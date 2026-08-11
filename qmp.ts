@@ -104,37 +104,42 @@ async function withSocket<T>(
 }
 
 /**
- * Hold Enter down through the firmware phase of an install.
- *
- * WHY THIS EXISTS, AND WHY IT IS SHAPED LIKE THIS.
+ * Answer the install media's boot prompt — with a STRICTLY BOUNDED number of
+ * keystrokes.
  *
  * Windows install media boots `cdboot.efi`, which prints "Press any key to boot
  * from CD or DVD" and returns EFI_TIMEOUT if nothing does. Unanswered, EDK2
- * then walks every remaining boot option — other USB devices, the disk, PXE
- * v4/v6, HTTP v4/v6, each with its own timeout — and lands in a UEFI shell
- * having installed nothing.
+ * walks every remaining boot option — other USB devices, the disk, PXE v4/v6,
+ * HTTP v4/v6, each with its own timeout — and lands in a UEFI shell having
+ * installed nothing.
+ *
+ * THE COUNT IS THE WHOLE DESIGN. This used to press Enter every 400 ms until
+ * the disk grew past 300 MB — around 250 keystrokes to satisfy a prompt that
+ * consumes one. Keystrokes the prompt does not take are not discarded; they
+ * queue in the keyboard buffer and are handed to Windows Setup's GUI when it
+ * starts pumping messages, where Enter activates the focused Cancel button and
+ * opens "Are you sure you want to quit?". The install then freezes with no
+ * error, at whatever percentage it happened to reach. Whether it happened at
+ * all depended on how fast the disk grew, which is why it struck intermittently.
+ *
+ * So: the CALLER waits for the firmware to announce that the prompt is imminent
+ * (see startup.nsh's `winvm-keypress-needed`), and this sends a handful of keys
+ * spaced across the prompt's few-second window. Nothing here is proportional to
+ * how long anything takes.
  *
  * `sendkey` is an **HMP** command, not a QMP one. Issuing it as
- * `{"execute":"sendkey"}` returns `CommandNotFound` — and if the caller ignores
- * the response, as an earlier version of this code did, the failure is
- * completely silent: hundreds of keystrokes are "sent", none arrive, and the
- * symptom looks exactly like a storage or firmware fault. That misdiagnosis
- * cost hours. It must be wrapped in `human-monitor-command`, and the result
- * must be checked.
+ * `{"execute":"sendkey"}` returns `CommandNotFound` — and a caller that ignores
+ * the response sees hundreds of keystrokes "sent" and none arrive, which looks
+ * exactly like a storage or firmware fault. That misdiagnosis cost hours. Every
+ * key here is a checked request; there are few enough to afford it.
  */
-export async function pressEnterUntil(sockPath: string, deadlineMs: number, shouldStop: () => boolean): Promise<void> {
+export async function tapEnter(sockPath: string, count: number, intervalMs: number): Promise<void> {
   await withSocket(sockPath, async (send, request) => {
-    // The FIRST keystroke is sent as a checked request, so a wrapper that does
-    // not work is reported now rather than as an install that silently stalls at
-    // firmware. The rest are fire-and-forget: hundreds of them go out, and
-    // waiting for each reply would halve the rate.
-    const first = await request({ execute: "human-monitor-command", arguments: { "command-line": "sendkey ret" } })
-    if (first["error"] !== undefined) throw new Error(`sendkey rejected: ${JSON.stringify(first["error"])}`)
-
-    const deadline = Date.now() + deadlineMs
-    while (Date.now() < deadline && !shouldStop()) {
-      await send({ execute: "human-monitor-command", arguments: { "command-line": "sendkey ret" } })
-      await new Promise((r) => setTimeout(r, 400))
+    void send
+    for (let i = 0; i < count; i += 1) {
+      const r = await request({ execute: "human-monitor-command", arguments: { "command-line": "sendkey ret" } })
+      if (r["error"] !== undefined) throw new Error(`sendkey rejected: ${JSON.stringify(r["error"])}`)
+      if (i < count - 1) await new Promise((res) => setTimeout(res, intervalMs))
     }
   })
 }

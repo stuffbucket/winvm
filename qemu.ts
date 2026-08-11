@@ -189,6 +189,26 @@ export async function launch(name: string, p: Paths, meta: InstanceMeta, o: Laun
 }
 
 /**
+ * Wait for a line to appear on the guest's firmware console.
+ *
+ * The serial log is the only channel that exists before the guest agent does,
+ * which makes it the only way to observe the firmware as an EVENT rather than
+ * guessing at it with a clock. Used to know when the install media's boot
+ * prompt is imminent — see startup.nsh and qmp.tapEnter.
+ *
+ * Read as latin1 on purpose: the firmware emits ANSI escapes and NUL padding,
+ * and a UTF-8 decode of that mangles the very bytes being matched.
+ */
+export async function waitForSerial(p: Paths, marker: string, timeoutMs: number): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() < deadline) {
+    if (existsSync(p.serial) && readFileSync(p.serial, "latin1").replaceAll("\0", "").includes(marker)) return true
+    await new Promise((r) => setTimeout(r, 500))
+  }
+  return false
+}
+
+/**
  * Per-instance, via QEMU's own pidfile — deliberately NOT a `pgrep
  * qemu-system-aarch64` pattern match. A global match is how one consumer ends
  * up reporting, or stopping, another's VM; an earlier version of this tool had

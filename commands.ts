@@ -191,33 +191,49 @@ export async function build(args: Args): Promise<number> {
     return 1
   }
 
-  // Answer "Press any key to boot from CD or DVD", then STOP EARLY.
+  // ANSWER "Press any key to boot from CD or DVD" — ONCE THE FIRMWARE SAYS SO.
   //
-  // THE STOP CONDITION IS THE DANGEROUS PART, IN BOTH DIRECTIONS.
+  // Two rules, and the second is the one that was learned the hard way:
   //
-  // Too late, and Enter starts landing on Windows Setup's GUI: the "Installing
-  // Windows" progress screen has a focusable Cancel, so a stray Enter opens
-  // "Are you sure you want to quit?" and the install freezes mid-copy waiting
-  // for an answer that never comes. That is not hypothetical — it wedged a
-  // build at 35%.
+  //   1. Wait for the EVENT. startup.nsh prints `winvm-keypress-needed` on the
+  //      firmware console immediately before launching the only boot image that
+  //      asks for a key. That is a causal signal; a timer is not. The prompt
+  //      itself is drawn on the graphical console and never reaches serial, so
+  //      this handshake is the only thing there is to observe.
   //
-  // Too early, and the prompt goes unanswered and nothing installs at all.
+  //   2. Send a BOUNDED number of keys. Surplus keystrokes are not discarded —
+  //      they queue and are delivered to Windows Setup's GUI, where Enter
+  //      activates Cancel and opens "Are you sure you want to quit?", freezing
+  //      the install with no error. The previous version held Enter down until
+  //      the disk grew past 300 MB, ~250 keystrokes for a prompt that takes
+  //      one, and wedged builds intermittently for exactly that reason.
   //
-  // A small amount of disk growth is the right signal: it means WinPE is past
-  // firmware and writing, which can only happen after the prompt was answered.
-  // Later reboots do not need the keyboard, because by then startup.nsh finds
-  // Windows Boot Manager on the ESP and prefers it over the installer.
-  //
-  // See qmp.ts for why this is not a plain QMP `sendkey`.
-  const installerRunning = (): boolean => {
+  // Later reboots need no keyboard at all: startup.nsh finds Windows Boot
+  // Manager on the ESP by then and prefers it over the installer.
+  const installerWriting = (): boolean => {
     try {
       return statSync(p.overlay).size > 300_000_000
     } catch {
       return false
     }
   }
-  void qmp.pressEnterUntil(p.qmp, 15 * 60_000, installerRunning).catch(() => {
-    console.warn("warning: could not drive the boot prompt; install may stall at firmware")
+  void (async () => {
+    if (!(await qemu.waitForSerial(p, "winvm-keypress-needed", 10 * 60_000))) {
+      console.warn("warning: the firmware never asked for a keypress; the install may stall at the boot prompt")
+      return
+    }
+    // Five keys, ten seconds, spanning the prompt's window — then stop for good,
+    // whatever happens next.
+    await qmp.tapEnter(p.qmp, 5, 2000)
+    // Confirm the keys did their job, so a prompt that went unanswered is named
+    // now rather than surfacing an hour later as a bare timeout.
+    for (let waited = 0; waited < 300_000; waited += 5000) {
+      if (installerWriting()) return
+      await new Promise((r) => setTimeout(r, 5000))
+    }
+    console.error("::error::the installer never started writing — the boot prompt appears to have gone unanswered")
+  })().catch((error: unknown) => {
+    console.warn(`warning: could not answer the boot prompt: ${error instanceof Error ? error.message : String(error)}`)
   })
 
   // provision.ps1 powers the guest off when it finishes, so QEMU exiting is the
