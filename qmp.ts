@@ -6,7 +6,36 @@
  */
 import { connect } from "node:net"
 
-async function withSocket<T>(sockPath: string, fn: (send: (o: object) => Promise<void>) => Promise<T>): Promise<T> {
+/**
+ * Run one HMP command and return what it said.
+ *
+ * READING THE REPLY IS THE ENTIRE POINT. HMP commands wrapped in
+ * `human-monitor-command` report failure as ordinary TEXT inside a SUCCESSFUL
+ * QMP response — `{"return": "Error: Device 'pflash1' is writable but does not
+ * support snapshots\r\n"}`. A caller that only checks for a QMP-level error sees
+ * every one of those as success, which is how a snapshot that never happened
+ * gets reported as taken, and a rewind that reverted nothing looks fine.
+ */
+export async function hmp(sockPath: string, command: string, timeoutMs = 180_000): Promise<string> {
+  return await withSocket(sockPath, async (send, request) => {
+    const reply = await request({ execute: "human-monitor-command", arguments: { "command-line": command } }, timeoutMs)
+    const error = reply["error"]
+    if (error !== undefined) throw new Error(`qmp rejected "${command}": ${JSON.stringify(error)}`)
+    const text = typeof reply["return"] === "string" ? reply["return"].trim() : ""
+    // HMP prefixes its failures with "Error:"; success is usually empty output.
+    if (/^Error/i.test(text)) throw new Error(`${command}: ${text.replace(/\r/g, "")}`)
+    void send
+    return text
+  })
+}
+
+async function withSocket<T>(
+  sockPath: string,
+  fn: (
+    send: (o: object) => Promise<void>,
+    request: (o: object, timeoutMs?: number) => Promise<Record<string, unknown>>,
+  ) => Promise<T>,
+): Promise<T> {
   // QEMU creates the socket a moment AFTER the process starts, so a connect
   // attempt racing the launch fails with ENOENT. Retry rather than give up:
   // losing this race means the boot prompt goes unanswered and the install
@@ -28,20 +57,47 @@ async function withSocket<T>(sockPath: string, fn: (send: (o: object) => Promise
     }
   }
 
+  // Replies are matched to requests in order. QEMU answers a QMP monitor's
+  // commands sequentially, so a queue is enough; asynchronous EVENTS are
+  // interleaved with them and must not be mistaken for a reply.
+  const waiting: ((r: Record<string, unknown>) => void)[] = []
   let buf = ""
   sock.on("data", (chunk) => {
     buf += chunk.toString("utf8")
-    // Responses are read only to keep the stream drained; the caller does not
-    // inspect them beyond the send() error path.
-    if (buf.length > 65_536) buf = buf.slice(-1024)
+    for (;;) {
+      const nl = buf.indexOf("\n")
+      if (nl < 0) break
+      const line = buf.slice(0, nl)
+      buf = buf.slice(nl + 1)
+      if (line.trim() === "") continue
+      let parsed: Record<string, unknown>
+      try {
+        parsed = JSON.parse(line) as Record<string, unknown>
+      } catch {
+        continue
+      }
+      if ("event" in parsed || "QMP" in parsed) continue
+      waiting.shift()?.(parsed)
+    }
   })
+  const request = async (o: object, timeoutMs = 20_000): Promise<Record<string, unknown>> => {
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const reply = new Promise<Record<string, unknown>>((res) => waiting.push(res))
+    const expiry = new Promise<Record<string, unknown>>((res) => {
+      timer = setTimeout(() => res({ error: { desc: "qmp timed out" } }), timeoutMs)
+    })
+    sock.write(`${JSON.stringify(o)}\n`)
+    const out = await Promise.race([reply, expiry])
+    clearTimeout(timer)
+    return out
+  }
   const send = async (o: object): Promise<void> => {
     sock.write(`${JSON.stringify(o)}\n`)
     await new Promise((r) => setTimeout(r, 30))
   }
   try {
-    await send({ execute: "qmp_capabilities" })
-    return await fn(send)
+    await request({ execute: "qmp_capabilities" })
+    return await fn(send, request)
   } finally {
     sock.destroy()
   }
@@ -67,7 +123,14 @@ async function withSocket<T>(sockPath: string, fn: (send: (o: object) => Promise
  * must be checked.
  */
 export async function pressEnterUntil(sockPath: string, deadlineMs: number, shouldStop: () => boolean): Promise<void> {
-  await withSocket(sockPath, async (send) => {
+  await withSocket(sockPath, async (send, request) => {
+    // The FIRST keystroke is sent as a checked request, so a wrapper that does
+    // not work is reported now rather than as an install that silently stalls at
+    // firmware. The rest are fire-and-forget: hundreds of them go out, and
+    // waiting for each reply would halve the rate.
+    const first = await request({ execute: "human-monitor-command", arguments: { "command-line": "sendkey ret" } })
+    if (first["error"] !== undefined) throw new Error(`sendkey rejected: ${JSON.stringify(first["error"])}`)
+
     const deadline = Date.now() + deadlineMs
     while (Date.now() < deadline && !shouldStop()) {
       await send({ execute: "human-monitor-command", arguments: { "command-line": "sendkey ret" } })

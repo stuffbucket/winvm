@@ -142,6 +142,27 @@ try {
         & $setup
     }
 
+    # --- 4. Confirm viostor came out boot-start ------------------------------
+    #
+    # The build attaches a scratch virtio-blk disk purely so PnP installs
+    # viostor from the DriverStore and marks it boot-start (Start=0). That is
+    # what lets instances run their boot disk on virtio-blk, which QEMU requires
+    # for live snapshots -- the nvme device model has no migration support, so
+    # `savevm` refuses outright.
+    #
+    # Reported, NOT thrown: an image without it is still a working Windows
+    # guest, just one that cannot be snapshotted. The host records the answer on
+    # the image so instances know which bus to boot.
+    $viostor = Get-ItemProperty "HKLM:\SYSTEM\CurrentControlSet\Services\viostor" -ErrorAction SilentlyContinue
+    if ($viostor -and $viostor.Start -eq 0) {
+        Write-Output "viostor is boot-start: this image can boot on virtio-blk"
+        Write-Result -Name "virtio.txt" -Content "ok"
+    } else {
+        $state = if ($viostor) { "Start=$($viostor.Start)" } else { "service absent" }
+        Write-Output "WARNING: viostor is not boot-start ($state) - no live snapshots"
+        Write-Result -Name "virtio.txt" -Content "no"
+    }
+
     Write-Result -Name "status.txt" -Content "ok"
     Write-Output "PROVISION OK"
 } catch {
