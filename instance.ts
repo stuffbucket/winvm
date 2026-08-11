@@ -5,26 +5,12 @@
  * one choice is what makes reset instant, concurrency free, and disk cost
  * proportional to what changed rather than to a whole Windows install.
  */
-import { chmodSync, existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs"
-import { resolve } from "node:path"
+import { chmodSync, copyFileSync, existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs"
 
 import { FIRMWARE_VARS, run } from "./host"
 import { makeResultVolume } from "./media"
 import type { InstanceMeta, Paths } from "./paths"
 import { allocateVnc, basePath, pathsFor, readMeta } from "./paths"
-
-/**
- * Firmware variables as qcow2, converted from the raw image QEMU ships.
- *
- * A copy would be simpler and is what this used to do, but a writable RAW
- * pflash makes the whole machine unsnapshottable — `savevm` reports "Device
- * 'pflash1' is writable but does not support snapshots" and refuses. The
- * conversion preserves the 64 MiB virtual size, which pflash requires.
- */
-export function makeVars(dest: string): void {
-  rmSync(dest, { force: true })
-  run("qemu-img", ["convert", "-f", "raw", "-O", "qcow2", FIRMWARE_VARS, dest])
-}
 
 /**
  * Make a base image read-only. NOT ceremony: writing to a backing file while
@@ -43,21 +29,7 @@ function createOverlay(p: Paths, image: string): void {
 
 export function ensureInstance(name: string, image: string): Paths {
   const p = pathsFor(name)
-  if (readMeta(name) !== null) {
-    // Instances created before firmware variables moved to qcow2 still have the
-    // raw file. Convert in place rather than fail to launch or, worse, silently
-    // hand them a blank NVRAM and lose their boot entries.
-    if (!existsSync(p.vars)) {
-      const legacy = resolve(p.dir, "efi-vars.fd")
-      if (existsSync(legacy)) {
-        run("qemu-img", ["convert", "-f", "raw", "-O", "qcow2", legacy, p.vars])
-        rmSync(legacy, { force: true })
-      } else {
-        makeVars(p.vars)
-      }
-    }
-    return p
-  }
+  if (readMeta(name) !== null) return p
 
   if (!existsSync(basePath(image))) {
     console.error(
@@ -68,7 +40,7 @@ export function ensureInstance(name: string, image: string): Paths {
   }
   mkdirSync(p.tpmDir, { recursive: true })
   createOverlay(p, image)
-  makeVars(p.vars)
+  copyFileSync(FIRMWARE_VARS, p.vars)
   makeResultVolume(p.result)
   const meta: InstanceMeta = { image, vnc: allocateVnc(), created: new Date().toISOString() }
   writeFileSync(p.meta, `${JSON.stringify(meta, null, 2)}\n`)
@@ -89,7 +61,7 @@ export function resetInstance(name: string, meta: InstanceMeta): void {
   const p = pathsFor(name)
   rmSync(p.overlay, { force: true })
   createOverlay(p, meta.image)
-  makeVars(p.vars)
+  copyFileSync(FIRMWARE_VARS, p.vars)
   rmSync(p.tpmDir, { recursive: true, force: true })
   mkdirSync(p.tpmDir, { recursive: true })
   rmSync(p.result, { force: true })

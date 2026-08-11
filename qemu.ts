@@ -8,7 +8,7 @@
  * message nobody will find.
  */
 import { spawn, spawnSync } from "node:child_process"
-import { closeSync, existsSync, openSync, readFileSync, renameSync, rmSync } from "node:fs"
+import { existsSync, readFileSync, rmSync } from "node:fs"
 
 import { FIRMWARE } from "./host"
 import type { InstanceMeta, Paths } from "./paths"
@@ -19,13 +19,6 @@ export interface LaunchOptions {
   readonly installMedia: boolean
   /** QEMU `-snapshot`: even the overlay is left untouched and the run is discarded. */
   readonly ephemeral: boolean
-  /**
-   * Boot the disk on virtio-blk instead of NVMe. Only images whose guest has
-   * viostor as a boot-start driver can do this — see ImageMeta.virtioBoot.
-   */
-  readonly virtioBoot: boolean
-  /** Resume straight into a saved VM state instead of booting. */
-  readonly loadvm?: string
 }
 
 export function qemuArgs(name: string, p: Paths, meta: InstanceMeta, o: LaunchOptions): readonly string[] {
@@ -45,33 +38,16 @@ export function qemuArgs(name: string, p: Paths, meta: InstanceMeta, o: LaunchOp
     "-smp", "4",
     "-m", "4096",
     "-drive", `if=pflash,format=raw,readonly=on,file=${FIRMWARE}`,
-    // QCOW2, not the raw vars image. A writable raw device blocks `savevm` for
-    // the entire machine — see Paths.vars.
-    "-drive", `if=pflash,format=qcow2,file=${p.vars}`,
+    "-drive", `if=pflash,format=raw,file=${p.vars}`,
     "-device", "nec-usb-xhci,id=usb-bus",
-    // THE BOOT DISK CHANGES BUS BETWEEN INSTALLING AND RUNNING, and both halves
-    // are load-bearing.
-    //
-    // NVMe while installing: Windows 11 ARM64 has an in-box NVMe driver
-    // (stornvme.sys), so Setup sees the disk with nothing injected. WinPE has no
-    // virtio-blk driver at all, so installing onto virtio would mean injecting
-    // viostor at windowsPE, and a <DriverPaths> entry names a drive letter that
-    // WinPE assigns by enumeration order. (It is also why a virtio disk attached
-    // during a build cannot disturb the answer file's DiskID 0: WinPE cannot see
-    // it.)
-    //
-    // virtio-blk while running: the nvme device model has NO migration support
-    // — `savevm` fails with "Device '...nvme' is non-migratable" — so live
-    // snapshots are impossible on NVMe. The build primes viostor as a boot-start
-    // driver (see Paths.prime) precisely so the finished image can run here.
+    // NVMe, NOT virtio-blk. Windows 11 ARM64 has an in-box NVMe driver
+    // (stornvme.sys), so Setup sees the disk with nothing injected. UTM's wizard
+    // special-cases aarch64+Windows to NVMe for exactly this reason, overriding
+    // the virtio default it uses everywhere else. Choosing virtio here would
+    // mean injecting viostor at windowsPE, which pins a WinPE drive letter.
     "-drive", `if=none,media=disk,id=hd0,file=${p.overlay}`,
-    ...(o.virtioBoot
-      ? ["-device", `virtio-blk-pci,drive=hd0,bootindex=${String(diskBootIndex)}`]
-      : ["-device", `nvme,drive=hd0,serial=winvm,bootindex=${String(diskBootIndex)}`]),
-    // Writable only while installing, when the guest writes its provisioning
-    // transcript here. Afterwards it is read-only — both because nothing should
-    // write it, and because a writable RAW device blocks `savevm` machine-wide.
-    "-drive", `if=none,media=disk,id=res0,format=raw,file=${p.result}${o.installMedia ? "" : ",readonly=on"}`,
+    "-device", `nvme,drive=hd0,serial=winvm,bootindex=${String(diskBootIndex)}`,
+    "-drive", `if=none,media=disk,id=res0,format=raw,file=${p.result}`,
     "-device", "usb-storage,drive=res0,removable=true,bus=usb-bus.0",
     "-device", "usb-kbd,bus=usb-bus.0",
     "-device", "usb-tablet,bus=usb-bus.0",
@@ -103,7 +79,6 @@ export function qemuArgs(name: string, p: Paths, meta: InstanceMeta, o: LaunchOp
     "-pidfile", p.pid,
   ]
   if (o.ephemeral) a.push("-snapshot")
-  if (o.loadvm !== undefined) a.push("-loadvm", o.loadvm)
   if (o.installMedia) {
     a.push(
       "-drive", `if=none,media=cdrom,id=cd0,file=${media.iso()},readonly=on`,
@@ -112,100 +87,29 @@ export function qemuArgs(name: string, p: Paths, meta: InstanceMeta, o: LaunchOp
       "-device", "usb-storage,drive=cd1,removable=true,bus=usb-bus.0",
       "-drive", `if=none,media=cdrom,id=cd2,file=${media.seed()},readonly=on`,
       "-device", "usb-storage,drive=cd2,removable=true,bus=usb-bus.0",
-      // The scratch virtio-blk device whose only job is to exist, so PnP installs
-      // viostor and marks it boot-start. See Paths.prime.
-      "-drive", `if=none,media=disk,id=prime0,file=${p.prime}`,
-      "-device", "virtio-blk-pci,drive=prime0",
     )
   }
   return a
 }
 
-async function startSwtpm(p: Paths): Promise<void> {
+function startSwtpm(p: Paths): void {
   if (existsSync(p.tpmSock) && spawnSync("pgrep", ["-f", `swtpm socket .*${p.tpmDir}`]).status === 0) return
-  // A socket file with no process behind it is what a killed swtpm leaves, and
-  // binding over one fails. Clear it rather than inherit the previous failure.
-  rmSync(p.tpmSock, { force: true })
   const proc = spawn(
     "swtpm",
     ["socket", "--tpmstate", `dir=${p.tpmDir}`, "--ctrl", `type=unixio,path=${p.tpmSock}`, "--tpm2"],
     { detached: true, stdio: "ignore" },
   )
   proc.unref()
-
-  // WAIT FOR THE SOCKET TO EXIST. Measured here, swtpm needs ~15 ms to bind it,
-  // and QEMU connects to this path while parsing its own command line — so
-  // returning immediately is a coin flip that QEMU sometimes loses, and loses
-  // more often under load. It does not degrade: a chardev that cannot connect
-  // aborts the launch outright (see below).
-  const deadline = Date.now() + 10_000
-  while (Date.now() < deadline) {
-    if (existsSync(p.tpmSock)) return
-    await new Promise((r) => setTimeout(r, 20))
-  }
-  throw new Error(`swtpm never created ${p.tpmSock} — check \`winvm doctor\``)
 }
 
-/**
- * Start the guest, and confirm it actually started.
- *
- * THE CONFIRMATION IS THE POINT. QEMU validates its command line and connects
- * its chardevs during startup, and reports failure by printing one line to
- * stderr and **exiting 0** — verified here with an unreachable TPM socket. This
- * used to be spawned detached with `stdio: "ignore"` and no check at all, which
- * made a launch that never happened indistinguishable from a slow boot: `start`
- * waited out its five-minute agent timeout and then blamed the guest agent, and
- * `build` saw "not running" on its first poll and promoted an empty disk to a
- * sealed base image.
- *
- * Throws if the guest is gone within a couple of seconds, with QEMU's own words.
- */
-export async function launch(name: string, p: Paths, meta: InstanceMeta, o: LaunchOptions): Promise<void> {
-  await startSwtpm(p)
-  // Rotate rather than delete: the usual response to a bad boot is another boot,
-  // and truncating here would erase the evidence being retried.
-  if (existsSync(p.serial)) renameSync(p.serial, p.serialPrev)
-  rmSync(p.qemuLog, { force: true })
-
-  const log = openSync(p.qemuLog, "w")
+export function launch(name: string, p: Paths, meta: InstanceMeta, o: LaunchOptions): void {
+  startSwtpm(p)
+  rmSync(p.serial, { force: true })
   const proc = spawn("qemu-system-aarch64", [...qemuArgs(name, p, meta, o)], {
     detached: true,
-    stdio: ["ignore", log, log],
+    stdio: "ignore",
   })
-  closeSync(log)
   proc.unref()
-
-  const exited = new Promise<"exited">((res) => proc.on("exit", () => res("exited")))
-  let timer: ReturnType<typeof setTimeout> | undefined
-  const survived = new Promise<"alive">((res) => {
-    timer = setTimeout(() => res("alive"), 2000)
-  })
-  const outcome = await Promise.race([exited, survived])
-  clearTimeout(timer)
-  if (outcome === "alive") return
-
-  const why = existsSync(p.qemuLog) ? readFileSync(p.qemuLog, "utf8").trim() : ""
-  throw new Error(`qemu exited immediately${why === "" ? "" : `:\n  ${why.split("\n").join("\n  ")}`}`)
-}
-
-/**
- * Wait for a line to appear on the guest's firmware console.
- *
- * The serial log is the only channel that exists before the guest agent does,
- * which makes it the only way to observe the firmware as an EVENT rather than
- * guessing at it with a clock. Used to know when the install media's boot
- * prompt is imminent — see startup.nsh and qmp.tapEnter.
- *
- * Read as latin1 on purpose: the firmware emits ANSI escapes and NUL padding,
- * and a UTF-8 decode of that mangles the very bytes being matched.
- */
-export async function waitForSerial(p: Paths, marker: string, timeoutMs: number): Promise<boolean> {
-  const deadline = Date.now() + timeoutMs
-  while (Date.now() < deadline) {
-    if (existsSync(p.serial) && readFileSync(p.serial, "latin1").replaceAll("\0", "").includes(marker)) return true
-    await new Promise((r) => setTimeout(r, 500))
-  }
-  return false
 }
 
 /**
