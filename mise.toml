@@ -1,0 +1,7 @@
+# Toolchain for winvm. The tool itself runs on Bun; pnpm installs the
+# typecheck-only dev dependencies (registry and auth come from ~/.npmrc).
+# Versions match stuffbucket/maximal, the first consumer, so one set of
+# installed tools serves both.
+[tools]
+bun = "1.3.14"
+pnpm = "12.3.4"

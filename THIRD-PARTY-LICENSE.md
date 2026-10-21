@@ -1,9 +1,8 @@
-# Third-party software in `scripts/dev/win11/`
+# Third-party software in winvm
 
 This directory redistributes some third-party software and downloads more at
-run time. Notices for both are here rather than in the repository-root
-`THIRD-PARTY-LICENSE`, because this tool is self-contained and meant to be
-copied out on its own — its obligations should travel with it.
+run time. Notices for both are kept in this file so the obligations travel with the
+tool wherever it is copied.
 
 ---
 

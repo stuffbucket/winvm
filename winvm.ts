@@ -14,7 +14,7 @@
  *
  * ## Self-contained and project-agnostic, on purpose
  *
- * THIS DIRECTORY IS THE WHOLE TOOL. Copy `scripts/dev/win11/` anywhere — another
+ * THIS DIRECTORY IS THE WHOLE TOOL. Copy this directory anywhere — another
  * repository, or no repository at all — and it works. It reads no manifest, no
  * version file, and nothing else belonging to whatever happens to host it.
  * Everything project-specific is passed in: what to stage in the guest
@@ -80,7 +80,7 @@
  *   instance.ts   create / reset / seal
  *   assets/       answer file, provisioning script, UEFI boot selector
  *
- * See docs/dev/windows-vm-qemu.md for the reasoning behind the device choices.
+ * See docs/windows-vm-qemu.md for the reasoning behind the device choices.
  *
  * Exit code: the guest command's, so `winvm exec` is transparent in a `&&` chain.
  */

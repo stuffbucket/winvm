@@ -1,0 +1,9 @@
+node_modules/
+*.tsbuildinfo
+.DS_Store
+# All VM state (images, instances, media) lives in $WINVM_HOME
+# (~/.local/state/winvm by default), never here. These guard against an
+# accidental copy of a multi-GB file into the repo.
+*.iso
+*.qcow2
+*.img

@@ -1,6 +1,6 @@
 echo -off
 #
-# UEFI shell boot selector for maximal-core's Windows test VM.
+# UEFI shell boot selector for the winvm Windows test VM.
 #
 # WHY THIS EXISTS. EDK2's own boot manager tries the install CD, gets the
 # "Press any key to boot from CD or DVD" prompt, and — with no key pressed —

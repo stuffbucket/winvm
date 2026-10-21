@@ -14,7 +14,7 @@
  * knowledge in diagnose.ts. Adding a failure mode means adding a directory to
  * the archive, not editing this file.
  *
- *   bun run test:winvm
+ *   pnpm test   (or: bun test)
  */
 import { spawnSync } from "node:child_process"
 import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs"
