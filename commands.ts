@@ -31,6 +31,7 @@ import * as qemu from "./qemu"
 import * as qmp from "./qmp"
 import * as qga from "./qga"
 import * as snapshot from "./snapshot"
+import * as timemachine from "./timemachine"
 
 /**
  * Whether this instance's image can boot on virtio-blk, which is what live
@@ -44,6 +45,7 @@ export function doctor(): number {
   const checks = hostChecks()
   for (const c of checks) console.log(`${c.ok ? "ok  " : "MISS"}  ${c.label}${c.ok ? "" : `  -> ${c.hint}`}`)
   const missing = checks.filter((c) => !c.ok)
+  console.log(timemachine.summary())
   console.log(missing.length === 0 ? `\nhost is ready · state: ${home()}` : `\n${missing.length} prerequisite(s) missing`)
   return missing.length === 0 ? 0 : 1
 }
@@ -591,7 +593,7 @@ export async function rewind(args: Args): Promise<number> {
   // sleep that is a little too short produces the worst possible result: a
   // command answered from across the restore, making a rewind that DID work
   // look like one that changed nothing.
-  if (!(await qga.waitReady(p.qga, 120_000))) {
+  if (!(await qga.waitResponsive(p.qga, 120_000))) {
     console.error(`::error::guest did not come back after the rewind — see ${p.serial}`)
     return 1
   }
@@ -796,6 +798,7 @@ export const USAGE =
   "  snapshot [-i name] [tag]      capture the running guest, RAM and all\n" +
   "           [--delete]           remove that snapshot instead\n" +
   "  rewind  [-i name] [tag]       put the guest back (default tag: fresh)\n" +
+  "  timemachine [--yes]           exclude the VM files from Time Machine backups\n" +
   "  snapshots [-i name]           list them\n" +
   "  reset   [-i name]             discard changes, back to the base image\n" +
   "  rmi <image> [--force]         remove a base image (undoes its read-only seal)\n" +

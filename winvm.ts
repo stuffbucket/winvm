@@ -8,9 +8,10 @@
  *   winvm start [-i name]            boot an instance (creating it if absent)
  *   winvm exec  [-i name] -- <cmd>   run a command in the guest
  *   winvm snapshot [-i name] [tag]   capture the running guest, RAM and all
- *   winvm rewind   [-i name] [tag]   put it back — about a second, no reboot
+ *   winvm rewind   [-i name] [tag]   put it back — ~10-20 s running, no reboot
  *   winvm reset [-i name]            discard all changes, back to the base
  *   winvm ls                         images and instances, with disk usage
+ *   winvm timemachine [--yes]        keep the VM files out of Time Machine backups
  *
  * ## Self-contained and project-agnostic, on purpose
  *
@@ -86,6 +87,7 @@
  */
 import { parseArgs } from "./args"
 import * as commands from "./commands"
+import * as timemachine from "./timemachine"
 
 const [, , sub, ...rawArgs] = process.argv
 const args = parseArgs(rawArgs)
@@ -94,6 +96,10 @@ switch (sub) {
   case "doctor":
     process.exit(commands.doctor())
   // eslint-disable-next-line no-fallthrough
+  case "timemachine":
+  case "tm":
+    process.exit(timemachine.run(process.argv.includes("--yes")))
+
   case "ls":
   case "list":
     process.exit(commands.ls())

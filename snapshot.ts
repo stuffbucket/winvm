@@ -3,8 +3,11 @@
  *
  * A snapshot here is QEMU's `savevm` — the whole machine, RAM included, stored
  * inside the instance's own qcow2 files. Restoring one is not a reboot: the
- * guest resumes mid-instruction from the moment it was taken, which is why a
- * rewind costs under a second instead of the half-minute a boot costs.
+ * guest resumes mid-instruction from the moment it was taken. Measured on an
+ * M-series Mac with Windows 11 26300: `loadvm` takes 5-15 s (it reads the saved
+ * RAM back; faster when it's still in the page cache) and the guest agent
+ * answers ~2 s later, so a rewind of a running guest is ~8-17 s. From stopped
+ * it also has to start QEMU: ~35 s.
  *
  * THREE THINGS HAD TO CHANGE BEFORE THIS WORKED AT ALL, and each announced
  * itself as a flat refusal from `savevm` naming a device:

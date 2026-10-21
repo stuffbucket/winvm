@@ -117,6 +117,30 @@ export async function waitReady(sockPath: string, timeoutMs: number): Promise<bo
 }
 
 /**
+ * After a rewind: the restored guest is already past OOBE (a snapshot can only
+ * be taken once `waitReady` passed), so all that matters is that the agent is
+ * serving commands again. `waitReady`'s PowerShell + CIM probe costs ~20 s per
+ * try on ARM64; one `cmd /c echo` costs ~2 s. The nonce makes sure the answer
+ * came from a command started after the restore, not a reply left over from
+ * before it.
+ */
+export async function waitResponsive(sockPath: string, timeoutMs: number): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs
+  if (!(await waitFor(sockPath, timeoutMs))) return false
+  const nonce = `winvm-${String(Date.now())}-${String(Math.random()).slice(2, 8)}`
+  while (Date.now() < deadline) {
+    try {
+      const r = await exec(sockPath, "C:\\Windows\\System32\\cmd.exe", ["/c", "echo", nonce])
+      if (r.stdout.includes(nonce)) return true
+    } catch {
+      // The agent reconnects after the restore; keep asking.
+    }
+    await new Promise((r) => setTimeout(r, 250))
+  }
+  return false
+}
+
+/**
  * `guest-exec` starts a process and returns immediately; the output is only
  * available once `guest-exec-status` reports it exited, so this polls. Output
  * arrives base64-encoded.

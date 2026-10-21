@@ -3,7 +3,8 @@
 A scriptable Windows 11 ARM64 guest on a Mac (Apple Silicon), on plain QEMU +
 Hypervisor.framework. Driven entirely from the shell: build a golden image
 once, then boot thin copy-on-write instances, run commands in them over the
-QEMU guest agent, snapshot and rewind them in about a second.
+QEMU guest agent, snapshot them, and rewind a running guest in ~10-20 seconds
+(no reboot; ~35 s from stopped).
 
 Built for reproducing Windows-only bugs locally (e.g. testing a
 [Maximal](https://github.com/stuffbucket/maximal) build) instead of
@@ -126,6 +127,24 @@ Fidelity note: this guest is **ARM64**. Maximal's Windows build targets x64,
 which runs under Windows' x64 emulation — fine for path, shell, file-locking
 and installer bugs, not for timing-sensitive ones. See
 [`docs/windows-vm-qemu.md`](docs/windows-vm-qemu.md#fidelity-limits--read-before-trusting-a-result).
+
+## Time Machine
+
+The VM disks are large and change constantly. Keep them out of backups:
+
+```sh
+bun winvm.ts timemachine          # report, and offer to exclude each folder
+bun winvm.ts timemachine --yes    # exclude without asking
+```
+
+It adds Time Machine's sticky exclusion (`tmutil addexclusion`, no sudo) to the
+state directory and to the folder holding the ISO; `winvm doctor` reports
+whether that's in place. Undo with `tmutil removeexclusion <path>`.
+
+Local Time Machine snapshots are a different thing: they cover the whole APFS
+volume and ignore exclusions, so each one keeps disk blocks the VM has since
+overwritten until macOS removes it (usually within 24 hours). The command lists
+them and prints how to remove them; it doesn't remove them itself.
 
 ## Troubleshooting
 
