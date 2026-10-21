@@ -37,11 +37,18 @@ export function makeResultVolume(dest: string): void {
   const dev = capture("hdiutil", ["attach", "-nomount", dest]).split(/\s+/)[0]
   if (dev === undefined || dev === "") throw new Error("could not attach result image")
   run("newfs_msdos", ["-F", "32", "-v", "MAXRESULT", dev])
-  run("hdiutil", ["detach", dev])
+  detachOrThrow(dev, dest)
 
-  const mounted = capture("hdiutil", ["attach", dest]).split(/\s+/)[0]
-  if (mounted !== undefined && mounted !== "") {
-    writeFileSync("/Volumes/MAXRESULT/startup.nsh", readFileSync(resolve(ASSETS, "startup.nsh")))
+  // -nobrowse and a private mount point, like the ISO checks below: a volume
+  // that appears under /Volumes gets picked up by Spotlight/Finder, which then
+  // holds it open ("Resource busy"), the detach fails, and QEMU can't lock the
+  // image ("Failed to lock byte 100").
+  const mnt = mkdtempSync(resolve(tmpdir(), "winvm-result-"))
+  try {
+    if (quiet("hdiutil", ["attach", "-nobrowse", "-mountpoint", mnt, dest]) !== 0) {
+      throw new Error("could not mount result image")
+    }
+    writeFileSync(resolve(mnt, "startup.nsh"), readFileSync(resolve(ASSETS, "startup.nsh")))
     // The answer file goes here TOO, not only on the seed ISO.
     //
     // Windows Setup scans attached volumes for `autounattend.xml`, and a FAT
@@ -50,13 +57,27 @@ export function makeResultVolume(dest: string): void {
     // interactively at "Select language settings" with the file present at the
     // ISO root, which is indistinguishable from having supplied no answer file
     // at all. Writing it to both costs 12 KB and removes the ambiguity.
-    writeFileSync("/Volumes/MAXRESULT/autounattend.xml", readFileSync(resolve(ASSETS, "autounattend.xml")))
+    writeFileSync(resolve(mnt, "autounattend.xml"), readFileSync(resolve(ASSETS, "autounattend.xml")))
     // Provisioning rides here too: `specialize` copies whichever volume it
     // finds first into C:\\Windows\\Setup\\Scripts.
-    writeFileSync("/Volumes/MAXRESULT/SetupComplete.cmd", readFileSync(resolve(ASSETS, "SetupComplete.cmd")))
-    writeFileSync("/Volumes/MAXRESULT/provision.ps1", readFileSync(resolve(ASSETS, "provision.ps1")))
-    run("hdiutil", ["detach", mounted])
+    writeFileSync(resolve(mnt, "SetupComplete.cmd"), readFileSync(resolve(ASSETS, "SetupComplete.cmd")))
+    writeFileSync(resolve(mnt, "provision.ps1"), readFileSync(resolve(ASSETS, "provision.ps1")))
+    detachOrThrow(mnt, dest)
+  } finally {
+    rmSync(mnt, { recursive: true, force: true })
   }
+}
+
+/** Detach `target` (a device or mount point), retrying while macOS still holds
+ *  it, then forcing. QEMU can't open an image that is still attached, so a
+ *  failed detach must stop the build here rather than as a lock error later. */
+function detachOrThrow(target: string, image: string): void {
+  for (let attempt = 0; attempt < 5; attempt++) {
+    if (quiet("hdiutil", ["detach", target]) === 0) return
+    Bun.sleepSync(1000)
+  }
+  if (quiet("hdiutil", ["detach", "-force", target]) === 0) return
+  throw new Error(`could not detach ${image} (${target}); see \`hdiutil info\``)
 }
 
 /**

@@ -96,7 +96,10 @@ export function qemuArgs(name: string, p: Paths, meta: InstanceMeta, o: LaunchOp
     // tpm-tis-device, not UTM's tpm-crb-device: Homebrew's QEMU builds only the
     // TIS model for aarch64. Verified equivalent here — with swtpm attached the
     // firmware enumerates all four PCR banks either way.
-    "-device", "tpm-tis-device,tpmdev=tpm0",
+    // ppi=off: the Physical Presence Interface adds a small RAM region that
+    // HVF refuses to map (QEMU 11.1 on macOS 26: "HV_BAD_ARGUMENT" at
+    // hvf-all.c:123, and qemu exits). Windows doesn't need PPI.
+    "-device", "tpm-tis-device,tpmdev=tpm0,ppi=off",
     // Windows expects local time in the RTC; without this the guest clock is
     // wrong by the host's UTC offset.
     "-rtc", "base=localtime",
