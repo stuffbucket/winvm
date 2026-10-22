@@ -20,7 +20,7 @@ anything in `qemu.ts` or `assets/`.
 |---|---|
 | Host | macOS on Apple Silicon (uses `-accel hvf`, `hdiutil`, `newfs_msdos`) |
 | [mise](https://mise.jdx.dev) | pins Bun 1.3.14 and pnpm 12.3.4 (`mise.toml`) |
-| `qemu`, `swtpm` | `bun winvm.ts setup` installs them with Homebrew, or `brew install qemu swtpm` |
+| `qemu`, `swtpm`, `zstd` | `bun winvm.ts setup` installs them with Homebrew, or `brew install qemu swtpm zstd` |
 | UEFI firmware | vendored in `firmware/` (gzipped EDK2), expanded into the state dir on first use |
 | UTM guest tools ISO | downloaded by `setup`/`build` from getutm.app (~121 MB), pinned by SHA-256 |
 | Windows 11 ARM64 ISO | you supply it — see below |
@@ -67,7 +67,7 @@ this repo. Run from the repo root (or use the `pnpm run <verb>` aliases in
 `package.json`).
 
 ```sh
-bun winvm.ts setup                       # brew install qemu swtpm; fetch guest tools
+bun winvm.ts setup                       # brew install qemu swtpm zstd; fetch guest tools
 bun winvm.ts build --iso ~/vm/Win11_25H2_English_Arm64.iso --bun 1.3.14
                                          # once: unattended install, ~10-20 min
 bun winvm.ts start                       # boot instance "default" (~35 s to desktop)
@@ -90,6 +90,40 @@ additional, independent instances backed by the same image, and
 To see the desktop: `bun winvm.ts ls` prints each instance's VNC display;
 `open vnc://127.0.0.1:5901` for display `:1`.
 
+## Saves
+
+Like a game's save files: the whole running machine (RAM, devices, disk,
+firmware variables) written to a directory you can list, keep across restarts,
+and load later, whether or not the guest is running.
+
+```sh
+bun winvm.ts save before-install        # ~6 s; name defaults to a timestamp
+bun winvm.ts load before-install        # ~4 s running, ~10 s stopped
+bun winvm.ts saves                      # name, kind, created, size, compatible
+bun winvm.ts saves rm before-install
+bun winvm.ts pause / resume             # freeze the vCPUs / carry on
+bun winvm.ts stow                       # save and shut QEMU down, freeing the host
+bun winvm.ts start                      # ...then this recalls the stow in seconds
+bun winvm.ts clock                      # guest-vs-host offset, and fix it
+```
+
+- **Baseline.** An instance's first `start` (and the first after `reset`) saves
+  `baseline` once the guest is logged on. `rewind` with no snapshot named
+  "fresh" goes back to it. `--no-autosave` skips it.
+- **Storage.** `~/.local/state/winvm/saves/<instance>/<name>/`: `manifest.json`,
+  `vmstate.zst` (zstd'd QEMU migration stream), plus APFS clones of the overlay
+  and NVRAM, which cost little until the instance overwrites what they share.
+  `destroy` leaves an instance's saves alone; `load` recreates the instance.
+- **Compatibility.** A save loads only into the same virtual hardware, base
+  image, firmware and QEMU version. `saves` shows which still do, and `load`
+  says what changed when it refuses.
+- **Clock.** Restoring, resuming or recalling puts the guest's clock back on
+  the host's (it stood still while frozen), and the first boot sets the guest's
+  time zone to the host's.
+- `snapshot`/`rewind <tag>` still work as before, inside the instance's qcow2.
+
+`zstd` is required (`setup` installs it; `doctor` checks).
+
 The guest boots to **audit mode** as the built-in Administrator, with UAC off.
 Do not use it for anything but testing.
 
@@ -105,12 +139,12 @@ when QEMU does; `stop` ends it first.
   minute; no `winvm exec`/`smoke`/`snapshot` activity; no VNC client
   connected. An idle desktop measures 0.2-1% here, with background bursts
   that one sample can't push over the threshold; one busy thread is 25%.
-- **Autosave**: after `autosave.idleMinutes` (10) idle, one `winvm save
-  --kind auto`; another only once the guest has been used and gone idle
-  again. The newest `autosave.keep` (3) are kept; manual, baseline and stow
+- **Autosave**: after `autosave.idleMinutes` (10) idle, one save of kind
+  `auto` (named `auto-<UTC timestamp>`); another only once the guest has been
+  used and gone idle again. The newest `autosave.keep` (3) are kept; manual, baseline and stow
   saves are never touched.
 - **Stow**: after `stow.idleMinutes` (60) idle, `winvm stow`, which saves the
-  guest and shuts QEMU down. `winvm start` brings it back.
+  guest and shuts QEMU down. `winvm start` recalls it, and the watcher with it.
 - **Clock**: after host sleep (the wall clock jumping between ticks) and
   whenever a 30-minute check finds the guest more than 2 s off, the guest
   clock is resynced.

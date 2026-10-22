@@ -26,6 +26,8 @@ export interface LaunchOptions {
   readonly virtioBoot: boolean
   /** Resume straight into a saved VM state instead of booting. */
   readonly loadvm?: string
+  /** QEMU `-incoming <uri>`: start paused, fed a migration stream (a file save). See saves.ts. */
+  readonly incoming?: string
 }
 
 export function qemuArgs(name: string, p: Paths, meta: InstanceMeta, o: LaunchOptions): readonly string[] {
@@ -100,9 +102,14 @@ export function qemuArgs(name: string, p: Paths, meta: InstanceMeta, o: LaunchOp
     // HVF refuses to map (QEMU 11.1 on macOS 26: "HV_BAD_ARGUMENT" at
     // hvf-all.c:123, and qemu exits). Windows doesn't need PPI.
     "-device", "tpm-tis-device,tpmdev=tpm0,ppi=off",
-    // Windows expects local time in the RTC; without this the guest clock is
-    // wrong by the host's UTC offset.
-    "-rtc", "base=localtime",
+    // UTC, because the GUEST's time zone is UTC: the answer file pins
+    // <TimeZone>UTC</TimeZone>, and Windows reads the RTC as local time
+    // (RealTimeIsUniversal unset). `base=localtime` handed it the HOST's wall
+    // time, so on a Pacific host every cold boot came up seven hours slow
+    // (measured: -7h 0m 1s). clock=host (the default) keeps the PL031 tracking
+    // real time across pauses, but Windows only reads it at boot — restored
+    // guests are put right by clock.ts instead.
+    "-rtc", "base=utc,clock=host",
     // A UEFI-GOP framebuffer, so there is a picture before any driver loads.
     // Deliberately not virtio-gpu, which needs viogpudo — UTM's own docs report
     // that driver black-screening recent Windows 11.
@@ -115,6 +122,7 @@ export function qemuArgs(name: string, p: Paths, meta: InstanceMeta, o: LaunchOp
   ]
   if (o.ephemeral) a.push("-snapshot")
   if (o.loadvm !== undefined) a.push("-loadvm", o.loadvm)
+  if (o.incoming !== undefined) a.push("-incoming", o.incoming)
   if (o.installMedia) {
     a.push(
       // USB STORAGE IS ONLY ATTACHED WHILE INSTALLING, and the device lines

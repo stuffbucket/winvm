@@ -6,7 +6,7 @@
  *   winvm watch --stop           end it
  *
  * One process per instance, guarded by `watch.pid` (taken with O_EXCL, and
- * recognised as stale when its process is gone). It exits when QEMU does.
+ * recognised as stale when its process is gone).
  *
  * The decisions are in idle.ts and are pure; this file only samples the world,
  * runs what was decided, and reports through two files in the instance dir:
@@ -14,36 +14,32 @@
  *   watch.json   current state, rewritten atomically every tick (read by `status`/UI)
  *   watch.log    a timeline, one line per tick and per action
  *
- * ## Saving is someone else's command
+ * ## Saving is saves.ts's job
  *
- * The watcher never saves anything itself: it runs `winvm save` / `winvm stow`
- * as subprocesses, so a save from here is exactly a save from the shell. The
- * argv for those lives in CLI below and nowhere else.
+ * An autosave is `saves.createSave(kind "auto")` under `saves.withLock`, the
+ * same path as `winvm save`; a lock held by another save or load means "skip
+ * this round". Stow runs `winvm stow` as a child (argv in CLI, nowhere else).
+ * Rotation deletes only kind "auto" saves.
+ *
+ * It follows QEMU being replaced (a `load` restarts it) rather than exiting,
+ * and exits once QEMU is gone with no save/load holding the instance.
  */
 import { spawn, spawnSync } from "node:child_process"
-import {
-  closeSync,
-  existsSync,
-  mkdirSync,
-  openSync,
-  readFileSync,
-  readdirSync,
-  renameSync,
-  rmSync,
-  statSync,
-  writeFileSync,
-} from "node:fs"
+import { closeSync, existsSync, openSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs"
 import { resolve } from "node:path"
 
+import type { Args } from "./args"
+import { formatOffset, measureOffset, syncGuestClock } from "./clock"
 import type { InstanceConfig } from "./config"
 import { effectiveConfig } from "./config"
 import type { Decision, SaveInfo, Settings, Timing } from "./idle"
 import { DEFAULT_TIMING, DRIFT_TOLERANCE_MS, IdleMachine, autosaveName, savesToRotate } from "./idle"
 import type { Paths } from "./paths"
-import { home, instanceDir, pathsFor } from "./paths"
+import { instanceDir, pathsFor } from "./paths"
 import * as qemu from "./qemu"
 import * as qga from "./qga"
 import * as qmp from "./qmp"
+import * as saves from "./saves"
 
 // ---------------------------------------------------------------------------
 // Files
@@ -116,71 +112,32 @@ export function readWatchState(name: string): WatchState | null {
 }
 
 // ---------------------------------------------------------------------------
-// Saves (read-only here; written by `winvm save`)
-
-export const savesDir = (instance: string): string => resolve(home(), "saves", instance)
-
-export function listSaves(instance: string): readonly SaveInfo[] {
-  const dir = savesDir(instance)
-  if (!existsSync(dir)) return []
-  const out: SaveInfo[] = []
-  for (const entry of readdirSync(dir)) {
-    try {
-      const m = JSON.parse(readFileSync(resolve(dir, entry, "manifest.json"), "utf8")) as Partial<SaveInfo>
-      if (typeof m.name === "string" && typeof m.kind === "string" && typeof m.createdAt === "string") {
-        out.push({ name: m.name, kind: m.kind, createdAt: m.createdAt })
-      }
-    } catch {
-      // A save being written has no manifest yet; skip it.
-    }
-  }
-  return out
-}
-
-const newestOfKind = (saves: readonly SaveInfo[], kind: string): string | undefined =>
-  saves
-    .filter((s) => s.kind === kind)
-    .map((s) => s.createdAt)
-    .toSorted()
-    .at(-1)
-
-// ---------------------------------------------------------------------------
-// The commands the watcher drives. THE ARGV LIVES HERE AND NOWHERE ELSE.
+// What the watcher does. Saving goes through saves.ts, exactly as `winvm save`
+// does; stow is the `winvm stow` command, run as a child, whose argv lives in
+// CLI below and nowhere else.
 
 const WINVM = resolve(import.meta.dir, "winvm.ts")
 
 export const CLI = {
-  save: (instance: string, name: string): readonly string[] => ["save", name, "--kind", "auto", "-i", instance],
-  deleteSave: (instance: string, name: string): readonly string[] => ["save", name, "--delete", "-i", instance],
   stow: (instance: string): readonly string[] => ["stow", "-i", instance],
 } as const
 
-/**
- * Bring the guest clock back to the host's. Delegates to clock.ts's
- * `syncGuestClock`, loaded dynamically so this file builds before that module
- * exists. THIS IS THE ONE PLACE THE CALL IS MADE.
- */
-async function syncGuestClockOnce(p: Paths): Promise<string> {
-  const specifier = "./clock.ts"
-  let mod: { syncGuestClock?: (p: Paths) => Promise<unknown> }
-  try {
-    mod = (await import(specifier)) as typeof mod
-  } catch {
-    return "skipped: clock.ts not available"
-  }
-  if (typeof mod.syncGuestClock !== "function") return "skipped: clock.ts has no syncGuestClock"
-  const r = await mod.syncGuestClock(p)
-  return r === undefined ? "synced" : `synced: ${JSON.stringify(r)}`
-}
+export type SaveOutcome = "saved" | "busy" | "failed"
 
 export interface Actions {
-  save(name: string): Promise<boolean>
-  deleteSave(name: string): Promise<boolean>
+  save(name: string): Promise<SaveOutcome>
+  /** Delete these auto saves; false if the instance was busy and nothing was deleted. */
+  deleteSaves(names: readonly string[]): Promise<boolean>
   stow(): Promise<boolean>
   syncClock(): Promise<string>
   /** Guest clock minus host clock, in ms; null if the agent did not answer. */
   drift(): Promise<number | null>
 }
+
+const errText = (e: unknown): string => (e instanceof Error ? e.message : String(e))
+
+/** saves.withLock's refusal: another winvm is saving or loading this instance. */
+const isBusy = (e: unknown): boolean => /is busy: another winvm/.test(errText(e))
 
 async function runWinvm(argv: readonly string[], log: (s: string) => void): Promise<boolean> {
   log(`run: winvm ${argv.join(" ")}`)
@@ -206,50 +163,102 @@ async function runWinvm(argv: readonly string[], log: (s: string) => void): Prom
   return code === 0
 }
 
-export function realActions(instance: string, p: Paths, log: (s: string) => void): Actions {
-  return {
-    save: async (name) => await runWinvm(CLI.save(instance, name), log),
-    deleteSave: async (name) => await runWinvm(CLI.deleteSave(instance, name), log),
-    stow: async () => await runWinvm(CLI.stow(instance), log),
-    syncClock: async () => await syncGuestClockOnce(p),
-    drift: async () => await guestDriftMs(p),
+/** Clock sync, only for a guest that is running (a paused one cannot answer). */
+async function syncIfRunning(p: Paths): Promise<string> {
+  try {
+    if ((await qmp.status(p.qmp)) !== "running") return "skipped: guest is paused"
+    const c = await syncGuestClock(p)
+    return `was ${formatOffset(c.beforeOffsetMs)}, now ${formatOffset(c.afterOffsetMs)}`
+  } catch (error) {
+    return `failed: ${errText(error)}`
   }
 }
 
-/**
- * Stand-ins for testing the watcher before the save commands exist, or without
- * waiting on real saves: a "save" writes only a manifest (no machine state —
- * nothing can be loaded from it), and "stow" is a plain `winvm stop`.
- */
-export function stubActions(instance: string, p: Paths, log: (s: string) => void): Actions {
+export function realActions(instance: string, p: Paths, log: (s: string) => void): Actions {
+  // Confirmed once per watcher: saving a guest that is still starting wedges it
+  // on restore (see qga.waitReady). `start` launches the watcher only after the
+  // guest is ready, but `winvm watch` can be run by hand at any time.
+  let ready = false
   return {
     save: async (name) => {
-      const dir = resolve(savesDir(instance), name)
-      mkdirSync(dir, { recursive: true })
-      const manifest = {
-        name,
-        instance,
-        kind: "auto",
-        createdAt: new Date().toISOString(),
-        bytes: 0,
-        compat: "stub",
-        image: "stub",
+      try {
+        const state = await qmp.status(p.qmp)
+        if (!ready && state === "running") {
+          ready = await qga.waitReady(p.qga, 120_000)
+          if (!ready) {
+            log("autosave: guest is not ready (still starting?) — skipping this round")
+            return "busy"
+          }
+        }
+        const r = await saves.withLock(instance, async () => await saves.createSave(instance, { name, kind: "auto" }))
+        const m = r.manifest
+        log(
+          `autosave: saved "${m.name}" in ${String(Math.round((m.saveMs ?? 0) / 100) / 10)} s, ` +
+            `${saves.formatBytes(m.bytes)} on disk`,
+        )
+        if (r.resumed) {
+          // The guest was stopped for the save; its clock stood still with it.
+          if (await qga.waitResponsive(p.qga, 120_000)) log(`clock: after the save — ${await syncIfRunning(p)}`)
+          else log("clock: the guest agent did not answer after the save; clock not synced")
+        }
+        return "saved"
+      } catch (error) {
+        if (isBusy(error)) {
+          log(`autosave: ${errText(error)} — skipping this round`)
+          return "busy"
+        }
+        log(`autosave: failed: ${errText(error)}`)
+        return "failed"
       }
-      writeFileSync(resolve(dir, "manifest.json"), `${JSON.stringify(manifest, null, 2)}\n`)
-      log(`stub: would run winvm ${CLI.save(instance, name).join(" ")} — wrote a manifest only`)
-      return true
     },
-    deleteSave: async (name) => {
-      log(`stub: would run winvm ${CLI.deleteSave(instance, name).join(" ")}`)
-      rmSync(resolve(savesDir(instance), name), { recursive: true, force: true })
-      return true
+    deleteSaves: async (names) => {
+      if (names.length === 0) return true
+      try {
+        await saves.withLock(instance, async () => {
+          for (const n of names) saves.removeSave(instance, n)
+        })
+        return true
+      } catch (error) {
+        log(`rotate: ${errText(error)} — will rotate after the next save`)
+        return false
+      }
     },
-    stow: async () => {
-      log(`stub: would run winvm ${CLI.stow(instance).join(" ")} — running winvm stop instead`)
-      return await runWinvm(["stop", "-i", instance], log)
+    stow: async () => await runWinvm(CLI.stow(instance), log),
+    syncClock: async () => await syncIfRunning(p),
+    drift: async () => {
+      try {
+        if ((await qmp.status(p.qmp)) !== "running") return null
+        return (await measureOffset(p)).offsetMs
+      } catch {
+        return null
+      }
     },
-    syncClock: async () => await syncGuestClockOnce(p),
-    drift: async () => await guestDriftMs(p),
+  }
+}
+
+/** Saves of this instance, as rotation needs them. Unreadable ones are left alone. */
+function currentSaves(instance: string): readonly SaveInfo[] {
+  return saves
+    .listSaves(instance)
+    .flatMap((l) => (l.manifest === null ? [] : [{ name: l.name, kind: l.manifest.kind, createdAt: l.manifest.createdAt }]))
+}
+
+const newestOfKind = (list: readonly SaveInfo[], kind: string): string | undefined =>
+  list
+    .filter((s) => s.kind === kind)
+    .map((s) => s.createdAt)
+    .toSorted()
+    .at(-1)
+
+/** Whether a save or load holds the instance — during a load, QEMU is down only because it is being replaced. */
+function saveLockHeld(instance: string): boolean {
+  try {
+    const pid = Number.parseInt(readFileSync(resolve(saves.savesDir(instance), ".lock"), "utf8").trim(), 10)
+    if (!Number.isFinite(pid)) return false
+    process.kill(pid, 0)
+    return true
+  } catch {
+    return false
   }
 }
 
@@ -279,35 +288,8 @@ export function vcpusOf(pid: number): number {
 
 async function vncClients(p: Paths): Promise<number | null> {
   try {
-    const r = (await qmp.query(p.qmp, "query-vnc", undefined, 5000)) as { clients?: unknown[] } | undefined
+    const r = (await qmp.execute(p.qmp, "query-vnc", undefined, 5000)) as { clients?: unknown[] } | undefined
     return Array.isArray(r?.clients) ? r.clients.length : 0
-  } catch {
-    return null
-  }
-}
-
-/**
- * Guest clock minus host clock, via the agent's `guest-get-time` — a native
- * call, no PowerShell, a few ms. The round trip is halved off.
- *
- * TWO CLOCKS COUNT AS RIGHT. The guest runs with `-rtc base=localtime` and the
- * answer file's TimeZone is UTC, so out of the box Windows shows the host's
- * local wall time while its own "UTC" is off by the host's UTC offset
- * (measured: -25200 s here, PDT). Whether a sync keeps that convention or
- * moves the guest to true UTC is clock.ts's call; drift is measured against
- * whichever of the two the guest is nearer, so either convention reads as ~0.
- */
-export async function guestDriftMs(p: Paths): Promise<number | null> {
-  try {
-    const before = Date.now()
-    const r = await qga.call(p.qga, { execute: "guest-get-time" }, 5000)
-    const after = Date.now()
-    const ns = r["return"]
-    if (typeof ns !== "number") return null
-    const host = (before + after) / 2
-    const utc = ns / 1e6 - host
-    const local = utc + new Date(host).getTimezoneOffset() * 60_000
-    return Math.round(Math.abs(local) < Math.abs(utc) ? local : utc)
   } catch {
     return null
   }
@@ -404,6 +386,13 @@ export function ensureWatcher(name: string): number | null {
   return child.pid ?? null
 }
 
+/** After a start/load/recall: launch the watcher unless `--no-watch` or `watch.enabled=false`. */
+export function startWatcherFor(name: string, args: Args): void {
+  if (args.flags.has("no-watch")) return
+  const pid = ensureWatcher(name)
+  if (pid !== null) console.log(`watcher: pid ${String(pid)} · ${watchPathsFor(name).log}`)
+}
+
 /**
  * End an instance's watcher, if any. A no-op when called from the watcher's own
  * child — that is the watcher running `winvm stow`, which must not kill the
@@ -440,7 +429,6 @@ export async function stopWatcher(name: string): Promise<boolean> {
 export interface WatchOptions {
   readonly timing?: Partial<Timing>
   readonly actions?: Actions
-  readonly stub?: boolean
 }
 
 const settingsOf = (c: InstanceConfig): Settings => ({
@@ -461,8 +449,8 @@ export async function watch(name: string, o: WatchOptions = {}): Promise<number>
     console.error(`::error::no such instance "${name}"`)
     return 1
   }
-  const qemuPid = qemu.pidOf(p)
-  if (qemuPid === null) {
+  const firstPid = qemu.pidOf(p)
+  if (firstPid === null) {
     console.error(`::error::instance "${name}" is not running — nothing to watch`)
     return 1
   }
@@ -478,13 +466,17 @@ export async function watch(name: string, o: WatchOptions = {}): Promise<number>
     return 1
   }
 
-  const actions = o.actions ?? (o.stub === true ? stubActions(name, p, log) : realActions(name, p, log))
+  let qemuPid = firstPid
+  const actions = o.actions ?? realActions(name, p, log)
+  // An --ephemeral guest's disk writes go nowhere durable, so it cannot be saved:
+  // watch it for the clock only.
+  const ephemeral = saves.isEphemeral(p)
   const startedAt = new Date().toISOString()
   const machine = new IdleMachine(Date.now(), timing)
-  const vcpus = vcpusOf(qemuPid)
+  let vcpus = vcpusOf(qemuPid)
   let state: WatchState["state"] = "watching"
   let cfg = effectiveConfig(name)
-  const lastAt = { autosave: newestOfKind(listSaves(name), "auto"), stow: newestOfKind(listSaves(name), "stow") }
+  const lastAt = { autosave: newestOfKind(currentSaves(name), "auto"), stow: newestOfKind(currentSaves(name), "stow") }
 
   const publish = (): void => {
     const s: WatchState = {
@@ -542,7 +534,7 @@ export async function watch(name: string, o: WatchOptions = {}): Promise<number>
     `watching qemu pid ${String(qemuPid)} (${String(vcpus)} vCPUs), tick ${String(timing.tickMs / 1000)} s · ` +
       `autosave ${cfg["autosave.enabled"] ? `after ${String(cfg["autosave.idleMinutes"])} min, keep ${String(cfg["autosave.keep"])}` : "off"} · ` +
       `stow ${cfg["stow.enabled"] ? `after ${String(cfg["stow.idleMinutes"])} min` : "off"} · ` +
-      `idle below ${String(cfg["watch.idleCpuPercent"])}% cpu${o.stub === true ? " · STUB ACTIONS" : ""}`,
+      `idle below ${String(cfg["watch.idleCpuPercent"])}% cpu${ephemeral ? " · EPHEMERAL: clock only" : ""}`,
   )
   publish()
 
@@ -552,10 +544,10 @@ export async function watch(name: string, o: WatchOptions = {}): Promise<number>
   }
 
   const rotate = async (): Promise<void> => {
-    for (const victim of savesToRotate(listSaves(name), cfg["autosave.keep"])) {
-      log(`rotate: deleting ${victim}`)
-      await actions.deleteSave(victim)
-    }
+    const victims = savesToRotate(currentSaves(name), cfg["autosave.keep"])
+    if (victims.length === 0) return
+    log(`rotate: keeping the newest ${String(cfg["autosave.keep"])} auto saves, deleting ${victims.join(", ")}`)
+    await actions.deleteSaves(victims)
   }
 
   const syncClock = async (reason: string): Promise<void> => {
@@ -579,12 +571,14 @@ export async function watch(name: string, o: WatchOptions = {}): Promise<number>
         publish()
         const saveName = autosaveName(Date.now())
         log(`autosave: idle ${String(Math.round(machine.idleMs(Date.now()) / 1000))} s — saving ${saveName}`)
-        const ok = await actions.save(saveName)
-        if (ok) {
+        const outcome = await actions.save(saveName)
+        if (outcome === "saved") {
           lastAt.autosave = new Date().toISOString()
           await rotate()
+        } else if (outcome === "busy") {
+          machine.autosaveSkipped()
         } else {
-          log("autosave: failed; not retrying until the guest has been active and idle again")
+          log("autosave: not retrying until the guest has been active and idle again")
         }
         machine.actionDone(Date.now())
         rebaseCpu()
@@ -614,9 +608,22 @@ export async function watch(name: string, o: WatchOptions = {}): Promise<number>
   let lastTickLogAt = 0
   for (;;) {
     await sleep(timing.tickMs)
-    if (qemu.pidOf(p) !== qemuPid) {
-      finish("qemu exited")
-      return 0
+    const livePid = qemu.pidOf(p)
+    if (livePid !== qemuPid) {
+      if (livePid === null) {
+        // A load quits QEMU and starts another; only a QEMU gone with nobody
+        // holding the instance means it has stopped for good.
+        if (saveLockHeld(name)) continue
+        finish("qemu exited")
+        return 0
+      }
+      log(`qemu was replaced (pid ${String(qemuPid)} -> ${String(livePid)}; a load or a rewind) — following it`)
+      qemuPid = livePid
+      vcpus = vcpusOf(livePid)
+      machine.restarted(Date.now())
+      rebaseCpu()
+      publish()
+      continue
     }
     cfg = effectiveConfig(name)
     if (!cfg["watch.enabled"]) {
@@ -630,9 +637,12 @@ export async function watch(name: string, o: WatchOptions = {}): Promise<number>
     const cpu = nowCpu !== null && prevCpu.sec !== null && dt > 0 ? Math.max(0, (nowCpu - prevCpu.sec) / dt / vcpus) : null
     prevCpu = { sec: nowCpu, at: now }
 
+    const settings = settingsOf(cfg)
     const decisions = machine.tick(
       { wallMs: now, cpu, activityAtMs: activityAt(w.activity), vncClients: await vncClients(p) },
-      settingsOf(cfg),
+      ephemeral
+        ? { ...settings, autosave: { ...settings.autosave, enabled: false }, stow: { ...settings.stow, enabled: false } }
+        : settings,
     )
     const v = machine.lastVerdict
     const summary = `${v.quiet ? "quiet" : "active"} ${String(machine.autosaveArmed)}`

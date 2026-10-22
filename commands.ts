@@ -30,6 +30,7 @@ import {
 import * as qemu from "./qemu"
 import * as qmp from "./qmp"
 import * as qga from "./qga"
+import * as savecmds from "./savecmds"
 import * as snapshot from "./snapshot"
 import * as timemachine from "./timemachine"
 import * as watcher from "./watch"
@@ -161,8 +162,8 @@ export function prune(args: Args): number {
  * "A check that silently mutates the environment is its own defect."
  */
 export function setup(args: Args): number {
-  const missing = ["qemu-system-aarch64", "qemu-img", "swtpm"].filter((c) => !have(c))
-  const formulae = [...new Set(missing.map((c) => (c === "swtpm" ? "swtpm" : "qemu")))]
+  const missing = ["qemu-system-aarch64", "qemu-img", "swtpm", "zstd"].filter((c) => !have(c))
+  const formulae = [...new Set(missing.map((c) => (c === "swtpm" || c === "zstd" ? c : "qemu")))]
   if (formulae.length > 0) {
     if (!have("brew")) {
       console.error(`::error::missing ${missing.join(", ")} and no Homebrew to install them with — see https://brew.sh`)
@@ -466,10 +467,16 @@ export async function start(args: Args): Promise<number> {
   const p = pathsFor(name)
   if (qemu.isRunning(p)) {
     console.log(`instance "${name}" already running`)
-    startWatcher(name, args)
+    watcher.startWatcherFor(name, args)
     return 0
   }
+  // A stow save present: recall it (seconds) instead of booting.
+  const recalled = await savecmds.recallStow(name, args)
+  if (recalled === 0) watcher.startWatcherFor(name, args)
+  if (recalled !== null) return recalled
+  const isNew = readMeta(name) === null
   ensureInstance(name, imageName(args))
+  if (isNew) savecmds.markPristine(name)
   const meta = readMeta(name)
   if (meta === null) return 1
 
@@ -487,7 +494,7 @@ export async function start(args: Args): Promise<number> {
   process.stdout.write("booting")
   // READY, NOT MERELY ANSWERING. `guest-ping` succeeds while the screen still
   // reads "Just a moment..."; anything issued then races the rest of the boot.
-  const up = await qga.waitReady(p.qga, 300_000)
+  const up = await qga.waitReady(p.qga, 600_000)
   process.stdout.write("\n")
   if (!up) {
     console.error(
@@ -496,17 +503,19 @@ export async function start(args: Args): Promise<number> {
     return 1
   }
   console.log(`instance "${name}" up (vnc :${String(meta.vnc)})`)
-  startWatcher(name, args)
-  // DELIBERATELY NO AUTOMATIC SNAPSHOT HERE.
+  // Clock and time zone; and on an instance's first boot, the automatic
+  // "baseline" save (--no-autosave skips it).
   //
-  // Taking one on first boot was tried and was a mistake in two ways. It froze
-  // the guest at whatever point boot had reached, so "fresh" captured a machine
-  // that was still starting; and doing that to a half-booted Windows LIVELOCKED
-  // it — four vCPUs at 100%, no disk I/O, no recovery. That turned a convenience
-  // into a way for the ordinary `start` path to destroy an instance.
-  //
-  // `winvm snapshot` is one command, and the caller knows when the guest is
-  // where they want to keep returning to. See the docs.
+  // THE BASELINE IS TAKEN ONLY HERE, AFTER waitReady, and must stay so. An
+  // automatic snapshot on first boot was tried before waitReady existed and
+  // was a mistake in two ways: it froze the guest at whatever point boot had
+  // reached, so it captured a machine still starting; and doing that to a
+  // half-booted Windows LIVELOCKED it — four vCPUs at 100%, no disk I/O, no
+  // recovery. Gated on the real account having logged on, it is safe.
+  await savecmds.afterBoot(name, args)
+  // AFTER the baseline save, so the watcher's idle clock starts from a guest at
+  // rest and the baseline's own work is not counted as use.
+  watcher.startWatcherFor(name, args)
   return 0
 }
 
@@ -565,6 +574,13 @@ export async function rewind(args: Args): Promise<number> {
     console.error(`::error::no such instance "${name}"`)
     return 1
   }
+  // No internal snapshot of that tag: a save of that name (default "baseline").
+  const viaSave = await savecmds.rewindViaSave(name, args.positional[0])
+  if (viaSave === 0) {
+    watcher.touchActivity(name)
+    watcher.startWatcherFor(name, args)
+  }
+  if (viaSave !== null) return viaSave
   const tag = args.positional[0] ?? snapshot.DEFAULT_TAG
   const started = Date.now()
 
@@ -603,8 +619,9 @@ export async function rewind(args: Args): Promise<number> {
     return 1
   }
   console.log(`rewound "${name}" to "${tag}" in ${String(Date.now() - started)} ms`)
+  await savecmds.afterRewind(name)
   watcher.touchActivity(name)
-  startWatcher(name, args)
+  watcher.startWatcherFor(name, args)
   return 0
 }
 
@@ -677,6 +694,7 @@ export function reset(args: Args): number {
     return 1
   }
   resetInstance(name, meta)
+  savecmds.afterReset(name)
   console.log(`instance "${name}" reset to image "${meta.image}"`)
   return 0
 }
@@ -795,13 +813,6 @@ export function diagnoseCmd(args: Args): number {
   return findings.some((f) => f.severity === "error") ? 1 : 0
 }
 
-/** Launch the background watcher after a start, unless `--no-watch` or `watch.enabled=false`. */
-function startWatcher(name: string, args: Args): void {
-  if (args.flags.has("no-watch")) return
-  const pid = watcher.ensureWatcher(name)
-  if (pid !== null) console.log(`watcher: pid ${String(pid)} · ${watcher.watchPathsFor(name).log}`)
-}
-
 /**
  * `winvm watch [-i name]` runs the watcher in the foreground (it is what
  * `start` launches detached). `--stop` ends a running one; `--status` prints
@@ -829,7 +840,6 @@ export async function watchCmd(args: Args): Promise<number> {
   }
   return await watcher.watch(name, {
     ...(tickMs === undefined ? {} : { timing: { tickMs } }),
-    stub: args.flags.has("stub-actions"),
   })
 }
 
@@ -867,12 +877,20 @@ export const USAGE =
   "        [--payload <dir>] [--bun <version>] [--image <name>]\n" +
   "  adopt <disk.qcow2>            adopt an installed disk as a base image\n" +
   "  ls                            images and instances, with disk usage\n" +
-  "  start   [-i name] [--ephemeral] [--no-watch]\n" +
+  "  start   [-i name] [--ephemeral] [--no-autosave] [--boot] [--no-watch]\n" +
+  "                                recalls a stow save if present (--boot: discard it, boot cold)\n" +
   "  exec    [-i name] -- <cmd>    run a command in the guest\n" +
   "  smoke   [-i name] [--expect <v> | --expect-file <path>] [--probe <exe>]\n" +
   "  snapshot [-i name] [tag]      capture the running guest, RAM and all\n" +
   "           [--delete]           remove that snapshot instead\n" +
-  "  rewind  [-i name] [tag]       put the guest back (default tag: fresh)\n" +
+  "  rewind  [-i name] [tag]       put the guest back: snapshot <tag> (default fresh), else\n" +
+  "                                the save of that name (default: the automatic baseline)\n" +
+  "  save    [-i name] [name]      save the running guest to files (default name: a timestamp)\n" +
+  "  load    [-i name] [name]      load a save, running or stopped (default: the newest)\n" +
+  "  saves   [-i name] [rm <name>] list saves (kind, size, compatible) or delete one\n" +
+  "  pause | resume [-i name]      freeze / unfreeze the guest (resume fixes its clock)\n" +
+  "  stow    [-i name]             save and shut QEMU down; the next start recalls it\n" +
+  "  clock   [-i name] [--check]   guest-vs-host clock offset, and fix it\n" +
   "  timemachine [--yes]           exclude the VM files from Time Machine backups\n" +
   "  snapshots [-i name]           list them\n" +
   "  reset   [-i name]             discard changes, back to the base image\n" +

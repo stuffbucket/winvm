@@ -9,6 +9,9 @@
  *   winvm exec  [-i name] -- <cmd>   run a command in the guest
  *   winvm snapshot [-i name] [tag]   capture the running guest, RAM and all
  *   winvm rewind   [-i name] [tag]   put it back — ~10-20 s running, no reboot
+ *   winvm save / load / saves        whole-machine saves as files; see saves.ts
+ *   winvm pause / resume / stow      freeze, unfreeze, save-and-quit
+ *   winvm clock [-i name]            guest-vs-host clock offset, and fix it
  *   winvm reset [-i name]            discard all changes, back to the base
  *   winvm ls                         images and instances, with disk usage
  *   winvm watch [-i name] [--stop]   idle watcher: autosave, stow, clock sync
@@ -78,6 +81,9 @@
  *   qga.ts        guest-agent client (the scriptable channel)
  *   qmp.ts        QEMU monitor client (keystrokes, snapshots)
  *   snapshot.ts   capture and restore a running guest
+ *   saves.ts      file saves: format, compatibility, save/load mechanics
+ *   savecmds.ts   the save verbs, and the start/rewind hooks
+ *   clock.ts      put the guest's clock on the host's
  *   watch.ts      the per-instance watcher process (idle.ts holds its decisions)
  *   config.ts     per-instance settings
  *   diagnose.ts   known failure signatures, read from a guest's own artifacts
@@ -91,6 +97,7 @@
  */
 import { parseArgs } from "./args"
 import * as commands from "./commands"
+import * as savecmds from "./savecmds"
 import * as timemachine from "./timemachine"
 
 const [, , sub, ...rawArgs] = process.argv
@@ -144,6 +151,26 @@ switch (sub) {
   case "snapshots":
     process.exit(await commands.snapshots(args))
   // eslint-disable-next-line no-fallthrough
+  case "save":
+    process.exit(await savecmds.save(args))
+  // eslint-disable-next-line no-fallthrough
+  case "load":
+    process.exit(await savecmds.load(args))
+  // eslint-disable-next-line no-fallthrough
+  case "saves":
+    process.exit(savecmds.list(args))
+  // eslint-disable-next-line no-fallthrough
+  case "pause":
+    process.exit(await savecmds.pause(args))
+  // eslint-disable-next-line no-fallthrough
+  case "resume":
+    process.exit(await savecmds.resume(args))
+  // eslint-disable-next-line no-fallthrough
+  case "stow":
+    process.exit(await savecmds.stow(args))
+  // eslint-disable-next-line no-fallthrough
+  case "clock":
+    process.exit(await savecmds.clock(args))
   case "watch":
     process.exit(await commands.watchCmd(args))
   // eslint-disable-next-line no-fallthrough

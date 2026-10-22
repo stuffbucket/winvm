@@ -216,6 +216,22 @@ export class IdleMachine {
     this.cpuWindow = []
   }
 
+  /**
+   * QEMU was replaced under us (a `load`, or a `rewind` from stopped): the guest
+   * is in a new state someone chose, which is activity — and worth an autosave
+   * once it has been idle again. The restore's CPU is not counted.
+   */
+  restarted(nowMs: number): void {
+    this.idleSinceMs = nowMs
+    this.autosaveArmed = true
+    this.actionDone(nowMs)
+  }
+
+  /** An autosave that could not run this round (another save/load held the instance): try again next tick. */
+  autosaveSkipped(): void {
+    this.autosaveArmed = true
+  }
+
   /** A stow that failed: go back to watching, and wait a full period before trying again. */
   stowFailed(nowMs: number): void {
     this.stowing = false
