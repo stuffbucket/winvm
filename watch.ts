@@ -394,6 +394,30 @@ export function startWatcherFor(name: string, args: Args): void {
 }
 
 /**
+ * Whether a load or rewind should start the watcher once it is done, from the
+ * state before it touched QEMU.
+ *
+ * Restoring a STOPPED instance is a start by another route, so it gets a
+ * watcher the way `start` does. Restoring a RUNNING one leaves things as they
+ * were: a guest running without a watcher is one somebody chose to run that way
+ * — `start --no-watch`, or `watch --stop` — and starting one behind their back
+ * is how it came to be autosaved and stowed anyway. A watcher that was running
+ * needs nothing either way; it follows QEMU across the restore.
+ */
+export const watchAfterRestore = (wasRunning: boolean, hadWatcher: boolean): boolean => !wasRunning || hadWatcher
+
+/**
+ * Sample before a load or rewind; call the result once it has succeeded. Still
+ * subject to `--no-watch` and `watch.enabled`, like any start.
+ */
+export function rewatchAfterRestore(name: string, args: Args): () => void {
+  const again = watchAfterRestore(qemu.isRunning(pathsFor(name)), watcherPid(name) !== null)
+  return () => {
+    if (again) startWatcherFor(name, args)
+  }
+}
+
+/**
  * End an instance's watcher, if any. A no-op when called from the watcher's own
  * child — that is the watcher running `winvm stow`, which must not kill the
  * process waiting on it.

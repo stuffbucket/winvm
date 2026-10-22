@@ -615,11 +615,12 @@ export async function rewind(args: Args): Promise<number> {
     console.error(`::error::no such instance "${name}"`)
     return 1
   }
+  const rewatch = watcher.rewatchAfterRestore(name, args)
   // No internal snapshot of that tag: a save of that name (default "baseline").
   const viaSave = await savecmds.rewindViaSave(name, args.positional[0])
   if (viaSave === 0) {
     watcher.touchActivity(name)
-    watcher.startWatcherFor(name, args)
+    rewatch()
   }
   if (viaSave !== null) return viaSave
   const tag = args.positional[0] ?? snapshot.DEFAULT_TAG
@@ -662,7 +663,7 @@ export async function rewind(args: Args): Promise<number> {
   console.log(`rewound "${name}" to "${tag}" in ${String(Date.now() - started)} ms`)
   await savecmds.afterRewind(name)
   watcher.touchActivity(name)
-  watcher.startWatcherFor(name, args)
+  rewatch()
   return 0
 }
 

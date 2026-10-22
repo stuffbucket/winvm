@@ -12,7 +12,7 @@ import { afterAll, beforeAll, describe, expect, it } from "bun:test"
 import { DEFAULTS, effectiveConfig, parseAssignment, readOverrides, writeAssignments } from "../config"
 import type { Decision, Sample, Settings, Timing } from "../idle"
 import { IdleMachine, autosaveName, savesToRotate } from "../idle"
-import { parseCpuTime } from "../watch"
+import { ensureWatcher, parseCpuTime, watchAfterRestore } from "../watch"
 
 const MIN = 60_000
 const TIMING: Timing = { tickMs: 15_000, wakeGapMs: 45_000, cpuWindowMs: 60_000, settleMs: 60_000, driftCheckMs: 30 * MIN }
@@ -278,5 +278,30 @@ describe("instance config", () => {
     expect(() => parseAssignment("stow.enabled=maybe")).toThrow()
     expect(() => parseAssignment("nope=1")).toThrow()
     expect(() => parseAssignment("autosave.enabled")).toThrow()
+  })
+})
+
+describe("watcher after a load or rewind", () => {
+  it("starts one for a stopped instance, as start would", () => {
+    expect(watchAfterRestore(false, false)).toBe(true)
+  })
+  it("keeps a running instance's choice: none if it ran without one", () => {
+    expect(watchAfterRestore(true, false)).toBe(false)
+    expect(watchAfterRestore(true, true)).toBe(true)
+  })
+
+  const home = mkdtempSync(resolve(tmpdir(), "winvm-rewatch-"))
+  const before = process.env["WINVM_HOME"]
+  beforeAll(() => {
+    process.env["WINVM_HOME"] = home
+  })
+  afterAll(() => {
+    if (before === undefined) delete process.env["WINVM_HOME"]
+    else process.env["WINVM_HOME"] = before
+    rmSync(home, { recursive: true, force: true })
+  })
+  it("never starts one with watch.enabled=false", () => {
+    writeAssignments("off", [parseAssignment("watch.enabled=false")])
+    expect(ensureWatcher("off")).toBeNull()
   })
 })

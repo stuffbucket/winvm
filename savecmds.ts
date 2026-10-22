@@ -174,10 +174,11 @@ export async function load(args: Args): Promise<number> {
   // A load is someone using the guest: the watcher's idle clock restarts. (A
   // save is not — the watcher's own autosaves go through the same code.)
   watcher.touchActivity(name)
+  const rewatch = watcher.rewatchAfterRestore(name, args)
   const code = await doLoad(name, saveName, "loaded")
   if (code === 0) {
     watcher.touchActivity(name)
-    watcher.startWatcherFor(name, args)
+    rewatch()
   }
   return code
 }
