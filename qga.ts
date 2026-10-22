@@ -218,28 +218,125 @@ export async function waitFor(sockPath: string, timeoutMs: number, o: WaitOption
  * LIVELOCKS the machine — every vCPU at 100%, no disk I/O, recoverable only by
  * killing it. Snapshots must not be taken until this returns true.
  */
-export async function waitReady(sockPath: string, timeoutMs: number): Promise<boolean> {
-  const deadline = Date.now() + timeoutMs
-  if (!(await waitFor(sockPath, timeoutMs))) return false
-  while (Date.now() < deadline) {
-    try {
-      const r = await exec(sockPath, "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe", [
-        "-NoProfile",
-        "-Command",
-        "(Get-CimInstance Win32_ComputerSystem).UserName",
-      ])
-      const user = r.stdout.trim()
-      // Matched by SHAPE, not by name: this file knows nothing about which
-      // account a caller's answer file creates, only that OOBE's own temporary
-      // one is `defaultuser<n>`.
-      if (user !== "" && !/\\defaultuser\d+$/i.test(user)) return true
-    } catch {
-      // The agent drops in and out across OOBE's reboots; keep asking.
-    }
-    await new Promise((r) => setTimeout(r, 5000))
-  }
-  return false
+export async function waitReady(sockPath: string, timeoutMs: number, o: ReadyOptions = {}): Promise<boolean> {
+  return (await untilReady(sockPath, timeoutMs, o)) === "ready"
 }
+
+export type Readiness = "ready" | "timeout" | "no-logon"
+
+export interface ReadyOptions {
+  /**
+   * Answer "no-logon" once the guest has been up and answering, with no one
+   * logged on, for this long (after any repair). Unset: wait out the timeout.
+   */
+  readonly noLogonMs?: number
+  readonly log?: (line: string) => void
+  /** Injectable for tests. */
+  readonly waitFor?: (sockPath: string, timeoutMs: number) => Promise<boolean>
+  /** The logged-on user ("" for none), or null when the guest could not be asked. */
+  readonly loggedOnUser?: (sockPath: string) => Promise<string | null>
+  /** Repair a broken audit-mode logon if that is what this is; true when it did (and restarted). */
+  readonly repairAudit?: (sockPath: string) => Promise<boolean>
+  readonly pollMs?: number
+  readonly repairAfterMs?: number
+}
+
+/** How long a reachable guest may sit with no one logged on before the audit repair is tried. */
+export const REPAIR_AFTER_MS = 45_000
+const MAX_REPAIRS = 2
+
+/** waitReady, saying why it stopped: and repairing a broken audit-mode logon on the way. */
+export async function untilReady(sockPath: string, timeoutMs: number, o: ReadyOptions = {}): Promise<Readiness> {
+  const deadline = Date.now() + timeoutMs
+  if (!(await (o.waitFor ?? waitFor)(sockPath, timeoutMs))) return "timeout"
+  const user = o.loggedOnUser ?? loggedOnUser
+  const repair = o.repairAudit ?? repairAudit
+  const repairAfter = o.repairAfterMs ?? REPAIR_AFTER_MS
+  let emptySince: number | null = null
+  let checked = false
+  let repairs = 0
+  while (Date.now() < deadline) {
+    const u = await user(sockPath)
+    // Matched by SHAPE, not by name: this file knows nothing about which
+    // account a caller's answer file creates, only that OOBE's own temporary
+    // one is `defaultuser<n>`.
+    if (u !== null && u !== "" && !/\\defaultuser\d+$/i.test(u)) return "ready"
+    if (u === "") {
+      emptySince ??= Date.now()
+      const empty = Date.now() - emptySince
+      if (empty >= repairAfter && !checked && repairs < MAX_REPAIRS) {
+        checked = true
+        if (await repair(sockPath).catch(() => false)) {
+          repairs++
+          o.log?.("no one had logged on: audit mode had been interrupted; restored it and restarted the guest")
+          emptySince = null
+          checked = false
+        }
+      }
+      if (emptySince !== null && o.noLogonMs !== undefined && Date.now() - emptySince >= o.noLogonMs) return "no-logon"
+    } else if (u !== null) {
+      emptySince = null // OOBE's own account: still starting, not stuck
+    }
+    await new Promise((r) => setTimeout(r, o.pollMs ?? 5000))
+  }
+  return "timeout"
+}
+
+/** Win32_ComputerSystem.UserName ("" for no one), or null when qemu-ga could not be asked. */
+async function loggedOnUser(sockPath: string): Promise<string | null> {
+  try {
+    const r = await exec(sockPath, POWERSHELL, ["-NoProfile", "-Command", "(Get-CimInstance Win32_ComputerSystem).UserName"])
+    return r.stdout.trim()
+  } catch {
+    // The agent drops in and out across OOBE's reboots; keep asking.
+    return null
+  }
+}
+
+/**
+ * AN AUDIT-MODE BOOT KILLED HALF-WAY NEVER LOGS ON AGAIN, unless repaired.
+ *
+ * Each audit-mode boot Windows runs HKLM\SYSTEM\Setup CmdLine (windeploy.exe),
+ * which clears it and OOBEInProgress; audit.exe then enables the built-in
+ * Administrator with a fresh password, logs it on, and writes the values back
+ * for the next boot; the account is disabled again after logon. Kill the guest
+ * in that window (a runner timing out, `winvm kill`) and they stay cleared: the
+ * next boot runs nothing, the auto-logon meets "Your account has been
+ * disabled", and nobody ever logs on. Measured: two kills 14 s and 18 s into
+ * boot did it, and the instance stayed at that screen across restarts.
+ *
+ * Not fixable from inside the guest with what Windows offers before a logon:
+ * Task Scheduler queues every task while setup is unfinished (measured: an
+ * "At startup" SYSTEM task stayed Queued in exactly this state), and a static
+ * Winlogon AutoAdminLogon cannot work because audit mode disables the account
+ * and changes its password every boot. qemu-ga runs as SYSTEM before any
+ * logon, so the host repairs it: write back what windeploy would have, and
+ * restart. Measured: the next boot ran windeploy and reached the desktop.
+ *
+ * Only when the signature is exact: AuditBoot=1, CmdLine empty, and neither
+ * windeploy nor audit running (that is a healthy boot, mid-way).
+ */
+export const AUDIT_REPAIR_PS = [
+  "$k = 'HKLM:\\SYSTEM\\Setup'",
+  "$audit = (Get-ItemProperty \"$k\\Status\" -ErrorAction SilentlyContinue).AuditBoot",
+  "$cmd = (Get-ItemProperty $k).CmdLine",
+  "if ($audit -ne 1 -or -not [string]::IsNullOrEmpty($cmd) -or (Get-Process windeploy, audit -ErrorAction SilentlyContinue)) { 'healthy'; exit 0 }",
+  "Set-ItemProperty $k -Name CmdLine -Value 'C:\\WINDOWS\\system32\\oobe\\windeploy.exe' -Type String",
+  "Set-ItemProperty $k -Name OOBEInProgress -Value 1 -Type DWord",
+  "Set-ItemProperty $k -Name SetupType -Value 2 -Type DWord",
+  "Set-ItemProperty $k -Name SetupPhase -Value 4 -Type DWord",
+  "'repaired'",
+  // A moment's grace, so this command's own result gets back to the host.
+  "shutdown.exe /r /t 3 /f",
+].join("\n")
+
+async function repairAudit(sockPath: string): Promise<boolean> {
+  const encoded = Buffer.from(AUDIT_REPAIR_PS, "utf16le").toString("base64")
+  const r = await exec(sockPath, POWERSHELL, ["-NoProfile", "-NonInteractive", "-EncodedCommand", encoded])
+  return r.stdout.includes("repaired")
+}
+
+const POWERSHELL = "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe"
 
 /**
  * After a rewind: the restored guest is already past OOBE (a snapshot can only

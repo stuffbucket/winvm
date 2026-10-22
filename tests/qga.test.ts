@@ -13,7 +13,7 @@ import { resolve } from "node:path"
 
 import { afterAll, beforeAll, describe, expect, it } from "bun:test"
 
-import { READ_CHUNK, call, readFile, waitFor } from "../qga"
+import { READ_CHUNK, call, readFile, untilReady, waitFor } from "../qga"
 
 type Handler = (req: Record<string, unknown>) => Record<string, unknown> | null
 
@@ -226,5 +226,48 @@ describe("qga.waitFor", () => {
     const before = agent.connections
     expect(await waitFor(agent.path, 600, { portOpen: async () => false })).toBe(false)
     expect(agent.connections).toBe(before)
+  })
+})
+
+describe("qga.untilReady", () => {
+  const fast = { waitFor: async (): Promise<boolean> => true, pollMs: 5, repairAfterMs: 30 }
+
+  it("repairs an interrupted audit-mode logon once, then waits for the logon", async () => {
+    let repaired = 0
+    const logs: string[] = []
+    // No one logged on until the repair's restart; then Administrator.
+    const loggedOnUser = async (): Promise<string | null> => (repaired === 0 ? "" : "WINVM\\Administrator")
+    const repairAudit = async (): Promise<boolean> => {
+      repaired += 1
+      return true
+    }
+    expect(await untilReady("unused", 5000, { ...fast, loggedOnUser, repairAudit, noLogonMs: 2000, log: (l) => logs.push(l) })).toBe("ready")
+    expect(repaired).toBe(1)
+    expect(logs.join("\n")).toContain("restarted the guest")
+  })
+
+  it("gives up with no-logon, not at the timeout, when nothing is there to repair", async () => {
+    let checks = 0
+    const repairAudit = async (): Promise<boolean> => {
+      checks += 1
+      return false
+    }
+    const t0 = Date.now()
+    expect(await untilReady("unused", 5000, { ...fast, loggedOnUser: async () => "", repairAudit, noLogonMs: 120 })).toBe("no-logon")
+    expect(Date.now() - t0).toBeLessThan(2000)
+    // Asked once per spell of no one logged on, not on every poll.
+    expect(checks).toBe(1)
+  })
+
+  it("does not count OOBE's own account, or an unreachable guest, as no one logged on", async () => {
+    let n = 0
+    const loggedOnUser = async (): Promise<string | null> => {
+      n += 1
+      return n < 20 ? (n % 2 === 0 ? null : "WINVM\\defaultuser0") : "WINVM\\Administrator"
+    }
+    const repairAudit = async (): Promise<boolean> => {
+      throw new Error("must not be asked")
+    }
+    expect(await untilReady("unused", 5000, { ...fast, loggedOnUser, repairAudit, noLogonMs: 20 })).toBe("ready")
   })
 })

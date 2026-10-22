@@ -28,6 +28,7 @@ import {
   readMeta,
 } from "./paths"
 import * as agentcmds from "./agentcmds"
+import * as input from "./input"
 import * as qemu from "./qemu"
 import * as qmp from "./qmp"
 import * as qga from "./qga"
@@ -507,6 +508,9 @@ export async function build(args: Args): Promise<number> {
   return guestFailed("the guest did not shut down after provisioning")
 }
 
+/** How long `start` lets an answering guest sit with no one logged on before giving up. */
+const NO_LOGON_MS = 120_000
+
 export async function start(args: Args): Promise<number> {
   requireHost()
   const name = instanceName(args)
@@ -540,9 +544,29 @@ export async function start(args: Args): Promise<number> {
   process.stdout.write("booting")
   // READY, NOT MERELY ANSWERING. `guest-ping` succeeds while the screen still
   // reads "Just a moment..."; anything issued then races the rest of the boot.
-  const up = await qga.waitReady(p.qga, 600_000)
+  //
+  // NOT TEN MINUTES AT A SIGN-IN SCREEN. A guest that answers but has had no
+  // one logged on for NO_LOGON_MS will not get there by itself (an interrupted
+  // audit-mode logon is repaired on the way, see qga.repairAudit), so say so,
+  // with the screen to look at.
+  const ready = await qga.untilReady(p.qga, 600_000, {
+    noLogonMs: NO_LOGON_MS,
+    log: (line) => process.stdout.write(`\n${line}\n`),
+  })
   process.stdout.write("\n")
-  if (!up) {
+  if (ready === "no-logon") {
+    const file = resolve(p.dir, "screenshots", `${new Date().toISOString().replace(/[:]/g, "").replace(/\..*$/, "").replace("T", "-")}-no-logon.png`)
+    const shot = await input.screenshot(p, file).then(
+      () => file,
+      () => null,
+    )
+    console.error(
+      `::error::the guest is up but no one logged on in ${String(NO_LOGON_MS / 1000)} s — it is most likely at the sign-in screen. ` +
+        (shot === null ? `Look at it with \`winvm screenshot -i ${name}\`` : `Screen: ${shot}`),
+    )
+    return 1
+  }
+  if (ready !== "ready") {
     console.error(
       `::error::guest never became ready. Look at it with \`winvm open -i ${name}\` or ${p.serial}`,
     )
