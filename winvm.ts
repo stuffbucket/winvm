@@ -19,6 +19,7 @@
  *   winvm screenshot | type | key | click | move | scroll   drive it with no window
  *   winvm watch [-i name] [--stop]   idle watcher: autosave, stow, clock sync
  *   winvm config [-i name] [k=v ...] per-instance watcher settings
+ *   winvm run job.yml / test dir/    CI jobs from a golden save; see runner.ts
  *   winvm timemachine [--yes]        keep the VM files out of Time Machine backups
  *
  * ## Self-contained and project-agnostic, on purpose
@@ -92,6 +93,8 @@
  *   diagnose.ts   known failure signatures, read from a guest's own artifacts
  *   status.ts     `status`: gathering (QMP, guest agent, files) and formatting
  *   screen.ts     `open`, `display` and the input verbs
+ *   runner.ts     `run` / `test`: jobs from golden saves (job.ts parses, guest.ts
+ *                 is the channel, report.ts renders, runcmds.ts the verbs)
  *   input.ts      screenshots, keys and the pointer, over QMP
  *   vnc.ts        VNC ports, websocket, password (why there is one)
  *   display.ts    the display device: ramfb, or virtio-gpu at a chosen size
@@ -108,6 +111,7 @@
  */
 import { parseArgs } from "./args"
 import * as commands from "./commands"
+import * as runcmds from "./runcmds"
 import * as savecmds from "./savecmds"
 import * as screen from "./screen"
 import * as status from "./status"
@@ -187,6 +191,12 @@ switch (sub) {
     process.exit(await savecmds.clock(args))
   case "watch":
     process.exit(await commands.watchCmd(args))
+  // eslint-disable-next-line no-fallthrough
+  case "run":
+    process.exit(await runcmds.run(args))
+  // eslint-disable-next-line no-fallthrough
+  case "test":
+    process.exit(await runcmds.test(args))
   // eslint-disable-next-line no-fallthrough
   case "config":
     process.exit(commands.configCmd(args))

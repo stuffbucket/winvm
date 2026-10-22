@@ -268,6 +268,31 @@ which runs under Windows' x64 emulation — fine for path, shell, file-locking
 and installer bugs, not for timing-sensitive ones. See
 [`docs/windows-vm-qemu.md`](docs/windows-vm-qemu.md#fidelity-limits--read-before-trusting-a-result).
 
+## CI jobs: `winvm run` / `winvm test`
+
+Job files are GitHub-Actions-shaped YAML (the format is documented at the top
+of `job.ts`; `jobs/examples/hello.yml` uses every feature):
+
+```sh
+bun winvm.ts run jobs/examples/hello.yml -i ci     # one job
+bun winvm.ts test jobs/maximal/ -i ci --junit out.xml --json out.json
+```
+
+Every job starts by loading a **golden save** of the instance (default name
+`ci-golden`; created on first use: guest ready, sysprep dialog closed,
+`C:\work` present), so each job sees the identical machine. Files are fetched
+on the host (release assets via `gh release download`, cached under
+`$WINVM_HOME/cache`), served on loopback, and pulled in with one `curl.exe`
+from `http://10.0.2.2:<port>`. Steps run with timeouts, `continue-on-error`,
+`if: always()`; failures get a screenshot and the job's `artifacts`
+(`$WINVM_HOME/runs/<instance>/<time>/` unless `--artifacts`). The summary
+reports reset time against test time and the reset share of the wall clock.
+
+Use a dedicated instance (the default is `ci`): a run resets it before every
+job, and quits it afterwards unless `--keep`. Over qemu-ga, steps run as
+SYSTEM in session 0 — `%LOCALAPPDATA%` and `HKCU` are SYSTEM's, and nothing
+launched shows on the desktop.
+
 ## Time Machine
 
 The VM disks are large and change constantly. Keep them out of backups:

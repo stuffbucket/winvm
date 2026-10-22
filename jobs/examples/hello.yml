@@ -1,0 +1,35 @@
+# The smallest useful job: every shell, env, a staged file, a failure-tolerant
+# step, and an always() step. `winvm run jobs/examples/hello.yml -i <name>`.
+name: hello
+env:
+  GREETING: hello from the job
+files:
+  - src: hello.yml
+    dest: C:\work\hello.yml
+steps:
+  - name: cmd sees env and the staged file
+    shell: cmd
+    run: |
+      echo %GREETING%
+      if not exist C:\work\hello.yml exit /b 3
+  - name: powershell sees env and the file server
+    run: |
+      "$env:GREETING ($env:WINVM_FILES)"
+      $r = Invoke-WebRequest -UseBasicParsing "$env:WINVM_FILES/hello.yml"
+      if ($r.StatusCode -ne 200) { exit 4 }
+  - name: pwsh falls back to Windows PowerShell
+    shell: pwsh
+    run: $PSVersionTable.PSVersion.ToString()
+  - name: a tolerated failure
+    shell: cmd
+    run: exit /b 7
+    continue-on-error: true
+  - name: a timeout
+    shell: cmd
+    run: ping -n 30 127.0.0.1 >nul
+    timeout: 2
+    continue-on-error: true
+  - name: cleanup runs always
+    if: always()
+    shell: cmd
+    run: echo done

@@ -957,7 +957,10 @@ export const USAGE =
   "  stop | kill | destroy [-i name]\n" +
   "  watch   [-i name]             run the idle watcher in the foreground (start runs it in the background)\n" +
   "          [--stop | --status]   end it / print its state\n" +
-  "  config  [-i name] [key=value ...]  autosave/stow/watch settings; bare prints them\n\n" +
+  "  config  [-i name] [key=value ...]  autosave/stow/watch settings; bare prints them\n" +
+  "  run     <job.yml>... [-i name] [--golden NAME] [--keep] [--junit f] [--json f] [--artifacts dir]\n" +
+  "                                run CI jobs, each from a golden save (instance default \"ci\")\n" +
+  "  test    <dir>... [same flags] every *.yml in the directory, in order\n\n" +
   "  state:    WINVM_HOME       (default ~/.local/state/winvm)\n" +
   "  iso:      WINVM_ISO        (else asked once, then remembered)\n" +
   "  instance: WINVM_INSTANCE / -i   (default \"default\")\n" +
