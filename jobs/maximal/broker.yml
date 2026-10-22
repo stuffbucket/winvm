@@ -1,0 +1,84 @@
+# Maximal MCP broker on Windows: the kill matrix, as far as it exists today.
+#
+# CURRENT BEHAVIOUR, ASSERTED ON PURPOSE: Windows refuses to run the broker.
+# The supervisor throws MCP_BROKER_CONTAINMENT_UNAVAILABLE before spawning
+# (no kill-on-close Job Object yet, so an MCP server's descendants could be
+# orphaned — src/lib/mcp-broker/supervisor.ts), and reports the permanent
+# state "unavailable" (problem: unsupported-platform) instead of retrying.
+#
+# This job therefore FAILS the day Job Object containment lands — at the step
+# that pins "unavailable" — which is the cue to turn it into the real matrix:
+#   proxy killed (taskkill /f)      -> broker and its MCP children gone (kill-on-close)
+#   broker killed                   -> supervisor restarts it, endpoints recover
+#   MCP server child killed         -> broker survives, session errors cleanly
+#   proxy stopped gracefully        -> broker exits within gracefulShutdownMs
+# The process-survival checks below already hold the first row.
+#
+#   bun winvm.ts run jobs/maximal/broker.yml -i ci
+name: maximal mcp broker containment (windows)
+timeout: 5m
+env:
+  PORT: "4141"
+  APP: C:\work\portable
+  COPILOT_API_HOME: C:\work\home
+files:
+  - release: stuffbucket/maximal
+    tag: ${{ env.MAXIMAL_TAG || 'latest' }}
+    pattern: "maximal-*-windows-x64.zip"
+    dest: C:\work\
+steps:
+  - name: unpack the portable build, enable the broker in its config
+    shell: cmd
+    run: |
+      mkdir "%APP%" "%COPILOT_API_HOME%" 2>nul
+      for %%f in (C:\work\maximal-*-windows-x64.zip) do tar -xf "%%f" -C "%APP%" || exit /b 1
+      > "%COPILOT_API_HOME%\config.json" echo {"mcpBroker":{"enabled":true}}
+      netsh advfirewall firewall add rule name="maximal broker job (winvm)" dir=in action=allow program="%APP%\maximal.exe" enable=yes >nul
+      exit /b 0
+
+  - name: start the proxy
+    shell: cmd
+    background: true
+    run: '"%APP%\maximal.exe" start --port %PORT%'
+
+  - name: the broker is "unavailable" on Windows (MCP_BROKER_CONTAINMENT_UNAVAILABLE)
+    timeout: 90
+    run: |
+      & curl.exe -sSf --retry 60 --retry-delay 1 --retry-all-errors --max-time 2 -o nul "http://127.0.0.1:$env:PORT/setup-status"
+      if ($LASTEXITCODE -ne 0) { throw 'the proxy never answered' }
+      # The supervisor decides synchronously at boot; allow a moment anyway.
+      for ($i = 0; $i -lt 20; $i++) {
+        $s = Invoke-RestMethod "http://127.0.0.1:$env:PORT/status"
+        if ($s.subsystems.mcp_broker.state -notin @('starting', 'disabled')) { break }
+        Start-Sleep -Milliseconds 250
+      }
+      $s | ConvertTo-Json -Depth 5 | Set-Content C:\work\status.json
+      "mcp_broker: $($s.subsystems.mcp_broker | ConvertTo-Json -Compress)"
+      if ($s.subsystems.mcp_broker.state -ne 'unavailable') {
+        throw "broker state is '$($s.subsystems.mcp_broker.state)', not 'unavailable'. If Job Object containment has landed, replace this step with the kill matrix (see the job's header)."
+      }
+
+  - name: no broker process was started
+    shell: cmd
+    run: |
+      tasklist /fo csv /nh | findstr /i "maximal-mcp-broker" && (echo a broker is running although the supervisor refused & exit /b 21)
+      exit /b 0
+
+  - name: proxy killed hard -> no broker or proxy process survives
+    shell: cmd
+    run: |
+      taskkill /f /im maximal.exe >nul 2>&1
+      ping -n 3 127.0.0.1 >nul
+      tasklist /fo csv /nh | findstr /i "maximal" && (echo survived the proxy & exit /b 31)
+      exit /b 0
+
+  - name: cleanup
+    if: always()
+    shell: cmd
+    run: taskkill /f /t /im maximal.exe >nul 2>&1 & taskkill /f /t /im maximal-mcp-broker.exe >nul 2>&1 & exit /b 0
+
+artifacts:
+  when: always
+  paths:
+    - C:\work\status.json
+    - C:\work\.winvm\*.log

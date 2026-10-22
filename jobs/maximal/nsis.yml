@@ -1,0 +1,136 @@
+# Maximal NSIS (Tauri tray app): silent install, what it puts where, launch
+# the tray app, its sidecar proxy answers, a graceful shutdown leaves no
+# orphaned process, silent uninstall leaves nothing behind.
+#
+#   bun winvm.ts run jobs/maximal/nsis.yml -i ci
+#
+# Needs the in-guest agent (the default for goldens `winvm run` creates): the
+# tray app is launched in the logged-on user's session. Over qemu-ga it would
+# run as SYSTEM in session 0 and have no tray at all.
+#
+# TODO(gui): drive the real tray "Quit Maximal" item (click the notification-
+# area icon, the menu item, then accept the native confirm dialog) once the
+# runner has a screen-step primitive. Until then the graceful-shutdown step
+# uses `maximal-shell.exe --replace`, which the shell documents as "the same
+# teardown path as the tray Quit item, minus the confirm dialog"
+# (graceful_shutdown in shell/src-tauri/src/lib.rs): app.exit(0) →
+# RunEvent::ExitRequested → kill_sidecar.
+name: maximal nsis tray install + quit + uninstall
+timeout: 10m
+files:
+  - release: stuffbucket/maximal
+    tag: ${{ env.MAXIMAL_TAG || 'latest' }}
+    pattern: "maximal-*-windows-x64-setup.exe"
+    dest: C:\work\
+steps:
+  - name: allow the sidecar through the firewall (it binds all interfaces)
+    shell: cmd
+    run: |
+      netsh advfirewall firewall add rule name="maximal sidecar (winvm job)" dir=in action=allow program="%LOCALAPPDATA%\Maximal\maximal.exe" enable=yes >nul
+
+  - name: setup.exe /S
+    shell: cmd
+    timeout: 5m
+    run: |
+      for %%f in (C:\work\maximal-*-windows-x64-setup.exe) do start "" /wait "%%f" /S
+      exit /b %ERRORLEVEL%
+
+  - name: files, Start-menu and desktop shortcuts, Add/Remove Programs entry
+    shell: cmd
+    run: |
+      dir /b "%LOCALAPPDATA%\Maximal"
+      if not exist "%LOCALAPPDATA%\Maximal\maximal-shell.exe" (echo missing maximal-shell.exe & exit /b 11)
+      if not exist "%LOCALAPPDATA%\Maximal\maximal.exe" (echo missing the maximal sidecar & exit /b 12)
+      if not exist "%LOCALAPPDATA%\Maximal\maximal-mcp-broker.exe" (echo missing maximal-mcp-broker.exe & exit /b 13)
+      if not exist "%LOCALAPPDATA%\Maximal\uninstall.exe" (echo missing uninstall.exe & exit /b 14)
+      dir /s /b "%APPDATA%\Microsoft\Windows\Start Menu\Programs\*Maximal*.lnk" || (echo no Start-menu shortcut & exit /b 15)
+      dir /b "%USERPROFILE%\Desktop\Maximal*.lnk" || (echo no desktop shortcut & exit /b 17)
+      reg query HKCU\Software\Microsoft\Windows\CurrentVersion\Uninstall /s /f Maximal /d | findstr /i "DisplayName" || (echo no Add/Remove Programs entry & exit /b 16)
+      exit /b 0
+
+  - name: launch the tray app
+    shell: cmd
+    background: true
+    run: |
+      "%LOCALAPPDATA%\Maximal\maximal-shell.exe"
+
+  - name: its sidecar answers /setup-status
+    shell: cmd
+    timeout: 90
+    run: curl.exe -sS --retry 120 --retry-delay 0 --retry-max-time 60 --retry-all-errors --max-time 2 -o nul -w "%%{http_code} in %%{time_total} s" http://127.0.0.1:4141/setup-status
+
+  - name: one shell, one sidecar, the sidecar a child of the shell
+    run: |
+      Start-Sleep -Milliseconds 500
+      $p = @(Get-CimInstance Win32_Process | Where-Object { $_.Name -like 'maximal*' })
+      $p | ForEach-Object { '{0} pid={1} ppid={2} session={3}' -f $_.Name, $_.ProcessId, $_.ParentProcessId, $_.SessionId }
+      $shell = @($p | Where-Object Name -eq 'maximal-shell.exe')
+      $side = @($p | Where-Object Name -eq 'maximal.exe')
+      if ($shell.Count -ne 1) { throw "expected one maximal-shell.exe, found $($shell.Count)" }
+      if ($side.Count -ne 1) { throw "expected one maximal.exe sidecar, found $($side.Count)" }
+      if ($side[0].ParentProcessId -ne $shell[0].ProcessId) { throw 'the sidecar is not a child of the shell' }
+      $side[0].ProcessId | Set-Content C:\work\sidecar1.pid
+      $shell[0].ProcessId | Set-Content C:\work\shell1.pid
+
+  - name: graceful shutdown (--replace, the tray Quit path minus its dialog) leaves no orphan
+    timeout: 2m
+    run: |
+      $app = "$env:LOCALAPPDATA\Maximal"
+      $old = [int](Get-Content C:\work\sidecar1.pid); $oldShell = [int](Get-Content C:\work\shell1.pid)
+      Start-Process -FilePath "$app\maximal-shell.exe" -ArgumentList '--replace'
+      $deadline = (Get-Date).AddSeconds(30)
+      while ((Get-Process -Id $old, $oldShell -ErrorAction SilentlyContinue) -and (Get-Date) -lt $deadline) { Start-Sleep -Milliseconds 200 }
+      if (Get-Process -Id $oldShell -ErrorAction SilentlyContinue) { throw "the old shell ($oldShell) did not exit" }
+      if (Get-Process -Id $old -ErrorAction SilentlyContinue) { throw "the old sidecar ($old) outlived its shell: orphaned" }
+      'old shell and its sidecar exited'
+
+  # Observed on v0.4.47: the second process exits too (the single-instance
+  # plugin's second instance always does), so --replace quits Maximal rather
+  # than replacing it, although lib.rs says it frees :4141 "so the second
+  # process can claim" it. Recorded, not fatal, until that is settled upstream.
+  - name: (informational) a replacement claims :4141 after --replace
+    continue-on-error: true
+    timeout: 1m
+    run: |
+      & curl.exe -sS --retry 5 --retry-delay 1 --retry-all-errors --max-time 2 -o nul -w "replacement answers: %{http_code}`n" http://127.0.0.1:4141/setup-status
+      $p = @(Get-CimInstance Win32_Process | Where-Object { $_.Name -like 'maximal*' })
+      $p | ForEach-Object { '{0} pid={1} ppid={2}' -f $_.Name, $_.ProcessId, $_.ParentProcessId }
+      if (@($p | Where-Object Name -eq 'maximal.exe').Count -ne 1) { throw "no replacement: $($p.Count) maximal process(es) after --replace" }
+
+  - name: stop it (taskkill /t until the tray Quit click exists); nothing survives
+    if: always()
+    shell: cmd
+    run: |
+      taskkill /t /f /im maximal-shell.exe >nul 2>&1
+      ping -n 2 127.0.0.1 >nul
+      tasklist /fo csv /nh | findstr /i "maximal" && (echo maximal processes still running & exit /b 41)
+      exit /b 0
+
+  - name: uninstall.exe /S
+    if: always()
+    timeout: 3m
+    run: |
+      Start-Process -FilePath "$env:LOCALAPPDATA\Maximal\uninstall.exe" -ArgumentList '/S' -Wait
+      # An NSIS uninstaller copies itself to %TEMP%\~nsu*.tmp, starts the copy
+      # and exits at once; the copy does the work. Wait for it.
+      $deadline = (Get-Date).AddSeconds(120)
+      while ((Get-Process | Where-Object { $_.Path -like '*\~nsu*' }) -and (Get-Date) -lt $deadline) { Start-Sleep -Milliseconds 200 }
+      if (Get-Process | Where-Object { $_.Path -like '*\~nsu*' }) { throw 'the uninstaller is still running after 2 minutes' }
+
+  - name: nothing left behind
+    if: always()
+    shell: cmd
+    run: |
+      if exist "%LOCALAPPDATA%\Maximal\maximal-shell.exe" (echo maximal-shell.exe still there & exit /b 51)
+      if exist "%LOCALAPPDATA%\Maximal\maximal.exe" (echo maximal.exe still there & exit /b 52)
+      dir /s /b "%APPDATA%\Microsoft\Windows\Start Menu\Programs\*Maximal*.lnk" 2>nul && (echo Start-menu shortcut still there & exit /b 53)
+      dir /b "%USERPROFILE%\Desktop\Maximal*.lnk" 2>nul && (echo desktop shortcut still there & exit /b 56)
+      reg query HKCU\Software\Microsoft\Windows\CurrentVersion\Uninstall /s /f Maximal /d 2>nul | findstr /i "DisplayName" && (echo Add/Remove Programs entry still there & exit /b 54)
+      tasklist /fo csv /nh | findstr /i "maximal" && (echo maximal processes still running & exit /b 55)
+      exit /b 0
+
+screenshot: always
+artifacts:
+  when: failure
+  paths:
+    - C:\work\.winvm\*.log
