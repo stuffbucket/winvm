@@ -135,6 +135,7 @@ export function prune(args: Args): number {
       continue
     }
     const size = du(p.dir)
+    qemu.stopSwtpm(p)
     rmSync(p.dir, { recursive: true, force: true })
     console.log(`  removed scratch instance "${name}" (${size})`)
     freedAnything = true
@@ -291,6 +292,7 @@ export async function build(args: Args): Promise<number> {
   const reap = (): void => {
     const pid = qemu.pidOf(p)
     if (pid !== null) process.kill(pid, "SIGKILL")
+    qemu.stopSwtpm(p)
   }
   for (const sig of ["SIGINT", "SIGTERM"] as const) {
     process.on(sig, () => {
@@ -305,6 +307,7 @@ export async function build(args: Args): Promise<number> {
     // Installs on NVMe — WinPE has no virtio-blk driver. See qemuArgs.
     await qemu.launch(scratch, p, meta, { installMedia: true, ephemeral: false, virtioBoot: false })
   } catch (error) {
+    qemu.stopSwtpm(p)
     console.error(`::error::could not start the installer VM: ${error instanceof Error ? error.message : String(error)}`)
     return 1
   }
@@ -444,6 +447,7 @@ export async function build(args: Args): Promise<number> {
       // Recorded because it cannot be read back off a disk image later.
       const imageMeta: ImageMeta = { virtioBoot, created: new Date().toISOString() }
       writeFileSync(imageMetaPath(image), `${JSON.stringify(imageMeta, null, 2)}\n`)
+      qemu.stopSwtpm(p)
       rmSync(p.dir, { recursive: true, force: true })
       console.log(`base image ready: ${basePath(image)} (${du(basePath(image))})`)
       console.log(
@@ -657,6 +661,7 @@ export async function stop(args: Args): Promise<number> {
   const deadline = Date.now() + 180_000
   while (Date.now() < deadline) {
     if (!qemu.isRunning(p)) {
+      qemu.stopSwtpm(p)
       console.log(`instance "${name}" stopped`)
       return 0
     }
@@ -671,11 +676,15 @@ export function kill(args: Args): number {
   const p = pathsFor(name)
   const pid = qemu.pidOf(p)
   if (pid === null) {
+    // Still worth a sweep: a launch that failed, or an older winvm, can leave
+    // the TPM emulator running with no guest.
+    qemu.stopSwtpm(p)
     console.log(`instance "${name}" is not running`)
     return 0
   }
   process.kill(pid, "SIGKILL")
   rmSync(p.pid, { force: true })
+  qemu.stopSwtpm(p)
   void watcher.stopWatcher(name)
   console.log(`killed instance "${name}"`)
   return 0
@@ -710,6 +719,7 @@ export function destroy(args: Args): number {
     console.error(`::error::no such instance "${name}"`)
     return 1
   }
+  qemu.stopSwtpm(p)
   rmSync(instanceDir(name), { recursive: true, force: true })
   console.log(`destroyed instance "${name}" (image untouched)`)
   return 0

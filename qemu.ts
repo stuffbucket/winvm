@@ -162,14 +162,63 @@ export function qemuArgs(name: string, p: Paths, meta: InstanceMeta, o: LaunchOp
   return a
 }
 
-async function startSwtpm(p: Paths): Promise<void> {
-  if (existsSync(p.tpmSock) && spawnSync("pgrep", ["-f", `swtpm socket .*${p.tpmDir}`]).status === 0) return
-  // A socket file with no process behind it is what a killed swtpm leaves, and
-  // binding over one fails. Clear it rather than inherit the previous failure.
+/**
+ * The swtpm processes serving this instance's TPM state, found by their command
+ * line. Matched on the exact `dir=<tpmDir> ` argument, so "fix-1" can never
+ * claim "fix-10"'s emulator, and so one left by an earlier, crashed launch —
+ * which no pidfile records — is found as well.
+ */
+function swtpmPids(p: Paths): readonly number[] {
+  const dir = p.tpmDir.replace(/[.*+?^$()|[\]{}\\]/g, "\\$&")
+  const r = spawnSync("pgrep", ["-f", `^swtpm socket --tpmstate dir=${dir} `], { encoding: "utf8" })
+  if (r.status !== 0) return []
+  return r.stdout
+    .split("\n")
+    .map((l) => Number.parseInt(l, 10))
+    .filter((n) => Number.isFinite(n))
+}
+
+/**
+ * Stop this instance's swtpm, if any is left.
+ *
+ * `terminate` on the control channel (see startSwtpm) ends swtpm once QEMU has
+ * connected and then gone, however it went. It cannot cover a QEMU that died
+ * before connecting, or an emulator started by an older winvm without that
+ * flag — and those leaked, one per failed launch or `kill`, for as long as the
+ * host stayed up. Every teardown path calls this, so none depends on swtpm
+ * noticing by itself.
+ */
+export function stopSwtpm(p: Paths): void {
+  for (const pid of swtpmPids(p)) {
+    try {
+      process.kill(pid, "SIGKILL")
+    } catch {
+      // Already gone between the listing and the signal.
+    }
+  }
   rmSync(p.tpmSock, { force: true })
+}
+
+async function startSwtpm(p: Paths): Promise<void> {
+  // Anything still running here outlived the QEMU it served — launch is only
+  // reached with no QEMU on this instance — and carries that machine's
+  // volatile TPM state. Start clean, as a power cycle would. The stale socket
+  // goes with it: binding over one fails. Waited out, because the new one
+  // cannot take the state directory's lock until the old one has let go.
+  stopSwtpm(p)
+  for (let i = 0; i < 50 && swtpmPids(p).length > 0; i += 1) await new Promise((r) => setTimeout(r, 20))
   const proc = spawn(
     "swtpm",
-    ["socket", "--tpmstate", `dir=${p.tpmDir}`, "--ctrl", `type=unixio,path=${p.tpmSock}`, "--tpm2"],
+    [
+      "socket",
+      "--tpmstate",
+      `dir=${p.tpmDir}`,
+      // `terminate`: exit when QEMU's connection drops, so a SIGKILLed or
+      // crashed QEMU does not leave its emulator behind.
+      "--ctrl",
+      `type=unixio,path=${p.tpmSock},terminate`,
+      "--tpm2",
+    ],
     { detached: true, stdio: "ignore" },
   )
   proc.unref()
@@ -233,6 +282,9 @@ export async function launch(name: string, p: Paths, meta: InstanceMeta, o: Laun
     return
   }
 
+  // A QEMU that died this early may never have connected to swtpm, and then
+  // `terminate` never fires.
+  stopSwtpm(p)
   // Read and handle absence, rather than asking whether it exists and then
   // reading: the two-step version races anything else touching the file.
   const why = readTextOr(p.qemuLog, "").trim()

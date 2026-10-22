@@ -412,11 +412,15 @@ export async function quitQemu(p: Paths, timeoutMs = 120_000): Promise<void> {
   }
   const deadline = Date.now() + timeoutMs
   while (Date.now() < deadline) {
-    if (qemu.pidOf(p) === null) return
+    if (qemu.pidOf(p) === null) {
+      qemu.stopSwtpm(p)
+      return
+    }
     await sleep(250)
   }
   process.kill(pid, "SIGKILL")
   while (qemu.pidOf(p) !== null) await sleep(250)
+  qemu.stopSwtpm(p)
 }
 
 export interface CreateOptions {
