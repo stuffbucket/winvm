@@ -10,6 +10,7 @@
  *   winvm snapshot [-i name] [tag]   capture the running guest, RAM and all
  *   winvm rewind   [-i name] [tag]   put it back — ~10-20 s running, no reboot
  *   winvm save / load / saves        whole-machine saves as files; see saves.ts
+ *   winvm golden create | reset      settled mapped-ram save for fast resets; see golden.ts
  *   winvm pause / resume / stow      freeze, unfreeze, save-and-quit
  *   winvm clock [-i name]            guest-vs-host clock offset, and fix it
  *   winvm reset [-i name]            discard all changes, back to the base
@@ -111,6 +112,7 @@
  */
 import { parseArgs } from "./args"
 import * as commands from "./commands"
+import * as goldens from "./golden"
 import * as runcmds from "./runcmds"
 import * as savecmds from "./savecmds"
 import * as screen from "./screen"
@@ -174,6 +176,9 @@ switch (sub) {
   // eslint-disable-next-line no-fallthrough
   case "load":
     process.exit(await savecmds.load(args))
+  // eslint-disable-next-line no-fallthrough
+  case "golden":
+    process.exit(await goldens.golden(args))
   // eslint-disable-next-line no-fallthrough
   case "saves":
     process.exit(savecmds.list(args))

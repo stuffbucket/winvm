@@ -933,9 +933,10 @@ export const USAGE =
   "           [--delete]           remove that snapshot instead\n" +
   "  rewind  [-i name] [tag]       put the guest back: snapshot <tag> (default fresh), else\n" +
   "                                the save of that name (default: the automatic baseline)\n" +
-  "  save    [-i name] [name]      save the running guest to files (default name: a timestamp)\n" +
+  "  save    [-i name] [name] [--fast]  save the running guest to files (default name: a timestamp)\n" +
   "  load    [-i name] [name]      load a save, running or stopped (default: the newest)\n" +
   "  saves   [-i name] [rm <name>] list saves (kind, size, compatible) or delete one\n" +
+  "  golden  create|reset [-i name] [--name golden]  settled mapped-ram save; reset to it in ~1 s\n" +
   "  pause | resume [-i name]      freeze / unfreeze the guest (resume fixes its clock)\n" +
   "  stow    [-i name]             save and shut QEMU down; the next start recalls it\n" +
   "  clock   [-i name] [--check]   guest-vs-host clock offset, and fix it\n" +
