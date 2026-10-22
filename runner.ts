@@ -67,6 +67,13 @@ export interface RunOptions {
   /** Where artifacts and screenshots go: <dir>/<job>/… */
   readonly artifactsDir: string
   readonly log: (line: string) => void
+  /**
+   * Polled between steps: once true, the rest of the job is skipped and nothing
+   * more is collected. For a pool's watchdog (pool.ts), which gives up on a
+   * wedged job and restarts its instance — a step still in flight must not go
+   * on to run its successors against the next job's guest.
+   */
+  readonly cancelled?: () => boolean
 }
 
 // ---------------------------------------------------------------------------
@@ -78,14 +85,19 @@ export interface RunOptions {
  * and let golden.ts wait for the guest to settle and take a mapped-ram save.
  * Returns the time spent (0 when it already existed).
  */
-export async function ensureGolden(instance: string, goldenName: string, log: (s: string) => void): Promise<number> {
+export async function ensureGolden(
+  instance: string,
+  goldenName: string,
+  log: (s: string) => void,
+  image: string | null = null,
+): Promise<number> {
   if (saves.readSave(instance, goldenName) !== null) return 0
   const t0 = Date.now()
   const p = pathsFor(instance)
   log(`golden "${goldenName}" not found on "${instance}": creating it (boot, agent, settle — a few minutes, once)`)
   if (!qemu.isRunning(p)) {
     // A new instance takes WINVM_IMAGE, as `start` would; an existing one keeps its own.
-    ensureInstance(instance, readMeta(instance)?.image ?? process.env["WINVM_IMAGE"] ?? "win11-arm64")
+    ensureInstance(instance, readMeta(instance)?.image ?? image ?? process.env["WINVM_IMAGE"] ?? "win11-arm64")
     const meta = readMeta(instance)
     if (meta === null) throw new Error(`could not create instance "${instance}"`)
     await qemu.launch(instance, p, meta, { installMedia: false, ephemeral: false, virtioBoot: readImageMeta(meta.image)?.virtioBoot === true })
@@ -415,7 +427,7 @@ export async function runJob(job: Job, o: RunOptions): Promise<JobResult> {
     for (const [i, step] of job.steps.entries()) {
       const run = step.if === "always" || (step.if === "failure" ? failed : !failed)
       let r: StepResult
-      if (!run || Date.now() > deadline) {
+      if (!run || Date.now() > deadline || o.cancelled?.() === true) {
         r = { name: step.name, status: "skipped", exitcode: null, ms: 0, stdout: "", stderr: "", continueOnError: step.continueOnError, background: step.background }
       } else {
         try {
@@ -435,6 +447,7 @@ export async function runJob(job: Job, o: RunOptions): Promise<JobResult> {
     const stepsMs = Date.now() - t2
 
     const t3 = Date.now()
+    if (o.cancelled?.() === true) return result({ status: "error", error: "cancelled", resetMs, stageMs, stepsMs, steps, channel: guest.kind })
     const artifacts = await collect(job, guest, o.instance, dir, failed, o.log).catch((error: unknown) => {
       o.log(`  (collecting artifacts failed: ${errMsg(error)})`)
       return [] as string[]

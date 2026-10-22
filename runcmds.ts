@@ -4,6 +4,8 @@
  *   winvm run  <job.yml>... [-i name] [--golden NAME] [--keep]
  *              [--junit out.xml] [--json out.json] [--artifacts dir]
  *   winvm test <dir>        [same flags]   every *.yml / *.yaml in it, in name order
+ *   winvm test <dir> --pool N [--pool-prefix ci] [--image IMG]
+ *                           the same jobs side by side on N instances ci-1..ci-N (pool.ts)
  *
  * The instance defaults to "ci", not "default": every job resets the instance
  * it runs on, so it should never be one someone is working in.
@@ -18,8 +20,9 @@ import type { Job } from "./job"
 import { JobError, readJob } from "./job"
 import { home, pathsFor } from "./paths"
 import * as qemu from "./qemu"
-import type { JobResult } from "./report"
-import { formatSummary, toJson, toJunit } from "./report"
+import { poolOptions, runPool } from "./pool"
+import type { JobResult, RunSummary } from "./report"
+import { formatSummary, poolStats, toJson, toJunit } from "./report"
 import { DEFAULT_GOLDEN, ensureGolden, instanceProblem, runJob } from "./runner"
 import * as saves from "./saves"
 import * as watcher from "./watch"
@@ -50,8 +53,40 @@ export function jobFiles(paths: readonly string[]): string[] {
   return out
 }
 
+function report(summary: RunSummary, args: Args): number {
+  console.log(formatSummary(summary))
+  const junit = args.flags.get("junit")
+  if (junit !== undefined) {
+    writeFileSync(junit, toJunit(summary))
+    console.log(`junit: ${resolve(junit)}`)
+  }
+  const json = args.flags.get("json")
+  if (json !== undefined) {
+    writeFileSync(json, toJson(summary))
+    console.log(`json: ${resolve(json)}`)
+  }
+  return summary.jobs.every((r) => r.status === "passed") ? 0 : 1
+}
+
 async function runAll(files: readonly string[], args: Args): Promise<number> {
   const wall0 = Date.now()
+  const pool = poolOptions(args)
+  if (pool !== null) {
+    if ("error" in pool) return fail(pool.error)
+    let jobs: Job[]
+    try {
+      jobs = files.map(readJob)
+    } catch (error) {
+      return fail(error instanceof JobError ? error.message : errMsg(error))
+    }
+    if (jobs.length === 0) return fail("no jobs to run")
+    try {
+      const r = await runPool(jobs, pool)
+      return report({ jobs: r.results, wallMs: Date.now() - wall0, setupMs: r.setupMs, pool: poolStats(r.results, r.instances) }, args)
+    } catch (error) {
+      return fail(errMsg(error))
+    }
+  }
   const instance = args.flags.get("instance") ?? process.env["WINVM_INSTANCE"] ?? "ci"
   const goldenFlag = args.flags.get("golden") ?? null
   const artifactsDir = resolve(args.flags.get("artifacts") ?? resolve(home(), "runs", instance, stamp(new Date())))
@@ -98,19 +133,7 @@ async function runAll(files: readonly string[], args: Args): Promise<number> {
     await saves.quitQemu(p)
   }
 
-  const summary = { jobs: results, wallMs: Date.now() - wall0, setupMs }
-  console.log(formatSummary(summary))
-  const junit = args.flags.get("junit")
-  if (junit !== undefined) {
-    writeFileSync(junit, toJunit(summary))
-    console.log(`junit: ${resolve(junit)}`)
-  }
-  const json = args.flags.get("json")
-  if (json !== undefined) {
-    writeFileSync(json, toJson(summary))
-    console.log(`json: ${resolve(json)}`)
-  }
-  return results.every((r) => r.status === "passed") ? 0 : 1
+  return report({ jobs: results, wallMs: Date.now() - wall0, setupMs }, args)
 }
 
 export async function run(args: Args): Promise<number> {

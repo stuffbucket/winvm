@@ -47,6 +47,82 @@ export interface RunSummary {
   readonly wallMs: number
   /** One-off setup before the first job (boot, golden creation), already in wallMs. */
   readonly setupMs: number
+  /** Set by `winvm test --pool` (pool.ts). */
+  readonly pool?: PoolStats
+}
+
+/**
+ * A pool's timing. With jobs running side by side, summed reset time says
+ * little — a reset on one instance while others run jobs costs nothing — so
+ * the figure that matters is EXPOSED reset: wall-clock time when some
+ * instance was resetting and none was running a job.
+ */
+export interface PoolStats {
+  readonly instances: readonly string[]
+  /** From the first job's reset starting to the last job finishing (setup excluded). */
+  readonly runMs: number
+  /** Sum over jobs of stage + steps + collect. */
+  readonly jobMs: number
+  /** Sum over jobs of their resets. */
+  readonly resetMs: number
+  readonly exposedResetMs: number
+  readonly perInstance: readonly { readonly instance: string; readonly jobs: number; readonly busyMs: number }[]
+}
+
+export interface Interval {
+  readonly start: number
+  readonly end: number
+}
+
+/** Merge overlapping intervals; the result is sorted and disjoint. */
+export function merge(xs: readonly Interval[]): Interval[] {
+  const sorted = xs.filter((x) => x.end > x.start).sort((a, b) => a.start - b.start)
+  const out: Interval[] = []
+  for (const x of sorted) {
+    const last = out.at(-1)
+    if (last !== undefined && x.start <= last.end) out[out.length - 1] = { start: last.start, end: Math.max(last.end, x.end) }
+    else out.push({ ...x })
+  }
+  return out
+}
+
+const length = (xs: readonly Interval[]): number => xs.reduce((a, x) => a + x.end - x.start, 0)
+
+/** Time covered by `a` and not by `b`. */
+export function uncoveredMs(a: readonly Interval[], b: readonly Interval[]): number {
+  const bs = merge(b)
+  let out = 0
+  for (const x of merge(a)) {
+    let covered = 0
+    for (const y of bs) covered += Math.max(0, Math.min(x.end, y.end) - Math.max(x.start, y.start))
+    out += x.end - x.start - covered
+  }
+  return out
+}
+
+/** A job's reset, then its work (stage, steps, collect), as wall-clock intervals. */
+export function jobIntervals(j: JobResult): { readonly reset: Interval; readonly work: Interval } {
+  const start = Date.parse(j.startedAt)
+  return { reset: { start, end: start + j.resetMs }, work: { start: start + j.resetMs, end: start + j.totalMs } }
+}
+
+export function poolStats(jobs: readonly JobResult[], instances: readonly string[]): PoolStats {
+  const iv = jobs.map(jobIntervals)
+  const all = merge(iv.flatMap((x) => [x.reset, x.work]))
+  return {
+    instances,
+    runMs: all.length === 0 ? 0 : (all.at(-1)?.end ?? 0) - (all[0]?.start ?? 0),
+    jobMs: jobs.reduce((a, j) => a + j.stageMs + j.stepsMs + j.collectMs, 0),
+    resetMs: jobs.reduce((a, j) => a + j.resetMs, 0),
+    exposedResetMs: uncoveredMs(
+      iv.map((x) => x.reset),
+      iv.map((x) => x.work),
+    ),
+    perInstance: instances.map((instance) => {
+      const mine = jobs.filter((j) => j.instance === instance)
+      return { instance, jobs: mine.length, busyMs: length(merge(mine.map((j) => jobIntervals(j)).flatMap((x) => [x.reset, x.work]))) }
+    }),
+  }
 }
 
 export const secs = (ms: number): string => `${(ms / 1000).toFixed(1)} s`
@@ -93,12 +169,14 @@ export function outputTail(r: StepResult, lines = 15): string {
 
 export function formatSummary(s: RunSummary): string {
   const t = totals(s)
-  const out: string[] = ["", "job".padEnd(34) + "result   reset    stage    steps    collect  total"]
+  const pool = s.pool
+  const out: string[] = ["", "job".padEnd(34) + "result   reset    stage    steps    collect  total" + (pool === undefined ? "" : "    instance")]
   for (const j of s.jobs) {
     out.push(
       j.name.slice(0, 33).padEnd(34) +
         j.status.padEnd(9) +
-        [j.resetMs, j.stageMs, j.stepsMs, j.collectMs, j.totalMs].map((ms) => secs(ms).padEnd(9)).join(""),
+        [j.resetMs, j.stageMs, j.stepsMs, j.collectMs, j.totalMs].map((ms) => secs(ms).padEnd(9)).join("") +
+        (pool === undefined ? "" : j.instance),
     )
   }
   out.push(
@@ -108,7 +186,19 @@ export function formatSummary(s: RunSummary): string {
     `reset ${secs(t.resetMs)} vs test ${secs(t.testMs)}: resets were ${pct(t.resetMs, s.wallMs)} of the wall clock` +
       ` (${pct(t.resetMs, s.wallMs - s.setupMs)} excluding setup)`,
   )
+  if (pool !== undefined) out.push(...formatPool(pool))
   return out.join("\n")
+}
+
+export function formatPool(p: PoolStats): string[] {
+  const serial = p.jobMs + p.resetMs
+  return [
+    `pool of ${String(p.instances.length)} (${p.instances.join(", ")}): ${secs(p.runMs)} wall clock, setup excluded; ` +
+      `job time ${secs(p.jobMs)} summed, resets ${secs(p.resetMs)} summed` +
+      (p.runMs > 0 ? ` — ${(serial / p.runMs).toFixed(2)}x one instance back to back` : ""),
+    `exposed reset (resetting, no job running): ${secs(p.exposedResetMs)}, ${pct(p.exposedResetMs, p.runMs)} of the wall clock`,
+    `  ${p.perInstance.map((i) => `${i.instance}: ${String(i.jobs)} job(s), busy ${secs(i.busyMs)}`).join("; ")}`,
+  ]
 }
 
 const xmlEscape = (s: string): string =>
@@ -172,6 +262,9 @@ export function toJson(s: RunSummary): string {
       wallMs: s.wallMs,
       setupMs: s.setupMs,
       resetShare: s.wallMs > 0 ? t.resetMs / s.wallMs : null,
+      ...(s.pool === undefined
+        ? {}
+        : { pool: { ...s.pool, exposedResetShare: s.pool.runMs > 0 ? s.pool.exposedResetMs / s.pool.runMs : null } }),
       jobs: s.jobs,
     },
     null,
