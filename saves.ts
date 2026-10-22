@@ -404,6 +404,16 @@ export function removeSave(instance: string, name: string): void {
   rmSync(saveDir(instance, name), { recursive: true, force: true })
 }
 
+/**
+ * Every save of an instance, for `destroy`. Left behind, they are not just
+ * gigabytes nobody can see in `ls`: a new instance of the same name inherits
+ * them, so its first `start` recalls the old stow and `rewind` goes back to the
+ * old baseline.
+ */
+export function removeAllSaves(instance: string): void {
+  rmSync(savesDir(instance), { recursive: true, force: true })
+}
+
 // ---------------------------------------------------------------------------
 // "This instance has never been started": the trigger for the automatic baseline
 

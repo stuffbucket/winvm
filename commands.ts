@@ -31,6 +31,7 @@ import * as agentcmds from "./agentcmds"
 import * as qemu from "./qemu"
 import * as qmp from "./qmp"
 import * as qga from "./qga"
+import * as saves from "./saves"
 import * as savecmds from "./savecmds"
 import * as snapshot from "./snapshot"
 import * as timemachine from "./timemachine"
@@ -139,6 +140,7 @@ export function prune(args: Args): number {
     const size = du(p.dir)
     qemu.stopSwtpm(p)
     rmSync(p.dir, { recursive: true, force: true })
+    saves.removeAllSaves(name)
     console.log(`  removed scratch instance "${name}" (${size})`)
     freedAnything = true
   }
@@ -759,10 +761,25 @@ export function destroy(args: Args): number {
     return 1
   }
   qemu.stopSwtpm(p)
+  const size = du(instanceDir(name))
   rmSync(instanceDir(name), { recursive: true, force: true })
-  console.log(`destroyed instance "${name}" (image untouched)`)
+  console.log(`destroyed instance "${name}" (${size}; image untouched)`)
+  if (!existsSync(saves.savesDir(name))) return 0
+  const kept = saves.listSaves(name)
+  if (args.flags.has("keep-saves")) {
+    // `load` recreates the instance from one of them.
+    console.log(`  kept its ${plural(kept.length, "save")} in ${saves.savesDir(name)}`)
+    return 0
+  }
+  // du counts the APFS-cloned disks in full, so this can be more than the
+  // space actually returned while the clones still share blocks.
+  const savesSize = du(saves.savesDir(name))
+  saves.removeAllSaves(name)
+  console.log(`  and its ${plural(kept.length, "save")} (${savesSize})`)
   return 0
 }
+
+const plural = (n: number, noun: string): string => `${String(n)} ${noun}${n === 1 ? "" : "s"}`
 
 export async function exec(args: Args): Promise<number> {
   const name = instanceName(args)
@@ -961,7 +978,8 @@ export const USAGE =
   "  reset   [-i name]             discard changes, back to the base image\n" +
   "  rmi <image> [--force]         remove a base image (undoes its read-only seal)\n" +
   "  prune [--media]               drop leftover build scratch instances, and cached media\n" +
-  "  stop | kill | destroy [-i name]\n" +
+  "  stop | kill [-i name]\n" +
+  "  destroy [-i name] [--keep-saves]  remove the instance and its saves\n" +
   "  watch   [-i name]             run the idle watcher in the foreground (start runs it in the background)\n" +
   "          [--stop | --status]   end it / print its state\n" +
   "  config  [-i name] [key=value ...]  autosave/stow/watch settings; bare prints them\n" +

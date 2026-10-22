@@ -180,7 +180,8 @@ bun winvm.ts clock                      # guest-vs-host offset, and fix it
 - **Storage.** `~/.local/state/winvm/saves/<instance>/<name>/`: `manifest.json`,
   `vmstate.zst` (zstd'd QEMU migration stream), plus APFS clones of the overlay
   and NVRAM, which cost little until the instance overwrites what they share.
-  `destroy` leaves an instance's saves alone; `load` recreates the instance.
+  `destroy` removes an instance's saves with it; `destroy --keep-saves` keeps
+  them, and `load` then recreates the instance from one.
 - **Formats.** `--format zstd` (default) is ~5x smaller and loads in ~2.5 s.
   `--fast` (`--format mapped`: QEMU mapped-ram + multifd, `vmstate.mapped`) is
   uncompressed and slower to write, but restores in ~0.5 s — for a save loaded
