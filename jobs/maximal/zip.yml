@@ -1,0 +1,87 @@
+# Maximal portable zip: unpack, run the CLI, start the proxy briefly against
+# an isolated home, check its health endpoints, stop it, and check it wrote
+# nothing outside that home.
+#
+#   bun winvm.ts run jobs/maximal/zip.yml -i ci
+name: maximal portable zip smoke
+timeout: 5m
+env:
+  PORT: "4141"
+  APP: C:\work\portable
+  # Highest-precedence home override on every platform (src/lib/platform/paths.ts).
+  COPILOT_API_HOME: C:\work\home
+files:
+  - release: stuffbucket/maximal
+    tag: ${{ env.MAXIMAL_TAG || 'latest' }}
+    pattern: "maximal-*-windows-x64.zip"
+    dest: C:\work\
+steps:
+  - name: unpack (bsdtar reads zip)
+    shell: cmd
+    run: |
+      mkdir "%APP%" 2>nul
+      for %%f in (C:\work\maximal-*-windows-x64.zip) do tar -xf "%%f" -C "%APP%" || exit /b 1
+      dir /b "%APP%"
+      if not exist "%APP%\maximal.exe" (echo no maximal.exe in the zip & exit /b 11)
+      if not exist "%APP%\maximal-mcp-broker.exe" (echo no maximal-mcp-broker.exe in the zip & exit /b 12)
+
+  - name: allow maximal through the firewall (it binds all interfaces)
+    shell: cmd
+    run: netsh advfirewall firewall add rule name="maximal portable (winvm job)" dir=in action=allow program="%APP%\maximal.exe" enable=yes >nul
+
+  - name: maximal --version is the release's
+    shell: cmd
+    run: |
+      for %%f in (C:\work\maximal-v*-windows-x64.zip) do set "Z=%%~nf"
+      set "VER=%Z:maximal-v=%"
+      set "VER=%VER:-windows-x64=%"
+      "%APP%\maximal.exe" --version > C:\work\version.txt 2>&1
+      type C:\work\version.txt
+      findstr /c:"%VER%" C:\work\version.txt >nul || (echo expected %VER% & exit /b 21)
+
+  - name: maximal debug --json
+    shell: cmd
+    run: |
+      "%APP%\maximal.exe" debug --json > C:\work\debug.json || exit /b 22
+      findstr /c:"version" C:\work\debug.json >nul || (type C:\work\debug.json & exit /b 23)
+
+  - name: start the proxy
+    shell: cmd
+    background: true
+    run: '"%APP%\maximal.exe" start --port %PORT%'
+
+  - name: it answers /setup-status and /status
+    shell: cmd
+    timeout: 90
+    run: |
+      curl.exe -sSf --retry 60 --retry-delay 1 --retry-all-errors --max-time 2 -o nul http://127.0.0.1:%PORT%/setup-status || exit /b 31
+      curl.exe -sSf --max-time 5 http://127.0.0.1:%PORT%/status > C:\work\status.json || exit /b 32
+      type C:\work\status.json
+      findstr /r /c:"service.:.maximal" C:\work\status.json >nul || exit /b 33
+
+  - name: stop it; no maximal process survives
+    shell: cmd
+    run: |
+      taskkill /f /t /im maximal.exe >nul 2>&1
+      ping -n 2 127.0.0.1 >nul
+      tasklist /fo csv /nh | findstr /i "maximal" && (echo maximal processes still running & exit /b 41)
+      exit /b 0
+
+  - name: state stayed under COPILOT_API_HOME
+    shell: cmd
+    run: |
+      dir /s /b "%COPILOT_API_HOME%" 2>nul
+      if exist "%APPDATA%\maximal" (echo wrote to %APPDATA%\maximal despite COPILOT_API_HOME & dir /s /b "%APPDATA%\maximal" & exit /b 51)
+      exit /b 0
+
+  - name: cleanup
+    if: always()
+    shell: cmd
+    run: taskkill /f /t /im maximal.exe >nul 2>&1 & exit /b 0
+
+artifacts:
+  when: failure
+  paths:
+    - C:\work\*.json
+    - C:\work\*.txt
+    - C:\work\.winvm\*.log

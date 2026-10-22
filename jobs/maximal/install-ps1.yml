@@ -1,0 +1,87 @@
+# Maximal install.ps1: the documented one-liner (`iex (irm …/install.ps1)`),
+# pointed at a host-served copy of the release via COPILOT_API_BASE_URL;
+# then what it installed, the CLI on the new PATH, its uninstaller, and that
+# the uninstall leaves nothing behind.
+#
+#   bun winvm.ts run jobs/maximal/install-ps1.yml -i ci
+name: maximal install.ps1 install + uninstall
+timeout: 10m
+files:
+  # install.ps1 and the checksum staged (the checksum's name says the version);
+  # the zip only served — install.ps1 downloads it from $env:WINVM_FILES.
+  - release: stuffbucket/maximal
+    tag: ${{ env.MAXIMAL_TAG || 'latest' }}
+    pattern: ["install.ps1", "maximal-*-windows-x64.zip.sha256"]
+    dest: C:\work\
+  - release: stuffbucket/maximal
+    tag: ${{ env.MAXIMAL_TAG || 'latest' }}
+    pattern: "maximal-*-windows-x64.zip"
+steps:
+  - name: iex (irm install.ps1), from the host-served release
+    timeout: 5m
+    run: |
+      # The user PATH before, raw (unexpanded), for the PATH step to compare against.
+      (Get-Item HKCU:\Environment).GetValue('Path', '', 'DoNotExpandEnvironmentNames') | Set-Content C:\work\path-before.txt
+      $sha = (Get-ChildItem C:\work\maximal-*-windows-x64.zip.sha256).Name
+      $env:COPILOT_API_VERSION = $sha -replace '^maximal-(v.+)-windows-x64\.zip\.sha256$', '$1'
+      $env:COPILOT_API_BASE_URL = $env:WINVM_FILES
+      iex (irm "$env:WINVM_FILES/install.ps1")
+
+  - name: files, user PATH, Add/Remove Programs entry, uninstaller
+    shell: cmd
+    run: |
+      set "DIR=%LOCALAPPDATA%\Programs\maximal"
+      if not exist "%DIR%\maximal.exe" (echo missing maximal.exe & exit /b 11)
+      if not exist "%DIR%\maximal-mcp-broker.exe" (echo missing maximal-mcp-broker.exe & exit /b 12)
+      if not exist "%DIR%\uninstall.ps1" (echo missing uninstall.ps1 & exit /b 13)
+      reg query HKCU\Environment /v Path | findstr /i /c:"%DIR%" || (echo install dir not on the user PATH & exit /b 14)
+      reg query HKCU\Software\Microsoft\Windows\CurrentVersion\Uninstall\maximal /v QuietUninstallString || (echo no Add/Remove Programs entry & exit /b 15)
+      reg query HKCU\Software\stuffbucket\maximal /v installed >nul 2>&1 && (echo the MSI marker should not be set & exit /b 16)
+      exit /b 0
+
+  - name: the user PATH gained the install dir as its own entry, and lost nothing
+    run: |
+      $before = @((Get-Content C:\work\path-before.txt -Raw).Trim() -split ';' | Where-Object { $_ -ne '' })
+      $after = @([Environment]::GetEnvironmentVariable('Path', 'User') -split ';' | Where-Object { $_ -ne '' })
+      $dir = Join-Path $env:LOCALAPPDATA 'Programs\maximal'
+      "user PATH now: $($after -join ' | ')"
+      if ($after -notcontains $dir) { throw "'$dir' is not an entry of the user PATH" }
+      foreach ($b in $before) {
+        if ($after -notcontains [Environment]::ExpandEnvironmentVariables($b) -and $after -notcontains $b) { throw "entry '$b' was lost from the user PATH" }
+      }
+
+  - name: maximal --version is the Add/Remove Programs version
+    if: always()
+    run: |
+      $out = (& "$env:LOCALAPPDATA\Programs\maximal\maximal.exe" --version 2>&1 | Out-String).Trim()
+      $out
+      $want = (Get-ItemProperty HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\maximal).DisplayVersion
+      if ($out -notmatch [regex]::Escape($want)) { throw "maximal --version says '$out', Add/Remove Programs says '$want'" }
+
+  - name: uninstall with the Add/Remove Programs QuietUninstallString
+    if: always()
+    shell: cmd
+    timeout: 3m
+    run: |
+      for /f "tokens=2,*" %%a in ('reg query HKCU\Software\Microsoft\Windows\CurrentVersion\Uninstall\maximal /v QuietUninstallString ^| findstr QuietUninstallString') do set "UN=%%b"
+      echo %UN%
+      %UN%
+
+  - name: nothing left behind
+    if: always()
+    shell: cmd
+    run: |
+      set "DIR=%LOCALAPPDATA%\Programs\maximal"
+      if exist "%DIR%\maximal.exe" (echo maximal.exe still there & exit /b 41)
+      if exist "%DIR%\maximal-mcp-broker.exe" (echo broker still there & exit /b 42)
+      if exist "%DIR%\uninstall.ps1" (echo uninstall.ps1 still there & exit /b 43)
+      reg query HKCU\Environment /v Path 2>nul | findstr /i /c:"%DIR%" && (echo install dir still on PATH & exit /b 44)
+      reg query HKCU\Software\Microsoft\Windows\CurrentVersion\Uninstall\maximal >nul 2>&1 && (echo Add/Remove Programs entry still there & exit /b 45)
+      tasklist /fo csv /nh | findstr /i "maximal" && (echo maximal processes still running & exit /b 46)
+      if exist "%DIR%" (echo note: %DIR% itself remains & dir /b /a "%DIR%")
+      exit /b 0
+
+artifacts:
+  when: failure
+  paths:
+    - C:\work\.winvm\*.log
