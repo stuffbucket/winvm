@@ -124,6 +124,37 @@ const t = await ui.tree({ process: "maximal-shell" }, { depth: 6 })
 Errors are `UiError` with a `code`: `notfound`, `timeout`, `covered`, `bad`,
 `unavailable` (no helper: off Windows, or an agent older than v4), `fail`.
 
+### UI Automation numbers
+
+Measured on `win11-arm64-v3` (800x600), M-series host, 2026-10-22, against
+Maximal v0.4.47 (x64 under Prism; Settings is WebView2), from the host through
+the agent (`ui.ts`, one held process; 20 runs, 5 for the compound rows).
+`winvm ui …` from the shell adds ~50 ms of bun start-up (`ui ping` end to end:
+50-60 ms).
+
+| operation | median | p90 |
+|---|---|---|
+| `ping` (host → agent → helper → back) | **3 ms** | 7 ms |
+| `windows` (top-level, with process names) | 6 ms | 9 ms |
+| `find`, scoped: window + name (a WebView2 link) | **20 ms** | 24 ms |
+| `find`, scoped: window + AutomationId (title-bar Close) | 20 ms | 25 ms |
+| `find`, whole desktop by name | 32 ms | 34 ms |
+| `tree` of the Settings window (62 elements, one cached walk) | 24 ms | 29 ms |
+| `click` (real input, hit-tested; incl. find and the 40 ms hover) | **128 ms** | 142 ms |
+| `invoke` (InvokePattern) | 44 ms | 53 ms |
+| click a nav link → its section title is there (`click` + `wait`) | ~200 ms | |
+| `settle`, quiet 300 ms, on an idle window / the desktop | 381 / 364 ms | 401 / 378 ms |
+| `tray Maximal --menu Settings` (open flyout, wait for the icon to stop, right-click, menu item, close flyout) | **1.2 s** | 2.1 s |
+| quit: `tray … --menu "Quit Maximal"` / confirm-dialog `click --settle 200` / windows gone | 0.8 s / 0.5 s / 0.15 s | |
+
+The helper's first request after it starts pays ~300-450 ms of UIA warm-up
+(`forInstance` spends it on a `ping`). Most of a tray call is waiting on the
+shell: the flyout opens in 130-260 ms and slides for ~350 ms more, and the
+chevron ignores a click within ~0.5 s of the flyout closing.
+`jobs/maximal/nsis.yml` passes in 25-31 s from a golden reset (6 of 6 in a
+row on a fresh golden); its tray steps take 7-9 s (Settings, most of it
+waiting out the start-up toast) and 1.4-4 s (Quit and confirm).
+
 ### How it works
 
 `winvm-ui.exe` (`assets/winvm-ui.cs`, C# 5) is compiled in the guest by
