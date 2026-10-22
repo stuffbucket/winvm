@@ -11,6 +11,8 @@
  *   winvm rewind   [-i name] [tag]   put it back — ~10-20 s running, no reboot
  *   winvm reset [-i name]            discard all changes, back to the base
  *   winvm ls                         images and instances, with disk usage
+ *   winvm watch [-i name] [--stop]   idle watcher: autosave, stow, clock sync
+ *   winvm config [-i name] [k=v ...] per-instance watcher settings
  *   winvm timemachine [--yes]        keep the VM files out of Time Machine backups
  *
  * ## Self-contained and project-agnostic, on purpose
@@ -76,6 +78,8 @@
  *   qga.ts        guest-agent client (the scriptable channel)
  *   qmp.ts        QEMU monitor client (keystrokes, snapshots)
  *   snapshot.ts   capture and restore a running guest
+ *   watch.ts      the per-instance watcher process (idle.ts holds its decisions)
+ *   config.ts     per-instance settings
  *   diagnose.ts   known failure signatures, read from a guest's own artifacts
  *   media.ts      seed ISO and result volume
  *   instance.ts   create / reset / seal
@@ -139,6 +143,12 @@ switch (sub) {
   // eslint-disable-next-line no-fallthrough
   case "snapshots":
     process.exit(await commands.snapshots(args))
+  // eslint-disable-next-line no-fallthrough
+  case "watch":
+    process.exit(await commands.watchCmd(args))
+  // eslint-disable-next-line no-fallthrough
+  case "config":
+    process.exit(commands.configCmd(args))
   // eslint-disable-next-line no-fallthrough
   case "diagnose":
     process.exit(commands.diagnoseCmd(args))

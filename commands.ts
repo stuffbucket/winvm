@@ -32,6 +32,8 @@ import * as qmp from "./qmp"
 import * as qga from "./qga"
 import * as snapshot from "./snapshot"
 import * as timemachine from "./timemachine"
+import * as watcher from "./watch"
+import { CONFIG_KEYS, DEFAULTS, effectiveConfig, parseAssignment, readOverrides, writeAssignments } from "./config"
 
 /**
  * Whether this instance's image can boot on virtio-blk, which is what live
@@ -464,6 +466,7 @@ export async function start(args: Args): Promise<number> {
   const p = pathsFor(name)
   if (qemu.isRunning(p)) {
     console.log(`instance "${name}" already running`)
+    startWatcher(name, args)
     return 0
   }
   ensureInstance(name, imageName(args))
@@ -493,6 +496,7 @@ export async function start(args: Args): Promise<number> {
     return 1
   }
   console.log(`instance "${name}" up (vnc :${String(meta.vnc)})`)
+  startWatcher(name, args)
   // DELIBERATELY NO AUTOMATIC SNAPSHOT HERE.
   //
   // Taking one on first boot was tried and was a mistake in two ways. It froze
@@ -540,6 +544,7 @@ export async function snap(args: Args): Promise<number> {
     console.error(`::error::guest "${name}" is not ready — snapshotting one that is still booting wedges it`)
     return 1
   }
+  watcher.touchActivity(name)
   const started = Date.now()
   await snapshot.save(p, tag)
   console.log(`snapshot "${tag}" taken in ${String(Date.now() - started)} ms`)
@@ -598,6 +603,8 @@ export async function rewind(args: Args): Promise<number> {
     return 1
   }
   console.log(`rewound "${name}" to "${tag}" in ${String(Date.now() - started)} ms`)
+  watcher.touchActivity(name)
+  startWatcher(name, args)
   return 0
 }
 
@@ -627,6 +634,8 @@ export async function stop(args: Args): Promise<number> {
     console.log(`instance "${name}" is not running`)
     return 0
   }
+  // First, so it cannot decide to autosave a guest that is shutting down.
+  await watcher.stopWatcher(name)
   await qga.shutdown(p.qga)
   const deadline = Date.now() + 180_000
   while (Date.now() < deadline) {
@@ -650,6 +659,7 @@ export function kill(args: Args): number {
   }
   process.kill(pid, "SIGKILL")
   rmSync(p.pid, { force: true })
+  void watcher.stopWatcher(name)
   console.log(`killed instance "${name}"`)
   return 0
 }
@@ -700,7 +710,8 @@ export async function exec(args: Args): Promise<number> {
     console.error("::error::usage: winvm exec [-i name] -- <program> [args...]")
     return 1
   }
-  const r = await qga.exec(p.qga, program, rest)
+  // Activity for the whole run, so the watcher never saves or stows mid-command.
+  const r = await watcher.whileActive(name, qga.exec(p.qga, program, rest))
   if (r.stdout !== "") process.stdout.write(r.stdout)
   if (r.stderr !== "") process.stderr.write(r.stderr)
   return r.exitcode
@@ -720,6 +731,7 @@ export async function smoke(args: Args): Promise<number> {
     console.error(`::error::instance "${name}" is not running`)
     return 1
   }
+  watcher.touchActivity(name)
   const ps = "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe"
   // ARCHITECTURE MUST COME FROM THE HARDWARE, NOT THE ENVIRONMENT.
   //
@@ -783,6 +795,69 @@ export function diagnoseCmd(args: Args): number {
   return findings.some((f) => f.severity === "error") ? 1 : 0
 }
 
+/** Launch the background watcher after a start, unless `--no-watch` or `watch.enabled=false`. */
+function startWatcher(name: string, args: Args): void {
+  if (args.flags.has("no-watch")) return
+  const pid = watcher.ensureWatcher(name)
+  if (pid !== null) console.log(`watcher: pid ${String(pid)} · ${watcher.watchPathsFor(name).log}`)
+}
+
+/**
+ * `winvm watch [-i name]` runs the watcher in the foreground (it is what
+ * `start` launches detached). `--stop` ends a running one; `--status` prints
+ * its watch.json.
+ */
+export async function watchCmd(args: Args): Promise<number> {
+  const name = instanceName(args)
+  if (args.flags.has("stop")) {
+    const stopped = await watcher.stopWatcher(name)
+    console.log(stopped ? `stopped the watcher for "${name}"` : `instance "${name}" has no watcher running`)
+    return 0
+  }
+  if (args.flags.has("status")) {
+    const pid = watcher.watcherPid(name)
+    const st = watcher.readWatchState(name)
+    if (st === null) console.log(`instance "${name}" has never been watched`)
+    else console.log(JSON.stringify(pid === null ? { ...st, state: "stopped" } : st, null, 2))
+    return 0
+  }
+  const interval = args.flags.get("interval")
+  const tickMs = interval === undefined ? undefined : Number(interval) * 1000
+  if (tickMs !== undefined && !(tickMs >= 1000)) {
+    console.error("::error::--interval is a number of seconds, at least 1")
+    return 1
+  }
+  return await watcher.watch(name, {
+    ...(tickMs === undefined ? {} : { timing: { tickMs } }),
+    stub: args.flags.has("stub-actions"),
+  })
+}
+
+/** `winvm config [-i name] [key=value ...]`: set, then print the effective settings. */
+export function configCmd(args: Args): number {
+  const name = instanceName(args)
+  if (args.positional.length > 0) {
+    if (readMeta(name) === null) {
+      console.error(`::error::no such instance "${name}"`)
+      return 1
+    }
+    try {
+      writeAssignments(name, args.positional.map(parseAssignment))
+    } catch (error) {
+      console.error(`::error::${error instanceof Error ? error.message : String(error)}`)
+      return 1
+    }
+  }
+  const eff = effectiveConfig(name)
+  const set = readOverrides(name)
+  console.log(`instance "${name}":`)
+  for (const k of CONFIG_KEYS) {
+    const note = Object.hasOwn(set, k) ? `(default ${String(DEFAULTS[k])})` : "(default)"
+    console.log(`  ${k.padEnd(22)} ${String(eff[k]).padEnd(6)} ${note}`)
+  }
+  return 0
+}
+
 export const USAGE =
   "winvm <command>\n\n" +
   "  setup                         install missing host prerequisites, fetch pinned media\n" +
@@ -792,7 +867,7 @@ export const USAGE =
   "        [--payload <dir>] [--bun <version>] [--image <name>]\n" +
   "  adopt <disk.qcow2>            adopt an installed disk as a base image\n" +
   "  ls                            images and instances, with disk usage\n" +
-  "  start   [-i name] [--ephemeral]\n" +
+  "  start   [-i name] [--ephemeral] [--no-watch]\n" +
   "  exec    [-i name] -- <cmd>    run a command in the guest\n" +
   "  smoke   [-i name] [--expect <v> | --expect-file <path>] [--probe <exe>]\n" +
   "  snapshot [-i name] [tag]      capture the running guest, RAM and all\n" +
@@ -803,7 +878,10 @@ export const USAGE =
   "  reset   [-i name]             discard changes, back to the base image\n" +
   "  rmi <image> [--force]         remove a base image (undoes its read-only seal)\n" +
   "  prune [--media]               drop leftover build scratch instances, and cached media\n" +
-  "  stop | kill | destroy [-i name]\n\n" +
+  "  stop | kill | destroy [-i name]\n" +
+  "  watch   [-i name]             run the idle watcher in the foreground (start runs it in the background)\n" +
+  "          [--stop | --status]   end it / print its state\n" +
+  "  config  [-i name] [key=value ...]  autosave/stow/watch settings; bare prints them\n\n" +
   "  state:    WINVM_HOME       (default ~/.local/state/winvm)\n" +
   "  iso:      WINVM_ISO        (else asked once, then remembered)\n" +
   "  instance: WINVM_INSTANCE / -i   (default \"default\")\n" +

@@ -143,3 +143,22 @@ export async function tapEnter(sockPath: string, count: number, intervalMs: numb
     }
   })
 }
+
+/**
+ * Run one QMP command and return its `return` value. Throws on a QMP error,
+ * including a timeout — QEMU serves one monitor client at a time, so a long
+ * `savevm` elsewhere holds the socket and a caller here should treat failure as
+ * "unknown", not as an answer.
+ */
+export async function query(
+  sockPath: string,
+  execute: string,
+  args?: Record<string, unknown>,
+  timeoutMs = 10_000,
+): Promise<unknown> {
+  return await withSocket(sockPath, async (_send, request) => {
+    const reply = await request(args === undefined ? { execute } : { execute, arguments: args }, timeoutMs)
+    if (reply["error"] !== undefined) throw new Error(`qmp ${execute}: ${JSON.stringify(reply["error"])}`)
+    return reply["return"]
+  })
+}
