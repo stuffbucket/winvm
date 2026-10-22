@@ -38,7 +38,7 @@ class UiError : Exception {
 
 static class WinvmUi {
   // ui.ts UI_HELPER_VERSION must match: the host reinstalls the agent when it does not.
-  const int VERSION = 4;
+  const int VERSION = 6;
 
   [DllImport("user32.dll")] static extern bool SetProcessDpiAwarenessContext(IntPtr v);
   [DllImport("user32.dll")] static extern bool SetForegroundWindow(IntPtr h);
@@ -52,6 +52,8 @@ static class WinvmUi {
   [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern int GetClassName(IntPtr h, StringBuilder s, int n);
   [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern int GetWindowText(IntPtr h, StringBuilder s, int n);
   [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr h, out uint pid);
+  [DllImport("user32.dll")] static extern bool IsWindowVisible(IntPtr h);
+  [DllImport("dwmapi.dll")] static extern int DwmGetWindowAttribute(IntPtr h, int attr, out int value, int size);
   [DllImport("user32.dll")] static extern uint GetDpiForSystem();
   [DllImport("kernel32.dll")] static extern bool IsWow64Process2(IntPtr p, out ushort pm, out ushort nm);
   [StructLayout(LayoutKind.Sequential)] struct MOUSEINPUT { public int dx, dy; public uint mouseData, dwFlags, time; public IntPtr dwExtraInfo; }
@@ -126,6 +128,8 @@ static class WinvmUi {
       reply = new Dictionary<string, object> { { "id", id }, { "result", result } };
     } catch (UiError e) {
       reply = new Dictionary<string, object> { { "id", id }, { "error", e.Message }, { "code", e.Code } };
+    } catch (ElementNotAvailableException) {
+      reply = new Dictionary<string, object> { { "id", id }, { "error", "the element went away while being used (its window closed or redrew); try again" }, { "code", "notfound" } };
     } catch (Exception e) {
       reply = new Dictionary<string, object> { { "id", id }, { "error", e.GetType().Name + ": " + e.Message }, { "code", "fail" } };
     }
@@ -740,9 +744,21 @@ static class WinvmUi {
         }
         if (icon != null) {
           // A flyout still closing from a previous call shows the icon, then takes it away: look again.
-          Steady(icon, 1500);
-          try { p = ClickPoint(icon); } catch (Exception) { icon = null; }
-          if (p != null) p = ClearPoint(icon, Math.Max(1000, timeout - (int)sw.ElapsedMilliseconds));
+          try {
+            Steady(icon, 1500);
+            p = ClickPoint(icon);
+            // Covered: a toast (it goes), or the flyout sank behind a window
+            // that came forward (it stays): close the flyout and open it again.
+            p = ClearPoint(icon, overflow ? 2000 : Math.Max(1000, timeout - (int)sw.ElapsedMilliseconds));
+          } catch (ElementNotAvailableException) { p = null; icon = null; }
+          catch (UiError e) {
+            p = null; icon = null;
+            if (e.Code == "covered") {
+              if (sw.ElapsedMilliseconds >= timeout) throw;
+              Log("tray: " + e.Message + "; reopening the flyout");
+              CloseOverflow(bar);
+            }
+          }
         }
         if (p == null) {
           if (sw.ElapsedMilliseconds >= timeout) throw new UiError("notfound", "no tray icon like \"" + tip + "\" on the taskbar or in the overflow");
@@ -769,12 +785,29 @@ static class WinvmUi {
       }
     }
     // The flyout stays open over the desktop after its icon's menu is done
-    // with; close it the way a person would, with the chevron.
-    if (overflow && OverflowWindow() != null) {
-      var chevron = Chevron(bar);
-      if (chevron != null) { int[] c = ClickPoint(chevron); Click(c[0], c[1], "left", 1); result["closedOverflow"] = true; }
-    }
+    // with (and sinks behind whatever window the item opens); close it the
+    // way a person would, with the chevron.
+    if (overflow && CloseOverflow(bar)) result["closedOverflow"] = true;
     return result;
+  }
+
+  /** Close the overflow flyout if it is showing: the chevron toggles it. Best effort; true if it closed. */
+  static bool CloseOverflow(AutomationElement bar) {
+    try {
+      if (OverflowWindow() == null) return true;
+      var chevron = Chevron(bar);
+      if (chevron == null) return false;
+      int[] c = ClickPoint(chevron);
+      Click(c[0], c[1], "left", 1);
+      var sw = Stopwatch.StartNew();
+      while (sw.ElapsedMilliseconds < 1500) {
+        if (OverflowWindow() == null) return true;
+        Thread.Sleep(30);
+      }
+    } catch (ElementNotAvailableException) {
+    } catch (UiError) {
+    }
+    return false;
   }
 
   static void Key(ushort vk) {
@@ -813,12 +846,21 @@ static class WinvmUi {
     return null;
   }
 
+  /**
+   * The overflow flyout, if it is really showing. A closed flyout stays in the
+   * UIA tree with its old bounds, not offscreen: it is merely cloaked (DWM), so
+   * ask Win32 and DWM, not UIA.
+   */
   static AutomationElement OverflowWindow() {
     foreach (var w in TopLevel()) {
       var i = w.Cached;
       if (i.ClassName == "TopLevelWindowForOverflowXamlIsland" || i.ClassName == "NotifyIconOverflowWindow") {
         var r = i.BoundingRectangle;
-        if (!r.IsEmpty && r.Width > 0 && !i.IsOffscreen) return w;
+        if (r.IsEmpty || r.Width <= 0 || i.IsOffscreen) continue;
+        var h = new IntPtr(i.NativeWindowHandle);
+        int cloaked = 0;
+        if (h != IntPtr.Zero && (!IsWindowVisible(h) || (DwmGetWindowAttribute(h, 14 /* DWMWA_CLOAKED */, out cloaked, 4) == 0 && cloaked != 0))) continue;
+        return w;
       }
     }
     return null;

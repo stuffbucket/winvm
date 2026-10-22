@@ -159,9 +159,13 @@ themselves on first use (~5 s).
   step); `agent-install.ps1` now also turns the firewall's desktop prompts off.
 - Maximal's title-bar Close hides Settings to the tray (the process stays);
   `wait --gone` with only a scope waits for the window to leave the tree.
-- The overflow flyout stays open after its icon's menu is used, and a second
-  `tray` that finds it still closing would click a vanishing icon; `tray`
-  closes it and retries a click whose target moved.
+- **The overflow flyout lies about being open.** A closed flyout stays in the
+  UIA tree with its old bounds and not offscreen — it is only DWM-cloaked —
+  so `tray` asks `IsWindowVisible` and `DWMWA_CLOAKED`. An open one stays open
+  after its icon's menu is used and sinks behind the window the item opened
+  (Settings, 820x620, covers the whole 800x600 screen); `tray` closes it
+  afterwards, and if it finds its icon covered anyway it closes and reopens
+  the flyout (a covering toast is waited out the same way).
 
 
 ```sh

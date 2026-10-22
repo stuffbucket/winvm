@@ -83,7 +83,7 @@ steps:
       ui wait --process maximal-shell --window Settings --gone --timeout 15
       ui tray Maximal --menu Settings --timeout 30
       ui wait --process maximal-shell --window Settings --name Account --type Text --timeout 30
-      ui find --process maximal-shell --window Settings --name "Sign in to GitHub" --type Button
+      ui wait --process maximal-shell --window Settings --name "Sign in to GitHub" --type Button --timeout 15
 
   - name: Quit Maximal from the tray menu and confirm
     shell: winvm

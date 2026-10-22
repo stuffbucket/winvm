@@ -25,7 +25,7 @@ import type { AgentClient } from "./agent"
 import { AgentError, ensure, install } from "./agent"
 
 /** assets/winvm-ui.cs VERSION: an older helper in the guest is replaced by reinstalling the agent. */
-export const UI_HELPER_VERSION = 4
+export const UI_HELPER_VERSION = 6
 
 export interface Selector {
   readonly window?: string
