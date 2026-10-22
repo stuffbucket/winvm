@@ -1010,6 +1010,8 @@ export const USAGE =
   "  display [-i name] [WxH|ramfb] show or set the screen size\n" +
   "  webview [-i name] enable <exe> | targets | eval <js> | click|wait|text <selector>\n" +
   "                                drive WebView2 windows over DevTools (winvm webview for more)\n" +
+  "  cua serve [-i name] [--port N] [--size WxH]   Claude computer-use endpoint on 127.0.0.1 (bearer token)\n" +
+  "  cua run [-i name] \"<task>\" [--model M] [--max-steps N] [--extras]   a computer-use agent loop\n" +
   "  timemachine [--yes]           exclude the VM files from Time Machine backups\n" +
   "  snapshots [-i name]           list them\n" +
   "  reset   [-i name]             discard changes, back to the base image\n" +

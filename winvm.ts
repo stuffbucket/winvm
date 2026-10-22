@@ -23,6 +23,7 @@
  *   winvm screenshot | type | key | click | move | scroll   drive it with no window
  *   winvm webview enable|eval|click|wait|text   WebView2 windows over DevTools
  *   winvm ocr [--find T] / click --text T   read the screen with macOS Vision
+ *   winvm cua serve | run "<task>"   Claude's computer-use tool against the guest; see cuacmds.ts
  *   winvm toasts [--since T] [--find T]     notifications apps raised, from Windows' record
  *   winvm watch [-i name] [--stop]   idle watcher: autosave, stow, clock sync
  *   winvm config [-i name] [k=v ...] per-instance watcher settings
@@ -112,6 +113,7 @@
  *   web.ts        `web`: the browser view's server; web/ holds the page and noVNC
  *   webview.ts    `webview`: WebView2 DevTools from the host (cdp.ts the client)
  *   ocr.ts        `ocr`, `click --text`: screendump + Vision (assets/ocr.swift)
+ *   cua.ts        computer-use actions -> QMP (cuacmds.ts: `cua serve`, `cua run`)
  *   toasts.ts     `toasts`: the guest's notification database, read on the host
  *   media.ts      seed ISO and result volume
  *   instance.ts   create / reset / seal
@@ -125,6 +127,7 @@ import { parseArgs } from "./args"
 import * as agentcmds from "./agentcmds"
 import * as uicmds from "./uicmds"
 import * as commands from "./commands"
+import * as cuacmds from "./cuacmds"
 import * as goldens from "./golden"
 import * as ocr from "./ocr"
 import * as runcmds from "./runcmds"
@@ -287,6 +290,12 @@ switch (sub) {
   // eslint-disable-next-line no-fallthrough
   case "toasts":
     process.exit(await toasts.toasts(args))
+  // eslint-disable-next-line no-fallthrough
+  case "cua":
+    process.exit(await cuacmds.cua(args))
+  // eslint-disable-next-line no-fallthrough
+  case "cua-serve":
+    process.exit(await cuacmds.cua(args, "serve"))
   // eslint-disable-next-line no-fallthrough
   default:
     console.error(commands.USAGE)

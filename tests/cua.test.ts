@@ -26,6 +26,7 @@ import {
   toNative,
 } from "../cua"
 import type { Rgb } from "../cua"
+import { EXTRA_TOOLS, authorized, parseSize, selectorFrom, systemPrompt } from "../cuacmds"
 import { pngSize } from "../input"
 
 describe("scaling", () => {
@@ -210,5 +211,38 @@ describe("images", () => {
       out.push(...px)
     }
     expect(out).toEqual([...img.data])
+  })
+})
+
+describe("serve and run helpers", () => {
+  it("parses --size", () => {
+    expect(parseSize(undefined)).toEqual(DEFAULT_BOX)
+    expect(parseSize("1366x768")).toEqual({ width: 1366, height: 768 })
+    expect(parseSize("1366X768")).toEqual({ width: 1366, height: 768 })
+    expect(parseSize("4000x3000")).toBeNull()
+    expect(parseSize("big")).toBeNull()
+  })
+
+  it("checks the bearer token", () => {
+    expect(authorized("Bearer s3cret", "s3cret")).toBe(true)
+    expect(authorized("Bearer s3cre", "s3cret")).toBe(false)
+    expect(authorized("Bearer s3cretx", "s3cret")).toBe(false)
+    expect(authorized("s3cret", "s3cret")).toBe(false)
+    expect(authorized(null, "s3cret")).toBe(false)
+  })
+
+  it("takes only known selector keys from tool input", () => {
+    expect(selectorFrom({ name: "OK", controlType: "Button", hwnd: 5, window: "", extra: "x" })).toEqual({ name: "OK", controlType: "Button" })
+  })
+
+  it("declares well-formed extra tools", () => {
+    expect(EXTRA_TOOLS.map((t) => t.name)).toEqual(["ui_find", "ui_click", "ocr_find"])
+    for (const t of EXTRA_TOOLS) expect(t.input_schema.type).toBe("object")
+  })
+
+  it("tells the model the screenshot size", () => {
+    expect(systemPrompt({ width: 1280, height: 720 }, false)).toContain("1280x720")
+    expect(systemPrompt({ width: 1280, height: 720 }, false)).not.toContain("ui_find")
+    expect(systemPrompt({ width: 1280, height: 720 }, true)).toContain("ui_find")
   })
 })

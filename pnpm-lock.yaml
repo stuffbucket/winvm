@@ -108,6 +108,10 @@ settings:
 importers:
 
   .:
+    dependencies:
+      '@anthropic-ai/sdk':
+        specifier: 0.134.0
+        version: 0.134.0
     devDependencies:
       '@types/bun':
         specifier: 1.4.0
@@ -118,6 +122,26 @@ importers:
 
 packages:
 
+  '@anthropic-ai/sdk@0.134.0':
+    resolution: {integrity: sha512-j0DNXXKUKkr3kKyVR/I3pPWVv93g7vgHjgGYgh9uCXv5IKoXZPWmTwXKiVq/SZSbhBaD3KmtKhIszzt8dBnzog==, tarball: https://ms-feed-25.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/@anthropic-ai/sdk/-/sdk-0.134.0.tgz}
+    hasBin: true
+    peerDependencies:
+      zod: ^3.25.0 || ^4.0.0
+    peerDependenciesMeta:
+      zod:
+        optional: true
+
+  '@babel/runtime@7.29.10':
+    resolution: {integrity: sha512-NpugTzbKgGrNe45Ui32cN8vCFFMxVtP/9rtfwv0nP5FRDAjvYBxJcLVpYA9mr1jxP6cnIT7x9LUzuDTbWYYNRA==, tarball: https://ms-feed-25.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/@babel/runtime/-/runtime-7.29.10.tgz}
+    engines: {node: '>=6.9.0'}
+
+  '@opentelemetry/api@1.9.1':
+    resolution: {integrity: sha1-wbA0beM2ulWvLVp5cIggN7rt7AU=, tarball: https://ms-feed-25.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/@opentelemetry/api/-/api-1.9.1.tgz}
+    engines: {node: '>=8.0.0'}
+
+  '@stablelib/base64@1.0.1':
+    resolution: {integrity: sha1-vfwcbTpi16O3u8ZbbM4btFYWQb4=, tarball: https://ms-feed-25.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/@stablelib/base64/-/base64-1.0.1.tgz}
+
   '@types/bun@1.4.0':
     resolution: {integrity: sha1-2eN9lzRItDfpy/POpCyAG2Zix3c=}
 
@@ -126,6 +150,19 @@ packages:
 
   bun-types@1.4.0:
     resolution: {integrity: sha1-IJfAcSoY2G98lCXCU4xl6xhjixM=}
+
+  fast-sha256@1.3.0:
+    resolution: {integrity: sha1-eRa6IFTuslWYJgjMzQ9mYMebeuY=, tarball: https://ms-feed-25.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/fast-sha256/-/fast-sha256-1.3.0.tgz}
+
+  json-schema-to-ts@3.1.1:
+    resolution: {integrity: sha1-gfOsr1o0c2SS9vX1GHDvns4cqFM=, tarball: https://ms-feed-25.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/json-schema-to-ts/-/json-schema-to-ts-3.1.1.tgz}
+    engines: {node: '>=16'}
+
+  standardwebhooks@1.1.1:
+    resolution: {integrity: sha1-JbmPorvk7a17QneBNckjVj49Xi8=, tarball: https://ms-feed-25.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/standardwebhooks/-/standardwebhooks-1.1.1.tgz}
+
+  ts-algebra@2.0.0:
+    resolution: {integrity: sha1-Tj4JU4ePJlGPzn9rsRUGSmU4i3o=, tarball: https://ms-feed-25.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/ts-algebra/-/ts-algebra-2.0.0.tgz}
 
   typescript@6.0.3:
     resolution: {integrity: sha1-kCUdwAeRbpcnhsuU100VsYVXfSE=}
@@ -136,6 +173,18 @@ packages:
     resolution: {integrity: sha1-4kDZfItdheU0fOc9JYZceQbB7J8=}
 
 snapshots:
+
+  '@anthropic-ai/sdk@0.134.0':
+    dependencies:
+      '@opentelemetry/api': 1.9.1
+      json-schema-to-ts: 3.1.1
+      standardwebhooks: 1.1.1
+
+  '@babel/runtime@7.29.10': {}
+
+  '@opentelemetry/api@1.9.1': {}
+
+  '@stablelib/base64@1.0.1': {}
 
   '@types/bun@1.4.0':
     dependencies:
@@ -148,6 +197,20 @@ snapshots:
   bun-types@1.4.0:
     dependencies:
       '@types/node': 26.6.5
+
+  fast-sha256@1.3.0: {}
+
+  json-schema-to-ts@3.1.1:
+    dependencies:
+      '@babel/runtime': 7.29.10
+      ts-algebra: 2.0.0
+
+  standardwebhooks@1.1.1:
+    dependencies:
+      '@stablelib/base64': 1.0.1
+      fast-sha256: 1.3.0
+
+  ts-algebra@2.0.0: {}
 
   typescript@6.0.3: {}
 
