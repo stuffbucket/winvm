@@ -38,8 +38,9 @@
  * `$env:WINVM_FILES/<basename>` (http://10.0.2.2:<port>/<token>/files), which
  * is how a job hands an installer an origin to download from.
  *
- * `${{ env.NAME }}` in a file entry's fields, or in a step's `run`, is
- * replaced before the job starts (job env, then the host's environment).
+ * `${{ env.NAME }}` (or `${{ env.NAME || 'default' }}`) in a file entry's
+ * fields, or in a step's `run`, is replaced before the job starts (job env,
+ * then the host's environment).
  */
 import { readFileSync } from "node:fs"
 import { dirname, isAbsolute, resolve } from "node:path"
@@ -185,13 +186,19 @@ function fileSpec(v: unknown, where: string, baseDir: string): FileSpec {
   return { kind: "release", repo, tag: str(v, "tag", where) ?? "latest", patterns, dest }
 }
 
-/** `${{ env.NAME }}` → the job's env, else the host's; unknown names are an error. */
+/**
+ * `${{ env.NAME }}` → the job's env, else the host's; unknown names are an
+ * error unless a default is given: `${{ env.NAME || 'fallback' }}`.
+ */
 export function interpolate(text: string, vars: Readonly<Record<string, string>>, where: string): string {
-  return text.replace(/\$\{\{\s*env\.([A-Za-z_][A-Za-z0-9_]*)\s*\}\}/g, (_, name: string) => {
-    const v = vars[name] ?? process.env[name]
-    if (v === undefined) throw new JobError(`${where}: \${{ env.${name} }} is not set`)
-    return v
-  })
+  return text.replace(
+    /\$\{\{\s*env\.([A-Za-z_][A-Za-z0-9_]*)\s*(?:\|\|\s*'([^']*)'\s*)?\}\}/g,
+    (_, name: string, dflt: string | undefined) => {
+      const v = vars[name] ?? process.env[name] ?? dflt
+      if (v === undefined) throw new JobError(`${where}: \${{ env.${name} }} is not set`)
+      return v
+    },
+  )
 }
 
 function interpolateFile(f: FileSpec, vars: Record<string, string>, where: string): FileSpec {

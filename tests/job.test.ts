@@ -93,6 +93,16 @@ describe("parseJob", () => {
   })
 })
 
+describe("interpolation", () => {
+  it("takes job env, then host env, then a default", () => {
+    process.env["WINVM_TEST_HOST_VAR"] = "host"
+    const j = parseJob(
+      "env: { A: job }\nsteps:\n  - run: ${{ env.A }} ${{ env.WINVM_TEST_HOST_VAR }} ${{ env.WINVM_UNSET_X || 'dflt' }} ${{env.A||'no'}}\n",
+    )
+    expect(j.steps[0]?.run).toBe("job host dflt job")
+  })
+})
+
 describe("parseDuration", () => {
   it("takes seconds and suffixed strings", () => {
     expect(parseDuration(90, "x")).toBe(90_000)

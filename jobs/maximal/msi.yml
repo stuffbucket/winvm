@@ -1,0 +1,104 @@
+# Maximal MSI: silent per-user install, what it puts where, the proxy starts
+# and answers, silent uninstall, and nothing left behind.
+#
+#   bun winvm.ts run jobs/maximal/msi.yml -i ci
+#   MAXIMAL_TAG=v0.4.47 bun winvm.ts run jobs/maximal/msi.yml -i ci
+#
+# The MSI is CLI-only by design (build/windows/maximal.wxs in the Maximal
+# repo): binaries under %LOCALAPPDATA%\Programs\maximal, the dir on the user
+# PATH, an HKCU marker, an Add/Remove Programs entry — and NO Start-menu
+# shortcut (the NSIS tray installer owns that). The job asserts all of it.
+#
+# Over qemu-ga this runs as SYSTEM, so "per-user" means SYSTEM's profile and
+# hive; the assertions use %LOCALAPPDATA% / HKCU and hold either way.
+name: maximal msi install + uninstall
+timeout: 10m
+env:
+  PORT: "4141"
+files:
+  - release: stuffbucket/maximal
+    tag: ${{ env.MAXIMAL_TAG || 'latest' }}
+    pattern: "maximal-*-windows-x64.msi"
+    dest: C:\work\
+steps:
+  - name: allow maximal through the firewall (it binds all interfaces)
+    shell: cmd
+    run: |
+      netsh advfirewall firewall add rule name="maximal (winvm job)" dir=in action=allow program="%LOCALAPPDATA%\Programs\maximal\maximal.exe" enable=yes >nul
+
+  - name: msiexec /i /qn
+    shell: cmd
+    timeout: 5m
+    run: |
+      for %%f in (C:\work\maximal-*-windows-x64.msi) do start "" /wait msiexec /i "%%f" /qn /norestart /l*v C:\work\msi-install.log
+      exit /b %ERRORLEVEL%
+
+  - name: files, HKCU marker, PATH, Add/Remove Programs; no Start-menu entry
+    shell: cmd
+    run: |
+      set "DIR=%LOCALAPPDATA%\Programs\maximal"
+      if not exist "%DIR%\maximal.exe" (echo missing maximal.exe & exit /b 11)
+      if not exist "%DIR%\maximal-mcp-broker.exe" (echo missing maximal-mcp-broker.exe & exit /b 12)
+      reg query HKCU\Software\stuffbucket\maximal /v installed | findstr /c:"0x1" || (echo no HKCU marker & exit /b 13)
+      reg query HKCU\Environment /v Path | findstr /i /c:"%DIR%" || (echo install dir not on the user PATH & exit /b 14)
+      rem A per-user MSI's Add/Remove Programs row is its Windows Installer product registration.
+      reg query HKCU\Software\Microsoft\Installer\Products /s /f maximal /d | findstr /i ProductName || (echo no Windows Installer product registration & exit /b 15)
+      dir /s /b "%APPDATA%\Microsoft\Windows\Start Menu\Programs\*maximal*" 2>nul && (echo unexpected Start-menu entry & exit /b 16)
+      exit /b 0
+
+  - name: maximal --version is the release's
+    shell: cmd
+    run: |
+      for %%f in (C:\work\maximal-v*-windows-x64.msi) do set "MSI=%%~nf"
+      set "VER=%MSI:maximal-v=%"
+      set "VER=%VER:-windows-x64=%"
+      "%LOCALAPPDATA%\Programs\maximal\maximal.exe" --version > C:\work\version.txt 2>&1
+      type C:\work\version.txt
+      findstr /c:"%VER%" C:\work\version.txt >nul || (echo expected %VER% & exit /b 21)
+
+  - name: start the proxy
+    shell: cmd
+    background: true
+    run: '"%LOCALAPPDATA%\Programs\maximal\maximal.exe" start --port %PORT%'
+
+  - name: it answers /setup-status and /status
+    shell: cmd
+    timeout: 90
+    run: |
+      curl.exe -sSf --retry 60 --retry-delay 1 --retry-all-errors --max-time 2 -o nul http://127.0.0.1:%PORT%/setup-status || exit /b 31
+      curl.exe -sSf --max-time 5 http://127.0.0.1:%PORT%/status > C:\work\status.json || exit /b 32
+      type C:\work\status.json
+      findstr /r /c:"service.:.maximal" C:\work\status.json >nul || exit /b 33
+
+  - name: stop the proxy
+    shell: cmd
+    run: |
+      taskkill /f /t /im maximal.exe >nul 2>&1
+      taskkill /f /t /im maximal-mcp-broker.exe >nul 2>&1
+      exit /b 0
+
+  - name: msiexec /x /qn
+    shell: cmd
+    timeout: 5m
+    run: |
+      for %%f in (C:\work\maximal-*-windows-x64.msi) do start "" /wait msiexec /x "%%f" /qn /norestart /l*v C:\work\msi-uninstall.log
+      exit /b %ERRORLEVEL%
+
+  - name: nothing left behind
+    shell: cmd
+    run: |
+      set "DIR=%LOCALAPPDATA%\Programs\maximal"
+      if exist "%DIR%\maximal.exe" (echo maximal.exe still there & exit /b 41)
+      if exist "%DIR%\maximal-mcp-broker.exe" (echo broker still there & exit /b 42)
+      reg query HKCU\Software\stuffbucket\maximal /v installed >nul 2>&1 && (echo HKCU marker still there & exit /b 43)
+      reg query HKCU\Environment /v Path 2>nul | findstr /i /c:"%DIR%" && (echo install dir still on PATH & exit /b 44)
+      reg query HKCU\Software\Microsoft\Installer\Products /s /f maximal /d 2>nul | findstr /i ProductName && (echo product registration still there & exit /b 45)
+      tasklist /fo csv /nh | findstr /i "maximal" && (echo maximal processes still running & exit /b 46)
+      exit /b 0
+
+artifacts:
+  when: failure
+  paths:
+    - C:\work\*.log
+    - C:\work\*.json
+    - C:\work\.winvm\*.log
