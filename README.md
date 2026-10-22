@@ -180,12 +180,12 @@ bun winvm.ts clock                      # guest-vs-host offset, and fix it
 - **Storage.** `~/.local/state/winvm/saves/<instance>/<name>/`: `manifest.json`,
   `vmstate.zst` (zstd'd QEMU migration stream), plus APFS clones of the overlay
   and NVRAM, which cost little until the instance overwrites what they share.
+  `destroy` leaves an instance's saves alone; `load` recreates the instance.
 - **Formats.** `--format zstd` (default) is ~5x smaller and loads in ~2.5 s.
   `--fast` (`--format mapped`: QEMU mapped-ram + multifd, `vmstate.mapped`) is
   uncompressed and slower to write, but restores in ~0.5 s — for a save loaded
   over and over (goldens, test resets). The manifest records the format; `load`
   reads either.
-  `destroy` leaves an instance's saves alone; `load` recreates the instance.
 - **Compatibility.** A save loads only into the same virtual hardware, base
   image, firmware and QEMU version. `saves` shows which still do, and `load`
   says what changed when it refuses.
@@ -198,6 +198,39 @@ bun winvm.ts clock                      # guest-vs-host offset, and fix it
 
 The guest boots to **audit mode** as the built-in Administrator, with UAC off.
 Do not use it for anything but testing.
+
+## Goldens: resets in about a second
+
+A golden is the state every test job starts from: a `--fast` (mapped-ram) save
+taken only once Windows has gone quiet.
+
+```sh
+bun winvm.ts golden create -i ci-1     # boot (or --from <save>), settle, save "golden"
+bun winvm.ts golden reset  -i ci-1     # back to it: ~1.3 s to a responsive guest
+```
+
+`create` waits until QEMU's CPU time stays at or under `--settle-cpu` (3% of
+all vCPUs) for every 5 s sample across `--settle-for` (60 s), at most
+`--max-wait` (10 min — then it saves anyway and says so). A save taken right
+after boot carries Windows' post-boot work with it and replays it on every
+load. `reset` loads the golden, waits for a `cmd /c echo` round trip through
+the agent, and sets the clock. From code: `createGolden(instance, opts)` and
+`resetToGolden(instance, name)` in `golden.ts`, which return per-phase
+timings and print nothing.
+
+Measured on an M-series host, 4 vCPU / 4 GiB guest, five resets each, medians
+(restored = old QEMU gone, disks cloned back, RAM loaded, running):
+
+| save                        | restored | + responsive | + clock | total  | guest CPU, next 20 s | RAM on disk |
+|-----------------------------|---------:|-------------:|--------:|-------:|---------------------:|------------:|
+| golden (mapped, settled)    |   602 ms |       206 ms |  459 ms | 1.28 s |             0.6-2.1% |      3.9 GB |
+| same state, zstd            |  2734 ms |       206 ms |  556 ms | 3.50 s |             0.8-2.1% |      1.8 GB |
+| mapped, just after boot     |   862 ms |       207 ms |  368 ms | 1.40 s |             1.7-3.1% |      3.8 GB |
+| zstd, just after boot       |  2545 ms |       125 ms |  663 ms | 3.41 s |             6.9-8.2% |      1.6 GB |
+
+A cold boot to a settled guest took 26 s + 245 s; taking the golden, 6 s.
+The clock step varies (10-900 ms) because the guest's clock answers in
+~100 ms jumps for a moment after a restore; it ends within ±50 ms.
 
 ## The idle watcher
 
