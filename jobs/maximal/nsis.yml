@@ -1,6 +1,7 @@
 # Maximal NSIS (Tauri tray app): silent install, what it puts where, launch
-# the tray app, its sidecar proxy answers, a graceful shutdown leaves no
-# orphaned process, silent uninstall leaves nothing behind.
+# the tray app, its sidecar proxy answers, Settings opens from the tray menu,
+# Quit from the tray menu leaves no orphaned process, silent uninstall leaves
+# nothing behind.
 #
 #   bun winvm.ts run jobs/maximal/nsis.yml -i ci
 #
@@ -8,13 +9,10 @@
 # tray app is launched in the logged-on user's session. Over qemu-ga it would
 # run as SYSTEM in session 0 and have no tray at all.
 #
-# TODO(gui): drive the real tray "Quit Maximal" item (click the notification-
-# area icon, the menu item, then accept the native confirm dialog) once the
-# runner has a screen-step primitive. Until then the graceful-shutdown step
-# uses `maximal-shell.exe --replace`, which the shell documents as "the same
-# teardown path as the tray Quit item, minus the confirm dialog"
-# (graceful_shutdown in shell/src-tauri/src/lib.rs): app.exit(0) →
-# RunEvent::ExitRequested → kill_sidecar.
+# The tray steps are `shell: winvm` lines run on the host: `winvm ui …` finds
+# and clicks by UI Automation names (docs/gui.md) — the notification-area icon
+# by its tooltip (in the overflow flyout, which it opens), the Win32 context
+# menu's items, the TaskDialog's buttons, and the WebView2 content of Settings.
 name: maximal nsis tray install + quit + uninstall
 timeout: 10m
 files:
@@ -72,38 +70,46 @@ steps:
       $side[0].ProcessId | Set-Content C:\work\sidecar1.pid
       $shell[0].ProcessId | Set-Content C:\work\shell1.pid
 
-  - name: graceful shutdown (--replace, the tray Quit path minus its dialog) leaves no orphan
+  # Not signed in, Maximal opens Settings at launch. Close it (to the tray: the
+  # process stays) so that what opens it next is the tray menu.
+  - name: Settings opens from the tray menu, with its Account section
+    shell: winvm
     timeout: 2m
     run: |
-      $app = "$env:LOCALAPPDATA\Maximal"
-      $old = [int](Get-Content C:\work\sidecar1.pid); $oldShell = [int](Get-Content C:\work\shell1.pid)
-      Start-Process -FilePath "$app\maximal-shell.exe" -ArgumentList '--replace'
-      $deadline = (Get-Date).AddSeconds(30)
-      while ((Get-Process -Id $old, $oldShell -ErrorAction SilentlyContinue) -and (Get-Date) -lt $deadline) { Start-Sleep -Milliseconds 200 }
-      if (Get-Process -Id $oldShell -ErrorAction SilentlyContinue) { throw "the old shell ($oldShell) did not exit" }
-      if (Get-Process -Id $old -ErrorAction SilentlyContinue) { throw "the old sidecar ($old) outlived its shell: orphaned" }
-      'old shell and its sidecar exited'
+      ui wait --process maximal-shell --window Settings --name Account --type Text --timeout 60
+      ui click --process maximal-shell --window Settings --id Close --settle 300
+      ui wait --process maximal-shell --window Settings --gone --timeout 15
+      ui tray Maximal --menu Settings
+      ui wait --process maximal-shell --window Settings --name Account --type Text --timeout 30
+      ui find --process maximal-shell --window Settings --name "Sign in to GitHub" --type Button
 
-  # Observed on v0.4.47: the second process exits too (the single-instance
-  # plugin's second instance always does), so --replace quits Maximal rather
-  # than replacing it, although lib.rs says it frees :4141 "so the second
-  # process can claim" it. Recorded, not fatal, until that is settled upstream.
-  - name: (informational) a replacement claims :4141 after --replace
-    continue-on-error: true
+  - name: Quit Maximal from the tray menu and confirm
+    shell: winvm
+    timeout: 2m
+    run: |
+      ui tray Maximal --menu "Quit Maximal"
+      ui click --process maximal-shell --window "Quit Maximal?" --name "Quit Maximal" --type Button --settle 200 --timeout 15
+      ui wait --process maximal-shell --gone --timeout 30
+
+  - name: the shell and its sidecar both exited, and :4141 is free (no orphan)
     timeout: 1m
     run: |
-      & curl.exe -sS --retry 5 --retry-delay 1 --retry-all-errors --max-time 2 -o nul -w "replacement answers: %{http_code}`n" http://127.0.0.1:4141/setup-status
-      $p = @(Get-CimInstance Win32_Process | Where-Object { $_.Name -like 'maximal*' })
-      $p | ForEach-Object { '{0} pid={1} ppid={2}' -f $_.Name, $_.ProcessId, $_.ParentProcessId }
-      if (@($p | Where-Object Name -eq 'maximal.exe').Count -ne 1) { throw "no replacement: $($p.Count) maximal process(es) after --replace" }
+      $old = [int](Get-Content C:\work\sidecar1.pid); $oldShell = [int](Get-Content C:\work\shell1.pid)
+      $deadline = (Get-Date).AddSeconds(30)
+      while ((Get-Process -Id $old, $oldShell -ErrorAction SilentlyContinue) -and (Get-Date) -lt $deadline) { Start-Sleep -Milliseconds 200 }
+      if (Get-Process -Id $oldShell -ErrorAction SilentlyContinue) { throw "the shell ($oldShell) did not exit" }
+      if (Get-Process -Id $old -ErrorAction SilentlyContinue) { throw "the sidecar ($old) outlived its shell: orphaned" }
+      $left = @(Get-CimInstance Win32_Process | Where-Object { $_.Name -like 'maximal*' })
+      if ($left.Count -gt 0) { throw "still running: $(($left | ForEach-Object { '{0} ({1})' -f $_.Name, $_.ProcessId }) -join ', ')" }
+      if (Get-NetTCPConnection -LocalPort 4141 -State Listen -ErrorAction SilentlyContinue) { throw ':4141 is still held' }
+      'shell and sidecar exited; :4141 free'
 
-  - name: stop it (taskkill /t until the tray Quit click exists); nothing survives
-    if: always()
+  - name: (on failure) kill what is left, so the uninstall can run
+    if: failure()
     shell: cmd
     run: |
       taskkill /t /f /im maximal-shell.exe >nul 2>&1
-      ping -n 2 127.0.0.1 >nul
-      tasklist /fo csv /nh | findstr /i "maximal" && (echo maximal processes still running & exit /b 41)
+      taskkill /f /im maximal.exe >nul 2>&1
       exit /b 0
 
   - name: uninstall.exe /S
