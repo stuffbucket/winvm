@@ -153,6 +153,27 @@ try {
         & $setup
     }
 
+    # --- 3b. .NET native images -----------------------------------------------
+    #
+    # AUDIT MODE NEVER RUNS THE NGEN QUEUE. Windows ships the .NET Framework with
+    # its native-image compilation QUEUED, and leaves the work to the scheduled
+    # ".NET Framework NGEN" tasks. Audit mode keeps OOBEInProgress=1, and with that
+    # set Task Scheduler never runs anything -- so on this guest the queue is
+    # simply never drained, and every PowerShell 5.1 start JITs
+    # System.Management.Automation from IL. Measured: draining it here makes
+    # `powershell -c 1` start 4-5x faster.
+    #
+    # Both frameworks, because both get used: FrameworkArm64 by native processes,
+    # Framework64 by x64 ones -- and qemu-ga is the x64 build, so everything
+    # `winvm exec` runs starts life under Prism emulation.
+    foreach ($fw in "Framework64", "FrameworkArm64") {
+        $ngen = "C:\Windows\Microsoft.NET\$fw\v4.0.30319\ngen.exe"
+        if (-not (Test-Path $ngen)) { Write-Output "ngen: no $fw"; continue }
+        $sw = [Diagnostics.Stopwatch]::StartNew()
+        & $ngen executeQueuedItems /nologo /silent | Out-Null
+        Write-Output "ngen $fw executeQueuedItems: exit $LASTEXITCODE in $([int]$sw.Elapsed.TotalSeconds)s"
+    }
+
     # --- 4. Confirm viostor came out boot-start ------------------------------
     #
     # The build attaches a scratch virtio-blk disk purely so PnP installs

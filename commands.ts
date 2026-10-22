@@ -428,7 +428,9 @@ export async function build(args: Args): Promise<number> {
   }
 
   // provision.ps1 writes its marker last, immediately before reporting success.
-  const provisionDeadline = Date.now() + 30 * 60_000
+  // An hour, not half: it now also drains the .NET native-image queue, which is
+  // minutes of compilation per framework under emulation.
+  const provisionDeadline = Date.now() + 60 * 60_000
   let provisioned = false
   while (Date.now() < provisionDeadline) {
     if ((await ask("Test-Path C:\\winvm-provisioned.txt")) === "True") {
