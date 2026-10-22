@@ -16,6 +16,13 @@ import { media, mediaDir } from "./paths"
 const ASSETS = resolve(import.meta.dir, "assets")
 
 /**
+ * Guest-side scripts that ride the seed under `winvm\` and that provision.ps1
+ * runs or installs from there. Not copied to C:\Windows\Setup\Scripts by the
+ * answer file: nothing needs them before provisioning starts.
+ */
+const WINVM_EXTRAS = ["defender.ps1"] as const
+
+/**
  * A 64 MB FAT volume the guest writes its provisioning transcript to, and the
  * host mounts afterwards. Also carries startup.nsh: the UEFI shell auto-runs it
  * from a volume it can see, and this FAT image is mapped earlier than the
@@ -281,6 +288,7 @@ export function buildSeed(payloadDir: string | undefined, bunVersion: string | u
   // winvm's own guest-side extras, kept apart from `payload\`, which belongs to
   // the caller. provision.ps1 finds this volume by the files in it.
   mkdirSync(resolve(dir, "winvm"), { recursive: true })
+  for (const f of WINVM_EXTRAS) copyFileSync(resolve(ASSETS, f), resolve(dir, "winvm", f))
   if (existsSync(media.pwsh())) copyFileSync(media.pwsh(), resolve(dir, "winvm", "PowerShell-win-arm64.msi"))
   copyFileSync(resolve(ASSETS, "autounattend.xml"), resolve(dir, "autounattend.xml"))
   copyFileSync(resolve(ASSETS, "provision.ps1"), resolve(dir, "provision.ps1"))

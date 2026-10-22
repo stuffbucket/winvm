@@ -249,7 +249,20 @@ try {
         fsutil.exe 8dot3name set C: 1
     }
 
-    # --- 3c. .NET native images -----------------------------------------------
+    # --- 3c. Defender exclusions, from their own script ----------------------
+    #
+    # A child process running a SEPARATE file, because AMSI judges a script by
+    # its whole text: Defender-touching lines in here would get all of
+    # provision.ps1 blocked, not just themselves. See defender.ps1.
+    $extras = Find-VolumeContaining -RelativePath "winvm\defender.ps1"
+    if ($extras) {
+        & powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$extras\winvm\defender.ps1"
+        Write-Output "defender.ps1 exit: $LASTEXITCODE"
+    } else {
+        Write-Output "WARNING: no winvm\defender.ps1 on any volume - no Defender exclusions"
+    }
+
+    # --- 3d. .NET native images -----------------------------------------------
     #
     # AUDIT MODE NEVER RUNS THE NGEN QUEUE. Windows ships the .NET Framework with
     # its native-image compilation QUEUED, and leaves the work to the scheduled
