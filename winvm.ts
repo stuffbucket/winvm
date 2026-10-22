@@ -20,6 +20,7 @@
  *   winvm status [-i name]           what an instance is doing, in one screen
  *   winvm open [-i name] [--web]     its screen: Screen Sharing, or the browser
  *   winvm screenshot | type | key | click | move | scroll   drive it with no window
+ *   winvm webview enable|eval|click|wait|text   WebView2 windows over DevTools
  *   winvm watch [-i name] [--stop]   idle watcher: autosave, stow, clock sync
  *   winvm config [-i name] [k=v ...] per-instance watcher settings
  *   winvm run job.yml / test dir/    CI jobs from a golden save; see runner.ts
@@ -106,6 +107,7 @@
  *   guestdisplay.ts  Windows' side of the screen size
  *   monitor.ts    short-deadline QMP commands
  *   web.ts        `web`: the browser view's server; web/ holds the page and noVNC
+ *   webview.ts    `webview`: WebView2 DevTools from the host (cdp.ts the client)
  *   media.ts      seed ISO and result volume
  *   instance.ts   create / reset / seal
  *   assets/       answer file, provisioning script, UEFI boot selector
@@ -123,6 +125,7 @@ import * as savecmds from "./savecmds"
 import * as screen from "./screen"
 import * as status from "./status"
 import * as web from "./web"
+import * as webview from "./webview"
 import * as timemachine from "./timemachine"
 
 const [, , sub, ...rawArgs] = process.argv
@@ -264,6 +267,9 @@ switch (sub) {
   // eslint-disable-next-line no-fallthrough
   case "display":
     process.exit(await screen.display(args))
+  // eslint-disable-next-line no-fallthrough
+  case "webview":
+    process.exit(await webview.webview(args))
   // eslint-disable-next-line no-fallthrough
   default:
     console.error(commands.USAGE)

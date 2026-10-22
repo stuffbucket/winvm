@@ -979,6 +979,8 @@ export const USAGE =
   "  move    [-i name] <x> <y>     move the pointer\n" +
   "  scroll  [-i name] <n>         n wheel notches, positive is down (or: up|down [n])\n" +
   "  display [-i name] [WxH|ramfb] show or set the screen size\n" +
+  "  webview [-i name] enable <exe> | targets | eval <js> | click|wait|text <selector>\n" +
+  "                                drive WebView2 windows over DevTools (winvm webview for more)\n" +
   "  timemachine [--yes]           exclude the VM files from Time Machine backups\n" +
   "  snapshots [-i name]           list them\n" +
   "  reset   [-i name]             discard changes, back to the base image\n" +
