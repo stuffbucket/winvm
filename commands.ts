@@ -6,7 +6,7 @@ import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } 
 import { resolve } from "node:path"
 
 import type { Args } from "./args"
-import { imageName, instanceName } from "./args"
+import { imageName, instanceName, isValidImageName } from "./args"
 import { TOOLS_SHA256, TOOLS_URL, download, du, have, hostChecks, requireHost, run } from "./host"
 import { diagnose, formatFindings } from "./diagnose"
 import { ensureInstance, makeVars, resetInstance, sealBase } from "./instance"
@@ -206,6 +206,10 @@ export function adopt(args: Args): number {
     return 1
   }
   const image = imageName(args)
+  if (!isValidImageName(image)) {
+    console.error(`::error::invalid image name "${image}" — letters, digits, ".", "_" and "-" only`)
+    return 1
+  }
   if (existsSync(basePath(image))) {
     console.error(`::error::image "${image}" already exists at ${basePath(image)}`)
     return 1
@@ -222,8 +226,23 @@ export function adopt(args: Args): number {
 export async function build(args: Args): Promise<number> {
   requireHost()
   const image = imageName(args)
+  if (!isValidImageName(image)) {
+    console.error(`::error::invalid image name "${image}" — letters, digits, ".", "_" and "-" only`)
+    return 1
+  }
   if (existsSync(basePath(image))) {
     console.error(`::error::image "${image}" already exists — use --image <other>, or remove it deliberately`)
+    return 1
+  }
+  // AN INSTANCE THAT NAMES THIS IMAGE PINS IT, EVEN IF ITS BASE IS GONE. Its
+  // overlay records the base by absolute path, so a fresh build at that path
+  // would silently become the backing file of an overlay written against a
+  // different disk — a corrupt instance that still boots far enough to mislead.
+  const dependents = listInstances().filter((n) => n !== `build-${image}` && readMeta(n)?.image === image)
+  if (dependents.length > 0) {
+    console.error(
+      `::error::instances ${dependents.join(", ")} name image "${image}" — build under another --image name`,
+    )
     return 1
   }
 
@@ -441,8 +460,21 @@ export async function build(args: Args): Promise<number> {
   const stopDeadline = Date.now() + 10 * 60_000
   while (Date.now() < stopDeadline) {
     if (!qemu.isRunning(p)) {
+      // Checked AGAIN at the end: a build takes half an hour, and another one
+      // (or an `adopt`) may have claimed the name meanwhile. Never replace a
+      // base image that overlays may already reference.
+      if (existsSync(basePath(image))) {
+        console.error(
+          `::error::image "${image}" appeared while this build ran; not replacing it. ` +
+            `The new disk is kept at ${p.overlay}`,
+        )
+        return 1
+      }
       mkdirSync(imageDir(image), { recursive: true })
-      run("mv", [p.overlay, basePath(image)])
+      if (run("mv", ["-n", p.overlay, basePath(image)]) !== 0 || existsSync(p.overlay)) {
+        console.error(`::error::could not move the new disk into place; it is kept at ${p.overlay}`)
+        return 1
+      }
       sealBase(image)
       // Recorded because it cannot be read back off a disk image later.
       const imageMeta: ImageMeta = { virtioBoot, created: new Date().toISOString() }

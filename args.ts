@@ -62,3 +62,13 @@ export function instanceName(args: Args): string {
 export function imageName(args: Args): string {
   return args.flags.get("image") ?? process.env["WINVM_IMAGE"] ?? "win11-arm64"
 }
+
+/**
+ * An image name is a single directory under images/, never a path. Without
+ * this, `--image ../images/win11-arm64` resolves onto an existing image's
+ * directory and walks straight past every "already exists" guard keyed on the
+ * literal name.
+ */
+export function isValidImageName(name: string): boolean {
+  return /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(name)
+}
