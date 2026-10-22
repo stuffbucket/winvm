@@ -417,12 +417,13 @@ export function formatMemory(mib: number): string {
   return mib % 1024 === 0 ? `${String(mib / 1024)} GiB` : mib >= 1024 ? `${(mib / 1024).toFixed(1)} GiB` : `${String(mib)} MiB`
 }
 
+/** Binary units with the short labels `du -h` and `winvm saves` use: 1 GB = 1024³ bytes. */
 export function formatBytes(n: number): string {
   const units = ["B", "KB", "MB", "GB", "TB"]
   let v = n
   let i = 0
-  while (v >= 1000 && i < units.length - 1) {
-    v /= 1000
+  while (v >= 1024 && i < units.length - 1) {
+    v /= 1024
     i += 1
   }
   return `${i === 0 ? String(v) : v.toFixed(v < 10 ? 1 : 0)} ${units[i] ?? "B"}`

@@ -47,11 +47,20 @@ function launch(url: string, printOnly: boolean): number {
 }
 
 export async function open(args: Args): Promise<number> {
-  const r = running(args)
-  if (r === null) return 1
   const printOnly = args.flags.has("print")
 
+  // The browser view opens for a stopped instance too — its Start button is
+  // one way to start it — but says so first.
   if (args.flags.has("web")) {
+    const name = instanceName(args)
+    const flag = name === "default" ? "" : ` -i ${name}`
+    if (readMeta(name) === null) {
+      console.error(`::error::no instance "${name}" — \`winvm start${flag}\` creates it`)
+      return 1
+    }
+    if (!qemu.isRunning(pathsFor(name))) {
+      console.warn(`note: "${name}" is not running — \`winvm start${flag}\`, or press Start on the page`)
+    }
     let server: web.ServerInfo
     try {
       server = await web.ensureServer()
@@ -59,11 +68,14 @@ export async function open(args: Args): Promise<number> {
       console.error(`::error::could not start the web view: ${errMsg(error)}`)
       return 1
     }
-    const url = web.pageUrl(server.port, r.name, server.token)
+    const url = web.pageUrl(server.port, name, server.token)
     // The URL carries the access token, so print it only when asked to.
-    console.log(printOnly ? url : `opening the browser view of "${r.name}" (server on 127.0.0.1:${String(server.port)})`)
+    console.log(printOnly ? url : `opening the browser view of "${name}" (server on 127.0.0.1:${String(server.port)})`)
     return launch(url, printOnly)
   }
+
+  const r = running(args)
+  if (r === null) return 1
 
   // Set the password again before connecting: cheap, and it covers a guest that
   // an older copy of this tool started without one.

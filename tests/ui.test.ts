@@ -41,8 +41,8 @@ describe("status formatting", () => {
     expect(formatDuration(3 * 3600 + 7 * 60)).toBe("3h 7m")
     expect(formatDuration(2 * 86400 + 3600)).toBe("2d 1h")
     expect(formatBytes(512)).toBe("512 B")
-    expect(formatBytes(2_100_000_000)).toBe("2.1 GB")
-    expect(formatBytes(15_000_000)).toBe("15 MB")
+    expect(formatBytes(2.1 * 1024 ** 3)).toBe("2.1 GB")
+    expect(formatBytes(15 * 1024 ** 2)).toBe("15 MB")
     expect(formatAge("2026-10-21T11:00:00Z", NOW)).toBe("1h 0m ago")
     expect(formatAge("not a date", NOW)).toBe("unknown time")
     expect(formatMemory(4096)).toBe("4 GiB")
@@ -109,13 +109,13 @@ describe("status formatting", () => {
     screen: "virtio-gpu 1920x1080",
     vncPort: 5904,
     websocketPort: 5704,
-    overlayBytes: 2_100_000_000,
+    overlayBytes: 2.1 * 1024 ** 3,
     guest: { agent: "ok", agentVersion: "109.1.0", os: "Windows 11 Pro (build 26300)", clockOffsetMs: 200 },
     saves: {
       count: 2,
-      bytes: 3_000_000_000,
-      latest: { name: "auto-1", kind: "auto", createdAt: "2026-10-21T11:50:00Z", bytes: 1_500_000_000 },
-      latestBaseline: { name: "clean", kind: "baseline", createdAt: "2026-10-20T12:00:00Z", bytes: 1_500_000_000 },
+      bytes: 3 * 1024 ** 3,
+      latest: { name: "auto-1", kind: "auto", createdAt: "2026-10-21T11:50:00Z", bytes: 1.5 * 1024 ** 3 },
+      latestBaseline: { name: "clean", kind: "baseline", createdAt: "2026-10-20T12:00:00Z", bytes: 1.5 * 1024 ** 3 },
     },
     watcher: null,
     notes: [],
