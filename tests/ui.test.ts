@@ -72,10 +72,10 @@ describe("status formatting", () => {
 
   it("derives paused and stowed", () => {
     const stow = { name: "s", kind: "stow", createdAt: "2026-10-21T11:00:00Z", bytes: 1 }
-    expect(deriveState(true, "running", null)).toBe("running")
-    expect(deriveState(true, "paused", null)).toBe("paused")
-    expect(deriveState(false, null, stow)).toBe("stowed")
-    expect(deriveState(false, null, { ...stow, kind: "manual" })).toBe("stopped")
+    expect(deriveState(true, "running", [stow])).toBe("running")
+    expect(deriveState(true, "paused", [])).toBe("paused")
+    expect(deriveState(false, null, [{ ...stow, kind: "manual" }, stow])).toBe("stowed")
+    expect(deriveState(false, null, [{ ...stow, kind: "manual" }])).toBe("stopped")
   })
 
   it("reads a watcher file defensively, and says when its process is gone", () => {

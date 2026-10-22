@@ -29,6 +29,30 @@ export async function hmp(sockPath: string, command: string, timeoutMs = 180_000
   })
 }
 
+/**
+ * Run one QMP command and return its `return` value; a QMP-level error throws.
+ * One connection per call: the monitor serves a single client at a time, so
+ * holding it open would lock out every other `winvm` process.
+ */
+export async function execute(
+  sockPath: string,
+  command: string,
+  args?: Record<string, unknown>,
+  timeoutMs = 60_000,
+): Promise<unknown> {
+  return await withSocket(sockPath, async (_send, request) => {
+    const reply = await request(args === undefined ? { execute: command } : { execute: command, arguments: args }, timeoutMs)
+    if (reply["error"] !== undefined) throw new Error(`qmp ${command}: ${JSON.stringify(reply["error"])}`)
+    return reply["return"]
+  })
+}
+
+/** QEMU's run state: "running", "paused", "postmigrate", "inmigrate", ... */
+export async function status(sockPath: string): Promise<string> {
+  const r = (await execute(sockPath, "query-status")) as { status?: string } | undefined
+  return r?.status ?? "unknown"
+}
+
 async function withSocket<T>(
   sockPath: string,
   fn: (

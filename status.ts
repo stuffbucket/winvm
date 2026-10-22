@@ -320,12 +320,12 @@ async function queryStatus(p: Paths): Promise<string | null> {
   }
 }
 
-export function deriveState(running: boolean, vmStatus: string | null, latestSave: SaveInfo | null): State {
+export function deriveState(running: boolean, vmStatus: string | null, saves: readonly SaveInfo[]): State {
   if (running) return vmStatus === "paused" || vmStatus === "suspended" ? "paused" : "running"
-  // STOWED: stopped with its running state put away, so `load` picks up where
-  // it left off. Read off the newest save being a stow rather than a marker of
-  // its own, so a manual save or a reset afterwards makes it plain "stopped".
-  return latestSave?.kind === "stow" ? "stowed" : "stopped"
+  // STOWED: stopped with its running state put away. `winvm stow` writes a save
+  // of kind "stow" and the next `winvm start` recalls and consumes it, so while
+  // one exists the instance is stowed rather than merely stopped.
+  return saves.some((s) => s.kind === "stow") ? "stowed" : "stopped"
 }
 
 /**
@@ -371,7 +371,7 @@ export async function gather(name: string, deep = true): Promise<InstanceStatus>
     running && deep ? probeGuest(p.qga) : Promise.resolve(null),
   ])
   if (running && vmStatus === null) notes.push("QEMU's monitor did not answer (busy with a save or load?)")
-  const state = deriveState(running, vmStatus, latest)
+  const state = deriveState(running, vmStatus, saves)
   if (guest?.agent === "silent" && state === "running") notes.push("the guest agent did not answer — still booting, or busy")
 
   return {
@@ -472,7 +472,7 @@ const STATE_WORDS: Record<State, string> = {
   running: "running",
   paused: "paused",
   stopped: "stopped",
-  stowed: "stowed (stopped; `winvm load` resumes where it left off)",
+  stowed: "stowed (stopped; `winvm start` picks up where it left off)",
   missing: "does not exist",
 }
 

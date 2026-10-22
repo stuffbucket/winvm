@@ -136,7 +136,9 @@ destroy an instance on the ordinary path is not a convenience.
 
 `winvm snapshot` refuses to run against a guest that is not ready for the same
 reason. Re-take `fresh` whenever the guest reaches a new state worth returning
-to, or keep several tags and rewind between them.
+to, or keep several tags and rewind between them. (`start` does now take one
+automatic checkpoint — the file save `baseline`, on an instance's first boot —
+but only after `waitReady` has seen the real account log on; see *Saves*.)
 
 `rewind` works on a stopped instance too — it starts QEMU directly into the
 saved state (`-loadvm`), skipping the boot entirely.
@@ -160,6 +162,100 @@ did work look like one that changed nothing. That cost a debugging cycle here;
 The base is `chmod 444` after it is built. That is not ceremony: writing to a
 backing file while overlays reference it corrupts every one of them, and the
 damage surfaces later and elsewhere.
+
+## Saves: the machine as files
+
+`winvm save` / `load` / `saves` / `stow` / `pause` / `resume` — see `saves.ts`
+for the format and `savecmds.ts` for the verbs. A save is a directory under
+`$WINVM_HOME/saves/<instance>/<name>/`:
+
+| file | what |
+|---|---|
+| `manifest.json` | `{name, instance, kind: manual\|auto\|baseline\|stow, createdAt, bytes, compat, image, note?}` plus `compatParts`, `ramFile`, `ramBytes`, `saveMs` |
+| `vmstate.zst` | RAM and device state: a QEMU **migration stream**, `zstd -T0 -3` |
+| `overlay.qcow2`, `efi-vars.qcow2` | the instance's disk and NVRAM at that instant, as APFS clones (`cp -c`) |
+
+**Why a migration stream.** QEMU 11.1 cannot `savevm` to a path; a
+migration to `exec:`/`file:` is the only whole-machine state that leaves the
+qcow2. It needs exactly what `savevm` needs (virtio-blk, qcow2 NVRAM; the
+result volume is no longer attached to a running guest), so every image that
+can `snapshot` can `save`. TPM state needs no file: the tpm-emulator backend
+carries swtpm's blobs in the stream and pushes them back on load (verified:
+`Win32_Tpm` reads enabled/owned/ready after loading into a re-created
+instance).
+
+**Consistency.** `stop` first (it drains and flushes every block device,
+qcow2 caches included), migrate, clone the disks while still stopped, then
+`cont`. A load always restarts QEMU — a stream can only be fed to one started
+with `-incoming` — so loading into a running guest is quit, clone the save's
+disks back, `-incoming "exec:zstd -dc …"`, `cont`. The stream records that
+the source was paused, so the destination comes up paused and is continued
+explicitly.
+
+**Compatibility.** `compat` hashes the base image's identity (name, size,
+mtime, `image.json` — never its 14 GB of content), the QEMU arguments with
+paths, ports, `-snapshot` and `-rtc` stripped, the firmware code image, and
+the QEMU version. `load` refuses a mismatch naming the part that changed.
+
+**Baseline.** The first `start` of an instance (and the first after `reset`)
+saves `baseline` — but only after `qga.waitReady`, never mid-boot or
+mid-OOBE, for the livelock reason under *Rewinding*. `--no-autosave` skips
+it. `build` does not take one: its guest is the throwaway install VM on
+non-migratable NVMe, and it is deleted when the image is sealed.
+
+**`rewind` and saves.** `rewind [tag]` uses an internal snapshot of that tag
+when one exists (default `fresh`, unchanged); otherwise the save of that name,
+and with no tag the `baseline`. So on a new instance `rewind` "just works".
+
+**Stow.** `stow` = save as `stow` + quit QEMU. The next `start` recalls it
+instead of booting, then deletes it. Any other `load`, a `rewind` or a `reset`
+discards it, so a stale stow never overrides newer state; `start --boot`
+discards it and boots cold.
+
+Measured on this host (load average 30-120 throughout, 4 GiB guest):
+
+| | |
+|---|---|
+| save, zstd | 5-9 s guest stopped; RAM stream 3.0-3.8 GB -> 1.2-1.6 GB |
+| save, raw (`file:`) | 3.8 s guest stopped; 3.4 GB |
+| ready check before a manual `save` | ~22 s (`--force` skips it; a paused guest skips it) |
+| load, running | 4-11 s (zstd); raw no faster here (6.8 s vs 8.5 s back to back) |
+| load, stopped | 12-16 s |
+| stow | 6.2 s |
+| recall (`start` with a stow) | 8.5 s, vs ~2 min cold boot to ready on this host |
+
+## The guest clock
+
+Two separate faults, both fixed:
+
+- **Cold boot was hours off.** The answer file pins the guest's zone to UTC,
+  and Windows reads the RTC as local time, but QEMU ran `-rtc base=localtime`
+  — the host's wall clock, labelled UTC. Measured on a Pacific host:
+  **-7h 0m 1s**. Now `-rtc base=utc,clock=host`: **-0.85 s** on a cold boot.
+- **Every freeze leaves it in the past.** Windows keeps time from the
+  virtual counter, which stops while the machine is stopped, and reads the RTC
+  only at boot (the PL031 itself is right after a restore; nothing looks at
+  it). So after `load`, `resume`, a save, recall and `rewind`, `clock.ts`
+  sets the time over the agent (`guest-set-time`, UTC ns — qemu-ga on Windows
+  requires the value). `winvm clock` does it on demand; `--check` only looks.
+
+And the zone: the first boot (and `winvm clock`) sets the guest's time zone to
+the host's — mapped from the IANA name by the host's own ICU
+(`ucal_getWindowsTimeZoneID` in libicucore) — and sets `RealTimeIsUniversal=1`
+so the UTC RTC stays right in any zone.
+
+| event | before | after |
+|---|---|---|
+| cold boot (old `-rtc base=localtime`) | -7h 0m 1s | — |
+| cold boot (`base=utc`) | -853 ms | +40 ms |
+| `pause`, 2 min, `resume` | -2m 4s | +149 ms |
+| `load` of a 9-minute-old save, running | -9m 17s | -1 ms |
+| `load` of a 12-minute-old save, stopped | -12m 25s | -12 ms |
+| recall after stow | -24.2 s | +50 ms |
+| `rewind` to an internal snapshot | -10.7 s | +76 ms |
+
+The residual is about ±100 ms: the agent is emulated x86 and its latency on a
+loaded host dominates.
 
 ## Selecting an image and instance
 
