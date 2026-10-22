@@ -37,7 +37,8 @@ class UiError : Exception {
 }
 
 static class WinvmUi {
-  const int VERSION = 1;
+  // ui.ts UI_HELPER_VERSION must match: the host reinstalls the agent when it does not.
+  const int VERSION = 3;
 
   [DllImport("user32.dll")] static extern bool SetProcessDpiAwarenessContext(IntPtr v);
   [DllImport("user32.dll")] static extern bool SetForegroundWindow(IntPtr h);
@@ -57,6 +58,20 @@ static class WinvmUi {
   static readonly object OutLock = new object();
   static readonly object InputLock = new object();
   static TextWriter Out;
+  static string LogFile;
+  static readonly object LogLock = new object();
+
+  /** One line per request, start and end, beside the exe: what hung, and for how long. */
+  static void Log(string s) {
+    if (LogFile == null) return;
+    try {
+      lock (LogLock) {
+        var f = new FileInfo(LogFile);
+        if (f.Exists && f.Length > 4 * 1024 * 1024) File.Delete(LogFile);
+        File.AppendAllText(LogFile, DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff") + " " + s + "\r\n");
+      }
+    } catch { }
+  }
   static bool DpiAware;
   static int pending;
 
@@ -65,6 +80,8 @@ static class WinvmUi {
     DpiAware = SetProcessDpiAwarenessContext(new IntPtr(-4)); // PER_MONITOR_AWARE_V2
     Out = new StreamWriter(Console.OpenStandardOutput(), new UTF8Encoding(false)) { AutoFlush = true, NewLine = "\n" };
     var input = new StreamReader(Console.OpenStandardInput(), new UTF8Encoding(false));
+    try { LogFile = Path.Combine(Path.GetDirectoryName(Process.GetCurrentProcess().MainModule.FileName), "winvm-ui.log"); } catch { }
+    Log("start pid " + Process.GetCurrentProcess().Id);
     // Warm UIA up front: the first cross-process call costs ~100 ms or more.
     ThreadPool.QueueUserWorkItem(delegate { try { AutomationElement.RootElement.FindAll(TreeScope.Children, Condition.TrueCondition); } catch { } });
     string line;
@@ -83,9 +100,21 @@ static class WinvmUi {
     object id = null;
     var sw = Stopwatch.StartNew();
     Dictionary<string, object> reply;
+    int answered = 0;
+    Timer watchdog = null;
     try {
       var req = Json.Deserialize<Dictionary<string, object>>(line);
       req.TryGetValue("id", out id);
+      Log("> " + line);
+      // A UIA call into a hung provider can block for minutes: answer anyway
+      // once the request is well past its own deadline, and leave the thread.
+      // (act with settleMs looks for its element twice, and settles in between.)
+      int limit = 2 * Int(req, "timeoutMs", 0) + Int(req, "settleTimeoutMs", 5000) + 20000;
+      object wid = id;
+      watchdog = new Timer(delegate {
+        if (Interlocked.CompareExchange(ref answered, 1, 0) != 0) return;
+        Reply(new Dictionary<string, object> { { "id", wid }, { "error", "no answer from UI Automation after " + limit + " ms (a hung window?)" }, { "code", "timeout" } }, sw);
+      }, null, limit, Timeout.Infinite);
       var result = Dispatch(Str(req, "op") ?? "", req);
       result["ms"] = sw.ElapsedMilliseconds;
       reply = new Dictionary<string, object> { { "id", id }, { "result", result } };
@@ -94,9 +123,17 @@ static class WinvmUi {
     } catch (Exception e) {
       reply = new Dictionary<string, object> { { "id", id }, { "error", e.GetType().Name + ": " + e.Message }, { "code", "fail" } };
     }
+    if (watchdog != null) watchdog.Dispose();
+    if (Interlocked.CompareExchange(ref answered, 1, 0) == 0) Reply(reply, sw);
+    else Log("< " + Convert.ToString(id) + " finished after the watchdog, " + sw.ElapsedMilliseconds + " ms");
+  }
+
+  static void Reply(Dictionary<string, object> reply, Stopwatch sw) {
     string text = Json.Serialize(reply);
+    Log("< " + Convert.ToString(reply["id"]) + " " + sw.ElapsedMilliseconds + " ms" + (reply.ContainsKey("error") ? " " + reply["code"] + ": " + reply["error"] : ""));
     lock (OutLock) Out.WriteLine(text);
   }
+
 
   // --- request fields --------------------------------------------------------
 
@@ -614,47 +651,78 @@ static class WinvmUi {
     string tip = Str(b, "name");
     if (string.IsNullOrEmpty(tip)) throw new UiError("bad", "tray needs name: the icon's tooltip, or part of it");
     string button = Str(b, "button") ?? "right";
+    string item = Str(b, "menu");
     int timeout = Int(b, "timeoutMs", 10000);
     var sw = Stopwatch.StartNew();
     bool overflow = false;
-    AutomationElement icon = null;
-    while (icon == null) {
-      var bar = TopLevel().FirstOrDefault(w => w.Cached.ClassName == "Shell_TrayWnd");
-      if (bar == null) throw new UiError("notfound", "no taskbar (Shell_TrayWnd)");
-      icon = TrayIcon(bar, tip, true);
-      if (icon == null) {
-        var flyout = OverflowWindow();
-        if (flyout == null) {
-          var chevron = Chevron(bar);
-          if (chevron == null) throw new UiError("notfound", "no tray icon like \"" + tip + "\" and no \"Show hidden icons\" button");
-          int[] at = ClickPoint(chevron);
-          Click(at[0], at[1], "left", 1);
-          var until = sw.ElapsedMilliseconds + 2000;
-          while ((flyout = OverflowWindow()) == null && sw.ElapsedMilliseconds < until) Thread.Sleep(30);
+    AutomationElement icon = null, bar = null;
+    Dictionary<string, object> result = null;
+    for (int attempt = 1; ; attempt++) {
+      int[] p = null;
+      while (p == null) {
+        bar = TopLevel().FirstOrDefault(w => w.Cached.ClassName == "Shell_TrayWnd");
+        if (bar == null) throw new UiError("notfound", "no taskbar (Shell_TrayWnd)");
+        icon = TrayIcon(bar, tip, true);
+        if (icon == null) {
+          var flyout = OverflowWindow();
+          if (flyout == null) {
+            var chevron = Chevron(bar);
+            if (chevron == null) throw new UiError("notfound", "no tray icon like \"" + tip + "\" and no \"Show hidden icons\" button");
+            int[] at = ClickPoint(chevron);
+            Click(at[0], at[1], "left", 1);
+            var until = sw.ElapsedMilliseconds + 2000;
+            while ((flyout = OverflowWindow()) == null && sw.ElapsedMilliseconds < until) Thread.Sleep(30);
+          }
+          if (flyout != null) {
+            overflow = true;
+            var until = sw.ElapsedMilliseconds + 1500;
+            while ((icon = TrayIcon(flyout, tip, false)) == null && sw.ElapsedMilliseconds < until) Thread.Sleep(30);
+          }
         }
-        if (flyout != null) {
-          overflow = true;
-          var until = sw.ElapsedMilliseconds + 1500;
-          while ((icon = TrayIcon(flyout, tip, false)) == null && sw.ElapsedMilliseconds < until) Thread.Sleep(30);
+        if (icon != null) {
+          // A flyout still closing from a previous call shows the icon, then takes it away: look again.
+          Steady(icon, 1500);
+          try { p = ClickPoint(icon); } catch (Exception) { icon = null; }
+        }
+        if (p == null) {
+          if (sw.ElapsedMilliseconds >= timeout) throw new UiError("notfound", "no tray icon like \"" + tip + "\" on the taskbar or in the overflow");
+          Thread.Sleep(200);
         }
       }
-      if (icon == null) {
-        if (sw.ElapsedMilliseconds >= timeout) throw new UiError("notfound", "no tray icon like \"" + tip + "\" on the taskbar or in the overflow");
-        Thread.Sleep(200);
+      Dictionary<string, object> desc;
+      try { desc = Describe(icon, false); } catch (ElementNotAvailableException) { desc = Describe(icon, true); }
+      Click(p[0], p[1], button == "double" ? "left" : button, button == "double" ? 2 : 1);
+      result = Obj("icon", desc, "overflow", overflow, "at", p, "clickedMs", sw.ElapsedMilliseconds, "attempts", attempt);
+      if (item == null) return result;
+      // The menu should be up within a second or two. If not (the click came
+      // while the flyout was still moving, or the app had not attached its
+      // menu yet: right after start), dismiss whatever opened and click again.
+      int left = timeout - (int)sw.ElapsedMilliseconds;
+      try {
+        var m = Menu(b, item, Math.Max(1000, Math.Min(2500, left)), Str(b, "menuAction") ?? "click");
+        result["menuItem"] = m["element"];
+        break;
+      } catch (UiError e) {
+        if (e.Code != "notfound" || sw.ElapsedMilliseconds >= timeout) throw;
+        Log("tray: no \"" + item + "\" after click " + attempt + "; again");
+        if (TopLevel().Any(w => w.Cached.ClassName == "#32768")) Key(0x1B); // Esc closes a wrong menu
       }
     }
-    Steady(icon, 1500);
-    var desc = Describe(icon, false);
-    int[] p = ClickPoint(icon);
-    Click(p[0], p[1], button == "double" ? "left" : button, button == "double" ? 2 : 1);
-    var result = Obj("icon", desc, "overflow", overflow, "at", p, "clickedMs", sw.ElapsedMilliseconds);
-    string item = Str(b, "menu");
-    if (item != null) {
-      var m = Menu(b, item, Math.Max(1000, timeout - (int)sw.ElapsedMilliseconds), Str(b, "menuAction") ?? "click");
-      result["menuItem"] = m["element"];
+    // The flyout stays open over the desktop after its icon's menu is done
+    // with; close it the way a person would, with the chevron.
+    if (overflow && OverflowWindow() != null) {
+      var chevron = Chevron(bar);
+      if (chevron != null) { int[] c = ClickPoint(chevron); Click(c[0], c[1], "left", 1); result["closedOverflow"] = true; }
     }
     return result;
   }
+
+  static void Key(ushort vk) {
+    var a = new INPUT(); var z = new INPUT();
+    a.type = z.type = 1; a.ki.wVk = z.ki.wVk = vk; z.ki.dwFlags = 0x0002;
+    lock (InputLock) Send(a, z);
+  }
+
 
   /** On the taskbar only the notification area's buttons count: "Maximal - 1 running window" is a task button. */
   static AutomationElement TrayIcon(AutomationElement scope, string tip, bool taskbar) {

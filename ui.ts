@@ -21,7 +21,10 @@
  * Errors are UiError with a `code`: notfound, timeout, bad, unavailable, fail.
  */
 import type { AgentClient } from "./agent"
-import { AgentError, ensure } from "./agent"
+import { AgentError, ensure, install } from "./agent"
+
+/** assets/winvm-ui.cs VERSION: an older helper in the guest is replaced by reinstalling the agent. */
+export const UI_HELPER_VERSION = 3
 
 export interface Selector {
   readonly window?: string
@@ -110,6 +113,8 @@ export interface TrayClicked extends Timed {
   readonly at: readonly [number, number]
   readonly clickedMs: number
   readonly menuItem?: Element
+  /** The overflow flyout was closed again after the menu item. */
+  readonly closedOverflow?: true
 }
 
 export class UiError extends Error {
@@ -131,11 +136,12 @@ export class Ui {
     this.agent = agent
   }
 
-  /** One raw request; the HTTP deadline outlives the helper's own. */
+  /** One raw request. */
   async call<T>(op: string, body: Readonly<Record<string, unknown>> = {}): Promise<T> {
     const t = typeof body["timeoutMs"] === "number" ? body["timeoutMs"] : 0
     try {
-      return await this.agent.ui<T>({ ...body, op }, t + 30_000)
+      // Past the helper's own watchdog (2 x timeout + 25 s), so a hang comes back as a UiError.
+      return await this.agent.ui<T>({ ...body, op }, 2 * t + 60_000)
     } catch (error) {
       if (error instanceof AgentError) {
         const msg = error.message.replace(/^agent POST \/ui: \d+ /, "")
@@ -246,11 +252,22 @@ export class Ui {
   }
 }
 
-/** A Ui for a running instance: its agent (installed or upgraded if need be), helper warmed up. */
+/**
+ * A Ui for a running instance: its agent (installed or upgraded if need be,
+ * and again if its helper is older than this host's), helper warmed up.
+ */
 export async function forInstance(name: string, o: { readonly log?: (line: string) => void } = {}): Promise<Ui> {
-  const ui = new Ui(await ensure(name, o.log === undefined ? {} : { log: o.log }))
-  await ui.ping()
-  return ui
+  const opts = o.log === undefined ? {} : { log: o.log }
+  const ui = new Ui(await ensure(name, opts))
+  const p = await ui.ping().catch((e: unknown) => {
+    if (e instanceof UiError && e.code === "unavailable") return null
+    throw e
+  })
+  if (p !== null && p.version === UI_HELPER_VERSION) return ui
+  o.log?.(`the guest's UI helper is ${p === null ? "missing" : `v${String(p.version)}`}, want v${String(UI_HELPER_VERSION)}: reinstalling the agent`)
+  const fresh = new Ui(await install(name, opts))
+  await fresh.ping()
+  return fresh
 }
 
 // --- formatting, for the CLI and job logs -----------------------------------

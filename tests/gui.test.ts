@@ -4,7 +4,7 @@
  * so the route must say so cleanly. The helper itself (assets/winvm-ui.cs)
  * runs only in the guest; docs/gui.md has its measurements.
  */
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs"
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { resolve } from "node:path"
 
@@ -13,7 +13,7 @@ import { afterAll, beforeAll, describe, expect, it } from "bun:test"
 import { AgentClient } from "../agent"
 import { parseArgs } from "../args"
 import { startAgent } from "../guestagent"
-import { Ui, UiError, formatElement, formatTree } from "../ui"
+import { UI_HELPER_VERSION, Ui, UiError, formatElement, formatTree } from "../ui"
 import { selectorFrom } from "../uicmds"
 
 let dir: string
@@ -43,6 +43,13 @@ describe("the /ui route", () => {
   it("wants an op", async () => {
     const r = await fetch(`${ui.agent.base}/ui`, { method: "POST", headers: { authorization: "Bearer tok" }, body: "{}" })
     expect(r.status).toBe(400)
+  })
+})
+
+describe("the helper's version", () => {
+  it("is the one ui.ts expects", () => {
+    const cs = readFileSync(resolve(import.meta.dir, "../assets/winvm-ui.cs"), "utf8")
+    expect(Number(/const int VERSION = (\d+);/.exec(cs)?.[1])).toBe(UI_HELPER_VERSION)
   })
 })
 

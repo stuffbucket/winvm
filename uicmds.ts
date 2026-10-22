@@ -83,7 +83,7 @@ export async function uiCmd(args: Args): Promise<number> {
   const took = (): string => `${(performance.now() - t0).toFixed(0)} ms`
   const out = (v: unknown, human: string): void => console.log(json ? JSON.stringify(v, null, 2) : human)
   try {
-    const ui = await forInstance(name)
+    const ui = await forInstance(name, { log: (l) => console.error(l) })
     const sel = selectorFrom(args, arg)
     const t = timeoutMs === undefined ? {} : { timeoutMs }
     switch (verb) {
