@@ -154,6 +154,11 @@ export async function exec(sockPath: string, path: string, args: readonly string
   if (pid === undefined) throw new Error(`guest-exec failed: ${JSON.stringify(started)}`)
 
   const deadline = Date.now() + 900_000
+  // Poll fast first, then back off: most commands finish in well under a
+  // second, and a fixed 1 s poll made every exec cost at least that (measured:
+  // `cmd /c echo` 1.06 s at 1 s, 75-190 ms at 25 ms). Long commands settle at
+  // 500 ms so a 15-minute install doesn't hammer the agent.
+  let pollMs = 25
   while (Date.now() < deadline) {
     const st = (await call(sockPath, { execute: "guest-exec-status", arguments: { pid } }))["return"] as
       | { exited?: boolean; exitcode?: number; "out-data"?: string; "err-data"?: string }
@@ -163,7 +168,8 @@ export async function exec(sockPath: string, path: string, args: readonly string
         s === undefined ? "" : Buffer.from(s, "base64").toString("utf8")
       return { exitcode: st.exitcode ?? 0, stdout: dec(st["out-data"]), stderr: dec(st["err-data"]) }
     }
-    await new Promise((r) => setTimeout(r, 1000))
+    await new Promise((r) => setTimeout(r, pollMs))
+    pollMs = Math.min(pollMs * 2, 500)
   }
   throw new Error("guest command timed out")
 }
