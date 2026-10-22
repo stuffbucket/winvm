@@ -104,11 +104,15 @@ kill-on-close job) and survive agent restarts.
 
 ## Baking it into an image
 
-`assets/agent-install.ps1 -Source <dir with guestagent.ts, runinsession.cs> -NoStart`
-from provisioning: installs everything and sets the Run key, with no token.
-Instances from that image then need only `agent.ensure(name)`, which writes the
-token over qemu-ga and adds the forward. At runtime, `agent.install(name)`
-stages the same files over qemu-ga and runs the same script.
+`winvm build` bakes it in: `buildSeed` puts `guestagent.ts`, `agent-install.ps1`,
+`runinsession.cs` and the host's own bun.exe (Windows ARM64, cached in media/)
+on the seed under `winvm\`, and provision.ps1 runs
+`agent-install.ps1 -Source <seed>\winvm -NoStart`: everything installed and the
+Run key set, with no token. Instances from that image (`win11-arm64-v3` on)
+then need only `agent.ensure(name)`, which writes the token over qemu-ga, adds
+the forward and waits (up to `waitMs`, 15 s) for the agent the Run key started
+at logon. Older images fall through to `agent.install(name)`, which stages the
+same files over qemu-ga and runs the same script.
 
 ## Bun quirks met on the way (1.3.14)
 

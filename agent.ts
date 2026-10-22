@@ -14,7 +14,7 @@
  * file, so writing it again over qemu-ga is all a rewrite ever needs.
  */
 import { randomBytes } from "node:crypto"
-import { createWriteStream, existsSync, mkdirSync, readFileSync } from "node:fs"
+import { createWriteStream, readFileSync } from "node:fs"
 import { once } from "node:events"
 import { resolve } from "node:path"
 
@@ -22,8 +22,8 @@ import type { AgentState } from "./agentfwd"
 import { ensureForward, ensureState, readState, restoreForward } from "./agentfwd"
 import type { ExecRequest, ExecResponse, Health, LaunchRequest, Proc, PwshResponse } from "./guestagent"
 import { AGENT_VERSION, GUEST_PORT, WINDOWS_DIR } from "./guestagent"
-import { download } from "./host"
-import { mediaDir, pathsFor } from "./paths"
+import { bunZip } from "./media"
+import { pathsFor } from "./paths"
 import * as qemu from "./qemu"
 import * as qga from "./qga"
 
@@ -235,16 +235,6 @@ export async function qgaWriteFile(sock: string, guestPath: string, data: Uint8A
   }
 }
 
-/** bun for Windows ARM64, the host's own version, cached beside the other media. */
-function bunZip(): string {
-  const f = resolve(mediaDir(), `bun-windows-aarch64-${Bun.version}.zip`)
-  if (!existsSync(f)) {
-    mkdirSync(mediaDir(), { recursive: true })
-    download(`https://github.com/oven-sh/bun/releases/download/bun-v${Bun.version}/bun-windows-aarch64.zip`, f)
-  }
-  return f
-}
-
 /**
  * Serve one file to the guest at http://10.0.2.2:<port>/<secret>/<name> — slirp
  * maps 10.0.2.2 to the host's loopback — for as long as `fn` runs.
@@ -337,7 +327,8 @@ export async function install(name: string, o: InstallOptions = {}): Promise<Age
  *   1. already answering with this version             ~ms
  *   2. present in the guest but holding another token  ~100 ms: write ours over
  *      qemu-ga (an image with the agent baked in, or a guest restored from a
- *      save another instance took), add the forward
+ *      save another instance took), add the forward, and wait for it to answer
+ *      — up to `waitMs`, for one still starting at logon
  *   3. otherwise a full install                         ~7 s
  */
 export async function ensure(name: string, o: InstallOptions & { readonly waitMs?: number } = {}): Promise<AgentClient> {
@@ -353,7 +344,11 @@ export async function ensure(name: string, o: InstallOptions & { readonly waitMs
       const s = ensureState(p)
       await qgaWriteFile(p.qga, `${WINDOWS_DIR}\\token`, new TextEncoder().encode(s.token))
       const client = clientFor({ ...s, hostPort: await ensureForward(p) })
-      const deadline = Date.now() + 3000
+      // The token landed, so the agent's directory exists: an image with the
+      // agent baked in, or an earlier install. Its Run key fires at logon, so
+      // right after a cold start it may still be seconds from listening — and
+      // waiting is far cheaper than reinstalling.
+      const deadline = Date.now() + (o.waitMs ?? 15_000)
       for (;;) {
         const h = await client.health(1000).catch(() => null)
         if (h !== null && h.version === AGENT_VERSION) return client

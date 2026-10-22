@@ -20,7 +20,17 @@ const ASSETS = resolve(import.meta.dir, "assets")
  * runs or installs from there. Not copied to C:\Windows\Setup\Scripts by the
  * answer file: nothing needs them before provisioning starts.
  */
-const WINVM_EXTRAS = ["defender.ps1", "logon.ps1"] as const
+const WINVM_EXTRAS = ["defender.ps1", "logon.ps1", "agent-install.ps1", "runinsession.cs"] as const
+
+/** bun for Windows ARM64, the host's own version, cached beside the other media. */
+export function bunZip(): string {
+  const f = resolve(mediaDir(), `bun-windows-aarch64-${Bun.version}.zip`)
+  if (!existsSync(f)) {
+    mkdirSync(mediaDir(), { recursive: true })
+    download(`https://github.com/oven-sh/bun/releases/download/bun-v${Bun.version}/bun-windows-aarch64.zip`, f)
+  }
+  return f
+}
 
 /**
  * A 64 MB FAT volume the guest writes its provisioning transcript to, and the
@@ -289,6 +299,14 @@ export function buildSeed(payloadDir: string | undefined, bunVersion: string | u
   // the caller. provision.ps1 finds this volume by the files in it.
   mkdirSync(resolve(dir, "winvm"), { recursive: true })
   for (const f of WINVM_EXTRAS) copyFileSync(resolve(ASSETS, f), resolve(dir, "winvm", f))
+  // The in-guest agent, baked in by provision.ps1 (agent-install.ps1 -NoStart)
+  // so instances only need a token, not an install. Its own bun.exe rides here
+  // rather than in `payload\`, which is the caller's: an image built without
+  // --bun still gets an agent.
+  copyFileSync(resolve(import.meta.dir, "guestagent.ts"), resolve(dir, "winvm", "guestagent.ts"))
+  if (run("unzip", ["-q", "-o", "-j", bunZip(), "bun-windows-aarch64/bun.exe", "-d", resolve(dir, "winvm")]) !== 0) {
+    throw new Error("could not unpack bun.exe for the guest agent")
+  }
   if (existsSync(media.pwsh())) copyFileSync(media.pwsh(), resolve(dir, "winvm", "PowerShell-win-arm64.msi"))
   copyFileSync(resolve(ASSETS, "autounattend.xml"), resolve(dir, "autounattend.xml"))
   copyFileSync(resolve(ASSETS, "provision.ps1"), resolve(dir, "provision.ps1"))

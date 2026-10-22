@@ -282,7 +282,24 @@ try {
         Write-Output "WARNING: no winvm\logon.ps1 on any volume - the Sysprep dialog will stay open"
     }
 
-    # --- 3e. .NET native images -----------------------------------------------
+    # --- 3e. The in-guest agent, baked in ------------------------------------
+    #
+    # Installed now, with -NoStart and no token, so every instance of the image
+    # has it at its first logon and the host only writes a token (agent.ensure)
+    # instead of staging files and compiling over qemu-ga. The host ships the
+    # agent, its bun.exe and runinsession.cs under `winvm\`. A warning rather
+    # than a failure: without it the host installs the agent on first use.
+    $extras = Find-VolumeContaining -RelativePath "winvm\agent-install.ps1"
+    if ($extras) {
+        & powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$extras\winvm\agent-install.ps1" -Source "$extras\winvm" -NoStart
+        Write-Output "agent-install.ps1 exit: $LASTEXITCODE"
+        # Copied off an ISO, so read-only; nothing needs them to be.
+        Get-ChildItem "C:\ProgramData\winvm\agent" -File -ErrorAction SilentlyContinue | ForEach-Object { $_.IsReadOnly = $false }
+    } else {
+        Write-Output "WARNING: no winvm\agent-install.ps1 on any volume - the agent installs on first use"
+    }
+
+    # --- 3f. .NET native images -----------------------------------------------
     #
     # AUDIT MODE NEVER RUNS THE NGEN QUEUE. Windows ships the .NET Framework with
     # its native-image compilation QUEUED, and leaves the work to the scheduled
