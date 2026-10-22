@@ -19,6 +19,8 @@ let tokenFile: string
 let server: ReturnType<typeof startAgent>
 let client: AgentClient
 const TOKEN = "t0k3n-for-tests"
+/** Per-test timeout for what spawns processes: a loaded host is slow, not broken. */
+const SLOW_HOST_MS = 300_000
 
 beforeAll(() => {
   dir = mkdtempSync(resolve(tmpdir(), "winvm-agent-"))
@@ -69,14 +71,19 @@ describe("agent over HTTP", () => {
     expect(r.stdout).toBe(`hello:${realpathSync(dir)}\npiped`)
     expect(r.stderr).toBe("err\n")
     expect(r.timedOut).toBe(false)
-  })
+  }, SLOW_HOST_MS)
 
+  // NO WALL-CLOCK BOUNDS IN HERE. On a host loaded with guests this file has
+  // stalled for minutes (measured: this test at 183 s, in one `check` of six),
+  // so a "< 3 s" or a fixed 100 ms sleep is a coin toss. What is asserted is
+  // the outcome; how long it may take is the test timeout's job, generous
+  // because a slow host is not a failure.
   it("kills a command that overruns its timeout", async () => {
-    const t = performance.now()
-    const r = await client.exec(["sleep", "10"], { timeoutMs: 200 })
+    // Ten minutes: it only ever ends early by being killed.
+    const r = await client.exec(["sleep", "600"], { timeoutMs: 200 })
     expect(r.timedOut).toBe(true)
-    expect(performance.now() - t).toBeLessThan(3000)
-  })
+    expect(r.code).not.toBe(0)
+  }, SLOW_HOST_MS)
 
   it("puts and gets binary files, creating directories", async () => {
     const bytes = new Uint8Array(3 * 1024 * 1024)
@@ -88,21 +95,23 @@ describe("agent over HTTP", () => {
     expect(await client.getFile(target, out)).toBe(bytes.length)
     const err = (await client.get(resolve(dir, "missing")).catch((e: unknown) => e)) as AgentError
     expect(err.status).toBe(404)
-  })
+  }, SLOW_HOST_MS)
 
   it("launches detached, lists and kills", async () => {
-    const { pid } = await client.launch(["sleep", "30"])
+    const { pid } = await client.launch(["sleep", "600"])
     expect(pid).toBeGreaterThan(0)
     expect((await client.procs()).some((p) => p.pid === pid)).toBe(true)
     await client.kill(pid)
-    await Bun.sleep(100)
-    expect((await client.procs()).some((p) => p.pid === pid && !p.name.includes("defunct"))).toBe(false)
-  })
+    // Gone once the kill is delivered and the zombie reaped: asked until it
+    // is, not after a fixed pause.
+    const alive = async (): Promise<boolean> => (await client.procs()).some((p) => p.pid === pid && !p.name.includes("defunct"))
+    while (await alive()) await Bun.sleep(50)
+  }, SLOW_HOST_MS)
 
   it("reports a missing program as an error, not a hang", async () => {
     const err = (await client.exec(["/no/such/program"]).catch((e: unknown) => e)) as AgentError
     expect(err.status).toBe(500)
-  })
+  }, SLOW_HOST_MS)
 })
 
 describe("parsers", () => {
