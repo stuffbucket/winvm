@@ -176,7 +176,8 @@ bun winvm.ts clock                      # guest-vs-host offset, and fix it
 
 - **Baseline.** An instance's first `start` (and the first after `reset`) saves
   `baseline` once the guest is logged on. `rewind` with no snapshot named
-  "fresh" goes back to it. `--no-autosave` skips it.
+  "fresh" goes back to it. `--no-autosave` skips it — only it: the watcher's
+  idle autosaves are `config autosave.enabled=false`.
 - **Storage.** `~/.local/state/winvm/saves/<instance>/<name>/`: `manifest.json`,
   `vmstate.zst` (zstd'd QEMU migration stream), plus APFS clones of the overlay
   and NVRAM, which cost little until the instance overwrites what they share.
@@ -236,7 +237,8 @@ The clock step varies (10-900 ms) because the guest's clock answers in
 ## The idle watcher
 
 `start` also launches a small background process per instance that watches
-for the guest going idle (`--no-watch` skips it). It logs to
+for the guest going idle (`--no-watch` skips it; `load` and `rewind` into a
+stopped instance start one too, and take `--no-watch` as well). It logs to
 `instances/<name>/watch.log`, publishes its state in `watch.json`, and exits
 when QEMU does; `stop` ends it first.
 

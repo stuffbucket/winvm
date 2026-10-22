@@ -945,6 +945,9 @@ export const USAGE =
   "  ls                            images and instances, with disk usage\n" +
   "  start   [-i name] [--ephemeral] [--no-autosave] [--boot] [--no-watch]\n" +
   "                                recalls a stow save if present (--boot: discard it, boot cold)\n" +
+  "                                --no-autosave: no baseline save on the first boot (idle\n" +
+  "                                autosaves are `config autosave.enabled=false`)\n" +
+  "                                --no-watch: no idle watcher (no autosave, stow or clock sync)\n" +
   "  exec    [-i name] [--qga] -- <cmd>  run a command in the guest (via the agent when installed)\n" +
   "  agent   [-i name] install | status [--json]   the in-guest agent (fast exec, files, GUI)\n" +
   "  put     [-i name] <host file> <guest path>    copy a file into the guest\n" +
@@ -953,10 +956,11 @@ export const USAGE =
   "  smoke   [-i name] [--expect <v> | --expect-file <path>] [--probe <exe>]\n" +
   "  snapshot [-i name] [tag]      capture the running guest, RAM and all\n" +
   "           [--delete]           remove that snapshot instead\n" +
-  "  rewind  [-i name] [tag]       put the guest back: snapshot <tag> (default fresh), else\n" +
-  "                                the save of that name (default: the automatic baseline)\n" +
+  "  rewind  [-i name] [tag] [--no-watch]  put the guest back: snapshot <tag> (default fresh),\n" +
+  "                                else the save of that name (default: the automatic baseline)\n" +
   "  save    [-i name] [name] [--fast]  save the running guest to files (default name: a timestamp)\n" +
-  "  load    [-i name] [name]      load a save, running or stopped (default: the newest)\n" +
+  "  load    [-i name] [name] [--no-watch]  load a save, running or stopped (default: the newest)\n" +
+  "                                into a stopped instance it starts the watcher, like start\n" +
   "  saves   [-i name] [rm <name>] list saves (kind, size, compatible) or delete one\n" +
   "  golden  create|reset [-i name] [--name golden]  settled mapped-ram save; reset to it in ~1 s\n" +
   "  pause | resume [-i name]      freeze / unfreeze the guest (resume fixes its clock)\n" +
