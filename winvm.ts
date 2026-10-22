@@ -7,6 +7,8 @@
  *   winvm adopt <disk.qcow2>         turn an existing installed disk into a base
  *   winvm start [-i name]            boot an instance (creating it if absent)
  *   winvm exec  [-i name] -- <cmd>   run a command in the guest
+ *   winvm agent [-i name] install    the in-guest agent: fast exec/files/GUI (agent.ts)
+ *   winvm put / get / launch         files in and out; a program on the guest's desktop
  *   winvm snapshot [-i name] [tag]   capture the running guest, RAM and all
  *   winvm rewind   [-i name] [tag]   put it back — ~10-20 s running, no reboot
  *   winvm save / load / saves        whole-machine saves as files; see saves.ts
@@ -84,6 +86,8 @@
  *   host.ts       prerequisites, shelling out, downloads
  *   qemu.ts       the QEMU command line and process lifecycle
  *   qga.ts        guest-agent client (the scriptable channel)
+ *   agent.ts      the in-guest agent's client and install; agentfwd.ts its port forward
+ *   guestagent.ts the in-guest agent itself (runs IN the guest); agentcmds.ts its verbs
  *   qmp.ts        QEMU monitor client (keystrokes, snapshots)
  *   snapshot.ts   capture and restore a running guest
  *   saves.ts      file saves: format, compatibility, save/load mechanics
@@ -111,6 +115,7 @@
  * Exit code: the guest command's, so `winvm exec` is transparent in a `&&` chain.
  */
 import { parseArgs } from "./args"
+import * as agentcmds from "./agentcmds"
 import * as commands from "./commands"
 import * as goldens from "./golden"
 import * as runcmds from "./runcmds"
@@ -158,6 +163,18 @@ switch (sub) {
   // eslint-disable-next-line no-fallthrough
   case "exec":
     process.exit(await commands.exec(args))
+  // eslint-disable-next-line no-fallthrough
+  case "agent":
+    process.exit(await agentcmds.agentCmd(args))
+  // eslint-disable-next-line no-fallthrough
+  case "put":
+    process.exit(await agentcmds.put(args))
+  // eslint-disable-next-line no-fallthrough
+  case "get":
+    process.exit(await agentcmds.get(args))
+  // eslint-disable-next-line no-fallthrough
+  case "launch":
+    process.exit(await agentcmds.launch(args))
   // eslint-disable-next-line no-fallthrough
   case "smoke":
     process.exit(await commands.smoke(args))

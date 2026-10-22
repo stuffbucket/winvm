@@ -27,6 +27,7 @@ import {
   readImageMeta,
   readMeta,
 } from "./paths"
+import * as agentcmds from "./agentcmds"
 import * as qemu from "./qemu"
 import * as qmp from "./qmp"
 import * as qga from "./qga"
@@ -777,7 +778,7 @@ export async function exec(args: Args): Promise<number> {
     return 1
   }
   // Activity for the whole run, so the watcher never saves or stows mid-command.
-  const r = await watcher.whileActive(name, qga.exec(p.qga, program, rest))
+  const r = await watcher.whileActive(name, agentcmds.exec(name, args, program, rest))
   if (r.stdout !== "") process.stdout.write(r.stdout)
   if (r.stderr !== "") process.stderr.write(r.stderr)
   return r.exitcode
@@ -927,7 +928,11 @@ export const USAGE =
   "  ls                            images and instances, with disk usage\n" +
   "  start   [-i name] [--ephemeral] [--no-autosave] [--boot] [--no-watch]\n" +
   "                                recalls a stow save if present (--boot: discard it, boot cold)\n" +
-  "  exec    [-i name] -- <cmd>    run a command in the guest\n" +
+  "  exec    [-i name] [--qga] -- <cmd>  run a command in the guest (via the agent when installed)\n" +
+  "  agent   [-i name] install | status [--json]   the in-guest agent (fast exec, files, GUI)\n" +
+  "  put     [-i name] <host file> <guest path>    copy a file into the guest\n" +
+  "  get     [-i name] <guest path> <host file>    copy a file out of the guest\n" +
+  "  launch  [-i name] -- <program> [args]         start it on the guest's desktop, detached\n" +
   "  smoke   [-i name] [--expect <v> | --expect-file <path>] [--probe <exe>]\n" +
   "  snapshot [-i name] [tag]      capture the running guest, RAM and all\n" +
   "           [--delete]           remove that snapshot instead\n" +
