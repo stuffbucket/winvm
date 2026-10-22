@@ -4,6 +4,7 @@
  * Used for the one thing the guest cannot do for itself: press a key before any
  * OS is running.
  */
+import { readFileSync, rmSync } from "node:fs"
 import { connect } from "node:net"
 
 /**
@@ -127,9 +128,47 @@ async function withSocket<T>(
   }
 }
 
+/** What a build VM's screen shows, as far as answering the boot prompt cares. */
+export type BootFrame = "prompt" | "console" | "blank" | "graphical"
+
 /**
- * Answer the install media's boot prompt — with a STRICTLY BOUNDED number of
- * keystrokes.
+ * Classify a raw (P6) screendump, and count its lit pixels.
+ *
+ * Measured on the build VM (ramfb, 800x600):
+ *
+ *   - "prompt": cdboot CLEARS the screen and prints "Press any key to boot from
+ *     CD or DVD", one line at the very top, adding a dot every half second.
+ *     Nothing else is lit — ~600 pixels, all in the top line.
+ *   - "console": the UEFI shell, text further down the screen (~5% lit).
+ *   - "graphical": Windows Setup and its blue screens (~100% lit).
+ *   - "blank": nothing lit at all.
+ *
+ * Positions and shares, not a font or a resolution, so a different display
+ * size does not need new numbers.
+ */
+export function classifyBootFrame(ppm: Buffer): { kind: BootFrame; lit: number } {
+  const m = /^P6\s+(\d+)\s+(\d+)\s+(\d+)\s/.exec(ppm.subarray(0, 64).toString("latin1"))
+  if (m === null) return { kind: "blank", lit: 0 }
+  const width = Number(m[1])
+  const height = Number(m[2])
+  const data = ppm.subarray(m[0].length)
+  if (width * height === 0 || data.length < width * height * 3) return { kind: "blank", lit: 0 }
+  let lit = 0
+  let lowest = -1
+  for (let i = 0; i < width * height * 3; i += 3) {
+    if (Math.max(data[i] ?? 0, data[i + 1] ?? 0, data[i + 2] ?? 0) > 80) {
+      lit += 1
+      lowest = Math.floor(i / 3 / width)
+    }
+  }
+  if (lit === 0) return { kind: "blank", lit }
+  if (lit / (width * height) > 0.3) return { kind: "graphical", lit }
+  return { kind: lowest < height / 16 ? "prompt" : "console", lit }
+}
+
+/**
+ * Answer the install media's boot prompt — pressing Enter ONLY WHILE THE PROMPT
+ * IS ON SCREEN AND STILL WAITING.
  *
  * Windows install media boots `cdboot.efi`, which prints "Press any key to boot
  * from CD or DVD" and returns EFI_TIMEOUT if nothing does. Unanswered, EDK2
@@ -137,33 +176,84 @@ async function withSocket<T>(
  * HTTP v4/v6, each with its own timeout — and lands in a UEFI shell having
  * installed nothing.
  *
- * THE COUNT IS THE WHOLE DESIGN. This used to press Enter every 400 ms until
- * the disk grew past 300 MB — around 250 keystrokes to satisfy a prompt that
- * consumes one. Keystrokes the prompt does not take are not discarded; they
- * queue in the keyboard buffer and are handed to Windows Setup's GUI when it
- * starts pumping messages, where Enter activates the focused Cancel button and
- * opens "Are you sure you want to quit?". The install then freezes with no
- * error, at whatever percentage it happened to reach. Whether it happened at
- * all depended on how fast the disk grew, which is why it struck intermittently.
+ * A KEY THAT ARRIVES AFTER THE PROMPT IS ANSWERED IS WORSE THAN NONE. Once
+ * bootmgr hands over to the Windows kernel nothing polls the keyboard, and
+ * QEMU's usb-kbd QUEUES what it is sent — then hands the lot to Windows Setup's
+ * GUI as soon as it starts, where Enter activates "Support" and Cancel and
+ * opens "Are you sure you want to quit?". The guest reboots having partitioned
+ * the disk and nothing else, and the build ends at "no bootable target found".
  *
- * So: the CALLER waits for the firmware to announce that the prompt is imminent
- * (see startup.nsh's `winvm-keypress-needed`), and this sends a handful of keys
- * spaced across the prompt's few-second window. Nothing here is proportional to
- * how long anything takes.
+ * Both earlier designs failed that way. Holding Enter until the disk grew sent
+ * ~250 keys; five keys over ten seconds still failed ~2 builds in 3, because on
+ * this host Setup is up ~8 s after the prompt is answered — inside the ten.
+ *
+ * So the screen decides, not a clock. The prompt is recognisable (one line of
+ * text on an otherwise black screen) and so is its answer: while cdboot waits
+ * it adds a dot every half second, and the moment it takes a key the dots stop
+ * — the frame then stays frozen until Setup draws over it. One key per prompt;
+ * another only if the dots are seen to move on well after it was sent; done
+ * as soon as the prompt freezes or Setup appears. If cdboot times out anyway,
+ * the shell tries the next copy and this answers that prompt too.
+ *
+ * Returns how many keys were sent and whether the prompt was seen to take one.
  *
  * `sendkey` is an **HMP** command, not a QMP one. Issuing it as
  * `{"execute":"sendkey"}` returns `CommandNotFound` — and a caller that ignores
- * the response sees hundreds of keystrokes "sent" and none arrive, which looks
- * exactly like a storage or firmware fault. That misdiagnosis cost hours. Every
- * key here is a checked request; there are few enough to afford it.
+ * the response sees keystrokes "sent" and none arrive, which looks exactly like
+ * a storage or firmware fault. That misdiagnosis cost hours. Every key here is
+ * a checked request.
  */
-export async function tapEnter(sockPath: string, count: number, intervalMs: number): Promise<void> {
-  await withSocket(sockPath, async (send, request) => {
-    void send
-    for (let i = 0; i < count; i += 1) {
-      const r = await request({ execute: "human-monitor-command", arguments: { "command-line": "sendkey ret" } })
-      if (r["error"] !== undefined) throw new Error(`sendkey rejected: ${JSON.stringify(r["error"])}`)
-      if (i < count - 1) await new Promise((res) => setTimeout(res, intervalMs))
+export async function answerBootPrompt(
+  sockPath: string,
+  frameFile: string,
+  { maxKeys = 6, withinMs = 60_000 }: { maxKeys?: number; withinMs?: number } = {},
+): Promise<{ keys: number; answered: boolean }> {
+  // Dots come every 500 ms: three missed in a row is a prompt that took the key,
+  // and a dot within 300 ms of the key may have been drawn before it arrived.
+  const FROZEN_MS = 1500
+  const SETTLE_MS = 300
+  const deadline = Date.now() + withinMs
+  return await withSocket(sockPath, async (_send, request) => {
+    const frame = async (): Promise<{ kind: BootFrame; lit: number }> => {
+      const r = await request({ execute: "screendump", arguments: { filename: frameFile } })
+      if (r["error"] !== undefined) throw new Error(`screendump rejected: ${JSON.stringify(r["error"])}`)
+      return classifyBootFrame(readFileSync(frameFile))
+    }
+    let keys = 0
+    // The prompt's state when the last key went: when, and how many lit pixels.
+    let sentAt = 0
+    let litAtKey = -1
+    let changedAt = 0
+    try {
+      while (Date.now() < deadline) {
+        const f = await frame()
+        const now = Date.now()
+        if (f.kind === "graphical") return { keys, answered: keys > 0 }
+        if (f.kind !== "prompt") {
+          // Back at the shell (a timeout, and it is about to try another copy) or
+          // between screens: the next prompt starts over.
+          litAtKey = -1
+        } else if (litAtKey >= 0 && f.lit !== litAtKey && now - sentAt <= SETTLE_MS) {
+          // A dot drawn as the key went in: the key may yet land. Judge from here.
+          litAtKey = f.lit
+          changedAt = now
+        } else if (litAtKey < 0 || f.lit !== litAtKey) {
+          // A prompt not yet answered, or one whose dots moved on after the key.
+          if (keys >= maxKeys) return { keys, answered: false }
+          const r = await request({ execute: "human-monitor-command", arguments: { "command-line": "sendkey ret" } })
+          if (r["error"] !== undefined) throw new Error(`sendkey rejected: ${JSON.stringify(r["error"])}`)
+          keys += 1
+          sentAt = Date.now()
+          changedAt = sentAt
+          litAtKey = f.lit
+        } else if (f.lit === litAtKey && now - changedAt > FROZEN_MS) {
+          return { keys, answered: true }
+        }
+        await new Promise((res) => setTimeout(res, 150))
+      }
+      return { keys, answered: false }
+    } finally {
+      rmSync(frameFile, { force: true })
     }
   })
 }

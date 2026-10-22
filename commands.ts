@@ -337,22 +337,24 @@ export async function build(args: Args): Promise<number> {
     return 1
   }
 
-  // ANSWER "Press any key to boot from CD or DVD" — ONCE THE FIRMWARE SAYS SO.
+  // ANSWER "Press any key to boot from CD or DVD" — ONCE THE FIRMWARE SAYS SO,
+  // AND ONLY WHILE IT IS STILL ON SCREEN.
   //
-  // Two rules, and the second is the one that was learned the hard way:
+  // Two rules, both learned the hard way:
   //
   //   1. Wait for the EVENT. startup.nsh prints `winvm-keypress-needed` on the
   //      firmware console immediately before launching the only boot image that
   //      asks for a key. That is a causal signal; a timer is not. The prompt
   //      itself is drawn on the graphical console and never reaches serial, so
-  //      this handshake is the only thing there is to observe.
+  //      this handshake is the only thing serial has to observe.
   //
-  //   2. Send a BOUNDED number of keys. Surplus keystrokes are not discarded —
-  //      they queue and are delivered to Windows Setup's GUI, where Enter
-  //      activates Cancel and opens "Are you sure you want to quit?", freezing
-  //      the install with no error. The previous version held Enter down until
-  //      the disk grew past 300 MB, ~250 keystrokes for a prompt that takes
-  //      one, and wedged builds intermittently for exactly that reason.
+  //   2. Never send a key the prompt will not take. Surplus keystrokes are not
+  //      discarded once Windows is booting — they queue and are delivered to
+  //      Windows Setup's GUI, where Enter activates Support and Cancel and the
+  //      install quits. Holding Enter until the disk grew sent ~250 of them; a
+  //      fixed five over ten seconds still failed ~2 builds in 3, because Setup
+  //      was up before the fifth. answerBootPrompt watches the prompt itself and
+  //      stops for good the moment it takes a key.
   //
   // Later reboots need no keyboard at all: startup.nsh finds Windows Boot
   // Manager on the ESP by then and prefers it over the installer.
@@ -368,9 +370,9 @@ export async function build(args: Args): Promise<number> {
       console.warn("warning: the firmware never asked for a keypress; the install may stall at the boot prompt")
       return
     }
-    // Five keys, ten seconds, spanning the prompt's window — then stop for good,
-    // whatever happens next.
-    await qmp.tapEnter(p.qmp, 5, 2000)
+    const { keys, answered } = await qmp.answerBootPrompt(p.qmp, resolve(p.dir, "boot-prompt.ppm"))
+    if (answered) console.log(`boot prompt answered (${String(keys)} key${keys === 1 ? "" : "s"})`)
+    else console.warn(`warning: the boot prompt was not seen to take a key (${String(keys)} sent)`)
     // Confirm the keys did their job, so a prompt that went unanswered is named
     // now rather than surfacing an hour later as a bare timeout.
     for (let waited = 0; waited < 300_000; waited += 5000) {

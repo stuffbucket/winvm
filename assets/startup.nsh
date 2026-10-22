@@ -50,7 +50,8 @@ endfor
 #
 # That keypress is the host's job, and the line below is the HANDSHAKE that
 # makes it deterministic: winvm watches the firmware console for
-# `winvm-keypress-needed` and only then sends a small, bounded number of Enters.
+# `winvm-keypress-needed` and only then sends Enter — one at a time, and only
+# while screendumps show the prompt still waiting (see qmp.answerBootPrompt).
 # It is printed here, immediately before the one image that asks for a key,
 # because this is the only moment the host can know the prompt is imminent —
 # the prompt itself is drawn on the graphical console and never reaches serial.
