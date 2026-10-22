@@ -171,6 +171,16 @@ bun winvm.ts click --text "Cancel"
 bun winvm.ts toasts --app maximal --since 10m
 ```
 
+**Claude computer use.** `cua serve` exposes the guest to Claude's
+computer-use tool on a localhost endpoint (bearer token), and `cua run` is a
+small agent loop that drives it — through `ANTHROPIC_API_KEY`, or Maximal on
+the host. See [`docs/cua.md`](docs/cua.md).
+
+```sh
+bun winvm.ts cua run -i ui "Open Notepad, type 'hello', and save it to C:\\work\\hello.txt"
+bun winvm.ts cua serve -i ui            # prints the URL and token
+```
+
 **Screen size.** The default display is `ramfb`, a firmware framebuffer that
 EDK2 fixes at 800x600. For a bigger screen, switch an instance to virtio-gpu:
 
