@@ -337,7 +337,7 @@ function listProcs(): Proc[] {
 
 /** A UI Automation request: `op` plus its fields (see assets/winvm-ui.cs). */
 export type UiRequest = { readonly op: string } & Readonly<Record<string, unknown>>
-/** What the helper answered: a result, or an error with a code (notfound | timeout | bad | fail | unavailable). */
+/** What the helper answered: a result, or an error with a code (notfound | timeout | covered | bad | fail | unavailable). */
 export type UiReply = { readonly result: Record<string, unknown> } | { readonly error: string; readonly code: string }
 
 /**
@@ -631,7 +631,7 @@ export function startAgent(o: AgentOptions, onFatal: () => void = () => {}): Run
               if (typeof r.op !== "string") return fail(400, "op required")
               const out = await spawner.call<UiReply>({ op: "ui", req: r })
               if ("result" in out) return json(out.result)
-              const status = { notfound: 404, timeout: 408, bad: 400, unavailable: 501 }[out.code] ?? 500
+              const status = { notfound: 404, timeout: 408, bad: 400, covered: 409, unavailable: 501 }[out.code] ?? 500
               return json({ error: out.error, code: out.code }, status)
             }
             case "POST /exit":

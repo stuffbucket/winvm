@@ -71,7 +71,9 @@ steps:
       $shell[0].ProcessId | Set-Content C:\work\shell1.pid
 
   # Not signed in, Maximal opens Settings at launch. Close it (to the tray: the
-  # process stays) so that what opens it next is the tray menu.
+  # process stays) so that what opens it next is the tray menu. Its "Sign in to
+  # GitHub" toast slides up over the tray at the same time; `ui tray` sees it
+  # covering the icon and waits it out (~2-5 s) before clicking.
   - name: Settings opens from the tray menu, with its Account section
     shell: winvm
     timeout: 2m
@@ -79,7 +81,7 @@ steps:
       ui wait --process maximal-shell --window Settings --name Account --type Text --timeout 60
       ui click --process maximal-shell --window Settings --id Close --settle 300
       ui wait --process maximal-shell --window Settings --gone --timeout 15
-      ui tray Maximal --menu Settings
+      ui tray Maximal --menu Settings --timeout 30
       ui wait --process maximal-shell --window Settings --name Account --type Text --timeout 30
       ui find --process maximal-shell --window Settings --name "Sign in to GitHub" --type Button
 
@@ -87,7 +89,7 @@ steps:
     shell: winvm
     timeout: 2m
     run: |
-      ui tray Maximal --menu "Quit Maximal"
+      ui tray Maximal --menu "Quit Maximal" --timeout 30
       ui click --process maximal-shell --window "Quit Maximal?" --name "Quit Maximal" --type Button --settle 200 --timeout 15
       ui wait --process maximal-shell --gone --timeout 30
 

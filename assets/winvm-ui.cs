@@ -38,7 +38,7 @@ class UiError : Exception {
 
 static class WinvmUi {
   // ui.ts UI_HELPER_VERSION must match: the host reinstalls the agent when it does not.
-  const int VERSION = 3;
+  const int VERSION = 4;
 
   [DllImport("user32.dll")] static extern bool SetProcessDpiAwarenessContext(IntPtr v);
   [DllImport("user32.dll")] static extern bool SetForegroundWindow(IntPtr h);
@@ -46,6 +46,12 @@ static class WinvmUi {
   [DllImport("user32.dll")] static extern bool ShowWindow(IntPtr h, int cmd);
   [DllImport("user32.dll")] static extern bool IsIconic(IntPtr h);
   [DllImport("user32.dll")] static extern int GetSystemMetrics(int i);
+  [StructLayout(LayoutKind.Sequential)] struct POINT { public int X, Y; }
+  [DllImport("user32.dll")] static extern IntPtr WindowFromPoint(POINT p);
+  [DllImport("user32.dll")] static extern IntPtr GetAncestor(IntPtr h, uint flags);
+  [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern int GetClassName(IntPtr h, StringBuilder s, int n);
+  [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern int GetWindowText(IntPtr h, StringBuilder s, int n);
+  [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr h, out uint pid);
   [DllImport("user32.dll")] static extern uint GetDpiForSystem();
   [DllImport("kernel32.dll")] static extern bool IsWow64Process2(IntPtr p, out ushort pm, out ushort nm);
   [StructLayout(LayoutKind.Sequential)] struct MOUSEINPUT { public int dx, dy; public uint mouseData, dwFlags, time; public IntPtr dwExtraInfo; }
@@ -190,6 +196,13 @@ static class WinvmUi {
         return Obj("foreground", Focus(roots[0]), "window", Describe(roots[0], true));
       }
       case "settle": return Settle(b);
+      case "at": {
+        int x = Int(b, "x", -1), y = Int(b, "y", -1);
+        if (x < 0 || y < 0) throw new UiError("bad", "at needs x and y");
+        var d = Obj("window", DescribeHwnd(RootAt(x, y)));
+        try { d["element"] = Describe(AutomationElement.FromPoint(new System.Windows.Point(x, y)), false); } catch { }
+        return d;
+      }
       case "tray": return Tray(b);
       case "menu": return Menu(b, Str(b, "name"), Int(b, "timeoutMs", 5000), Str(b, "action") ?? "click");
     }
@@ -519,7 +532,7 @@ static class WinvmUi {
     string did = action;
     switch (action) {
       case "click": case "rightclick": case "doubleclick": case "middleclick": {
-        int[] at = ClickPoint(e);
+        int[] at = ClearPoint(e, Math.Max(3000, Int(b, "timeoutMs", 0)));
         Click(at[0], at[1], action == "rightclick" ? "right" : action == "middleclick" ? "middle" : "left", action == "doubleclick" ? 2 : 1);
         return Obj("did", action, "at", at, "element", before);
       }
@@ -578,6 +591,52 @@ static class WinvmUi {
     if (r.IsEmpty || double.IsInfinity(r.X) || r.Width <= 0 || r.Height <= 0)
       throw new UiError("bad", "the element has no on-screen bounds to click (offscreen or hidden); try invoke");
     return new[] { (int)(r.X + r.Width / 2), (int)(r.Y + r.Height / 2) };
+  }
+
+  /**
+   * Where to click `e`, once nothing else is on top of it there. A real click
+   * goes to whatever window is at that point: a toast sliding up over the
+   * tray, a dialog. Hit-test first; while something else is there, park the
+   * pointer away (a toast never times out under the pointer) and wait, up to
+   * waitMs, then say what covers it.
+   */
+  static int[] ClearPoint(AutomationElement e, int waitMs) {
+    var sw = Stopwatch.StartNew();
+    bool parked = false;
+    IntPtr want = IntPtr.Zero;
+    var top = TopWindowOf(e);
+    if (top != null) { try { want = new IntPtr(top.Current.NativeWindowHandle); } catch (ElementNotAvailableException) { } }
+    while (true) {
+      int[] p = ClickPoint(e);
+      if (want == IntPtr.Zero) return p; // nothing to compare with
+      // Win32, not UIA: a toast's window is not in the UIA tree at all, yet takes the click.
+      IntPtr hit = RootAt(p[0], p[1]);
+      if (hit == want || hit == IntPtr.Zero) {
+        if (parked) Log("hit-test clear after " + sw.ElapsedMilliseconds + " ms");
+        return p;
+      }
+      if (sw.ElapsedMilliseconds >= waitMs)
+        throw new UiError("covered", "the element is covered at " + p[0] + "," + p[1] + " by " + DescribeHwnd(hit));
+      if (!parked) {
+        Log("hit-test: covered at " + p[0] + "," + p[1] + " by " + DescribeHwnd(hit) + "; waiting");
+        lock (InputLock) Send(Mouse(0, 32767, 0x0001 | 0x8000 | 0x4000)); // left edge, halfway down
+        parked = true;
+      }
+      Thread.Sleep(100);
+    }
+  }
+
+  static IntPtr RootAt(int x, int y) {
+    var pt = new POINT { X = x, Y = y };
+    IntPtr h = WindowFromPoint(pt);
+    return h == IntPtr.Zero ? h : GetAncestor(h, 2 /* GA_ROOT */);
+  }
+
+  static string DescribeHwnd(IntPtr h) {
+    var cls = new StringBuilder(256); GetClassName(h, cls, 256);
+    var title = new StringBuilder(256); GetWindowText(h, title, 256);
+    uint pid; GetWindowThreadProcessId(h, out pid);
+    return "\"" + title + "\" (" + cls + ", " + ProcessName((int)pid) + ", hwnd " + h.ToInt64() + ")";
   }
 
   /** Real input: move there, press, release. Absolute coordinates over the virtual desktop. */
@@ -668,7 +727,7 @@ static class WinvmUi {
           if (flyout == null) {
             var chevron = Chevron(bar);
             if (chevron == null) throw new UiError("notfound", "no tray icon like \"" + tip + "\" and no \"Show hidden icons\" button");
-            int[] at = ClickPoint(chevron);
+            int[] at = ClearPoint(chevron, Math.Max(1000, timeout - (int)sw.ElapsedMilliseconds));
             Click(at[0], at[1], "left", 1);
             var until = sw.ElapsedMilliseconds + 2000;
             while ((flyout = OverflowWindow()) == null && sw.ElapsedMilliseconds < until) Thread.Sleep(30);
@@ -683,6 +742,7 @@ static class WinvmUi {
           // A flyout still closing from a previous call shows the icon, then takes it away: look again.
           Steady(icon, 1500);
           try { p = ClickPoint(icon); } catch (Exception) { icon = null; }
+          if (p != null) p = ClearPoint(icon, Math.Max(1000, timeout - (int)sw.ElapsedMilliseconds));
         }
         if (p == null) {
           if (sw.ElapsedMilliseconds >= timeout) throw new UiError("notfound", "no tray icon like \"" + tip + "\" on the taskbar or in the overflow");
@@ -818,7 +878,7 @@ static class WinvmUi {
           if (!hit.TryGetCurrentPattern(InvokePattern.Pattern, out pat)) throw new UiError("bad", "the menu item has no Invoke pattern");
           ((InvokePattern)pat).Invoke();
         } else {
-          int[] at = ClickPoint(hit);
+          int[] at = ClearPoint(hit, 1000);
           Click(at[0], at[1], "left", 1);
         }
         return Obj("element", desc, "waitedMs", sw.ElapsedMilliseconds);

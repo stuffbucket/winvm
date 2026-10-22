@@ -18,13 +18,14 @@
  * looking until then. Clicks are real input (SendInput) at the element's
  * centre; `invoke` and friends use UIA patterns and need nothing on screen.
  *
- * Errors are UiError with a `code`: notfound, timeout, bad, unavailable, fail.
+ * Errors are UiError with a `code`: notfound, timeout, covered (another window
+ * is on top of the element where it would be clicked), bad, unavailable, fail.
  */
 import type { AgentClient } from "./agent"
 import { AgentError, ensure, install } from "./agent"
 
 /** assets/winvm-ui.cs VERSION: an older helper in the guest is replaced by reinstalling the agent. */
-export const UI_HELPER_VERSION = 3
+export const UI_HELPER_VERSION = 4
 
 export interface Selector {
   readonly window?: string
@@ -125,7 +126,7 @@ export class UiError extends Error {
   }
 }
 
-const CODES: Readonly<Record<number, string>> = { 400: "bad", 404: "notfound", 408: "timeout", 501: "unavailable" }
+const CODES: Readonly<Record<number, string>> = { 400: "bad", 404: "notfound", 408: "timeout", 409: "covered", 501: "unavailable" }
 
 /** Defaults: element ops wait this long for their element to appear. */
 export const DEFAULT_TIMEOUT_MS = 10_000
@@ -244,6 +245,11 @@ export class Ui {
       timeoutMs: o.timeoutMs ?? DEFAULT_TIMEOUT_MS,
       ...(o.menu === undefined ? {} : { menu: o.menu }),
     })
+  }
+
+  /** What is at a screen point: the top-level window a click there would reach, and the UIA element. */
+  async at(x: number, y: number): Promise<{ readonly window: string; readonly element?: Element }> {
+    return await this.call("at", { x, y })
   }
 
   /** Click an item of an open context menu (exact text, else prefix; "…" and accelerators ignored). */

@@ -10,6 +10,7 @@
  *       webview wait 'a[href="#account"]' --timeout 30
  *       webview click 'a[href="#apps"]'
  *       ocr --find "MCP servers"
+ *       ui tray Maximal --menu "Quit Maximal"
  *       toasts --app maximal --find "Sign in" --since 5m --wait 30
  *
  * Each non-empty line not starting with `#` is one command (a leading `winvm`

@@ -35,8 +35,9 @@
  *   screenshot: failure                    # failure (default) | always | never
  *
  * `shell: winvm` runs each line of `run` as a winvm command ON THE HOST against
- * the job's instance (`webview click …`, `ocr --find …`, `toasts --find …`,
- * `click --text …`); see hoststep.ts.
+ * the job's instance (`ui tray … --menu …`, `ui click …`, `webview click …`,
+ * `ocr --find …`, `toasts --find …`, `click --text …`); see hoststep.ts and
+ * docs/gui.md.
  *
  * Every staged or served file is also reachable from the guest at
  * `$env:WINVM_FILES/<basename>` (http://10.0.2.2:<port>/<token>/files), which

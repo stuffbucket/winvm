@@ -37,6 +37,7 @@ await c.launch(argv, { cwd, env })    // detached, on the desktop: {pid}
 await c.procs()                       // [{pid, name, session}]
 await c.kill(pid, { tree })           // tree by default
 await c.health()                      // {version, pid, arch, session, from, uptimeMs, ...}
+await c.ui({ op, ... })               // UI Automation via winvm-ui.exe; use ui.ts (docs/gui.md)
 
 agent.qgaLaunch(name, argv)           // GUI launch over qemu-ga via runinsession.exe (no agent needed, once installed)
 agent.reattach(name)                  // re-add the port forward (qemu.launch already does)
@@ -86,6 +87,8 @@ loopback, and the firewall rule allows the port for that program from
 
 `C:\ProgramData\winvm\agent\`: `bun.exe` (its own copy, from
 `C:\payload\bun-windows-aarch64` or served by the host), `guestagent.ts`,
+`winvm-ui.exe` (the UI Automation helper behind `POST /ui`, compiled at install
+from `assets/winvm-ui.cs`; see [gui.md](gui.md#ui-automation-winvm-ui)),
 `runinsession.exe` (compiled in the guest from `assets/runinsession.cs` with
 Add-Type), `token`, `agent.log`. The HKLM Run key `winvm-agent` starts
 `conhost.exe --headless bun.exe guestagent.ts --supervise …` at every logon, in

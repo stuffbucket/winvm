@@ -1,15 +1,18 @@
-# Driving app UI: WebView2, OCR, toasts
+# Driving app UI: UI Automation, WebView2, OCR, toasts
 
-Three ways to check what a Windows app shows, all from the host, none needing
-a window on the Mac:
+Four ways to check (and drive) what a Windows app shows, all from the host,
+none needing a window on the Mac:
 
 | | what it reads | needs | command |
 |---|---|---|---|
+| **UI Automation** (`ui.ts`, `assets/winvm-ui.cs`) | the accessibility tree: native windows, the taskbar and tray, Win32 menus, dialogs, and WebView2 content too | the in-guest agent (v4+) | `winvm ui …` |
 | **DevTools** (`webview.ts`, `cdp.ts`) | the DOM of a WebView2 window (Tauri, WinUI/WPF hosts) | a policy set before the app starts | `winvm webview …` |
 | **OCR** (`ocr.ts`, `assets/ocr.swift`) | the screen's pixels: anything, incl. native dialogs and menus | macOS + `swiftc` | `winvm ocr`, `winvm click --text` |
 | **Toasts** (`toasts.ts`) | Windows' record of every notification an app raised | the in-guest agent | `winvm toasts` |
 
-UI Automation (the accessibility tree) is separate work.
+UI Automation is the one that also *drives* the shell around an app: the
+notification-area icon, its context menu, a TaskDialog. See
+[UI Automation](#ui-automation-winvm-ui) below.
 
 ## Numbers
 
@@ -37,7 +40,129 @@ small UI text for ~5x speed; the default is accurate. First `winvm ocr` also
 compiles the helper (`swiftc -O`, ~0.8 s, once
 per source change).
 
-## WebView2 over DevTools
+## UI Automation (`winvm ui`)
+
+```sh
+winvm ui windows                                   # top-level windows, with process names
+winvm ui tree --process maximal-shell --depth 8     # the element tree
+winvm ui find --window Settings --name Models --type Hyperlink
+winvm ui wait --process maximal-shell --window Settings --name Account --type Text --timeout 30
+winvm ui click --window Settings --id Close --settle 300
+winvm ui wait --process maximal-shell --window Settings --gone
+winvm ui tray Maximal --menu Settings               # tray icon by tooltip, then its menu item
+winvm ui click --window "Quit Maximal?" --name "Quit Maximal" --type Button
+winvm ui settle --process maximal-shell             # until nothing changes for 300 ms
+winvm ui invoke | toggle | expand | collapse | select | focus  [selector]
+winvm ui set --name Search --type Edit --value hello    # ValuePattern; `type` sends keys instead
+winvm ui at 618 515                                 # what a click at x,y would hit
+```
+
+**Selectors.** A scope picks top-level windows — `--window` (title contains,
+case-insensitive, or class equals), `--process` (name, `.exe` optional),
+`--hwnd` — and both together must hold. Then the element: `--name` (exact,
+case-insensitive; a bare word after the verb means `--name`), `--contains`,
+`--id` (AutomationId), `--type` (ControlType: Button, MenuItem, Hyperlink,
+Text, Window, Edit, …), `--class`, `--index`. With no scope the whole desktop
+is searched: correct, ~10 ms slower. `--timeout` (seconds, or `500ms`) is
+how long to keep looking; `click` and friends default to 10 s, `find` to none.
+`--json` prints the helper's answer.
+
+**Clicks are real input** (SendInput: move, 40 ms hover, press, release) at
+the element's centre, so they go through hit-testing, focus and hover exactly
+like a person's. So before each click the helper hit-tests the point
+(`WindowFromPoint`): if another top-level window is there — a toast sliding up
+over the tray, a dialog — it parks the pointer at the screen's left edge (a
+toast never times out under the pointer) and waits, up to the timeout, then
+fails with code `covered` naming the window. `--settle <ms>` first waits for
+the element's window to stop changing, then finds it again. `invoke`/`toggle`/`expand`/`select`/`set` use
+UIA patterns instead and need nothing on screen.
+
+**The tray.** `ui tray <tooltip part>` looks for the icon on the taskbar's
+notification area (task buttons don't count: "Maximal - 1 running window" is
+not the tray icon), else opens the overflow flyout with "Show Hidden Icons"
+and looks there; waits for the icon to stop moving; clicks it (right by
+default, `--button left|double`). With `--menu <item>` it then clicks that
+item in the context menu (`#32768`, matched without `&`, the accelerator and
+a trailing `…`; exact first, then prefix), clicking the icon again if no menu
+appears within 2.5 s — right after start an app may not have attached its
+menu yet — and closes the flyout afterwards. `ui menu <item>` alone clicks an
+item of a menu that is already open.
+
+**Settling.** `ui settle` polls the scope's element tree every 50 ms (one
+cached cross-process walk each; names, types, bounds, enabled/offscreen,
+values, toggle states) and returns once it has been identical for `--quiet`
+ms (300). No scope: every top-level window plus the foreground window's
+subtree. It reports `settled: false` (exit 1) at `--timeout` (10 s) rather
+than throwing.
+
+In jobs, `shell: winvm` lines (see below):
+
+```yaml
+  - name: Quit Maximal from the tray menu and confirm
+    shell: winvm
+    run: |
+      ui tray Maximal --menu "Quit Maximal"
+      ui click --process maximal-shell --window "Quit Maximal?" --name "Quit Maximal" --type Button --settle 200
+      ui wait --process maximal-shell --gone --timeout 30
+```
+
+`jobs/maximal/nsis.yml` is the worked example: Settings opened from the tray
+menu, and a real Quit from the tray menu followed by the no-orphan check.
+
+For harnesses, `ui.ts`:
+
+```ts
+import { forInstance } from "./ui"
+const ui = await forInstance(name)        // agent.ensure, helper version check, warm-up
+await ui.tray("Maximal", { menu: "Settings" })
+await ui.wait({ process: "maximal-shell", window: "Settings", name: "Account", controlType: "Text" })
+await ui.click({ window: "Settings", name: "Models", controlType: "Hyperlink" }, { settleMs: 200 })
+const t = await ui.tree({ process: "maximal-shell" }, { depth: 6 })
+// also: find, findAll, invoke, setValue, type, act(action, sel), focus, settle, menu, windows, ping
+```
+
+Errors are `UiError` with a `code`: `notfound`, `timeout`, `covered`, `bad`,
+`unavailable` (no helper: off Windows, or an agent older than v4), `fail`.
+
+### How it works
+
+`winvm-ui.exe` (`assets/winvm-ui.cs`, C# 5) is compiled in the guest by
+`agent-install.ps1` with Add-Type against the in-box .NET Framework 4.8.1
+(`System.Windows.Automation`): AnyCPU, so it runs **native ARM64**, per-monitor
+DPI aware (UIA bounds = SendInput coordinates = screendump pixels). The
+agent's spawner starts it on first use and talks to it over stdin/stdout, one
+JSON line each way, answers matched by id so a long `wait` holds up nothing
+else; the agent exposes that as `POST /ui` (`AgentClient.ui`). It exits when
+its stdin closes, so it never outlives the agent. Every request is logged to
+`C:\ProgramData\winvm\agent\winvm-ui.log`; one that UIA never answers (a
+hung window) is answered with a `timeout` error after 2 × its timeout + 25 s.
+`ui.forInstance` reinstalls the agent when the guest's helper is older than
+`UI_HELPER_VERSION`, so goldens made before a helper change upgrade
+themselves on first use (~5 s).
+
+### Things learned
+
+- **WebView2 builds its accessibility tree on the first UIA query.** The very
+  first `find` into a fresh Chromium window can miss; `wait` (or any
+  `--timeout`) covers it. After that the web content is ordinary elements
+  (ListItem, Hyperlink, Text, Button, ComboBox …) in the app's window.
+- **Toasts are invisible to UI Automation but take clicks.** Maximal's "Sign
+  in to GitHub" toast (a `Windows.UI.Core.CoreWindow` of ShellExperienceHost,
+  "New notification") slides up over the tray right after start, and neither
+  the UIA tree nor `AutomationElement.FromPoint` shows it — the first nsis
+  runs right-clicked the toast and opened *its* context menu. Hence the
+  Win32 hit test above; `ui at x y` shows both views.
+- **A higher-integrity window on top swallows real clicks.** Windows
+  Firewall's "allow this app" prompt (a Bun-compiled sidecar listening on
+  0.0.0.0 shows as "Bun") does not appear in the UIA tree, and input aimed at
+  the window under it goes nowhere. Allow the program first (the job's first
+  step); `agent-install.ps1` now also turns the firewall's desktop prompts off.
+- Maximal's title-bar Close hides Settings to the tray (the process stays);
+  `wait --gone` with only a scope waits for the window to leave the tree.
+- The overflow flyout stays open after its icon's menu is used, and a second
+  `tray` that finds it still closing would click a vanishing icon; `tray`
+  closes it and retries a click whose target moved.
+
 
 ```sh
 winvm webview enable maximal-shell.exe          # once; then (re)start the app

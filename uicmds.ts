@@ -12,6 +12,7 @@
  *   winvm ui settle [selector] [--quiet ms]             until the UI is idle
  *   winvm ui tray   <tooltip> [--menu item] [--button left|right|double]
  *   winvm ui menu   <item>                              click an open menu's item
+ *   winvm ui at     <x> <y>                             what a click there would hit
  *   winvm ui ping                                       the helper's arch, DPI, screen
  *
  * Selector flags: --window <title part|class> --process <name> --hwnd <n>
@@ -30,7 +31,7 @@ import { ACTIONS, UiError, forInstance, formatElement, formatTree } from "./ui"
 
 const USAGE = `usage: winvm ui [-i name] <verb> [selector] [options]
   verbs:    windows | tree | find | wait | click | rightclick | doubleclick | invoke | toggle
-            | expand | collapse | select | focus | set | type | settle | tray <tooltip> | menu <item> | ping
+            | expand | collapse | select | focus | set | type | settle | tray <tooltip> | menu <item> | at <x> <y> | ping
   selector: --window <title part|class> --process <name> --hwnd <n>
             --name <exact> (or a bare word) --contains <part> --id <automationId>
             --type <controlType> --class <className> --index <n>
@@ -142,6 +143,13 @@ export async function uiCmd(args: Args): Promise<number> {
         if (arg === undefined) return fail("usage: winvm ui menu <item>")
         const r = await ui.menu(arg, t)
         out(r, `${formatElement(r.element)}  (${took()})`)
+        return 0
+      }
+      case "at": {
+        const [x, y] = [Number(args.positional[1]), Number(args.positional[2])]
+        if (!Number.isInteger(x) || !Number.isInteger(y)) return fail("usage: winvm ui at <x> <y>")
+        const r = await ui.at(x, y)
+        out(r, `window: ${r.window}${r.element === undefined ? "" : `\nelement: ${formatElement(r.element)}`}`)
         return 0
       }
       case "focus": {
