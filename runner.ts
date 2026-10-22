@@ -93,7 +93,10 @@ export async function ensureGolden(instance: string, goldenName: string, log: (s
   // every screenshot, and the work dir.
   await qga.exec(p.qga, CMD, ["/c", `taskkill /f /im sysprep.exe >nul 2>&1 & mkdir ${SCRIPTS} 2>nul & exit /b 0`])
   try {
-    await agent.install(instance, { log: (l) => log(`  agent: ${l}`) })
+    // ensure, not install: an image with the agent baked in, or an instance
+    // that already has one, only needs the token written (~100 ms instead of
+    // a ~7 s reinstall).
+    await agent.ensure(instance, { log: (l) => log(`  agent: ${l}`) })
   } catch (error) {
     log(`  (no agent — jobs will run over qemu-ga as SYSTEM: ${errMsg(error)})`)
   }
