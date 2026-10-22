@@ -83,7 +83,8 @@ export async function ensureGolden(instance: string, goldenName: string, log: (s
   const p = pathsFor(instance)
   log(`golden "${goldenName}" not found on "${instance}": creating it (boot, agent, settle — a few minutes, once)`)
   if (!qemu.isRunning(p)) {
-    ensureInstance(instance, readMeta(instance)?.image ?? "win11-arm64")
+    // A new instance takes WINVM_IMAGE, as `start` would; an existing one keeps its own.
+    ensureInstance(instance, readMeta(instance)?.image ?? process.env["WINVM_IMAGE"] ?? "win11-arm64")
     const meta = readMeta(instance)
     if (meta === null) throw new Error(`could not create instance "${instance}"`)
     await qemu.launch(instance, p, meta, { installMedia: false, ephemeral: false, virtioBoot: readImageMeta(meta.image)?.virtioBoot === true })

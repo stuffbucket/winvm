@@ -90,6 +90,10 @@ bun winvm.ts config                      # idle watcher settings (see below)
 additional, independent instances backed by the same image, and
 `--ephemeral` on `start` to discard everything on exit.
 
+An instance keeps the image it was created with; pick one for a new instance
+with `--image <name>` or `WINVM_IMAGE` (default `win11-arm64`). Recommended:
+`win11-arm64-v3`, the first with the agent baked in and no Start menu on screen.
+
 Every image also gets PowerShell 7 (`pwsh`, native ARM64), precompiled .NET
 native images (so Windows PowerShell starts fast too), Windows Update /
 indexing / telemetry / maintenance switched off, Defender exclusions for
