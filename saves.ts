@@ -12,6 +12,7 @@
  *   $WINVM_HOME/saves/<instance>/<name>/
  *     manifest.json     the contract below; other tools read it
  *     vmstate.zst       RAM + device state: a QEMU migration stream, zstd'd
+ *                       (or vmstate.mapped / vmstate.bin — see "RAM formats")
  *     overlay.qcow2     the instance's writable disk at that moment (APFS clone)
  *     efi-vars.qcow2    its firmware variables at that moment (APFS clone)
  *
@@ -34,6 +35,25 @@
  * load always (re)starts QEMU: quit the running one (its state is being
  * discarded anyway), clone the save's disks back into the instance, launch
  * with `-incoming "exec:zstd -dc …"`, `cont`, wait for the agent, fix the clock.
+ *
+ * ## RAM formats
+ *
+ * The manifest's `format` says how the RAM was written, and `load` sets up the
+ * incoming side to match:
+ *
+ *   zstd    (default) one stream through `zstd -3`: ~5x smaller, but a load is
+ *           bound by single-stream decompression — 3.3-4.6 s measured. Right for
+ *           autosaves, stows and anything kept a while.
+ *   mapped  QEMU's `mapped-ram` + `multifd` to a `file:` URI: every RAM page has
+ *           a fixed offset in a sparse file, written and read by several
+ *           threads at once, so a load is ~1-1.5 s. Uncompressed (zero pages
+ *           are holes, so it allocates about what the guest has touched). Right
+ *           for goldens and test resets, loaded over and over.
+ *   raw     one uncompressed stream (`file:`). Kept so older saves still load.
+ *
+ * Migration capabilities stick to a QEMU process, and a QEMU loaded from a
+ * mapped save has them on — so every save sets all of them explicitly, or a
+ * zstd save after a mapped load would fail (`exec:` cannot carry mapped-ram).
  *
  * ## Why not `savevm` into a file
  *
@@ -68,13 +88,24 @@ import * as qmp from "./qmp"
 // ---------------------------------------------------------------------------
 // The on-disk contract
 
-export const SAVE_KINDS = ["manual", "auto", "baseline", "stow"] as const
+export const SAVE_KINDS = ["manual", "auto", "baseline", "stow", "golden"] as const
 export type SaveKind = (typeof SAVE_KINDS)[number]
 
 /** Taken automatically the first time a fresh instance is ready; `rewind` goes here. */
 export const BASELINE = "baseline"
 /** Written by `winvm stow`, consumed by the next `winvm start`. */
 export const STOW = "stow"
+/** The default name of a golden save (`winvm golden create`, golden.ts). */
+export const GOLDEN = "golden"
+
+export const RAM_FORMATS = ["zstd", "mapped", "raw"] as const
+export type RamFormat = (typeof RAM_FORMATS)[number]
+
+/**
+ * Threads per side for a mapped save. Measured 4-8 as the sweet spot on an
+ * M-series host with a 4 GiB guest; beyond that the file system is the limit.
+ */
+export const MULTIFD_CHANNELS = 8
 
 export interface CompatParts {
   /** Digest of the base image's identity (name, size, mtime, recorded build time). */
@@ -108,12 +139,15 @@ export interface Manifest {
   readonly ramBytes?: number
   /** Wall time the guest was stopped to take the save. */
   readonly saveMs?: number
+  /** How the RAM was written (see "RAM formats"). Absent in older saves: inferred from `ramFile`. */
+  readonly format?: RamFormat
 }
 
 export const FILES = {
   manifest: "manifest.json",
   ram: "vmstate.zst",
   ramRaw: "vmstate.bin",
+  ramMapped: "vmstate.mapped",
   overlay: "overlay.qcow2",
   vars: "efi-vars.qcow2",
 } as const
@@ -179,6 +213,10 @@ export function parseManifest(text: string): Manifest {
   }
   const note = r["note"]
   if (note !== undefined && typeof note !== "string") throw new Error("manifest.note must be a string")
+  const format = r["format"]
+  if (format !== undefined && !(RAM_FORMATS as readonly unknown[]).includes(format)) {
+    throw new Error(`manifest.format must be one of ${RAM_FORMATS.join(", ")}, got ${JSON.stringify(format)}`)
+  }
   return { ...(r as object), name, instance: str("instance"), kind: kind as SaveKind, createdAt, bytes, compat: str("compat"), image: str("image") } as Manifest
 }
 
@@ -242,6 +280,58 @@ export function formatBytes(n: number): string {
 
 /** Single-quote for `/bin/sh` — the migration `exec:` URI goes through a shell. */
 export const shQuote = (s: string): string => `'${s.replaceAll("'", `'\\''`)}'`
+
+/** A save's RAM format: the manifest's word, else what its file name implies (saves before `format`). */
+export function ramFormatOf(m: Pick<Manifest, "format" | "ramFile">): RamFormat {
+  if (m.format !== undefined) return m.format
+  if (m.ramFile === FILES.ramRaw) return "raw"
+  if (m.ramFile === FILES.ramMapped) return "mapped"
+  return "zstd"
+}
+
+export const ramFileFor = (f: RamFormat): string =>
+  f === "mapped" ? FILES.ramMapped : f === "raw" ? FILES.ramRaw : FILES.ram
+
+export interface MigrationPlan {
+  /** For `migrate-set-capabilities`, on both sides. Always complete — see "RAM formats". */
+  readonly capabilities: readonly { readonly capability: string; readonly state: boolean }[]
+  /** For `migrate-set-parameters`, on both sides. */
+  readonly parameters: Readonly<Record<string, unknown>>
+  /** The URI the saving side migrates to. */
+  readonly uri: string
+  /**
+   * QEMU's `-incoming` for the loading side. "defer" means capabilities must be
+   * set first and the stream started with `migrate-incoming` on `uri`.
+   */
+  readonly incoming: string
+}
+
+/** How to write, and read back, RAM in a format. Pure, so it is tested without a VM. */
+export function migrationPlan(format: RamFormat, ramPath: string, channels = MULTIFD_CHANNELS): MigrationPlan {
+  const mapped = format === "mapped"
+  const capabilities = [
+    { capability: "mapped-ram", state: mapped },
+    { capability: "multifd", state: mapped },
+  ]
+  // The default precopy bandwidth cap (128 MiB/s) would make a 4 GiB guest take
+  // half a minute for no reason; the guest is stopped, so there is no dirtying
+  // to race.
+  const parameters: Record<string, unknown> = { "max-bandwidth": 64 * 1024 ** 3 }
+  if (mapped) parameters["multifd-channels"] = channels
+  switch (format) {
+    case "zstd":
+      return {
+        capabilities,
+        parameters,
+        uri: `exec:zstd -T0 -3 -q -f - -o ${shQuote(ramPath)}`,
+        incoming: `exec:zstd -dc ${shQuote(ramPath)}`,
+      }
+    case "raw":
+      return { capabilities, parameters, uri: `file:${ramPath}`, incoming: `file:${ramPath}` }
+    case "mapped":
+      return { capabilities, parameters, uri: `file:${ramPath}`, incoming: "defer" }
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Compatibility, measured on this host
@@ -416,7 +506,8 @@ export async function quitQemu(p: Paths, timeoutMs = 120_000): Promise<void> {
       qemu.stopSwtpm(p)
       return
     }
-    await sleep(250)
+    // QEMU is usually gone ~10 ms after `quit`; a 250 ms poll was a quarter of a mapped load.
+    await sleep(20)
   }
   process.kill(pid, "SIGKILL")
   while (qemu.pidOf(p) !== null) await sleep(250)
@@ -427,7 +518,9 @@ export interface CreateOptions {
   readonly name: string
   readonly kind: SaveKind
   readonly note?: string
-  /** zstd the RAM stream (default). False writes it raw — measurably faster to load, ~5x larger. */
+  /** How to write the RAM; see "RAM formats". Default "zstd". */
+  readonly format?: RamFormat
+  /** Older spelling: false means `format: "raw"`. Ignored when `format` is given. */
   readonly compress?: boolean
   /** Quit QEMU once saved instead of resuming (stow). */
   readonly quitAfter?: boolean
@@ -459,8 +552,10 @@ export async function createSave(instance: string, o: CreateOptions): Promise<Cr
   const tmp = resolve(savesDir(instance), `.${o.name}.partial-${String(process.pid)}`)
   rmSync(tmp, { recursive: true, force: true })
   mkdirSync(tmp, { recursive: true })
-  const ramFile = o.compress === false ? FILES.ramRaw : FILES.ram
+  const format: RamFormat = o.format ?? (o.compress === false ? "raw" : "zstd")
+  const ramFile = ramFileFor(format)
   const ramPath = resolve(tmp, ramFile)
+  const plan = migrationPlan(format, ramPath)
 
   const before = await qmp.status(p.qmp)
   const wasRunning = before === "running"
@@ -468,15 +563,9 @@ export async function createSave(instance: string, o: CreateOptions): Promise<Cr
   let migrated: Record<string, unknown>
   try {
     if (wasRunning) await qmp.execute(p.qmp, "stop")
-    // The default precopy bandwidth cap (128 MiB/s) would make a 4 GiB guest
-    // take half a minute for no reason; the guest is stopped, so there is no
-    // dirtying to race.
-    await qmp.execute(p.qmp, "migrate-set-parameters", { "max-bandwidth": 64 * 1024 ** 3 })
-    const uri =
-      o.compress === false
-        ? `file:${ramPath}`
-        : `exec:zstd -T0 -3 -q -f - -o ${shQuote(ramPath)}`
-    await qmp.execute(p.qmp, "migrate", { uri })
+    await qmp.execute(p.qmp, "migrate-set-capabilities", { capabilities: plan.capabilities })
+    await qmp.execute(p.qmp, "migrate-set-parameters", plan.parameters)
+    await qmp.execute(p.qmp, "migrate", { uri: plan.uri })
     migrated = await waitMigration(p, 30 * 60_000)
     // Still stopped, block devices flushed and inactive: the disks now match
     // the RAM just written.
@@ -509,6 +598,7 @@ export async function createSave(instance: string, o: CreateOptions): Promise<Cr
     ramFile,
     ramBytes,
     saveMs,
+    format,
   }
   writeFileSync(resolve(tmp, FILES.manifest), `${JSON.stringify(manifest, null, 2)}\n`)
 
@@ -549,8 +639,10 @@ export async function loadSave(instance: string, name: string): Promise<Manifest
     )
   }
   const dir = saveDir(instance, name)
-  const ramFile = m.ramFile ?? FILES.ram
+  const format = ramFormatOf(m)
+  const ramFile = m.ramFile ?? ramFileFor(format)
   const ramPath = resolve(dir, ramFile)
+  const plan = migrationPlan(format, ramPath)
   for (const f of [ramPath, resolve(dir, FILES.overlay), resolve(dir, FILES.vars)]) {
     if (!existsSync(f)) throw new Error(`save "${name}" is incomplete: ${f} is missing`)
   }
@@ -568,13 +660,17 @@ export async function loadSave(instance: string, name: string): Promise<Manifest
   renameSync(`${p.overlay}.loading`, p.overlay)
   renameSync(`${p.vars}.loading`, p.vars)
 
-  const incoming = ramFile === FILES.ramRaw ? `file:${ramPath}` : `exec:zstd -dc ${shQuote(ramPath)}`
   await qemu.launch(instance, p, meta, {
     installMedia: false,
     ephemeral: false,
     virtioBoot: readImageMeta(meta.image)?.virtioBoot === true,
-    incoming,
+    incoming: plan.incoming,
   })
+  if (plan.incoming === "defer") {
+    await qmp.execute(p.qmp, "migrate-set-capabilities", { capabilities: plan.capabilities })
+    await qmp.execute(p.qmp, "migrate-set-parameters", plan.parameters)
+    await qmp.execute(p.qmp, "migrate-incoming", { uri: plan.uri })
+  }
   // The stream records the source's run state, and a save stops the guest
   // first — so the destination ends PAUSED, and is continued here.
   const deadline = Date.now() + 30 * 60_000
@@ -600,7 +696,8 @@ export async function loadSave(instance: string, name: string): Promise<Manifest
       break
     }
     if (Date.now() > deadline) throw new Error(`loading save "${name}" did not finish in time (state: ${s})`)
-    await sleep(250)
+    // Short: on a mapped save the whole load is about a second.
+    await sleep(50)
   }
   return m
 }

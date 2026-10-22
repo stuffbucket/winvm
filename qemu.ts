@@ -14,6 +14,7 @@ import { requireFirmware } from "./host"
 import type { InstanceMeta, Paths } from "./paths"
 import { media } from "./paths"
 import { RAMFB, displayArgs, readDisplay } from "./display"
+import * as qmp from "./qmp"
 import { applyPassword, vncArg } from "./vnc"
 
 export interface LaunchOptions {
@@ -256,6 +257,9 @@ export async function launch(name: string, p: Paths, meta: InstanceMeta, o: Laun
   // and truncating here would erase the evidence being retried.
   if (existsSync(p.serial)) renameSync(p.serial, p.serialPrev)
   rmSync(p.qemuLog, { force: true })
+  // No QEMU runs here (launch is only reached then), so any monitor socket is
+  // a dead one's; gone, its reappearance means THIS QEMU created it.
+  if (o.incoming !== undefined) rmSync(p.qmp, { force: true })
 
   const log = openSync(p.qemuLog, "w")
   const proc = spawn("qemu-system-aarch64", [...qemuArgs(name, p, meta, o)], {
@@ -270,7 +274,18 @@ export async function launch(name: string, p: Paths, meta: InstanceMeta, o: Laun
   const survived = new Promise<"alive">((res) => {
     timer = setTimeout(() => res("alive"), 2000)
   })
-  const outcome = await Promise.race([exited, survived])
+  // A LOAD WAITS ON QEMU, NOT ON THE TIMER. Two seconds of "still alive?" was
+  // most of a mapped-ram load, which cannot even start until the monitor takes
+  // `migrate-incoming`. A monitor that answers `query-status` means the command
+  // line was accepted, the chardevs connected and the machine built; and with
+  // -incoming no vCPU runs until the stream is in, so there is no later
+  // failure for the timer to catch. (A boot keeps the timer: its vCPUs start
+  // at once, and HVF can refuse a mapping only then.)
+  let stop = false
+  const answering =
+    o.incoming === undefined ? new Promise<never>(() => undefined) : monitorAnswers(p, () => stop)
+  const outcome = await Promise.race([exited, survived, answering])
+  stop = true
   clearTimeout(timer)
   if (outcome === "alive") {
     // `password=on` refuses every VNC client until a password is set, so set it
@@ -289,6 +304,21 @@ export async function launch(name: string, p: Paths, meta: InstanceMeta, o: Laun
   // reading: the two-step version races anything else touching the file.
   const why = readTextOr(p.qemuLog, "").trim()
   throw new Error(`qemu exited immediately${why === "" ? "" : `:\n  ${why.split("\n").join("\n  ")}`}`)
+}
+
+async function monitorAnswers(p: Paths, stopped: () => boolean): Promise<"alive"> {
+  while (!stopped()) {
+    if (existsSync(p.qmp)) {
+      try {
+        await qmp.execute(p.qmp, "query-status", undefined, 5000)
+        return "alive"
+      } catch {
+        // Socket bound but not yet accepting; ask again.
+      }
+    }
+    await new Promise((r) => setTimeout(r, 10))
+  }
+  return await new Promise<never>(() => undefined)
 }
 
 /**

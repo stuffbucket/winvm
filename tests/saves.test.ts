@@ -10,9 +10,13 @@ import {
   compatDiff,
   compatHash,
   defaultName,
+  FILES,
   hardwareArgs,
+  migrationPlan,
   nameError,
   parseManifest,
+  ramFileFor,
+  ramFormatOf,
   shQuote,
 } from "../saves"
 
@@ -58,6 +62,50 @@ describe("manifest", () => {
     expect(() => parseManifest(JSON.stringify({ ...good, bytes: -1 }))).toThrow(/bytes/)
     expect(() => parseManifest(JSON.stringify({ ...good, compat: "" }))).toThrow(/compat/)
     expect(() => parseManifest(JSON.stringify({ ...good, note: 3 }))).toThrow(/note/)
+    expect(() => parseManifest(JSON.stringify({ ...good, format: "lz4" }))).toThrow(/format/)
+  })
+  it("accepts golden saves and a RAM format", () => {
+    const m = parseManifest(JSON.stringify({ ...good, name: "golden", kind: "golden", format: "mapped" }))
+    expect(m.kind).toBe("golden")
+    expect(m.format).toBe("mapped")
+  })
+})
+
+describe("RAM formats", () => {
+  it("infers the format of a save written before manifests recorded it", () => {
+    expect(ramFormatOf({})).toBe("zstd")
+    expect(ramFormatOf({ ramFile: FILES.ram })).toBe("zstd")
+    expect(ramFormatOf({ ramFile: FILES.ramRaw })).toBe("raw")
+    expect(ramFormatOf({ ramFile: FILES.ramMapped })).toBe("mapped")
+    expect(ramFormatOf({ format: "mapped", ramFile: FILES.ram })).toBe("mapped")
+  })
+  it("names one file per format", () => {
+    expect(new Set([ramFileFor("zstd"), ramFileFor("raw"), ramFileFor("mapped")]).size).toBe(3)
+  })
+  it("mapped: file URI, deferred incoming, multifd channels, both capabilities on", () => {
+    const m = migrationPlan("mapped", "/s/vmstate.mapped", 6)
+    expect(m.uri).toBe("file:/s/vmstate.mapped")
+    expect(m.incoming).toBe("defer")
+    expect(m.parameters["multifd-channels"]).toBe(6)
+    expect(m.capabilities).toEqual([
+      { capability: "mapped-ram", state: true },
+      { capability: "multifd", state: true },
+    ])
+  })
+  it("stream formats switch both capabilities OFF, so a QEMU loaded from a mapped save can still zstd", () => {
+    for (const f of ["zstd", "raw"] as const) {
+      const m = migrationPlan(f, "/s/x")
+      expect(m.capabilities.every((c) => !c.state)).toBe(true)
+      expect(m.capabilities.map((c) => c.capability).sort()).toEqual(["mapped-ram", "multifd"])
+      expect(m.parameters["multifd-channels"]).toBeUndefined()
+      expect(m.incoming).not.toBe("defer")
+    }
+    expect(migrationPlan("zstd", "/a b/x").uri).toBe(`exec:zstd -T0 -3 -q -f - -o '/a b/x'`)
+    expect(migrationPlan("zstd", "/a b/x").incoming).toBe(`exec:zstd -dc '/a b/x'`)
+    expect(migrationPlan("raw", "/s/x").incoming).toBe("file:/s/x")
+  })
+  it("never caps bandwidth: the guest is stopped while it is saved", () => {
+    expect(migrationPlan("zstd", "/x").parameters["max-bandwidth"]).toBeGreaterThan(2 ** 34)
   })
 })
 
