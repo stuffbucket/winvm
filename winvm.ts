@@ -9,6 +9,7 @@
  *   winvm exec  [-i name] -- <cmd>   run a command in the guest
  *   winvm agent [-i name] install    the in-guest agent: fast exec/files/GUI (agent.ts)
  *   winvm put / get / launch         files in and out; a program on the guest's desktop
+ *   winvm ui tree|find|click|wait|tray …   drive the GUI by UI Automation names; see ui.ts
  *   winvm snapshot [-i name] [tag]   capture the running guest, RAM and all
  *   winvm rewind   [-i name] [tag]   put it back — ~10-20 s running, no reboot
  *   winvm save / load / saves        whole-machine saves as files; see saves.ts
@@ -122,6 +123,7 @@
  */
 import { parseArgs } from "./args"
 import * as agentcmds from "./agentcmds"
+import * as uicmds from "./uicmds"
 import * as commands from "./commands"
 import * as goldens from "./golden"
 import * as ocr from "./ocr"
@@ -184,6 +186,9 @@ switch (sub) {
   // eslint-disable-next-line no-fallthrough
   case "launch":
     process.exit(await agentcmds.launch(args))
+  // eslint-disable-next-line no-fallthrough
+  case "ui":
+    process.exit(await uicmds.uiCmd(args))
   // eslint-disable-next-line no-fallthrough
   case "smoke":
     process.exit(await commands.smoke(args))
