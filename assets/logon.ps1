@@ -17,6 +17,9 @@
 #      Experience (OOBE)", which drops the guest out of audit mode and into the
 #      very OOBE the image exists to avoid. It is also just in the way of every
 #      screenshot. It is closed here, as soon as it appears.
+#   3. The Start menu opens by itself at an instance's first logon, around when
+#      the Sysprep dialog goes. Harmless, but it covers every first screenshot
+#      and takes the keyboard from whatever a GUI test types. Closed with Esc.
 $ErrorActionPreference = "Continue"
 $log = "C:\ProgramData\winvm\logon.log"
 function Log([string] $m) { Add-Content -Path $log -Value "$(Get-Date -Format o) $env:USERNAME $m" }
@@ -26,21 +29,60 @@ function RegSet([string] $Path, [string] $Name, $Value, [string] $Type = "DWord"
     New-ItemProperty -Path $Path -Name $Name -Value $Value -PropertyType $Type -Force | Out-Null
 }
 
+# THE START MENU IS OPEN when the foreground window belongs to its host and is
+# not cloaked. Foreground alone is not enough: closed, it stays cloaked but
+# keeps the foreground (DWMWA_CLOAKED = 14, measured: 2 closed, 0 open). Its
+# host is SearchHost on current builds, StartMenuExperienceHost on older ones.
+$startMenu = $null
+try {
+    $startMenu = Add-Type -PassThru -Namespace WinvmLogon -Name User -MemberDefinition @'
+[DllImport("user32.dll")] public static extern System.IntPtr GetForegroundWindow();
+[DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(System.IntPtr h, out uint pid);
+[DllImport("dwmapi.dll")] public static extern int DwmGetWindowAttribute(System.IntPtr h, int attr, out int value, int size);
+[DllImport("user32.dll")] public static extern void keybd_event(byte vk, byte scan, uint flags, System.UIntPtr extra);
+'@
+} catch {
+    Log "Start menu check unavailable: $($_.Exception.Message)"
+}
+function StartMenuOpen {
+    if (-not $startMenu) { return $false }
+    $h = $startMenu::GetForegroundWindow()
+    $fgPid = [uint32]0
+    [void]$startMenu::GetWindowThreadProcessId($h, [ref]$fgPid)
+    $name = (Get-Process -Id $fgPid -ErrorAction SilentlyContinue).Name
+    if ($name -notin "SearchHost", "StartMenuExperienceHost") { return $false }
+    $cloaked = 0
+    [void]$startMenu::DwmGetWindowAttribute($h, 14, [ref]$cloaked, 4)
+    return $cloaked -eq 0
+}
+
 # --- 1. The Sysprep dialog, first: it is the one with a hazard attached ------
 # It may open before or after this script starts, so watch for it -- for up to
-# three minutes, but only ten seconds past the first time it is closed, so
-# the watching itself does not linger as background load.
+# three minutes, but only twenty seconds past the first time it is closed (the
+# Start menu tends to open around then), so the watching itself does not
+# linger as background load.
 $deadline = (Get-Date).AddMinutes(3)
 $closed = 0
+$startClosed = 0
 try {
     $settingsDone = $false
     while ((Get-Date) -lt $deadline) {
+        # Esc, key down and up, only while it is open: never a key into
+        # anything else on the desktop.
+        if ($startClosed -lt 3 -and (StartMenuOpen)) {
+            $startMenu::keybd_event(0x1B, 0, 0, [UIntPtr]::Zero)
+            $startMenu::keybd_event(0x1B, 0, 2, [UIntPtr]::Zero)
+            $startClosed += 1
+            Log "closed the Start menu"
+            $later = (Get-Date).AddSeconds(10)
+            if ($closed -gt 0 -and $later -gt $deadline) { $deadline = $later }
+        }
         $sp = Get-Process -Name sysprep -ErrorAction SilentlyContinue
         if ($sp) {
             $sp | Stop-Process -Force -ErrorAction SilentlyContinue
             $closed += 1
             Log "closed the Sysprep dialog"
-            $soon = (Get-Date).AddSeconds(10)
+            $soon = (Get-Date).AddSeconds(20)
             if ($soon -lt $deadline) { $deadline = $soon }
         }
         # --- 2. Per-user settings, once, between the first two checks -------
@@ -80,5 +122,5 @@ try {
         Start-Sleep -Milliseconds 500
     }
 } finally {
-    Log "done (closed the Sysprep dialog $closed time(s))"
+    Log "done (closed the Sysprep dialog $closed time(s), the Start menu $startClosed time(s))"
 }
