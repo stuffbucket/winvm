@@ -38,7 +38,7 @@ class UiError : Exception {
 
 static class WinvmUi {
   // ui.ts UI_HELPER_VERSION must match: the host reinstalls the agent when it does not.
-  const int VERSION = 6;
+  const int VERSION = 7;
 
   [DllImport("user32.dll")] static extern bool SetProcessDpiAwarenessContext(IntPtr v);
   [DllImport("user32.dll")] static extern bool SetForegroundWindow(IntPtr h);
@@ -82,6 +82,7 @@ static class WinvmUi {
   }
   static bool DpiAware;
   static int pending;
+  static int lastFlyoutClose = Environment.TickCount - 100000;
 
   static int Main(string[] args) {
     // Physical pixels everywhere: UIA bounds == SendInput coordinates == the framebuffer.
@@ -445,6 +446,7 @@ static class WinvmUi {
       try {
         present = HasElementSel(b) ? Matches(b, Roots(b, 0)).Count > Int(b, "index", 0) : Roots(b, 0).Count > 0;
       } catch (UiError) { present = false; }
+      catch (ElementNotAvailableException) { present = true; } // going: look again
       if (!present) return Obj("gone", true, "waitedMs", sw.ElapsedMilliseconds);
       if (sw.ElapsedMilliseconds >= timeout) throw new UiError("timeout", "still there after " + timeout + " ms: " + Json.Serialize(Sel(b)));
       Thread.Sleep(50);
@@ -732,9 +734,13 @@ static class WinvmUi {
             var chevron = Chevron(bar);
             if (chevron == null) throw new UiError("notfound", "no tray icon like \"" + tip + "\" and no \"Show hidden icons\" button");
             int[] at = ClearPoint(chevron, Math.Max(1000, timeout - (int)sw.ElapsedMilliseconds));
+            // The chevron ignores a click that comes right after the flyout closed.
+            int since = Environment.TickCount - lastFlyoutClose;
+            if (since >= 0 && since < 500) Thread.Sleep(500 - since);
             Click(at[0], at[1], "left", 1);
-            var until = sw.ElapsedMilliseconds + 2000;
+            var until = sw.ElapsedMilliseconds + 800; // it opens in 130-260 ms; else click again
             while ((flyout = OverflowWindow()) == null && sw.ElapsedMilliseconds < until) Thread.Sleep(30);
+            Log("tray: flyout " + (flyout == null ? "did not open" : "open") + " at " + sw.ElapsedMilliseconds + " ms");
           }
           if (flyout != null) {
             overflow = true;
@@ -749,7 +755,7 @@ static class WinvmUi {
             p = ClickPoint(icon);
             // Covered: a toast (it goes), or the flyout sank behind a window
             // that came forward (it stays): close the flyout and open it again.
-            p = ClearPoint(icon, overflow ? 2000 : Math.Max(1000, timeout - (int)sw.ElapsedMilliseconds));
+            p = ClearPoint(icon, overflow ? 800 : Math.Max(1000, timeout - (int)sw.ElapsedMilliseconds));
           } catch (ElementNotAvailableException) { p = null; icon = null; }
           catch (UiError e) {
             p = null; icon = null;
@@ -768,6 +774,7 @@ static class WinvmUi {
       Dictionary<string, object> desc;
       try { desc = Describe(icon, false); } catch (ElementNotAvailableException) { desc = Describe(icon, true); }
       Click(p[0], p[1], button == "double" ? "left" : button, button == "double" ? 2 : 1);
+      Log("tray: clicked the icon at " + sw.ElapsedMilliseconds + " ms");
       result = Obj("icon", desc, "overflow", overflow, "at", p, "clickedMs", sw.ElapsedMilliseconds, "attempts", attempt);
       if (item == null) return result;
       // The menu should be up within a second or two. If not (the click came
@@ -787,7 +794,9 @@ static class WinvmUi {
     // The flyout stays open over the desktop after its icon's menu is done
     // with (and sinks behind whatever window the item opens); close it the
     // way a person would, with the chevron.
+    Log("tray: menu item clicked at " + sw.ElapsedMilliseconds + " ms");
     if (overflow && CloseOverflow(bar)) result["closedOverflow"] = true;
+    Log("tray: flyout " + (result.ContainsKey("closedOverflow") ? "closed" : "NOT closed") + " at " + sw.ElapsedMilliseconds + " ms");
     return result;
   }
 
@@ -801,7 +810,7 @@ static class WinvmUi {
       Click(c[0], c[1], "left", 1);
       var sw = Stopwatch.StartNew();
       while (sw.ElapsedMilliseconds < 1500) {
-        if (OverflowWindow() == null) return true;
+        if (OverflowWindow() == null) { lastFlyoutClose = Environment.TickCount; return true; }
         Thread.Sleep(30);
       }
     } catch (ElementNotAvailableException) {
