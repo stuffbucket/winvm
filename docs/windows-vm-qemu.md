@@ -517,6 +517,65 @@ matters because Windows ARM64 enforces kernel-mode driver signing. The drivers
 are Fedora's virtio-win ARM64 builds; Fedora publishes only x64/x86 *MSIs*,
 which is why the ISO is the useful artifact.
 
+## What the image carries, and why it is quiet
+
+Beyond Windows and the guest tools, provisioning (`assets/provision.ps1`) bakes
+in what makes the guest a fast, steady test fixture. Everything here exists
+because it was measured, not because it is folklore:
+
+- **.NET native images, compiled.** Windows ships the NGEN queue full and leaves
+  it to scheduled tasks — but audit mode keeps `OOBEInProgress=1`, and while that
+  is set **Task Scheduler runs nothing**, so the queue was never drained and
+  every Windows PowerShell start JITted `System.Management.Automation` from IL.
+  The build runs `ngen executeQueuedItems` for `Framework64` and
+  `FrameworkArm64`.
+- **PowerShell 7** (native ARM64, pinned MSI shipped on the seed), at
+  `C:\Program Files\PowerShell\7\pwsh.exe` and on PATH.
+- **Quiet.** Windows Update (and its medic service), Delivery Optimization,
+  Search indexing, SysMain, telemetry, WER, automatic maintenance, Store
+  auto-updates, consumer features, Edge background/updates, OneDrive, Widgets and
+  the lock screen are all off; power plan is High performance.
+- **Defender stays on, with exclusions** for `C:\work` (created for test
+  workspaces), `C:\payload`, `C:\ProgramData\winvm`, and the `bun.exe` /
+  `node.exe` processes. In their **own** script, `assets/defender.ps1`: Tamper
+  Protection plus AMSI block scripts that touch Defender, and a block inside
+  `provision.ps1` would fail all of provisioning.
+- **A logon task** (`C:\ProgramData\winvm\logon.ps1`, from an HKLM `Run` entry
+  under `conhost --headless` — not Task Scheduler, for the reason above). It
+  applies per-user (HKCU) settings, and **closes the System Preparation Tool
+  dialog** that audit mode opens at every logon. That dialog is a hazard, not
+  just clutter: it takes focus, and its default action on a stray Enter is
+  "Enter System Out-of-Box Experience (OOBE)", which drops the guest out of audit
+  mode.
+
+Not done, deliberately: a Dev Drive (a ReFS VHDX inside the qcow2 must be
+re-attached every boot; not worth the moving part yet), and anything about
+**Prism**. `qemu-ga` is the x64 build, so the processes `winvm exec` starts
+inherit an x64-emulated environment (`PROCESSOR_ARCHITECTURE=AMD64`) — known,
+and out of scope here.
+
+Measured 2026-10-22, the same day and host, on a fresh `--ephemeral` instance of
+each image (4 vCPUs, 4 GB; other VMs were running on the host, so treat the
+small numbers as indicative). Idle is QEMU's own CPU time over 180 s, after a
+120 s settle; start times are host wall clock for `winvm exec` (which adds
+~0.14 s, the `cmd /c echo` row), median of 5 warm runs:
+
+| | `win11-arm64` (before) | `win11-arm64-v2` (after) |
+|---|---|---|
+| idle CPU, % of 4 vCPUs | 2.6 % | **0.6 %** |
+| `winvm exec cmd /c echo` | 0.16 s | 0.28 s |
+| `winvm exec powershell -NoProfile -c 1` | 3.4 s (cold 3.0 s) | **0.94 s** (cold 0.88 s) |
+| `winvm exec pwsh -NoProfile -c 1` | — (not installed) | 1.6 s (cold 1.7 s) |
+| same, timed **inside** the guest from an ARM64 parent | | `powershell` 0.53 s, `pwsh` **0.17 s** |
+| Sysprep dialog on screen after boot | yes | **no** (closed ~1 s after logon) |
+| `winvm build`, end to end | | 13 min |
+
+The last-but-two row is the Prism note above made concrete: `pwsh` started by
+the x64 `qemu-ga` costs ~1.4 s more than the same `pwsh` started by an ARM64
+process, so harnesses that care should launch through a native ARM64 parent.
+Also seen: on an instance's first boot the Start menu is open (Windows'
+first-run behaviour for the profile); it is gone from the second boot on.
+
 ## Fidelity limits — read before trusting a result
 
 This guest is **ARM64**; CI's `windows-latest` is **x64**. Not interchangeable:

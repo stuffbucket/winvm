@@ -90,6 +90,15 @@ bun winvm.ts config                      # idle watcher settings (see below)
 additional, independent instances backed by the same image, and
 `--ephemeral` on `start` to discard everything on exit.
 
+Every image also gets PowerShell 7 (`pwsh`, native ARM64), precompiled .NET
+native images (so Windows PowerShell starts fast too), Windows Update /
+indexing / telemetry / maintenance switched off, Defender exclusions for
+`C:\work` and `C:\payload`, and a logon task that closes audit mode's Sysprep
+dialog. What and why, with measurements:
+[`docs/windows-vm-qemu.md`](docs/windows-vm-qemu.md#what-the-image-carries-and-why-it-is-quiet).
+`build` refuses an `--image` name that already exists or that any instance
+still names, so building never replaces a base that overlays depend on.
+
 ## Seeing the screen, and driving it without one
 
 `winvm status [-i name]` is the one-screen summary: running / paused / stopped
