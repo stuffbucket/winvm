@@ -92,7 +92,9 @@ additional, independent instances backed by the same image, and
 
 An instance keeps the image it was created with; pick one for a new instance
 with `--image <name>` or `WINVM_IMAGE` (default `win11-arm64`). Recommended:
-`win11-arm64-v3`, the first with the agent baked in and no Start menu on screen.
+`win11-arm64-v4`: the agent baked in (v3 had an older one, which `ensure`
+replaces with a ~7 s install), no Start menu or firewall prompt on screen, and
+`launch` able to start console programs such as PowerShell scripts.
 
 Every image also gets PowerShell 7 (`pwsh`, native ARM64), precompiled .NET
 native images (so Windows PowerShell starts fast too), Windows Update /
