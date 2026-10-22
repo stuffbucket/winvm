@@ -99,8 +99,14 @@ inheritable and libuv spawns with `bInheritHandles`, so every child got the
 listening socket, and a GUI program started through `/launch` held `:7801`
 after the agent exited — the next agent could not listen. bun:ffi is not in
 the Windows ARM64 build, so the flag cannot be cleared; the spawner never has
-the socket. Launched programs are spawned detached (outside libuv's
-kill-on-close job) and survive agent restarts.
+the socket. Launched programs survive agent restarts: the spawner starts them
+through `runinsession.exe --self --hidden`, an ordinary child that calls
+CreateProcess with `CREATE_NO_WINDOW` and no inherited handles, then exits
+(libuv's kill-on-close job allows silent breakaway, so the program is outside
+it). Not node's `detached`: that is `DETACHED_PROCESS`, no console at all, and
+Windows PowerShell started that way exits 0 without running anything (as did
+`conhost --headless powershell …`). Console programs get a console of their
+own with no window; GUI programs are unaffected.
 
 ## Baking it into an image
 

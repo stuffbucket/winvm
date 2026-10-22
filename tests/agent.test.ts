@@ -12,7 +12,7 @@ import { afterAll, beforeAll, describe, expect, it } from "bun:test"
 import { AgentClient, AgentError } from "../agent"
 import { ensureState, forwardedPorts, hostfwdRule, readState } from "../agentfwd"
 import type { Paths } from "../paths"
-import { AGENT_VERSION, parseTasklist, startAgent } from "../guestagent"
+import { AGENT_VERSION, launcherArgv, parseLauncherPid, parseTasklist, startAgent } from "../guestagent"
 
 let dir: string
 let tokenFile: string
@@ -106,6 +106,16 @@ describe("agent over HTTP", () => {
 })
 
 describe("parsers", () => {
+  it("launches on Windows through the session launcher, hidden, as itself", () => {
+    // Not node's `detached` (DETACHED_PROCESS): Windows PowerShell started that
+    // way exits 0 at once and runs nothing. The launcher gives it a console.
+    const ris = "C:\\ProgramData\\winvm\\agent\\runinsession.exe"
+    const argv = ["powershell.exe", "-NoProfile", "-File", "C:\\a b\\s.ps1"]
+    expect(launcherArgv(ris, argv)).toEqual([ris, "--self", "--hidden", ...argv])
+    expect(parseLauncherPid("session 1 pid 7984\r\n")).toBe(7984)
+    expect(parseLauncherPid("CreateProcess 2\r\n")).toBeNull()
+  })
+
   it("reads tasklist CSV", () => {
     const csv = '"System Idle Process","0","Services","0","8 K"\r\n"explorer.exe","3268","Console","1","120,004 K"\r\n'
     expect(parseTasklist(csv)).toEqual([

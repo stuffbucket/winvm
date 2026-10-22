@@ -34,7 +34,7 @@ import { dirname } from "node:path"
 import { timingSafeEqual } from "node:crypto"
 
 /** Bumped whenever the protocol or behaviour changes; the host reinstalls on mismatch. */
-export const AGENT_VERSION = 2
+export const AGENT_VERSION = 3
 /** The port the agent listens on INSIDE the guest. The host side is per instance. */
 export const GUEST_PORT = 7801
 export const WINDOWS_DIR = "C:\\ProgramData\\winvm\\agent"
@@ -252,19 +252,52 @@ class PwshHost {
 }
 
 /**
- * Start a program and leave it running, detached — node's `detached`, not
- * Bun.spawn: on Windows libuv puts ordinary children in a kill-on-close job
- * object, so everything the agent launched would die with it.
+ * The command that starts `argv` through the session launcher (runinsession.exe,
+ * `--self`): as the agent's user, in its session, with a console of its own and
+ * no window. It prints `session <id> pid <pid>` and exits.
+ */
+export function launcherArgv(runinsession: string, argv: readonly string[]): string[] {
+  return [runinsession, "--self", "--hidden", ...argv]
+}
+
+/** The pid from the launcher's `session <id> pid <pid>`, or null. */
+export function parseLauncherPid(stdout: string): number | null {
+  const m = /\bpid (\d+)\b/.exec(stdout)
+  return m === null ? null : Number(m[1])
+}
+
+/**
+ * Start a program and leave it running.
+ *
+ * ON WINDOWS, NOT node's `detached`. Two requirements pull apart: the program
+ * must outlive the agent, so it cannot be an ordinary libuv child (those sit in
+ * a kill-on-close job object and die with it); and `detached` is
+ * DETACHED_PROCESS, which leaves a console program with NO console. GUI
+ * programs and cmd.exe shrug that off. Windows PowerShell does not: started
+ * that way it exits 0 at once and runs nothing (measured: `launch --
+ * powershell.exe -File x.ps1` returned a pid and the script never ran; `conhost
+ * --headless powershell …` the same, while `exec` of it worked).
+ *
+ * So the session launcher starts it: an ordinary child of ours that calls
+ * CreateProcess with CREATE_NO_WINDOW (a console of its own, invisible; ignored
+ * for GUI programs) and no inherited handles, then exits. libuv's job allows
+ * silent breakaway, so the grandchild is outside it and survives us. Images or
+ * installs without the launcher fall back to `detached`.
  */
 async function launch(r: LaunchRequest): Promise<{ readonly pid: number }> {
   const [exe, ...rest] = r.argv
   if (exe === undefined) throw new Error("argv is empty")
-  const child = nodeSpawn(exe, rest, {
-    detached: true,
-    stdio: "ignore",
-    ...(r.cwd === undefined ? {} : { cwd: r.cwd }),
-    env: r.env === undefined ? process.env : { ...process.env, ...r.env },
-  })
+  const cwd = r.cwd === undefined ? {} : { cwd: r.cwd }
+  const env = r.env === undefined ? process.env : { ...process.env, ...r.env }
+  const ris = `${dirname(import.meta.path)}\\runinsession.exe`
+  if (isWin && existsSync(ris)) {
+    const p = Bun.spawn(launcherArgv(ris, r.argv), { ...cwd, env, stdin: "ignore", stdout: "pipe", stderr: "pipe" })
+    const [out, err, code] = await Promise.all([new Response(p.stdout).text(), new Response(p.stderr).text(), p.exited])
+    const pid = parseLauncherPid(out)
+    if (code !== 0 || pid === null) throw new Error(`could not start ${exe}: ${(err || out).trim() || `launcher exit ${String(code)}`}`)
+    return { pid }
+  }
+  const child = nodeSpawn(exe, rest, { detached: true, stdio: "ignore", ...cwd, env })
   await new Promise<void>((res, rej) => {
     child.once("spawn", () => res())
     child.once("error", rej)
