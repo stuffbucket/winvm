@@ -38,6 +38,10 @@ if ($running.Count -gt 0) {
     $running | Wait-Process -Timeout 10 -ErrorAction SilentlyContinue
     Write-Output "stopped agent pid $($running.Id -join ',')"
 }
+# An agent before v1's handle fix leaked its listening socket into everything it
+# started; such a process keeps the port, and the new agent cannot listen.
+$held = Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue
+if ($held) { Write-Output "WARNING: port $Port is still held (a process an old agent started inherited it); end that process or restart the guest" }
 
 # 2. bun: staged with the agent, else the image's payload copy, else what is
 #    already installed, else downloaded from the host.
@@ -86,8 +90,9 @@ netsh advfirewall firewall delete rule name=winvm-agent 2>&1 | Out-Null
 netsh advfirewall firewall add rule name=winvm-agent dir=in action=allow protocol=TCP localport=$Port remoteip=10.0.2.2 program="$bun" | Out-Null
 
 # 6. Start at every logon. conhost --headless gives the agent (and every
-#    console program it runs) a console with no window.
-$argv = @("C:\Windows\System32\conhost.exe", "--headless", $bun, (Join-Path $Dest "guestagent.ts"),
+#    console program it runs) a console with no window; --supervise restarts
+#    it if it dies.
+$argv = @("C:\Windows\System32\conhost.exe", "--headless", $bun, (Join-Path $Dest "guestagent.ts"), "--supervise",
     "--port", "$Port", "--token-file", $token, "--allow-from", "10.0.2.2,127.0.0.1",
     "--log", (Join-Path $Dest "agent.log"), "--close-sysprep")
 $line = ($argv | ForEach-Object { if ($_ -match '\s') { "`"$_`"" } else { $_ } }) -join " "

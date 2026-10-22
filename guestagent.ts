@@ -34,7 +34,7 @@ import { dirname } from "node:path"
 import { timingSafeEqual } from "node:crypto"
 
 /** Bumped whenever the protocol or behaviour changes; the host reinstalls on mismatch. */
-export const AGENT_VERSION = 1
+export const AGENT_VERSION = 2
 /** The port the agent listens on INSIDE the guest. The host side is per instance. */
 export const GUEST_PORT = 7801
 export const WINDOWS_DIR = "C:\\ProgramData\\winvm\\agent"
@@ -192,7 +192,7 @@ class PwshHost {
   }
 
   private start(): void {
-    const proc = Bun.spawn([this.exe, "-NoProfile", "-NonInteractive", "-NoLogo", "-Command", "-"], {
+      const proc = Bun.spawn([this.exe, "-NoProfile", "-NonInteractive", "-NoLogo", "-Command", "-"], {
       stdin: "pipe",
       stdout: "pipe",
       stderr: "ignore",
@@ -301,11 +301,112 @@ function listProcs(): Proc[] {
   return procs
 }
 
-let ownSession: number | null | undefined
-function sessionOfSelf(): number | null {
-  if (ownSession !== undefined) return ownSession
-  ownSession = isWin ? (listProcs().find((p) => p.pid === process.pid)?.session ?? null) : null
-  return ownSession
+// --- the spawner -------------------------------------------------------------
+
+/**
+ * Everything that starts a process runs in a SEPARATE process, the spawner,
+ * started before the agent listens.
+ *
+ * ESSENTIAL ON WINDOWS. Bun creates its sockets inheritable and libuv spawns
+ * with bInheritHandles, so every child of the process that listens gets a copy
+ * of the LISTENING socket — and a detached GUI program outlives the agent. Once
+ * the agent exited, that program kept the port bound and the next agent could
+ * never listen (measured: a charmap started through /launch did exactly this).
+ * There is no way to clear the flag from Bun (bun:ffi is not in the Windows
+ * ARM64 build), so the process that spawns simply never has the socket: it is
+ * started before the socket exists. One JSON line each way per operation.
+ */
+type Op =
+  | { readonly op: "exec"; readonly req: ExecRequest }
+  | { readonly op: "pwsh"; readonly script: string; readonly timeoutMs: number }
+  | { readonly op: "launch"; readonly req: LaunchRequest }
+  | { readonly op: "procs" }
+  | { readonly op: "kill"; readonly pid: number; readonly tree: boolean }
+
+let pwshHost: PwshHost | null = null
+async function runOp(o: Op): Promise<unknown> {
+  switch (o.op) {
+    case "exec":
+      return await runExec(o.req)
+    case "pwsh":
+      pwshHost ??= new PwshHost(POWERSHELL)
+      return await pwshHost.run(o.script, o.timeoutMs)
+    case "launch":
+      return await launch(o.req)
+    case "procs":
+      return listProcs()
+    case "kill":
+      if (o.tree) killTree(o.pid)
+      else process.kill(o.pid, "SIGKILL")
+      return { ok: true }
+  }
+}
+
+/** The spawner's main loop: ops in on stdin, results out on stdout; gone with the agent. */
+async function runSpawner(): Promise<void> {
+  const dec = new TextDecoder()
+  let buf = ""
+  for await (const chunk of Bun.stdin.stream()) {
+    buf += dec.decode(chunk, { stream: true })
+    for (let nl = buf.indexOf("\n"); nl >= 0; nl = buf.indexOf("\n")) {
+      const line = buf.slice(0, nl)
+      buf = buf.slice(nl + 1)
+      if (line.trim() === "") continue
+      const { id, ...o } = JSON.parse(line) as Op & { id: number }
+      runOp(o as Op).then(
+        (result) => process.stdout.write(`${JSON.stringify({ id, result })}\n`),
+        (error: unknown) => process.stdout.write(`${JSON.stringify({ id, error: error instanceof Error ? error.message : String(error) })}\n`),
+      )
+    }
+  }
+  process.exit(0)
+}
+
+/** The agent's end of the spawner. */
+class Spawner {
+  private readonly proc: ReturnType<typeof Bun.spawn<"pipe", "pipe", "inherit">>
+  private readonly waiting = new Map<number, { res: (v: unknown) => void; rej: (e: Error) => void }>()
+  private next = 1
+  private dead = false
+
+  constructor(onDeath: () => void) {
+    this.proc = Bun.spawn([process.execPath, import.meta.path, "--spawner"], { stdin: "pipe", stdout: "pipe", stderr: "inherit" })
+    void this.read(onDeath)
+  }
+
+  private async read(onDeath: () => void): Promise<void> {
+    const dec = new TextDecoder()
+    let buf = ""
+    for await (const chunk of this.proc.stdout) {
+      buf += dec.decode(chunk, { stream: true })
+      for (let nl = buf.indexOf("\n"); nl >= 0; nl = buf.indexOf("\n")) {
+        const m = JSON.parse(buf.slice(0, nl)) as { id: number; result?: unknown; error?: string }
+        buf = buf.slice(nl + 1)
+        const w = this.waiting.get(m.id)
+        this.waiting.delete(m.id)
+        if (m.error !== undefined) w?.rej(new Error(m.error))
+        else w?.res(m.result)
+      }
+    }
+    this.dead = true
+    for (const w of this.waiting.values()) w.rej(new Error("the spawner exited"))
+    this.waiting.clear()
+    onDeath()
+  }
+
+  async call<T>(o: Op): Promise<T> {
+    if (this.dead) throw new Error("the spawner exited")
+    const id = this.next++
+    const p = new Promise<unknown>((res, rej) => this.waiting.set(id, { res, rej }))
+    this.proc.stdin.write(`${JSON.stringify({ id, ...o })}\n`)
+    await this.proc.stdin.flush()
+    return (await p) as T
+  }
+
+  stop(): void {
+    this.dead = true
+    this.proc.kill()
+  }
 }
 
 /**
@@ -324,10 +425,19 @@ function ensureDir(dir: string): void {
 const json = (v: unknown, status = 200): Response => Response.json(v, { status })
 const fail = (status: number, error: string): Response => json({ error }, status)
 
-/** Start serving. Returns the server so a test (or `/exit`) can stop it. */
-export function startAgent(o: AgentOptions): ReturnType<typeof Bun.serve> {
+export interface RunningAgent {
+  readonly port: number
+  stop(): void
+}
+
+/**
+ * Start serving: the spawner first (see above — it must not hold the socket),
+ * then the server. `onFatal` runs if the spawner dies; the agent cannot start
+ * a new one without leaking the socket into it, so the CLI exits and its
+ * supervisor starts both afresh.
+ */
+export function startAgent(o: AgentOptions, onFatal: () => void = () => {}): RunningAgent {
   const token = tokenReader(o.tokenFile)
-  const pwsh = new PwshHost(POWERSHELL)
   const started = performance.now()
   const log = (line: string): void => {
     if (o.log === undefined) return
@@ -337,93 +447,115 @@ export function startAgent(o: AgentOptions): ReturnType<typeof Bun.serve> {
       // logging is best effort
     }
   }
-
-  const server = Bun.serve({
-    port: o.port,
-    hostname: o.hostname,
-    maxRequestBodySize: 8 * 1024 ** 3,
-    idleTimeout: 0,
-    async fetch(req, srv) {
-      const from = srv.requestIP(req)?.address ?? null
-      if (o.allowFrom !== null && (from === null || !o.allowFrom.includes(from.replace(/^::ffff:/, "")))) {
-        return fail(403, "forbidden")
-      }
-      const want = token()
-      const got = (req.headers.get("authorization") ?? "").replace(/^Bearer /, "")
-      if (want === null || !sameSecret(got, want)) return fail(401, "unauthorized")
-
-      const u = new URL(req.url)
-      try {
-        switch (`${req.method} ${u.pathname}`) {
-          case "GET /health": {
-            const h: Health = {
-              ok: true,
-              version: AGENT_VERSION,
-              pid: process.pid,
-              arch: process.arch,
-              platform: process.platform,
-              bun: Bun.version,
-              session: sessionOfSelf(),
-              from,
-              uptimeMs: Math.round(performance.now() - started),
-            }
-            return json(h)
-          }
-          case "POST /exec": {
-            const r = (await req.json()) as ExecRequest
-            if (!Array.isArray(r.argv) || r.argv.length === 0) return fail(400, "argv must be a non-empty array")
-            return json(await runExec(r))
-          }
-          case "POST /pwsh": {
-            const r = (await req.json()) as { script?: string; timeoutMs?: number }
-            if (typeof r.script !== "string") return fail(400, "script must be a string")
-            if (!isWin) return fail(501, "powershell is only on the Windows guest")
-            return json(await pwsh.run(r.script, r.timeoutMs ?? 600_000))
-          }
-          case "PUT /file": {
-            const path = u.searchParams.get("path")
-            if (path === null || path === "") return fail(400, "path required")
-            const t0 = performance.now()
-            ensureDir(dirname(path))
-            const bytes = await Bun.write(path, req as unknown as Response) // a Request streams like a Response; the types lag
-            return json({ bytes, ms: performance.now() - t0 })
-          }
-          case "GET /file": {
-            const path = u.searchParams.get("path")
-            if (path === null || path === "") return fail(400, "path required")
-            if (!existsSync(path) || !statSync(path).isFile()) return fail(404, `no such file: ${path}`)
-            return new Response(Bun.file(path))
-          }
-          case "POST /launch": {
-            const r = (await req.json()) as LaunchRequest
-            if (!Array.isArray(r.argv) || r.argv.length === 0) return fail(400, "argv must be a non-empty array")
-            const out = await launch(r)
-            log(`launch ${JSON.stringify(r.argv)} -> pid ${String(out.pid)}`)
-            return json(out)
-          }
-          case "GET /procs":
-            return json(listProcs())
-          case "POST /kill": {
-            const r = (await req.json()) as { pid?: number; tree?: boolean }
-            if (typeof r.pid !== "number") return fail(400, "pid required")
-            if (r.tree === false) process.kill(r.pid, "SIGKILL")
-            else killTree(r.pid)
-            return json({ ok: true })
-          }
-          case "POST /exit":
-            log("exit requested")
-            setTimeout(() => process.exit(0), 50)
-            return json({ ok: true })
-          default:
-            return fail(404, `no route ${req.method} ${u.pathname}`)
-        }
-      } catch (error) {
-        return fail(500, error instanceof Error ? error.message : String(error))
-      }
-    },
+  let stopping = false
+  const spawner = new Spawner(() => {
+    if (stopping) return
+    log("the spawner died")
+    onFatal()
   })
+  let session: Promise<number | null> | null = null
+  const ownSession = async (): Promise<number | null> =>
+    !isWin ? null : ((await spawner.call<Proc[]>({ op: "procs" })).find((p) => p.pid === process.pid)?.session ?? null)
+
+  let server: ReturnType<typeof Bun.serve>
+  try {
+    server = Bun.serve({
+      port: o.port,
+      hostname: o.hostname,
+      maxRequestBodySize: 8 * 1024 ** 3,
+      idleTimeout: 0,
+      async fetch(req, srv) {
+        const from = srv.requestIP(req)?.address ?? null
+        if (o.allowFrom !== null && (from === null || !o.allowFrom.includes(from.replace(/^::ffff:/, "")))) {
+          return fail(403, "forbidden")
+        }
+        const want = token()
+        const got = (req.headers.get("authorization") ?? "").replace(/^Bearer /, "")
+        if (want === null || !sameSecret(got, want)) return fail(401, "unauthorized")
+
+        const u = new URL(req.url)
+        try {
+          switch (`${req.method} ${u.pathname}`) {
+            case "GET /health": {
+              session ??= ownSession().catch(() => null)
+              const h: Health = {
+                ok: true,
+                version: AGENT_VERSION,
+                pid: process.pid,
+                arch: process.arch,
+                platform: process.platform,
+                bun: Bun.version,
+                session: await session,
+                from,
+                uptimeMs: Math.round(performance.now() - started),
+              }
+              return json(h)
+            }
+            case "POST /exec": {
+              const r = (await req.json()) as ExecRequest
+              if (!Array.isArray(r.argv) || r.argv.length === 0) return fail(400, "argv must be a non-empty array")
+              return json(await spawner.call<ExecResponse>({ op: "exec", req: r }))
+            }
+            case "POST /pwsh": {
+              const r = (await req.json()) as { script?: string; timeoutMs?: number }
+              if (typeof r.script !== "string") return fail(400, "script must be a string")
+              if (!isWin) return fail(501, "powershell is only on the Windows guest")
+              return json(await spawner.call<PwshResponse>({ op: "pwsh", script: r.script, timeoutMs: r.timeoutMs ?? 600_000 }))
+            }
+            case "PUT /file": {
+              const path = u.searchParams.get("path")
+              if (path === null || path === "") return fail(400, "path required")
+              const t0 = performance.now()
+              ensureDir(dirname(path))
+              const bytes = await Bun.write(path, req as unknown as Response) // a Request streams like a Response; the types lag
+              return json({ bytes, ms: performance.now() - t0 })
+            }
+            case "GET /file": {
+              const path = u.searchParams.get("path")
+              if (path === null || path === "") return fail(400, "path required")
+              if (!existsSync(path) || !statSync(path).isFile()) return fail(404, `no such file: ${path}`)
+              return new Response(Bun.file(path))
+            }
+            case "POST /launch": {
+              const r = (await req.json()) as LaunchRequest
+              if (!Array.isArray(r.argv) || r.argv.length === 0) return fail(400, "argv must be a non-empty array")
+              const out = await spawner.call<{ pid: number }>({ op: "launch", req: r })
+              log(`launch ${JSON.stringify(r.argv)} -> pid ${String(out.pid)}`)
+              return json(out)
+            }
+            case "GET /procs":
+              return json(await spawner.call<Proc[]>({ op: "procs" }))
+            case "POST /kill": {
+              const r = (await req.json()) as { pid?: number; tree?: boolean }
+              if (typeof r.pid !== "number") return fail(400, "pid required")
+              return json(await spawner.call({ op: "kill", pid: r.pid, tree: r.tree !== false }))
+            }
+            case "POST /exit":
+              log("exit requested")
+              setTimeout(() => process.exit(0), 50)
+              return json({ ok: true })
+            default:
+              return fail(404, `no route ${req.method} ${u.pathname}`)
+          }
+        } catch (error) {
+          return fail(500, error instanceof Error ? error.message : String(error))
+        }
+      },
+    })
+  } catch (error) {
+    stopping = true
+    spawner.stop()
+    throw error
+  }
   log(`listening ${o.hostname}:${String(server.port)} pid ${String(process.pid)} ${process.arch} bun ${Bun.version}`)
-  return server
+  return {
+    port: server.port ?? o.port,
+    stop: () => {
+      stopping = true
+      spawner.stop()
+      void server.stop(true)
+    },
+  }
 }
 
 /**
@@ -444,16 +576,48 @@ function flag(argv: readonly string[], name: string): string | undefined {
   return i >= 0 ? argv[i + 1] : undefined
 }
 
+/**
+ * `--supervise`: run the agent as a child and start it again if it dies (not
+ * after a clean exit, which is what /exit asks for). Holds no socket itself.
+ * Killing the supervisor takes the agent with it (libuv's kill-on-close job).
+ */
+async function supervise(argv: readonly string[]): Promise<never> {
+  let backoff = 1000
+  for (;;) {
+    const t0 = Date.now()
+    const p = Bun.spawn([process.execPath, import.meta.path, ...argv], { stdio: ["ignore", "inherit", "inherit"] })
+    const code = await p.exited
+    if (code === 0) process.exit(0)
+    backoff = Date.now() - t0 > 60_000 ? 1000 : Math.min(backoff * 2, 30_000)
+    await Bun.sleep(backoff)
+  }
+}
+
 if (import.meta.main) {
   const argv = process.argv.slice(2)
-  const allow = flag(argv, "allow-from")
-  const logFile = flag(argv, "log")
-  startAgent({
-    port: Number(flag(argv, "port") ?? GUEST_PORT),
-    hostname: flag(argv, "hostname") ?? "0.0.0.0",
-    tokenFile: flag(argv, "token-file") ?? `${WINDOWS_DIR}\\token`,
-    allowFrom: allow === undefined ? null : allow.split(","),
-    ...(logFile === undefined ? {} : { log: logFile }),
-  })
-  if (argv.includes("--close-sysprep")) closeSysprep()
+  if (argv.includes("--spawner")) {
+    await runSpawner()
+  } else if (argv.includes("--supervise")) {
+    await supervise(argv.filter((a) => a !== "--supervise"))
+  } else {
+    const allow = flag(argv, "allow-from")
+    const logFile = flag(argv, "log")
+    try {
+      startAgent(
+        {
+          port: Number(flag(argv, "port") ?? GUEST_PORT),
+          hostname: flag(argv, "hostname") ?? "0.0.0.0",
+          tokenFile: flag(argv, "token-file") ?? `${WINDOWS_DIR}\\token`,
+          allowFrom: allow === undefined ? null : allow.split(","),
+          ...(logFile === undefined ? {} : { log: logFile }),
+        },
+        () => process.exit(3),
+      )
+    } catch (error) {
+      // Usually the port: something still holds it. Say so where install looks.
+      if (logFile !== undefined) appendFileSync(logFile, `${new Date().toISOString()} could not start: ${String(error)}\n`)
+      process.exit(2)
+    }
+    if (argv.includes("--close-sysprep")) closeSysprep()
+  }
 }

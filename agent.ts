@@ -3,6 +3,7 @@
  * and `install` into a running guest over qemu-ga. The per-instance state and
  * the port forward it is reached through live in agentfwd.ts.
  *
+ *   const c = await agent.ensure(name)         // connect, else adopt, else install
  *   const c = await agent.connect(name)        // null: no agent answering
  *   const c = await agent.install(name)        // (re)install, start, connect
  *   await c.exec([...]); await c.pwsh("..."); await c.putFile(host, guest)
@@ -327,6 +328,40 @@ export async function install(name: string, o: InstallOptions = {}): Promise<Age
       await Bun.sleep(250)
     }
   }
+}
+
+/**
+ * The one call a harness needs: a working agent for a running instance, by the
+ * cheapest route that works.
+ *
+ *   1. already answering with this version             ~ms
+ *   2. present in the guest but holding another token  ~100 ms: write ours over
+ *      qemu-ga (an image with the agent baked in, or a guest restored from a
+ *      save another instance took), add the forward
+ *   3. otherwise a full install                         ~7 s
+ */
+export async function ensure(name: string, o: InstallOptions = {}): Promise<AgentClient> {
+  const c = await connect(name, { timeoutMs: 2000 })
+  if (c !== null && (await c.health()).version === AGENT_VERSION) return c
+  const p = pathsFor(name)
+  if (!qemu.isRunning(p)) throw new Error(`instance "${name}" is not running`)
+  if (c === null) {
+    try {
+      const s = ensureState(p)
+      await qgaWriteFile(p.qga, `${WINDOWS_DIR}\\token`, new TextEncoder().encode(s.token))
+      const client = clientFor({ ...s, hostPort: await ensureForward(p) })
+      const deadline = Date.now() + 3000
+      for (;;) {
+        const h = await client.health(1000).catch(() => null)
+        if (h !== null && h.version === AGENT_VERSION) return client
+        if (h !== null || Date.now() >= deadline) break
+        await Bun.sleep(100)
+      }
+    } catch {
+      // not there (no directory to write the token into): install
+    }
+  }
+  return await install(name, o)
 }
 
 /**

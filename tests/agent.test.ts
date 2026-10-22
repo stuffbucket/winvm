@@ -28,7 +28,7 @@ beforeAll(() => {
   client = new AgentClient(`http://127.0.0.1:${String(server.port)}`, TOKEN)
 })
 afterAll(() => {
-  void server.stop(true)
+  server.stop()
   rmSync(dir, { recursive: true, force: true })
 })
 
