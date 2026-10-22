@@ -141,6 +141,8 @@ export interface Manifest {
   readonly saveMs?: number
   /** How the RAM was written (see "RAM formats"). Absent in older saves: inferred from `ramFile`. */
   readonly format?: RamFormat
+  /** Set on a copy made by `cloneSave`: the save it was cloned from. */
+  readonly clonedFrom?: { readonly instance: string; readonly createdAt: string }
 }
 
 export const FILES = {
@@ -624,6 +626,63 @@ export async function createSave(instance: string, o: CreateOptions): Promise<Cr
 }
 
 export class IncompatibleSave extends Error {}
+
+/**
+ * Copy save `name` of instance `from` to instance `to` (created if missing,
+ * on the save's image), for a pool of identical instances: `winvm test --pool`
+ * takes one golden and hands every member a copy rather than booting and
+ * settling each one.
+ *
+ * Every file is an APFS clone, so a 4 GiB mapped-ram golden costs nothing to
+ * copy and each instance's loads stay independent (copy-on-write). The
+ * migration stream holds no per-instance identity a load depends on: QEMU's
+ * paths, sockets and VNC port are not in it (see "Compatibility"), the disks
+ * descend from the same base, and TPM state travels inside the stream. Refuses
+ * — IncompatibleSave — when `to`'s hardware hash differs from the save's.
+ *
+ * The copy's manifest names `to` and records `clonedFrom`, so a caller can
+ * tell a stale copy from a current one. The guest inside still holds `from`'s
+ * agent token: the caller copies that across (agentfwd.ts state) too.
+ */
+export async function cloneSave(from: string, to: string, name: string): Promise<Manifest> {
+  const m = readSave(from, name)
+  if (m === null) throw new Error(`instance "${from}" has no save "${name}"`)
+  if (readMeta(to) === null) ensureInstance(to, m.image)
+  const meta = readMeta(to)
+  if (meta === null) throw new Error(`could not create instance "${to}"`)
+  if (meta.image !== m.image) {
+    throw new IncompatibleSave(`save "${name}" is of image "${m.image}", but instance "${to}" runs "${meta.image}"`)
+  }
+  const now = currentCompat(to, meta)
+  if (now.hash !== m.compat) {
+    const why = m.compatParts === undefined ? [] : compatDiff(m.compatParts, now.parts)
+    throw new IncompatibleSave(`"${to}" differs from "${from}"${why.length > 0 ? `: ${why.join("; ")}` : ""}`)
+  }
+  const src = saveDir(from, name)
+  return await withLock(to, async () => {
+    const tmp = resolve(savesDir(to), `.${name}.partial-${String(process.pid)}`)
+    rmSync(tmp, { recursive: true, force: true })
+    mkdirSync(tmp, { recursive: true })
+    try {
+      for (const f of readdirSync(src)) {
+        if (f.startsWith(".") || f === FILES.manifest) continue
+        cloneFile(resolve(src, f), resolve(tmp, f))
+      }
+      const copy = { ...m, instance: to, clonedFrom: { instance: from, createdAt: m.createdAt } }
+      writeFileSync(resolve(tmp, FILES.manifest), `${JSON.stringify(copy, null, 2)}\n`)
+    } catch (error) {
+      rmSync(tmp, { recursive: true, force: true })
+      throw error
+    }
+    const final = saveDir(to, name)
+    const old = resolve(savesDir(to), `.${name}.old-${String(process.pid)}`)
+    if (existsSync(final)) renameSync(final, old)
+    renameSync(tmp, final)
+    rmSync(old, { recursive: true, force: true })
+    return parseManifest(readFileSync(resolve(final, FILES.manifest), "utf8"))
+  })
+}
+
 
 /**
  * Put an instance into a save's state, running or not. QEMU is restarted
