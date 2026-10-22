@@ -340,8 +340,11 @@ export async function install(name: string, o: InstallOptions = {}): Promise<Age
  *      save another instance took), add the forward
  *   3. otherwise a full install                         ~7 s
  */
-export async function ensure(name: string, o: InstallOptions = {}): Promise<AgentClient> {
-  const c = await connect(name, { timeoutMs: 2000 })
+export async function ensure(name: string, o: InstallOptions & { readonly waitMs?: number } = {}): Promise<AgentClient> {
+  // An instance that has had an agent most likely still has one that is just
+  // starting: right after `start` returns the Run key has fired but the agent
+  // takes a few seconds to listen. Waiting is far cheaper than reinstalling.
+  const c = await connect(name, { timeoutMs: readState(pathsFor(name)) === null ? 2000 : (o.waitMs ?? 15_000) })
   if (c !== null && (await c.health()).version === AGENT_VERSION) return c
   const p = pathsFor(name)
   if (!qemu.isRunning(p)) throw new Error(`instance "${name}" is not running`)
