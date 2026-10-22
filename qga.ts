@@ -18,36 +18,99 @@ export interface ExecResult {
   readonly stderr: string
 }
 
+/** Byte that delimits guest-sync-delimited's reply. Never appears in UTF-8 JSON. */
+const DELIMITER = 0xff
+const NEWLINE = 0x0a
+
+/**
+ * One request, one reply — on a channel that is synced first.
+ *
+ * THE SYNC IS NOT OPTIONAL. The agent sits behind a single virtio-serial port
+ * and answers every request it was sent, whether or not anyone is still
+ * listening. A call that timed out leaves its reply in flight, and the next
+ * connection — this process or another one — used to read that stale reply as
+ * its own: a `guest-exec` handed the previous call's pid, a status poll handed
+ * another command's output. So every call first sends guest-sync-delimited
+ * with a random id. The agent answers requests in order, so anything still
+ * owed to an earlier caller arrives before the 0xFF that opens our sync reply;
+ * everything before a delimiter, and any sync reply carrying another id, is
+ * discarded. The leading 0xFF the client sends also makes the agent drop any
+ * half-received request a previous caller abandoned mid-write.
+ */
 export async function call(
   sockPath: string,
   payload: Record<string, unknown>,
   timeoutMs = 20_000,
 ): Promise<Record<string, unknown>> {
+  const id = Math.floor(Math.random() * 2 ** 31)
   return await new Promise((res, rej) => {
     const sock = connect(sockPath)
-    let buf = ""
-    const timer = setTimeout(() => {
-      sock.destroy()
-      rej(new Error("guest agent timed out"))
-    }, timeoutMs)
-    sock.on("connect", () => sock.write(`${JSON.stringify(payload)}\n`))
-    sock.on("data", (chunk) => {
-      buf += chunk.toString("utf8")
-      const nl = buf.indexOf("\n")
-      if (nl < 0) return
+    let synced = false
+    let inSyncReply = false
+    // The current line so far, kept as chunks so a multi-megabyte reply is not
+    // re-copied on every read.
+    let pending: Buffer[] = []
+    const settle = (fn: () => void): void => {
       clearTimeout(timer)
       sock.destroy()
-      try {
-        res(JSON.parse(buf.slice(0, nl)) as Record<string, unknown>)
-      } catch (error) {
-        rej(error instanceof Error ? error : new Error(String(error)))
+      fn()
+    }
+    const timer = setTimeout(() => {
+      settle(() => rej(new Error("guest agent timed out")))
+    }, timeoutMs)
+    sock.on("connect", () => {
+      const sync = JSON.stringify({ execute: "guest-sync-delimited", arguments: { id } })
+      sock.write(Buffer.concat([Buffer.from([DELIMITER]), Buffer.from(`${sync}\n`)]))
+    })
+    sock.on("data", (chunk: Buffer) => {
+      let data = chunk
+      while (!synced) {
+        if (!inSyncReply) {
+          const ff = data.indexOf(DELIMITER)
+          if (ff < 0) return
+          data = data.subarray(ff + 1)
+          inSyncReply = true
+        }
+        const nl = data.indexOf(NEWLINE)
+        if (nl < 0) {
+          pending.push(data)
+          return
+        }
+        const line = Buffer.concat([...pending, data.subarray(0, nl)]).toString("utf8")
+        data = data.subarray(nl + 1)
+        pending = []
+        inSyncReply = false
+        if (syncReplyId(line) === id) {
+          synced = true
+          sock.write(`${JSON.stringify(payload)}\n`)
+        }
       }
+      const nl = data.indexOf(NEWLINE)
+      if (nl < 0) {
+        pending.push(data)
+        return
+      }
+      const line = Buffer.concat([...pending, data.subarray(0, nl)]).toString("utf8")
+      settle(() => {
+        try {
+          res(JSON.parse(line) as Record<string, unknown>)
+        } catch (error) {
+          rej(error instanceof Error ? error : new Error(String(error)))
+        }
+      })
     })
     sock.on("error", (error) => {
-      clearTimeout(timer)
-      rej(error)
+      settle(() => rej(error))
     })
   })
+}
+
+function syncReplyId(line: string): unknown {
+  try {
+    return (JSON.parse(line) as { return?: unknown }).return
+  } catch {
+    return undefined
+  }
 }
 
 /** Poll until the agent answers. A cold boot to a responsive agent is ~25s. */
