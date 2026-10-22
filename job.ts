@@ -21,7 +21,7 @@
  *     - src: ./big.zip                     # no dest: only served over HTTP
  *   steps:
  *     - name: install
- *       shell: powershell                  # pwsh | powershell | cmd
+ *       shell: powershell                  # pwsh | powershell | cmd | winvm
  *       run: |
  *         Start-Process msiexec -ArgumentList '/i','C:\work\app.msi','/qn' -Wait
  *       timeout: 300
@@ -34,6 +34,10 @@
  *     paths: [C:\work\*.log]
  *   screenshot: failure                    # failure (default) | always | never
  *
+ * `shell: winvm` runs each line of `run` as a winvm command ON THE HOST against
+ * the job's instance (`webview click …`, `ocr --find …`, `toasts --find …`,
+ * `click --text …`); see hoststep.ts.
+ *
  * Every staged or served file is also reachable from the guest at
  * `$env:WINVM_FILES/<basename>` (http://10.0.2.2:<port>/<token>/files), which
  * is how a job hands an installer an origin to download from.
@@ -45,7 +49,7 @@
 import { readFileSync } from "node:fs"
 import { dirname, isAbsolute, resolve } from "node:path"
 
-export type Shell = "pwsh" | "powershell" | "cmd"
+export type Shell = "pwsh" | "powershell" | "cmd" | "winvm"
 export type Condition = "success" | "failure" | "always"
 export type When = "failure" | "always" | "never"
 
@@ -143,8 +147,8 @@ function env(v: unknown, where: string): Record<string, string> {
 
 function shell(v: string | null, where: string): Shell {
   if (v === null) return "powershell"
-  if (v === "pwsh" || v === "powershell" || v === "cmd") return v
-  throw new JobError(`${where}: shell must be pwsh, powershell or cmd (got "${v}")`)
+  if (v === "pwsh" || v === "powershell" || v === "cmd" || v === "winvm") return v
+  throw new JobError(`${where}: shell must be pwsh, powershell, cmd or winvm (got "${v}")`)
 }
 
 /** `always()`, `failure()`, `success()` — the three conditions a runner can decide alone. */
@@ -233,10 +237,12 @@ export function parseJob(text: string, file = ""): Job {
     const run = str(s, "run", sw)
     if (run === null || run.trim() === "") throw new JobError(`${sw}: "run" is required`)
     const name = str(s, "name", sw) ?? run.trim().split("\n")[0]?.slice(0, 60) ?? `step ${String(i + 1)}`
+    const sh = shell(str(s, "shell", sw), sw)
+    if (sh === "winvm" && bool(s, "background", sw, false)) throw new JobError(`${sw}: a winvm step cannot be background`)
     return {
       name,
       run: interpolate(run, jobEnv, sw),
-      shell: shell(str(s, "shell", sw), sw),
+      shell: sh,
       timeoutMs: parseDuration(s["timeout"] ?? minutes(s["timeout-minutes"]), sw) ?? DEFAULT_STEP_TIMEOUT_MS,
       continueOnError: bool(s, "continue-on-error", sw, false),
       env: env(s["env"], sw),

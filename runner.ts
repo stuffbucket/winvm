@@ -34,6 +34,7 @@ import * as golden from "./golden"
 import type { Guest } from "./guest"
 import { guestFor } from "./guest"
 import { capture } from "./host"
+import { runHostStep } from "./hoststep"
 import * as input from "./input"
 import type { FileSpec, Job, Step } from "./job"
 import { stepScript } from "./job"
@@ -270,8 +271,15 @@ async function runStep(
   env: Readonly<Record<string, string>>,
   guest: Guest,
   remainingMs: number,
+  instance: string,
 ): Promise<StepResult> {
   const t0 = Date.now()
+  if (step.shell === "winvm") {
+    // On the host, against the instance: see hoststep.ts.
+    const r = await runHostStep(step.run, instance, { ...env, ...step.env }, Math.min(step.timeoutMs, Math.max(1000, remainingMs)))
+    const status = r.timedOut ? "timed-out" : r.exitcode === 0 ? "passed" : "failed"
+    return { name: step.name, continueOnError: step.continueOnError, background: false, status, exitcode: r.timedOut ? null : r.exitcode, ms: Date.now() - t0, stdout: r.stdout, stderr: r.stderr }
+  }
   const s = stepScript(step, env)
   const script = `${SCRIPTS}\\${String(index + 1)}${s.ext}`
   await guest.put(script, s.text)
@@ -411,7 +419,7 @@ export async function runJob(job: Job, o: RunOptions): Promise<JobResult> {
         r = { name: step.name, status: "skipped", exitcode: null, ms: 0, stdout: "", stderr: "", continueOnError: step.continueOnError, background: step.background }
       } else {
         try {
-          r = await runStep(step, i, env, guest, deadline - Date.now())
+          r = await runStep(step, i, env, guest, deadline - Date.now(), o.instance)
         } catch (error) {
           r = { name: step.name, status: "failed", exitcode: null, ms: 0, stdout: "", stderr: errMsg(error), continueOnError: step.continueOnError, background: step.background }
         }

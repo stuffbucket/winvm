@@ -7,6 +7,8 @@ import { describe, expect, it } from "bun:test"
 
 import { pickTarget } from "../cdp"
 import type { Target } from "../cdp"
+import { commands, splitWords } from "../hoststep"
+import { JobError, parseJob } from "../job"
 import { centre, parseBoxes, rank } from "../ocr"
 import type { TextBox } from "../ocr"
 import { fileTimeToIso, filterToasts, parseSince, readDb, toastTexts } from "../toasts"
@@ -133,5 +135,28 @@ describe("toasts", () => {
     } finally {
       rmSync(dir, { recursive: true, force: true })
     }
+  })
+})
+
+describe("shell: winvm steps", () => {
+  it("splits words like a shell: quotes group, no expansion, backslashes literal outside double quotes", () => {
+    expect(splitWords(`webview click 'a[href="#apps"]'`)).toEqual(["webview", "click", 'a[href="#apps"]'])
+    expect(splitWords(`click --text "Quit Maximal"  --double`)).toEqual(["click", "--text", "Quit Maximal", "--double"])
+    expect(splitWords(String.raw`put C:\work\x "a \"b\" c" ''`)).toEqual(["put", String.raw`C:\work\x`, 'a "b" c', ""])
+    expect(() => splitWords("ocr --find 'oops")).toThrow()
+  })
+
+  it("one command per line, comments skipped, an optional leading winvm, the instance after the verb", () => {
+    const run = "# read it\nwebview wait '#account' --timeout 30\n\nwinvm ocr --find Settings\n"
+    expect(commands(run, "ci")).toEqual([
+      ["webview", "-i", "ci", "wait", "#account", "--timeout", "30"],
+      ["ocr", "-i", "ci", "--find", "Settings"],
+    ])
+  })
+
+  it("parses as a shell, and refuses background", () => {
+    const job = parseJob("steps:\n  - shell: winvm\n    run: ocr\n")
+    expect(job.steps[0]?.shell).toBe("winvm")
+    expect(() => parseJob("steps:\n  - shell: winvm\n    background: true\n    run: ocr\n")).toThrow(JobError)
   })
 })
