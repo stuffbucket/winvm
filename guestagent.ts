@@ -26,11 +26,12 @@
  *   POST /launch  {argv,cwd?,env?}    detached, in this session  -> {pid}
  *   GET  /procs                       [{pid,name,session}]
  *   POST /kill    {pid,tree?}
+ *   POST /ui      {op,...}             UI Automation via winvm-ui.exe (assets/winvm-ui.cs, docs/gui.md)
  *   POST /exit                        stop the agent (reinstall)
  */
 import { spawn as nodeSpawn } from "node:child_process"
 import { appendFileSync, existsSync, mkdirSync, readFileSync, statSync } from "node:fs"
-import { dirname } from "node:path"
+import { dirname, join } from "node:path"
 import { timingSafeEqual } from "node:crypto"
 
 /** Bumped whenever the protocol or behaviour changes; the host reinstalls on mismatch. */
@@ -334,6 +335,63 @@ function listProcs(): Proc[] {
   return procs
 }
 
+/** A UI Automation request: `op` plus its fields (see assets/winvm-ui.cs). */
+export type UiRequest = { readonly op: string } & Readonly<Record<string, unknown>>
+/** What the helper answered: a result, or an error with a code (notfound | timeout | bad | fail | unavailable). */
+export type UiReply = { readonly result: Record<string, unknown> } | { readonly error: string; readonly code: string }
+
+/**
+ * winvm-ui.exe, the UI Automation helper (assets/winvm-ui.cs, compiled at
+ * install): one long-lived .NET process in this session, JSON lines both ways,
+ * answers matched by id so a long `wait` does not hold up anything else.
+ * Started on first use (the first call pays ~300 ms of UIA warm-up), started
+ * again if it dies; it exits when its stdin closes, so never outlives us.
+ */
+class UiHost {
+  private proc: ReturnType<typeof Bun.spawn<"pipe", "pipe", "ignore">> | null = null
+  private readonly waiting = new Map<number, (r: UiReply) => void>()
+  private next = 1
+  private readonly exe: string
+  constructor(exe: string) {
+    this.exe = exe
+  }
+
+  async call(req: UiRequest): Promise<UiReply> {
+    if (!isWin) return { error: "UI Automation exists only in the Windows guest", code: "unavailable" }
+    if (!existsSync(this.exe)) return { error: `${this.exe} is missing: reinstall the agent (winvm agent install)`, code: "unavailable" }
+    const proc = this.proc ?? this.start()
+    const id = this.next++
+    const reply = new Promise<UiReply>((res) => this.waiting.set(id, res))
+    proc.stdin.write(`${JSON.stringify({ ...req, id })}\n`)
+    await proc.stdin.flush()
+    return await reply
+  }
+
+  private start(): ReturnType<typeof Bun.spawn<"pipe", "pipe", "ignore">> {
+    const proc = Bun.spawn([this.exe], { stdin: "pipe", stdout: "pipe", stderr: "ignore" })
+    this.proc = proc
+    void (async () => {
+      const dec = new TextDecoder()
+      let buf = ""
+      for await (const chunk of proc.stdout) {
+        buf += dec.decode(chunk, { stream: true })
+        for (let nl = buf.indexOf("\n"); nl >= 0; nl = buf.indexOf("\n")) {
+          const line = buf.slice(0, nl).trim()
+          buf = buf.slice(nl + 1)
+          if (line === "") continue
+          const { id, ...r } = JSON.parse(line) as { id: number } & UiReply
+          this.waiting.get(id)?.(r)
+          this.waiting.delete(id)
+        }
+      }
+      if (this.proc === proc) this.proc = null
+      for (const w of this.waiting.values()) w({ error: "winvm-ui.exe exited", code: "fail" })
+      this.waiting.clear()
+    })()
+    return proc
+  }
+}
+
 // --- the spawner -------------------------------------------------------------
 
 /**
@@ -355,8 +413,10 @@ type Op =
   | { readonly op: "launch"; readonly req: LaunchRequest }
   | { readonly op: "procs" }
   | { readonly op: "kill"; readonly pid: number; readonly tree: boolean }
+  | { readonly op: "ui"; readonly req: UiRequest }
 
 let pwshHost: PwshHost | null = null
+let uiHost: UiHost | null = null
 async function runOp(o: Op): Promise<unknown> {
   switch (o.op) {
     case "exec":
@@ -372,6 +432,9 @@ async function runOp(o: Op): Promise<unknown> {
       if (o.tree) killTree(o.pid)
       else process.kill(o.pid, "SIGKILL")
       return { ok: true }
+    case "ui":
+      uiHost ??= new UiHost(process.env["WINVM_UI_EXE"] ?? join(import.meta.dir, "winvm-ui.exe"))
+      return await uiHost.call(o.req)
   }
 }
 
@@ -562,6 +625,14 @@ export function startAgent(o: AgentOptions, onFatal: () => void = () => {}): Run
               const r = (await req.json()) as { pid?: number; tree?: boolean }
               if (typeof r.pid !== "number") return fail(400, "pid required")
               return json(await spawner.call({ op: "kill", pid: r.pid, tree: r.tree !== false }))
+            }
+            case "POST /ui": {
+              const r = (await req.json()) as UiRequest
+              if (typeof r.op !== "string") return fail(400, "op required")
+              const out = await spawner.call<UiReply>({ op: "ui", req: r })
+              if ("result" in out) return json(out.result)
+              const status = { notfound: 404, timeout: 408, bad: 400, unavailable: 501 }[out.code] ?? 500
+              return json({ error: out.error, code: out.code }, status)
             }
             case "POST /exit":
               log("exit requested")

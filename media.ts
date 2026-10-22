@@ -20,7 +20,7 @@ const ASSETS = resolve(import.meta.dir, "assets")
  * runs or installs from there. Not copied to C:\Windows\Setup\Scripts by the
  * answer file: nothing needs them before provisioning starts.
  */
-const WINVM_EXTRAS = ["defender.ps1", "logon.ps1", "agent-install.ps1", "runinsession.cs"] as const
+const WINVM_EXTRAS = ["defender.ps1", "logon.ps1", "agent-install.ps1", "runinsession.cs", "winvm-ui.cs"] as const
 
 /** bun for Windows ARM64, the host's own version, cached beside the other media. */
 export function bunZip(): string {

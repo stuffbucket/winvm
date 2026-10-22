@@ -11,6 +11,8 @@
 #   <Dest>\bun.exe            the agent's own native ARM64 bun (a copy, so a
 #                             reinstall can stop exactly this process)
 #   <Dest>\guestagent.ts      the agent
+#   <Dest>\winvm-ui.exe       UI Automation helper the agent drives (/ui);
+#                             compiled here from C# (docs/gui.md)
 #   <Dest>\runinsession.exe   start a program on the logged-on desktop from
 #                             session 0 (qemu-ga); compiled here from C#
 #   HKLM Run "winvm-agent"    starts the agent at every logon, IN the user's
@@ -32,7 +34,7 @@ $bun = Join-Path $Dest "bun.exe"
 $ris = Join-Path $Dest "runinsession.exe"
 
 # 1. Stop a running agent: it holds bun.exe open, and two would fight over the port.
-$running = @(Get-Process bun -ErrorAction SilentlyContinue | Where-Object { $_.Path -eq $bun })
+$running = @(Get-Process bun, winvm-ui -ErrorAction SilentlyContinue | Where-Object { $_.Path -eq $bun -or $_.Path -eq (Join-Path $Dest "winvm-ui.exe") })
 if ($running.Count -gt 0) {
     $running | Stop-Process -Force
     $running | Wait-Process -Timeout 10 -ErrorAction SilentlyContinue
@@ -81,6 +83,22 @@ if (Test-Path $cs) {
         Add-Type -TypeDefinition (Get-Content $cs -Raw) -OutputAssembly $ris -OutputType ConsoleApplication
         Set-Content $stamp $sum
         Write-Output "runinsession: compiled"
+    }
+}
+
+# 4b. The UI Automation helper, the same way. AnyCPU: native ARM64 under .NET 4.8.1.
+$cs = Join-Path $Source "winvm-ui.cs"
+if (Test-Path $cs) {
+    $exe = Join-Path $Dest "winvm-ui.exe"
+    $sum = (Get-FileHash $cs -Algorithm SHA256).Hash
+    $stamp = Join-Path $Dest "winvm-ui.sha256"
+    if (-not (Test-Path $exe) -or -not (Test-Path $stamp) -or (Get-Content $stamp -Raw).Trim() -ne $sum) {
+        Remove-Item $exe -Force -ErrorAction SilentlyContinue
+        $refs = @("UIAutomationClient", "UIAutomationTypes", "WindowsBase", "System.Web.Extensions") |
+            ForEach-Object { [Reflection.Assembly]::LoadWithPartialName($_).Location }
+        Add-Type -TypeDefinition (Get-Content $cs -Raw) -ReferencedAssemblies ($refs + "System.Core") -OutputAssembly $exe -OutputType ConsoleApplication
+        Set-Content $stamp $sum
+        Write-Output "winvm-ui: compiled"
     }
 }
 

@@ -157,6 +157,14 @@ export class AgentClient {
     await this.post("/kill", { pid, tree: o.tree ?? true })
   }
 
+  /**
+   * One UI Automation request (`op` plus fields) to the guest's winvm-ui helper;
+   * ui.ts wraps it. Throws AgentError: 404 not found, 408 timed out, 400 bad request.
+   */
+  async ui<T>(req: { readonly op: string } & Readonly<Record<string, unknown>>, timeoutMs = 30_000): Promise<T> {
+    return await this.post<T>("/ui", req, timeoutMs)
+  }
+
   /** Ask the agent to exit (the Run key starts it again at the next logon). */
   async exit(): Promise<void> {
     await this.post("/exit", {})
@@ -275,6 +283,7 @@ export async function install(name: string, o: InstallOptions = {}): Promise<Age
     [resolve(import.meta.dir, "guestagent.ts"), `${STAGE_DIR}\\guestagent.ts`],
     [resolve(ASSETS, "agent-install.ps1"), `${STAGE_DIR}\\agent-install.ps1`],
     [resolve(ASSETS, "runinsession.cs"), `${STAGE_DIR}\\runinsession.cs`],
+    [resolve(ASSETS, "winvm-ui.cs"), `${STAGE_DIR}\\winvm-ui.cs`],
   ] as const) {
     await qgaWriteFile(p.qga, to, new Uint8Array(readFileSync(from)))
   }
