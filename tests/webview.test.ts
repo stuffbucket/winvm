@@ -3,6 +3,8 @@ import { describe, expect, it } from "bun:test"
 
 import { pickTarget } from "../cdp"
 import type { Target } from "../cdp"
+import { centre, parseBoxes, rank } from "../ocr"
+import type { TextBox } from "../ocr"
 import { forwardsTo, guestScript, relayPort } from "../webview"
 
 const t = (o: Partial<Target>): Target => ({ id: "x", type: "page", title: "", url: "", webSocketDebuggerUrl: "ws://h/p", ...o })
@@ -47,5 +49,33 @@ describe("webview", () => {
     expect(pickTarget(list, "/ui/dashboard")?.id).toBe("1")
     expect(pickTarget(list, "nope")).toBeNull()
     expect(pickTarget([t({ webSocketDebuggerUrl: undefined })], null)).toBeNull()
+  })
+})
+
+describe("ocr", () => {
+  const b = (text: string, x: number, y: number, match?: [number, number, number, number]): TextBox => ({
+    text,
+    confidence: 1,
+    box: [x, y, 100, 20],
+    ...(match === undefined ? {} : { match }),
+  })
+
+  it("parses the helper's JSON lines", () => {
+    const out = '{"box":[1,2,3,4],"confidence":0.5,"text":"Quit"}\n\n{"box":[5,6,7,8],"confidence":1,"match":[5,6,2,8],"text":"Quit all"}\n'
+    const boxes = parseBoxes(out)
+    expect(boxes).toHaveLength(2)
+    expect(boxes[1]?.match).toEqual([5, 6, 2, 8])
+  })
+
+  it("ranks a whole-line match first, then reading order; folds case and accents", () => {
+    const boxes = [b("Quit Maximal", 10, 50), b("Settings", 10, 10), b("quit", 300, 80), b("Quit", 5, 80)]
+    expect(rank(boxes, "QUIT").map((x) => `${x.text}@${String(x.box[0])}`)).toEqual(["Quit@5", "quit@300", "Quit Maximal@10"])
+    expect(rank([b("Español", 0, 0)], "espanol")).toHaveLength(1)
+    expect(rank(boxes, "nope")).toEqual([])
+  })
+
+  it("aims at the matched part of a line when Vision boxed it", () => {
+    expect(centre(b("Quit Maximal", 10, 50))).toEqual({ x: 60, y: 60 })
+    expect(centre(b("Quit Maximal", 10, 50, [10, 50, 30, 20]))).toEqual({ x: 25, y: 60 })
   })
 })

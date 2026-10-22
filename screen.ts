@@ -14,6 +14,7 @@ import { instanceName } from "./args"
 import { describeDisplay, parseDisplay, readDisplay, writeDisplay } from "./display"
 import * as guestDisplay from "./guestdisplay"
 import * as input from "./input"
+import * as ocr from "./ocr"
 import type { InstanceMeta, Paths } from "./paths"
 import { pathsFor, readMeta } from "./paths"
 import * as qemu from "./qemu"
@@ -177,7 +178,9 @@ function coords(args: Args, usage: string): { x: number; y: number } | null {
 }
 
 export async function click(args: Args): Promise<number> {
-  const at = coords(args, "winvm click [-i name] <x> <y> [--right | --middle] [--double]")
+  const text = args.flags.get("text")
+  if (text !== undefined && text !== "true") return await ocr.clickText(args, text)
+  const at = coords(args, "winvm click [-i name] <x> <y> | --text TEXT [--wait S]  [--right | --middle] [--double]")
   if (at === null) return 1
   const r = running(args)
   if (r === null) return 1

@@ -976,6 +976,9 @@ export const USAGE =
   "  type    [-i name] \"text\"      type into the guest (US layout)\n" +
   "  key     [-i name] <combo>...  e.g. ctrl-alt-delete, win-r, enter, f5\n" +
   "  click   [-i name] <x> <y> [--right|--middle] [--double]   screenshot pixels\n" +
+  "          [-i name] --text TEXT [--wait S]   OCR the screen, click the middle of TEXT\n" +
+  "  ocr     [-i name] [--find TEXT] [--wait S] [--fast] [--json] [--image f.png]\n" +
+  "                                the screen's text and boxes (macOS Vision)\n" +
   "  move    [-i name] <x> <y>     move the pointer\n" +
   "  scroll  [-i name] <n>         n wheel notches, positive is down (or: up|down [n])\n" +
   "  display [-i name] [WxH|ramfb] show or set the screen size\n" +
