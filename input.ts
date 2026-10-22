@@ -203,19 +203,19 @@ export function parseCombo(combo: string): { qcodes: readonly string[]; unknown:
 // ---------------------------------------------------------------------------
 // Talking to QEMU
 
-type Event = Record<string, unknown>
-const keyEv = (qcode: string, down: boolean): Event => ({ type: "key", data: { down, key: { type: "qcode", data: qcode } } })
-const absEv = (axis: "x" | "y", value: number): Event => ({ type: "abs", data: { axis, value } })
-const btnEv = (button: string, down: boolean): Event => ({ type: "btn", data: { down, button } })
+export type Event = Record<string, unknown>
+export const keyEv = (qcode: string, down: boolean): Event => ({ type: "key", data: { down, key: { type: "qcode", data: qcode } } })
+export const absEv = (axis: "x" | "y", value: number): Event => ({ type: "abs", data: { axis, value } })
+export const btnEv = (button: string, down: boolean): Event => ({ type: "btn", data: { down, button } })
 
 /**
  * A gap between press and release. Too short and the USB HID poll can see
  * neither; under heavy host load the guest needs a little more.
  */
-const GAP_MS = 30
+export const GAP_MS = 30
 const sleep = async (ms: number): Promise<void> => await new Promise((r) => setTimeout(r, ms))
 
-async function send(q: QmpSend, events: readonly Event[]): Promise<void> {
+export async function send(q: QmpSend, events: readonly Event[]): Promise<void> {
   await q("input-send-event", { events: [...events] })
 }
 
