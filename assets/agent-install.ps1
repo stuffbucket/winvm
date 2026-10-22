@@ -106,6 +106,15 @@ if (Test-Path $cs) {
 #    asking on the desktop the first time bun listens.
 netsh advfirewall firewall delete rule name=winvm-agent 2>&1 | Out-Null
 netsh advfirewall firewall add rule name=winvm-agent dir=in action=allow protocol=TCP localport=$Port remoteip=10.0.2.2 program="$bun" | Out-Null
+#    And never ASK on the desktop, for any program. Any other bun.exe that
+#    listens beyond loopback (measured: the payload's
+#    C:\payload\bun-windows-aarch64\bun.exe serving on 0.0.0.0) otherwise pops
+#    "Do you want to allow public and private networks to access this app?",
+#    which sits over whatever a GUI job is driving -- and dismissing it adds
+#    block rules. With notifications off the firewall still blocks what no
+#    rule allows; it just says nothing. Here rather than provision.ps1 so an
+#    instance of an older image gets it with its next agent install too.
+netsh advfirewall set allprofiles settings inboundusernotification disable | Out-Null
 
 # 6. Start at every logon. conhost --headless gives the agent (and every
 #    console program it runs) a console with no window; --supervise restarts
