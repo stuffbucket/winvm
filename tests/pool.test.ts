@@ -152,6 +152,7 @@ describe("pool timing", () => {
     expect(s.runMs).toBe(20_000)
     expect(s.resetMs).toBe(2000)
     expect(s.exposedResetMs).toBe(2000)
+    expect(s.initialResetMs).toBe(1000)
   })
 
   it("two instances: a reset hidden behind the other's job is not exposed", () => {
@@ -163,6 +164,7 @@ describe("pool timing", () => {
     const s = poolStats(jobs, ["ci-1", "ci-2"])
     expect(s.runMs).toBe(15_000)
     expect(s.exposedResetMs).toBe(1000) // only the first, parallel resets
+    expect(s.initialResetMs).toBe(1000)
     expect(s.perInstance).toEqual([
       { instance: "ci-1", jobs: 1, busyMs: 10_000 },
       { instance: "ci-2", jobs: 2, busyMs: 15_000 },

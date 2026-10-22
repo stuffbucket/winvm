@@ -376,6 +376,11 @@ desktop); without one they fall back to qemu-ga, as SYSTEM in session 0
 (`%LOCALAPPDATA%` and `HKCU` are SYSTEM's, nothing launched is visible).
 `WINVM_CHANNEL=qga` forces the fallback.
 
+`--pool N` runs the jobs side by side on N instances (`ci-1` … `ci-N`), each
+reset between its own jobs while the others keep working; the golden is made
+once and APFS-cloned to the rest. The 6 Maximal jobs take ~74 s on one
+instance, ~43 s on 2, ~30-34 s on 3. See [`docs/pool.md`](docs/pool.md).
+
 `jobs/maximal/` holds end-to-end jobs for Maximal's Windows releases (MSI,
 portable zip, install.ps1, NSIS tray app, MCP broker containment); each
 downloads the latest release, or `MAXIMAL_TAG=vX.Y.Z`.

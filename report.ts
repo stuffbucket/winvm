@@ -66,6 +66,8 @@ export interface PoolStats {
   /** Sum over jobs of their resets. */
   readonly resetMs: number
   readonly exposedResetMs: number
+  /** Of that, the first round: from the run starting to the first job's work starting. The rest is mid-run and tail. */
+  readonly initialResetMs: number
   readonly perInstance: readonly { readonly instance: string; readonly jobs: number; readonly busyMs: number }[]
 }
 
@@ -118,6 +120,7 @@ export function poolStats(jobs: readonly JobResult[], instances: readonly string
       iv.map((x) => x.reset),
       iv.map((x) => x.work),
     ),
+    initialResetMs: iv.length === 0 ? 0 : Math.min(...iv.map((x) => x.work.start)) - Math.min(...iv.map((x) => x.reset.start)),
     perInstance: instances.map((instance) => {
       const mine = jobs.filter((j) => j.instance === instance)
       return { instance, jobs: mine.length, busyMs: length(merge(mine.map((j) => jobIntervals(j)).flatMap((x) => [x.reset, x.work]))) }
@@ -196,7 +199,8 @@ export function formatPool(p: PoolStats): string[] {
     `pool of ${String(p.instances.length)} (${p.instances.join(", ")}): ${secs(p.runMs)} wall clock, setup excluded; ` +
       `job time ${secs(p.jobMs)} summed, resets ${secs(p.resetMs)} summed` +
       (p.runMs > 0 ? ` — ${(serial / p.runMs).toFixed(2)}x one instance back to back` : ""),
-    `exposed reset (resetting, no job running): ${secs(p.exposedResetMs)}, ${pct(p.exposedResetMs, p.runMs)} of the wall clock`,
+    `exposed reset (resetting, no job running): ${secs(p.exposedResetMs)}, ${pct(p.exposedResetMs, p.runMs)} of the wall clock` +
+      ` (${secs(p.initialResetMs)} of it the first round, ${secs(Math.max(0, p.exposedResetMs - p.initialResetMs))} after)`,
     `  ${p.perInstance.map((i) => `${i.instance}: ${String(i.jobs)} job(s), busy ${secs(i.busyMs)}`).join("; ")}`,
   ]
 }
