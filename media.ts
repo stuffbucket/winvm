@@ -273,7 +273,15 @@ export function readResult(image: string): ProvisionResult {
  */
 export function buildSeed(payloadDir: string | undefined, bunVersion: string | undefined): void {
   const dir = media.seedDir()
+  // FROM NOTHING, every time. This directory outlives builds, so without the
+  // wipe a payload from an earlier `--bun` or `--payload` rides along into every
+  // later image — a build without --bun still shipped Bun.
+  rmSync(dir, { recursive: true, force: true })
   mkdirSync(resolve(dir, "payload"), { recursive: true })
+  // winvm's own guest-side extras, kept apart from `payload\`, which belongs to
+  // the caller. provision.ps1 finds this volume by the files in it.
+  mkdirSync(resolve(dir, "winvm"), { recursive: true })
+  if (existsSync(media.pwsh())) copyFileSync(media.pwsh(), resolve(dir, "winvm", "PowerShell-win-arm64.msi"))
   copyFileSync(resolve(ASSETS, "autounattend.xml"), resolve(dir, "autounattend.xml"))
   copyFileSync(resolve(ASSETS, "provision.ps1"), resolve(dir, "provision.ps1"))
   copyFileSync(resolve(ASSETS, "SetupComplete.cmd"), resolve(dir, "SetupComplete.cmd"))

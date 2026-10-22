@@ -7,7 +7,7 @@ import { resolve } from "node:path"
 
 import type { Args } from "./args"
 import { imageName, instanceName, isValidImageName } from "./args"
-import { TOOLS_SHA256, TOOLS_URL, download, du, have, hostChecks, requireHost, run } from "./host"
+import { PWSH_SHA256, PWSH_URL, TOOLS_SHA256, TOOLS_URL, download, du, have, hostChecks, requireHost, run } from "./host"
 import { diagnose, formatFindings } from "./diagnose"
 import { ensureInstance, makeVars, resetInstance, sealBase } from "./instance"
 import { ISO_SOURCE, buildSeed, checkIsoIsArm64, makeResultVolume, readResult, resolveWindowsIso } from "./media"
@@ -82,6 +82,7 @@ export function ls(): number {
   const entries: readonly [string, string][] = [
     ["windows ISO", media.iso()],
     ["guest tools", media.tools()],
+    ["PowerShell 7", media.pwsh()],
     ["seed ISO", media.seed()],
     ["seed contents", media.seedDir()],
   ]
@@ -144,7 +145,7 @@ export function prune(args: Args): number {
     // The tools ISO is re-downloaded and verified against its pin; the seed is
     // rebuilt from assets on every build. Neither is precious. The Windows ISO
     // is the user's own file and is only ever symlinked, so it is left alone.
-    for (const path of [media.tools(), media.seed(), media.seedDir()]) {
+    for (const path of [media.tools(), media.pwsh(), media.seed(), media.seedDir()]) {
       if (!existsSync(path)) continue
       const size = du(path)
       rmSync(path, { recursive: true, force: true })
@@ -179,6 +180,7 @@ export function setup(args: Args): number {
     mkdirSync(mediaDir(), { recursive: true })
     try {
       download(TOOLS_URL, media.tools(), TOOLS_SHA256)
+      download(PWSH_URL, media.pwsh(), PWSH_SHA256)
     } catch (error) {
       console.error(`::error::${error instanceof Error ? error.message : String(error)}`)
       return 1
@@ -286,6 +288,7 @@ export async function build(args: Args): Promise<number> {
   }
 
   download(TOOLS_URL, media.tools(), TOOLS_SHA256)
+  download(PWSH_URL, media.pwsh(), PWSH_SHA256)
   buildSeed(args.flags.get("payload"), args.flags.get("bun"))
 
   // Start from nothing. Anything kept from a failed build is a way for this one

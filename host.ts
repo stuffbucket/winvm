@@ -151,6 +151,18 @@ export function firmwareHint(): string {
 export const TOOLS_URL = "https://getutm.app/downloads/utm-guest-tools-latest.iso"
 export const TOOLS_SHA256 = "65b6a69b392ee01dd314c10f3dad9ebbf9c4160be43f5f0dd6bb715944d9095b"
 
+/**
+ * PowerShell 7, installed into every image. Native ARM64 and .NET 8+, so it
+ * starts several times faster than the in-box Windows PowerShell 5.1 and is
+ * what test harnesses should script the guest with. Pinned by version and
+ * digest for the same reason as the guest tools; shipped on the seed rather
+ * than downloaded in the guest, so the build never depends on the guest NIC.
+ */
+export const PWSH_VERSION = "7.6.7"
+export const PWSH_URL =
+  `https://github.com/PowerShell/PowerShell/releases/download/v${PWSH_VERSION}/PowerShell-${PWSH_VERSION}-win-arm64.msi`
+export const PWSH_SHA256 = "ddb2f3613a0ad27817b90601a0827f7347e81dfa5bce18d4be8009b8cb0e0a31"
+
 export const sha256Of = (path: string): string => capture("shasum", ["-a", "256", path]).split(/\s+/)[0] ?? ""
 
 export function run(cmd: string, args: readonly string[]): number {

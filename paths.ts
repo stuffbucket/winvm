@@ -37,6 +37,7 @@ export const instanceDir = (name: string): string => resolve(instancesDir(), nam
 export const media = {
   iso: (): string => resolve(mediaDir(), "windows-arm64.iso"),
   tools: (): string => resolve(mediaDir(), "utm-guest-tools.iso"),
+  pwsh: (): string => resolve(mediaDir(), "PowerShell-win-arm64.msi"),
   seed: (): string => resolve(mediaDir(), "seed.iso"),
   seedDir: (): string => resolve(mediaDir(), "seed"),
 } as const

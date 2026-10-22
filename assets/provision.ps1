@@ -153,6 +153,28 @@ try {
         & $setup
     }
 
+    # --- 3a. PowerShell 7 ------------------------------------------------------
+    #
+    # Native ARM64, so it starts several times faster than Windows PowerShell 5.1
+    # and is what a harness should script this guest with. Shipped on the seed
+    # (`winvm\`) by the host, pinned by digest, so nothing is fetched in-guest.
+    # A warning rather than a failure: the image is still a working guest.
+    $extras = Find-VolumeContaining -RelativePath "winvm\PowerShell-win-arm64.msi"
+    if ($extras) {
+        $msi = "$extras\winvm\PowerShell-win-arm64.msi"
+        $msiArgs = "/i `"$msi`" /qn /norestart ADD_PATH=1 REGISTER_MANIFEST=1 ENABLE_PSREMOTING=0 " +
+            "USE_MU=0 ENABLE_MU=0 DISABLE_TELEMETRY=1"
+        $p = Start-Process -FilePath msiexec.exe -ArgumentList $msiArgs -Wait -PassThru
+        Write-Output "PowerShell 7 msiexec exit: $($p.ExitCode)"
+        # Its update check prints a banner and phones home on interactive starts.
+        [Environment]::SetEnvironmentVariable("POWERSHELL_UPDATECHECK", "Off", "Machine")
+        [Environment]::SetEnvironmentVariable("POWERSHELL_TELEMETRY_OPTOUT", "1", "Machine")
+        $pwsh = "C:\Program Files\PowerShell\7\pwsh.exe"
+        Write-Result -Name "pwsh.txt" -Content $(if (Test-Path $pwsh) { "ok" } else { "no" })
+    } else {
+        Write-Output "WARNING: no winvm\PowerShell-win-arm64.msi on any volume - no PowerShell 7"
+    }
+
     # --- 3b. .NET native images -----------------------------------------------
     #
     # AUDIT MODE NEVER RUNS THE NGEN QUEUE. Windows ships the .NET Framework with
