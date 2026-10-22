@@ -979,6 +979,8 @@ export const USAGE =
   "          [-i name] --text TEXT [--wait S]   OCR the screen, click the middle of TEXT\n" +
   "  ocr     [-i name] [--find TEXT] [--wait S] [--fast] [--json] [--image f.png]\n" +
   "                                the screen's text and boxes (macOS Vision)\n" +
+  "  toasts  [-i name] [--since T] [--app A] [--find TEXT] [--wait S] [--json]\n" +
+  "                                notifications apps raised (T: ISO time, or 90s/5m/2h ago)\n" +
   "  move    [-i name] <x> <y>     move the pointer\n" +
   "  scroll  [-i name] <n>         n wheel notches, positive is down (or: up|down [n])\n" +
   "  display [-i name] [WxH|ramfb] show or set the screen size\n" +

@@ -1,10 +1,15 @@
 /** The pure parts of webview.ts, cdp.ts, ocr.ts and toasts.ts. No VM needed. */
+import { mkdtempSync, rmSync } from "node:fs"
+import { tmpdir } from "node:os"
+import { resolve } from "node:path"
+import { Database } from "bun:sqlite"
 import { describe, expect, it } from "bun:test"
 
 import { pickTarget } from "../cdp"
 import type { Target } from "../cdp"
 import { centre, parseBoxes, rank } from "../ocr"
 import type { TextBox } from "../ocr"
+import { fileTimeToIso, filterToasts, parseSince, readDb, toastTexts } from "../toasts"
 import { forwardsTo, guestScript, relayPort } from "../webview"
 
 const t = (o: Partial<Target>): Target => ({ id: "x", type: "page", title: "", url: "", webSocketDebuggerUrl: "ws://h/p", ...o })
@@ -77,5 +82,56 @@ describe("ocr", () => {
   it("aims at the matched part of a line when Vision boxed it", () => {
     expect(centre(b("Quit Maximal", 10, 50))).toEqual({ x: 60, y: 60 })
     expect(centre(b("Quit Maximal", 10, 50, [10, 50, 30, 20]))).toEqual({ x: 25, y: 60 })
+  })
+})
+
+describe("toasts", () => {
+  const xml =
+    '<toast duration="short"><visual><binding template="ToastGeneric"><text id="1">Maximal is working</text><text id="2"></text>' +
+    '<text id="3">Requests &amp; replies &#8212; &lt;ok&gt;</text></binding></visual></toast>'
+
+  it("converts FILETIME to ISO", () => {
+    expect(fileTimeToIso(134371541463351150)).toBe("2026-10-22T14:49:06.335Z")
+    expect(fileTimeToIso(0)).toBeNull()
+    expect(fileTimeToIso(null)).toBeNull()
+  })
+
+  it("reads a toast's text lines, entities decoded, empties dropped", () => {
+    expect(toastTexts(xml)).toEqual(["Maximal is working", "Requests & replies \u2014 <ok>"])
+  })
+
+  it("takes --since as an age or an ISO time", () => {
+    const now = Date.parse("2026-10-22T15:00:00Z")
+    expect(parseSince("90s", now)?.toISOString()).toBe("2026-10-22T14:58:30.000Z")
+    expect(parseSince("2h", now)?.toISOString()).toBe("2026-10-22T13:00:00.000Z")
+    expect(parseSince("2026-10-22T14:00:00Z")?.toISOString()).toBe("2026-10-22T14:00:00.000Z")
+    expect(parseSince("soon")).toBeNull()
+  })
+
+  it("reads toasts from a WPN-shaped database and filters them", () => {
+    const dir = mkdtempSync(resolve(tmpdir(), "winvm-test-wpn-"))
+    try {
+      const file = resolve(dir, "wpndatabase.db")
+      const db = new Database(file)
+      db.run("CREATE TABLE NotificationHandler (RecordId INTEGER PRIMARY KEY, PrimaryId TEXT NOT NULL)")
+      db.run(
+        "CREATE TABLE Notification ([Order] INTEGER PRIMARY KEY, Id INTEGER NOT NULL, HandlerId INTEGER, Type TEXT NOT NULL, Payload BLOB, Tag TEXT, [Group] TEXT, ExpiryTime INT64, ArrivalTime INT64)",
+      )
+      db.run("INSERT INTO NotificationHandler VALUES (1, 'co.stuffbucket.maximal'), (2, 'Windows.SystemToast.Other')")
+      const ins = db.prepare("INSERT INTO Notification VALUES (?, ?, ?, ?, ?, '', '', 0, ?)")
+      ins.run(1, 10, 1, "toast", new TextEncoder().encode(xml), 134371541463351150)
+      ins.run(2, 11, 2, "toast", "<toast><visual><binding><text>Other</text></binding></visual></toast>", 134371541000000000)
+      ins.run(3, 12, 1, "tile", "<tile/>", 134371541463351150)
+      db.close()
+      const all = readDb(file)
+      expect(all.map((t) => t.texts[0])).toEqual(["Other", "Maximal is working"])
+      expect(all[1]?.app).toBe("co.stuffbucket.maximal")
+      expect(filterToasts(all, { app: "MAXIMAL" })).toHaveLength(1)
+      expect(filterToasts(all, { find: "is WORKING" })).toHaveLength(1)
+      expect(filterToasts(all, { since: new Date("2026-10-22T14:49:06Z") }).map((t) => t.id)).toEqual([10])
+      expect(filterToasts(all, { since: new Date("2026-10-22T14:50:00Z") })).toEqual([])
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
   })
 })
