@@ -26,6 +26,31 @@ conditions and the disclaimer are reproduced — which is what this file and
 They are vendored so the harness does not depend on where a particular QEMU
 packaging put its data files. Set `WINVM_QEMU_DATA` to use a system copy instead.
 
+### noVNC 1.7.0 — `web/novnc/`
+
+The browser view (`winvm open --web`) uses noVNC's client library, vendored
+unmodified from the v1.7.0 release
+(<https://github.com/novnc/noVNC/releases/tag/v1.7.0>, tarball SHA-256
+`b1003a11b6e6e8d8f7f5e5586daae7f8ca651d8aee0aa155ff9ac841c48f52c6`). Only what
+the page loads is kept: `core/` and `vendor/pako/`, with the licence files
+(~740 KB). noVNC's own app (`vnc.html`, `app/`) is not included; `web/index.html`
+and `web/app.js` are this project's.
+
+- `core/`: Copyright (C) noVNC authors (see `web/novnc/AUTHORS`).
+  **SPDX-License-Identifier: MPL-2.0**, except `core/crypto/des.js` (BSD-style,
+  see its header) and `core/base64.js` (MPL-2.0).
+- `vendor/pako/`: Copyright (C) 2014-2016 Vitaly Puzrin.
+  **MIT**.
+- Full texts: [`web/novnc/LICENSE.txt`](web/novnc/LICENSE.txt),
+  [`web/novnc/docs/LICENSE.MPL-2.0`](web/novnc/docs/LICENSE.MPL-2.0),
+  [`web/novnc/docs/LICENSE.BSD-2-Clause`](web/novnc/docs/LICENSE.BSD-2-Clause),
+  [`web/novnc/docs/LICENSE.BSD-3-Clause`](web/novnc/docs/LICENSE.BSD-3-Clause),
+  [`web/novnc/vendor/pako/LICENSE`](web/novnc/vendor/pako/LICENSE).
+
+MPL-2.0 is file-level copyleft: these files stay under MPL-2.0 and their source
+is this source. Modifying one means publishing that file's changes under MPL-2.0;
+nothing else in winvm is affected. None are modified.
+
 ---
 
 ## Downloaded at run time, NOT redistributed here

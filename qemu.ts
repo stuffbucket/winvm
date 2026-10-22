@@ -13,6 +13,8 @@ import { closeSync, existsSync, openSync, readFileSync, renameSync, rmSync } fro
 import { requireFirmware } from "./host"
 import type { InstanceMeta, Paths } from "./paths"
 import { media } from "./paths"
+import { RAMFB, displayArgs, readDisplay } from "./display"
+import { applyPassword, vncArg } from "./vnc"
 
 export interface LaunchOptions {
   /** Attach the Windows ISO, guest tools and seed. Only a base build needs them. */
@@ -104,11 +106,15 @@ export function qemuArgs(name: string, p: Paths, meta: InstanceMeta, o: LaunchOp
     // wrong by the host's UTC offset.
     "-rtc", "base=localtime",
     // A UEFI-GOP framebuffer, so there is a picture before any driver loads.
-    // Deliberately not virtio-gpu, which needs viogpudo — UTM's own docs report
-    // that driver black-screening recent Windows 11.
-    "-device", "ramfb",
+    // Not virtio-gpu by default, which needs viogpudo — UTM's own docs report
+    // that driver black-screening recent Windows 11. An instance can opt in to
+    // it for a larger screen (`winvm display`); a build never does. See display.ts.
+    ...displayArgs(o.installMedia ? RAMFB : readDisplay(p)),
     "-display", "none",
-    "-vnc", `127.0.0.1:${String(meta.vnc)}`,
+    // Loopback only, with a websocket listener for the browser view and a
+    // password, which macOS Screen Sharing needs and the websocket must have.
+    // See vnc.ts.
+    "-vnc", vncArg(meta.vnc),
     "-qmp", `unix:${p.qmp},server=on,wait=off`,
     "-serial", `file:${p.serial}`,
     "-pidfile", p.pid,
@@ -209,7 +215,15 @@ export async function launch(name: string, p: Paths, meta: InstanceMeta, o: Laun
   })
   const outcome = await Promise.race([exited, survived])
   clearTimeout(timer)
-  if (outcome === "alive") return
+  if (outcome === "alive") {
+    // `password=on` refuses every VNC client until a password is set, so set it
+    // now rather than leave the screen unreachable until someone runs `open`.
+    // Advisory: a guest without a screen is still a working guest.
+    await applyPassword(p).catch((error: unknown) => {
+      console.warn(`warning: could not set the VNC password: ${error instanceof Error ? error.message : String(error)}`)
+    })
+    return
+  }
 
   // Read and handle absence, rather than asking whether it exists and then
   // reading: the two-step version races anything else touching the file.

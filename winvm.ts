@@ -11,6 +11,9 @@
  *   winvm rewind   [-i name] [tag]   put it back — ~10-20 s running, no reboot
  *   winvm reset [-i name]            discard all changes, back to the base
  *   winvm ls                         images and instances, with disk usage
+ *   winvm status [-i name]           what an instance is doing, in one screen
+ *   winvm open [-i name] [--web]     its screen: Screen Sharing, or the browser
+ *   winvm screenshot | type | key | click | move | scroll   drive it with no window
  *   winvm timemachine [--yes]        keep the VM files out of Time Machine backups
  *
  * ## Self-contained and project-agnostic, on purpose
@@ -77,6 +80,14 @@
  *   qmp.ts        QEMU monitor client (keystrokes, snapshots)
  *   snapshot.ts   capture and restore a running guest
  *   diagnose.ts   known failure signatures, read from a guest's own artifacts
+ *   status.ts     `status`: gathering (QMP, guest agent, files) and formatting
+ *   screen.ts     `open`, `display` and the input verbs
+ *   input.ts      screenshots, keys and the pointer, over QMP
+ *   vnc.ts        VNC ports, websocket, password (why there is one)
+ *   display.ts    the display device: ramfb, or virtio-gpu at a chosen size
+ *   guestdisplay.ts  Windows' side of the screen size
+ *   monitor.ts    short-deadline QMP commands
+ *   web.ts        `web`: the browser view's server; web/ holds the page and noVNC
  *   media.ts      seed ISO and result volume
  *   instance.ts   create / reset / seal
  *   assets/       answer file, provisioning script, UEFI boot selector
@@ -87,6 +98,9 @@
  */
 import { parseArgs } from "./args"
 import * as commands from "./commands"
+import * as screen from "./screen"
+import * as status from "./status"
+import * as web from "./web"
 import * as timemachine from "./timemachine"
 
 const [, , sub, ...rawArgs] = process.argv
@@ -151,6 +165,36 @@ switch (sub) {
   // eslint-disable-next-line no-fallthrough
   case "prune":
     process.exit(commands.prune(args))
+  // eslint-disable-next-line no-fallthrough
+  case "status":
+    process.exit(await status.run({ instance: args.flags.get("instance") ?? process.env["WINVM_INSTANCE"] ?? null, json: args.flags.has("json") }))
+  // eslint-disable-next-line no-fallthrough
+  case "open":
+    process.exit(await screen.open(args))
+  // eslint-disable-next-line no-fallthrough
+  case "web":
+    process.exit(await web.run(args))
+  // eslint-disable-next-line no-fallthrough
+  case "screenshot":
+    process.exit(await screen.screenshot(args))
+  // eslint-disable-next-line no-fallthrough
+  case "type":
+    process.exit(await screen.type(args))
+  // eslint-disable-next-line no-fallthrough
+  case "key":
+    process.exit(await screen.key(args))
+  // eslint-disable-next-line no-fallthrough
+  case "click":
+    process.exit(await screen.click(args))
+  // eslint-disable-next-line no-fallthrough
+  case "move":
+    process.exit(await screen.move(args))
+  // eslint-disable-next-line no-fallthrough
+  case "scroll":
+    process.exit(await screen.scroll(args))
+  // eslint-disable-next-line no-fallthrough
+  case "display":
+    process.exit(await screen.display(args))
   // eslint-disable-next-line no-fallthrough
   default:
     console.error(commands.USAGE)

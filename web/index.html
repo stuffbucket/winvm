@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>winvm</title>
+<link rel="stylesheet" href="/app.css">
+<script type="module" src="/app.js"></script>
+</head>
+<body>
+<header class="bar">
+  <h1>winvm</h1>
+  <label class="pick">instance
+    <select id="instance" aria-label="instance"></select>
+  </label>
+  <span id="state" class="badge" data-state="unknown">…</span>
+  <span id="screen-state" class="muted"></span>
+</header>
+
+<main class="layout">
+  <section class="screen-wrap" aria-label="guest screen">
+    <div id="screen"></div>
+    <div id="screen-msg" class="screen-msg" hidden></div>
+  </section>
+
+  <aside class="side">
+    <section aria-labelledby="h-actions">
+      <h2 id="h-actions">Actions</h2>
+      <div class="buttons">
+        <button data-verb="start">Start</button>
+        <button data-verb="stop">Stop</button>
+        <button data-verb="pause">Pause</button>
+        <button data-verb="resume">Resume</button>
+        <button data-verb="stow" title="save the running state and stop">Stow</button>
+      </div>
+      <form id="save-form" class="row">
+        <input id="save-name" placeholder="save name (optional)" pattern="[A-Za-z0-9][A-Za-z0-9._+\-]{0,63}" aria-label="save name">
+        <button type="submit">Save</button>
+      </form>
+      <form id="load-form" class="row">
+        <select id="load-name" aria-label="save to load"></select>
+        <button type="submit">Load</button>
+      </form>
+      <div class="buttons">
+        <button data-verb="key" data-arg="ctrl-alt-delete">Ctrl+Alt+Del</button>
+        <button id="shot">Screenshot</button>
+      </div>
+    </section>
+
+    <section aria-labelledby="h-status">
+      <h2 id="h-status">Status</h2>
+      <p id="title" class="title"></p>
+      <dl id="rows" class="rows"></dl>
+      <ul id="notes" class="notes"></ul>
+    </section>
+
+    <section aria-labelledby="h-output">
+      <h2 id="h-output">Last action</h2>
+      <p id="job-head" class="muted">none yet</p>
+      <pre id="job-output"></pre>
+    </section>
+  </aside>
+</main>
+</body>
+</html>

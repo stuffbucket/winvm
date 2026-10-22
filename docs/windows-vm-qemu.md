@@ -415,8 +415,11 @@ Half the traces are of guests that were FINE. That is the point — several
 signatures here are transient states a healthy guest passes straight through,
 and the archive keeps a working example beside each failing one.
 
-**Watch a boot.** `winvm ls` prints each instance's VNC display; connect with
-`open vnc://127.0.0.1:590<n>`. Firmware output goes to the instance's
+**Watch a boot.** `winvm open -i <name>` shows the screen in Screen Sharing
+(`--web` for the browser, `winvm screenshot` for a PNG with no window). The VNC
+server needs the password in `<instance>/vncpassword`; a plain
+`open vnc://127.0.0.1:590<n>` gets a password prompt, and `winvm open --print`
+prints a URL that carries it. Firmware output goes to the instance's
 `serial.log`, and the boot before it to `serial.prev.log` — kept because the
 usual response to a bad boot is another boot, which would otherwise overwrite
 the evidence. QEMU's own stderr goes to `qemu.log`.

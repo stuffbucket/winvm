@@ -78,6 +78,9 @@ bun winvm.ts rewind                      # back to "fresh", no reboot
 bun winvm.ts stop                        # orderly shutdown via the guest agent
 bun winvm.ts reset                       # discard all changes, back to the base image
 bun winvm.ts ls                          # images, instances, VNC ports, disk usage
+bun winvm.ts status                      # running? guest version, clock, saves, watcher
+bun winvm.ts open                        # the screen, in macOS Screen Sharing
+bun winvm.ts open --web                  # the screen + status + buttons, in the browser
 bun winvm.ts diagnose                    # explain a guest that misbehaved
 ```
 
@@ -86,8 +89,71 @@ bun winvm.ts diagnose                    # explain a guest that misbehaved
 additional, independent instances backed by the same image, and
 `--ephemeral` on `start` to discard everything on exit.
 
-To see the desktop: `bun winvm.ts ls` prints each instance's VNC display;
-`open vnc://127.0.0.1:5901` for display `:1`.
+## Seeing the screen, and driving it without one
+
+`winvm status [-i name]` is the one-screen summary: running / paused / stopped
+/ stowed, uptime, Windows version, whether the guest agent answers, the guest
+clock's offset from the host, CPU/RAM, display, overlay disk use, saves, the
+idle watcher, and Time Machine. It runs no PowerShell, so it takes about a
+second. With no `-i` and several instances it prints a table; `--json` for
+scripts.
+
+**For a person:**
+
+- `winvm open` opens the screen in macOS Screen Sharing.
+- `winvm open --web` opens it in the browser instead, with the status and
+  buttons beside it (start, stop, pause, resume, save, load, stow, Ctrl+Alt+Del,
+  screenshot). Each button runs the CLI (`bun winvm.ts <verb> -i <name>`) and
+  shows its output. The page is served by `winvm web`, which `open --web` starts
+  in the background (`winvm web --stop` stops it); it uses a vendored copy of
+  [noVNC](https://novnc.com) talking to QEMU's own websocket listener.
+
+The VNC server has a password. **macOS Screen Sharing won't connect to a VNC
+server that offers no authentication** — it asks for a password and then fails
+— so QEMU runs with `password=on`, gets a random 8-character password over QMP
+as soon as it starts (kept in `<instance>/vncpassword`, mode 0600), and `open`
+passes it in the URL (`vnc://:<password>@127.0.0.1:5901`), so nothing prompts.
+The password also keeps other pages in your browser from reaching the screen
+through the websocket. To connect another VNC client by hand:
+`bun winvm.ts open --print` prints the URL.
+
+The browser view is loopback-only and needs a token that's random per server
+start: `open --web` puts it in the URL's `#fragment`, and every request to the
+server must carry it, so other web pages can't drive the VM. `WINVM_WEB_PORT`
+changes the port (default 5690).
+
+**For a script or an agent — no window at all:**
+
+```sh
+bun winvm.ts screenshot              # PNG under <instance>/screenshots/, prints the path
+bun winvm.ts screenshot shot.png
+bun winvm.ts click 412 300           # screenshot pixels; --right, --middle, --double
+bun winvm.ts move 412 300
+bun winvm.ts scroll 5                # wheel notches, positive is down (scroll up 5)
+bun winvm.ts key win-r               # combos: ctrl-alt-delete, alt-f4, enter, f5 ...
+bun winvm.ts type "notepad"          # US layout; a newline presses Enter
+```
+
+These go through QEMU's monitor (`screendump`, `input-send-event` on the USB
+tablet and keyboard), so coordinates are exact and nothing needs a display.
+Input goes wherever the guest's focus is — take a screenshot first.
+
+**Screen size.** The default display is `ramfb`, a firmware framebuffer that
+EDK2 fixes at 800x600. For a bigger screen, switch an instance to virtio-gpu:
+
+```sh
+bun winvm.ts display -i ui 1920x1080   # stopped or running: records the device
+bun winvm.ts stop -i ui && bun winvm.ts start -i ui
+bun winvm.ts display -i ui 1920x1080   # sets Windows' resolution, reboots the guest
+```
+
+The second run is needed because Windows starts a new monitor at the driver's
+1024x768 and has no command-line way to change it; `display` writes the size
+into Windows' saved display configuration over the guest agent and reboots.
+The `viogpudo` driver comes from the guest tools already in the image, so no
+rebuild. **Changing the display device makes that instance's existing snapshots
+and saves unrestorable** (QEMU refuses them; nothing is damaged) — switch back
+with `display ramfb`. `winvm display` alone shows the current setting.
 
 The guest boots to **audit mode** as the built-in Administrator, with UAC off.
 Do not use it for anything but testing.

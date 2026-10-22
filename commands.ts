@@ -798,6 +798,17 @@ export const USAGE =
   "  snapshot [-i name] [tag]      capture the running guest, RAM and all\n" +
   "           [--delete]           remove that snapshot instead\n" +
   "  rewind  [-i name] [tag]       put the guest back (default tag: fresh)\n" +
+  "  status  [-i name] [--json]    what it's doing; with no -i and several instances, a table\n" +
+  "  open    [-i name] [--web]     show the screen in Screen Sharing, or (--web) the browser\n" +
+  "          [--print]             print the URL instead of opening it\n" +
+  "  web     [--port n] [--stop]   the browser view's local server, in the foreground\n" +
+  "  screenshot [-i name] [file.png]  save the screen (default: <instance>/screenshots/)\n" +
+  "  type    [-i name] \"text\"      type into the guest (US layout)\n" +
+  "  key     [-i name] <combo>...  e.g. ctrl-alt-delete, win-r, enter, f5\n" +
+  "  click   [-i name] <x> <y> [--right|--middle] [--double]   screenshot pixels\n" +
+  "  move    [-i name] <x> <y>     move the pointer\n" +
+  "  scroll  [-i name] <n>         n wheel notches, positive is down (or: up|down [n])\n" +
+  "  display [-i name] [WxH|ramfb] show or set the screen size\n" +
   "  timemachine [--yes]           exclude the VM files from Time Machine backups\n" +
   "  snapshots [-i name]           list them\n" +
   "  reset   [-i name]             discard changes, back to the base image\n" +
