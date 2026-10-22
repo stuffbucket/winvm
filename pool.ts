@@ -9,6 +9,11 @@
  * The summary measures exactly that — "exposed reset", time when an instance
  * was resetting and none was running a job (report.ts, PoolStats).
  *
+ * The queue is longest job first, by each job's time in the previous pool run
+ * ($WINVM_HOME/runs/job-times.json; unknown jobs first): started last, the
+ * one long job would be the whole tail of the run. Results are reported in
+ * file order regardless.
+ *
  * GOLDENS. The golden is created once, on the first member (runner.ts,
  * ensureGolden: boot, agent, settle, mapped-ram save — minutes), and the others
  * get an APFS-clone copy of it (saves.cloneSave): no boot, no settling, no
@@ -32,13 +37,15 @@
  * save's compatibility hash, so not tunable per pool); a pool that would
  * oversubscribe the host's cores or half its memory is warned about.
  */
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs"
 import { availableParallelism, totalmem } from "node:os"
-import { resolve } from "node:path"
+import { dirname, resolve } from "node:path"
 
 import { ensureState, readState, writeState } from "./agentfwd"
 import type { Args } from "./args"
 import type { Job } from "./job"
 import { home, pathsFor, readMeta } from "./paths"
+import { parseDuration } from "./golden"
 import * as qemu from "./qemu"
 import type { JobResult } from "./report"
 import { DEFAULT_GOLDEN, ensureGolden, instanceProblem, resolveHostFiles, runJob } from "./runner"
@@ -51,8 +58,12 @@ const sleep = async (ms: number): Promise<void> => await new Promise((r) => setT
 /** Per instance, as qemu.ts launches it. */
 export const VCPUS = 4
 export const MEMORY_BYTES = 4 * 1024 ** 3
-/** A job gets this long past its own timeout before the watchdog gives up on it. */
+/** A job gets this long past its own timeout before the watchdog gives up on it. WINVM_POOL_GRACE overrides. */
 export const WATCHDOG_GRACE_MS = 5 * 60_000
+const watchdogGraceMs = (): number => {
+  const v = process.env["WINVM_POOL_GRACE"]
+  return v === undefined || v === "" ? WATCHDOG_GRACE_MS : parseDuration(v)
+}
 
 // ---------------------------------------------------------------------------
 // Pure logic (unit-tested)
@@ -79,6 +90,16 @@ export function resourceWarnings(n: number, cpus: number, memBytes: number): str
 
 /** A result whose reset failed: the instance, not the job, is what is broken. */
 export const isResetFailure = (r: JobResult): boolean => r.status === "error" && (r.error ?? "").startsWith("reset to ")
+
+/**
+ * Indexes of `keys` in the order to queue them: longest last-known time first,
+ * jobs never timed before all of those (they might be the long ones), ties in
+ * file order.
+ */
+export function longestFirst(keys: readonly string[], lastMs: Readonly<Record<string, number>>): number[] {
+  const t = (i: number): number => lastMs[keys[i] ?? ""] ?? Number.POSITIVE_INFINITY
+  return keys.map((_, i) => i).sort((a, b) => (t(a) === t(b) ? a - b : t(b) - t(a)))
+}
 
 export interface ScheduleDeps<J> {
   /** Run one job on one instance (reset included). Never throws. */
@@ -128,6 +149,31 @@ export async function schedule<J>(jobs: readonly J[], instances: readonly string
   // needs another round.
   while (queue.length > 0 && alive.size > 0) await Promise.all([...alive].map(worker))
   return results.map((r, i) => r ?? deps.abandoned(jobs[i] as J, "no instance in the pool could be reset"))
+}
+
+// ---------------------------------------------------------------------------
+// Job times, for the queue order
+
+const timesPath = (): string => resolve(home(), "runs", "job-times.json")
+
+function readTimes(): Record<string, number> {
+  try {
+    const o = JSON.parse(readFileSync(timesPath(), "utf8")) as unknown
+    return typeof o === "object" && o !== null ? (o as Record<string, number>) : {}
+  } catch {
+    return {}
+  }
+}
+
+function writeTimes(results: readonly JobResult[]): void {
+  const t = readTimes()
+  for (const r of results) if (r.file !== "" && r.status !== "error") t[r.file] = r.totalMs
+  try {
+    mkdirSync(dirname(timesPath()), { recursive: true })
+    writeFileSync(timesPath(), `${JSON.stringify(t, null, 2)}\n`)
+  } catch {
+    // Only an ordering hint.
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -268,7 +314,7 @@ export async function runPool(jobs: readonly Job[], o: PoolOptions): Promise<Poo
     const started = Date.now()
     let cancelled = false
     const log = tagged(instance)
-    const watchdogMs = job.timeoutMs + WATCHDOG_GRACE_MS
+    const watchdogMs = job.timeoutMs + watchdogGraceMs()
     let timer: ReturnType<typeof setTimeout> | undefined
     const wedged = new Promise<"wedged">((res) => {
       timer = setTimeout(() => res("wedged"), watchdogMs)
@@ -294,12 +340,25 @@ export async function runPool(jobs: readonly Job[], o: PoolOptions): Promise<Poo
     return stub(job, instance, "error", `wedged: no result after ${String(Math.round(watchdogMs / 1000))} s; instance restarted`, started)
   }
 
-  const results = await schedule(jobs, members, {
-    run,
-    recover: hardStop,
-    log: (i, l) => tagged(i)(l),
-    abandoned: (job, why) => stub(job, "", "error", why, Date.now()),
+  const order = longestFirst(
+    jobs.map((j) => j.file),
+    readTimes(),
+  )
+  const queued = await schedule(
+    order.map((i) => jobs[i] as Job),
+    members,
+    {
+      run,
+      recover: hardStop,
+      log: (i, l) => tagged(i)(l),
+      abandoned: (job, why) => stub(job, "", "error", why, Date.now()),
+    },
+  )
+  const results: JobResult[] = new Array<JobResult>(jobs.length)
+  order.forEach((jobIndex, k) => {
+    results[jobIndex] = queued[k] as JobResult
   })
+  writeTimes(results)
 
   if (o.keep) {
     console.log(`\n--keep: instances left running in their last job's state`)

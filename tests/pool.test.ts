@@ -5,7 +5,7 @@
 import { describe, expect, it } from "bun:test"
 
 import type { ScheduleDeps } from "../pool"
-import { isResetFailure, poolMembers, poolSizeError, resourceWarnings, schedule } from "../pool"
+import { isResetFailure, longestFirst, poolMembers, poolSizeError, resourceWarnings, schedule } from "../pool"
 import type { JobResult } from "../report"
 import { formatSummary, merge, poolStats, toJson, uncoveredMs } from "../report"
 
@@ -70,6 +70,13 @@ describe("pool sizing", () => {
     expect(resourceWarnings(4, 18, 128 * gib)).toEqual([])
     expect(resourceWarnings(5, 18, 128 * gib)).toHaveLength(1) // 20 vCPUs
     expect(resourceWarnings(4, 18, 16 * gib)).toHaveLength(1) // 16 GiB > half of 16
+  })
+})
+
+describe("queue order", () => {
+  it("is longest first, unknown jobs before timed ones, ties in file order", () => {
+    expect(longestFirst(["a", "b", "c", "d"], { a: 5, b: 30, d: 5 })).toEqual([2, 1, 0, 3])
+    expect(longestFirst(["a", "b"], {})).toEqual([0, 1])
   })
 })
 
