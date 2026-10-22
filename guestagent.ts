@@ -308,6 +308,19 @@ function sessionOfSelf(): number | null {
   return ownSession
 }
 
+/**
+ * `mkdir -p` that tolerates what Bun on Windows reports for some existing
+ * directories (C:\Users\Public, a reparse point, gives EEXIST even with `recursive`).
+ */
+function ensureDir(dir: string): void {
+  if (existsSync(dir)) return
+  try {
+    mkdirSync(dir, { recursive: true })
+  } catch (error) {
+    if ((error as { code?: string }).code !== "EEXIST") throw error
+  }
+}
+
 const json = (v: unknown, status = 200): Response => Response.json(v, { status })
 const fail = (status: number, error: string): Response => json({ error }, status)
 
@@ -371,7 +384,7 @@ export function startAgent(o: AgentOptions): ReturnType<typeof Bun.serve> {
             const path = u.searchParams.get("path")
             if (path === null || path === "") return fail(400, "path required")
             const t0 = performance.now()
-            mkdirSync(dirname(path), { recursive: true })
+            ensureDir(dirname(path))
             const bytes = await Bun.write(path, req as unknown as Response) // a Request streams like a Response; the types lag
             return json({ bytes, ms: performance.now() - t0 })
           }

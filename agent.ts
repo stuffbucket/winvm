@@ -17,13 +17,19 @@
  * file, so writing it again over qemu-ga is all a rewrite ever needs.
  */
 import { randomBytes } from "node:crypto"
-import { chmodSync, existsSync, readFileSync, writeFileSync } from "node:fs"
+import { chmodSync, createWriteStream, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
+import { once } from "node:events"
 import { createServer } from "node:net"
 import { resolve } from "node:path"
 
 import type { ExecRequest, ExecResponse, Health, LaunchRequest, Proc, PwshResponse } from "./guestagent"
-import { GUEST_PORT } from "./guestagent"
+import { AGENT_VERSION, GUEST_PORT, WINDOWS_DIR } from "./guestagent"
+import { download } from "./host"
 import type { Paths } from "./paths"
+import { mediaDir, pathsFor } from "./paths"
+import * as qemu from "./qemu"
+import * as qga from "./qga"
+import * as qmp from "./qmp"
 
 export type { ExecResponse, Health, Proc, PwshResponse } from "./guestagent"
 export { AGENT_VERSION, GUEST_PORT } from "./guestagent"
@@ -122,7 +128,20 @@ export class AgentClient {
   /** Stream a guest file to a host file; returns the byte count. */
   async getFile(guestPath: string, hostPath: string, timeoutMs = 600_000): Promise<number> {
     const r = await this.req("GET", `/file?path=${encodeURIComponent(guestPath)}`, undefined, timeoutMs)
-    return await Bun.write(hostPath, r)
+    // Chunk by chunk, not `Bun.write(hostPath, r)`: that spins at 100% CPU and
+    // never finishes on a response arriving through slirp (Bun 1.3.14).
+    const out = createWriteStream(hostPath)
+    let n = 0
+    try {
+      for await (const chunk of r.body ?? new ReadableStream<Uint8Array>()) {
+        n += chunk.length
+        if (!out.write(chunk)) await once(out, "drain")
+      }
+    } finally {
+      out.end()
+      await once(out, "close")
+    }
+    return n
   }
 
   /** Start a program detached in the logged-on user's session — GUI programs show on the desktop. */
@@ -217,3 +236,206 @@ export function forwardedPorts(usernet: string): readonly number[] {
 export const clientFor = (s: AgentState & { readonly hostPort: number }): AgentClient =>
   new AgentClient(`http://127.0.0.1:${String(s.hostPort)}`, s.token)
 
+
+/**
+ * Make sure the forward to the agent exists, and return its host port.
+ *
+ * Idempotent and cheap (one `info usernet`), so anything about to talk to the
+ * agent can call it. A port that has since been taken on the host is replaced
+ * by a free one, and the new port recorded.
+ */
+export async function ensureForward(p: Paths): Promise<number> {
+  const s = ensureState(p)
+  const present = forwardedPorts(await qmp.hmp(p.qmp, "info usernet"))
+  if (s.hostPort !== null && present.includes(s.hostPort)) return s.hostPort
+  for (const stale of present) await qmp.hmp(p.qmp, `hostfwd_remove ${NETDEV} tcp:127.0.0.1:${String(stale)}`)
+  let lastError = ""
+  for (const port of [s.hostPort ?? (await freePort()), await freePort(), await freePort()]) {
+    // hostfwd_add reports failure as text in a successful reply, not as an error.
+    const said = await qmp.hmp(p.qmp, `hostfwd_add ${NETDEV} ${hostfwdRule(port)}`).catch((e: unknown) => String(e))
+    if (said === "" || forwardedPorts(await qmp.hmp(p.qmp, "info usernet")).includes(port)) {
+      writeState(p, { ...s, hostPort: port })
+      return port
+    }
+    lastError = said
+  }
+  throw new Error(`could not forward a host port to the agent: ${lastError}`)
+}
+
+/**
+ * The agent of a running instance, or null when it has none (never installed,
+ * not running, not answering within `timeoutMs`). Adds the forward if needed.
+ */
+export async function connect(name: string, o: { readonly timeoutMs?: number } = {}): Promise<AgentClient | null> {
+  const p = pathsFor(name)
+  if (readState(p) === null || !qemu.isRunning(p)) return null
+  const deadline = Date.now() + (o.timeoutMs ?? 2000)
+  let client: AgentClient
+  try {
+    client = clientFor({ ...ensureState(p), hostPort: await ensureForward(p) })
+  } catch {
+    return null
+  }
+  for (;;) {
+    try {
+      await client.health(Math.max(500, Math.min(3000, deadline - Date.now())))
+      return client
+    } catch (error) {
+      if (error instanceof AgentError && error.status === 401) return null
+      if (Date.now() >= deadline) return null
+      await Bun.sleep(200)
+    }
+  }
+}
+
+/** Like `connect`, but throws with a hint when there is no agent. */
+export async function requireAgent(name: string, timeoutMs = 2000): Promise<AgentClient> {
+  const c = await connect(name, { timeoutMs })
+  if (c === null) throw new Error(`instance "${name}" has no agent answering — \`winvm agent install -i ${name}\``)
+  return c
+}
+
+/**
+ * After anything that started a NEW QEMU process (start, load, a stow recall)
+ * the forward is gone with the old process. Puts it back for an instance that
+ * has an agent; a no-op for one that never had one. Never throws.
+ */
+export async function reattach(name: string): Promise<void> {
+  const p = pathsFor(name)
+  if (readState(p) === null || !qemu.isRunning(p)) return
+  try {
+    await ensureForward(p)
+  } catch (error) {
+    console.warn(`warning: agent forward not restored (${error instanceof Error ? error.message : String(error)})`)
+  }
+}
+
+// --- install ----------------------------------------------------------------
+
+const ASSETS = resolve(import.meta.dir, "assets")
+const STAGE_DIR = "C:\\ProgramData\\winvm\\stage"
+const CMD = "C:\\Windows\\System32\\cmd.exe"
+const POWERSHELL = "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe"
+/** Where the session launcher lands; usable over qemu-ga once the agent is installed. */
+export const RUNINSESSION = `${WINDOWS_DIR}\\runinsession.exe`
+
+/** Write a guest file over qemu-ga: slow (base64 over a serial channel), so for small files. */
+export async function qgaWriteFile(sock: string, guestPath: string, data: Uint8Array): Promise<void> {
+  const open = await qga.call(sock, { execute: "guest-file-open", arguments: { path: guestPath, mode: "wb" } })
+  const handle = open["return"]
+  if (typeof handle !== "number") throw new Error(`guest-file-open ${guestPath}: ${JSON.stringify(open)}`)
+  try {
+    const CHUNK = 256 * 1024
+    for (let off = 0; off < data.length || off === 0; off += CHUNK) {
+      const part = data.subarray(off, off + CHUNK)
+      const r = await qga.call(sock, { execute: "guest-file-write", arguments: { handle, "buf-b64": Buffer.from(part).toString("base64") } })
+      if (r["error"] !== undefined) throw new Error(`guest-file-write ${guestPath}: ${JSON.stringify(r["error"])}`)
+      if (data.length === 0) break
+    }
+  } finally {
+    await qga.call(sock, { execute: "guest-file-close", arguments: { handle } })
+  }
+}
+
+/** bun for Windows ARM64, the host's own version, cached beside the other media. */
+function bunZip(): string {
+  const f = resolve(mediaDir(), `bun-windows-aarch64-${Bun.version}.zip`)
+  if (!existsSync(f)) {
+    mkdirSync(mediaDir(), { recursive: true })
+    download(`https://github.com/oven-sh/bun/releases/download/bun-v${Bun.version}/bun-windows-aarch64.zip`, f)
+  }
+  return f
+}
+
+/**
+ * Serve one file to the guest at http://10.0.2.2:<port>/<secret>/<name> — slirp
+ * maps 10.0.2.2 to the host's loopback — for as long as `fn` runs.
+ */
+async function serveToGuest<T>(file: string, fn: (url: string) => Promise<T>): Promise<T> {
+  const secret = randomBytes(16).toString("hex")
+  const server = Bun.serve({
+    hostname: "127.0.0.1",
+    port: 0,
+    fetch: (req) => (new URL(req.url).pathname === `/${secret}/file` ? new Response(Bun.file(file)) : new Response("no", { status: 404 })),
+  })
+  try {
+    return await fn(`http://10.0.2.2:${String(server.port)}/${secret}/file`)
+  } finally {
+    void server.stop(true)
+  }
+}
+
+export interface InstallOptions {
+  readonly log?: (line: string) => void
+  /** How long to wait for the freshly started agent to answer. */
+  readonly timeoutMs?: number
+}
+
+/**
+ * Install (or reinstall) the agent into a running guest over qemu-ga, start it
+ * in the logged-on session, forward a host port to it, and return a client.
+ */
+export async function install(name: string, o: InstallOptions = {}): Promise<AgentClient> {
+  const log = o.log ?? ((): void => {})
+  const p = pathsFor(name)
+  if (!qemu.isRunning(p)) throw new Error(`instance "${name}" is not running`)
+  const s = ensureState(p)
+  const t0 = performance.now()
+  const mk = await qga.exec(p.qga, CMD, ["/d", "/c", `mkdir ${STAGE_DIR} 2>nul & mkdir ${WINDOWS_DIR} 2>nul & exit 0`])
+  if (mk.exitcode !== 0) throw new Error(`could not create the agent's directories: ${mk.stderr}`)
+  for (const [from, to] of [
+    [resolve(import.meta.dir, "guestagent.ts"), `${STAGE_DIR}\\guestagent.ts`],
+    [resolve(ASSETS, "agent-install.ps1"), `${STAGE_DIR}\\agent-install.ps1`],
+    [resolve(ASSETS, "runinsession.cs"), `${STAGE_DIR}\\runinsession.cs`],
+  ] as const) {
+    await qgaWriteFile(p.qga, to, new Uint8Array(readFileSync(from)))
+  }
+  await qgaWriteFile(p.qga, `${WINDOWS_DIR}\\token`, new TextEncoder().encode(s.token))
+  log(`staged in ${(performance.now() - t0).toFixed(0)} ms`)
+
+  const script = async (extra: readonly string[]): Promise<qga.ExecResult> =>
+    await qga.exec(p.qga, POWERSHELL, [
+      "-NoProfile",
+      "-NonInteractive",
+      "-ExecutionPolicy",
+      "Bypass",
+      "-File",
+      `${STAGE_DIR}\\agent-install.ps1`,
+      "-Source",
+      STAGE_DIR,
+      "-Port",
+      String(GUEST_PORT),
+      ...extra,
+    ])
+  let r = await script([])
+  if (r.exitcode === 3) {
+    log("no bun in the guest; serving one from the host")
+    r = await serveToGuest(bunZip(), async (url) => await script(["-BunUrl", url]))
+  }
+  for (const line of `${r.stdout}${r.stderr}`.split(/\r?\n/)) if (line.trim() !== "") log(`  guest: ${line.trimEnd()}`)
+  if (r.exitcode !== 0) throw new Error(`agent install failed in the guest (exit ${String(r.exitcode)})`)
+  log(`installed in ${(performance.now() - t0).toFixed(0)} ms`)
+
+  const port = await ensureForward(p)
+  const client = clientFor({ ...s, hostPort: port })
+  const deadline = Date.now() + (o.timeoutMs ?? 30_000)
+  for (;;) {
+    try {
+      const h = await client.health(2000)
+      if (h.version !== AGENT_VERSION) throw new Error(`agent reports version ${String(h.version)}, expected ${String(AGENT_VERSION)}`)
+      log(`agent up: pid ${String(h.pid)}, ${h.arch}, session ${String(h.session)}, 127.0.0.1:${String(port)} (${(performance.now() - t0).toFixed(0)} ms)`)
+      return client
+    } catch (error) {
+      if (Date.now() >= deadline) throw new Error(`the agent did not answer after install: ${error instanceof Error ? error.message : String(error)}`)
+      await Bun.sleep(250)
+    }
+  }
+}
+
+/**
+ * Start a program on the logged-on desktop over qemu-ga, for when the agent is
+ * not answering — through the session launcher the install left behind.
+ */
+export async function qgaLaunch(name: string, argv: readonly string[]): Promise<qga.ExecResult> {
+  return await qga.exec(pathsFor(name).qga, RUNINSESSION, argv)
+}
