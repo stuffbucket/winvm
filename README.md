@@ -152,6 +152,18 @@ These go through QEMU's monitor (`screendump`, `input-send-event` on the USB
 tablet and keyboard), so coordinates are exact and nothing needs a display.
 Input goes wherever the guest's focus is — take a screenshot first.
 
+**Reading app UI.** `webview` drives WebView2 windows (Tauri apps) over
+DevTools, `ocr` / `click --text` read and click the screen's text, and
+`toasts` lists the notifications apps raised; in jobs, `shell: winvm` steps run
+them on the host. See [`docs/gui.md`](docs/gui.md).
+
+```sh
+bun winvm.ts webview enable maximal-shell.exe     # then start the app
+bun winvm.ts webview text 'h2.section__title' --target /ui/settings
+bun winvm.ts click --text "Cancel"
+bun winvm.ts toasts --app maximal --since 10m
+```
+
 **Screen size.** The default display is `ramfb`, a firmware framebuffer that
 EDK2 fixes at 800x600. For a bigger screen, switch an instance to virtio-gpu:
 
