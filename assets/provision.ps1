@@ -245,6 +245,16 @@ try {
         powercfg.exe /setactive 8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c
         powercfg.exe /change hibernate-timeout-ac 0
     }
+    # A guest hard-killed mid-boot (a runner timing out, `winvm kill`) otherwise
+    # comes back in Windows Recovery, where qemu-ga never starts and `start`
+    # waits out its timeout. "{default}" is quoted: bare braces are a script
+    # block to PowerShell.
+    Step "boot: no recovery environment after a failed boot" {
+        bcdedit.exe /set "{default}" recoveryenabled No
+        if ($LASTEXITCODE -ne 0) { throw "bcdedit recoveryenabled exit $LASTEXITCODE" }
+        bcdedit.exe /set "{default}" bootstatuspolicy IgnoreAllFailures
+        if ($LASTEXITCODE -ne 0) { throw "bcdedit bootstatuspolicy exit $LASTEXITCODE" }
+    }
     Step "NTFS: no last-access updates, no 8.3 names" {
         fsutil.exe behavior set disablelastaccess 1
         fsutil.exe 8dot3name set C: 1
