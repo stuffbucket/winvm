@@ -27,6 +27,7 @@ import * as qga from "./qga"
 import * as qmp from "./qmp"
 import * as saves from "./saves"
 import * as snapshot from "./snapshot"
+import * as watcher from "./watch"
 
 const fail = (msg: string): number => {
   console.error(`::error::${msg}`)
@@ -156,7 +157,15 @@ export async function load(args: Args): Promise<number> {
     if (newest === undefined) return fail(`instance "${name}" has no saves`)
     saveName = newest.name
   }
-  return await doLoad(name, saveName, "loaded")
+  // A load is someone using the guest: the watcher's idle clock restarts. (A
+  // save is not — the watcher's own autosaves go through the same code.)
+  watcher.touchActivity(name)
+  const code = await doLoad(name, saveName, "loaded")
+  if (code === 0) {
+    watcher.touchActivity(name)
+    watcher.startWatcherFor(name, args)
+  }
+  return code
 }
 
 export function list(args: Args): number {
@@ -223,6 +232,9 @@ export async function resume(args: Args): Promise<number> {
 
 export async function stow(args: Args): Promise<number> {
   const name = instanceName(args)
+  // Like `stop`: end the watcher first (waiting out an autosave in progress).
+  // A no-op when the watcher itself is the one running this stow.
+  await watcher.stopWatcher(name)
   const started = Date.now()
   const code = await doSave(name, {
     name: saves.STOW,

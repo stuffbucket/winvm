@@ -257,6 +257,54 @@ so the UTC RTC stays right in any zone.
 The residual is about ±100 ms: the agent is emulated x86 and its latency on a
 loaded host dominates.
 
+## The idle watcher
+
+`start` launches `winvm watch` detached, one per instance (`watch.pid`, taken
+with O_EXCL; a pidfile whose process is gone, or is no longer a watcher, is
+stale and replaced). It samples every 15 s and decides in `idle.ts`, which is
+pure and unit-tested; `watch.ts` does the I/O. Its choices, and why:
+
+- **CPU is read from the host**, as QEMU's process CPU time (`ps -o time=`)
+  over wall time, divided by the `-smp` count. QMP's `query-cpus-fast` has no
+  time, and asking the guest costs a PowerShell launch (~20 s here). Measured
+  on this guest (4 vCPUs, host at load average ~90): idle desktop 0.2-1% per
+  15 s sample, background bursts of 3-17% for a single sample, worst idle
+  1-minute average ~5.5%; one busy thread 25%, four 97-101%. The threshold is
+  10% of a **1-minute average**, so a burst does not restart the idle clock and
+  half a minute of one busy thread does.
+- **Commands are activity.** `exec` touches `instances/<name>/activity` when
+  it starts, every 15 s while it runs, and when it ends; `smoke`, `snapshot`
+  and `rewind` touch it too.
+- **A VNC client is activity.** `query-vnc` lists connected clients but not
+  whether anyone is typing; saving or stowing under a live session is the wrong
+  default, so any client blocks idleness. Guest-side input idle
+  (`GetLastInputInfo`) would need a process in the user's session, which
+  qemu-ga (SYSTEM, session 0) is not.
+- **Its own saves are not activity.** CPU is ignored for a minute after any
+  action it took; otherwise each autosave would re-arm the next one.
+- **Host sleep is a wall-clock jump.** Between ticks the watcher compares
+  `Date.now()` deltas to the interval it slept; a gap of 45 s or more beyond it
+  is a sleep (a loaded host delays timers by seconds, not minutes). Timer counts
+  and monotonic clocks are not used: whether they advance during sleep differs
+  by clock. A wake resyncs the guest clock and restarts the idle timer, so the
+  hours the lid was shut never count towards stowing.
+- **Drift is measured with `measureOffset`** (clock.ts; `guest-get-time`,
+  native, a few ms) every 30 min, and resynced with `syncGuestClock` above
+  2 s. A paused guest is skipped: its agent cannot answer.
+- **Autosave is an in-process `saves.createSave`** (kind `auto`) under
+  `saves.withLock`, then a clock sync, since the guest stood still while it was
+  saved. A lock held by someone else's save or load skips the round. Rotation
+  deletes only kind `auto`, oldest first, down to `autosave.keep`.
+- **Stow is `winvm stow`**, run as a child. `stow` and `stop` end the watcher
+  first, except when the watcher is the caller.
+- **A `load` replaces QEMU**; the watcher follows the new process (and restarts
+  its idle clock) instead of exiting, and exits only once QEMU is gone with no
+  save or load holding the instance. `load` and `rewind` count as activity; a
+  save does not, or every autosave would re-arm the next.
+- **`start` launches it after the first-boot baseline save**, so that save is
+  not counted as use. An `--ephemeral` guest cannot be saved, so its watcher
+  only keeps the clock.
+
 ## Selecting an image and instance
 
 | | flag | env | default |

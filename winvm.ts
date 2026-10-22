@@ -17,6 +17,8 @@
  *   winvm status [-i name]           what an instance is doing, in one screen
  *   winvm open [-i name] [--web]     its screen: Screen Sharing, or the browser
  *   winvm screenshot | type | key | click | move | scroll   drive it with no window
+ *   winvm watch [-i name] [--stop]   idle watcher: autosave, stow, clock sync
+ *   winvm config [-i name] [k=v ...] per-instance watcher settings
  *   winvm timemachine [--yes]        keep the VM files out of Time Machine backups
  *
  * ## Self-contained and project-agnostic, on purpose
@@ -85,6 +87,8 @@
  *   saves.ts      file saves: format, compatibility, save/load mechanics
  *   savecmds.ts   the save verbs, and the start/rewind hooks
  *   clock.ts      put the guest's clock on the host's
+ *   watch.ts      the per-instance watcher process (idle.ts holds its decisions)
+ *   config.ts     per-instance settings
  *   diagnose.ts   known failure signatures, read from a guest's own artifacts
  *   status.ts     `status`: gathering (QMP, guest agent, files) and formatting
  *   screen.ts     `open`, `display` and the input verbs
@@ -181,6 +185,11 @@ switch (sub) {
   // eslint-disable-next-line no-fallthrough
   case "clock":
     process.exit(await savecmds.clock(args))
+  case "watch":
+    process.exit(await commands.watchCmd(args))
+  // eslint-disable-next-line no-fallthrough
+  case "config":
+    process.exit(commands.configCmd(args))
   // eslint-disable-next-line no-fallthrough
   case "diagnose":
     process.exit(commands.diagnoseCmd(args))

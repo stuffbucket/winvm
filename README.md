@@ -82,6 +82,7 @@ bun winvm.ts status                      # running? guest version, clock, saves,
 bun winvm.ts open                        # the screen, in macOS Screen Sharing
 bun winvm.ts open --web                  # the screen + status + buttons, in the browser
 bun winvm.ts diagnose                    # explain a guest that misbehaved
+bun winvm.ts config                      # idle watcher settings (see below)
 ```
 
 `--bun <version>` is optional; it stages that Bun release in the image at
@@ -191,6 +192,39 @@ bun winvm.ts clock                      # guest-vs-host offset, and fix it
 
 The guest boots to **audit mode** as the built-in Administrator, with UAC off.
 Do not use it for anything but testing.
+
+## The idle watcher
+
+`start` also launches a small background process per instance that watches
+for the guest going idle (`--no-watch` skips it). It logs to
+`instances/<name>/watch.log`, publishes its state in `watch.json`, and exits
+when QEMU does; `stop` ends it first.
+
+- **Idle** means all of these, continuously: QEMU's CPU time below
+  `watch.idleCpuPercent` (default 10%) of the guest's vCPUs, averaged over a
+  minute; no `winvm exec`/`smoke`/`snapshot` activity; no VNC client
+  connected. An idle desktop measures 0.2-1% here, with background bursts
+  that one sample can't push over the threshold; one busy thread is 25%.
+- **Autosave**: after `autosave.idleMinutes` (10) idle, one save of kind
+  `auto` (named `auto-<UTC timestamp>`); another only once the guest has been
+  used and gone idle again. The newest `autosave.keep` (3) are kept; manual, baseline and stow
+  saves are never touched.
+- **Stow**: after `stow.idleMinutes` (60) idle, `winvm stow`, which saves the
+  guest and shuts QEMU down. `winvm start` recalls it, and the watcher with it.
+- **Clock**: after host sleep (the wall clock jumping between ticks) and
+  whenever a 30-minute check finds the guest more than 2 s off, the guest
+  clock is resynced.
+
+```sh
+bun winvm.ts config -i default                         # effective settings
+bun winvm.ts config -i default stow.idleMinutes=120 autosave.keep=5
+bun winvm.ts config -i default watch.enabled=false     # no watcher for this instance
+bun winvm.ts watch  -i default                         # run it in the foreground instead
+bun winvm.ts watch  -i default --status                # or --stop
+```
+
+Settings live in `instances/<name>/config.json` (overrides only); a running
+watcher picks up changes on its next tick.
 
 ## Getting files into the guest (e.g. a Maximal build)
 
