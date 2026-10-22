@@ -118,27 +118,9 @@ export function qgaGuest(p: Paths): Guest {
       await g.put(guestPath, readFileSync(hostPath))
     },
     async get(guestPath) {
-      let h: number
-      try {
-        h = await open(guestPath, "rb")
-      } catch {
-        return null
-      }
-      const parts: Buffer[] = []
-      try {
-        for (;;) {
-          const r = ret(await qga.call(sock, { execute: "guest-file-read", arguments: { handle: h, count: CHUNK } }, 120_000), "read") as {
-            "buf-b64": string
-            count: number
-            eof: boolean
-          }
-          parts.push(Buffer.from(r["buf-b64"], "base64"))
-          if (r.eof || r.count === 0) break
-        }
-      } finally {
-        await close(h)
-      }
-      return new Uint8Array(Buffer.concat(parts))
+      // Chunked to fit what the agent can answer — see qga.READ_CHUNK.
+      const bytes = await qga.readFile(sock, guestPath)
+      return bytes === null ? null : new Uint8Array(bytes)
     },
   }
   return g

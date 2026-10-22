@@ -13,7 +13,7 @@ import { resolve } from "node:path"
 
 import { afterAll, beforeAll, describe, expect, it } from "bun:test"
 
-import { call } from "../qga"
+import { READ_CHUNK, call, readFile } from "../qga"
 
 type Handler = (req: Record<string, unknown>) => Record<string, unknown> | null
 
@@ -21,6 +21,15 @@ class FakeAgent {
   /** Replies owed to callers that hung up first; the next connection receives them. */
   owed: Buffer[] = []
   handler: Handler = () => ({ return: {} })
+  readonly files = new Map<string, Buffer>()
+  /**
+   * The largest guest-file-read the agent will answer. Above it the real one
+   * sends nothing at all, though its file position still moves on.
+   */
+  readCeiling = 1_900_000
+  readonly reads: number[] = []
+  private readonly handles = new Map<number, { data: Buffer; pos: number }>()
+  private nextHandle = 1000
   readonly path: string
   private readonly server: Server
 
@@ -37,6 +46,41 @@ class FakeAgent {
 
   async close(): Promise<void> {
     await new Promise<void>((r) => this.server.close(() => r()))
+  }
+
+  /** The guest-file-* commands; undefined for anything else, null for "no reply". */
+  private file(req: Record<string, unknown>): Record<string, unknown> | null | undefined {
+    const a = (req["arguments"] ?? {}) as Record<string, unknown>
+    switch (req["execute"]) {
+      case "guest-file-open": {
+        const data = this.files.get(a["path"] as string)
+        if (data === undefined) return { error: { class: "GenericError", desc: "not found" } }
+        this.nextHandle += 1
+        this.handles.set(this.nextHandle, { data, pos: 0 })
+        return { return: this.nextHandle }
+      }
+      case "guest-file-read": {
+        const h = this.handles.get(a["handle"] as number)
+        if (h === undefined) return { error: { class: "GenericError", desc: "bad handle" } }
+        const count = a["count"] as number
+        this.reads.push(count)
+        const bytes = h.data.subarray(h.pos, h.pos + count)
+        h.pos += bytes.length
+        if (count > this.readCeiling) return null
+        return { return: { count: bytes.length, "buf-b64": bytes.toString("base64"), eof: h.pos >= h.data.length } }
+      }
+      case "guest-file-seek": {
+        const h = this.handles.get(a["handle"] as number)
+        if (h === undefined || a["whence"] !== "set") return { error: { class: "GenericError", desc: "bad seek" } }
+        h.pos = a["offset"] as number
+        return { return: { position: h.pos, eof: h.pos >= h.data.length } }
+      }
+      case "guest-file-close":
+        this.handles.delete(a["handle"] as number)
+        return { return: {} }
+      default:
+        return undefined
+    }
   }
 
   private serve(sock: Socket): void {
@@ -64,6 +108,11 @@ class FakeAgent {
         if (req["execute"] === "guest-sync-delimited") {
           const id = (req["arguments"] as { id: number }).id
           send(Buffer.concat([Buffer.from([0xff]), Buffer.from(`${JSON.stringify({ return: id })}\n`)]))
+          continue
+        }
+        const fileReply = this.file(req)
+        if (fileReply !== undefined) {
+          if (fileReply !== null) send(Buffer.from(`${JSON.stringify(fileReply)}\n`))
           continue
         }
         const reply = this.handler(req)
@@ -117,5 +166,33 @@ describe("qga.call", () => {
     agent.owed.push(Buffer.concat([Buffer.from([0xff]), Buffer.from('{"return": 12345}\n')]))
     agent.owed.push(Buffer.from('{"return": "someone else\'s"}\n'))
     expect(await call(agent.path, { execute: "guest-ping" })).toEqual({ return: "mine" })
+  })
+})
+
+describe("qga.readFile", () => {
+  const big = Buffer.alloc(6 * 1024 * 1024)
+  for (let i = 0; i < big.length; i += 1) big[i] = (i * 7919) % 251
+
+  it("reads a file far larger than one reply, in chunks the agent answers", async () => {
+    agent.files.set("C:\\big.bin", big)
+    agent.reads.length = 0
+    const got = await readFile(agent.path, "C:\\big.bin")
+    expect(got?.equals(big)).toBe(true)
+    expect(Math.max(...agent.reads)).toBe(READ_CHUNK)
+  })
+
+  it("recovers from a chunk the agent never answers, without losing its bytes", async () => {
+    agent.files.set("C:\\big.bin", big)
+    agent.readCeiling = 300_000
+    try {
+      const got = await readFile(agent.path, "C:\\big.bin", { chunk: 4 * 1024 * 1024, chunkTimeoutMs: 100 })
+      expect(got?.equals(big)).toBe(true)
+    } finally {
+      agent.readCeiling = 1_900_000
+    }
+  })
+
+  it("is null for a file that cannot be opened", async () => {
+    expect(await readFile(agent.path, "C:\\missing")).toBeNull()
   })
 })

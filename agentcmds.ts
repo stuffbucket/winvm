@@ -41,23 +41,10 @@ export async function exec(name: string, args: Args, program: string, rest: read
 
 /** Read a guest file over qemu-ga, for when there is no agent. */
 async function qgaReadFile(sock: string, guestPath: string): Promise<Uint8Array> {
-  const open = await qga.call(sock, { execute: "guest-file-open", arguments: { path: guestPath, mode: "rb" } })
-  const handle = open["return"]
-  if (typeof handle !== "number") throw new Error(`guest-file-open ${guestPath}: ${JSON.stringify(open["error"] ?? open)}`)
-  const parts: Buffer[] = []
-  try {
-    for (;;) {
-      const r = (await qga.call(sock, { execute: "guest-file-read", arguments: { handle, count: 4 * 1024 * 1024 } }))["return"] as
-        | { "buf-b64"?: string; eof?: boolean }
-        | undefined
-      if (r === undefined) throw new Error(`guest-file-read ${guestPath} failed`)
-      parts.push(Buffer.from(r["buf-b64"] ?? "", "base64"))
-      if (r.eof === true) break
-    }
-  } finally {
-    await qga.call(sock, { execute: "guest-file-close", arguments: { handle } })
-  }
-  return new Uint8Array(Buffer.concat(parts))
+  // Chunked to fit what the agent can answer — see qga.READ_CHUNK.
+  const bytes = await qga.readFile(sock, guestPath)
+  if (bytes === null) throw new Error(`guest-file-open ${guestPath} failed`)
+  return new Uint8Array(bytes)
 }
 
 /**

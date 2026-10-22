@@ -18,6 +18,14 @@ export interface ExecResult {
   readonly stderr: string
 }
 
+/** A call the agent did not answer in time. Distinct so a caller can recover from it. */
+export class AgentTimeout extends Error {
+  constructor() {
+    super("guest agent timed out")
+    this.name = "AgentTimeout"
+  }
+}
+
 /** Byte that delimits guest-sync-delimited's reply. Never appears in UTF-8 JSON. */
 const DELIMITER = 0xff
 const NEWLINE = 0x0a
@@ -56,7 +64,7 @@ export async function call(
       fn()
     }
     const timer = setTimeout(() => {
-      settle(() => rej(new Error("guest agent timed out")))
+      settle(() => rej(new AgentTimeout()))
     }, timeoutMs)
     sock.on("connect", () => {
       const sync = JSON.stringify({ execute: "guest-sync-delimited", arguments: { id } })
@@ -244,4 +252,63 @@ export async function shutdown(sockPath: string): Promise<void> {
   } catch {
     // Expected: the agent stops answering mid-request.
   }
+}
+
+/**
+ * guest-file-read's count. KEPT WELL UNDER WHAT THE AGENT CAN ANSWER: measured
+ * against qemu-ga on the Windows 11 ARM64 guest, a read of 1,900,000 bytes
+ * comes back in ~15 ms and one of 1,950,000 never comes back at all — no
+ * reply, no error, while the file position still advances past the data. A
+ * count of 4 MiB therefore hung every read of a file larger than about 1.9 MB.
+ * Smaller is slower — each chunk is a round trip; 6 MiB took ~0.7 s at 1 MiB,
+ * ~1.1 s at 512 KiB, ~2.3 s at 256 KiB — so this keeps a wide margin under the
+ * ceiling without paying much for it.
+ */
+export const READ_CHUNK = 512 * 1024
+const MIN_READ_CHUNK = 16 * 1024
+
+export interface ReadOptions {
+  readonly chunk?: number
+  /** Per guest-file-read. A chunk is milliseconds of work; waiting longer only delays the recovery below. */
+  readonly chunkTimeoutMs?: number
+}
+
+/**
+ * Read a guest file whole, in chunks. Null if it cannot be opened.
+ *
+ * A chunk whose reply never arrives is retried smaller, after seeking back:
+ * the guest moved its file position whether or not the reply made it, so a
+ * plain retry would silently skip that data. That covers a guest whose ceiling
+ * sits lower than the one measured above.
+ */
+export async function readFile(sockPath: string, guestPath: string, o: ReadOptions = {}): Promise<Buffer | null> {
+  const open = await call(sockPath, { execute: "guest-file-open", arguments: { path: guestPath, mode: "rb" } })
+  const handle = open["return"]
+  if (typeof handle !== "number") return null
+  const parts: Buffer[] = []
+  let offset = 0
+  let count = o.chunk ?? READ_CHUNK
+  try {
+    for (;;) {
+      let r: Record<string, unknown>
+      try {
+        r = await call(sockPath, { execute: "guest-file-read", arguments: { handle, count } }, o.chunkTimeoutMs ?? 15_000)
+      } catch (error) {
+        if (!(error instanceof AgentTimeout) || count <= MIN_READ_CHUNK) throw error
+        const seek = await call(sockPath, { execute: "guest-file-seek", arguments: { handle, offset, whence: "set" } })
+        if (seek["error"] !== undefined) throw new Error(`guest-file-seek ${guestPath}: ${JSON.stringify(seek["error"])}`)
+        count = Math.max(MIN_READ_CHUNK, Math.floor(count / 2))
+        continue
+      }
+      const ret = r["return"] as { "buf-b64"?: string; count?: number; eof?: boolean } | undefined
+      if (ret === undefined) throw new Error(`guest-file-read ${guestPath}: ${JSON.stringify(r["error"] ?? r)}`)
+      const bytes = Buffer.from(ret["buf-b64"] ?? "", "base64")
+      parts.push(bytes)
+      offset += bytes.length
+      if (ret.eof === true || bytes.length === 0) break
+    }
+  } finally {
+    await call(sockPath, { execute: "guest-file-close", arguments: { handle } }).catch(() => undefined)
+  }
+  return Buffer.concat(parts)
 }
