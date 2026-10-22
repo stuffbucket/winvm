@@ -15,35 +15,37 @@
  *             run by its shell, with a timeout and its own env.
  *   collect   on failure (or always): a screenshot and the artifact paths.
  *
- * GOLDEN SAVES. A golden is an ordinary save of the instance (saves.ts) taken
- * once the guest is ready and a few CI chores are done (no sysprep dialog,
- * C:\work exists). `ensureGolden` creates it on first use; delete it with
- * `winvm saves -i <instance> rm <golden>` to rebuild.
+ * GOLDEN SAVES (golden.ts): a mapped-ram save taken once the guest has gone
+ * quiet, so it restores in about a second. `ensureGolden` creates one on first
+ * use — with the in-guest agent installed and a few CI chores done (no sysprep
+ * dialog, C:\work exists); `winvm saves -i <instance> rm <golden>` to rebuild.
  *
- * THE CHANNEL. guest.ts picks qemu-ga or the in-guest agent. Over qemu-ga every
- * step runs as SYSTEM in session 0, so %LOCALAPPDATA% and HKCU are SYSTEM's
- * and nothing it launches is visible on the desktop; jobs that need the
- * logged-on user's session (a tray app) need the agent.
+ * THE CHANNEL (guest.ts): the in-guest agent when it answers — steps run as the
+ * logged-on user, in their session, so a tray app shows on the desktop — else
+ * qemu-ga, where every step runs as SYSTEM in session 0 (%LOCALAPPDATA% and
+ * HKCU are SYSTEM's, nothing launched is visible). WINVM_CHANNEL=qga forces it.
  */
 import { createHash, randomBytes } from "node:crypto"
 import { existsSync, mkdirSync, readdirSync, renameSync, statSync, writeFileSync } from "node:fs"
 import { basename, resolve } from "node:path"
 
-import { syncGuestClock } from "./clock"
+import * as agent from "./agent"
+import * as golden from "./golden"
 import type { Guest } from "./guest"
 import { guestFor } from "./guest"
 import { capture } from "./host"
 import * as input from "./input"
 import type { FileSpec, Job, Step } from "./job"
 import { stepScript } from "./job"
-import { home, pathsFor, readMeta } from "./paths"
+import { ensureInstance } from "./instance"
+import { home, pathsFor, readImageMeta, readMeta } from "./paths"
 import * as qemu from "./qemu"
 import * as qga from "./qga"
 import type { JobResult, StepResult } from "./report"
 import { formatStep, outputTail, secs } from "./report"
 import * as saves from "./saves"
 
-export const DEFAULT_GOLDEN = "ci-golden"
+export const DEFAULT_GOLDEN = saves.GOLDEN
 export const WORK = "C:\\work"
 const SCRIPTS = `${WORK}\\.winvm`
 const CMD = "C:\\Windows\\System32\\cmd.exe"
@@ -70,40 +72,34 @@ export interface RunOptions {
 // Instance and golden
 
 /**
- * Make sure `golden` exists as a save of `instance`, booting and preparing the
- * instance if it has to. Returns the time spent (0 when it already existed).
+ * Make sure `golden` exists as a save of `instance`; if not, create it: boot
+ * (or use the running guest), do the CI chores, install the in-guest agent,
+ * and let golden.ts wait for the guest to settle and take a mapped-ram save.
+ * Returns the time spent (0 when it already existed).
  */
-export async function ensureGolden(
-  instance: string,
-  golden: string,
-  boot: (instance: string) => Promise<number>,
-  log: (s: string) => void,
-): Promise<number> {
-  if (saves.readSave(instance, golden) !== null) return 0
+export async function ensureGolden(instance: string, goldenName: string, log: (s: string) => void): Promise<number> {
+  if (saves.readSave(instance, goldenName) !== null) return 0
   const t0 = Date.now()
   const p = pathsFor(instance)
-  log(`golden "${golden}" not found on "${instance}": creating it`)
+  log(`golden "${goldenName}" not found on "${instance}": creating it (boot, agent, settle — a few minutes, once)`)
   if (!qemu.isRunning(p)) {
-    const code = await boot(instance)
-    if (code !== 0) throw new Error(`could not start instance "${instance}"`)
+    ensureInstance(instance, readMeta(instance)?.image ?? "win11-arm64")
+    const meta = readMeta(instance)
+    if (meta === null) throw new Error(`could not create instance "${instance}"`)
+    await qemu.launch(instance, p, meta, { installMedia: false, ephemeral: false, virtioBoot: readImageMeta(meta.image)?.virtioBoot === true })
   }
   if (!(await qga.waitReady(p.qga, 600_000))) throw new Error(`guest "${instance}" never became ready`)
-  // CI chores, done once and frozen into the golden: the audit-mode sysprep
-  // dialog closed (it would sit on top of every screenshot), the work dir.
+  // CI chores, frozen into the golden: no audit-mode sysprep dialog on top of
+  // every screenshot, and the work dir.
   await qga.exec(p.qga, CMD, ["/c", `taskkill /f /im sysprep.exe >nul 2>&1 & mkdir ${SCRIPTS} 2>nul & exit /b 0`])
-  await saves.withLock(instance, async () =>
-    await saves.createSave(instance, { name: golden, kind: "manual", note: "winvm run golden: ready, sysprep closed, C:\\work" }),
-  )
-  log(`golden "${golden}" created in ${secs(Date.now() - t0)}`)
+  try {
+    await agent.install(instance, { log: (l) => log(`  agent: ${l}`) })
+  } catch (error) {
+    log(`  (no agent — jobs will run over qemu-ga as SYSTEM: ${errMsg(error)})`)
+  }
+  const r = await golden.createGolden(instance, { name: goldenName, log: (l) => log(`  ${l}`) })
+  log(`golden "${goldenName}" created in ${secs(Date.now() - t0)}${r.settled ? "" : " (guest never settled)"}`)
   return Date.now() - t0
-}
-
-/** Back to the golden: load it, wait for the guest, fix the clock. */
-export async function resetToGolden(instance: string, golden: string): Promise<void> {
-  const p = pathsFor(instance)
-  await saves.withLock(instance, async () => await saves.loadSave(instance, golden))
-  if (!(await qga.waitResponsive(p.qga, 300_000))) throw new Error(`guest did not answer after loading "${golden}"`)
-  await syncGuestClock(p).catch(() => undefined)
 }
 
 // ---------------------------------------------------------------------------
@@ -342,7 +338,7 @@ async function collect(job: Job, guest: Guest, instance: string, dir: string, fa
 export async function runJob(job: Job, o: RunOptions): Promise<JobResult> {
   const startedAt = new Date().toISOString()
   const t0 = Date.now()
-  const golden = o.golden ?? job.golden ?? DEFAULT_GOLDEN
+  const goldenName = o.golden ?? job.golden ?? DEFAULT_GOLDEN
   const p = pathsFor(o.instance)
   const dir = resolve(o.artifactsDir, slug(job.name))
   const result = (r: Partial<JobResult> & Pick<JobResult, "status">): JobResult => ({
@@ -350,7 +346,7 @@ export async function runJob(job: Job, o: RunOptions): Promise<JobResult> {
     file: job.file,
     error: null,
     instance: o.instance,
-    golden: job.reset ? golden : null,
+    golden: job.reset ? goldenName : null,
     channel: "",
     resetMs: 0,
     stageMs: 0,
@@ -367,17 +363,20 @@ export async function runJob(job: Job, o: RunOptions): Promise<JobResult> {
   let resetMs = 0
   if (job.reset) {
     try {
-      await resetToGolden(o.instance, golden)
+      const r = await golden.resetToGolden(o.instance, goldenName)
+      resetMs = Date.now() - t0
+      o.log(
+        `  reset to "${goldenName}" in ${secs(resetMs)} ` +
+          `(restore ${secs(r.restoredMs)}, answer ${secs(r.responsiveMs)}, clock ${secs(r.clockMs)})`,
+      )
     } catch (error) {
-      return result({ status: "error", error: `reset to "${golden}" failed: ${errMsg(error)}`, resetMs: Date.now() - t0 })
+      return result({ status: "error", error: `reset to "${goldenName}" failed: ${errMsg(error)}`, resetMs: Date.now() - t0 })
     }
-    resetMs = Date.now() - t0
-    o.log(`  reset to "${golden}" in ${secs(resetMs)}`)
   } else if (!qemu.isRunning(p)) {
     return result({ status: "error", error: `instance "${o.instance}" is not running and the job has reset: false` })
   }
 
-  const guest = guestFor(p)
+  const guest = await guestFor(o.instance)
   const server = startServer(dir)
   try {
     const t1 = Date.now()

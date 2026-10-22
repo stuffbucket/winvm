@@ -73,7 +73,7 @@ async function runAll(files: readonly string[], args: Args): Promise<number> {
   const boot = async (name: string): Promise<number> => await commands.start(parseArgs(["-i", name, "--no-watch", "--no-autosave"]))
   const goldens = [...new Set(jobs.filter((j) => j.reset).map((j) => goldenFlag ?? j.golden ?? DEFAULT_GOLDEN))]
   try {
-    for (const g of goldens) await ensureGolden(instance, g, boot, (s) => console.log(s))
+    for (const g of goldens) await ensureGolden(instance, g, (s) => console.log(s))
   } catch (error) {
     return fail(errMsg(error))
   }

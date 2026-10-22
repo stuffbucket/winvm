@@ -278,20 +278,29 @@ bun winvm.ts run jobs/examples/hello.yml -i ci     # one job
 bun winvm.ts test jobs/maximal/ -i ci --junit out.xml --json out.json
 ```
 
-Every job starts by loading a **golden save** of the instance (default name
-`ci-golden`; created on first use: guest ready, sysprep dialog closed,
-`C:\work` present), so each job sees the identical machine. Files are fetched
-on the host (release assets via `gh release download`, cached under
-`$WINVM_HOME/cache`), served on loopback, and pulled in with one `curl.exe`
-from `http://10.0.2.2:<port>`. Steps run with timeouts, `continue-on-error`,
-`if: always()`; failures get a screenshot and the job's `artifacts`
+Every job starts by loading a **golden** (`golden.ts`: a mapped-ram save taken
+once the guest has gone quiet; default name `golden`, created on first use with
+the in-guest agent installed, the sysprep dialog closed and `C:\work`
+present), so each job sees the identical machine. Files are fetched on the
+host (release assets via `gh release download`, cached under
+`$WINVM_HOME/cache`) and pushed through the agent, or served on loopback and
+pulled with one `curl.exe` from `http://10.0.2.2:<port>`; `$env:WINVM_FILES`
+is that server, for installers that download their own payload. Steps run
+with timeouts, `continue-on-error`, `if: always()`, `background: true`;
+failures get a screenshot and the job's `artifacts`
 (`$WINVM_HOME/runs/<instance>/<time>/` unless `--artifacts`). The summary
 reports reset time against test time and the reset share of the wall clock.
 
 Use a dedicated instance (the default is `ci`): a run resets it before every
-job, and quits it afterwards unless `--keep`. Over qemu-ga, steps run as
-SYSTEM in session 0 — `%LOCALAPPDATA%` and `HKCU` are SYSTEM's, and nothing
-launched shows on the desktop.
+job, and quits it afterwards unless `--keep`. Steps run through the in-guest
+agent, as the logged-on user in their session (a tray app shows on the
+desktop); without one they fall back to qemu-ga, as SYSTEM in session 0
+(`%LOCALAPPDATA%` and `HKCU` are SYSTEM's, nothing launched is visible).
+`WINVM_CHANNEL=qga` forces the fallback.
+
+`jobs/maximal/` holds end-to-end jobs for Maximal's Windows releases (MSI,
+portable zip, install.ps1, NSIS tray app, MCP broker containment); each
+downloads the latest release, or `MAXIMAL_TAG=vX.Y.Z`.
 
 ## Time Machine
 

@@ -9,7 +9,10 @@
  */
 import { readFileSync } from "node:fs"
 
+import type { AgentClient } from "./agent"
+import { AgentError, connect } from "./agent"
 import type { Paths } from "./paths"
+import { pathsFor } from "./paths"
 import * as qga from "./qga"
 
 export interface RunResult {
@@ -126,7 +129,55 @@ export function qgaGuest(p: Paths): Guest {
   return g
 }
 
-/** The channel for an instance. The in-guest agent, when present, replaces qga here. */
-export function guestFor(p: Paths): Guest {
+/**
+ * The in-guest agent (agent.ts): runs in the logged-on user's session, so
+ * %LOCALAPPDATA% and HKCU are that user's and a launched GUI program is on the
+ * desktop. Exec is ~10 ms rather than qemu-ga's ~80, and files move over HTTP.
+ */
+export function agentGuest(client: AgentClient): Guest {
+  return {
+    kind: "agent",
+    session: "user",
+    fastFiles: true,
+    async run(argv, timeoutMs) {
+      // cmd.exe parses its own command line and does not understand the
+      // MSVCRT quoting Bun would add; hand it the words as written.
+      const verbatim = /\\cmd\.exe$/i.test(argv[0] ?? "")
+      const r = await client.exec(argv, { timeoutMs, verbatim })
+      return { exitcode: r.timedOut ? -1 : r.code, stdout: r.stdout, stderr: r.stderr, timedOut: r.timedOut }
+    },
+    async launch(argv) {
+      return (await client.launch(argv)).pid
+    },
+    async kill(pid) {
+      await client.kill(pid).catch(() => undefined)
+    },
+    async put(guestPath, data) {
+      await client.put(guestPath, typeof data === "string" ? new TextEncoder().encode(data) : data)
+    },
+    async putFile(hostPath, guestPath) {
+      await client.putFile(hostPath, guestPath)
+    },
+    async get(guestPath) {
+      try {
+        return await client.get(guestPath)
+      } catch (error) {
+        if (error instanceof AgentError && error.status === 404) return null
+        throw error
+      }
+    },
+  }
+}
+
+/**
+ * The channel for an instance: its agent when one answers, else qemu-ga.
+ * WINVM_CHANNEL=qga forces the fallback (to compare, or to run as SYSTEM).
+ */
+export async function guestFor(instance: string): Promise<Guest> {
+  const p = pathsFor(instance)
+  if (process.env["WINVM_CHANNEL"] !== "qga") {
+    const client = await connect(instance, { timeoutMs: 5000 })
+    if (client !== null) return agentGuest(client)
+  }
   return qgaGuest(p)
 }
