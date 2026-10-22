@@ -196,6 +196,8 @@ export function hostChecks(): readonly Check[] {
     // Windows 11 hard-requires TPM 2.0. Without an emulated one the only way
     // past Setup is the LabConfig registry bypass, an unsupported configuration.
     { label: "swtpm", ok: have("swtpm"), hint: "brew install swtpm" },
+    // Compresses the RAM stream of a file save (`winvm save`/`stow`) ~4x.
+    { label: "zstd", ok: have("zstd"), hint: "brew install zstd" },
     // Reported with the path that was actually found, so a mismatched QEMU
     // install is obvious rather than a bare "missing".
     {
