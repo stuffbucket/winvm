@@ -8,7 +8,7 @@
  *   winvm webview eval  <js>        [--target T]
  *   winvm webview click <selector>  [--target T]
  *   winvm webview wait  <selector>  [--target T] [--timeout S] [--visible]
- *   winvm webview text  <selector>  [--target T]
+ *   winvm webview text  <selector>  [--target T] [--expect TEXT]
  *   winvm webview disable <exe> [--port 9222]
  *
  * HOW THE PORT GETS OUT. Three hops, each forced by something:
@@ -208,7 +208,7 @@ export const USAGE =
   "  eval    <js>                    print the value (JSON; strings raw)\n" +
   "  click   <selector>              a real mouse click at the element's centre\n" +
   "  wait    <selector> [--visible]  until it exists (--visible: has a box)\n" +
-  "  text    <selector>              its innerText\n" +
+  "  text    <selector> [--expect T] its innerText (--expect: fail unless it contains T)\n" +
   "  common: [--target T] page whose URL/title contains T; [--timeout S] (default 10)\n" +
   "          [--port N] the guest DevTools port (default: the last enabled, else 9222)\n"
 
@@ -262,7 +262,10 @@ export async function webview(args: Args): Promise<number> {
             const ms = await s.waitFor(arg, { timeoutMs, visible: args.flags.has("visible") })
             console.log(`${arg} after ${ms.toFixed(0)} ms`)
           } else {
-            console.log(await s.text(arg))
+            const text = await s.text(arg)
+            console.log(text)
+            const want = args.flags.get("expect")
+            if (want !== undefined && !text.toLowerCase().includes(want.toLowerCase())) return fail(`${arg} does not contain "${want}"`)
           }
         } finally {
           s.close()

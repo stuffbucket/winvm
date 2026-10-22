@@ -1,0 +1,97 @@
+# Maximal's Settings window (a Tauri WebView2 window), driven from the host:
+# DevTools for the DOM, OCR for the pixels, the notification database for
+# toasts. Install the NSIS tray app, open DevTools on its WebView2 windows,
+# start it, read and click Settings, check the start-up toast, OCR Settings.
+#
+#   bun winvm.ts run jobs/maximal/settings-ui.yml -i ci
+#
+# `shell: winvm` steps run on the HOST against the job's instance (hoststep.ts);
+# the others run in the guest as the logged-on user (needs the in-guest agent,
+# which `winvm run`'s goldens have).
+#
+# The "Maximal is working" toast fires on the first tokens that go through
+# (src/lib/working-notice.ts in Maximal), which needs a signed-in Copilot
+# account; a fresh guest has none, so that check is informational. What a
+# fresh install does raise at start is "Sign in to GitHub", and that is asserted.
+name: maximal settings ui (webview + ocr + toasts)
+timeout: 10m
+files:
+  - release: stuffbucket/maximal
+    tag: ${{ env.MAXIMAL_TAG || 'latest' }}
+    pattern: "maximal-*-windows-x64-setup.exe"
+    dest: C:\work\
+steps:
+  - name: allow the sidecar through the firewall (it binds all interfaces)
+    shell: cmd
+    run: |
+      netsh advfirewall firewall add rule name="maximal sidecar (winvm job)" dir=in action=allow program="%LOCALAPPDATA%\Maximal\maximal.exe" enable=yes >nul
+
+  - name: setup.exe /S
+    shell: cmd
+    timeout: 5m
+    run: |
+      for %%f in (C:\work\maximal-*-windows-x64-setup.exe) do start "" /wait "%%f" /S
+      exit /b %ERRORLEVEL%
+
+  - name: DevTools on for maximal-shell.exe's WebView2 (before it starts)
+    shell: winvm
+    run: webview enable maximal-shell.exe
+
+  - name: launch the tray app
+    shell: cmd
+    background: true
+    run: |
+      "%LOCALAPPDATA%\Maximal\maximal-shell.exe"
+
+  - name: its sidecar answers
+    shell: cmd
+    timeout: 90
+    run: curl.exe -sS --retry 120 --retry-delay 0 --retry-max-time 60 --retry-all-errors --max-time 2 -o nul -w "%%{http_code} in %%{time_total} s" http://127.0.0.1:4141/setup-status
+
+  - name: open Settings (a second launch focuses or opens it)
+    run: Start-Process "$env:LOCALAPPDATA\Maximal\maximal-shell.exe"
+
+  - name: Settings over DevTools — read the title, the nav and the Account section; click Apps
+    shell: winvm
+    timeout: 2m
+    run: |
+      webview targets
+      webview wait 'nav.sidebar a[href="#apps"]' --visible --target /ui/settings --timeout 60
+      webview eval 'document.title' --target /ui/settings
+      webview text 'nav.sidebar' --target /ui/settings --expect 'MCP servers'
+      webview text 'h2.section__title' --target /ui/settings --expect Account
+      webview click 'nav.sidebar a[href="#apps"]' --target /ui/settings
+      webview eval '(() => { if (location.hash !== "#apps") throw new Error("hash is " + location.hash); return location.hash })()' --target /ui/settings
+
+  - name: the start-up toast is recorded ("Sign in to GitHub", on a fresh install)
+    shell: winvm
+    timeout: 1m
+    run: toasts --app co.stuffbucket.maximal --find "Sign in to GitHub" --since 10m --wait 30
+
+  - name: (informational) "Maximal is working" — needs tokens through a signed-in account
+    shell: winvm
+    continue-on-error: true
+    timeout: 1m
+    run: toasts --app co.stuffbucket.maximal --find "Maximal is working" --wait 5
+
+  - name: OCR the Settings window
+    shell: winvm
+    timeout: 1m
+    run: |
+      ocr --find "MCP servers" --wait 20
+      ocr --find Diagnostics
+
+  - name: stop it; nothing survives
+    if: always()
+    shell: cmd
+    run: |
+      taskkill /t /f /im maximal-shell.exe >nul 2>&1
+      ping -n 2 127.0.0.1 >nul
+      tasklist /fo csv /nh | findstr /i "maximal" && (echo maximal processes still running & exit /b 41)
+      exit /b 0
+
+screenshot: always
+artifacts:
+  when: failure
+  paths:
+    - C:\work\.winvm\*.log

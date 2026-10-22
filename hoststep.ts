@@ -78,6 +78,8 @@ export interface HostStepResult {
 }
 
 const WINVM = resolve(import.meta.dir, "winvm.ts")
+/** A word as it would be typed: quoted when it needs to be. */
+export const quote = (w: string): string => (/^[\w@%+=:,./#-]+$/.test(w) ? w : `'${w.replaceAll("'", `'"'"'`)}'`)
 
 export async function runHostStep(
   run: string,
@@ -89,7 +91,7 @@ export async function runHostStep(
   let stdout = ""
   let stderr = ""
   for (const argv of commands(run, instance)) {
-    stdout += `$ winvm ${argv.filter((_, i) => i !== 1 && i !== 2).join(" ")}\n`
+    stdout += `$ winvm ${argv.filter((_, i) => i !== 1 && i !== 2).map(quote).join(" ")}\n`
     const p = Bun.spawn([process.execPath, WINVM, ...argv], {
       env: { ...process.env, ...env, WINVM_INSTANCE: instance },
       stdout: "pipe",
