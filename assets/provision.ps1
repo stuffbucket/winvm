@@ -239,6 +239,7 @@ try {
         RegSet "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Notifications\Settings\Windows.SystemToast.SecurityAndMaintenance" Enabled 0
         RegSet "$pol\Windows Defender Security Center\Notifications" DisableNotifications 1
     }
+    Step "Widgets off" { RegSet "$pol\Dsh" AllowNewsAndInterests 0 }
     Step "no lock screen" { RegSet "$pol\Windows\Personalization" NoLockScreen 1 }
     Step "power: high performance, never sleep" {
         powercfg.exe /setactive 8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c
@@ -262,7 +263,26 @@ try {
         Write-Output "WARNING: no winvm\defender.ps1 on any volume - no Defender exclusions"
     }
 
-    # --- 3d. .NET native images -----------------------------------------------
+    # --- 3d. Every logon: per-user settings, and close the Sysprep dialog ------
+    #
+    # An HKLM Run entry, NOT a scheduled task: audit mode keeps OOBEInProgress=1
+    # and Task Scheduler runs nothing while it is set. Under `conhost --headless`
+    # so no console window flashes up on the desktop. See logon.ps1 for what it
+    # does and why it has to be at logon.
+    $extras = Find-VolumeContaining -RelativePath "winvm\logon.ps1"
+    if ($extras) {
+        $winvmDir = "C:\ProgramData\winvm"
+        New-Item -ItemType Directory -Force -Path $winvmDir | Out-Null
+        Copy-Item -Path "$extras\winvm\logon.ps1" -Destination "$winvmDir\logon.ps1" -Force
+        $ps51 = "C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe"
+        Set-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Run" -Name "winvm-logon" `
+            -Value "C:\Windows\System32\conhost.exe --headless $ps51 -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $winvmDir\logon.ps1"
+        Write-Output "logon task installed: $winvmDir\logon.ps1 (HKLM Run winvm-logon)"
+    } else {
+        Write-Output "WARNING: no winvm\logon.ps1 on any volume - the Sysprep dialog will stay open"
+    }
+
+    # --- 3e. .NET native images -----------------------------------------------
     #
     # AUDIT MODE NEVER RUNS THE NGEN QUEUE. Windows ships the .NET Framework with
     # its native-image compilation QUEUED, and leaves the work to the scheduled

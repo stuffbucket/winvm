@@ -20,7 +20,7 @@ const ASSETS = resolve(import.meta.dir, "assets")
  * runs or installs from there. Not copied to C:\Windows\Setup\Scripts by the
  * answer file: nothing needs them before provisioning starts.
  */
-const WINVM_EXTRAS = ["defender.ps1"] as const
+const WINVM_EXTRAS = ["defender.ps1", "logon.ps1"] as const
 
 /**
  * A 64 MB FAT volume the guest writes its provisioning transcript to, and the
