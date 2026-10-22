@@ -3,8 +3,10 @@
  * hooks `start` and `rewind` call. The mechanics live in saves.ts and clock.ts;
  * this file decides when they run and what is printed.
  *
- *   save [name]        RAM + disk + NVRAM to files (default name: a timestamp)
- *   load [name]        back to a save, running or stopped (default: the newest)
+ *   save [name]        RAM + disk + NVRAM to files (default name: a timestamp);
+ *                      --fast (= --format mapped) for a save loaded over and over
+ *   load [name]        back to a save, running or stopped (default: the newest);
+ *                      the save's manifest says which RAM format to read
  *   saves [rm <name>]  list them, with compatibility; or delete one
  *   pause / resume     freeze / unfreeze the vCPUs (resume fixes the clock)
  *   stow               save as "stow" and shut QEMU down; `start` recalls it
@@ -98,12 +100,21 @@ async function doSave(
   }
   const m = r.manifest
   console.log(
-    `saved "${m.name}" (${m.kind}) in ${secs(m.saveMs ?? 0)}: ` +
+    `saved "${m.name}" (${m.kind}, ${saves.ramFormatOf(m)}) in ${secs(m.saveMs ?? 0)}: ` +
       `RAM ${saves.formatBytes(r.rawRamBytes)} -> ${saves.formatBytes(m.ramBytes ?? 0)} on disk, ` +
       `${saves.formatBytes(m.bytes)} total (disks are clones)`,
   )
   if (r.resumed) await settle(p, "the save")
   return 0
+}
+
+/** `--fast` is `--format mapped`; otherwise `--format zstd|mapped|raw`, default zstd. */
+export function formatFlag(args: Args): saves.RamFormat | string {
+  const f = args.flags.get("format") ?? (args.flags.has("fast") ? "mapped" : "zstd")
+  if (!(saves.RAM_FORMATS as readonly string[]).includes(f)) {
+    return `--format must be one of ${saves.RAM_FORMATS.join(", ")}, got "${f}"`
+  }
+  return f as saves.RamFormat
 }
 
 export async function save(args: Args): Promise<number> {
@@ -112,10 +123,13 @@ export async function save(args: Args): Promise<number> {
   const err = saves.nameError(saveName)
   if (err !== null) return fail(err)
   if (saveName === saves.STOW) return fail(`"${saves.STOW}" is reserved for \`winvm stow\``)
+  const format = formatFlag(args)
+  if (!(saves.RAM_FORMATS as readonly string[]).includes(format)) return fail(format)
   const note = args.flags.get("note")
   return await doSave(name, {
     name: saveName,
     kind: saveName === saves.BASELINE ? "baseline" : "manual",
+    format: format as saves.RamFormat,
     ...(note === undefined ? {} : { note }),
     checkReady: !args.flags.has("force"),
   })
@@ -190,7 +204,7 @@ export function list(args: Args): number {
   } catch {
     compat = null
   }
-  console.log(`  ${"NAME".padEnd(22)} ${"KIND".padEnd(9)} ${"CREATED".padEnd(19)} ${"SIZE".padStart(8)}  COMPATIBLE`)
+  console.log(`  ${"NAME".padEnd(22)} ${"KIND".padEnd(9)} ${"FORMAT".padEnd(7)} ${"CREATED".padEnd(19)} ${"SIZE".padStart(8)}  COMPATIBLE`)
   for (const r of rows) {
     const m = r.manifest
     if (m === null) {
@@ -201,7 +215,7 @@ export function list(args: Args): number {
     const created = `${saves.defaultName(d).slice(0, 10)} ${saves.defaultName(d).slice(11).replaceAll("-", ":")}`
     const ok = compat === null ? "?" : m.compat === compat ? "yes" : "no"
     console.log(
-      `  ${m.name.padEnd(22)} ${m.kind.padEnd(9)} ${created.padEnd(19)} ${saves.formatBytes(m.bytes).padStart(8)}  ${ok}` +
+      `  ${m.name.padEnd(22)} ${m.kind.padEnd(9)} ${saves.ramFormatOf(m).padEnd(7)} ${created.padEnd(19)} ${saves.formatBytes(m.bytes).padStart(8)}  ${ok}` +
         (m.note === undefined ? "" : `  ${m.note}`),
     )
   }

@@ -165,7 +165,8 @@ and load later, whether or not the guest is running.
 ```sh
 bun winvm.ts save before-install        # ~6 s; name defaults to a timestamp
 bun winvm.ts load before-install        # ~4 s running, ~10 s stopped
-bun winvm.ts saves                      # name, kind, created, size, compatible
+bun winvm.ts save --fast clean          # mapped-ram: ~7 s to take, ~0.5 s to load
+bun winvm.ts saves                      # name, kind, format, created, size, compatible
 bun winvm.ts saves rm before-install
 bun winvm.ts pause / resume             # freeze the vCPUs / carry on
 bun winvm.ts stow                       # save and shut QEMU down, freeing the host
@@ -179,6 +180,11 @@ bun winvm.ts clock                      # guest-vs-host offset, and fix it
 - **Storage.** `~/.local/state/winvm/saves/<instance>/<name>/`: `manifest.json`,
   `vmstate.zst` (zstd'd QEMU migration stream), plus APFS clones of the overlay
   and NVRAM, which cost little until the instance overwrites what they share.
+- **Formats.** `--format zstd` (default) is ~5x smaller and loads in ~2.5 s.
+  `--fast` (`--format mapped`: QEMU mapped-ram + multifd, `vmstate.mapped`) is
+  uncompressed and slower to write, but restores in ~0.5 s — for a save loaded
+  over and over (goldens, test resets). The manifest records the format; `load`
+  reads either.
   `destroy` leaves an instance's saves alone; `load` recreates the instance.
 - **Compatibility.** A save loads only into the same virtual hardware, base
   image, firmware and QEMU version. `saves` shows which still do, and `load`
