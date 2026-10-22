@@ -313,14 +313,15 @@ async function loggedOnUser(sockPath: string): Promise<string | null> {
  * logon, so the host repairs it: write back what windeploy would have, and
  * restart. Measured: the next boot ran windeploy and reached the desktop.
  *
- * Only when the signature is exact: AuditBoot=1, CmdLine empty, and neither
- * windeploy nor audit running (that is a healthy boot, mid-way).
+ * Only when the signature is exact: AuditBoot=1, CmdLine not windeploy (empty
+ * after a kill; anything else is no better), and neither windeploy nor audit
+ * running (that is a healthy boot, mid-way).
  */
 export const AUDIT_REPAIR_PS = [
   "$k = 'HKLM:\\SYSTEM\\Setup'",
   "$audit = (Get-ItemProperty \"$k\\Status\" -ErrorAction SilentlyContinue).AuditBoot",
   "$cmd = (Get-ItemProperty $k).CmdLine",
-  "if ($audit -ne 1 -or -not [string]::IsNullOrEmpty($cmd) -or (Get-Process windeploy, audit -ErrorAction SilentlyContinue)) { 'healthy'; exit 0 }",
+  "if ($audit -ne 1 -or $cmd -match 'windeploy\\.exe$' -or (Get-Process windeploy, audit -ErrorAction SilentlyContinue)) { 'healthy'; exit 0 }",
   "Set-ItemProperty $k -Name CmdLine -Value 'C:\\WINDOWS\\system32\\oobe\\windeploy.exe' -Type String",
   "Set-ItemProperty $k -Name OOBEInProgress -Value 1 -Type DWord",
   "Set-ItemProperty $k -Name SetupType -Value 2 -Type DWord",
