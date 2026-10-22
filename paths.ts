@@ -12,7 +12,7 @@
  */
 import { existsSync, readFileSync, readdirSync } from "node:fs"
 import { homedir } from "node:os"
-import { resolve } from "node:path"
+import { dirname, resolve } from "node:path"
 
 /**
  * All state, deliberately outside any project directory: a base image is tens
@@ -79,6 +79,13 @@ export interface Paths {
   readonly result: string
   readonly meta: string
 }
+
+/**
+ * QEMU's monitor socket for the instance whose guest-agent socket this is. For
+ * qga.ts, which is handed only the agent's socket but sometimes needs QEMU's
+ * view of that channel.
+ */
+export const monitorBeside = (qgaSock: string): string => resolve(dirname(qgaSock), "qmp.sock")
 
 export function pathsFor(name: string): Paths {
   const dir = instanceDir(name)

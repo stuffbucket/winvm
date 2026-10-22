@@ -13,7 +13,7 @@ import { resolve } from "node:path"
 
 import { afterAll, beforeAll, describe, expect, it } from "bun:test"
 
-import { READ_CHUNK, call, readFile } from "../qga"
+import { READ_CHUNK, call, readFile, waitFor } from "../qga"
 
 type Handler = (req: Record<string, unknown>) => Record<string, unknown> | null
 
@@ -30,6 +30,8 @@ class FakeAgent {
   readonly reads: number[] = []
   private readonly handles = new Map<number, { data: Buffer; pos: number }>()
   private nextHandle = 1000
+  /** Connections accepted so far: what waitFor must not make too early. */
+  connections = 0
   readonly path: string
   private readonly server: Server
 
@@ -84,6 +86,7 @@ class FakeAgent {
   }
 
   private serve(sock: Socket): void {
+    this.connections += 1
     let open = true
     sock.on("close", () => {
       open = false
@@ -194,5 +197,34 @@ describe("qga.readFile", () => {
 
   it("is null for a file that cannot be opened", async () => {
     expect(await readFile(agent.path, "C:\\missing")).toBeNull()
+  })
+})
+
+describe("qga.waitFor", () => {
+  it("does not connect until the guest has opened its port", async () => {
+    agent.handler = () => ({ return: {} })
+    const before = agent.connections
+    let asked = 0
+    // QEMU reports the port closed three times, then open.
+    const portOpen = async (): Promise<boolean> => {
+      asked += 1
+      if (asked <= 3) expect(agent.connections).toBe(before)
+      return asked > 3
+    }
+    expect(await waitFor(agent.path, 5000, { portOpen })).toBe(true)
+    expect(asked).toBe(4)
+    expect(agent.connections).toBe(before + 1)
+  })
+
+  it("still tries the agent when QEMU's view is unknown", async () => {
+    const before = agent.connections
+    expect(await waitFor(agent.path, 5000, { portOpen: async () => null })).toBe(true)
+    expect(agent.connections).toBe(before + 1)
+  })
+
+  it("gives up at the deadline if the port never opens, without connecting", async () => {
+    const before = agent.connections
+    expect(await waitFor(agent.path, 600, { portOpen: async () => false })).toBe(false)
+    expect(agent.connections).toBe(before)
   })
 })

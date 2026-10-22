@@ -12,6 +12,12 @@
  */
 import { connect } from "node:net"
 
+import { monitorBeside } from "./paths"
+import * as qmp from "./qmp"
+
+/** The chardev id qemu.ts gives the guest agent's socket. */
+export const CHARDEV = "qga0"
+
 export interface ExecResult {
   readonly exitcode: number
   readonly stdout: string
@@ -121,15 +127,63 @@ function syncReplyId(line: string): unknown {
   }
 }
 
-/** Poll until the agent answers. A cold boot to a responsive agent is ~25s. */
-export async function waitFor(sockPath: string, timeoutMs: number): Promise<boolean> {
+/**
+ * Whether qemu-ga in the guest has its end of the virtio-serial port open, as
+ * QEMU sees it (query-chardev's "frontend-open"). Null when the monitor does
+ * not say: unknown, so the caller should just try the agent.
+ */
+export async function portOpen(sockPath: string): Promise<boolean | null> {
+  try {
+    const r = (await qmp.execute(monitorBeside(sockPath), "query-chardev", undefined, 2000)) as {
+      readonly label: string
+      readonly "frontend-open": boolean
+    }[]
+    return r.find((c) => c.label === CHARDEV)?.["frontend-open"] ?? null
+  } catch {
+    return null
+  }
+}
+
+export interface WaitOptions {
+  /** Injectable for tests; QEMU's monitor otherwise. */
+  readonly portOpen?: (sockPath: string) => Promise<boolean | null>
+}
+
+/**
+ * Poll until the agent answers. A cold boot to a responsive agent is ~10-25 s.
+ *
+ * DO NOT CONNECT BEFORE THE GUEST HAS OPENED ITS PORT. QEMU on macOS cannot
+ * see a client hang up while the guest end is closed: char-socket watches for
+ * the hangup with a G_IO_HUP-only source, and GLib polls with select() on
+ * macOS (poll() is marked broken there), which has no way to ask for HUP —
+ * so the only way QEMU learns of it is by reading, and it reads only while
+ * the guest can take the data. A probe that gave up before qemu-ga started
+ * therefore left QEMU holding a dead connection; the socket accepts one
+ * client at a time with a backlog of one, so the next probe sat unanswered
+ * and the one after was refused outright (Bun reports that as ENOENT). It
+ * cleared itself once qemu-ga opened the port, but by then the probes were
+ * spaced seconds apart. Measured on a fresh boot: a client closed at 8 s was
+ * held as connected until qemu-ga opened at 14.3 s.
+ *
+ * So wait on QEMU's view of the port first (one monitor round trip), and ping
+ * only once it is open. Measured on fresh boots: no connection at all until
+ * qemu-ga opened the port at ~10.8 s, and the ping answered 0.1 s after.
+ * Anything else that connects early (a stray `status`, a script) can still
+ * leave a dead client behind; it clears when qemu-ga opens the port.
+ */
+export async function waitFor(sockPath: string, timeoutMs: number, o: WaitOptions = {}): Promise<boolean> {
+  const isOpen = o.portOpen ?? portOpen
   const deadline = Date.now() + timeoutMs
   while (Date.now() < deadline) {
+    if ((await isOpen(sockPath)) === false) {
+      await new Promise((r) => setTimeout(r, 250))
+      continue
+    }
     try {
       await call(sockPath, { execute: "guest-ping" }, 4000)
       return true
     } catch {
-      await new Promise((r) => setTimeout(r, 4000))
+      await new Promise((r) => setTimeout(r, 1000))
     }
   }
   return false

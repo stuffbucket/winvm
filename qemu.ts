@@ -15,6 +15,7 @@ import { requireFirmware } from "./host"
 import type { InstanceMeta, Paths } from "./paths"
 import { media } from "./paths"
 import { RAMFB, displayArgs, readDisplay } from "./display"
+import * as qga from "./qga"
 import * as qmp from "./qmp"
 import { applyPassword, vncArg } from "./vnc"
 
@@ -93,10 +94,11 @@ export function qemuArgs(name: string, p: Paths, meta: InstanceMeta, o: LaunchOp
     // guest tools, after which this gives the guest real outbound internet.
     "-netdev", "user,id=net0",
     "-device", "virtio-net-pci,netdev=net0",
-    // The command channel. See qga.ts.
+    // The command channel. See qga.ts, and qga.waitFor on why nothing should
+    // connect to it before the guest has opened the port.
     "-device", "virtio-serial",
-    "-chardev", `socket,path=${p.qga},server=on,wait=off,id=qga0`,
-    "-device", "virtserialport,chardev=qga0,name=org.qemu.guest_agent.0",
+    "-chardev", `socket,path=${p.qga},server=on,wait=off,id=${qga.CHARDEV}`,
+    "-device", `virtserialport,chardev=${qga.CHARDEV},name=org.qemu.guest_agent.0`,
     "-chardev", `socket,id=chrtpm,path=${p.tpmSock}`,
     "-tpmdev", "emulator,id=tpm0,chardev=chrtpm",
     // tpm-tis-device, not UTM's tpm-crb-device: Homebrew's QEMU builds only the
