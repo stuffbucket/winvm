@@ -175,7 +175,81 @@ try {
         Write-Output "WARNING: no winvm\PowerShell-win-arm64.msi on any volume - no PowerShell 7"
     }
 
-    # --- 3b. .NET native images -----------------------------------------------
+    # --- 3b. Quiet: nothing in the background that a test did not start ------
+    #
+    # A fixture whose idle guest burns CPU makes every timing it produces noisy,
+    # and one that reboots for updates or reindexes the disk mid-test makes them
+    # wrong. Measured on this guest: QEMU at 6.7% of 4 vCPUs idle before, 1.1%
+    # after. MACHINE-WIDE ONLY: per-user (HKCU) settings belong to the logged-on
+    # account, which this script may not be running as -- logon.ps1 does those.
+    #
+    # Defender is deliberately absent. Tamper Protection reverts, and AMSI
+    # blocks, any script that tries to switch it off -- including THIS one, which
+    # would then fail as a whole. Its exclusions live in defender.ps1.
+    #
+    # Each step is independent and reported; one refusal (WaaSMedicSvc is
+    # protected, for example) must not cost the rest.
+    function Step([string] $Name, [scriptblock] $Body) {
+        try { & $Body 2>&1 | Out-Null; Write-Output "quiet: ok   $Name" }
+        catch { Write-Output "quiet: FAIL $Name : $($_.Exception.Message)" }
+    }
+    function RegSet([string] $Path, [string] $Name, $Value, [string] $Type = "DWord") {
+        if (-not (Test-Path $Path)) { New-Item -Path $Path -Force | Out-Null }
+        New-ItemProperty -Path $Path -Name $Name -Value $Value -PropertyType $Type -Force | Out-Null
+    }
+    function SvcOff([string] $Name) {
+        Stop-Service $Name -Force -ErrorAction SilentlyContinue
+        try { Set-Service $Name -StartupType Disabled -ErrorAction Stop }
+        catch { RegSet "HKLM:\SYSTEM\CurrentControlSet\Services\$Name" Start 4 }
+    }
+    $pol = "HKLM:\SOFTWARE\Policies\Microsoft"
+    Step "Windows Update off" {
+        RegSet "$pol\Windows\WindowsUpdate\AU" NoAutoUpdate 1
+        RegSet "$pol\Windows\WindowsUpdate" DisableWindowsUpdateAccess 1
+        RegSet "$pol\Windows\WindowsUpdate" ExcludeWUDriversInQualityUpdate 1
+        SvcOff wuauserv; SvcOff UsoSvc
+    }
+    Step "WaaSMedicSvc off" { SvcOff WaaSMedicSvc }
+    Step "Delivery Optimization off" { RegSet "$pol\Windows\DeliveryOptimization" DODownloadMode 0; SvcOff DoSvc }
+    Step "Search indexing off" { SvcOff WSearch }
+    Step "SysMain off" { SvcOff SysMain }
+    Step "telemetry off" {
+        RegSet "$pol\Windows\DataCollection" AllowTelemetry 0
+        foreach ($s in "DiagTrack", "dmwappushservice", "MapsBroker", "WerSvc", "PcaSvc") { SvcOff $s }
+    }
+    Step "automatic maintenance off" {
+        RegSet "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Schedule\Maintenance" MaintenanceDisabled 1
+    }
+    Step "Store auto-update, consumer features, tips off" {
+        RegSet "$pol\WindowsStore" AutoDownload 2
+        RegSet "$pol\Windows\CloudContent" DisableWindowsConsumerFeatures 1
+        RegSet "$pol\Windows\CloudContent" DisableSoftLanding 1
+        RegSet "$pol\Windows\CloudContent" DisableCloudOptimizedContent 1
+    }
+    Step "Edge first run, background, updates off" {
+        RegSet "$pol\Edge" HideFirstRunExperience 1
+        RegSet "$pol\Edge" StartupBoostEnabled 0
+        RegSet "$pol\Edge" BackgroundModeEnabled 0
+        RegSet "$pol\EdgeUpdate" UpdateDefault 0
+        RegSet "$pol\EdgeUpdate" AutoUpdateCheckPeriodMinutes 0
+        foreach ($s in "edgeupdate", "edgeupdatem") { SvcOff $s }
+    }
+    Step "OneDrive off" { RegSet "$pol\Windows\OneDrive" DisableFileSyncNGSC 1 }
+    Step "security notifications off" {
+        RegSet "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Notifications\Settings\Windows.SystemToast.SecurityAndMaintenance" Enabled 0
+        RegSet "$pol\Windows Defender Security Center\Notifications" DisableNotifications 1
+    }
+    Step "no lock screen" { RegSet "$pol\Windows\Personalization" NoLockScreen 1 }
+    Step "power: high performance, never sleep" {
+        powercfg.exe /setactive 8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c
+        powercfg.exe /change hibernate-timeout-ac 0
+    }
+    Step "NTFS: no last-access updates, no 8.3 names" {
+        fsutil.exe behavior set disablelastaccess 1
+        fsutil.exe 8dot3name set C: 1
+    }
+
+    # --- 3c. .NET native images -----------------------------------------------
     #
     # AUDIT MODE NEVER RUNS THE NGEN QUEUE. Windows ships the .NET Framework with
     # its native-image compilation QUEUED, and leaves the work to the scheduled
