@@ -10,6 +10,7 @@
 import { spawn, spawnSync } from "node:child_process"
 import { closeSync, existsSync, openSync, readFileSync, renameSync, rmSync } from "node:fs"
 
+import { restoreForward } from "./agentfwd"
 import { requireFirmware } from "./host"
 import type { InstanceMeta, Paths } from "./paths"
 import { media } from "./paths"
@@ -294,6 +295,9 @@ export async function launch(name: string, p: Paths, meta: InstanceMeta, o: Laun
     await applyPassword(p).catch((error: unknown) => {
       console.warn(`warning: could not set the VNC password: ${error instanceof Error ? error.message : String(error)}`)
     })
+    // The in-guest agent's port forward is runtime state, gone with the last
+    // QEMU; put it back for an instance that has one (a no-op otherwise).
+    await restoreForward(p)
     return
   }
 

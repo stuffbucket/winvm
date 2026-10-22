@@ -1,36 +1,33 @@
 /**
- * The host side of the in-guest agent (guestagent.ts): its client, where it is
- * reached, and the per-instance state that says so.
+ * The host side of the in-guest agent (guestagent.ts): its client, `connect`,
+ * and `install` into a running guest over qemu-ga. The per-instance state and
+ * the port forward it is reached through live in agentfwd.ts.
  *
- * Reached through a QEMU user-net port forward, `127.0.0.1:<hostPort>` on the
- * host to the guest's GUEST_PORT. The forward is added at RUNTIME over the
- * monitor (`hostfwd_add`), never on the command line: a save's compatibility
- * hash (saves.ts) covers the hardware arguments, and a forward there would make
- * every existing save incompatible. The price is that a QEMU started afresh —
- * `start`, a `load` into a new process — has no forward until `reattach` adds
- * it back; a `loadvm` inside a running QEMU keeps it.
- *
- *   <instance>/agent.json   { token, hostPort }   (mode 0600)
+ *   const c = await agent.connect(name)        // null: no agent answering
+ *   const c = await agent.install(name)        // (re)install, start, connect
+ *   await c.exec([...]); await c.pwsh("..."); await c.putFile(host, guest)
+ *   await c.getFile(guest, host); await c.launch([exe]); await c.kill(pid)
  *
  * The token is generated once per instance and kept: a guest restored from a
  * save still holds the token it had, and the guest agent re-reads its token
  * file, so writing it again over qemu-ga is all a rewrite ever needs.
  */
 import { randomBytes } from "node:crypto"
-import { chmodSync, createWriteStream, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
+import { createWriteStream, existsSync, mkdirSync, readFileSync } from "node:fs"
 import { once } from "node:events"
-import { createServer } from "node:net"
 import { resolve } from "node:path"
 
+import type { AgentState } from "./agentfwd"
+import { ensureForward, ensureState, readState, restoreForward } from "./agentfwd"
 import type { ExecRequest, ExecResponse, Health, LaunchRequest, Proc, PwshResponse } from "./guestagent"
 import { AGENT_VERSION, GUEST_PORT, WINDOWS_DIR } from "./guestagent"
 import { download } from "./host"
-import type { Paths } from "./paths"
 import { mediaDir, pathsFor } from "./paths"
 import * as qemu from "./qemu"
 import * as qga from "./qga"
-import * as qmp from "./qmp"
 
+export type { AgentState } from "./agentfwd"
+export { ensureForward, forwardedPorts, readState, statePath } from "./agentfwd"
 export type { ExecResponse, Health, Proc, PwshResponse } from "./guestagent"
 export { AGENT_VERSION, GUEST_PORT } from "./guestagent"
 
@@ -165,103 +162,6 @@ export class AgentClient {
   }
 }
 
-// --- per-instance state ---------------------------------------------------
-
-export interface AgentState {
-  readonly token: string
-  /** The host end of the forward, or null before one was ever added. */
-  readonly hostPort: number | null
-}
-
-export const statePath = (p: Paths): string => resolve(p.dir, "agent.json")
-
-export function readState(p: Paths): AgentState | null {
-  const f = statePath(p)
-  if (!existsSync(f)) return null
-  try {
-    const s = JSON.parse(readFileSync(f, "utf8")) as Partial<AgentState>
-    if (typeof s.token !== "string" || s.token === "") return null
-    return { token: s.token, hostPort: typeof s.hostPort === "number" ? s.hostPort : null }
-  } catch {
-    return null
-  }
-}
-
-export function writeState(p: Paths, s: AgentState): void {
-  const f = statePath(p)
-  writeFileSync(f, `${JSON.stringify(s, null, 2)}\n`, { mode: 0o600 })
-  chmodSync(f, 0o600)
-}
-
-/** The instance's state, creating a token the first time. */
-export function ensureState(p: Paths): AgentState {
-  const s = readState(p)
-  if (s !== null) return s
-  const fresh: AgentState = { token: randomBytes(32).toString("hex"), hostPort: null }
-  writeState(p, fresh)
-  return fresh
-}
-
-/** A port nothing on the host is listening on right now. */
-export async function freePort(): Promise<number> {
-  return await new Promise((res, rej) => {
-    const srv = createServer()
-    srv.once("error", rej)
-    srv.listen(0, "127.0.0.1", () => {
-      const a = srv.address()
-      const port = typeof a === "object" && a !== null ? a.port : 0
-      srv.close(() => res(port))
-    })
-  })
-}
-
-// --- the port forward -------------------------------------------------------
-
-/** QEMU's id for the user-net backend; see qemu.ts (`-netdev user,id=net0`). */
-export const NETDEV = "net0"
-
-export const hostfwdRule = (hostPort: number): string => `tcp:127.0.0.1:${String(hostPort)}-:${String(GUEST_PORT)}`
-
-/** Host ports that `info usernet` shows forwarded to the agent's guest port. */
-export function forwardedPorts(usernet: string): readonly number[] {
-  const ports: number[] = []
-  for (const line of usernet.split(/\r?\n/)) {
-    // TCP[HOST_FORWARD]  12       127.0.0.1 47801       10.0.2.15  7801     0     0
-    const m = /^\s*TCP\[HOST_FORWARD\]\s+\d+\s+\S+\s+(\d+)\s+\S+\s+(\d+)\s/.exec(line)
-    if (m !== null && Number(m[2]) === GUEST_PORT) ports.push(Number(m[1]))
-  }
-  return ports
-}
-
-export const clientFor = (s: AgentState & { readonly hostPort: number }): AgentClient =>
-  new AgentClient(`http://127.0.0.1:${String(s.hostPort)}`, s.token)
-
-
-/**
- * Make sure the forward to the agent exists, and return its host port.
- *
- * Idempotent and cheap (one `info usernet`), so anything about to talk to the
- * agent can call it. A port that has since been taken on the host is replaced
- * by a free one, and the new port recorded.
- */
-export async function ensureForward(p: Paths): Promise<number> {
-  const s = ensureState(p)
-  const present = forwardedPorts(await qmp.hmp(p.qmp, "info usernet"))
-  if (s.hostPort !== null && present.includes(s.hostPort)) return s.hostPort
-  for (const stale of present) await qmp.hmp(p.qmp, `hostfwd_remove ${NETDEV} tcp:127.0.0.1:${String(stale)}`)
-  let lastError = ""
-  for (const port of [s.hostPort ?? (await freePort()), await freePort(), await freePort()]) {
-    // hostfwd_add reports failure as text in a successful reply, not as an error.
-    const said = await qmp.hmp(p.qmp, `hostfwd_add ${NETDEV} ${hostfwdRule(port)}`).catch((e: unknown) => String(e))
-    if (said === "" || forwardedPorts(await qmp.hmp(p.qmp, "info usernet")).includes(port)) {
-      writeState(p, { ...s, hostPort: port })
-      return port
-    }
-    lastError = said
-  }
-  throw new Error(`could not forward a host port to the agent: ${lastError}`)
-}
-
 /**
  * The agent of a running instance, or null when it has none (never installed,
  * not running, not answering within `timeoutMs`). Adds the forward if needed.
@@ -296,19 +196,16 @@ export async function requireAgent(name: string, timeoutMs = 2000): Promise<Agen
 }
 
 /**
- * After anything that started a NEW QEMU process (start, load, a stow recall)
- * the forward is gone with the old process. Puts it back for an instance that
- * has an agent; a no-op for one that never had one. Never throws.
+ * Put the forward back after something started a new QEMU process. qemu.launch
+ * already does this; exported for callers that want to be explicit. Never throws.
  */
 export async function reattach(name: string): Promise<void> {
   const p = pathsFor(name)
-  if (readState(p) === null || !qemu.isRunning(p)) return
-  try {
-    await ensureForward(p)
-  } catch (error) {
-    console.warn(`warning: agent forward not restored (${error instanceof Error ? error.message : String(error)})`)
-  }
+  if (qemu.isRunning(p)) await restoreForward(p)
 }
+
+export const clientFor = (s: AgentState & { readonly hostPort: number }): AgentClient =>
+  new AgentClient(`http://127.0.0.1:${String(s.hostPort)}`, s.token)
 
 // --- install ----------------------------------------------------------------
 

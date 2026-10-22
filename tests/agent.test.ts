@@ -9,7 +9,8 @@ import { resolve } from "node:path"
 
 import { afterAll, beforeAll, describe, expect, it } from "bun:test"
 
-import { AgentClient, AgentError, ensureState, forwardedPorts, hostfwdRule, readState } from "../agent"
+import { AgentClient, AgentError } from "../agent"
+import { ensureState, forwardedPorts, hostfwdRule, readState } from "../agentfwd"
 import type { Paths } from "../paths"
 import { AGENT_VERSION, parseTasklist, startAgent } from "../guestagent"
 
