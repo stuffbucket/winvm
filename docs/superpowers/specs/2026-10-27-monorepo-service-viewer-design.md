@@ -474,6 +474,22 @@ of hosted CI.
 - **The cage check moves in its own commit**, in the cage repo, pinned to the
   winvm commit that lands this.
 
+## Changed after the first app build (user's decision)
+
+- **The window uses maximal v0.4.48's UI framework** instead of the monimal
+  design-system copy and Base UI: its `theme.ts` tokens and generator,
+  component styles, `Button`, `Callout`, `EmptyState` and `ConfirmDialog`,
+  the ICU i18n runtime, self-hosted fonts, the Bun bundler and its
+  `docs/design/` rules, copied into `apps/viewer` (`apps/viewer/docs/design/README.md`
+  maps maximal's paths to winvm's). The UI lives in `apps/viewer/ui` for now
+  and reaches winvm through the app's Tauri command, which runs the bundled
+  CLI; `packages/viewer-ui` and the service-served bundle wait for the
+  control service's HTTP API.
+- **The guest's screen draws in a frame with the guest display's own
+  shape**, and with no screen the frame holds the instance's state, facts,
+  start action and start progress, so the window shows where Windows'
+  screen goes (`apps/viewer/docs/design/windows.md`).
+
 ## Left to the builder
 
 - Service transport details (SSE vs streamed JSON lines). Settled in plan 2a:
