@@ -572,7 +572,7 @@ export async function start(args: Args): Promise<number> {
     )
     return 1
   }
-  console.log(`instance "${name}" up (vnc :${String(meta.vnc)})`)
+  console.log(`instance "${name}" up (vnc :${String(readMeta(name)?.vnc ?? meta.vnc)})`)
   // Clock and time zone; and on an instance's first boot, the automatic
   // "baseline" save (--no-autosave skips it).
   //

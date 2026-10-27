@@ -30,10 +30,12 @@
  */
 import { randomInt } from "node:crypto"
 import { chmodSync, readFileSync, writeFileSync } from "node:fs"
+import { createServer } from "node:net"
 import { resolve } from "node:path"
 
 import { qmpCommand } from "./monitor"
-import type { Paths } from "./paths"
+import type { InstanceMeta, Paths } from "./paths"
+import { listInstances, readMeta } from "./paths"
 
 export const VNC_BASE_PORT = 5900
 /** QEMU's own convention for `websocket` with no port: 5700 + display. */
@@ -45,6 +47,42 @@ export const websocketPort = (display: number): number => WEBSOCKET_BASE_PORT + 
 /** The `-vnc` argument: loopback only, websocket alongside, password required. */
 export function vncArg(display: number): string {
   return `127.0.0.1:${String(display)},websocket=127.0.0.1:${String(websocketPort(display))},password=on`
+}
+
+/** Whether nothing on this host listens on the display's VNC or websocket port. */
+export async function displayFree(display: number): Promise<boolean> {
+  for (const port of [vncPort(display), websocketPort(display)]) {
+    const free = await new Promise<boolean>((res) => {
+      const s = createServer()
+      s.once("error", () => res(false))
+      s.listen(port, "127.0.0.1", () => s.close(() => res(true)))
+    })
+    if (!free) return false
+  }
+  return true
+}
+
+/**
+ * The instance's display, moved to a free one when something else on the host
+ * holds it.
+ *
+ * Displays are allocated per WINVM_HOME (paths.allocateVnc), so an instance in
+ * another home — or any other VNC server — can hold the same number, and QEMU
+ * then fails to bind. Called just before QEMU starts, when this instance is
+ * not running, so a busy port is someone else's. The move is written to
+ * instance.json, which is where every reader of the display looks.
+ */
+export async function ensureFreeDisplay(name: string, p: Paths, meta: InstanceMeta): Promise<InstanceMeta> {
+  if (await displayFree(meta.vnc)) return meta
+  const claimed = new Set(listInstances().filter((n) => n !== name).map((n) => readMeta(n)?.vnc))
+  for (let d = 1; d < 100; d += 1) {
+    if (claimed.has(d) || !(await displayFree(d))) continue
+    const moved: InstanceMeta = { ...meta, vnc: d }
+    writeFileSync(p.meta, `${JSON.stringify(moved, null, 2)}\n`)
+    console.log(`VNC :${String(meta.vnc)} is in use on this host; instance "${name}" moves to :${String(d)}`)
+    return moved
+  }
+  throw new Error("no free VNC display")
 }
 
 export const passwordPath = (p: Paths): string => resolve(p.dir, "vncpassword")
