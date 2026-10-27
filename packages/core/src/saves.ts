@@ -383,6 +383,34 @@ export function readSave(instance: string, name: string): Manifest | null {
   }
 }
 
+export interface SaveEntry {
+  readonly name: string
+  readonly kind: SaveKind
+  readonly createdAt: string
+  readonly bytes: number
+  /** Whether it loads into this instance as it is now; null when that could not be worked out. */
+  readonly compatible: boolean | null
+  readonly note?: string
+}
+
+/** `winvm saves --json`: the readable saves, oldest name first, and whether each loads here. */
+export function savesReport(rows: readonly Listed[], compat: string | null): SaveEntry[] {
+  return rows.flatMap((r) =>
+    r.manifest === null
+      ? []
+      : [
+          {
+            name: r.manifest.name,
+            kind: r.manifest.kind,
+            createdAt: r.manifest.createdAt,
+            bytes: r.manifest.bytes,
+            compatible: compat === null ? null : r.manifest.compat === compat,
+            ...(r.manifest.note === undefined ? {} : { note: r.manifest.note }),
+          },
+        ],
+  )
+}
+
 export function listSaves(instance: string): readonly Listed[] {
   let names: string[]
   try {

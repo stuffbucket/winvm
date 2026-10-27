@@ -194,16 +194,20 @@ export function list(args: Args): number {
     return 0
   }
   const rows = saves.listSaves(name)
-  if (rows.length === 0) {
-    console.log(`instance "${name}" has no saves (${saves.savesDir(name)})`)
-    return 0
-  }
   const meta = readMeta(name)
   let compat: string | null = null
   try {
-    if (meta !== null) compat = saves.currentCompat(name, meta).hash
+    if (meta !== null && rows.length > 0) compat = saves.currentCompat(name, meta).hash
   } catch {
     compat = null
+  }
+  if (args.flags.has("json")) {
+    console.log(JSON.stringify(saves.savesReport(rows, compat), null, 2))
+    return 0
+  }
+  if (rows.length === 0) {
+    console.log(`instance "${name}" has no saves (${saves.savesDir(name)})`)
+    return 0
   }
   console.log(`  ${"NAME".padEnd(22)} ${"KIND".padEnd(9)} ${"FORMAT".padEnd(7)} ${"CREATED".padEnd(19)} ${"SIZE".padStart(8)}  COMPATIBLE`)
   for (const r of rows) {

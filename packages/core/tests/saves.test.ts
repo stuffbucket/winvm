@@ -17,6 +17,7 @@ import {
   parseManifest,
   ramFileFor,
   ramFormatOf,
+  savesReport,
   shQuote,
 } from "../src/saves"
 
@@ -179,5 +180,39 @@ describe("helpers", () => {
       "Pacific Standard Time\r\n\r\nHKEY_LOCAL_MACHINE\\SYSTEM\\CurrentControlSet\\Control\\TimeZoneInformation\r\n" +
       "    RealTimeIsUniversal    REG_DWORD    0x1\r\n"
     expect(parseGuestTz(set)).toEqual({ zone: "Pacific Standard Time", rtcUtc: true })
+  })
+})
+
+describe("savesReport", () => {
+  const m = {
+    name: "before-update",
+    instance: "default",
+    kind: "manual" as const,
+    createdAt: "2026-10-27T20:00:00.000Z",
+    bytes: 2048,
+    compat: "abc",
+    image: "win11-arm64",
+  }
+
+  it("lists each save with whether it loads here", () => {
+    expect(savesReport([{ name: m.name, manifest: m }, { name: "old", manifest: { ...m, name: "old", compat: "zzz" } }], "abc")).toEqual([
+      { name: "before-update", kind: "manual", createdAt: m.createdAt, bytes: 2048, compatible: true },
+      { name: "old", kind: "manual", createdAt: m.createdAt, bytes: 2048, compatible: false },
+    ])
+  })
+
+  it("says compatibility is unknown when it cannot be worked out, and keeps the note", () => {
+    expect(savesReport([{ name: m.name, manifest: { ...m, note: "clean install" } }], null)[0]).toEqual({
+      name: "before-update",
+      kind: "manual",
+      createdAt: m.createdAt,
+      bytes: 2048,
+      compatible: null,
+      note: "clean install",
+    })
+  })
+
+  it("leaves out a save whose manifest cannot be read", () => {
+    expect(savesReport([{ name: "broken", manifest: null, error: "bad json" }], "abc")).toEqual([])
   })
 })
