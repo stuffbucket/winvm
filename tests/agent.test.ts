@@ -7,10 +7,12 @@ import { mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { resolve } from "node:path"
 
-import { afterAll, beforeAll, describe, expect, it } from "bun:test"
+import { afterAll, beforeAll, describe, expect, it, spyOn } from "bun:test"
 
 import { AgentClient, AgentError } from "../agent"
+import { TIMED_OUT, execResult, execTimeoutMs } from "../agentcmds"
 import { ensureState, forwardedPorts, hostfwdRule, readState } from "../agentfwd"
+import { parseArgs } from "../args"
 import type { Paths } from "../paths"
 import { AGENT_VERSION, launcherArgv, parseLauncherPid, parseTasklist, startAgent } from "../guestagent"
 
@@ -85,6 +87,27 @@ describe("agent over HTTP", () => {
     expect(r.code).not.toBe(0)
   }, SLOW_HOST_MS)
 
+  // Bun's fetch drops a connection idle for 5 minutes, and /exec sends nothing
+  // until the command ends: every exec over 300 s failed, whatever its deadline
+  // (measured, Bun 1.3.14). Waiting that out here would take five minutes, so
+  // this checks that every request turns the idle timer off.
+  it("turns off Bun's idle timeout, so only the request's own deadline applies", async () => {
+    const seen: unknown[] = []
+    const real = globalThis.fetch
+    const spy = spyOn(globalThis, "fetch").mockImplementation(((input: Parameters<typeof fetch>[0], init?: RequestInit) => {
+      seen.push((init as { timeout?: unknown } | undefined)?.timeout)
+      return real(input, init)
+    }) as typeof fetch)
+    try {
+      await client.health()
+      await client.exec(["true"])
+      await client.pwsh("1").catch(() => undefined) // no PowerShell here; the request is what counts
+    } finally {
+      spy.mockRestore()
+    }
+    expect(seen).toEqual([false, false, false])
+  })
+
   it("puts and gets binary files, creating directories", async () => {
     const bytes = new Uint8Array(3 * 1024 * 1024)
     for (let i = 0; i < bytes.length; i += 1) bytes[i] = (i * 7) & 0xff
@@ -143,6 +166,31 @@ describe("parsers", () => {
     ].join("\r\n")
     expect(forwardedPorts(out)).toEqual([47123])
     expect(hostfwdRule(47123)).toBe("tcp:127.0.0.1:47123-:7801")
+  })
+})
+
+describe("winvm exec results", () => {
+  const ok = { code: 3, stdout: "out\n", stderr: "err\n", ms: 5, timedOut: false }
+
+  it("passes a finished command's exit code and streams through", () => {
+    expect(execResult(ok, 900_000)).toEqual({ exitcode: 3, stdout: "out\n", stderr: "err\n" })
+  })
+
+  it("keeps what a command killed at its deadline printed, and exits 124", () => {
+    const r = execResult({ ...ok, code: 1, stdout: "step 1 done\n", stderr: "waiting on the mirror", timedOut: true }, 60_000)
+    expect(r.exitcode).toBe(TIMED_OUT)
+    expect(TIMED_OUT).toBe(124)
+    expect(r.stdout).toBe("step 1 done\n")
+    expect(r.stderr).toBe(
+      "waiting on the mirror\n::error::guest command timed out after 60 s and was killed with its process tree\n",
+    )
+  })
+
+  it("takes --timeout in seconds, 900 by default, and refuses nonsense", () => {
+    expect(execTimeoutMs(parseArgs(["--", "cmd"]))).toBe(900_000)
+    expect(execTimeoutMs(parseArgs(["--timeout", "1.5", "--", "cmd"]))).toBe(1500)
+    expect(() => execTimeoutMs(parseArgs(["--timeout", "soon", "--", "cmd"]))).toThrow("--timeout wants seconds")
+    expect(() => execTimeoutMs(parseArgs(["--timeout", "0", "--", "cmd"]))).toThrow("--timeout wants seconds")
   })
 })
 

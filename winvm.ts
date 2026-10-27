@@ -6,7 +6,7 @@
  *   winvm build --iso <win11.iso>    build the golden base image (~20 min, once)
  *   winvm adopt <disk.qcow2>         turn an existing installed disk into a base
  *   winvm start [-i name]            boot an instance (creating it if absent)
- *   winvm exec  [-i name] -- <cmd>   run a command in the guest
+ *   winvm exec  [-i name] -- <cmd>   run a command in the guest; --timeout S (900), 124 if hit
  *   winvm agent [-i name] install    the in-guest agent: fast exec/files/GUI (agent.ts)
  *   winvm put / get / launch         files in and out; a program on the guest's desktop
  *   winvm ui tree|find|click|wait|tray …   drive the GUI by UI Automation names; see ui.ts

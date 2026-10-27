@@ -817,7 +817,13 @@ export async function exec(args: Args): Promise<number> {
   const argv = args.rest.length > 0 ? args.rest : args.positional
   const [program, ...rest] = argv
   if (program === undefined) {
-    console.error("::error::usage: winvm exec [-i name] -- <program> [args...]")
+    console.error("::error::usage: winvm exec [-i name] [--timeout S] -- <program> [args...]")
+    return 1
+  }
+  try {
+    agentcmds.execTimeoutMs(args)
+  } catch (error) {
+    console.error(`::error::${error instanceof Error ? error.message : String(error)}`)
     return 1
   }
   // Activity for the whole run, so the watcher never saves or stows mid-command.

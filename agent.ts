@@ -71,6 +71,12 @@ export class AgentClient {
       headers: { authorization: `Bearer ${this.token}` },
       ...(body === undefined ? {} : { body }),
       signal: AbortSignal.timeout(timeoutMs),
+      // The signal is the deadline. Bun's fetch also drops a connection idle
+      // for 5 minutes (BUN_CONFIG_HTTP_IDLE_TIMEOUT), and /exec and /pwsh send
+      // nothing until the command ends, so without this every guest command
+      // longer than 300 s failed with "The operation timed out" and its output
+      // was lost, whatever timeoutMs said (measured, Bun 1.3.14).
+      timeout: false,
     })
     if (!r.ok) {
       const text = await r.text()
