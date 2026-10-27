@@ -6,7 +6,7 @@ day-to-day use, start with the [README](../README.md); this file records why the
 tool is built the way it is.
 
 Commands below are written as `winvm <verb>`; from a checkout that is
-`bun winvm.ts <verb>`.
+`winvm <verb>`.
 
 ```sh
 winvm setup                          # install prerequisites, fetch pinned media

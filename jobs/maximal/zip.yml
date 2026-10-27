@@ -2,7 +2,7 @@
 # an isolated home, check its health endpoints, stop it, and check it wrote
 # nothing outside that home.
 #
-#   bun winvm.ts run jobs/maximal/zip.yml -i ci
+#   winvm run jobs/maximal/zip.yml -i ci
 name: maximal portable zip smoke
 timeout: 5m
 env:

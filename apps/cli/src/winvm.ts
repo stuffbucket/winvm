@@ -86,7 +86,11 @@
  *
  * ## Layout
  *
- *   winvm.ts      this file — argument dispatch only
+ *   apps/cli/src/winvm.ts   this file — argument dispatch only
+ *
+ * Everything else is the @winvm/core package, in packages/core/src unless
+ * noted (assets/, firmware/ and web/ sit beside src/):
+ *
  *   commands.ts   the verbs
  *   paths.ts      state layout and instance metadata
  *   host.ts       prerequisites, shelling out, downloads

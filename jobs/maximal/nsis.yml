@@ -3,7 +3,7 @@
 # Quit from the tray menu leaves no orphaned process, silent uninstall leaves
 # nothing behind.
 #
-#   bun winvm.ts run jobs/maximal/nsis.yml -i ci
+#   winvm run jobs/maximal/nsis.yml -i ci
 #
 # Needs the in-guest agent (the default for goldens `winvm run` creates): the
 # tray app is launched in the logged-on user's session. Over qemu-ga it would
