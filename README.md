@@ -300,6 +300,28 @@ A cold boot to a settled guest took 26 s + 245 s; taking the golden, 6 s.
 The clock step varies (10-900 ms) because the guest's clock answers in
 ~100 ms jumps for a moment after a restore; it ends within ±50 ms.
 
+## The control service
+
+Each running instance has a service process, started by `winvm start` (and
+by anything else that launches QEMU) and stopped when QEMU has been gone for
+10 seconds. QEMU binds `qmp-qemu.sock` and `qga-qemu.sock`; the service
+listens on `qmp.sock` and `qga.sock` and passes callers through one at a
+time, in arrival order. Connect to `qmp.sock` and `qga.sock` as before; do not
+connect to the `-qemu` sockets directly.
+
+`service.json` in the instance directory (mode 0600) holds the service's pid,
+HTTP port and token. With the token:
+
+- `GET /events?key=TOKEN` streams events as server-sent events: QEMU state
+  changes (`paused`, `running`, `stopped`, `reset`, `migration`) and the
+  service starting and stopping.
+- `GET /status` with header `X-Winvm-Token: TOKEN` returns the last known
+  state, QEMU's pid and whether the service is connected to QEMU.
+
+The same events are appended to `events.jsonl` in the instance directory.
+`winvm status` shows the service; an instance started by an older winvm has
+none and works as before. `winvm kill` and `winvm destroy` stop it.
+
 ## The idle watcher
 
 `start` also launches a small background process per instance that watches
