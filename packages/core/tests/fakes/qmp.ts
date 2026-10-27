@@ -7,16 +7,23 @@ export type QmpHandler = (cmd: Json) => Json | null | Promise<Json | null>
 export const GREETING = { QMP: { version: { qemu: { major: 11, minor: 0, micro: 3 } }, capabilities: [] } }
 
 export class FakeQmp {
-  handler: QmpHandler = (cmd) => (cmd["execute"] === "query-status" ? { return: { status: "running", running: true } } : { return: {} })
+  handler: QmpHandler = (cmd) => {
+    if (cmd["execute"] === "query-status") return { return: { status: "running", running: true } }
+    if (cmd["execute"] === "query-chardev") return { return: [{ label: "qga0", "frontend-open": true }] }
+    return { return: {} }
+  }
+  greets = true
   connections = 0
   readonly commands: string[] = []
   private readonly sockets = new Set<Socket>()
+  private readonly backlog: Socket[] = []
+  private active: Socket | null = null
   private readonly server: Server
   readonly path: string
 
   constructor(path: string) {
     this.path = path
-    this.server = createServer((s) => this.serve(s))
+    this.server = createServer((s) => this.accept(s))
   }
 
   async listen(): Promise<void> {
@@ -31,15 +38,30 @@ export class FakeQmp {
   }
 
   emit(event: Json): void {
-    for (const s of this.sockets) s.write(`${JSON.stringify(event)}\n`)
+    this.active?.write(`${JSON.stringify(event)}\n`)
+  }
+
+  private accept(s: Socket): void {
+    this.connections += 1
+    this.sockets.add(s)
+    s.on("error", () => undefined)
+    s.on("close", () => {
+      this.sockets.delete(s)
+      const i = this.backlog.indexOf(s)
+      if (i >= 0) this.backlog.splice(i, 1)
+      if (this.active === s) {
+        this.active = null
+        const next = this.backlog.shift()
+        if (next !== undefined) this.serve(next)
+      }
+    })
+    if (this.active === null) this.serve(s)
+    else this.backlog.push(s)
   }
 
   private serve(s: Socket): void {
-    this.connections += 1
-    this.sockets.add(s)
-    s.on("close", () => this.sockets.delete(s))
-    s.on("error", () => undefined)
-    s.write(`${JSON.stringify(GREETING)}\n`)
+    this.active = s
+    if (this.greets) s.write(`${JSON.stringify(GREETING)}\n`)
     let buf = ""
     let negotiated = false
     let inOrder: Promise<void> = Promise.resolve()
@@ -53,10 +75,11 @@ export class FakeQmp {
         if (line === "") continue
         const cmd = JSON.parse(line) as Json
         const name = String(cmd["execute"])
+        const id = cmd["id"]
         this.commands.push(name)
         if (name === "qmp_capabilities") {
           negotiated = true
-          s.write(`${JSON.stringify({ return: {} })}\n`)
+          s.write(`${JSON.stringify({ return: {}, ...(id === undefined ? {} : { id }) })}\n`)
           continue
         }
         if (!negotiated) {
@@ -65,7 +88,7 @@ export class FakeQmp {
         }
         inOrder = inOrder.then(async () => {
           const reply = await this.handler(cmd)
-          if (reply !== null && !s.destroyed) s.write(`${JSON.stringify(reply)}\n`)
+          if (reply !== null && !s.destroyed) s.write(`${JSON.stringify(id === undefined ? reply : { ...reply, id })}\n`)
         })
       }
     })

@@ -1,7 +1,7 @@
 import { spawn, spawnSync } from "node:child_process"
 import { randomBytes } from "node:crypto"
-import { appendFileSync, chmodSync, closeSync, existsSync, openSync, readFileSync, rmSync, writeFileSync } from "node:fs"
-import { resolve } from "node:path"
+import { appendFileSync, chmodSync, closeSync, existsSync, openSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs"
+import { basename, resolve } from "node:path"
 
 import { QgaChannel, QmpChannel } from "./broker"
 import { PACKAGE_DIR, cliEntry, home, pathsFor, type Paths } from "./paths"
@@ -53,13 +53,49 @@ function livePidIn(file: string): number | null {
   }
 }
 
-export function readService(p: Paths): ServiceInfo | null {
+function recordedPid(p: Paths): number | null {
   try {
-    const s = JSON.parse(readFileSync(p.service, "utf8")) as ServiceInfo
-    return typeof s.pid === "number" && alive(s.pid) ? s : null
+    const pid = (JSON.parse(readFileSync(p.service, "utf8")) as { pid?: unknown }).pid
+    return typeof pid === "number" ? pid : null
   } catch {
     return null
   }
+}
+
+function isServiceFor(pid: number, name: string): boolean {
+  if (pid === process.pid) return true
+  const r = spawnSync("ps", ["-o", "command=", "-p", String(pid)], { encoding: "utf8" })
+  return (r.stdout ?? "").includes(` serve -i ${name}`)
+}
+
+export function readService(p: Paths): ServiceInfo | null {
+  try {
+    const s = JSON.parse(readFileSync(p.service, "utf8")) as ServiceInfo
+    return typeof s.pid === "number" && alive(s.pid) && isServiceFor(s.pid, basename(p.dir)) ? s : null
+  } catch {
+    return null
+  }
+}
+
+const keepPath = (p: Paths): string => resolve(p.dir, "service.keep")
+
+export function keepService(p: Paths): void {
+  writeFileSync(keepPath(p), `${new Date().toISOString()}\n`)
+}
+
+function keptWithin(p: Paths, ms: number): boolean {
+  try {
+    return Date.now() - statSync(keepPath(p)).mtimeMs < ms
+  } catch {
+    return false
+  }
+}
+
+function writeAtomic(path: string, text: string): void {
+  const tmp = `${path}.${String(process.pid)}.tmp`
+  writeFileSync(tmp, text, { mode: 0o600 })
+  chmodSync(tmp, 0o600)
+  renameSync(tmp, path)
 }
 
 export function stopService(p: Paths): void {
@@ -86,9 +122,13 @@ function exited(pid: number): boolean {
 export async function ensureService(name: string, p: Paths): Promise<ServiceInfo> {
   const cli = cliEntry()
   const running = readService(p)
-  if (running !== null && running.cli === cli) return running
+  if (running !== null && running.cli === cli) {
+    keepService(p)
+    return running
+  }
   if (running !== null) stopService(p)
   rmSync(p.service, { force: true })
+  keepService(p)
   const log = openSync(resolve(p.dir, "service.log"), "a")
   const child = spawn(process.execPath, [cli, "serve", "-i", name], {
     detached: true,
@@ -100,7 +140,7 @@ export async function ensureService(name: string, p: Paths): Promise<ServiceInfo
   const deadline = Date.now() + 10_000
   while (Date.now() < deadline) {
     const info = readService(p)
-    if (info !== null && info.pid === child.pid && existsSync(p.qmp) && existsSync(p.qga)) return info
+    if (info !== null && info.cli === cli && existsSync(p.qmp) && existsSync(p.qga)) return info
     await new Promise((r) => setTimeout(r, 50))
   }
   throw new Error(`the control service for "${name}" did not start; see ${resolve(p.dir, "service.log")}`)
@@ -113,9 +153,10 @@ const STATES: Readonly<Record<string, string>> = { STOP: "paused", RESUME: "runn
 
 export function stateEvent(e: Record<string, unknown>): Record<string, unknown> | null {
   const name = String(e["event"])
+  const data = e["data"] as Record<string, unknown> | undefined
   const state = STATES[name]
-  if (state !== undefined) return { state }
-  if (name === "MIGRATION") return { state: "migration", status: (e["data"] as { status?: string } | undefined)?.status }
+  if (state !== undefined) return data === undefined ? { state } : { state, data }
+  if (name === "MIGRATION") return { state: "migration", status: (data as { status?: string } | undefined)?.status }
   return null
 }
 
@@ -146,17 +187,41 @@ export async function runService(name: string, o: ServiceOptions = {}): Promise<
     for (const c of subs) send(c, `data: ${line}\n\n`)
   }
 
+  let portOpen: boolean | null = null
   const qmpChannel = new QmpChannel({
     listen: p.qmp,
     upstream: p.qmpQemu,
+    onConnect: () => {
+      portOpen = null
+    },
     onEvent: (e) => {
+      if (e["event"] === "RESET" || e["event"] === "SHUTDOWN" || e["event"] === "VSERPORT_CHANGE") portOpen = null
       const s = stateEvent(e)
       if (s === null) return
       state = String(s["state"])
       record("state", s)
     },
   })
-  const qgaChannel = new QgaChannel({ listen: p.qga, upstream: p.qgaQemu, portOpen: async () => await qga.portOpen(p.qga) })
+  const askPortOpen = async (): Promise<boolean | null> => {
+    if (portOpen === true) return true
+    try {
+      const r = (await qmpChannel.request("query-chardev", undefined, 2000))["return"] as
+        | { readonly label: string; readonly "frontend-open": boolean }[]
+        | undefined
+      portOpen = r?.find((c) => c.label === qga.CHARDEV)?.["frontend-open"] ?? null
+    } catch {
+      portOpen = null
+    }
+    return portOpen
+  }
+  const qgaChannel = new QgaChannel({
+    listen: p.qga,
+    upstream: p.qgaQemu,
+    portOpen: askPortOpen,
+    onRefused: () => {
+      portOpen = null
+    },
+  })
   await qmpChannel.start()
   await qgaChannel.start()
 
@@ -204,8 +269,7 @@ export async function runService(name: string, o: ServiceOptions = {}): Promise<
     version: coreVersion(),
     startedAt: new Date().toISOString(),
   }
-  writeFileSync(p.service, `${JSON.stringify(info, null, 2)}\n`, { mode: 0o600 })
-  chmodSync(p.service, 0o600)
+  writeAtomic(p.service, `${JSON.stringify(info, null, 2)}\n`)
   record("service", { what: "started" })
 
   let finish: () => void = () => undefined
@@ -216,7 +280,11 @@ export async function runService(name: string, o: ServiceOptions = {}): Promise<
   let goneMs = 0
   const lock = resolve(home(), "saves", name, ".lock")
   const check = setInterval(() => {
-    if (livePidIn(p.pid) !== null || livePidIn(lock) !== null) {
+    if (recordedPid(p) !== process.pid) {
+      void stop()
+      return
+    }
+    if (livePidIn(p.pid) !== null || livePidIn(lock) !== null || keptWithin(p, exitAfterMs)) {
       goneMs = 0
       return
     }
@@ -240,7 +308,7 @@ export async function runService(name: string, o: ServiceOptions = {}): Promise<
     void server.stop(true)
     await qmpChannel.stop()
     await qgaChannel.stop()
-    if (readService(p)?.pid === process.pid) rmSync(p.service, { force: true })
+    if (recordedPid(p) === process.pid) rmSync(p.service, { force: true })
     record("service", { what: "stopped" })
     finish()
   }

@@ -4,10 +4,13 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, wri
 import { tmpdir } from "node:os"
 import { resolve } from "node:path"
 
+import { QmpChannel } from "../src/broker"
+import * as monitor from "../src/monitor"
 import { PACKAGE_DIR, pathsFor, type Paths } from "../src/paths"
+import * as qga from "../src/qga"
 import { qemuArgs } from "../src/qemu"
 import * as qmp from "../src/qmp"
-import { ensureService, readService, runService, stopService, type ServiceHandle } from "../src/service"
+import { ensureService, keepService, readService, runService, stopService, type ServiceHandle } from "../src/service"
 import { FakeAgent } from "./fakes/agent"
 import { FakeQmp } from "./fakes/qmp"
 
@@ -123,6 +126,61 @@ describe("the service", () => {
     await sleep(600)
     expect(readService(p)?.pid).toBe(process.pid)
     expect(existsSync(p.qmp)).toBe(true)
+  })
+})
+
+describe("one service per instance", () => {
+  it("stops when its record names another service, and leaves that service's sockets", async () => {
+    svc = await runService("t", { exitAfterMs: 5000, checkMs: 50 })
+    const newer = new QmpChannel({ listen: p.qmp, upstream: resolve(home, "nowhere.sock") })
+    await newer.start()
+    writeFileSync(p.service, JSON.stringify({ pid: 1, port: 1, token: "x", cli: "", version: "", startedAt: "" }))
+    await svc.done
+    svc = null
+    expect(existsSync(p.qmp)).toBe(true)
+    await newer.stop()
+  })
+
+  it("is kept alive by a launch that just reused it", async () => {
+    svc = await runService("t", { exitAfterMs: 300, checkMs: 50 })
+    rmSync(p.pid)
+    await sleep(200)
+    keepService(p)
+    await sleep(250)
+    expect(readService(p)?.pid).toBe(process.pid)
+    await svc.done
+    svc = null
+  })
+
+  it("does not take a live process that is not this instance's service for one", () => {
+    const other = Bun.spawn(["sleep", "30"])
+    writeFileSync(p.service, JSON.stringify({ pid: other.pid, port: 1, token: "x", cli: "", version: "", startedAt: "" }))
+    expect(readService(p)).toBeNull()
+    other.kill()
+  })
+
+  it("asks for the guest's port without waiting behind a QMP caller", async () => {
+    svc = await runService("t", { exitAfterMs: 5000, checkMs: 50 })
+    const held = monitor.withQmp(p.qmp, async () => await sleep(1500), 3000)
+    await sleep(100)
+    const t0 = Date.now()
+    expect(await qga.call(p.qga, { execute: "guest-ping" }, 1000)).toEqual({ return: {} })
+    expect(Date.now() - t0).toBeLessThan(800)
+    await held
+  })
+
+  it("never connects to the agent after the guest closed its port, even if it was open before", async () => {
+    svc = await runService("t", { exitAfterMs: 5000, checkMs: 50 })
+    expect(await qga.call(p.qga, { execute: "guest-ping" }, 1000)).toEqual({ return: {} })
+    const before = agent.connections
+    const open = fake.handler
+    fake.handler = (cmd) =>
+      cmd["execute"] === "query-chardev" ? { return: [{ label: "qga0", "frontend-open": false }] } : open(cmd)
+    await qmp.status(p.qmp)
+    fake.emit({ event: "VSERPORT_CHANGE", data: { id: "channel0", open: false } })
+    await sleep(50)
+    await expect(qga.call(p.qga, { execute: "guest-ping" }, 500)).rejects.toThrow("timed out")
+    expect(agent.connections).toBe(before)
   })
 })
 

@@ -119,6 +119,7 @@ describe("status formatting", () => {
     },
     watcher: null,
     service: { pid: 77, port: 61234 },
+    serviceExpected: false,
     notes: [],
   }
 
@@ -126,6 +127,9 @@ describe("status formatting", () => {
     expect(formatStatus(sample, "", NOW)).toContain("service       pid 77 · 127.0.0.1:61234")
     expect(formatStatus({ ...sample, service: null }, "", NOW)).toContain(
       "service       none (started before the control service)",
+    )
+    expect(formatStatus({ ...sample, service: null, serviceExpected: true }, "", NOW)).toContain(
+      "service       missing — `winvm start -i ui` starts it again",
     )
     expect(formatStatus({ ...sample, state: "stopped", pid: null, service: null }, "", NOW)).not.toContain("service ")
   })

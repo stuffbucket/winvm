@@ -1,8 +1,6 @@
-/**
- * The control service's channel broker, against fake QEMU sockets: no VM.
- */
 import { afterEach, beforeEach, describe, expect, it } from "bun:test"
-import { mkdtempSync, rmSync } from "node:fs"
+import { existsSync, mkdtempSync, rmSync } from "node:fs"
+import { connect } from "node:net"
 import { tmpdir } from "node:os"
 import { resolve } from "node:path"
 
@@ -92,6 +90,62 @@ describe("the QMP channel", () => {
     expect(await pending).toBe("running")
     expect(channel.connected).toBe(true)
   })
+
+  it("asks QEMU itself, ahead of a caller holding the queue", async () => {
+    const held = monitor.withQmp(listen, async () => await sleep(1000), 3000)
+    await sleep(100)
+    const t0 = Date.now()
+    expect(await channel.request("query-chardev")).toEqual({ return: [{ label: "qga0", "frontend-open": true }] })
+    expect(Date.now() - t0).toBeLessThan(500)
+    await held
+  })
+
+  it("leaves a newer listener's socket in place when it stops", async () => {
+    const newer = new QmpChannel({ listen, upstream: resolve(dir, "nowhere.sock") })
+    await newer.start()
+    await channel.stop()
+    expect(existsSync(listen)).toBe(true)
+    await newer.stop()
+    channel = new QmpChannel({ listen, upstream: fake.path })
+  })
+})
+
+describe("the QMP channel's own timeouts", () => {
+  let other: QmpChannel | null = null
+
+  afterEach(async () => {
+    await other?.stop()
+    other = null
+  })
+
+  it("drops a QEMU connection that never greets, and tries again", async () => {
+    await channel.stop()
+    await fake.close()
+    fake = new FakeQmp(resolve(dir, "up.sock"))
+    fake.greets = false
+    await fake.listen()
+    other = new QmpChannel({ listen: resolve(dir, "other.sock"), upstream: fake.path, negotiateTimeoutMs: 200 })
+    await other.start()
+    await sleep(700)
+    expect(fake.connections).toBeGreaterThanOrEqual(2)
+  })
+
+  it("renegotiates rather than hand a reply owed past the drain timeout to the next caller", async () => {
+    await channel.stop()
+    fake.handler = async (cmd) => {
+      if (cmd["execute"] === "savevm") {
+        await sleep(600)
+        return { return: "savevm finished late" }
+      }
+      return { return: { status: "running" } }
+    }
+    const otherListen = resolve(dir, "other.sock")
+    other = new QmpChannel({ listen: otherListen, upstream: fake.path, drainTimeoutMs: 200 })
+    await other.start()
+    while (!other.connected) await sleep(20)
+    await expect(monitor.qmpCommand(otherListen, "savevm", undefined, 100)).rejects.toThrow("no answer")
+    expect(await qmp.status(otherListen)).toBe("running")
+  })
 })
 
 describe("the qemu-ga channel", () => {
@@ -149,5 +203,17 @@ describe("the qemu-ga channel", () => {
     const ping = qga.call(qgaListen, { execute: "guest-ping" }).then(() => order.push("ping"))
     await Promise.all([exec, ping])
     expect(order).toEqual(["ping", "exec"])
+  })
+
+  it("closes a caller at once when the agent refuses the connection", async () => {
+    await agent.close()
+    const t0 = Date.now()
+    const sock = connect(qgaListen)
+    sock.on("error", () => undefined)
+    sock.write(Buffer.from([0xff]))
+    await new Promise<void>((r) => sock.on("close", () => r()))
+    expect(Date.now() - t0).toBeLessThan(1500)
+    agent = new FakeAgent(resolve(dir, "qga-up.sock"))
+    await agent.listen()
   })
 })

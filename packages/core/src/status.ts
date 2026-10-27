@@ -82,6 +82,7 @@ export interface InstanceStatus {
   readonly saves: { readonly count: number; readonly bytes: number; readonly latest: SaveInfo | null; readonly latestBaseline: SaveInfo | null }
   readonly watcher: WatchInfo | null
   readonly service: { readonly pid: number; readonly port: number } | null
+  readonly serviceExpected: boolean
   /** Things that could not be determined, in words. */
   readonly notes: readonly string[]
 }
@@ -368,6 +369,7 @@ export async function gather(name: string, deep = true): Promise<InstanceStatus>
       saves: savesSummary,
       watcher: readWatch(name),
       service: null,
+      serviceExpected: false,
       notes: [`no instance "${name}" — \`winvm start -i ${name}\` creates it`],
     }
   }
@@ -400,6 +402,7 @@ export async function gather(name: string, deep = true): Promise<InstanceStatus>
     saves: savesSummary,
     watcher: readWatch(name),
     service: serviceOf(p),
+    serviceExpected: running && existsSync(p.qmpQemu),
     notes,
   }
 }
@@ -539,7 +542,15 @@ export function statusReport(s: InstanceStatus, timeMachine: string, now: number
           .filter((x) => x !== null)
           .join(" · "),
   ])
-  if (live) rows.push(["service", s.service === null ? "none (started before the control service)" : `pid ${String(s.service.pid)} · 127.0.0.1:${String(s.service.port)}`])
+  if (live) {
+    const service =
+      s.service !== null
+        ? `pid ${String(s.service.pid)} · 127.0.0.1:${String(s.service.port)}`
+        : s.serviceExpected
+          ? `missing — \`winvm start${flag}\` starts it again`
+          : "none (started before the control service)"
+    rows.push(["service", service])
+  }
   rows.push(["watcher", formatWatcher(s.watcher, now)])
   rows.push(["time machine", timeMachine.replace(/^(ok|note)\s+Time Machine:\s*/, "")])
 

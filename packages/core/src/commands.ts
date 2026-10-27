@@ -37,7 +37,7 @@ import * as saves from "./saves"
 import * as savecmds from "./savecmds"
 import * as snapshot from "./snapshot"
 import * as timemachine from "./timemachine"
-import { stopService } from "./service"
+import { ensureService, readService, stopService } from "./service"
 import * as watcher from "./watch"
 import { CONFIG_KEYS, DEFAULTS, effectiveConfig, parseAssignment, readOverrides, writeAssignments } from "./config"
 
@@ -142,6 +142,7 @@ export function prune(args: Args): number {
     }
     const size = du(p.dir)
     qemu.stopSwtpm(p)
+    stopService(p)
     rmSync(p.dir, { recursive: true, force: true })
     saves.removeAllSaves(name)
     console.log(`  removed scratch instance "${name}" (${size})`)
@@ -302,6 +303,7 @@ export async function build(args: Args): Promise<number> {
   // provisioning scripts (so an edited asset would not reach the guest, and the
   // old transcript would be read as this run's), and TPM state and firmware
   // variables persist outside the disk image.
+  stopService(p)
   rmSync(p.dir, { recursive: true, force: true })
   mkdirSync(p.tpmDir, { recursive: true })
   run("qemu-img", ["create", "-f", "qcow2", p.overlay, "64G"])
@@ -493,6 +495,7 @@ export async function build(args: Args): Promise<number> {
       const imageMeta: ImageMeta = { virtioBoot, created: new Date().toISOString() }
       writeFileSync(imageMetaPath(image), `${JSON.stringify(imageMeta, null, 2)}\n`)
       qemu.stopSwtpm(p)
+      stopService(p)
       rmSync(p.dir, { recursive: true, force: true })
       console.log(`base image ready: ${basePath(image)} (${du(basePath(image))})`)
       console.log(
@@ -519,6 +522,7 @@ export async function start(args: Args): Promise<number> {
   const p = pathsFor(name)
   if (qemu.isRunning(p)) {
     console.log(`instance "${name}" already running`)
+    if (existsSync(p.qmpQemu) && readService(p) === null) await ensureService(name, p)
     watcher.startWatcherFor(name, args)
     return 0
   }
