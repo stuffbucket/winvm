@@ -1,0 +1,182 @@
+name: Release
+
+# Runs on a vX.Y.Z tag (dispatched by release-please.yml, or by hand with the
+# tag selected). Creates the draft release, has stuffbucket/macos-builder build,
+# sign, notarize and attach the .dmg, then publishes once. A release is never
+# published without its .dmg. Adapted from stuffbucket/maximal's release.yml.
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Tag to release (must already exist, e.g. v0.2.0)
+        required: true
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.event.inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash -eo pipefail {0}
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    outputs:
+      is_prerelease: ${{ steps.prerelease.outputs.is_prerelease }}
+    steps:
+      - name: Validate the ref is a release tag
+        run: |
+          if [[ ! "$GITHUB_REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$ ]]; then
+            echo "::error::Release must run on a vX.Y.Z tag, not '$GITHUB_REF_NAME'."
+            exit 1
+          fi
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        with:
+          run_install: false
+
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version-file: .bun-version
+
+      - run: bun apply-pnpm-tarball-policy.mjs --check
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm check
+
+      - name: Generate SBOM and run license scan
+        run: bun scripts/sbom.ts --root packages/core --root apps/cli --output SBOM.cdx.json
+
+      - name: Detect pre-release
+        id: prerelease
+        run: |
+          if [[ "$GITHUB_REF_NAME" == *-* ]]; then
+            echo "is_prerelease=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "is_prerelease=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      # changelogithub computes notes from the previous v* tag. On the first
+      # release there is none and it produces a malformed range, so fall back
+      # to gh's generated notes.
+      - name: Generate the release notes (draft)
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ github.token }}
+          IS_PRERELEASE: ${{ steps.prerelease.outputs.is_prerelease }}
+        run: |
+          draft=$(gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --json isDraft --jq .isDraft 2> /dev/null || echo notfound)
+          if [ "$draft" = "true" ]; then
+            echo "Draft release for $GITHUB_REF_NAME already exists; skipping creation (re-run)."
+            exit 0
+          fi
+          prior=$(git tag --list 'v*' --sort=-v:refname | grep -v "^${GITHUB_REF_NAME}$" | head -1 || true)
+          if [ -z "$prior" ]; then
+            flags=(--draft)
+            [ "$IS_PRERELEASE" = "true" ] && flags+=(--prerelease)
+            gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --title "$GITHUB_REF_NAME" --generate-notes "${flags[@]}"
+          elif [ "$IS_PRERELEASE" = "true" ]; then
+            bunx changelogithub@15.0.5 --draft --prerelease
+          else
+            bunx changelogithub@15.0.5 --draft
+          fi
+
+      - name: Link the runtime release in the notes
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          runtime=$(jq -r .version packages/core/runtime.json)
+          notes=$(mktemp)
+          gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --json body --jq .body > "$notes"
+          if ! grep -q "winvm-runtime" "$notes"; then
+            printf '\nQEMU, swtpm and zstd come from [winvm-runtime %s](https://github.com/stuffbucket/winvm-runtime/releases/tag/v%s), whose release carries their sources.\n' "$runtime" "$runtime" >> "$notes"
+            gh release edit "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --notes-file "$notes"
+          fi
+
+      - name: Attach SBOM to release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "$GITHUB_REF_NAME" SBOM.cdx.json --repo "$GITHUB_REPOSITORY" --clobber
+
+  macos-dmg:
+    needs: release
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      TAG: ${{ github.ref_name }}
+    steps:
+      - name: Build the signed .dmg on stuffbucket/macos-builder and attach it to the draft
+        env:
+          BUILDER_PAT: ${{ secrets.MACOS_BUILDER_PAT }}
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          src="winvm.dmg"
+          dst="winvm-${TAG}-darwin-arm64.dmg"
+          has() {
+            gh release view "$TAG" --repo "$REPO" --json assets --jq '.assets[].name' 2> /dev/null | grep -Fxq "$1"
+          }
+          if has "$dst"; then
+            echo "$dst is already on the draft"
+            exit 0
+          fi
+          if [ -z "$BUILDER_PAT" ]; then
+            echo "::error::MACOS_BUILDER_PAT is not set; the release stays a draft."
+            exit 1
+          fi
+          if ! has "$src"; then
+            GH_TOKEN="$BUILDER_PAT" gh workflow run build.yml --repo stuffbucket/macos-builder --ref main \
+              -f "repo=${REPO}" -f "ref=${TAG}"
+            ok=0
+            for i in $(seq 1 70); do
+              sleep 45
+              if has "$src" || has "$dst"; then
+                ok=1
+                echo "${src} present after ~$((i * 45))s"
+                break
+              fi
+            done
+            if [ "$ok" -ne 1 ]; then
+              echo "::error::No ${src} on the draft after ~52 minutes; see the stuffbucket/macos-builder run. The release stays a draft."
+              exit 1
+            fi
+          fi
+          tmp=$(mktemp -d)
+          gh release download "$TAG" --repo "$REPO" --pattern "$src" --dir "$tmp"
+          mv "$tmp/$src" "$tmp/$dst"
+          (cd "$tmp" && shasum -a 256 "$dst" > "$dst.sha256")
+          gh release upload "$TAG" --repo "$REPO" "$tmp/$dst" "$tmp/$dst.sha256" --clobber
+          gh release delete-asset "$TAG" "$src" --repo "$REPO" --yes 2> /dev/null || true
+          gh release delete-asset "$TAG" "$src.sha256" --repo "$REPO" --yes 2> /dev/null || true
+
+  publish:
+    needs: [release, macos-dmg]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          draft=$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json isDraft --jq .isDraft 2> /dev/null || echo true)
+          if [ "$draft" = "false" ]; then
+            echo "$TAG is already published"
+            exit 0
+          fi
+          if [ "${{ needs.release.outputs.is_prerelease }}" = "true" ]; then
+            gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --draft=false --prerelease
+          else
+            gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --draft=false --latest
+          fi

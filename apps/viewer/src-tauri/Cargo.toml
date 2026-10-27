@@ -1,0 +1,24 @@
+[package]
+name = "winvm-viewer"
+version = "0.1.0"
+description = "winvm: Windows 11 ARM64 virtual machines on Apple Silicon"
+authors = ["stuffbucket"]
+edition = "2021"
+
+[lib]
+name = "winvm_viewer_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "=2.6.2", features = [] }
+
+[dependencies]
+tauri = { version = "=2.11.2", features = [] }
+tauri-plugin-shell = "=2.3.5"
+serde = { version = "1", features = ["derive"] }
+
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = "s"
+strip = true

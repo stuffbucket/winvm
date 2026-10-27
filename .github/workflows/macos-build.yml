@@ -1,0 +1,31 @@
+name: macOS signed build (manual)
+
+# Re-runs the stuffbucket/macos-builder build for a release that is still a
+# draft (release.yml's macos-dmg job is the normal path). A published release
+# is immutable, so this cannot add a .dmg to one.
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing draft release tag to rebuild, e.g. v0.2.0
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  trigger:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Trigger the build on stuffbucket/macos-builder
+        env:
+          GH_TOKEN: ${{ secrets.MACOS_BUILDER_PAT }}
+          REPO: ${{ github.repository }}
+          TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          gh workflow run build.yml --repo stuffbucket/macos-builder --ref main -f "repo=${REPO}" -f "ref=${TAG}"
+          echo "Triggered; winvm.dmg will appear on the ${TAG} draft."

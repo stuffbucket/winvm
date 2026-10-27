@@ -8,3 +8,8 @@ node_modules/
 *.qcow2
 *.img
 .turbo/
+
+# The app's build outputs: the compiled CLI, Rust targets, staged bundles.
+apps/viewer/src-tauri/binaries/
+apps/viewer/src-tauri/target/
+apps/viewer/src-tauri/gen/

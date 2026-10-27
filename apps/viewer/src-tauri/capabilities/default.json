@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "The main window may call winvm's own commands only.",
+  "windows": ["main"],
+  "permissions": ["core:default"]
+}

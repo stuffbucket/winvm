@@ -4,7 +4,14 @@ on:
   push:
     branches: [main]
   pull_request:
+  # release-please.yml dispatches this for its release PR, whose GITHUB_TOKEN
+  # pushes trigger nothing, with the exact head SHA the check must cover.
   workflow_dispatch:
+    inputs:
+      expected_sha:
+        description: Exact PR head SHA this run must validate
+        required: true
+        type: string
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -30,6 +37,15 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
+      - name: The branch has not moved since dispatch
+        if: github.event_name == 'workflow_dispatch' && github.sha != inputs.expected_sha
+        env:
+          EXPECTED_SHA: ${{ inputs.expected_sha }}
+          ACTUAL_SHA: ${{ github.sha }}
+        run: |
+          echo "::error::Branch moved before CI dispatch: expected ${EXPECTED_SHA}, got ${ACTUAL_SHA}."
+          exit 1
+
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           # Full history (the repository is small): the commit-subject check
