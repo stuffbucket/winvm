@@ -5,7 +5,7 @@
   "version": "0.1.0",
   "identifier": "co.stuffbucket.winvm",
   "build": {
-    "frontendDist": "../ui"
+    "frontendDist": "../dist"
   },
   "app": {
     "withGlobalTauri": true,
@@ -13,22 +13,38 @@
       {
         "label": "main",
         "title": "winvm",
-        "width": 760,
-        "height": 540,
-        "minWidth": 560,
-        "minHeight": 400
+        "width": 1024,
+        "height": 816,
+        "minWidth": 640,
+        "minHeight": 480,
+        "visible": false,
+        "titleBarStyle": "Overlay",
+        "hiddenTitle": true,
+        "trafficLightPosition": {
+          "x": 18,
+          "y": 26
+        }
       }
     ],
     "security": {
-      "csp": "default-src 'self'; style-src 'self'; script-src 'self'"
+      "csp": "default-src 'self'; connect-src 'self' ipc: http://ipc.localhost ws://127.0.0.1:*; img-src 'self' blob: data:; font-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'"
     }
   },
   "bundle": {
     "active": true,
-    "targets": ["app"],
+    "targets": [
+      "app"
+    ],
     "category": "DeveloperTool",
-    "icon": ["icons/32x32.png", "icons/128x128.png", "icons/128x128@2x.png", "icons/icon.icns"],
-    "externalBin": ["binaries/winvm"],
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns"
+    ],
+    "externalBin": [
+      "binaries/winvm"
+    ],
     "macOS": {
       "minimumSystemVersion": "15.0"
     }

@@ -9,7 +9,7 @@ struct Output {
     stderr: String,
 }
 
-const VERBS: &[&str] = &["status", "doctor", "start", "stop", "kill", "open", "setup"];
+const VERBS: &[&str] = &["status", "doctor", "start", "stop", "reboot", "pause", "resume", "kill", "open", "setup"];
 
 #[tauri::command]
 async fn winvm(app: tauri::AppHandle, args: Vec<String>) -> Result<Output, String> {
