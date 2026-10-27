@@ -1,0 +1,89 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  TURBO_TELEMETRY_DISABLED: 1
+
+# Read-only for every job (monimal's reasoning: a token that can write is
+# handed to every action and `run:` block when this is absent).
+permissions:
+  contents: read
+
+# GitHub's default shell has -e without -o pipefail, so `cmd | tee log`
+# reports tee's success.
+defaults:
+  run:
+    shell: bash -eo pipefail {0}
+
+jobs:
+  check:
+    name: check
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # The commit-subject check reads the pull request's commits.
+          fetch-depth: ${{ github.event_name == 'pull_request' && 0 || 1 }}
+
+      - uses: raven-actions/actionlint@3d39aea434753780c3b3d4a1a31c854b4dbf49d7 # v2.2.0
+
+      # pnpm's version comes from packageManager in package.json.
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        with:
+          run_install: false
+
+      # Bun's version comes from .bun-version, the one Bun pin.
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version-file: .bun-version
+
+      - name: Bun is the pinned version
+        run: |
+          want=$(tr -d '[:space:]' < .bun-version)
+          got=$(bun --version)
+          [ "$got" = "$want" ] || { echo "::error::bun $got, .bun-version says $want"; exit 1; }
+
+      - name: Commit subjects are Conventional Commits
+        if: github.event_name == 'pull_request'
+        run: |
+          git log --format=%s "origin/${{ github.base_ref }}..${{ github.event.pull_request.head.sha }}" \
+            | bun scripts/check-commit-msg.ts --subjects
+
+      # Before the install: pnpm rejects a recorded shard host before anything
+      # else runs (stuffbucket/pnpm-hooks).
+      - name: The lockfile records no proxy shard hosts
+        run: bun apply-pnpm-tarball-policy.mjs --check
+
+      - name: Locate pnpm store
+        id: pnpm-store
+        run: echo "path=$(pnpm store path)" >> "$GITHUB_OUTPUT"
+
+      - name: Restore pnpm cache
+        id: pnpm-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ steps.pnpm-store.outputs.path }}
+          key: pnpm-v1-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: pnpm-v1-${{ runner.os }}-
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Save pnpm cache
+        if: github.event_name == 'push' && steps.pnpm-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ steps.pnpm-store.outputs.path }}
+          key: ${{ steps.pnpm-cache.outputs.cache-primary-key }}
+
+      - name: Typecheck and test
+        run: pnpm check
