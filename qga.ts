@@ -26,8 +26,9 @@ export interface ExecResult {
 
 /** A call the agent did not answer in time. Distinct so a caller can recover from it. */
 export class AgentTimeout extends Error {
-  constructor() {
-    super("guest agent timed out")
+  /** Which command, and how long it was given: the evidence when one stalls. */
+  constructor(command = "", timeoutMs = 0) {
+    super(command === "" ? "guest agent timed out" : `guest agent timed out: ${command} after ${String(timeoutMs / 1000)} s`)
     this.name = "AgentTimeout"
   }
 }
@@ -70,7 +71,7 @@ export async function call(
       fn()
     }
     const timer = setTimeout(() => {
-      settle(() => rej(new AgentTimeout()))
+      settle(() => rej(new AgentTimeout(String(payload["execute"] ?? "?"), timeoutMs)))
     }, timeoutMs)
     sock.on("connect", () => {
       const sync = JSON.stringify({ execute: "guest-sync-delimited", arguments: { id } })

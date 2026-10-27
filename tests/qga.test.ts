@@ -157,7 +157,7 @@ describe("qga.call", () => {
 
   it("does not hand a timed-out call's reply to the next call", async () => {
     agent.handler = (req) => (req["execute"] === "slow" ? null : { return: "fresh" })
-    await expect(call(agent.path, { execute: "slow" }, 50)).rejects.toThrow("timed out")
+    await expect(call(agent.path, { execute: "slow" }, 50)).rejects.toThrow("guest agent timed out: slow after 0.05 s")
     // Let the late reply land, so the next connection is handed it first.
     await new Promise((r) => setTimeout(r, 250))
     expect(agent.owed.length).toBeGreaterThan(0)
