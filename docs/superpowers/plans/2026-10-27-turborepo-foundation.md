@@ -106,75 +106,53 @@ git commit -m "build: run winvm on Bun 1.4.3, pinned in .bun-version"
 
 ### Task 2: Install through the package proxy, with shard hosts kept out of the lockfile
 
-Follows monimal (`.npmrc`, `.pnpmfile.cjs`, `scripts/lockfile-shard-hosts.cjs`,
-`scripts/strip-lockfile-hosts.mjs`, and SOURCES.md "Lockfile integrity"). The
-proxy serves tarballs from `ms-feed-N.pkgs.visualstudio.com` hosts whose number
-rotates; pnpm records whichever answered as `tarball:` and a later frozen
-install fails `ERR_PNPM_LOCKFILE_RESOLUTION_VERIFICATION`. Without a `tarball:`
-field pnpm rebuilds the URL from the configured registry, so shard hosts are
-dropped; integrity hashes stay.
+Uses `stuffbucket/pnpm-hooks`, the shared fix stuffbucket's repos use, pinned
+at commit `4935cd694704061d08a96af876ab9de70a3bf4f6`. The proxy serves tarballs
+from `ms-feed-N.pkgs.visualstudio.com` hosts whose number rotates; pnpm records
+whichever answered as `tarball:`, and a later install fails
+`ERR_PNPM_TARBALL_URL_MISMATCH`. With the field absent pnpm rebuilds the URL
+from the configured registry, so the hook omits shard URLs; integrity hashes
+stay. Today's lockfile records 8 of them.
 
 **Files:**
-- Create: `.npmrc`, `.pnpmfile.cjs`, `scripts/lockfile-shard-hosts.cjs`, `scripts/strip-lockfile-hosts.ts`
-- Test: `scripts/strip-lockfile-hosts.test.ts`
-- Modify: `pnpm-lock.yaml` (re-resolved)
+- Create: `.npmrc`; `.pnpmfile.cjs` and `apply-pnpm-tarball-policy.mjs` (copied unchanged from pnpm-hooks at the pinned commit); `pnpm-workspace.yaml` (`pnpmfile: .pnpmfile.cjs`, with a comment naming the pnpm-hooks commit)
+- Modify: `package.json` (`pnpmTarballUrlPolicy`), `pnpm-lock.yaml` (repaired)
 
 **Interfaces:**
 - Produces:
-  - `.npmrc`: `registry=https://packagefeedproxy.microsoft.io/npm/` (public, no token), with monimal's comment.
-  - `scripts/lockfile-shard-hosts.cjs` (CommonJS; pnpm `require`s pnpmfiles): `SHARD_HOST` (`/https?:\/\/ms-feed-\d+\.pkgs\.visualstudio\.com(?=[:/]|$)/`) and `dropShardHostUrls(lockfile) → { dropped, inspected }`, copied from monimal's.
-  - `.pnpmfile.cjs`: `afterAllResolved` calls `dropShardHostUrls` (monimal's, without its settings-package policy hook).
-  - `scripts/strip-lockfile-hosts.ts`: `export function stripShardHosts(text: string): { text: string; stripped: number }` (only `resolution: {…}` lines are touched); `bun scripts/strip-lockfile-hosts.ts` repairs `pnpm-lock.yaml` in place; `--check` exits 1 if any shard host is recorded.
+  - `.npmrc`: `registry=https://packagefeedproxy.microsoft.io/npm/` (public, no token).
+  - `package.json#pnpmTarballUrlPolicy`: `{ "rules": [{ "registry": "https://packagefeedproxy.microsoft.io/npm/", "includeTarballHostSuffixes": ["pkgs.visualstudio.com"], "action": "omit" }] }`.
+  - `node apply-pnpm-tarball-policy.mjs` repairs `pnpm-lock.yaml`; `--check` exits non-zero while any matching tarball URL is recorded. CI runs the `--check` form (Task 5).
 
-- [ ] **Step 1: Write the failing test**
+- [ ] **Step 1: Fetch the hook at the pinned commit**
 
-```ts
-import { expect, it } from "bun:test"
-import { stripShardHosts } from "./strip-lockfile-hosts"
+Run: `for f in .pnpmfile.cjs apply-pnpm-tarball-policy.mjs; do curl -fsSL "https://raw.githubusercontent.com/stuffbucket/pnpm-hooks/4935cd694704061d08a96af876ab9de70a3bf4f6/$f" -o "$f"; done`, then add `.npmrc`, the policy and `pnpm-workspace.yaml` as above.
 
-it("drops shard-host tarballs and keeps the integrity", () => {
-  const line = "    resolution: {integrity: sha512-abc, tarball: https://ms-feed-25.pkgs.visualstudio.com/x/a-1.tgz}"
-  expect(stripShardHosts(line)).toEqual({ text: "    resolution: {integrity: sha512-abc}", stripped: 1 })
-})
+- [ ] **Step 2: See the check catch today's lockfile**
 
-it("keeps a tarball pinned on purpose", () => {
-  const line = "    resolution: {tarball: https://codeload.github.com/o/r/tar.gz/abc}"
-  expect(stripShardHosts(line)).toEqual({ text: line, stripped: 0 })
-})
+Run: `node apply-pnpm-tarball-policy.mjs --check`
+Expected: non-zero exit, reporting 8 URLs (today's `ms-feed-25` entries).
 
-it("touches only resolution lines", () => {
-  const line = "    # see https://ms-feed-3.pkgs.visualstudio.com/x"
-  expect(stripShardHosts(line).stripped).toBe(0)
-})
-```
+- [ ] **Step 3: Repair, and refresh the lockfile's hook checksum**
 
-- [ ] **Step 2: Run it to see it fail**
+Run: `node apply-pnpm-tarball-policy.mjs && pnpm install --lockfile-only && node apply-pnpm-tarball-policy.mjs --check`
+Expected: 8 removed; the check exits 0.
 
-Run: `bun test scripts/strip-lockfile-hosts.test.ts`
-Expected: FAIL, module not found.
+- [ ] **Step 4: A clean frozen install works**
 
-- [ ] **Step 3: Add `.npmrc`, `lockfile-shard-hosts.cjs` and `.pnpmfile.cjs`** from monimal as above, and implement `stripShardHosts` plus the CLI (repair, or `--check`) in `scripts/strip-lockfile-hosts.ts`, importing `SHARD_HOST` from the `.cjs` so the two can't drift (maximal's `scripts/strip-lockfile-hosts.ts` is the TypeScript model).
+Run: `rm -rf node_modules && pnpm install --frozen-lockfile`
+Expected: succeeds (this is what failed at the start). Versions unchanged: `@anthropic-ai/sdk 0.134.0`, `typescript 6.0.3`.
 
-- [ ] **Step 4: Run it to see it pass, and see it catch today's lockfile**
-
-Run: `bun test scripts/strip-lockfile-hosts.test.ts && bun scripts/strip-lockfile-hosts.ts --check`
-Expected: 3 pass; the check exits 1 (today's lockfile records `ms-feed-25` hosts).
-
-- [ ] **Step 5: Re-resolve the lockfile through the proxy**
-
-Run: `rm pnpm-lock.yaml && pnpm install && bun scripts/strip-lockfile-hosts.ts --check && rm -rf node_modules && pnpm install --frozen-lockfile`
-Expected: the first install prints `pnpmfile: dropped N rotating shard-host tarball URL(s)`; the check exits 0; the frozen install from a clean `node_modules` succeeds (this is what failed at the start). Versions unchanged: `@anthropic-ai/sdk 0.134.0`, `typescript 6.0.3`.
-
-- [ ] **Step 6: Typecheck and test**
+- [ ] **Step 5: Typecheck and test**
 
 Run: `pnpm run check`
-Expected: clean; `201 pass, 0 fail` (the flat layout's `bun test` also picks up `scripts/*.test.ts`).
+Expected: clean; `198 pass, 0 fail`.
 
-- [ ] **Step 7: Commit**
+- [ ] **Step 6: Commit**
 
 ```bash
-git add .npmrc .pnpmfile.cjs pnpm-lock.yaml scripts/lockfile-shard-hosts.cjs scripts/strip-lockfile-hosts.ts scripts/strip-lockfile-hosts.test.ts
-git commit -m "build: install through the package proxy and keep shard hosts out of the lockfile"
+git add .npmrc .pnpmfile.cjs apply-pnpm-tarball-policy.mjs pnpm-workspace.yaml package.json pnpm-lock.yaml
+git commit -m "build: install through the package proxy with stuffbucket/pnpm-hooks"
 ```
 
 ---
@@ -183,8 +161,8 @@ git commit -m "build: install through the package proxy and keep shard hosts out
 
 **Files:**
 - Move (`git mv`): every root `*.ts` except `winvm.ts` → `packages/core/src/`; `assets/`, `firmware/`, `web/` → `packages/core/`; `tests/` → `packages/core/tests/`; `winvm.ts` → `apps/cli/src/winvm.ts`
-- Create: `pnpm-workspace.yaml`, `turbo.json`, `packages/core/package.json`, `packages/core/tsconfig.json`, `packages/core/bunfig.toml`, `apps/cli/package.json`, `apps/cli/tsconfig.json`
-- Modify: root `package.json`, `mise.toml`, `.gitignore`; `packages/core/src/paths.ts`, `agent.ts`, `media.ts`, `host.ts`, `ocr.ts`, `diagnose.ts`, `web.ts`, `watch.ts`, `hoststep.ts`; every `packages/core/tests/*.ts` import (`../x` → `../src/x`)
+- Create: `turbo.json`, `packages/core/package.json`, `packages/core/tsconfig.json`, `packages/core/bunfig.toml`, `apps/cli/package.json`, `apps/cli/tsconfig.json`
+- Modify: root `package.json`, `pnpm-workspace.yaml` (add `packages:` `packages/*`, `apps/*`; keep `pnpmfile`), `mise.toml`, `.gitignore`; `packages/core/src/paths.ts`, `agent.ts`, `media.ts`, `host.ts`, `ocr.ts`, `diagnose.ts`, `web.ts`, `watch.ts`, `hoststep.ts`; every `packages/core/tests/*.ts` import (`../x` → `../src/x`)
 - Delete: root `tsconfig.json`, root `bunfig.toml`
 - Test: `packages/core/tests/paths.test.ts`
 
@@ -195,7 +173,7 @@ git commit -m "build: install through the package proxy and keep shard hosts out
   - `export const PACKAGE_DIR: string` in `packages/core/src/paths.ts` = the `packages/core` directory; every lookup of `assets/`, `firmware/`, `web/` resolves from it.
   - `export function cliEntry(): string` in `packages/core/src/paths.ts`: the absolute path of the CLI entry to spawn, from `process.env["WINVM_CLI"]`; throws `Error("WINVM_CLI is not set: start winvm through apps/cli")` when unset.
   - Package `@winvm/cli` with `"bin": { "winvm": "./src/winvm.ts" }`; `apps/cli/src/winvm.ts` sets `process.env["WINVM_CLI"] ??= import.meta.path` before anything else runs, so detached children inherit it.
-  - Root scripts: `build`, `typecheck`, `test` = `turbo run <task>`; `test:scripts` = `bun test scripts`; `check` = `turbo run typecheck test && bun test scripts`; `winvm` = `bun apps/cli/src/winvm.ts`.
+  - Root scripts: `build`, `typecheck`, `test` = `turbo run <task>`; `check` = `turbo run typecheck test`; `winvm` = `bun apps/cli/src/winvm.ts`.
   - `winvm` on `PATH` inside the repository: root `devDependencies` has `"@winvm/cli": "workspace:*"`, and `mise.toml` adds `[env] _.path = ["{{config_root}}/node_modules/.bin"]`.
 
 - [ ] **Step 1: Write the failing test** (`packages/core/tests/paths.test.ts`)
@@ -227,7 +205,7 @@ it("says how to start winvm when it does not know its CLI", () => {
 })
 ```
 
-- [ ] **Step 2: Move the files** with `git mv` as listed, then write the workspace files: `pnpm-workspace.yaml` (`packages/*`, `apps/*`); `turbo.json` with tasks `build` (`dependsOn: ["^build"]`, `outputs: ["dist/**"]`), `typecheck` and `test` (`dependsOn: ["^build"]`, `outputs: []`), `globalDependencies` `["mise.toml", "mise.lock", ".bun-version", "pnpm-workspace.yaml"]`; per-package `package.json` and `tsconfig.json` (today's compiler options; core includes `src/**/*.ts` and `tests/**/*.ts`); `packages/core/bunfig.toml` (`[test] root = "."`). `@anthropic-ai/sdk`, `@types/bun` and `typescript` move to `@winvm/core`; `turbo` goes in the root `devDependencies`. `.gitignore` adds `.turbo/`.
+- [ ] **Step 2: Move the files** with `git mv` as listed, then write the workspace files: `pnpm-workspace.yaml` gains `packages: ["packages/*", "apps/*"]`; `turbo.json` with tasks `build` (`dependsOn: ["^build"]`, `outputs: ["dist/**"]`), `typecheck` and `test` (`dependsOn: ["^build"]`, `outputs: []`), `globalDependencies` `["mise.toml", "mise.lock", ".bun-version", "pnpm-workspace.yaml"]`; per-package `package.json` and `tsconfig.json` (today's compiler options; core includes `src/**/*.ts` and `tests/**/*.ts`); `packages/core/bunfig.toml` (`[test] root = "."`). `@anthropic-ai/sdk`, `@types/bun` and `typescript` move to `@winvm/core`; `turbo` goes in the root `devDependencies`. `.gitignore` adds `.turbo/`.
 
 - [ ] **Step 3: Run the new test to see it fail**
 
@@ -241,7 +219,7 @@ Expected: FAIL, `PACKAGE_DIR` and `cliEntry` are not exported.
 - [ ] **Step 6: Typecheck and test through Turborepo**
 
 Run: `pnpm check`
-Expected: both packages typecheck; core's tests `201 pass, 0 fail` (198 + 3 new); `scripts` tests `3 pass`.
+Expected: both packages typecheck; core's tests `201 pass, 0 fail` (198 + 3 new).
 
 - [ ] **Step 7: The CLI works through the bin**
 
@@ -312,7 +290,7 @@ git commit -m "docs: run winvm through its bin, and a getting-started sequence"
 - Modify: any core test that needs macOS (skip on other platforms with a reason)
 
 **Interfaces:**
-- Consumes: `.bun-version`, `packageManager`, `scripts/strip-lockfile-hosts.ts`, root `check` script.
+- Consumes: `.bun-version`, `packageManager`, `apply-pnpm-tarball-policy.mjs`, root `check` script (Task 5 extends it to `turbo run typecheck test && bun test scripts`, since Task 5 adds the first root script test).
 - Produces: a required-able check named `ci / check`.
 
 - [ ] **Step 1: Bring over the commit-subject check** from `~/github/stuffbucket/maximal/scripts/check-commit-msg.ts` with its accepted types, and a test that accepts `fix(qemu): pass ppi=off only when supported` and rejects `Fixed stuff`.
@@ -322,7 +300,7 @@ git commit -m "docs: run winvm through its bin, and a getting-started sequence"
 Run: `bun test scripts/check-commit-msg.test.ts`
 Expected: PASS.
 
-- [ ] **Step 3: Write `ci.yml`** following monimal's `.github/workflows/ci.yml`: triggers `pull_request` and `push` to `main`; `permissions: contents: read`; `defaults.run.shell: bash -eo pipefail`; job `check` on `ubuntu-latest`: checkout; `pnpm/action-setup` (version from `packageManager`); `oven-sh/setup-bun` with `bun-version-file: .bun-version`; pnpm store cache keyed on `pnpm-lock.yaml` (saved on push only); `bun scripts/strip-lockfile-hosts.ts --check` (before installing, as monimal does); `pnpm install --frozen-lockfile`; on pull requests, the commit-subject check over the PR's commits; `pnpm check`; a step asserting `bun --version` equals `.bun-version`; `actionlint`. Pin each action to the exact version monimal uses.
+- [ ] **Step 3: Write `ci.yml`** following monimal's `.github/workflows/ci.yml`: triggers `pull_request` and `push` to `main`; `permissions: contents: read`; `defaults.run.shell: bash -eo pipefail`; job `check` on `ubuntu-latest`: checkout; `pnpm/action-setup` (version from `packageManager`); `oven-sh/setup-bun` with `bun-version-file: .bun-version`; pnpm store cache keyed on `pnpm-lock.yaml` (saved on push only); `node apply-pnpm-tarball-policy.mjs --check` (before installing; needs `actions/setup-node`); `pnpm install --frozen-lockfile`; on pull requests, the commit-subject check over the PR's commits; `pnpm check`; a step asserting `bun --version` equals `.bun-version`; `actionlint`. Pin each action to the exact version monimal uses.
 
 - [ ] **Step 4: Run the suite as CI will, on Linux**
 
