@@ -83,7 +83,7 @@ describe("RAM formats", () => {
     expect(new Set([ramFileFor("zstd"), ramFileFor("raw"), ramFileFor("mapped")]).size).toBe(3)
   })
   it("mapped: file URI, deferred incoming, multifd channels, both capabilities on", () => {
-    const m = migrationPlan("mapped", "/s/vmstate.mapped", 6)
+    const m = migrationPlan("mapped", "/s/vmstate.mapped", "/rt/bin/zstd", 6)
     expect(m.uri).toBe("file:/s/vmstate.mapped")
     expect(m.incoming).toBe("defer")
     expect(m.parameters["multifd-channels"]).toBe(6)
@@ -94,18 +94,18 @@ describe("RAM formats", () => {
   })
   it("stream formats switch both capabilities OFF, so a QEMU loaded from a mapped save can still zstd", () => {
     for (const f of ["zstd", "raw"] as const) {
-      const m = migrationPlan(f, "/s/x")
+      const m = migrationPlan(f, "/s/x", "/rt/bin/zstd")
       expect(m.capabilities.every((c) => !c.state)).toBe(true)
       expect(m.capabilities.map((c) => c.capability).sort()).toEqual(["mapped-ram", "multifd"])
       expect(m.parameters["multifd-channels"]).toBeUndefined()
       expect(m.incoming).not.toBe("defer")
     }
-    expect(migrationPlan("zstd", "/a b/x").uri).toBe(`exec:zstd -T0 -3 -q -f - -o '/a b/x'`)
-    expect(migrationPlan("zstd", "/a b/x").incoming).toBe(`exec:zstd -dc '/a b/x'`)
-    expect(migrationPlan("raw", "/s/x").incoming).toBe("file:/s/x")
+    expect(migrationPlan("zstd", "/a b/x", "/rt dir/bin/zstd").uri).toBe(`exec:'/rt dir/bin/zstd' -T0 -3 -q -f - -o '/a b/x'`)
+    expect(migrationPlan("zstd", "/a b/x", "/rt dir/bin/zstd").incoming).toBe(`exec:'/rt dir/bin/zstd' -dc '/a b/x'`)
+    expect(migrationPlan("raw", "/s/x", "/rt/bin/zstd").incoming).toBe("file:/s/x")
   })
   it("never caps bandwidth: the guest is stopped while it is saved", () => {
-    expect(migrationPlan("zstd", "/x").parameters["max-bandwidth"]).toBeGreaterThan(2 ** 34)
+    expect(migrationPlan("zstd", "/x", "/rt/bin/zstd").parameters["max-bandwidth"]).toBeGreaterThan(2 ** 34)
   })
 })
 

@@ -3,7 +3,7 @@
  */
 import { describe, expect, it } from "bun:test"
 
-import { MIN_QEMU, parseHasPpi, qemuVersionCheck } from "../src/host"
+import { macosCheck, parseHasPpi, runtimeCheck } from "../src/host"
 
 describe("parseHasPpi", () => {
   it("is false for QEMU 11.0, whose tpm-tis-device has no ppi property", () => {
@@ -33,28 +33,54 @@ describe("parseHasPpi", () => {
   })
 })
 
-describe("qemuVersionCheck", () => {
-  it("rejects QEMU 11.0, whose HVF guests can lose their timer interrupt", () => {
-    const c = qemuVersionCheck("QEMU emulator version 11.0.3\nCopyright (c) 2003-2026 Fabrice Bellard and the QEMU Project developers\n")
-    expect(c.ok).toBe(false)
-    expect(c.label).toBe(`QEMU 11.0.3 (needs ${MIN_QEMU} or later)`)
-    expect(c.hint).toContain("a86024eb2d")
-    expect(c.hint).toContain("brew upgrade")
+describe("runtimeCheck", () => {
+  const manifest = {
+    name: "winvm-runtime",
+    version: "11.1.2-1",
+    qemu: "11.1.2",
+    qemuPatches: "none",
+    components: {},
+    macho: [],
+    files: {},
+  }
+
+  it("says how to get the runtime when there is none", () => {
+    expect(runtimeCheck(null, [])).toMatchObject({ ok: false, label: "runtime (not installed)", hint: "winvm setup" })
   })
 
-  it("accepts 11.1.0 and later", () => {
-    expect(MIN_QEMU).toBe("11.1.0")
-    expect(qemuVersionCheck("QEMU emulator version 11.1.0").ok).toBe(true)
-    expect(qemuVersionCheck("QEMU emulator version 11.1.2").ok).toBe(true)
-    expect(qemuVersionCheck("QEMU emulator version 11.10.0").ok).toBe(true)
-    expect(qemuVersionCheck("QEMU emulator version 12.0.0").ok).toBe(true)
-    expect(qemuVersionCheck("QEMU emulator version 11.1.2").label).toBe("QEMU 11.1.2")
+  it("names the runtime, its QEMU and where it came from when it verifies", () => {
+    expect(runtimeCheck({ dir: "/c/11.1.2-1", source: "cache", manifest }, [])).toEqual({
+      ok: true,
+      label: "runtime 11.1.2-1 (QEMU 11.1.2, cache)",
+      hint: "",
+    })
   })
 
-  it("rejects older majors and minors, and says so when QEMU is missing or unreadable", () => {
-    expect(qemuVersionCheck("QEMU emulator version 10.2.9").ok).toBe(false)
-    expect(qemuVersionCheck("QEMU emulator version 11.0.99").ok).toBe(false)
-    expect(qemuVersionCheck(null)).toMatchObject({ ok: false, label: "QEMU (not found)", hint: "brew install qemu (11.1.0 or later)" })
-    expect(qemuVersionCheck("something else")).toMatchObject({ ok: false, label: "QEMU (version unreadable)" })
+  it("refuses a runtime that does not verify, naming the first problem", () => {
+    expect(runtimeCheck({ dir: "/c/11.1.2-1", source: "cache", manifest }, ["bin/zstd does not match manifest.json", "x"])).toEqual({
+      ok: false,
+      label: "runtime 11.1.2-1 does not verify: bin/zstd does not match manifest.json (and 1 more)",
+      hint: "winvm setup",
+    })
+  })
+
+  it("accepts an override without a manifest, saying it is unverified", () => {
+    expect(runtimeCheck({ dir: "/x", source: "override", manifest: null }, ["no manifest.json"])).toEqual({
+      ok: true,
+      label: "runtime override /x (unverified: no manifest.json)",
+      hint: "",
+    })
+  })
+})
+
+describe("macosCheck", () => {
+  it("accepts macOS 15 and later on Apple Silicon", () => {
+    expect(macosCheck("26.7.2", "arm64")).toEqual({ ok: true, label: "macOS 26.7.2 on Apple Silicon", hint: "" })
+    expect(macosCheck("15.0", "arm64").ok).toBe(true)
+  })
+
+  it("refuses older macOS and Intel Macs", () => {
+    expect(macosCheck("14.6.1", "arm64")).toMatchObject({ ok: false, hint: "winvm needs macOS 15 or later" })
+    expect(macosCheck("26.1", "x86_64")).toMatchObject({ ok: false, hint: "winvm needs an Apple Silicon Mac" })
   })
 })

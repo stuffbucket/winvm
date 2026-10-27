@@ -269,7 +269,7 @@ switch (sub) {
     process.exit(commands.diagnoseCmd(args))
   // eslint-disable-next-line no-fallthrough
   case "setup":
-    process.exit(commands.setup(args))
+    process.exit(await commands.setup(args))
   // eslint-disable-next-line no-fallthrough
   case "rmi":
     process.exit(commands.rmi(args))

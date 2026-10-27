@@ -186,7 +186,12 @@ export interface ImageMeta {
   /** The guest can boot with its disk on virtio-blk, which is what live snapshots require. */
   readonly virtioBoot: boolean
   readonly created: string
+  readonly runtime?: string
+  readonly isoSha256?: string
+  readonly guestToolsSha256?: string
 }
+
+export const newImageMeta = (m: Required<ImageMeta>): ImageMeta => ({ ...m })
 
 export function readImageMeta(image: string): ImageMeta | null {
   const f = imageMetaPath(image)
