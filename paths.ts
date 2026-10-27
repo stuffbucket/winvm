@@ -109,7 +109,10 @@ export function pathsFor(name: string): Paths {
 
 export interface InstanceMeta {
   readonly image: string
-  /** VNC display number; the port is 5900 + this. Assigned once, at creation. */
+  /**
+   * VNC display number; the port is 5900 + this. Assigned at creation, and
+   * moved at launch only if something else on the host holds it (vnc.ensureFreeDisplay).
+   */
   readonly vnc: number
   readonly created: string
 }

@@ -17,7 +17,7 @@ import { media } from "./paths"
 import { RAMFB, displayArgs, readDisplay } from "./display"
 import * as qga from "./qga"
 import * as qmp from "./qmp"
-import { applyPassword, vncArg } from "./vnc"
+import { applyPassword, ensureFreeDisplay, vncArg } from "./vnc"
 
 export interface LaunchOptions {
   /** Attach the Windows ISO, guest tools and seed. Only a base build needs them. */
@@ -263,9 +263,12 @@ export async function launch(name: string, p: Paths, meta: InstanceMeta, o: Laun
   // No QEMU runs here (launch is only reached then), so any monitor socket is
   // a dead one's; gone, its reappearance means THIS QEMU created it.
   if (o.incoming !== undefined) rmSync(p.qmp, { force: true })
+  // A display another home's instance (or anything else) is listening on would
+  // fail QEMU's bind; move to a free one first.
+  const m = await ensureFreeDisplay(name, p, meta)
 
   const log = openSync(p.qemuLog, "w")
-  const proc = spawn("qemu-system-aarch64", [...qemuArgs(name, p, meta, o)], {
+  const proc = spawn("qemu-system-aarch64", [...qemuArgs(name, p, m, o)], {
     detached: true,
     stdio: ["ignore", log, log],
   })
