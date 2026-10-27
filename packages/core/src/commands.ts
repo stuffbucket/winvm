@@ -1072,7 +1072,7 @@ export const USAGE =
   "  save    [-i name] [name] [--fast]  save the running guest to files (default name: a timestamp)\n" +
   "  load    [-i name] [name] [--no-watch]  load a save, running or stopped (default: the newest)\n" +
   "                                into a stopped instance it starts the watcher, like start\n" +
-  "  saves   [-i name] [rm <name>] list saves (kind, size, compatible) or delete one\n" +
+  "  saves   [-i name] [rm <name>] [--json]  list saves (kind, size, compatible) or delete one\n" +
   "  golden  create|reset [-i name] [--name golden]  settled mapped-ram save; reset to it in ~1 s\n" +
   "  pause | resume [-i name]      freeze / unfreeze the guest (resume fixes its clock)\n" +
   "  stow    [-i name]             save and shut QEMU down; the next start recalls it\n" +

@@ -322,6 +322,11 @@ switch (sub) {
   case "cua-serve":
     process.exit(await cuacmds.cua(args, "serve"))
   // eslint-disable-next-line no-fallthrough
+  case "help":
+  case "--help":
+    console.log(commands.USAGE)
+    process.exit(0)
+  // eslint-disable-next-line no-fallthrough
   default:
     console.error(commands.USAGE)
     process.exit(2)
