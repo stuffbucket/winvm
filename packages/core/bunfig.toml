@@ -1,0 +1,3 @@
+[test]
+# `bun test` runs only this package's own tests (tests/**).
+root = "."

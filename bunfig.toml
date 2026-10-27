@@ -1,4 +1,0 @@
-[test]
-# `bun test` runs only this tool's own tests (tests/**). Kept in the tool's
-# directory so the config travels with it if the tool is copied elsewhere.
-root = "."

@@ -1,0 +1,21 @@
+{
+  "name": "@winvm/cli",
+  "version": "0.1.0",
+  "private": true,
+  "description": "The winvm command",
+  "license": "MIT",
+  "type": "module",
+  "bin": {
+    "winvm": "./src/winvm.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "@winvm/core": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/bun": "1.4.0",
+    "typescript": "6.0.3"
+  }
+}

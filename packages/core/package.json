@@ -1,0 +1,22 @@
+{
+  "name": "@winvm/core",
+  "version": "0.1.0",
+  "private": true,
+  "description": "winvm's library: QEMU, the guest agent, saves, jobs and computer use",
+  "license": "MIT",
+  "type": "module",
+  "exports": {
+    "./*": "./src/*.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "bun test"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "0.134.0"
+  },
+  "devDependencies": {
+    "@types/bun": "1.4.0",
+    "typescript": "6.0.3"
+  }
+}

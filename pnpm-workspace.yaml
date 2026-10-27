@@ -4,3 +4,7 @@
 # policy in package.json#pnpmTarballUrlPolicy. To update, fetch both files at a
 # newer commit, run `pnpm install --lockfile-only`, and commit the lockfile.
 pnpmfile: .pnpmfile.cjs
+
+packages:
+  - "packages/*"
+  - "apps/*"

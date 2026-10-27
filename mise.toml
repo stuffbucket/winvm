@@ -12,3 +12,7 @@ pnpm = "12.3.4"
 [settings]
 idiomatic_version_file_enable_tools = ["bun"]
 lockfile = true
+
+# `winvm` (the @winvm/cli bin, linked by pnpm) on PATH inside the repository.
+[env]
+_.path = ["{{config_root}}/node_modules/.bin"]
