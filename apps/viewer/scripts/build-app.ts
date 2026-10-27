@@ -23,6 +23,7 @@ if (version !== undefined) {
 }
 const want = (JSON.parse(readFileSync(CONF, "utf8")) as { version: string }).version
 
+step("bun", [resolve(VIEWER, "scripts", "build-ui.ts")])
 step("bun", [resolve(VIEWER, "scripts", "build-sidecar.ts")])
 rmSync(APP, { recursive: true, force: true })
 step("pnpm", ["exec", "tauri", "build", "--bundles", "app"], VIEWER)

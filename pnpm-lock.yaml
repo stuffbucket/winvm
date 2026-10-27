@@ -132,16 +132,41 @@ importers:
         version: 6.0.3
 
   apps/viewer:
+    dependencies:
+      intl-messageformat:
+        specifier: 11.2.9
+        version: 11.2.9
+      react:
+        specifier: 18.3.1
+        version: 18.3.1
+      react-dom:
+        specifier: 18.3.1
+        version: 18.3.1(react@18.3.1)
+      zod:
+        specifier: 4.1.11
+        version: 4.1.11
     devDependencies:
       '@tauri-apps/cli':
         specifier: 2.11.1
         version: 2.11.1
+      '@types/bun':
+        specifier: 1.4.0
+        version: 1.4.0
+      '@types/react':
+        specifier: 18.3.12
+        version: 18.3.12
+      '@types/react-dom':
+        specifier: 18.3.1
+        version: 18.3.1
+      typescript:
+        specifier: 6.0.3
+        version: 6.0.3
 
   packages/core:
     dependencies:
       '@anthropic-ai/sdk':
         specifier: 0.134.0
-        version: 0.134.0
+        version: 0.134.0(zod@4.1.11)
     devDependencies:
       '@types/bun':
         specifier: 1.4.0
@@ -164,6 +189,15 @@ packages:
   '@babel/runtime@7.29.10':
     resolution: {integrity: sha512-NpugTzbKgGrNe45Ui32cN8vCFFMxVtP/9rtfwv0nP5FRDAjvYBxJcLVpYA9mr1jxP6cnIT7x9LUzuDTbWYYNRA==}
     engines: {node: '>=6.9.0'}
+
+  '@formatjs/fast-memoize@3.1.6':
+    resolution: {integrity: sha1-/KFqfWD4nfSPUG8TD1giPX2BwqI=}
+
+  '@formatjs/icu-messageformat-parser@3.5.12':
+    resolution: {integrity: sha1-EgOE53Z/w3QadAxwBGPa/3zL8Eg=}
+
+  '@formatjs/icu-skeleton-parser@2.1.10':
+    resolution: {integrity: sha1-pyhZM5xozinVldJ8SBEVpQuLZSc=}
 
   '@opentelemetry/api@1.9.1':
     resolution: {integrity: sha1-wbA0beM2ulWvLVp5cIggN7rt7AU=}
@@ -284,15 +318,49 @@ packages:
   '@types/node@26.6.5':
     resolution: {integrity: sha512-uMzsv9stDdofIZBx4UGh4Z9ZgXnGC9seRDscilBcTHAeOFk67MZg/k9bWVfO+bk4qZmG+l52hRnLwUiH2LnJTg==}
 
+  '@types/prop-types@15.7.15':
+    resolution: {integrity: sha1-5uWobWAr6spxzlFj+t9fldcJMcc=}
+
+  '@types/react-dom@18.3.1':
+    resolution: {integrity: sha1-HkZUwIqc3PtllMeArFm1Wq1C/gc=}
+
+  '@types/react@18.3.12':
+    resolution: {integrity: sha1-mUGfGCzNaRUYE7fuJLeS/gh3T2A=}
+
   bun-types@1.4.0:
     resolution: {integrity: sha1-IJfAcSoY2G98lCXCU4xl6xhjixM=}
+
+  csstype@3.2.3:
+    resolution: {integrity: sha1-7EjA8+mT5QZIyG2lWeJhCZXPmJo=}
 
   fast-sha256@1.3.0:
     resolution: {integrity: sha1-eRa6IFTuslWYJgjMzQ9mYMebeuY=}
 
+  intl-messageformat@11.2.9:
+    resolution: {integrity: sha1-roZt9ccqC2aT8JNsK5oVTJxzotI=}
+
+  js-tokens@4.0.0:
+    resolution: {integrity: sha1-GSA/tZmR35jjoocFDUZHzerzJJk=}
+
   json-schema-to-ts@3.1.1:
     resolution: {integrity: sha1-gfOsr1o0c2SS9vX1GHDvns4cqFM=}
     engines: {node: '>=16'}
+
+  loose-envify@1.4.0:
+    resolution: {integrity: sha1-ce5R+nvkyuwaY4OffmgtgTLTDK8=}
+    hasBin: true
+
+  react-dom@18.3.1:
+    resolution: {integrity: sha1-wiZdeVEbV9R5s90/36UVNklMXLQ=}
+    peerDependencies:
+      react: ^18.3.1
+
+  react@18.3.1:
+    resolution: {integrity: sha1-SauJIAnFOTNiW9FrJTP8dUyrKJE=}
+    engines: {node: '>=0.10.0'}
+
+  scheduler@0.23.2:
+    resolution: {integrity: sha1-QUumSjsoKJLpRM8hCOzAeNEVzcM=}
 
   standardwebhooks@1.1.1:
     resolution: {integrity: sha1-JbmPorvk7a17QneBNckjVj49Xi8=}
@@ -312,15 +380,28 @@ packages:
   undici-types@8.9.0:
     resolution: {integrity: sha1-4kDZfItdheU0fOc9JYZceQbB7J8=}
 
+  zod@4.1.11:
+    resolution: {integrity: sha1-Sqti92z9RebGFmUZujGy6gGfdfU=}
+
 snapshots:
 
-  '@anthropic-ai/sdk@0.134.0':
+  '@anthropic-ai/sdk@0.134.0(zod@4.1.11)':
     dependencies:
       '@opentelemetry/api': 1.9.1
       json-schema-to-ts: 3.1.1
       standardwebhooks: 1.1.1
+    optionalDependencies:
+      zod: 4.1.11
 
   '@babel/runtime@7.29.10': {}
+
+  '@formatjs/fast-memoize@3.1.6': {}
+
+  '@formatjs/icu-messageformat-parser@3.5.12':
+    dependencies:
+      '@formatjs/icu-skeleton-parser': 2.1.10
+
+  '@formatjs/icu-skeleton-parser@2.1.10': {}
 
   '@opentelemetry/api@1.9.1': {}
 
@@ -399,16 +480,54 @@ snapshots:
     dependencies:
       undici-types: 8.9.0
 
+  '@types/prop-types@15.7.15': {}
+
+  '@types/react-dom@18.3.1':
+    dependencies:
+      '@types/react': 18.3.12
+
+  '@types/react@18.3.12':
+    dependencies:
+      '@types/prop-types': 15.7.15
+      csstype: 3.2.3
+
   bun-types@1.4.0:
     dependencies:
       '@types/node': 26.6.5
 
+  csstype@3.2.3: {}
+
   fast-sha256@1.3.0: {}
+
+  intl-messageformat@11.2.9:
+    dependencies:
+      '@formatjs/fast-memoize': 3.1.6
+      '@formatjs/icu-messageformat-parser': 3.5.12
+
+  js-tokens@4.0.0: {}
 
   json-schema-to-ts@3.1.1:
     dependencies:
       '@babel/runtime': 7.29.10
       ts-algebra: 2.0.0
+
+  loose-envify@1.4.0:
+    dependencies:
+      js-tokens: 4.0.0
+
+  react-dom@18.3.1(react@18.3.1):
+    dependencies:
+      loose-envify: 1.4.0
+      react: 18.3.1
+      scheduler: 0.23.2
+
+  react@18.3.1:
+    dependencies:
+      loose-envify: 1.4.0
+
+  scheduler@0.23.2:
+    dependencies:
+      loose-envify: 1.4.0
 
   standardwebhooks@1.1.1:
     dependencies:
@@ -429,3 +548,5 @@ snapshots:
   typescript@6.0.3: {}
 
   undici-types@8.9.0: {}
+
+  zod@4.1.11: {}

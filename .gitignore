@@ -10,6 +10,7 @@ node_modules/
 .turbo/
 
 # The app's build outputs: the compiled CLI, Rust targets, staged bundles.
+apps/viewer/dist/
 apps/viewer/src-tauri/binaries/
 apps/viewer/src-tauri/target/
 apps/viewer/src-tauri/gen/

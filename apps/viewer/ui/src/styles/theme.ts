@@ -1,0 +1,161 @@
+export const fontStacks = {
+  display: '"Fraunces", Georgia, "Times New Roman", serif',
+  body: '"Commissioner", "Segoe UI", Helvetica, Arial, sans-serif',
+  mono: 'ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace',
+} as const;
+
+export const text = {
+  xs: "0.75rem",
+  sm: "0.875rem",
+  base: "1rem",
+  md: "1.125rem",
+  lg: "1.25rem",
+  xl: "1.5rem",
+  "2xl": "2rem",
+  "3xl": "2.5rem",
+  "4xl": "3rem",
+} as const;
+
+export const weight = {
+  base: "400",
+  md: "500",
+  lg: "600",
+  xl: "600",
+  "2xl": "700",
+} as const;
+
+export const leading = {
+  base: "1.6",
+  lg: "1.4",
+  xl: "1.3",
+  "2xl": "1.2",
+} as const;
+
+export const tracking = {
+  xl: "-0.01em",
+  "2xl": "-0.015em",
+} as const;
+
+export const spacing = {
+  1: "4px",
+  2: "8px",
+  3: "12px",
+  4: "16px",
+  5: "24px",
+  6: "32px",
+  7: "48px",
+  8: "64px",
+} as const;
+
+export const radii = {
+  input: "6px",
+  card: "8px",
+  chip: "4px",
+  pill: "9999px",
+} as const;
+
+export const borderWidth = {
+  hairline: "1px",
+  thin: "1px",
+  thick: "2px",
+  heavy: "4px",
+} as const;
+
+export const size = {
+  xs: "12px",
+  sm: "16px",
+  md: "20px",
+  lg: "24px",
+  xl: "32px",
+  "2xl": "40px",
+} as const;
+
+export const elevation = {
+  card: "0 1px 2px rgb(0 0 0 / 0.06)",
+  modal: "0 8px 24px rgb(0 0 0 / 0.18)",
+  tooltip: "0 2px 6px rgb(0 0 0 / 0.1)",
+} as const;
+
+/** Identity only (brand mark, requirement icon) — never a control, link or text. */
+export const brand = {
+  color: "#c8334a",
+} as const;
+
+/**
+ * Theme-independent interaction colors. The accent fill itself is per theme
+ * (`themes.*.accent`); its label stays white in both. `destructive` is the
+ * destructive *button fill* only — error text and icons use `statusError`.
+ */
+export const accent = {
+  fg: "#ffffff",
+  destructive: "#b32d3f",
+  destructiveFg: "#ffffff",
+} as const;
+
+/** Behind a modal dialog, in both themes. */
+export const scrim = {
+  color: "rgb(0 0 0 / 0.5)",
+} as const;
+
+export const focusRing = {
+  width: "2px",
+  offset: "2px",
+  color: "var(--accent)",
+  expr: "var(--focus-ring-width) solid var(--focus-ring-color)",
+} as const;
+
+export const layout = {
+  contentMax: "640px",
+  panelWidth: "320px",
+} as const;
+
+/**
+ * Theme-dependent colors. Every key must exist in both themes. The
+ * generator (apps/viewer/scripts/generate-css-tokens.ts) emits dark as the default,
+ * switches to light when the OS appearance is light, and lets a
+ * `data-theme="dark" | "light"` attribute on <html> pin either one.
+ *
+ * Each value is chosen against all three surfaces of its own theme
+ * (maximal's packages/storybook contrast audit checked them):
+ *   text-*, link*, status-*   ≥ 4.5:1 — usable as text, so also as icons
+ *   accent, border-strong     ≥ 3:1   — controls, focus ring, input borders
+ *   accent behind white text  ≥ 4.5:1 — primary button labels
+ * `link` doubles as the accent family's text color: anything teal that is
+ * text (links, "Copied", accent figures) uses `link`, never `accent`.
+ */
+export const themes = {
+  dark: {
+    surfaceBase: "#0a0a0a",
+    surfaceCard: "#161616",
+    surfaceControl: "#1f1f1f",
+    textStrong: "#f5f5f5",
+    textBaseColor: "#d4d4d4",
+    textMuted: "#8a8a8a",
+    borderSubtle: "#2a2a2a",
+    borderStrong: "#737373",
+    accent: "#437e89",
+    link: "#7fc1d2",
+    linkHover: "#a8d8e3",
+    statusError: "#f87171",
+    statusSuccess: "#22c55e",
+    statusWarning: "#eab308",
+    statusInfo: "#38bdf8",
+  },
+  light: {
+    surfaceBase: "#fafafa",
+    surfaceCard: "#ffffff",
+    surfaceControl: "#f0f0f0",
+    textStrong: "#0a0a0a",
+    textBaseColor: "#2a2a2a",
+    textMuted: "#6a6a6a",
+    borderSubtle: "#e5e5e5",
+    borderStrong: "#8a8a8a",
+    accent: "#36646e",
+    link: "#2d6470",
+    linkHover: "#1e5560",
+    statusError: "#b91c1c",
+    statusSuccess: "#137333",
+    statusWarning: "#8a5a00",
+    statusInfo: "#0369a1",
+  },
+} as const satisfies Record<"dark" | "light", Record<string, string>>;
