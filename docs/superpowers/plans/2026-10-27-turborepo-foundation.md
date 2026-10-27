@@ -4,7 +4,7 @@
 
 **Goal:** winvm runs on Bun 1.4.3 as a pnpm + Turborepo monorepo (`packages/core`, `apps/cli`) with pull-request CI, behaving exactly as it does today.
 
-**Architecture:** Pin Bun 1.4.3 first and prove nothing regressed, in the flat layout. Then regenerate the lockfile against public npm. Then move every module with `git mv` into `packages/core` (library, assets, firmware, old web page, tests) and the entry point into `apps/cli`; replace the runtime path lookups that assumed one flat directory. Last, add CI on hosted runners.
+**Architecture:** Pin Bun 1.4.3 first and prove nothing regressed, in the flat layout. Then re-resolve the lockfile through the package proxy, with rotating shard hosts kept out of it (monimal's pattern). Then move every module with `git mv` into `packages/core` (library, assets, firmware, old web page, tests) and the entry point into `apps/cli`; replace the runtime path lookups that assumed one flat directory. Last, add CI on hosted runners.
 
 **Tech Stack:** Bun 1.4.3, TypeScript 6.0.3, pnpm 12.3.4 workspaces, Turborepo 2.11, mise, GitHub Actions.
 
@@ -35,7 +35,7 @@ creates).
 
 - Bun **1.4.3**, pinned only in `.bun-version`; mise and CI read that file. Never `latest`.
 - pnpm **12.3.4** (`packageManager` and `mise.toml`, the versions winvm already uses); Turborepo `^2.11.4` (monimal's).
-- Install resolves against the public npm registry; no private feed host may appear in `pnpm-lock.yaml`.
+- Installs go through the package proxy in the committed `.npmrc` (`https://packagefeedproxy.microsoft.io/npm/`, public, no token); no rotating `ms-feed-N.pkgs.visualstudio.com` host may appear in `pnpm-lock.yaml`.
 - File moves use `git mv` so history follows; no compatibility shims for the old layout.
 - `jobs/` and `docs/` stay at the repository root.
 - Disk use stays small: pnpm's shared store; no copies of base images; no new caches beyond pnpm's and Turborepo's.
@@ -47,7 +47,7 @@ creates).
 
 - **Running from another directory**: `winvm doctor` and `winvm ls` from `/tmp` must find `assets/`, `firmware/` and `web/` (Task 3 Step 8).
 - **Processes winvm spawns detached** (idle watcher, `winvm web` server, job host steps) must find the CLI after the move, including when started from a non-repo directory (Task 3, `cliEntry` test and Step 8).
-- **A fresh clone on a machine without the private feed** must install (Task 2 lockfile check).
+- **A fresh clone, or CI, installing with `--frozen-lockfile`** must succeed whichever proxy shard answers (Task 2 Step 5, and CI).
 - **Existing `WINVM_HOME` state** (instances, saves, expanded firmware made by the flat layout) keeps working (Task 3 Step 9, the cage check against `~/.local/state/cage-winvm`).
 - **Bun 1.4.3's HTTP client and server** keep winvm#3's behaviour: a guest command longer than 300 s returns its output (Task 1 Step 5).
 
@@ -241,7 +241,7 @@ Expected: FAIL, `PACKAGE_DIR` and `cliEntry` are not exported.
 - [ ] **Step 6: Typecheck and test through Turborepo**
 
 Run: `pnpm check`
-Expected: both packages typecheck; core's tests `201 pass, 0 fail` (198 + 3 new); `scripts` tests `2 pass`.
+Expected: both packages typecheck; core's tests `201 pass, 0 fail` (198 + 3 new); `scripts` tests `3 pass`.
 
 - [ ] **Step 7: The CLI works through the bin**
 
@@ -312,7 +312,7 @@ git commit -m "docs: run winvm through its bin, and a getting-started sequence"
 - Modify: any core test that needs macOS (skip on other platforms with a reason)
 
 **Interfaces:**
-- Consumes: `.bun-version`, `packageManager`, `scripts/check-lockfile-hosts.ts`, root `check` script.
+- Consumes: `.bun-version`, `packageManager`, `scripts/strip-lockfile-hosts.ts`, root `check` script.
 - Produces: a required-able check named `ci / check`.
 
 - [ ] **Step 1: Bring over the commit-subject check** from `~/github/stuffbucket/maximal/scripts/check-commit-msg.ts` with its accepted types, and a test that accepts `fix(qemu): pass ppi=off only when supported` and rejects `Fixed stuff`.
@@ -322,7 +322,7 @@ git commit -m "docs: run winvm through its bin, and a getting-started sequence"
 Run: `bun test scripts/check-commit-msg.test.ts`
 Expected: PASS.
 
-- [ ] **Step 3: Write `ci.yml`** following monimal's `.github/workflows/ci.yml`: triggers `pull_request` and `push` to `main`; `permissions: contents: read`; `defaults.run.shell: bash -eo pipefail`; job `check` on `ubuntu-latest`: checkout; `pnpm/action-setup` (version from `packageManager`); `oven-sh/setup-bun` with `bun-version-file: .bun-version`; pnpm store cache keyed on `pnpm-lock.yaml` (saved on push only); `pnpm install --frozen-lockfile`; `bun scripts/check-lockfile-hosts.ts`; on pull requests, the commit-subject check over the PR's commits; `pnpm check`; a step asserting `bun --version` equals `.bun-version`; `actionlint`. Pin each action to the exact version monimal uses.
+- [ ] **Step 3: Write `ci.yml`** following monimal's `.github/workflows/ci.yml`: triggers `pull_request` and `push` to `main`; `permissions: contents: read`; `defaults.run.shell: bash -eo pipefail`; job `check` on `ubuntu-latest`: checkout; `pnpm/action-setup` (version from `packageManager`); `oven-sh/setup-bun` with `bun-version-file: .bun-version`; pnpm store cache keyed on `pnpm-lock.yaml` (saved on push only); `bun scripts/strip-lockfile-hosts.ts --check` (before installing, as monimal does); `pnpm install --frozen-lockfile`; on pull requests, the commit-subject check over the PR's commits; `pnpm check`; a step asserting `bun --version` equals `.bun-version`; `actionlint`. Pin each action to the exact version monimal uses.
 
 - [ ] **Step 4: Run the suite as CI will, on Linux**
 
