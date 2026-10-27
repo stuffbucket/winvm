@@ -4,10 +4,10 @@ import { installCli, outputText, winvm } from "../../backend"
 import type { Checks, Connection, Phase, Status } from "../../model"
 import { parseChecks, parseConnection, parseStatus, phase } from "../../model"
 
-export type Verb = "start" | "stop" | "reboot" | "pause" | "resume" | "kill" | "setup"
+export type Verb = "start" | "stop" | "reboot" | "pause" | "resume" | "kill" | "setup" | "save" | "load"
 
 export interface Ran {
-  readonly verb: Verb | "open"
+  readonly verb: Verb | "open" | "put"
   readonly code: number
   readonly output: string
 }
@@ -26,7 +26,8 @@ export interface Winvm {
   readonly last: Ran | null
   readonly cliPath: string | null
   select(name: string): void
-  act(verb: Verb): Promise<void>
+  /** Runs a verb on this instance; `arg` names the save for save and load. */
+  act(verb: Verb, arg?: string): Promise<void>
   openScreenSharing(): Promise<void>
   installCommand(): Promise<void>
   dismissFailure(): void
@@ -141,12 +142,13 @@ export function useWinvm(): Winvm {
   }, [live, pid, name, connection, polls])
 
   const act = useCallback(
-    async (verb: Verb): Promise<void> => {
+    async (verb: Verb, arg?: string): Promise<void> => {
       if (name === null && verb !== "setup") return
       setBusy(verb)
       setFailure(null)
       try {
-        const out = verb === "setup" ? await winvm("setup") : await winvm(verb, "-i", name ?? "default")
+        const extra = arg === undefined || arg === "" ? [] : [arg]
+        const out = verb === "setup" ? await winvm("setup") : await winvm(verb, "-i", name ?? "default", ...extra)
         const ran: Ran = { verb, code: out.code, output: outputText(out) }
         setLast(ran)
         if (out.code !== 0) setFailure(ran)

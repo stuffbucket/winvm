@@ -168,18 +168,39 @@ export function startSteps(created: boolean, s: Status | null): Step[] {
   return reached.map((r, i) => ({ key: r.key, state: r.done ? "done" : i === firstTodo ? "current" : "todo" }))
 }
 
-export interface Fact {
-  readonly key: string
-  readonly values: Record<string, string | number>
+/** What the instance is, labelled: image, memory, processors, changes since the image, saves. */
+export function facts(s: Status): Row[] {
+  const out: Row[] = []
+  if (s.image !== null) out.push({ key: "fact.image", value: s.image })
+  if (s.memoryMiB !== null) out.push({ key: "fact.memory", value: formatMemory(s.memoryMiB) })
+  if (s.cpus !== null) out.push({ key: "fact.cpus", value: String(s.cpus) })
+  if (s.overlayBytes !== null) out.push({ key: "fact.changes", value: formatSize(s.overlayBytes) })
+  if (s.saves.count > 0) out.push({ key: "fact.saves", value: String(s.saves.count) })
+  return out
 }
 
-/** What the instance is, for one line under its state: image, processors, memory, changes, saves. */
-export function facts(s: Status): Fact[] {
-  const out: Fact[] = []
-  if (s.image !== null) out.push({ key: "fact.image", values: { name: s.image } })
-  if (s.cpus !== null) out.push({ key: "fact.cpus", values: { count: s.cpus } })
-  if (s.memoryMiB !== null) out.push({ key: "fact.memory", values: { size: formatMemory(s.memoryMiB) } })
-  if (s.overlayBytes !== null) out.push({ key: "fact.changes", values: { size: formatSize(s.overlayBytes) } })
-  if (s.saves.count > 0) out.push({ key: "fact.saves", values: { count: s.saves.count } })
-  return out
+const SaveEntry = z.object({
+  name: z.string(),
+  kind: z.string(),
+  createdAt: z.string(),
+  bytes: z.number(),
+  compatible: z.boolean().nullable(),
+  note: z.string().optional(),
+})
+
+export type SaveEntry = z.infer<typeof SaveEntry>
+
+/** `winvm saves --json`. */
+export const parseSaves = (stdout: string): SaveEntry[] | null => z.array(SaveEntry).safeParse(json(stdout)).data ?? null
+
+export interface Share {
+  readonly url: string
+  readonly token: string
+}
+
+/** The endpoint and bearer token `winvm cua serve` prints when it is ready. */
+export function parseShare(stdout: string): Share | null {
+  const url = / on (http:\/\/127\.0\.0\.1:\d+)/.exec(stdout)?.[1]
+  const token = /^\s*token (\S+)$/m.exec(stdout)?.[1]
+  return url === undefined || token === undefined ? null : { url, token }
 }

@@ -71,22 +71,16 @@ html[data-os="macos"] .toolbar {
   padding-inline-start: calc(var(--space-8) + var(--space-6));
 }
 
-.toolbar__instance {
+.toolbar__lead {
   display: flex;
   align-items: center;
-  gap: var(--space-2);
+  gap: var(--space-3);
   flex: 1 1 auto;
   min-width: 0;
+  align-self: stretch;
 }
 
-.toolbar__name {
-  font-size: var(--text-sm);
-  font-weight: var(--weight-md);
-  color: var(--text-strong);
-  white-space: nowrap;
-}
-
-.toolbar__state {
+.toolbar__activity {
   font-size: var(--text-sm);
   color: var(--text-muted);
   white-space: nowrap;
@@ -113,7 +107,7 @@ html[data-os="macos"] .toolbar {
 .toolbar__group {
   display: flex;
   align-items: center;
-  gap: var(--space-1);
+  gap: var(--space-2);
 }
 
 .toolbar__divider {
@@ -123,27 +117,9 @@ html[data-os="macos"] .toolbar {
   background: var(--border-subtle);
 }
 
-/* ---- Status dot ---- */
-.dot {
-  flex: 0 0 auto;
-  display: inline-block;
-  width: var(--size-xs);
-  height: var(--size-xs);
-  border-radius: var(--radius-pill);
-  background: var(--text-muted);
-}
-
-.dot--running {
-  background: var(--status-success);
-}
-
-.dot--starting,
-.dot--paused {
-  background: var(--status-warning);
-}
-
-/* ---- Stage: the display and the panel beside it ---- */
+/* ---- Stage: the display on its backdrop; the panel over it ---- */
 .stage {
+  position: relative;
   display: flex;
   flex: 1 1 auto;
   min-height: 0;
@@ -152,10 +128,19 @@ html[data-os="macos"] .toolbar {
 .display-area {
   display: flex;
   flex-direction: column;
-  gap: var(--space-3);
   flex: 1 1 auto;
   min-width: 0;
-  padding: var(--space-4);
+  background:
+    radial-gradient(120% 90% at 12% 8%, var(--backdrop-glow-accent) 0%, transparent 62%),
+    radial-gradient(90% 80% at 92% 96%, var(--backdrop-glow-brand) 0%, transparent 58%),
+    var(--backdrop-base);
+}
+
+.notices {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-4) 0;
 }
 
 /* Sized by the space left, so the display can fit itself into it. */
@@ -167,35 +152,46 @@ html[data-os="macos"] .toolbar {
   container-type: size;
 }
 
-/* Where the guest's screen is: the guest display's own shape, as large as
-   fits. With no screen yet, it holds the overview; the live screen draws in
-   the same place at the same size. */
+/* Where the guest's screen is, in the guest display's shape: at most one
+   guest pixel per point, smaller when the window is; "Fit to window" lifts
+   the cap. Edge to edge when it fills; otherwise it sits on the backdrop. */
 .display {
   position: relative;
+  width: min(100cqw, calc(100cqh * var(--display-ratio)), var(--display-width));
+  aspect-ratio: var(--display-ratio);
   container-type: size;
-  width: min(100cqw, calc(100cqh * var(--display-ratio)));
-  height: min(100cqh, calc(100cqw / var(--display-ratio)));
   overflow: hidden;
   background: var(--surface-card);
-  border: var(--border-width-hairline) solid var(--border-subtle);
-  border-radius: var(--radius-card);
+  box-shadow: var(--elevation-modal);
+}
+
+.display--fill {
+  width: min(100cqw, calc(100cqh * var(--display-ratio)));
 }
 
 .display--on {
   background: var(--surface-base);
 }
 
-.display--actual {
-  width: 100%;
-  height: 100%;
+.display--drop {
+  outline: var(--border-width-thick) dashed var(--accent);
+  outline-offset: calc(-1 * var(--space-2));
 }
 
-.display__size {
+.display__drop {
   position: absolute;
-  inset-block-end: var(--space-3);
-  inset-inline-end: var(--space-4);
-  color: var(--text-muted);
+  inset: 0;
+  display: grid;
+  place-items: center;
+  background: color-mix(in srgb, var(--surface-card) 85%, transparent);
   pointer-events: none;
+}
+
+.display__drop p {
+  margin: 0;
+  font-size: var(--text-md);
+  font-weight: var(--weight-md);
+  color: var(--text-strong);
 }
 
 .screen {
@@ -229,7 +225,7 @@ html[data-os="macos"] .toolbar {
   inset: 0;
   display: flex;
   flex-direction: column;
-  padding: var(--space-6) var(--space-7) var(--space-7);
+  padding: var(--space-6) var(--space-7);
   overflow-y: auto;
 }
 
@@ -238,7 +234,7 @@ html[data-os="macos"] .toolbar {
   display: flex;
   flex-direction: column;
   align-items: flex-start;
-  gap: var(--space-4);
+  gap: var(--space-5);
   margin-block: auto;
 }
 
@@ -256,24 +252,39 @@ html[data-os="macos"] .toolbar {
   color: var(--text-strong);
 }
 
-.overview__body {
+.overview__note {
   margin: 0;
   max-width: 65ch;
-  font-size: var(--text-base);
-  color: var(--text-base-color);
+  font-size: var(--text-sm);
+  line-height: var(--leading-lg);
+  color: var(--text-muted);
 }
 
-.overview__facts {
+/* What the instance is: a label over each value. */
+.facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3) var(--space-6);
+  margin: 0;
+}
+
+.fact {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.fact dt {
+  font-size: var(--text-sm);
+  color: var(--text-muted);
+}
+
+.fact dd {
   margin: 0;
   font-size: var(--text-sm);
+  font-weight: var(--weight-md);
   font-variant-numeric: tabular-nums;
-  color: var(--text-muted);
-}
-
-.overview__hint {
-  margin: 0;
-  font-size: var(--text-sm);
-  color: var(--text-muted);
+  color: var(--text-strong);
 }
 
 /* ---- Start progress ---- */
@@ -369,6 +380,7 @@ html[data-os="macos"] .toolbar {
 
 .ability {
   display: flex;
+  align-items: center;
   gap: var(--space-3);
   font-size: var(--text-sm);
   color: var(--text-strong);
@@ -381,20 +393,8 @@ html[data-os="macos"] .toolbar {
 }
 
 .ability__icon svg {
-  width: var(--size-md);
-  height: var(--size-md);
-}
-
-.ability__text {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-1);
-  min-width: 0;
-}
-
-.ability__commands {
-  color: var(--text-muted);
-  overflow-wrap: anywhere;
+  width: var(--size-sm);
+  height: var(--size-sm);
 }
 
 /* Only when the display has room for it. */
@@ -408,9 +408,14 @@ html[data-os="macos"] .toolbar {
   padding: var(--space-6);
 }
 
-/* ---- Panel ---- */
+/* ---- Panel: over the display, at the right ---- */
 .panel {
-  flex: 0 0 var(--panel-width);
+  position: absolute;
+  inset-block: 0;
+  inset-inline-end: 0;
+  z-index: 10;
+  width: var(--panel-width);
+  max-width: 100%;
   display: flex;
   flex-direction: column;
   gap: var(--space-3);
@@ -418,12 +423,163 @@ html[data-os="macos"] .toolbar {
   overflow-y: auto;
   background: var(--surface-card);
   border-inline-start: var(--border-width-hairline) solid var(--border-subtle);
+  box-shadow: var(--elevation-modal);
 }
 
 .panel__note {
   margin: 0;
   font-size: var(--text-sm);
   color: var(--text-muted);
+}
+
+/* ---- Popover: layer 2, under its toolbar button ---- */
+.popover {
+  position: fixed;
+  z-index: 20;
+  width: min(28rem, calc(100vw - var(--space-6)));
+  max-height: calc(100vh - var(--space-8) - var(--space-6));
+  overflow-y: auto;
+  padding: var(--space-4);
+  background: var(--surface-card);
+  border: var(--border-width-hairline) solid var(--border-subtle);
+  border-radius: var(--radius-card);
+  box-shadow: var(--elevation-modal);
+}
+
+.action {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.action__section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.action__section + .action__section {
+  padding-block-start: var(--space-3);
+  border-block-start: var(--border-width-hairline) solid var(--border-subtle);
+}
+
+.action__label {
+  margin: 0;
+  font-size: var(--text-sm);
+  font-weight: var(--weight-md);
+  color: var(--text-strong);
+}
+
+.action__row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.action__text {
+  margin: 0;
+  font-size: var(--text-sm);
+  line-height: var(--leading-lg);
+  color: var(--text-base-color);
+}
+
+.action__hint {
+  margin: 0;
+  font-size: var(--text-sm);
+  line-height: var(--leading-lg);
+  color: var(--text-muted);
+}
+
+.action__error {
+  margin: 0;
+  font-size: var(--text-sm);
+  line-height: var(--leading-lg);
+  color: var(--status-error);
+  overflow-wrap: anywhere;
+}
+
+.saves {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  max-height: calc(var(--size-2xl) * 6);
+  overflow-y: auto;
+}
+
+.save {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding-block: var(--space-1);
+}
+
+.save__text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.save__name {
+  font-size: var(--text-sm);
+  color: var(--text-strong);
+  overflow-wrap: anywhere;
+}
+
+.save__meta {
+  font-size: var(--text-sm);
+  color: var(--text-muted);
+}
+
+.copyable {
+  min-width: 0;
+}
+
+.copyable__value {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.reference {
+  max-width: 760px;
+}
+
+.reference__text {
+  max-height: 60vh;
+}
+
+/* ---- Inputs ---- */
+.input {
+  appearance: none;
+  background: var(--surface-control);
+  color: var(--text-strong);
+  border: var(--border-width-hairline) solid var(--border-strong);
+  border-radius: var(--radius-input);
+  padding: var(--space-2) var(--space-3);
+  font-family: var(--font-body);
+  font-size: var(--text-sm);
+  line-height: var(--leading-lg);
+  min-height: var(--size-xl);
+  width: 100%;
+  min-width: 0;
+}
+
+.input.mono {
+  font-family: var(--font-mono);
+}
+
+.input:focus-visible {
+  outline: var(--focus-ring);
+  outline-offset: var(--focus-ring-offset);
+}
+
+.input:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
 }
 
 /* ---- Host checks ---- */

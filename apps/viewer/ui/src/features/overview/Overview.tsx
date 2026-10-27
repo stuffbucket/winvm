@@ -13,11 +13,12 @@ interface OverviewProps {
   onStart(): void
 }
 
-const ABILITIES: readonly { icon: IconName; key: string; commands: readonly string[] }[] = [
-  { icon: "terminal", key: "ability.exec", commands: ["winvm exec -- <command>"] },
-  { icon: "folder", key: "ability.files", commands: ["winvm put", "winvm get"] },
-  { icon: "history", key: "ability.saves", commands: ["winvm save", "winvm load"] },
-  { icon: "agent", key: "ability.agent", commands: ["winvm cua"] },
+// The same glyphs as their toolbar buttons, so each reads as "that button".
+const ABILITIES: readonly { icon: IconName; key: string }[] = [
+  { icon: "terminal", key: "ability.exec" },
+  { icon: "folder", key: "ability.files" },
+  { icon: "history", key: "ability.saves" },
+  { icon: "agent", key: "ability.agent" },
 ]
 
 function Steps({ steps }: { readonly steps: readonly Step[] }): JSX.Element {
@@ -35,14 +36,13 @@ function Steps({ steps }: { readonly steps: readonly Step[] }): JSX.Element {
   )
 }
 
-/** What fills the display while there is no screen: the state, what it is, how to start it, and what else it does. */
+/** What fills the display while there is no screen: the state, what the instance is, Start, and what it does once on. */
 export function Overview(p: OverviewProps): JSX.Element {
   if (p.steps !== null) {
     return (
       <div className="overview">
         <div className="overview__content">
           <h1 className="overview__title">{t("overview.starting.title")}</h1>
-          <p className="overview__body">{t("overview.starting.body")}</p>
           <Steps steps={p.steps} />
         </div>
       </div>
@@ -52,7 +52,7 @@ export function Overview(p: OverviewProps): JSX.Element {
     return (
       <div className="overview overview--quiet">
         <div className="overview__content">
-          <p className="overview__body muted" role="status">
+          <p className="overview__note" role="status">
             {p.phase === null ? t("state.loading") : t("overview.connecting")}
           </p>
         </div>
@@ -61,21 +61,30 @@ export function Overview(p: OverviewProps): JSX.Element {
   }
 
   const which = p.phase === "missing" || p.phase === "stowed" ? p.phase : "stopped"
-  const line = p.status === null ? [] : facts(p.status).map((f) => t(f.key, f.values))
+  const rows = p.status === null ? [] : facts(p.status)
   return (
     <div className="overview">
       <div className="overview__content">
         <h1 className="overview__title">{t(`overview.${which}.title`)}</h1>
-        <p className="overview__body">{t(`overview.${which}.body`)}</p>
-        {line.length > 0 && <p className="overview__facts">{line.join(" · ")}</p>}
+        {which === "stowed" && <p className="overview__note">{t("overview.stowed.body")}</p>}
+        {rows.length > 0 && (
+          <dl className="facts">
+            {rows.map((r) => (
+              <div className="fact" key={r.key}>
+                <dt>{t(r.key)}</dt>
+                <dd>{r.value}</dd>
+              </div>
+            ))}
+          </dl>
+        )}
         <div className="actions">
           <Button variant="primary" disabled={!p.canStart} onClick={p.onStart}>
             <Icon name="play" />
-            {t("action.startWindows")}
+            {t(which === "missing" ? "action.setUp" : "action.startWindows")}
           </Button>
         </div>
         {which === "missing" && (
-          <p className="overview__hint">
+          <p className="overview__note">
             {t("overview.missing.noImage")} <code className="mono">winvm build --iso &lt;Windows 11 ISO&gt;</code>
           </p>
         )}
@@ -89,10 +98,7 @@ export function Overview(p: OverviewProps): JSX.Element {
                 <span className="ability__icon" aria-hidden="true">
                   <Icon name={a.icon} />
                 </span>
-                <span className="ability__text">
-                  {t(a.key)}
-                  <span className="ability__commands mono">{a.commands.join("  ·  ")}</span>
-                </span>
+                {t(a.key)}
               </li>
             ))}
           </ul>

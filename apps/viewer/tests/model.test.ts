@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test"
 
-import { controls, detailRows, displaySize, facts, parseChecks, parseConnection, parseStatus, phase, startSteps } from "../ui/src/model"
+import { controls, detailRows, displaySize, facts, parseChecks, parseConnection, parseSaves, parseShare, parseStatus, phase, startSteps } from "../ui/src/model"
 
 const base = {
   name: "default",
@@ -137,13 +137,13 @@ describe("startSteps", () => {
 })
 
 describe("facts", () => {
-  it("lists what the instance is, as message keys and values", () => {
+  it("labels what the instance is", () => {
     expect(facts(one())).toEqual([
-      { key: "fact.image", values: { name: "win11" } },
-      { key: "fact.cpus", values: { count: 4 } },
-      { key: "fact.memory", values: { size: "8 GiB" } },
-      { key: "fact.changes", values: { size: "3.0 GiB" } },
-      { key: "fact.saves", values: { count: 2 } },
+      { key: "fact.image", value: "win11" },
+      { key: "fact.memory", value: "8 GiB" },
+      { key: "fact.cpus", value: "4" },
+      { key: "fact.changes", value: "3.0 GiB" },
+      { key: "fact.saves", value: "2" },
     ])
   })
 
@@ -153,8 +153,7 @@ describe("facts", () => {
   })
 
   it("gives a size under 1 GiB in MiB", () => {
-    const got = facts(one({ overlayBytes: 190 * 1024 ** 2 })).find((f) => f.key === "fact.changes")
-    expect(got?.values).toEqual({ size: "190 MiB" })
+    expect(facts(one({ overlayBytes: 190 * 1024 ** 2 })).find((f) => f.key === "fact.changes")?.value).toBe("190 MiB")
   })
 })
 
@@ -169,6 +168,33 @@ describe("displaySize", () => {
 
   it("is the firmware framebuffer's 800x600 when unknown", () => {
     expect(displaySize(null)).toEqual({ width: 800, height: 600, device: null })
+  })
+})
+
+describe("parseSaves", () => {
+  it("reads saves --json", () => {
+    const out = JSON.stringify([{ name: "before-update", kind: "manual", createdAt: "2026-10-27T20:00:00.000Z", bytes: 2048, compatible: true }])
+    expect(parseSaves(out)?.map((s) => s.name)).toEqual(["before-update"])
+  })
+
+  it("is null for text output", () => {
+    expect(parseSaves('instance "default" has no saves')).toBeNull()
+  })
+})
+
+describe("parseShare", () => {
+  it("reads the endpoint and token cua serve prints", () => {
+    const out = [
+      'computer use for "default" on http://127.0.0.1:61234',
+      "  screen 1280x800, screenshots 1280x800 (scale 1.0000)",
+      "  token abc_DEF-123",
+      "  (also in /x/cua.json)",
+    ].join("\n")
+    expect(parseShare(out)).toEqual({ url: "http://127.0.0.1:61234", token: "abc_DEF-123" })
+  })
+
+  it("is null until both are printed", () => {
+    expect(parseShare('computer use for "default" on http://127.0.0.1:61234')).toBeNull()
   })
 })
 
