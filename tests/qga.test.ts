@@ -13,7 +13,7 @@ import { resolve } from "node:path"
 
 import { afterAll, beforeAll, describe, expect, it } from "bun:test"
 
-import { READ_CHUNK, call, readFile, untilReady, waitFor } from "../qga"
+import { READ_CHUNK, call, readFile, untilNewBoot, untilReady, waitFor } from "../qga"
 
 type Handler = (req: Record<string, unknown>) => Record<string, unknown> | null
 
@@ -269,5 +269,35 @@ describe("qga.untilReady", () => {
       throw new Error("must not be asked")
     }
     expect(await untilReady("unused", 5000, { ...fast, loggedOnUser, repairAudit, noLogonMs: 20 })).toBe("ready")
+  })
+})
+
+describe("qga.untilNewBoot", () => {
+  const BEFORE = "2026-10-27T10:00:00.0000000-07:00"
+  const AFTER = "2026-10-27T10:01:30.0000000-07:00"
+  const ready = async (): Promise<"ready"> => "ready"
+
+  it("waits out the old boot, which stays ready for a while, until a new one is ready", async () => {
+    // Old boot, old boot, unreachable on the way down, then the new boot.
+    const seen = [BEFORE, BEFORE, null, AFTER]
+    let asked = 0
+    const bootTime = async (): Promise<string | null> => seen[Math.min(asked++, seen.length - 1)] ?? null
+    expect(await untilNewBoot("unused", BEFORE, 5000, { untilReady: ready, bootTime, settleMs: 1 })).toBe("ready")
+    expect(asked).toBe(4)
+  })
+
+  it("times out when the boot never changes", async () => {
+    const bootTime = async (): Promise<string | null> => BEFORE
+    expect(await untilNewBoot("unused", BEFORE, 50, { untilReady: ready, bootTime, settleMs: 5 })).toBe("timeout")
+  })
+
+  it("passes on no-logon from the new boot rather than waiting for a change it cannot see", async () => {
+    let asked = 0
+    const bootTime = async (): Promise<string | null> => {
+      asked += 1
+      return AFTER
+    }
+    expect(await untilNewBoot("unused", BEFORE, 5000, { untilReady: async () => "no-logon", bootTime })).toBe("no-logon")
+    expect(asked).toBe(0)
   })
 })

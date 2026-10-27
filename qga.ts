@@ -406,6 +406,59 @@ export async function shutdown(sockPath: string): Promise<void> {
   }
 }
 
+/** Ask Windows to restart. As with shutdown, the socket dropping is success. */
+export async function reboot(sockPath: string): Promise<void> {
+  try {
+    await call(sockPath, { execute: "guest-shutdown", arguments: { mode: "reboot" } }, 5000)
+  } catch {
+    // Expected: the agent stops answering mid-request.
+  }
+}
+
+/**
+ * Win32_OperatingSystem.LastBootUpTime, which tells one boot from the next;
+ * null when qemu-ga could not be asked.
+ */
+export async function bootTime(sockPath: string): Promise<string | null> {
+  try {
+    const r = await exec(sockPath, POWERSHELL, [
+      "-NoProfile",
+      "-Command",
+      "(Get-CimInstance Win32_OperatingSystem).LastBootUpTime.ToString('o')",
+    ])
+    const t = r.stdout.trim()
+    return r.exitcode === 0 && t !== "" ? t : null
+  } catch {
+    return null
+  }
+}
+
+export interface NewBootOptions extends ReadyOptions {
+  /** Injectable for tests. */
+  readonly bootTime?: (sockPath: string) => Promise<string | null>
+  readonly untilReady?: (sockPath: string, timeoutMs: number, o: ReadyOptions) => Promise<Readiness>
+  readonly settleMs?: number
+}
+
+/**
+ * untilReady for a boot OTHER than `before` (a LastBootUpTime). After a
+ * restart is asked for, the old boot goes on answering — logged on and all —
+ * until Windows gets round to stopping, so plain readiness says nothing.
+ */
+export async function untilNewBoot(sockPath: string, before: string, timeoutMs: number, o: NewBootOptions = {}): Promise<Readiness> {
+  const deadline = Date.now() + timeoutMs
+  const ready = o.untilReady ?? untilReady
+  const boot = o.bootTime ?? bootTime
+  while (Date.now() < deadline) {
+    const r = await ready(sockPath, deadline - Date.now(), o)
+    if (r !== "ready") return r
+    const now = await boot(sockPath)
+    if (now !== null && now !== before) return "ready"
+    await new Promise((res) => setTimeout(res, o.settleMs ?? 2000)) // still the old boot, on its way down
+  }
+  return "timeout"
+}
+
 /**
  * guest-file-read's count. KEPT WELL UNDER WHAT THE AGENT CAN ANSWER: measured
  * against qemu-ga on the Windows 11 ARM64 guest, a read of 1,900,000 bytes
