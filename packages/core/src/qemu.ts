@@ -12,6 +12,7 @@ import { closeSync, existsSync, openSync, readFileSync, renameSync, rmSync } fro
 
 import { restoreForward } from "./agentfwd"
 import { requireFirmware, tpmTisHasPpi } from "./host"
+import { ensureService } from "./service"
 import type { InstanceMeta, Paths } from "./paths"
 import { media } from "./paths"
 import { RAMFB, displayArgs, readDisplay } from "./display"
@@ -97,7 +98,7 @@ export function qemuArgs(name: string, p: Paths, meta: InstanceMeta, o: LaunchOp
     // The command channel. See qga.ts, and qga.waitFor on why nothing should
     // connect to it before the guest has opened the port.
     "-device", "virtio-serial",
-    "-chardev", `socket,path=${p.qga},server=on,wait=off,id=${qga.CHARDEV}`,
+    "-chardev", `socket,path=${p.qgaQemu},server=on,wait=off,id=${qga.CHARDEV}`,
     "-device", `virtserialport,chardev=${qga.CHARDEV},name=org.qemu.guest_agent.0`,
     "-chardev", `socket,id=chrtpm,path=${p.tpmSock}`,
     "-tpmdev", "emulator,id=tpm0,chardev=chrtpm",
@@ -128,7 +129,7 @@ export function qemuArgs(name: string, p: Paths, meta: InstanceMeta, o: LaunchOp
     // password, which macOS Screen Sharing needs and the websocket must have.
     // See vnc.ts.
     "-vnc", vncArg(meta.vnc),
-    "-qmp", `unix:${p.qmp},server=on,wait=off`,
+    "-qmp", `unix:${p.qmpQemu},server=on,wait=off`,
     "-serial", `file:${p.serial}`,
     "-pidfile", p.pid,
   ]
@@ -264,7 +265,8 @@ export async function launch(name: string, p: Paths, meta: InstanceMeta, o: Laun
   rmSync(p.qemuLog, { force: true })
   // No QEMU runs here (launch is only reached then), so any monitor socket is
   // a dead one's; gone, its reappearance means THIS QEMU created it.
-  if (o.incoming !== undefined) rmSync(p.qmp, { force: true })
+  if (o.incoming !== undefined) rmSync(p.qmpQemu, { force: true })
+  await ensureService(name, p)
   // A display another home's instance (or anything else) is listening on would
   // fail QEMU's bind; move to a free one first.
   const m = await ensureFreeDisplay(name, p, meta)

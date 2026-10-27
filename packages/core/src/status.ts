@@ -24,6 +24,7 @@ import { qmpCommand } from "./monitor"
 import { home, instanceDir, listInstances, pathsFor, readImageMeta, readMeta } from "./paths"
 import type { Paths } from "./paths"
 import * as qemu from "./qemu"
+import { readService } from "./service"
 import * as timemachine from "./timemachine"
 import { vncPort, websocketPort } from "./vnc"
 
@@ -80,6 +81,7 @@ export interface InstanceStatus {
   readonly guest: GuestInfo | null
   readonly saves: { readonly count: number; readonly bytes: number; readonly latest: SaveInfo | null; readonly latestBaseline: SaveInfo | null }
   readonly watcher: WatchInfo | null
+  readonly service: { readonly pid: number; readonly port: number } | null
   /** Things that could not be determined, in words. */
   readonly notes: readonly string[]
 }
@@ -128,6 +130,11 @@ export function readSaves(instance: string): readonly SaveInfo[] {
 
 export function sortSaves(saves: readonly SaveInfo[]): readonly SaveInfo[] {
   return [...saves].sort((a, b) => Date.parse(b.createdAt || "0") - Date.parse(a.createdAt || "0"))
+}
+
+function serviceOf(p: Paths): { pid: number; port: number } | null {
+  const s = readService(p)
+  return s === null ? null : { pid: s.pid, port: s.port }
 }
 
 const pidAlive = (pid: number | null): boolean => {
@@ -360,6 +367,7 @@ export async function gather(name: string, deep = true): Promise<InstanceStatus>
       guest: null,
       saves: savesSummary,
       watcher: readWatch(name),
+      service: null,
       notes: [`no instance "${name}" — \`winvm start -i ${name}\` creates it`],
     }
   }
@@ -391,6 +399,7 @@ export async function gather(name: string, deep = true): Promise<InstanceStatus>
     guest,
     saves: savesSummary,
     watcher: readWatch(name),
+    service: serviceOf(p),
     notes,
   }
 }
@@ -530,6 +539,7 @@ export function statusReport(s: InstanceStatus, timeMachine: string, now: number
           .filter((x) => x !== null)
           .join(" · "),
   ])
+  if (live) rows.push(["service", s.service === null ? "none (started before the control service)" : `pid ${String(s.service.pid)} · 127.0.0.1:${String(s.service.port)}`])
   rows.push(["watcher", formatWatcher(s.watcher, now)])
   rows.push(["time machine", timeMachine.replace(/^(ok|note)\s+Time Machine:\s*/, "")])
 

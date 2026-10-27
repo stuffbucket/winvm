@@ -51,6 +51,7 @@ export class QmpChannel {
   private greeting: string | null = null
   private ready = false
   private readonly queue: Socket[] = []
+  private readonly sockets = new Set<Socket>()
   private readonly pending = new WeakMap<Socket, string[]>()
   private active: Socket | null = null
   private owed = 0
@@ -74,7 +75,8 @@ export class QmpChannel {
   async stop(): Promise<void> {
     this.stopped = true
     clearTimeout(this.drainTimer)
-    for (const c of this.queue.splice(0)) c.destroy()
+    this.queue.length = 0
+    for (const c of this.sockets) c.destroy()
     this.active?.destroy()
     this.upstream?.destroy()
     await closeServer(this.server, this.o.listen)
@@ -137,9 +139,11 @@ export class QmpChannel {
   }
 
   private accept(c: Socket): void {
+    this.sockets.add(c)
     this.pending.set(c, [])
     c.on("error", () => undefined)
     c.on("close", () => {
+      this.sockets.delete(c)
       if (this.active === c) this.callerLeft()
       else {
         const i = this.queue.indexOf(c)
@@ -212,6 +216,7 @@ export class QgaChannel {
   private readonly o: QgaChannelOptions
   private server: Server | null = null
   private readonly queue: Socket[] = []
+  private readonly sockets = new Set<Socket>()
   private readonly pending = new WeakMap<Socket, Buffer[]>()
   private active: Socket | null = null
   private upstream: Socket | null = null
@@ -227,13 +232,15 @@ export class QgaChannel {
 
   async stop(): Promise<void> {
     this.stopped = true
-    for (const c of this.queue.splice(0)) c.destroy()
+    this.queue.length = 0
+    for (const c of this.sockets) c.destroy()
     this.active?.destroy()
     this.upstream?.destroy()
     await closeServer(this.server, this.o.listen)
   }
 
   private accept(c: Socket): void {
+    this.sockets.add(c)
     this.pending.set(c, [])
     c.on("error", () => undefined)
     c.on("data", (chunk: Buffer) => {
@@ -241,6 +248,7 @@ export class QgaChannel {
       else this.pending.get(c)?.push(chunk)
     })
     c.on("close", () => {
+      this.sockets.delete(c)
       if (this.active === c) {
         this.upstream?.destroy()
         this.upstream = null
