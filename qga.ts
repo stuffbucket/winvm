@@ -368,7 +368,7 @@ export async function waitResponsive(sockPath: string, timeoutMs: number): Promi
  * available once `guest-exec-status` reports it exited, so this polls. Output
  * arrives base64-encoded.
  */
-export async function exec(sockPath: string, path: string, args: readonly string[]): Promise<ExecResult> {
+export async function exec(sockPath: string, path: string, args: readonly string[], timeoutMs = 900_000): Promise<ExecResult> {
   const started = await call(sockPath, {
     execute: "guest-exec",
     arguments: { path, arg: [...args], "capture-output": true },
@@ -376,7 +376,7 @@ export async function exec(sockPath: string, path: string, args: readonly string
   const pid = (started["return"] as { pid?: number } | undefined)?.pid
   if (pid === undefined) throw new Error(`guest-exec failed: ${JSON.stringify(started)}`)
 
-  const deadline = Date.now() + 900_000
+  const deadline = Date.now() + timeoutMs
   // Poll fast first, then back off: most commands finish in well under a
   // second, and a fixed 1 s poll made every exec cost at least that (measured:
   // `cmd /c echo` 1.06 s at 1 s, 75-190 ms at 25 ms). Long commands settle at

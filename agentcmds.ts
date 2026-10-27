@@ -30,13 +30,37 @@ async function preferred(name: string, args: Args): Promise<agent.AgentClient | 
   return await agent.connect(name, { timeoutMs: 1500 })
 }
 
+/** `exec`'s deadline: `--timeout S`, default 15 minutes. */
+export function execTimeoutMs(args: Args): number {
+  const s = Number(args.flags.get("timeout") ?? 900)
+  if (!Number.isFinite(s) || s <= 0) throw new Error(`--timeout wants seconds, got "${args.flags.get("timeout") ?? ""}"`)
+  return s * 1000
+}
+
+/** Exit code for a command killed at its deadline, as timeout(1) uses. */
+export const TIMED_OUT = 124
+
 /** `exec`'s engine: through the agent when there is one, else qemu-ga. Same result shape as qga.exec. */
 export async function exec(name: string, args: Args, program: string, rest: readonly string[]): Promise<qga.ExecResult> {
+  const timeoutMs = execTimeoutMs(args)
   const c = await preferred(name, args)
-  if (c === null) return await qga.exec(pathsFor(name).qga, program, rest)
-  const r = await c.exec([program, ...rest], { timeoutMs: 900_000 })
-  if (r.timedOut) throw new Error("guest command timed out")
-  return { exitcode: r.code, stdout: r.stdout, stderr: r.stderr }
+  if (c === null) return await qga.exec(pathsFor(name).qga, program, rest, timeoutMs)
+  return execResult(await c.exec([program, ...rest], { timeoutMs }), timeoutMs)
+}
+
+/**
+ * The agent's answer as qga.exec's result. A command the agent killed at its
+ * deadline (with its tree) exits TIMED_OUT, and what it printed until then
+ * still comes back: it is often the only clue to why it hung.
+ */
+export function execResult(r: agent.ExecResponse, timeoutMs: number): qga.ExecResult {
+  if (!r.timedOut) return { exitcode: r.code, stdout: r.stdout, stderr: r.stderr }
+  const sep = r.stderr === "" || r.stderr.endsWith("\n") ? "" : "\n"
+  return {
+    exitcode: TIMED_OUT,
+    stdout: r.stdout,
+    stderr: `${r.stderr}${sep}::error::guest command timed out after ${String(timeoutMs / 1000)} s and was killed with its process tree\n`,
+  }
 }
 
 /** Read a guest file over qemu-ga, for when there is no agent. */
