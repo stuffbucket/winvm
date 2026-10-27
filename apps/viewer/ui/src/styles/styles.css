@@ -404,6 +404,10 @@ html[data-os="macos"] .toolbar {
   }
 }
 
+.crash {
+  padding: var(--space-6);
+}
+
 /* ---- Panel ---- */
 .panel {
   flex: 0 0 var(--panel-width);

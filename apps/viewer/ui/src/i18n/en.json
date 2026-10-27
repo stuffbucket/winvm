@@ -74,6 +74,7 @@
   "error.setup": "The runtime didn't install",
   "error.open": "Screen Sharing didn't open",
   "error.status": "Couldn't get the status of Windows",
+  "error.crash": "Something in this window went wrong",
 
   "panel.status": "Status",
   "panel.mac": "This Mac",
