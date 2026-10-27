@@ -236,7 +236,11 @@ pnpm viewer:build       # once, to build the native app (needs Rust; mise pins i
 - `winvm open --close` closes a viewer window the CLI opened.
 - `winvm start --open` boots and opens in one step.
 - Opening the app from Finder or the Dock shows the home's instances, with
-  their states, and opens any of them.
+  their states, and opens any of them. **The viewer can start a stopped
+  instance** (toolbar Start, or from that list): it does exactly what
+  `winvm start` does, booting QEMU and the instance's detached service, so
+  the VM keeps running when the window closes. Building a base image
+  (`winvm build`, ~20 minutes from an ISO) stays a CLI job.
 
 Several instances run at once, as they do today (`winvm test --pool N` runs
 jobs side by side): each instance has its own QEMU, sockets, TPM state, VNC
@@ -298,7 +302,7 @@ what that changes here (sources are maximal paths or commits):
   timeout, and a test that a killed subscriber is cleaned up. **winvm moves to
   Bun 1.4.3** (user's decision), the version maximal's broker already runs
   (`packages/mcp-broker/mise.toml`), where `node:http` was rewritten; never a
-  floating `latest` (09b478b1). `mise.toml` is the one pin and CI reads it.
+  floating `latest` (09b478b1). `.bun-version` is the one pin; mise and CI both read it.
   The move is its own step, with the full test suite and a live guest run
   before anything else changes, since Bun 1.3.14's `fetch` and `Bun.serve`
   behaviour is what winvm's agent client was measured against (winvm#3).
@@ -356,10 +360,90 @@ what that changes here (sources are maximal paths or commits):
   lockfile (`scripts/strip-lockfile-hosts.ts`), and whether `bun build
   --compile` needs pnpm's `node-linker=hoisted` (as maximal's did, ecc2ba9e)
   is checked early.
-- **Release signing** (when it comes): Bun binaries under the hardened
-  runtime need `allow-jit`, `allow-unsigned-executable-memory` and
-  `disable-library-validation`; sign the sidecar first, never `--deep`,
-  notarize the dmg only (6e861b97). Not needed for local builds.
+- **Release signing:** Bun binaries under the hardened runtime need
+  `allow-jit`, `allow-unsigned-executable-memory` and
+  `disable-library-validation` (the builder's `bun-runtime` entitlements);
+  the sidecar is signed first, never `--deep`. The builder now notarizes and
+  staples both the app and the `.dmg` (macos-builder#25; maximal's older
+  "dmg only", 6e861b97, is superseded). See *Build, CI and release*.
+
+## Build, CI and release
+
+The viewer ships as a **signed, notarized `.dmg`** (user's decision), the way
+maximal ships today (its v0.4.46 and v0.4.47 releases went through this
+path). The workspace build follows monimal; the release follows maximal.
+
+**Workspace build (from monimal).** Root `package.json` scripts are thin
+`turbo run` calls (`build`, `typecheck`, `lint`, `test`, `check:affected`
+with `--affected`); each package declares plain `build`, `typecheck`,
+`lint` and `test` scripts. `turbo.json` follows monimal's: `build` depends on
+`^build` and outputs `dist/**`; `globalDependencies` include `mise.toml`,
+`mise.lock`, `.bun-version` and `pnpm-workspace.yaml`; inputs exclude
+`.claude`, `.github` and `docs`; the sidecar build is `cache: false` with its
+env listed; packaged app output is never cached (it once made a 3.68 GB
+cache in monimal, #86). **Pins:** `.bun-version` (1.4.3) is the one Bun pin,
+read by mise (`idiomatic_version_file_enable_tools`) and by CI
+(`setup-bun` with `bun-version-file`); pnpm is pinned in `packageManager` and
+`mise.toml`; `mise.lock` (`lockfile = true`) pins tool artifacts by checksum.
+monimal's `verify-workspace.mjs` is the model for a "the installed tree
+matches the pins" check, rewritten for winvm (it imports monimal-only
+helpers).
+
+**Pull-request CI (`.github/workflows/ci.yml`, from monimal's).** One Ubuntu
+job, `permissions: contents: read`, `shell: bash -eo pipefail`: the
+Conventional Commit subject check (maximal's `scripts/check-commit-msg.ts`),
+install, lint, typecheck, test and build, excluding `apps/viewer`; compile
+the sidecar (`bun build --compile`) to catch compile breaks; actionlint and
+shellcheck on workflow and release scripts, with the release scripts
+self-tested on every PR (monimal burned two release candidates on untested
+release shell). pnpm store and `.turbo/cache` cached as monimal does, with a
+separate key per line of runs. The macOS-only tests that need QEMU stay out
+of hosted CI.
+
+**Release (from maximal's).**
+
+- `release-please.yml` with `release-please-config.json` and
+  `.release-please-manifest.json`: on push to `main` it maintains the release
+  PR; when that merges it pushes the tag and starts `release.yml` itself
+  (tags pushed with `GITHUB_TOKEN` trigger nothing; grant `actions: write`),
+  and moves the `autorelease: pending` label to `tagged` (a stuck label
+  blocked every later release, maximal #152). `Release-As: X.Y.Z` forces a
+  version.
+- `release.yml` (tag push or dispatch): checks and builds, a **draft**
+  release, then the `.dmg` job, then one draft-to-published flip, so a
+  release is never published without its `.dmg` (maximal shipped three
+  without one before this).
+- **The `.dmg` is built and signed by `stuffbucket/macos-builder`**, the
+  private self-hosted builder maximal uses: the release job starts its
+  `build.yml` with `MACOS_BUILDER_PAT`, waits for the draft to gain the
+  `.dmg`, renames it `winvm-<tag>-darwin-arm64.dmg` and adds a `.sha256`.
+  winvm supplies only `.macos-builder/config` (`bundle_id=co.stuffbucket.winvm`,
+  `entitlements=bun-runtime`, `artifact=dmg`, `sign_nested` for the sidecar)
+  and `.macos-builder/build.sh`, which builds the unsigned app: stamps the
+  version into `tauri.conf.json`, builds the sidecar, deletes the old bundle,
+  runs `tauri build --bundles app` and asserts the built
+  `CFBundleShortVersionString`. The builder signs the sidecar and the app
+  (never `--deep`), notarizes and staples the app, then builds, notarizes and
+  staples the `.dmg`. No Apple credentials live in winvm.
+- **Bun on the builder is not pinned** (it uses the runner's global Bun, and
+  monimal's `build.sh` checks it matches 1.3.14). winvm's `build.sh` installs
+  Bun 1.4.3 through mise from `.bun-version` rather than relying on it.
+- `macos-build.yml` (manual) rebuilds the `.dmg` for an existing release.
+- No auto-updater for now (maximal doesn't use Tauri's either). A policy
+  mismatch on the builder fails only after a 20-40 minute build, so the
+  config is checked against the policy before the first release.
+
+**Setup only the user can do** (no winvm secrets exist today):
+
+1. Add `stuffbucket/winvm` to the builder's `ALLOWED_CLIENTS`.
+2. Approve a `build-config` issue in macos-builder that creates
+   `clients/stuffbucket/winvm.policy` (`bundle_id_allowed=co.stuffbucket.winvm`,
+   `entitlements_allowed=bun-runtime`, `artifact_allowed=dmg`).
+3. Install the app-repoman GitHub App on winvm (Contents read and write).
+4. Add the `MACOS_BUILDER_PAT` secret to winvm, and note its expiry (an
+   expired token leaves a draft release with no `.dmg`).
+5. Rulesets that require the CI check on `main`. Immutable releases can wait
+   until the first release succeeds.
 
 ## Settled after review (my calls)
 
