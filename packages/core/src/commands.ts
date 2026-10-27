@@ -7,7 +7,7 @@ import { resolve } from "node:path"
 
 import type { Args } from "./args"
 import { imageName, instanceName, isValidImageName } from "./args"
-import { PWSH_SHA256, PWSH_URL, TOOLS_SHA256, TOOLS_URL, download, du, hostChecks, printChecks, requireHost, run, sha256Of } from "./host"
+import { PWSH_SHA256, PWSH_URL, TOOLS_SHA256, TOOLS_URL, checksReport, download, du, hostChecks, printChecks, requireHost, run, sha256Of } from "./host"
 import { diagnose, formatFindings } from "./diagnose"
 import { ensureInstance, makeVars, resetInstance, sealBase } from "./instance"
 import { ISO_SOURCE, buildSeed, checkIsoIsArm64, makeResultVolume, readResult, resolveWindowsIso } from "./media"
@@ -51,7 +51,12 @@ import { CONFIG_KEYS, DEFAULTS, effectiveConfig, parseAssignment, readOverrides,
  */
 const virtioBootFor = (meta: InstanceMeta): boolean => readImageMeta(meta.image)?.virtioBoot === true
 
-export function doctor(): number {
+export function doctor(json = false): number {
+  if (json) {
+    const report = checksReport(hostChecks(), timemachine.summary())
+    console.log(JSON.stringify(report, null, 2))
+    return report.ready ? 0 : 1
+  }
   const missing = printChecks(hostChecks())
   console.log(timemachine.summary())
   console.log(missing === 0 ? `\nhost is ready · state: ${home()}` : `\n${String(missing)} prerequisite(s) missing`)
@@ -1043,7 +1048,7 @@ export function configCmd(args: Args): number {
 export const USAGE =
   "winvm <command>\n\n" +
   "  setup                         install missing host prerequisites, fetch pinned media\n" +
-  "  doctor                        check host prerequisites (the HOST, before anything runs)\n" +
+  "  doctor  [--json]              check host prerequisites (the HOST, before anything runs)\n" +
   "  diagnose [-i name]            explain a guest that misbehaved, from its files\n" +
   "  build --iso <win11.iso>       build a base image (once, ~20 min)\n" +
   "        [--payload <dir>] [--bun <version>] [--image <name>]\n" +
@@ -1073,7 +1078,8 @@ export const USAGE =
   "  stow    [-i name]             save and shut QEMU down; the next start recalls it\n" +
   "  clock   [-i name] [--check]   guest-vs-host clock offset, and fix it\n" +
   "  status  [-i name] [--json]    what it's doing; with no -i and several instances, a table\n" +
-  "  open    [-i name] [--web]     show the screen in Screen Sharing, or (--web) the browser\n" +
+  "  open    [-i name] [--web]     show the screen in Screen Sharing, or (--web) the browser;\n" +
+  "          [--json]              or print the VNC ports and password for a client\n" +
   "          [--print]             print the URL instead of opening it\n" +
   "  web     [--port n] [--stop]   the browser view's local server, in the foreground\n" +
   "  screenshot [-i name] [file.png]  save the screen (default: <instance>/screenshots/)\n" +

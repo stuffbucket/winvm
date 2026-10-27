@@ -159,7 +159,7 @@ const args = parseArgs(rawArgs)
 
 switch (sub) {
   case "doctor":
-    process.exit(commands.doctor())
+    process.exit(commands.doctor(args.flags.has("json")))
   // eslint-disable-next-line no-fallthrough
   case "timemachine":
   case "tm":

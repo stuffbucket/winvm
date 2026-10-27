@@ -44,6 +44,21 @@ export const WEBSOCKET_BASE_PORT = 5700
 export const vncPort = (display: number): number => VNC_BASE_PORT + display
 export const websocketPort = (display: number): number => WEBSOCKET_BASE_PORT + display
 
+export interface Connection {
+  readonly display: number
+  readonly vncPort: number
+  readonly websocketPort: number
+  readonly password: string | null
+}
+
+/** Everything a VNC client needs to reach the display. */
+export const connection = (display: number, password: string | null): Connection => ({
+  display,
+  vncPort: vncPort(display),
+  websocketPort: websocketPort(display),
+  password,
+})
+
 /** The `-vnc` argument: loopback only, websocket alongside, password required. */
 export function vncArg(display: number): string {
   return `127.0.0.1:${String(display)},websocket=127.0.0.1:${String(websocketPort(display))},password=on`

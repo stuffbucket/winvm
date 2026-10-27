@@ -38,7 +38,7 @@ import { PACKAGE_DIR, cliArgv, cliEntry, home, listInstances, pathsFor, readMeta
 import * as qemu from "./qemu"
 import * as status from "./status"
 import * as timemachine from "./timemachine"
-import { passwordFor, websocketPort } from "./vnc"
+import { connection, passwordFor } from "./vnc"
 
 export const DEFAULT_PORT = 5690
 export const TOKEN_HEADER = "x-winvm-token"
@@ -295,7 +295,7 @@ async function statusBody(name: string): Promise<unknown> {
     saves: status.readSaves(name),
     vnc:
       live && meta !== null
-        ? { display: meta.vnc, websocketPort: websocketPort(meta.vnc), password: passwordFor(pathsFor(name)) }
+        ? connection(meta.vnc, passwordFor(pathsFor(name)))
         : null,
   }
 }

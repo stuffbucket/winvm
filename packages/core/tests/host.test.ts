@@ -3,7 +3,7 @@
  */
 import { describe, expect, it } from "bun:test"
 
-import { macosCheck, parseHasPpi, runtimeCheck } from "../src/host"
+import { checksReport, macosCheck, parseHasPpi, runtimeCheck } from "../src/host"
 
 describe("parseHasPpi", () => {
   it("is false for QEMU 11.0, whose tpm-tis-device has no ppi property", () => {
@@ -82,5 +82,23 @@ describe("macosCheck", () => {
   it("refuses older macOS and Intel Macs", () => {
     expect(macosCheck("14.6.1", "arm64")).toMatchObject({ ok: false, hint: "winvm needs macOS 15 or later" })
     expect(macosCheck("26.1", "x86_64")).toMatchObject({ ok: false, hint: "winvm needs an Apple Silicon Mac" })
+  })
+})
+
+describe("checksReport", () => {
+  it("is ready when every check passes", () => {
+    const r = checksReport([{ label: "macOS 15.1", ok: true, hint: "" }], "ok    Time Machine: off")
+    expect(r).toEqual({ ready: true, checks: [{ label: "macOS 15.1", ok: true, hint: "" }], timeMachine: "ok    Time Machine: off" })
+  })
+
+  it("is not ready when one is missing", () => {
+    const r = checksReport(
+      [
+        { label: "macOS 15.1", ok: true, hint: "" },
+        { label: "runtime (not installed)", ok: false, hint: "winvm setup" },
+      ],
+      "",
+    )
+    expect(r.ready).toBe(false)
   })
 })
