@@ -53,10 +53,12 @@ jobs:
           got=$(bun --version)
           [ "$got" = "$want" ] || { echo "::error::bun $got, .bun-version says $want"; exit 1; }
 
+      # Base and head SHAs, not branch names: checkout fetches the pull
+      # request's merge ref, whose parents are these two, and no origin/<base>.
       - name: Commit subjects are Conventional Commits
         if: github.event_name == 'pull_request'
         run: |
-          git log --format=%s "origin/${{ github.base_ref }}..${{ github.event.pull_request.head.sha }}" \
+          git log --format=%s "${{ github.event.pull_request.base.sha }}..${{ github.event.pull_request.head.sha }}" \
             | bun scripts/check-commit-msg.ts --subjects
 
       # Before the install: pnpm rejects a recorded shard host before anything
