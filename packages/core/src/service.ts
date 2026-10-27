@@ -207,15 +207,10 @@ export async function runService(name: string, o: ServiceOptions = {}): Promise<
     for (const c of subs) send(c, `data: ${line}\n\n`)
   }
 
-  let portOpen: boolean | null = null
   const qmpChannel = new QmpChannel({
     listen: p.qmp,
     upstream: p.qmpQemu,
-    onConnect: () => {
-      portOpen = null
-    },
     onEvent: (e) => {
-      if (e["event"] === "RESET" || e["event"] === "SHUTDOWN" || e["event"] === "VSERPORT_CHANGE") portOpen = null
       const s = stateEvent(e)
       if (s === null) return
       state = String(s["state"])
@@ -223,25 +218,16 @@ export async function runService(name: string, o: ServiceOptions = {}): Promise<
     },
   })
   const askPortOpen = async (): Promise<boolean | null> => {
-    if (portOpen === true) return true
     try {
       const r = (await qmpChannel.request("query-chardev", undefined, 2000))["return"] as
         | { readonly label: string; readonly "frontend-open": boolean }[]
         | undefined
-      portOpen = r?.find((c) => c.label === qga.CHARDEV)?.["frontend-open"] ?? null
+      return r?.find((c) => c.label === qga.CHARDEV)?.["frontend-open"] ?? null
     } catch {
-      portOpen = null
+      return null
     }
-    return portOpen
   }
-  const qgaChannel = new QgaChannel({
-    listen: p.qga,
-    upstream: p.qgaQemu,
-    portOpen: askPortOpen,
-    onRefused: () => {
-      portOpen = null
-    },
-  })
+  const qgaChannel = new QgaChannel({ listen: p.qga, upstream: p.qgaQemu, portOpen: askPortOpen })
   const handle = (req: Request): Response => {
     const url = new URL(req.url)
     if (url.pathname === "/events") {
