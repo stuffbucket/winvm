@@ -7,7 +7,7 @@ import { resolve } from "node:path"
 
 import type { Args } from "./args"
 import { imageName, instanceName, isValidImageName } from "./args"
-import { PWSH_SHA256, PWSH_URL, TOOLS_SHA256, TOOLS_URL, download, du, have, hostChecks, requireHost, run } from "./host"
+import { PWSH_SHA256, PWSH_URL, TOOLS_SHA256, TOOLS_URL, download, du, have, hostChecks, printChecks, requireHost, run } from "./host"
 import { diagnose, formatFindings } from "./diagnose"
 import { ensureInstance, makeVars, resetInstance, sealBase } from "./instance"
 import { ISO_SOURCE, buildSeed, checkIsoIsArm64, makeResultVolume, readResult, resolveWindowsIso } from "./media"
@@ -50,12 +50,10 @@ import { CONFIG_KEYS, DEFAULTS, effectiveConfig, parseAssignment, readOverrides,
 const virtioBootFor = (meta: InstanceMeta): boolean => readImageMeta(meta.image)?.virtioBoot === true
 
 export function doctor(): number {
-  const checks = hostChecks()
-  for (const c of checks) console.log(`${c.ok ? "ok  " : "MISS"}  ${c.label}${c.ok ? "" : `  -> ${c.hint}`}`)
-  const missing = checks.filter((c) => !c.ok)
+  const missing = printChecks(hostChecks())
   console.log(timemachine.summary())
-  console.log(missing.length === 0 ? `\nhost is ready · state: ${home()}` : `\n${missing.length} prerequisite(s) missing`)
-  return missing.length === 0 ? 0 : 1
+  console.log(missing === 0 ? `\nhost is ready · state: ${home()}` : `\n${String(missing)} prerequisite(s) missing`)
+  return missing === 0 ? 0 : 1
 }
 
 export function ls(): number {

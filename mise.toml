@@ -16,3 +16,8 @@ lockfile = true
 # `winvm` (the @winvm/cli bin, linked by pnpm) on PATH inside the repository.
 [env]
 _.path = ["{{config_root}}/node_modules/.bin"]
+
+# QEMU (11.1 or later), swtpm and zstd come from Homebrew, which mise does not
+# manage; `mise install` reports whether they are there and new enough.
+[hooks]
+postinstall = "bun scripts/check-host.ts || true"

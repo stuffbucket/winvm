@@ -17,7 +17,7 @@ anything in `packages/core/src/qemu.ts` or `packages/core/assets/`.
 ## Getting started
 
 ```sh
-mise install            # Bun 1.4.3 (.bun-version) and pnpm 12.3.4
+mise install            # Bun 1.4.3 (.bun-version) and pnpm 12.3.4; checks QEMU and the rest
 pnpm install            # through the package proxy in .npmrc
 winvm doctor            # check the host; changes nothing
 winvm start             # boot the default instance
@@ -35,7 +35,7 @@ command is `apps/cli`. `pnpm check` typechecks and tests everything.
 |---|---|
 | Host | macOS on Apple Silicon (uses `-accel hvf`, `hdiutil`, `newfs_msdos`) |
 | [mise](https://mise.jdx.dev) | pins Bun 1.4.3 (`.bun-version`) and pnpm 12.3.4 (`mise.toml`) |
-| `qemu`, `swtpm`, `zstd` | `winvm setup` installs them with Homebrew, or `brew install qemu swtpm zstd` |
+| `qemu` 11.1 or later, `swtpm`, `zstd` | `winvm setup` installs them with Homebrew, or `brew install qemu swtpm zstd`. On 11.0.x an HVF guest can lose its timer interrupt and hang after a reboot (QEMU a86024eb2d). mise does not manage them; `mise install` and `winvm doctor` report them. |
 | UEFI firmware | vendored in `packages/core/firmware/` (gzipped EDK2), expanded into the state dir on first use |
 | UTM guest tools ISO | downloaded by `setup`/`build` from getutm.app (~121 MB), pinned by SHA-256 |
 | Windows 11 ARM64 ISO | you supply it — see below |
