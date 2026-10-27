@@ -46,6 +46,7 @@ export function useWinvm(): Winvm {
   const [failure, setFailure] = useState<Ran | null>(null)
   const [last, setLast] = useState<Ran | null>(null)
   const [cliPath, setCliPath] = useState<string | null>(null)
+  const [polls, setPolls] = useState(0)
   const tick = useRef(0)
 
   const loadNames = useCallback(async (): Promise<string | null> => {
@@ -107,6 +108,7 @@ export function useWinvm(): Winvm {
       } catch (e) {
         setStatusError(errorText(e))
       }
+      setPolls((n) => n + 1)
       if (!stopped) timer = setTimeout(() => void loop(), fast ? 1500 : 4000)
     }
     void loop()
@@ -118,23 +120,25 @@ export function useWinvm(): Winvm {
 
   const live = p === "running" || p === "starting" || p === "paused"
   const pid = current?.pid ?? null
+  const asking = useRef(false)
+  // Asked again on every poll until it answers: the monitor can be busy (a save) the first time.
   useEffect(() => {
     if (!live || pid === null || name === null) {
       setConnection(null)
       return
     }
-    if (connection !== null && connection.pid === pid) return
-    let cancelled = false
+    if ((connection !== null && connection.pid === pid) || asking.current) return
+    asking.current = true
     winvm("open", "--json", "-i", name)
       .then((out) => {
         const conn = parseConnection(out.stdout)
-        if (!cancelled && conn !== null) setConnection({ pid, conn })
+        if (conn !== null) setConnection({ pid, conn })
       })
       .catch(() => undefined)
-    return () => {
-      cancelled = true
-    }
-  }, [live, pid, name, connection])
+      .finally(() => {
+        asking.current = false
+      })
+  }, [live, pid, name, connection, polls])
 
   const act = useCallback(
     async (verb: Verb): Promise<void> => {
@@ -187,7 +191,7 @@ export function useWinvm(): Winvm {
     statusError,
     checks,
     checksError,
-    connection: connection?.conn ?? null,
+    connection: connection !== null && connection.pid === pid ? connection.conn : null,
     busy,
     failure,
     last,
