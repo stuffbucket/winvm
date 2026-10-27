@@ -70,7 +70,6 @@ export interface QmpChannelOptions {
   readonly listen: string
   readonly upstream: string
   readonly onEvent?: (event: Json) => void
-  readonly onConnect?: () => void
   readonly drainTimeoutMs?: number
   readonly negotiateTimeoutMs?: number
 }
@@ -169,7 +168,6 @@ export class QmpChannel {
           this.connecting = null
           this.upstream = s
           this.ready = true
-          this.o.onConnect?.()
           this.pump()
           return
         }
@@ -278,7 +276,6 @@ export interface QgaChannelOptions {
   readonly listen: string
   readonly upstream: string
   readonly portOpen: () => Promise<boolean | null>
-  readonly onRefused?: () => void
   readonly pollMs?: number
 }
 
@@ -349,10 +346,8 @@ export class QgaChannel {
     if (next.destroyed || this.stopped || this.active !== next) return
     const up = connect(this.o.upstream)
     this.upstream = up
-    let connected = false
     up.on("error", () => undefined)
     up.on("close", () => {
-      if (!connected) this.o.onRefused?.()
       if (this.upstream === up) next.destroy()
     })
     up.on("data", (chunk: Buffer) => {
@@ -360,7 +355,6 @@ export class QgaChannel {
       else up.destroy()
     })
     up.on("connect", () => {
-      connected = true
       if (this.active !== next) {
         up.destroy()
         return

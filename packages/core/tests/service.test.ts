@@ -200,16 +200,13 @@ describe("one service per instance", () => {
     await held
   })
 
-  it("never connects to the agent after the guest closed its port, even if it was open before", async () => {
+  it("never connects to the agent after the guest closed its port, though QEMU sends no event for it", async () => {
     svc = await runService("t", { exitAfterMs: 5000, checkMs: 50 })
     expect(await qga.call(p.qga, { execute: "guest-ping" }, 1000)).toEqual({ return: {} })
     const before = agent.connections
     const open = fake.handler
     fake.handler = (cmd) =>
       cmd["execute"] === "query-chardev" ? { return: [{ label: "qga0", "frontend-open": false }] } : open(cmd)
-    await qmp.status(p.qmp)
-    fake.emit({ event: "VSERPORT_CHANGE", data: { id: "channel0", open: false } })
-    await sleep(50)
     await expect(qga.call(p.qga, { execute: "guest-ping" }, 500)).rejects.toThrow("timed out")
     expect(agent.connections).toBe(before)
   })
