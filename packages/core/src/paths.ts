@@ -112,6 +112,10 @@ export interface Paths {
   readonly tpmSock: string
   readonly qga: string
   readonly qmp: string
+  readonly qgaQemu: string
+  readonly qmpQemu: string
+  readonly service: string
+  readonly events: string
   readonly pid: string
   readonly serial: string
   /**
@@ -144,6 +148,10 @@ export function pathsFor(name: string): Paths {
     tpmSock: resolve(dir, "tpm/swtpm-sock"),
     qga: resolve(dir, "qga.sock"),
     qmp: resolve(dir, "qmp.sock"),
+    qgaQemu: resolve(dir, "qga-qemu.sock"),
+    qmpQemu: resolve(dir, "qmp-qemu.sock"),
+    service: resolve(dir, "service.json"),
+    events: resolve(dir, "events.jsonl"),
     pid: resolve(dir, "qemu.pid"),
     serial: resolve(dir, "serial.log"),
     serialPrev: resolve(dir, "serial.prev.log"),
