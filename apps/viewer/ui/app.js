@@ -39,7 +39,7 @@ function instancesFrom(stdout) {
     if (Array.isArray(parsed.instances)) return parsed.instances
     return parsed.state === "missing" ? [] : [parsed]
   } catch {
-    return []
+    return null
   }
 }
 
@@ -56,6 +56,12 @@ async function instances() {
   const out = await winvm("status", "--json")
   const all = instancesFrom(out.stdout)
   const list = $("instances")
+  if (all === null) {
+    const last = out.stderr.trim().split("\n").find((l) => /error/i.test(l)) ?? `exit ${out.code}`
+    list.replaceChildren(item(`winvm status failed: ${last}`, "bad"))
+    $("output-panel").open = true
+    return
+  }
   if (all.length === 0) {
     list.replaceChildren(item("No instances yet. Start one to create “default”.", "muted"))
     list.append(row({ name: "default", state: "stopped" }))

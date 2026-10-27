@@ -32,12 +32,16 @@ export function isExcluded(path: string): boolean {
 
 /** Folders worth excluding: the state directory, and the folder holding the
  *  ISO the base was built from (it is only symlinked into the state). */
-export function targets(): readonly string[] {
+export function targets(o: { readonly realpath?: (path: string) => string } = {}): readonly string[] {
   const out = [home()]
   const iso = media.iso()
   if (existsSync(iso)) {
-    const isoDir = dirname(realpathSync(iso))
-    if (!isoDir.startsWith(`${home()}/`)) out.push(isoDir)
+    try {
+      const isoDir = dirname((o.realpath ?? realpathSync)(iso))
+      if (!isoDir.startsWith(`${home()}/`)) out.push(isoDir)
+    } catch {
+      // An app without access to the volume holding the ISO cannot resolve it.
+    }
   }
   return out.filter((p) => existsSync(p))
 }

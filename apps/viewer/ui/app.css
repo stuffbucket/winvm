@@ -112,6 +112,10 @@ ul {
   color: var(--ok);
 }
 
+.instances .bad {
+  color: var(--bad);
+}
+
 .checks .bad::before {
   content: "✕ ";
   color: var(--bad);
