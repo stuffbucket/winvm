@@ -104,62 +104,77 @@ git commit -m "build: run winvm on Bun 1.4.3, pinned in .bun-version"
 
 ---
 
-### Task 2: Resolve dependencies against public npm, and keep it that way
+### Task 2: Install through the package proxy, with shard hosts kept out of the lockfile
+
+Follows monimal (`.npmrc`, `.pnpmfile.cjs`, `scripts/lockfile-shard-hosts.cjs`,
+`scripts/strip-lockfile-hosts.mjs`, and SOURCES.md "Lockfile integrity"). The
+proxy serves tarballs from `ms-feed-N.pkgs.visualstudio.com` hosts whose number
+rotates; pnpm records whichever answered as `tarball:` and a later frozen
+install fails `ERR_PNPM_LOCKFILE_RESOLUTION_VERIFICATION`. Without a `tarball:`
+field pnpm rebuilds the URL from the configured registry, so shard hosts are
+dropped; integrity hashes stay.
 
 **Files:**
-- Modify: `pnpm-lock.yaml` (regenerated)
-- Create: `scripts/check-lockfile-hosts.ts`
-- Test: `scripts/check-lockfile-hosts.test.ts`
+- Create: `.npmrc`, `.pnpmfile.cjs`, `scripts/lockfile-shard-hosts.cjs`, `scripts/strip-lockfile-hosts.ts`
+- Test: `scripts/strip-lockfile-hosts.test.ts`
+- Modify: `pnpm-lock.yaml` (re-resolved)
 
 **Interfaces:**
-- Produces: `bun scripts/check-lockfile-hosts.ts [lockfile]`, exit 0 when every `tarball:`/`resolution` URL in the lockfile is on `registry.npmjs.org` (or the lockfile records no tarball URLs), exit 1 listing each other host otherwise. `export function foreignHosts(lockText: string): string[]` (sorted, unique).
+- Produces:
+  - `.npmrc`: `registry=https://packagefeedproxy.microsoft.io/npm/` (public, no token), with monimal's comment.
+  - `scripts/lockfile-shard-hosts.cjs` (CommonJS; pnpm `require`s pnpmfiles): `SHARD_HOST` (`/https?:\/\/ms-feed-\d+\.pkgs\.visualstudio\.com(?=[:/]|$)/`) and `dropShardHostUrls(lockfile) → { dropped, inspected }`, copied from monimal's.
+  - `.pnpmfile.cjs`: `afterAllResolved` calls `dropShardHostUrls` (monimal's, without its settings-package policy hook).
+  - `scripts/strip-lockfile-hosts.ts`: `export function stripShardHosts(text: string): { text: string; stripped: number }` (only `resolution: {…}` lines are touched); `bun scripts/strip-lockfile-hosts.ts` repairs `pnpm-lock.yaml` in place; `--check` exits 1 if any shard host is recorded.
 
 - [ ] **Step 1: Write the failing test**
 
 ```ts
 import { expect, it } from "bun:test"
-import { foreignHosts } from "./check-lockfile-hosts"
+import { stripShardHosts } from "./strip-lockfile-hosts"
 
-it("accepts integrity-only entries and the public registry", () => {
-  expect(foreignHosts("  resolution: {integrity: sha512-abc}\n  tarball: https://registry.npmjs.org/a/-/a-1.0.0.tgz\n")).toEqual([])
+it("drops shard-host tarballs and keeps the integrity", () => {
+  const line = "    resolution: {integrity: sha512-abc, tarball: https://ms-feed-25.pkgs.visualstudio.com/x/a-1.tgz}"
+  expect(stripShardHosts(line)).toEqual({ text: "    resolution: {integrity: sha512-abc}", stripped: 1 })
 })
 
-it("names every other host once", () => {
-  const lock =
-    "  resolution: {tarball: https://ms-feed-25.pkgs.visualstudio.com/x/a-1.tgz}\n" +
-    "  resolution: {tarball: https://ms-feed-25.pkgs.visualstudio.com/x/b-1.tgz}\n" +
-    "  tarball: https://packagefeedproxy.microsoft.io/c-1.tgz\n"
-  expect(foreignHosts(lock)).toEqual(["ms-feed-25.pkgs.visualstudio.com", "packagefeedproxy.microsoft.io"])
+it("keeps a tarball pinned on purpose", () => {
+  const line = "    resolution: {tarball: https://codeload.github.com/o/r/tar.gz/abc}"
+  expect(stripShardHosts(line)).toEqual({ text: line, stripped: 0 })
+})
+
+it("touches only resolution lines", () => {
+  const line = "    # see https://ms-feed-3.pkgs.visualstudio.com/x"
+  expect(stripShardHosts(line).stripped).toBe(0)
 })
 ```
 
 - [ ] **Step 2: Run it to see it fail**
 
-Run: `bun test scripts/check-lockfile-hosts.test.ts`
+Run: `bun test scripts/strip-lockfile-hosts.test.ts`
 Expected: FAIL, module not found.
 
-- [ ] **Step 3: Implement `foreignHosts` and the CLI wrapper** in `scripts/check-lockfile-hosts.ts` (scan for `https://` URLs on lines containing `tarball`; default path `pnpm-lock.yaml`).
+- [ ] **Step 3: Add `.npmrc`, `lockfile-shard-hosts.cjs` and `.pnpmfile.cjs`** from monimal as above, and implement `stripShardHosts` plus the CLI (repair, or `--check`) in `scripts/strip-lockfile-hosts.ts`, importing `SHARD_HOST` from the `.cjs` so the two can't drift (maximal's `scripts/strip-lockfile-hosts.ts` is the TypeScript model).
 
-- [ ] **Step 4: Run it to see it pass, and see it reject today's lockfile**
+- [ ] **Step 4: Run it to see it pass, and see it catch today's lockfile**
 
-Run: `bun test scripts/check-lockfile-hosts.test.ts && bun scripts/check-lockfile-hosts.ts`
-Expected: test PASS; the script exits 1 naming `ms-feed-25.pkgs.visualstudio.com` (today's lockfile).
+Run: `bun test scripts/strip-lockfile-hosts.test.ts && bun scripts/strip-lockfile-hosts.ts --check`
+Expected: 3 pass; the check exits 1 (today's lockfile records `ms-feed-25` hosts).
 
-- [ ] **Step 5: Regenerate the lockfile against public npm**
+- [ ] **Step 5: Re-resolve the lockfile through the proxy**
 
-Run: `rm pnpm-lock.yaml && pnpm install --registry=https://registry.npmjs.org/ && bun scripts/check-lockfile-hosts.ts`
-Expected: install succeeds with the same versions (`@anthropic-ai/sdk 0.134.0`, `@types/bun`, `typescript 6.0.3`); the check exits 0.
+Run: `rm pnpm-lock.yaml && pnpm install && bun scripts/strip-lockfile-hosts.ts --check && rm -rf node_modules && pnpm install --frozen-lockfile`
+Expected: the first install prints `pnpmfile: dropped N rotating shard-host tarball URL(s)`; the check exits 0; the frozen install from a clean `node_modules` succeeds (this is what failed at the start). Versions unchanged: `@anthropic-ai/sdk 0.134.0`, `typescript 6.0.3`.
 
 - [ ] **Step 6: Typecheck and test**
 
 Run: `pnpm run check`
-Expected: clean; `200 pass, 0 fail` (the flat layout's `bun test` also picks up `scripts/*.test.ts`).
+Expected: clean; `201 pass, 0 fail` (the flat layout's `bun test` also picks up `scripts/*.test.ts`).
 
 - [ ] **Step 7: Commit**
 
 ```bash
-git add pnpm-lock.yaml scripts/check-lockfile-hosts.ts scripts/check-lockfile-hosts.test.ts
-git commit -m "build: resolve the lockfile against public npm and check it stays there"
+git add .npmrc .pnpmfile.cjs pnpm-lock.yaml scripts/lockfile-shard-hosts.cjs scripts/strip-lockfile-hosts.ts scripts/strip-lockfile-hosts.test.ts
+git commit -m "build: install through the package proxy and keep shard hosts out of the lockfile"
 ```
 
 ---
