@@ -92,7 +92,8 @@ export function controls(p: Phase, busy: boolean): Controls {
 
 const GiB = 1024 ** 3
 
-export const formatGiB = (bytes: number): string => `${(bytes / GiB).toFixed(1)} GiB`
+export const formatSize = (bytes: number): string =>
+  bytes < GiB ? `${String(Math.round(bytes / 1024 ** 2))} MiB` : `${(bytes / GiB).toFixed(1)} GiB`
 
 export function formatMemory(mib: number): string {
   const gib = mib / 1024
@@ -133,8 +134,8 @@ export function detailRows(s: Status): Row[] {
     const d = displaySize(s.screen)
     add("detail.screen", `${String(d.width)} × ${String(d.height)}${d.device === null ? "" : ` (${d.device})`}`)
   }
-  add("detail.disk", s.overlayBytes === null ? null : formatGiB(s.overlayBytes))
-  if (s.saves.count > 0) add("detail.saves", `${String(s.saves.count)} · ${formatGiB(s.saves.bytes)}`)
+  add("detail.disk", s.overlayBytes === null ? null : formatSize(s.overlayBytes))
+  if (s.saves.count > 0) add("detail.saves", `${String(s.saves.count)} · ${formatSize(s.saves.bytes)}`)
   return rows
 }
 
@@ -178,7 +179,7 @@ export function facts(s: Status): Fact[] {
   if (s.image !== null) out.push({ key: "fact.image", values: { name: s.image } })
   if (s.cpus !== null) out.push({ key: "fact.cpus", values: { count: s.cpus } })
   if (s.memoryMiB !== null) out.push({ key: "fact.memory", values: { size: formatMemory(s.memoryMiB) } })
-  if (s.overlayBytes !== null) out.push({ key: "fact.changes", values: { size: formatGiB(s.overlayBytes) } })
+  if (s.overlayBytes !== null) out.push({ key: "fact.changes", values: { size: formatSize(s.overlayBytes) } })
   if (s.saves.count > 0) out.push({ key: "fact.saves", values: { count: s.saves.count } })
   return out
 }

@@ -151,6 +151,11 @@ describe("facts", () => {
     const got = facts(one({ image: null, cpus: null, overlayBytes: null, saves: { count: 0, bytes: 0 } }))
     expect(got.map((f) => f.key)).toEqual(["fact.memory"])
   })
+
+  it("gives a size under 1 GiB in MiB", () => {
+    const got = facts(one({ overlayBytes: 190 * 1024 ** 2 })).find((f) => f.key === "fact.changes")
+    expect(got?.values).toEqual({ size: "190 MiB" })
+  })
 })
 
 describe("displaySize", () => {
