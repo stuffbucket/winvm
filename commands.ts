@@ -27,6 +27,7 @@ import {
   readImageMeta,
   readMeta,
 } from "./paths"
+import * as agent from "./agent"
 import * as agentcmds from "./agentcmds"
 import * as input from "./input"
 import * as qemu from "./qemu"
@@ -736,6 +737,66 @@ export async function stop(args: Args): Promise<number> {
   }
   console.error("::error::guest did not shut down — `winvm kill` if it is wedged")
   return 1
+}
+
+/**
+ * Restart Windows in a running instance, and wait until it is ready again.
+ *
+ * The guest restarts; QEMU does not. So an --ephemeral instance keeps what it
+ * has written, the agent's port forward stays, and the agent comes back at
+ * logon (its Run key). The old boot keeps answering for a while after the
+ * request, so "ready" means a NEW boot (LastBootUpTime changed) whose real
+ * account has logged on (qga.untilReady, which also repairs an interrupted
+ * audit-mode logon).
+ */
+export async function reboot(args: Args): Promise<number> {
+  const name = instanceName(args)
+  const p = pathsFor(name)
+  if (!qemu.isRunning(p)) {
+    console.error(`::error::instance "${name}" is not running — \`winvm start -i ${name}\``)
+    return 1
+  }
+  const s = Number(args.flags.get("timeout") ?? 600)
+  if (!Number.isFinite(s) || s <= 0) {
+    console.error(`::error::--timeout wants seconds, got "${args.flags.get("timeout") ?? ""}"`)
+    return 1
+  }
+  const before = await qga.bootTime(p.qga)
+  if (before === null) {
+    console.error(
+      `::error::the guest is not answering qemu-ga, so a restart can be neither asked for nor confirmed — ` +
+        `\`winvm kill -i ${name}\` and \`winvm start -i ${name}\` if it is wedged`,
+    )
+    return 1
+  }
+  const t0 = Date.now()
+  const deadline = t0 + s * 1000
+  // Activity throughout, so the watcher neither saves nor stows a guest mid-restart.
+  const outcome = await watcher.whileActive(
+    name,
+    (async (): Promise<qga.Readiness> => {
+      await qga.reboot(p.qga)
+      process.stdout.write("rebooting")
+      return await qga.untilNewBoot(p.qga, before, deadline - Date.now(), {
+        noLogonMs: NO_LOGON_MS,
+        log: (line) => process.stdout.write(`\n${line}\n`),
+      })
+    })(),
+  )
+  process.stdout.write("\n")
+  if (outcome !== "ready") {
+    console.error(
+      outcome === "no-logon"
+        ? `::error::the guest restarted but no one logged on in ${String(NO_LOGON_MS / 1000)} s — \`winvm screenshot -i ${name}\``
+        : `::error::the guest was not back within ${String(s)} s. Look at it with \`winvm open -i ${name}\` or ${p.serial}`,
+    )
+    return 1
+  }
+  if (agent.readState(p) !== null && (await agent.connect(name, { timeoutMs: 60_000 })) === null) {
+    console.warn(`warning: the in-guest agent did not answer within 60 s of logon — \`winvm agent status -i ${name}\``)
+  }
+  console.log(`instance "${name}" rebooted in ${String(Math.round((Date.now() - t0) / 1000))} s`)
+  return 0
 }
 
 export function kill(args: Args): number {

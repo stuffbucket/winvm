@@ -15,6 +15,7 @@
  *   winvm save / load / saves        whole-machine saves as files; see saves.ts
  *   winvm golden create | reset      settled mapped-ram save for fast resets; see golden.ts
  *   winvm pause / resume / stow      freeze, unfreeze, save-and-quit
+ *   winvm reboot [-i name]           restart Windows, back when logged on again
  *   winvm clock [-i name]            guest-vs-host clock offset, and fix it
  *   winvm reset [-i name]            discard all changes, back to the base
  *   winvm ls                         images and instances, with disk usage
@@ -165,6 +166,9 @@ switch (sub) {
   // eslint-disable-next-line no-fallthrough
   case "stop":
     process.exit(await commands.stop(args))
+  // eslint-disable-next-line no-fallthrough
+  case "reboot":
+    process.exit(await commands.reboot(args))
   // eslint-disable-next-line no-fallthrough
   case "kill":
     process.exit(commands.kill(args))
