@@ -1,9 +1,10 @@
+import { spawn, spawnSync } from "node:child_process"
 import { randomBytes } from "node:crypto"
-import { appendFileSync, chmodSync, readFileSync, rmSync, writeFileSync } from "node:fs"
+import { appendFileSync, chmodSync, closeSync, existsSync, openSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { resolve } from "node:path"
 
 import { QgaChannel, QmpChannel } from "./broker"
-import { PACKAGE_DIR, home, pathsFor, type Paths } from "./paths"
+import { PACKAGE_DIR, cliEntry, home, pathsFor, type Paths } from "./paths"
 import * as qga from "./qga"
 
 export interface ServiceInfo {
@@ -61,6 +62,50 @@ export function readService(p: Paths): ServiceInfo | null {
   }
 }
 
+export function stopService(p: Paths): void {
+  const info = readService(p)
+  if (info === null) return
+  try {
+    process.kill(info.pid, "SIGTERM")
+  } catch {
+    return
+  }
+  const running = (): boolean => alive(info.pid) && !exited(info.pid)
+  const deadline = Date.now() + 5000
+  while (running() && Date.now() < deadline) Bun.sleepSync(50)
+  if (running()) process.kill(info.pid, "SIGKILL")
+  rmSync(p.service, { force: true })
+}
+
+function exited(pid: number): boolean {
+  const r = spawnSync("ps", ["-o", "stat=", "-p", String(pid)], { encoding: "utf8" })
+  const stat = (r.stdout ?? "").trim()
+  return stat === "" || stat.startsWith("Z")
+}
+
+export async function ensureService(name: string, p: Paths): Promise<ServiceInfo> {
+  const cli = cliEntry()
+  const running = readService(p)
+  if (running !== null && running.cli === cli) return running
+  if (running !== null) stopService(p)
+  rmSync(p.service, { force: true })
+  const log = openSync(resolve(p.dir, "service.log"), "a")
+  const child = spawn(process.execPath, [cli, "serve", "-i", name], {
+    detached: true,
+    stdio: ["ignore", log, log],
+    env: { ...process.env, WINVM_SERVICE_TOKEN: randomBytes(24).toString("base64url") },
+  })
+  closeSync(log)
+  child.unref()
+  const deadline = Date.now() + 10_000
+  while (Date.now() < deadline) {
+    const info = readService(p)
+    if (info !== null && info.pid === child.pid && existsSync(p.qmp) && existsSync(p.qga)) return info
+    await new Promise((r) => setTimeout(r, 50))
+  }
+  throw new Error(`the control service for "${name}" did not start; see ${resolve(p.dir, "service.log")}`)
+}
+
 const coreVersion = (): string =>
   (JSON.parse(readFileSync(resolve(PACKAGE_DIR, "package.json"), "utf8")) as { version: string }).version
 
@@ -93,7 +138,11 @@ export async function runService(name: string, o: ServiceOptions = {}): Promise<
   const record = (kind: WinvmEvent["kind"], fields: Record<string, unknown>): void => {
     const event: WinvmEvent = { t: new Date().toISOString(), instance: name, kind, ...fields }
     const line = JSON.stringify(event)
-    appendFileSync(p.events, `${line}\n`)
+    try {
+      appendFileSync(p.events, `${line}\n`)
+    } catch {
+      return
+    }
     for (const c of subs) send(c, `data: ${line}\n\n`)
   }
 

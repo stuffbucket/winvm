@@ -1,11 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test"
+import { spawnSync } from "node:child_process"
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { resolve } from "node:path"
 
-import { pathsFor, type Paths } from "../src/paths"
+import { PACKAGE_DIR, pathsFor, type Paths } from "../src/paths"
+import { qemuArgs } from "../src/qemu"
 import * as qmp from "../src/qmp"
-import { readService, runService, type ServiceHandle } from "../src/service"
+import { ensureService, readService, runService, stopService, type ServiceHandle } from "../src/service"
 import { FakeAgent } from "./fakes/agent"
 import { FakeQmp } from "./fakes/qmp"
 
@@ -121,5 +123,53 @@ describe("the service", () => {
     await sleep(600)
     expect(readService(p)?.pid).toBe(process.pid)
     expect(existsSync(p.qmp)).toBe(true)
+  })
+})
+
+describe("starting the service", () => {
+  const cli = resolve(PACKAGE_DIR, "..", "..", "apps", "cli", "src", "winvm.ts")
+  let savedCli: string | undefined
+
+  beforeEach(() => {
+    savedCli = process.env["WINVM_CLI"]
+    process.env["WINVM_CLI"] = cli
+    delete process.env["WINVM_SERVICE_TOKEN"]
+  })
+
+  afterEach(() => {
+    stopService(p)
+    if (savedCli === undefined) delete process.env["WINVM_CLI"]
+    else process.env["WINVM_CLI"] = savedCli
+  })
+
+  it("starts the service once, detached, and reuses it", async () => {
+    const first = await ensureService("t", p)
+    expect(first.pid).not.toBe(process.pid)
+    expect(first.cli).toBe(cli)
+    expect(existsSync(p.qmp) && existsSync(p.qga)).toBe(true)
+    expect(await qmp.status(p.qmp)).toBe("running")
+    const again = await ensureService("t", p)
+    expect(again.pid).toBe(first.pid)
+  }, 30_000)
+
+  it("stops it, and waits until it has gone", async () => {
+    const info = await ensureService("t", p)
+    stopService(p)
+    expect(readService(p)).toBeNull()
+    expect(spawnSync("ps", ["-o", "stat=", "-p", String(info.pid)], { encoding: "utf8" }).stdout.trim()).toMatch(/^(Z.*)?$/)
+  }, 30_000)
+})
+
+describe("QEMU's command line", () => {
+  it("hands QEMU the private sockets", () => {
+    const args = qemuArgs("t", p, { image: "win11-arm64", vnc: 9, created: "" }, {
+      installMedia: false,
+      ephemeral: true,
+      virtioBoot: false,
+    }).join(" ")
+    expect(args).toContain(`unix:${p.qmpQemu},server=on,wait=off`)
+    expect(args).toContain(`socket,path=${p.qgaQemu},`)
+    expect(args).not.toContain(`unix:${p.qmp},`)
+    expect(args).not.toContain(`path=${p.qga},`)
   })
 })

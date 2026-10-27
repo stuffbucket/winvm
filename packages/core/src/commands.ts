@@ -37,6 +37,7 @@ import * as saves from "./saves"
 import * as savecmds from "./savecmds"
 import * as snapshot from "./snapshot"
 import * as timemachine from "./timemachine"
+import { stopService } from "./service"
 import * as watcher from "./watch"
 import { CONFIG_KEYS, DEFAULTS, effectiveConfig, parseAssignment, readOverrides, writeAssignments } from "./config"
 
@@ -807,12 +808,14 @@ export function kill(args: Args): number {
     // Still worth a sweep: a launch that failed, or an older winvm, can leave
     // the TPM emulator running with no guest.
     qemu.stopSwtpm(p)
+    stopService(p)
     console.log(`instance "${name}" is not running`)
     return 0
   }
   process.kill(pid, "SIGKILL")
   rmSync(p.pid, { force: true })
   qemu.stopSwtpm(p)
+  stopService(p)
   void watcher.stopWatcher(name)
   console.log(`killed instance "${name}"`)
   return 0
@@ -847,6 +850,7 @@ export function destroy(args: Args): number {
     console.error(`::error::no such instance "${name}"`)
     return 1
   }
+  stopService(p)
   qemu.stopSwtpm(p)
   const size = du(instanceDir(name))
   rmSync(instanceDir(name), { recursive: true, force: true })
