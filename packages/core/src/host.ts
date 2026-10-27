@@ -221,9 +221,40 @@ export interface Check {
   readonly hint: string
 }
 
+export const MIN_QEMU = "11.1.0"
+
+const versionParts = (v: string): readonly number[] => v.split(".").map((n) => Number.parseInt(n, 10))
+
+function atLeast(v: string, min: string): boolean {
+  const a = versionParts(v)
+  const b = versionParts(min)
+  for (let i = 0; i < b.length; i++) {
+    const x = a[i] ?? 0
+    const y = b[i] ?? 0
+    if (x !== y) return x > y
+  }
+  return true
+}
+
+export function qemuVersionCheck(versionOutput: string | null): Check {
+  const hint =
+    `QEMU 11.0.x HVF guests can lose their timer interrupt and hang (QEMU a86024eb2d, fixed in 11.1); ` +
+    `brew upgrade stuffbucket/qemu-spice/qemu-spice (or qemu)`
+  if (versionOutput === null) return { label: "QEMU (not found)", ok: false, hint: `brew install qemu (${MIN_QEMU} or later)` }
+  const v = /QEMU emulator version (\d+\.\d+\.\d+)/.exec(versionOutput)?.[1]
+  if (v === undefined) return { label: "QEMU (version unreadable)", ok: false, hint }
+  const ok = atLeast(v, MIN_QEMU)
+  return { label: ok ? `QEMU ${v}` : `QEMU ${v} (needs ${MIN_QEMU} or later)`, ok, hint }
+}
+
+function qemuVersionOutput(): string | null {
+  const r = spawnSync("qemu-system-aarch64", ["--version"], { encoding: "utf8" })
+  return r.status === 0 ? r.stdout : null
+}
+
 export function hostChecks(): readonly Check[] {
   return [
-    { label: "qemu-system-aarch64", ok: have("qemu-system-aarch64"), hint: "brew install qemu" },
+    qemuVersionCheck(qemuVersionOutput()),
     { label: "qemu-img", ok: have("qemu-img"), hint: "brew install qemu" },
     // Windows 11 hard-requires TPM 2.0. Without an emulated one the only way
     // past Setup is the LabConfig registry bypass, an unsupported configuration.
@@ -242,6 +273,11 @@ export function hostChecks(): readonly Check[] {
     // confusing failure deep inside `build`.
     { label: "hdiutil", ok: have("hdiutil"), hint: "macOS built-in" },
   ]
+}
+
+export function printChecks(checks: readonly Check[]): number {
+  for (const c of checks) console.log(`${c.ok ? "ok  " : "MISS"}  ${c.label}${c.ok ? "" : `  -> ${c.hint}`}`)
+  return checks.filter((c) => !c.ok).length
 }
 
 export function requireHost(): void {
