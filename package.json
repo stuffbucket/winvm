@@ -1,32 +1,20 @@
 {
-  "name": "winvm",
+  "name": "winvm-workspace",
   "version": "0.1.0",
   "private": true,
   "description": "A scriptable Windows 11 ARM64 guest on plain QEMU + Hypervisor.framework (macOS, Apple Silicon)",
   "license": "MIT",
   "type": "module",
-  "bin": {
-    "winvm": "./winvm.ts"
-  },
   "scripts": {
-    "winvm": "bun winvm.ts",
-    "setup": "bun winvm.ts setup",
-    "doctor": "bun winvm.ts doctor",
-    "build:image": "bun winvm.ts build",
-    "start": "bun winvm.ts start",
-    "stop": "bun winvm.ts stop",
-    "exec": "bun winvm.ts exec",
-    "smoke": "bun winvm.ts smoke",
-    "ls": "bun winvm.ts ls",
-    "reset": "bun winvm.ts reset",
-    "diagnose": "bun winvm.ts diagnose",
-    "typecheck": "tsc --noEmit -p tsconfig.json",
-    "test": "bun test",
-    "check": "pnpm run typecheck && pnpm run test"
+    "build": "turbo run build",
+    "typecheck": "turbo run typecheck",
+    "test": "turbo run test",
+    "check": "turbo run typecheck test",
+    "winvm": "bun apps/cli/src/winvm.ts"
   },
   "devDependencies": {
-    "@types/bun": "1.4.0",
-    "typescript": "6.0.3"
+    "@winvm/cli": "workspace:*",
+    "turbo": "^2.11.4"
   },
   "packageManager": "pnpm@12.3.4",
   "pnpmTarballUrlPolicy": {
@@ -37,8 +25,5 @@
         "action": "omit"
       }
     ]
-  },
-  "dependencies": {
-    "@anthropic-ai/sdk": "0.134.0"
   }
 }

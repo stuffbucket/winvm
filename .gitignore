@@ -7,3 +7,4 @@ node_modules/
 *.iso
 *.qcow2
 *.img
+.turbo/
