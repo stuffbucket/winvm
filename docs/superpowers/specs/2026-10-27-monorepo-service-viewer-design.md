@@ -1,4 +1,4 @@
-# winvm as a monorepo, with a control service and a native viewer
+# winvm as a Turborepo monorepo, with a control service and a native viewer
 
 Date: 2026-10-27. Status: design, for review before planning.
 
@@ -103,7 +103,7 @@ design system for the viewer.
 
 By the user:
 
-- **Monorepo** with two apps and a core package: the existing winvm logic
+- **A Turborepo monorepo** (pnpm workspaces, Turborepo tasks) with two apps and a core package: the existing winvm logic
   becomes a package; the CLI is one app; the viewer is the other. The core is
   the viewer's **sidecar** when the viewer is used.
 - **Tauri** for the viewer window, not a browser with a profile.
