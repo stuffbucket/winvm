@@ -29,6 +29,15 @@
     "typescript": "6.0.3"
   },
   "packageManager": "pnpm@12.3.4",
+  "pnpmTarballUrlPolicy": {
+    "rules": [
+      {
+        "registry": "https://packagefeedproxy.microsoft.io/npm/",
+        "includeTarballHostSuffixes": ["pkgs.visualstudio.com"],
+        "action": "omit"
+      }
+    ]
+  },
   "dependencies": {
     "@anthropic-ai/sdk": "0.134.0"
   }

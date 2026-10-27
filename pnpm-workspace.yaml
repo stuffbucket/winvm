@@ -1,0 +1,6 @@
+# .pnpmfile.cjs and apply-pnpm-tarball-policy.mjs come unchanged from
+# stuffbucket/pnpm-hooks at 4935cd694704061d08a96af876ab9de70a3bf4f6: they keep
+# the package proxy's rotating shard hosts out of pnpm-lock.yaml, under the
+# policy in package.json#pnpmTarballUrlPolicy. To update, fetch both files at a
+# newer commit, run `pnpm install --lockfile-only`, and commit the lockfile.
+pnpmfile: .pnpmfile.cjs
