@@ -35,7 +35,7 @@ import { effectiveConfig } from "./config"
 import type { Decision, SaveInfo, Settings, Timing } from "./idle"
 import { DEFAULT_TIMING, DRIFT_TOLERANCE_MS, IdleMachine, autosaveName, savesToRotate } from "./idle"
 import type { Paths } from "./paths"
-import { cliEntry, instanceDir, pathsFor } from "./paths"
+import { cliArgv, instanceDir, pathsFor } from "./paths"
 import * as qemu from "./qemu"
 import * as qga from "./qga"
 import * as qmp from "./qmp"
@@ -142,7 +142,7 @@ async function runWinvm(argv: readonly string[], log: (s: string) => void): Prom
   log(`run: winvm ${argv.join(" ")}`)
   const started = Date.now()
   const code = await new Promise<number>((res) => {
-    const child = spawn(process.execPath, [cliEntry(), ...argv], { stdio: ["ignore", "pipe", "pipe"], env: process.env })
+    const child = spawn(process.execPath, [...cliArgv(...argv)], { stdio: ["ignore", "pipe", "pipe"], env: process.env })
     // Bounded, so a command that prints its usage (or worse) every time cannot grow the log without limit.
     let lines = 0
     const relay = (chunk: Buffer): void => {
@@ -375,7 +375,7 @@ export function ensureWatcher(name: string): number | null {
     // no log yet
   }
   const log = openSync(w.log, "a")
-  const child = spawn(process.execPath, [cliEntry(), "watch", "-i", name], {
+  const child = spawn(process.execPath, [...cliArgv("watch", "-i", name)], {
     detached: true,
     stdio: ["ignore", log, log],
     env: process.env,
