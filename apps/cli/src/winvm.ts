@@ -128,7 +128,7 @@
  *
  * Exit code: the guest command's, so `winvm exec` is transparent in a `&&` chain.
  */
-import { parseArgs } from "@winvm/core/args"
+import { instanceName, parseArgs } from "@winvm/core/args"
 import { bunVersionWarning, pinnedBunVersion, recordCliEntry } from "@winvm/core/paths"
 import * as agentcmds from "@winvm/core/agentcmds"
 import * as uicmds from "@winvm/core/uicmds"
@@ -139,6 +139,7 @@ import * as ocr from "@winvm/core/ocr"
 import * as runcmds from "@winvm/core/runcmds"
 import * as savecmds from "@winvm/core/savecmds"
 import * as screen from "@winvm/core/screen"
+import * as service from "@winvm/core/service"
 import * as status from "@winvm/core/status"
 import * as web from "@winvm/core/web"
 import * as webview from "@winvm/core/webview"
@@ -247,6 +248,13 @@ switch (sub) {
     process.exit(await savecmds.clock(args))
   case "watch":
     process.exit(await commands.watchCmd(args))
+  // eslint-disable-next-line no-fallthrough
+  case "serve": {
+    const handle = await service.runService(instanceName(args))
+    for (const sig of ["SIGINT", "SIGTERM", "SIGHUP"] as const) process.on(sig, () => void handle.stop())
+    await handle.done
+    process.exit(0)
+  }
   // eslint-disable-next-line no-fallthrough
   case "run":
     process.exit(await runcmds.run(args))
