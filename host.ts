@@ -60,6 +60,26 @@ export function qemuDataDirs(): readonly string[] {
 }
 
 /**
+ * Whether this QEMU's tpm-tis-device has a `ppi` property — ASKED, NOT ASSUMED.
+ *
+ * QEMU 11.1 added the Physical Presence Interface to that device, and on macOS
+ * 26 its RAM region makes HVF fail, so qemu.ts turns it off. QEMU before 11.1
+ * has no PPI there and rejects `ppi=off` as an unknown property ("Property
+ * 'tpm-tis-device.ppi' not found"), so the guest never starts. Leaving the
+ * option out on those versions gives the same device.
+ */
+let tpmPpi: boolean | null = null
+export function tpmTisHasPpi(): boolean {
+  if (tpmPpi !== null) return tpmPpi
+  const r = spawnSync("qemu-system-aarch64", ["-M", "virt", "-device", "tpm-tis-device,help"], { encoding: "utf8" })
+  tpmPpi = parseHasPpi(`${r.stdout ?? ""}${r.stderr ?? ""}`)
+  return tpmPpi
+}
+
+/** `-device tpm-tis-device,help` lists one property per line: `  ppi=<bool> ...`. */
+export const parseHasPpi = (help: string): boolean => /^\s*ppi=/m.test(help)
+
+/**
  * Expand `firmware/*.fd.gz` into the state directory, once, and return the
  * directory holding them. Returns null when this copy of the tool has no
  * vendored firmware, so discovery still runs.

@@ -11,7 +11,7 @@ import { spawn, spawnSync } from "node:child_process"
 import { closeSync, existsSync, openSync, readFileSync, renameSync, rmSync } from "node:fs"
 
 import { restoreForward } from "./agentfwd"
-import { requireFirmware } from "./host"
+import { requireFirmware, tpmTisHasPpi } from "./host"
 import type { InstanceMeta, Paths } from "./paths"
 import { media } from "./paths"
 import { RAMFB, displayArgs, readDisplay } from "./display"
@@ -106,8 +106,10 @@ export function qemuArgs(name: string, p: Paths, meta: InstanceMeta, o: LaunchOp
     // firmware enumerates all four PCR banks either way.
     // ppi=off: the Physical Presence Interface adds a small RAM region that
     // HVF refuses to map (QEMU 11.1 on macOS 26: "HV_BAD_ARGUMENT" at
-    // hvf-all.c:123, and qemu exits). Windows doesn't need PPI.
-    "-device", "tpm-tis-device,tpmdev=tpm0,ppi=off",
+    // hvf-all.c:123, and qemu exits). Windows doesn't need PPI. QEMU before
+    // 11.1 has no PPI on this device and rejects the option, so it is passed
+    // only when the property exists — see host.tpmTisHasPpi.
+    "-device", `tpm-tis-device,tpmdev=tpm0${tpmTisHasPpi() ? ",ppi=off" : ""}`,
     // UTC, because the GUEST's time zone is UTC: the answer file pins
     // <TimeZone>UTC</TimeZone>, and Windows reads the RTC as local time
     // (RealTimeIsUniversal unset). `base=localtime` handed it the HOST's wall
