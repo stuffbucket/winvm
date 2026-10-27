@@ -1,7 +1,7 @@
 # `winvm test --pool N`: jobs side by side
 
 ```sh
-bun winvm.ts test jobs/maximal/ --pool 3 [--pool-prefix ci] [--image win11-arm64-v4] \
+winvm test jobs/maximal/ --pool 3 [--pool-prefix ci] [--image win11-arm64-v4] \
     [--junit out.xml] [--json out.json] [--keep]
 ```
 

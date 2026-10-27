@@ -3,7 +3,7 @@
 # toasts. Install the NSIS tray app, open DevTools on its WebView2 windows,
 # start it, read and click Settings, check the start-up toast, OCR Settings.
 #
-#   bun winvm.ts run jobs/maximal/settings-ui.yml -i ci
+#   winvm run jobs/maximal/settings-ui.yml -i ci
 #
 # `shell: winvm` steps run on the HOST against the job's instance (hoststep.ts);
 # the others run in the guest as the logged-on user (needs the in-guest agent,

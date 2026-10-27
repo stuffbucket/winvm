@@ -14,7 +14,7 @@
 #   proxy stopped gracefully        -> broker exits within gracefulShutdownMs
 # The process-survival checks below already hold the first row.
 #
-#   bun winvm.ts run jobs/maximal/broker.yml -i ci
+#   winvm run jobs/maximal/broker.yml -i ci
 name: maximal mcp broker containment (windows)
 timeout: 5m
 env:

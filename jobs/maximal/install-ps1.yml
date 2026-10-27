@@ -3,7 +3,7 @@
 # then what it installed, the CLI on the new PATH, its uninstaller, and that
 # the uninstall leaves nothing behind.
 #
-#   bun winvm.ts run jobs/maximal/install-ps1.yml -i ci
+#   winvm run jobs/maximal/install-ps1.yml -i ci
 name: maximal install.ps1 install + uninstall
 timeout: 10m
 files:

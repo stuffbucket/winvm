@@ -12,16 +12,31 @@ pushing and waiting on CI.
 
 The reasoning behind every device and answer-file choice is in
 [`docs/windows-vm-qemu.md`](docs/windows-vm-qemu.md). Read it before changing
-anything in `qemu.ts` or `assets/`.
+anything in `packages/core/src/qemu.ts` or `packages/core/assets/`.
+
+## Getting started
+
+```sh
+mise install            # Bun 1.4.3 (.bun-version) and pnpm 12.3.4
+pnpm install            # through the package proxy in .npmrc
+winvm doctor            # check the host; changes nothing
+winvm start             # boot the default instance
+```
+
+`winvm` is on `PATH` inside the repository through mise (`mise.toml` adds
+`node_modules/.bin`); without mise activation, `pnpm winvm <verb>` does the
+same. The repository is a pnpm + Turborepo workspace: the library is
+`packages/core` (`src/`, `assets/`, `firmware/`, `web/`, `tests/`) and the
+command is `apps/cli`. `pnpm check` typechecks and tests everything.
 
 ## Prerequisites
 
 | | |
 |---|---|
 | Host | macOS on Apple Silicon (uses `-accel hvf`, `hdiutil`, `newfs_msdos`) |
-| [mise](https://mise.jdx.dev) | pins Bun 1.3.14 and pnpm 12.3.4 (`mise.toml`) |
-| `qemu`, `swtpm`, `zstd` | `bun winvm.ts setup` installs them with Homebrew, or `brew install qemu swtpm zstd` |
-| UEFI firmware | vendored in `firmware/` (gzipped EDK2), expanded into the state dir on first use |
+| [mise](https://mise.jdx.dev) | pins Bun 1.4.3 (`.bun-version`) and pnpm 12.3.4 (`mise.toml`) |
+| `qemu`, `swtpm`, `zstd` | `winvm setup` installs them with Homebrew, or `brew install qemu swtpm zstd` |
+| UEFI firmware | vendored in `packages/core/firmware/` (gzipped EDK2), expanded into the state dir on first use |
 | UTM guest tools ISO | downloaded by `setup`/`build` from getutm.app (~121 MB), pinned by SHA-256 |
 | Windows 11 ARM64 ISO | you supply it — see below |
 | Disk | ~15 GB for the base image, plus a few hundred MB to a few GB per instance |
@@ -32,7 +47,7 @@ UTM.app itself is **not** needed — only its guest-tools ISO (virtio drivers +
 ```sh
 mise install          # bun + pnpm
 pnpm install          # typecheck-only dev deps (registry/auth from ~/.npmrc)
-bun winvm.ts doctor   # check the host; changes nothing
+winvm doctor   # check the host; changes nothing
 ```
 
 `pnpm run check` runs the typecheck and the tests (the tests replay recorded
@@ -51,7 +66,7 @@ failure traces through `winvm diagnose`; no VM needed).
 
 Where to put it — any one of:
 
-1. `bun winvm.ts build --iso /path/to/Win11_..._Arm64.iso`
+1. `winvm build --iso /path/to/Win11_..._Arm64.iso`
 2. `export WINVM_ISO=/path/to/Win11_..._Arm64.iso`
 3. Drop it in `~/vm/` or `~/isos/` (or one subfolder below) with `arm64` in the
    file name; `build` finds it if it is the only match.
@@ -67,22 +82,22 @@ this repo. Run from the repo root (or use the `pnpm run <verb>` aliases in
 `package.json`).
 
 ```sh
-bun winvm.ts setup                       # brew install qemu swtpm zstd; fetch guest tools
-bun winvm.ts build --iso ~/vm/Win11_25H2_English_Arm64.iso --bun 1.3.14
+winvm setup                       # brew install qemu swtpm zstd; fetch guest tools
+winvm build --iso ~/vm/Win11_25H2_English_Arm64.iso --bun 1.3.14
                                          # once: unattended install, ~10-20 min
-bun winvm.ts start                       # boot instance "default" (~35 s to desktop)
-bun winvm.ts snapshot                    # checkpoint "fresh" once it is settled
-bun winvm.ts exec -- cmd /c ver          # run anything in the guest
-bun winvm.ts smoke --expect 1.3.14       # guest arch + staged bun version
-bun winvm.ts rewind                      # back to "fresh", no reboot
-bun winvm.ts stop                        # orderly shutdown via the guest agent
-bun winvm.ts reset                       # discard all changes, back to the base image
-bun winvm.ts ls                          # images, instances, VNC ports, disk usage
-bun winvm.ts status                      # running? guest version, clock, saves, watcher
-bun winvm.ts open                        # the screen, in macOS Screen Sharing
-bun winvm.ts open --web                  # the screen + status + buttons, in the browser
-bun winvm.ts diagnose                    # explain a guest that misbehaved
-bun winvm.ts config                      # idle watcher settings (see below)
+winvm start                       # boot instance "default" (~35 s to desktop)
+winvm snapshot                    # checkpoint "fresh" once it is settled
+winvm exec -- cmd /c ver          # run anything in the guest
+winvm smoke --expect 1.3.14       # guest arch + staged bun version
+winvm rewind                      # back to "fresh", no reboot
+winvm stop                        # orderly shutdown via the guest agent
+winvm reset                       # discard all changes, back to the base image
+winvm ls                          # images, instances, VNC ports, disk usage
+winvm status                      # running? guest version, clock, saves, watcher
+winvm open                        # the screen, in macOS Screen Sharing
+winvm open --web                  # the screen + status + buttons, in the browser
+winvm diagnose                    # explain a guest that misbehaved
+winvm config                      # idle watcher settings (see below)
 ```
 
 `--bun <version>` is optional; it stages that Bun release in the image at
@@ -119,7 +134,7 @@ scripts.
 - `winvm open` opens the screen in macOS Screen Sharing.
 - `winvm open --web` opens it in the browser instead, with the status and
   buttons beside it (start, stop, pause, resume, save, load, stow, Ctrl+Alt+Del,
-  screenshot). Each button runs the CLI (`bun winvm.ts <verb> -i <name>`) and
+  screenshot). Each button runs the CLI (`winvm <verb> -i <name>`) and
   shows its output. The page is served by `winvm web`, which `open --web` starts
   in the background (`winvm web --stop` stops it); it uses a vendored copy of
   [noVNC](https://novnc.com) talking to QEMU's own websocket listener.
@@ -131,7 +146,7 @@ as soon as it starts (kept in `<instance>/vncpassword`, mode 0600), and `open`
 passes it in the URL (`vnc://:<password>@127.0.0.1:5901`), so nothing prompts.
 The password also keeps other pages in your browser from reaching the screen
 through the websocket. To connect another VNC client by hand:
-`bun winvm.ts open --print` prints the URL.
+`winvm open --print` prints the URL.
 
 The browser view is loopback-only and needs a token that's random per server
 start: `open --web` puts it in the URL's `#fragment`, and every request to the
@@ -141,13 +156,13 @@ changes the port (default 5690).
 **For a script or an agent — no window at all:**
 
 ```sh
-bun winvm.ts screenshot              # PNG under <instance>/screenshots/, prints the path
-bun winvm.ts screenshot shot.png
-bun winvm.ts click 412 300           # screenshot pixels; --right, --middle, --double
-bun winvm.ts move 412 300
-bun winvm.ts scroll 5                # wheel notches, positive is down (scroll up 5)
-bun winvm.ts key win-r               # combos: ctrl-alt-delete, alt-f4, enter, f5 ...
-bun winvm.ts type "notepad"          # US layout; a newline presses Enter
+winvm screenshot              # PNG under <instance>/screenshots/, prints the path
+winvm screenshot shot.png
+winvm click 412 300           # screenshot pixels; --right, --middle, --double
+winvm move 412 300
+winvm scroll 5                # wheel notches, positive is down (scroll up 5)
+winvm key win-r               # combos: ctrl-alt-delete, alt-f4, enter, f5 ...
+winvm type "notepad"          # US layout; a newline presses Enter
 ```
 
 These go through QEMU's monitor (`screendump`, `input-send-event` on the USB
@@ -162,13 +177,13 @@ notifications apps raised; in jobs, `shell: winvm` steps run them on the host.
 See [`docs/gui.md`](docs/gui.md).
 
 ```sh
-bun winvm.ts ui tray Maximal --menu Settings      # tray icon by tooltip, then the menu item
-bun winvm.ts ui wait --window Settings --name Account --type Text
-bun winvm.ts ui click --window Settings --name Models
-bun winvm.ts webview enable maximal-shell.exe     # then start the app
-bun winvm.ts webview text 'h2.section__title' --target /ui/settings
-bun winvm.ts click --text "Cancel"
-bun winvm.ts toasts --app maximal --since 10m
+winvm ui tray Maximal --menu Settings      # tray icon by tooltip, then the menu item
+winvm ui wait --window Settings --name Account --type Text
+winvm ui click --window Settings --name Models
+winvm webview enable maximal-shell.exe     # then start the app
+winvm webview text 'h2.section__title' --target /ui/settings
+winvm click --text "Cancel"
+winvm toasts --app maximal --since 10m
 ```
 
 **Claude computer use.** `cua serve` exposes the guest to Claude's
@@ -177,17 +192,17 @@ small agent loop that drives it — through `ANTHROPIC_API_KEY`, or Maximal on
 the host. See [`docs/cua.md`](docs/cua.md).
 
 ```sh
-bun winvm.ts cua run -i ui "Open Notepad, type 'hello', and save it to C:\\work\\hello.txt"
-bun winvm.ts cua serve -i ui            # prints the URL and token
+winvm cua run -i ui "Open Notepad, type 'hello', and save it to C:\\work\\hello.txt"
+winvm cua serve -i ui            # prints the URL and token
 ```
 
 **Screen size.** The default display is `ramfb`, a firmware framebuffer that
 EDK2 fixes at 800x600. For a bigger screen, switch an instance to virtio-gpu:
 
 ```sh
-bun winvm.ts display -i ui 1920x1080   # stopped or running: records the device
-bun winvm.ts stop -i ui && bun winvm.ts start -i ui
-bun winvm.ts display -i ui 1920x1080   # sets Windows' resolution, reboots the guest
+winvm display -i ui 1920x1080   # stopped or running: records the device
+winvm stop -i ui && winvm start -i ui
+winvm display -i ui 1920x1080   # sets Windows' resolution, reboots the guest
 ```
 
 The second run is needed because Windows starts a new monitor at the driver's
@@ -205,15 +220,15 @@ firmware variables) written to a directory you can list, keep across restarts,
 and load later, whether or not the guest is running.
 
 ```sh
-bun winvm.ts save before-install        # ~6 s; name defaults to a timestamp
-bun winvm.ts load before-install        # ~4 s running, ~10 s stopped
-bun winvm.ts save --fast clean          # mapped-ram: ~7 s to take, ~0.5 s to load
-bun winvm.ts saves                      # name, kind, format, created, size, compatible
-bun winvm.ts saves rm before-install
-bun winvm.ts pause / resume             # freeze the vCPUs / carry on
-bun winvm.ts stow                       # save and shut QEMU down, freeing the host
-bun winvm.ts start                      # ...then this recalls the stow in seconds
-bun winvm.ts clock                      # guest-vs-host offset, and fix it
+winvm save before-install        # ~6 s; name defaults to a timestamp
+winvm load before-install        # ~4 s running, ~10 s stopped
+winvm save --fast clean          # mapped-ram: ~7 s to take, ~0.5 s to load
+winvm saves                      # name, kind, format, created, size, compatible
+winvm saves rm before-install
+winvm pause / resume             # freeze the vCPUs / carry on
+winvm stow                       # save and shut QEMU down, freeing the host
+winvm start                      # ...then this recalls the stow in seconds
+winvm clock                      # guest-vs-host offset, and fix it
 ```
 
 - **Baseline.** An instance's first `start` (and the first after `reset`) saves
@@ -249,8 +264,8 @@ A golden is the state every test job starts from: a `--fast` (mapped-ram) save
 taken only once Windows has gone quiet.
 
 ```sh
-bun winvm.ts golden create -i ci-1     # boot (or --from <save>), settle, save "golden"
-bun winvm.ts golden reset  -i ci-1     # back to it: ~1.3 s to a responsive guest
+winvm golden create -i ci-1     # boot (or --from <save>), settle, save "golden"
+winvm golden reset  -i ci-1     # back to it: ~1.3 s to a responsive guest
 ```
 
 `create` waits until QEMU's CPU time stays at or under `--settle-cpu` (3% of
@@ -300,11 +315,11 @@ when QEMU does; `stop` ends it first.
   clock is resynced.
 
 ```sh
-bun winvm.ts config -i default                         # effective settings
-bun winvm.ts config -i default stow.idleMinutes=120 autosave.keep=5
-bun winvm.ts config -i default watch.enabled=false     # no watcher for this instance
-bun winvm.ts watch  -i default                         # run it in the foreground instead
-bun winvm.ts watch  -i default --status                # or --stop
+winvm config -i default                         # effective settings
+winvm config -i default stow.idleMinutes=120 autosave.keep=5
+winvm config -i default watch.enabled=false     # no watcher for this instance
+winvm watch  -i default                         # run it in the foreground instead
+winvm watch  -i default --status                # or --stop
 ```
 
 Settings live in `instances/<name>/config.json` (overrides only); a running
@@ -324,9 +339,9 @@ python3 -m http.server 8000 --bind 127.0.0.1
 
 # guest
 PS='C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe'
-bun winvm.ts exec -- "$PS" -NoProfile -Command \
+winvm exec -- "$PS" -NoProfile -Command \
   "Invoke-WebRequest http://10.0.2.2:8000/maximal-setup.msi -OutFile C:\maximal-setup.msi"
-bun winvm.ts exec -- msiexec /i 'C:\maximal-setup.msi' /qn /l*v 'C:\maximal-install.log'
+winvm exec -- msiexec /i 'C:\maximal-setup.msi' /qn /l*v 'C:\maximal-install.log'
 ```
 
 The guest can equally download a release straight from GitHub. Take a
@@ -352,8 +367,8 @@ Job files are GitHub-Actions-shaped YAML (the format is documented at the top
 of `job.ts`; `jobs/examples/hello.yml` uses every feature):
 
 ```sh
-bun winvm.ts run jobs/examples/hello.yml -i ci     # one job
-bun winvm.ts test jobs/maximal/ -i ci --junit out.xml --json out.json
+winvm run jobs/examples/hello.yml -i ci     # one job
+winvm test jobs/maximal/ -i ci --junit out.xml --json out.json
 ```
 
 Every job starts by loading a **golden** (`golden.ts`: a mapped-ram save taken
@@ -390,8 +405,8 @@ downloads the latest release, or `MAXIMAL_TAG=vX.Y.Z`.
 The VM disks are large and change constantly. Keep them out of backups:
 
 ```sh
-bun winvm.ts timemachine          # report, and offer to exclude each folder
-bun winvm.ts timemachine --yes    # exclude without asking
+winvm timemachine          # report, and offer to exclude each folder
+winvm timemachine --yes    # exclude without asking
 ```
 
 It adds Time Machine's sticky exclusion (`tmutil addexclusion`, no sudo) to the
@@ -405,7 +420,7 @@ them and prints how to remove them; it doesn't remove them itself.
 
 ## Troubleshooting
 
-Start with `bun winvm.ts diagnose [-i name]`; see the troubleshooting section of
+Start with `winvm diagnose [-i name]`; see the troubleshooting section of
 the design notes. If you get stuck, Linaro's reference is the closest upstream
 match for this setup:
 <https://linaro.atlassian.net/wiki/spaces/WOAR/pages/28914909194/windows-arm64+VM+using+qemu-system>

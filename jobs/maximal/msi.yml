@@ -1,8 +1,8 @@
 # Maximal MSI: silent per-user install, what it puts where, the proxy starts
 # and answers, silent uninstall, and nothing left behind.
 #
-#   bun winvm.ts run jobs/maximal/msi.yml -i ci
-#   MAXIMAL_TAG=v0.4.47 bun winvm.ts run jobs/maximal/msi.yml -i ci
+#   winvm run jobs/maximal/msi.yml -i ci
+#   MAXIMAL_TAG=v0.4.47 winvm run jobs/maximal/msi.yml -i ci
 #
 # The MSI is CLI-only by design (build/windows/maximal.wxs in the Maximal
 # repo): binaries under %LOCALAPPDATA%\Programs\maximal, the dir on the user
