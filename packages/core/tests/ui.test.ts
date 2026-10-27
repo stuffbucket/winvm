@@ -118,13 +118,13 @@ describe("status formatting", () => {
       latestBaseline: { name: "clean", kind: "baseline", createdAt: "2026-10-20T12:00:00Z", bytes: 1.5 * 1024 ** 3 },
     },
     watcher: null,
-    service: { pid: 77, port: 61234 },
+    service: { pid: 77 },
     serviceExpected: false,
     notes: [],
   }
 
   it("shows the instance's control service", () => {
-    expect(formatStatus(sample, "", NOW)).toContain("service       pid 77 · 127.0.0.1:61234")
+    expect(formatStatus(sample, "", NOW)).toMatch(/^ *service {7}pid 77$/m)
     expect(formatStatus({ ...sample, service: null }, "", NOW)).toContain(
       "service       none (started before the control service)",
     )

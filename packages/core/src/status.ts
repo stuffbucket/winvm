@@ -81,7 +81,7 @@ export interface InstanceStatus {
   readonly guest: GuestInfo | null
   readonly saves: { readonly count: number; readonly bytes: number; readonly latest: SaveInfo | null; readonly latestBaseline: SaveInfo | null }
   readonly watcher: WatchInfo | null
-  readonly service: { readonly pid: number; readonly port: number } | null
+  readonly service: { readonly pid: number } | null
   readonly serviceExpected: boolean
   /** Things that could not be determined, in words. */
   readonly notes: readonly string[]
@@ -133,9 +133,9 @@ export function sortSaves(saves: readonly SaveInfo[]): readonly SaveInfo[] {
   return [...saves].sort((a, b) => Date.parse(b.createdAt || "0") - Date.parse(a.createdAt || "0"))
 }
 
-function serviceOf(p: Paths): { pid: number; port: number } | null {
+function serviceOf(p: Paths): { pid: number } | null {
   const s = readService(p)
-  return s === null ? null : { pid: s.pid, port: s.port }
+  return s === null ? null : { pid: s.pid }
 }
 
 const pidAlive = (pid: number | null): boolean => {
@@ -545,7 +545,7 @@ export function statusReport(s: InstanceStatus, timeMachine: string, now: number
   if (live) {
     const service =
       s.service !== null
-        ? `pid ${String(s.service.pid)} · 127.0.0.1:${String(s.service.port)}`
+        ? `pid ${String(s.service.pid)}`
         : s.serviceExpected
           ? `missing — \`winvm start${flag}\` starts it again`
           : "none (started before the control service)"

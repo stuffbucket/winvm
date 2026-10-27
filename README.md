@@ -309,14 +309,22 @@ listens on `qmp.sock` and `qga.sock` and passes callers through one at a
 time, in arrival order. Connect to `qmp.sock` and `qga.sock` as before; do not
 connect to the `-qemu` sockets directly.
 
-`service.json` in the instance directory (mode 0600) holds the service's pid,
-HTTP port and token. With the token:
+The service also answers HTTP on `control.sock` in the instance directory
+(mode 0600, so only your account can connect; there is no port and no token):
 
-- `GET /events?key=TOKEN` streams events as server-sent events: QEMU state
-  changes (`paused`, `running`, `stopped`, `reset`, `migration`) and the
-  service starting and stopping.
-- `GET /status` with header `X-Winvm-Token: TOKEN` returns the last known
-  state, QEMU's pid and whether the service is connected to QEMU.
+- `GET /events` streams events as server-sent events: QEMU state changes
+  (`paused`, `running`, `stopped`, `reset`, `migration`) and the service
+  starting and stopping.
+- `GET /status` returns the last known state, QEMU's pid and whether the
+  service is connected to QEMU.
+
+```sh
+curl -N --unix-socket ~/.local/state/winvm/instances/NAME/control.sock http://localhost/events
+```
+
+`service.json` (mode 0600) records the service's pid and build. A service
+creates it exclusively when it starts, so a second service for the same
+instance refuses to start while the first is alive.
 
 The same events are appended to `events.jsonl` in the instance directory.
 `winvm status` shows the service; an instance started by an older winvm has
