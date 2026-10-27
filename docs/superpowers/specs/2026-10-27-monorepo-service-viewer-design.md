@@ -202,19 +202,54 @@ winvm/
 
 - `packages/core` exposes a library API (what `agent.ts`, `qga.ts`, `saves.ts`
   etc. export today) and the service.
-- `apps/cli` keeps today's command names and flags. `winvm web` (the old
-  browser page) goes; `winvm view [-i name]` opens the viewer window for an
-  instance, and the CLI can close a window it opened.
+- `apps/cli` keeps today's command names and flags, except how a guest is
+  seen (next section). `winvm web` (the old browser page) goes.
 - `apps/viewer` builds only on demand. Turborepo tasks are arranged so
   `pnpm turbo run test --filter=!viewer` (or an equivalent CI task) never
   touches Rust or Tauri.
 - The compiled sidecar (`bun build --compile`) embeds firmware, `assets/` and
   `guestagent.ts`.
 
+## Getting started, and seeing a guest
+
+Bringing everything up is one short, documented sequence (README and
+`winvm --help` both show it), not something to work out:
+
+```sh
+mise install            # Bun 1.4.3 and pnpm, pinned in mise.toml
+pnpm install
+pnpm build              # core, CLI and the viewer UI; no Rust
+winvm start             # boot the default instance, headless
+winvm open              # see it: the viewer window
+pnpm viewer:build       # once, to build the native app (needs Rust; mise pins it)
+```
+
+`winvm open` is the one verb for seeing a guest:
+
+- `winvm open [-i name]` opens the viewer window for the instance, or focuses
+  it if open. If the native app isn't built yet, it opens the same UI in the
+  default browser instead and prints the one command that builds the app; it
+  never fails just because the app is missing.
+- `winvm open --vnc` opens macOS Screen Sharing, as `open` does today.
+- `winvm open --web` opens the browser view on purpose (or prints its URL
+  with `--print`, for a tunnel).
+- `winvm open --close` closes a viewer window the CLI opened.
+- `winvm start --open` boots and opens in one step.
+- Opening the app from Finder or the Dock shows the home's instances, with
+  their states, and opens any of them.
+
+Several instances run at once, as they do today (`winvm test --pool N` runs
+jobs side by side): each instance has its own QEMU, sockets, TPM state, VNC
+display and, with this design, its own service on its own port. The viewer is
+one app (single-instance) with a window per instance. Instances in other homes
+(the cage check's) work the same way, and VNC displays no longer clash across
+homes (winvm#2). Several CLI processes may act on one instance at once; its
+service puts their QMP and qemu-ga calls in order.
+
 ## How the cage check changes afterwards
 
-`CAGE_SHOW=1` runs `winvm view` and closes the window at exit (no Edge, no
-profile). `CAGE_SHOW=screen` keeps Screen Sharing. The check gains the run's
+`CAGE_SHOW=1` runs `winvm open` and closes the window at exit (no Edge, no
+profile). `CAGE_SHOW=screen` runs `winvm open --vnc`. The check gains the run's
 `events.jsonl` in its log directory.
 
 ## Testing expectations
@@ -260,9 +295,13 @@ what that changes here (sources are maximal paths or commits):
   response** (no `close`, no write error; seen on 1.3.14), so long-lived
   streams leak (`docs/bun-version-policy.md`, 202857bc). The event stream
   uses `Bun.serve` with `request.signal`, plus heartbeats and an idle
-  timeout, and a test that a killed subscriber is cleaned up. Moving winvm to
-  Bun 1.4.x, where `node:http` was rewritten, is the builder's call; never a
+  timeout, and a test that a killed subscriber is cleaned up. **winvm moves to
+  Bun 1.4.3** (user's decision), the version maximal's broker already runs
+  (`packages/mcp-broker/mise.toml`), where `node:http` was rewritten; never a
   floating `latest` (09b478b1). `mise.toml` is the one pin and CI reads it.
+  The move is its own step, with the full test suite and a live guest run
+  before anything else changes, since Bun 1.3.14's `fetch` and `Bun.serve`
+  behaviour is what winvm's agent client was measured against (winvm#3).
 - **An app opened from Finder or `open` gets launchd's minimal PATH**
   (`docs/architecture.md:166`). The sidecar resolves `qemu-system-aarch64`,
   `qemu-img`, `swtpm` and `zstd` to absolute paths and receives `WINVM_HOME`
@@ -284,7 +323,7 @@ what that changes here (sources are maximal paths or commits):
   in the user's browser (ADR-0021). The UI uses discovered ports, never
   literals.
 - **One app, many windows:** `tauri-plugin-single-instance` hands a second
-  launch's arguments to the running app, which is how `winvm view -i x` and
+  launch's arguments to the running app, which is how `winvm open -i x` and
   `--close` reach it.
 - **Stale builds ship:** a persistent `target/` once shipped a build six
   versions old (2b36018e). The viewer and service exchange version and build
@@ -333,11 +372,10 @@ what that changes here (sources are maximal paths or commits):
   browser the service proxies the VNC websocket, so the tunnel needs one
   port. An open viewer still counts as activity for the idle watcher, as a
   connected VNC client does today.
-- **One window per instance.** `winvm view -i name` opens it (or focuses an
-  open one) and `winvm view -i name --close` closes it. Instances in another
-  `WINVM_HOME` (the cage check's) get their own windows. `winvm view` expects
-  a built app and, when there is none, says how to build it; it never starts
-  a Rust build itself.
+- **One window per instance**, through `winvm open` (see *Getting started*).
+  Instances in another `WINVM_HOME` (the cage check's) get their own
+  windows. `winvm open` never starts a Rust build itself; without a built app
+  it falls back to the browser view and prints how to build the app.
 - **The CLI runs from source** through the workspace's `winvm` bin
   (`bun apps/cli/...`). The service reports its version and the build it came
   from; a CLI that finds a service of another version says so and restarts it
