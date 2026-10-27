@@ -122,6 +122,8 @@ export const layout = {
  *   accent behind white text  ≥ 4.5:1 — primary button labels
  * `link` doubles as the accent family's text color: anything teal that is
  * text (links, "Copied", accent figures) uses `link`, never `accent`.
+ * `backdrop*` (winvm) is the ground the display sits on: a base and two soft
+ * glows, accent and brand. Never behind text; text sits on a surface over it.
  */
 export const themes = {
   dark: {
@@ -140,6 +142,9 @@ export const themes = {
     statusSuccess: "#22c55e",
     statusWarning: "#eab308",
     statusInfo: "#38bdf8",
+    backdropBase: "#0b1214",
+    backdropGlowAccent: "#173d44",
+    backdropGlowBrand: "#2e1720",
   },
   light: {
     surfaceBase: "#fafafa",
@@ -157,5 +162,8 @@ export const themes = {
     statusSuccess: "#137333",
     statusWarning: "#8a5a00",
     statusInfo: "#0369a1",
+    backdropBase: "#e9eceb",
+    backdropGlowAccent: "#c9dfe2",
+    backdropGlowBrand: "#efd9de",
   },
 } as const satisfies Record<"dark" | "light", Record<string, string>>;

@@ -13,9 +13,7 @@ interface PanelProps {
   readonly checks: Checks | null
   readonly checksError: string | null
   readonly last: Ran | null
-  readonly cliPath: string | null
   readonly canForceStop: boolean
-  onInstallCommand(): void
   onForceStop(): void
 }
 
@@ -31,7 +29,7 @@ function Section({ title, hint, open, children }: { title: string; hint?: string
   )
 }
 
-/** Details on demand: status, this Mac, the command line and troubleshooting, one section open. */
+/** Details on demand, over the display: status, this Mac and troubleshooting. */
 export function Panel(p: PanelProps): JSX.Element {
   const rows = p.status === null ? [] : detailRows(p.status)
   const macReady = p.checks?.ready ?? false
@@ -79,15 +77,6 @@ export function Panel(p: PanelProps): JSX.Element {
             ))}
           </ul>
         )}
-      </Section>
-
-      <Section title={t("panel.commandLine")}>
-        <p className="panel__note">{p.cliPath === null ? t("cli.body") : t("cli.done", { path: p.cliPath })}</p>
-        <div className="actions">
-          <Button size="sm" onClick={p.onInstallCommand}>
-            {t("cli.install")}
-          </Button>
-        </div>
       </Section>
 
       <Section title={t("panel.troubleshooting")}>

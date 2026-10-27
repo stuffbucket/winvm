@@ -1,5 +1,9 @@
 use serde::Serialize;
 use std::path::Path;
+use std::sync::Mutex;
+use tauri::menu::{Menu, MenuItem, PredefinedMenuItem, HELP_SUBMENU_ID};
+use tauri::{Emitter, Manager, RunEvent};
+use tauri_plugin_shell::process::{CommandChild, CommandEvent};
 use tauri_plugin_shell::ShellExt;
 
 #[derive(Serialize)]
@@ -9,7 +13,10 @@ struct Output {
     stderr: String,
 }
 
-const VERBS: &[&str] = &["status", "doctor", "start", "stop", "reboot", "pause", "resume", "kill", "open", "setup"];
+const VERBS: &[&str] = &[
+    "status", "doctor", "start", "stop", "reboot", "pause", "resume", "kill", "open", "setup", "exec", "put", "get",
+    "save", "load", "saves", "help",
+];
 
 #[tauri::command]
 async fn winvm(app: tauri::AppHandle, args: Vec<String>) -> Result<Output, String> {
@@ -32,6 +39,72 @@ async fn winvm(app: tauri::AppHandle, args: Vec<String>) -> Result<Output, Strin
     })
 }
 
+/// The `winvm cua serve` this app started, while the screen is shared with an agent.
+#[derive(Default)]
+struct Sharing(Mutex<Option<CommandChild>>);
+
+fn stop_sharing(sharing: &Sharing) {
+    if let Some(child) = sharing.0.lock().map(|mut c| c.take()).unwrap_or(None) {
+        // SIGTERM, so the server removes its cua.json; CommandChild::kill is SIGKILL.
+        let _ = std::process::Command::new("/bin/kill").arg(child.pid().to_string()).status();
+    }
+}
+
+/// Starts `winvm cua serve` and returns what it printed once it is listening (or what it said before exiting).
+#[tauri::command]
+async fn share_start(app: tauri::AppHandle, instance: String) -> Result<Output, String> {
+    let sharing = app.state::<Sharing>();
+    stop_sharing(&sharing);
+    let (mut rx, child) = app
+        .shell()
+        .sidecar("winvm")
+        .map_err(|e| e.to_string())?
+        .args(["cua", "serve", "-i", instance.as_str()])
+        .spawn()
+        .map_err(|e| e.to_string())?;
+    let mut stdout = String::new();
+    let mut stderr = String::new();
+    let mut code = None;
+    while let Some(event) = rx.recv().await {
+        match event {
+            CommandEvent::Stdout(line) => {
+                stdout.push_str(&String::from_utf8_lossy(&line));
+                stdout.push('\n');
+                if stdout.contains("  token ") {
+                    break;
+                }
+            }
+            CommandEvent::Stderr(line) => {
+                stderr.push_str(&String::from_utf8_lossy(&line));
+                stderr.push('\n');
+            }
+            CommandEvent::Terminated(t) => {
+                code = Some(t.code.unwrap_or(-1));
+                break;
+            }
+            _ => {}
+        }
+    }
+    match code {
+        Some(code) => Ok(Output { code, stdout, stderr }),
+        None => {
+            *sharing.0.lock().map_err(|e| e.to_string())? = Some(child);
+            Ok(Output { code: 0, stdout, stderr })
+        }
+    }
+}
+
+#[tauri::command]
+fn share_stop(app: tauri::AppHandle) {
+    stop_sharing(&app.state::<Sharing>());
+}
+
+#[tauri::command]
+fn downloads_dir() -> Result<String, String> {
+    let home = std::env::var("HOME").map_err(|e| e.to_string())?;
+    Ok(Path::new(&home).join("Downloads").display().to_string())
+}
+
 #[tauri::command]
 fn install_cli() -> Result<String, String> {
     let exe = std::env::current_exe().map_err(|e| e.to_string())?;
@@ -49,10 +122,38 @@ fn install_cli() -> Result<String, String> {
     Ok(link.display().to_string())
 }
 
+/// The default menu, plus the command line: installing it (app menu) and its reference (Help).
+fn menu(app: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
+    let menu = Menu::default(app)?;
+    let install = MenuItem::with_id(app, "install-cli", "Install Command Line Tool…", true, None::<&str>)?;
+    let reference = MenuItem::with_id(app, "reference", "winvm Command Reference", true, Some("CmdOrCtrl+Shift+/"))?;
+    if let Some(app_menu) = menu.items()?.first().and_then(|i| i.as_submenu().cloned()) {
+        app_menu.insert_items(&[&install, &PredefinedMenuItem::separator(app)?], 2)?;
+    }
+    if let Some(help) = menu.get(HELP_SUBMENU_ID).and_then(|i| i.as_submenu().cloned()) {
+        help.append(&reference)?;
+    }
+    Ok(menu)
+}
+
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
-        .invoke_handler(tauri::generate_handler![winvm, install_cli])
-        .run(tauri::generate_context!())
-        .expect("winvm could not start");
+        .plugin(tauri_plugin_dialog::init())
+        .manage(Sharing::default())
+        .menu(menu)
+        .on_menu_event(|app, event| {
+            let id = event.id().as_ref();
+            if id == "install-cli" || id == "reference" {
+                let _ = app.emit("menu", id);
+            }
+        })
+        .invoke_handler(tauri::generate_handler![winvm, install_cli, share_start, share_stop, downloads_dir])
+        .build(tauri::generate_context!())
+        .expect("winvm could not start")
+        .run(|app, event| {
+            if let RunEvent::Exit = event {
+                stop_sharing(&app.state::<Sharing>());
+            }
+        });
 }

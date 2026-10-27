@@ -101,6 +101,9 @@
   --status-success: #22c55e;
   --status-warning: #eab308;
   --status-info: #38bdf8;
+  --backdrop-base: #0b1214;
+  --backdrop-glow-accent: #173d44;
+  --backdrop-glow-brand: #2e1720;
 }
 
 @media (prefers-color-scheme: light) {
@@ -121,6 +124,9 @@
     --status-success: #137333;
     --status-warning: #8a5a00;
     --status-info: #0369a1;
+    --backdrop-base: #e9eceb;
+    --backdrop-glow-accent: #c9dfe2;
+    --backdrop-glow-brand: #efd9de;
   }
 }
 
@@ -141,4 +147,7 @@
   --status-success: #137333;
   --status-warning: #8a5a00;
   --status-info: #0369a1;
+  --backdrop-base: #e9eceb;
+  --backdrop-glow-accent: #c9dfe2;
+  --backdrop-glow-brand: #efd9de;
 }

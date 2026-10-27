@@ -19,10 +19,12 @@ const catalog = new Set(Object.keys(en))
 // Keys built at run time, from the values they are built from.
 const built = [
   ...["loading", "starting", "running", "paused", "stopped", "stowed", "missing"].map((s) => `state.${s}`),
-  ...["start", "stop", "reboot", "pause", "resume", "kill", "setup"].map((v) => `busy.${v}`),
-  ...["start", "stop", "reboot", "pause", "resume", "kill", "setup", "open"].map((v) => `error.${v}`),
-  ...["stop", "reboot", "kill"].flatMap((v) => [`confirm.${v}.title`, `confirm.${v}.body`]),
-  ...["stopped", "stowed", "missing"].flatMap((p) => [`overview.${p}.title`, `overview.${p}.body`]),
+  ...["start", "stop", "reboot", "pause", "resume", "kill", "setup", "save", "load"].map((v) => `busy.${v}`),
+  ...["start", "stop", "reboot", "pause", "resume", "kill", "setup", "save", "load", "open", "put"].map((v) => `error.${v}`),
+  ...["stop", "reboot", "kill", "load"].flatMap((v) => [`confirm.${v}.title`, `confirm.${v}.body`]),
+  ...["stopped", "stowed", "missing"].map((p) => `overview.${p}.title`),
+  ...["action.command", "action.files", "action.saves", "action.share", "action.shutDown", "action.restart", "action.forceStop"],
+  "saves.restore",
   ...["connecting", "lost", "refused"].map((v) => `screen.${v}`),
   ...["step.disk", "step.machine", "step.windows"],
   ...["fact.image", "fact.cpus", "fact.memory", "fact.changes", "fact.saves"],

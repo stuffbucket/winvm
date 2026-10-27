@@ -6,15 +6,13 @@ import type { Connection } from "../../model"
 
 interface ScreenProps {
   readonly connection: Connection
-  readonly fit: boolean
 }
 
 type View = "connecting" | "connected" | "lost" | "refused"
 
-/** The guest's screen through QEMU's VNC websocket, interactive, scaled to fit or at 1:1. */
-export function Screen({ connection, fit }: ScreenProps): JSX.Element {
+/** The guest's screen through QEMU's VNC websocket, interactive, scaled to its frame (which sets the size). */
+export function Screen({ connection }: ScreenProps): JSX.Element {
   const target = useRef<HTMLDivElement | null>(null)
-  const rfb = useRef<RFB | null>(null)
   const [view, setView] = useState<View>("connecting")
   const [attempt, setAttempt] = useState(0)
   const { websocketPort, password } = connection
@@ -30,6 +28,7 @@ export function Screen({ connection, fit }: ScreenProps): JSX.Element {
       wsProtocols: ["binary"],
     })
     conn.background = "transparent"
+    conn.scaleViewport = true
     conn.focusOnClick = true
     conn.addEventListener("connect", () => setView("connected"))
     conn.addEventListener("credentialsrequired", () => conn.sendCredentials({ password: password ?? "" }))
@@ -39,20 +38,12 @@ export function Screen({ connection, fit }: ScreenProps): JSX.Element {
       setView((v) => (v === "refused" ? v : "lost"))
       retry = setTimeout(() => setAttempt((a) => a + 1), 2000)
     })
-    rfb.current = conn
     return () => {
       closing = true
       if (retry !== undefined) clearTimeout(retry)
-      rfb.current = null
       conn.disconnect()
     }
   }, [websocketPort, password, attempt])
-
-  useEffect(() => {
-    if (rfb.current === null) return
-    rfb.current.scaleViewport = fit
-    rfb.current.clipViewport = !fit
-  }, [fit, attempt, view])
 
   const message = view === "connected" ? null : t(`screen.${view}`)
   return (
