@@ -43,6 +43,38 @@ export function cliEntry(): string {
   return cli
 }
 
+/**
+ * Called by the CLI as it starts, with its own path. Always overwrites: a
+ * WINVM_CLI inherited from a parent (exported in a shell, or set by a job
+ * step) may name another checkout or version.
+ */
+export function recordCliEntry(path: string): void {
+  process.env["WINVM_CLI"] = path
+}
+
+/**
+ * The Bun this checkout of winvm is pinned to: its own `.bun-version`, at the
+ * workspace root. null when there is none (a copy of the package elsewhere).
+ * This is winvm's own pin, not a file of whatever project hosts it.
+ */
+export function pinnedBunVersion(): string | null {
+  const f = resolve(PACKAGE_DIR, "..", "..", ".bun-version")
+  return existsSync(f) ? readFileSync(f, "utf8").trim() : null
+}
+
+/**
+ * A warning when this process runs on a Bun other than the pin, or null.
+ * mise applies the pin only inside the repository, so a caller elsewhere (a
+ * script in /tmp, another repository) gets whatever `bun` is first on PATH.
+ */
+export function bunVersionWarning(running: string, pinned: string | null): string | null {
+  if (pinned === null || running === pinned) return null
+  return (
+    `warning: winvm is running on Bun ${running}; this checkout pins ${pinned} (.bun-version). ` +
+    `Run it inside the repository, or with \`mise exec -C ${resolve(PACKAGE_DIR, "..", "..")} -- winvm …\`.`
+  )
+}
+
 export const imageDir = (image: string): string => resolve(imagesDir(), image)
 export const basePath = (image: string): string => resolve(imageDir(image), "base.qcow2")
 export const imageMetaPath = (image: string): string => resolve(imageDir(image), "image.json")

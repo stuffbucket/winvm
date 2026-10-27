@@ -48,6 +48,8 @@ export interface ServerInfo {
   readonly port: number
   readonly token: string
   readonly startedAt: string
+  /** The CLI entry the server runs from; absent in records from before it was kept. */
+  readonly cli?: string
 }
 
 export const statePath = (): string => resolve(home(), "web.json")
@@ -119,13 +121,26 @@ export function readState(): ServerInfo | null {
   try {
     const raw = JSON.parse(readFileSync(statePath(), "utf8")) as Partial<ServerInfo>
     if (typeof raw.pid === "number" && typeof raw.port === "number" && typeof raw.token === "string") {
-      return { pid: raw.pid, port: raw.port, token: raw.token, startedAt: raw.startedAt ?? "" }
+      return {
+        pid: raw.pid,
+        port: raw.port,
+        token: raw.token,
+        startedAt: raw.startedAt ?? "",
+        ...(typeof raw.cli === "string" ? { cli: raw.cli } : {}),
+      }
     }
   } catch {
     // absent or unreadable
   }
   return null
 }
+
+/**
+ * Whether a running server is this CLI's. One started by another CLI (another
+ * checkout, or the layout before winvm became a monorepo) serves that CLI's
+ * page and spawns that CLI's commands, which may no longer exist.
+ */
+export const serverServesCli = (s: ServerInfo, cli: string): boolean => s.cli === cli
 
 const alive = (pid: number): boolean => {
   try {
@@ -151,7 +166,12 @@ async function ping(s: ServerInfo): Promise<boolean> {
 /** The running server, starting one in the background if needed. */
 export async function ensureServer(): Promise<ServerInfo> {
   const cur = readState()
-  if (cur !== null && alive(cur.pid) && (await ping(cur))) return cur
+  if (cur !== null && alive(cur.pid) && (await ping(cur))) {
+    if (serverServesCli(cur, cliEntry())) return cur
+    // Another CLI's server: stop it, so this home has one server, this CLI's.
+    process.kill(cur.pid, "SIGTERM")
+    for (let i = 0; i < 20 && alive(cur.pid); i += 1) await new Promise((r) => setTimeout(r, 100))
+  }
 
   mkdirSync(home(), { recursive: true })
   const log = openSync(logPath(), "a")
@@ -399,7 +419,13 @@ export async function run(args: Args): Promise<number> {
   }
   boundPort = server.port ?? 0
 
-  const info: ServerInfo = { pid: process.pid, port: boundPort, token, startedAt: new Date().toISOString() }
+  const info: ServerInfo = {
+    pid: process.pid,
+    port: boundPort,
+    token,
+    startedAt: new Date().toISOString(),
+    cli: cliEntry(),
+  }
   mkdirSync(home(), { recursive: true })
   writeFileSync(statePath(), `${JSON.stringify(info, null, 2)}\n`, { mode: 0o600 })
   chmodSync(statePath(), 0o600)
