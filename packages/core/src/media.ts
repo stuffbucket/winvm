@@ -11,7 +11,7 @@ import { homedir, tmpdir } from "node:os"
 import { resolve } from "node:path"
 
 import { capture, download, quiet, run } from "./host"
-import { PACKAGE_DIR, media, mediaDir } from "./paths"
+import { PACKAGE_DIR, media, mediaDir, pinnedBunVersion } from "./paths"
 
 const ASSETS = resolve(PACKAGE_DIR, "assets")
 
@@ -22,12 +22,20 @@ const ASSETS = resolve(PACKAGE_DIR, "assets")
  */
 const WINVM_EXTRAS = ["defender.ps1", "logon.ps1", "agent-install.ps1", "runinsession.cs", "winvm-ui.cs"] as const
 
-/** bun for Windows ARM64, the host's own version, cached beside the other media. */
+/**
+ * The Bun guest agents run: the checkout's pin, so an image or an agent install
+ * gets the same Bun whichever directory winvm was launched from. The host's own
+ * version only for a copy of the package with no pin.
+ */
+export const agentBunVersion = (): string => pinnedBunVersion() ?? Bun.version
+
+/** bun for Windows ARM64, at agentBunVersion(), cached beside the other media. */
 export function bunZip(): string {
-  const f = resolve(mediaDir(), `bun-windows-aarch64-${Bun.version}.zip`)
+  const v = agentBunVersion()
+  const f = resolve(mediaDir(), `bun-windows-aarch64-${v}.zip`)
   if (!existsSync(f)) {
     mkdirSync(mediaDir(), { recursive: true })
-    download(`https://github.com/oven-sh/bun/releases/download/bun-v${Bun.version}/bun-windows-aarch64.zip`, f)
+    download(`https://github.com/oven-sh/bun/releases/download/bun-v${v}/bun-windows-aarch64.zip`, f)
   }
   return f
 }

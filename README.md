@@ -45,12 +45,12 @@ UTM.app itself is **not** needed — only its guest-tools ISO (virtio drivers +
 `qemu-ga`).
 
 ```sh
-mise install          # bun + pnpm
-pnpm install          # typecheck-only dev deps (registry/auth from ~/.npmrc)
-winvm doctor   # check the host; changes nothing
+mise install          # Bun 1.4.3 + pnpm
+pnpm install          # through the package proxy in .npmrc
+winvm doctor          # check the host; changes nothing
 ```
 
-`pnpm run check` runs the typecheck and the tests (the tests replay recorded
+`pnpm check` typechecks and tests the workspace (the tests replay recorded
 failure traces through `winvm diagnose`; no VM needed).
 
 ## The ISO
@@ -78,8 +78,17 @@ them pops a macOS permission dialog. The ISO is **symlinked**, never copied, to
 ## Using it
 
 All state lives in `~/.local/state/winvm` (`WINVM_HOME` overrides), never in
-this repo. Run from the repo root (or use the `pnpm run <verb>` aliases in
-`package.json`).
+this repo. Inside the repository `winvm` is on `PATH` (mise) and runs on the
+pinned Bun. From anywhere else, use `mise exec -C <repo> -- winvm <verb>`;
+winvm warns when it runs on a Bun other than the pin. `pnpm winvm <verb>` also
+works, but runs from the repository root, so relative paths in its arguments
+resolve there.
+
+**After updating winvm**, restart anything long-running that an older version
+started: `winvm web --stop` (`winvm open --web` also replaces a server another
+checkout or version started), and stop and start any instance whose idle
+watcher was running (`winvm status` shows it), since a running watcher keeps
+the code it was started with.
 
 ```sh
 winvm setup                       # brew install qemu swtpm zstd; fetch guest tools

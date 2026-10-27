@@ -129,6 +129,7 @@
  * Exit code: the guest command's, so `winvm exec` is transparent in a `&&` chain.
  */
 import { parseArgs } from "@winvm/core/args"
+import { bunVersionWarning, pinnedBunVersion, recordCliEntry } from "@winvm/core/paths"
 import * as agentcmds from "@winvm/core/agentcmds"
 import * as uicmds from "@winvm/core/uicmds"
 import * as commands from "@winvm/core/commands"
@@ -146,9 +147,11 @@ import * as toasts from "@winvm/core/toasts"
 
 // Work that outlives this command (the idle watcher, the web server, job host
 // steps) is spawned through this same entry point; core reads it as cliEntry().
-// Nothing in core reads it while being imported, so setting it here, after the
-// hoisted imports, still comes before anything is spawned.
-process.env["WINVM_CLI"] ??= import.meta.path
+// Nothing in core reads it while being imported, so recording it here, after
+// the hoisted imports, still comes before anything is spawned.
+recordCliEntry(import.meta.path)
+const bunWarning = bunVersionWarning(Bun.version, pinnedBunVersion())
+if (bunWarning !== null) console.warn(bunWarning)
 
 const [, , sub, ...rawArgs] = process.argv
 const args = parseArgs(rawArgs)

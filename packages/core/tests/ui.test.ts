@@ -30,7 +30,7 @@ import {
   readSaves,
 } from "../src/status"
 import { generatePassword, screenSharingUrl, vncArg, websocketPort } from "../src/vnc"
-import { actionArgv, hostAllowed, makeHandler, pageUrl, tokenMatches } from "../src/web"
+import { actionArgv, hostAllowed, makeHandler, pageUrl, serverServesCli, tokenMatches } from "../src/web"
 
 const NOW = Date.parse("2026-10-21T12:00:00Z")
 
@@ -290,6 +290,19 @@ describe("input", () => {
     expect(parseCombo("F5")).toEqual({ qcodes: ["f5"], unknown: null })
     expect(parseCombo("ctrl--")).toEqual({ qcodes: ["ctrl", "minus"], unknown: null })
     expect(parseCombo("ctrl-banana").unknown).toBe("banana")
+  })
+})
+
+describe("reusing a running web server", () => {
+  const server = { pid: 1, port: 5690, token: "t", startedAt: "" }
+
+  it("reuses a server started by this same CLI", () => {
+    expect(serverServesCli({ ...server, cli: "/repo/apps/cli/src/winvm.ts" }, "/repo/apps/cli/src/winvm.ts")).toBe(true)
+  })
+
+  it("replaces one started by another CLI: another checkout, or the layout before the move", () => {
+    expect(serverServesCli({ ...server, cli: "/other/apps/cli/src/winvm.ts" }, "/repo/apps/cli/src/winvm.ts")).toBe(false)
+    expect(serverServesCli(server, "/repo/apps/cli/src/winvm.ts")).toBe(false)
   })
 })
 

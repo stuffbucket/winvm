@@ -8,16 +8,16 @@ tool wherever it is copied.
 
 ## Redistributed here
 
-### TianoCore EDK2 UEFI firmware — `firmware/`
+### TianoCore EDK2 UEFI firmware — `packages/core/firmware/`
 
-`firmware/edk2-aarch64-code.fd.gz` and `firmware/edk2-arm-vars.fd.gz` are the
+`packages/core/firmware/edk2-aarch64-code.fd.gz` and `packages/core/firmware/edk2-arm-vars.fd.gz` are the
 AArch64 UEFI firmware images QEMU ships, stored gzipped (they are ~99% zero
 padding: 128 MiB becomes 1.6 MB) and expanded into the state directory on first
 use.
 
 - Copyright (c) 2019, TianoCore and contributors. All rights reserved.
 - **SPDX-License-Identifier: BSD-2-Clause-Patent**
-- Full text: [`firmware/edk2-licenses.txt`](firmware/edk2-licenses.txt)
+- Full text: [`packages/core/firmware/edk2-licenses.txt`](packages/core/firmware/edk2-licenses.txt)
 
 Binary redistribution is permitted provided the copyright notice, this list of
 conditions and the disclaimer are reproduced — which is what this file and
@@ -26,26 +26,26 @@ conditions and the disclaimer are reproduced — which is what this file and
 They are vendored so the harness does not depend on where a particular QEMU
 packaging put its data files. Set `WINVM_QEMU_DATA` to use a system copy instead.
 
-### noVNC 1.7.0 — `web/novnc/`
+### noVNC 1.7.0 — `packages/core/web/novnc/`
 
 The browser view (`winvm open --web`) uses noVNC's client library, vendored
 unmodified from the v1.7.0 release
 (<https://github.com/novnc/noVNC/releases/tag/v1.7.0>, tarball SHA-256
 `b1003a11b6e6e8d8f7f5e5586daae7f8ca651d8aee0aa155ff9ac841c48f52c6`). Only what
 the page loads is kept: `core/` and `vendor/pako/`, with the licence files
-(~740 KB). noVNC's own app (`vnc.html`, `app/`) is not included; `web/index.html`
-and `web/app.js` are this project's.
+(~740 KB). noVNC's own app (`vnc.html`, `app/`) is not included; `packages/core/web/index.html`
+and `packages/core/web/app.js` are this project's.
 
-- `core/`: Copyright (C) noVNC authors (see `web/novnc/AUTHORS`).
+- `core/`: Copyright (C) noVNC authors (see `packages/core/web/novnc/AUTHORS`).
   **SPDX-License-Identifier: MPL-2.0**, except `core/crypto/des.js` (BSD-style,
   see its header) and `core/base64.js` (MPL-2.0).
 - `vendor/pako/`: Copyright (C) 2014-2016 Vitaly Puzrin.
   **MIT**.
-- Full texts: [`web/novnc/LICENSE.txt`](web/novnc/LICENSE.txt),
-  [`web/novnc/docs/LICENSE.MPL-2.0`](web/novnc/docs/LICENSE.MPL-2.0),
-  [`web/novnc/docs/LICENSE.BSD-2-Clause`](web/novnc/docs/LICENSE.BSD-2-Clause),
-  [`web/novnc/docs/LICENSE.BSD-3-Clause`](web/novnc/docs/LICENSE.BSD-3-Clause),
-  [`web/novnc/vendor/pako/LICENSE`](web/novnc/vendor/pako/LICENSE).
+- Full texts: [`packages/core/web/novnc/LICENSE.txt`](packages/core/web/novnc/LICENSE.txt),
+  [`packages/core/web/novnc/docs/LICENSE.MPL-2.0`](packages/core/web/novnc/docs/LICENSE.MPL-2.0),
+  [`packages/core/web/novnc/docs/LICENSE.BSD-2-Clause`](packages/core/web/novnc/docs/LICENSE.BSD-2-Clause),
+  [`packages/core/web/novnc/docs/LICENSE.BSD-3-Clause`](packages/core/web/novnc/docs/LICENSE.BSD-3-Clause),
+  [`packages/core/web/novnc/vendor/pako/LICENSE`](packages/core/web/novnc/vendor/pako/LICENSE).
 
 MPL-2.0 is file-level copyleft: these files stay under MPL-2.0 and their source
 is this source. Modifying one means publishing that file's changes under MPL-2.0;
