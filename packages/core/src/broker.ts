@@ -1,4 +1,5 @@
-import { rmSync } from "node:fs"
+import { readlinkSync, renameSync, rmSync, symlinkSync } from "node:fs"
+import { basename } from "node:path"
 import { connect, createServer, type Server, type Socket } from "node:net"
 
 type Json = Record<string, unknown>
@@ -25,29 +26,60 @@ function parse(line: string): Json | null {
   }
 }
 
-async function listenOn(path: string, onConnection: (c: Socket) => void): Promise<Server> {
-  rmSync(path, { force: true })
-  const server = createServer(onConnection)
-  await new Promise<void>((r) => server.listen(path, r))
-  return server
+let listeners = 0
+
+class Listener {
+  private server: Server | null = null
+  private readonly path: string
+  private readonly own: string
+
+  constructor(path: string) {
+    this.path = path
+    listeners += 1
+    this.own = `${path}.${process.pid.toString(36)}${listeners.toString(36)}`
+  }
+
+  async start(onConnection: (c: Socket) => void): Promise<void> {
+    rmSync(this.own, { force: true })
+    const server = createServer(onConnection)
+    this.server = server
+    await new Promise<void>((r) => server.listen(this.own, r))
+    const link = `${this.own}.link`
+    rmSync(link, { force: true })
+    symlinkSync(basename(this.own), link)
+    renameSync(link, this.path)
+  }
+
+  async stop(): Promise<void> {
+    let ours = false
+    try {
+      ours = readlinkSync(this.path) === basename(this.own)
+    } catch {
+      ours = false
+    }
+    if (ours) rmSync(this.path, { force: true })
+    const server = this.server
+    if (server !== null) await new Promise<void>((r) => server.close(() => r()))
+    rmSync(this.own, { force: true })
+  }
 }
 
-async function closeServer(server: Server | null, path: string): Promise<void> {
-  if (server !== null) await new Promise<void>((r) => server.close(() => r()))
-  rmSync(path, { force: true })
-}
+const REQUEST_ID = "winvm-service-"
 
 export interface QmpChannelOptions {
   readonly listen: string
   readonly upstream: string
   readonly onEvent?: (event: Json) => void
+  readonly onConnect?: () => void
   readonly drainTimeoutMs?: number
+  readonly negotiateTimeoutMs?: number
 }
 
 export class QmpChannel {
   private readonly o: QmpChannelOptions
-  private server: Server | null = null
+  private readonly listener: Listener
   private upstream: Socket | null = null
+  private connecting: Socket | null = null
   private greeting: string | null = null
   private ready = false
   private readonly queue: Socket[] = []
@@ -58,9 +90,12 @@ export class QmpChannel {
   private draining = false
   private drainTimer: ReturnType<typeof setTimeout> | undefined
   private stopped = false
+  private nextId = 0
+  private readonly requests = new Map<string, (reply: Json) => void>()
 
   constructor(o: QmpChannelOptions) {
     this.o = o
+    this.listener = new Listener(o.listen)
   }
 
   get connected(): boolean {
@@ -68,7 +103,7 @@ export class QmpChannel {
   }
 
   async start(): Promise<void> {
-    this.server = await listenOn(this.o.listen, (c) => this.accept(c))
+    await this.listener.start((c) => this.accept(c))
     this.connectUpstream()
   }
 
@@ -79,15 +114,41 @@ export class QmpChannel {
     for (const c of this.sockets) c.destroy()
     this.active?.destroy()
     this.upstream?.destroy()
-    await closeServer(this.server, this.o.listen)
+    this.connecting?.destroy()
+    await this.listener.stop()
+  }
+
+  async request(execute: string, args?: Json, timeoutMs = 5000): Promise<Json> {
+    const up = this.upstream
+    if (up === null || !this.ready) throw new Error("not connected to QEMU")
+    this.nextId += 1
+    const id = `${REQUEST_ID}${String(this.nextId)}`
+    let timer: ReturnType<typeof setTimeout> | undefined
+    try {
+      return await new Promise<Json>((res, rej) => {
+        this.requests.set(id, (reply) => {
+          const { id: _id, ...rest } = reply
+          res(rest)
+        })
+        timer = setTimeout(() => rej(new Error(`${execute}: no answer in ${String(timeoutMs)} ms`)), timeoutMs)
+        up.write(`${JSON.stringify(args === undefined ? { execute, id } : { execute, arguments: args, id })}\n`)
+      })
+    } finally {
+      clearTimeout(timer)
+      this.requests.delete(id)
+    }
   }
 
   private connectUpstream(): void {
     if (this.stopped) return
     const s = connect(this.o.upstream)
+    this.connecting = s
     let negotiating = false
+    const negotiation = setTimeout(() => s.destroy(), this.o.negotiateTimeoutMs ?? 10_000)
     s.on("error", () => undefined)
     s.on("close", () => {
+      clearTimeout(negotiation)
+      if (this.connecting === s) this.connecting = null
       if (this.upstream === s) this.upstreamLost()
       if (!this.stopped) setTimeout(() => this.connectUpstream(), 200)
     })
@@ -103,9 +164,12 @@ export class QmpChannel {
           return
         }
         if (negotiating && !("event" in msg)) {
+          clearTimeout(negotiation)
           negotiating = false
+          this.connecting = null
           this.upstream = s
           this.ready = true
+          this.o.onConnect?.()
           this.pump()
           return
         }
@@ -128,6 +192,11 @@ export class QmpChannel {
     if ("event" in msg) {
       this.o.onEvent?.(msg)
       if (this.active !== null && !this.draining) this.active.write(`${line}\n`)
+      return
+    }
+    const id = msg["id"]
+    if (typeof id === "string" && id.startsWith(REQUEST_ID)) {
+      this.requests.get(id)?.(msg)
       return
     }
     if (this.owed > 0) this.owed -= 1
@@ -190,7 +259,7 @@ export class QmpChannel {
     this.active = null
     if (this.owed > 0 && this.upstream !== null) {
       this.draining = true
-      this.drainTimer = setTimeout(() => this.endDrain(), this.o.drainTimeoutMs ?? 200_000)
+      this.drainTimer = setTimeout(() => this.upstream?.destroy(), this.o.drainTimeoutMs ?? 200_000)
       return
     }
     this.owed = 0
@@ -209,12 +278,13 @@ export interface QgaChannelOptions {
   readonly listen: string
   readonly upstream: string
   readonly portOpen: () => Promise<boolean | null>
+  readonly onRefused?: () => void
   readonly pollMs?: number
 }
 
 export class QgaChannel {
   private readonly o: QgaChannelOptions
-  private server: Server | null = null
+  private readonly listener: Listener
   private readonly queue: Socket[] = []
   private readonly sockets = new Set<Socket>()
   private readonly pending = new WeakMap<Socket, Buffer[]>()
@@ -224,10 +294,11 @@ export class QgaChannel {
 
   constructor(o: QgaChannelOptions) {
     this.o = o
+    this.listener = new Listener(o.listen)
   }
 
   async start(): Promise<void> {
-    this.server = await listenOn(this.o.listen, (c) => this.accept(c))
+    await this.listener.start((c) => this.accept(c))
   }
 
   async stop(): Promise<void> {
@@ -236,7 +307,7 @@ export class QgaChannel {
     for (const c of this.sockets) c.destroy()
     this.active?.destroy()
     this.upstream?.destroy()
-    await closeServer(this.server, this.o.listen)
+    await this.listener.stop()
   }
 
   private accept(c: Socket): void {
@@ -275,15 +346,25 @@ export class QgaChannel {
     while (!next.destroyed && !this.stopped && (await this.o.portOpen().catch(() => null)) !== true) {
       await new Promise((r) => setTimeout(r, this.o.pollMs ?? 250))
     }
-    if (next.destroyed || this.stopped) return
+    if (next.destroyed || this.stopped || this.active !== next) return
     const up = connect(this.o.upstream)
+    this.upstream = up
+    let connected = false
     up.on("error", () => undefined)
     up.on("close", () => {
+      if (!connected) this.o.onRefused?.()
       if (this.upstream === up) next.destroy()
     })
-    up.on("data", (chunk: Buffer) => next.write(chunk))
+    up.on("data", (chunk: Buffer) => {
+      if (this.active === next) next.write(chunk)
+      else up.destroy()
+    })
     up.on("connect", () => {
-      this.upstream = up
+      connected = true
+      if (this.active !== next) {
+        up.destroy()
+        return
+      }
       for (const chunk of this.pending.get(next)?.splice(0) ?? []) up.write(chunk)
     })
   }
