@@ -10,21 +10,11 @@ import { basename, resolve } from "node:path"
 import { gunzipSync } from "node:zlib"
 
 import { PACKAGE_DIR, home } from "./paths"
+import { findRuntime, runtimeBin, verifyRuntime, type Runtime } from "./runtime"
 
 /**
- * Where QEMU keeps the firmware images it ships — ASKED, NOT ASSUMED.
- *
- * The binaries are already found through PATH, so assuming a prefix for their
- * data files was the one inconsistent thing left: a hard-coded
- * `/opt/homebrew/share/qemu` finds nothing on an Intel Mac (`/usr/local`),
- * under MacPorts or Nix, or against a QEMU built from source — while
- * `qemu-system-aarch64` itself resolves perfectly well. On this machine that
- * path only works by symlink: QEMU actually lives in
- * `/opt/homebrew/Cellar/qemu-spice/…/share/qemu`.
- *
- * `-L help` makes QEMU print the directories it will search, which is the
- * authoritative answer and costs one process. Falling back to the binary's own
- * location covers a QEMU too old to support it.
+ * Where to look for UEFI firmware: `WINVM_QEMU_DATA`, else the vendored copy,
+ * else the directories the runtime's QEMU reports with `-L help`.
  */
 let dataDirs: readonly string[] | null = null
 export function qemuDataDirs(): readonly string[] {
@@ -43,19 +33,13 @@ export function qemuDataDirs(): readonly string[] {
     dataDirs = [vendored]
     return dataDirs
   }
-  const asked = spawnSync("qemu-system-aarch64", ["-L", "help"], { encoding: "utf8" })
+  const asked = spawnSync(runtimeBin("qemu-system-aarch64"), ["-L", "help"], { encoding: "utf8" })
   const listed = `${asked.stdout ?? ""}${asked.stderr ?? ""}`
     .split("\n")
     .map((l) => l.trim())
     .filter((l) => l.startsWith("/"))
     .map((l) => resolve(l))
-  if (listed.length > 0) {
-    dataDirs = listed
-    return dataDirs
-  }
-  // Last resort: <prefix>/bin/qemu-system-aarch64 -> <prefix>/share/qemu
-  const bin = (spawnSync("command", ["-v", "qemu-system-aarch64"], { shell: true, encoding: "utf8" }).stdout ?? "").trim()
-  dataDirs = bin === "" ? [] : [resolve(bin, "..", "..", "share", "qemu")]
+  dataDirs = listed
   return dataDirs
 }
 
@@ -71,7 +55,11 @@ export function qemuDataDirs(): readonly string[] {
 let tpmPpi: boolean | null = null
 export function tpmTisHasPpi(): boolean {
   if (tpmPpi !== null) return tpmPpi
-  const r = spawnSync("qemu-system-aarch64", ["-M", "virt", "-device", "tpm-tis-device,help"], { encoding: "utf8" })
+  const rt = findRuntime()
+  if (rt === null) return false
+  const r = spawnSync(resolve(rt.dir, "bin", "qemu-system-aarch64"), ["-M", "virt", "-device", "tpm-tis-device,help"], {
+    encoding: "utf8",
+  })
   tpmPpi = parseHasPpi(`${r.stdout ?? ""}${r.stderr ?? ""}`)
   return tpmPpi
 }
@@ -168,7 +156,7 @@ export function firmwareHint(): string {
  * serves at any moment, and a test fixture that silently changes underneath a
  * harness is exactly the kind of variable this tool exists to remove.
  */
-export const TOOLS_URL = "https://getutm.app/downloads/utm-guest-tools-latest.iso"
+export const TOOLS_URL = "https://github.com/utmapp/qemu/releases/download/v10.0.2-utm/utm-guest-tools-0.1.271.iso"
 export const TOOLS_SHA256 = "65b6a69b392ee01dd314c10f3dad9ebbf9c4160be43f5f0dd6bb715944d9095b"
 
 /**
@@ -221,46 +209,32 @@ export interface Check {
   readonly hint: string
 }
 
-export const MIN_QEMU = "11.1.0"
-
-const versionParts = (v: string): readonly number[] => v.split(".").map((n) => Number.parseInt(n, 10))
-
-function atLeast(v: string, min: string): boolean {
-  const a = versionParts(v)
-  const b = versionParts(min)
-  for (let i = 0; i < b.length; i++) {
-    const x = a[i] ?? 0
-    const y = b[i] ?? 0
-    if (x !== y) return x > y
+export function runtimeCheck(rt: Runtime | null, problems: readonly string[]): Check {
+  if (rt === null) return { label: "runtime (not installed)", ok: false, hint: "winvm setup" }
+  if (rt.source === "override") {
+    const note = problems.length === 0 ? "" : ` (unverified: ${problems[0] ?? ""})`
+    return { label: `runtime override ${rt.dir}${note}`, ok: true, hint: "" }
   }
-  return true
+  const version = rt.manifest?.version ?? "?"
+  if (problems.length > 0) {
+    const more = problems.length > 1 ? ` (and ${String(problems.length - 1)} more)` : ""
+    return { label: `runtime ${version} does not verify: ${problems[0] ?? ""}${more}`, ok: false, hint: "winvm setup" }
+  }
+  return { label: `runtime ${version} (QEMU ${rt.manifest?.qemu ?? "?"}, ${rt.source})`, ok: true, hint: "" }
 }
 
-export function qemuVersionCheck(versionOutput: string | null): Check {
-  const hint =
-    `QEMU 11.0.x HVF guests can lose their timer interrupt and hang (QEMU a86024eb2d, fixed in 11.1); ` +
-    `brew upgrade stuffbucket/qemu-spice/qemu-spice (or qemu)`
-  if (versionOutput === null) return { label: "QEMU (not found)", ok: false, hint: `brew install qemu (${MIN_QEMU} or later)` }
-  const v = /QEMU emulator version (\d+\.\d+\.\d+)/.exec(versionOutput)?.[1]
-  if (v === undefined) return { label: "QEMU (version unreadable)", ok: false, hint }
-  const ok = atLeast(v, MIN_QEMU)
-  return { label: ok ? `QEMU ${v}` : `QEMU ${v} (needs ${MIN_QEMU} or later)`, ok, hint }
-}
-
-function qemuVersionOutput(): string | null {
-  const r = spawnSync("qemu-system-aarch64", ["--version"], { encoding: "utf8" })
-  return r.status === 0 ? r.stdout : null
+export function macosCheck(productVersion: string, arch: string): Check {
+  const label = `macOS ${productVersion} on ${arch === "arm64" ? "Apple Silicon" : arch}`
+  if (arch !== "arm64") return { label, ok: false, hint: "winvm needs an Apple Silicon Mac" }
+  const major = Number.parseInt(productVersion.split(".")[0] ?? "0", 10)
+  return major >= 15 ? { label, ok: true, hint: "" } : { label, ok: false, hint: "winvm needs macOS 15 or later" }
 }
 
 export function hostChecks(): readonly Check[] {
+  const rt = findRuntime()
   return [
-    qemuVersionCheck(qemuVersionOutput()),
-    { label: "qemu-img", ok: have("qemu-img"), hint: "brew install qemu" },
-    // Windows 11 hard-requires TPM 2.0. Without an emulated one the only way
-    // past Setup is the LabConfig registry bypass, an unsupported configuration.
-    { label: "swtpm", ok: have("swtpm"), hint: "brew install swtpm" },
-    // Compresses the RAM stream of a file save (`winvm save`/`stow`) ~4x.
-    { label: "zstd", ok: have("zstd"), hint: "brew install zstd" },
+    macosCheck(capture("sw_vers", ["-productVersion"]), process.arch),
+    runtimeCheck(rt, rt === null ? [] : verifyRuntime(rt)),
     // Reported with the path that was actually found, so a mismatched QEMU
     // install is obvious rather than a bare "missing".
     {

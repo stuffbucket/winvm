@@ -7,11 +7,11 @@ import { resolve } from "node:path"
 
 import type { Args } from "./args"
 import { imageName, instanceName, isValidImageName } from "./args"
-import { PWSH_SHA256, PWSH_URL, TOOLS_SHA256, TOOLS_URL, download, du, have, hostChecks, printChecks, requireHost, run } from "./host"
+import { PWSH_SHA256, PWSH_URL, TOOLS_SHA256, TOOLS_URL, download, du, hostChecks, printChecks, requireHost, run, sha256Of } from "./host"
 import { diagnose, formatFindings } from "./diagnose"
 import { ensureInstance, makeVars, resetInstance, sealBase } from "./instance"
 import { ISO_SOURCE, buildSeed, checkIsoIsArm64, makeResultVolume, readResult, resolveWindowsIso } from "./media"
-import type { ImageMeta, InstanceMeta } from "./paths"
+import type { InstanceMeta } from "./paths"
 import {
   allocateVnc,
   basePath,
@@ -22,6 +22,7 @@ import {
   listImages,
   listInstances,
   media,
+  newImageMeta,
   mediaDir,
   pathsFor,
   readImageMeta,
@@ -38,6 +39,7 @@ import * as savecmds from "./savecmds"
 import * as snapshot from "./snapshot"
 import * as timemachine from "./timemachine"
 import { ensureService, readService, stopService } from "./service"
+import { ensureRuntime, findRuntime, runtimeBin } from "./runtime"
 import * as watcher from "./watch"
 import { CONFIG_KEYS, DEFAULTS, effectiveConfig, parseAssignment, readOverrides, writeAssignments } from "./config"
 
@@ -168,16 +170,13 @@ export function prune(args: Args): number {
  * which stays a pure check — this repository's own preflight says it plainly:
  * "A check that silently mutates the environment is its own defect."
  */
-export function setup(args: Args): number {
-  const missing = ["qemu-system-aarch64", "qemu-img", "swtpm", "zstd"].filter((c) => !have(c))
-  const formulae = [...new Set(missing.map((c) => (c === "swtpm" || c === "zstd" ? c : "qemu")))]
-  if (formulae.length > 0) {
-    if (!have("brew")) {
-      console.error(`::error::missing ${missing.join(", ")} and no Homebrew to install them with — see https://brew.sh`)
-      return 1
-    }
-    console.log(`installing ${formulae.join(" ")}`)
-    if (run("brew", ["install", ...formulae]) !== 0) return 1
+export async function setup(args: Args): Promise<number> {
+  try {
+    const rt = await ensureRuntime()
+    console.log(`runtime ${rt.manifest?.version ?? "?"} in ${rt.dir}`)
+  } catch (error) {
+    console.error(`::error::${error instanceof Error ? error.message : String(error)}`)
+    return 1
   }
   // Fetch and verify the guest tools now, so the first build does not stop to do
   // it — and so a broken pin is found here rather than 20 minutes into an install.
@@ -286,6 +285,8 @@ export async function build(args: Args): Promise<number> {
   // Checked BEFORE the install, because the alternative is finding out twelve
   // minutes in that this was the x64 ISO.
   if (!checkIsoIsArm64(iso)) return 1
+  console.log("checksumming the ISO (it is read, never changed)")
+  const isoSha256 = sha256Of(iso)
   if (resolve(iso) !== resolve(media.iso())) {
     // Symlinked, never copied: ~8 GB, and it belongs to the user.
     rmSync(media.iso(), { force: true })
@@ -304,11 +305,11 @@ export async function build(args: Args): Promise<number> {
   stopService(p)
   rmSync(p.dir, { recursive: true, force: true })
   mkdirSync(p.tpmDir, { recursive: true })
-  run("qemu-img", ["create", "-f", "qcow2", p.overlay, "64G"])
+  run(runtimeBin("qemu-img"), ["create", "-f", "qcow2", p.overlay, "64G"])
   // The scratch virtio-blk disk. Tiny and never read: its only job is to be a
   // virtio-blk device, so PnP installs viostor and marks it boot-start, which is
   // what lets the finished image run (and therefore snapshot) on virtio-blk.
-  run("qemu-img", ["create", "-f", "qcow2", p.prime, "64M"])
+  run(runtimeBin("qemu-img"), ["create", "-f", "qcow2", p.prime, "64M"])
   makeVars(p.vars)
   makeResultVolume(p.result)
   const meta: InstanceMeta = { image, vnc: allocateVnc(), created: new Date().toISOString() }
@@ -490,7 +491,13 @@ export async function build(args: Args): Promise<number> {
       }
       sealBase(image)
       // Recorded because it cannot be read back off a disk image later.
-      const imageMeta: ImageMeta = { virtioBoot, created: new Date().toISOString() }
+      const imageMeta = newImageMeta({
+        virtioBoot,
+        created: new Date().toISOString(),
+        runtime: findRuntime()?.manifest?.version ?? "override",
+        isoSha256,
+        guestToolsSha256: TOOLS_SHA256,
+      })
       writeFileSync(imageMetaPath(image), `${JSON.stringify(imageMeta, null, 2)}\n`)
       qemu.stopSwtpm(p)
       stopService(p)

@@ -17,7 +17,7 @@ lockfile = true
 [env]
 _.path = ["{{config_root}}/node_modules/.bin"]
 
-# QEMU (11.1 or later), swtpm and zstd come from Homebrew, which mise does not
-# manage; `mise install` reports whether they are there and new enough.
+# QEMU, swtpm and zstd come from the pinned runtime (packages/core/runtime.json,
+# built in stuffbucket/winvm-runtime); `mise install` fetches and verifies it.
 [hooks]
 postinstall = "bun scripts/check-host.ts || true"

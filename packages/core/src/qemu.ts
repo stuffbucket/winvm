@@ -12,6 +12,7 @@ import { closeSync, existsSync, openSync, readFileSync, renameSync, rmSync } fro
 
 import { restoreForward } from "./agentfwd"
 import { requireFirmware, tpmTisHasPpi } from "./host"
+import { runtimeBin } from "./runtime"
 import { ensureService } from "./service"
 import type { InstanceMeta, Paths } from "./paths"
 import { media } from "./paths"
@@ -177,7 +178,7 @@ export function qemuArgs(name: string, p: Paths, meta: InstanceMeta, o: LaunchOp
  */
 function swtpmPids(p: Paths): readonly number[] {
   const dir = p.tpmDir.replace(/[.*+?^$()|[\]{}\\]/g, "\\$&")
-  const r = spawnSync("pgrep", ["-f", `^swtpm socket --tpmstate dir=${dir} `], { encoding: "utf8" })
+  const r = spawnSync("pgrep", ["-f", `(^|/)swtpm socket --tpmstate dir=${dir} `], { encoding: "utf8" })
   if (r.status !== 0) return []
   return r.stdout
     .split("\n")
@@ -215,7 +216,7 @@ async function startSwtpm(p: Paths): Promise<void> {
   stopSwtpm(p)
   for (let i = 0; i < 50 && swtpmPids(p).length > 0; i += 1) await new Promise((r) => setTimeout(r, 20))
   const proc = spawn(
-    "swtpm",
+    runtimeBin("swtpm"),
     [
       "socket",
       "--tpmstate",
@@ -272,7 +273,7 @@ export async function launch(name: string, p: Paths, meta: InstanceMeta, o: Laun
   const m = await ensureFreeDisplay(name, p, meta)
 
   const log = openSync(p.qemuLog, "w")
-  const proc = spawn("qemu-system-aarch64", [...qemuArgs(name, p, m, o)], {
+  const proc = spawn(runtimeBin("qemu-system-aarch64"), [...qemuArgs(name, p, m, o)], {
     detached: true,
     stdio: ["ignore", log, log],
   })

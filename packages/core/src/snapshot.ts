@@ -22,6 +22,7 @@
 import { existsSync } from "node:fs"
 
 import { capture } from "./host"
+import { runtimeBin } from "./runtime"
 import type { Paths } from "./paths"
 import * as qmp from "./qmp"
 
@@ -68,7 +69,7 @@ function parseRows(out: string): readonly Snapshot[] {
  */
 export function list(p: Paths): readonly Snapshot[] {
   if (!existsSync(p.overlay)) return []
-  return parseRows(capture("qemu-img", ["snapshot", "-l", p.overlay]))
+  return parseRows(capture(runtimeBin("qemu-img"), ["snapshot", "-l", p.overlay]))
 }
 
 /** Tags on a RUNNING instance, via its monitor. */

@@ -79,6 +79,7 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, s
 import { resolve } from "node:path"
 
 import { capture, requireFirmware } from "./host"
+import { currentQemuCompat, runtimeBin } from "./runtime"
 import { ensureInstance } from "./instance"
 import type { InstanceMeta, Paths } from "./paths"
 import { basePath, home, imageMetaPath, instanceDir, pathsFor, readImageMeta, readMeta } from "./paths"
@@ -114,7 +115,7 @@ export interface CompatParts {
   readonly hardware: string
   /** Digest of the UEFI code image. */
   readonly firmware: string
-  /** QEMU version, verbatim, e.g. "11.1.2". */
+  /** The runtime's QEMU version and patch set, e.g. "11.1.2+patches:none". */
   readonly qemu: string
 }
 
@@ -309,7 +310,7 @@ export interface MigrationPlan {
 }
 
 /** How to write, and read back, RAM in a format. Pure, so it is tested without a VM. */
-export function migrationPlan(format: RamFormat, ramPath: string, channels = MULTIFD_CHANNELS): MigrationPlan {
+export function migrationPlan(format: RamFormat, ramPath: string, zstd: string, channels = MULTIFD_CHANNELS): MigrationPlan {
   const mapped = format === "mapped"
   const capabilities = [
     { capability: "mapped-ram", state: mapped },
@@ -325,8 +326,8 @@ export function migrationPlan(format: RamFormat, ramPath: string, channels = MUL
       return {
         capabilities,
         parameters,
-        uri: `exec:zstd -T0 -3 -q -f - -o ${shQuote(ramPath)}`,
-        incoming: `exec:zstd -dc ${shQuote(ramPath)}`,
+        uri: `exec:${shQuote(zstd)} -T0 -3 -q -f - -o ${shQuote(ramPath)}`,
+        incoming: `exec:${shQuote(zstd)} -dc ${shQuote(ramPath)}`,
       }
     case "raw":
       return { capabilities, parameters, uri: `file:${ramPath}`, incoming: `file:${ramPath}` }
@@ -350,7 +351,7 @@ export function currentCompat(instance: string, meta: InstanceMeta): { readonly 
     // Adopted images may have no metadata; size and mtime still identify them.
   }
   firmwareDigest ??= sha(readFileSync(requireFirmware().code)).slice(0, 16)
-  qemuVersion ??= /version\s+(\S+)/.exec(capture("qemu-system-aarch64", ["--version"]))?.[1] ?? "unknown"
+  qemuVersion ??= currentQemuCompat()
   const argv = qemu.qemuArgs(instance, pathsFor(instance), meta, {
     installMedia: false,
     ephemeral: false,
@@ -567,7 +568,7 @@ export async function createSave(instance: string, o: CreateOptions): Promise<Cr
   const format: RamFormat = o.format ?? (o.compress === false ? "raw" : "zstd")
   const ramFile = ramFileFor(format)
   const ramPath = resolve(tmp, ramFile)
-  const plan = migrationPlan(format, ramPath)
+  const plan = migrationPlan(format, ramPath, runtimeBin("zstd"))
 
   const before = await qmp.status(p.qmp)
   const wasRunning = before === "running"
@@ -711,7 +712,7 @@ export async function loadSave(instance: string, name: string): Promise<Manifest
   const format = ramFormatOf(m)
   const ramFile = m.ramFile ?? ramFileFor(format)
   const ramPath = resolve(dir, ramFile)
-  const plan = migrationPlan(format, ramPath)
+  const plan = migrationPlan(format, ramPath, runtimeBin("zstd"))
   for (const f of [ramPath, resolve(dir, FILES.overlay), resolve(dir, FILES.vars)]) {
     if (!existsSync(f)) throw new Error(`save "${name}" is incomplete: ${f} is missing`)
   }

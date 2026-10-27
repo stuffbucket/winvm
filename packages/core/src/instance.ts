@@ -9,6 +9,7 @@ import { chmodSync, existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs
 import { resolve } from "node:path"
 
 import { requireFirmware, run } from "./host"
+import { runtimeBin } from "./runtime"
 import { makeResultVolume } from "./media"
 import type { InstanceMeta, Paths } from "./paths"
 import { allocateVnc, basePath, pathsFor, readMeta } from "./paths"
@@ -23,7 +24,7 @@ import { allocateVnc, basePath, pathsFor, readMeta } from "./paths"
  */
 export function makeVars(dest: string): void {
   rmSync(dest, { force: true })
-  run("qemu-img", ["convert", "-f", "raw", "-O", "qcow2", requireFirmware().vars, dest])
+  run(runtimeBin("qemu-img"), ["convert", "-f", "raw", "-O", "qcow2", requireFirmware().vars, dest])
 }
 
 /**
@@ -38,7 +39,7 @@ export function sealBase(image: string): void {
 function createOverlay(p: Paths, image: string): void {
   // Absolute backing path, so the instance keeps working regardless of the
   // process working directory.
-  run("qemu-img", ["create", "-f", "qcow2", "-b", basePath(image), "-F", "qcow2", p.overlay])
+  run(runtimeBin("qemu-img"), ["create", "-f", "qcow2", "-b", basePath(image), "-F", "qcow2", p.overlay])
 }
 
 export function ensureInstance(name: string, image: string): Paths {
@@ -50,7 +51,7 @@ export function ensureInstance(name: string, image: string): Paths {
     if (!existsSync(p.vars)) {
       const legacy = resolve(p.dir, "efi-vars.fd")
       if (existsSync(legacy)) {
-        run("qemu-img", ["convert", "-f", "raw", "-O", "qcow2", legacy, p.vars])
+        run(runtimeBin("qemu-img"), ["convert", "-f", "raw", "-O", "qcow2", legacy, p.vars])
         rmSync(legacy, { force: true })
       } else {
         makeVars(p.vars)

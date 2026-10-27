@@ -33,9 +33,9 @@ command is `apps/cli`. `pnpm check` typechecks and tests everything.
 
 | | |
 |---|---|
-| Host | macOS on Apple Silicon (uses `-accel hvf`, `hdiutil`, `newfs_msdos`) |
+| Host | macOS 15 or later on Apple Silicon (uses `-accel hvf`, `hdiutil`, `newfs_msdos`); no Intel Macs |
 | [mise](https://mise.jdx.dev) | pins Bun 1.4.3 (`.bun-version`) and pnpm 12.3.4 (`mise.toml`) |
-| `qemu` 11.1 or later, `swtpm`, `zstd` | `winvm setup` installs them with Homebrew, or `brew install qemu swtpm zstd`. On 11.0.x an HVF guest can lose its timer interrupt and hang after a reboot (QEMU a86024eb2d). mise does not manage them; `mise install` and `winvm doctor` report them. |
+| Runtime: QEMU, `swtpm`, `zstd` | Pinned in `packages/core/runtime.json` and built from source in [stuffbucket/winvm-runtime](https://github.com/stuffbucket/winvm-runtime). `mise install` and `winvm setup` fetch and verify it into `~/.local/share/winvm/runtime/<version>/`. winvm never runs a QEMU, swtpm or zstd from `PATH`; `WINVM_RUNTIME=<dir>` points it at another build for experiments. Homebrew is not needed. |
 | UEFI firmware | vendored in `packages/core/firmware/` (gzipped EDK2), expanded into the state dir on first use |
 | UTM guest tools ISO | downloaded by `setup`/`build` from getutm.app (~121 MB), pinned by SHA-256 |
 | Windows 11 ARM64 ISO | you supply it — see below |
@@ -91,7 +91,7 @@ watcher was running (`winvm status` shows it), since a running watcher keeps
 the code it was started with.
 
 ```sh
-winvm setup                       # brew install qemu swtpm zstd; fetch guest tools
+winvm setup                       # fetch the pinned runtime and the guest tools
 winvm build --iso ~/vm/Win11_25H2_English_Arm64.iso --bun 1.3.14
                                          # once: unattended install, ~10-20 min
 winvm start                       # boot instance "default" (~35 s to desktop)
@@ -262,7 +262,7 @@ winvm clock                      # guest-vs-host offset, and fix it
   time zone to the host's.
 - `snapshot`/`rewind <tag>` still work as before, inside the instance's qcow2.
 
-`zstd` is required (`setup` installs it; `doctor` checks).
+`zstd` comes from the runtime.
 
 The guest boots to **audit mode** as the built-in Administrator, with UAC off.
 Do not use it for anything but testing.
