@@ -32,8 +32,10 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          # The commit-subject check reads the pull request's commits.
-          fetch-depth: ${{ github.event_name == 'pull_request' && 0 || 1 }}
+          # Full history (the repository is small): the commit-subject check
+          # reads the pull request's commits. Not `cond && 0 || 1`, which is
+          # always 1 because 0 is falsy in expressions.
+          fetch-depth: 0
 
       - uses: raven-actions/actionlint@3d39aea434753780c3b3d4a1a31c854b4dbf49d7 # v2.2.0
 
