@@ -1,0 +1,119 @@
+name: Release Please
+
+# On a push to main: keep the release PR (version bump + CHANGELOG.md) open and
+# current. When that PR merges, push the tag vX.Y.Z and dispatch release.yml,
+# which owns the GitHub Release (draft, then the .dmg, then one publish).
+# GITHUB_TOKEN-created tags and PRs trigger no workflows, so both release.yml
+# and CI for the release PR are dispatched explicitly. Adapted from
+# stuffbucket/maximal's release-please.yml.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+  actions: write
+
+concurrency:
+  group: release-please-${{ github.ref }}
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash -eo pipefail {0}
+
+jobs:
+  release-please:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version-file: .bun-version
+
+      - name: Tag a merged release PR
+        id: tag
+        run: |
+          version=$(jq -r '.["."]' .release-please-manifest.json)
+          tag="v${version}"
+          echo "tag=${tag}" >> "$GITHUB_OUTPUT"
+          if git ls-remote --exit-code --tags origin "refs/tags/${tag}" > /dev/null 2>&1; then
+            echo "${tag} already tagged"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "${tag}" -m "${tag}"
+          git push origin "${tag}"
+
+      - name: Dispatch release.yml for a tagged, unpublished release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.tag.outputs.tag }}
+        run: |
+          draft=$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json isDraft --jq .isDraft 2> /dev/null || echo notfound)
+          if [ "$draft" = "false" ]; then
+            echo "$TAG is published"
+            exit 0
+          fi
+          gh workflow run release.yml --repo "$GITHUB_REPOSITORY" --ref "$TAG" -f tag="$TAG"
+
+      - name: Mark tagged release PRs autorelease:tagged
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          for n in $(gh pr list --repo "$GITHUB_REPOSITORY" --state merged --label "autorelease: pending" --json number --jq '.[].number'); do
+            gh pr edit "$n" --repo "$GITHUB_REPOSITORY" --remove-label "autorelease: pending" --add-label "autorelease: tagged"
+          done
+
+      - name: Open or update the release PR
+        env:
+          RP_TOKEN: ${{ github.token }}
+        run: |
+          bunx release-please@17.11.2 release-pr \
+            --token "$RP_TOKEN" \
+            --repo-url "$GITHUB_REPOSITORY" \
+            --target-branch "$GITHUB_REF_NAME" \
+            --config-file release-please-config.json \
+            --manifest-file .release-please-manifest.json
+
+      # The PR API can lag a just-pushed release branch, so retry until its
+      # head agrees with the git ref, then run the required check against that
+      # immutable SHA.
+      - name: Dispatch CI for the release PR head
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          for attempt in 1 2 3 4 5 6; do
+            prs=$(gh pr list --repo "$GITHUB_REPOSITORY" --state open --base main --label "autorelease: pending" \
+              --json number,headRefName,headRefOid,url)
+            count=$(jq length <<< "$prs")
+            if [ "$count" -eq 0 ]; then
+              echo "no open release PR"
+              exit 0
+            fi
+            if [ "$count" -ne 1 ]; then
+              echo "::error::Expected one open release PR, found $count."
+              exit 1
+            fi
+            head_ref=$(jq -r '.[0].headRefName' <<< "$prs")
+            head_sha=$(jq -r '.[0].headRefOid' <<< "$prs")
+            remote_sha=$(git ls-remote origin "refs/heads/$head_ref" | awk '{print $1}')
+            if [ -n "$remote_sha" ] && [ "$remote_sha" = "$head_sha" ]; then
+              break
+            fi
+            if [ "$attempt" -eq 6 ]; then
+              echo "::error::Release PR head moved during discovery."
+              exit 1
+            fi
+            sleep 10
+          done
+          gh workflow run ci.yml --repo "$GITHUB_REPOSITORY" --ref "$head_ref" -f expected_sha="$head_sha"
+          echo "Dispatched CI for $(jq -r '.[0].url' <<< "$prs") at $head_sha."

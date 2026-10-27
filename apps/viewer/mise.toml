@@ -1,0 +1,3 @@
+# The viewer app needs Rust; only work in this directory installs it.
+[tools]
+rust = "1.99.0"

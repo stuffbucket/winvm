@@ -1,0 +1,13 @@
+{
+  "name": "@winvm/viewer",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "tauri": "tauri",
+    "app": "bun scripts/build-app.ts"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "2.11.1"
+  }
+}

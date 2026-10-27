@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>winvm</title>
+    <link rel="stylesheet" href="app.css" />
+    <script type="module" src="app.js"></script>
+  </head>
+  <body>
+    <header class="bar">
+      <h1>winvm</h1>
+      <div class="actions">
+        <button id="refresh" type="button">Refresh</button>
+        <button id="install-cli" type="button">Install command-line tool</button>
+      </div>
+    </header>
+    <main>
+      <section aria-labelledby="host-heading">
+        <h2 id="host-heading">This Mac</h2>
+        <ul id="host" class="checks"><li class="muted">Checking…</li></ul>
+      </section>
+      <section aria-labelledby="instances-heading">
+        <h2 id="instances-heading">Instances</h2>
+        <ul id="instances" class="instances"><li class="muted">Loading…</li></ul>
+      </section>
+      <details id="output-panel">
+        <summary>Last command</summary>
+        <pre id="output"></pre>
+      </details>
+    </main>
+    <p id="status" class="status" role="status" aria-live="polite"></p>
+  </body>
+</html>
