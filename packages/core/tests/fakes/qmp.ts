@@ -1,9 +1,3 @@
-/**
- * A stand-in for QEMU's QMP monitor on a Unix socket: greets, requires
- * qmp_capabilities first, then answers each command through `handler`
- * (null: never answer). Records every command it was sent, and can emit
- * asynchronous events.
- */
 import { rmSync } from "node:fs"
 import { createServer, type Server, type Socket } from "node:net"
 
@@ -69,8 +63,6 @@ export class FakeQmp {
           s.write(`${JSON.stringify({ error: { class: "CommandNotFound", desc: "Expecting capabilities negotiation" } })}\n`)
           continue
         }
-        // QEMU answers a monitor's commands strictly in order: a slow one
-        // holds back every reply after it.
         inOrder = inOrder.then(async () => {
           const reply = await this.handler(cmd)
           if (reply !== null && !s.destroyed) s.write(`${JSON.stringify(reply)}\n`)

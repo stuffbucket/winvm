@@ -1,32 +1,8 @@
-/**
- * The control service's channel broker: one owner for an instance's QMP and
- * qemu-ga sockets.
- *
- * WHY. Both sockets serve a single client at a time, and every winvm process
- * used to connect on its own: a status poll, the idle watcher and an agent
- * install could meet on qemu-ga, and a client that gave up mid-request left
- * its reply for whoever connected next (winvm#5 was one such collision).
- *
- * HOW. QEMU binds private sockets beside the usual ones (paths.qmpQemu,
- * paths.qgaQemu). The service listens on the usual paths, which every caller
- * already uses, and lets callers through one at a time, in arrival order, per
- * connection. A connection is one caller's turn, so a 15-minute `exec` (many
- * short connections) lets others in between its polls.
- *
- * QMP keeps one negotiated upstream connection. Each caller is handed the
- * stored greeting and its `qmp_capabilities` is answered here. A caller that
- * leaves with replies still owed holds the queue until they have arrived and
- * been discarded, so no late reply reaches the next caller.
- *
- * qemu-ga is piped per caller over a fresh upstream connection, as qga.call
- * makes today; its own guest-sync handles anything a previous caller left.
- */
 import { rmSync } from "node:fs"
 import { connect, createServer, type Server, type Socket } from "node:net"
 
 type Json = Record<string, unknown>
 
-/** Feed chunks in, get whole non-empty lines out. */
 function lineReader(onLine: (line: string) => void): (chunk: Buffer) => void {
   let buf = ""
   return (chunk) => {
@@ -49,18 +25,27 @@ function parse(line: string): Json | null {
   }
 }
 
+async function listenOn(path: string, onConnection: (c: Socket) => void): Promise<Server> {
+  rmSync(path, { force: true })
+  const server = createServer(onConnection)
+  await new Promise<void>((r) => server.listen(path, r))
+  return server
+}
+
+async function closeServer(server: Server | null, path: string): Promise<void> {
+  if (server !== null) await new Promise<void>((r) => server.close(() => r()))
+  rmSync(path, { force: true })
+}
+
 export interface QmpChannelOptions {
-  /** Where callers connect (paths.qmp). */
   readonly listen: string
-  /** QEMU's own monitor socket (paths.qmpQemu). */
   readonly upstream: string
-  /** Every asynchronous QMP event, whoever is connected. */
   readonly onEvent?: (event: Json) => void
-  /** How long a departed caller's owed replies may hold the queue; default 200 s (savevm's 180 s, and some). */
   readonly drainTimeoutMs?: number
 }
 
 export class QmpChannel {
+  private readonly o: QmpChannelOptions
   private server: Server | null = null
   private upstream: Socket | null = null
   private greeting: string | null = null
@@ -68,12 +53,10 @@ export class QmpChannel {
   private readonly queue: Socket[] = []
   private readonly pending = new WeakMap<Socket, string[]>()
   private active: Socket | null = null
-  /** Replies the current caller (or a departed one being drained) is still owed. */
   private owed = 0
   private draining = false
   private drainTimer: ReturnType<typeof setTimeout> | undefined
   private stopped = false
-  private readonly o: QmpChannelOptions
 
   constructor(o: QmpChannelOptions) {
     this.o = o
@@ -84,10 +67,7 @@ export class QmpChannel {
   }
 
   async start(): Promise<void> {
-    rmSync(this.o.listen, { force: true })
-    const server = createServer((c) => this.accept(c))
-    this.server = server
-    await new Promise<void>((r) => server.listen(this.o.listen, r))
+    this.server = await listenOn(this.o.listen, (c) => this.accept(c))
     this.connectUpstream()
   }
 
@@ -97,18 +77,14 @@ export class QmpChannel {
     for (const c of this.queue.splice(0)) c.destroy()
     this.active?.destroy()
     this.upstream?.destroy()
-    const server = this.server
-    if (server !== null) await new Promise<void>((r) => server.close(() => r()))
-    rmSync(this.o.listen, { force: true })
+    await closeServer(this.server, this.o.listen)
   }
-
-  // --- upstream (QEMU) -------------------------------------------------------
 
   private connectUpstream(): void {
     if (this.stopped) return
     const s = connect(this.o.upstream)
     let negotiating = false
-    s.on("error", () => undefined) // "close" follows and retries
+    s.on("error", () => undefined)
     s.on("close", () => {
       if (this.upstream === s) this.upstreamLost()
       if (!this.stopped) setTimeout(() => this.connectUpstream(), 200)
@@ -139,7 +115,6 @@ export class QmpChannel {
   private upstreamLost(): void {
     this.upstream = null
     this.ready = false
-    // The caller's monitor is gone, as it is when QEMU exits; say so by closing.
     this.active?.destroy()
     this.active = null
     this.owed = 0
@@ -153,7 +128,6 @@ export class QmpChannel {
       if (this.active !== null && !this.draining) this.active.write(`${line}\n`)
       return
     }
-    // A reply: owed to the current caller, or to a departed one being drained.
     if (this.owed > 0) this.owed -= 1
     if (this.draining) {
       if (this.owed === 0) this.endDrain()
@@ -161,8 +135,6 @@ export class QmpChannel {
     }
     this.active?.write(`${line}\n`)
   }
-
-  // --- callers ---------------------------------------------------------------
 
   private accept(c: Socket): void {
     this.pending.set(c, [])
@@ -202,7 +174,6 @@ export class QmpChannel {
     const msg = parse(line)
     if (msg === null) return
     if (msg["execute"] === "qmp_capabilities") {
-      // Negotiated once, upstream; each caller is answered here.
       c.write(`${JSON.stringify({ return: {} })}\n`)
       return
     }
@@ -227,5 +198,85 @@ export class QmpChannel {
     this.draining = false
     this.owed = 0
     this.pump()
+  }
+}
+
+export interface QgaChannelOptions {
+  readonly listen: string
+  readonly upstream: string
+  readonly portOpen: () => Promise<boolean | null>
+  readonly pollMs?: number
+}
+
+export class QgaChannel {
+  private readonly o: QgaChannelOptions
+  private server: Server | null = null
+  private readonly queue: Socket[] = []
+  private readonly pending = new WeakMap<Socket, Buffer[]>()
+  private active: Socket | null = null
+  private upstream: Socket | null = null
+  private stopped = false
+
+  constructor(o: QgaChannelOptions) {
+    this.o = o
+  }
+
+  async start(): Promise<void> {
+    this.server = await listenOn(this.o.listen, (c) => this.accept(c))
+  }
+
+  async stop(): Promise<void> {
+    this.stopped = true
+    for (const c of this.queue.splice(0)) c.destroy()
+    this.active?.destroy()
+    this.upstream?.destroy()
+    await closeServer(this.server, this.o.listen)
+  }
+
+  private accept(c: Socket): void {
+    this.pending.set(c, [])
+    c.on("error", () => undefined)
+    c.on("data", (chunk: Buffer) => {
+      if (this.active === c && this.upstream !== null) this.upstream.write(chunk)
+      else this.pending.get(c)?.push(chunk)
+    })
+    c.on("close", () => {
+      if (this.active === c) {
+        this.upstream?.destroy()
+        this.upstream = null
+        this.active = null
+        void this.pump()
+      } else {
+        const i = this.queue.indexOf(c)
+        if (i >= 0) this.queue.splice(i, 1)
+      }
+    })
+    this.queue.push(c)
+    void this.pump()
+  }
+
+  private async pump(): Promise<void> {
+    if (this.active !== null || this.stopped) return
+    const next = this.queue.shift()
+    if (next === undefined) return
+    if (next.destroyed) {
+      void this.pump()
+      return
+    }
+    this.active = next
+    while (!next.destroyed && !this.stopped && (await this.o.portOpen().catch(() => null)) !== true) {
+      await new Promise((r) => setTimeout(r, this.o.pollMs ?? 250))
+    }
+    if (next.destroyed || this.stopped) return
+    const up = connect(this.o.upstream)
+    up.on("error", () => undefined)
+    up.on("close", () => {
+      if (this.upstream === up) next.destroy()
+    })
+    up.on("data", (chunk: Buffer) => next.write(chunk))
+    up.on("connect", () => {
+      this.upstream = up
+      for (const chunk of this.pending.get(next)?.splice(0) ?? []) up.write(chunk)
+    })
   }
 }

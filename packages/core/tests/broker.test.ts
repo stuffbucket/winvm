@@ -6,9 +6,11 @@ import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { resolve } from "node:path"
 
-import { QmpChannel } from "../src/broker"
+import { QgaChannel, QmpChannel } from "../src/broker"
 import * as monitor from "../src/monitor"
+import * as qga from "../src/qga"
 import * as qmp from "../src/qmp"
+import { FakeAgent } from "./fakes/agent"
 import { FakeQmp } from "./fakes/qmp"
 
 const sleep = async (ms: number): Promise<void> => await new Promise((r) => setTimeout(r, ms))
@@ -89,5 +91,63 @@ describe("the QMP channel", () => {
     await fake.listen()
     expect(await pending).toBe("running")
     expect(channel.connected).toBe(true)
+  })
+})
+
+describe("the qemu-ga channel", () => {
+  let agent: FakeAgent
+  let qgaChannel: QgaChannel
+  let qgaListen = ""
+  let open = true
+
+  beforeEach(async () => {
+    agent = new FakeAgent(resolve(dir, "qga-up.sock"))
+    await agent.listen()
+    qgaListen = resolve(dir, "qga.sock")
+    open = true
+    qgaChannel = new QgaChannel({ listen: qgaListen, upstream: agent.path, portOpen: async () => open })
+    await qgaChannel.start()
+  })
+
+  afterEach(async () => {
+    await qgaChannel.stop()
+    await agent.close()
+  })
+
+  it("never connects to the agent before the guest opens its port", async () => {
+    open = false
+    agent.handler = () => ({ return: {} })
+    const done = qga.call(qgaListen, { execute: "guest-ping" }, 5000)
+    await sleep(500)
+    expect(agent.connections).toBe(0)
+    open = true
+    expect(await done).toEqual({ return: {} })
+    expect(agent.connections).toBe(1)
+  })
+
+  it("serves qga callers one at a time, each with its own sync", async () => {
+    agent.handler = (req) => ({ return: `reply to ${String(req["execute"])}` })
+    const [a, b] = await Promise.all([
+      qga.call(qgaListen, { execute: "guest-info" }),
+      qga.call(qgaListen, { execute: "guest-get-time" }),
+    ])
+    expect(a).toEqual({ return: "reply to guest-info" })
+    expect(b).toEqual({ return: "reply to guest-get-time" })
+    expect(agent.connections).toBe(2)
+  })
+
+  it("lets other callers in between the polls of a long exec", async () => {
+    const t0 = Date.now()
+    agent.handler = (req) => {
+      if (req["execute"] === "guest-exec") return { return: { pid: 42 } }
+      if (req["execute"] === "guest-exec-status") return { return: { exited: Date.now() - t0 > 1000, exitcode: 0 } }
+      return { return: "pong" }
+    }
+    const order: string[] = []
+    const exec = qga.exec(qgaListen, "cmd.exe", ["/c", "ver"], 10_000).then(() => order.push("exec"))
+    await sleep(200)
+    const ping = qga.call(qgaListen, { execute: "guest-ping" }).then(() => order.push("ping"))
+    await Promise.all([exec, ping])
+    expect(order).toEqual(["ping", "exec"])
   })
 })
