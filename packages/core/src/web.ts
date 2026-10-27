@@ -34,7 +34,7 @@ import { extname, resolve, sep } from "node:path"
 
 import type { Args } from "./args"
 import * as input from "./input"
-import { PACKAGE_DIR, cliEntry, home, listInstances, pathsFor, readMeta } from "./paths"
+import { PACKAGE_DIR, cliArgv, cliEntry, home, listInstances, pathsFor, readMeta } from "./paths"
 import * as qemu from "./qemu"
 import * as status from "./status"
 import * as timemachine from "./timemachine"
@@ -175,7 +175,7 @@ export async function ensureServer(): Promise<ServerInfo> {
 
   mkdirSync(home(), { recursive: true })
   const log = openSync(logPath(), "a")
-  const child = spawn(process.execPath, [cliEntry(), "web"], { detached: true, stdio: ["ignore", log, log], env: process.env })
+  const child = spawn(process.execPath, [...cliArgv("web")], { detached: true, stdio: ["ignore", log, log], env: process.env })
   closeSync(log)
   child.unref()
   let gone = false
@@ -225,7 +225,7 @@ function startJob(instance: string, verb: string, argv: readonly string[]): Job 
   // Keep the last 50.
   for (const id of [...jobs.keys()].slice(0, Math.max(0, jobs.size - 50))) jobs.delete(id)
 
-  const child = spawn(process.execPath, [cliEntry(), ...argv], {
+  const child = spawn(process.execPath, [...cliArgv(...argv)], {
     cwd: PACKAGE_DIR,
     env: process.env,
     stdio: ["ignore", "pipe", "pipe"],

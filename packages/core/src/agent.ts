@@ -293,7 +293,7 @@ export async function install(name: string, o: InstallOptions = {}): Promise<Age
   const mk = await qga.exec(p.qga, CMD, ["/d", "/c", `rmdir /s /q ${STAGE_DIR} 2>nul & mkdir ${stage} 2>nul & mkdir ${WINDOWS_DIR} 2>nul & exit 0`])
   if (mk.exitcode !== 0) throw new Error(`could not create the agent's directories: ${mk.stderr}`)
   for (const [from, to] of [
-    [resolve(import.meta.dir, "guestagent.ts"), `${stage}\\guestagent.ts`],
+    [resolve(PACKAGE_DIR, "src", "guestagent.ts"), `${stage}\\guestagent.ts`],
     [resolve(ASSETS, "agent-install.ps1"), `${stage}\\agent-install.ps1`],
     [resolve(ASSETS, "runinsession.cs"), `${stage}\\runinsession.cs`],
     [resolve(ASSETS, "winvm-ui.cs"), `${stage}\\winvm-ui.cs`],

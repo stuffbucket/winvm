@@ -29,8 +29,28 @@ export const imagesDir = (): string => resolve(home(), "images")
 export const instancesDir = (): string => resolve(home(), "instances")
 export const mediaDir = (): string => resolve(home(), "media")
 
+const isCompiled = (modulePath: string): boolean => modulePath.startsWith("/$bunfs/")
+
+export function packageDirFor(o: {
+  readonly modulePath: string
+  readonly execPath: string
+  readonly env: Readonly<Record<string, string | undefined>>
+}): string {
+  const own = o.env["WINVM_PACKAGE_DIR"]
+  if (own !== undefined && own !== "") return resolve(own)
+  if (isCompiled(o.modulePath)) return resolve(dirname(o.execPath), "..", "Resources", "winvm", "packages", "core")
+  return resolve(dirname(o.modulePath), "..")
+}
+
 /** This package's own directory: `assets/`, `firmware/` and `web/` live here. */
-export const PACKAGE_DIR = resolve(import.meta.dir, "..")
+export const PACKAGE_DIR = packageDirFor({ modulePath: import.meta.path, execPath: process.execPath, env: process.env })
+
+export const cliArgvFor = (o: { readonly compiled: boolean; readonly entry: string }, argv: readonly string[]): readonly string[] =>
+  o.compiled ? [...argv] : [o.entry, ...argv]
+
+/** Arguments for `spawn(process.execPath, …)` that run the CLI with `argv`. */
+export const cliArgv = (...argv: string[]): readonly string[] =>
+  cliArgvFor({ compiled: isCompiled(import.meta.path), entry: cliEntry() }, argv)
 
 /**
  * The CLI entry to spawn for work that outlives the command (the idle watcher,
@@ -49,7 +69,7 @@ export function cliEntry(): string {
  * step) may name another checkout or version.
  */
 export function recordCliEntry(path: string): void {
-  process.env["WINVM_CLI"] = path
+  process.env["WINVM_CLI"] = isCompiled(path) ? process.execPath : path
 }
 
 /**

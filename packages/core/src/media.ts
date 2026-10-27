@@ -311,7 +311,7 @@ export function buildSeed(payloadDir: string | undefined, bunVersion: string | u
   // so instances only need a token, not an install. Its own bun.exe rides here
   // rather than in `payload\`, which is the caller's: an image built without
   // --bun still gets an agent.
-  copyFileSync(resolve(import.meta.dir, "guestagent.ts"), resolve(dir, "winvm", "guestagent.ts"))
+  copyFileSync(resolve(PACKAGE_DIR, "src", "guestagent.ts"), resolve(dir, "winvm", "guestagent.ts"))
   if (run("unzip", ["-q", "-o", "-j", bunZip(), "bun-windows-aarch64/bun.exe", "-d", resolve(dir, "winvm")]) !== 0) {
     throw new Error("could not unpack bun.exe for the guest agent")
   }

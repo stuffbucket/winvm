@@ -3,7 +3,7 @@ import { appendFileSync, chmodSync, closeSync, linkSync, openSync, readFileSync,
 import { basename, resolve } from "node:path"
 
 import { QgaChannel, QmpChannel } from "./broker"
-import { PACKAGE_DIR, cliEntry, home, pathsFor, type Paths } from "./paths"
+import { PACKAGE_DIR, cliArgv, cliEntry, home, pathsFor, type Paths } from "./paths"
 import * as qga from "./qga"
 
 export interface ServiceInfo {
@@ -149,7 +149,7 @@ export async function ensureService(name: string, p: Paths): Promise<ServiceInfo
   if (running !== null) stopService(p)
   keepService(p)
   const log = openSync(resolve(p.dir, "service.log"), "a")
-  const child = spawn(process.execPath, [cli, "serve", "-i", name], { detached: true, stdio: ["ignore", log, log] })
+  const child = spawn(process.execPath, [...cliArgv("serve", "-i", name)], { detached: true, stdio: ["ignore", log, log] })
   closeSync(log)
   child.unref()
   const deadline = Date.now() + 10_000
