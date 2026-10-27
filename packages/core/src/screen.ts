@@ -18,7 +18,7 @@ import * as ocr from "./ocr"
 import type { InstanceMeta, Paths } from "./paths"
 import { pathsFor, readMeta } from "./paths"
 import * as qemu from "./qemu"
-import { applyPassword, passwordFor, screenSharingUrl, vncPort } from "./vnc"
+import { applyPassword, connection, passwordFor, screenSharingUrl, vncPort } from "./vnc"
 import * as web from "./web"
 
 const errMsg = (e: unknown): string => (e instanceof Error ? e.message : String(e))
@@ -88,6 +88,10 @@ export async function open(args: Args): Promise<number> {
     // already, so the stored one is the best guess.
     console.warn(`warning: could not confirm the VNC password (${errMsg(error)}); using the stored one`)
     password = passwordFor(r.p)
+  }
+  if (args.flags.has("json")) {
+    console.log(JSON.stringify(connection(r.meta.vnc, password), null, 2))
+    return 0
   }
   if (password === null) {
     console.warn(

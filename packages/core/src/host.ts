@@ -249,6 +249,18 @@ export function hostChecks(): readonly Check[] {
   ]
 }
 
+export interface ChecksReport {
+  readonly ready: boolean
+  readonly checks: readonly Check[]
+  readonly timeMachine: string
+}
+
+export const checksReport = (checks: readonly Check[], timeMachine: string): ChecksReport => ({
+  ready: checks.every((c) => c.ok),
+  checks,
+  timeMachine,
+})
+
 export function printChecks(checks: readonly Check[]): number {
   for (const c of checks) console.log(`${c.ok ? "ok  " : "MISS"}  ${c.label}${c.ok ? "" : `  -> ${c.hint}`}`)
   return checks.filter((c) => !c.ok).length

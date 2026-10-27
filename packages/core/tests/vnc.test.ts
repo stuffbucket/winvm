@@ -10,7 +10,7 @@ import { resolve } from "node:path"
 
 import type { InstanceMeta } from "../src/paths"
 import { instanceDir, pathsFor } from "../src/paths"
-import { displayFree, ensureFreeDisplay, vncPort, websocketPort } from "../src/vnc"
+import { connection, displayFree, ensureFreeDisplay, vncPort, websocketPort } from "../src/vnc"
 
 let state = ""
 let previousHome: string | undefined
@@ -78,5 +78,15 @@ describe("VNC display in use on the host", () => {
     expect(await displayFree(moved.vnc)).toBe(true)
     expect(moved.image).toBe(meta.image)
     expect((JSON.parse(readFileSync(pathsFor("a").meta, "utf8")) as InstanceMeta).vnc).toBe(moved.vnc)
+  })
+})
+
+describe("connection", () => {
+  it("gives both ports for the display and the password", () => {
+    expect(connection(3, "abcd1234")).toEqual({ display: 3, vncPort: 5903, websocketPort: 5703, password: "abcd1234" })
+  })
+
+  it("keeps a missing password as null", () => {
+    expect(connection(1, null).password).toBeNull()
   })
 })
