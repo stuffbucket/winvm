@@ -283,13 +283,20 @@ export async function install(name: string, o: InstallOptions = {}): Promise<Age
   if (!qemu.isRunning(p)) throw new Error(`instance "${name}" is not running`)
   const s = ensureState(p)
   const t0 = performance.now()
-  const mk = await qga.exec(p.qga, CMD, ["/d", "/c", `mkdir ${STAGE_DIR} 2>nul & mkdir ${WINDOWS_DIR} 2>nul & exit 0`])
+  // A FOLDER OF ITS OWN PER ATTEMPT. When a qemu-ga call times out on the host,
+  // qemu-ga can still carry it out: a guest-file-open the host gave up on leaves
+  // that file open in the guest, with a handle the host never learned, and every
+  // later open of the same path fails ("being used by another process"). So a
+  // retried install, writing the same paths, could never succeed. What earlier
+  // attempts left is cleared first, as far as nothing holds it.
+  const stage = `${STAGE_DIR}\\${randomBytes(4).toString("hex")}`
+  const mk = await qga.exec(p.qga, CMD, ["/d", "/c", `rmdir /s /q ${STAGE_DIR} 2>nul & mkdir ${stage} 2>nul & mkdir ${WINDOWS_DIR} 2>nul & exit 0`])
   if (mk.exitcode !== 0) throw new Error(`could not create the agent's directories: ${mk.stderr}`)
   for (const [from, to] of [
-    [resolve(import.meta.dir, "guestagent.ts"), `${STAGE_DIR}\\guestagent.ts`],
-    [resolve(ASSETS, "agent-install.ps1"), `${STAGE_DIR}\\agent-install.ps1`],
-    [resolve(ASSETS, "runinsession.cs"), `${STAGE_DIR}\\runinsession.cs`],
-    [resolve(ASSETS, "winvm-ui.cs"), `${STAGE_DIR}\\winvm-ui.cs`],
+    [resolve(import.meta.dir, "guestagent.ts"), `${stage}\\guestagent.ts`],
+    [resolve(ASSETS, "agent-install.ps1"), `${stage}\\agent-install.ps1`],
+    [resolve(ASSETS, "runinsession.cs"), `${stage}\\runinsession.cs`],
+    [resolve(ASSETS, "winvm-ui.cs"), `${stage}\\winvm-ui.cs`],
   ] as const) {
     await qgaWriteFile(p.qga, to, new Uint8Array(readFileSync(from)))
   }
@@ -303,9 +310,9 @@ export async function install(name: string, o: InstallOptions = {}): Promise<Age
       "-ExecutionPolicy",
       "Bypass",
       "-File",
-      `${STAGE_DIR}\\agent-install.ps1`,
+      `${stage}\\agent-install.ps1`,
       "-Source",
-      STAGE_DIR,
+      stage,
       "-Port",
       String(GUEST_PORT),
       ...extra,
