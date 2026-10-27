@@ -1,6 +1,5 @@
 import { spawn, spawnSync } from "node:child_process"
-import { randomBytes } from "node:crypto"
-import { appendFileSync, chmodSync, closeSync, existsSync, openSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs"
+import { appendFileSync, chmodSync, closeSync, linkSync, openSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs"
 import { basename, resolve } from "node:path"
 
 import { QgaChannel, QmpChannel } from "./broker"
@@ -9,8 +8,6 @@ import * as qga from "./qga"
 
 export interface ServiceInfo {
   readonly pid: number
-  readonly port: number
-  readonly token: string
   readonly cli: string
   readonly version: string
   readonly startedAt: string
@@ -91,11 +88,34 @@ function keptWithin(p: Paths, ms: number): boolean {
   }
 }
 
-function writeAtomic(path: string, text: string): void {
-  const tmp = `${path}.${String(process.pid)}.tmp`
-  writeFileSync(tmp, text, { mode: 0o600 })
+function claim(p: Paths, name: string, info: ServiceInfo): void {
+  const tmp = `${p.service}.${String(process.pid)}.tmp`
+  writeFileSync(tmp, `${JSON.stringify(info, null, 2)}\n`, { mode: 0o600 })
   chmodSync(tmp, 0o600)
-  renameSync(tmp, path)
+  try {
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        linkSync(tmp, p.service)
+        return
+      } catch (e) {
+        if ((e as NodeJS.ErrnoException).code !== "EEXIST") throw e
+      }
+      const holder = readService(p)
+      if (holder !== null) throw new Error(`another winvm service (pid ${String(holder.pid)}) holds instance "${name}"`)
+      rmSync(p.service, { force: true })
+    }
+    throw new Error(`could not claim instance "${name}": ${p.service} keeps reappearing`)
+  } finally {
+    rmSync(tmp, { force: true })
+  }
+}
+
+async function answers(control: string): Promise<boolean> {
+  try {
+    return (await fetch("http://localhost/status", { unix: control, signal: AbortSignal.timeout(1000) })).ok
+  } catch {
+    return false
+  }
 }
 
 export function stopService(p: Paths): void {
@@ -127,20 +147,15 @@ export async function ensureService(name: string, p: Paths): Promise<ServiceInfo
     return running
   }
   if (running !== null) stopService(p)
-  rmSync(p.service, { force: true })
   keepService(p)
   const log = openSync(resolve(p.dir, "service.log"), "a")
-  const child = spawn(process.execPath, [cli, "serve", "-i", name], {
-    detached: true,
-    stdio: ["ignore", log, log],
-    env: { ...process.env, WINVM_SERVICE_TOKEN: randomBytes(24).toString("base64url") },
-  })
+  const child = spawn(process.execPath, [cli, "serve", "-i", name], { detached: true, stdio: ["ignore", log, log] })
   closeSync(log)
   child.unref()
   const deadline = Date.now() + 10_000
   while (Date.now() < deadline) {
     const info = readService(p)
-    if (info !== null && info.cli === cli && existsSync(p.qmp) && existsSync(p.qga)) return info
+    if (info !== null && info.cli === cli && (await answers(p.control))) return info
     await new Promise((r) => setTimeout(r, 50))
   }
   throw new Error(`the control service for "${name}" did not start; see ${resolve(p.dir, "service.log")}`)
@@ -162,7 +177,12 @@ export function stateEvent(e: Record<string, unknown>): Record<string, unknown> 
 
 export async function runService(name: string, o: ServiceOptions = {}): Promise<ServiceHandle> {
   const p = pathsFor(name)
-  const token = process.env["WINVM_SERVICE_TOKEN"] ?? randomBytes(24).toString("base64url")
+  claim(p, name, {
+    pid: process.pid,
+    cli: process.env["WINVM_CLI"] ?? "",
+    version: coreVersion(),
+    startedAt: new Date().toISOString(),
+  })
   const exitAfterMs = o.exitAfterMs ?? 10_000
   const checkMs = o.checkMs ?? 1000
   const enc = new TextEncoder()
@@ -222,54 +242,54 @@ export async function runService(name: string, o: ServiceOptions = {}): Promise<
       portOpen = null
     },
   })
-  await qmpChannel.start()
-  await qgaChannel.start()
-
-  const server = Bun.serve({
-    hostname: "127.0.0.1",
-    port: 0,
-    idleTimeout: 0,
-    fetch(req) {
-      const url = new URL(req.url)
-      if (url.searchParams.get("key") !== token && req.headers.get("x-winvm-token") !== token) {
-        return new Response("unauthorized", { status: 401 })
-      }
-      if (url.pathname === "/events") {
-        let controller: ReadableStreamDefaultController<Uint8Array> | undefined
-        const stream = new ReadableStream<Uint8Array>({
-          start(c) {
-            controller = c
-            subs.add(c)
-            send(c, ": connected\n\n")
-          },
-          cancel() {
-            if (controller !== undefined) subs.delete(controller)
-          },
-        })
-        req.signal.addEventListener("abort", () => {
+  const handle = (req: Request): Response => {
+    const url = new URL(req.url)
+    if (url.pathname === "/events") {
+      let controller: ReadableStreamDefaultController<Uint8Array> | undefined
+      const stream = new ReadableStream<Uint8Array>({
+        start(c) {
+          controller = c
+          subs.add(c)
+          send(c, ": connected\n\n")
+        },
+        cancel() {
           if (controller !== undefined) subs.delete(controller)
-        })
-        return new Response(stream, { headers: { "content-type": "text/event-stream", "cache-control": "no-store" } })
-      }
-      if (url.pathname === "/status") {
-        return Response.json({ state, qemuPid: livePidIn(p.pid), connected: qmpChannel.connected })
-      }
-      return new Response("not found", { status: 404 })
-    },
-  })
+        },
+      })
+      req.signal.addEventListener("abort", () => {
+        if (controller !== undefined) subs.delete(controller)
+      })
+      return new Response(stream, { headers: { "content-type": "text/event-stream", "cache-control": "no-store" } })
+    }
+    if (url.pathname === "/status") {
+      return Response.json({ state, qemuPid: livePidIn(p.pid), connected: qmpChannel.connected })
+    }
+    return new Response("not found", { status: 404 })
+  }
+
+  const owned = (): boolean => recordedPid(p) === process.pid
+  const release = (): void => {
+    if (!owned()) return
+    rmSync(p.control, { force: true })
+    rmSync(p.service, { force: true })
+  }
+  let server: ReturnType<typeof Bun.serve>
+  try {
+    await qmpChannel.start()
+    await qgaChannel.start()
+    rmSync(p.control, { force: true })
+    server = Bun.serve({ unix: p.control, fetch: handle, idleTimeout: 0 } as unknown as Parameters<typeof Bun.serve>[0])
+    chmodSync(p.control, 0o600)
+  } catch (e) {
+    await qmpChannel.stop()
+    await qgaChannel.stop()
+    release()
+    throw e
+  }
   const heartbeat = setInterval(() => {
     for (const c of subs) send(c, ": heartbeat\n\n")
   }, o.heartbeatMs ?? 15_000)
 
-  const info: ServiceInfo = {
-    pid: process.pid,
-    port: server.port ?? 0,
-    token,
-    cli: process.env["WINVM_CLI"] ?? "",
-    version: coreVersion(),
-    startedAt: new Date().toISOString(),
-  }
-  writeAtomic(p.service, `${JSON.stringify(info, null, 2)}\n`)
   record("service", { what: "started" })
 
   let finish: () => void = () => undefined
@@ -280,7 +300,7 @@ export async function runService(name: string, o: ServiceOptions = {}): Promise<
   let goneMs = 0
   const lock = resolve(home(), "saves", name, ".lock")
   const check = setInterval(() => {
-    if (recordedPid(p) !== process.pid) {
+    if (!owned()) {
       void stop()
       return
     }
@@ -308,7 +328,7 @@ export async function runService(name: string, o: ServiceOptions = {}): Promise<
     void server.stop(true)
     await qmpChannel.stop()
     await qgaChannel.stop()
-    if (recordedPid(p) === process.pid) rmSync(p.service, { force: true })
+    release()
     record("service", { what: "stopped" })
     finish()
   }

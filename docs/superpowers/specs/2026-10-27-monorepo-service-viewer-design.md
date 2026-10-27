@@ -140,7 +140,10 @@ revisit with reason):
 
 - **A control service per running instance** (the user left how it works to
   this design) that alone holds the instance's QMP and qemu-ga connections and
-  offers a local HTTP API with a token (actions, status, event stream).
+  offers an HTTP API (actions, status, event stream) on a Unix socket,
+  `control.sock` in the instance directory (mode 0600). File permissions are
+  its access control, as in bladerunner's `internal/control`, so it has no
+  port and no token.
   `winvm start` launches it detached beside QEMU, and it stops when QEMU
   does. The idle watcher (`watch.ts`) becomes part of it, so there is still
   one helper process per instance. Commands keep their logic in core and pass
@@ -244,7 +247,7 @@ pnpm viewer:build       # once, to build the native app (needs Rust; mise pins i
 
 Several instances run at once, as they do today (`winvm test --pool N` runs
 jobs side by side): each instance has its own QEMU, sockets, TPM state, VNC
-display and, with this design, its own service on its own port. The viewer is
+display and, with this design, its own service on its own socket. The viewer is
 one app (single-instance) with a window per instance. Instances in other homes
 (the cage check's) work the same way, and VNC displays no longer clash across
 homes (winvm#2). Several CLI processes may act on one instance at once; its
@@ -291,9 +294,11 @@ what that changes here (sources are maximal paths or commits):
   loads from `http://127.0.0.1:port` count as remote, so IPC and window
   dragging need a remote capability naming the URL
   (`shell/src-tauri/capabilities/loopback.json`, 5868794b), and per-instance
-  ports make that awkward. So `apps/viewer` bundles `viewer-ui` and talks to
-  services over HTTP (CORS allowing the app's origin); the service serves the
-  same bundle only to browsers. `viewer-ui` never touches `window.__TAURI__`
+  ports make that awkward. So `apps/viewer` bundles `viewer-ui`. A webview
+  cannot open a Unix socket, so the viewer reaches each instance's
+  `control.sock` through its sidecar, the one loopback HTTP server (CORS
+  allowing the app's origin). For browsers, `winvm web` serves the same bundle
+  and forwards to the control sockets the same way. `viewer-ui` never touches `window.__TAURI__`
   (maximal ADR-0018); window chrome is the shell's job.
 - **Bun's `node:http` on 1.3.x does not notice a client dropping a streaming
   response** (no `close`, no write error; seen on 1.3.14), so long-lived
@@ -319,8 +324,10 @@ what that changes here (sources are maximal paths or commits):
   `WINVM_HOME`); `import.meta.dir`-relative reads must go. Core builds and
   tests with `viewer-ui` unbuilt (maximal's self-healing empty embed stub,
   baff99e2).
-- **Tokens and requests:** the token is generated from the OS random source
-  and passed in the environment, never argv or disk (`lib.rs:546-575`);
+- **Tokens and requests** (the sidecar and `winvm web`, the only loopback
+  servers; instance services have none): the token is generated from the OS
+  random source and passed in the environment, never argv or disk
+  (`lib.rs:546-575`);
   EventSource and WebSocket carry it as `?key=` on those paths only (maximal
   ADR-0019); mutating routes check an Origin allowlist (a missing Origin, as
   from the CLI, passes) because loopback alone does not stop a malicious page
@@ -453,7 +460,7 @@ of hosted CI.
   involved. Only `apps/viewer` is excluded from CI.
 - **The screen stays interactive** (noVNC, as today). While `cua` or a job is
   driving the guest, the toolbar says so; input is not blocked. For a remote
-  browser the service proxies the VNC websocket, so the tunnel needs one
+  browser `winvm web` proxies the VNC websocket, so the tunnel needs one
   port. An open viewer still counts as activity for the idle watcher, as a
   connected VNC client does today.
 - **One window per instance**, through `winvm open` (see *Getting started*).
@@ -469,9 +476,9 @@ of hosted CI.
 
 ## Left to the builder
 
-- Service transport details (SSE vs streamed JSON lines), its port and token
-  handling (winvm's existing token and port-forward conventions are the
-  starting point), and how the CLI finds a running service.
+- Service transport details (SSE vs streamed JSON lines). Settled in plan 2a:
+  HTTP on `control.sock` with no token, and the CLI finds a running service
+  through `service.json`, which the service creates exclusively.
 - How boot phases are detected (serial log, QMP state, qemu-ga, agent).
 - How `winvm run` jobs and `cua` publish steps and actions to the stream.
 - Folder structure inside each package, following conventions for React,
