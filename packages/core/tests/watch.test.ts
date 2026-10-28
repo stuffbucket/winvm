@@ -29,6 +29,8 @@ class Harness {
   readonly machine = new IdleMachine(this.now, TIMING)
   activityAt: number | null = null
   vnc = 0
+  /** The guest is paused or asleep. */
+  frozen = false
   readonly log: { readonly at: number; readonly d: Decision }[] = []
 
   private readonly settings: Settings
@@ -39,7 +41,7 @@ class Harness {
 
   tick(cpu: number | null, advanceMs = TIMING.tickMs): Decision[] {
     this.now += advanceMs
-    const s: Sample = { wallMs: this.now, cpu, activityAtMs: this.activityAt, vncClients: this.vnc }
+    const s: Sample = { wallMs: this.now, cpu, activityAtMs: this.activityAt, vncClients: this.vnc, frozen: this.frozen }
     const ds = this.machine.tick(s, this.settings)
     for (const d of ds) {
       this.log.push({ at: this.now, d })
@@ -200,6 +202,48 @@ describe("idle state machine", () => {
     const h = new Harness({ ...SETTINGS, autosave: { enabled: false, idleMinutes: 10 }, stow: { enabled: false, idleMinutes: 60 } })
     h.run(95, IDLE)
     expect(h.kinds("checkDrift")).toHaveLength(3)
+  })
+
+  it("never autosaves or stows a paused guest, however long it is paused", () => {
+    // A paused guest's CPU reads as idle (0.1% measured on pause-test).
+    const h = new Harness()
+    h.frozen = true
+    h.run(6 * 60, 0.001)
+    expect(h.kinds("autosave")).toHaveLength(0)
+    expect(h.kinds("stow")).toHaveLength(0)
+    expect(h.kinds("checkDrift")).toHaveLength(0)
+    expect(h.machine.lastVerdict.reasons).toEqual(["paused"])
+  })
+
+  it("does not count time paused as idle: the idle clock starts again on resume", () => {
+    const h = new Harness()
+    h.run(8, IDLE)
+    h.frozen = true
+    h.run(120, 0.001)
+    h.frozen = false
+    // Resumed after two hours: not stowed, not autosaved, on the spot.
+    h.tick(IDLE)
+    expect(h.kinds("stow")).toHaveLength(0)
+    expect(h.kinds("autosave")).toHaveLength(0)
+    expect(h.machine.idleMs(h.now)).toBeLessThanOrEqual(TIMING.tickMs)
+    // Left idle after resuming, it is treated like any idle guest.
+    h.run(10.25, IDLE)
+    expect(h.kinds("autosave")).toHaveLength(1)
+    h.run(50, IDLE)
+    expect(h.kinds("stow")).toHaveLength(1)
+  })
+
+  it("an autosave due as the guest is paused is held until it runs and idles again", () => {
+    const h = new Harness()
+    h.run(9.75, IDLE)
+    h.frozen = true
+    h.run(30, 0.001)
+    expect(h.kinds("autosave")).toHaveLength(0)
+    h.frozen = false
+    h.run(9.5, IDLE)
+    expect(h.kinds("autosave")).toHaveLength(0)
+    h.run(1, IDLE)
+    expect(h.kinds("autosave")).toHaveLength(1)
   })
 
   it("treats the wall clock going backwards as a jump to resync", () => {

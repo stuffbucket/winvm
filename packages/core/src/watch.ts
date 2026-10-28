@@ -23,6 +23,16 @@
  *
  * It follows QEMU being replaced (a `load` restarts it) rather than exiting,
  * and exits once QEMU is gone with no save/load holding the instance.
+ *
+ * ## A paused or asleep guest is left alone
+ *
+ * Its CPU reads as idle, but it is not idle: the user stopped it and only the
+ * user resumes it. So while the vCPUs are stopped the watcher neither
+ * autosaves nor stows it (a stow would quit QEMU under a paused guest, and
+ * the next `start` would bring it back running), skips the clock (it cannot
+ * answer), and does not count the time as idle: the idle clock starts over
+ * when it is resumed, so a guest paused for hours is not stowed the moment it
+ * runs again.
  */
 import { spawn, spawnSync } from "node:child_process"
 import { closeSync, existsSync, openSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs"
@@ -34,6 +44,7 @@ import type { InstanceConfig } from "./config"
 import { effectiveConfig } from "./config"
 import type { Decision, SaveInfo, Settings, Timing } from "./idle"
 import { DEFAULT_TIMING, DRIFT_TOLERANCE_MS, IdleMachine, autosaveName, savesToRotate } from "./idle"
+import { isFrozenRunState } from "./frozen"
 import type { Paths } from "./paths"
 import { cliArgv, instanceDir, pathsFor } from "./paths"
 import * as qemu from "./qemu"
@@ -283,6 +294,16 @@ export function vcpusOf(pid: number): number {
   const r = spawnSync("ps", ["-o", "command=", "-p", String(pid)], { encoding: "utf8" })
   const m = /-smp\s+(?:cpus=)?(\d+)/.exec(r.stdout)
   return m?.[1] === undefined ? 4 : Number(m[1])
+}
+
+/** Whether the vCPUs are stopped (paused or asleep); false when the monitor does not answer. */
+async function isFrozen(p: Paths): Promise<boolean> {
+  try {
+    const r = (await qmp.execute(p.qmp, "query-status", undefined, 5000)) as { status?: unknown } | undefined
+    return isFrozenRunState(typeof r?.status === "string" ? r.status : null)
+  } catch {
+    return false
+  }
 }
 
 async function vncClients(p: Paths): Promise<number | null> {
@@ -662,7 +683,7 @@ export async function watch(name: string, o: WatchOptions = {}): Promise<number>
 
     const settings = settingsOf(cfg)
     const decisions = machine.tick(
-      { wallMs: now, cpu, activityAtMs: activityAt(w.activity), vncClients: await vncClients(p) },
+      { wallMs: now, cpu, activityAtMs: activityAt(w.activity), vncClients: await vncClients(p), frozen: await isFrozen(p) },
       ephemeral
         ? { ...settings, autosave: { ...settings.autosave, enabled: false }, stow: { ...settings.stow, enabled: false } }
         : settings,

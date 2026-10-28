@@ -60,7 +60,7 @@ body {
   letter-spacing: 0.04em;
 }
 .badge[data-state="running"] { color: var(--ok); }
-.badge[data-state="paused"], .badge[data-state="stowed"] { color: var(--warn); }
+.badge[data-state="paused"], .badge[data-state="asleep"], .badge[data-state="stowed"] { color: var(--warn); }
 .badge[data-state="stopped"], .badge[data-state="missing"], .badge[data-state="unknown"] { color: var(--muted); }
 
 .layout {

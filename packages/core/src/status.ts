@@ -21,6 +21,7 @@ import { resolve } from "node:path"
 
 import { effectiveConfig } from "./config"
 import { describeDisplay, readDisplay } from "./display"
+import { frozenFrom, markedAsleep } from "./frozen"
 import { qmpCommand } from "./monitor"
 import { home, instanceDir, listInstances, pathsFor, readImageMeta, readMeta } from "./paths"
 import type { Paths } from "./paths"
@@ -32,7 +33,7 @@ import { vncPort, websocketPort } from "./vnc"
 // ---------------------------------------------------------------------------
 // The report
 
-export type State = "running" | "paused" | "stopped" | "stowed" | "missing"
+export type State = "running" | "paused" | "asleep" | "stopped" | "stowed" | "missing"
 
 export interface SaveInfo {
   readonly name: string
@@ -331,8 +332,11 @@ async function queryStatus(p: Paths): Promise<string | null> {
   }
 }
 
-export function deriveState(running: boolean, vmStatus: string | null, saves: readonly SaveInfo[]): State {
-  if (running) return vmStatus === "paused" || vmStatus === "suspended" ? "paused" : "running"
+export function deriveState(running: boolean, vmStatus: string | null, saves: readonly SaveInfo[], asleep = false): State {
+  // PAUSED or ASLEEP while the vCPUs are stopped (frozen.ts), including the
+  // "postmigrate" a save of a paused guest leaves behind. A monitor that did
+  // not answer (null) is a save or load at work: running, as before.
+  if (running) return frozenFrom(vmStatus, asleep) ?? "running"
   // STOWED: stopped with its running state put away. `winvm stow` writes a save
   // of kind "stow" and the next `winvm start` recalls and consumes it, so while
   // one exists the instance is stowed rather than merely stopped.
@@ -381,12 +385,12 @@ export async function gather(name: string, deep = true): Promise<InstanceStatus>
 
   const pid = qemu.pidOf(p)
   const running = pid !== null
-  const [vmStatus, guest] = await Promise.all([
-    running ? queryStatus(p) : Promise.resolve(null),
-    running && deep ? probeGuest(p.qga) : Promise.resolve(null),
-  ])
+  const vmStatus = running ? await queryStatus(p) : null
+  const state = deriveState(running, vmStatus, saves, markedAsleep(p, pid))
+  // A paused or asleep guest cannot answer its agent: asking only waits out
+  // the probe's timeout (~4 s), and leaves calls queued for when it resumes.
+  const guest = running && deep && state === "running" ? await probeGuest(p.qga) : null
   if (running && vmStatus === null) notes.push("QEMU's monitor did not answer (busy with a save or load?)")
-  const state = deriveState(running, vmStatus, saves)
   if (guest?.agent === "silent" && state === "running") notes.push("the guest agent did not answer — still booting, or busy")
 
   return {
@@ -490,6 +494,7 @@ export function formatWatcher(w: WatchInfo | null, now: number): string {
 const STATE_WORDS: Record<State, string> = {
   running: "running",
   paused: "paused",
+  asleep: "asleep (Windows locked, then paused; `winvm wake` wakes it)",
   stopped: "stopped",
   stowed: "stowed (stopped; `winvm start` picks up where it left off)",
   missing: "does not exist",
@@ -506,7 +511,7 @@ export function statusReport(s: InstanceStatus, timeMachine: string, now: number
   const rows: [string, string][] = []
   const flag = s.name === "default" ? "" : ` -i ${s.name}`
   if (s.state === "missing") return { title: `instance "${s.name}" ${STATE_WORDS.missing}`, rows: [], notes: s.notes }
-  const live = s.state === "running" || s.state === "paused"
+  const live = s.state === "running" || s.state === "paused" || s.state === "asleep"
   if (live) {
     rows.push(["uptime", `${s.uptimeSeconds === null ? "?" : formatDuration(s.uptimeSeconds)} (qemu pid ${String(s.pid)})`])
     const g = s.guest

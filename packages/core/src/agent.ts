@@ -34,6 +34,7 @@ import type {
   Proc,
   PwshResponse,
 } from "./guestagent"
+import { refuseFrozen } from "./frozen"
 import { AGENT_VERSION, GUEST_PORT, WINDOWS_DIR } from "./guestagent"
 import { bunZip } from "./media"
 import { PACKAGE_DIR, pathsFor } from "./paths"
@@ -289,8 +290,9 @@ export async function connect(name: string, o: { readonly timeoutMs?: number } =
   }
 }
 
-/** Like `connect`, but throws with a hint when there is no agent. */
+/** Like `connect`, but throws with a hint when there is no agent (or GuestFrozen when the guest is paused or asleep). */
 export async function requireAgent(name: string, timeoutMs = 2000): Promise<AgentClient> {
+  await refuseFrozen(name)
   const c = await connect(name, { timeoutMs })
   if (c === null) throw new Error(`instance "${name}" has no agent answering — \`winvm agent install -i ${name}\``)
   return c
@@ -442,6 +444,10 @@ export async function install(name: string, o: InstallOptions = {}): Promise<Age
  *   3. otherwise a full install                         ~7 s
  */
 export async function ensure(name: string, o: InstallOptions & { readonly waitMs?: number } = {}): Promise<AgentClient> {
+  // NEVER ON A PAUSED OR ASLEEP GUEST. It cannot answer, so every step below
+  // would wait out its timeout and fall through to a reinstall — whose qemu-ga
+  // calls then sit queued and run the moment the user resumes.
+  await refuseFrozen(name)
   // An instance that has had an agent most likely still has one that is just
   // starting: right after `start` returns the Run key has fired but the agent
   // takes a few seconds to listen. Waiting is far cheaper than reinstalling.
