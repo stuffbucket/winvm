@@ -52,7 +52,7 @@ const baseName = (path: string): string => path.split("/").filter((x) => x !== "
 
 export function App(): JSX.Element {
   const w = useWinvm()
-  const [fit, setFit] = useState(false)
+  const [actualSize, setActualSize] = useState(false)
   const [detailsOpen, setDetailsOpen] = useState(false)
   const [confirm, setConfirm] = useState<Confirm | null>(null)
   const [startedFrom, setStartedFrom] = useState<Phase | null>(null)
@@ -183,7 +183,7 @@ export function App(): JSX.Element {
         guestReady={guestReady}
         canSaves={phase !== null && phase !== "missing"}
         sharing={share !== null}
-        fit={fit}
+        actualSize={actualSize}
         open={open?.id ?? null}
         detailsOpen={detailsOpen}
         onSelect={w.select}
@@ -193,7 +193,7 @@ export function App(): JSX.Element {
         onPause={() => run("pause")}
         onResume={() => run("resume")}
         onOpen={togglePanel}
-        onFit={() => setFit((f) => !f)}
+        onActualSize={() => setActualSize((a) => !a)}
         onScreenSharing={() => void w.openScreenSharing()}
         onDetails={() => setDetailsOpen((o) => !o)}
       />
@@ -260,7 +260,7 @@ export function App(): JSX.Element {
           )}
 
           <div className="display-fit">
-            <div className={cx("display", fit && "display--fill", showScreen && "display--on", dropping && "display--drop")} style={frame}>
+            <div className={cx("display", actualSize && "display--actual", showScreen && "display--on", dropping && "display--drop")} style={frame}>
               {showScreen && w.connection !== null ? (
                 <Screen connection={w.connection} />
               ) : (

@@ -28,7 +28,7 @@
   "action.files": "Copy files",
   "action.saves": "Saves",
   "action.share": "Share with an agent",
-  "action.fit": "Fit to window",
+  "action.actualSize": "Actual size",
   "action.screenSharing": "Open in Screen Sharing",
   "action.details": "Details",
   "action.instance": "Instance",

@@ -14,7 +14,7 @@ interface ToolbarProps {
   readonly guestReady: boolean
   readonly canSaves: boolean
   readonly sharing: boolean
-  readonly fit: boolean
+  readonly actualSize: boolean
   readonly open: PanelId | null
   readonly detailsOpen: boolean
   onSelect(name: string): void
@@ -24,7 +24,7 @@ interface ToolbarProps {
   onPause(): void
   onResume(): void
   onOpen(id: PanelId, button: HTMLElement): void
-  onFit(): void
+  onActualSize(): void
   onScreenSharing(): void
   onDetails(): void
 }
@@ -107,7 +107,7 @@ export function Toolbar(p: ToolbarProps): JSX.Element {
       <span className="toolbar__divider" aria-hidden="true" />
 
       <div className="toolbar__group">
-        <ToolButton icon="fit" label={t("action.fit")} enabled={c.screen} pressed={p.fit} onClick={p.onFit} />
+        <ToolButton icon="fit" label={t("action.actualSize")} enabled={c.screen} pressed={p.actualSize} onClick={p.onActualSize} />
         <ToolButton icon="screenSharing" label={t("action.screenSharing")} enabled={c.screen} onClick={p.onScreenSharing} />
         <ToolButton icon="panel" label={t("action.details")} enabled pressed={p.detailsOpen} onClick={p.onDetails} />
       </div>
