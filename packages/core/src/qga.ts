@@ -234,8 +234,10 @@ export interface ReadyOptions {
   readonly log?: (line: string) => void
   /** Injectable for tests. */
   readonly waitFor?: (sockPath: string, timeoutMs: number) => Promise<boolean>
-  /** The logged-on user ("" for none), or null when the guest could not be asked. */
-  readonly loggedOnUser?: (sockPath: string) => Promise<string | null>
+  /** The logged-on user ("" for none), or null when the guest could not be asked within timeoutMs. */
+  readonly loggedOnUser?: (sockPath: string, timeoutMs: number) => Promise<string | null>
+  /** The longest one "who is logged on" probe may take before it is asked again. */
+  readonly probeMs?: number
   /** Repair a broken audit-mode logon if that is what this is; true when it did (and restarted). */
   readonly repairAudit?: (sockPath: string) => Promise<boolean>
   readonly pollMs?: number
@@ -244,6 +246,14 @@ export interface ReadyOptions {
 
 /** How long a reachable guest may sit with no one logged on before the audit repair is tried. */
 export const REPAIR_AFTER_MS = 45_000
+
+/**
+ * The longest one "who is logged on" probe may take. guest-get-users answers
+ * in milliseconds and the PowerShell fallback in a few seconds; a probe still
+ * running after this is stuck, and is asked again rather than allowed to use
+ * up the caller's wait (#10).
+ */
+export const PROBE_MS = 15_000
 const MAX_REPAIRS = 2
 
 /** waitReady, saying why it stopped: and repairing a broken audit-mode logon on the way. */
@@ -256,8 +266,15 @@ export async function untilReady(sockPath: string, timeoutMs: number, o: ReadyOp
   let emptySince: number | null = null
   let checked = false
   let repairs = 0
+  let slowNoted = false
   while (Date.now() < deadline) {
-    const u = await user(sockPath)
+    const probe = Math.max(1, Math.min(o.probeMs ?? PROBE_MS, deadline - Date.now()))
+    const asked = Date.now()
+    const u = await user(sockPath, probe)
+    if (u === null && Date.now() - asked >= probe && !slowNoted) {
+      slowNoted = true
+      o.log?.(`the guest did not say who is logged on within ${String(Math.round(probe / 1000))} s; asking again`)
+    }
     // Matched by SHAPE, not by name: this file knows nothing about which
     // account a caller's answer file creates, only that OOBE's own temporary
     // one is `defaultuser<n>`.
@@ -283,15 +300,43 @@ export async function untilReady(sockPath: string, timeoutMs: number, o: ReadyOp
   return "timeout"
 }
 
-/** Win32_ComputerSystem.UserName ("" for no one), or null when qemu-ga could not be asked. */
-async function loggedOnUser(sockPath: string): Promise<string | null> {
+/**
+ * Who is logged on, as DOMAIN\user ("" for no one), or null when the guest
+ * could not be asked within timeoutMs.
+ *
+ * Asks qemu-ga itself (guest-get-users), which starts nothing in the guest.
+ * Only an agent without that command gets a PowerShell query of
+ * Win32_ComputerSystem.UserName, bounded the same way: a PowerShell that never
+ * exits once used up a whole reboot's wait (#10).
+ */
+export async function loggedOnUser(sockPath: string, timeoutMs = PROBE_MS): Promise<string | null> {
   try {
-    const r = await exec(sockPath, POWERSHELL, ["-NoProfile", "-Command", "(Get-CimInstance Win32_ComputerSystem).UserName"])
-    return r.stdout.trim()
+    const r = await call(sockPath, { execute: "guest-get-users" }, timeoutMs)
+    if (Array.isArray(r["return"])) return pickUser(r["return"] as readonly GuestUser[])
+    if ((r["error"] as { class?: string } | undefined)?.class !== "CommandNotFound") return null
   } catch {
     // The agent drops in and out across OOBE's reboots; keep asking.
     return null
   }
+  try {
+    const r = await exec(sockPath, POWERSHELL, ["-NoProfile", "-Command", "(Get-CimInstance Win32_ComputerSystem).UserName"], timeoutMs)
+    return r.stdout.trim()
+  } catch {
+    return null
+  }
+}
+
+interface GuestUser {
+  readonly user?: string
+  readonly domain?: string
+}
+
+/** The account that counts as logged on: any but OOBE's own defaultuser<n> if there is one. */
+function pickUser(users: readonly GuestUser[]): string {
+  const names = users
+    .filter((u) => typeof u.user === "string" && u.user !== "")
+    .map((u) => (u.domain === undefined || u.domain === "" ? (u.user ?? "") : `${u.domain}\\${u.user ?? ""}`))
+  return names.find((n) => !/\\defaultuser\d+$/i.test(n)) ?? names[0] ?? ""
 }
 
 /**
