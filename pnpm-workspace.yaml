@@ -8,3 +8,4 @@ pnpmfile: .pnpmfile.cjs
 packages:
   - "packages/*"
   - "apps/*"
+  - "site"

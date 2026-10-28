@@ -1,0 +1,23 @@
+{
+  "name": "@winvm/site",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "winvm documentation site (Astro + Starlight), generated from README.md and docs/",
+  "license": "MIT",
+  "scripts": {
+    "generate": "node scripts/generate.mjs",
+    "dev": "node scripts/generate.mjs && astro dev",
+    "build": "node scripts/generate.mjs && astro build",
+    "preview": "astro preview",
+    "test:site": "node --test scripts/*.test.mjs"
+  },
+  "dependencies": {
+    "@astrojs/starlight": "0.42.6",
+    "astro": "7.3.8",
+    "github-slugger": "2.0.0"
+  },
+  "engines": {
+    "node": ">=24"
+  }
+}
