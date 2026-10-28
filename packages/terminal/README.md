@@ -45,6 +45,10 @@ copy is vendored by the same owner and published under winvm's MIT license.
   catalog supplies the words.
 - The xterm adapter applies `TerminalTypography`'s family, point size, weight
   and leading. In monimal only the Ghostty adapter did.
+- The xterm adapter's `fit` keeps the grid when its host is hidden
+  (`display: none` measures as NaN), so a background tab can be hidden.
+- `setAppearance` repaints the host's own foreground and background as well
+  as xterm's, so a light/dark switch leaves no old-colour margin.
 
 To take a newer monimal, diff its `src/renderer` against these files and
-carry the two changes above across.
+carry the changes above across.
