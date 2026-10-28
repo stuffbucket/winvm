@@ -548,6 +548,9 @@ app asks for its window's size in device pixels, at DPR×100% scale.
 | width a multiple of 16 | QEMU's VNC server pads other widths in ServerInit (1500 shows as 1504). |
 
 The host clamps every request. The guest helper refuses over 30 MiB as well.
+The app draws a clamped guest scaled up to fill its window, up to 5120x2880
+device pixels (`drawSize` in `displayfit.ts`); below the limits it draws one
+guest pixel per device pixel.
 A Windows that saved a too-big mode falls back to a fixed mode at the next
 boot (seen: 3456x2234).
 
