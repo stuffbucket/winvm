@@ -196,6 +196,15 @@ html[data-os="macos"] .toolbar {
   background: var(--surface-base);
 }
 
+/* A resizable (virtio-gpu) guest: its screen is the window's size, so the
+   frame fills the area edge to edge and there is no shape to keep. */
+.display--live {
+  width: 100cqw;
+  height: 100cqh;
+  aspect-ratio: auto;
+  box-shadow: none;
+}
+
 .display--drop {
   outline: var(--border-width-thick) dashed var(--accent);
   outline-offset: calc(-1 * var(--space-2));
@@ -225,6 +234,18 @@ html[data-os="macos"] .toolbar {
 .screen__canvas {
   position: absolute;
   inset: 0;
+}
+
+/* One guest pixel per device pixel: Screen.tsx sizes this box to the
+   framebuffer in CSS pixels, from the top-left corner so it starts on a whole
+   device pixel, and noVNC's scale comes out at exactly 1/devicePixelRatio.
+   Nearest-neighbour guards against any rounding left over. */
+.screen__canvas--exact {
+  inset: 0 auto auto 0;
+}
+
+.screen__canvas--exact canvas {
+  image-rendering: pixelated;
 }
 
 .screen__message {
