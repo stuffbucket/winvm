@@ -2,8 +2,10 @@
  * The one place the UI reaches the app: Tauri commands that run winvm's own
  * CLI (the bundled sidecar) and return what it printed, plus the few things
  * only the app can do (menus, file picking and dropping, a long-running
- * `cua serve`).
+ * `cua serve`, the Terminal window).
  */
+import type { MenuNode, OpenRequest } from "./features/terminal/shells"
+
 export interface Output {
   readonly code: number
   readonly stdout: string
@@ -16,9 +18,14 @@ interface DragDrop {
   readonly payload: { readonly type: "enter" | "over" | "drop" | "leave"; readonly paths?: readonly string[] }
 }
 
+interface NativeMenu {
+  popup(): Promise<void>
+}
+
 interface TauriGlobal {
   readonly core: { invoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T> }
-  readonly window: { getCurrentWindow(): { show(): Promise<void> } }
+  readonly window: { getCurrentWindow(): { show(): Promise<void>; setTitle(title: string): Promise<void>; close(): Promise<void> } }
+  readonly menu: { readonly Menu: { "new"(options: { items: unknown[] }): Promise<NativeMenu> } }
   readonly event: { listen<T>(name: string, cb: (e: { payload: T }) => void): Promise<Unlisten> }
   readonly webview: { getCurrentWebview(): { onDragDropEvent(cb: (e: DragDrop) => void): Promise<Unlisten> } }
 }
@@ -47,13 +54,12 @@ export async function pickFiles(title: string): Promise<string[]> {
   return Array.isArray(got) ? got : [got]
 }
 
-/** App menu items the window acts on: "install-cli" and "reference". */
-export function onMenu(cb: (id: string) => void): Unlisten {
+function listen<T>(name: string, cb: (payload: T) => void): Unlisten {
   let unlisten: Unlisten | null = null
   let gone = false
   try {
     void tauri()
-      .event.listen<string>("menu", (e) => cb(e.payload))
+      .event.listen<T>(name, (e) => cb(e.payload))
       .then((u) => {
         if (gone) u()
         else unlisten = u
@@ -64,6 +70,51 @@ export function onMenu(cb: (id: string) => void): Unlisten {
   return () => {
     gone = true
     unlisten?.()
+  }
+}
+
+/** App menu items the main window acts on: "install-cli", "reference" and "new-terminal". */
+export const onMenu = (cb: (id: string) => void): Unlisten => listen<string>("menu", cb)
+
+/** Opens a tab in the Terminal window, opening the window first or bringing it forward. */
+export const openTerminal = (request: OpenRequest): Promise<void> => tauri().core.invoke<void>("terminal_open", { request })
+
+/** The tabs asked for since the Terminal window last looked. */
+export const takeTerminalRequests = (): Promise<OpenRequest[]> => tauri().core.invoke<OpenRequest[]>("terminal_take")
+
+/** Rung when tabs have been asked for. */
+export const onTerminalOpen = (cb: () => void): Unlisten => listen<unknown>("terminal-open", () => cb())
+
+/** File menu items the Terminal window acts on: "new-tab" and "close-tab". */
+export const onTerminalMenu = (cb: (id: "new-tab" | "close-tab") => void): Unlisten => listen<"new-tab" | "close-tab">("terminal-menu", cb)
+
+const menuItems = (nodes: readonly MenuNode[], pick: (node: Extract<MenuNode, { kind: "item" }>) => void): unknown[] =>
+  nodes.map((n) => {
+    if (n.kind === "separator") return { item: "Separator" }
+    if (n.kind === "submenu") return { text: n.label, items: menuItems(n.items, pick) }
+    return { text: n.label, action: () => pick(n) }
+  })
+
+/** Shows a native menu at the pointer; `pick` gets the item chosen, if any. */
+export async function popupMenu(nodes: readonly MenuNode[], pick: (node: Extract<MenuNode, { kind: "item" }>) => void): Promise<void> {
+  const menu = await tauri().menu.Menu.new({ items: menuItems(nodes, pick) })
+  await menu.popup()
+}
+
+export function setWindowTitle(title: string): void {
+  try {
+    void tauri().window.getCurrentWindow().setTitle(title)
+  } catch {
+    // not in the app
+  }
+  document.title = title
+}
+
+export function closeWindow(): void {
+  try {
+    void tauri().window.getCurrentWindow().close()
+  } catch {
+    // not in the app
   }
 }
 

@@ -9,7 +9,7 @@
 import { readFileSync } from "node:fs"
 import { resolve } from "node:path"
 
-const FILES = ["ui/src/styles/styles.css"]
+const FILES = ["ui/src/styles/styles.css", "ui/src/styles/terminal.css"]
 const ROOT = resolve(import.meta.dir, "..")
 
 interface Violation {
@@ -39,5 +39,5 @@ if (import.meta.main) {
   const all = FILES.flatMap((f) => violations(f, readFileSync(resolve(ROOT, f), "utf8")))
   for (const v of all) console.error(`${v.file}:${String(v.line)}  ${v.what}`)
   if (all.length > 0) process.exit(1)
-  console.log(`design tokens: clean (${String(FILES.length)} file)`)
+  console.log(`design tokens: clean (${String(FILES.length)} files)`)
 }

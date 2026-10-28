@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "The main window may run winvm's own commands, pick files to copy into Windows, move itself and show itself once drawn.",
+  "description": "The main window may run winvm's own commands, pick files to copy into Windows, open the Terminal window and show its shell menu, move itself and show itself once drawn.",
   "windows": [
     "main"
   ],

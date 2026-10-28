@@ -1,7 +1,7 @@
 import type { CSSProperties } from "react"
 import { useCallback, useEffect, useState } from "react"
 
-import { onFileDrop, onMenu, outputText, shareStart, shareStop, showWindow, winvm } from "./backend"
+import { onFileDrop, onMenu, openTerminal, outputText, popupMenu, shareStart, shareStop, showWindow, winvm } from "./backend"
 import { Button } from "./components/Button"
 import { Callout } from "./components/Callout"
 import { ConfirmDialog } from "./components/ConfirmDialog"
@@ -9,8 +9,7 @@ import { Popover } from "./components/Popover"
 import { cx } from "./components/cx"
 import { t } from "./i18n"
 import type { Phase, Share } from "./model"
-import { controls, displaySize, parseShare, startSteps } from "./model"
-import { CommandPanel } from "./features/actions/CommandPanel"
+import { controls, displaySize, parseShare, startSteps, terminalBlocked } from "./model"
 import { FilesPanel } from "./features/actions/FilesPanel"
 import { SavesPanel } from "./features/actions/SavesPanel"
 import { SharePanel } from "./features/actions/SharePanel"
@@ -18,6 +17,7 @@ import { Overview } from "./features/overview/Overview"
 import { Panel } from "./features/panel/Panel"
 import { ReferenceDialog } from "./features/reference/ReferenceDialog"
 import { Screen } from "./features/screen/Screen"
+import { DEFAULT_SHELL, type Launch, shellMenu } from "./features/terminal/shells"
 import { type PanelId, Toolbar } from "./features/toolbar/Toolbar"
 import type { Verb } from "./features/winvm/useWinvm"
 import { useWinvm } from "./features/winvm/useWinvm"
@@ -38,7 +38,6 @@ const CONFIRM_ACTION: Record<Confirm["kind"], string> = {
 }
 
 const PANEL_LABEL: Record<PanelId, string> = {
-  command: "action.command",
   files: "action.files",
   saves: "action.saves",
   share: "action.share",
@@ -71,6 +70,7 @@ export function App(): JSX.Element {
   const guestReady = phase === "running" && w.busy === null
   const hostReady = w.checks === null || w.checks.ready
   const c = controls(phase ?? "missing", w.busy !== null || phase === null || !hostReady)
+  const blocked = terminalBlocked(phase ?? "missing", w.busy !== null || phase === null || !hostReady)
   const missing = w.checks?.checks.filter((x) => !x.ok) ?? []
   const runtimeMissing = missing.some((x) => x.hint === "winvm setup")
   const display = displaySize(w.status?.screen ?? null)
@@ -113,10 +113,23 @@ export function App(): JSX.Element {
     [guestReady, copyIn],
   )
 
+  const terminal = useCallback(
+    (launch: Launch): void => {
+      if (w.name === null || !c.terminal) return
+      openTerminal({ instance: w.name, ...launch }).catch((e: unknown) => setNotice({ tone: "error", title: t("terminal.failed"), detail: String(e) }))
+    },
+    [w.name, c.terminal],
+  )
+
+  const terminalMenu = (): void => {
+    popupMenu(shellMenu(t), (item) => terminal(item.launch)).catch((e: unknown) => setNotice({ tone: "error", title: t("terminal.failed"), detail: String(e) }))
+  }
+
   const install = w.installCommand
   useEffect(
     () =>
       onMenu((id) => {
+        if (id === "new-terminal") terminal({ shell: DEFAULT_SHELL, cwd: null })
         if (id === "install-cli") void install()
         if (id === "reference") {
           setReference({ text: null })
@@ -125,7 +138,7 @@ export function App(): JSX.Element {
             .catch((e: unknown) => setReference({ text: String(e) }))
         }
       }),
-    [install],
+    [install, terminal],
   )
 
   useEffect(() => {
@@ -181,6 +194,7 @@ export function App(): JSX.Element {
         activity={activity}
         controls={c}
         guestReady={guestReady}
+        terminalBlocked={blocked}
         canSaves={phase !== null && phase !== "missing"}
         sharing={share !== null}
         fit={fit}
@@ -193,6 +207,8 @@ export function App(): JSX.Element {
         onPause={() => run("pause")}
         onResume={() => run("resume")}
         onOpen={togglePanel}
+        onTerminal={() => terminal({ shell: DEFAULT_SHELL, cwd: null })}
+        onTerminalMenu={terminalMenu}
         onFit={() => setFit((f) => !f)}
         onScreenSharing={() => void w.openScreenSharing()}
         onDetails={() => setDetailsOpen((o) => !o)}
@@ -289,7 +305,6 @@ export function App(): JSX.Element {
 
       {open !== null && w.name !== null && (
         <Popover anchor={open.anchor} label={t(PANEL_LABEL[open.id])} onClose={closePanel}>
-          {open.id === "command" && <CommandPanel instance={w.name} />}
           {open.id === "files" && <FilesPanel instance={w.name} onCopyIn={(paths) => void copyIn(paths)} />}
           {open.id === "saves" && (
             <SavesPanel
