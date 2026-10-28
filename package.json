@@ -1,6 +1,6 @@
 {
   "name": "winvm-workspace",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "private": true,
   "description": "A scriptable Windows 11 ARM64 guest on plain QEMU + Hypervisor.framework (macOS, Apple Silicon)",
   "license": "MIT",
