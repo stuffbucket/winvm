@@ -171,7 +171,10 @@ switch (sub) {
 
   case "ls":
   case "list":
-    process.exit(commands.ls())
+    process.exit(commands.ls(args.flags.has("json")))
+  // eslint-disable-next-line no-fallthrough
+  case "create":
+    process.exit(commands.create(args))
   // eslint-disable-next-line no-fallthrough
   case "adopt":
     process.exit(commands.adopt(args))

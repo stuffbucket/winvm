@@ -6,7 +6,7 @@ import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } 
 import { resolve } from "node:path"
 
 import type { Args } from "./args"
-import { imageName, instanceName, isValidImageName } from "./args"
+import { imageName, instanceName, isValidImageName, isValidInstanceName } from "./args"
 import { PWSH_SHA256, PWSH_URL, TOOLS_SHA256, TOOLS_URL, checksReport, download, du, hostChecks, printChecks, requireHost, run, sha256Of } from "./host"
 import { diagnose, formatFindings } from "./diagnose"
 import { ensureInstance, makeVars, resetInstance, sealBase } from "./instance"
@@ -63,7 +63,19 @@ export function doctor(json = false): number {
   return missing === 0 ? 0 : 1
 }
 
-export function ls(): number {
+/** `ls --json`: the images an instance can be made from, and the instances, without sizes (du is slow). */
+export function lsJson(): { images: { name: string; snapshots: boolean }[]; instances: { name: string; image: string | null; running: boolean }[] } {
+  return {
+    images: listImages().map((name) => ({ name, snapshots: readImageMeta(name)?.virtioBoot === true })),
+    instances: listInstances().map((name) => ({ name, image: readMeta(name)?.image ?? null, running: qemu.isRunning(pathsFor(name)) })),
+  }
+}
+
+export function ls(json = false): number {
+  if (json) {
+    console.log(JSON.stringify(lsJson()))
+    return 0
+  }
   console.log(`state: ${home()}\n`)
   const images = listImages()
   console.log(images.length === 0 ? "images: (none — run `winvm build`)" : "images:")
@@ -526,6 +538,29 @@ export async function build(args: Args): Promise<number> {
 /** How long `start` lets an answering guest sit with no one logged on before giving up. */
 const NO_LOGON_MS = 120_000
 
+/**
+ * `winvm create [-i name] [--image NAME]`: a new instance from an image,
+ * not started (`start` creates one too, and boots it). Refuses a name that
+ * is taken or not a plain name (isValidInstanceName).
+ */
+export function create(args: Args): number {
+  requireHost()
+  const name = instanceName(args)
+  if (!isValidInstanceName(name)) {
+    console.error(`::error::"${name}" is not a name winvm takes: letters, digits, ".", "-" and "_", starting with a letter or digit, up to 64`)
+    return 1
+  }
+  if (readMeta(name) !== null) {
+    console.error(`::error::instance "${name}" already exists`)
+    return 1
+  }
+  const image = imageName(args)
+  ensureInstance(name, image)
+  savecmds.markPristine(name)
+  console.log(`\`winvm start -i ${name}\` boots it`)
+  return 0
+}
+
 export async function start(args: Args): Promise<number> {
   requireHost()
   const name = instanceName(args)
@@ -541,6 +576,10 @@ export async function start(args: Args): Promise<number> {
   if (recalled === 0) watcher.startWatcherFor(name, args)
   if (recalled !== null) return recalled
   const isNew = readMeta(name) === null
+  if (isNew && !isValidInstanceName(name)) {
+    console.error(`::error::"${name}" is not a name winvm takes: letters, digits, ".", "-" and "_", starting with a letter or digit, up to 64`)
+    return 1
+  }
   ensureInstance(name, imageName(args))
   if (isNew) savecmds.markPristine(name)
   const meta = readMeta(name)
@@ -1054,7 +1093,8 @@ export const USAGE =
   "  build --iso <win11.iso>       build a base image (once, ~20 min)\n" +
   "        [--payload <dir>] [--bun <version>] [--image <name>]\n" +
   "  adopt <disk.qcow2>            adopt an installed disk as a base image\n" +
-  "  ls                            images and instances, with disk usage\n" +
+  "  ls                            images and instances, with disk usage (--json: names only)\n" +
+  "  create  [-i name] [--image NAME]   a new instance from an image, not started\n" +
   "  start   [-i name] [--ephemeral] [--no-autosave] [--boot] [--no-watch]\n" +
   "                                recalls a stow save if present (--boot: discard it, boot cold)\n" +
   "                                --no-autosave: no baseline save on the first boot (idle\n" +
