@@ -23,6 +23,7 @@ import {
   type Size,
 } from "../src/displayfit"
 import { deviceFromCommandLine } from "../src/guestdisplay"
+import { type DisplayOutcome, LockedDisplay, lockScreenUp } from "../src/guestagent"
 import { displayArgv } from "../src/guestagent"
 import type { Paths } from "../src/paths"
 import { compatHash, hardwareArgs } from "../src/saves"
@@ -309,5 +310,69 @@ describe("drawSize", () => {
     // A 6K display's full-screen window at 2x is 3008x1692 points.
     const view = { width: 3008, height: 1692 }
     expect(drawSize(guestSizeFor(view, 2), view, 2)).toEqual({ width: 2560, height: 1440 })
+  })
+})
+
+describe("a size Windows refuses at its lock screen (LockedDisplay)", () => {
+  const make = (answers: { locked: boolean[]; set: DisplayOutcome[] }): { d: LockedDisplay; sets: string[] } => {
+    const sets: string[] = []
+    const d = new LockedDisplay({
+      locked: async () => answers.locked.shift() ?? false,
+      set: async (args) => {
+        sets.push(args.join(" "))
+        return answers.set.shift() ?? "ok"
+      },
+      everyMs: 60_000,
+    })
+    return { d, sets }
+  }
+
+  it("waits while the lock screen is up, then sets the latest size once, and stops", async () => {
+    const { d, sets } = make({ locked: [true, true, false], set: ["ok"] })
+    d.later(["set", "1360", "800", "2000", "100"])
+    d.later(["set", "1440", "900", "2000", "100"])
+    await d.tick()
+    await d.tick()
+    expect(sets).toEqual([])
+    await d.tick()
+    expect(sets).toEqual(["set 1440 900 2000 100"])
+    expect(d.waiting).toBeNull()
+    await d.tick()
+    expect(sets).toHaveLength(1)
+  })
+
+  it("a size set meanwhile cancels the one waiting", async () => {
+    const { d, sets } = make({ locked: [false], set: [] })
+    d.later(["set", "1360", "800", "2000", "0"])
+    d.cancel()
+    await d.tick()
+    expect(sets).toEqual([])
+  })
+
+  it("tries again while Windows still refuses just after the lock screen goes, then gives up", async () => {
+    const { d, sets } = make({ locked: [], set: Array<DisplayOutcome>(20).fill("fail") })
+    d.later(["set", "1360", "800", "2000", "0"])
+    for (let i = 0; i < 12; i++) await d.tick()
+    expect(sets).toHaveLength(10)
+    expect(d.waiting).toBeNull()
+  })
+
+  it("gives up at once on any other error", async () => {
+    const { d, sets } = make({ locked: [false], set: ["error"] })
+    d.later(["set", "1360", "800", "2000", "0"])
+    await d.tick()
+    expect(sets).toHaveLength(1)
+    expect(d.waiting).toBeNull()
+  })
+
+  it("sees the lock screen by LogonUI.exe in the agent's own session", () => {
+    const procs = [
+      { pid: 4, name: "System", session: 0 },
+      { pid: 900, name: "LogonUI.exe", session: 1 },
+    ]
+    expect(lockScreenUp(procs, 1)).toBe(true)
+    expect(lockScreenUp(procs, 2)).toBe(false)
+    expect(lockScreenUp(procs, null)).toBe(true)
+    expect(lockScreenUp(procs.slice(0, 1), 1)).toBe(false)
   })
 })

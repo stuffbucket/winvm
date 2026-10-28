@@ -38,7 +38,8 @@
  *   POST /kill    {pid,tree?}
  *   POST /ui      {op,...}             UI Automation via winvm-ui.exe (assets/winvm-ui.cs, docs/gui.md)
  *   GET  /term?shell=&cwd=&cols=&rows=  a terminal, as a WebSocket (conpty.exe, assets/conpty.cs)
- *   POST /display {op,...}             screen size and scaling via winvm-display.exe (assets/winvm-display.cs)
+ *   POST /display {op,...}             screen size and scaling via winvm-display.exe (assets/winvm-display.cs);
+ *                                     a size Windows refuses at its lock screen -> 202 {deferred}, set at sign-in
  *   GET  /stats                       memory in use and the system drive's space -> GuestStats
  *   POST /smb/setup {user,password}   share C:\ and the profile with the Mac (finder.ts) -> {code,output,ms,timedOut}
  *   POST /exit                        stop the agent (reinstall)
@@ -852,6 +853,75 @@ export function displayArgv(r: DisplayRequest): string[] | null {
   }
 }
 
+/** What set() did: the size is set, Windows refused it (`fail`: ChangeDisplaySettingsEx), or anything else. */
+export type DisplayOutcome = "ok" | "fail" | "error"
+
+/**
+ * A screen size Windows refused because its lock screen was up, set once it is
+ * gone. ChangeDisplaySettingsEx fails (-1) from the user's session while the
+ * lock screen has the input desktop, and sleep leaves Windows locked: the size
+ * the app kept while the machine slept arrives at the lock screen, and would
+ * otherwise be lost until the window was resized again. So the agent keeps the
+ * latest such size and sets it as soon as someone signs in. A size set since
+ * (or a newer one kept) replaces it.
+ */
+export class LockedDisplay {
+  private pending: readonly string[] | null = null
+  private timer: ReturnType<typeof setInterval> | null = null
+  private busy = false
+  private failuresUnlocked = 0
+  private readonly locked: () => Promise<boolean>
+  private readonly set: (args: readonly string[]) => Promise<DisplayOutcome>
+  private readonly everyMs: number
+
+  constructor(o: { locked(): Promise<boolean>; set(args: readonly string[]): Promise<DisplayOutcome>; everyMs?: number }) {
+    this.locked = o.locked
+    this.set = o.set
+    this.everyMs = o.everyMs ?? 1000
+  }
+
+  /** The `set` arguments waiting for the lock screen to go; null when none are. */
+  get waiting(): readonly string[] | null {
+    return this.pending
+  }
+
+  /** Keeps `args` (winvm-display.exe's `set ...`) to set once Windows is unlocked. */
+  later(args: readonly string[]): void {
+    this.pending = args
+    this.failuresUnlocked = 0
+    this.timer ??= setInterval(() => void this.tick(), this.everyMs)
+  }
+
+  /** A size was set meanwhile: nothing is waiting any more. */
+  cancel(): void {
+    this.pending = null
+    if (this.timer !== null) clearInterval(this.timer)
+    this.timer = null
+  }
+
+  /** One look: still locked, wait; unlocked, set it. Windows can still refuse just as the lock screen goes: a few tries. */
+  async tick(): Promise<void> {
+    const args = this.pending
+    if (this.busy || args === null) return
+    this.busy = true
+    try {
+      if (await this.locked()) return
+      const r = await this.set(args)
+      if (this.pending !== args) return
+      if (r === "fail" && ++this.failuresUnlocked < 10) return
+      this.cancel()
+    } catch {
+      // the spawner is busy or restarting: the next tick tries again
+    } finally {
+      this.busy = false
+    }
+  }
+}
+
+/** Whether the lock screen (LogonUI.exe) is up in `session` (or in any session, when it is unknown). */
+export const lockScreenUp = (procs: readonly Proc[], session: number | null): boolean =>
+  procs.some((p) => p.name.toLowerCase() === "logonui.exe" && (session === null || p.session === session))
+
 /**
  * What the meters show: Windows' memory (total and available, as Task Manager
  * counts "in use" = total - available) and the system drive's space. Cheap:
@@ -1616,6 +1686,28 @@ export function startAgent(o: AgentOptions, onFatal: () => void = () => {}): Run
 
   const terms = new Terminals(spawner, o.termHelper, log)
 
+  const displayLine = async (args: readonly string[], timeoutMs: number): Promise<Record<string, unknown> | null> => {
+    const { line } = await spawner.call<{ line: string }>({ op: "display", args, timeoutMs })
+    try {
+      return JSON.parse(line) as Record<string, unknown>
+    } catch {
+      return null
+    }
+  }
+  const sessionLocked = async (): Promise<boolean> => {
+    session ??= ownSession().catch(() => null)
+    return lockScreenUp(await spawner.call<Proc[]>({ op: "procs" }), await session)
+  }
+  const lockedDisplay = new LockedDisplay({
+    locked: sessionLocked,
+    set: async (args) => {
+      const body = await displayLine(args, 17_000)
+      const outcome: DisplayOutcome = body !== null && body["error"] === undefined ? "ok" : body?.["code"] === "fail" ? "fail" : "error"
+      log(`display ${args.join(" ")} after the lock screen: ${outcome}`)
+      return outcome
+    },
+  })
+
   let server: Server<TermSession>
   try {
     server = Bun.serve<TermSession>({
@@ -1750,14 +1842,17 @@ export function startAgent(o: AgentOptions, onFatal: () => void = () => {}): Run
               const exe = displayExe()
               if (!existsSync(exe)) return fail(501, `${exe} is missing: reinstall the agent (winvm agent install)`)
               const timeoutMs = (r.waitMs ?? 2000) + 15_000
-              const { line } = await spawner.call<{ line: string }>({ op: "display", args, timeoutMs })
-              let body: Record<string, unknown>
-              try {
-                body = JSON.parse(line) as Record<string, unknown>
-              } catch {
-                return fail(500, `winvm-display.exe said: ${line}`)
+              const body = await displayLine(args, timeoutMs)
+              if (body === null) return fail(500, "winvm-display.exe said something that is not JSON")
+              if (body["error"] === undefined) {
+                if (r.op === "set") lockedDisplay.cancel()
+                return json(body)
               }
-              if (body["error"] === undefined) return json(body)
+              // Refused while the lock screen is up: set once someone signs in (LockedDisplay).
+              if (r.op === "set" && body["code"] === "fail" && (await sessionLocked().catch(() => false))) {
+                lockedDisplay.later(args)
+                return json({ deferred: true, reason: "locked", width: r.width, height: r.height }, 202)
+              }
               const status = { bad: 400, badmode: 409, toobig: 413, timeout: 408 }[String(body["code"])] ?? 500
               return json(body, status)
             }
@@ -1789,6 +1884,7 @@ export function startAgent(o: AgentOptions, onFatal: () => void = () => {}): Run
     })
   } catch (error) {
     stopping = true
+    lockedDisplay.cancel()
     spawner.stop()
     terms.stop()
     throw error
@@ -1798,6 +1894,7 @@ export function startAgent(o: AgentOptions, onFatal: () => void = () => {}): Run
     port: server.port ?? o.port,
     stop: () => {
       stopping = true
+      lockedDisplay.cancel()
       terms.stop()
       spawner.stop()
       void server.stop(true)
