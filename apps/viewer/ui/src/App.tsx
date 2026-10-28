@@ -8,15 +8,16 @@ import {
   agentFetch,
   announceTitle,
   GUEST_FOLDERS_IN_FINDER,
+  type GuestShare,
   installedShells,
   onFileDrop,
   onMenu,
   openFiles,
+  openShareInFinder,
   openTerminal,
   outputText,
   popupActions,
   popupMenu,
-  revealGuestPath,
   revealInFinder,
   setWindowTitle,
   shareStart,
@@ -82,6 +83,8 @@ export function App(): JSX.Element {
   const [share, setShare] = useState<Share | null>(null)
   const [sharing, setSharing] = useState<{ starting: boolean; error: string | null }>({ starting: false, error: null })
   const [notice, setNotice] = useState<Notice | null>(null)
+  /** The share being opened in Finder (its menu label), while `winvm files open` runs. */
+  const [finding, setFinding] = useState<string | null>(null)
   const [reference, setReference] = useState<{ text: string | null } | null>(null)
   const [dropping, setDropping] = useState(false)
 
@@ -332,24 +335,27 @@ export function App(): JSX.Element {
     if (w.name !== null) openFiles(w.name, titles[w.name] ?? null).catch((e: unknown) => setNotice({ tone: "error", title: t("files.openFailed"), detail: String(e) }))
   }
 
-  // Showing a guest folder in Finder waits on the guest's drives being mounted on the Mac; until
-  // then the menu says it is coming.
+  // The guest's home folder and C:\ in Finder (`winvm files open`). The first
+  // time sets Windows up to share, so it says what it is doing meanwhile.
   const filesMenu = (): void => {
     const instance = w.name
     if (instance === null) return
-    const finder = (label: string, path: string): Action => ({
+    const finder = (label: string, place: string, share: GuestShare): Action => ({
       kind: "action",
       label: GUEST_FOLDERS_IN_FINDER ? label : t("files.finder.soon", { label }),
-      enabled: GUEST_FOLDERS_IN_FINDER,
+      enabled: GUEST_FOLDERS_IN_FINDER && finding === null,
       run: () => {
-        revealGuestPath(instance, path).catch((e: unknown) => setNotice({ tone: "error", title: t("files.finder.failed"), detail: String(e) }))
+        setFinding(place)
+        openShareInFinder(instance, share)
+          .catch((e: unknown) => setNotice({ tone: "error", title: t("files.finder.failed"), detail: e instanceof Error ? e.message : String(e) }))
+          .finally(() => setFinding(null))
       },
     })
     popupActions([
       { kind: "action", label: t("files.menu.window"), run: filesWindow },
       { kind: "separator" },
-      finder(t("files.finder.home"), "C:\\Users\\Administrator"),
-      finder(t("files.finder.drive", { drive: "C:\\" }), "C:\\"),
+      finder(t("files.finder.home"), t("files.finder.homePlace"), "home"),
+      finder(t("files.finder.drive", { drive: "C:\\" }), "C:\\", "c"),
     ]).catch((e: unknown) => setNotice({ tone: "error", title: t("files.openFailed"), detail: String(e) }))
   }
 
@@ -426,6 +432,11 @@ export function App(): JSX.Element {
                   }
                 >
                   <pre className="output">{w.failure.output}</pre>
+                </Callout>
+              )}
+              {finding !== null && (
+                <Callout tone="notice" title={t("files.finder.opening", { place: finding })}>
+                  <p>{t("files.finder.firstTime")}</p>
                 </Callout>
               )}
               {notice !== null && (

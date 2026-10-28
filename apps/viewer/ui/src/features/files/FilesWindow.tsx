@@ -17,12 +17,15 @@ import { type KeyboardEvent, type MouseEvent, type PointerEvent, useCallback, us
 import {
   copyText,
   dragOut,
+  GUEST_FOLDERS_IN_FINDER,
+  inFinderReach,
   installedShells,
   onHostDrag,
   onInstanceTitle,
   openTerminal,
   pickFiles,
   popupActions,
+  revealGuestPath,
   revealInFinder,
   setWindowTitle,
   showWindow,
@@ -405,6 +408,16 @@ export function FilesWindow({ instance, initialTitle }: { readonly instance: str
       .catch((e: unknown) => copies.report({ ok: false, title: t("terminal.failed"), detail: String(e) }))
   }
 
+  /** The folder in Finder, through the guest's C:\ or home folder mounted on the Mac (`winvm files open --path`). */
+  const finderAt = (folder: string): void => {
+    copies.report({ ok: true, title: t("files.finder.opening", { place: leafName(folder) || folder }) })
+    revealGuestPath(instance, folder)
+      .then(() => copies.dismiss())
+      .catch((e: unknown) => copies.report({ ok: false, title: t("files.finder.failed"), detail: e instanceof Error ? e.message : String(e) }))
+  }
+  const finderItem = (folder: string): Action[] =>
+    GUEST_FOLDERS_IN_FINDER && inFinderReach(folder) ? [{ kind: "action", label: t("files.finder.here"), run: () => finderAt(folder) }] : []
+
   const copyOut = (): void => {
     const l = live.current.listing
     if (l !== null && live.current.chosen.length > 0) copies.copyOut(l.path, live.current.chosen)
@@ -436,6 +449,7 @@ export function FilesWindow({ instance, initialTitle }: { readonly instance: str
       { kind: "separator" },
       { kind: "action", label: t("files.menu.copyPath", { count: names.length }), accelerator: "CmdOrCtrl+Alt+C", run: () => copyPaths(names) },
       { kind: "action", label: t("files.menu.terminal"), run: () => terminalIn(one?.dir === true ? childPath(folder, one.name) : folder) },
+      ...finderItem(one?.dir === true ? childPath(folder, one.name) : folder),
       { kind: "separator" },
       { kind: "action", label: t("files.menu.newFolder"), accelerator: "CmdOrCtrl+Shift+N", run: newFolder },
     ]
@@ -448,6 +462,7 @@ export function FilesWindow({ instance, initialTitle }: { readonly instance: str
       { kind: "action", label: t("files.copyIn"), run: () => copyIn() },
       { kind: "separator" },
       { kind: "action", label: t("files.menu.terminalHere"), run: () => terminalIn(folder) },
+      ...finderItem(folder),
       { kind: "action", label: t("files.menu.copyPath", { count: 1 }), run: () => copyPaths([]) },
       { kind: "separator" },
       { kind: "action", label: t("files.refresh.menu"), accelerator: "CmdOrCtrl+R", run: refresh },
