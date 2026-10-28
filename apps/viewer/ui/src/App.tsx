@@ -1,7 +1,7 @@
 import type { CSSProperties } from "react"
 import { useCallback, useEffect, useState } from "react"
 
-import { onFileDrop, onMenu, outputText, shareStart, shareStop, showWindow, winvm } from "./backend"
+import { onFileDrop, onMenu, outputText, revealInFinder, shareStart, shareStop, showWindow, winvm } from "./backend"
 import { Button } from "./components/Button"
 import { Callout } from "./components/Callout"
 import { ConfirmDialog } from "./components/ConfirmDialog"
@@ -11,9 +11,10 @@ import { t } from "./i18n"
 import type { Phase, Share } from "./model"
 import { controls, displaySize, parseShare, startSteps } from "./model"
 import { CommandPanel } from "./features/actions/CommandPanel"
-import { FilesPanel } from "./features/actions/FilesPanel"
 import { SavesPanel } from "./features/actions/SavesPanel"
 import { SharePanel } from "./features/actions/SharePanel"
+import { FilesDialog } from "./features/files/FilesDialog"
+import { useCopies } from "./features/files/useCopies"
 import { Overview } from "./features/overview/Overview"
 import { Panel } from "./features/panel/Panel"
 import { ReferenceDialog } from "./features/reference/ReferenceDialog"
@@ -44,11 +45,13 @@ const PANEL_LABEL: Record<PanelId, string> = {
   share: "action.share",
 }
 
-/** Where copied-in files land: the desktop every Windows user sees. */
-const GUEST_DROP_DIR = "C:\\Users\\Public\\Desktop"
+/** The Files sheet's folder: where copies in land, the Desktop until the sheet goes elsewhere. */
+interface Folder {
+  readonly path: string
+  readonly name: string
+}
 
 const isLive = (p: Phase | null): boolean => p === "running" || p === "starting" || p === "paused"
-const baseName = (path: string): string => path.split("/").filter((x) => x !== "").pop() ?? path
 
 export function App(): JSX.Element {
   const w = useWinvm()
@@ -83,34 +86,27 @@ export function App(): JSX.Element {
     void w.act(verb, arg)
   }
 
-  const copyIn = useCallback(
-    async (paths: readonly string[]): Promise<void> => {
-      if (w.name === null || paths.length === 0) return
-      const failed: string[] = []
-      setNotice({ tone: "notice", title: t("files.copyingIn", { count: paths.length }) })
-      for (const path of paths) {
-        const out = await winvm("put", "-i", w.name, path, `${GUEST_DROP_DIR}\\${baseName(path)}`)
-        if (out.code !== 0) failed.push(`${baseName(path)}: ${outputText(out)}`)
-      }
-      setNotice(
-        failed.length === 0
-          ? { tone: "notice", title: t("files.copiedIn", { count: paths.length }) }
-          : { tone: "error", title: t("files.copyInFailed", { count: failed.length }), detail: failed.join("\n") },
-      )
-    },
-    [w.name],
-  )
+  const copies = useCopies(w.name)
+  const [filesOpen, setFilesOpen] = useState(false)
+  const [folder, setFolder] = useState<Folder | null>(null)
+  const copyIn = copies.copyIn
+  const onFolder = useCallback((path: string, name: string) => setFolder({ path, name }), [])
+  /** A copy's progress and result go above the display while the Files sheet isn't there to show them. */
+  const copyNotice = !filesOpen && (copies.job !== null || copies.result !== null)
+
+  // Another instance has other folders: back to its Desktop.
+  useEffect(() => setFolder(null), [w.name])
 
   useEffect(
     () =>
       onFileDrop(
         (paths) => {
-          if (guestReady) void copyIn(paths)
+          if (guestReady) copyIn(paths, folder?.path ?? null)
           else if (paths.length > 0) setNotice({ tone: "error", title: t("files.notRunning") })
         },
         (over) => setDropping(over && guestReady),
       ),
-    [guestReady, copyIn],
+    [guestReady, copyIn, folder],
   )
 
   const install = w.installCommand
@@ -163,7 +159,12 @@ export function App(): JSX.Element {
     setShare(null)
   }
 
-  const togglePanel = (id: PanelId, anchor: HTMLElement): void => setOpen((cur) => (cur?.id === id ? null : { id, anchor }))
+  const togglePanel = (id: PanelId, anchor: HTMLElement): void => {
+    if (id === "files") {
+      setOpen(null)
+      setFilesOpen(true)
+    } else setOpen((cur) => (cur?.id === id ? null : { id, anchor }))
+  }
   const closePanel = useCallback(() => setOpen(null), [])
 
   const frame = {
@@ -184,7 +185,7 @@ export function App(): JSX.Element {
         canSaves={phase !== null && phase !== "missing"}
         sharing={share !== null}
         fit={fit}
-        open={open?.id ?? null}
+        open={filesOpen ? "files" : (open?.id ?? null)}
         detailsOpen={detailsOpen}
         onSelect={w.select}
         onStart={() => run("start")}
@@ -200,7 +201,7 @@ export function App(): JSX.Element {
 
       <div className="stage">
         <div className="display-area">
-          {(w.failure !== null || notice !== null || (w.checks !== null && !w.checks.ready) || w.statusError !== null) && (
+          {(w.failure !== null || notice !== null || copyNotice || (w.checks !== null && !w.checks.ready) || w.statusError !== null) && (
             <div className="notices">
               {w.failure !== null && (
                 <Callout
@@ -226,6 +227,30 @@ export function App(): JSX.Element {
                   }
                 >
                   {notice.detail !== undefined && <pre className="output">{notice.detail}</pre>}
+                </Callout>
+              )}
+              {copyNotice && copies.job !== null && (
+                <Callout tone="notice" title={t("files.copying", { name: copies.job.name })}>
+                  {copies.job.total > 1 && <p>{t("files.ofTotal", { done: copies.job.done + 1, total: copies.job.total })}</p>}
+                </Callout>
+              )}
+              {copyNotice && copies.job === null && copies.result !== null && (
+                <Callout
+                  tone={copies.result.ok ? "notice" : "error"}
+                  title={copies.result.title}
+                  action={
+                    copies.result.reveal !== undefined ? (
+                      <Button size="sm" variant="ghost" onClick={() => void revealInFinder(copies.result?.reveal ?? "")}>
+                        {t("files.reveal")}
+                      </Button>
+                    ) : (
+                      <Button size="sm" variant="ghost" onClick={copies.dismiss}>
+                        {t("action.dismiss")}
+                      </Button>
+                    )
+                  }
+                >
+                  {copies.result.detail !== undefined && <pre className="output">{copies.result.detail}</pre>}
                 </Callout>
               )}
               {w.checks !== null && !w.checks.ready && (
@@ -268,7 +293,7 @@ export function App(): JSX.Element {
               )}
               {dropping && (
                 <div className="display__drop" aria-hidden="true">
-                  <p>{t("files.dropHere")}</p>
+                  <p>{t("files.dropOn", { folder: folder?.name ?? t("files.place.desktop") })}</p>
                 </div>
               )}
             </div>
@@ -290,7 +315,6 @@ export function App(): JSX.Element {
       {open !== null && w.name !== null && (
         <Popover anchor={open.anchor} label={t(PANEL_LABEL[open.id])} onClose={closePanel}>
           {open.id === "command" && <CommandPanel instance={w.name} />}
-          {open.id === "files" && <FilesPanel instance={w.name} onCopyIn={(paths) => void copyIn(paths)} />}
           {open.id === "saves" && (
             <SavesPanel
               instance={w.name}
@@ -307,6 +331,17 @@ export function App(): JSX.Element {
       )}
 
       {reference !== null && <ReferenceDialog text={reference.text} onClose={() => setReference(null)} />}
+
+      {filesOpen && live && w.name !== null && (
+        <FilesDialog
+          instance={w.name}
+          folder={folder?.path ?? null}
+          dropping={dropping}
+          copies={copies}
+          onFolder={onFolder}
+          onClose={() => setFilesOpen(false)}
+        />
+      )}
 
       <ConfirmDialog
         open={confirm !== null}

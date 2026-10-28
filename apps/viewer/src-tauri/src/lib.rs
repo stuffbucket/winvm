@@ -18,7 +18,7 @@ struct Output {
 
 const VERBS: &[&str] = &[
     "status", "doctor", "start", "stop", "reboot", "pause", "resume", "kill", "open", "setup", "exec", "put", "get",
-    "save", "load", "saves", "help",
+    "dir", "save", "load", "saves", "help",
 ];
 
 #[tauri::command]
@@ -106,6 +106,30 @@ fn share_stop(app: tauri::AppHandle) {
 fn downloads_dir() -> Result<String, String> {
     let home = std::env::var("HOME").map_err(|e| e.to_string())?;
     Ok(Path::new(&home).join("Downloads").display().to_string())
+}
+
+/// `dir/name`, or Finder's "name 2", "name 3"... when that is taken, so a copy never replaces a Mac file.
+#[tauri::command]
+fn unused_path(dir: String, name: String, folder: bool) -> String {
+    let dir = Path::new(&dir);
+    let (stem, ext) = match name.rfind('.') {
+        Some(i) if i > 0 && !folder => (&name[..i], &name[i..]),
+        _ => (name.as_str(), ""),
+    };
+    let mut path = dir.join(&name);
+    let mut n = 2;
+    while path.symlink_metadata().is_ok() {
+        path = dir.join(format!("{stem} {n}{ext}"));
+        n += 1;
+    }
+    path.display().to_string()
+}
+
+/// Shows a file or folder in Finder, selected.
+#[tauri::command]
+fn reveal(path: String) -> Result<(), String> {
+    std::process::Command::new("/usr/bin/open").arg("-R").arg(&path).status().map_err(|e| e.to_string())?;
+    Ok(())
 }
 
 #[tauri::command]
@@ -222,7 +246,7 @@ pub fn run() {
             }
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![winvm, install_cli, share_start, share_stop, downloads_dir])
+        .invoke_handler(tauri::generate_handler![winvm, install_cli, share_start, share_stop, downloads_dir, unused_path, reveal])
         .build(tauri::generate_context!())
         .expect("winvm could not start")
         .run(|app, event| {

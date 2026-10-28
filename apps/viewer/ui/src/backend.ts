@@ -47,6 +47,25 @@ export async function pickFiles(title: string): Promise<string[]> {
   return Array.isArray(got) ? got : [got]
 }
 
+/** A folder chosen in the open panel, or null. */
+export async function pickFolder(title: string, defaultPath?: string): Promise<string | null> {
+  const got = await tauri().core.invoke<string[] | string | null>("plugin:dialog|open", {
+    options: { multiple: false, directory: true, canCreateDirectories: true, title, ...(defaultPath === undefined ? {} : { defaultPath }) },
+  })
+  return Array.isArray(got) ? (got[0] ?? null) : got
+}
+
+/** Where to save one file, from the save panel (which asks before replacing), or null. */
+export const pickSavePath = (title: string, defaultPath: string): Promise<string | null> =>
+  tauri().core.invoke<string | null>("plugin:dialog|save", { options: { title, defaultPath, canCreateDirectories: true } })
+
+/** `dir/name` if free, else Finder's `name 2`, `name 3`…: a copy never replaces a Mac file. */
+export const unusedPath = (dir: string, name: string, folder: boolean): Promise<string> =>
+  tauri().core.invoke<string>("unused_path", { dir, name, folder })
+
+/** Shows a Mac file or folder in Finder, selected. */
+export const revealInFinder = (path: string): Promise<void> => tauri().core.invoke<void>("reveal", { path })
+
 /** App menu items the window acts on: "install-cli" and "reference". */
 export function onMenu(cb: (id: string) => void): Unlisten {
   let unlisten: Unlisten | null = null
