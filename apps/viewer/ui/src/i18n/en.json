@@ -70,8 +70,8 @@
   "terminal.tabs": "Terminals",
   "terminal.newTab": "New tab (⌘T)",
   "terminal.closeTab": "Close tab (⌘W)",
-  "terminal.admin": "Administrator",
-  "terminal.adminTip": "Every shell here runs as the built-in Administrator, elevated.",
+  "terminal.runsAsAdmin": "Runs as Administrator",
+  "terminal.windowTitle": "{title} — Administrator",
   "terminal.none": "No terminals open.",
   "terminal.exited": "Exited with code {code}.",
   "terminal.lost": "Lost the connection to Windows.",
@@ -83,6 +83,7 @@
   "shell.pwsh": "PowerShell 7",
   "shell.powershell": "Windows PowerShell",
   "shell.cmd": "Command Prompt",
+  "shell.notInstalled": "{shell} (not installed)",
 
   "place.desktop": "Desktop",
 

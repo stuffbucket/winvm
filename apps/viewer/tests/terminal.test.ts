@@ -3,7 +3,23 @@ import { afterAll, beforeAll, describe, expect, it } from "bun:test"
 import type { TerminalEvent } from "@winvm/terminal"
 
 import en from "../ui/src/i18n/en.json"
-import { connectArgs, failureText, parseEndpoint, shellMenu, shellTitle, START_IN } from "../ui/src/features/terminal/shells"
+import {
+  connectArgs,
+  defaultShell,
+  failureText,
+  fromList,
+  type Installed,
+  installedList,
+  type MenuNode,
+  parseEndpoint,
+  parseInstalled,
+  runnable,
+  shellCache,
+  shellMenu,
+  shellsArgs,
+  shellTitle,
+  START_IN,
+} from "../ui/src/features/terminal/shells"
 import { createSocketTransport, type SessionStatus, sizedUrl } from "../ui/src/features/terminal/socket"
 import { noTabs, type Tabs, tabsReducer } from "../ui/src/features/terminal/tabs"
 import { type FakeTermServer, startFakeTermServer } from "./fake-term-server"
@@ -149,10 +165,11 @@ describe("shells", () => {
     expect(shellTitle("  ")).toBeNull()
   })
 
+  const label = (key: string, values: Record<string, string> = {}): string =>
+    ((en as Record<string, string>)[key] ?? key).replace(/\{(\w+)\}/g, (_, k: string) => values[k] ?? "")
+
   it("offers each shell at home, then the same shells in each other place", () => {
-    const label = (key: string, values: Record<string, string> = {}): string =>
-      ((en as Record<string, string>)[key] ?? key).replace(/\{(\w+)\}/g, (_, k: string) => values[k] ?? "")
-    const menu = shellMenu(label)
+    const menu = shellMenu(label, null)
     expect(menu.map((n) => (n.kind === "separator" ? "---" : n.label))).toEqual([
       "PowerShell 7",
       "Windows PowerShell",
@@ -168,6 +185,56 @@ describe("shells", () => {
       { shell: "cmd", cwd: START_IN[1].cwd },
     ])
     expect(menu[0]?.kind === "item" ? menu[0].launch : null).toEqual({ shell: "pwsh", cwd: null })
+    expect(menu.every((n) => n.kind !== "item" || n.enabled)).toBe(true)
+  })
+
+  const noPwsh = { pwsh: false, powershell: true, cmd: true }
+
+  it("shows PowerShell 7 disabled where the guest lacks it, at home and in each place", () => {
+    const menu = shellMenu(label, noPwsh)
+    const items = (nodes: readonly MenuNode[]): { label: string; enabled: boolean }[] =>
+      nodes.flatMap((n) => (n.kind === "item" ? [{ label: n.label, enabled: n.enabled }] : n.kind === "submenu" ? items(n.items) : []))
+    const all = items(menu)
+    expect(all.filter((i) => !i.enabled).map((i) => i.label)).toEqual(Array(3).fill("PowerShell 7 (not installed)"))
+    expect(all.filter((i) => i.enabled)).toHaveLength(6)
+  })
+
+  it("opens PowerShell 7 by default only where the guest has it", () => {
+    expect(defaultShell(null)).toBe("pwsh")
+    expect(defaultShell({ ...noPwsh, pwsh: true })).toBe("pwsh")
+    expect(defaultShell(noPwsh)).toBe("powershell")
+    expect(runnable({ shell: "pwsh", cwd: "C:\\work" }, noPwsh)).toEqual({ shell: "powershell", cwd: "C:\\work" })
+    expect(runnable({ shell: "cmd", cwd: null }, noPwsh)).toEqual({ shell: "cmd", cwd: null })
+  })
+
+  it("asks which shells there are, and reads the answer", () => {
+    expect(shellsArgs("demo")).toEqual(["terminal", "-i", "demo", "--shells", "--json"])
+    expect(parseInstalled('{"pwsh":false,"powershell":true,"cmd":true}\n')).toEqual(noPwsh)
+    expect(parseInstalled("::error::no agent")).toBeNull()
+    expect(parseInstalled("")).toBeNull()
+    expect(fromList(installedList(noPwsh) ?? [])).toEqual(noPwsh)
+  })
+
+  it("asks once per instance until told to forget, and retries a failed ask", async () => {
+    const asked: string[] = []
+    let answer: Installed | null = null
+    const cache = shellCache(async (instance) => {
+      asked.push(instance)
+      return answer
+    })
+    expect(await cache.get("demo")).toBeNull()
+    answer = noPwsh
+    const [a, b] = await Promise.all([cache.get("demo"), cache.get("demo")])
+    expect(a).toEqual(noPwsh)
+    expect(b).toEqual(noPwsh)
+    expect(await cache.get("demo")).toEqual(noPwsh)
+    expect(asked).toEqual(["demo", "demo"])
+    cache.forget("demo")
+    await cache.get("demo")
+    expect(asked).toHaveLength(3)
+    cache.seed("ci", noPwsh)
+    expect(await cache.get("ci")).toEqual(noPwsh)
+    expect(asked).toHaveLength(3)
   })
 })
 

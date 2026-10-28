@@ -4,7 +4,7 @@
  * only the app can do (menus, file picking and dropping, a long-running
  * `cua serve`, the Terminal window).
  */
-import type { MenuNode, OpenRequest } from "./features/terminal/shells"
+import { type Installed, type MenuNode, type OpenRequest, parseInstalled, type Shell, shellsArgs } from "./features/terminal/shells"
 
 export interface Output {
   readonly code: number
@@ -95,11 +95,25 @@ function listen<T>(name: string, cb: (payload: T) => void): Unlisten {
 /** App menu items the main window acts on: "install-cli", "reference" and "new-terminal". */
 export const onMenu = (cb: (id: string) => void): Unlisten => listen<string>("menu", cb)
 
+/** Which shells an instance has (`winvm terminal --shells --json`), or null if that couldn't be told. */
+export async function installedShells(instance: string): Promise<Installed | null> {
+  const out = await winvm(...shellsArgs(instance))
+  return out.code === 0 ? parseInstalled(out.stdout) : null
+}
+
+/**
+ * One tab for the Terminal window, with the shells its instance has when the
+ * app knows (so the window need not ask again).
+ */
+export interface TerminalRequest extends OpenRequest {
+  readonly installed: readonly Shell[] | null
+}
+
 /** Opens a tab in the Terminal window, opening the window first or bringing it forward. */
-export const openTerminal = (request: OpenRequest): Promise<void> => tauri().core.invoke<void>("terminal_open", { request })
+export const openTerminal = (request: TerminalRequest): Promise<void> => tauri().core.invoke<void>("terminal_open", { request })
 
 /** The tabs asked for since the Terminal window last looked. */
-export const takeTerminalRequests = (): Promise<OpenRequest[]> => tauri().core.invoke<OpenRequest[]>("terminal_take")
+export const takeTerminalRequests = (): Promise<TerminalRequest[]> => tauri().core.invoke<TerminalRequest[]>("terminal_take")
 
 /** Rung when tabs have been asked for. */
 export const onTerminalOpen = (cb: () => void): Unlisten => listen<unknown>("terminal-open", () => cb())
@@ -111,7 +125,7 @@ const menuItems = (nodes: readonly MenuNode[], pick: (node: Extract<MenuNode, { 
   nodes.map((n) => {
     if (n.kind === "separator") return { item: "Separator" }
     if (n.kind === "submenu") return { text: n.label, items: menuItems(n.items, pick) }
-    return { text: n.label, action: () => pick(n) }
+    return { text: n.label, enabled: n.enabled, action: () => pick(n) }
   })
 
 /** Shows a native menu at the pointer; `pick` gets the item chosen, if any. */
