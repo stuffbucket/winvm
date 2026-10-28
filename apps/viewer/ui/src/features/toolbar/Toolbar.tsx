@@ -30,6 +30,7 @@ interface ToolbarProps {
   onOpen(id: PanelId, button: HTMLElement): void
   onTerminal(): void
   onTerminalMenu(): void
+  onFilesMenu(): void
   onActualSize(): void
   onScreenSharing(): void
   onDetails(): void
@@ -87,6 +88,28 @@ function TerminalButton({ blocked, onOpen, onMenu }: { readonly blocked: string 
   )
 }
 
+/** The folder opens the Files window; Option-click or right-click offers a menu of places, as >_ does. */
+function FilesButton({ enabled, onOpen, onMenu }: { readonly enabled: boolean; onOpen(): void; onMenu(): void }): JSX.Element {
+  const label = t("action.files")
+  return (
+    <button
+      type="button"
+      className="btn btn--ghost btn--icon"
+      aria-label={label}
+      aria-haspopup="menu"
+      title={t("files.tip")}
+      disabled={!enabled}
+      onClick={(e) => (e.altKey ? onMenu() : onOpen())}
+      onContextMenu={(e) => {
+        e.preventDefault()
+        if (enabled) onMenu()
+      }}
+    >
+      <Icon name="folder" />
+    </button>
+  )
+}
+
 /**
  * The title bar: which Windows machine (a menu of them all), what is
  * happening, then power, things to do in Windows, and view.
@@ -126,7 +149,7 @@ export function Toolbar(p: ToolbarProps): JSX.Element {
 
       <div className="toolbar__group">
         <TerminalButton blocked={p.terminalBlocked} onOpen={p.onTerminal} onMenu={p.onTerminalMenu} />
-        {panel("files", "folder", t("action.files"), p.guestReady)}
+        <FilesButton enabled={p.guestReady} onOpen={() => p.onOpen("files", document.body)} onMenu={p.onFilesMenu} />
         {panel("saves", "history", t("action.saves"), p.canSaves)}
         {panel("share", "agent", t("action.share"), p.guestReady || p.sharing, p.sharing)}
       </div>

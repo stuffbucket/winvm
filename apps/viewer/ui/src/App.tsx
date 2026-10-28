@@ -4,15 +4,19 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import type { Size } from "@winvm/displayfit"
 
 import {
+  type Action,
   agentFetch,
   announceTitle,
+  GUEST_FOLDERS_IN_FINDER,
   installedShells,
   onFileDrop,
   onMenu,
   openFiles,
   openTerminal,
   outputText,
+  popupActions,
   popupMenu,
+  revealGuestPath,
   revealInFinder,
   setWindowTitle,
   shareStart,
@@ -323,11 +327,35 @@ export function App(): JSX.Element {
     setShare(null)
   }
 
+  const filesWindow = (): void => {
+    setOpen(null)
+    if (w.name !== null) openFiles(w.name, titles[w.name] ?? null).catch((e: unknown) => setNotice({ tone: "error", title: t("files.openFailed"), detail: String(e) }))
+  }
+
+  // Showing a guest folder in Finder waits on the guest's drives being mounted on the Mac; until
+  // then the menu says it is coming.
+  const filesMenu = (): void => {
+    const instance = w.name
+    if (instance === null) return
+    const finder = (label: string, path: string): Action => ({
+      kind: "action",
+      label: GUEST_FOLDERS_IN_FINDER ? label : t("files.finder.soon", { label }),
+      enabled: GUEST_FOLDERS_IN_FINDER,
+      run: () => {
+        revealGuestPath(instance, path).catch((e: unknown) => setNotice({ tone: "error", title: t("files.finder.failed"), detail: String(e) }))
+      },
+    })
+    popupActions([
+      { kind: "action", label: t("files.menu.window"), run: filesWindow },
+      { kind: "separator" },
+      finder(t("files.finder.home"), "C:\\Users\\Administrator"),
+      finder(t("files.finder.drive", { drive: "C:\\" }), "C:\\"),
+    ]).catch((e: unknown) => setNotice({ tone: "error", title: t("files.openFailed"), detail: String(e) }))
+  }
+
   const togglePanel = (id: PanelId, anchor: HTMLElement): void => {
-    if (id === "files") {
-      setOpen(null)
-      if (w.name !== null) openFiles(w.name, titles[w.name] ?? null).catch((e: unknown) => setNotice({ tone: "error", title: t("files.openFailed"), detail: String(e) }))
-    } else setOpen((cur) => (cur?.id === id ? null : { id, anchor }))
+    if (id === "files") filesWindow()
+    else setOpen((cur) => (cur?.id === id ? null : { id, anchor }))
   }
   const closePanel = useCallback(() => setOpen(null), [])
 
@@ -376,6 +404,7 @@ export function App(): JSX.Element {
         onOpen={togglePanel}
         onTerminal={() => terminal(null)}
         onTerminalMenu={terminalMenu}
+        onFilesMenu={filesMenu}
         onActualSize={() => setActualSize((a) => !a)}
         onScreenSharing={() => void w.openScreenSharing()}
         onDetails={() => setDetailsOpen((o) => !o)}
