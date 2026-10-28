@@ -26,7 +26,8 @@ const FOCUSABLE = 'a[href], button:not([disabled]), input:not([disabled]), texta
 
 /** Keeps Tab inside the surface, as a modal does. */
 function trapTab(event: KeyboardEvent<HTMLElement>): void {
-  if (event.key !== "Tab") return
+  // A modal <dialog> inside keeps Tab to itself.
+  if (event.key !== "Tab" || (event.target instanceof Element && event.target.closest("dialog") !== null)) return
   const items = [...event.currentTarget.querySelectorAll<HTMLElement>(FOCUSABLE)].filter((el) => el.offsetParent !== null || el === document.activeElement)
   const first = items[0]
   const last = items.at(-1)
