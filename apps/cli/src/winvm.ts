@@ -17,6 +17,8 @@
  *   winvm save / load / saves        whole-machine saves as files; see saves.ts
  *   winvm golden create | reset      settled mapped-ram save for fast resets; see golden.ts
  *   winvm pause / resume / stow      freeze, unfreeze, save-and-quit
+ *   winvm sleep / wake / lock        lock Windows and freeze it, wake it, lock it
+ *   winvm settings [key=value]       the user's settings (XDG config dir)
  *   winvm reboot [-i name]           restart Windows, back when logged on again
  *   winvm clock [-i name]            guest-vs-host clock offset, and fix it
  *   winvm reset [-i name]            discard all changes, back to the base
@@ -146,6 +148,7 @@ import * as runcmds from "@winvm/core/runcmds"
 import * as savecmds from "@winvm/core/savecmds"
 import * as screen from "@winvm/core/screen"
 import * as service from "@winvm/core/service"
+import * as settings from "@winvm/core/settings"
 import * as status from "@winvm/core/status"
 import * as web from "@winvm/core/web"
 import * as webview from "@winvm/core/webview"
@@ -266,7 +269,17 @@ switch (sub) {
     process.exit(await savecmds.pause(args))
   // eslint-disable-next-line no-fallthrough
   case "resume":
+  case "wake":
     process.exit(await savecmds.resume(args))
+  // eslint-disable-next-line no-fallthrough
+  case "sleep":
+    process.exit(await savecmds.sleep(args))
+  // eslint-disable-next-line no-fallthrough
+  case "lock":
+    process.exit(await savecmds.lock(args))
+  // eslint-disable-next-line no-fallthrough
+  case "settings":
+    process.exit(settings.settingsCmd(args))
   // eslint-disable-next-line no-fallthrough
   case "stow":
     process.exit(await savecmds.stow(args))

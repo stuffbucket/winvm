@@ -9,6 +9,8 @@
  *                      the save's manifest says which RAM format to read
  *   saves [rm <name>]  list them, with compatibility; or delete one
  *   pause / resume     freeze / unfreeze the vCPUs (resume fixes the clock)
+ *   sleep / wake       lock Windows, then freeze it marked asleep / resume it
+ *   lock               Windows back to its lock screen
  *   stow               save as "stow" and shut QEMU down; `start` recalls it
  *   clock [--check]    guest-vs-host clock offset, and fix it
  *
@@ -21,7 +23,10 @@
  */
 import type { Args } from "./args"
 import { instanceName } from "./args"
+import * as agent from "./agent"
 import { alignGuestTimeZone, formatOffset, measureOffset, syncGuestClock } from "./clock"
+import * as frozen from "./frozen"
+import { lockWindows } from "./lock"
 import type { InstanceMeta, Paths } from "./paths"
 import { pathsFor, readImageMeta, readMeta } from "./paths"
 import * as qemu from "./qemu"
@@ -228,24 +233,76 @@ export function list(args: Args): number {
   return 0
 }
 
+/**
+ * Stops the vCPUs until `resume`. Nothing else in winvm resumes a paused guest
+ * (frozen.ts): the watcher holds off, and the agent is not called. An asleep
+ * guest paused this way becomes plainly paused: it no longer wakes on a key.
+ */
 export async function pause(args: Args): Promise<number> {
   const name = instanceName(args)
   const p = pathsFor(name)
   if (!qemu.isRunning(p)) return fail(`instance "${name}" is not running`)
   await qmp.execute(p.qmp, "stop")
+  frozen.clearAsleep(p)
   console.log(`paused "${name}" — \`winvm resume -i ${name}\` to continue`)
   return 0
 }
 
+/** Starts a paused or asleep guest's vCPUs again, then fixes its clock. `wake` is the same verb. */
 export async function resume(args: Args): Promise<number> {
   const name = instanceName(args)
   const p = pathsFor(name)
   if (!qemu.isRunning(p)) return fail(`instance "${name}" is not running`)
   const state = await qmp.status(p.qmp)
+  const was = frozen.markedAsleep(p, qemu.pidOf(p)) ? "asleep" : "paused"
   if (state !== "running") await qmp.execute(p.qmp, "cont")
-  else console.log(`"${name}" was not paused`)
-  if (!(await settle(p, "resuming"))) return 1
-  if (state !== "running") console.log(`resumed "${name}"`)
+  else console.log(`"${name}" was not ${was}`)
+  frozen.clearAsleep(p)
+  if (!(await settle(p, was === "asleep" ? "waking" : "resuming"))) return 1
+  if (state !== "running") console.log(was === "asleep" ? `woke "${name}" — Windows is at its lock screen` : `resumed "${name}"`)
+  return 0
+}
+
+/** Locks Windows through its agent (lock.ts), returning it to the lock screen. */
+async function lockGuest(name: string): Promise<boolean> {
+  try {
+    const c = await agent.ensure(name)
+    const r = await lockWindows(c)
+    if (r.enabled !== null) console.log(`  enabled the Windows account "${r.enabled}" so it can sign back in from the lock screen`)
+    if (!r.confirmed) console.warn("warning: the lock screen did not appear in time; locked anyway")
+    return true
+  } catch (error) {
+    console.error(`::error::could not lock Windows in "${name}": ${msg(error)}`)
+    return false
+  }
+}
+
+/** `lock`: Windows back to its lock screen (sign in again with Enter). */
+export async function lock(args: Args): Promise<number> {
+  const name = instanceName(args)
+  const p = pathsFor(name)
+  if (!qemu.isRunning(p)) return fail(`instance "${name}" is not running`)
+  if (!(await lockGuest(name))) return 1
+  console.log(`locked "${name}"`)
+  return 0
+}
+
+/**
+ * `sleep`: there is no ACPI sleep to use (frozen.ts), so: lock Windows, stop
+ * the vCPUs, and mark the guest asleep. `wake` (or `resume`) undoes it; the app
+ * wakes it on a key press in its screen.
+ */
+export async function sleep(args: Args): Promise<number> {
+  const name = instanceName(args)
+  const p = pathsFor(name)
+  const pid = qemu.pidOf(p)
+  if (pid === null) return fail(`instance "${name}" is not running`)
+  const already = await frozen.frozenState(p)
+  if (already !== null) return fail(`instance "${name}" is already ${already}`)
+  if (!(await lockGuest(name))) return 1
+  await qmp.execute(p.qmp, "stop")
+  frozen.markAsleep(p, pid)
+  console.log(`"${name}" is asleep — \`winvm wake -i ${name}\` wakes it`)
   return 0
 }
 

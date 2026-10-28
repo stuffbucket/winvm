@@ -13,6 +13,8 @@ winvm save --fast clean          # larger, but faster to load
 winvm saves                      # name, kind, format, created, size, compatible
 winvm saves rm before-install
 winvm pause / resume             # freeze the guest / carry on
+winvm sleep / wake               # lock Windows and freeze it / carry on at the lock screen
+winvm lock                       # Windows back to its lock screen
 winvm stow                       # save and shut QEMU down; the next start recalls it
 winvm clock                      # the guest's clock offset, and fix it
 ```
@@ -32,6 +34,17 @@ winvm clock                      # the guest's clock offset, and fix it
   says what changed when it refuses.
 - **Clock.** Loading, resuming or recalling a stow sets the guest's clock to
   the host's.
+- **Paused stays paused.** Only `resume` (or `wake`) starts a paused or asleep
+  guest again. Nothing else calls into it meanwhile: `status` reports it at once
+  without asking its agent, the agent verbs refuse it (`agent connect` exits 3),
+  and the watcher neither autosaves nor stows it. A save taken while it is
+  paused leaves it paused.
+- **Sleep.** This guest has no ACPI sleep (QEMU's `virt` machine reports no
+  wakeup support, and `powercfg /a` lists no sleep states), so `sleep` locks
+  Windows, then pauses it marked asleep. `lock` and `sleep` first enable the
+  signed-in account if Windows has it disabled, as audit mode's built-in
+  Administrator is; otherwise the lock screen would refuse it. Sign back in
+  with Enter.
 
 `snapshot` and `rewind <tag>` also work. They keep their state inside the
 instance's disk file instead.

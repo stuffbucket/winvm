@@ -1126,6 +1126,8 @@ export const USAGE =
   "  saves   [-i name] [rm <name>] [--json]  list saves (kind, size, compatible) or delete one\n" +
   "  golden  create|reset [-i name] [--name golden]  settled mapped-ram save; reset to it in ~1 s\n" +
   "  pause | resume [-i name]      freeze / unfreeze the guest (resume fixes its clock)\n" +
+  "  sleep | wake [-i name]        lock Windows, then freeze it as asleep / resume it\n" +
+  "  lock    [-i name]             Windows back to its lock screen (sign in again with Enter)\n" +
   "  stow    [-i name]             save and shut QEMU down; the next start recalls it\n" +
   "  clock   [-i name] [--check]   guest-vs-host clock offset, and fix it\n" +
   "  status  [-i name] [--json]    what it's doing; with no -i and several instances, a table\n" +
@@ -1164,6 +1166,8 @@ export const USAGE =
   "  watch   [-i name]             run the idle watcher in the foreground (start runs it in the background)\n" +
   "          [--stop | --status]   end it / print its state\n" +
   "  config  [-i name] [key=value ...]  autosave/stow/watch settings and the app's title; bare prints them\n" +
+  "  settings [key=value ...] [--json]  your own settings, for every instance (viewer.pauseOverlay);\n" +
+  "                                in $XDG_CONFIG_HOME/winvm/settings.json (default ~/.config/winvm)\n" +
   "  run     <job.yml>... [-i name] [--golden NAME] [--keep] [--junit f] [--json f] [--artifacts dir]\n" +
   "                                run CI jobs, each from a golden save (instance default \"ci\")\n" +
   "          [--pool N] [--pool-prefix ci]   on N instances at once (ci-1 … ci-N)\n" +
