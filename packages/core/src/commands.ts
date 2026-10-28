@@ -30,6 +30,7 @@ import {
 } from "./paths"
 import * as agent from "./agent"
 import * as agentcmds from "./agentcmds"
+import * as finder from "./finder"
 import * as input from "./input"
 import * as qemu from "./qemu"
 import * as qmp from "./qmp"
@@ -638,6 +639,8 @@ export async function start(args: Args): Promise<number> {
   // half-booted Windows LIVELOCKED it — four vCPUs at 100%, no disk I/O, no
   // recovery. Gated on the real account having logged on, it is safe.
   await savecmds.afterBoot(name, args)
+  // The guest's drives in Finder, if they were mounted when it last went down.
+  await finder.afterUp(name)
   // AFTER the baseline save, so the watcher's idle clock starts from a guest at
   // rest and the baseline's own work is not counted as use.
   watcher.startWatcherFor(name, args)
@@ -700,6 +703,8 @@ export async function rewind(args: Args): Promise<number> {
     return 1
   }
   const rewatch = watcher.rewatchAfterRestore(name, args)
+  // Whichever way it rewinds, the guest the drives were mounted from goes away.
+  finder.beforeDown(name)
   // No internal snapshot of that tag: a save of that name (default "baseline").
   const viaSave = await savecmds.rewindViaSave(name, args.positional[0])
   if (viaSave === 0) {
@@ -746,6 +751,7 @@ export async function rewind(args: Args): Promise<number> {
   }
   console.log(`rewound "${name}" to "${tag}" in ${String(Date.now() - started)} ms`)
   await savecmds.afterRewind(name)
+  await finder.afterUp(name)
   watcher.touchActivity(name)
   rewatch()
   return 0
@@ -779,6 +785,8 @@ export async function stop(args: Args): Promise<number> {
   }
   // First, so it cannot decide to autosave a guest that is shutting down.
   await watcher.stopWatcher(name)
+  // Then the guest's drives in Finder, while their server still answers.
+  finder.beforeDown(name)
   await qga.shutdown(p.qga)
   const deadline = Date.now() + 180_000
   while (Date.now() < deadline) {
@@ -825,6 +833,8 @@ export async function reboot(args: Args): Promise<number> {
   }
   const t0 = Date.now()
   const deadline = t0 + s * 1000
+  // The file server restarts with Windows; the drives come back once it is up.
+  finder.beforeDown(name)
   // Activity throughout, so the watcher neither saves nor stows a guest mid-restart.
   const outcome = await watcher.whileActive(
     name,
@@ -849,6 +859,7 @@ export async function reboot(args: Args): Promise<number> {
   if (agent.readState(p) !== null && (await agent.connect(name, { timeoutMs: 60_000 })) === null) {
     console.warn(`warning: the in-guest agent did not answer within 60 s of logon — \`winvm agent status -i ${name}\``)
   }
+  await finder.afterUp(name)
   console.log(`instance "${name}" rebooted in ${String(Math.round((Date.now() - t0) / 1000))} s`)
   return 0
 }
@@ -862,9 +873,12 @@ export function kill(args: Args): number {
     // the TPM emulator running with no guest.
     qemu.stopSwtpm(p)
     stopService(p)
+    finder.cleanStale(name)
     console.log(`instance "${name}" is not running`)
     return 0
   }
+  // While their server still answers: a mount whose server is gone hangs whatever touches it.
+  finder.beforeDown(name)
   process.kill(pid, "SIGKILL")
   rmSync(p.pid, { force: true })
   qemu.stopSwtpm(p)
@@ -886,6 +900,7 @@ export function reset(args: Args): number {
     console.error(`::error::no such instance "${name}"`)
     return 1
   }
+  finder.cleanStale(name)
   resetInstance(name, meta)
   savecmds.afterReset(name)
   console.log(`instance "${name}" reset to image "${meta.image}"`)
@@ -905,6 +920,8 @@ export function destroy(args: Args): number {
   }
   stopService(p)
   qemu.stopSwtpm(p)
+  // Before smb.json goes with the instance: it holds the port that tells our mounts from anything else.
+  finder.cleanStale(name)
   const size = du(instanceDir(name))
   rmSync(instanceDir(name), { recursive: true, force: true })
   console.log(`destroyed instance "${name}" (${size}; image untouched)`)
@@ -1024,6 +1041,8 @@ export async function smoke(args: Args): Promise<number> {
  */
 export function diagnoseCmd(args: Args): number {
   const name = instanceName(args)
+  // What a guest that died left mounted on the Mac.
+  for (const dir of finder.cleanStale(name)) console.log(`unmounted ${dir}, left behind by a guest that is no longer running`)
   const findings = diagnose(name)
   console.log(formatFindings(name, findings))
   return findings.some((f) => f.severity === "error") ? 1 : 0
@@ -1111,6 +1130,8 @@ export const USAGE =
   "  mv      [-i name] <from> <to> [--json]        rename, or move into the folder <to>; replaces nothing\n" +
   "  cp      [-i name] <from> <to> [--json]        copy in the guest, a file or a whole folder; replaces nothing\n" +
   "  rm      [-i name] <guest path>... [--permanently] [--json]   to the Recycle Bin (--permanently: for good)\n" +
+  "  files   open|mount|unmount|status [-i name] [c|home] [--json]   the guest's C:\\ and home folder in Finder,\n" +
+  "                                mounted on ~/winvm/<name>/{C,Home}; open mounts if needed (--path GUEST_PATH: a folder in it)\n" +
   "  launch  [-i name] -- <program> [args]         start it on the guest's desktop, detached\n" +
   "  terminal [-i name] [--shell pwsh|powershell|cmd] [--cwd PATH]   a guest shell, in this terminal\n" +
   "          [--connect --json]    print the WebSocket URL and subprotocols for another client\n" +

@@ -42,6 +42,7 @@ import type { Args } from "./args"
 import { formatOffset, measureOffset, syncGuestClock } from "./clock"
 import type { InstanceConfig } from "./config"
 import { effectiveConfig } from "./config"
+import * as finder from "./finder"
 import type { Decision, SaveInfo, Settings, Timing } from "./idle"
 import { DEFAULT_TIMING, DRIFT_TOLERANCE_MS, IdleMachine, autosaveName, savesToRotate } from "./idle"
 import { isFrozenRunState } from "./frozen"
@@ -658,6 +659,8 @@ export async function watch(name: string, o: WatchOptions = {}): Promise<number>
         // A load quits QEMU and starts another; only a QEMU gone with nobody
         // holding the instance means it has stopped for good.
         if (saveLockHeld(name)) continue
+        // Its drives in Finder would hang whatever touches them now.
+        finder.cleanStale(name)
         finish("qemu exited")
         return 0
       }
