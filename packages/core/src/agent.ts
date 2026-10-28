@@ -297,6 +297,7 @@ export async function install(name: string, o: InstallOptions = {}): Promise<Age
     [resolve(ASSETS, "agent-install.ps1"), `${stage}\\agent-install.ps1`],
     [resolve(ASSETS, "runinsession.cs"), `${stage}\\runinsession.cs`],
     [resolve(ASSETS, "winvm-ui.cs"), `${stage}\\winvm-ui.cs`],
+    [resolve(ASSETS, "conpty.cs"), `${stage}\\conpty.cs`],
   ] as const) {
     await qgaWriteFile(p.qga, to, new Uint8Array(readFileSync(from)))
   }
