@@ -20,7 +20,7 @@ import { resolve } from "node:path"
 
 import type { AgentState } from "./agentfwd"
 import { ensureForward, ensureState, readState, restoreForward } from "./agentfwd"
-import type { DirListing, DisplayRequest, ExecRequest, ExecResponse, Health, LaunchRequest, Proc, PwshResponse } from "./guestagent"
+import type { DirListing, DisplayRequest, ExecRequest, ExecResponse, GuestStats, Health, LaunchRequest, Proc, PwshResponse } from "./guestagent"
 import { AGENT_VERSION, GUEST_PORT, WINDOWS_DIR } from "./guestagent"
 import { bunZip } from "./media"
 import { PACKAGE_DIR, pathsFor } from "./paths"
@@ -29,7 +29,7 @@ import * as qga from "./qga"
 
 export type { AgentState } from "./agentfwd"
 export { ensureForward, forwardedPorts, readState, statePath } from "./agentfwd"
-export type { DirEntry, DirListing, ExecResponse, Health, Place, Proc, PwshResponse } from "./guestagent"
+export type { DirEntry, DirListing, ExecResponse, GuestStats, Health, Place, Proc, PwshResponse } from "./guestagent"
 export { AGENT_VERSION, GUEST_PORT } from "./guestagent"
 
 export class AgentError extends Error {
@@ -175,6 +175,11 @@ export class AgentClient {
 
   async procs(): Promise<readonly Proc[]> {
     return (await (await this.req("GET", "/procs")).json()) as Proc[]
+  }
+
+  /** Windows' memory and the system drive's space, cheaply (no process started). */
+  async stats(timeoutMs = 5000): Promise<GuestStats> {
+    return (await (await this.req("GET", "/stats", undefined, timeoutMs)).json()) as GuestStats
   }
 
   /** Kill a process; by default its whole tree. */
