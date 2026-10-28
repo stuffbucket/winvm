@@ -137,14 +137,18 @@ jobs:
             echo "$cmd"
             echo '```'
             echo
-            echo "This job waits about 50 minutes for the DMG, then the release is published."
+            echo "This job waits about 50 minutes for the DMG and the app update, then the release is published."
             echo "If it is started later, run the **finish-release** workflow for ${TAG}."
           } >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Attach the signed .dmg to the draft
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version-file: .bun-version
+
+      - name: Attach the signed .dmg and the app update to the draft
         env:
           GH_TOKEN: ${{ github.token }}
-        run: scripts/release-dmg.sh "$TAG" 3000
+        run: scripts/release-assets.sh "$TAG" 3000
 
   publish:
     needs: [release, macos-dmg]

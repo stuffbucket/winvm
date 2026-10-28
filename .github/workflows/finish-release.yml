@@ -1,8 +1,9 @@
 name: Finish a draft release (manual)
 
 # For a signed build started after release.yml stopped waiting: once
-# stuffbucket/macos-builder has uploaded winvm.dmg to the draft, this attaches
-# it under its release name with a checksum and publishes the release.
+# stuffbucket/macos-builder has uploaded winvm.dmg and the app update to the
+# draft, this attaches them under their release names, adds the update
+# manifest, and publishes the release.
 
 on:
   workflow_dispatch:
@@ -34,8 +35,12 @@ jobs:
           draft=$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json isDraft --jq .isDraft)
           [ "$draft" = "true" ] || { echo "::error::$TAG is not a draft; a published release is immutable"; exit 1; }
 
-      - name: Attach the signed .dmg
-        run: scripts/release-dmg.sh "$TAG" 0
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version-file: .bun-version
+
+      - name: Attach the signed .dmg and the app update
+        run: scripts/release-assets.sh "$TAG" 0
 
       - name: Publish
         run: |
