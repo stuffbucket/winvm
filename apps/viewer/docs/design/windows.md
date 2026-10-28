@@ -40,9 +40,21 @@ The title bar is an overlay (`TitleBarStyle::Overlay`, hidden title), so
 the toolbar is the drag region and leaves room for the traffic lights.
 Left to right: the machine picker; what is happening, in words; power
 (Start or Shut down, Restart, Pause or Resume); things to do in Windows
-(Terminal, Files in Windows, Saves, Use with Claude); view (Fit to
+(Terminal, Files in Windows, Saves, Use with Claude); input (Capture
+Keyboard); view (Fit to
 window, Open in Screen Sharing, Details). Nothing else: no meters, no
 heading repeating the window title.
+
+**Keyboard capture.** The safe default is not captured: macOS owns Command
+shortcuts, left Command is never sent to Windows, and right Command is the
+deliberate Windows modifier (right Command-R is Windows-R). The Input menu
+also sends a Windows-key press or Ctrl-Alt-Delete directly. Capture Keyboard
+in the toolbar or Input menu, or Control-Option, enters an explicit mode:
+macOS global hotkeys are suspended, every key goes to Windows, the toolbar
+says that capture is on, and Control-Option releases it. Losing focus or
+hiding the window always releases capture and every held guest key. A held
+Windows key is neutralized with a Ctrl press/release before it is released,
+so cleanup cannot open Start.
 
 **The machine picker** is one trigger, a computer icon, the machine's name
 or title and a chevron, with the tooltip "Windows machine", so nothing next
