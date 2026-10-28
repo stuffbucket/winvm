@@ -1,23 +1,13 @@
-import { popupActions } from "../../backend"
 import { Icon, type IconName } from "../../components/Icon"
-import { InlineRename } from "../../components/InlineRename"
 import { t } from "../../i18n"
-import { type Controls, type Phase, shownTitle, TITLE_MAX } from "../../model"
+import type { Controls, Phase } from "../../model"
+import { MachinePicker, type MachinePickerProps } from "../machines/MachinePicker"
 
 export type PanelId = "files" | "saves" | "share"
 
 interface ToolbarProps {
-  readonly names: readonly string[]
-  readonly name: string | null
-  /** Each instance's title; null or absent: its name. */
-  readonly titles: Readonly<Record<string, string | null>>
-  /** This instance's title as shown: its own, else its name; null with no instance. */
-  readonly title: string | null
-  /** The title is being edited, in place. */
-  readonly renaming: boolean
-  onRenameStart(): void
-  /** The edit ended: the text typed (empty clears the title), or null for no change. */
-  onRenamed(next: string | null): void
+  /** The Windows machine picker, at the left. */
+  readonly picker: MachinePickerProps
   readonly phase: Phase | null
   /** What is happening right now, in a word or two; null when nothing is. */
   readonly activity: string | null
@@ -32,7 +22,6 @@ interface ToolbarProps {
   readonly canActualSize: boolean
   readonly open: PanelId | null
   readonly detailsOpen: boolean
-  onSelect(name: string): void
   onStart(): void
   onShutDown(): void
   onRestart(): void
@@ -98,42 +87,20 @@ function TerminalButton({ blocked, onOpen, onMenu }: { readonly blocked: string 
   )
 }
 
-/** The title bar: the instance's title (and a menu of the others, when there are several), then power, things to do in Windows, and view. */
+/**
+ * The title bar: which Windows machine (a menu of them all), what is
+ * happening, then power, things to do in Windows, and view.
+ */
 export function Toolbar(p: ToolbarProps): JSX.Element {
   const c = p.controls
   const live = p.phase === "running" || p.phase === "starting" || p.phase === "paused"
   const panel = (id: PanelId, icon: IconName, label: string, enabled: boolean, pressed?: boolean): JSX.Element => (
     <ToolButton icon={icon} label={label} enabled={enabled} pressed={pressed} expanded={p.open === id} onClick={(b) => p.onOpen(id, b)} />
   )
-  const switchMenu = (): void => {
-    void popupActions(
-      p.names.map((n) => ({ kind: "action", label: shownTitle(n, p.titles[n]), checked: n === p.name, run: () => p.onSelect(n) })),
-    ).catch(() => undefined)
-  }
   return (
     <header className="toolbar" data-tauri-drag-region>
       <div className="toolbar__lead" data-tauri-drag-region>
-        {p.title !== null &&
-          (p.renaming ? (
-            <InlineRename className="toolbar__rename" value={p.title} label={t("rename.windowLabel")} maxLength={TITLE_MAX} onDone={p.onRenamed} />
-          ) : (
-            // Not a drag region: a double-click here renames rather than zooms.
-            <span className="toolbar__title" title={t("rename.windowTip")} onDoubleClick={p.onRenameStart}>
-              {p.title}
-            </span>
-          ))}
-        {p.names.length > 1 && !p.renaming && (
-          <button
-            type="button"
-            className="btn btn--ghost btn--icon toolbar__switch"
-            aria-label={t("action.instance")}
-            aria-haspopup="menu"
-            title={t("action.instance")}
-            onClick={switchMenu}
-          >
-            <Icon name="chevronDown" />
-          </button>
-        )}
+        <MachinePicker {...p.picker} />
         {p.activity !== null && (
           <span className="toolbar__activity" data-tauri-drag-region role="status">
             {p.activity}

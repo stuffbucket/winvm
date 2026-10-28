@@ -34,6 +34,8 @@ const built = [
   ...["notfound", "denied", "notdir", "notrunning", "other"].map((c) => `files.error.${c}`),
   ...["off", "starting", "paused", "busy"].map((v) => `terminal.why.${v}`),
   ...["pwsh", "powershell", "cmd"].map((s) => `shell.${s}`),
+  ...["running", "starting", "paused", "stopped", "stowed", "missing"].map((s) => `machine.state.${s}`),
+  ...["invalid", "taken"].map((p) => `machine.name.${p}`),
   "place.desktop",
 ]
 

@@ -1,18 +1,20 @@
 import RFB from "novnc/core/rfb.js"
-import { useEffect, useRef, useState } from "react"
+import { useEffect, useLayoutEffect, useRef, useState } from "react"
 
-import { type Size, SizeDebouncer, drawSize, guestSizeFor, sameSize, scaleFor } from "@winvm/displayfit"
+import { type Size, drawSize, guestSizeFor, sameSize, scaleFor } from "@winvm/displayfit"
 
+import { onLiveResize, trace } from "../../backend"
 import { t } from "../../i18n"
 import type { Connection } from "../../model"
+import { LiveResize, type ResizePhase } from "./resize"
 
 interface ScreenProps {
   readonly connection: Connection
   /**
    * The guest's screen can follow the view (virtio-gpu). Then the viewer asks
    * QEMU for the view's size in device pixels and `onGuestSize` has the guest
-   * switch to it (`winvm display WxH --no-request`), and the picture is drawn
-   * one guest pixel per device pixel.
+   * switch to it (through its agent), and the picture is drawn one guest pixel
+   * per device pixel.
    */
   readonly resizable: boolean
   readonly onGuestSize?: (size: Size, scale: number) => Promise<void>
@@ -20,21 +22,34 @@ interface ScreenProps {
 
 type View = "connecting" | "connected" | "lost" | "refused"
 
-/** Window drags settle for this long before the guest is resized. */
-const RESIZE_DEBOUNCE_MS = 300
+/** A new size's first frame is the old picture redrawn; the second is the guest's. Without one, this long. */
+const FRAME_WAIT_MS = 150
 
 const dpr = (): number => window.devicePixelRatio || 1
 
-/** The guest's screen through QEMU's VNC websocket, interactive. */
+/**
+ * The guest's screen through QEMU's VNC websocket, interactive.
+ *
+ * WHILE A RESIZABLE GUEST IS RESIZED (resize.ts decides when): the last
+ * picture is copied to a canvas laid over the screen and stretched to fill the
+ * view, so the window's edge never shows a blank, a corner or a jump. The live
+ * screen underneath carries on (sizes the guest passes through, the redraw of a
+ * new size), out of sight, and the copy goes once the guest's picture is drawn
+ * in full at the size asked for, one guest pixel per device pixel.
+ */
 export function Screen({ connection, resizable, onGuestSize }: ScreenProps): JSX.Element {
   const area = useRef<HTMLDivElement | null>(null)
   const target = useRef<HTMLDivElement | null>(null)
+  const still = useRef<HTMLCanvasElement | null>(null)
+  const rfb = useRef<RFB | null>(null)
   const [view, setView] = useState<View>("connecting")
   const [attempt, setAttempt] = useState(0)
-  // The framebuffer's size, and the view's in CSS pixels, for the 1:1 box.
+  // The framebuffer drawn, and the view's size in CSS pixels, for the 1:1 box.
   const [fb, setFb] = useState<Size | null>(null)
   const [box, setBox] = useState<Size | null>(null)
   const [ratio, setRatio] = useState(dpr)
+  const [phase, setPhase] = useState<ResizePhase>("settled")
+  const [held, setHeld] = useState(false)
   const { websocketPort, password } = connection
   const guestSize = useRef(onGuestSize)
   guestSize.current = onGuestSize
@@ -51,6 +66,7 @@ export function Screen({ connection, resizable, onGuestSize }: ScreenProps): JSX
       credentials: { password: password ?? "" },
       wsProtocols: ["binary"],
     })
+    rfb.current = conn
     conn.background = "transparent"
     conn.scaleViewport = true
     // We send SetDesktopSize ourselves: noVNC asks in CSS pixels, and treats
@@ -58,44 +74,95 @@ export function Screen({ connection, resizable, onGuestSize }: ScreenProps): JSX
     conn.resizeSession = false
     conn.focusOnClick = true
 
-    // One guest resize at a time; the latest size wins.
-    let busy = false
-    let queued: Size | null = null
-    const applyInGuest = async (size: Size): Promise<void> => {
-      if (busy) {
-        queued = size
-        return
-      }
-      busy = true
-      try {
-        await guestSize.current?.(size, scaleFor(dpr()))
-      } catch (error) {
-        console.warn("resizing the guest failed", error)
-      } finally {
-        busy = false
-      }
-      const next = queued
-      queued = null
-      if (next !== null && !sameSize(next, size)) await applyInGuest(next)
-    }
-    const debouncer = new SizeDebouncer((size) => {
-      if (!connected || closing) return
-      RFB.messages.setDesktopSize(conn._sock, size.width, size.height, conn._screenID ?? 0, conn._screenFlags ?? 0)
-      void applyInGuest(size)
-    }, RESIZE_DEBOUNCE_MS)
-
     const measure = (): Size => {
       const r = outer.getBoundingClientRect()
       return { width: r.width, height: r.height }
     }
-    const wanted = (): Size => guestSizeFor(measure(), dpr())
+
+    // The picture as it is, held over the screen while the guest changes size.
+    const hold = (): void => {
+      const from = el.querySelector("canvas")
+      const to = still.current
+      if (from === null || to === null || from.width === 0 || from.height === 0) return
+      to.width = from.width
+      to.height = from.height
+      to.getContext("2d")?.drawImage(from, 0, 0)
+      setHeld(true)
+    }
+
+    const resize = resizable
+      ? new LiveResize({
+          request: async (size) => {
+            if (!connected || closing) return
+            RFB.messages.setDesktopSize(conn._sock, size.width, size.height, conn._screenID ?? 0, conn._screenFlags ?? 0)
+            try {
+              await guestSize.current?.(size, scaleFor(dpr()))
+            } catch (error) {
+              console.warn("resizing the guest failed", error)
+            }
+          },
+          onPhase: (next, settled) => {
+            if (next === "resizing") hold()
+            else {
+              setBox(measure())
+              setRatio(dpr())
+              if (settled !== null && settled.ms !== null && settled.size !== null) {
+                const { width, height } = settled.size
+                const line = `resize: ${String(width)}x${String(height)} drawn 1:1 ${String(Math.round(settled.ms))} ms after the resize ended${settled.timedOut ? " (gave up waiting for the size asked for)" : ""}`
+                console.info(line)
+                trace(line)
+              }
+            }
+            setPhase(next)
+          },
+        })
+      : null
+
+    // Each update ends in a flip. After a new size, the first is the old
+    // picture redrawn at it; the second is the guest's own.
+    const display = conn._display
+    const flip = display.flip.bind(display)
+    let flipped: Size | null = null
+    let flips = 0
+    let frameWait: ReturnType<typeof setTimeout> | undefined
+    const drawnAt = (size: Size): void => {
+      clearTimeout(frameWait)
+      setFb((cur) => (sameSize(cur, size) ? cur : size))
+      if (resize === null) return
+      // Mid-drag, the held picture becomes the newest one the guest has drawn.
+      if (resize.resizing) hold()
+      resize.drawnAt(size)
+    }
+    display.flip = (fromQueue?: boolean): void => {
+      const deferred = fromQueue !== true && display._renderQ.length !== 0
+      flip(fromQueue)
+      if (deferred) return
+      const size = { width: display._fbWidth, height: display._fbHeight }
+      if (size.width === 0 || size.height === 0) return
+      if (!sameSize(size, flipped)) {
+        flipped = size
+        flips = 1
+        clearTimeout(frameWait)
+        frameWait = setTimeout(() => drawnAt(size), FRAME_WAIT_MS)
+      } else if (++flips === 2) drawnAt(size)
+    }
+
     const onArea = (): void => {
-      setBox(measure())
-      setRatio(dpr())
-      if (resizable) debouncer.push(wanted())
+      if (resize === null) {
+        setBox(measure())
+        setRatio(dpr())
+        return
+      }
+      resize.want(guestSizeFor(measure(), dpr()))
+      // Still settled: the guest keeps its size (a change under a device pixel); follow the view.
+      if (!resize.resizing) {
+        setBox(measure())
+        setRatio(dpr())
+      }
     }
     const observer = new ResizeObserver(onArea)
     observer.observe(outer)
+    const unlisten = onLiveResize((live) => (live ? resize?.liveStart() : resize?.liveEnd()))
 
     // Moving the window to a display with another pixel ratio.
     let media: MediaQueryList | null = null
@@ -110,22 +177,14 @@ export function Screen({ connection, resizable, onGuestSize }: ScreenProps): JSX
     }
     watchRatio()
 
-    // The canvas' backing store is the framebuffer (scaleViewport, no clipping).
-    const canvasSize = new MutationObserver(() => {
-      const c = el.querySelector("canvas")
-      if (c === null || c.width === 0 || c.height === 0) return
-      setFb((cur) => (cur?.width === c.width && cur.height === c.height ? cur : { width: c.width, height: c.height }))
-    })
-    canvasSize.observe(el, { subtree: true, childList: true, attributes: true, attributeFilter: ["width", "height"] })
-
     conn.addEventListener("connect", () => {
       connected = true
       setView("connected")
       // A new connection may be a different guest state (a save loaded, a restart): ask again.
-      if (resizable) {
-        debouncer.reset()
-        debouncer.push(wanted())
-        debouncer.flush()
+      if (resize !== null) {
+        resize.reset()
+        resize.want(guestSizeFor(measure(), dpr()))
+        resize.flush()
       }
     })
     conn.addEventListener("credentialsrequired", () => conn.sendCredentials({ password: password ?? "" }))
@@ -138,22 +197,37 @@ export function Screen({ connection, resizable, onGuestSize }: ScreenProps): JSX
     })
     return () => {
       closing = true
-      debouncer.cancel()
+      resize?.cancel()
+      clearTimeout(frameWait)
       observer.disconnect()
-      canvasSize.disconnect()
+      unlisten()
       media?.removeEventListener("change", onRatio)
       if (retry !== undefined) clearTimeout(retry)
       conn.disconnect()
+      rfb.current = null
+      setHeld(false)
+      setPhase("settled")
     }
   }, [websocketPort, password, attempt, resizable])
 
-  // One guest pixel per device pixel while the guest can match the view: the
-  // box noVNC scales into is the framebuffer's size in CSS pixels, so its
-  // scale comes out at exactly 1/devicePixelRatio. Past the limits the box is
-  // the view, up to 5K, and noVNC scales the capped guest up to fill it.
-  const drawn = resizable && fb !== null && box !== null ? drawSize(fb, box, ratio) : null
+  // One guest pixel per device pixel once the guest is the size this view
+  // wants: the box noVNC scales into is the framebuffer's size in CSS pixels,
+  // so its scale comes out at exactly 1/devicePixelRatio. Past the limits the
+  // box is the view, up to 5K, and noVNC scales the capped guest up to fill it.
+  // Any other size (the guest not there yet, or refusing) is scaled to fit,
+  // never pinned to a corner.
+  const fits = resizable && fb !== null && box !== null && sameSize(fb, guestSizeFor(box, ratio))
+  const drawn = fits ? drawSize(fb, box, ratio) : null
   const exact = drawn === null ? undefined : { width: `${String(drawn.width)}px`, height: `${String(drawn.height)}px` }
   const scaled = drawn !== null && fb !== null && drawn.width > fb.width / ratio + 0.5
+  const holding = resizable && phase === "resizing" && held
+
+  // noVNC rescales into a new box by itself a frame later; do it before this
+  // paint, so the held picture gives way to one already in place.
+  useLayoutEffect(() => {
+    const conn = rfb.current
+    if (conn !== null && exact !== undefined) conn.scaleViewport = true
+  }, [exact?.width, exact?.height])
 
   const message = view === "connected" ? null : t(`screen.${view}`)
   return (
@@ -163,6 +237,7 @@ export function Screen({ connection, resizable, onGuestSize }: ScreenProps): JSX
         className={exact === undefined ? "screen__canvas" : scaled ? "screen__canvas screen__canvas--exact screen__canvas--scaled" : "screen__canvas screen__canvas--exact"}
         style={exact}
       />
+      <canvas ref={still} className="screen__still" hidden={!holding} aria-hidden="true" />
       {message !== null && (
         <div className="screen__message" role="status">
           <p>{message}</p>
