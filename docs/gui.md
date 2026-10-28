@@ -1,101 +1,141 @@
-# Driving app UI: UI Automation, WebView2, OCR, toasts
+# Driving app UI
 
-Four ways to check (and drive) what a Windows app shows, all from the host,
-none needing a window on the Mac:
+winvm has four ways to check and drive what a Windows app shows. All of them
+run from the host and none needs a window open on the Mac.
 
-| | what it reads | needs | command |
+| tool | command | reads | needs |
 |---|---|---|---|
-| **UI Automation** (`ui.ts`, `assets/winvm-ui.cs`) | the accessibility tree: native windows, the taskbar and tray, Win32 menus, dialogs, and WebView2 content too | the in-guest agent (v4+) | `winvm ui …` |
-| **DevTools** (`webview.ts`, `cdp.ts`) | the DOM of a WebView2 window (Tauri, WinUI/WPF hosts) | a policy set before the app starts | `winvm webview …` |
-| **OCR** (`ocr.ts`, `assets/ocr.swift`) | the screen's pixels: anything, incl. native dialogs and menus | macOS + `swiftc` | `winvm ocr`, `winvm click --text` |
-| **Toasts** (`toasts.ts`) | Windows' record of every notification an app raised | the in-guest agent | `winvm toasts` |
+| UI Automation | `winvm ui` | the accessibility tree: windows, buttons, menus, dialogs, the taskbar and tray, and WebView2 content | the in-guest agent (installed or upgraded on first use) |
+| DevTools | `winvm webview` | the DOM of a WebView2 window (Tauri, WinUI and WPF apps) | `winvm webview enable` before the app starts |
+| OCR | `winvm ocr`, `winvm click --text` | the text in the screen's pixels | macOS and `swiftc` (Xcode command-line tools) |
+| Notifications | `winvm toasts` | every notification (toast) an app raised | the in-guest agent |
 
-UI Automation is the one that also *drives* the shell around an app: the
-notification-area icon, its context menu, a TaskDialog. See
-[UI Automation](#ui-automation-winvm-ui) below.
+Use UI Automation to click things by name, including the tray icon and its
+menu. Use DevTools to read or click inside a web page. Use OCR for anything
+the other two can't see. Use `winvm toasts` to check that an app sent a
+notification.
 
-## Numbers
+All commands take `-i <instance>`, and the instance must be running.
 
-Measured on `win11-arm64-v3` (800x600 screen), M-series host, 2026-10-22,
-against Maximal v0.4.47's Settings window (x64 under Prism, WebView2 152).
-`jobs/maximal/settings-ui.yml` passes end to end in 21.8 s from a golden reset
-(1.2 s reset, 1.1 s stage, 7 s NSIS install; the DevTools step 0.8 s, the
-toast step 0.1 s, two OCR finds 0.7 s).
+Measured on `win11-arm64-v3` (800x600 screen), M-series Mac, 2026-10-22,
+against Maximal v0.4.47:
 
-| operation | median | notes |
-|---|---|---|
-| CDP `Runtime.evaluate` on a held session | **0.4 ms** | `document.title`; p90 0.5 ms |
-| CDP `text` / `waitFor` (present) / `click` on a held session | 0.4 ms / 0.4 ms / 16 ms | click = 3 `Input.dispatchMouseEvent`s + a lookup |
-| CDP connect (forward check, `/json/list`, ws open) | 10 ms | once per session |
-| `winvm webview eval` end to end | 35 ms | mostly bun startup (24 ms) |
-| QMP screendump to PNG | 12 ms | |
-| Vision OCR, accurate / fast | **300 ms** / 57 ms | whole 800x600 screen |
-| `winvm ocr --find` end to end | 338 ms | screendump + OCR + startup |
-| toasts read (copy WPN db + wal + shm out, sqlite) | **50 ms** | ~2 MB over the agent |
-| `winvm toasts` end to end | 88 ms | |
-
-OCR cost is per call: the helper is a fresh process that loads Vision's model
-each time (in-process repeats run 80–150 ms). `--fast` trades accuracy on
-small UI text for ~5x speed; the default is accurate. First `winvm ocr` also
-compiles the helper (`swiftc -O`, ~0.8 s, once
-per source change).
+| operation | typical time |
+|---|---|
+| `ui` find an element by name in a window | 20 ms (plus about 50 ms to start `winvm`) |
+| `ui click` | 130 ms |
+| `ui tray Maximal --menu Settings` | 1.2 s |
+| `webview eval` | 35 ms from the shell; under 1 ms per call on an open session |
+| `ocr --find` | 340 ms (`--fast`: about 5x faster, less accurate on small text) |
+| `toasts` | 90 ms |
 
 ## UI Automation (`winvm ui`)
 
 ```sh
-winvm ui windows                                   # top-level windows, with process names
+winvm ui windows                                    # top-level windows, with process names
 winvm ui tree --process maximal-shell --depth 8     # the element tree
 winvm ui find --window Settings --name Models --type Hyperlink
 winvm ui wait --process maximal-shell --window Settings --name Account --type Text --timeout 30
 winvm ui click --window Settings --id Close --settle 300
 winvm ui wait --process maximal-shell --window Settings --gone
-winvm ui tray Maximal --menu Settings               # tray icon by tooltip, then its menu item
-winvm ui click --window "Quit Maximal?" --name "Quit Maximal" --type Button
-winvm ui settle --process maximal-shell             # until nothing changes for 300 ms
-winvm ui invoke | toggle | expand | collapse | select | focus  [selector]
-winvm ui set --name Search --type Edit --value hello    # ValuePattern; `type` sends keys instead
+winvm ui tray Maximal --menu Settings               # the tray icon by tooltip, then its menu item
+winvm ui menu Exit                                  # click an item in a menu that is already open
+winvm ui settle --process maximal-shell             # wait until nothing changes for 300 ms
+winvm ui set --name Search --type Edit --value hello
+winvm ui type --name Search --type Edit --value hello
 winvm ui at 618 515                                 # what a click at x,y would hit
+winvm ui ping                                       # the helper's version, DPI and screen size
 ```
 
-**Selectors.** A scope picks top-level windows — `--window` (title contains,
-case-insensitive, or class equals), `--process` (name, `.exe` optional),
-`--hwnd` — and both together must hold. Then the element: `--name` (exact,
-case-insensitive; a bare word after the verb means `--name`), `--contains`,
-`--id` (AutomationId), `--type` (ControlType: Button, MenuItem, Hyperlink,
-Text, Window, Edit, …), `--class`, `--index`. With no scope the whole desktop
-is searched: correct, ~10 ms slower. `--timeout` (seconds, or `500ms`) is
-how long to keep looking; `click` and friends default to 10 s, `find` to none.
-`--json` prints the helper's answer.
+Other actions: `rightclick`, `doubleclick`, `invoke`, `toggle`, `expand`,
+`collapse`, `select`, `focus`. Run `winvm ui help` for the full list.
 
-**Clicks are real input** (SendInput: move, 40 ms hover, press, release) at
-the element's centre, so they go through hit-testing, focus and hover exactly
-like a person's. So before each click the helper hit-tests the point
-(`WindowFromPoint`): if another top-level window is there — a toast sliding up
-over the tray, a dialog — it parks the pointer at the screen's left edge (a
-toast never times out under the pointer) and waits, up to the timeout, then
-fails with code `covered` naming the window. `--settle <ms>` first waits for
-the element's window to stop changing, then finds it again. `invoke`/`toggle`/`expand`/`select`/`set` use
-UIA patterns instead and need nothing on screen.
+### Selectors
 
-**The tray.** `ui tray <tooltip part>` looks for the icon on the taskbar's
-notification area (task buttons don't count: "Maximal - 1 running window" is
-not the tray icon), else opens the overflow flyout with "Show Hidden Icons"
-and looks there; waits for the icon to stop moving; clicks it (right by
-default, `--button left|double`). With `--menu <item>` it then clicks that
-item in the context menu (`#32768`, matched without `&`, the accelerator and
-a trailing `…`; exact first, then prefix), clicking the icon again if no menu
-appears within 2.5 s — right after start an app may not have attached its
-menu yet — and closes the flyout afterwards. `ui menu <item>` alone clicks an
-item of a menu that is already open.
+First choose which top-level windows to search. If you give more than one,
+all must match:
 
-**Settling.** `ui settle` polls the scope's element tree every 50 ms (one
-cached cross-process walk each; names, types, bounds, enabled/offscreen,
-values, toggle states) and returns once it has been identical for `--quiet`
-ms (300). No scope: every top-level window plus the foreground window's
-subtree. It reports `settled: false` (exit 1) at `--timeout` (10 s) rather
-than throwing.
+- `--window <text>`: the title contains the text (any case), or the window
+  class equals it.
+- `--process <name>`: the process name; `.exe` is optional.
+- `--hwnd <n>`: the window handle.
 
-In jobs, `shell: winvm` lines (see below):
+Then choose the element:
+
+- `--name <text>`: the exact name, any case. A word right after the verb
+  means `--name`.
+- `--contains <text>`: the name contains the text.
+- `--id <id>`: the AutomationId.
+- `--type <type>`: the control type, such as Button, MenuItem, Hyperlink,
+  Text, Window or Edit.
+- `--class <name>`, `--index <n>`.
+
+Without a window or process, `ui` searches the whole desktop. That works but
+is slower.
+
+### Options
+
+- `--timeout <s>` (or `500ms`): how long to keep looking for the element.
+  `click`, `wait` and the other actions default to 10 seconds. `find` does
+  not wait unless you pass `--timeout`. `menu` waits 5 seconds.
+- `--settle <ms>`: before acting, wait until the element's window has stopped
+  changing for that long.
+- `--json`: print the helper's full answer.
+
+### Clicks
+
+`click`, `rightclick` and `doubleclick` send real mouse input to the centre of
+the element, so the app sees them exactly like a person's clicks.
+
+Before clicking, winvm checks which window is at that point. If another
+window covers the element, such as a notification or a dialog, winvm moves
+the pointer out of the way and waits for it to go. If it is still covered at
+the timeout, the command fails with the error code `covered` and names the
+covering window.
+
+`invoke`, `toggle`, `expand`, `select` and `set` use UI Automation patterns
+instead of the mouse. They work even when the element is not visible.
+
+`set` replaces a text field's value directly. `type` focuses the element and
+types the text as key presses.
+
+### The tray
+
+`ui tray <tooltip text>` finds the notification-area icon whose tooltip
+contains the text. Taskbar buttons don't count. If the icon is hidden, winvm
+opens the "Show hidden icons" flyout and looks there. It then clicks the icon:
+a right-click by default, or `--button left|double`.
+
+With `--menu <item>`, winvm then clicks that item in the icon's context menu.
+The match ignores case, the `&` accelerator marker and a trailing `…`; an
+exact match wins, then a prefix. If no menu appears within 2.5 seconds, winvm
+clicks the icon again, because an app that has just started may not have
+attached its menu yet. Afterwards it closes the flyout.
+
+### Waiting for the UI to settle
+
+`ui settle` waits until the element tree has not changed for `--quiet`
+milliseconds (default 300). With no window or process it watches all
+top-level windows and the foreground window. If the UI is still changing at
+`--timeout` (default 10 s), it prints `NOT settled` and exits with code 1.
+
+### Errors
+
+Failures print an error code:
+
+| code | meaning |
+|---|---|
+| `notfound` | no element matched |
+| `timeout` | the element did not appear (or, with `--gone`, did not go) in time |
+| `covered` | another window covers the point winvm would click |
+| `bad` | the request was invalid |
+| `unavailable` | the guest has no UI helper |
+| `fail` | anything else |
+
+### In jobs
+
+A `shell: winvm` step runs winvm commands on the host against the job's
+instance (see [CI jobs](jobs.md)):
 
 ```yaml
   - name: Quit Maximal from the tray menu and confirm
@@ -106,190 +146,181 @@ In jobs, `shell: winvm` lines (see below):
       ui wait --process maximal-shell --gone --timeout 30
 ```
 
-`jobs/maximal/nsis.yml` is the worked example: Settings opened from the tray
-menu, and a real Quit from the tray menu followed by the no-orphan check.
+`jobs/maximal/nsis.yml` is a full example. It opens Settings from the tray
+menu, quits from the tray menu, and checks that no processes are left.
 
-For harnesses, `ui.ts`:
+### From TypeScript (`ui.ts`)
 
 ```ts
 import { forInstance } from "./ui"
-const ui = await forInstance(name)        // agent.ensure, helper version check, warm-up
+const ui = await forInstance(name)        // ensures the agent and an up-to-date helper
 await ui.tray("Maximal", { menu: "Settings" })
 await ui.wait({ process: "maximal-shell", window: "Settings", name: "Account", controlType: "Text" })
 await ui.click({ window: "Settings", name: "Models", controlType: "Hyperlink" }, { settleMs: 200 })
 const t = await ui.tree({ process: "maximal-shell" }, { depth: 6 })
-// also: find, findAll, invoke, setValue, type, act(action, sel), focus, settle, menu, windows, ping
+// also: find, findAll, invoke, setValue, type, act(action, sel), focus, settle, menu, windows, at, ping
 ```
 
-Errors are `UiError` with a `code`: `notfound`, `timeout`, `covered`, `bad`,
-`unavailable` (no helper: off Windows, or an agent older than v4), `fail`.
+Errors are `UiError`, with a `code` from the table above.
 
-### UI Automation numbers
+### How UI Automation works
 
-Measured on `win11-arm64-v3` (800x600), M-series host, 2026-10-22, against
-Maximal v0.4.47 (x64 under Prism; Settings is WebView2), from the host through
-the agent (`ui.ts`, one held process; 20 runs, 5 for the compound rows).
-`winvm ui …` from the shell adds ~50 ms of bun start-up (`ui ping` end to end:
-50-60 ms).
+`winvm-ui.exe` (`assets/winvm-ui.cs`) is a C# program that uses the UI
+Automation library in Windows' built-in .NET Framework. The agent's install
+compiles it in the guest, and it runs natively on ARM64. It is DPI-aware, so
+its element bounds, mouse coordinates and screenshot pixels all match.
 
-| operation | median | p90 |
-|---|---|---|
-| `ping` (host → agent → helper → back) | **3 ms** | 7 ms |
-| `windows` (top-level, with process names) | 6 ms | 9 ms |
-| `find`, scoped: window + name (a WebView2 link) | **20 ms** | 24 ms |
-| `find`, scoped: window + AutomationId (title-bar Close) | 20 ms | 25 ms |
-| `find`, whole desktop by name | 32 ms | 34 ms |
-| `tree` of the Settings window (62 elements, one cached walk) | 24 ms | 29 ms |
-| `click` (real input, hit-tested; incl. find and the 40 ms hover) | **128 ms** | 142 ms |
-| `invoke` (InvokePattern) | 44 ms | 53 ms |
-| click a nav link → its section title is there (`click` + `wait`) | ~200 ms | |
-| `settle`, quiet 300 ms, on an idle window / the desktop | 381 / 364 ms | 401 / 378 ms |
-| `tray Maximal --menu Settings` (open flyout, wait for the icon to stop, right-click, menu item, close flyout) | **1.2 s** | 2.1 s |
-| quit: `tray … --menu "Quit Maximal"` / confirm-dialog `click --settle 200` / windows gone | 0.8 s / 0.5 s / 0.15 s | |
+The agent starts the helper on first use and talks to it over stdin and
+stdout, one JSON line per request and answer. The agent exposes it as
+`POST /ui`. The helper exits when the agent does. It logs every request to
+`C:\ProgramData\winvm\agent\winvm-ui.log`. If a window hangs and UI
+Automation never answers, the helper returns a `timeout` error.
 
-The helper's first request after it starts pays ~300-450 ms of UIA warm-up
-(`forInstance` spends it on a `ping`). Most of a tray call is waiting on the
-shell: the flyout opens in 130-260 ms and slides for ~350 ms more, and the
-chevron ignores a click within ~0.5 s of the flyout closing.
-`jobs/maximal/nsis.yml` passes in 25-31 s from a golden reset (6 of 6 in a
-row on a fresh golden); its tray steps take 7-9 s (Settings, most of it
-waiting out the start-up toast) and 1.4-4 s (Quit and confirm).
+The helper's first request after it starts takes a few hundred milliseconds
+longer. `forInstance` spends that time on a `ping`. If the guest's helper is
+older than the host expects (`UI_HELPER_VERSION` in `ui.ts`), `forInstance`
+reinstalls the agent, which takes a few seconds. Goldens made before a helper
+change therefore upgrade themselves on first use.
 
-### How it works
+### Known problems
 
-`winvm-ui.exe` (`assets/winvm-ui.cs`, C# 5) is compiled in the guest by
-`agent-install.ps1` with Add-Type against the in-box .NET Framework 4.8.1
-(`System.Windows.Automation`): AnyCPU, so it runs **native ARM64**, per-monitor
-DPI aware (UIA bounds = SendInput coordinates = screendump pixels). The
-agent's spawner starts it on first use and talks to it over stdin/stdout, one
-JSON line each way, answers matched by id so a long `wait` holds up nothing
-else; the agent exposes that as `POST /ui` (`AgentClient.ui`). It exits when
-its stdin closes, so it never outlives the agent. Every request is logged to
-`C:\ProgramData\winvm\agent\winvm-ui.log`; one that UIA never answers (a
-hung window) is answered with a `timeout` error after 2 × its timeout + 25 s.
-`ui.forInstance` reinstalls the agent when the guest's helper is older than
-`UI_HELPER_VERSION`, so goldens made before a helper change upgrade
-themselves on first use (~5 s).
+- **WebView2 builds its accessibility tree on the first query.** The first
+  `find` into a new WebView2 window can miss. Use `wait`, or give `find` a
+  `--timeout`.
+- **Notifications are invisible to UI Automation but still catch clicks.** A
+  notification that slides up over the tray does not appear in the element
+  tree. This is why winvm checks for a covering window before each click.
+  `ui at x y` shows both what UI Automation sees and which window would get
+  the click.
+- **A Windows Firewall prompt blocks clicks.** The "allow this app" prompt
+  does not appear in the element tree, and clicks on the window under it do
+  nothing. The agent's install turns these prompts off. If an app still
+  triggers one, allow the program in an earlier step.
+- **The tray's overflow flyout stays in the tree after it closes.** It is
+  hidden, not removed, so `tray` checks whether it is really visible. An open
+  flyout can also end up behind a window that its menu opened, so `tray`
+  closes it afterwards and reopens it if its icon is covered.
+- Maximal's title-bar Close button hides Settings to the tray; the process
+  keeps running. `wait --gone` with only a window or process waits for the
+  window to leave the tree.
 
-### Things learned
-
-- **WebView2 builds its accessibility tree on the first UIA query.** The very
-  first `find` into a fresh Chromium window can miss; `wait` (or any
-  `--timeout`) covers it. After that the web content is ordinary elements
-  (ListItem, Hyperlink, Text, Button, ComboBox …) in the app's window.
-- **Toasts are invisible to UI Automation but take clicks.** Maximal's "Sign
-  in to GitHub" toast (a `Windows.UI.Core.CoreWindow` of ShellExperienceHost,
-  "New notification") slides up over the tray right after start, and neither
-  the UIA tree nor `AutomationElement.FromPoint` shows it — the first nsis
-  runs right-clicked the toast and opened *its* context menu. Hence the
-  Win32 hit test above; `ui at x y` shows both views.
-- **A higher-integrity window on top swallows real clicks.** Windows
-  Firewall's "allow this app" prompt (a Bun-compiled sidecar listening on
-  0.0.0.0 shows as "Bun") does not appear in the UIA tree, and input aimed at
-  the window under it goes nowhere. Allow the program first (the job's first
-  step); `agent-install.ps1` now also turns the firewall's desktop prompts off.
-- Maximal's title-bar Close hides Settings to the tray (the process stays);
-  `wait --gone` with only a scope waits for the window to leave the tree.
-- **The overflow flyout lies about being open.** A closed flyout stays in the
-  UIA tree with its old bounds and not offscreen — it is only DWM-cloaked —
-  so `tray` asks `IsWindowVisible` and `DWMWA_CLOAKED`. An open one stays open
-  after its icon's menu is used and sinks behind the window the item opened
-  (Settings, 820x620, covers the whole 800x600 screen); `tray` closes it
-  afterwards, and if it finds its icon covered anyway it closes and reopens
-  the flyout (a covering toast is waited out the same way).
-
+## DevTools for WebView2 (`winvm webview`)
 
 ```sh
-winvm webview enable maximal-shell.exe          # once; then (re)start the app
+winvm webview enable maximal-shell.exe          # once; then start or restart the app
 winvm webview targets
 winvm webview eval 'document.title' --target /ui/settings
 winvm webview wait 'nav.sidebar a[href="#apps"]' --visible --timeout 30
 winvm webview click 'nav.sidebar a[href="#apps"]'
 winvm webview text 'h2.section__title' --expect Account
+winvm webview disable maximal-shell.exe
 ```
 
-`--target T` picks the page whose URL or title contains T (default: the first
-page). Commands wait up to `--timeout` (10 s) for the app's port and page, so
-they can follow a launch directly. `eval` awaits promises and prints JSON
-(strings raw); a thrown exception exits 1, which is the way to assert.
-`click` is a real mouse press/release at the element's centre
-(`Input.dispatchMouseEvent`), after scrolling it into view.
+`enable` takes the program's file name, not a path. It only affects the app
+the next time it starts.
 
-For harnesses: `webview.session(name, match)` returns a `CdpSession` with
-`eval`, `waitFor`, `text`, `click` and raw `send(method, params)`.
+- `--target <text>`: use the page whose URL or title contains the text. The
+  default is the first page.
+- `--timeout <s>`: how long to wait for the app's DevTools port, the page and
+  the element. The default is 10 seconds, so a command can run right after
+  the app is launched.
+- `eval` waits for promises and prints the result as JSON (strings are
+  printed as is). If the script throws, `eval` exits with code 1, so you can
+  use it to assert.
+- `click` scrolls the element into view and sends a real mouse click at its
+  centre.
+- `wait --visible` waits until the element also has a size on screen.
+- `text --expect <text>` fails unless the element's text contains it (any
+  case).
+- `--port <n>`: the DevTools port in the guest. The default is the last one
+  you enabled, else 9222.
 
-### How the port gets out
+From TypeScript, `webview.session(name, match)` returns a `CdpSession` with
+`eval`, `waitFor`, `text`, `click`, and `send(method, params)` for raw
+DevTools calls.
 
-1. **The policy.** WebView2 opens a DevTools port only when its browser
-   arguments say so. Tauri ignores `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS`, so
-   `enable` sets the machine policy
-   `HKLM\SOFTWARE\Policies\Microsoft\Edge\WebView2\AdditionalBrowserArguments`,
-   value name = the exe's file name, data `--remote-debugging-port=9222`. It
-   is read when the app creates its WebView2 environment: at app start.
-2. **The relay.** Chromium binds the port to 127.0.0.1, and a slirp forward
-   arrives on the guest's address (10.0.2.15), never its loopback. A Windows
-   portproxy relays `0.0.0.0:19222` (port + 10000) to `127.0.0.1:9222`, with
-   a firewall rule admitting 10.0.2.2 (slirp) only.
-3. **The forward.** A host port to the relay, added at runtime with
-   `hostfwd_add` — never on the QEMU command line, which would change every
-   save's compatibility hash (same reasoning as the agent's, `agentfwd.ts`).
-   Every command re-checks it, so a new QEMU process (load, stow recall,
-   golden reset) gets it back on first use. State: `<instance>/webview.json`.
+### How the DevTools port is reached
 
-1 and 2 live in the guest's registry, so a save or golden taken after
-`enable` keeps them. `disable <exe>` removes them.
+1. **A policy turns the port on.** WebView2 opens a DevTools port only when
+   its browser arguments ask for one. Tauri ignores the
+   `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS` environment variable, so `enable`
+   sets the machine policy
+   `HKLM\SOFTWARE\Policies\Microsoft\Edge\WebView2\AdditionalBrowserArguments`.
+   The value name is the program's file name and the data is
+   `--remote-debugging-port=9222`. WebView2 reads it when the app starts.
+2. **A relay in the guest exposes it.** WebView2 listens on 127.0.0.1 only,
+   and QEMU's forwards arrive on the guest's network address, not loopback. A
+   Windows port proxy relays `0.0.0.0:19222` (the port plus 10000) to
+   `127.0.0.1:9222`. A firewall rule allows only the host (10.0.2.2).
+3. **A forward connects the host.** winvm forwards a host port to the relay at
+   runtime with `hostfwd_add`, for the same reason as the agent's forward
+   (see [agent.md](agent.md#connection)). Every command checks the forward and
+   adds it again if a new QEMU process lost it. The host port is stored in
+   `<instance>/webview.json`.
 
-Chromium checks the `Host` header of `/json/*`; an IP literal (what we send)
-passes. Its `webSocketDebuggerUrl` echoes that host and port, so it needs no
-rewriting.
+Steps 1 and 2 are stored in the guest, so a save or golden taken after
+`enable` keeps them. `disable` removes them.
 
-## OCR
+## OCR (`winvm ocr`)
 
 ```sh
-winvm ocr                                  # every line: x,y wxh  confidence  text
-winvm ocr --find "MCP servers" --wait 20   # exit 1 if not there after 20 s
-winvm ocr --image shot.png --json          # any image; JSON with centres
-winvm click --text Cancel                  # OCR, then click the middle of the match
+winvm ocr                                  # every line of text: x,y wxh  confidence  text
+winvm ocr --find "MCP servers" --wait 20   # exit 1 if it is not on screen within 20 s
+winvm ocr --image shot.png --json          # any image; JSON includes each box's centre
+winvm click --text Cancel                  # find the text, then click its centre
 ```
 
-A QMP screendump (PNG, framebuffer pixels) goes through macOS Vision
-(`VNRecognizeTextRequest`, accurate, en-US language correction) in
-`assets/ocr.swift`, compiled on first use into
-`$WINVM_HOME/cache/bin/winvm-ocr-<source hash>`. Boxes are screenshot pixels,
-the same coordinates `winvm click x y` takes.
+winvm takes a screenshot through QEMU and reads it with macOS Vision. The
+positions are screenshot pixels, the same coordinates `winvm click x y`
+takes.
 
-Matching folds case and accents. A whole-line match beats a line that merely
-contains the text; ties go top to bottom, then left to right. A match inside a
-longer line gets its own box (Vision boxes substrings), so `--text Quit` on
-"Quit Maximal" clicks "Quit".
+The default is accurate recognition. `--fast` is about five times faster but
+less accurate on small text.
 
-## Toasts
+Matching ignores case and accents. A line that is exactly the text wins over
+a line that contains it. If several lines match equally, the top one wins,
+then the leftmost. A match inside a longer line gets its own box, so
+`click --text Quit` on the line "Quit Maximal" clicks the word "Quit".
+
+The OCR helper is `assets/ocr.swift`. winvm compiles it with `swiftc` the
+first time you use OCR and caches it in `$WINVM_HOME/cache/bin/`. It is
+rebuilt only when its source changes.
+
+## Notifications (`winvm toasts`)
 
 ```sh
-winvm toasts                                         # every toast still on record
+winvm toasts                                         # every notification still on record
 winvm toasts --app maximal --find "Sign in" --since 10m --wait 30
 winvm toasts --json
 ```
 
-Windows records each toast it accepts in the user's WPN database,
-`%LOCALAPPDATA%\Microsoft\Windows\Notifications\wpndatabase.db` (SQLite, WAL,
-held open by WpnUserService). The agent runs as that user, copies the db,
-`-wal` and `-shm` out over HTTP, and `bun:sqlite` reads the copy (opening it
-read-write, so the WAL is applied). `Notification.Payload` is the toast XML;
-its `<text>` elements are the title and body. `ArrivalTime` is a FILETIME.
+- `--app <text>`: the app's ID contains the text.
+- `--find <text>`: the title or body contains the text.
+- `--since <time>`: an ISO time, or an age such as `90s`, `5m` or `2h`.
+- `--wait <s>`: keep checking until a notification matches.
 
-The image turns toast popups and the notification centre off
-(`assets/logon.ps1`); toasts are recorded all the same, which is what makes
-this reliable where OCR of a popup would race its animation. A toast stays in
-the table until it is dismissed or expires (days), so "did it fire?" wants
-`--since`. Times are the guest's clock, which winvm keeps on the host's.
+With any filter, the command exits with code 1 if nothing matches.
 
-## In jobs: `shell: winvm`
+Windows keeps a notification in its record until it is dismissed or expires,
+which can take days. To check that something happened just now, use
+`--since`. Times use the guest's clock, which winvm keeps in sync with the
+host.
 
-A step with `shell: winvm` runs each line of `run` as a winvm command **on the
-host**, against the job's instance (`hoststep.ts`): split like a POSIX shell
-(quotes, no expansion), `-i <instance>` added, the job's and step's env
-passed. The step fails at the first line that exits non-zero.
+The image turns notification pop-ups and the notification centre off.
+Windows still records every notification, so this check is reliable where
+OCR of a pop-up would race its animation.
+
+How it works: Windows records notifications in the user's database,
+`%LOCALAPPDATA%\Microsoft\Windows\Notifications\wpndatabase.db` (SQLite). The
+agent runs as that user and copies the database files to the host, where
+winvm reads them with `bun:sqlite`.
+
+## Using these in jobs
+
+A `shell: winvm` step runs each line of `run` as a winvm command on the host,
+against the job's instance. Quotes work as in a POSIX shell, with no variable
+expansion. The step fails at the first line that exits with an error. See
+[CI jobs](jobs.md).
 
 ```yaml
   - name: Settings over DevTools
@@ -301,15 +332,14 @@ passed. The step fails at the first line that exits non-zero.
       ocr --find Diagnostics
 ```
 
-`jobs/maximal/settings-ui.yml` is the worked example: install the NSIS tray
-app, `webview enable`, start it, read and click Settings over DevTools, check
-the start-up toast, OCR Settings.
+`jobs/maximal/settings-ui.yml` is a full example. It installs Maximal, runs
+`webview enable`, starts the app, reads and clicks Settings over DevTools,
+checks the start-up notification, and reads Settings with OCR.
 
-### Maximal notes
+### Notes on Maximal
 
-- A fresh install with no account raises **"Sign in to GitHub"** at start, and
-  opens Settings at `#account` on its own. A second launch of
-  `maximal-shell.exe` focuses or opens Settings.
-- **"Maximal is working"** fires on the first tokens through the proxy
-  (`src/lib/working-notice.ts`), so it needs a signed-in Copilot account; a
-  CI guest has none. The job checks it as informational only.
+- A fresh install with no account shows a "Sign in to GitHub" notification
+  at start and opens Settings on the Account section. Launching
+  `maximal-shell.exe` a second time focuses or opens Settings.
+- The "Maximal is working" notification needs a signed-in Copilot account,
+  which a CI guest does not have. The job does not fail if it is missing.
