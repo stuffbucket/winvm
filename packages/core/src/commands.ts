@@ -1064,6 +1064,8 @@ export const USAGE =
   "  put     [-i name] <host file> <guest path>    copy a file into the guest\n" +
   "  get     [-i name] <guest path> <host file>    copy a file out of the guest\n" +
   "  launch  [-i name] -- <program> [args]         start it on the guest's desktop, detached\n" +
+  "  terminal [-i name] [--shell pwsh|powershell|cmd] [--cwd PATH]   a guest shell, in this terminal\n" +
+  "          [--connect --json]    print the WebSocket URL and subprotocols for another client\n" +
   "  smoke   [-i name] [--expect <v> | --expect-file <path>] [--probe <exe>]\n" +
   "  snapshot [-i name] [tag]      capture the running guest, RAM and all\n" +
   "           [--delete]           remove that snapshot instead\n" +
