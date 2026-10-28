@@ -71,6 +71,7 @@ const built = [
   ...["running", "starting", "paused", "stopped", "stowed", "missing"].map((s) => `machine.state.${s}`),
   ...["invalid", "taken"].map((p) => `machine.name.${p}`),
   "place.desktop",
+  ...["hintOff", "hintOn", "pending", "pendingStop"].map((k) => `folder.${k}`),
 ]
 
 describe("the en catalog", () => {

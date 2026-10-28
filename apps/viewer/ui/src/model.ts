@@ -266,3 +266,26 @@ export type ClaudeChange = z.infer<typeof ClaudeChange>
 
 /** `winvm mcp install|uninstall <client> -i <name> --json`. */
 export const parseClaudeChange = (stdout: string): ClaudeChange | null => ClaudeChange.safeParse(json(stdout)).data ?? null
+
+const SharedFolderStatus = z.object({
+  /** This machine can share a folder; when not, `reason` says why in plain words. */
+  available: z.boolean(),
+  reason: z.string().nullable().default(null),
+  /** The Mac folder chosen; null when nothing is shared. */
+  folder: z.string().nullable(),
+  /** The Windows drive letter it shows as, without the colon. */
+  letter: z.string(),
+  readonly: z.boolean(),
+  running: z.boolean(),
+  /** What the running Windows shows now; null while it is off. */
+  serving: z.string().nullable().default(null),
+  /** A change waits for the next time Windows starts. */
+  pending: z.boolean(),
+  /** Windows' side: the driver installed, the drive there; null when unknown (off, or its agent silent). */
+  guest: z.object({ installed: z.boolean().nullable(), mounted: z.boolean().nullable() }).default({ installed: null, mounted: null }),
+})
+
+export type SharedFolderStatus = z.infer<typeof SharedFolderStatus>
+
+/** `winvm share -i <name> status|set|clear|install --json`: the shared Mac folder. */
+export const parseSharedFolder = (stdout: string): SharedFolderStatus | null => SharedFolderStatus.safeParse(json(stdout)).data ?? null

@@ -98,6 +98,25 @@ available, as Task Manager counts it), or, until Windows answers, what QEMU
 holds on the Mac, said so. Read every 2.5 s while the window shows, never
 while the machine is off, with one `ps` and one agent call, no CLI.
 
+**Shared folder** (`features/sharedfolder/`), closed unless Windows needs
+its setup, with "Off" or "Z: in Windows" beside the title: the Mac folder
+on one line under `~` (the middle gives way, its last part stays) with a
+Show in Finder icon button, "In File Explorer as Mac (Z:)", a Windows can
+only read it checkbox, Choose folder… (the folder panel) and Stop sharing.
+A change made while Windows runs waits for its next start, and one hint
+line says so. When Windows lacks the driver, Set up in Windows… confirms
+first (Windows restarts twice, a few minutes), then a hint holds the place
+while it runs. A machine that can't share (the fixed 800 × 600 display, an
+older runtime) shows `winvm share status`'s reason and no buttons. It reads
+`winvm share -i <name> status --json` while the panel is open, and again
+when the machine starts, stops or its agent answers.
+
+**The clipboard** has no control: text goes both ways while the window is
+in front (`features/screen/clipboard.ts`). What Windows copies goes on the
+Mac's clipboard; the Mac's goes to Windows when the window comes forward and
+once on connecting, only when it changed, and never back to where it came
+from. QEMU's qemu-vdagent carries it, through noVNC's extended clipboard.
+
 ## The Files window
 
 A window of its own per instance, as Finder is, so files sit beside the

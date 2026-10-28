@@ -24,7 +24,7 @@ struct Output {
 const VERBS: &[&str] = &[
     "status", "doctor", "start", "stop", "reboot", "pause", "resume", "kill", "open", "setup", "exec", "put", "get",
     "dir", "mkdir", "mv", "cp", "rm", "save", "load", "saves", "help", "terminal", "config", "display", "create",
-    "destroy", "ls", "mcp",
+    "destroy", "ls", "mcp", "share",
 ];
 
 #[tauri::command]
@@ -238,16 +238,43 @@ async fn files_open(app: tauri::AppHandle, instance: String, title: Option<Strin
 }
 
 /// Puts text on the Mac's clipboard (the webview's own clipboard needs a user gesture a menu item isn't).
+/// pbcopy reads its input in LANG's encoding, and an app started from Finder has none: say UTF-8.
 #[tauri::command]
 fn copy_text(text: String) -> Result<(), String> {
     use std::io::Write;
     let mut child = std::process::Command::new("/usr/bin/pbcopy")
+        .env("LANG", "en_US.UTF-8")
         .stdin(std::process::Stdio::piped())
         .spawn()
         .map_err(|e| e.to_string())?;
     child.stdin.take().ok_or("pbcopy has no stdin")?.write_all(text.as_bytes()).map_err(|e| e.to_string())?;
     child.wait().map_err(|e| e.to_string())?;
     Ok(())
+}
+
+/// The text on the Mac's clipboard, for Windows' clipboard; empty when it holds none (an image,
+/// files). Off the main thread: the screen asks each time the window comes forward.
+#[tauri::command]
+async fn read_text() -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(|| {
+        let out = std::process::Command::new("/usr/bin/pbpaste")
+            .args(["-Prefer", "txt"])
+            .env("LANG", "en_US.UTF-8")
+            .output()
+            .map_err(|e| e.to_string())?;
+        if !out.status.success() {
+            return Err(String::from_utf8_lossy(&out.stderr).into_owned());
+        }
+        Ok(String::from_utf8_lossy(&out.stdout).into_owned())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// The Mac user's home folder, so the UI can show paths under it as `~/…`.
+#[tauri::command]
+fn home_dir() -> Result<String, String> {
+    std::env::var("HOME").map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -479,6 +506,8 @@ pub fn run() {
             usage::instance_usage,
             files_open,
             copy_text,
+            read_text,
+            home_dir,
             dragout::files_drag_out,
             trace
         ])

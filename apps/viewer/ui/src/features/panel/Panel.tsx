@@ -6,6 +6,9 @@ import { cx } from "../../components/cx"
 import { t } from "../../i18n"
 import type { Checks, Status } from "../../model"
 import { detailRows, phase } from "../../model"
+import { SharedFolder } from "../sharedfolder/SharedFolder"
+import { needsSetup, sectionHint } from "../sharedfolder/folder"
+import type { SharedFolderView } from "../sharedfolder/useSharedFolder"
 import { Resources, type UsageContext } from "../usage/Resources"
 import type { UsageView } from "../usage/useUsage"
 import type { Ran } from "../winvm/useWinvm"
@@ -18,6 +21,9 @@ interface PanelProps {
   readonly usage: UsageView
   readonly usageContext: UsageContext
   readonly canForceStop: boolean
+  readonly sharedFolder: SharedFolderView
+  /** Windows is up and its agent answers. */
+  readonly guestReady: boolean
   onForceStop(): void
 }
 
@@ -33,10 +39,11 @@ function Section({ title, hint, open, children }: { title: string; hint?: string
   )
 }
 
-/** Details on demand, over the display: resources, status, this Mac and troubleshooting. */
+/** Details on demand, over the display: resources, status, the shared folder, this Mac and troubleshooting. */
 export function Panel(p: PanelProps): JSX.Element {
   const rows = p.status === null ? [] : detailRows(p.status)
   const macReady = p.checks?.ready ?? false
+  const folderHint = sectionHint(p.sharedFolder.status)
   return (
     <aside className="panel" aria-label={t("action.details")}>
       <Section title={t("panel.resources")} open>
@@ -65,6 +72,14 @@ export function Panel(p: PanelProps): JSX.Element {
             ))}
           </ul>
         )}
+      </Section>
+
+      <Section
+        title={t("panel.sharedFolder")}
+        hint={folderHint === null ? undefined : t(folderHint.key, folderHint.values)}
+        open={needsSetup(p.sharedFolder.status) || p.sharedFolder.working === "install" ? true : undefined}
+      >
+        <SharedFolder view={p.sharedFolder} guestReady={p.guestReady} />
       </Section>
 
       <Section title={t("panel.mac")} hint={macReady ? t("mac.ready") : undefined} open={p.checks !== null && !macReady}>

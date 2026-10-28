@@ -12,6 +12,14 @@ declare module "novnc/core/rfb.js" {
     focusOnClick: boolean
     disconnect(): void
     sendCredentials(credentials: { readonly password: string }): void
+    /** Sends text to the server's clipboard: extended clipboard (UTF-8) once the server has said it can, else Latin-1. */
+    clipboardPasteFrom(text: string): void
+    /**
+     * Private in noVNC: the extended-clipboard formats the server announced
+     * (1 is text), empty until its caps arrive just after connecting; read so
+     * the first paste goes as UTF-8 (see Screen.tsx).
+     */
+    readonly _clipboardServerCapabilitiesFormats?: Readonly<Record<number, boolean>>
     /** Private in noVNC, read to send SetDesktopSize ourselves (see Screen.tsx). */
     readonly _sock: unknown
     readonly _screenID?: number
