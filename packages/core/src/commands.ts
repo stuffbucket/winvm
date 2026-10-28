@@ -41,6 +41,8 @@ import * as snapshot from "./snapshot"
 import * as timemachine from "./timemachine"
 import { ensureService, readService, stopService } from "./service"
 import { ensureRuntime, findRuntime, runtimeBin } from "./runtime"
+import * as share from "./share"
+import { ensureShareMedia } from "./sharemedia"
 import * as watcher from "./watch"
 import { CONFIG_KEYS, DEFAULTS, effectiveConfig, parseAssignment, readOverrides, writeAssignments } from "./config"
 
@@ -159,7 +161,7 @@ export function prune(args: Args): number {
       continue
     }
     const size = du(p.dir)
-    qemu.stopSwtpm(p)
+    qemu.stopSidecars(p)
     stopService(p)
     rmSync(p.dir, { recursive: true, force: true })
     saves.removeAllSaves(name)
@@ -313,7 +315,19 @@ export async function build(args: Args): Promise<number> {
 
   download(TOOLS_URL, media.tools(), TOOLS_SHA256)
   download(PWSH_URL, media.pwsh(), PWSH_SHA256)
-  buildSeed(args.flags.get("payload"), args.flags.get("bun"))
+  // The shared folder's guest side (viofs, WinFsp), installed while the build
+  // is on ramfb with the virtio-fs device attached (share.ts). Only on a
+  // runtime that has the device, and never fatal: without it the image is
+  // still whole, and `winvm share install` sets it up later.
+  let shareMedia: string | undefined
+  if (share.runtimeSupport().ok) {
+    try {
+      shareMedia = await ensureShareMedia()
+    } catch (error) {
+      console.warn(`warning: no shared folder in this image (${error instanceof Error ? error.message : String(error)}); \`winvm share install\` adds it later`)
+    }
+  }
+  buildSeed(args.flags.get("payload"), args.flags.get("bun"), shareMedia)
 
   // Start from nothing. Anything kept from a failed build is a way for this one
   // to behave like that one: the result volume carries the answer file and the
@@ -339,7 +353,7 @@ export async function build(args: Args): Promise<number> {
   const reap = (): void => {
     const pid = qemu.pidOf(p)
     if (pid !== null) process.kill(pid, "SIGKILL")
-    qemu.stopSwtpm(p)
+    qemu.stopSidecars(p)
   }
   for (const sig of ["SIGINT", "SIGTERM"] as const) {
     process.on(sig, () => {
@@ -354,7 +368,7 @@ export async function build(args: Args): Promise<number> {
     // Installs on NVMe — WinPE has no virtio-blk driver. See qemuArgs.
     await qemu.launch(scratch, p, meta, { installMedia: true, ephemeral: false, virtioBoot: false })
   } catch (error) {
-    qemu.stopSwtpm(p)
+    qemu.stopSidecars(p)
     console.error(`::error::could not start the installer VM: ${error instanceof Error ? error.message : String(error)}`)
     return 1
   }
@@ -517,7 +531,7 @@ export async function build(args: Args): Promise<number> {
         guestToolsSha256: TOOLS_SHA256,
       })
       writeFileSync(imageMetaPath(image), `${JSON.stringify(imageMeta, null, 2)}\n`)
-      qemu.stopSwtpm(p)
+      qemu.stopSidecars(p)
       stopService(p)
       rmSync(p.dir, { recursive: true, force: true })
       console.log(`base image ready: ${basePath(image)} (${du(basePath(image))})`)
@@ -585,6 +599,9 @@ export async function start(args: Args): Promise<number> {
   if (isNew) savecmds.markPristine(name)
   const meta = readMeta(name)
   if (meta === null) return 1
+  // Saves the shared folder and clipboard devices stranded: named, as `display` names a switch's.
+  const stranded = saves.strandedNote(name, saves.strandedByDevices(name))
+  if (stranded !== null) console.log(stranded)
 
   const virtioBoot = virtioBootFor(meta)
   try {
@@ -791,7 +808,7 @@ export async function stop(args: Args): Promise<number> {
   const deadline = Date.now() + 180_000
   while (Date.now() < deadline) {
     if (!qemu.isRunning(p)) {
-      qemu.stopSwtpm(p)
+      qemu.stopSidecars(p)
       console.log(`instance "${name}" stopped`)
       return 0
     }
@@ -871,7 +888,7 @@ export function kill(args: Args): number {
   if (pid === null) {
     // Still worth a sweep: a launch that failed, or an older winvm, can leave
     // the TPM emulator running with no guest.
-    qemu.stopSwtpm(p)
+    qemu.stopSidecars(p)
     stopService(p)
     finder.cleanStale(name)
     console.log(`instance "${name}" is not running`)
@@ -881,7 +898,7 @@ export function kill(args: Args): number {
   finder.beforeDown(name)
   process.kill(pid, "SIGKILL")
   rmSync(p.pid, { force: true })
-  qemu.stopSwtpm(p)
+  qemu.stopSidecars(p)
   stopService(p)
   void watcher.stopWatcher(name)
   console.log(`killed instance "${name}"`)
@@ -919,7 +936,7 @@ export function destroy(args: Args): number {
     return 1
   }
   stopService(p)
-  qemu.stopSwtpm(p)
+  qemu.stopSidecars(p)
   // Before smb.json goes with the instance: it holds the port that tells our mounts from anything else.
   finder.cleanStale(name)
   const size = du(instanceDir(name))
@@ -1167,6 +1184,9 @@ export const USAGE =
   "                                notifications apps raised (T: ISO time, or 90s/5m/2h ago)\n" +
   "  move    [-i name] <x> <y>     move the pointer\n" +
   "  scroll  [-i name] <n>         n wheel notches, positive is down (or: up|down [n])\n" +
+  "  share   [-i name] [status] [--json]   the Mac folder Windows sees as a drive (default Z:)\n" +
+  "          [-i name] set PATH [--letter Z] [--readonly] | clear   takes effect at the next start\n" +
+  "          [-i name] install [--restart]   set up Windows' side once (restarts Windows)\n" +
   "  display [-i name] [WxH] [--scale PCT]   resize the running screen live (virtio-gpu)\n" +
   "          [-i name] virtio-gpu|ramfb       switch a stopped instance's display device\n" +
   "  webview [-i name] enable <exe> | targets | eval <js> | click|wait|text <selector>\n" +

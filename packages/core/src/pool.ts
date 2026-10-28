@@ -239,7 +239,7 @@ async function hardStop(instance: string): Promise<void> {
     }
     for (let i = 0; i < 100 && qemu.pidOf(p) !== null; i += 1) await sleep(100)
   }
-  qemu.stopSwtpm(p)
+  qemu.stopSidecars(p)
   // A reset the watchdog abandoned may still hold the save lock; give it a
   // moment to fail and let go now that its QEMU is gone.
   await sleep(2000)

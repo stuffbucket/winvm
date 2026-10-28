@@ -247,7 +247,8 @@ describe("the save hash and the guest's resolution", () => {
 
   it("qemu.ts builds the display arguments from display.json alone", () => {
     const src = readFileSync(resolve(import.meta.dir, "../src/qemu.ts"), "utf8")
-    expect(src).toContain("...displayArgs(o.installMedia ? RAMFB : readDisplay(p))")
+    expect(src).toContain("const display = o.installMedia ? RAMFB : readDisplay(p)")
+    expect(src).toContain("...displayArgs(display),")
   })
 })
 

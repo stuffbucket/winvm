@@ -369,6 +369,53 @@ export function currentCompat(instance: string, meta: InstanceMeta): { readonly 
   return { hash: compatHash(parts), parts }
 }
 
+/**
+ * The hardware digest this instance had before winvm added the shared folder
+ * and clipboard devices (share.ts), or null when it has none of them (ramfb,
+ * or a runtime without them), so nothing was stranded.
+ */
+export function hardwareBeforeDevices(instance: string, meta: InstanceMeta): string | null {
+  const o = { installMedia: false, ephemeral: false, virtioBoot: readImageMeta(meta.image)?.virtioBoot === true }
+  const p = pathsFor(instance)
+  const now = qemu.qemuArgs(instance, p, meta, o)
+  const before = qemu.qemuArgs(instance, p, meta, { ...o, shareDevices: "none" })
+  if (now.join(" ") === before.join(" ")) return null
+  return sha(JSON.stringify(hardwareArgs(before))).slice(0, 16)
+}
+
+/** True when a save was taken on this instance's hardware as it was before the shared folder devices. */
+export const takenBeforeDevices = (m: Pick<Manifest, "compatParts">, before: string | null): boolean =>
+  before !== null && m.compatParts?.hardware === before
+
+/**
+ * The saves of `instance` that stopped loading when the shared folder and
+ * clipboard devices arrived: named by `start`, `saves`, `load` and the stow
+ * recall, as `display` names those a device switch strands.
+ */
+export function strandedByDevices(instance: string): readonly string[] {
+  const meta = readMeta(instance)
+  if (meta === null) return []
+  let before: string | null
+  try {
+    before = hardwareBeforeDevices(instance, meta)
+  } catch {
+    return []
+  }
+  if (before === null) return []
+  return listSaves(instance).flatMap((s) => (s.manifest !== null && takenBeforeDevices(s.manifest, before) ? [s.name] : []))
+}
+
+/** The sentence `start` and `saves` print about them, or null. */
+export function strandedNote(instance: string, names: readonly string[]): string | null {
+  if (names.length === 0) return null
+  const flag = instance === "default" ? "" : ` -i ${instance}`
+  return (
+    `${String(names.length)} save${names.length === 1 ? "" : "s"} of "${instance}" (${names.join(", ")}) ` +
+    `${names.length === 1 ? "was" : "were"} taken before winvm added the shared folder and clipboard devices and will not load. ` +
+    `They are kept; \`winvm saves${flag} rm <name>\` deletes one.`
+  )
+}
+
 // ---------------------------------------------------------------------------
 // Listing
 
@@ -394,10 +441,12 @@ export interface SaveEntry {
   /** Whether it loads into this instance as it is now; null when that could not be worked out. */
   readonly compatible: boolean | null
   readonly note?: string
+  /** Why it does not load, when winvm knows: e.g. taken before the shared folder devices. */
+  readonly why?: string
 }
 
 /** `winvm saves --json`: the readable saves, oldest name first, and whether each loads here. */
-export function savesReport(rows: readonly Listed[], compat: string | null): SaveEntry[] {
+export function savesReport(rows: readonly Listed[], compat: string | null, before?: string | null): SaveEntry[] {
   return rows.flatMap((r) =>
     r.manifest === null
       ? []
@@ -409,6 +458,9 @@ export function savesReport(rows: readonly Listed[], compat: string | null): Sav
             bytes: r.manifest.bytes,
             compatible: compat === null ? null : r.manifest.compat === compat,
             ...(r.manifest.note === undefined ? {} : { note: r.manifest.note }),
+            ...(compat !== null && r.manifest.compat !== compat && takenBeforeDevices(r.manifest, before ?? null)
+              ? { why: "taken before the shared folder and clipboard devices" }
+              : {}),
           },
         ],
   )
@@ -550,7 +602,7 @@ export async function quitQemu(p: Paths, timeoutMs = 120_000): Promise<void> {
   const deadline = Date.now() + timeoutMs
   while (Date.now() < deadline) {
     if (qemu.pidOf(p) === null) {
-      qemu.stopSwtpm(p)
+      qemu.stopSidecars(p)
       return
     }
     // QEMU is usually gone ~10 ms after `quit`; a 250 ms poll was a quarter of a mapped load.
@@ -558,7 +610,7 @@ export async function quitQemu(p: Paths, timeoutMs = 120_000): Promise<void> {
   }
   process.kill(pid, "SIGKILL")
   while (qemu.pidOf(p) !== null) await sleep(250)
-  qemu.stopSwtpm(p)
+  qemu.stopSidecars(p)
 }
 
 export interface CreateOptions {
@@ -744,7 +796,10 @@ export async function loadSave(instance: string, name: string): Promise<Manifest
   }
   const now = currentCompat(instance, meta)
   if (m.compat !== now.hash) {
-    const why = m.compatParts === undefined ? [] : compatDiff(m.compatParts, now.parts)
+    const devices = takenBeforeDevices(m, hardwareBeforeDevices(instance, meta))
+    const why = (m.compatParts === undefined ? [] : compatDiff(m.compatParts, now.parts)).map((w) =>
+      devices && w === "the virtual hardware (QEMU arguments) changed" ? "it was taken before winvm added the shared folder and clipboard devices" : w,
+    )
     throw new IncompatibleSave(
       `save "${name}" was taken on different virtual hardware and cannot be loaded here` +
         (why.length > 0 ? `: ${why.join("; ")}` : "") +
