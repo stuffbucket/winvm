@@ -61,12 +61,20 @@ guest's. It ends when the shell does, with the shell's exit code.
 ```sh
 winvm terminal [-i name] [--shell pwsh|powershell|cmd] [--cwd PATH]
 winvm terminal [-i name] [--shell ..] [--cwd ..] --connect --json
+winvm terminal [-i name] --shells [--json]
 ```
 
 The shell is PowerShell 7 (`pwsh`) unless you pick Windows PowerShell or
 `cmd`, and starts in the user's profile folder unless you give `--cwd`. An
 image built before PowerShell 7 was part of images gets Windows PowerShell
 instead, with a note in the terminal saying so.
+
+`--shells` says which shells the guest has, so a client can offer only
+those: with `--json`, one line such as
+`{"pwsh":false,"powershell":true,"cmd":true}`. It looks for PowerShell 7
+where the agent does (its install folder, then `PATH`), through the agent's
+ordinary exec. The Mac app asks once per instance and opens Windows
+PowerShell where PowerShell 7 is missing.
 
 Shells run as the logged-on Administrator, elevated: images have UAC off, so
 `whoami /groups` shows `High Mandatory Level`. For a SYSTEM command line, use

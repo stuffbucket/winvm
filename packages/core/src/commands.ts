@@ -1068,6 +1068,7 @@ export const USAGE =
   "  launch  [-i name] -- <program> [args]         start it on the guest's desktop, detached\n" +
   "  terminal [-i name] [--shell pwsh|powershell|cmd] [--cwd PATH]   a guest shell, in this terminal\n" +
   "          [--connect --json]    print the WebSocket URL and subprotocols for another client\n" +
+  "          --shells [--json]     which shells the guest has (PowerShell 7 may be missing)\n" +
   "  smoke   [-i name] [--expect <v> | --expect-file <path>] [--probe <exe>]\n" +
   "  snapshot [-i name] [tag]      capture the running guest, RAM and all\n" +
   "           [--delete]           remove that snapshot instead\n" +
