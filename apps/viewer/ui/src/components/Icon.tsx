@@ -27,10 +27,11 @@ export type IconName =
   | "plus"
   | "shield"
   | "chevronDown"
+  | "copy"
 
 // Lucide glyphs: play, power, rotate-ccw, pause, maximize, screen-share, panel-right, check, x,
 // terminal, folder, history, bot, file, monitor, file-text, download, house, hard-drive,
-// chevron-left, chevron-right, arrow-up, refresh-cw, plus; shield, quartered as Windows' elevation shield; chevron-down.
+// chevron-left, chevron-right, arrow-up, refresh-cw, plus; shield, quartered as Windows' elevation shield; chevron-down; copy.
 const PATHS: Record<IconName, ReactNode> = {
   terminal: (
     <>
@@ -166,6 +167,12 @@ const PATHS: Record<IconName, ReactNode> = {
     </>
   ),
   chevronDown: <path d="m6 9 6 6 6-6" />,
+  copy: (
+    <>
+      <rect width="14" height="14" x="8" y="8" rx="2" ry="2" />
+      <path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2" />
+    </>
+  ),
   plus: (
     <>
       <path d="M5 12h14" />

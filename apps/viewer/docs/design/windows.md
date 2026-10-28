@@ -40,7 +40,7 @@ The title bar is an overlay (`TitleBarStyle::Overlay`, hidden title), so
 the toolbar is the drag region and leaves room for the traffic lights.
 Left to right: the machine picker; what is happening, in words; power
 (Start or Shut down, Restart, Pause or Resume); things to do in Windows
-(Terminal, Files in Windows, Saves, Share with an agent); view (Fit to
+(Terminal, Files in Windows, Saves, Use with Claude); view (Fit to
 window, Open in Screen Sharing, Details). Nothing else: no meters, no
 heading repeating the window title.
 
@@ -192,6 +192,22 @@ above the display.
 | a letter or two | the next name starting with them |
 | Esc | cancel a rename or a drag; clear the selection |
 | ⌘W | close the window |
+
+## Use with Claude
+
+The toolbar's bot button opens a popover with one row per Claude app,
+Claude Code and Claude Desktop (from `winvm mcp status`): an Add button, or a
+quiet "Added" with a check and a ghost Remove; "Update" in place of "Added"
+when the app runs another copy of winvm; "Not installed" and no button when
+the app isn't on this Mac. Claude Desktop's Add confirms inline first (it
+edits that app's settings file). After a change, one hint line says what to
+do next: start a new Claude Code session, or quit and reopen Claude Desktop.
+It works with Windows off; Claude's tools then say how to start it.
+
+The HTTP endpoint for other agents (`winvm cua serve`) sits under a
+collapsed "Other agents" disclosure: a summary line, not a card. The
+address and token are each one unwrapped line with a copy icon button; a
+token too long for the line loses its middle, never its ends.
 
 ## Window behaviour
 
