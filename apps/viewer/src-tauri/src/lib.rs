@@ -1,3 +1,5 @@
+mod agent;
+
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -336,6 +338,7 @@ pub fn run() {
         .manage(Sharing::default())
         .manage(Updating::default())
         .manage(TerminalRequests::default())
+        .manage(agent::Agents::default())
         .menu(menu)
         .on_window_event(|window, event| {
             // Tabs asked for and never taken die with the window, rather than open in the next one.
@@ -395,7 +398,8 @@ pub fn run() {
             unused_path,
             reveal,
             terminal_open,
-            terminal_take
+            terminal_take,
+            agent::agent_fetch
         ])
         .build(tauri::generate_context!())
         .expect("winvm could not start")

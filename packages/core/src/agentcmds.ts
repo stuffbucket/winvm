@@ -1,5 +1,5 @@
 /**
- * The agent's verbs: `agent install|status`, `put`, `get`, `dir`, `launch` — and the
+ * The agent's verbs: `agent install|status|connect`, `put`, `get`, `dir`, `launch` — and the
  * agent-first `exec` that commands.ts calls. Each uses the in-guest agent when
  * one answers and falls back to qemu-ga, so they work on any running guest;
  * the agent only makes them fast (and puts launched programs on the desktop).
@@ -258,7 +258,7 @@ export async function launch(args: Args): Promise<number> {
   }
 }
 
-/** `agent install|status`. */
+/** `agent install|status|connect`. */
 export async function agentCmd(args: Args): Promise<number> {
   const name = instanceName(args)
   const sub = args.positional[0] ?? "status"
@@ -295,5 +295,30 @@ export async function agentCmd(args: Args): Promise<number> {
     )
     return 0
   }
-  return fail("usage: winvm agent [-i name] install | status [--json]")
+  if (sub === "connect") return await connectCmd(name, args)
+  return fail("usage: winvm agent [-i name] install | status [--json] | connect [--json]")
+}
+
+/**
+ * `agent connect [--json]`: make sure the agent is current and answering
+ * (installing or updating it if not), then print how to reach it:
+ * `{"url": "http://127.0.0.1:PORT", "token": …, "version": N}`. For a client
+ * that calls the agent itself, many times (the app: a live resize, the
+ * meters, the Files window), where this command would cost a process start
+ * each time. Mirrors `winvm terminal --connect`.
+ */
+async function connectCmd(name: string, args: Args): Promise<number> {
+  const notUp = running(name)
+  if (notUp !== null) return fail(notUp)
+  try {
+    const c = await agent.ensure(name, { log: (l) => console.error(l) })
+    const health = await c.health()
+    const s = agent.readState(pathsFor(name))
+    if (s === null || s.hostPort === null) throw new Error("the agent has no host port")
+    const info = { url: `http://127.0.0.1:${String(s.hostPort)}`, token: s.token, version: health.version }
+    console.log(args.flags.has("json") ? JSON.stringify(info) : `${info.url}\ntoken: ${info.token}\nagent v${String(info.version)}`)
+    return 0
+  } catch (error) {
+    return fail(`could not reach the agent in "${name}": ${msg(error)}`)
+  }
 }

@@ -4875,6 +4875,8 @@ dependencies = [
 name = "winvm-viewer"
 version = "0.1.0"
 dependencies = [
+ "reqwest",
+ "rustls",
  "serde",
  "serde_json",
  "tauri",
