@@ -522,11 +522,28 @@ it keeps them on the command line, so its saves still load.
    compiled at agent install, behind the agent's `POST /display`) polls the
    mode list until the size appears, then calls `ChangeDisplaySettingsEx` in
    the logged-on session. Through qemu-ga (session 0), the same call returns
-   success and changes nothing.
+   success and changes nothing. The agent keeps one helper running (`serve`,
+   a request per line): starting a .NET program costs 0.55–0.85 s in the
+   guest, which used to be most of every resize.
 
 Measured on win11-arm64: about 80 ms from the VNC request to QEMU's new
 framebuffer, of which the guest helper takes 60–160 ms including its wait.
-Through the CLI as a separate process it is 0.6–1 s, mostly bun starting up.
+Through the CLI as a separate process it was 0.6–1 s: the helper's .NET
+start-up (0.55–0.85 s, gone now it is kept running), then bun's.
+
+**How the app resizes.** It asks the CLI once per machine for the agent's
+address and token (`winvm agent connect --json`, which also brings an older
+agent up to date), then calls `POST /display` itself, from Rust
+(`agent_fetch`), on every resize. While the window's edge is dragged it
+holds the last picture stretched over the view and asks nothing, unless the
+size has been still for 250 ms; it asks the moment the mouse is let go
+(AppKit's end-of-live-resize notification), one request at a time with only
+the latest size queued, and draws 1:1 again once a frame has arrived at that
+size (or after 1.5 s, with whatever arrived). Release to 1:1, measured on
+win11-arm64 through the app's own controller (`resize.ts`) with VNC and the
+agent as the app uses them: median 137 ms, at most 188 ms over 8 drags. The
+old path, a 300 ms wait then the CLI and a fresh helper, took a median of
+880 ms to the new size's first pixels (up to 1.06 s).
 
 **Display scaling is set live too.** `DisplayConfigSetDeviceInfo` with the
 undocumented `DISPLAYCONFIG_DEVICE_INFO_SET_DPI_SCALE` (-4), which is what the
