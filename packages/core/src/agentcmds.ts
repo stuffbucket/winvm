@@ -114,7 +114,7 @@ export async function put(args: Args): Promise<number> {
 }
 
 /** Copy a host folder's files, at any depth, under the guest folder `to` (the agent creates folders as it writes). */
-async function putTree(c: agent.AgentClient, from: string, to: string): Promise<{ files: number; bytes: number }> {
+export async function putTree(c: Pick<agent.AgentClient, "putFile">, from: string, to: string): Promise<{ files: number; bytes: number }> {
   let files = 0
   let bytes = 0
   for (const rel of readdirSync(from, { recursive: true, encoding: "utf8" })) {
@@ -153,7 +153,7 @@ export async function get(args: Args): Promise<number> {
 }
 
 /** A guest folder's listing (everything in it), or null when `path` is not a folder or this agent cannot list. */
-async function folderOf(c: agent.AgentClient, path: string): Promise<agent.DirListing | null> {
+export async function folderOf(c: Pick<agent.AgentClient, "list">, path: string): Promise<agent.DirListing | null> {
   try {
     return await c.list(path, { hidden: true, limit: FOLDER_LIMIT })
   } catch (error) {
@@ -166,7 +166,7 @@ async function folderOf(c: agent.AgentClient, path: string): Promise<agent.DirLi
 const FOLDER_LIMIT = 100_000
 
 /** Copy a guest folder and everything in it to the host folder `to`, which it creates. */
-async function getTree(c: agent.AgentClient, l: agent.DirListing, to: string): Promise<{ files: number; bytes: number }> {
+export async function getTree(c: Pick<agent.AgentClient, "list" | "getFile">, l: agent.DirListing, to: string): Promise<{ files: number; bytes: number }> {
   if (l.total > l.entries.length) throw new Error(`${l.path} holds more than ${String(FOLDER_LIMIT)} entries`)
   mkdirSync(to, { recursive: true })
   let files = 0

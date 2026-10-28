@@ -83,7 +83,7 @@ function running(args: Args): { name: string; p: Paths } | null {
 // ---------------------------------------------------------------------------
 // Extra, non-standard actions: UI Automation by name, OCR by text
 
-const selectorSchema = {
+export const selectorSchema = {
   name: { type: "string", description: "The element's exact accessible name" },
   nameContains: { type: "string", description: "Part of the element's accessible name" },
   window: { type: "string", description: "Part of the top-level window's title (or its class) to search in" },
@@ -137,7 +137,7 @@ export function selectorFrom(input: Readonly<Record<string, unknown>>): Selector
 
 const text = (t: string, isError = false): Result => ({ content: [{ type: "text", text: t }], isError, ms: {} })
 
-class Extras {
+export class Extras {
   private ui: Ui | null = null
   private readonly name: string
   private readonly computer: Computer
