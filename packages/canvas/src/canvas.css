@@ -1,0 +1,319 @@
+/* =========================================================
+   @winvm/canvas: the infinite canvas's layers and chrome.
+
+   From monimal's packages/maximal-design-system/src/styles/spatial-canvas.css,
+   cut to the parts this package keeps and moved onto winvm's tokens
+   (apps/viewer/ui/src/styles/theme.ts): --surface-*, --text-*, --border-*,
+   --accent, --space-*, --radius-*. The host page defines them.
+   ========================================================= */
+
+.spatial-canvas-surface {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: block;
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+  border: 0;
+  outline: none;
+}
+
+.spatial-canvas-surface--embedded {
+  position: relative;
+  inset: auto;
+  z-index: auto;
+  width: 100%;
+  height: 100%;
+}
+
+.spatial-canvas-surface > .spatial-canvas {
+  width: 100%;
+  height: 100%;
+}
+
+.spatial-canvas {
+  position: relative;
+  overflow: hidden;
+  color: var(--text-base-color);
+  contain: layout paint style;
+  isolation: isolate;
+}
+
+.spatial-canvas__sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+/* ---- Viewport, grid and scene ---- */
+
+.spatial-canvas__viewport {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  outline: none;
+  cursor: default;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.spatial-canvas__viewport[data-tool="hand"],
+.spatial-canvas__viewport[data-panning="true"] {
+  cursor: grabbing;
+}
+
+.spatial-canvas__grid {
+  position: absolute;
+  inset: 0;
+  color: color-mix(in srgb, var(--text-muted) 38%, transparent);
+  background-image: radial-gradient(circle, currentColor 0.75px, transparent 1.25px);
+  background-size: var(--space-4) var(--space-4);
+  pointer-events: none;
+}
+
+.spatial-canvas__viewport:focus-visible {
+  box-shadow: inset 0 0 0 var(--border-width-thick) var(--accent);
+}
+
+.spatial-canvas input,
+.spatial-canvas textarea,
+.spatial-canvas [contenteditable="true"] {
+  cursor: text;
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+.spatial-canvas__scene {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 1px;
+  height: 1px;
+  transform-origin: 0 0;
+  will-change: transform;
+}
+
+.spatial-canvas__node,
+.spatial-canvas__label {
+  position: absolute;
+  top: 0;
+  left: 0;
+  box-sizing: border-box;
+  margin: 0;
+  transform-origin: 0 0;
+}
+
+.spatial-canvas__label {
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+.spatial-canvas__marquee {
+  position: absolute;
+  top: 0;
+  left: 0;
+  border: var(--border-width-thin) solid var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  pointer-events: none;
+}
+
+/* ---- Chrome ---- */
+
+.spatial-canvas__topbar {
+  position: absolute;
+  z-index: 3;
+  top: var(--space-3);
+  right: var(--space-3);
+  left: var(--space-3);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  pointer-events: none;
+}
+
+.spatial-canvas__topbar > * {
+  pointer-events: auto;
+}
+
+.spatial-canvas__corner,
+.spatial-canvas__controls,
+.spatial-canvas__zoom {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: var(--space-1);
+  border: var(--border-width-hairline) solid var(--border-subtle);
+  border-radius: var(--radius-card);
+  background: color-mix(in srgb, var(--surface-card) 86%, transparent);
+  box-shadow: var(--elevation-tooltip);
+  -webkit-backdrop-filter: blur(var(--space-5)) saturate(1.4);
+  backdrop-filter: blur(var(--space-5)) saturate(1.4);
+}
+
+.spatial-canvas__controls {
+  position: absolute;
+  z-index: 3;
+  bottom: var(--space-4);
+  left: 50%;
+  transform: translateX(-50%);
+}
+
+.spatial-canvas__button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  min-width: var(--size-xl);
+  height: var(--size-xl);
+  margin: 0;
+  padding: 0 var(--space-2);
+  border: 0;
+  border-radius: var(--radius-input);
+  background: transparent;
+  color: var(--text-base-color);
+  font: inherit;
+  font-size: var(--text-sm);
+  cursor: default;
+}
+
+.spatial-canvas__button--icon {
+  width: var(--size-xl);
+  padding: 0;
+}
+
+.spatial-canvas__button:hover:enabled,
+.spatial-canvas__button[aria-pressed="true"] {
+  background: var(--surface-control);
+  color: var(--text-strong);
+}
+
+.spatial-canvas__button:focus-visible,
+.spatial-canvas__search-result:focus-visible {
+  outline: var(--focus-ring);
+  outline-offset: calc(-1 * var(--focus-ring-width));
+}
+
+.spatial-canvas__button:disabled {
+  opacity: 0.45;
+}
+
+.spatial-canvas__zoom-value {
+  min-width: calc(var(--size-2xl) + var(--space-3));
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+.spatial-canvas__floating-panel {
+  position: absolute;
+  z-index: 4;
+  padding: var(--space-3);
+  border: var(--border-width-hairline) solid var(--border-subtle);
+  border-radius: var(--radius-card);
+  background: var(--surface-card);
+  box-shadow: var(--elevation-modal);
+}
+
+.spatial-canvas__side-panel {
+  position: absolute;
+  z-index: 4;
+  top: calc(var(--size-2xl) + var(--space-5));
+  right: var(--space-3);
+  bottom: var(--space-3);
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  width: min(calc(var(--panel-width) + var(--space-7)), calc(100% - var(--space-5)));
+  overflow: hidden;
+  border: var(--border-width-hairline) solid var(--border-subtle);
+  border-radius: var(--radius-card);
+  background: var(--surface-card);
+  box-shadow: var(--elevation-modal);
+}
+
+.spatial-canvas__side-panel > header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-2) var(--space-2) var(--space-4);
+  border-bottom: var(--border-width-hairline) solid var(--border-subtle);
+}
+
+.spatial-canvas__side-panel > header > strong {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-strong);
+  font-weight: var(--weight-lg);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.spatial-canvas__side-panel-body {
+  min-height: 0;
+  overflow: auto;
+  padding: var(--space-4);
+}
+
+/* ---- Search ---- */
+
+.spatial-canvas__search-results {
+  display: grid;
+  gap: var(--space-1);
+  max-height: min(60vh, calc(var(--size-2xl) * 10));
+  overflow: auto;
+}
+
+.spatial-canvas__search-empty {
+  padding: var(--space-3);
+  color: var(--text-muted);
+  font-size: var(--text-sm);
+}
+
+.spatial-canvas__search-result {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  width: 100%;
+  margin: 0;
+  padding: var(--space-2) var(--space-3);
+  border: 0;
+  border-radius: var(--radius-input);
+  background: transparent;
+  color: var(--text-base-color);
+  font: inherit;
+  text-align: left;
+  cursor: default;
+}
+
+.spatial-canvas__search-result:hover:enabled,
+.spatial-canvas__search-result[data-active="true"] {
+  background: var(--surface-control);
+}
+
+.spatial-canvas__search-result > span {
+  display: grid;
+  min-width: 0;
+}
+
+.spatial-canvas__search-result strong,
+.spatial-canvas__search-result small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.spatial-canvas__search-result strong {
+  color: var(--text-strong);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-md);
+}
+
+.spatial-canvas__search-result small {
+  color: var(--text-muted);
+  font-size: var(--text-sm);
+}
