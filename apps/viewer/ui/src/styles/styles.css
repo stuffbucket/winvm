@@ -267,6 +267,16 @@ html[data-os="macos"] .toolbar {
   background: var(--border-subtle);
 }
 
+.toolbar__capture-status {
+  max-width: calc(var(--size-2xl) * 4);
+  color: var(--accent);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-md);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 /* ---- Stage: the display on its backdrop; the panel over it ---- */
 .stage {
   position: relative;

@@ -13,6 +13,7 @@ declare module "novnc/core/rfb.js" {
     /** No keys or pointer sent to the server (the screen still updates). */
     viewOnly: boolean
     disconnect(): void
+    sendKey(keysym: number, code: string, down?: boolean): void
     sendCredentials(credentials: { readonly password: string }): void
     /** Sends text to the server's clipboard: extended clipboard (UTF-8) once the server has said it can, else Latin-1. */
     clipboardPasteFrom(text: string): void
@@ -37,8 +38,17 @@ declare module "novnc/core/rfb.js" {
       readonly _fbWidth: number
       readonly _fbHeight: number
     }
+    readonly _keyboard: {
+      _allKeysUp(): void
+    }
     static readonly messages: {
       setDesktopSize(sock: unknown, width: number, height: number, id: number, flags: number): void
     }
   }
+
+}
+
+declare module "novnc/core/input/util.js" {
+  export function getKeycode(event: KeyboardEvent): string
+  export function getKeysym(event: KeyboardEvent): number | null
 }

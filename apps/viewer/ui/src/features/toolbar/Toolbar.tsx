@@ -26,6 +26,7 @@ interface ToolbarProps {
   readonly canActualSize: boolean
   readonly open: PanelId | null
   readonly detailsOpen: boolean
+  readonly keyboardCaptured: boolean
   onStart(): void
   onShutDown(): void
   onRestart(): void
@@ -43,6 +44,7 @@ interface ToolbarProps {
   onActualSize(): void
   onScreenSharing(): void
   onDetails(): void
+  onKeyboardCapture(): void
 }
 
 interface ToolButtonProps {
@@ -218,6 +220,14 @@ export function Toolbar(p: ToolbarProps): JSX.Element {
       <span className="toolbar__divider" aria-hidden="true" />
 
       <div className="toolbar__group">
+        <ToolButton
+          icon="keyboard"
+          label={t(p.keyboardCaptured ? "input.release" : "input.capture")}
+          enabled={c.screen && !isFrozen(p.phase)}
+          pressed={p.keyboardCaptured}
+          onClick={p.onKeyboardCapture}
+        />
+        {p.keyboardCaptured && <span className="toolbar__capture-status">{t("input.captured")}</span>}
         <ToolButton
           icon="fit"
           label={t("action.actualSize")}
