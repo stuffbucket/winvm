@@ -72,6 +72,7 @@ const built = [
   ...["paused", "asleep"].map((s) => `usage.${s}`),
   ...["invalid", "taken"].map((p) => `machine.name.${p}`),
   "place.desktop",
+  ...["hintOff", "hintOn", "pending", "pendingStop"].map((k) => `folder.${k}`),
 ]
 
 describe("the en catalog", () => {
