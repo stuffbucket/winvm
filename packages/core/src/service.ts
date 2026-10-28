@@ -5,6 +5,8 @@ import { basename, resolve } from "node:path"
 import { QgaChannel, QmpChannel } from "./broker"
 import { PACKAGE_DIR, cliArgv, cliEntry, home, pathsFor, type Paths } from "./paths"
 import * as qga from "./qga"
+import * as share from "./share"
+import type { ChangeNotices } from "./sharewatch"
 
 export interface ServiceInfo {
   readonly pid: number
@@ -166,6 +168,19 @@ const coreVersion = (): string =>
 
 const STATES: Readonly<Record<string, string>> = { STOP: "paused", RESUME: "running", SHUTDOWN: "stopped", RESET: "reset" }
 
+/**
+ * What the shared folder's change notices (sharewatch.ts) should watch now: the
+ * folder the running daemon serves, and the drive it is in Windows. null while
+ * no QEMU runs, nothing is shared, or the share is read-only (the guest cannot
+ * touch anything there).
+ */
+export function noticeTarget(p: Paths, qemuRunning: boolean): { readonly root: string; readonly letter: string } | null {
+  if (!qemuRunning) return null
+  const serving = share.readServing(p)
+  if (serving === null || serving.folder === null || serving.readonly) return null
+  return { root: serving.folder, letter: share.readShare(p)?.letter ?? share.DEFAULT_LETTER }
+}
+
 export function stateEvent(e: Record<string, unknown>): Record<string, unknown> | null {
   const name = String(e["event"])
   const data = e["data"] as Record<string, unknown> | undefined
@@ -285,11 +300,55 @@ export async function runService(name: string, o: ServiceOptions = {}): Promise<
   let stopping = false
   let goneMs = 0
   const lock = resolve(home(), "saves", name, ".lock")
+
+  // The shared folder's change notices, for as long as a guest with one runs.
+  // Imported on first use: they need the agent's client, which needs qemu.ts.
+  let notices: { readonly key: string; readonly n: ChangeNotices } | null = null
+  let syncing = false
+  const syncNotices = async (): Promise<void> => {
+    if (syncing) return
+    syncing = true
+    try {
+      const want = stopping ? null : noticeTarget(p, livePidIn(p.pid) !== null)
+      const key = want === null ? "" : `${want.root}|${want.letter}`
+      if (notices?.key === key) return
+      if (notices !== null) await notices.n.stop()
+      notices = null
+      if (want === null) return
+      const [{ ChangeNotices }, agent] = await Promise.all([import("./sharewatch"), import("./agent")])
+      let client: Awaited<ReturnType<typeof agent.connect>> = null
+      const n = new ChangeNotices({
+        root: want.root,
+        send: async (paths) => {
+          client ??= await agent.connect(name, { timeoutMs: 1000 })
+          if (client === null) return
+          try {
+            const r = await client.touch(`${want.letter}:\\`, paths)
+            if (process.env["WINVM_SHARE_DEBUG"]) record("service", { what: "share notices sent", paths, ...r })
+          } catch (error) {
+            if (process.env["WINVM_SHARE_DEBUG"]) record("warning", { what: "share notices", error: String(error) })
+            client = null
+            throw error
+          }
+        },
+      })
+      n.start()
+      notices = { key, n }
+      record("service", { what: "share notices", root: want.root, letter: want.letter })
+    } catch (error) {
+      record("warning", { what: "share notices", error: error instanceof Error ? error.message : String(error) })
+    } finally {
+      syncing = false
+    }
+  }
+  void syncNotices()
+
   const check = setInterval(() => {
     if (!owned()) {
       void stop()
       return
     }
+    void syncNotices()
     if (livePidIn(p.pid) !== null || livePidIn(lock) !== null || keptWithin(p, exitAfterMs)) {
       goneMs = 0
       return
@@ -311,6 +370,8 @@ export async function runService(name: string, o: ServiceOptions = {}): Promise<
       }
     }
     subs.clear()
+    if (notices !== null) await notices.n.stop()
+    notices = null
     void server.stop(true)
     await qmpChannel.stop()
     await qgaChannel.stop()

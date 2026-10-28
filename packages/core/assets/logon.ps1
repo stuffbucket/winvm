@@ -114,6 +114,13 @@ try {
                 RegSet "HKCU:\Software\Microsoft\Windows\DWM" EnableAeroPeek 0
                 # OneDrive's per-user autostart.
                 Remove-ItemProperty "$cu\Run" -Name "OneDrive*" -ErrorAction SilentlyContinue
+                # The shared folder's drive is called what viofs-install.ps1
+                # recorded (Mac). The volume's own label is the virtio-fs tag;
+                # Explorer shows this per-user name instead.
+                $vfs = Get-ItemProperty "HKLM:\SOFTWARE\VirtIO-FS" -ErrorAction SilentlyContinue
+                if ($vfs -and $vfs.MountPoint -and $vfs.WinvmLabel) {
+                    RegSet "$cu\Explorer\MountPoints2\$($vfs.MountPoint.TrimEnd(':'))" _LabelFromReg $vfs.WinvmLabel String
+                }
                 Log "per-user settings applied"
             } catch {
                 Log "per-user settings FAILED: $($_.Exception.Message)"

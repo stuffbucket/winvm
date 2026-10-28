@@ -309,6 +309,22 @@ try {
         Write-Output "WARNING: no winvm\agent-install.ps1 on any volume - the agent installs on first use"
     }
 
+    # --- 3e2. The shared folder: viofs and WinFsp -----------------------------
+    #
+    # The build runs on ramfb with the virtio-fs device attached, so viofs is
+    # bound to the device here, where no virtio-gpu driver runs: binding it
+    # under virtio-gpu bugchecks Windows (see viofs-install.ps1). Instances
+    # then find the device installed. Optional: an image without it gets it
+    # from `winvm share install`.
+    $extras = Find-VolumeContaining -RelativePath "winvm\viofs\viofs-install.ps1"
+    if ($extras) {
+        & powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$extras\winvm\viofs\viofs-install.ps1" -Source "$extras\winvm\viofs"
+        Write-Output "viofs-install.ps1 exit: $LASTEXITCODE"
+        Write-Result -Name "viofs.txt" -Content $(if ($LASTEXITCODE -eq 0) { "ok" } else { "failed" })
+    } else {
+        Write-Output "no winvm\viofs on any volume - no shared folder in this image (winvm share install adds it)"
+    }
+
     # --- 3f. .NET native images -----------------------------------------------
     #
     # AUDIT MODE NEVER RUNS THE NGEN QUEUE. Windows ships the .NET Framework with

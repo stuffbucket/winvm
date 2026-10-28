@@ -296,7 +296,7 @@ export function readResult(image: string): ProvisionResult {
  * `C:\payload`, everything else is copied there, and a `setup.ps1` runs last.
  * That keeps this tool ignorant of what any particular consumer installs.
  */
-export function buildSeed(payloadDir: string | undefined, bunVersion: string | undefined): void {
+export function buildSeed(payloadDir: string | undefined, bunVersion: string | undefined, shareMedia?: string): void {
   const dir = media.seedDir()
   // FROM NOTHING, every time. This directory outlives builds, so without the
   // wipe a payload from an earlier `--bun` or `--payload` rides along into every
@@ -316,6 +316,13 @@ export function buildSeed(payloadDir: string | undefined, bunVersion: string | u
     throw new Error("could not unpack bun.exe for the guest agent")
   }
   if (existsSync(media.pwsh())) copyFileSync(media.pwsh(), resolve(dir, "winvm", "PowerShell-win-arm64.msi"))
+  // The shared folder's guest side: provision.ps1 runs viofs-install.ps1 from
+  // `winvm\viofs\` (sharemedia.ts fetched and checked the files).
+  if (shareMedia !== undefined) {
+    mkdirSync(resolve(dir, "winvm", "viofs"), { recursive: true })
+    for (const f of readdirSync(shareMedia)) copyFileSync(resolve(shareMedia, f), resolve(dir, "winvm", "viofs", f))
+    copyFileSync(resolve(ASSETS, "viofs-install.ps1"), resolve(dir, "winvm", "viofs", "viofs-install.ps1"))
+  }
   copyFileSync(resolve(ASSETS, "autounattend.xml"), resolve(dir, "autounattend.xml"))
   copyFileSync(resolve(ASSETS, "provision.ps1"), resolve(dir, "provision.ps1"))
   copyFileSync(resolve(ASSETS, "SetupComplete.cmd"), resolve(dir, "SetupComplete.cmd"))

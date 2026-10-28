@@ -15,6 +15,7 @@
  *   winvm snapshot [-i name] [tag]   capture the running guest, RAM and all
  *   winvm rewind   [-i name] [tag]   put it back — ~10-20 s running, no reboot
  *   winvm save / load / saves        whole-machine saves as files; see saves.ts
+ *   winvm share set PATH | clear | install   a Mac folder as a drive in Windows; see sharecmds.ts
  *   winvm golden create | reset      settled mapped-ram save for fast resets; see golden.ts
  *   winvm pause / resume / stow      freeze, unfreeze, save-and-quit
  *   winvm sleep / wake / lock        lock Windows and freeze it, wake it, lock it
@@ -147,6 +148,7 @@ import * as goldens from "@winvm/core/golden"
 import * as ocr from "@winvm/core/ocr"
 import * as runcmds from "@winvm/core/runcmds"
 import * as savecmds from "@winvm/core/savecmds"
+import * as sharecmds from "@winvm/core/sharecmds"
 import * as screen from "@winvm/core/screen"
 import * as service from "@winvm/core/service"
 import * as settings from "@winvm/core/settings"
@@ -273,6 +275,9 @@ switch (sub) {
   // eslint-disable-next-line no-fallthrough
   case "load":
     process.exit(await savecmds.load(args))
+  // eslint-disable-next-line no-fallthrough
+  case "share":
+    process.exit(await sharecmds.shareCmd(args))
   // eslint-disable-next-line no-fallthrough
   case "golden":
     process.exit(await goldens.golden(args))

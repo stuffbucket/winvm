@@ -30,6 +30,10 @@
  *   POST /fs/rename {from,to}         rename or move; never replaces anything     -> {path}
  *   POST /fs/copy   {from,to}         a file or a whole folder; never replaces    -> {path}
  *   POST /fs/delete {paths,recycle?}  to the Recycle Bin (default), or for good  -> {deleted}
+ *   POST /fs/touch  {root,paths}      give each path (under root) its own times back, or its
+ *                                     nearest existing folder when it is gone, so Windows'
+ *                                     change notifications fire for a change made on the Mac
+ *                                     side of the shared folder (sharewatch.ts) -> {touched,failed}
  *                                     the /fs/* routes fail with {error, code}: see FsCode
  *   POST /kill    {pid,tree?}
  *   POST /ui      {op,...}             UI Automation via winvm-ui.exe (assets/winvm-ui.cs, docs/gui.md)
@@ -41,7 +45,7 @@
  */
 import { spawn as nodeSpawn } from "node:child_process"
 import { appendFileSync, existsSync, mkdirSync, readFileSync, statSync, type Stats as FileStats } from "node:fs"
-import { cp, lstat, mkdir, readdir, rename, rm, stat, statfs } from "node:fs/promises"
+import { cp, lstat, mkdir, readdir, rename, rm, stat, statfs, utimes } from "node:fs/promises"
 import { freemem, homedir, totalmem } from "node:os"
 import { dirname, isAbsolute, join, relative, resolve } from "node:path"
 import { randomBytes, timingSafeEqual } from "node:crypto"
@@ -391,6 +395,62 @@ export interface FsPathResult {
 /** What /fs/delete answers: how many of the paths went. */
 export interface FsDeleteResult {
   readonly deleted: number
+}
+
+/** What /fs/touch answers. */
+export interface FsTouchResult {
+  readonly touched: number
+  readonly failed: number
+}
+
+/** The most paths one /fs/touch takes; the host touches the root for a bigger change. */
+export const TOUCH_LIMIT = 2000
+
+/**
+ * Nudge each path's modification time forward a millisecond and straight back.
+ * The write goes through the file system, and WinFsp (the shared folder's
+ * layer) reports it as a last-write change, so FileSystemWatchers and Explorer
+ * see what changed on the Mac, which virtio-fs does not report by itself.
+ * Writing the same time back alone reports nothing (measured: WinFsp skips a
+ * no-op), hence the round trip; the file ends with the time it had. A path
+ * that is gone touches its nearest existing folder up to `root`. Paths are
+ * relative to `root`, with / or \\, and may not climb out.
+ */
+export async function touchPaths(rawRoot: unknown, rawPaths: unknown): Promise<FsTouchResult> {
+  if (typeof rawRoot !== "string" || rawRoot === "") throw new FsError("bad", "root must be a folder")
+  if (!Array.isArray(rawPaths) || rawPaths.some((x) => typeof x !== "string")) throw new FsError("bad", "paths must be an array of strings")
+  if (rawPaths.length > TOUCH_LIMIT) throw new FsError("bad", `at most ${String(TOUCH_LIMIT)} paths at a time`)
+  const root = resolve(rawRoot)
+  const done = new Set<string>()
+  let touched = 0
+  let failed = 0
+  for (const rel of rawPaths as string[]) {
+    let target = resolve(root, rel.replaceAll("\\", "/"))
+    const up = relative(root, target)
+    if (up.startsWith("..") || isAbsolute(up)) {
+      failed += 1
+      continue
+    }
+    for (;;) {
+      if (done.has(target)) break
+      try {
+        const st = await stat(target)
+        // Seconds as doubles keep Windows' 100 ns precision; a Date would round to the millisecond.
+        await utimes(target, st.atimeMs / 1000, st.mtimeMs / 1000 + 0.001)
+        await utimes(target, st.atimeMs / 1000, st.mtimeMs / 1000)
+        done.add(target)
+        touched += 1
+        break
+      } catch {
+        if (target === root) {
+          failed += 1
+          break
+        }
+        target = dirname(target)
+      }
+    }
+  }
+  return { touched, failed }
 }
 
 /** The most entries a listing returns unless asked for more: a huge folder still answers at once. */
@@ -1662,6 +1722,10 @@ export function startAgent(o: AgentOptions, onFatal: () => void = () => {}): Run
               const deleted = await removePaths(r.paths, { recycle, pwsh })
               log(`delete ${JSON.stringify(r.paths)} ${recycle ? "to the Recycle Bin" : "for good"}`)
               return json({ deleted } satisfies FsDeleteResult)
+            }
+            case "POST /fs/touch": {
+              const r = (await req.json()) as { root?: unknown; paths?: unknown }
+              return json((await touchPaths(r.root, r.paths)) satisfies FsTouchResult)
             }
             case "POST /kill": {
               const r = (await req.json()) as { pid?: number; tree?: boolean }
