@@ -242,7 +242,7 @@ write, so Windows' change notifications fire for a change made on the Mac
 side, which virtio-fs does not report. The control service calls it for each
 batch of changes it sees in the shared folder (`sharewatch.ts`); see
 [files.md](files.md#for-developers). At most 2000 paths a call; the host sends
-`.` for a bigger change. Agent version 9.
+`.` for a bigger change. Agent version 10 has both this and `/smb/setup`.
 
 ### Changing files
 

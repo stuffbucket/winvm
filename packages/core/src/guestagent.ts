@@ -52,7 +52,7 @@ import { randomBytes, timingSafeEqual } from "node:crypto"
 import type { Server, ServerWebSocket, Socket, TCPSocketListener, WebSocketHandler } from "bun"
 
 /** Bumped whenever the protocol or behaviour changes; the host reinstalls on mismatch. */
-export const AGENT_VERSION = 9
+export const AGENT_VERSION = 10
 /** The port the agent listens on INSIDE the guest. The host side is per instance. */
 export const GUEST_PORT = 7801
 export const WINDOWS_DIR = "C:\\ProgramData\\winvm\\agent"
