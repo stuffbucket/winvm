@@ -14,33 +14,31 @@ import { findRuntime, runtimeBin, verifyRuntime, type Runtime } from "./runtime"
 
 /**
  * Where to look for UEFI firmware: `WINVM_QEMU_DATA`, else the vendored copy,
- * else the directories the runtime's QEMU reports with `-L help`.
+ * else the directories the runtime's QEMU reports with `-L help`. Worked out
+ * once per state directory (the vendored copy is expanded into it).
  */
-let dataDirs: readonly string[] | null = null
+let dataDirs: { readonly key: string; readonly dirs: readonly string[] } | null = null
 export function qemuDataDirs(): readonly string[] {
-  if (dataDirs !== null) return dataDirs
   const override = process.env["WINVM_QEMU_DATA"]
-  if (override !== undefined && override !== "") {
-    dataDirs = [resolve(override)]
-    return dataDirs
-  }
-  // The vendored copy comes first, so the harness does not depend on how a
-  // particular QEMU packaging laid out its data files. Expanded once into the
-  // state directory: the images are ~99% zero padding, which is why 128 MiB of
-  // firmware is 1.6 MB in the repository. See THIRD-PARTY-LICENSE.md.
-  const vendored = expandVendoredFirmware()
-  if (vendored !== null) {
-    dataDirs = [vendored]
-    return dataDirs
-  }
-  const asked = spawnSync(runtimeBin("qemu-system-aarch64"), ["-L", "help"], { encoding: "utf8" })
-  const listed = `${asked.stdout ?? ""}${asked.stderr ?? ""}`
-    .split("\n")
-    .map((l) => l.trim())
-    .filter((l) => l.startsWith("/"))
-    .map((l) => resolve(l))
-  dataDirs = listed
-  return dataDirs
+  const key = `${override ?? ""}\n${home()}`
+  if (dataDirs?.key === key) return dataDirs.dirs
+  const found = ((): readonly string[] => {
+    if (override !== undefined && override !== "") return [resolve(override)]
+    // The vendored copy comes first, so the harness does not depend on how a
+    // particular QEMU packaging laid out its data files. Expanded once into the
+    // state directory: the images are ~99% zero padding, which is why 128 MiB of
+    // firmware is 1.6 MB in the repository. See THIRD-PARTY-LICENSE.md.
+    const vendored = expandVendoredFirmware()
+    if (vendored !== null) return [vendored]
+    const asked = spawnSync(runtimeBin("qemu-system-aarch64"), ["-L", "help"], { encoding: "utf8" })
+    return `${asked.stdout ?? ""}${asked.stderr ?? ""}`
+      .split("\n")
+      .map((l) => l.trim())
+      .filter((l) => l.startsWith("/"))
+      .map((l) => resolve(l))
+  })()
+  dataDirs = { key, dirs: found }
+  return found
 }
 
 /**
