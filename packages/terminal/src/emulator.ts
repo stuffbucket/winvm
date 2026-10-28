@@ -1,5 +1,8 @@
+/// <reference path="./css.d.ts" />
 import { FitAddon } from '@xterm/addon-fit';
 import { Terminal } from '@xterm/xterm';
+// winvm: the adapter brings xterm's own stylesheet; Bun bundles it into the page's CSS.
+import '@xterm/xterm/css/xterm.css';
 import type { ITheme } from '@xterm/xterm';
 
 import type {
@@ -141,7 +144,8 @@ function createXtermEmulator(theme?: TerminalTheme, typography?: TerminalTypogra
     },
     fit: () => {
       const proposed = fitAddon.proposeDimensions();
-      if (!proposed) return;
+      // winvm: a hidden host (display: none) measures as NaN; keep the grid.
+      if (!proposed || !Number.isFinite(proposed.cols) || !Number.isFinite(proposed.rows)) return;
       const { cols, rows } = clampTerminalGrid(proposed.cols, proposed.rows);
       if (cols !== terminal.cols || rows !== terminal.rows) terminal.resize(cols, rows);
     },
