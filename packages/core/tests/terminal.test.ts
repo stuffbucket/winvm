@@ -22,7 +22,7 @@ import {
   termProtocols,
   termShellArgv,
 } from "../src/guestagent"
-import { shellFlag, termClientProtocols, termUrl } from "../src/termcmds"
+import { parseShells, shellFlag, shellsProbeArgv, termClientProtocols, termUrl } from "../src/termcmds"
 
 const TOKEN = "t0k3n-for-terminals"
 const SLOW_HOST_MS = 300_000
@@ -106,6 +106,18 @@ describe("winvm terminal's arguments", () => {
     expect(shellFlag(parseArgs([]))).toBe("pwsh")
     expect(shellFlag(parseArgs(["--shell", "cmd"]))).toBe("cmd")
     expect(() => shellFlag(parseArgs(["--shell", "bash"]))).toThrow("--shell")
+  })
+  it("checks for each shell with one cmd.exe line, run verbatim", () => {
+    const argv = shellsProbeArgv()
+    expect(argv.slice(0, 4)).toEqual(["C:\\Windows\\System32\\cmd.exe", "/d", "/s", "/c"])
+    expect(argv[4]).toMatch(/^".*"$/)
+    expect(argv[4]).toContain("%ProgramFiles%\\PowerShell\\7\\pwsh.exe")
+    expect(argv[4]).toContain("where /q pwsh.exe")
+  })
+  it("reads which shells the guest has from what the check printed", () => {
+    expect(parseShells("powershell\r\ncmd\r\n")).toEqual({ pwsh: false, powershell: true, cmd: true })
+    expect(parseShells("pwsh \r\npowershell\r\ncmd\r\n")).toEqual({ pwsh: true, powershell: true, cmd: true })
+    expect(parseShells("")).toEqual({ pwsh: false, powershell: false, cmd: false })
   })
 })
 
