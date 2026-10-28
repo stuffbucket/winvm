@@ -10,6 +10,7 @@ import { t } from "../../i18n"
 import type { Connection } from "../../model"
 import { HeldSizes, keyVerdict } from "./held"
 import { LiveResize, type ResizePhase } from "./resize"
+import { type WakeSock, keepRefreshing } from "./wake"
 
 interface ScreenProps {
   readonly connection: Connection
@@ -83,6 +84,7 @@ export function Screen({ connection, resizable, onGuestSize, frozen = false, asl
     let closing = false
     let connected = false
     let retry: ReturnType<typeof setTimeout> | undefined
+    let stopWake: (() => void) | null = null
     setView("connecting")
     const conn = new RFB(el, `ws://127.0.0.1:${String(websocketPort)}`, {
       credentials: { password: password ?? "" },
@@ -218,6 +220,8 @@ export function Screen({ connection, resizable, onGuestSize, frozen = false, asl
     conn.addEventListener("connect", () => {
       connected = true
       setView("connected")
+      // Keep QEMU checking for changes every 30 ms, not backing off (wake.ts).
+      stopWake ??= keepRefreshing(conn._sock as WakeSock, () => connected && !closing && document.visibilityState === "visible")
       // A new connection may be a different guest state (a save loaded, a restart): ask again.
       if (resize !== null) {
         resize.reset()
@@ -229,6 +233,8 @@ export function Screen({ connection, resizable, onGuestSize, frozen = false, asl
     conn.addEventListener("securityfailure", () => setView("refused"))
     conn.addEventListener("disconnect", () => {
       connected = false
+      stopWake?.()
+      stopWake = null
       if (closing) return
       setView((v) => (v === "refused" ? v : "lost"))
       retry = setTimeout(() => setAttempt((a) => a + 1), 2000)
@@ -237,6 +243,7 @@ export function Screen({ connection, resizable, onGuestSize, frozen = false, asl
       closing = true
       live.current = null
       outer.removeEventListener("keydown", onKey, true)
+      stopWake?.()
       resize?.cancel()
       clearTimeout(frameWait)
       observer.disconnect()
