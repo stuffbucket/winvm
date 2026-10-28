@@ -9,6 +9,7 @@
  *   winvm exec  [-i name] -- <cmd>   run a command in the guest; --timeout S (900), 124 if hit
  *   winvm agent [-i name] install    the in-guest agent: fast exec/files/GUI (agent.ts)
  *   winvm put / get / launch         files in and out; a program on the guest's desktop
+ *   winvm script [-i name] f.ps1     copy a script in and run it (PowerShell 5.1, or cmd)
  *   winvm dir [-i name] [path]       a guest folder (default the Desktop); --json for the app
  *   winvm terminal [-i name]         a shell in the guest (pwsh, powershell, cmd), here
  *   winvm ui tree|find|click|wait|tray …   drive the GUI by UI Automation names; see ui.ts
@@ -33,6 +34,7 @@
  *   winvm config [-i name] [k=v ...] per-instance watcher settings
  *   winvm run job.yml / test dir/    CI jobs from a golden save; see runner.ts
  *   winvm timemachine [--yes]        keep the VM files out of Time Machine backups
+ *   winvm skills install | pack      agent skills for Claude Code, Codex, Copilot; see skillcmds.ts
  *
  * ## Self-contained and project-agnostic, on purpose
  *
@@ -144,6 +146,7 @@ import * as goldens from "@winvm/core/golden"
 import * as ocr from "@winvm/core/ocr"
 import * as runcmds from "@winvm/core/runcmds"
 import * as savecmds from "@winvm/core/savecmds"
+import * as skillcmds from "@winvm/core/skillcmds"
 import * as screen from "@winvm/core/screen"
 import * as service from "@winvm/core/service"
 import * as status from "@winvm/core/status"
@@ -228,6 +231,9 @@ switch (sub) {
   // eslint-disable-next-line no-fallthrough
   case "rm":
     process.exit(await agentcmds.rm(args))
+  // eslint-disable-next-line no-fallthrough
+  case "script":
+    process.exit(await agentcmds.script(args))
   // eslint-disable-next-line no-fallthrough
   case "launch":
     process.exit(await agentcmds.launch(args))
@@ -351,6 +357,9 @@ switch (sub) {
   // eslint-disable-next-line no-fallthrough
   case "mcp":
     process.exit(await mcpcmds.mcpCmd(args))
+  // eslint-disable-next-line no-fallthrough
+  case "skills":
+    process.exit(skillcmds.skillsCmd(args))
   // eslint-disable-next-line no-fallthrough
   case "help":
   case "--help":

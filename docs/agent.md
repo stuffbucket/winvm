@@ -18,6 +18,7 @@ winvm get  <guest path> <host path>   # a file, or a folder and everything in it
 winvm dir  ['C:\Users']          # a guest folder (default the Desktop); --all, --places, --json
 winvm mkdir | mv | cp | rm ...   # change the guest's files (see files.md)
 winvm launch -- notepad.exe    # start a program on the desktop and return at once
+winvm script setup.ps1 -- -Name x   # copy a .ps1/.cmd to C:\winvm\scripts and run it (PowerShell 5.1)
 winvm terminal                 # a shell in the guest, in this terminal
 ```
 

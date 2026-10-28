@@ -70,6 +70,22 @@ Most commands take `-i <name>` to pick an instance. The default instance is
 `default`. All state lives in `~/.local/state/winvm`, or in `WINVM_HOME` if
 you set it.
 
+## Agent skills
+
+`skills/` holds agent skills that teach coding agents to use winvm, from the
+first build to a checkpointed machine set up the way you asked. One copy
+serves every tool:
+
+```sh
+winvm skills install       # links them into ~/.agents/skills (Codex, Copilot CLI) and ~/.claude/skills (Claude Code)
+winvm skills pack          # one zip per skill, to upload in Claude Desktop (Customize > Skills)
+winvm skills               # where each tool sees them
+```
+
+Agents working in this repository find them through `.agents/skills` and
+`.claude/skills`, which link to `skills/`. `bun test scripts` checks every
+command in them against the CLI.
+
 ## More
 
 - [Setting up](docs/setup.md): the ISO, building images, instances, screen

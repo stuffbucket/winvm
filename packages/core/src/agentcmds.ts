@@ -10,7 +10,7 @@
  * the old path.
  */
 import { mkdirSync, readdirSync, statSync } from "node:fs"
-import { join, win32 } from "node:path"
+import { basename, join, win32 } from "node:path"
 
 import * as agent from "./agent"
 import type { Args } from "./args"
@@ -330,6 +330,63 @@ export async function rm(args: Args): Promise<number> {
       return { result: r, text: recycle ? `moved ${items} to the Recycle Bin` : `deleted ${items}` }
     },
   )
+}
+
+/** Where `script` copies the file it runs. */
+export const SCRIPT_DIR = "C:\\winvm\\scripts"
+const POWERSHELL = "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe"
+const CMD = "C:\\Windows\\System32\\cmd.exe"
+
+/**
+ * The guest command line for a script copied to `guestPath`: Windows
+ * PowerShell 5.1 for .ps1, because every image has it (PowerShell 7 may be
+ * missing), and cmd for .cmd and .bat. Null for anything else.
+ */
+export function scriptArgv(guestPath: string, scriptArgs: readonly string[]): readonly string[] | null {
+  const ext = win32.extname(guestPath).toLowerCase()
+  if (ext === ".ps1") return [POWERSHELL, "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", guestPath, ...scriptArgs]
+  if (ext === ".cmd" || ext === ".bat") return [CMD, "/d", "/c", guestPath, ...scriptArgs]
+  return null
+}
+
+/**
+ * `script <file> [-- args]`: copy a script from the host to C:\winvm\scripts\
+ * and run it there, with its output and exit code, as `exec` would. What the
+ * skills' guest templates run through. Arguments after `--` go to the script;
+ * so do single-dash ones before it (`-Name x`), which the parser leaves alone.
+ */
+export async function script(args: Args): Promise<number> {
+  const name = instanceName(args)
+  const [file, ...more] = positionals(args)
+  if (file === undefined) return fail("usage: winvm script [-i name] [--timeout S] [--qga] <file.ps1|.cmd|.bat> [-- args...]")
+  const dest = win32.join(SCRIPT_DIR, basename(file))
+  const argv = scriptArgv(dest, [...more, ...args.rest])
+  if (argv === null) return fail(`${file}: winvm script runs .ps1, .cmd and .bat files`)
+  if (statSync(file, { throwIfNoEntry: false })?.isFile() !== true) return fail(`no such file ${file}`)
+  const notUp = running(name)
+  if (notUp !== null) return fail(notUp)
+  try {
+    execTimeoutMs(args)
+  } catch (error) {
+    return fail(msg(error))
+  }
+  try {
+    const c = await preferred(name, args)
+    if (c === null) {
+      const sock = pathsFor(name).qga
+      await qga.exec(sock, CMD, ["/c", `mkdir ${SCRIPT_DIR} 2>nul & exit /b 0`])
+      await agent.qgaWriteFile(sock, dest, new Uint8Array(await Bun.file(file).arrayBuffer()))
+    } else {
+      await c.putFile(file, dest)
+    }
+  } catch (error) {
+    return fail(`could not copy ${file} into the guest: ${msg(error)}`)
+  }
+  const [program, ...rest] = argv
+  const r = await watcher.whileActive(name, exec(name, args, program ?? POWERSHELL, rest))
+  if (r.stdout !== "") process.stdout.write(r.stdout)
+  if (r.stderr !== "") process.stderr.write(r.stderr)
+  return r.exitcode
 }
 
 /** Start a program on the guest's desktop and return at once. */

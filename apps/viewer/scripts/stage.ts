@@ -22,6 +22,8 @@ cpSync(resolve(CORE, "src", "guestagent.ts"), resolve(winvm, "packages", "core",
 for (const dir of ["assets", "firmware", "web"]) {
   cpSync(resolve(CORE, dir), resolve(winvm, "packages", "core", dir), { recursive: true })
 }
+// The agent skills (`winvm skills`), found at <package>/../../skills.
+cpSync(resolve(ROOT, "skills"), resolve(winvm, "skills"), { recursive: true, dereference: true })
 
 const rt = (process.env["WINVM_RUNTIME"] ?? "") !== "" ? findRuntime() : await ensureRuntime()
 if (rt === null || rt.manifest === null) {

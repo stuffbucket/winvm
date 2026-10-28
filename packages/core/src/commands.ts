@@ -1100,7 +1100,8 @@ export const USAGE =
   "                                --no-autosave: no baseline save on the first boot (idle\n" +
   "                                autosaves are `config autosave.enabled=false`)\n" +
   "                                --no-watch: no idle watcher (no autosave, stow or clock sync)\n" +
-  "  exec    [-i name] [--qga] -- <cmd>  run a command in the guest (via the agent when installed)\n" +
+  "  exec    [-i name] [--qga] [--timeout S] -- <cmd>  run a command in the guest (via the agent when installed);\n" +
+  "                                exits with its code, or 124 when --timeout (default 900) kills it\n" +
   "  agent   [-i name] install | status [--json]   the in-guest agent (fast exec, files, GUI)\n" +
   "          [-i name] connect [--json]   update it if need be, then print its address and token\n" +
   "  put     [-i name] <host path> <guest path>    copy a file, or a folder and all in it, into the guest\n" +
@@ -1112,6 +1113,8 @@ export const USAGE =
   "  cp      [-i name] <from> <to> [--json]        copy in the guest, a file or a whole folder; replaces nothing\n" +
   "  rm      [-i name] <guest path>... [--permanently] [--json]   to the Recycle Bin (--permanently: for good)\n" +
   "  launch  [-i name] -- <program> [args]         start it on the guest's desktop, detached\n" +
+  "  script  [-i name] [--timeout S] <file.ps1|.cmd|.bat> [-- args]   copy it to C:\\winvm\\scripts and run it\n" +
+  "                                (.ps1: Windows PowerShell 5.1); its output and exit code, as exec\n" +
   "  terminal [-i name] [--shell pwsh|powershell|cmd] [--cwd PATH]   a guest shell, in this terminal\n" +
   "          [--connect --json]    print the WebSocket URL and subprotocols for another client\n" +
   "          --shells [--json]     which shells the guest has (PowerShell 7 may be missing)\n" +
@@ -1120,7 +1123,7 @@ export const USAGE =
   "           [--delete]           remove that snapshot instead\n" +
   "  rewind  [-i name] [tag] [--no-watch]  put the guest back: snapshot <tag> (default fresh),\n" +
   "                                else the save of that name (default: the automatic baseline)\n" +
-  "  save    [-i name] [name] [--fast]  save the running guest to files (default name: a timestamp)\n" +
+  "  save    [-i name] [name] [--fast] [--note TEXT]  save the running guest to files (default name: a timestamp)\n" +
   "  load    [-i name] [name] [--no-watch]  load a save, running or stopped (default: the newest)\n" +
   "                                into a stopped instance it starts the watcher, like start\n" +
   "  saves   [-i name] [rm <name>] [--json]  list saves (kind, size, compatible) or delete one\n" +
@@ -1155,6 +1158,11 @@ export const USAGE =
   "  mcp install|uninstall claude-code|claude-desktop [-i name] [--json]   add it to Claude, or take it out\n" +
   "  mcp status [-i name] [--json] whether Claude Code and Claude Desktop have it\n" +
   "  timemachine [--yes]           exclude the VM files from Time Machine backups\n" +
+  "  skills  [status] [--json]     winvm's agent skills: where Claude Code, Codex and Copilot see them\n" +
+  "  skills  install|uninstall [--claude-code] [--codex] [--copilot] [--agents] [--all] [--json]\n" +
+  "                                link them into ~/.claude/skills and ~/.agents/skills (no flag: --all)\n" +
+  "  skills  pack [--out DIR] [--json]   one zip per skill, to upload to Claude Desktop\n" +
+  "  skills  path                  print the folder they are in\n" +
   "  snapshots [-i name]           list them\n" +
   "  reset   [-i name]             discard changes, back to the base image\n" +
   "  rmi <image> [--force]         remove a base image (undoes its read-only seal)\n" +
