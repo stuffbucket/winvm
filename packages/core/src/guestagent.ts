@@ -25,6 +25,7 @@
  *   GET  /file?path=…                 a guest file, raw
  *   POST /launch  {argv,cwd?,env?}    detached, in this session  -> {pid}
  *   GET  /procs                       [{pid,name,session}]
+ *   GET  /fs/list?path=…&hidden=1&limit=N  a folder's entries, and the known folders -> DirListing
  *   POST /kill    {pid,tree?}
  *   POST /ui      {op,...}             UI Automation via winvm-ui.exe (assets/winvm-ui.cs, docs/gui.md)
  *   GET  /term?shell=&cwd=&cols=&rows=  a terminal, as a WebSocket (conpty.exe, assets/conpty.cs)
@@ -32,7 +33,9 @@
  */
 import { spawn as nodeSpawn } from "node:child_process"
 import { appendFileSync, existsSync, mkdirSync, readFileSync, statSync } from "node:fs"
-import { dirname, join } from "node:path"
+import { readdir, stat } from "node:fs/promises"
+import { homedir } from "node:os"
+import { dirname, join, resolve } from "node:path"
 import { randomBytes, timingSafeEqual } from "node:crypto"
 import type { Server, ServerWebSocket, Socket, TCPSocketListener, WebSocketHandler } from "bun"
 
@@ -339,6 +342,166 @@ function listProcs(): Proc[] {
   return procs
 }
 
+// --- folder listings ---------------------------------------------------------
+
+/** One thing in a folder. `size` and `modified` are null when Windows would not say (access denied, a dangling link). */
+export interface DirEntry {
+  readonly name: string
+  readonly dir: boolean
+  /** Bytes; null for a folder. */
+  readonly size: number | null
+  /** Last written, in ms since the epoch. */
+  readonly modified: number | null
+  /** Hidden or system, which Explorer hides by default (a dot name where there is no such attribute). */
+  readonly hidden: boolean
+}
+
+/** A folder people go to: Desktop, Documents, Downloads, the profile, C:\work, and the drives. */
+export interface Place {
+  readonly kind: "desktop" | "documents" | "downloads" | "home" | "work" | "drive"
+  readonly name: string
+  readonly path: string
+}
+
+export interface DirListing {
+  /** The folder, absolute and normalized. */
+  readonly path: string
+  /** The folder it is in; null at a drive's root. */
+  readonly parent: string | null
+  /** Folders first, then files, each by name as Explorer orders them; at most `limit` of them. */
+  readonly entries: readonly DirEntry[]
+  /** How many there are in all (hidden ones only when asked for): more than `entries` holds when cut at the limit. */
+  readonly total: number
+  readonly places: readonly Place[]
+}
+
+/** The most entries a listing returns unless asked for more: a huge folder still answers at once. */
+export const LIST_LIMIT = 5000
+const LIST_LIMIT_MAX = 100_000
+/** Stats at a time: each one opens the file on Windows, so a 20 000-entry folder is not 20 000 handles at once. */
+const STAT_BATCH = 256
+
+/** Why a folder could not be listed: the route's status, and a `code` the caller can branch on. */
+export class ListError extends Error {
+  readonly status: number
+  readonly code: "notfound" | "denied" | "notdir"
+  constructor(message: string, status: number, code: "notfound" | "denied" | "notdir") {
+    super(message)
+    this.status = status
+    this.code = code
+  }
+}
+
+const isDir = (path: string): boolean => {
+  try {
+    return statSync(path).isDirectory()
+  } catch {
+    return false
+  }
+}
+
+/** The known folders that exist here: the agent's user's, since it runs as them. */
+export function knownFolders(): Place[] {
+  const home = process.env["USERPROFILE"] ?? homedir()
+  const places: Place[] = []
+  const add = (kind: Place["kind"], path: string, name: string): void => {
+    if (isDir(path)) places.push({ kind, name, path })
+  }
+  add("desktop", join(home, "Desktop"), "Desktop")
+  add("documents", join(home, "Documents"), "Documents")
+  add("downloads", join(home, "Downloads"), "Downloads")
+  add("home", home, home.split(/[\\/]/).filter((p) => p !== "").pop() ?? home)
+  if (!isWin) {
+    add("drive", "/", "/")
+    return places
+  }
+  add("work", "C:\\work", "work")
+  for (const letter of "CDEFGHIJKLMNOPQRSTUVWXYZ") add("drive", `${letter}:\\`, `${letter}:`)
+  return places
+}
+
+/** Absolute and tidy; a bare `C:` is the drive's root, not the current folder on it. */
+export const normalizeDir = (path: string): string => resolve(/^[A-Za-z]:$/.test(path) ? `${path}\\` : path)
+
+/**
+ * The names `dir /a:h` prints: the hidden and system entries, the one thing
+ * Node's fs cannot tell on Windows. `cmd /u` makes its built-ins write UTF-16
+ * to a pipe, so any name survives (the OEM code page would not). It spawns, so
+ * it runs in the spawner.
+ */
+async function hiddenNames(dir: string): Promise<string[]> {
+  const p = Bun.spawn(["C:\\Windows\\System32\\cmd.exe", "/d", "/u", "/s", "/c", `"dir /b /a:h "${dir}""`], {
+    stdin: "ignore",
+    stdout: "pipe",
+    stderr: "ignore",
+    windowsVerbatimArguments: true,
+  })
+  const [out] = await Promise.all([new Response(p.stdout).arrayBuffer(), p.exited])
+  return Buffer.from(out).toString("utf16le").split(/\r?\n/).filter((n) => n !== "")
+}
+
+function listError(error: unknown, path: string): Error {
+  switch ((error as { code?: string }).code) {
+    case "ENOENT":
+      return new ListError(`no such folder: ${path}`, 404, "notfound")
+    case "EACCES":
+    case "EPERM":
+      return new ListError(`access denied: ${path}`, 403, "denied")
+    case "ENOTDIR":
+      return new ListError(`not a folder: ${path}`, 400, "notdir")
+    default:
+      return error instanceof Error ? error : new Error(String(error))
+  }
+}
+
+type Stats = Awaited<ReturnType<typeof stat>>
+
+async function statAll(paths: readonly string[]): Promise<(Stats | null)[]> {
+  const out: (Stats | null)[] = []
+  for (let i = 0; i < paths.length; i += STAT_BATCH) {
+    out.push(...(await Promise.all(paths.slice(i, i + STAT_BATCH).map(async (p) => await stat(p).catch(() => null)))))
+  }
+  return out
+}
+
+/**
+ * One folder's entries, folders first. Only what is returned is stat'ed (and
+ * links, to learn whether they lead to a folder), so a folder of tens of
+ * thousands answers about as fast as one of `limit`.
+ */
+export async function listDir(
+  path: string,
+  o: { readonly withHidden: boolean; readonly limit: number; readonly hidden: Promise<ReadonlySet<string>> },
+): Promise<Omit<DirListing, "places">> {
+  const dirents = await readdir(path, { withFileTypes: true }).catch((error: unknown) => {
+    throw listError(error, path)
+  })
+  const hidden = await o.hidden
+  const isHidden = (name: string): boolean => hidden.has(name) || (!isWin && name.startsWith("."))
+  const kept = dirents.filter((d) => o.withHidden || !isHidden(d.name))
+  const links = kept.filter((d) => d.isSymbolicLink())
+  const linkStats = await statAll(links.map((d) => join(path, d.name)))
+  const linkDir = new Map(links.map((d, i) => [d.name, linkStats[i]?.isDirectory() ?? false]))
+  const byName = new Intl.Collator(undefined, { numeric: true, sensitivity: "base" })
+  const sorted = kept
+    .map((d) => ({ name: d.name, dir: linkDir.get(d.name) ?? d.isDirectory() }))
+    .sort((a, b) => (a.dir === b.dir ? byName.compare(a.name, b.name) : a.dir ? -1 : 1))
+    .slice(0, Math.max(0, Math.min(o.limit, LIST_LIMIT_MAX)))
+  const stats = await statAll(sorted.map((e) => join(path, e.name)))
+  const entries = sorted.map((e, i): DirEntry => {
+    const st = stats[i] ?? null
+    return {
+      name: e.name,
+      dir: e.dir,
+      size: e.dir || st === null ? null : Number(st.size),
+      modified: st === null ? null : Math.round(Number(st.mtimeMs)),
+      hidden: isHidden(e.name),
+    }
+  })
+  const up = dirname(path)
+  return { path, parent: up === path ? null : up, entries, total: kept.length }
+}
+
 /** A UI Automation request: `op` plus its fields (see assets/winvm-ui.cs). */
 export type UiRequest = { readonly op: string } & Readonly<Record<string, unknown>>
 /** What the helper answered: a result, or an error with a code (notfound | timeout | covered | bad | fail | unavailable). */
@@ -418,6 +581,7 @@ type Op =
   | { readonly op: "procs" }
   | { readonly op: "kill"; readonly pid: number; readonly tree: boolean }
   | { readonly op: "ui"; readonly req: UiRequest }
+  | { readonly op: "hidden"; readonly path: string }
 
 let pwshHost: PwshHost | null = null
 let uiHost: UiHost | null = null
@@ -439,6 +603,8 @@ async function runOp(o: Op): Promise<unknown> {
     case "ui":
       uiHost ??= new UiHost(process.env["WINVM_UI_EXE"] ?? join(import.meta.dir, "winvm-ui.exe"))
       return await uiHost.call(o.req)
+    case "hidden":
+      return await hiddenNames(o.path)
   }
 }
 
@@ -944,6 +1110,25 @@ export function startAgent(o: AgentOptions, onFatal: () => void = () => {}): Run
             }
             case "GET /procs":
               return json(await spawner.call<Proc[]>({ op: "procs" }))
+            case "GET /fs/list": {
+              const places = knownFolders()
+              const asked = u.searchParams.get("path") ?? ""
+              const start = places.find((p) => p.kind === "desktop") ?? places.find((p) => p.kind === "home")
+              const path = normalizeDir(asked !== "" ? asked : (start?.path ?? homedir()))
+              const limit = Number(u.searchParams.get("limit") ?? LIST_LIMIT)
+              // Asked for alongside readdir; failing only means nothing is marked hidden.
+              const hidden = (isWin ? spawner.call<string[]>({ op: "hidden", path }) : Promise.resolve([]))
+                .then((names) => new Set(names))
+                .catch(() => new Set<string>())
+              try {
+                const withHidden = u.searchParams.get("hidden") === "1"
+                const listing = await listDir(path, { withHidden, limit: Number.isFinite(limit) ? limit : LIST_LIMIT, hidden })
+                return json({ ...listing, places } satisfies DirListing)
+              } catch (error) {
+                if (error instanceof ListError) return json({ error: error.message, code: error.code }, error.status)
+                throw error
+              }
+            }
             case "POST /kill": {
               const r = (await req.json()) as { pid?: number; tree?: boolean }
               if (typeof r.pid !== "number") return fail(400, "pid required")

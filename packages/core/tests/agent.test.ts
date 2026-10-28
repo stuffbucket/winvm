@@ -3,18 +3,18 @@
  * host (it is plain Bun) — no VM. Windows-only parts (PowerShell, tasklist,
  * sessions) are covered by their parsers.
  */
-import { mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs"
+import { chmodSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, utimesSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { resolve } from "node:path"
 
 import { afterAll, beforeAll, describe, expect, it, spyOn } from "bun:test"
 
 import { AgentClient, AgentError } from "../src/agent"
-import { TIMED_OUT, execResult, execTimeoutMs } from "../src/agentcmds"
+import { TIMED_OUT, execResult, execTimeoutMs, formatListing } from "../src/agentcmds"
 import { ensureState, forwardedPorts, hostfwdRule, readState } from "../src/agentfwd"
 import { parseArgs } from "../src/args"
 import type { Paths } from "../src/paths"
-import { AGENT_VERSION, launcherArgv, parseLauncherPid, parseTasklist, startAgent } from "../src/guestagent"
+import { AGENT_VERSION, launcherArgv, normalizeDir, parseLauncherPid, parseTasklist, startAgent } from "../src/guestagent"
 
 let dir: string
 let tokenFile: string
@@ -135,6 +135,114 @@ describe("agent over HTTP", () => {
     const err = (await client.exec(["/no/such/program"]).catch((e: unknown) => e)) as AgentError
     expect(err.status).toBe(500)
   }, SLOW_HOST_MS)
+})
+
+describe("folder listings", () => {
+  let root: string
+
+  beforeAll(() => {
+    root = resolve(dir, "listing")
+    mkdirSync(resolve(root, "b folder"), { recursive: true })
+    mkdirSync(resolve(root, "A folder"))
+    writeFileSync(resolve(root, "file10.txt"), "ten")
+    writeFileSync(resolve(root, "file2.txt"), "two!")
+    writeFileSync(resolve(root, ".hidden"), "")
+    symlinkSync(resolve(root, "A folder"), resolve(root, "link to folder"))
+    utimesSync(resolve(root, "file2.txt"), new Date(1_700_000_000_000), new Date(1_700_000_000_000))
+  })
+
+  it("lists folders first, then files, by name as Explorer orders them, with sizes and times", async () => {
+    const l = await client.list(root)
+    expect(l.path).toBe(root)
+    expect(l.parent).toBe(dir)
+    expect(l.entries.map((e) => [e.name, e.dir])).toEqual([
+      ["A folder", true],
+      ["b folder", true],
+      ["link to folder", true],
+      ["file2.txt", false],
+      ["file10.txt", false],
+    ])
+    const two = l.entries.find((e) => e.name === "file2.txt")
+    expect(two).toEqual({ name: "file2.txt", dir: false, size: 4, modified: 1_700_000_000_000, hidden: false })
+    expect(l.entries[0]?.size).toBeNull()
+    expect(l.total).toBe(5)
+  })
+
+  it("leaves hidden entries out unless asked, and marks them", async () => {
+    expect((await client.list(root)).entries.some((e) => e.name === ".hidden")).toBe(false)
+    const all = await client.list(root, { hidden: true })
+    expect(all.entries.find((e) => e.name === ".hidden")?.hidden).toBe(true)
+    expect(all.total).toBe(6)
+  })
+
+  it("cuts a big folder at the limit and says how many there are", async () => {
+    const l = await client.list(root, { limit: 2 })
+    expect(l.entries.map((e) => e.name)).toEqual(["A folder", "b folder"])
+    expect(l.total).toBe(5)
+  })
+
+  it("lists the Desktop when given no path, with the known folders that exist", async () => {
+    // The agent's user's profile; not the host's own, whose Desktop macOS may refuse.
+    const profile = resolve(dir, "profile")
+    mkdirSync(resolve(profile, "Desktop"), { recursive: true })
+    mkdirSync(resolve(profile, "Documents"))
+    const was = process.env["USERPROFILE"]
+    process.env["USERPROFILE"] = profile
+    try {
+      const l = await client.list()
+      expect(l.path).toBe(resolve(profile, "Desktop"))
+      expect(l.places.map((p) => [p.kind, p.path])).toEqual([
+        ["desktop", resolve(profile, "Desktop")],
+        ["documents", resolve(profile, "Documents")],
+        ["home", profile],
+        ["drive", "/"],
+      ])
+      expect(l.places.find((p) => p.kind === "home")?.name).toBe("profile")
+    } finally {
+      if (was === undefined) delete process.env["USERPROFILE"]
+      else process.env["USERPROFILE"] = was
+    }
+  })
+
+  it("normalizes the path, and a drive's root has no parent", async () => {
+    expect((await client.list(`${root}/b folder/..`)).path).toBe(root)
+    expect((await client.list("/")).parent).toBeNull()
+    expect(normalizeDir(`${root}/./b folder`)).toBe(resolve(root, "b folder"))
+  })
+
+  it("says why a folder could not be listed: missing, not a folder, access denied", async () => {
+    const code = async (path: string): Promise<[number, string | null]> => {
+      const e = (await client.list(path).catch((x: unknown) => x)) as AgentError
+      return [e.status, e.code]
+    }
+    expect(await code(resolve(root, "nope"))).toEqual([404, "notfound"])
+    expect(await code(resolve(root, "file2.txt"))).toEqual([400, "notdir"])
+    const locked = resolve(dir, "locked")
+    mkdirSync(locked, { mode: 0o000 })
+    try {
+      // root reads anything, so only for anyone else does this mean something.
+      if (process.getuid?.() !== 0) expect(await code(locked)).toEqual([403, "denied"])
+    } finally {
+      chmodSync(locked, 0o700)
+    }
+  })
+
+  it("prints a listing as Windows' `dir` lays it out", () => {
+    const text = formatListing({
+      path: "C:\\Users\\me\\Desktop",
+      parent: "C:\\Users\\me",
+      entries: [
+        { name: "Projects", dir: true, size: null, modified: null, hidden: false },
+        { name: "notes.txt", dir: false, size: 12_345, modified: null, hidden: false },
+      ],
+      total: 3,
+      places: [],
+    }).split("\n")
+    expect(text[0]).toBe("C:\\Users\\me\\Desktop")
+    expect(text[1]).toEndWith("<DIR>  Projects")
+    expect(text[2]).toEndWith("12,345  notes.txt")
+    expect(text[3]).toContain("1 more")
+  })
 })
 
 describe("parsers", () => {
