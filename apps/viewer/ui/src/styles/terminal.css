@@ -1,11 +1,14 @@
 @import url("./styles.css");
 
 /* =========================================================
-   The Terminal window: a tab strip over the terminals, and a status line
-   when the active tab's shell has ended. The terminal's own colours are
-   xterm's theme, from the same tokens (features/terminal/appearance.ts);
-   these rules are the frame around it. The window has a native title bar,
-   so the strip is not a drag region.
+   The Terminal window: tabs in the title bar over the terminals, and a
+   status line when the active tab's shell has ended. The terminal's own
+   colours are xterm's theme, from the same tokens
+   (features/terminal/appearance.ts); these rules are the frame around it.
+   The title bar is an overlay (TitleBarStyle::Overlay, traffic lights where
+   the main window has them), so the tab strip is the title bar: as tall as
+   the main window's toolbar, clear of the traffic lights, and a drag region
+   wherever there is no tab.
    ========================================================= */
 
 .term {
@@ -16,12 +19,13 @@
   background: var(--surface-base);
 }
 
-/* ---- Tab strip ---- */
+/* ---- Title bar: the tabs ---- */
 .term__bar {
   display: flex;
-  align-items: stretch;
-  gap: var(--space-3);
+  align-items: center;
   flex-shrink: 0;
+  /* The main toolbar's height: its padding around a toolbar button. */
+  min-height: calc(var(--size-xl) + var(--space-2) * 2 + var(--border-width-hairline));
   padding-inline: var(--space-2) var(--space-3);
   background: var(--surface-card);
   border-block-end: var(--border-width-hairline) solid var(--border-subtle);
@@ -29,10 +33,16 @@
   -webkit-user-select: none;
 }
 
+html[data-os="macos"] .term__bar {
+  padding-inline-start: calc(var(--space-8) + var(--space-6));
+}
+
 .term__tabs {
   display: flex;
-  align-items: stretch;
+  align-items: center;
+  gap: var(--space-1);
   flex: 1 1 auto;
+  align-self: stretch;
   min-width: 0;
 }
 
@@ -41,26 +51,30 @@
   align-items: center;
   flex: 0 1 calc(var(--size-2xl) * 5);
   min-width: calc(var(--size-2xl) * 2);
-  margin-block-end: calc(var(--border-width-hairline) * -1);
-  border-inline-end: var(--border-width-hairline) solid var(--border-subtle);
-  border-block-end: var(--border-width-hairline) solid var(--border-subtle);
+  height: var(--size-xl);
+  border: var(--border-width-hairline) solid transparent;
+  border-radius: var(--radius-input);
 }
 
-.term__tab:first-child {
-  border-inline-start: var(--border-width-hairline) solid var(--border-subtle);
+.term__tab:hover {
+  background: var(--surface-control);
 }
 
-.term__tab--active {
+.term__tab--active,
+.term__tab--active:hover {
   background: var(--surface-base);
-  border-block-end-color: var(--surface-base);
+  border-color: var(--border-subtle);
 }
 
 .term__tab-label {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
   flex: 1 1 auto;
   min-width: 0;
   align-self: stretch;
-  padding-block: var(--space-2);
-  padding-inline: var(--space-3) var(--space-1);
+  padding-block: 0;
+  padding-inline: var(--space-2) var(--space-1);
   font-family: var(--font-body);
   font-size: var(--text-sm);
   font-weight: var(--weight-base);
@@ -69,10 +83,30 @@
   color: var(--text-muted);
   background: none;
   border: 0;
+  border-radius: inherit;
+  cursor: default;
+}
+
+.term__tab-name {
+  flex: 0 1 auto;
+  min-width: 0;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  cursor: default;
+}
+
+/* Windows' elevation shield: every shell here runs as Administrator. Shown
+   before the name, read after it. */
+.term__tab-admin {
+  display: inline-flex;
+  flex: 0 0 auto;
+  order: -1;
+  color: var(--text-muted);
+}
+
+.term__tab-admin svg {
+  width: var(--size-xs);
+  height: var(--size-xs);
 }
 
 .term__tab--active .term__tab-label {
@@ -98,7 +132,7 @@
   flex: 0 0 auto;
   width: var(--size-md);
   height: var(--size-md);
-  margin-inline-end: var(--space-2);
+  margin-inline-end: var(--space-1);
   padding: 0;
   color: var(--text-muted);
   background: none;
@@ -124,17 +158,8 @@
 }
 
 .term__new {
-  align-self: center;
-  margin-inline-start: var(--space-1);
-}
-
-/* Everything runs as the built-in Administrator: said once, quietly. */
-.term__admin {
-  align-self: center;
   flex-shrink: 0;
-  font-size: var(--text-sm);
-  color: var(--text-muted);
-  white-space: nowrap;
+  margin-inline-start: var(--space-1);
 }
 
 /* ---- Terminals ---- */

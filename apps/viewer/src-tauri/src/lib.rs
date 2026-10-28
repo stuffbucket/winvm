@@ -105,12 +105,15 @@ fn share_stop(app: tauri::AppHandle) {
 const TERMINAL: &str = "terminal";
 const SHELLS: &[&str] = &["pwsh", "powershell", "cmd"];
 
-/// One tab the Terminal window should open: a shell in an instance, started in `cwd` (home when absent).
+/// One tab the Terminal window should open: a shell in an instance, started in `cwd` (home when absent),
+/// with the shells that instance has when the main window already asked.
 #[derive(Clone, Deserialize, Serialize)]
 struct TerminalRequest {
     instance: String,
     shell: String,
     cwd: Option<String>,
+    #[serde(default)]
+    installed: Option<Vec<String>>,
 }
 
 /// Tabs asked for and not yet taken by the Terminal window, which may still be loading.
@@ -130,6 +133,14 @@ fn show_terminal(app: &tauri::AppHandle) -> Result<(), String> {
         .inner_size(820.0, 520.0)
         .min_inner_size(420.0, 240.0)
         .visible(false);
+    // Tabs in the title bar, beside traffic lights where the main window has them (tauri.conf.json).
+    #[cfg(target_os = "macos")]
+    {
+        builder = builder
+            .title_bar_style(tauri::TitleBarStyle::Overlay)
+            .hidden_title(true)
+            .traffic_light_position(tauri::LogicalPosition::new(18.0, 26.0));
+    }
     if let Some((x, y)) = beside_main(app, 820.0) {
         builder = builder.position(x, y);
     }

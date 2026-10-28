@@ -12,6 +12,7 @@ import { TerminalView, terminalProcessTitle } from "@winvm/terminal"
 
 import {
   closeWindow,
+  installedShells,
   onTerminalMenu,
   onTerminalOpen,
   popupMenu,
@@ -25,7 +26,18 @@ import { Icon } from "../../components/Icon"
 import { cx } from "../../components/cx"
 import { t } from "../../i18n"
 import { terminalTheme, terminalTypography, useDark } from "./appearance"
-import { DEFAULT_SHELL, failureText, type Launch, connectArgs, parseEndpoint, shellMenu, shellTitle } from "./shells"
+import {
+  connectArgs,
+  defaultShell,
+  failureText,
+  fromList,
+  type Launch,
+  parseEndpoint,
+  runnable,
+  shellCache,
+  shellMenu,
+  shellTitle,
+} from "./shells"
 import { createSocketTransport, type SessionStatus } from "./socket"
 import { activeTab, noTabs, type Tab, type TabState, tabsReducer } from "./tabs"
 
@@ -60,6 +72,8 @@ export function TerminalWindow(): JSX.Element {
   const dark = useDark()
   const theme = useMemo(() => terminalTheme(dark), [dark])
   const active = activeTab(s)
+  // Which shells each instance has: from the app with its first tab, or asked here.
+  const shells = useMemo(() => shellCache(installedShells), [])
 
   const transport = useMemo(
     () =>
@@ -75,9 +89,12 @@ export function TerminalWindow(): JSX.Element {
         onStatus(id, status) {
           const state = stateOf(status)
           if (state !== null) dispatch({ type: "state", id, state })
+          // Lost: Windows may have restarted, and may have other shells now.
+          const tab = current.current.tabs.find((x) => x.id === id)
+          if (status.kind === "lost" && tab !== undefined) shells.forget(tab.instance)
         },
       }),
-    [],
+    [shells],
   )
 
   // A hidden window gets no animation frames, so show it straight after the first commit.
@@ -87,21 +104,38 @@ export function TerminalWindow(): JSX.Element {
     const take = (): void => {
       takeTerminalRequests()
         .then((requests) => {
-          for (const request of requests) dispatch({ type: "open", id: newId(), request })
+          for (const { installed, ...request } of requests) {
+            if (installed !== null) shells.seed(request.instance, fromList(installed))
+            dispatch({ type: "open", id: newId(), request })
+          }
         })
         .catch(() => undefined)
     }
     take()
     return onTerminalOpen(take)
-  }, [])
+  }, [shells])
 
-  const open = useCallback((launch: Launch): void => {
-    const from = activeTab(current.current) ?? current.current.tabs.at(-1)
-    if (from !== undefined) dispatch({ type: "open", id: newId(), request: { instance: from.instance, ...launch } })
-  }, [])
-  const openDefault = useCallback(() => open({ shell: DEFAULT_SHELL, cwd: null }), [open])
+  /** A new tab on the active tab's instance: `launch`, or the default shell. */
+  const open = useCallback(
+    (launch: Launch | null): void => {
+      const from = activeTab(current.current) ?? current.current.tabs.at(-1)
+      if (from === undefined) return
+      const instance = from.instance
+      void shells.get(instance).then((installed) => {
+        const request = { instance, ...runnable(launch ?? { shell: defaultShell(installed), cwd: null }, installed) }
+        dispatch({ type: "open", id: newId(), request })
+      })
+    },
+    [shells],
+  )
+  const openDefault = useCallback(() => open(null), [open])
   const openMenu = (): void => {
-    void popupMenu(shellMenu(t), (item) => open(item.launch)).catch(() => undefined)
+    const from = activeTab(current.current) ?? current.current.tabs.at(-1)
+    if (from === undefined) return
+    void shells
+      .get(from.instance)
+      .then((installed) => popupMenu(shellMenu(t, installed), (item) => open(item.launch)))
+      .catch(() => undefined)
   }
 
   useEffect(
@@ -138,7 +172,8 @@ export function TerminalWindow(): JSX.Element {
     return () => window.removeEventListener("keydown", keys, { capture: true })
   }, [])
 
-  const title = active === null ? t("terminal.title") : tabTitle(active)
+  // The title bar shows tabs, not this; it names the window in the Window menu and Mission Control.
+  const title = t("terminal.windowTitle", { title: active === null ? t("terminal.title") : tabTitle(active) })
   useEffect(() => setWindowTitle(title), [title])
 
   // The last tab closing closes the window, as in Terminal.
@@ -152,8 +187,9 @@ export function TerminalWindow(): JSX.Element {
 
   return (
     <div className="term">
-      <div className="term__bar">
-        <div className="term__tabs" role="tablist" aria-label={t("terminal.tabs")}>
+      {/* The title bar: an overlay, so the strip and the space around its tabs move the window. */}
+      <div className="term__bar" data-tauri-drag-region>
+        <div className="term__tabs" role="tablist" aria-label={t("terminal.tabs")} data-tauri-drag-region>
           {s.tabs.map((tab) => {
             const name = tabTitle(tab)
             const done = tab.state.kind === "exited" || tab.state.kind === "lost" || tab.state.kind === "failed"
@@ -164,13 +200,18 @@ export function TerminalWindow(): JSX.Element {
                   role="tab"
                   className="term__tab-label"
                   aria-selected={tab.id === s.active}
-                  title={name}
                   onClick={() => dispatch({ type: "activate", id: tab.id })}
                   onAuxClick={(e) => {
                     if (e.button === 1) dispatch({ type: "close", id: tab.id })
                   }}
                 >
-                  {name}
+                  <span className="term__tab-name" title={name}>
+                    {name}
+                  </span>
+                  {/* Windows' sign for elevated; after the name in the accessible name, before it on screen. */}
+                  <span className="term__tab-admin" role="img" aria-label={t("terminal.runsAsAdmin")} title={t("terminal.runsAsAdmin")}>
+                    <Icon name="shield" />
+                  </span>
                 </button>
                 <button
                   type="button"
@@ -200,9 +241,6 @@ export function TerminalWindow(): JSX.Element {
             <Icon name="plus" />
           </button>
         </div>
-        <span className="term__admin" title={t("terminal.adminTip")}>
-          {t("terminal.admin")}
-        </span>
       </div>
 
       <div className="term__panes">

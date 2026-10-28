@@ -1,7 +1,19 @@
 import type { CSSProperties } from "react"
-import { useCallback, useEffect, useState } from "react"
+import { useCallback, useEffect, useMemo, useState } from "react"
 
-import { onFileDrop, onMenu, openTerminal, outputText, popupMenu, revealInFinder, shareStart, shareStop, showWindow, winvm } from "./backend"
+import {
+  installedShells,
+  onFileDrop,
+  onMenu,
+  openTerminal,
+  outputText,
+  popupMenu,
+  revealInFinder,
+  shareStart,
+  shareStop,
+  showWindow,
+  winvm,
+} from "./backend"
 import { Button } from "./components/Button"
 import { Callout } from "./components/Callout"
 import { ConfirmDialog } from "./components/ConfirmDialog"
@@ -18,7 +30,7 @@ import { Overview } from "./features/overview/Overview"
 import { Panel } from "./features/panel/Panel"
 import { ReferenceDialog } from "./features/reference/ReferenceDialog"
 import { Screen } from "./features/screen/Screen"
-import { DEFAULT_SHELL, type Launch, shellMenu } from "./features/terminal/shells"
+import { defaultShell, installedList, type Launch, runnable, shellCache, shellMenu } from "./features/terminal/shells"
 import { type PanelId, Toolbar } from "./features/toolbar/Toolbar"
 import type { Verb } from "./features/winvm/useWinvm"
 import { useWinvm } from "./features/winvm/useWinvm"
@@ -109,23 +121,44 @@ export function App(): JSX.Element {
     [guestReady, copyIn, folder],
   )
 
+  // Which shells the guest has: asked once Windows is ready, so the first tab
+  // already knows, and asked again after it stops, restarts or is busy.
+  const shells = useMemo(() => shellCache(installedShells), [])
+  useEffect(() => {
+    if (w.name === null) return
+    if (guestReady) void shells.get(w.name)
+    else shells.forget(w.name)
+  }, [shells, w.name, guestReady])
+
+  /** A tab of `launch`, or of the default shell (PowerShell 7 if the guest has it). */
   const terminal = useCallback(
-    (launch: Launch): void => {
-      if (w.name === null || !c.terminal) return
-      openTerminal({ instance: w.name, ...launch }).catch((e: unknown) => setNotice({ tone: "error", title: t("terminal.failed"), detail: String(e) }))
+    (launch: Launch | null): void => {
+      const instance = w.name
+      if (instance === null || !c.terminal) return
+      shells
+        .get(instance)
+        .then((installed) =>
+          openTerminal({ instance, ...runnable(launch ?? { shell: defaultShell(installed), cwd: null }, installed), installed: installedList(installed) }),
+        )
+        .catch((e: unknown) => setNotice({ tone: "error", title: t("terminal.failed"), detail: String(e) }))
     },
-    [w.name, c.terminal],
+    [shells, w.name, c.terminal],
   )
 
   const terminalMenu = (): void => {
-    popupMenu(shellMenu(t), (item) => terminal(item.launch)).catch((e: unknown) => setNotice({ tone: "error", title: t("terminal.failed"), detail: String(e) }))
+    const instance = w.name
+    if (instance === null) return
+    shells
+      .get(instance)
+      .then((installed) => popupMenu(shellMenu(t, installed), (item) => terminal(item.launch)))
+      .catch((e: unknown) => setNotice({ tone: "error", title: t("terminal.failed"), detail: String(e) }))
   }
 
   const install = w.installCommand
   useEffect(
     () =>
       onMenu((id) => {
-        if (id === "new-terminal") terminal({ shell: DEFAULT_SHELL, cwd: null })
+        if (id === "new-terminal") terminal(null)
         if (id === "install-cli") void install()
         if (id === "reference") {
           setReference({ text: null })
@@ -208,7 +241,7 @@ export function App(): JSX.Element {
         onPause={() => run("pause")}
         onResume={() => run("resume")}
         onOpen={togglePanel}
-        onTerminal={() => terminal({ shell: DEFAULT_SHELL, cwd: null })}
+        onTerminal={() => terminal(null)}
         onTerminalMenu={terminalMenu}
         onFit={() => setFit((f) => !f)}
         onScreenSharing={() => void w.openScreenSharing()}
