@@ -3,7 +3,7 @@ use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem, HELP_SUBMENU_ID, WINDOW_SUBMENU_ID};
-use tauri::{Emitter, Manager, RunEvent, WebviewUrl, WebviewWindowBuilder};
+use tauri::{Emitter, Manager, RunEvent, WebviewUrl, WebviewWindowBuilder, WindowEvent};
 use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
 use tauri_plugin_shell::process::{CommandChild, CommandEvent};
 use tauri_plugin_shell::ShellExt;
@@ -321,6 +321,14 @@ pub fn run() {
         .manage(Updating::default())
         .manage(TerminalRequests::default())
         .menu(menu)
+        .on_window_event(|window, event| {
+            // Tabs asked for and never taken die with the window, rather than open in the next one.
+            if let (WindowEvent::Destroyed, TERMINAL) = (event, window.label()) {
+                if let Ok(mut queue) = window.state::<TerminalRequests>().0.lock() {
+                    queue.clear();
+                }
+            }
+        })
         .on_menu_event(|app, event| {
             let id = event.id().as_ref();
             if id == "install-cli" || id == "reference" {
