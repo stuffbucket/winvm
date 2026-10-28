@@ -104,6 +104,7 @@
   --backdrop-base: #0b1214;
   --backdrop-glow-accent: #173d44;
   --backdrop-glow-brand: #2e1720;
+  --terminal-selection: #24464d;
 }
 
 @media (prefers-color-scheme: light) {
@@ -127,6 +128,7 @@
     --backdrop-base: #e9eceb;
     --backdrop-glow-accent: #c9dfe2;
     --backdrop-glow-brand: #efd9de;
+    --terminal-selection: #c9dfe2;
   }
 }
 
@@ -150,4 +152,5 @@
   --backdrop-base: #e9eceb;
   --backdrop-glow-accent: #c9dfe2;
   --backdrop-glow-brand: #efd9de;
+  --terminal-selection: #c9dfe2;
 }

@@ -124,6 +124,8 @@ export const layout = {
  * text (links, "Copied", accent figures) uses `link`, never `accent`.
  * `backdrop*` (winvm) is the ground the display sits on: a base and two soft
  * glows, accent and brand. Never behind text; text sits on a surface over it.
+ * `terminalSelection` (winvm) is selected text's ground in the Terminal
+ * window; the terminal's own text on it stays ≥ 4.5:1.
  */
 export const themes = {
   dark: {
@@ -145,6 +147,7 @@ export const themes = {
     backdropBase: "#0b1214",
     backdropGlowAccent: "#173d44",
     backdropGlowBrand: "#2e1720",
+    terminalSelection: "#24464d",
   },
   light: {
     surfaceBase: "#fafafa",
@@ -165,5 +168,6 @@ export const themes = {
     backdropBase: "#e9eceb",
     backdropGlowAccent: "#c9dfe2",
     backdropGlowBrand: "#efd9de",
+    terminalSelection: "#c9dfe2",
   },
 } as const satisfies Record<"dark" | "light", Record<string, string>>;

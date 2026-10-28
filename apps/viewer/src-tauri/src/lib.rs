@@ -1,9 +1,9 @@
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
-use tauri::menu::{Menu, MenuItem, PredefinedMenuItem, HELP_SUBMENU_ID};
-use tauri::{Emitter, Manager, RunEvent};
+use tauri::menu::{Menu, MenuItem, PredefinedMenuItem, HELP_SUBMENU_ID, WINDOW_SUBMENU_ID};
+use tauri::{Emitter, Manager, RunEvent, WebviewUrl, WebviewWindowBuilder};
 use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
 use tauri_plugin_shell::process::{CommandChild, CommandEvent};
 use tauri_plugin_shell::ShellExt;
@@ -18,7 +18,7 @@ struct Output {
 
 const VERBS: &[&str] = &[
     "status", "doctor", "start", "stop", "reboot", "pause", "resume", "kill", "open", "setup", "exec", "put", "get",
-    "dir", "save", "load", "saves", "help",
+    "dir", "save", "load", "saves", "help", "terminal",
 ];
 
 #[tauri::command]
@@ -100,6 +100,72 @@ async fn share_start(app: tauri::AppHandle, instance: String) -> Result<Output, 
 #[tauri::command]
 fn share_stop(app: tauri::AppHandle) {
     stop_sharing(&app.state::<Sharing>());
+}
+
+const TERMINAL: &str = "terminal";
+const SHELLS: &[&str] = &["pwsh", "powershell", "cmd"];
+
+/// One tab the Terminal window should open: a shell in an instance, started in `cwd` (home when absent).
+#[derive(Clone, Deserialize, Serialize)]
+struct TerminalRequest {
+    instance: String,
+    shell: String,
+    cwd: Option<String>,
+}
+
+/// Tabs asked for and not yet taken by the Terminal window, which may still be loading.
+#[derive(Default)]
+struct TerminalRequests(Mutex<Vec<TerminalRequest>>);
+
+/// Brings the Terminal window forward, or opens it beside the main window.
+fn show_terminal(app: &tauri::AppHandle) -> Result<(), String> {
+    if let Some(window) = app.get_webview_window(TERMINAL) {
+        let _ = window.unminimize();
+        let _ = window.show();
+        let _ = window.set_focus();
+        return app.emit_to(TERMINAL, "terminal-open", ()).map_err(|e| e.to_string());
+    }
+    let mut builder = WebviewWindowBuilder::new(app, TERMINAL, WebviewUrl::App("terminal.html".into()))
+        .title("Terminal")
+        .inner_size(820.0, 520.0)
+        .min_inner_size(420.0, 240.0)
+        .visible(false);
+    if let Some((x, y)) = beside_main(app, 820.0) {
+        builder = builder.position(x, y);
+    }
+    builder.build().map(|_| ()).map_err(|e| e.to_string())
+}
+
+/// Just right of the main window, when the screen has room for `width` there.
+fn beside_main(app: &tauri::AppHandle, width: f64) -> Option<(f64, f64)> {
+    let main = app.get_webview_window("main")?;
+    let scale = main.scale_factor().ok()?;
+    let at = main.outer_position().ok()?.to_logical::<f64>(scale);
+    let size = main.outer_size().ok()?.to_logical::<f64>(scale);
+    let monitor = main.current_monitor().ok()??;
+    let screen_at = monitor.position().to_logical::<f64>(scale);
+    let screen = monitor.size().to_logical::<f64>(scale);
+    let x = at.x + size.width + 8.0;
+    (x + width <= screen_at.x + screen.width).then_some((x, at.y))
+}
+
+#[tauri::command]
+async fn terminal_open(app: tauri::AppHandle, request: TerminalRequest) -> Result<(), String> {
+    if !SHELLS.contains(&request.shell.as_str()) {
+        return Err(format!("not a shell this app opens: {}", request.shell));
+    }
+    app.state::<TerminalRequests>().0.lock().map_err(|e| e.to_string())?.push(request);
+    show_terminal(&app)
+}
+
+#[tauri::command]
+fn terminal_take(app: tauri::AppHandle) -> Vec<TerminalRequest> {
+    app.state::<TerminalRequests>().0.lock().map(|mut q| std::mem::take(&mut *q)).unwrap_or_default()
+}
+
+/// The window with keyboard focus, if any of the app's has it.
+fn focused_window(app: &tauri::AppHandle) -> Option<tauri::WebviewWindow> {
+    app.webview_windows().into_values().find(|w| w.is_focused().unwrap_or(false))
 }
 
 #[tauri::command]
@@ -208,9 +274,31 @@ fn check_for_update(app: tauri::AppHandle, asked: bool) {
     });
 }
 
-/// The default menu, plus updates and the command line (app menu) and the command reference (Help).
+/// The default menu, plus updates and the command line (app menu), terminal tabs (File) and the
+/// command reference (Help). File's New Terminal Tab and Close act on the Terminal window's tabs when
+/// it is in front, so Cmd-T and Cmd-W are tab keys there and window keys elsewhere.
 fn menu(app: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
     let menu = Menu::default(app)?;
+    let new_tab = MenuItem::with_id(app, "new-tab", "New Terminal Tab", true, Some("CmdOrCtrl+T"))?;
+    let close = MenuItem::with_id(app, "close", "Close", true, Some("CmdOrCtrl+W"))?;
+    let file = menu
+        .items()?
+        .into_iter()
+        .filter_map(|i| i.as_submenu().cloned())
+        .find(|m| m.text().is_ok_and(|t| t == "File"));
+    if let Some(file) = file {
+        for item in file.items()? {
+            file.remove(&item)?;
+        }
+        file.append_items(&[&new_tab, &PredefinedMenuItem::separator(app)?, &close])?;
+    }
+    // The Window menu's own Close Window (after a separator) would take Cmd-W back from File's Close.
+    if let Some(window) = menu.get(WINDOW_SUBMENU_ID).and_then(|i| i.as_submenu().cloned()) {
+        if window.items()?.len() == 4 {
+            window.remove_at(3)?;
+            window.remove_at(2)?;
+        }
+    }
     let updates = MenuItem::with_id(app, "check-updates", "Check for Updates…", true, None::<&str>)?;
     let install = MenuItem::with_id(app, "install-cli", "Install Command Line Tool…", true, None::<&str>)?;
     let reference = MenuItem::with_id(app, "reference", "winvm Command Reference", true, Some("CmdOrCtrl+Shift+/"))?;
@@ -231,11 +319,25 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(Sharing::default())
         .manage(Updating::default())
+        .manage(TerminalRequests::default())
         .menu(menu)
         .on_menu_event(|app, event| {
             let id = event.id().as_ref();
             if id == "install-cli" || id == "reference" {
                 let _ = app.emit("menu", id);
+            } else if id == "new-tab" || id == "close" {
+                match focused_window(app) {
+                    Some(w) if w.label() == TERMINAL => {
+                        let _ = app.emit_to(TERMINAL, "terminal-menu", if id == "new-tab" { "new-tab" } else { "close-tab" });
+                    }
+                    Some(w) if id == "close" => {
+                        let _ = w.close();
+                    }
+                    _ if id == "new-tab" => {
+                        let _ = app.emit_to("main", "menu", "new-terminal");
+                    }
+                    _ => {}
+                }
             } else if id == "check-updates" {
                 check_for_update(app.clone(), true);
             }
@@ -246,7 +348,17 @@ pub fn run() {
             }
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![winvm, install_cli, share_start, share_stop, downloads_dir, unused_path, reveal])
+        .invoke_handler(tauri::generate_handler![
+            winvm,
+            install_cli,
+            share_start,
+            share_stop,
+            downloads_dir,
+            unused_path,
+            reveal,
+            terminal_open,
+            terminal_take
+        ])
         .build(tauri::generate_context!())
         .expect("winvm could not start")
         .run(|app, event| {

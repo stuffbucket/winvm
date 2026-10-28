@@ -24,10 +24,11 @@ export type IconName =
   | "forward"
   | "up"
   | "refresh"
+  | "plus"
 
 // Lucide glyphs: play, power, rotate-ccw, pause, maximize, screen-share, panel-right, check, x,
 // terminal, folder, history, bot, file, monitor, file-text, download, house, hard-drive,
-// chevron-left, chevron-right, arrow-up, refresh-cw.
+// chevron-left, chevron-right, arrow-up, refresh-cw, plus.
 const PATHS: Record<IconName, ReactNode> = {
   terminal: (
     <>
@@ -155,6 +156,12 @@ const PATHS: Record<IconName, ReactNode> = {
     </>
   ),
   check: <path d="M20 6 9 17l-5-5" />,
+  plus: (
+    <>
+      <path d="M5 12h14" />
+      <path d="M12 5v14" />
+    </>
+  ),
   cross: (
     <>
       <path d="M18 6 6 18" />

@@ -76,6 +76,8 @@ export interface Controls {
   readonly pause: boolean
   readonly resume: boolean
   readonly screen: boolean
+  /** A shell in Windows needs Windows up and its agent answering. */
+  readonly terminal: boolean
 }
 
 export function controls(p: Phase, busy: boolean): Controls {
@@ -87,7 +89,16 @@ export function controls(p: Phase, busy: boolean): Controls {
     pause: !busy && (p === "running" || p === "starting"),
     resume: !busy && p === "paused",
     screen: live,
+    terminal: !busy && p === "running",
   }
+}
+
+/** Why the terminal can't open, as an i18n key; null when it can. */
+export function terminalBlocked(p: Phase, busy: boolean): string | null {
+  if (p === "starting") return "terminal.why.starting"
+  if (p === "paused") return "terminal.why.paused"
+  if (p !== "running") return "terminal.why.off"
+  return busy ? "terminal.why.busy" : null
 }
 
 const GiB = 1024 ** 3

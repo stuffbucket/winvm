@@ -71,6 +71,7 @@ surfaces of its theme by `bun scripts/contrast-audit.ts` (in
 | `--border-subtle` | per theme | Hairline divider | Separators, card borders | Input borders (not 3:1) |
 | `--border-strong` | per theme | Control border (≥3:1) | Input and checkbox borders | Decorative rules |
 | `--status-error` / `-success` / `-warning` / `-info` | per theme | State color, text-safe (≥4.5:1) so also icon-safe | Error text, icons, stripes; success/warning indicators | Identity or interaction |
+| `--terminal-selection` | per theme | Selected text's ground in the Terminal window (text on it ≥4.5:1) | xterm's `selectionBackground` | Anything outside the terminal |
 | `--focus-ring*` | — | Focus ring composition (color = `--accent`) | Every focusable element | Hover styling |
 
 There are no `--brand-fg`, `--accent-hover` or `--status-*-fg` tokens:

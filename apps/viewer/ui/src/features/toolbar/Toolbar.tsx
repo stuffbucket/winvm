@@ -2,7 +2,7 @@ import { Icon, type IconName } from "../../components/Icon"
 import { t } from "../../i18n"
 import type { Controls, Phase } from "../../model"
 
-export type PanelId = "command" | "files" | "saves" | "share"
+export type PanelId = "files" | "saves" | "share"
 
 interface ToolbarProps {
   readonly names: readonly string[]
@@ -12,6 +12,8 @@ interface ToolbarProps {
   readonly activity: string | null
   readonly controls: Controls
   readonly guestReady: boolean
+  /** Why the terminal can't open (an i18n key), or null when it can. */
+  readonly terminalBlocked: string | null
   readonly canSaves: boolean
   readonly sharing: boolean
   readonly fit: boolean
@@ -24,6 +26,8 @@ interface ToolbarProps {
   onPause(): void
   onResume(): void
   onOpen(id: PanelId, button: HTMLElement): void
+  onTerminal(): void
+  onTerminalMenu(): void
   onFit(): void
   onScreenSharing(): void
   onDetails(): void
@@ -51,6 +55,32 @@ function ToolButton({ icon, label, enabled, pressed, expanded, onClick }: ToolBu
       onClick={(e) => onClick(e.currentTarget)}
     >
       <Icon name={icon} />
+    </button>
+  )
+}
+
+/**
+ * >_ opens a PowerShell 7 tab in the Terminal window; Option-click or
+ * right-click offers the other shells and places in a native menu. Disabled,
+ * its tooltip says why.
+ */
+function TerminalButton({ blocked, onOpen, onMenu }: { readonly blocked: string | null; onOpen(): void; onMenu(): void }): JSX.Element {
+  const label = t("action.terminal")
+  return (
+    <button
+      type="button"
+      className="btn btn--ghost btn--icon"
+      aria-label={label}
+      aria-haspopup="menu"
+      title={blocked === null ? t("terminal.tip") : t(blocked)}
+      disabled={blocked !== null}
+      onClick={(e) => (e.altKey ? onMenu() : onOpen())}
+      onContextMenu={(e) => {
+        e.preventDefault()
+        if (blocked === null) onMenu()
+      }}
+    >
+      <Icon name="terminal" />
     </button>
   )
 }
@@ -98,7 +128,7 @@ export function Toolbar(p: ToolbarProps): JSX.Element {
       <span className="toolbar__divider" aria-hidden="true" />
 
       <div className="toolbar__group">
-        {panel("command", "terminal", t("action.command"), p.guestReady)}
+        <TerminalButton blocked={p.terminalBlocked} onOpen={p.onTerminal} onMenu={p.onTerminalMenu} />
         {panel("files", "folder", t("action.files"), p.guestReady)}
         {panel("saves", "history", t("action.saves"), p.canSaves)}
         {panel("share", "agent", t("action.share"), p.guestReady || p.sharing, p.sharing)}
