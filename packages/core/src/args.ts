@@ -28,11 +28,21 @@ export function parseArgs(argv: readonly string[]): Args {
       continue
     }
     if (a.startsWith("--")) {
+      // `--key=value` carries any value, empty or starting with "-" (markdown's
+      // "- item"), which the two-word form cannot: the safe form for scripts
+      // and the app.
+      const eq = a.indexOf("=")
+      if (eq > 2) {
+        flags.set(a.slice(2, eq), a.slice(eq + 1))
+        continue
+      }
       const key = a.slice(2)
       const next = argv[i + 1]
       // A flag followed by a non-flag consumes it as a value; otherwise it is
-      // boolean. `--ephemeral` and `--image foo` therefore both work.
-      if (next !== undefined && !next.startsWith("-")) {
+      // boolean. `--ephemeral` and `--image foo` therefore both work. A lone
+      // `-` is a value, as everywhere on a command line: "read standard input"
+      // (`saves note --text -`).
+      if (next !== undefined && (next === "-" || !next.startsWith("-"))) {
         flags.set(key, next)
         i += 1
       } else {

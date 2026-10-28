@@ -16,6 +16,7 @@ import { runtimeBin } from "./runtime"
 import { ensureService } from "./service"
 import type { InstanceMeta, Paths } from "./paths"
 import { media } from "./paths"
+import type { DisplayConfig } from "./display"
 import { RAMFB, displayArgs, readDisplay } from "./display"
 import * as qga from "./qga"
 import * as qmp from "./qmp"
@@ -35,6 +36,12 @@ export interface LaunchOptions {
   readonly loadvm?: string
   /** QEMU `-incoming <uri>`: start paused, fed a migration stream (a file save). See saves.ts. */
   readonly incoming?: string
+  /**
+   * The display device to use instead of the instance's display.json. Only for
+   * working out a command line (saves.currentCompat asking "what if this had
+   * the other device?"), so nothing is written to find out.
+   */
+  readonly display?: DisplayConfig
 }
 
 export function qemuArgs(name: string, p: Paths, meta: InstanceMeta, o: LaunchOptions): readonly string[] {
@@ -124,7 +131,7 @@ export function qemuArgs(name: string, p: Paths, meta: InstanceMeta, o: LaunchOp
     // arguments, resized live through VNC and the guest agent, so the size is
     // never part of the save hash. Older instances keep ramfb until switched;
     // a build always uses ramfb (WinPE has no virtio-gpu driver). See display.ts.
-    ...displayArgs(o.installMedia ? RAMFB : readDisplay(p)),
+    ...displayArgs(o.installMedia ? RAMFB : (o.display ?? readDisplay(p))),
     "-display", "none",
     // Loopback only, with a websocket listener for the browser view and a
     // password, which macOS Screen Sharing needs and the websocket must have.

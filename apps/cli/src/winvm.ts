@@ -15,6 +15,7 @@
  *   winvm snapshot [-i name] [tag]   capture the running guest, RAM and all
  *   winvm rewind   [-i name] [tag]   put it back — ~10-20 s running, no reboot
  *   winvm save / load / saves        whole-machine saves as files; see saves.ts
+ *   winvm saves note <save>          a title, text and tags on a save; see notes.ts
  *   winvm golden create | reset      settled mapped-ram save for fast resets; see golden.ts
  *   winvm pause / resume / stow      freeze, unfreeze, save-and-quit
  *   winvm reboot [-i name]           restart Windows, back when logged on again
@@ -104,7 +105,8 @@
  *   termcmds.ts   `terminal`: a guest shell over the agent's WebSocket (assets/conpty.cs)
  *   qmp.ts        QEMU monitor client (keystrokes, snapshots)
  *   snapshot.ts   capture and restore a running guest
- *   saves.ts      file saves: format, compatibility, save/load mechanics
+ *   saves.ts      file saves: format, compatibility, save/load mechanics, screenshots
+ *   notes.ts      a person's notes on a save, kept in the XDG data dir (xdg.ts)
  *   savecmds.ts   the save verbs, and the start/rewind hooks
  *   clock.ts      put the guest's clock on the host's
  *   watch.ts      the per-instance watcher process (idle.ts holds its decisions)
