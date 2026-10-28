@@ -327,6 +327,7 @@ export async function display(args: Args): Promise<number> {
       result = await guestDisplay.setGuestSize(name, size, scale === undefined ? {} : { scale })
     }
     if (asJson) console.log(JSON.stringify(result))
+    else if (result.deferred === true) console.log(`Windows is at its lock screen: the screen becomes ${String(result.width)}x${String(result.height)} once someone signs in`)
     else console.log(`screen is ${String(result.width)}x${String(result.height)} at ${String(result.scale)}%${result.ms === undefined ? "" : ` (${String(result.ms)} ms in the guest)`}`)
     return 0
   } catch (error) {

@@ -148,7 +148,8 @@ export function App(): JSX.Element {
       }
       pendingSize.current = null
       const reply = await agentFetch(w.name, "POST", "/display", { op: "set", width: size.width, height: size.height, waitMs: 2000, scale }, 22_000)
-      if (reply.status !== 200) throw new Error(`the agent answered ${String(reply.status)}: ${JSON.stringify(reply.body)}`)
+      // 202: Windows is at its lock screen (after a wake, say); the agent sets the size at sign-in.
+      if (reply.status !== 200 && reply.status !== 202) throw new Error(`the agent answered ${String(reply.status)}: ${JSON.stringify(reply.body)}`)
     },
     [w.name, guestReady],
   )

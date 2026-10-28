@@ -71,6 +71,8 @@ export interface GuestDisplay {
   readonly changed?: boolean
   readonly scaled?: boolean
   readonly ms?: number
+  /** Windows is at its lock screen: the agent sets the size once someone signs in (guestagent.ts LockedDisplay). */
+  readonly deferred?: boolean
 }
 
 /** The guest's size and scale, from the helper. */
