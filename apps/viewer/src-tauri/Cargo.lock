@@ -4891,6 +4891,8 @@ dependencies = [
  "objc2-app-kit",
  "objc2-foundation",
  "objc2-uniform-type-identifiers",
+ "reqwest",
+ "rustls",
  "serde",
  "serde_json",
  "tauri",

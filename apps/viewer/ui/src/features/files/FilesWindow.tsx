@@ -26,7 +26,7 @@ import {
   revealInFinder,
   setWindowTitle,
   showWindow,
-  winvm,
+
   type Action,
 } from "../../backend"
 import { Button } from "../../components/Button"
@@ -38,9 +38,9 @@ import { t } from "../../i18n"
 import { defaultShell, installedList, runnable } from "../terminal/shells"
 import { FileList, type Renaming, rowHeight, rowId } from "./FileList"
 import type { Entry, ListFailure, Listing, Place, Sort, SortKey } from "./files"
-import { childPath, clickSelect, crumbs, findByPrefix, freeName, isListing, isWithin, leafName, nameProblem, parseListing, samePath, sortEntries } from "./files"
+import { childPath, clickSelect, crumbs, findByPrefix, freeName, isListing, isWithin, leafName, nameProblem, samePath, sortEntries } from "./files"
 import { glyphOf, kindLabel } from "./kinds"
-import { copy, makeFolder, move, type OpCode, remove } from "./ops"
+import { copy, listFolder, makeFolder, move, type OpCode, remove } from "./ops"
 import { useCopies } from "./useCopies"
 
 const PLACE_ICON: Record<Place["kind"], IconName> = {
@@ -159,14 +159,9 @@ export function FilesWindow({ instance, initialTitle }: { readonly instance: str
     async (path: string | null, how: "go" | "back" | "forward" | "stay"): Promise<void> => {
       const id = (request.current += 1)
       setLoading(true)
-      const out = await winvm("dir", "-i", instance, ...(path === null ? [] : [path]), "--json").catch((e: unknown) => ({
-        code: 1,
-        stdout: "",
-        stderr: String(e),
-      }))
+      const got = await listFolder(instance, path)
       if (id !== request.current) return
       setLoading(false)
-      const got = parseListing(out.stdout, out.stderr)
       if (!isListing(got)) {
         setFailure(got)
         // A remembered folder that has gone: the Desktop instead.
@@ -366,7 +361,7 @@ export function FilesWindow({ instance, initialTitle }: { readonly instance: str
       return
     }
     enqueue(async () => {
-      const there = parseListing(...(await winvm("dir", "-i", instance, to, "--all", "--json").then((o) => [o.stdout, o.stderr] as const)))
+      const there = await listFolder(instance, to, { hidden: true })
       if (!isListing(there)) {
         copies.report({ ok: false, title: asCopy ? t("files.failedCopy") : t("files.failedMove"), detail: there.detail })
         return

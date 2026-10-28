@@ -9,6 +9,7 @@ use tauri_plugin_shell::process::{CommandChild, CommandEvent};
 use tauri_plugin_shell::ShellExt;
 use tauri_plugin_updater::UpdaterExt;
 
+mod agent;
 mod dragout;
 
 #[derive(Serialize)]
@@ -401,6 +402,7 @@ pub fn run() {
         .manage(Sharing::default())
         .manage(Updating::default())
         .manage(TerminalRequests::default())
+        .manage(agent::Agents::default())
         .menu(menu)
         .on_window_event(|window, event| {
             // Tabs asked for and never taken die with the window, rather than open in the next one.
@@ -461,6 +463,7 @@ pub fn run() {
             reveal,
             terminal_open,
             terminal_take,
+            agent::agent_fetch,
             files_open,
             copy_text,
             dragout::files_drag_out
