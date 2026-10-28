@@ -72,3 +72,12 @@ export function imageName(args: Args): string {
 export function isValidImageName(name: string): boolean {
   return /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(name)
 }
+
+/**
+ * An instance name for a NEW instance: the same shape as an image name, a
+ * single directory under instances/. Existing instances keep whatever name
+ * they have; the Mac app checks names the same way (features/machines).
+ */
+export function isValidInstanceName(name: string): boolean {
+  return isValidImageName(name)
+}
