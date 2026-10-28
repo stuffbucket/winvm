@@ -11,7 +11,8 @@ winvm save before-install        # the name defaults to a timestamp
 winvm load before-install        # running or stopped
 winvm save --fast clean          # larger, but faster to load
 winvm saves                      # name, kind, format, created, size, compatible
-winvm saves rm before-install
+winvm saves rm before-install    # deletes its note too
+winvm saves note before-install --title "Clean install" --tags win11,clean
 winvm pause / resume             # freeze the guest / carry on
 winvm sleep / wake               # lock Windows and freeze it / carry on at the lock screen
 winvm lock                       # Windows back to its lock screen
@@ -48,6 +49,58 @@ winvm clock                      # the guest's clock offset, and fix it
 
 `snapshot` and `rewind <tag>` also work. They keep their state inside the
 instance's disk file instead.
+
+## Screenshots and notes
+
+Every save keeps a picture of the screen at the moment it was taken, next to
+its other files:
+
+- `screen.png`: the whole screen, at the guest's resolution.
+- `thumb.png`: the same picture, shrunk to fit inside 480x300.
+
+The picture is taken while the guest is paused for the save, so it shows
+exactly what the save holds. If no picture can be taken, for example because
+the guest has no screen, the save still works and simply has none. Saves made
+before this feature have no picture. The pictures don't count towards a save's
+size in `saves`.
+
+You can also add a note to a save: a title, some text and tags.
+
+```sh
+winvm saves note before-install                      # show it
+winvm saves note before-install --title "Clean install" --tags win11,clean
+echo "Office not installed yet" | winvm saves note before-install --text -
+winvm saves note before-install --clear              # delete it
+winvm saves note before-install --json               # the note as JSON, or null
+```
+
+`--title`, `--text` and `--tags` change only what you pass and keep the rest.
+An empty value clears that field (`--title=`). `--clear` starts again from an
+empty note.
+
+In scripts, write each value as `--text=<value>`, joined with `=`. That form
+takes any text, including text that starts with `-`, like a Markdown list:
+`--text="- first item"`. Written as two words, `--text - item` would be misread.
+
+Notes aren't stored with the save. They live in your data folder, so clearing
+out machine state never touches them:
+
+- `~/.local/share/winvm/notes/<instance>/<save>.json`, or under
+  `$XDG_DATA_HOME/winvm/` when that's set.
+
+A note still belongs to its save:
+
+- Deleting the save (`saves rm`, autosave rotation, `destroy`) deletes its note.
+  `destroy --keep-saves` keeps both.
+- Saving again under the same name drops the old note, because it described the
+  old moment.
+- A save copied to another instance (a test pool) brings its note with it.
+
+`saves --json` reports, for each save, `format`, `screenshot` and `thumbnail`
+(absolute paths, or `null`), `screenSize`, `title` and `notes` (the whole note,
+or `null`). For a save that won't load, `incompatible` lists what changed:
+`base`, `hardware`, `display` (only the display device differs), `firmware` or
+`qemu`.
 
 ## Goldens
 

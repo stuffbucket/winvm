@@ -15,11 +15,27 @@
  *                       (or vmstate.mapped / vmstate.bin — see "RAM formats")
  *     overlay.qcow2     the instance's writable disk at that moment (APFS clone)
  *     efi-vars.qcow2    its firmware variables at that moment (APFS clone)
+ *     screen.png        the screen at that instant, full size (when there is one)
+ *     thumb.png         the same, fitted inside 480x300 for lists
  *
  * The disk copies are `cp -c` CLONES (clonefile), so they cost nothing until the
  * instance writes over the blocks they share. TPM state needs no file: QEMU's
  * tpm-emulator backend carries swtpm's state inside the migration stream and
  * pushes it back into swtpm on load.
+ *
+ * A person's notes on a save (title, text, tags) are NOT in this directory but
+ * in the XDG data dir — see notes.ts — and follow the save's lifecycle here.
+ *
+ * ## Screenshots
+ *
+ * Every save keeps a picture of the screen, so a list of saves can show what
+ * each one was. It is grabbed as one raw PPM screendump (~60 ms) while the
+ * guest is stopped, so it shows exactly the saved instant, and encoded to PNG
+ * only after the guest is running again (or QEMU has quit), so the guest is
+ * not held stopped for it. A screenshot is a nicety: any failure — a headless
+ * guest has no framebuffer — skips the files and never fails the save. The
+ * PNGs are not counted in the manifest's `bytes`, which stays the cost of the
+ * machine state (RAM and disks), the figure retention and `saves` reason about.
  *
  * ## Consistency
  *
@@ -78,10 +94,15 @@ import { createHash } from "node:crypto"
 import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs"
 import { resolve } from "node:path"
 
-import { RAMFB, VIRTIO_GPU, readDisplay, writeDisplay } from "./display"
+import type { Size } from "./cua"
+import { encodePng, fitScale, parsePpm, resize, scaled } from "./cua"
+import type { DisplayConfig } from "./display"
+import { RAMFB, VIRTIO_GPU, readDisplay, sameDevice, writeDisplay } from "./display"
 import { capture, requireFirmware } from "./host"
 import { currentQemuCompat, runtimeBin } from "./runtime"
 import { ensureInstance } from "./instance"
+import type { Note } from "./notes"
+import { copyNote, readNote, removeNote, removeNotes } from "./notes"
 import type { InstanceMeta, Paths } from "./paths"
 import { basePath, home, imageMetaPath, instanceDir, pathsFor, readImageMeta, readMeta } from "./paths"
 import * as qemu from "./qemu"
@@ -147,6 +168,12 @@ export interface Manifest {
   readonly format?: RamFormat
   /** Set on a copy made by `cloneSave`: the save it was cloned from. */
   readonly clonedFrom?: { readonly instance: string; readonly createdAt: string }
+  /** The screen at the saved instant, full size (FILES.screen); absent when none could be taken. */
+  readonly screenshot?: string
+  /** The same, fitted inside THUMB_BOX (FILES.thumb). */
+  readonly thumbnail?: string
+  /** The framebuffer's size when the screenshot was taken. */
+  readonly screenSize?: { readonly width: number; readonly height: number }
 }
 
 export const FILES = {
@@ -156,7 +183,12 @@ export const FILES = {
   ramMapped: "vmstate.mapped",
   overlay: "overlay.qcow2",
   vars: "efi-vars.qcow2",
+  screen: "screen.png",
+  thumb: "thumb.png",
 } as const
+
+/** The box a save's thumbnail is fitted inside: small enough for a list, sharp enough for a card. */
+export const THUMB_BOX: Size = { width: 480, height: 300 }
 
 export const savesRoot = (): string => resolve(home(), "saves")
 export const savesDir = (instance: string): string => resolve(savesRoot(), instance)
@@ -272,6 +304,13 @@ export function compatDiff(saved: CompatParts, now: CompatParts): readonly strin
   return out
 }
 
+export type CompatPart = keyof CompatParts
+
+/** Which parts differ, as keys: what `saves --json` reports for an incompatible save. */
+export function compatDiffKeys(saved: CompatParts, now: CompatParts): CompatPart[] {
+  return (["base", "hardware", "firmware", "qemu"] as const).filter((k) => saved[k] !== now[k])
+}
+
 export function formatBytes(n: number): string {
   if (n < 1024) return `${String(n)} B`
   const units = ["KB", "MB", "GB", "TB"]
@@ -345,7 +384,16 @@ export function migrationPlan(format: RamFormat, ramPath: string, zstd: string, 
 let firmwareDigest: string | null = null
 let qemuVersion: string | null = null
 
-export function currentCompat(instance: string, meta: InstanceMeta): { readonly hash: string; readonly parts: CompatParts } {
+/**
+ * `display` measures the instance as if it had that display device instead of
+ * its own, without touching display.json: `saves` uses it to tell a save that
+ * differs only by its display device from one that differs by more.
+ */
+export function currentCompat(
+  instance: string,
+  meta: InstanceMeta,
+  display?: DisplayConfig,
+): { readonly hash: string; readonly parts: CompatParts } {
   const st = statSync(basePath(meta.image))
   let created = ""
   try {
@@ -359,6 +407,7 @@ export function currentCompat(instance: string, meta: InstanceMeta): { readonly 
     installMedia: false,
     ephemeral: false,
     virtioBoot: readImageMeta(meta.image)?.virtioBoot === true,
+    ...(display === undefined ? {} : { display }),
   })
   const parts: CompatParts = {
     base: baseIdentity(meta.image, st.size, st.mtimeMs, created),
@@ -433,37 +482,125 @@ export function readSave(instance: string, name: string): Manifest | null {
   }
 }
 
+/** Why a save will not load here: a part of `compat`, with a display-device change told apart from other hardware. */
+export type IncompatibleReason = "base" | "hardware" | "display" | "firmware" | "qemu"
+
 export interface SaveEntry {
   readonly name: string
   readonly kind: SaveKind
   readonly createdAt: string
   readonly bytes: number
+  /** How the RAM was written. */
+  readonly format: RamFormat
   /** Whether it loads into this instance as it is now; null when that could not be worked out. */
   readonly compatible: boolean | null
+  /** Only when `compatible` is false and the save recorded its parts: which ones differ. */
+  readonly incompatible?: readonly IncompatibleReason[]
+  /** The `--note` given to `winvm save`, kept in the manifest. */
   readonly note?: string
+  /** Absolute path of the save's screen.png / thumb.png; null when it has none. */
+  readonly screenshot: string | null
+  readonly thumbnail: string | null
+  readonly screenSize?: { readonly width: number; readonly height: number }
+  /** The person's note (notes.ts): its title, and the whole note. */
+  readonly title: string | null
+  readonly notes: Note | null
   /** Why it does not load, when winvm knows: e.g. taken before the shared folder devices. */
   readonly why?: string
 }
 
-/** `winvm saves --json`: the readable saves, oldest name first, and whether each loads here. */
-export function savesReport(rows: readonly Listed[], compat: string | null, before?: string | null): SaveEntry[] {
-  return rows.flatMap((r) =>
-    r.manifest === null
-      ? []
-      : [
-          {
-            name: r.manifest.name,
-            kind: r.manifest.kind,
-            createdAt: r.manifest.createdAt,
-            bytes: r.manifest.bytes,
-            compatible: compat === null ? null : r.manifest.compat === compat,
-            ...(r.manifest.note === undefined ? {} : { note: r.manifest.note }),
-            ...(compat !== null && r.manifest.compat !== compat && takenBeforeDevices(r.manifest, before ?? null)
-              ? { why: "taken before the shared folder and clipboard devices" }
-              : {}),
-          },
-        ],
+/** What `savesReport` needs to know about this host, passed in so the report stays pure. */
+export interface ReportContext {
+  /** The instance's compatibility now; null when it could not be worked out. */
+  readonly compat: { readonly hash: string; readonly parts: CompatParts } | null
+  /**
+   * The hardware part as it would be with each OTHER display device: a save
+   * whose hardware matches one of these differs only by its display.
+   */
+  readonly displayHardware?: readonly string[]
+  /** The hardware part before the shared folder devices (hardwareBeforeDevices); null when nothing was stranded. */
+  readonly beforeDevices?: string | null
+  /** Absolute path of `file` in save `save`'s directory when it exists, else null. */
+  readonly file?: (save: string, file: string) => string | null
+  readonly note?: (save: string) => Note | null
+}
+
+/** Why `m` will not load here; null when it will, or when it cannot say. */
+function reasons(m: Manifest, ctx: ReportContext): IncompatibleReason[] | null {
+  if (ctx.compat === null || m.compat === ctx.compat.hash || m.compatParts === undefined) return null
+  const saved = m.compatParts
+  const out = compatDiffKeys(saved, ctx.compat.parts).map((k): IncompatibleReason =>
+    k === "hardware" && (ctx.displayHardware ?? []).includes(saved.hardware) ? "display" : k,
   )
+  return out.length > 0 ? out : null
+}
+
+/** `winvm saves --json`: the readable saves, oldest first, whether each loads here, and what to show for it. */
+export function savesReport(rows: readonly Listed[], ctx: ReportContext): SaveEntry[] {
+  const file = ctx.file ?? ((): null => null)
+  const note = ctx.note ?? ((): null => null)
+  return rows.flatMap((r) => {
+    const m = r.manifest
+    if (m === null) return []
+    const differ = reasons(m, ctx)
+    const n = note(r.name)
+    return [
+      {
+        name: m.name,
+        kind: m.kind,
+        createdAt: m.createdAt,
+        bytes: m.bytes,
+        format: ramFormatOf(m),
+        compatible: ctx.compat === null ? null : m.compat === ctx.compat.hash,
+        ...(differ === null ? {} : { incompatible: differ }),
+        ...(m.note === undefined ? {} : { note: m.note }),
+        ...(ctx.compat !== null && m.compat !== ctx.compat.hash && takenBeforeDevices(m, ctx.beforeDevices ?? null)
+          ? { why: "taken before the shared folder and clipboard devices" }
+          : {}),
+        screenshot: file(r.name, FILES.screen),
+        thumbnail: file(r.name, FILES.thumb),
+        ...(m.screenSize === undefined ? {} : { screenSize: m.screenSize }),
+        title: n?.title ?? null,
+        notes: n,
+      },
+    ]
+  })
+}
+
+/** Absolute path of a file in a save's directory, or null when it is not there. */
+export function saveFile(instance: string, save: string, file: string): string | null {
+  const path = resolve(saveDir(instance, save), file)
+  return existsSync(path) ? path : null
+}
+
+/**
+ * Everything `savesReport` needs for this instance as it is now. Never throws:
+ * what cannot be worked out (no firmware, no base image) is reported unknown.
+ */
+export function reportContext(instance: string): ReportContext {
+  const meta = readMeta(instance)
+  let compat: ReportContext["compat"] = null
+  let displayHardware: string[] = []
+  let beforeDevices: string | null = null
+  try {
+    if (meta !== null) {
+      compat = currentCompat(instance, meta)
+      beforeDevices = hardwareBeforeDevices(instance, meta)
+      const own = readDisplay(pathsFor(instance))
+      displayHardware = [RAMFB, VIRTIO_GPU]
+        .filter((d) => !sameDevice(d, own))
+        .map((d) => currentCompat(instance, meta, d).parts.hardware)
+    }
+  } catch {
+    // Unknown is reported as unknown; `compat` keeps whatever was worked out.
+  }
+  return {
+    compat,
+    displayHardware,
+    beforeDevices,
+    file: (save, f) => saveFile(instance, save, f),
+    note: (save) => readNoteSafe(instance, save),
+  }
 }
 
 export function listSaves(instance: string): readonly Listed[] {
@@ -486,8 +623,10 @@ export function listSaves(instance: string): readonly Listed[] {
 
 export const hasSave = (instance: string, name: string): boolean => readSave(instance, name) !== null
 
+/** The save, and the note on it: a note on a save that is gone describes nothing. */
 export function removeSave(instance: string, name: string): void {
   rmSync(saveDir(instance, name), { recursive: true, force: true })
+  forgetNote(instance, name)
 }
 
 /**
@@ -498,6 +637,28 @@ export function removeSave(instance: string, name: string): void {
  */
 export function removeAllSaves(instance: string): void {
   rmSync(savesDir(instance), { recursive: true, force: true })
+  try {
+    removeNotes(instance)
+  } catch {
+    // An instance name notes.ts refuses has no notes to remove.
+  }
+}
+
+/** Notes are a nicety: a name notes.ts refuses, or a file it cannot delete, never fails a save operation. */
+function forgetNote(instance: string, name: string): void {
+  try {
+    removeNote(instance, name)
+  } catch {
+    // see above
+  }
+}
+
+function readNoteSafe(instance: string, name: string): Note | null {
+  try {
+    return readNote(instance, name)
+  } catch {
+    return null
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -557,6 +718,52 @@ export function cloneFile(src: string, dst: string): void {
   rmSync(dst, { force: true })
   if (spawnSync("cp", ["-c", src, dst], { stdio: "ignore" }).status === 0) return
   if (spawnSync("cp", [src, dst], { stdio: "inherit" }).status !== 0) throw new Error(`could not copy ${src} -> ${dst}`)
+}
+
+/** The fitted size of a thumbnail: inside `box`, aspect kept, never larger than `native`. */
+export const thumbSize = (native: Size, box: Size = THUMB_BOX): Size => scaled(native, fitScale(native, box))
+
+/** The raw screendump's name inside a save's in-progress directory: a dot-file, so a clone never copies one left behind. */
+const SCREEN_PPM = ".screen.ppm"
+
+/**
+ * Grab the screen as a raw PPM into `dir`, for writeScreenshots. Raw because
+ * it is the cheapest dump QEMU makes (~60 ms) and this runs while the guest is
+ * stopped. Returns the file, or null when there is no screen to take — never
+ * throws, never waits long.
+ */
+export async function captureScreen(qmpPath: string, dir: string, timeoutMs = 5000): Promise<string | null> {
+  const file = resolve(dir, SCREEN_PPM)
+  try {
+    await qmp.execute(qmpPath, "screendump", { filename: file }, timeoutMs)
+    return existsSync(file) ? file : null
+  } catch {
+    rmSync(file, { force: true })
+    return null
+  }
+}
+
+/**
+ * Encode a raw screendump as the save's screen.png and thumb.png in `dir`, and
+ * delete the PPM. Returns the screen's size, or null (and no files) when it
+ * could not be read or written.
+ */
+export function writeScreenshots(ppmPath: string, dir: string): Size | null {
+  const screen = resolve(dir, FILES.screen)
+  const thumb = resolve(dir, FILES.thumb)
+  try {
+    const img = parsePpm(readFileSync(ppmPath))
+    const t = thumbSize(img)
+    writeFileSync(screen, encodePng(img))
+    writeFileSync(thumb, encodePng(resize(img, t.width, t.height)))
+    return { width: img.width, height: img.height }
+  } catch {
+    rmSync(screen, { force: true })
+    rmSync(thumb, { force: true })
+    return null
+  } finally {
+    rmSync(ppmPath, { force: true })
+  }
 }
 
 const allocated = (f: string): number => {
@@ -660,8 +867,11 @@ export async function createSave(instance: string, o: CreateOptions): Promise<Cr
   const wasRunning = before === "running"
   const started = Date.now()
   let migrated: Record<string, unknown>
+  let ppm: string | null = null
   try {
     if (wasRunning) await qmp.execute(p.qmp, "stop")
+    // The screen exactly as saved; encoded once the guest runs again.
+    ppm = await captureScreen(p.qmp, tmp)
     await qmp.execute(p.qmp, "migrate-set-capabilities", { capabilities: plan.capabilities })
     await qmp.execute(p.qmp, "migrate-set-parameters", plan.parameters)
     await qmp.execute(p.qmp, "migrate", { uri: plan.uri })
@@ -681,6 +891,7 @@ export async function createSave(instance: string, o: CreateOptions): Promise<Cr
     await qmp.execute(p.qmp, "cont")
   }
   const saveMs = Date.now() - started
+  const screen = ppm === null ? null : writeScreenshots(ppm, tmp)
 
   const ramBytes = allocated(ramPath)
   const bytes = ramBytes + allocated(resolve(tmp, FILES.overlay)) + allocated(resolve(tmp, FILES.vars))
@@ -698,15 +909,19 @@ export async function createSave(instance: string, o: CreateOptions): Promise<Cr
     ramBytes,
     saveMs,
     format,
+    ...(screen === null ? {} : { screenshot: FILES.screen, thumbnail: FILES.thumb, screenSize: screen }),
   }
   writeFileSync(resolve(tmp, FILES.manifest), `${JSON.stringify(manifest, null, 2)}\n`)
 
   // Replace any save of the same name only once the new one is complete.
   const final = saveDir(instance, o.name)
   const old = resolve(savesDir(instance), `.${o.name}.old-${String(process.pid)}`)
-  if (existsSync(final)) renameSync(final, old)
+  const replaced = existsSync(final)
+  if (replaced) renameSync(final, old)
   renameSync(tmp, final)
   rmSync(old, { recursive: true, force: true })
+  // The old save's note described the old moment, not this one.
+  if (replaced) forgetNote(instance, o.name)
 
   const ram = migrated["ram"] as { transferred?: number; total?: number } | undefined
   return { manifest, rawRamBytes: ram?.transferred ?? 0, resumed: wasRunning && o.quitAfter !== true }
@@ -767,6 +982,11 @@ export async function cloneSave(from: string, to: string, name: string): Promise
     if (existsSync(final)) renameSync(final, old)
     renameSync(tmp, final)
     rmSync(old, { recursive: true, force: true })
+    try {
+      copyNote(from, to, name)
+    } catch {
+      // The copy loads either way; a note is not worth failing it for.
+    }
     return parseManifest(readFileSync(resolve(final, FILES.manifest), "utf8"))
   })
 }
