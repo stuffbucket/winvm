@@ -45,9 +45,21 @@ A failed publish gate leaves the release as a draft.
 
 QEMU, swtpm and zstd come from `packages/core/runtime.json`, which pins a
 `stuffbucket/winvm-runtime` release by SHA-256. Change it only in a PR that
-records that release's acceptance (40 reboots, the cage check, a save and load)
-and the Mac it ran on. A new QEMU version or patch set makes existing saves
-refuse to load, so golden and baseline saves need rebuilding.
+records that release's acceptance and the Mac it ran on:
+
+1. `scripts/check.sh` in winvm-runtime passes on the release tarball (CI runs
+   it too): every binary stands alone, the websocket handshake and a PNG
+   screendump work, and `paths.py` runs the other QEMU paths winvm uses on
+   TCG (qemu-img, saves in each format, snapshots, port forwards, virtio-gpu).
+2. `scripts/accept-runtime.sh <instance>` passes against a fresh instance in a
+   scratch `WINVM_HOME`, with `WINVM_RUNTIME` pointing at the unpacked
+   release. It runs the guest under HVF through winvm itself, including
+   reboots after saves, and fails on any QEMU, swtpm or zstd crash report. A
+   failure leaves the guest running: inspect it before stopping it.
+3. The cage check.
+
+A new QEMU version or patch set makes existing saves refuse to load, so golden
+and baseline saves need rebuilding.
 
 ## Recovery
 
