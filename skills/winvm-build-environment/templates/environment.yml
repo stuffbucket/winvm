@@ -1,0 +1,68 @@
+# What a Windows machine should have, as a winvm job file that changes the
+# machine in place (reset: false). Copy this file, keep only what you need,
+# and keep it with the project: it is how the machine is rebuilt.
+#
+# Apply it, then checkpoint, with the skill's helper (same flags in both):
+#   scripts/apply-env.sh  -i NAME --save NAME-ready --note "what it has" environment.yml
+#   scripts/apply-env.ps1 -i NAME --save NAME-ready --note "what it has" environment.yml
+# or by hand (the helper sets WINVM_TEMPLATES to winvm-inside-windows/templates):
+#   WINVM_TEMPLATES=... winvm run environment.yml -i NAME --keep && winvm save -i NAME NAME-ready --note "..."
+#
+# Steps run in order, as the logged-on Administrator, in Windows PowerShell 5.1
+# with $ErrorActionPreference = 'Stop'. The first failing step stops the run.
+# Every template step is idempotent, so after fixing a step, apply it again.
+name: example environment
+reset: false          # never reset the machine to a golden: change it as it is
+timeout: 1h           # the whole spec
+
+files:
+  # The guest templates. Copy only the ones the steps use.
+  - src: ${{ env.WINVM_TEMPLATES }}/install-package.ps1
+    dest: C:\winvm\scripts\
+  - src: ${{ env.WINVM_TEMPLATES }}/winget-install.ps1
+    dest: C:\winvm\scripts\
+  - src: ${{ env.WINVM_TEMPLATES }}/set-env.ps1
+    dest: C:\winvm\scripts\
+  - src: ${{ env.WINVM_TEMPLATES }}/set-registry.ps1
+    dest: C:\winvm\scripts\
+  - src: ${{ env.WINVM_TEMPLATES }}/enable-feature.ps1
+    dest: C:\winvm\scripts\
+  # Installers: a url is downloaded once on the Mac and cached, so a rebuild
+  # gets the same bytes. Prefer ARM64 builds; x64 ones run emulated.
+  - url: https://nodejs.org/dist/v22.11.0/node-v22.11.0-arm64.msi
+    dest: C:\winvm\downloads\
+
+steps:
+  - name: Node.js 22 (msi)
+    run: |
+      & C:\winvm\scripts\install-package.ps1 -Path C:\winvm\downloads\node-v22.11.0-arm64.msi -ProductName 'Node.js' -TestCommand 'node --version'
+
+  - name: 7-Zip (winget, else the installer)
+    run: |
+      & C:\winvm\scripts\winget-install.ps1 -Id 7zip.7zip -TestPath 'C:\Program Files\7-Zip\7z.exe' `
+        -FallbackUrl https://github.com/ip7z/7zip/releases/download/25.01/7z2501-arm64.exe -FallbackArguments '/S'
+
+  - name: tools folder on PATH
+    run: |
+      & C:\winvm\scripts\set-env.ps1 -AddToPath 'C:\Program Files\7-Zip'
+
+  - name: long paths
+    run: |
+      & C:\winvm\scripts\set-registry.ps1 -Path 'HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem' -Name LongPathsEnabled -Type DWord -Value 1
+
+  - name: Telnet client (a Windows feature)
+    run: |
+      & C:\winvm\scripts\enable-feature.ps1 -Feature TelnetClient
+
+  # A template that exits 3010 needs a restart. Restart from the Mac, then check:
+  # - name: restart Windows
+  #   shell: winvm
+  #   run: reboot
+
+  - name: check everything, the way a new shell sees it
+    run: |
+      $env:Path = [Environment]::GetEnvironmentVariable('Path', 'Machine')
+      node --version
+      7z i | Out-Null; if ($LASTEXITCODE -ne 0) { throw '7z does not run' }
+      if ((Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem').LongPathsEnabled -ne 1) { throw 'long paths are off' }
+      if ((Get-WindowsOptionalFeature -Online -FeatureName TelnetClient).State -ne 'Enabled') { throw 'no telnet client' }

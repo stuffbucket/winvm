@@ -1,0 +1,26 @@
+# A winvm CI job. Run: winvm run job.yml -i ci   (see the winvm-ci-jobs skill)
+name: example
+timeout: 10m
+env:
+  GREETING: hello from the job
+files:
+  - src: job.yml               # any host file, relative to this one
+    dest: C:\work\job.yml
+steps:
+  - name: cmd sees env and the staged file
+    shell: cmd
+    run: |
+      echo %GREETING%
+      if not exist C:\work\job.yml exit /b 3
+  - name: PowerShell reaches the file server
+    run: |
+      $r = Invoke-WebRequest -UseBasicParsing "$env:WINVM_FILES/job.yml"
+      if ($r.StatusCode -ne 200) { exit 4 }
+  - name: the screen, from the Mac
+    shell: winvm
+    run: |
+      screenshot
+  - name: runs even after a failure
+    if: always()
+    shell: cmd
+    run: echo done
