@@ -26,7 +26,7 @@ The title bar is an overlay (`TitleBarStyle::Overlay`, hidden title), so
 the toolbar is the drag region and leaves room for the traffic lights.
 Left to right: the instance (a picker when there are several) and its state
 in words; power (Start or Shut down, Restart, Pause or Resume); things to do
-in Windows (Terminal, Copy files, Saves, Share with an agent); view (Fit
+in Windows (Terminal, Files in Windows, Saves, Share with an agent); view (Fit
 to window, Open in Screen Sharing, Details). There is no heading repeating
 the window title.
 
