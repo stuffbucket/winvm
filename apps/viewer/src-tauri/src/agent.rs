@@ -9,6 +9,11 @@
 //! them and asks again once: the machine restarted (a new forward), or the
 //! agent was reinstalled. A connect that failed is not tried again for a few
 //! seconds, so a machine still starting is not asked on every call.
+//!
+//! A machine paused or asleep can't answer. `winvm agent connect` says so at
+//! once (exit 3) rather than wait for the agent or reinstall it; that answer
+//! comes back as an error starting "paused:", and is not kept, so the first
+//! call after it runs again connects straight away.
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -20,6 +25,10 @@ use tauri_plugin_shell::ShellExt;
 
 /// After a failed connect, calls fail at once for this long.
 const RETRY_AFTER: Duration = Duration::from_secs(10);
+/// `winvm agent connect`'s exit code for a machine paused or asleep.
+const EXIT_PAUSED: i32 = 3;
+/// How an error from a paused or asleep machine starts, for the UI to tell it apart.
+pub const PAUSED_PREFIX: &str = "paused:";
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Where an agent is and its token, as `winvm agent connect --json` prints them.
@@ -133,7 +142,9 @@ impl Agents {
                 c.links.insert(instance.to_owned(), link.clone());
                 Ok(link)
             }
-            Err(why) => {
+            // Not kept: it runs again the moment it is resumed or woken.
+            Err(ConnectFailure::Paused(why)) => Err(why),
+            Err(ConnectFailure::Other(why)) => {
                 c.failed.insert(instance.to_owned(), (Instant::now(), why.clone()));
                 Err(why)
             }
@@ -188,20 +199,35 @@ impl Agents {
     }
 }
 
-async fn connect(app: &tauri::AppHandle, instance: &str) -> Result<Link, String> {
+#[derive(Debug, PartialEq)]
+enum ConnectFailure {
+    /// The machine is paused or asleep: say so, and don't keep it.
+    Paused(String),
+    Other(String),
+}
+
+/// Why `winvm agent connect` failed, from its exit code and what it said.
+fn connect_failure(code: Option<i32>, stderr: &str) -> ConnectFailure {
+    let said = stderr.trim().trim_start_matches("::error::").trim().to_owned();
+    if code == Some(EXIT_PAUSED) {
+        return ConnectFailure::Paused(format!("{PAUSED_PREFIX} {}", if said.is_empty() { "the machine is paused" } else { &said }));
+    }
+    ConnectFailure::Other(if said.is_empty() { format!("winvm agent connect exited {code:?}") } else { said })
+}
+
+async fn connect(app: &tauri::AppHandle, instance: &str) -> Result<Link, ConnectFailure> {
     let out = app
         .shell()
         .sidecar("winvm")
-        .map_err(|e| e.to_string())?
+        .map_err(|e| ConnectFailure::Other(e.to_string()))?
         .args(["agent", "-i", instance, "connect", "--json"])
         .output()
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| ConnectFailure::Other(e.to_string()))?;
     if !out.status.success() {
-        let said = String::from_utf8_lossy(&out.stderr).trim().trim_start_matches("::error::").to_owned();
-        return Err(if said.is_empty() { format!("winvm agent connect exited {:?}", out.status.code()) } else { said });
+        return Err(connect_failure(out.status.code(), &String::from_utf8_lossy(&out.stderr)));
     }
-    parse_link(&String::from_utf8_lossy(&out.stdout))
+    parse_link(&String::from_utf8_lossy(&out.stdout)).map_err(ConnectFailure::Other)
 }
 
 /// A request to a machine's agent (`GET /stats`, `POST /display`, …): its status and body.
@@ -232,6 +258,17 @@ mod tests {
         assert!(parse_link("{\"url\":\"http://127.0.0.1:80/x\",\"token\":\"abc\"}").is_err());
         assert!(parse_link("{\"url\":\"http://127.0.0.1:80\",\"token\":\"\"}").is_err());
         assert!(parse_link("::error::not running").is_err());
+    }
+
+    #[test]
+    fn tells_a_paused_machine_from_other_failures() {
+        assert_eq!(
+            connect_failure(Some(3), "::error::instance \"demo\" is paused — resume it first\n"),
+            ConnectFailure::Paused("paused: instance \"demo\" is paused — resume it first".into())
+        );
+        assert_eq!(connect_failure(Some(3), ""), ConnectFailure::Paused("paused: the machine is paused".into()));
+        assert_eq!(connect_failure(Some(1), "::error::instance \"demo\" is not running\n"), ConnectFailure::Other("instance \"demo\" is not running".into()));
+        assert_eq!(connect_failure(None, ""), ConnectFailure::Other("winvm agent connect exited None".into()));
     }
 
     #[test]

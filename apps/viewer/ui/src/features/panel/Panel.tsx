@@ -17,6 +17,8 @@ interface PanelProps {
   readonly last: Ran | null
   readonly usage: UsageView
   readonly usageContext: UsageContext
+  /** Paused or asleep: the meters say so instead of Windows' figures. */
+  readonly held?: "paused" | "asleep" | null
   readonly canForceStop: boolean
   onForceStop(): void
 }
@@ -40,7 +42,7 @@ export function Panel(p: PanelProps): JSX.Element {
   return (
     <aside className="panel" aria-label={t("action.details")}>
       <Section title={t("panel.resources")} open>
-        <Resources usage={p.usage} context={p.usageContext} />
+        <Resources usage={p.usage} context={p.usageContext} held={p.held ?? null} />
       </Section>
 
       <Section title={t("panel.status")} open>

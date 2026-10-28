@@ -69,6 +69,18 @@ and the button says so: Turn Off and Delete. It runs `winvm destroy
 A button that can't act now is disabled, and its tooltip says why ("Start
 Windows to open a terminal"), not only what it is.
 
+**Pause** holds the machine until Resume; nothing else resumes it. While held
+the toolbar says Paused (or Asleep), the screen takes no input, a resize waits
+and is asked for once it runs, the meters say Paused instead of Windows'
+figures, and nothing calls Windows' agent. The screen dims under
+`--scrim-paused` with a large pause glyph, fading in and out (150 ms).
+Option-click or right-click on Pause shows a native menu: **Show Pause
+Overlay** (a check; off for clean screenshots; kept in winvm's user settings),
+then **Sleep** (Windows is locked, then the machine held as Asleep; the glyph
+is a moon, and the first key pressed in the screen wakes it and isn't typed)
+and **Lock (Ctrl+Alt+Del)** (back to Windows' sign-in screen). Asleep, the
+button reads Wake.
+
 ## Resizing the window
 
 On virtio-gpu the guest's screen follows the window, one guest pixel per

@@ -5,6 +5,7 @@ export type IconName =
   | "power"
   | "restart"
   | "pause"
+  | "moon"
   | "fit"
   | "screenSharing"
   | "panel"
@@ -31,7 +32,8 @@ export type IconName =
 
 // Lucide glyphs: play, power, rotate-ccw, pause, maximize, screen-share, panel-right, check, x,
 // terminal, folder, history, bot, file, monitor, file-text, download, house, hard-drive,
-// chevron-left, chevron-right, arrow-up, refresh-cw, plus; shield, quartered as Windows' elevation shield; chevron-down; copy.
+// chevron-left, chevron-right, arrow-up, refresh-cw, plus; shield, quartered as Windows' elevation shield; chevron-down; copy;
+// moon (asleep).
 const PATHS: Record<IconName, ReactNode> = {
   terminal: (
     <>
@@ -135,6 +137,7 @@ const PATHS: Record<IconName, ReactNode> = {
       <rect x="6" y="4" width="4" height="16" rx="1" />
     </>
   ),
+  moon: <path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z" />,
   fit: (
     <>
       <path d="M8 3H5a2 2 0 0 0-2 2v3" />

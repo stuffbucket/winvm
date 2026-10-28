@@ -10,6 +10,8 @@ declare module "novnc/core/rfb.js" {
     resizeSession: boolean
     background: string
     focusOnClick: boolean
+    /** No keys or pointer sent to the server (the screen still updates). */
+    viewOnly: boolean
     disconnect(): void
     sendCredentials(credentials: { readonly password: string }): void
     /** Private in noVNC, read to send SetDesktopSize ourselves (see Screen.tsx). */

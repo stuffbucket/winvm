@@ -103,6 +103,7 @@ export function tokensCss(): string {
     `  --accent-destructive: ${destructive};`,
     `  --accent-destructive-foreground: ${destructiveFg};`,
     `  --scrim: ${scrim.color};`,
+    `  --scrim-paused: ${scrim.paused};`,
     "",
     "  /* ---- Focus ring ---- */",
     `  --focus-ring-width: ${focusRing.width};`,

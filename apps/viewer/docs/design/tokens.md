@@ -74,6 +74,8 @@ surfaces of its theme by `bun scripts/contrast-audit.ts` (in
 | `--status-error` / `-success` / `-warning` / `-info` | per theme | State color, text-safe (≥4.5:1) so also icon-safe | Error text, icons, stripes; success/warning indicators | Identity or interaction |
 | `--terminal-selection` | per theme | Selected text's ground in the Terminal window (text on it ≥4.5:1) | xterm's `selectionBackground` | Anything outside the terminal |
 | `--focus-ring*` | — | Focus ring composition (color = `--accent`) | Every focusable element | Hover styling |
+| `--scrim` | fixed | Behind a modal dialog | The confirmation dialog's backdrop | Anything that isn't modal |
+| `--scrim-paused` | fixed | Veil over the guest's screen while the machine is paused or asleep (light grey, so the picture stays readable) | The held screen (`.screen__held`), under its glyph | Modals (use `--scrim`), text grounds |
 
 There are no `--brand-fg`, `--accent-hover` or `--status-*-fg` tokens:
 brand never sits behind text, teal text is `--link`, and the status

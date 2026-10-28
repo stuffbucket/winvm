@@ -66,7 +66,17 @@ const memoryValue = (m: Amount & { readonly source: "windows" | "mac" }): string
  * half as a line, C: as a bar, each with its value in words. Read every 2.5 s
  * while the machine runs (useUsage); nothing while it is off.
  */
-export function Resources({ usage, context }: { readonly usage: UsageView; readonly context: UsageContext }): JSX.Element {
+export function Resources({
+  usage,
+  context,
+  held = null,
+}: {
+  readonly usage: UsageView
+  readonly context: UsageContext
+  /** The machine is paused or asleep: Windows can't answer, so its figures wait. */
+  readonly held?: "paused" | "asleep" | null
+}): JSX.Element {
+  if (held !== null) return <p className="panel__note">{t(held === "asleep" ? "usage.asleep" : "usage.paused")}</p>
   const u = usage.now
   if (u === null) return <p className="panel__note">{t("usage.none")}</p>
   return (

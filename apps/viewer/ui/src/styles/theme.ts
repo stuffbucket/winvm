@@ -94,9 +94,14 @@ export const accent = {
   destructiveFg: "#ffffff",
 } as const;
 
-/** Behind a modal dialog, in both themes. */
+/**
+ * Behind a modal dialog, in both themes. `paused` dims the guest's screen while
+ * the machine is paused or asleep: a light grey veil, so the picture stays
+ * readable (and the glyph over it says why it doesn't move).
+ */
 export const scrim = {
   color: "rgb(0 0 0 / 0.5)",
+  paused: "rgb(143 143 143 / 0.2)",
 } as const;
 
 export const focusRing = {

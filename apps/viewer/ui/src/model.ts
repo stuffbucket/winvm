@@ -10,7 +10,8 @@ const Status = z.object({
   name: z.string(),
   // What the user calls it (`winvm config title=…`); null, or absent from an older winvm: its name.
   title: z.string().nullable().default(null),
-  state: z.enum(["running", "paused", "stopped", "stowed", "missing"]),
+  // "asleep": paused by `winvm sleep` (Windows locked first); a key in the screen wakes it.
+  state: z.enum(["running", "paused", "asleep", "stopped", "stowed", "missing"]),
   vmStatus: z.string().nullable(),
   image: z.string().nullable(),
   pid: z.number().nullable(),
@@ -73,7 +74,14 @@ export const parseChecks = (stdout: string): Checks | null => Checks.safeParse(j
 
 export const parseConnection = (stdout: string): Connection | null => Connection.safeParse(json(stdout)).data ?? null
 
-export type Phase = "starting" | "running" | "paused" | "stopped" | "stowed" | "missing"
+export type Phase = "starting" | "running" | "paused" | "asleep" | "stopped" | "stowed" | "missing"
+
+/** QEMU's process is up: the machine runs, starts, or is held (paused or asleep). */
+export const isLivePhase = (p: Phase | null | undefined): boolean =>
+  p === "running" || p === "starting" || p === "paused" || p === "asleep"
+
+/** Held: the guest's processors are stopped. Nothing may call its agent, resize it or type into it. */
+export const isFrozen = (p: Phase | null | undefined): boolean => p === "paused" || p === "asleep"
 
 export function phase(s: Status): Phase {
   if (s.state === "running" && s.guest?.agent === "silent") return "starting"
@@ -85,20 +93,28 @@ export interface Controls {
   readonly shutDown: boolean
   readonly restart: boolean
   readonly pause: boolean
+  /** Resume a paused machine, or wake one asleep. */
   readonly resume: boolean
+  /** Lock Windows, then hold the machine asleep until a key or Wake. */
+  readonly sleep: boolean
+  /** Return Windows to its lock screen. */
+  readonly lock: boolean
   readonly screen: boolean
   /** A shell in Windows needs Windows up and its agent answering. */
   readonly terminal: boolean
 }
 
 export function controls(p: Phase, busy: boolean): Controls {
-  const live = p === "running" || p === "starting" || p === "paused"
+  const live = isLivePhase(p)
   return {
     start: !busy && !live,
     shutDown: !busy && live,
     restart: !busy && (p === "running" || p === "starting"),
     pause: !busy && (p === "running" || p === "starting"),
-    resume: !busy && p === "paused",
+    resume: !busy && isFrozen(p),
+    // Both go through Windows' agent, so Windows must be up and answering.
+    sleep: !busy && p === "running",
+    lock: !busy && p === "running",
     screen: live,
     terminal: !busy && p === "running",
   }
@@ -108,6 +124,7 @@ export function controls(p: Phase, busy: boolean): Controls {
 export function terminalBlocked(p: Phase, busy: boolean): string | null {
   if (p === "starting") return "terminal.why.starting"
   if (p === "paused") return "terminal.why.paused"
+  if (p === "asleep") return "terminal.why.asleep"
   if (p !== "running") return "terminal.why.off"
   return busy ? "terminal.why.busy" : null
 }
@@ -183,7 +200,7 @@ export interface Step {
 /** What starting has done so far: the disk (for a new instance), the machine, then Windows. */
 export function startSteps(created: boolean, s: Status | null): Step[] {
   const exists = s !== null && s.state !== "missing"
-  const machine = s !== null && (s.state === "running" || s.state === "paused")
+  const machine = s !== null && (s.state === "running" || s.state === "paused" || s.state === "asleep")
   const windows = machine && s.guest?.agent === "ok"
   const reached = [...(created ? [{ key: "step.disk", done: exists }] : []), { key: "step.machine", done: machine }, { key: "step.windows", done: windows }]
   const firstTodo = reached.findIndex((r) => !r.done)

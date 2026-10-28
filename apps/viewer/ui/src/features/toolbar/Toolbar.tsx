@@ -1,6 +1,6 @@
 import { Icon, type IconName } from "../../components/Icon"
 import { t } from "../../i18n"
-import type { Controls, Phase } from "../../model"
+import { type Controls, isFrozen, isLivePhase, type Phase } from "../../model"
 import { MachinePicker, type MachinePickerProps } from "../machines/MachinePicker"
 
 export type PanelId = "files" | "saves" | "share"
@@ -28,7 +28,10 @@ interface ToolbarProps {
   onShutDown(): void
   onRestart(): void
   onPause(): void
+  /** Resume a paused machine, or wake one asleep. */
   onResume(): void
+  /** Option-click or right-click on Pause / Resume: Show Pause Overlay, Sleep, Lock. */
+  onPauseMenu(): void
   onOpen(id: PanelId, button: HTMLElement): void
   onTerminal(): void
   onTerminalMenu(): void
@@ -90,6 +93,35 @@ function TerminalButton({ blocked, onOpen, onMenu }: { readonly blocked: string 
   )
 }
 
+/**
+ * Pause, or Resume (Wake when asleep) while held. Option-click or right-click
+ * offers Show Pause Overlay, Sleep and Lock in a native menu. Pause and Resume
+ * are different buttons to React (their parent keys them), so the one focused
+ * when Pause is clicked never turns into Resume under a key press.
+ */
+function PauseButton({ phase, c, onPause, onResume, onMenu }: { readonly phase: Phase | null; readonly c: Controls; onPause(): void; onResume(): void; onMenu(): void }): JSX.Element {
+  const frozen = isFrozen(phase)
+  const label = t(phase === "asleep" ? "action.wake" : frozen ? "action.resume" : "action.pause")
+  const enabled = frozen ? c.resume : c.pause
+  return (
+    <button
+      type="button"
+      className="btn btn--ghost btn--icon"
+      aria-label={label}
+      aria-haspopup="menu"
+      title={t("power.tip", { action: label })}
+      disabled={!enabled}
+      onClick={(e) => (e.altKey ? onMenu() : frozen ? onResume() : onPause())}
+      onContextMenu={(e) => {
+        e.preventDefault()
+        onMenu()
+      }}
+    >
+      <Icon name={frozen ? "play" : "pause"} />
+    </button>
+  )
+}
+
 /** The folder opens the Files window; Option-click or right-click offers a menu of places, as >_ does. */
 function FilesButton({ enabled, onOpen, onMenu }: { readonly enabled: boolean; onOpen(): void; onMenu(): void }): JSX.Element {
   const label = t("action.files")
@@ -118,7 +150,7 @@ function FilesButton({ enabled, onOpen, onMenu }: { readonly enabled: boolean; o
  */
 export function Toolbar(p: ToolbarProps): JSX.Element {
   const c = p.controls
-  const live = p.phase === "running" || p.phase === "starting" || p.phase === "paused"
+  const live = isLivePhase(p.phase)
   const panel = (id: PanelId, icon: IconName, label: string, enabled: boolean, pressed?: boolean): JSX.Element => (
     <ToolButton icon={icon} label={label} enabled={enabled} pressed={pressed} expanded={p.open === id} onClick={(b) => p.onOpen(id, b)} />
   )
@@ -140,11 +172,7 @@ export function Toolbar(p: ToolbarProps): JSX.Element {
           <ToolButton icon="play" label={t("action.start")} enabled={c.start} onClick={p.onStart} />
         )}
         <ToolButton icon="restart" label={t("action.restart")} enabled={c.restart} onClick={p.onRestart} />
-        {p.phase === "paused" ? (
-          <ToolButton icon="play" label={t("action.resume")} enabled={c.resume} onClick={p.onResume} />
-        ) : (
-          <ToolButton icon="pause" label={t("action.pause")} enabled={c.pause} onClick={p.onPause} />
-        )}
+        <PauseButton key={isFrozen(p.phase) ? "resume" : "pause"} phase={p.phase} c={c} onPause={p.onPause} onResume={p.onResume} onMenu={p.onPauseMenu} />
       </div>
 
       <span className="toolbar__divider" aria-hidden="true" />

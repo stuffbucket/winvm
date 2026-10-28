@@ -81,11 +81,31 @@ describe("phase", () => {
 
 describe("controls", () => {
   it("offers start only when stopped", () => {
-    expect(controls("stopped", false)).toEqual({ start: true, shutDown: false, restart: false, pause: false, resume: false, screen: false, terminal: false })
+    expect(controls("stopped", false)).toEqual({
+      start: true,
+      shutDown: false,
+      restart: false,
+      pause: false,
+      resume: false,
+      sleep: false,
+      lock: false,
+      screen: false,
+      terminal: false,
+    })
   })
 
   it("offers shut down, restart, pause, the screen and a terminal when running", () => {
-    expect(controls("running", false)).toEqual({ start: false, shutDown: true, restart: true, pause: true, resume: false, screen: true, terminal: true })
+    expect(controls("running", false)).toEqual({
+      start: false,
+      shutDown: true,
+      restart: true,
+      pause: true,
+      resume: false,
+      sleep: true,
+      lock: true,
+      screen: true,
+      terminal: true,
+    })
   })
 
   it("offers resume instead of pause when paused", () => {

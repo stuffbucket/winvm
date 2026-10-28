@@ -20,8 +20,18 @@ const visible = (): boolean => document.visibilityState !== "hidden"
 /**
  * The running machine's meters: one `ps` and one agent call every 2.5 s (no
  * CLI start), only while `pid` is set (the machine runs) and the window shows.
+ * The agent is asked only while `instance` is given: never while the machine is
+ * paused or asleep (Windows can't answer, and asking would start an agent
+ * connect); `ps` carries on. `readUsage` is the app's `instance_usage` (tests pass
+ * a fake).
  */
-export function useUsage(pid: number | null, instance: string | null, cpus: number | null, memoryMiB: number | null): UsageView {
+export function useUsage(
+  pid: number | null,
+  instance: string | null,
+  cpus: number | null,
+  memoryMiB: number | null,
+  readUsage: (pid: number, instance: string | null) => Promise<unknown> = instanceUsage,
+): UsageView {
   const [view, setView] = useState<UsageView>(EMPTY)
   const [shown, setShown] = useState(visible)
   const prev = useRef<Sample | null>(null)
@@ -44,7 +54,7 @@ export function useUsage(pid: number | null, instance: string | null, cpus: numb
     let timer: ReturnType<typeof setTimeout> | undefined
     const read = async (): Promise<void> => {
       try {
-        const sample = parseSample(await instanceUsage(pid, instance))
+        const sample = parseSample(await readUsage(pid, instance))
         if (sample !== null && !stopped) {
           const now = usageFrom(prev.current, sample, cpus, memoryMiB)
           prev.current = sample
@@ -64,7 +74,7 @@ export function useUsage(pid: number | null, instance: string | null, cpus: numb
       stopped = true
       clearTimeout(timer)
     }
-  }, [pid, instance, shown, cpus, memoryMiB])
+  }, [pid, instance, shown, cpus, memoryMiB, readUsage])
 
   return view
 }
