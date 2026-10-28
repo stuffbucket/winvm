@@ -1,8 +1,8 @@
 # Release runbook
 
 winvm releases through one protected PR merge: the generated release PR. CI
-builds and verifies the release before publishing it. The one asset, a signed
-and notarized `.dmg`, comes from `stuffbucket/macos-builder`.
+builds and verifies the release before publishing it. The signed and notarized
+`.dmg` and the app's update bundle come from `stuffbucket/macos-builder`.
 
 ## Release checklist
 
@@ -22,8 +22,9 @@ and notarized `.dmg`, comes from `stuffbucket/macos-builder`.
    winvm stores no token for macos-builder, so nothing starts this
    automatically: each signed build is a deliberate step by someone with
    access to the builder.
-4. `macos-dmg` waits about 50 minutes for the DMG, attaches it, and `publish`
-   publishes. Confirm the GitHub release changes from draft to published.
+4. `macos-dmg` waits about 50 minutes for the DMG and the update bundle,
+   attaches them with `latest.json`, and `publish` publishes. Confirm the
+   GitHub release changes from draft to published.
 
 For an optional local check, build the app the way the builder does:
 
@@ -39,7 +40,7 @@ otherwise produce patch releases.
 | Job | Expected result |
 |---|---|
 | `release` | `pnpm check`, the draft release, notes (changelogithub, or generated notes for the first release), a link to the pinned winvm-runtime release, and `SBOM.cdx.json` with a license scan |
-| `macos-dmg` | Prints the command that starts the signed build, then attaches `winvm-vX.Y.Z-darwin-arm64.dmg` and its `.sha256` (signed, notarized and stapled by `stuffbucket/macos-builder`) once the builder uploads it |
+| `macos-dmg` | Prints the command that starts the signed build. Once the builder uploads them, attaches `winvm-vX.Y.Z-darwin-arm64.dmg` and its `.sha256`, keeps the builder's `winvm-vX.Y.Z-darwin-arm64.app.tar.gz` with its `.sig` and `.sha256`, checks that signature, and attaches `latest.json` |
 | `publish` | Publishes only after `release` and `macos-dmg` succeed |
 
 The app contains the Tauri shell (`Contents/MacOS/winvm-viewer`), the compiled
@@ -52,6 +53,22 @@ QEMU with `qemu-hvf`, and every other runtime binary and library with
 change and commit the result.
 
 A failed publish gate leaves the release as a draft.
+
+## App updates
+
+The app checks
+`https://github.com/stuffbucket/winvm/releases/latest/download/latest.json` at
+launch and from **winvm → Check for Updates…**, and offers to install a newer
+version. It installs only a bundle signed by the key in `plugins.updater` of
+`apps/viewer/src-tauri/tauri.conf.json` (key id E4167998E5A196BB) for that
+version. `scripts/updater-manifest.ts` runs the same check before
+`latest.json` is attached.
+
+The private key is in macos-builder's `signing` environment
+(`TAURI_SIGNING_PRIVATE_KEY__WINVM` and its password, with
+`updater_key_id = winvm` in winvm's policy), and is backed up outside GitHub.
+Installed apps accept only that key, so losing it means every user reinstalls
+from a DMG.
 
 ## Changing the runtime
 
@@ -79,7 +96,7 @@ and baseline saves need rebuilding.
 |---|---|
 | A publish-gating job failed | Use **Re-run failed jobs** on the original `release.yml` run. |
 | The release workflow was not dispatched | Run `gh workflow run release.yml --ref vX.Y.Z -f tag=vX.Y.Z`. |
-| The signed build was started after `macos-dmg` stopped waiting | Once the builder has uploaded `winvm.dmg`, run `gh workflow run finish-release.yml --ref main -f tag=vX.Y.Z`: it attaches the DMG and publishes. |
+| The signed build was started after `macos-dmg` stopped waiting | Once the builder has uploaded its files, run `gh workflow run finish-release.yml --ref main -f tag=vX.Y.Z`: it attaches the DMG and `latest.json` and publishes. |
 | The macOS builder failed or was unavailable | Fix the cause, start the signed build again, then rerun `macos-dmg` or run `finish-release.yml`. |
 | A published asset is wrong | Cut a new patch release. |
 
@@ -100,7 +117,9 @@ and baseline saves need rebuilding.
 - An approved build-config issue in macos-builder creating
   `clients/stuffbucket/winvm.policy`: `bundle_id_allowed=co.stuffbucket.winvm`,
   `entitlements_allowed=default,bun-runtime,qemu-hvf`, `artifact_allowed=dmg`.
-  It needs the `qemu-hvf` profile (stuffbucket/macos-builder#28).
+  It needs the `qemu-hvf` profile (stuffbucket/macos-builder#28). A reviewed
+  PR then added `updater` and `updater_key_id = winvm`
+  (stuffbucket/macos-builder#33).
 - The app-repoman GitHub App installed on winvm (Contents: read and write).
   The builder checks winvm out and uploads the DMG with it.
 

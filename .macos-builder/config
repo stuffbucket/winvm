@@ -2,7 +2,11 @@ app_path = apps/viewer/src-tauri/target/release/bundle/macos/winvm.app
 volname = winvm
 bundle_id = co.stuffbucket.winvm
 entitlements = default
-artifact = dmg
+# The update bundle is what the app's updater installs in place: a tarball of
+# the notarized app and its signature (winvm's updater key, bound to the tag's
+# version). scripts/release-assets.sh checks it and lists it in latest.json.
+artifact = dmg,updater
+updater_name = winvm-{tag}-darwin-arm64.app.tar.gz
 
 # The builder signs every nested Mach-O after the producer exits: the compiled
 # CLI (bun-runtime), the runtime's QEMU (qemu-hvf) and every other runtime
