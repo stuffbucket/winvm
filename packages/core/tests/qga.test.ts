@@ -11,7 +11,7 @@ import { resolve } from "node:path"
 
 import { afterAll, beforeAll, describe, expect, it } from "bun:test"
 
-import { READ_CHUNK, call, readFile, untilNewBoot, untilReady, waitFor } from "../src/qga"
+import { READ_CHUNK, call, loggedOnUser, readFile, untilNewBoot, untilReady, waitFor } from "../src/qga"
 import { FakeAgent } from "./fakes/agent"
 
 let dir: string
@@ -148,6 +148,49 @@ describe("qga.untilReady", () => {
       throw new Error("must not be asked")
     }
     expect(await untilReady("unused", 5000, { ...fast, loggedOnUser, repairAudit, noLogonMs: 20 })).toBe("ready")
+  })
+})
+
+describe("qga.loggedOnUser", () => {
+  const noRepair = async (): Promise<boolean> => false
+
+  it("asks the agent who is logged on, without starting a command in the guest", async () => {
+    const asked: unknown[] = []
+    agent.handler = (req) => {
+      asked.push(req["execute"])
+      return req["execute"] === "guest-get-users"
+        ? { return: [{ user: "Administrator", domain: "WINVM", "login-time": 1761620000.5 }] }
+        : { error: { class: "GenericError", desc: "not expected" } }
+    }
+    expect(await loggedOnUser(agent.path)).toBe("WINVM\\Administrator")
+    expect(asked).toEqual(["guest-get-users"])
+  })
+
+  it("reads no users as no one logged on, and keeps OOBE's own account out of readiness", async () => {
+    agent.handler = () => ({ return: [] })
+    expect(await loggedOnUser(agent.path)).toBe("")
+    agent.handler = () => ({ return: [{ user: "defaultuser0", domain: "WINVM" }] })
+    expect(await untilReady(agent.path, 300, { waitFor: async () => true, pollMs: 20, repairAudit: noRepair })).toBe("timeout")
+  })
+
+  it("does not let a guest command that never ends use up the wait", async () => {
+    // An agent without guest-get-users, whose PowerShell fallback never exits:
+    // what both missed reboots looked like from winvm's side (#10).
+    agent.handler = (req) => {
+      switch (req["execute"]) {
+        case "guest-get-users":
+          return { error: { class: "CommandNotFound", desc: "The command guest-get-users has not been found" } }
+        case "guest-exec":
+          return { return: { pid: 4242 } }
+        case "guest-exec-status":
+          return { return: { exited: false } }
+        default:
+          return { return: {} }
+      }
+    }
+    const t0 = Date.now()
+    expect(await untilReady(agent.path, 1500, { waitFor: async () => true, pollMs: 20, probeMs: 200, repairAudit: noRepair })).toBe("timeout")
+    expect(Date.now() - t0).toBeLessThan(3000)
   })
 })
 
