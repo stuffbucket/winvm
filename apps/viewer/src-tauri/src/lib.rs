@@ -1,10 +1,13 @@
 use serde::Serialize;
 use std::path::Path;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem, HELP_SUBMENU_ID};
 use tauri::{Emitter, Manager, RunEvent};
+use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
 use tauri_plugin_shell::process::{CommandChild, CommandEvent};
 use tauri_plugin_shell::ShellExt;
+use tauri_plugin_updater::UpdaterExt;
 
 #[derive(Serialize)]
 struct Output {
@@ -122,13 +125,74 @@ fn install_cli() -> Result<String, String> {
     Ok(link.display().to_string())
 }
 
-/// The default menu, plus the command line: installing it (app menu) and its reference (Help).
+/// Set while an update check or install is running, so a second one waits its turn.
+#[derive(Default)]
+struct Updating(AtomicBool);
+
+/// Checks the release's latest.json for a newer signed winvm and offers to install it.
+/// `asked`: the person chose Check for Updates, so say when there is nothing new or the check failed.
+fn check_for_update(app: tauri::AppHandle, asked: bool) {
+    if app.state::<Updating>().0.swap(true, Ordering::SeqCst) {
+        return;
+    }
+    std::thread::spawn(move || {
+        let found = tauri::async_runtime::block_on(async { app.updater()?.check().await });
+        match found {
+            Ok(Some(update)) => {
+                let install = app
+                    .dialog()
+                    .message(format!(
+                        "winvm {} is available. You have {}. Install it now? winvm restarts when it's done.",
+                        update.version, update.current_version
+                    ))
+                    .title("Update available")
+                    .buttons(MessageDialogButtons::OkCancelCustom("Install and Restart".into(), "Later".into()))
+                    .blocking_show();
+                if install {
+                    let done = tauri::async_runtime::block_on(update.download_and_install(|_, _| {}, || {}));
+                    match done {
+                        Ok(()) => {
+                            stop_sharing(&app.state::<Sharing>());
+                            app.restart();
+                        }
+                        Err(e) => {
+                            app.dialog()
+                                .message(format!("The update didn't install: {e}"))
+                                .title("Update failed")
+                                .kind(MessageDialogKind::Error)
+                                .blocking_show();
+                        }
+                    }
+                }
+            }
+            Ok(None) if asked => {
+                app.dialog()
+                    .message(format!("winvm {} is the latest version.", app.package_info().version))
+                    .title("No update")
+                    .blocking_show();
+            }
+            Err(e) if asked => {
+                app.dialog()
+                    .message(format!("Couldn't check for updates: {e}"))
+                    .title("Update check failed")
+                    .kind(MessageDialogKind::Error)
+                    .blocking_show();
+            }
+            _ => {}
+        }
+        app.state::<Updating>().0.store(false, Ordering::SeqCst);
+    });
+}
+
+/// The default menu, plus updates and the command line (app menu) and the command reference (Help).
 fn menu(app: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
     let menu = Menu::default(app)?;
+    let updates = MenuItem::with_id(app, "check-updates", "Check for Updates…", true, None::<&str>)?;
     let install = MenuItem::with_id(app, "install-cli", "Install Command Line Tool…", true, None::<&str>)?;
     let reference = MenuItem::with_id(app, "reference", "winvm Command Reference", true, Some("CmdOrCtrl+Shift+/"))?;
     if let Some(app_menu) = menu.items()?.first().and_then(|i| i.as_submenu().cloned()) {
         app_menu.insert_items(&[&install, &PredefinedMenuItem::separator(app)?], 2)?;
+        app_menu.insert(&updates, 1)?;
     }
     if let Some(help) = menu.get(HELP_SUBMENU_ID).and_then(|i| i.as_submenu().cloned()) {
         help.append(&reference)?;
@@ -140,13 +204,23 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(Sharing::default())
+        .manage(Updating::default())
         .menu(menu)
         .on_menu_event(|app, event| {
             let id = event.id().as_ref();
             if id == "install-cli" || id == "reference" {
                 let _ = app.emit("menu", id);
+            } else if id == "check-updates" {
+                check_for_update(app.clone(), true);
             }
+        })
+        .setup(|app| {
+            if !cfg!(debug_assertions) {
+                check_for_update(app.handle().clone(), false);
+            }
+            Ok(())
         })
         .invoke_handler(tauri::generate_handler![winvm, install_cli, share_start, share_stop, downloads_dir])
         .build(tauri::generate_context!())

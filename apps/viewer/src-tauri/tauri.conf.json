@@ -31,6 +31,15 @@
       "csp": "default-src 'self'; connect-src 'self' ipc: http://ipc.localhost ws://127.0.0.1:*; img-src 'self' blob: data:; font-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'"
     }
   },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEU0MTY3OTk4RTVBMTk2QkIKUldTN2xxSGxtSGtXNVBTVVBkdytKU1h4Y0V5allXZHVLazlQdnphbnBDRTROTHFrek5ZNzVTdXYK",
+      "endpoints": [
+        "https://github.com/stuffbucket/winvm/releases/latest/download/latest.json"
+      ],
+      "requireSignedVersion": true
+    }
+  },
   "bundle": {
     "active": true,
     "targets": [
