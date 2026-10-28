@@ -9,6 +9,10 @@ spacing, and copy.
 - **200ms ease-out** — layout shifts (card collapse, accordion
   twirldown).
 - **Instant** — under `prefers-reduced-motion: reduce`.
+- **The Checkpoints camera** (winvm, [`windows.md`](windows.md) →
+  *Checkpoints*): 420–900 ms, cubic ease-in-out, longer for a bigger
+  change of view. A flight is how that view says where a checkpoint is in
+  time, so it is utility there; it still jumps under reduced motion.
 
 ## What's forbidden
 

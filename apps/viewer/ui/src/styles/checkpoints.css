@@ -1,0 +1,732 @@
+/* =========================================================
+   Checkpoints: the full-window view of a Windows machine's checkpoints
+   (features/checkpoints/), on @winvm/canvas (packages/canvas/src/canvas.css).
+   Every color, size and space comes from a token.
+   ========================================================= */
+
+/* ---- The surface: a dimmed, blurred window behind a transparent canvas ---- */
+
+.checkpoints {
+  --checkpoints-timeline: calc(var(--size-2xl) * 3);
+  --checkpoints-ease: cubic-bezier(0.65, 0, 0.35, 1);
+  color: var(--text-base-color);
+  font-family: var(--font-body);
+}
+
+.checkpoints__backdrop {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  background: color-mix(in srgb, var(--surface-base) 58%, transparent);
+  -webkit-backdrop-filter: blur(var(--space-6)) saturate(1.25);
+  backdrop-filter: blur(var(--space-6)) saturate(1.25);
+  transition: opacity 480ms var(--checkpoints-ease);
+}
+
+/* The live screen, blurred and dimmed behind everything (a copy, a couple of times a second). */
+.checkpoints__backdrop-screen {
+  position: absolute;
+  inset: calc(-1 * var(--space-8));
+  width: calc(100% + var(--space-8) * 2);
+  height: calc(100% + var(--space-8) * 2);
+  object-fit: cover;
+  filter: blur(var(--space-7)) saturate(1.3);
+}
+
+.checkpoints__backdrop::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: color-mix(in srgb, var(--surface-base) 62%, transparent);
+}
+
+.checkpoints .spatial-canvas__viewport {
+  background: transparent;
+}
+
+.checkpoints__canvas {
+  width: 100%;
+  height: 100%;
+}
+
+/* In and out: the backdrop and the chrome fade while the camera flies. */
+.checkpoints[data-phase="entering"] .checkpoints__backdrop,
+.checkpoints[data-phase="leaving"] .checkpoints__backdrop {
+  opacity: 0;
+}
+
+.checkpoints .spatial-canvas__grid,
+.checkpoints .spatial-canvas__topbar,
+.checkpoints .timeline,
+.checkpoints__zoom,
+.checkpoints__status,
+.checkpoints .spatial-canvas__side-panel,
+.checkpoints .spatial-canvas__floating-panel,
+.checkpoints__day,
+.checkpoint:not(.checkpoint--now) {
+  transition: opacity 320ms var(--checkpoints-ease);
+}
+
+.checkpoints[data-phase="entering"] :is(.spatial-canvas__grid, .spatial-canvas__topbar, .timeline, .checkpoints__zoom, .checkpoints__status, .checkpoints__day, .checkpoint:not(.checkpoint--now)),
+.checkpoints[data-phase="leaving"] :is(.spatial-canvas__grid, .spatial-canvas__topbar, .timeline, .checkpoints__zoom, .checkpoints__status, .spatial-canvas__side-panel, .spatial-canvas__floating-panel, .checkpoints__day, .checkpoint:not(.checkpoint--now)) {
+  opacity: 0;
+}
+
+.checkpoints[data-phase="leaving"] .checkpoint--now .checkpoint__caption {
+  opacity: 0;
+}
+
+/* The window's title bar is under the view: this strip still moves the window. */
+.checkpoints__drag {
+  position: absolute;
+  z-index: 1;
+  top: 0;
+  right: 0;
+  left: 0;
+  height: calc(var(--size-2xl) + var(--space-4));
+}
+
+/* ---- Top bar ---- */
+
+.checkpoints .spatial-canvas__topbar {
+  /* Clear of the traffic lights, which sit over the window's top left. */
+  left: calc(var(--size-2xl) + var(--size-xl));
+  right: var(--space-3);
+}
+
+.checkpoints__heading {
+  gap: var(--space-2);
+  padding-inline: var(--space-3);
+  min-height: calc(var(--size-xl) + var(--space-2));
+}
+
+.checkpoints__heading strong {
+  color: var(--text-strong);
+  font-weight: var(--weight-lg);
+}
+
+.checkpoints__heading span {
+  color: var(--text-muted);
+  font-size: var(--text-sm);
+  white-space: nowrap;
+}
+
+.checkpoints__actions {
+  gap: var(--space-2);
+}
+
+.checkpoints__search {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  height: var(--size-xl);
+  padding-inline: var(--space-2);
+  border: var(--border-width-hairline) solid var(--border-subtle);
+  border-radius: var(--radius-input);
+  background: var(--surface-control);
+  color: var(--text-muted);
+}
+
+.checkpoints__search:focus-within {
+  outline: var(--focus-ring);
+  outline-offset: var(--focus-ring-offset);
+}
+
+.checkpoints__search input {
+  width: calc(var(--size-2xl) * 5.5);
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text-strong);
+  font: inherit;
+  font-size: var(--text-sm);
+  outline: none;
+}
+
+.checkpoints__search input::placeholder {
+  color: var(--text-muted);
+}
+
+.checkpoints__divider {
+  width: var(--border-width-hairline);
+  height: var(--size-md);
+  background: var(--border-subtle);
+}
+
+.checkpoints .spatial-canvas__button[aria-pressed="true"] {
+  color: var(--link);
+}
+
+.checkpoints__results,
+.checkpoints__new {
+  top: calc(var(--size-2xl) + var(--space-5));
+  right: var(--space-3);
+  width: min(calc(var(--panel-width) + var(--space-6)), calc(100% - var(--space-5)));
+}
+
+.checkpoints__new form {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.checkpoints__hint {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: var(--text-sm);
+}
+
+.checkpoints__new-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-2);
+}
+
+/* ---- Bottom: zoom and the status line ---- */
+
+.checkpoints__zoom {
+  position: absolute;
+  z-index: 3;
+  bottom: var(--space-3);
+  left: var(--space-3);
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.checkpoints__zoom > .spatial-canvas__button {
+  border: var(--border-width-hairline) solid var(--border-subtle);
+  background: color-mix(in srgb, var(--surface-card) 86%, transparent);
+  box-shadow: var(--elevation-tooltip);
+}
+
+.checkpoints__status {
+  position: absolute;
+  z-index: 3;
+  bottom: var(--space-4);
+  left: 50%;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  max-width: min(calc(var(--content-max) + var(--space-8)), calc(100% - var(--space-8) * 2));
+  padding: var(--space-2) var(--space-2) var(--space-2) var(--space-4);
+  transform: translateX(-50%);
+  border: var(--border-width-hairline) solid var(--border-subtle);
+  border-radius: var(--radius-pill);
+  background: var(--surface-card);
+  box-shadow: var(--elevation-modal);
+  font-size: var(--text-sm);
+}
+
+.checkpoints__status span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.checkpoints__status[data-tone="error"] {
+  color: var(--status-error);
+}
+
+/* ---- Day labels, in world space ---- */
+
+.checkpoints__day {
+  color: var(--text-strong);
+  font-weight: var(--weight-lg);
+  letter-spacing: var(--tracking-xl);
+  line-height: var(--leading-2xl);
+}
+
+/* Sits on its block: the label's bottom is the point it is placed at, so it can grow upwards when zoomed out. */
+.checkpoints__day > span {
+  display: block;
+  transform: translateY(-100%);
+}
+
+/* Far away, a month's name sits beside the stack, right-aligned to it. */
+.checkpoints__day[data-far="true"] > span {
+  color: var(--text-base-color);
+  font-weight: var(--weight-md);
+  transform: translate(-100%, -50%);
+}
+
+/* ---- A checkpoint card ---- */
+
+.checkpoint {
+  --card-radius: var(--radius-card);
+}
+
+.checkpoint[data-selected="true"] {
+  z-index: 2;
+}
+
+.checkpoint__hit {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+  border: var(--border-width-hairline) solid var(--border-subtle);
+  border-radius: calc(var(--card-radius) * var(--card-scale, 1));
+  background: var(--surface-card);
+  box-shadow: var(--elevation-modal);
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: default;
+  transition:
+    border-color 150ms ease-out,
+    box-shadow 200ms ease-out,
+    opacity 220ms ease-out,
+    transform 220ms ease-out;
+}
+
+.checkpoint__hit:hover {
+  border-color: var(--border-strong);
+}
+
+.checkpoint__hit:focus-visible {
+  outline: var(--focus-ring);
+  outline-offset: var(--focus-ring-offset);
+}
+
+.checkpoint[data-selected="true"] .checkpoint__hit {
+  border-color: var(--accent);
+  box-shadow:
+    0 0 0 var(--border-width-thick) var(--accent),
+    var(--elevation-modal),
+    var(--elevation-modal);
+}
+
+.checkpoint__frame {
+  position: relative;
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 100%;
+  aspect-ratio: 16 / 10;
+  overflow: hidden;
+  background: var(--surface-base);
+}
+
+.checkpoint__frame img,
+.checkpoint__live {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.checkpoint__live:not([data-live="true"]) {
+  visibility: hidden;
+}
+
+.checkpoint__placeholder {
+  display: grid;
+  justify-items: center;
+  gap: calc(var(--space-2) * var(--card-scale, 1));
+  color: var(--text-muted);
+  font-size: calc(var(--text-sm) * var(--card-scale, 1));
+}
+
+.checkpoint__placeholder svg {
+  width: calc(var(--size-2xl) * var(--card-scale, 1));
+  height: calc(var(--size-2xl) * var(--card-scale, 1));
+}
+
+.checkpoint__working {
+  position: absolute;
+  z-index: 1;
+  padding: calc(var(--space-2) * var(--card-scale, 1)) calc(var(--space-4) * var(--card-scale, 1));
+  border-radius: var(--radius-pill);
+  background: var(--surface-card);
+  box-shadow: var(--elevation-modal);
+  color: var(--text-strong);
+  font-size: calc(var(--text-base) * var(--card-scale, 1));
+}
+
+.checkpoint__caption {
+  display: grid;
+  align-content: start;
+  gap: calc(var(--space-1) * var(--card-scale, 1) / 2);
+  min-height: 0;
+  padding: calc(var(--space-3) * var(--card-scale, 1)) calc(var(--space-4) * var(--card-scale, 1));
+  font-size: calc(var(--text-sm) * var(--card-scale, 1));
+  line-height: var(--leading-lg);
+  transition: opacity 200ms ease-out;
+}
+
+.checkpoint__title {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--space-2) * var(--card-scale, 1));
+  min-width: 0;
+}
+
+.checkpoint__name {
+  overflow: hidden;
+  color: var(--text-strong);
+  font-size: calc(var(--text-base) * var(--card-scale, 1));
+  font-weight: var(--weight-lg);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.checkpoint__notes {
+  display: inline-flex;
+  flex: none;
+  color: var(--link);
+}
+
+.checkpoint__notes svg {
+  width: calc(var(--size-sm) * var(--card-scale, 1));
+  height: calc(var(--size-sm) * var(--card-scale, 1));
+}
+
+.checkpoint__when {
+  color: var(--text-base-color);
+}
+
+.checkpoint__meta {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--space-2) * var(--card-scale, 1));
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.checkpoint__kind {
+  padding: 0 calc(var(--space-1) * var(--card-scale, 1) * 1.5);
+  border: var(--border-width-hairline) solid var(--border-subtle);
+  border-radius: var(--radius-chip);
+}
+
+.checkpoint__badge {
+  position: absolute;
+  z-index: 1;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  padding: calc(var(--space-2) * var(--card-scale, 1)) calc(var(--space-3) * var(--card-scale, 1));
+  background: color-mix(in srgb, var(--surface-card) 90%, transparent);
+  color: var(--status-warning);
+  font-size: calc(var(--text-sm) * var(--card-scale, 1));
+  line-height: var(--leading-lg);
+}
+
+/* Can't load here: the picture steps back, the words say why. */
+.checkpoint[data-incompatible="true"] .checkpoint__frame > img {
+  filter: grayscale(1);
+  opacity: 0.45;
+}
+
+.checkpoint[data-incompatible="true"] .checkpoint__hit {
+  border-style: dashed;
+}
+
+/* Not among the search's matches. */
+.checkpoint[data-dimmed="true"] {
+  opacity: 0.28;
+}
+
+.checkpoint[data-leaving="true"] .checkpoint__hit {
+  opacity: 0;
+  transform: scale(0.92);
+}
+
+/* Just taken: out of the Now card, into its place in the stack. */
+.checkpoint[data-arriving="true"] {
+  z-index: 3;
+}
+
+.checkpoint[data-arriving="true"] .checkpoint__hit {
+  transform-origin: 0 0;
+  animation: checkpoint-arrive 900ms var(--checkpoints-ease) both;
+}
+
+@keyframes checkpoint-arrive {
+  from {
+    transform: translate(var(--arrive-x), var(--arrive-y)) scale(var(--arrive-scale));
+    box-shadow: none;
+  }
+}
+
+.spatial-canvas__viewport[data-far="true"] .checkpoint__hit {
+  box-shadow: none;
+}
+
+/* Far away, a card is its picture: the words are too small to read. */
+.spatial-canvas__viewport[data-far="true"] .checkpoint:not(.checkpoint--now) .checkpoint__caption {
+  opacity: 0;
+}
+
+/* ---- Now: the running machine ---- */
+
+.checkpoint--now .checkpoint__hit {
+  --card-scale: 1.4;
+  border-color: var(--border-strong);
+}
+
+.checkpoint--now .checkpoint__frame {
+  aspect-ratio: auto;
+}
+
+.checkpoint--now .checkpoint__caption {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-4);
+}
+
+.checkpoint--now .checkpoint__name {
+  color: var(--link);
+}
+
+/* ---- Timeline, down the right edge ---- */
+
+.timeline {
+  position: absolute;
+  z-index: 3;
+  top: calc(var(--size-2xl) + var(--space-5));
+  right: var(--space-3);
+  bottom: var(--space-3);
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  width: var(--checkpoints-timeline);
+}
+
+.timeline__step {
+  display: grid;
+  place-items: center;
+  width: var(--size-xl);
+  height: var(--size-xl);
+  margin: 0;
+  padding: 0;
+  border: var(--border-width-hairline) solid var(--border-subtle);
+  border-radius: var(--radius-pill);
+  background: color-mix(in srgb, var(--surface-card) 86%, transparent);
+  box-shadow: var(--elevation-tooltip);
+  color: var(--text-strong);
+  cursor: default;
+}
+
+.timeline__step:hover:enabled {
+  border-color: var(--border-strong);
+}
+
+.timeline__step:disabled {
+  opacity: 0.4;
+}
+
+.timeline__step:focus-visible,
+.timeline__track:focus-visible {
+  outline: var(--focus-ring);
+  outline-offset: var(--focus-ring-offset);
+}
+
+.timeline__track {
+  position: relative;
+  flex: 1;
+  width: 100%;
+  margin-block: var(--space-4);
+  touch-action: none;
+  cursor: default;
+}
+
+.timeline__rail {
+  position: absolute;
+  top: 0;
+  right: calc(var(--size-xl) / 2);
+  bottom: 0;
+  width: var(--border-width-hairline);
+  background: var(--border-subtle);
+}
+
+.timeline__tick {
+  position: absolute;
+  right: calc(var(--size-xl) / 2 - var(--space-1));
+  width: var(--space-2);
+  height: var(--border-width-thick);
+  border-radius: var(--radius-pill);
+  background: var(--text-muted);
+  transform: translateY(-50%);
+  transition:
+    width 150ms ease-out,
+    background-color 150ms ease-out;
+}
+
+.timeline__tick[data-month="true"] {
+  width: var(--space-4);
+  right: calc(var(--size-xl) / 2 - var(--space-2));
+  background: var(--text-base-color);
+}
+
+.timeline__tick[data-active="true"] {
+  width: var(--space-5);
+  right: calc(var(--size-xl) / 2 - var(--space-3));
+  background: var(--accent);
+}
+
+.timeline__month,
+.timeline__current,
+.timeline__now,
+.timeline__hover {
+  position: absolute;
+  top: 50%;
+  right: calc(100% + var(--space-2));
+  transform: translateY(-50%);
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+.timeline__month {
+  color: var(--text-base-color);
+  font-size: var(--text-sm);
+}
+
+.timeline__current {
+  color: var(--link);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-lg);
+}
+
+.timeline__now {
+  color: var(--text-strong);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-lg);
+}
+
+.timeline__tick[data-kind="now"] {
+  width: var(--space-4);
+  right: calc(var(--size-xl) / 2 - var(--space-2));
+  background: var(--text-strong);
+}
+
+.timeline__hover {
+  z-index: 1;
+  right: calc(var(--size-xl) + var(--space-2));
+  padding: var(--space-1) var(--space-2);
+  border: var(--border-width-hairline) solid var(--border-subtle);
+  border-radius: var(--radius-input);
+  background: var(--surface-card);
+  box-shadow: var(--elevation-tooltip);
+  color: var(--text-strong);
+  font-size: var(--text-sm);
+}
+
+/* ---- The selected checkpoint, up close ---- */
+
+.checkpoints .checkpoint-details {
+  right: calc(var(--checkpoints-timeline) + var(--space-4));
+  width: min(calc(var(--panel-width) + var(--space-7)), calc(100% - var(--checkpoints-timeline) - var(--space-7)));
+}
+
+.checkpoint-details .spatial-canvas__side-panel-body {
+  display: grid;
+  align-content: start;
+  gap: var(--space-2);
+}
+
+.checkpoint-details__picture .checkpoint__frame {
+  border: var(--border-width-hairline) solid var(--border-subtle);
+  border-radius: var(--radius-input);
+}
+
+.checkpoint-details__picture {
+  display: block;
+  width: 100%;
+  margin: 0 0 var(--space-2);
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: zoom-in;
+}
+
+.checkpoint-details__picture:focus-visible {
+  outline: var(--focus-ring);
+  outline-offset: var(--focus-ring-offset);
+}
+
+/* Quick Look: the screenshot as big as the window allows; a click or Space puts it away. */
+.checkpoints__look {
+  position: absolute;
+  z-index: 6;
+  inset: 0;
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) auto;
+  place-items: center;
+  gap: var(--space-3);
+  padding: var(--space-7) var(--space-7) var(--space-5);
+  background: color-mix(in srgb, var(--surface-base) 86%, transparent);
+  cursor: zoom-out;
+}
+
+.checkpoints__look .checkpoint__frame {
+  width: auto;
+  max-width: 100%;
+  height: 100%;
+  max-height: 100%;
+  border-radius: var(--radius-card);
+  box-shadow: var(--elevation-modal);
+}
+
+.checkpoints__look p {
+  margin: 0;
+  color: var(--text-strong);
+}
+
+.checkpoints__look p strong {
+  margin-right: var(--space-2);
+}
+
+.checkpoint-details__reason {
+  margin: 0;
+  color: var(--status-warning);
+  font-size: var(--text-sm);
+}
+
+.checkpoint-details__label {
+  margin-top: var(--space-2);
+  color: var(--text-muted);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-md);
+}
+
+.input.checkpoint-details__text {
+  height: auto;
+  min-height: calc(var(--size-2xl) * 3);
+  resize: vertical;
+  font-family: var(--font-body);
+  line-height: var(--leading-lg);
+}
+
+.checkpoint-details__manifest-note {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: var(--text-sm);
+}
+
+.checkpoint-details__facts {
+  margin-top: var(--space-3);
+}
+
+.checkpoint-details__actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-4);
+  border-top: var(--border-width-hairline) solid var(--border-subtle);
+}
+
+.checkpoint-details__saved {
+  flex: 1;
+  color: var(--text-muted);
+  font-size: var(--text-sm);
+}
+
+.checkpoint-details__delete:enabled {
+  color: var(--status-error);
+}

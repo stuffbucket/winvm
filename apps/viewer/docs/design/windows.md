@@ -6,16 +6,19 @@ apply here unchanged except where this page says otherwise.
 
 ## Words
 
-The CLI and the code say *instance* and *image*; the app never does. A
-person asked "instance of what?", so in every UI string:
+The CLI and the code say *instance*, *image* and *save*; the app never does.
+A person asked "instance of what?", so in every UI string:
 
 | In the code | In the app |
 |---|---|
 | instance | Windows machine, or machine once it is clear ("Windows machines", "New Machine…", "this machine") |
 | image (the base disk an instance starts from) | Windows image |
+| save (`winvm save`: the whole machine, RAM and disk, at a moment) | checkpoint ("New Checkpoint", "Go Back to This", "Keep checkpoints"); never "save", which a person reads as saving a document |
 
-Keep `-i`, `instance` and `image` in the CLI, its help and these docs' code
-references; they are the command line's words.
+Keep `-i`, `instance`, `image` and `save` in the CLI, its help and these
+docs' code references; they are the command line's words. Kinds of
+checkpoint read as Manual, Automatic (auto), First start (baseline), Put away
+(stow) and For tests (golden).
 
 ## Layers
 
@@ -31,8 +34,10 @@ Back to front:
 1. **Docked.** The toolbar, always; callouts above the display; the panel
    when open. They take space and push the display, never cover it.
 2. **Floating.** The toolbar's popovers and the confirmation dialog
-   (`<dialog>`, top layer). Nothing else floats. Files and terminals are
-   windows of their own.
+   (`<dialog>`, top layer). Files and terminals are windows of their own.
+3. **Full window.** Checkpoints (below), over everything in the window,
+   the window's own screen blurred behind it. Its confirmations are the
+   same `<dialog>`, above it. Nothing else covers the window.
 
 ## Toolbar
 
@@ -40,7 +45,7 @@ The title bar is an overlay (`TitleBarStyle::Overlay`, hidden title), so
 the toolbar is the drag region and leaves room for the traffic lights.
 Left to right: the machine picker; what is happening, in words; power
 (Start or Shut down, Restart, Pause or Resume); things to do in Windows
-(Terminal, Files in Windows, Saves, Use with Claude); view (Fit to
+(Terminal, Files in Windows, Checkpoints, Use with Claude); view (Fit to
 window, Open in Screen Sharing, Details). Nothing else: no meters, no
 heading repeating the window title.
 
@@ -61,10 +66,10 @@ Advanced, folded, the Windows image (`winvm ls --json`) and Start it now
 (on). It runs `winvm create`, shows the new machine, and starts it if asked.
 
 **Delete "<name>"…** is the confirmation dialog: it says the disk goes (and
-with it everything in Windows) and the saves too, unless Keep saves is
-ticked, and that it can't be undone. A running machine is turned off first,
-and the button says so: Turn Off and Delete. It runs `winvm destroy
-[--keep-saves]` and shows the next machine.
+with it everything in Windows) and the checkpoints too, unless Keep
+checkpoints is ticked, and that it can't be undone. A running machine is
+turned off first, and the button says so: Turn Off and Delete. It runs
+`winvm destroy [--keep-saves]` and shows the next machine.
 
 A button that can't act now is disabled, and its tooltip says why ("Start
 Windows to open a terminal"), not only what it is.
@@ -223,6 +228,106 @@ above the display.
 | a letter or two | the next name starting with them |
 | Esc | cancel a rename or a drag; clear the selection |
 | ⌘W | close the window |
+
+## Checkpoints
+
+Time Machine's way back, for a Windows machine: every checkpoint on an
+infinite canvas (`features/checkpoints/`, on `@winvm/canvas`, monimal's
+spatial canvas). The toolbar's clock opens it, as do ⌘⇧T and File →
+Checkpoints…; Option-click or right-click on the clock shows a native menu
+with Take a Checkpoint Now and Show Checkpoints….
+
+**In and out.** The view eases in: the window's own screen becomes the
+"Now" card where it stands (the camera starts with the card exactly over the
+display) and the camera pulls back to show Now and the newest checkpoints,
+while the window behind dims and blurs (the live screen, copied a couple of
+times a second and blurred; `backdrop-filter` where there is no screen).
+Done, Esc or a click on Now flies back into the screen the same way. Going
+back to a checkpoint flies that checkpoint's picture into the screen once
+Windows is back at that moment.
+
+**Layout.** Time runs up the canvas, as Time Machine's windows recede into
+the screen. Now, the running machine (its live screen, copied into the card
+a few times a second; its state when it is off), is the large card at the
+front, at the bottom. Above it, one block per day with checkpoints, the
+newest day nearest, its date above it (Today, Yesterday, a weekday this
+week, else the date): the day's checkpoints left to right as taken, six to
+a line. Each older day is drawn a little smaller (7% a day, down to 62%),
+so the stack reads as going back in time and in depth. Far out, where the
+dates no longer fit, only the months are named, beside the stack.
+
+**A card** is the checkpoint's screenshot (a 16:10 frame, the picture
+fitted inside it; "No picture" for checkpoints taken before screenshots),
+then its title (its notes' title, else its name), when it was taken as
+Finder says it, its kind and size, and a notes mark when it has notes. One
+that can't load here is dashed and grey, and says why over its picture
+("Made with a different display, so it can't load here"). Far out, cards
+are their pictures only.
+
+**The timeline**, down the right edge: a tick per day with checkpoints,
+evenly spaced (by turn, not by time, so a busy day and a quiet month take
+the same room), months named where they start, Now at the bottom. The day
+in view is named in `--link`; hovering names any day. Click or drag flies
+there; the chevrons above and below step one checkpoint older or newer.
+
+**Moving around.** Every camera move eases in and out (log-space zoom; a
+flight pans while zoomed out, then closes in) and, with reduced motion,
+jumps. Pinch, ⌘-scroll or ⌘+ / ⌘− zoom (about the pointer for pinch and
+scroll); two-finger scroll, dragging anywhere or the arrow keys pan. The
+camera never leaves the stack behind, and zooms between seeing everything
+and three times life size.
+
+**A selected card** comes up close, centred in the space the panel leaves,
+and the panel beside the timeline shows a larger screenshot (click it, or
+press Space, for Quick Look), its notes (title, markdown text and tags,
+written as they are typed to `$XDG_DATA_HOME/winvm/notes/<instance>/<save>.json`
+through `winvm saves note`), when it was taken, its kind, size, whether it
+loads here and its name in winvm; then Delete… and Go Back to This.
+
+- **Go Back to This** confirms: "Windows returns to exactly how it was at
+  that moment. What it's doing now is replaced, unless you keep it as a
+  checkpoint first.", with Cancel, Save Current First (while Windows runs:
+  it takes "Before going back to …" first) and Go Back. It is disabled,
+  with the reason, for a checkpoint that can't load here.
+- **Delete…** confirms, destructive: its picture and notes go with it.
+  First start (baseline) and For tests (golden) checkpoints can't be deleted
+  here, as `rewind` and tests depend on them; the button's tooltip says so.
+
+**New Checkpoint** asks for a name (empty: named by the time). The name
+becomes its title, and a directory-safe form of it the save's name. The
+view pulls back to Now and today, Now says "Taking a checkpoint…", and the
+new card flies out of Now into its place, screenshot and all.
+
+**Search** (⌘F) matches every word against names, titles, notes, tags,
+kinds and dates, newest first; cards that don't match fade while the
+results are open, and choosing one flies to it. **Automatic** shows or
+hides the checkpoints winvm takes by itself (autosaves and the stow).
+
+The view's settings (whether automatic checkpoints show, the zoom it was
+left at) are in `$XDG_CONFIG_HOME/winvm/settings.json` under
+`"checkpoints"`, read and written by the app (`src-tauri/src/checkpoints.rs`).
+Screenshots come through `checkpoint_image`, which serves only
+`saves/<instance>/<save>/{thumb,screen}.png`, as bytes shown as `blob:`
+URLs (which the CSP already allows). Only the cards in view are drawn and
+only their pictures fetched, four at a time, thumbnails until a card is
+large on screen, so hundreds of checkpoints pan smoothly.
+
+| Keys (in Checkpoints) | |
+|---|---|
+| ⌘⇧T, Esc | back to Windows (Esc first closes Quick Look, New Checkpoint, search or the selection) |
+| ⌘+ ⌘− | zoom in, out |
+| ⌘0 | show every checkpoint |
+| arrows (⇧ for more) | pan |
+| ⌘↑ ⌘↓ | the checkpoint older, newer |
+| Space | Quick Look the selected checkpoint |
+| ⌘F | search |
+| ⌘⌫ | delete the selected checkpoint (it asks first) |
+
+`bun scripts/build-ui.ts`, then `PLAYWRIGHT_DIR=… node
+scripts/render-checkpoints.mjs` renders it in WebKit against a fake app
+(`tests/render/fake-tauri.js`): the way in and out, zooms, the timeline, a
+selection, Quick Look, search, the confirmations, New Checkpoint and 400
+checkpoints, light and dark.
 
 ## Use with Claude
 

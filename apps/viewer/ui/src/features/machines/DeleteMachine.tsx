@@ -8,7 +8,7 @@ export interface Deleting {
   readonly live: boolean
 }
 
-/** What Delete "<name>"… says goes, the Keep saves box, and that a running machine is turned off first. */
+/** What Delete "<name>"… says goes, the Keep checkpoints box, and that a running machine is turned off first. */
 export function DeleteMachineBody({ deleting, keepSaves, busy, onKeepSaves }: { readonly deleting: Deleting; readonly keepSaves: boolean; readonly busy: boolean; onKeepSaves(keep: boolean): void }): JSX.Element {
   return (
     <>

@@ -8,6 +8,9 @@ interface ConfirmDialogProps {
   cancelLabel?: string;
   tone?: "default" | "danger";
   busy?: boolean;
+  /** A third choice between Cancel and the confirm button (e.g. "Save Current First"). */
+  secondaryLabel?: string;
+  onSecondary?: () => void | Promise<void>;
   onConfirm: () => void | Promise<void>;
   onCancel: () => void;
 }
@@ -28,6 +31,8 @@ export function ConfirmDialog({
   cancelLabel = "Cancel",
   tone = "default",
   busy = false,
+  secondaryLabel,
+  onSecondary,
   onConfirm,
   onCancel,
 }: ConfirmDialogProps): JSX.Element | null {
@@ -104,6 +109,16 @@ export function ConfirmDialog({
           >
             {cancelLabel}
           </button>
+          {secondaryLabel !== undefined && onSecondary !== undefined && (
+            <button
+              type="button"
+              className="btn btn--secondary"
+              onClick={() => void onSecondary()}
+              disabled={busy}
+            >
+              {secondaryLabel}
+            </button>
+          )}
           <button
             type="button"
             className={
