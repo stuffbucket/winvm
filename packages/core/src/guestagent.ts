@@ -36,6 +36,7 @@
  *   GET  /term?shell=&cwd=&cols=&rows=  a terminal, as a WebSocket (conpty.exe, assets/conpty.cs)
  *   POST /display {op,...}             screen size and scaling via winvm-display.exe (assets/winvm-display.cs)
  *   GET  /stats                       memory in use and the system drive's space -> GuestStats
+ *   POST /smb/setup {user,password}   share C:\ and the profile with the Mac (finder.ts) -> {code,output,ms,timedOut}
  *   POST /exit                        stop the agent (reinstall)
  */
 import { spawn as nodeSpawn } from "node:child_process"
@@ -47,7 +48,7 @@ import { randomBytes, timingSafeEqual } from "node:crypto"
 import type { Server, ServerWebSocket, Socket, TCPSocketListener, WebSocketHandler } from "bun"
 
 /** Bumped whenever the protocol or behaviour changes; the host reinstalls on mismatch. */
-export const AGENT_VERSION = 8
+export const AGENT_VERSION = 9
 /** The port the agent listens on INSIDE the guest. The host side is per instance. */
 export const GUEST_PORT = 7801
 export const WINDOWS_DIR = "C:\\ProgramData\\winvm\\agent"
@@ -812,6 +813,125 @@ export async function guestStats(): Promise<GuestStats> {
     // reported as unknown
   }
   return { memory: { total: totalmem(), available: freemem() }, disk }
+}
+
+// --- file sharing with the Mac (finder.ts) -----------------------------------
+
+/** POST /smb/setup: the account the Mac signs in as, and its password. In the body, never on a command line. */
+export interface SmbSetupRequest {
+  readonly user: string
+  readonly password: string
+}
+
+/** The shares the Mac mounts, by name: the whole of C:, and the profile. */
+export const SMB_SHARES: Readonly<Record<string, string>> = { C: "C:\\", Home: "C:\\Users\\Administrator" }
+
+/** Checks a /smb/setup body; null when it is fine. The script quotes both, so they are held to plain characters. */
+export function smbSetupError(r: Partial<Record<keyof SmbSetupRequest, unknown>>): string | null {
+  if (typeof r.user !== "string" || !/^[A-Za-z0-9._-]{1,20}$/.test(r.user)) return "user must be 1-20 letters, digits, '.', '_' or '-'"
+  if (typeof r.password !== "string" || !/^[A-Za-z0-9_-]{20,127}$/.test(r.password)) {
+    return "password must be 20-127 letters, digits, '_' or '-'"
+  }
+  return null
+}
+
+/**
+ * The PowerShell that makes the guest's file server reachable from the Mac,
+ * and only from the Mac. Idempotent: run again, it resets the password and
+ * puts everything back as it should be.
+ *
+ *   1. a local account, created disabled (or its password reset);
+ *   2. denied interactive, remote-interactive, batch and service logons
+ *      (secedit), BEFORE it is enabled — so it never logs on anywhere but the
+ *      network, and no profile is ever made for it;
+ *   3. an administrator (to reach every file), hidden from the sign-in screen;
+ *   4. the Server service automatic and running; the shares (C:\ and the
+ *      profile, caching off); and a firewall rule letting TCP 445 in from
+ *      10.0.2.2 only — the address slirp gives connections from the Mac.
+ *
+ * SMB signing and encryption are left as Windows has them (signing required,
+ * encryption off): the traffic never leaves the Mac.
+ */
+export function smbSetupScript(r: SmbSetupRequest): string {
+  const shares = Object.entries(SMB_SHARES)
+    .map(([name, path]) => `'${name}' = '${path}'`)
+    .join("; ")
+  return String.raw`$ErrorActionPreference = 'Stop'
+$user = '${r.user}'
+$secret = ConvertTo-SecureString '${r.password}' -AsPlainText -Force
+$shares = [ordered]@{ ${shares} }
+$rights = 'SeDenyInteractiveLogonRight', 'SeDenyRemoteInteractiveLogonRight', 'SeDenyBatchLogonRight', 'SeDenyServiceLogonRight'
+
+$u = Get-LocalUser -Name $user -ErrorAction SilentlyContinue
+if ($null -eq $u) {
+  New-LocalUser -Name $user -Password $secret -Disabled -PasswordNeverExpires -AccountNeverExpires -UserMayNotChangePassword -Description 'winvm: the Mac opens C: and Home in Finder' | Out-Null
+  "created $user (disabled until its logons are limited)"
+} else {
+  Set-LocalUser -Name $user -Password $secret -PasswordNeverExpires $true -AccountNeverExpires
+  "reset the password of $user"
+}
+$sid = (Get-LocalUser -Name $user).SID.Value
+
+# Callers wrap it in @(): PowerShell unrolls a returned array, so one member
+# would come back a string, and += would glue the SID onto its name.
+function Get-Members($inf, $right) {
+  $line = Get-Content $inf | Where-Object { $_ -match "^$right\s*=" } | Select-Object -First 1
+  if ($null -eq $line) { return @() }
+  return @(($line -replace "^$right\s*=\s*", '').Split(',') | ForEach-Object { $_.Trim() } | Where-Object { $_ -ne '' })
+}
+$tmp = Join-Path $env:TEMP ('winvm-smb-' + [guid]::NewGuid().ToString('N'))
+New-Item -ItemType Directory -Path $tmp | Out-Null
+try {
+  secedit /export /cfg "$tmp\now.inf" /areas USER_RIGHTS /quiet | Out-Null
+  $out = @('[Unicode]', 'Unicode=yes', '[Version]', 'signature="$CHICAGO$"', 'Revision=1', '[Privilege Rights]')
+  foreach ($right in $rights) {
+    $list = @(Get-Members "$tmp\now.inf" $right)
+    if (($list -notcontains "*$sid") -and ($list -notcontains $user)) { $list += "*$sid" }
+    $out += "$right = $($list -join ',')"
+  }
+  Set-Content -Path "$tmp\deny.inf" -Value $out -Encoding Unicode
+  secedit /configure /db "$tmp\deny.sdb" /cfg "$tmp\deny.inf" /areas USER_RIGHTS /log "$tmp\deny.log" /quiet | Out-Null
+  if ($LASTEXITCODE -ne 0) {
+    $why = (Get-Content "$tmp\deny.log" -ErrorAction SilentlyContinue | Where-Object { $_ -match '\S' } | Select-Object -Last 8) -join "; "
+    throw "secedit /configure failed ($LASTEXITCODE): $why"
+  }
+  secedit /export /cfg "$tmp\after.inf" /areas USER_RIGHTS /quiet | Out-Null
+  foreach ($right in $rights) {
+    $list = @(Get-Members "$tmp\after.inf" $right)
+    if (($list -notcontains "*$sid") -and ($list -notcontains $user)) { throw "$right does not name $user" }
+  }
+  "denied $user interactive, remote-interactive, batch and service logons"
+} finally {
+  Remove-Item -Recurse -Force $tmp -ErrorAction SilentlyContinue
+}
+
+$admins = Get-LocalGroup -SID 'S-1-5-32-544'
+if (-not (Get-LocalGroupMember -Group $admins | Where-Object { $_.SID.Value -eq $sid })) {
+  Add-LocalGroupMember -Group $admins -Member $sid
+}
+$hidden = 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon\SpecialAccounts\UserList'
+New-Item -Path $hidden -Force | Out-Null
+New-ItemProperty -Path $hidden -Name $user -Value 0 -PropertyType DWord -Force | Out-Null
+# With UAC on, a local administrator signing in over the network gets a
+# filtered token without its rights, and the profile is closed to it.
+$system = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System'
+if ((Get-ItemProperty $system).EnableLUA -ne 0) {
+  New-ItemProperty -Path $system -Name LocalAccountTokenFilterPolicy -Value 1 -PropertyType DWord -Force | Out-Null
+}
+Enable-LocalUser -Name $user
+"$user is an administrator, hidden from the sign-in screen"
+
+Set-Service -Name LanmanServer -StartupType Automatic
+Start-Service -Name LanmanServer
+foreach ($name in $shares.Keys) {
+  if (Get-SmbShare -Name $name -ErrorAction SilentlyContinue) { Remove-SmbShare -Name $name -Force }
+  New-SmbShare -Name $name -Path $shares[$name] -FullAccess $user -CachingMode None | Out-Null
+  "shared $($shares[$name]) as $name"
+}
+Remove-NetFirewallRule -Name 'winvm-smb' -ErrorAction SilentlyContinue
+New-NetFirewallRule -Name 'winvm-smb' -DisplayName 'winvm: file sharing with the Mac' -Direction Inbound -Protocol TCP -LocalPort 445 -RemoteAddress 10.0.2.2 -Action Allow -Profile Any | Out-Null
+"firewall rule winvm-smb: TCP 445 from 10.0.2.2 only"
+`
 }
 
 /** A UI Automation request: `op` plus its fields (see assets/winvm-ui.cs). */
@@ -1579,6 +1699,17 @@ export function startAgent(o: AgentOptions, onFatal: () => void = () => {}): Run
             }
             case "GET /stats":
               return json(await guestStats())
+            case "POST /smb/setup": {
+              const r = (await req.json()) as Partial<Record<keyof SmbSetupRequest, unknown>>
+              const bad = smbSetupError(r)
+              if (bad !== null) return fail(400, bad)
+              if (!isWin) return fail(501, "file sharing is set up only in the Windows guest")
+              const script = smbSetupScript(r as SmbSetupRequest)
+              const out = await spawner.call<PwshResponse>({ op: "pwsh", script, timeoutMs: 120_000 })
+              // Never the request: it holds the password.
+              log(`smb setup for ${String(r.user)}: exit ${String(out.code)}`)
+              return json(out)
+            }
             case "POST /exit":
               log("exit requested")
               setTimeout(() => process.exit(0), 50)

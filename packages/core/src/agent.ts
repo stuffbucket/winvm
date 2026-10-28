@@ -33,6 +33,7 @@ import type {
   LaunchRequest,
   Proc,
   PwshResponse,
+  SmbSetupRequest,
 } from "./guestagent"
 import { AGENT_VERSION, GUEST_PORT, WINDOWS_DIR } from "./guestagent"
 import { bunZip } from "./media"
@@ -233,6 +234,14 @@ export class AgentClient {
   /** Windows' memory and the system drive's space, cheaply (no process started). */
   async stats(timeoutMs = 5000): Promise<GuestStats> {
     return (await (await this.req("GET", "/stats", undefined, timeoutMs)).json()) as GuestStats
+  }
+
+  /**
+   * Share C:\ and the profile with the Mac, signing in as `user` (finder.ts).
+   * The password travels in the request body only, never on a command line.
+   */
+  async smbSetup(r: SmbSetupRequest, timeoutMs = 150_000): Promise<PwshResponse> {
+    return await this.post<PwshResponse>("/smb/setup", r, timeoutMs)
   }
 
   /** Kill a process; by default its whole tree. */
