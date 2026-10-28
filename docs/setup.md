@@ -73,7 +73,9 @@ winvm display -i test --scale 200        # Windows display scaling, live
 
 Sizes are kept to what the guest can show: up to 5120 wide and 2160 tall, and
 at most 30 MiB of picture (3840x2048 fits; a bigger request is shrunk to fit,
-keeping its shape). Windows' smallest is 1024x768.
+keeping its shape). Windows' smallest is 1024x768. In the app, a window bigger
+than that, such as full screen on a 5K display, keeps Windows at the largest
+size that fits and scales the picture up to fill the window, up to 5K.
 
 **Instances made before this** keep the fixed 800x600 display (ramfb), so
 their saves keep loading. To switch one, stop it first:
