@@ -47,7 +47,17 @@ is missing.
 
 A window of its own per instance, as Finder is, so files sit beside the
 screen. The toolbar's folder button opens it, or brings it forward; its
-title names the folder and the instance ("Desktop — demo").
+title names the folder and the instance ("Desktop — demo"). Option-click or
+right-click on the button shows a native menu: Open Files in Windows, then
+Open in Finder: Home and Open in Finder: C:\, disabled and marked "coming
+soon" until the guest's drives can be mounted on the Mac
+(`revealGuestPath` in `backend.ts` is the hook).
+
+Listing, renaming, moving, copying within Windows and deleting go straight
+to the in-guest agent over HTTP (`agent_fetch`, `src-tauri/src/agent.rs`):
+a few milliseconds each, where a `winvm` command costs a process start. The
+app asks `winvm agent connect --json` where the agent is once per machine.
+Copies to and from the Mac still run `winvm put` and `winvm get`.
 
 - **Title bar**: an overlay (traffic lights, hidden title), like the main
   window's. The lights sit over the sidebar; the toolbar beside them holds
