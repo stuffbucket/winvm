@@ -16,6 +16,7 @@ import {
   MAX_WIDTH,
   SizeDebouncer,
   clampSize,
+  drawSize,
   guestSizeFor,
   parseSize,
   scaleFor,
@@ -280,5 +281,29 @@ describe("wire formats", () => {
     expect(displayArgv({ op: "set", width: 2560 })).toBeNull()
     expect(displayArgv({ op: "set", width: -1, height: 2 })).toBeNull()
     expect(displayArgv({ op: "nope" } as unknown as Parameters<typeof displayArgv>[0])).toBeNull()
+  })
+})
+
+describe("drawSize", () => {
+  it("draws one guest pixel per device pixel when the guest can match the view", () => {
+    expect(drawSize({ width: 2560, height: 1600 }, { width: 1280, height: 800 }, 2)).toEqual({ width: 1280, height: 800 })
+  })
+
+  it("never draws larger than the view while a bigger guest is switching away", () => {
+    expect(drawSize({ width: 3200, height: 2000 }, { width: 1280, height: 800 }, 2)).toEqual({ width: 1280, height: 800 })
+  })
+
+  it("scales a capped guest up to fill a view past the limits", () => {
+    // A full-screen Studio Display window: 2560x1440 points at 2x.
+    const view = { width: 2560, height: 1380 }
+    const guest = guestSizeFor(view, 2)
+    expect(guest.height).toBeLessThanOrEqual(MAX_HEIGHT)
+    expect(drawSize(guest, view, 2)).toEqual(view)
+  })
+
+  it("stops at 5K device pixels", () => {
+    // A 6K display's full-screen window at 2x is 3008x1692 points.
+    const view = { width: 3008, height: 1692 }
+    expect(drawSize(guestSizeFor(view, 2), view, 2)).toEqual({ width: 2560, height: 1440 })
   })
 })

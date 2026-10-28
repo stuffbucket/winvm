@@ -1,7 +1,7 @@
 import RFB from "novnc/core/rfb.js"
 import { useEffect, useRef, useState } from "react"
 
-import { type Size, SizeDebouncer, guestSizeFor, sameSize, scaleFor } from "@winvm/displayfit"
+import { type Size, SizeDebouncer, drawSize, guestSizeFor, sameSize, scaleFor } from "@winvm/displayfit"
 
 import { t } from "../../i18n"
 import type { Connection } from "../../model"
@@ -147,19 +147,22 @@ export function Screen({ connection, resizable, onGuestSize }: ScreenProps): JSX
     }
   }, [websocketPort, password, attempt, resizable])
 
-  // One guest pixel per device pixel: the box noVNC scales into is the
-  // framebuffer's size in CSS pixels, so its scale comes out at exactly
-  // 1/devicePixelRatio. Never larger than the view; while the guest is bigger
-  // (a size it is switching away from), noVNC shrinks it to fit.
-  const exact =
-    resizable && fb !== null && box !== null
-      ? { width: `${String(Math.min(fb.width / ratio, box.width))}px`, height: `${String(Math.min(fb.height / ratio, box.height))}px` }
-      : undefined
+  // One guest pixel per device pixel while the guest can match the view: the
+  // box noVNC scales into is the framebuffer's size in CSS pixels, so its
+  // scale comes out at exactly 1/devicePixelRatio. Past the limits the box is
+  // the view, up to 5K, and noVNC scales the capped guest up to fill it.
+  const drawn = resizable && fb !== null && box !== null ? drawSize(fb, box, ratio) : null
+  const exact = drawn === null ? undefined : { width: `${String(drawn.width)}px`, height: `${String(drawn.height)}px` }
+  const scaled = drawn !== null && fb !== null && drawn.width > fb.width / ratio + 0.5
 
   const message = view === "connected" ? null : t(`screen.${view}`)
   return (
     <div ref={area} className="screen">
-      <div ref={target} className={exact === undefined ? "screen__canvas" : "screen__canvas screen__canvas--exact"} style={exact} />
+      <div
+        ref={target}
+        className={exact === undefined ? "screen__canvas" : scaled ? "screen__canvas screen__canvas--exact screen__canvas--scaled" : "screen__canvas screen__canvas--exact"}
+        style={exact}
+      />
       {message !== null && (
         <div className="screen__message" role="status">
           <p>{message}</p>
