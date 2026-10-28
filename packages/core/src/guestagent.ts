@@ -29,6 +29,7 @@
  *   POST /kill    {pid,tree?}
  *   POST /ui      {op,...}             UI Automation via winvm-ui.exe (assets/winvm-ui.cs, docs/gui.md)
  *   GET  /term?shell=&cwd=&cols=&rows=  a terminal, as a WebSocket (conpty.exe, assets/conpty.cs)
+ *   POST /display {op,...}             screen size and scaling via winvm-display.exe (assets/winvm-display.cs)
  *   POST /exit                        stop the agent (reinstall)
  */
 import { spawn as nodeSpawn } from "node:child_process"
@@ -40,7 +41,7 @@ import { randomBytes, timingSafeEqual } from "node:crypto"
 import type { Server, ServerWebSocket, Socket, TCPSocketListener, WebSocketHandler } from "bun"
 
 /** Bumped whenever the protocol or behaviour changes; the host reinstalls on mismatch. */
-export const AGENT_VERSION = 5
+export const AGENT_VERSION = 6
 /** The port the agent listens on INSIDE the guest. The host side is per instance. */
 export const GUEST_PORT = 7801
 export const WINDOWS_DIR = "C:\\ProgramData\\winvm\\agent"
@@ -500,6 +501,37 @@ export async function listDir(
   })
   const up = dirname(path)
   return { path, parent: up === path ? null : up, entries, total: kept.length }
+}
+
+/**
+ * A display request (assets/winvm-display.cs): `get`, `modes`, `set` (width,
+ * height, waitMs?, scale?) or `scale` (scale).
+ */
+export interface DisplayRequest {
+  readonly op: "get" | "modes" | "set" | "scale"
+  readonly width?: number
+  readonly height?: number
+  readonly waitMs?: number
+  readonly scale?: number
+}
+
+/** winvm-display.exe's arguments for a request; null when the request is malformed. */
+export function displayArgv(r: DisplayRequest): string[] | null {
+  const int = (n: unknown): n is number => typeof n === "number" && Number.isInteger(n) && n >= 0
+  switch (r.op) {
+    case "get":
+    case "modes":
+      return [r.op]
+    case "set":
+      if (!int(r.width) || !int(r.height)) return null
+      if (r.waitMs !== undefined && !int(r.waitMs)) return null
+      if (r.scale !== undefined && !int(r.scale)) return null
+      return ["set", String(r.width), String(r.height), String(r.waitMs ?? 2000), String(r.scale ?? 0)]
+    case "scale":
+      return int(r.scale) ? ["scale", String(r.scale)] : null
+    default:
+      return null
+  }
 }
 
 /** A UI Automation request: `op` plus its fields (see assets/winvm-ui.cs). */
@@ -1144,6 +1176,25 @@ export function startAgent(o: AgentOptions, onFatal: () => void = () => {}): Run
             }
             case "GET /term":
               return terms.upgrade(req, srv, u)
+            case "POST /display": {
+              const r = (await req.json()) as DisplayRequest
+              const args = displayArgv(r)
+              if (args === null) return fail(400, "op must be get, modes, set {width,height,waitMs?,scale?} or scale {scale}")
+              if (!isWin) return fail(501, "the display helper exists only in the Windows guest")
+              const exe = process.env["WINVM_DISPLAY_EXE"] ?? join(import.meta.dir, "winvm-display.exe")
+              if (!existsSync(exe)) return fail(501, `${exe} is missing: reinstall the agent (winvm agent install)`)
+              const timeoutMs = (r.waitMs ?? 2000) + 15_000
+              const out = await spawner.call<ExecResponse>({ op: "exec", req: { argv: [exe, ...args], timeoutMs } })
+              let body: Record<string, unknown>
+              try {
+                body = JSON.parse(out.stdout.trim()) as Record<string, unknown>
+              } catch {
+                return fail(500, `winvm-display.exe said: ${(out.stdout + out.stderr).trim() || `exit ${String(out.code)}`}`)
+              }
+              if (out.code === 0) return json(body)
+              const status = { bad: 400, badmode: 409, toobig: 413, timeout: 408 }[String(body["code"])] ?? 500
+              return json(body, status)
+            }
             case "POST /exit":
               log("exit requested")
               setTimeout(() => process.exit(0), 50)

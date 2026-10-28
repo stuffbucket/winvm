@@ -1,36 +1,30 @@
 /**
- * The guest's side of the screen size: what QEMU is showing now, and setting
- * Windows' resolution for the virtio GPU's monitor without a window.
+ * The running guest's screen: what QEMU shows now, and resizing it live on
+ * virtio-gpu (display.ts explains the device; displayfit.ts the limits).
  *
- * WHY THE REGISTRY. Windows remembers a resolution per monitor, under
- * HKLM\SYSTEM\CurrentControlSet\Control\GraphicsDrivers\Configuration\<monitor>,
- * and applies it at boot. A monitor it has never seen starts at the driver's
- * default — viogpudo's is 1024x768, whatever size QEMU's virtual screen is —
- * and the only supported way to change it is the Settings app or
- * ChangeDisplaySettingsEx from inside the logged-on session, neither of which
- * the guest agent (running as SYSTEM in session 0) can reach. Writing the size
- * into the saved configuration and rebooting does the same thing at the layer
- * Windows reads it from. Verified on this guest: 1024x768 -> 1920x1080.
+ * A LIVE RESIZE IS TWO STEPS, in this order:
+ *   1. `requestSize`: VNC SetDesktopSize (desktopsize.ts). QEMU passes the size
+ *      to virtio-gpu, and the guest's viogpudo driver adds it to its modes.
+ *      The app's viewer sends this itself, over its own noVNC connection.
+ *   2. `setGuestSize`: the in-guest agent's display helper waits for that mode
+ *      and sets it with ChangeDisplaySettingsEx in the logged-on session, then
+ *      the display scale if asked. Without step 1 the size is not a mode and
+ *      the helper times out; without step 2 nothing changes.
+ * Measured on win11-arm64: ~80 ms from the request to QEMU's new framebuffer.
  *
- * Commands go through `reg.exe` directly, never `cmd /c`: the configuration
- * key names contain `^`, which cmd treats as an escape and silently drops.
+ * WHY NOT qemu-ga. qemu-ga runs in session 0: ChangeDisplaySettingsEx there
+ * returns success and changes nothing on the user's desktop.
  */
 import { spawnSync } from "node:child_process"
 
-import type { DisplayConfig } from "./display"
+import * as agent from "./agent"
+import { requestDesktopSize, RESIZE_STATUS } from "./desktopsize"
+import type { Size } from "./displayfit"
 import { withQmp } from "./monitor"
-import type { Paths } from "./paths"
+import type { InstanceMeta, Paths } from "./paths"
 import * as qemu from "./qemu"
-import * as qga from "./qga"
 import { screenSize } from "./input"
-
-const REG = "C:\\Windows\\System32\\reg.exe"
-const CONFIG_KEY = "HKLM\\SYSTEM\\CurrentControlSet\\Control\\GraphicsDrivers\\Configuration"
-/** virtio-gpu's PCI vendor and device ids, as Windows writes them in monitor ids. */
-const VIRTIO_GPU_ID = "1AF4_1050"
-
-export const deviceLabel = (cfg: DisplayConfig): string =>
-  cfg.device === "ramfb" ? "ramfb" : `virtio-gpu ${String(cfg.width)}x${String(cfg.height)}`
+import { passwordFor, vncPort } from "./vnc"
 
 /** The device the RUNNING QEMU was started with, read off its command line. */
 export function liveDevice(p: Paths): string | null {
@@ -41,14 +35,13 @@ export function liveDevice(p: Paths): string | null {
 }
 
 export function deviceFromCommandLine(cmd: string): string | null {
-  const gpu = /virtio-gpu-pci,xres=(\d+),yres=(\d+)/.exec(cmd)
-  if (gpu !== null) return `virtio-gpu ${String(gpu[1])}x${String(gpu[2])}`
+  if (/(^|\s)virtio-gpu-pci(,|\s|$)/.test(cmd)) return "virtio-gpu"
   if (/(^|\s)ramfb(\s|$)/.test(cmd)) return "ramfb"
   return null
 }
 
 /** The framebuffer's current size, or null if the monitor didn't answer. */
-export async function liveSize(p: Paths): Promise<{ width: number; height: number } | null> {
+export async function liveSize(p: Paths): Promise<Size | null> {
   try {
     return await withQmp(p.qmp, async (q) => await screenSize(q), 5000)
   } catch {
@@ -56,71 +49,52 @@ export async function liveSize(p: Paths): Promise<{ width: number; height: numbe
   }
 }
 
+/** Step 1: ask QEMU, over VNC, for `size`. Throws unless QEMU forwarded it to the device. */
+export async function requestSize(p: Paths, meta: InstanceMeta, size: Size): Promise<void> {
+  const answer = await requestDesktopSize(vncPort(meta.vnc), passwordFor(p), size.width, size.height)
+  if (answer.status !== 4 && answer.status !== 0) {
+    const why = RESIZE_STATUS[answer.status as keyof typeof RESIZE_STATUS] ?? `status ${String(answer.status)}`
+    throw new Error(`QEMU did not pass the size on: ${why}`)
+  }
+}
+
+/** What the guest's display helper reports. */
+export interface GuestDisplay {
+  readonly width: number
+  readonly height: number
+  /** Windows' display scale, percent. */
+  readonly scale: number
+  /** The largest scale Windows allows at this size. */
+  readonly maxScale: number
+  /** Effective DPI of the screen (96 at 100%). */
+  readonly dpi: number
+  readonly changed?: boolean
+  readonly scaled?: boolean
+  readonly ms?: number
+}
+
+/** The guest's size and scale, from the helper. */
+export async function guestState(name: string): Promise<GuestDisplay> {
+  return await (await agent.requireAgent(name)).display<GuestDisplay>({ op: "get" })
+}
+
 /**
- * Saved-configuration entries for the virtio GPU's monitor, by key name, from
- * `reg query <CONFIG_KEY>`. reg.exe prints the root spelled out
- * (HKEY_LOCAL_MACHINE), and accepts it back that way.
+ * Step 2: set the size in the guest (waiting up to `waitMs` for the driver to
+ * offer it), and the scale if given and different. Ensures an agent new enough
+ * to have the helper: an older one is reinstalled, once.
  */
-export function virtioMonitorKeys(regQueryOutput: string): readonly string[] {
-  const out: string[] = []
-  const marker = "\\CONTROL\\GRAPHICSDRIVERS\\CONFIGURATION\\"
-  for (const line of regQueryOutput.split(/\r?\n/)) {
-    const t = line.trim()
-    const at = t.toUpperCase().indexOf(marker)
-    if (at < 0 || !/^(HKLM|HKEY_LOCAL_MACHINE)\\/i.test(t)) continue
-    const rest = t.slice(at + marker.length)
-    if (rest === "" || rest.includes("\\") || !rest.toUpperCase().includes(VIRTIO_GPU_ID)) continue
-    out.push(t)
-  }
-  return out
+export async function setGuestSize(name: string, size: Size, o: { readonly scale?: number; readonly waitMs?: number } = {}): Promise<GuestDisplay> {
+  const c = await agent.ensure(name)
+  return await c.display<GuestDisplay>({
+    op: "set",
+    width: size.width,
+    height: size.height,
+    waitMs: o.waitMs ?? 2000,
+    ...(o.scale === undefined ? {} : { scale: o.scale }),
+  })
 }
 
-/** The values to write for one monitor entry: [subkey, value name, number]. */
-export function resolutionValues(width: number, height: number): readonly (readonly [string, string, number])[] {
-  return [
-    ["00", "PrimSurfSize.cx", width],
-    ["00", "PrimSurfSize.cy", height],
-    ["00\\00", "PrimSurfSize.cx", width],
-    ["00\\00", "PrimSurfSize.cy", height],
-    ["00\\00", "ActiveSize.cx", width],
-    ["00\\00", "ActiveSize.cy", height],
-    ["00\\00", "DwmClipBox.right", width],
-    ["00\\00", "DwmClipBox.bottom", height],
-  ]
-}
-
-/** Write WxH for every virtio-GPU monitor entry. Returns how many entries there were. */
-export async function setGuestResolution(p: Paths, width: number, height: number): Promise<number> {
-  const listed = await qga.exec(p.qga, REG, ["query", CONFIG_KEY])
-  if (listed.exitcode !== 0) throw new Error(`reg query failed: ${listed.stderr.trim() || listed.stdout.trim()}`)
-  const keys = virtioMonitorKeys(listed.stdout)
-  for (const key of keys) {
-    for (const [sub, value, n] of resolutionValues(width, height)) {
-      const r = await qga.exec(p.qga, REG, ["add", `${key}\\${sub}`, "/v", value, "/t", "REG_DWORD", "/d", String(n), "/f"])
-      if (r.exitcode !== 0) throw new Error(`reg add ${value} failed: ${r.stderr.trim() || r.stdout.trim()}`)
-    }
-  }
-  return keys.length
-}
-
-/** Reboot the guest, wait for it to be back, and measure the screen. */
-export async function rebootAndMeasure(p: Paths): Promise<{ width: number; height: number } | null> {
-  try {
-    await qga.call(p.qga, { execute: "guest-shutdown", arguments: { mode: "reboot" } }, 5000)
-  } catch {
-    // The agent drops mid-request as the guest goes down; that is success.
-  }
-  // Wait for it to actually go away, so the readiness check below can't be
-  // answered by the guest that is shutting down.
-  const goneBy = Date.now() + 120_000
-  while (Date.now() < goneBy) {
-    try {
-      await qga.call(p.qga, { execute: "guest-ping" }, 2000)
-      await new Promise((r) => setTimeout(r, 2000))
-    } catch {
-      break
-    }
-  }
-  if (!(await qga.waitReady(p.qga, 600_000))) return null
-  return await liveSize(p)
+/** Set only the scale (percent). */
+export async function setGuestScale(name: string, scale: number): Promise<GuestDisplay> {
+  return await (await agent.ensure(name)).display<GuestDisplay>({ op: "scale", scale })
 }

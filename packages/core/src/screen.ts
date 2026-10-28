@@ -9,15 +9,19 @@
 import { spawnSync } from "node:child_process"
 import { resolve } from "node:path"
 
+import * as agent from "./agent"
 import type { Args } from "./args"
 import { instanceName } from "./args"
-import { describeDisplay, parseDisplay, readDisplay, writeDisplay } from "./display"
+import type { DisplayConfig } from "./display"
+import { describeDisplay, parseDevice, readDisplay, sameDevice, writeDisplay } from "./display"
+import { SCALES, clampSize, parseSize, sameSize } from "./displayfit"
 import * as guestDisplay from "./guestdisplay"
 import * as input from "./input"
 import * as ocr from "./ocr"
 import type { InstanceMeta, Paths } from "./paths"
 import { pathsFor, readMeta } from "./paths"
 import * as qemu from "./qemu"
+import * as saves from "./saves"
 import { applyPassword, connection, passwordFor, screenSharingUrl, vncPort } from "./vnc"
 import * as web from "./web"
 
@@ -236,21 +240,17 @@ export async function scroll(args: Args): Promise<number> {
 }
 
 /**
- * `winvm display [-i name] [WxH | ramfb]` — show or set the screen size.
+ * `winvm display [-i name] [WxH | virtio-gpu | ramfb] [--scale PCT] [--json]`
  *
- * Converges in steps, and says which step is next:
- *
- *   1. QEMU's side: the display device, recorded per instance (display.ts).
- *      Takes effect at the next start.
- *   2. Windows' side: Windows keeps a per-monitor resolution and starts a new
- *      monitor at the driver's default (1024x768 for viogpudo), however large
- *      the virtual screen. It has no command-line way to change that, so this
- *      writes the size into the saved display configuration for the virtio
- *      GPU's monitor (HKLM\...\GraphicsDrivers\Configuration) over the guest
- *      agent, and reboots the guest so Windows applies it.
- *
- * Step 2 needs the guest to have booted on the virtio GPU once, so the monitor's
- * entry exists. Running the same command again after a start does it.
+ *   (nothing)        the device, and the screen's size and scale now
+ *   WxH              resize a running virtio-gpu guest live: a VNC
+ *                    SetDesktopSize request, then the guest agent sets the
+ *                    mode (guestdisplay.ts). Clamped to what the driver and
+ *                    VNC can show (displayfit.ts). `--no-request` skips the
+ *                    VNC step, for a viewer that already sent it (the app).
+ *   --scale PCT      Windows' display scale (100, 125, 150, 200, …), live
+ *   virtio-gpu|ramfb switch the display device of a STOPPED instance; saves
+ *                    taken on the other device stop loading (display.ts)
  */
 export async function display(args: Args): Promise<number> {
   const name = instanceName(args)
@@ -261,79 +261,111 @@ export async function display(args: Args): Promise<number> {
   }
   const p = pathsFor(name)
   const flag = name === "default" ? "" : ` -i ${name}`
+  const asJson = args.flags.has("json")
   const live = qemu.isRunning(p)
   const configured = readDisplay(p)
-  const actual = live ? await guestDisplay.liveSize(p) : null
   const wantRaw = args.positional[0]
+  const scaleRaw = args.flags.get("scale")
+  const scale = scaleRaw === undefined ? undefined : Number(scaleRaw.replace(/%$/, ""))
+  if (scale !== undefined && !(SCALES as readonly number[]).includes(scale)) {
+    console.error(`::error::--scale takes one of ${SCALES.join(", ")} (percent)`)
+    return 1
+  }
 
-  if (wantRaw === undefined) {
+  if (wantRaw === undefined && scale === undefined) {
     const device = live ? guestDisplay.liveDevice(p) : null
+    const size = live ? await guestDisplay.liveSize(p) : null
+    let guest: guestDisplay.GuestDisplay | null = null
+    if (live && device === "virtio-gpu" && (await agent.connect(name, { timeoutMs: 1500 })) !== null) {
+      guest = await guestDisplay.guestState(name).catch(() => null)
+    }
+    if (asJson) {
+      console.log(JSON.stringify({ configured: configured.device, running: device, size, scale: guest?.scale ?? null, dpi: guest?.dpi ?? null }))
+      return 0
+    }
     console.log(`configured: ${describeDisplay(configured)}`)
     if (live) {
-      console.log(`running:    ${device ?? "?"}${actual === null ? "" : `, screen ${String(actual.width)}x${String(actual.height)}`}`)
+      const at = size === null ? "" : `, screen ${String(size.width)}x${String(size.height)}`
+      console.log(`running:    ${device ?? "?"}${at}${guest === null ? "" : `, scale ${String(guest.scale)}%`}`)
     }
     return 0
   }
 
-  const want = parseDisplay(wantRaw)
-  if (want === null) {
-    console.error(`::error::"${wantRaw}" is not a size — use WIDTHxHEIGHT (e.g. 1920x1080) or "ramfb"`)
+  // Switching the device.
+  const device = wantRaw === undefined ? null : parseDevice(wantRaw)
+  if (device !== null) return switchDevice(name, meta, p, configured, device, live, flag)
+
+  // Resizing (and/or scaling) the running guest.
+  const asked = wantRaw === undefined ? null : parseSize(wantRaw)
+  if (wantRaw !== undefined && asked === null) {
+    console.error(`::error::"${wantRaw}" is not a size or a device — use WIDTHxHEIGHT (e.g. 2560x1600), virtio-gpu or ramfb`)
     return 1
   }
-
-  // 1. QEMU's side.
-  const deviceChanges = describeDisplay(want) !== describeDisplay(configured)
-  if (deviceChanges) {
-    writeDisplay(p, want)
-    console.log(`display for "${name}": ${describeDisplay(want)} (was ${describeDisplay(configured)})`)
-    console.log(
-      "  note: snapshots and saves taken with the previous display can't be restored on this one;\n" +
-        `  \`winvm display${flag} ${configured.device === "ramfb" ? "ramfb" : `${String(configured.width)}x${String(configured.height)}`}\` switches back.`,
+  if (!live) {
+    console.error(`::error::"${name}" is not running; the screen is resized live — \`winvm start${flag}\` first`)
+    return 1
+  }
+  if (guestDisplay.liveDevice(p) !== "virtio-gpu") {
+    console.error(
+      `::error::"${name}" runs on ramfb, which is fixed at 800x600. Switch to the resizable virtio-gpu while stopped: ` +
+        `\`winvm stop${flag} && winvm display${flag} virtio-gpu && winvm start${flag}\``,
     )
+    return 1
   }
-  const runningDevice = live ? guestDisplay.liveDevice(p) : null
-  if (!live || runningDevice !== guestDisplay.deviceLabel(want)) {
-    console.log(
-      live
-        ? `next: restart to switch the device (\`winvm stop${flag} && winvm start${flag}\`)` +
-            (want.device === "virtio-gpu" ? `, then run \`winvm display${flag} ${wantRaw}\` again to size Windows' screen` : "")
-        : `takes effect at the next \`winvm start${flag}\`` +
-            (want.device === "virtio-gpu" ? `; after it, run \`winvm display${flag} ${wantRaw}\` again to size Windows' screen` : ""),
-    )
-    return 0
-  }
-  if (want.device === "ramfb") {
-    console.log("ramfb is already in use; the firmware fixes its size at 800x600")
-    return 0
-  }
-  if (actual !== null && actual.width === want.width && actual.height === want.height) {
-    console.log(`screen is ${String(want.width)}x${String(want.height)} — nothing to do`)
-    return 0
-  }
-
-  // 2. Windows' side.
-  let entries: number
   try {
-    entries = await guestDisplay.setGuestResolution(p, want.width, want.height)
+    let result: guestDisplay.GuestDisplay
+    if (asked === null) {
+      result = await guestDisplay.setGuestScale(name, scale ?? 100)
+    } else {
+      const size = clampSize(asked)
+      if (!sameSize(size, asked) && !asJson) console.log(`${wantRaw} is outside what the guest can show; using ${String(size.width)}x${String(size.height)}`)
+      if (!args.flags.has("no-request")) await guestDisplay.requestSize(p, meta, size)
+      result = await guestDisplay.setGuestSize(name, size, scale === undefined ? {} : { scale })
+    }
+    if (asJson) console.log(JSON.stringify(result))
+    else console.log(`screen is ${String(result.width)}x${String(result.height)} at ${String(result.scale)}%${result.ms === undefined ? "" : ` (${String(result.ms)} ms in the guest)`}`)
+    return 0
   } catch (error) {
-    console.error(`::error::could not set the guest's resolution: ${errMsg(error)}`)
+    console.error(`::error::could not resize the guest's screen: ${errMsg(error)}`)
     return 1
   }
-  if (entries === 0) {
-    console.error("::error::Windows has no saved configuration for the virtio GPU's monitor yet — is the guest still booting?")
-    return 1
-  }
-  if (args.flags.has("no-reboot")) {
-    console.log(`set ${String(want.width)}x${String(want.height)} in the guest; it applies at the guest's next reboot`)
+}
+
+/** `winvm display virtio-gpu|ramfb`: only while stopped, and says which saves stop (or start) loading. */
+function switchDevice(name: string, meta: InstanceMeta, p: Paths, from: DisplayConfig, to: DisplayConfig, live: boolean, flag: string): number {
+  if (sameDevice(from, to)) {
+    console.log(`"${name}" already uses ${describeDisplay(to)}`)
     return 0
   }
-  console.log(`set ${String(want.width)}x${String(want.height)} in the guest; rebooting it to apply`)
-  const after = await guestDisplay.rebootAndMeasure(p)
-  if (after === null) {
-    console.error(`::error::the guest did not come back from the reboot — \`winvm status${flag}\``)
+  if (live) {
+    console.error(`::error::"${name}" is running; the display device changes only while it is stopped — \`winvm stop${flag}\` first`)
     return 1
   }
-  const ok = after.width === want.width && after.height === want.height
-  console.log(`screen is now ${String(after.width)}x${String(after.height)}${ok ? "" : ` — not the ${wantRaw} asked for`}`)
-  return ok ? 0 : 1
+  // A stowed guest's disk is mid-session; on another device it could only boot cold from it, like pulling the plug.
+  if (saves.hasSave(name, saves.STOW)) {
+    console.error(
+      `::error::"${name}" is stowed (saved mid-session). Start it and shut it down cleanly first: ` +
+        `\`winvm start${flag} && winvm stop${flag}\`, then switch.`,
+    )
+    return 1
+  }
+  const before = saves.currentCompat(name, meta).hash
+  writeDisplay(p, to)
+  const after = saves.currentCompat(name, meta).hash
+  console.log(`display for "${name}": ${describeDisplay(to)} (was ${describeDisplay(from)}); takes effect at the next \`winvm start${flag}\``)
+  const listed = saves.listSaves(name).filter((s) => s.manifest !== null)
+  const stranded = listed.filter((s) => s.manifest?.compat === before).map((s) => s.name)
+  const regained = listed.filter((s) => s.manifest?.compat === after).map((s) => s.name)
+  if (stranded.length > 0) {
+    console.log(
+      `${String(stranded.length)} save${stranded.length === 1 ? "" : "s"} of "${name}" (${stranded.join(", ")}) ` +
+        `${stranded.length === 1 ? "was" : "were"} taken on ${from.device} and will not load on ${to.device}. ` +
+        `They are kept; \`winvm display${flag} ${from.device}\` makes them loadable again.`,
+    )
+  }
+  if (regained.length > 0) console.log(`${String(regained.length)} save(s) taken on ${to.device} load again: ${regained.join(", ")}`)
+  if (from.device === "ramfb" && regained.length === 0) {
+    console.log("On its first start on virtio-gpu, Windows comes up at 1024x768; the app then sizes it to its window (or `winvm display WxH`).")
+  }
+  return 0
 }

@@ -78,6 +78,7 @@ import { createHash } from "node:crypto"
 import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs"
 import { resolve } from "node:path"
 
+import { RAMFB, VIRTIO_GPU, readDisplay, writeDisplay } from "./display"
 import { capture, requireFirmware } from "./host"
 import { currentQemuCompat, runtimeBin } from "./runtime"
 import { ensureInstance } from "./instance"
@@ -676,7 +677,8 @@ export class IncompatibleSave extends Error {}
 export async function cloneSave(from: string, to: string, name: string): Promise<Manifest> {
   const m = readSave(from, name)
   if (m === null) throw new Error(`instance "${from}" has no save "${name}"`)
-  if (readMeta(to) === null) ensureInstance(to, m.image)
+  // A new copy gets the source's display device, or the hash could never match.
+  if (readMeta(to) === null) ensureInstance(to, m.image, readDisplay(pathsFor(from)))
   const meta = readMeta(to)
   if (meta === null) throw new Error(`could not create instance "${to}"`)
   if (meta.image !== m.image) {
@@ -721,9 +723,17 @@ export async function cloneSave(from: string, to: string, name: string): Promise
 export async function loadSave(instance: string, name: string): Promise<Manifest> {
   const m = readSave(instance, name)
   if (m === null) throw new Error(`instance "${instance}" has no save "${name}" — \`winvm saves -i ${instance}\``)
-  if (readMeta(instance) === null) ensureInstance(instance, m.image)
+  const created = readMeta(instance) === null
+  if (created) ensureInstance(instance, m.image)
   const meta = readMeta(instance)
   if (meta === null) throw new Error(`no such instance "${instance}"`)
+  // An instance made just now for a kept save: give it whichever display device the save was taken on.
+  if (created && currentCompat(instance, meta).hash !== m.compat) {
+    for (const d of [RAMFB, VIRTIO_GPU]) {
+      writeDisplay(pathsFor(instance), d)
+      if (currentCompat(instance, meta).hash === m.compat) break
+    }
+  }
   if (meta.image !== m.image) {
     throw new IncompatibleSave(`save "${name}" is of image "${m.image}", but instance "${instance}" runs "${meta.image}"`)
   }

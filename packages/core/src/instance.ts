@@ -8,6 +8,8 @@
 import { chmodSync, existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs"
 import { resolve } from "node:path"
 
+import type { DisplayConfig } from "./display"
+import { VIRTIO_GPU, writeDisplay } from "./display"
 import { requireFirmware, run } from "./host"
 import { runtimeBin } from "./runtime"
 import { makeResultVolume } from "./media"
@@ -42,7 +44,12 @@ function createOverlay(p: Paths, image: string): void {
   run(runtimeBin("qemu-img"), ["create", "-f", "qcow2", "-b", basePath(image), "-F", "qcow2", p.overlay])
 }
 
-export function ensureInstance(name: string, image: string): Paths {
+/**
+ * The instance, created from `image` if it does not exist yet. A new instance
+ * gets `display` (default: virtio-gpu, resizable; display.ts); an existing one
+ * keeps the device it has.
+ */
+export function ensureInstance(name: string, image: string, display: DisplayConfig = VIRTIO_GPU): Paths {
   const p = pathsFor(name)
   if (readMeta(name) !== null) {
     // Instances created before firmware variables moved to qcow2 still have the
@@ -71,6 +78,7 @@ export function ensureInstance(name: string, image: string): Paths {
   createOverlay(p, image)
   makeVars(p.vars)
   makeResultVolume(p.result)
+  writeDisplay(p, display)
   const meta: InstanceMeta = { image, vnc: allocateVnc(), created: new Date().toISOString() }
   writeFileSync(p.meta, `${JSON.stringify(meta, null, 2)}\n`)
   console.log(`created instance "${name}" from image "${image}" (vnc :${String(meta.vnc)})`)

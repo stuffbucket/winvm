@@ -120,10 +120,10 @@ export function qemuArgs(name: string, p: Paths, meta: InstanceMeta, o: LaunchOp
     // real time across pauses, but Windows only reads it at boot — restored
     // guests are put right by clock.ts instead.
     "-rtc", "base=utc,clock=host",
-    // A UEFI-GOP framebuffer, so there is a picture before any driver loads.
-    // Not virtio-gpu by default, which needs viogpudo — UTM's own docs report
-    // that driver black-screening recent Windows 11. An instance can opt in to
-    // it for a larger screen (`winvm display`); a build never does. See display.ts.
+    // virtio-gpu for instances created since it became the default: fixed
+    // arguments, resized live through VNC and the guest agent, so the size is
+    // never part of the save hash. Older instances keep ramfb until switched;
+    // a build always uses ramfb (WinPE has no virtio-gpu driver). See display.ts.
     ...displayArgs(o.installMedia ? RAMFB : readDisplay(p)),
     "-display", "none",
     // Loopback only, with a websocket listener for the browser view and a
