@@ -23,11 +23,44 @@ reqwest = { version = "=0.13.3", default-features = false, features = ["json"] }
 # reqwest comes with rustls but no crypto provider (the updater's features); agent.rs installs this one, as the updater does.
 rustls = { version = "=0.23.46", default-features = false, features = ["ring"] }
 
+# AppKit from Rust: the live-resize notifications (src/lib.rs) and native
+# drag-out of guest files to Finder (src/dragout.rs).
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "=0.6.4"
-objc2-app-kit = { version = "=0.3.2", default-features = false, features = ["std", "NSWindow"] }
-objc2-foundation = { version = "=0.3.2", default-features = false, features = ["std", "NSNotification", "NSString", "NSOperation", "block2"] }
 block2 = "=0.6.2"
+objc2-foundation = { version = "=0.3.2", default-features = false, features = [
+    "std",
+    "block2",
+    "NSArray",
+    "NSDate",
+    "NSDictionary",
+    "NSError",
+    "NSGeometry",
+    "NSNotification",
+    "NSObject",
+    "NSOperation",
+    "NSProcessInfo",
+    "NSString",
+    "NSURL",
+] }
+objc2-app-kit = { version = "=0.3.2", default-features = false, features = [
+    "std",
+    "block2",
+    "objc2-uniform-type-identifiers",
+    "NSDragging",
+    "NSDraggingItem",
+    "NSDraggingSession",
+    "NSEvent",
+    "NSFilePromiseProvider",
+    "NSGraphicsContext",
+    "NSImage",
+    "NSPasteboard",
+    "NSResponder",
+    "NSView",
+    "NSWindow",
+    "NSWorkspace",
+] }
+objc2-uniform-type-identifiers = { version = "=0.3.2", default-features = false, features = ["std", "UTType"] }
 
 [profile.release]
 codegen-units = 1
