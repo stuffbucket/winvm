@@ -116,49 +116,35 @@ jobs:
     env:
       TAG: ${{ github.ref_name }}
     steps:
-      - name: Build the signed .dmg on stuffbucket/macos-builder and attach it to the draft
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # winvm stores no token for macos-builder: a person with access to it
+      # starts the signed build, and this waits for the result.
+      - name: Ask for the signed build
         env:
-          BUILDER_PAT: ${{ secrets.MACOS_BUILDER_PAT }}
-          GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
         run: |
-          src="winvm.dmg"
-          dst="winvm-${TAG}-darwin-arm64.dmg"
-          has() {
-            gh release view "$TAG" --repo "$REPO" --json assets --jq '.assets[].name' 2> /dev/null | grep -Fxq "$1"
-          }
-          if has "$dst"; then
-            echo "$dst is already on the draft"
-            exit 0
-          fi
-          if [ -z "$BUILDER_PAT" ]; then
-            echo "::error::MACOS_BUILDER_PAT is not set; the release stays a draft."
-            exit 1
-          fi
-          if ! has "$src"; then
-            GH_TOKEN="$BUILDER_PAT" gh workflow run build.yml --repo stuffbucket/macos-builder --ref main \
-              -f "repo=${REPO}" -f "ref=${TAG}"
-            ok=0
-            for i in $(seq 1 70); do
-              sleep 45
-              if has "$src" || has "$dst"; then
-                ok=1
-                echo "${src} present after ~$((i * 45))s"
-                break
-              fi
-            done
-            if [ "$ok" -ne 1 ]; then
-              echo "::error::No ${src} on the draft after ~52 minutes; see the stuffbucket/macos-builder run. The release stays a draft."
-              exit 1
-            fi
-          fi
-          tmp=$(mktemp -d)
-          gh release download "$TAG" --repo "$REPO" --pattern "$src" --dir "$tmp"
-          mv "$tmp/$src" "$tmp/$dst"
-          (cd "$tmp" && shasum -a 256 "$dst" > "$dst.sha256")
-          gh release upload "$TAG" --repo "$REPO" "$tmp/$dst" "$tmp/$dst.sha256" --clobber
-          gh release delete-asset "$TAG" "$src" --repo "$REPO" --yes 2> /dev/null || true
-          gh release delete-asset "$TAG" "$src.sha256" --repo "$REPO" --yes 2> /dev/null || true
+          cmd="gh workflow run build.yml --repo stuffbucket/macos-builder --ref main -f repo=${REPO} -f ref=${TAG}"
+          echo "::notice::Start the signed build for ${TAG}: ${cmd}"
+          {
+            echo "### Start the signed build"
+            echo
+            echo "Someone with access to stuffbucket/macos-builder runs:"
+            echo
+            echo '```'
+            echo "$cmd"
+            echo '```'
+            echo
+            echo "This job waits about 50 minutes for the DMG, then the release is published."
+            echo "If it is started later, run the **finish-release** workflow for ${TAG}."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Attach the signed .dmg to the draft
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: scripts/release-dmg.sh "$TAG" 3000
 
   publish:
     needs: [release, macos-dmg]

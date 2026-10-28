@@ -10,8 +10,20 @@ and notarized `.dmg`, comes from `stuffbucket/macos-builder`.
    (dispatched against the PR's exact head SHA), and confirm it is current with
    `main`.
 2. Merge the release PR. Do not create or move a tag during the normal flow.
-3. Open the resulting `release.yml` run and wait for every publish-gating job.
-4. Confirm the GitHub release changes from draft to published.
+3. Open the resulting `release.yml` run. When `release` has made the draft,
+   start the signed build; its `macos-dmg` job prints the command in its
+   summary:
+
+   ```sh
+   gh workflow run build.yml --repo stuffbucket/macos-builder --ref main \
+     -f repo=stuffbucket/winvm -f ref=vX.Y.Z
+   ```
+
+   winvm stores no token for macos-builder, so nothing starts this
+   automatically: each signed build is a deliberate step by someone with
+   access to the builder.
+4. `macos-dmg` waits about 50 minutes for the DMG, attaches it, and `publish`
+   publishes. Confirm the GitHub release changes from draft to published.
 
 For an optional local check, build the app the way the builder does:
 
@@ -27,7 +39,7 @@ otherwise produce patch releases.
 | Job | Expected result |
 |---|---|
 | `release` | `pnpm check`, the draft release, notes (changelogithub, or generated notes for the first release), a link to the pinned winvm-runtime release, and `SBOM.cdx.json` with a license scan |
-| `macos-dmg` | `winvm-vX.Y.Z-darwin-arm64.dmg` and its `.sha256`: signed, notarized and stapled Apple Silicon DMG from `stuffbucket/macos-builder` |
+| `macos-dmg` | Prints the command that starts the signed build, then attaches `winvm-vX.Y.Z-darwin-arm64.dmg` and its `.sha256` (signed, notarized and stapled by `stuffbucket/macos-builder`) once the builder uploads it |
 | `publish` | Publishes only after `release` and `macos-dmg` succeed |
 
 The app contains the Tauri shell (`Contents/MacOS/winvm-viewer`), the compiled
@@ -67,8 +79,8 @@ and baseline saves need rebuilding.
 |---|---|
 | A publish-gating job failed | Use **Re-run failed jobs** on the original `release.yml` run. |
 | The release workflow was not dispatched | Run `gh workflow run release.yml --ref vX.Y.Z -f tag=vX.Y.Z`. |
-| The macOS builder failed or was unavailable | Rerun `macos-dmg`, or run `gh workflow run macos-build.yml --ref main -f tag=vX.Y.Z`. |
-| `MACOS_BUILDER_PAT` expired | Replace the secret, then rerun `macos-dmg`. |
+| The signed build was started after `macos-dmg` stopped waiting | Once the builder has uploaded `winvm.dmg`, run `gh workflow run finish-release.yml --ref main -f tag=vX.Y.Z`: it attaches the DMG and publishes. |
+| The macOS builder failed or was unavailable | Fix the cause, start the signed build again, then rerun `macos-dmg` or run `finish-release.yml`. |
 | A published asset is wrong | Cut a new patch release. |
 
 ## Release safety and signing
@@ -90,5 +102,8 @@ and baseline saves need rebuilding.
   `entitlements_allowed=default,bun-runtime,qemu-hvf`, `artifact_allowed=dmg`.
   It needs the `qemu-hvf` profile (stuffbucket/macos-builder#28).
 - The app-repoman GitHub App installed on winvm (Contents: read and write).
-- The `MACOS_BUILDER_PAT` secret on winvm (fine-grained, Actions: write on
-  `stuffbucket/macos-builder` only). Note its expiry.
+  The builder checks winvm out and uploads the DMG with it.
+
+winvm deliberately has no `MACOS_BUILDER_PAT`: a stored token would let any
+workflow in this public repo start builds on the signing Mac, and it would
+expire silently. Starting the build by hand costs one command per release.

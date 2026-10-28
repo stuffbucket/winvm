@@ -240,6 +240,14 @@ A builder read this design cold and asked four questions. My calls:
   and `manifest.json` hashes for the non-Mach-O files. The cached runtime on
   developer machines is checked against every hash.
 
+## Changed after the first release attempt (user's decision)
+
+- **No `MACOS_BUILDER_PAT`.** winvm stores no token for macos-builder. A
+  person with access to the builder starts each signed build; `release.yml`
+  prints the command and waits for the DMG, and `finish-release.yml` finishes
+  a draft whose build was started later. This departs from maximal, which
+  stores the token.
+
 ## Order of work
 
 - **5a:** `stuffbucket/winvm-runtime`: recipe, CI, release `11.1.2-1`,
