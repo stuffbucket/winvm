@@ -1,0 +1,47 @@
+name: Finish a draft release (manual)
+
+# For a signed build started after release.yml stopped waiting: once
+# stuffbucket/macos-builder has uploaded winvm.dmg to the draft, this attaches
+# it under its release name with a checksum and publishes the release.
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Draft release tag, e.g. v0.2.0
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  finish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      TAG: ${{ inputs.tag }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Check the tag is a draft release
+        run: |
+          set -euo pipefail
+          [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$ ]] || { echo "::error::$TAG is not a release tag"; exit 1; }
+          draft=$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json isDraft --jq .isDraft)
+          [ "$draft" = "true" ] || { echo "::error::$TAG is not a draft; a published release is immutable"; exit 1; }
+
+      - name: Attach the signed .dmg
+        run: scripts/release-dmg.sh "$TAG" 0
+
+      - name: Publish
+        run: |
+          set -euo pipefail
+          if [[ "$TAG" == *-* ]]; then
+            gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --draft=false --prerelease
+          else
+            gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --draft=false --latest
+          fi
