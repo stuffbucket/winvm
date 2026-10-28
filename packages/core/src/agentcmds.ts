@@ -15,6 +15,7 @@ import { join, win32 } from "node:path"
 import * as agent from "./agent"
 import type { Args } from "./args"
 import { instanceName } from "./args"
+import { refuseFrozen } from "./frozen"
 import { pathsFor } from "./paths"
 import * as qemu from "./qemu"
 import * as qga from "./qga"
@@ -25,6 +26,9 @@ const fail = (msg: string): number => {
   return 1
 }
 const msg = (e: unknown): string => (e instanceof Error ? e.message : String(e))
+
+/** `agent connect`'s exit code when the guest is paused or asleep (the app's agent.rs knows it). */
+export const EXIT_FROZEN = 3
 
 /** The agent, unless `--qga` or none answers quickly. */
 async function preferred(name: string, args: Args): Promise<agent.AgentClient | null> {
@@ -404,10 +408,20 @@ export async function agentCmd(args: Args): Promise<number> {
  * that calls the agent itself, many times (the app: a live resize, the
  * meters, the Files window), where this command would cost a process start
  * each time. Mirrors `winvm terminal --connect`.
+ *
+ * A paused or asleep guest is refused at once with EXIT_FROZEN: no waiting on
+ * an agent that cannot answer, and never a reinstall.
  */
 async function connectCmd(name: string, args: Args): Promise<number> {
   const notUp = running(name)
   if (notUp !== null) return fail(notUp)
+  try {
+    await refuseFrozen(name)
+  } catch (error) {
+    // Its own exit code, so the app tells "paused" from "broken" without reading prose.
+    fail(msg(error))
+    return EXIT_FROZEN
+  }
   try {
     const c = await agent.ensure(name, { log: (l) => console.error(l) })
     const health = await c.health()

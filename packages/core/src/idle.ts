@@ -47,6 +47,12 @@ export interface Sample {
   readonly activityAtMs: number | null
   /** Connected VNC clients; null if QMP could not be asked. */
   readonly vncClients: number | null
+  /**
+   * The vCPUs are stopped — paused or asleep (frozen.ts). Such a guest is held
+   * as the user left it: no autosave, no stow, and the time frozen is not idle
+   * time (the idle clock starts again when it resumes). Absent: not frozen.
+   */
+  readonly frozen?: boolean
 }
 
 export interface Settings {
@@ -155,6 +161,15 @@ export class IdleMachine {
       this.ignoreCpuUntilMs = s.wallMs + this.timing.settleMs
       this.lastDriftCheckMs = s.wallMs
       this.lastVerdict = { quiet: false, cpuAvg: null, reasons: ["host woke"], woke }
+      return decisions
+    }
+
+    // ---- Paused or asleep: only the user resumes it, and nothing here may
+    // (a save of a paused guest leaves it paused, but a stow would quit it).
+    if (s.frozen === true) {
+      this.restartIdle(s.wallMs)
+      this.lastDriftCheckMs = s.wallMs
+      this.lastVerdict = { quiet: false, cpuAvg: null, reasons: ["paused"], woke }
       return decisions
     }
 

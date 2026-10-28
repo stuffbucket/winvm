@@ -304,6 +304,12 @@ rules, and why:
 - **Drift is measured with `measureOffset`** (`clock.ts`; `guest-get-time`,
   native, a few ms) every 30 min, and resynced with `syncGuestClock` when it
   exceeds 2 s. A paused guest is skipped, because its agent cannot answer.
+- **A paused or asleep guest is left alone.** Its CPU reads as idle, but only
+  the user resumes it: while QEMU's run state is `paused`, `suspended` or
+  `postmigrate` (a save of a paused guest ends there), the watcher neither
+  autosaves nor stows it, and the time does not count as idle. The idle clock
+  starts again on resume, so a guest paused for hours is not stowed the moment
+  it runs again.
 - **Autosave is an in-process `saves.createSave`** (kind `auto`) under
   `saves.withLock`, followed by a clock sync, because the guest was stopped
   while it was saved. If another save or load holds the lock, the round is
