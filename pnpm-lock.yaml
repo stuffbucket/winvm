@@ -133,6 +133,9 @@ importers:
 
   apps/viewer:
     dependencies:
+      '@winvm/terminal':
+        specifier: workspace:*
+        version: link:../../packages/terminal
       intl-messageformat:
         specifier: 11.2.9
         version: 11.2.9
@@ -171,6 +174,28 @@ importers:
       '@types/bun':
         specifier: 1.4.0
         version: 1.4.0
+      typescript:
+        specifier: 6.0.3
+        version: 6.0.3
+
+  packages/terminal:
+    dependencies:
+      '@xterm/addon-fit':
+        specifier: 0.11.0
+        version: 0.11.0
+      '@xterm/xterm':
+        specifier: 6.0.0
+        version: 6.0.0
+    devDependencies:
+      '@types/bun':
+        specifier: 1.4.0
+        version: 1.4.0
+      '@types/react':
+        specifier: 18.3.12
+        version: 18.3.12
+      react:
+        specifier: 18.3.1
+        version: 18.3.1
       typescript:
         specifier: 6.0.3
         version: 6.0.3
@@ -956,6 +981,12 @@ packages:
 
   '@ungap/structured-clone@1.4.0':
     resolution: {integrity: sha1-Xi4TdMCjC1pC6LCDUjoiXGlF+Io=}
+
+  '@xterm/addon-fit@0.11.0':
+    resolution: {integrity: sha1-ukd4tp/MkESgYMIXa74HdlfXs34=}
+
+  '@xterm/xterm@6.0.0':
+    resolution: {integrity: sha1-k2N7Dy7jpwcYtXRqJ8nFBq8WdFs=}
 
   am-i-vibing@0.5.0:
     resolution: {integrity: sha512-KLcsDhqf1XRrJmJr+9I/C0EX2K+sGrAGZFgkmd84c8TJO9zJBu+/kFInjazu1KfJWFhWDKdRWkpBzEs7s35DVA==}
@@ -2602,6 +2633,10 @@ snapshots:
   '@types/unist@3.0.3': {}
 
   '@ungap/structured-clone@1.4.0': {}
+
+  '@xterm/addon-fit@0.11.0': {}
+
+  '@xterm/xterm@6.0.0': {}
 
   am-i-vibing@0.5.0:
     dependencies:
