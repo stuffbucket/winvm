@@ -10,7 +10,7 @@ import { afterAll, describe, expect, it } from "bun:test"
 
 import type { Proc, PwshResponse } from "../src/guestagent"
 import { ENABLE_SIGN_IN, LOCK_ARGV, type LockAgent, lockWindows } from "../src/lock"
-import { SETTING_DEFAULTS, parseSetting, readSettings, settingsPath, writeSettings } from "../src/settings"
+import { SETTING_DEFAULTS, parseSetting, readSection, readSettings, sectionError, settingsPath, writeSection, writeSettings } from "../src/settings"
 import { configDir, dataDir } from "../src/xdg"
 
 class FakeAgent implements LockAgent {
@@ -117,6 +117,34 @@ describe("the user's settings", () => {
     expect(readSettings(env)).toEqual(SETTING_DEFAULTS)
     writeFileSync(settingsPath(env), "{not json")
     expect(readSettings(env)).toEqual(SETTING_DEFAULTS)
+  })
+
+  it("keep the app's sections and the flat keys apart: neither write clobbers the other", () => {
+    rmSync(settingsPath(env), { force: true })
+    writeSection("checkpoints", { showAutomatic: false, zoom: 1.5 }, env)
+    writeSettings({ "viewer.pauseOverlay": false }, env)
+    expect(readSection("checkpoints", env)).toEqual({ showAutomatic: false, zoom: 1.5 })
+    writeSection("checkpoints", { showAutomatic: true, zoom: null }, env)
+    expect(readSettings(env)["viewer.pauseOverlay"]).toBe(false)
+    expect(JSON.parse(readFileSync(settingsPath(env), "utf8"))).toEqual({
+      "viewer.pauseOverlay": false,
+      checkpoints: { showAutomatic: true, zoom: null },
+    })
+    // Unknown keys someone else wrote survive a flat write too.
+    writeFileSync(settingsPath(env), JSON.stringify({ later: { a: 1 }, "viewer.pauseOverlay": true }))
+    writeSettings({ "viewer.pauseOverlay": false }, env)
+    expect(JSON.parse(readFileSync(settingsPath(env), "utf8"))).toEqual({ later: { a: 1 }, "viewer.pauseOverlay": false })
+    writeSection("later", null, env)
+    expect(readSection("later", env)).toBeNull()
+    expect(readSection("missing", env)).toBeNull()
+  })
+
+  it("name sections as plain words, never a flat key", () => {
+    expect(sectionError("checkpoints")).toBeNull()
+    expect(sectionError("viewer.pauseOverlay")).not.toBeNull()
+    expect(sectionError("")).not.toBeNull()
+    expect(sectionError("../x")).not.toBeNull()
+    expect(() => writeSection("a.b", 1, env)).toThrow()
   })
 
   it("parse key=value against the key's type", () => {

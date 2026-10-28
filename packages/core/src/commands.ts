@@ -1212,6 +1212,7 @@ export const USAGE =
   "  config  [-i name] [key=value ...]  autosave/stow/watch settings and the app's title; bare prints them\n" +
   "  settings [key=value ...] [--json]  your own settings, for every instance (viewer.pauseOverlay);\n" +
   "                                in $XDG_CONFIG_HOME/winvm/settings.json (default ~/.config/winvm)\n" +
+  "          [--section NAME [--set JSON]]   one part the app keeps there (checkpoints), as JSON\n" +
   "  run     <job.yml>... [-i name] [--golden NAME] [--keep] [--junit f] [--json f] [--artifacts dir]\n" +
   "                                run CI jobs, each from a golden save (instance default \"ci\")\n" +
   "          [--pool N] [--pool-prefix ci]   on N instances at once (ci-1 … ci-N)\n" +

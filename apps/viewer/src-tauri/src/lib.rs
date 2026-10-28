@@ -514,8 +514,6 @@ pub fn run() {
             terminal_take,
             agent::agent_fetch,
             checkpoints::checkpoint_image,
-            checkpoints::settings_read,
-            checkpoints::settings_write,
             usage::instance_usage,
             files_open,
             copy_text,

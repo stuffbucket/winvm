@@ -252,10 +252,15 @@ export const revealGuestPath = (instance: string, path: string): Promise<void> =
 /** A checkpoint's screenshot or thumbnail (a path `winvm saves --json` gave), as PNG bytes. */
 export const checkpointImage = (path: string): Promise<ArrayBuffer> => tauri().core.invoke<ArrayBuffer>("checkpoint_image", { path })
 
-/** One part of the person's settings (`$XDG_CONFIG_HOME/winvm/settings.json`), or null. */
+/**
+ * One part of the person's settings (`$XDG_CONFIG_HOME/winvm/settings.json`), or
+ * null. Through `winvm settings --section`, the file's one writer, so the parts
+ * the app keeps and the CLI's own keys (the pause overlay) never undo each other.
+ */
 export async function readSettings(section: string): Promise<unknown> {
   try {
-    return await tauri().core.invoke<unknown>("settings_read", { section })
+    const out = await winvm("settings", "--section", section)
+    return out.code === 0 ? (JSON.parse(out.stdout) as unknown) : null
   } catch {
     return null
   }
@@ -264,7 +269,8 @@ export async function readSettings(section: string): Promise<unknown> {
 /** Replaces one part of the person's settings, keeping the rest. Never throws: a setting that isn't kept is not worth a notice. */
 export async function writeSettings(section: string, value: unknown): Promise<void> {
   try {
-    await tauri().core.invoke<void>("settings_write", { section, value })
+    // `--set=...`: the one-word form carries any value (args.ts).
+    await winvm("settings", "--section", section, `--set=${JSON.stringify(value)}`)
   } catch {
     // not in the app, or the folder can't be written
   }
