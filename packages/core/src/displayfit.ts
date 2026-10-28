@@ -72,6 +72,24 @@ export function guestSizeFor(css: Size, dpr: number): Size {
   return clampSize({ width: Math.floor(css.width * ratio), height: Math.floor(css.height * ratio) })
 }
 
+/** The most device pixels the screen is drawn at, scaled up or not: 5K. */
+export const MAX_DRAW = { width: 5120, height: 2880 } as const
+
+/**
+ * The CSS size to draw a `guest` framebuffer at in a `view` of CSS pixels.
+ * While the guest can match the view it is drawn one guest pixel per device
+ * pixel, never larger than the view. Past the limits the guest stays at its
+ * cap and is scaled up to fill the view, up to 5K device pixels.
+ */
+export function drawSize(guest: Size, view: Size, dpr: number): Size {
+  const ratio = Number.isFinite(dpr) && dpr > 0 ? dpr : 1
+  const raw = { width: Math.floor(view.width * ratio), height: Math.floor(view.height * ratio) }
+  if (fits(raw)) {
+    return { width: Math.min(guest.width / ratio, view.width), height: Math.min(guest.height / ratio, view.height) }
+  }
+  return { width: Math.min(view.width, MAX_DRAW.width / ratio), height: Math.min(view.height, MAX_DRAW.height / ratio) }
+}
+
 /** The Windows scale for a device pixel ratio: DPR x 100%, the nearest step Windows offers. */
 export function scaleFor(dpr: number): number {
   const want = (Number.isFinite(dpr) && dpr > 0 ? dpr : 1) * 100
