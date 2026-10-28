@@ -82,6 +82,8 @@ you set it.
   [running them in parallel](docs/pool.md)
 - [Background processes](docs/background.md): the control service and the
   idle watcher
+- [Using Windows from Claude Code and Claude Desktop](docs/cua.md#claude-code-and-claude-desktop):
+  `winvm mcp install claude-code` (or the app's "Use with Claude" button)
 - [The in-guest agent](docs/agent.md), [driving app UI](docs/gui.md),
   [Claude computer use](docs/cua.md)
 - [How the VM is configured, and why](docs/windows-vm-qemu.md): read before

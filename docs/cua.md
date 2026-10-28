@@ -1,14 +1,99 @@
-# Claude computer use (`winvm cua`)
+# Claude and the guest
 
-`winvm cua` lets Claude operate the guest's desktop with its computer-use
-tool. Claude sees screenshots of the guest and sends clicks and key presses
-back. There are two ways to use it:
+Claude can see the guest's screen, use its mouse and keyboard, and run
+commands in Windows. There are three ways to set this up:
 
-- `winvm cua run` runs a complete agent loop for one task.
+- **Claude Code and Claude Desktop** (`winvm mcp`): add winvm as an MCP
+  server once, then ask Claude in a normal conversation.
+- `winvm cua run` runs a complete computer-use agent loop for one task.
 - `winvm cua serve` starts a local HTTP endpoint for your own agent loop.
 
 Nothing opens a window on the Mac. Screenshots and input go through QEMU's
-monitor.
+monitor; commands and files go through the [in-guest agent](agent.md).
+
+## Claude Code and Claude Desktop
+
+In the app, choose **Use with Claude** in the toolbar and click **Add** next
+to Claude Code or Claude Desktop. From a terminal:
+
+```sh
+winvm mcp install claude-code -i demo       # claude mcp add -s user winvm-demo -- <winvm> mcp -i demo
+winvm mcp install claude-desktop -i demo    # edits Claude Desktop's settings; restart Claude Desktop
+winvm mcp status -i demo                    # which of the two have it
+winvm mcp uninstall claude-code -i demo     # or claude-desktop
+```
+
+Each instance becomes a server named `winvm-<instance>`. Then ask, for
+example: "Take a screenshot of Windows and tell me what's open", or "In
+Windows, install the latest Git and show me `git --version`".
+
+What `install` writes:
+
+- **Claude Code**: it runs `claude mcp add -s user winvm-<instance> --
+  <winvm> mcp -i <instance>`, so the server is there in every project. Claude
+  Code keeps it in `~/.claude.json` (or `$CLAUDE_CONFIG_DIR/.claude.json`).
+  `install` finds `claude` on `PATH` or where its installers put it
+  (`~/.local/bin`, `~/.claude/local`, Homebrew); `WINVM_CLAUDE` names it
+  directly.
+- **Claude Desktop**: it adds the server to `mcpServers` in
+  `~/Library/Application Support/Claude/claude_desktop_config.json`. It
+  backs the file up first, next to it, as
+  `claude_desktop_config.json.winvm-backup-<time>`, keeps every other
+  setting, and replaces the file in one step. Quit and reopen Claude Desktop
+  to pick it up.
+
+`<winvm>` is the app's own CLI,
+`/Applications/winvm.app/Contents/MacOS/winvm`, when the app (or the
+`winvm` link it installs) runs `install`. Otherwise it is the full path of
+the CLI that ran it; from a source checkout, Bun and the script. If
+`WINVM_HOME` or `WINVM_RUNTIME` is set, it goes into the entry too.
+Running `install` again does nothing when the entry is already right, and
+updates it when winvm has moved. `--json` prints the result as JSON.
+
+To start the server by hand, for another MCP client:
+
+```sh
+winvm mcp -i demo     # MCP over stdio; logs go to stderr
+```
+
+### The tools
+
+Every tool takes an optional `instance`. Without it, a tool uses the
+instance the server was started for (`-i`, else `WINVM_INSTANCE`, else
+`default`). When that instance isn't running, the tool says so ("Instance
+demo isn't running; start it with winvm start -i demo") and the server stays
+up.
+
+| tool | what it does |
+|---|---|
+| `screenshot` | the screen as a PNG, scaled down to fit 1280x800, with the scale |
+| `click`, `double_click`, `right_click` `{x, y, modifiers?}` | click at a point in the screenshot's pixels |
+| `move {x, y}` | move the pointer |
+| `drag {x, y, to_x, to_y}` | press, move, release |
+| `scroll {direction, amount?, x?, y?}` | the mouse wheel; left and right too |
+| `type {text}` | type text; US layout, ASCII only |
+| `key {keys, repeat?}` | a key or combination: `Return`, `ctrl+s`, `win+r`, `ctrl-alt-delete` |
+| `find_and_click {name \| nameContains \| automationId, window?, controlType?, button?}` | click a control by its accessible name (UI Automation) |
+| `find_text {text, wait?}` | find text on the screen by OCR; returns where to click |
+| `run {command, shell?, timeout_seconds?, cwd?}` | run a command in Windows as the logged-on user; `powershell` (default), `pwsh` or `cmd`; returns the exit code and output |
+| `list_files {path?, hidden?}` | a Windows folder (default the Desktop) |
+| `copy_to_windows {mac_path, windows_path}` | copy a file or folder from the Mac into Windows |
+| `copy_from_windows {windows_path, mac_path}` | copy a file or folder from Windows to the Mac |
+| `status` | running or not, screen and screenshot size, Windows version |
+
+Screen tools use the same executor and coordinates as `cua` below. `run`,
+`list_files` and the copies use the in-guest agent, which winvm installs on
+first use if the guest has none (that first call takes a few seconds more).
+Each `run` starts a new PowerShell, which takes about 3 seconds.
+
+The copies read and write any path your user can on the Mac, and `run` can
+do anything in Windows. Claude Code and Claude Desktop ask before each tool
+call unless you allow it.
+
+## Computer use (`winvm cua`)
+
+`winvm cua` lets Claude operate the guest's desktop with its computer-use
+tool from your own code or a one-off task.
 
 ## Run a task: `winvm cua run`
 
@@ -41,6 +126,9 @@ At the end, `cua run` prints the median latencies and the total tokens used.
 ```sh
 winvm cua serve -i ui [--port N] [--size WxH]    # also: winvm cua-serve
 ```
+
+In the app, **Use with Claude** > **Other agents** starts and stops it and
+shows the address and token.
 
 The server listens on 127.0.0.1 only. It prints a random bearer token, and
 writes the token, URL and process ID to `<instance>/cua.json` (mode 0600).
@@ -133,6 +221,16 @@ effort, finished in 5 model calls and 18 actions, using about 37,500 input
 and 750 output tokens. Most model calls took about 2 seconds.
 
 ## For developers
+
+- `mcp.ts` is the MCP server: JSON-RPC 2.0 over stdio, written by hand
+  (initialize, ping, tools/list, tools/call), with the tools on top of
+  `cua.ts`, `cuacmds.ts`'s extras and the agent. While it runs,
+  `console.log` goes to stderr, so stdout carries protocol messages only.
+  State for an instance is dropped when its QEMU process changes.
+- `mcpcmds.ts` has `mcp install`, `uninstall` and `status`.
+- `run` wraps PowerShell commands so errors come back as text: with
+  `-EncodedCommand` and redirected output, Windows PowerShell writes them as
+  CLIXML.
 
 - `cua.ts` executes actions. It turns them into QMP screendumps and
   `input-send-event` calls on the USB tablet and keyboard, as `input.ts`
