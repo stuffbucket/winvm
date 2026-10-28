@@ -91,8 +91,9 @@ export async function terminal(args: Args): Promise<number> {
   return await relay(termUrl(hostPort, { shell, cwd, ...size() }), token)
 }
 
+/** This terminal's size, when it has one: a pty nobody sized reports 0x0, which the agent refuses. */
 const size = (): { cols?: number; rows?: number } =>
-  process.stdout.isTTY ? { cols: process.stdout.columns, rows: process.stdout.rows } : {}
+  process.stdout.isTTY && process.stdout.columns > 0 && process.stdout.rows > 0 ? { cols: process.stdout.columns, rows: process.stdout.rows } : {}
 
 /**
  * This terminal <-> the guest's, until the shell exits: raw mode on a TTY (every
