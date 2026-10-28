@@ -86,6 +86,8 @@ import type { InstanceMeta, Paths } from "./paths"
 import { basePath, home, imageMetaPath, instanceDir, pathsFor, readImageMeta, readMeta } from "./paths"
 import * as qemu from "./qemu"
 import * as qmp from "./qmp"
+import * as finder from "./finder"
+import { instanceOf } from "./smbstate"
 
 // ---------------------------------------------------------------------------
 // The on-disk contract
@@ -537,6 +539,9 @@ async function waitMigration(p: Paths, timeoutMs: number): Promise<Record<string
 export async function quitQemu(p: Paths, timeoutMs = 120_000): Promise<void> {
   const pid = qemu.pidOf(p)
   if (pid === null) return
+  // The guest's drives in Finder go first, while their server still answers
+  // (a load, a golden reset; `stow` unmounted before it froze the guest).
+  finder.beforeDown(instanceOf(p))
   try {
     await qmp.execute(p.qmp, "quit", undefined, 20_000)
   } catch {

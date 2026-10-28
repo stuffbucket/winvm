@@ -22,6 +22,7 @@
 import type { Args } from "./args"
 import { instanceName } from "./args"
 import { alignGuestTimeZone, formatOffset, measureOffset, syncGuestClock } from "./clock"
+import * as finder from "./finder"
 import type { InstanceMeta, Paths } from "./paths"
 import { pathsFor, readImageMeta, readMeta } from "./paths"
 import * as qemu from "./qemu"
@@ -140,6 +141,8 @@ async function doLoad(name: string, saveName: string, verb: string): Promise<num
   const p = pathsFor(name)
   const wasRunning = qemu.isRunning(p)
   const started = Date.now()
+  // The guest's drives in Finder go before the guest does; they come back below.
+  finder.beforeDown(name)
   let m: saves.Manifest
   try {
     m = await saves.withLock(name, async () => await saves.loadSave(name, saveName))
@@ -160,6 +163,7 @@ async function doLoad(name: string, saveName: string, verb: string): Promise<num
     `${verb} "${name}" from "${m.name}" (${m.kind}, taken ${new Date(m.createdAt).toLocaleString()}) ` +
       `in ${secs(Date.now() - started)} — ${wasRunning ? "was running" : "was stopped"}; state restored in ${secs(restoredMs)}`,
   )
+  await finder.afterUp(name)
   return 0
 }
 
@@ -232,6 +236,8 @@ export async function pause(args: Args): Promise<number> {
   const name = instanceName(args)
   const p = pathsFor(name)
   if (!qemu.isRunning(p)) return fail(`instance "${name}" is not running`)
+  // A paused guest's file server cannot answer, and a mount waiting on it hangs whatever touches it.
+  finder.beforeDown(name)
   await qmp.execute(p.qmp, "stop")
   console.log(`paused "${name}" — \`winvm resume -i ${name}\` to continue`)
   return 0
@@ -246,6 +252,7 @@ export async function resume(args: Args): Promise<number> {
   else console.log(`"${name}" was not paused`)
   if (!(await settle(p, "resuming"))) return 1
   if (state !== "running") console.log(`resumed "${name}"`)
+  await finder.afterUp(name)
   return 0
 }
 
@@ -254,6 +261,8 @@ export async function stow(args: Args): Promise<number> {
   // Like `stop`: end the watcher first (waiting out an autosave in progress).
   // A no-op when the watcher itself is the one running this stow.
   await watcher.stopWatcher(name)
+  // Unmount while the guest still runs; the save freezes it.
+  finder.beforeDown(name)
   const started = Date.now()
   const code = await doSave(name, {
     name: saves.STOW,
@@ -261,7 +270,11 @@ export async function stow(args: Args): Promise<number> {
     quitAfter: true,
     checkReady: !args.flags.has("force"),
   })
-  if (code !== 0) return code
+  if (code !== 0) {
+    // Not stowed, so still running: put back what was mounted.
+    await finder.afterUp(name)
+    return code
+  }
   console.log(`stowed "${name}" in ${secs(Date.now() - started)} — QEMU is stopped; \`winvm start -i ${name}\` recalls it`)
   return 0
 }

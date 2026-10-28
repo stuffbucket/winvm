@@ -139,6 +139,7 @@ import * as termcmds from "@winvm/core/termcmds"
 import * as uicmds from "@winvm/core/uicmds"
 import * as commands from "@winvm/core/commands"
 import * as cuacmds from "@winvm/core/cuacmds"
+import * as finder from "@winvm/core/finder"
 import * as mcpcmds from "@winvm/core/mcpcmds"
 import * as goldens from "@winvm/core/golden"
 import * as ocr from "@winvm/core/ocr"
@@ -162,6 +163,17 @@ if (bunWarning !== null) console.warn(bunWarning)
 
 const [, , sub, ...rawArgs] = process.argv
 const args = parseArgs(rawArgs)
+
+// The guest's drives in Finder, left mounted by a QEMU that died: unmounted
+// before anything else runs (finder.ts). Free unless the instance shares its
+// drives and is not running. Unmounting from a dead server takes a minute, so
+// a command that only looks leaves it to a detached `winvm files _clean`.
+const NO_SWEEP = ["help", "--help", "ls", "list", "doctor", "timemachine", "tm", "watch", "serve"]
+const LOOK_ONLY = ["status", "saves", "snapshots", "config", "screenshot", "mcp", "cua-serve"]
+if (sub !== undefined && !NO_SWEEP.includes(sub) && !(sub === "files" && args.positional[0]?.startsWith("_") === true)) {
+  if (LOOK_ONLY.includes(sub) || (sub === "files" && args.positional[0] === "status")) finder.cleanStaleLater(instanceName(args))
+  else finder.cleanStale(instanceName(args))
+}
 
 switch (sub) {
   case "doctor":
@@ -228,6 +240,9 @@ switch (sub) {
   // eslint-disable-next-line no-fallthrough
   case "rm":
     process.exit(await agentcmds.rm(args))
+  // eslint-disable-next-line no-fallthrough
+  case "files":
+    process.exit(await finder.filesCmd(args))
   // eslint-disable-next-line no-fallthrough
   case "launch":
     process.exit(await agentcmds.launch(args))
