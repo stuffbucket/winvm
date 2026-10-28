@@ -13,6 +13,8 @@ use tauri_plugin_shell::process::{CommandChild, CommandEvent};
 use tauri_plugin_shell::ShellExt;
 use tauri_plugin_updater::UpdaterExt;
 
+mod dragout;
+
 #[derive(Serialize)]
 struct Output {
     code: i32,
@@ -412,6 +414,7 @@ pub fn run() {
             terminal_take,
             agent::agent_fetch,
             usage::instance_usage,
+            dragout::files_drag_out,
             trace
         ])
         .build(tauri::generate_context!())
