@@ -85,7 +85,6 @@ function usageBlocks(): Map<string, string> {
 /** Sub-commands the skills may use, each checked against the source below. */
 const SUBVERBS: Record<string, readonly string[]> = {
   agent: ["install", "status", "connect"],
-  saves: ["rm"],
   golden: ["create", "reset"],
   mcp: ["install", "uninstall", "status"],
   cua: ["run", "serve"],

@@ -57,6 +57,17 @@ export const PENDING: readonly Pending[] = [
     ],
     subverbs: { share: ["status", "set", "clear", "install"] },
   },
+  {
+    branch: "feat/checkpoints-canvas",
+    verbs: [],
+    usage: [
+      "  saves   [-i name] [rm <name>] [--json]  list saves (kind, size, compatible) or delete one (and its note)",
+      "  saves note [-i name] <save> [--title T] [--text TEXT|-] [--tags a,b,c] [--clear] [--json]",
+      "                                show a save's note, or set it (--text - reads stdin;",
+      "                                --text=<markdown> is the safe form when it may start with -)",
+    ],
+    subverbs: { saves: ["rm", "note"] },
+  },
 ]
 
 /** The usage text with the pending branches' lines, as the skills see the CLI. */

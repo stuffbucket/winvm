@@ -63,6 +63,9 @@ every step passed, `winvm save -i NAME CHECKPOINT --note TEXT`. Exit codes: 0 do
 `{"ok":true,"instance":"devbox","spec":"...","checkpoint":"devbox-ready","stage":"done","exit":0}`.
 winvm runs only on the Mac: from another computer, run the helper on the Mac (e.g. over ssh).
 
+Then title it for the app's Checkpoints view (winvm-checkpoints):
+`winvm saves note -i devbox devbox-ready --title "Dev box" --text="Built from winvm-env/environment.yml" --tags env`.
+
 On failure: read the failing step's output, fix the spec, apply again. To start
 over instead: `winvm load -i devbox before-env` (or `baseline`).
 

@@ -15,7 +15,9 @@ winvm save  -i NAME                  # name defaults to a timestamp, e.g. 2026-1
 winvm save  -i NAME clean --fast     # bigger, but loads several times faster: for one you reload often
 winvm load  -i NAME before-office    # running or stopped; no name = the newest
 winvm saves -i NAME [--json]         # name, kind, format, created, size, compatible, note
-winvm saves -i NAME rm before-office # delete one (ask first)
+winvm saves -i NAME rm before-office # delete one, and its note (ask first)
+winvm saves note -i NAME before-office --title "Clean Windows" --text="Before Office; nothing else installed" --tags office,clean
+winvm saves note -i NAME before-office [--json]   # show it; --clear deletes it
 ```
 
 - Checkpoint names: letters, digits, `.`, `_`, `-`, starting with a letter or
@@ -26,6 +28,11 @@ winvm saves -i NAME rm before-office # delete one (ask first)
   starts it. Anything not checkpointed is lost: save first if unsure.
 - A checkpoint from before `winvm agent install` brings back a Windows without the
   agent: run `winvm agent install -i NAME` again after loading it.
+- Two notes: `save --note` is one line kept inside the checkpoint (`saves` lists
+  it); `saves note` is the title, text and tags the Mac app's Checkpoints view
+  shows and edits (kept in `~/.local/share/winvm/notes/`). Write `--text=VALUE`
+  with `=` when the value may start with `-`; `--text -` reads stdin.
+- Every save also keeps a screenshot of that moment; `saves --json` gives the paths.
 - Files: `$WINVM_HOME/saves/NAME/<checkpoint>/`; disks are APFS clones, so
   checkpoints are cheap until the machine changes a lot.
 
@@ -76,6 +83,7 @@ winvm save -i NAME before-X --note "what is about to change"
 # ... make the change, verify it ...
 winvm load -i NAME before-X          # only if the change failed
 winvm save -i NAME after-X --note "what now works, and how it was checked"
+winvm saves note -i NAME after-X --title "X installed" --text="What works, how it was checked, how it was built"
 ```
 
-Name and note every checkpoint you make; the user reads them later in the app.
+Name and note every checkpoint you make: the user picks them later from the app.

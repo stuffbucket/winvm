@@ -1123,7 +1123,7 @@ export const USAGE =
   "           [--delete]           remove that snapshot instead\n" +
   "  rewind  [-i name] [tag] [--no-watch]  put the guest back: snapshot <tag> (default fresh),\n" +
   "                                else the save of that name (default: the automatic baseline)\n" +
-  "  save    [-i name] [name] [--fast] [--note TEXT]  save the running guest to files (default name: a timestamp)\n" +
+  "  save    [-i name] [name] [--fast]  save the running guest to files (default name: a timestamp)\n" +
   "  load    [-i name] [name] [--no-watch]  load a save, running or stopped (default: the newest)\n" +
   "                                into a stopped instance it starts the watcher, like start\n" +
   "  saves   [-i name] [rm <name>] [--json]  list saves (kind, size, compatible) or delete one\n" +

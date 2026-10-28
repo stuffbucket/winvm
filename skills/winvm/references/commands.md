@@ -42,7 +42,7 @@ winvm <command>
            [--delete]           remove that snapshot instead
   rewind  [-i name] [tag] [--no-watch]  put the guest back: snapshot <tag> (default fresh),
                                 else the save of that name (default: the automatic baseline)
-  save    [-i name] [name] [--fast] [--note TEXT]  save the running guest to files (default name: a timestamp)
+  save    [-i name] [name] [--fast]  save the running guest to files (default name: a timestamp)
   load    [-i name] [name] [--no-watch]  load a save, running or stopped (default: the newest)
                                 into a stopped instance it starts the watcher, like start
   saves   [-i name] [rm <name>] [--json]  list saves (kind, size, compatible) or delete one
@@ -126,4 +126,13 @@ From `feat/shared-folder`:
   share   [-i name] [status] [--json]   the Mac folder Windows sees as a drive (default Z:)
           [-i name] set PATH [--letter Z] [--readonly] | clear   takes effect at the next start
           [-i name] install [--restart]   set up Windows' side once (restarts Windows)
+```
+
+From `feat/checkpoints-canvas`:
+
+```text
+  saves   [-i name] [rm <name>] [--json]  list saves (kind, size, compatible) or delete one (and its note)
+  saves note [-i name] <save> [--title T] [--text TEXT|-] [--tags a,b,c] [--clear] [--json]
+                                show a save's note, or set it (--text - reads stdin;
+                                --text=<markdown> is the safe form when it may start with -)
 ```
