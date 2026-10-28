@@ -103,9 +103,9 @@ export function qemuArgs(name: string, p: Paths, meta: InstanceMeta, o: LaunchOp
     "-device", `virtserialport,chardev=${qga.CHARDEV},name=org.qemu.guest_agent.0`,
     "-chardev", `socket,id=chrtpm,path=${p.tpmSock}`,
     "-tpmdev", "emulator,id=tpm0,chardev=chrtpm",
-    // tpm-tis-device, not UTM's tpm-crb-device: Homebrew's QEMU builds only the
-    // TIS model for aarch64. Verified equivalent here — with swtpm attached the
-    // firmware enumerates all four PCR banks either way.
+    // tpm-tis-device, not UTM's tpm-crb-device: the runtime's QEMU builds no CRB
+    // model for aarch64. With swtpm attached the firmware enumerates all four
+    // PCR banks.
     // ppi=off: the Physical Presence Interface adds a small RAM region that
     // HVF refuses to map (QEMU 11.1 on macOS 26: "HV_BAD_ARGUMENT" at
     // hvf-all.c:123, and qemu exits). Windows doesn't need PPI. QEMU before

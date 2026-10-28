@@ -423,11 +423,11 @@ reported since QEMU 5.2.
 [qemuusb]: https://qemu-project.gitlab.io/qemu/system/devices/usb.html
 [necbug]: https://gitlab.com/qemu-project/qemu/-/issues/3241
 
-**swtpm with `tpm-tis-device`.** UTM uses `tpm-crb-device`. winvm uses the TIS
-model, which was the only TPM model for aarch64 in the QEMU build it was first
-written against. The two were verified equivalent: with swtpm attached, the
-firmware log goes from `Tpm2SubmitCommand - Tcg2 - Not Found` to enumerating all
-four PCR banks.
+**swtpm with `tpm-tis-device`.** UTM uses `tpm-crb-device`, which winvm's QEMU
+doesn't build for aarch64. Its aarch64 TPM devices are `tpm-tis-device` and
+`tpm-tis-i2c`, which needs an I2C bus (`qemu-system-aarch64 -M virt -device
+help`, QEMU 11.1.2). With swtpm attached, the firmware log goes from
+`Tpm2SubmitCommand - Tcg2 - Not Found` to enumerating all four PCR banks.
 
 **Secure Boot is absent.** The vendored firmware is `edk2-aarch64-code.fd`,
 which has no Secure Boot. UTM pairs its TPM with `edk2-aarch64-secure-code.fd`,
