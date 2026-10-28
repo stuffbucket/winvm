@@ -298,13 +298,13 @@
 
   "confirm.cancel": "Cancel",
   "confirm.stop.title": "Shut down Windows?",
-  "confirm.stop.body": "Windows shuts down the same way as from its Start menu. Save your work in Windows first.",
+  "confirm.stop.body": "Windows closes its apps and turns off, as it does from its Start menu. Save your work first.",
   "confirm.reboot.title": "Restart Windows?",
-  "confirm.reboot.body": "Windows restarts the same way as from its Start menu. Save your work in Windows first.",
+  "confirm.reboot.body": "Windows closes its apps and starts again, as it does from its Start menu. Save your work first.",
   "confirm.kill.title": "Turn off Windows?",
-  "confirm.kill.body": "Windows turns off immediately, like pulling the plug. Anything you haven't saved in Windows is lost.",
+  "confirm.kill.body": "Windows turns off at once, like pulling the plug. Anything you haven't saved is lost.",
   "confirm.load.title": "Go back to “{name}”?",
-  "confirm.load.body": "Windows returns to exactly how it was at that moment. Anything since then is lost unless you save it first.",
+  "confirm.load.body": "Windows goes back to just how it was then. Anything since is lost, so save first if you want to keep it.",
 
   "app.name": "winvm",
   "rename.windowLabel": "Window title",
