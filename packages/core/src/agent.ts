@@ -20,7 +20,7 @@ import { resolve } from "node:path"
 
 import type { AgentState } from "./agentfwd"
 import { ensureForward, ensureState, readState, restoreForward } from "./agentfwd"
-import type { DirListing, ExecRequest, ExecResponse, Health, LaunchRequest, Proc, PwshResponse } from "./guestagent"
+import type { DirListing, DisplayRequest, ExecRequest, ExecResponse, Health, LaunchRequest, Proc, PwshResponse } from "./guestagent"
 import { AGENT_VERSION, GUEST_PORT, WINDOWS_DIR } from "./guestagent"
 import { bunZip } from "./media"
 import { PACKAGE_DIR, pathsFor } from "./paths"
@@ -190,6 +190,15 @@ export class AgentClient {
     return await this.post<T>("/ui", req, timeoutMs)
   }
 
+  /**
+   * The guest's screen size and display scaling, through winvm-display.exe
+   * (guestdisplay.ts wraps it). Throws AgentError: 408 the size never became a
+   * mode, 409 the driver refused it, 413 too big for the driver, 400 bad request.
+   */
+  async display<T>(req: DisplayRequest, timeoutMs?: number): Promise<T> {
+    return await this.post<T>("/display", req, timeoutMs ?? (req.waitMs ?? 2000) + 20_000)
+  }
+
   /** Ask the agent to exit (the Run key starts it again at the next logon). */
   async exit(): Promise<void> {
     await this.post("/exit", {})
@@ -317,6 +326,7 @@ export async function install(name: string, o: InstallOptions = {}): Promise<Age
     [resolve(ASSETS, "runinsession.cs"), `${stage}\\runinsession.cs`],
     [resolve(ASSETS, "winvm-ui.cs"), `${stage}\\winvm-ui.cs`],
     [resolve(ASSETS, "conpty.cs"), `${stage}\\conpty.cs`],
+    [resolve(ASSETS, "winvm-display.cs"), `${stage}\\winvm-display.cs`],
   ] as const) {
     await qgaWriteFile(p.qga, to, new Uint8Array(readFileSync(from)))
   }

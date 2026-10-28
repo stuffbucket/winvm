@@ -1099,7 +1099,8 @@ export const USAGE =
   "                                notifications apps raised (T: ISO time, or 90s/5m/2h ago)\n" +
   "  move    [-i name] <x> <y>     move the pointer\n" +
   "  scroll  [-i name] <n>         n wheel notches, positive is down (or: up|down [n])\n" +
-  "  display [-i name] [WxH|ramfb] show or set the screen size\n" +
+  "  display [-i name] [WxH] [--scale PCT]   resize the running screen live (virtio-gpu)\n" +
+  "          [-i name] virtio-gpu|ramfb       switch a stopped instance's display device\n" +
   "  webview [-i name] enable <exe> | targets | eval <js> | click|wait|text <selector>\n" +
   "                                drive WebView2 windows over DevTools (winvm webview for more)\n" +
   "  ui      [-i name] <verb> [selector]   find and click windows, controls, the tray (winvm ui help)\n" +

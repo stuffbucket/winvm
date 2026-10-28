@@ -1,89 +1,109 @@
 /**
- * The guest's display device, and so its screen resolution.
+ * The guest's display device.
  *
- * ## Why the default stays 800x600
+ * ## virtio-gpu, resizable while it runs (the default for new instances)
  *
- * The default device is `ramfb`: a plain framebuffer in guest RAM that the
- * firmware sets up and Windows' Basic Display driver keeps using, so there is a
- * picture before any driver loads and no driver to go wrong. Its resolution is
- * whatever the FIRMWARE picked, and EDK2's ramfb driver offers exactly three
- * modes (640x480, 800x600, 1024x768) and always starts in 800x600
- * (OvmfPkg/QemuRamfbDxe/QemuRamfb.c). Windows can't change it afterwards: Basic
- * Display has no mode setting of its own.
+ * `virtio-gpu-pci` with FIXED arguments: no size on the command line, ever.
+ * The screen's size is set live instead, in two steps (guestdisplay.ts):
  *
- * For a bigger screen, an instance can switch to `virtio-gpu-pci` with the
- * resolution given as its `xres`/`yres` (QEMU reports it to the guest as the
- * monitor's preferred mode over EDID). That needs Windows' `viogpudo` driver,
- * which the UTM guest tools put in the driver store during the build — so an
- * existing image binds it on first boot with the new device, no rebuild.
+ *   1. A VNC SetDesktopSize request. QEMU forwards it to virtio-gpu
+ *      (qemu_console_set_ui_info), which tells the guest a display change
+ *      happened; Windows' viogpudo driver then offers exactly that size as a
+ *      mode. It does not switch to it by itself.
+ *   2. The in-guest agent's display helper (assets/winvm-display.cs) waits for
+ *      the mode to appear and sets it with ChangeDisplaySettingsEx, in the
+ *      logged-on session. QEMU's framebuffer follows within ~80 ms.
  *
- * ## Why it is per instance, and only while stopped
+ * Windows' display scaling (100/200%) is set the same way, live, no sign-out.
+ * Keeping the size off the command line keeps the save compatibility hash
+ * (saves.ts) the same whatever size the guest is: a save restores into the
+ * size it was taken at, and the viewer asks for its own size again after.
+ * Sizes are bounded by displayfit.ts (30 MiB framebuffer, VNC's 5120x2160).
  *
- * The display device is part of the machine. A snapshot or a saved state holds
- * the state of every device and only restores into a machine with the same
- * set, so switching an instance's display makes its existing snapshots and
- * saves unrestorable (QEMU refuses them; nothing is corrupted). That is why it
- * is a deliberate per-instance choice, stored in the instance directory, rather
- * than a new default that would silently strand every snapshot already taken.
- * A build always uses ramfb: WinPE has no virtio-gpu driver.
+ * ## ramfb (instances created before virtio-gpu was the default; builds)
+ *
+ * A plain framebuffer in guest RAM that the firmware sets up; EDK2's ramfb
+ * driver always starts it at 800x600 (OvmfPkg/QemuRamfbDxe) and Windows'
+ * Basic Display driver cannot change it. QEMU cannot resize it either (no
+ * ui_info: SetDesktopSize is refused). A build always uses ramfb: WinPE has no
+ * virtio-gpu driver.
+ *
+ * ## Switching
+ *
+ * The device is part of the machine, and a save only loads into the same
+ * machine, so switching an instance's device makes the saves taken before
+ * unloadable (QEMU refuses them; nothing is corrupted). That is why existing
+ * instances keep their device until switched with `winvm display virtio-gpu`
+ * or `winvm display ramfb`, and only while stopped. An instance switched to
+ * virtio-gpu by an earlier winvm has a size in its display.json; it keeps
+ * that size on its command line (so its saves still load) until switched
+ * again.
  */
-import { readFileSync, rmSync, writeFileSync } from "node:fs"
+import { readFileSync, writeFileSync } from "node:fs"
 import { resolve } from "node:path"
 
 import type { Paths } from "./paths"
 
 export type DisplayConfig =
   | { readonly device: "ramfb" }
-  | { readonly device: "virtio-gpu"; readonly width: number; readonly height: number }
+  | {
+      readonly device: "virtio-gpu"
+      /** Set only for an instance switched by an earlier winvm, whose saves have it on the command line. */
+      readonly legacySize?: { readonly width: number; readonly height: number }
+    }
 
 export const RAMFB: DisplayConfig = { device: "ramfb" }
+export const VIRTIO_GPU: DisplayConfig = { device: "virtio-gpu" }
 
 export const displayPath = (p: Paths): string => resolve(p.dir, "display.json")
 
-/** The instance's display; ramfb when it has never been set. */
+/** The instance's display; ramfb when it has never been set (instances older than the virtio-gpu default). */
 export function readDisplay(p: Paths): DisplayConfig {
   try {
     const raw = JSON.parse(readFileSync(displayPath(p), "utf8")) as Record<string, unknown>
+    if (raw["device"] !== "virtio-gpu") return RAMFB
     const w = raw["width"]
     const h = raw["height"]
-    if (raw["device"] === "virtio-gpu" && typeof w === "number" && typeof h === "number") {
-      return { device: "virtio-gpu", width: w, height: h }
-    }
+    return typeof w === "number" && typeof h === "number" ? { device: "virtio-gpu", legacySize: { width: w, height: h } } : VIRTIO_GPU
   } catch {
-    // absent or unreadable: the default
+    // absent or unreadable: the default for instances made before display.json existed
   }
   return RAMFB
 }
 
+/** ramfb is written too, not just implied by a missing file. */
 export function writeDisplay(p: Paths, cfg: DisplayConfig): void {
-  if (cfg.device === "ramfb") rmSync(displayPath(p), { force: true })
-  else writeFileSync(displayPath(p), `${JSON.stringify(cfg, null, 2)}\n`)
+  const out =
+    cfg.device === "ramfb"
+      ? { device: "ramfb" }
+      : cfg.legacySize === undefined
+        ? { device: "virtio-gpu" }
+        : { device: "virtio-gpu", width: cfg.legacySize.width, height: cfg.legacySize.height }
+  writeFileSync(displayPath(p), `${JSON.stringify(out, null, 2)}\n`)
 }
 
-/** QEMU arguments for the display device. */
+/** QEMU arguments for the display device. Never a size, except an earlier winvm's (see above). */
 export function displayArgs(cfg: DisplayConfig): readonly string[] {
-  return cfg.device === "ramfb"
-    ? ["-device", "ramfb"]
-    : ["-device", `virtio-gpu-pci,xres=${String(cfg.width)},yres=${String(cfg.height)}`]
+  if (cfg.device === "ramfb") return ["-device", "ramfb"]
+  if (cfg.legacySize !== undefined) {
+    return ["-device", `virtio-gpu-pci,xres=${String(cfg.legacySize.width)},yres=${String(cfg.legacySize.height)}`]
+  }
+  return ["-device", "virtio-gpu-pci"]
 }
 
-/**
- * "1920x1080" -> virtio-gpu at that size; "ramfb" or "default" -> ramfb.
- * Null for anything else. Bounds are loose sanity limits, not what any
- * particular driver supports.
- */
-export function parseDisplay(s: string): DisplayConfig | null {
+/** "virtio-gpu" (or "virtio") and "ramfb"; null for anything else. */
+export function parseDevice(s: string): DisplayConfig | null {
   const t = s.trim().toLowerCase()
-  if (t === "ramfb" || t === "default") return RAMFB
-  const m = /^(\d{3,5})x(\d{3,5})$/.exec(t)
-  if (m === null) return null
-  const width = Number(m[1])
-  const height = Number(m[2])
-  if (width < 640 || height < 480 || width > 7680 || height > 4320) return null
-  return { device: "virtio-gpu", width, height }
+  if (t === "ramfb") return RAMFB
+  if (t === "virtio-gpu" || t === "virtio") return VIRTIO_GPU
+  return null
 }
 
+export const isResizable = (cfg: DisplayConfig): boolean => cfg.device === "virtio-gpu"
+
+/** The device as `status` and the app show it; the app keys off the leading word. */
 export const describeDisplay = (cfg: DisplayConfig): string =>
-  cfg.device === "ramfb"
-    ? "ramfb (firmware framebuffer, 800x600)"
-    : `virtio-gpu ${String(cfg.width)}x${String(cfg.height)}`
+  cfg.device === "ramfb" ? "ramfb (firmware framebuffer, 800x600)" : "virtio-gpu (resizable)"
+
+/** Same device on the command line? A legacy size counts: it is in the hardware hash. */
+export const sameDevice = (a: DisplayConfig, b: DisplayConfig): boolean => displayArgs(a).join(" ") === displayArgs(b).join(" ")
