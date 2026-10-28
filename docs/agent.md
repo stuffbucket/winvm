@@ -15,6 +15,7 @@ winvm exec --qga -- whoami     # force qemu-ga instead
 winvm put  <host path> <guest path>   # a file, or a folder and everything in it
 winvm get  <guest path> <host path>   # a file, or a folder and everything in it
 winvm dir  ['C:\Users']          # a guest folder (default the Desktop); --all, --places, --json
+winvm mkdir | mv | cp | rm ...   # change the guest's files (see files.md)
 winvm launch -- notepad.exe    # start a program on the desktop and return at once
 winvm terminal                 # a shell in the guest, in this terminal
 ```
@@ -117,6 +118,10 @@ await c.putFile(hostPath, guestPath)
 await c.get(guestPath)                // throws AgentError with status 404 if the file is missing
 await c.getFile(guestPath, hostPath)
 await c.list(guestPath, { hidden, limit })  // a folder: {path, parent, entries, total, places}
+await c.mkdir(guestPath)              // a new folder: {path}
+await c.rename(from, to)              // rename, or move to a full path: {path}
+await c.copy(from, to)                // a file or a whole folder: {path}
+await c.remove(paths, { recycle })    // to the Recycle Bin unless recycle is false: {deleted}
 await c.launch(argv, { cwd, env })    // start on the desktop, detached: {pid}
 await c.procs()                       // [{pid, name, session}]
 await c.kill(pid, { tree })           // kills the whole tree unless tree is false
@@ -132,7 +137,10 @@ logon, before it decides to install one.
 
 Errors throw `AgentError`, which has the HTTP `status`, and a `code` when the
 agent gives one: `list` throws `notfound` (404), `denied` (403) or `notdir`
-(400).
+(400). `mkdir`, `rename`, `copy` and `remove` throw those too, and `exists`
+(409: the target is taken; they never replace anything), `busy` (409: a
+program has it open), `into` (400: a folder into itself), `bad` (400) and
+`unavailable` (501: no Recycle Bin, outside Windows).
 
 `list` returns folders first, then files, each sorted by name as Explorer
 sorts them. Each entry is `{name, dir, size, modified, hidden}`; `size` and
@@ -213,6 +221,22 @@ second.
 Node can't read Windows' hidden attribute, so the spawner runs `cmd /u /c dir
 /b /a:h` alongside `readdir`. `/u` makes cmd write UTF-16 to the pipe, so names
 outside the OEM code page survive.
+
+### Changing files
+
+`POST /fs/mkdir`, `/fs/rename`, `/fs/copy` and `/fs/delete` use Bun's fs
+calls in the agent's own process. `rename` checks that the target is free
+first (a change of case alone is still a rename) and, across drives, copies
+and then deletes. `copy` copies links as links.
+
+`/fs/delete` with `recycle` (the default) sends each item to the Recycle Bin
+with shell32's `SHFileOperation`, compiled once into the spawner's warm
+PowerShell, with flags that never show a dialog (`FOF_ALLOWUNDO |
+FOF_NOCONFIRMATION | FOF_NOERRORUI | FOF_SILENT`). Microsoft.VisualBasic's
+`FileSystem.DeleteFile` can't recycle without allowing error dialogs, and a
+dialog in the user's session would hold the request until someone closed
+it. An item too big for the Recycle Bin is deleted for good, as Explorer
+does when told not to ask. Every path is checked before anything is deleted.
 
 ### Processes
 

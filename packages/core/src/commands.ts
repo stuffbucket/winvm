@@ -1107,6 +1107,10 @@ export const USAGE =
   "  get     [-i name] <guest path> <host path>    copy a file, or a folder and all in it, out of the guest\n" +
   "  dir     [-i name] [path] [--all] [--places] [--json]   a guest folder (default the Desktop);\n" +
   "                                --all: hidden files too; --places: the known folders\n" +
+  "  mkdir   [-i name] <guest path> [--json]       a new folder in the guest\n" +
+  "  mv      [-i name] <from> <to> [--json]        rename, or move into the folder <to>; replaces nothing\n" +
+  "  cp      [-i name] <from> <to> [--json]        copy in the guest, a file or a whole folder; replaces nothing\n" +
+  "  rm      [-i name] <guest path>... [--permanently] [--json]   to the Recycle Bin (--permanently: for good)\n" +
   "  launch  [-i name] -- <program> [args]         start it on the guest's desktop, detached\n" +
   "  terminal [-i name] [--shell pwsh|powershell|cmd] [--cwd PATH]   a guest shell, in this terminal\n" +
   "          [--connect --json]    print the WebSocket URL and subprotocols for another client\n" +
