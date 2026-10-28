@@ -27,6 +27,7 @@ import type {
   ExecRequest,
   ExecResponse,
   FsDeleteResult,
+  FsTouchResult,
   FsPathResult,
   GuestStats,
   Health,
@@ -48,6 +49,7 @@ export type {
   ExecResponse,
   FsCode,
   FsDeleteResult,
+  FsTouchResult,
   FsPathResult,
   GuestStats,
   Health,
@@ -224,6 +226,15 @@ export class AgentClient {
    */
   async remove(paths: readonly string[], o: { readonly recycle?: boolean } = {}): Promise<FsDeleteResult> {
     return await this.post<FsDeleteResult>("/fs/delete", { paths, recycle: o.recycle ?? true }, 630_000)
+  }
+
+  /**
+   * Fire Windows' change notifications for paths under `root` (a shared
+   * folder's drive) that changed on the Mac: each gets its own times back, or
+   * its nearest existing folder when it is gone. See sharewatch.ts.
+   */
+  async touch(root: string, paths: readonly string[]): Promise<FsTouchResult> {
+    return await this.post<FsTouchResult>("/fs/touch", { root, paths }, 60_000)
   }
 
   async procs(): Promise<readonly Proc[]> {

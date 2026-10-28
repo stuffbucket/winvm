@@ -196,13 +196,17 @@ export function list(args: Args): number {
   const rows = saves.listSaves(name)
   const meta = readMeta(name)
   let compat: string | null = null
+  let before: string | null = null
   try {
-    if (meta !== null && rows.length > 0) compat = saves.currentCompat(name, meta).hash
+    if (meta !== null && rows.length > 0) {
+      compat = saves.currentCompat(name, meta).hash
+      before = saves.hardwareBeforeDevices(name, meta)
+    }
   } catch {
     compat = null
   }
   if (args.flags.has("json")) {
-    console.log(JSON.stringify(saves.savesReport(rows, compat), null, 2))
+    console.log(JSON.stringify(saves.savesReport(rows, compat, before), null, 2))
     return 0
   }
   if (rows.length === 0) {
@@ -218,7 +222,7 @@ export function list(args: Args): number {
     }
     const d = new Date(m.createdAt)
     const created = `${saves.defaultName(d).slice(0, 10)} ${saves.defaultName(d).slice(11).replaceAll("-", ":")}`
-    const ok = compat === null ? "?" : m.compat === compat ? "yes" : "no"
+    const ok = compat === null ? "?" : m.compat === compat ? "yes" : saves.takenBeforeDevices(m, before) ? "no (before the shared folder)" : "no"
     console.log(
       `  ${m.name.padEnd(22)} ${m.kind.padEnd(9)} ${saves.ramFormatOf(m).padEnd(7)} ${created.padEnd(19)} ${saves.formatBytes(m.bytes).padStart(8)}  ${ok}` +
         (m.note === undefined ? "" : `  ${m.note}`),
@@ -312,7 +316,13 @@ export async function recallStow(name: string, args: Args): Promise<number | nul
   if (meta !== null) {
     const m = saves.readSave(name, saves.STOW)
     if (m !== null && m.compat !== saves.currentCompat(name, meta).hash) {
-      console.warn(`warning: the stow save no longer matches this VM's hardware; booting instead (it is kept — \`winvm saves -i ${name}\`)`)
+      const devices = saves.takenBeforeDevices(m, saves.hardwareBeforeDevices(name, meta))
+      console.warn(
+        devices
+          ? `warning: the stow save was taken before winvm added the shared folder and clipboard devices and cannot be recalled; ` +
+              `booting instead, so Windows starts afresh from its disk (the stow is kept — \`winvm saves -i ${name}\`)`
+          : `warning: the stow save no longer matches this VM's hardware; booting instead (it is kept — \`winvm saves -i ${name}\`)`,
+      )
       return null
     }
   }

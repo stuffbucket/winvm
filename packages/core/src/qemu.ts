@@ -17,6 +17,7 @@ import { ensureService } from "./service"
 import type { InstanceMeta, Paths } from "./paths"
 import { media } from "./paths"
 import { RAMFB, displayArgs, readDisplay } from "./display"
+import * as share from "./share"
 import * as qga from "./qga"
 import * as qmp from "./qmp"
 import { applyPassword, ensureFreeDisplay, vncArg } from "./vnc"
@@ -35,6 +36,12 @@ export interface LaunchOptions {
   readonly loadvm?: string
   /** QEMU `-incoming <uri>`: start paused, fed a migration stream (a file save). See saves.ts. */
   readonly incoming?: string
+  /**
+   * The shared folder and clipboard devices (share.ts), regardless of the
+   * display: `share install` boots a machine on ramfb WITH them, so Windows
+   * binds viofs while no virtio-gpu driver is running. Default: share.devicesFor.
+   */
+  readonly shareDevices?: share.DeviceSet
 }
 
 export function qemuArgs(name: string, p: Paths, meta: InstanceMeta, o: LaunchOptions): readonly string[] {
@@ -45,14 +52,20 @@ export function qemuArgs(name: string, p: Paths, meta: InstanceMeta, o: LaunchOp
   // even found, let alone run. Once installed, the disk is the boot device and
   // the CDs are gone.
   const diskBootIndex = o.installMedia ? 1 : 0
+  const display = o.installMedia ? RAMFB : readDisplay(p)
+  // The shared folder and the clipboard on virtio-gpu instances; the shared
+  // folder's device alone on a build, so provisioning binds its driver on
+  // ramfb. Nothing on ramfb instances or a runtime without them. Guest RAM
+  // then comes from a shared memory backend so virtiofsd can reach it. See share.ts.
+  const devices = o.shareDevices ?? share.devicesFor(display, o.installMedia)
   const a: string[] = [
     "-name", `winvm-${name}`,
-    "-machine", "virt,accel=hvf",
+    "-machine", devices === "none" ? "virt,accel=hvf" : share.MACHINE_WITH_SHM,
     // `host` under HVF is what UTM uses for this guest. `max` falls back to TCG
     // for features HVF cannot provide, and boots far slower.
     "-cpu", "host",
     "-smp", "4",
-    "-m", "4096",
+    "-m", String(share.GUEST_MEM_MIB),
     "-drive", `if=pflash,format=raw,readonly=on,file=${requireFirmware().code}`,
     // QCOW2, not the raw vars image. A writable raw device blocks `savevm` for
     // the entire machine — see Paths.vars.
@@ -124,7 +137,8 @@ export function qemuArgs(name: string, p: Paths, meta: InstanceMeta, o: LaunchOp
     // arguments, resized live through VNC and the guest agent, so the size is
     // never part of the save hash. Older instances keep ramfb until switched;
     // a build always uses ramfb (WinPE has no virtio-gpu driver). See display.ts.
-    ...displayArgs(o.installMedia ? RAMFB : readDisplay(p)),
+    ...displayArgs(display),
+    ...share.deviceArgs(p, devices),
     "-display", "none",
     // Loopback only, with a websocket listener for the browser view and a
     // password, which macOS Screen Sharing needs and the websocket must have.
@@ -207,6 +221,16 @@ export function stopSwtpm(p: Paths): void {
   rmSync(p.tpmSock, { force: true })
 }
 
+/**
+ * Stop what runs beside an instance's QEMU: swtpm, and the shared folder's
+ * virtiofsd. Both end by themselves when QEMU disconnects; this covers a QEMU
+ * that died before connecting, and every teardown path calls it.
+ */
+export function stopSidecars(p: Paths): void {
+  stopSwtpm(p)
+  share.stopVirtiofsd(p)
+}
+
 async function startSwtpm(p: Paths): Promise<void> {
   // Anything still running here outlived the QEMU it served — launch is only
   // reached with no QEMU on this instance — and carries that machine's
@@ -260,6 +284,16 @@ async function startSwtpm(p: Paths): Promise<void> {
  */
 export async function launch(name: string, p: Paths, meta: InstanceMeta, o: LaunchOptions): Promise<void> {
   await startSwtpm(p)
+  // One virtiofsd per QEMU: it exits when its QEMU disconnects, so a load or
+  // a recall needs a fresh one as much as a boot does.
+  if ((o.shareDevices ?? share.devicesFor(o.installMedia ? RAMFB : readDisplay(p), o.installMedia)) !== "none") {
+    try {
+      await share.startVirtiofsd(p)
+    } catch (error) {
+      stopSidecars(p)
+      throw error
+    }
+  }
   // Rotate rather than delete: the usual response to a bad boot is another boot,
   // and truncating here would erase the evidence being retried.
   if (existsSync(p.serial)) renameSync(p.serial, p.serialPrev)
@@ -311,9 +345,9 @@ export async function launch(name: string, p: Paths, meta: InstanceMeta, o: Laun
     return
   }
 
-  // A QEMU that died this early may never have connected to swtpm, and then
-  // `terminate` never fires.
-  stopSwtpm(p)
+  // A QEMU that died this early may never have connected to swtpm or
+  // virtiofsd, and then neither notices.
+  stopSidecars(p)
   // Read and handle absence, rather than asking whether it exists and then
   // reading: the two-step version races anything else touching the file.
   const why = readTextOr(p.qemuLog, "").trim()
