@@ -1096,6 +1096,7 @@ export const USAGE =
   "  display [-i name] [WxH|ramfb] show or set the screen size\n" +
   "  webview [-i name] enable <exe> | targets | eval <js> | click|wait|text <selector>\n" +
   "                                drive WebView2 windows over DevTools (winvm webview for more)\n" +
+  "  ui      [-i name] <verb> [selector]   find and click windows, controls, the tray (winvm ui help)\n" +
   "  cua serve [-i name] [--port N] [--size WxH]   Claude computer-use endpoint on 127.0.0.1 (bearer token)\n" +
   "  cua run [-i name] \"<task>\" [--model M] [--max-steps N] [--extras]   a computer-use agent loop\n" +
   "  timemachine [--yes]           exclude the VM files from Time Machine backups\n" +
@@ -1110,6 +1111,7 @@ export const USAGE =
   "  config  [-i name] [key=value ...]  autosave/stow/watch settings; bare prints them\n" +
   "  run     <job.yml>... [-i name] [--golden NAME] [--keep] [--junit f] [--json f] [--artifacts dir]\n" +
   "                                run CI jobs, each from a golden save (instance default \"ci\")\n" +
+  "          [--pool N] [--pool-prefix ci]   on N instances at once (ci-1 … ci-N)\n" +
   "  test    <dir>... [same flags] every *.yml in the directory, in order\n\n" +
   "  state:    WINVM_HOME       (default ~/.local/state/winvm)\n" +
   "  iso:      WINVM_ISO        (else asked once, then remembered)\n" +
