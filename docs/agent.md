@@ -13,7 +13,8 @@ winvm agent status [--json]    # is it answering, which version, which host port
 winvm exec -- cmd /c ver       # runs through the agent when it answers
 winvm exec --qga -- whoami     # force qemu-ga instead
 winvm put  <host file> <guest path>
-winvm get  <guest path> <host file>
+winvm get  <guest path> <host path>   # a file, or a folder and everything in it
+winvm dir  ['C:\Users']          # a guest folder (default the Desktop); --all, --places, --json
 winvm launch -- notepad.exe    # start a program on the desktop and return at once
 winvm terminal                 # a shell in the guest, in this terminal
 ```
@@ -107,6 +108,7 @@ await c.put(guestPath, data)          // data: bytes, string, Blob or stream
 await c.putFile(hostPath, guestPath)
 await c.get(guestPath)                // throws AgentError with status 404 if the file is missing
 await c.getFile(guestPath, hostPath)
+await c.list(guestPath, { hidden, limit })  // a folder: {path, parent, entries, total, places}
 await c.launch(argv, { cwd, env })    // start on the desktop, detached: {pid}
 await c.procs()                       // [{pid, name, session}]
 await c.kill(pid, { tree })           // kills the whole tree unless tree is false
@@ -119,7 +121,18 @@ agent.qgaLaunch(name, argv)           // start a GUI program over qemu-ga, witho
 `ensure` waits up to 15 seconds for an agent that is still starting after
 logon, before it decides to install one.
 
-Errors throw `AgentError`, which has the HTTP `status`.
+Errors throw `AgentError`, which has the HTTP `status`, and a `code` when the
+agent gives one: `list` throws `notfound` (404), `denied` (403) or `notdir`
+(400).
+
+`list` returns folders first, then files, each sorted by name as Explorer
+sorts them. Each entry is `{name, dir, size, modified, hidden}`; `size` and
+`modified` are null when Windows won't say. Hidden and system entries are
+left out unless you pass `hidden: true`. A folder with more than `limit`
+entries (5000 by default) returns the first `limit`, and `total` says how many
+there are. `places` lists the known folders that exist: the agent user's
+Desktop, Documents and Downloads, their profile, `C:\work`, and the drives.
+With no path, `list` lists the Desktop.
 
 `exec` takes an argument list, not a shell command line. Bun quotes arguments
 in a way that `cmd.exe` does not always parse. For `cmd /c` with embedded
@@ -232,6 +245,16 @@ and waits for the agent that started at logon.
 
 For an image without the agent, `ensure` falls back to `agent.install`, which
 copies the same files over qemu-ga and runs the same script.
+
+### Folder listings
+
+`GET /fs/list` reads the folder with `readdir` and stats only the entries it
+returns, plus links (to learn whether they lead to a folder), 256 at a time.
+`C:\Windows\WinSxS`, about 17,000 entries, lists its first 5000 in about half a
+second.
+Node can't read Windows' hidden attribute, so the spawner runs `cmd /u /c dir
+/b /a:h` alongside `readdir`. `/u` makes cmd write UTF-16 to the pipe, so names
+outside the OEM code page survive.
 
 ### Bun issues found
 

@@ -9,6 +9,7 @@
  *   winvm exec  [-i name] -- <cmd>   run a command in the guest; --timeout S (900), 124 if hit
  *   winvm agent [-i name] install    the in-guest agent: fast exec/files/GUI (agent.ts)
  *   winvm put / get / launch         files in and out; a program on the guest's desktop
+ *   winvm dir [-i name] [path]       a guest folder (default the Desktop); --json for the app
  *   winvm terminal [-i name]         a shell in the guest (pwsh, powershell, cmd), here
  *   winvm ui tree|find|click|wait|tray …   drive the GUI by UI Automation names; see ui.ts
  *   winvm snapshot [-i name] [tag]   capture the running guest, RAM and all
@@ -207,6 +208,9 @@ switch (sub) {
   // eslint-disable-next-line no-fallthrough
   case "get":
     process.exit(await agentcmds.get(args))
+  // eslint-disable-next-line no-fallthrough
+  case "dir":
+    process.exit(await agentcmds.dir(args))
   // eslint-disable-next-line no-fallthrough
   case "launch":
     process.exit(await agentcmds.launch(args))
