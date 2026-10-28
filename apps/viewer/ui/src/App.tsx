@@ -32,8 +32,8 @@ import { cx } from "./components/cx"
 import { t } from "./i18n"
 import type { Phase, Share } from "./model"
 import { controls, displaySize, parseShare, shownTitle, startSteps, terminalBlocked } from "./model"
-import { SavesPanel } from "./features/actions/SavesPanel"
 import { SharePanel } from "./features/actions/SharePanel"
+import { CheckpointCanvas } from "./features/checkpoints/CheckpointCanvas"
 import { useCopies } from "./features/files/useCopies"
 import { Overview } from "./features/overview/Overview"
 import { Panel } from "./features/panel/Panel"
@@ -49,7 +49,7 @@ import { createArgs, destroyArgs, isLive as machineLive, nextAfterDelete, parseI
 import { type NewMachine, NewMachineDialog } from "./features/machines/NewMachineDialog"
 import { useUsage } from "./features/usage/useUsage"
 
-type Confirm = { kind: "stop" | "reboot" | "kill" } | { kind: "load"; save: string }
+type Confirm = { kind: "stop" | "reboot" | "kill" }
 
 interface Notice {
   readonly tone: "notice" | "error"
@@ -61,12 +61,10 @@ const CONFIRM_ACTION: Record<Confirm["kind"], string> = {
   stop: "action.shutDown",
   reboot: "action.restart",
   kill: "action.forceStop",
-  load: "saves.restore",
 }
 
 const PANEL_LABEL: Record<PanelId, string> = {
   files: "action.files",
-  saves: "action.saves",
   share: "action.share",
 }
 
@@ -84,6 +82,9 @@ export function App(): JSX.Element {
   const [notice, setNotice] = useState<Notice | null>(null)
   const [reference, setReference] = useState<{ text: string | null } | null>(null)
   const [dropping, setDropping] = useState(false)
+  // Checkpoints, the full-window view: open, and a count the menu bumps to ask it to leave.
+  const [checkpoints, setCheckpoints] = useState(false)
+  const [closeCheckpoints, setCloseCheckpoints] = useState(0)
 
   // A hidden window gets no animation frames, so show it straight after the first commit.
   useEffect(() => showWindow(), [])
@@ -97,6 +98,12 @@ export function App(): JSX.Element {
   const missing = w.checks?.checks.filter((x) => !x.ok) ?? []
   const runtimeMissing = missing.some((x) => x.hint === "winvm setup")
   const display = displaySize(w.status?.screen ?? null)
+  // Where Windows' screen is, and its picture, for Checkpoints to fly into and show live.
+  const displayRect = useCallback(() => {
+    const r = document.querySelector(".display")?.getBoundingClientRect()
+    return r === undefined ? null : { x: r.left, y: r.top, width: r.width, height: r.height }
+  }, [])
+  const liveSource = useCallback(() => document.querySelector<HTMLCanvasElement>(".screen__canvas canvas"), [])
   const showScreen = live && w.connection !== null
   // virtio-gpu: the guest's screen follows the window, one guest pixel per
   // device pixel, so there is nothing to fit. ramfb stays a fixed 800x600.
@@ -212,7 +219,7 @@ export function App(): JSX.Element {
     }
   }, [startNext, w.name, phase, w.busy, w.act])
 
-  // Delete "<name>"…: what goes, Keep saves, and a running machine turned off first.
+  // Delete "<name>"…: what goes, Keep checkpoints, and a running machine turned off first.
   const [deleting, setDeleting] = useState<Deleting | null>(null)
   const [keepSaves, setKeepSaves] = useState(false)
   const [deleteBusy, setDeleteBusy] = useState(false)
@@ -275,12 +282,32 @@ export function App(): JSX.Element {
       .catch((e: unknown) => setNotice({ tone: "error", title: t("terminal.failed"), detail: String(e) }))
   }
 
+  // Checkpoints: the clock, ⌘⇧T and File → Checkpoints… open it; the same keys close it.
+  const canCheckpoints = w.name !== null && phase !== null && phase !== "missing"
+  const openCheckpoints = useCallback(() => {
+    setOpen(null)
+    if (canCheckpoints) setCheckpoints(true)
+  }, [canCheckpoints])
+  const toggleCheckpoints = useCallback(() => {
+    if (checkpoints) setCloseCheckpoints((n) => n + 1)
+    else openCheckpoints()
+  }, [checkpoints, openCheckpoints])
+  const canSave = (phase === "running" || phase === "paused") && w.busy === null
+  const checkpointsMenu = (): void => {
+    popupActions([
+      { kind: "action", label: t("checkpoints.saveNow"), enabled: canSave, run: () => run("save") },
+      { kind: "separator" },
+      { kind: "action", label: t("checkpoints.showAll"), accelerator: "CmdOrCtrl+Shift+T", run: openCheckpoints },
+    ]).catch((e: unknown) => setNotice({ tone: "error", title: t("checkpoints.menuFailed"), detail: String(e) }))
+  }
+
   const install = w.installCommand
   useEffect(
     () =>
       onMenu((id) => {
         if (id === "new-terminal") terminal(null)
         if (id === "rename-window") setRenaming(true)
+        if (id === "checkpoints") toggleCheckpoints()
         if (id === "install-cli") void install()
         if (id === "reference") {
           setReference({ text: null })
@@ -289,7 +316,7 @@ export function App(): JSX.Element {
             .catch((e: unknown) => setReference({ text: String(e) }))
         }
       }),
-    [install, terminal],
+    [install, terminal, toggleCheckpoints],
   )
 
   useEffect(() => {
@@ -390,7 +417,8 @@ export function App(): JSX.Element {
         controls={c}
         guestReady={guestReady}
         terminalBlocked={blocked}
-        canSaves={phase !== null && phase !== "missing"}
+        canCheckpoints={w.name !== null && phase !== null && phase !== "missing"}
+        checkpointsOpen={checkpoints}
         canShare={phase !== null && phase !== "missing"}
         sharing={share !== null}
         actualSize={actualSize}
@@ -406,6 +434,8 @@ export function App(): JSX.Element {
         onTerminal={() => terminal(null)}
         onTerminalMenu={terminalMenu}
         onFilesMenu={filesMenu}
+        onCheckpoints={openCheckpoints}
+        onCheckpointsMenu={checkpointsMenu}
         onActualSize={() => setActualSize((a) => !a)}
         onScreenSharing={() => void w.openScreenSharing()}
         onDetails={() => setDetailsOpen((o) => !o)}
@@ -537,15 +567,6 @@ export function App(): JSX.Element {
 
       {open !== null && w.name !== null && (
         <Popover anchor={open.anchor} label={t(PANEL_LABEL[open.id])} onClose={closePanel}>
-          {open.id === "saves" && (
-            <SavesPanel
-              instance={w.name}
-              canSave={phase === "running" || phase === "paused"}
-              busy={w.busy !== null}
-              onSave={(name) => run("save", name)}
-              onRestore={(save) => setConfirm({ kind: "load", save })}
-            />
-          )}
           {open.id === "share" && (
             <SharePanel
               instance={w.name}
@@ -562,9 +583,24 @@ export function App(): JSX.Element {
 
       {reference !== null && <ReferenceDialog text={reference.text} onClose={() => setReference(null)} />}
 
+      {checkpoints && w.name !== null && (
+        <CheckpointCanvas
+          instance={w.name}
+          machine={title ?? w.name}
+          phase={phase}
+          busy={w.busy !== null}
+          aspect={display.width / display.height}
+          displayRect={displayRect}
+          liveSource={liveSource}
+          run={(verb, arg) => w.act(verb, arg)}
+          closeRequest={closeCheckpoints}
+          onClosed={() => setCheckpoints(false)}
+        />
+      )}
+
       <ConfirmDialog
         open={confirm !== null}
-        title={confirm === null ? "" : confirm.kind === "load" ? t("confirm.load.title", { name: confirm.save }) : t(`confirm.${confirm.kind}.title`)}
+        title={confirm === null ? "" : t(`confirm.${confirm.kind}.title`)}
         body={confirm === null ? "" : <p>{t(`confirm.${confirm.kind}.body`)}</p>}
         confirmLabel={confirm === null ? "" : t(CONFIRM_ACTION[confirm.kind])}
         cancelLabel={t("confirm.cancel")}
@@ -575,8 +611,7 @@ export function App(): JSX.Element {
           setConfirm(null)
           if (chosen === null) return
           setOpen(null)
-          if (chosen.kind === "load") run("load", chosen.save)
-          else run(chosen.kind)
+          run(chosen.kind)
         }}
       />
 

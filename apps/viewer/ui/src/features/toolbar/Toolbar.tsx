@@ -3,7 +3,7 @@ import { t } from "../../i18n"
 import type { Controls, Phase } from "../../model"
 import { MachinePicker, type MachinePickerProps } from "../machines/MachinePicker"
 
-export type PanelId = "files" | "saves" | "share"
+export type PanelId = "files" | "share"
 
 interface ToolbarProps {
   /** The Windows machine picker, at the left. */
@@ -15,7 +15,9 @@ interface ToolbarProps {
   readonly guestReady: boolean
   /** Why the terminal can't open (an i18n key), or null when it can. */
   readonly terminalBlocked: string | null
-  readonly canSaves: boolean
+  /** Whether Checkpoints can open: there is a machine (its checkpoints show even while it is off). */
+  readonly canCheckpoints: boolean
+  readonly checkpointsOpen: boolean
   /** Whether "Use with Claude" can open: there is an instance to add (its HTTP endpoint also needs Windows up). */
   readonly canShare: boolean
   readonly sharing: boolean
@@ -33,6 +35,8 @@ interface ToolbarProps {
   onTerminal(): void
   onTerminalMenu(): void
   onFilesMenu(): void
+  onCheckpoints(): void
+  onCheckpointsMenu(): void
   onActualSize(): void
   onScreenSharing(): void
   onDetails(): void
@@ -113,6 +117,33 @@ function FilesButton({ enabled, onOpen, onMenu }: { readonly enabled: boolean; o
 }
 
 /**
+ * The clock opens Checkpoints, the full-window view of every checkpoint
+ * (⌘⇧T, File → Checkpoints…, too); Option-click or right-click offers a
+ * native menu with Take a Checkpoint Now, as >_ and the folder do.
+ */
+function CheckpointsButton({ enabled, open, onOpen, onMenu }: { readonly enabled: boolean; readonly open: boolean; onOpen(): void; onMenu(): void }): JSX.Element {
+  const label = t("action.checkpoints")
+  return (
+    <button
+      type="button"
+      className="btn btn--ghost btn--icon"
+      aria-label={label}
+      aria-haspopup="menu"
+      aria-pressed={open}
+      title={t("checkpoints.tip")}
+      disabled={!enabled}
+      onClick={(e) => (e.altKey ? onMenu() : onOpen())}
+      onContextMenu={(e) => {
+        e.preventDefault()
+        if (enabled) onMenu()
+      }}
+    >
+      <Icon name="history" />
+    </button>
+  )
+}
+
+/**
  * The title bar: which Windows machine (a menu of them all), what is
  * happening, then power, things to do in Windows, and view.
  */
@@ -152,7 +183,7 @@ export function Toolbar(p: ToolbarProps): JSX.Element {
       <div className="toolbar__group">
         <TerminalButton blocked={p.terminalBlocked} onOpen={p.onTerminal} onMenu={p.onTerminalMenu} />
         <FilesButton enabled={p.guestReady} onOpen={() => p.onOpen("files", document.body)} onMenu={p.onFilesMenu} />
-        {panel("saves", "history", t("action.saves"), p.canSaves)}
+        <CheckpointsButton enabled={p.canCheckpoints} open={p.checkpointsOpen} onOpen={p.onCheckpoints} onMenu={p.onCheckpointsMenu} />
         {panel("share", "agent", t("action.share"), p.canShare || p.sharing, p.sharing)}
       </div>
 

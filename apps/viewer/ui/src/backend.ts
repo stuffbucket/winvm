@@ -120,7 +120,7 @@ function listen<T>(name: string, cb: (payload: T) => void): Unlisten {
   }
 }
 
-/** App menu items the main window acts on: "install-cli", "reference", "new-terminal" and "rename-window". */
+/** App menu items the main window acts on: "install-cli", "reference", "new-terminal", "rename-window" and "checkpoints". */
 export const onMenu = (cb: (id: string) => void): Unlisten => listen<string>("menu", cb)
 
 /** The window's edge is being dragged (true), or was let go (false). */
@@ -231,6 +231,27 @@ export const GUEST_FOLDERS_IN_FINDER = false
 /** Shows a guest folder in Finder, once the guest's drives can be mounted on the Mac. Not yet. */
 export async function revealGuestPath(instance: string, path: string): Promise<void> {
   throw new Error(`showing ${path} of ${instance} in Finder isn't available yet`)
+}
+
+/** A checkpoint's screenshot or thumbnail (a path `winvm saves --json` gave), as PNG bytes. */
+export const checkpointImage = (path: string): Promise<ArrayBuffer> => tauri().core.invoke<ArrayBuffer>("checkpoint_image", { path })
+
+/** One part of the person's settings (`$XDG_CONFIG_HOME/winvm/settings.json`), or null. */
+export async function readSettings(section: string): Promise<unknown> {
+  try {
+    return await tauri().core.invoke<unknown>("settings_read", { section })
+  } catch {
+    return null
+  }
+}
+
+/** Replaces one part of the person's settings, keeping the rest. Never throws: a setting that isn't kept is not worth a notice. */
+export async function writeSettings(section: string, value: unknown): Promise<void> {
+  try {
+    await tauri().core.invoke<void>("settings_write", { section, value })
+  } catch {
+    // not in the app, or the folder can't be written
+  }
 }
 
 /** Puts text on the Mac's clipboard. */

@@ -1,5 +1,7 @@
 @import url("./tokens.css");
 @import url("./fonts.css");
+@import url("../../../../../packages/canvas/src/canvas.css");
+@import url("./checkpoints.css");
 
 /* =========================================================
    The winvm window. Base, buttons, callout, empty state, key/value,
@@ -670,42 +672,6 @@ html[data-os="macos"] .toolbar {
   line-height: var(--leading-lg);
   color: var(--status-error);
   overflow-wrap: anywhere;
-}
-
-.saves {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-1);
-  max-height: calc(var(--size-2xl) * 6);
-  overflow-y: auto;
-}
-
-.save {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-3);
-  padding-block: var(--space-1);
-}
-
-.save__text {
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-}
-
-.save__name {
-  font-size: var(--text-sm);
-  color: var(--text-strong);
-  overflow-wrap: anywhere;
-}
-
-.save__meta {
-  font-size: var(--text-sm);
-  color: var(--text-muted);
 }
 
 /* A value and its copy button on one line. */

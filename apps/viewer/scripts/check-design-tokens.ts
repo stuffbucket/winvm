@@ -9,7 +9,7 @@
 import { readFileSync } from "node:fs"
 import { resolve } from "node:path"
 
-const FILES = ["ui/src/styles/styles.css", "ui/src/styles/terminal.css", "ui/src/styles/files.css"]
+const FILES = ["ui/src/styles/styles.css", "ui/src/styles/terminal.css", "ui/src/styles/files.css", "ui/src/styles/checkpoints.css", "../../packages/canvas/src/canvas.css"]
 const ROOT = resolve(import.meta.dir, "..")
 
 interface Violation {
