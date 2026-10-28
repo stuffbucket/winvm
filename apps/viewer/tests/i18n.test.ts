@@ -30,6 +30,8 @@ const built = [
   ...["fact.image", "fact.cpus", "fact.memory", "fact.changes", "fact.saves"],
   ...["detail.windows", "detail.uptime", "detail.hardware", "detail.image", "detail.screen", "detail.disk", "detail.saves"],
   ...["ability.exec", "ability.files", "ability.saves", "ability.agent"],
+  ...["desktop", "documents", "downloads"].map((p) => `files.place.${p}`),
+  ...["notfound", "denied", "notdir", "notrunning", "other"].map((c) => `files.error.${c}`),
 ]
 
 describe("the en catalog", () => {
