@@ -1,6 +1,6 @@
 {
   "name": "winvm-workspace",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "description": "A scriptable Windows 11 ARM64 guest on plain QEMU + Hypervisor.framework (macOS, Apple Silicon)",
   "license": "MIT",
@@ -21,7 +21,9 @@
     "rules": [
       {
         "registry": "https://packagefeedproxy.microsoft.io/npm/",
-        "includeTarballHostSuffixes": ["pkgs.visualstudio.com"],
+        "includeTarballHostSuffixes": [
+          "pkgs.visualstudio.com"
+        ],
         "action": "omit"
       }
     ]
