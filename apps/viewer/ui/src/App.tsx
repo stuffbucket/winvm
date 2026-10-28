@@ -8,6 +8,7 @@ import {
   installedShells,
   onFileDrop,
   onMenu,
+  openFiles,
   openTerminal,
   outputText,
   popupMenu,
@@ -28,7 +29,6 @@ import type { Phase, Share } from "./model"
 import { controls, displaySize, parseShare, shownTitle, startSteps, terminalBlocked } from "./model"
 import { SavesPanel } from "./features/actions/SavesPanel"
 import { SharePanel } from "./features/actions/SharePanel"
-import { FilesDialog } from "./features/files/FilesDialog"
 import { useCopies } from "./features/files/useCopies"
 import { Overview } from "./features/overview/Overview"
 import { Panel } from "./features/panel/Panel"
@@ -58,12 +58,6 @@ const PANEL_LABEL: Record<PanelId, string> = {
   files: "action.files",
   saves: "action.saves",
   share: "action.share",
-}
-
-/** The Files sheet's folder: where copies in land, the Desktop until the sheet goes elsewhere. */
-interface Folder {
-  readonly path: string
-  readonly name: string
 }
 
 const isLive = (p: Phase | null): boolean => p === "running" || p === "starting" || p === "paused"
@@ -126,27 +120,21 @@ export function App(): JSX.Element {
     void w.act(verb, arg)
   }
 
+  // Files dropped on the main window go to the Desktop in Windows; the Files window takes them anywhere.
   const copies = useCopies(w.name)
-  const [filesOpen, setFilesOpen] = useState(false)
-  const [folder, setFolder] = useState<Folder | null>(null)
   const copyIn = copies.copyIn
-  const onFolder = useCallback((path: string, name: string) => setFolder({ path, name }), [])
-  /** A copy's progress and result go above the display while the Files sheet isn't there to show them. */
-  const copyNotice = !filesOpen && (copies.job !== null || copies.result !== null)
-
-  // Another instance has other folders: back to its Desktop.
-  useEffect(() => setFolder(null), [w.name])
+  const copyNotice = copies.job !== null || copies.result !== null
 
   useEffect(
     () =>
       onFileDrop(
         (paths) => {
-          if (guestReady) copyIn(paths, folder?.path ?? null)
+          if (guestReady) copyIn(paths, null)
           else if (paths.length > 0) setNotice({ tone: "error", title: t("files.notRunning") })
         },
         (over) => setDropping(over && guestReady),
       ),
-    [guestReady, copyIn, folder],
+    [guestReady, copyIn],
   )
 
   // The instance's title: the toolbar shows it, the window is named by it, and
@@ -262,7 +250,7 @@ export function App(): JSX.Element {
   const togglePanel = (id: PanelId, anchor: HTMLElement): void => {
     if (id === "files") {
       setOpen(null)
-      setFilesOpen(true)
+      if (w.name !== null) openFiles(w.name, titles[w.name] ?? null).catch((e: unknown) => setNotice({ tone: "error", title: t("files.openFailed"), detail: String(e) }))
     } else setOpen((cur) => (cur?.id === id ? null : { id, anchor }))
   }
   const closePanel = useCallback(() => setOpen(null), [])
@@ -292,7 +280,7 @@ export function App(): JSX.Element {
         sharing={share !== null}
         actualSize={actualSize}
         canActualSize={!resizable}
-        open={filesOpen ? "files" : (open?.id ?? null)}
+        open={open?.id ?? null}
         detailsOpen={detailsOpen}
         onSelect={w.select}
         onStart={() => run("start")}
@@ -411,7 +399,7 @@ export function App(): JSX.Element {
               )}
               {dropping && (
                 <div className="display__drop" aria-hidden="true">
-                  <p>{t("files.dropOn", { folder: folder?.name ?? t("files.place.desktop") })}</p>
+                  <p>{t("files.dropOn", { folder: t("files.place.desktop") })}</p>
                 </div>
               )}
             </div>
@@ -448,18 +436,6 @@ export function App(): JSX.Element {
       )}
 
       {reference !== null && <ReferenceDialog text={reference.text} onClose={() => setReference(null)} />}
-
-      {filesOpen && live && w.name !== null && (
-        <FilesDialog
-          instance={w.name}
-          title={title ?? w.name}
-          folder={folder?.path ?? null}
-          dropping={dropping}
-          copies={copies}
-          onFolder={onFolder}
-          onClose={() => setFilesOpen(false)}
-        />
-      )}
 
       <ConfirmDialog
         open={confirm !== null}

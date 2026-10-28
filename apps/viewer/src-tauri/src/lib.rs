@@ -20,7 +20,7 @@ struct Output {
 
 const VERBS: &[&str] = &[
     "status", "doctor", "start", "stop", "reboot", "pause", "resume", "kill", "open", "setup", "exec", "put", "get",
-    "dir", "save", "load", "saves", "help", "terminal", "config", "display",
+    "dir", "mkdir", "mv", "cp", "rm", "save", "load", "saves", "help", "terminal", "config", "display",
 ];
 
 #[tauri::command]
@@ -181,6 +181,69 @@ fn terminal_take(app: tauri::AppHandle) -> Vec<TerminalRequest> {
 /// The window with keyboard focus, if any of the app's has it.
 fn focused_window(app: &tauri::AppHandle) -> Option<tauri::WebviewWindow> {
     app.webview_windows().into_values().find(|w| w.is_focused().unwrap_or(false))
+}
+
+/// The Files window's label for an instance: one window per instance.
+fn files_label(instance: &str) -> String {
+    let safe: String = instance.chars().map(|c| if c.is_ascii_alphanumeric() || c == '-' || c == '_' { c } else { '_' }).collect();
+    format!("files-{safe}")
+}
+
+/// Percent-encodes a query value.
+fn query_value(s: &str) -> String {
+    s.bytes()
+        .map(|b| if b.is_ascii_alphanumeric() || b"-_.~".contains(&b) { (b as char).to_string() } else { format!("%{b:02X}") })
+        .collect()
+}
+
+/// Opens the instance's Files window, or brings it forward. The overlay title bar puts the traffic
+/// lights over the window's own sidebar, where the main window puts them over its toolbar. `title`
+/// is what the instance is called (its name when absent); the window hears of later changes itself.
+#[tauri::command]
+async fn files_open(app: tauri::AppHandle, instance: String, title: Option<String>) -> Result<(), String> {
+    if instance.is_empty() || instance.len() > 64 {
+        return Err("no instance named".into());
+    }
+    let label = files_label(&instance);
+    if let Some(window) = app.get_webview_window(&label) {
+        let _ = window.unminimize();
+        let _ = window.show();
+        let _ = window.set_focus();
+        return Ok(());
+    }
+    let shown = title.clone().unwrap_or_else(|| instance.clone());
+    let url = format!("files.html?instance={}&title={}", query_value(&instance), query_value(title.as_deref().unwrap_or("")));
+    let mut builder = WebviewWindowBuilder::new(&app, &label, WebviewUrl::App(url.into()))
+        .title(format!("Files in Windows — {shown}"))
+        .inner_size(920.0, 560.0)
+        .min_inner_size(560.0, 340.0)
+        .visible(false);
+    #[cfg(target_os = "macos")]
+    {
+        builder = builder
+            .title_bar_style(tauri::TitleBarStyle::Overlay)
+            .hidden_title(true)
+            .traffic_light_position(tauri::LogicalPosition::new(18.0, 26.0));
+    }
+    if let Some((x, y)) = beside_main(&app, 920.0) {
+        builder = builder.position(x, y);
+    } else {
+        builder = builder.center();
+    }
+    builder.build().map(|_| ()).map_err(|e| e.to_string())
+}
+
+/// Puts text on the Mac's clipboard (the webview's own clipboard needs a user gesture a menu item isn't).
+#[tauri::command]
+fn copy_text(text: String) -> Result<(), String> {
+    use std::io::Write;
+    let mut child = std::process::Command::new("/usr/bin/pbcopy")
+        .stdin(std::process::Stdio::piped())
+        .spawn()
+        .map_err(|e| e.to_string())?;
+    child.stdin.take().ok_or("pbcopy has no stdin")?.write_all(text.as_bytes()).map_err(|e| e.to_string())?;
+    child.wait().map_err(|e| e.to_string())?;
+    Ok(())
 }
 
 #[tauri::command]
@@ -398,6 +461,8 @@ pub fn run() {
             reveal,
             terminal_open,
             terminal_take,
+            files_open,
+            copy_text,
             dragout::files_drag_out
         ])
         .build(tauri::generate_context!())

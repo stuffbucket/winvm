@@ -1,0 +1,669 @@
+@import url("./styles.css");
+
+/* =========================================================
+   A Files window: one instance's files in Windows, laid out as Finder
+   lays out a Mac's. The overlay title bar puts the traffic lights over the
+   top of the sidebar; the toolbar beside them is the drag region. Then the
+   list, in columns that sort, and a status bar.
+   ========================================================= */
+
+@font-face {
+  font-family: "Symbols Nerd Font Mono";
+  font-style: normal;
+  font-weight: 400;
+  font-display: block;
+  src: url("./fonts/symbols-nerd-font-mono-3.4.0-subset.woff2") format("woff2");
+}
+
+:root {
+  /* The toolbar matches the main window's, so the traffic lights sit at the same height. */
+  --fw-bar: calc(var(--size-xl) + var(--space-2) * 2 + var(--border-width-hairline));
+  --files-row: var(--size-lg);
+}
+
+html,
+body {
+  height: 100%;
+  overflow: hidden;
+}
+
+.fw {
+  display: grid;
+  grid-template-columns: 11.5rem minmax(0, 1fr);
+  height: 100vh;
+  background: var(--surface-base);
+  color: var(--text-base-color);
+  font-family: var(--font-body);
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+/* ---- Sidebar: under the traffic lights, the known folders, then the drives ---- */
+.fw__side {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: var(--surface-card);
+  border-inline-end: var(--border-width-hairline) solid var(--border-subtle);
+}
+
+.fw__lights {
+  flex: 0 0 var(--fw-bar);
+}
+
+.fw__places {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 0 var(--space-2) var(--space-3);
+}
+
+.fw__places section + section {
+  margin-block-start: var(--space-3);
+}
+
+.fw__group {
+  margin: 0;
+  padding: var(--space-1) var(--space-2);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-md);
+  line-height: var(--leading-lg);
+  color: var(--text-muted);
+}
+
+.fw__places ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--border-width-hairline);
+}
+
+.fw__place {
+  appearance: none;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  min-height: var(--files-row);
+  border: 0;
+  background: transparent;
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-input);
+  font-family: var(--font-body);
+  font-size: var(--text-sm);
+  line-height: var(--leading-lg);
+  color: var(--text-base-color);
+  text-align: start;
+  cursor: default;
+}
+
+.fw__place:hover {
+  background: var(--surface-control);
+}
+
+.fw__place[aria-current="location"] {
+  background: var(--surface-control);
+  color: var(--text-strong);
+  font-weight: var(--weight-md);
+}
+
+.fw__place--target,
+.fw__place--target:hover {
+  background: var(--accent);
+  color: var(--accent-fg);
+}
+
+.fw__place:focus-visible {
+  outline: var(--focus-ring);
+  outline-offset: calc(-1 * var(--focus-ring-width));
+}
+
+.fw__place svg {
+  flex: 0 0 auto;
+  width: var(--size-sm);
+  height: var(--size-sm);
+  color: var(--link);
+}
+
+.fw__place--target svg {
+  color: var(--accent-fg);
+}
+
+.fw__place-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ---- Main column ---- */
+.fw__main {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  container: fw-main / inline-size;
+}
+
+/* Narrow: the folder shown alone; its parents are a click on the up arrow away. */
+@container fw-main (max-width: 32rem) {
+  .fw__crumb:not(.fw__crumb--here) {
+    display: none;
+  }
+}
+
+/* ---- Toolbar: back, forward, up, the path, refresh; the rest drags the window ---- */
+.fw__bar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex: 0 0 var(--fw-bar);
+  padding-inline: var(--space-2) var(--space-3);
+  border-block-end: var(--border-width-hairline) solid var(--border-subtle);
+}
+
+.fw__nav {
+  display: flex;
+  flex: 0 0 auto;
+}
+
+/* The path: earlier folders give way first; the folder shown keeps its name longest. */
+.fw__crumbs {
+  display: flex;
+  align-items: center;
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.fw__crumb {
+  display: inline-flex;
+  align-items: center;
+  flex: 0 1 auto;
+  min-width: 0;
+}
+
+.fw__crumb--here {
+  flex-shrink: 0.2;
+}
+
+.fw__sep {
+  flex: 0 0 auto;
+  padding-inline: var(--space-1);
+  color: var(--text-muted);
+}
+
+.fw__crumb-btn {
+  appearance: none;
+  min-width: 0;
+  max-width: 100%;
+  border: 0;
+  background: transparent;
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-input);
+  font-family: var(--font-body);
+  font-size: var(--text-sm);
+  line-height: var(--leading-lg);
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: default;
+}
+
+.fw__crumb-btn:hover {
+  background: var(--surface-control);
+  color: var(--text-strong);
+}
+
+.fw__crumb-btn[aria-current="location"] {
+  font-size: var(--text-base);
+  font-weight: var(--weight-lg);
+  color: var(--text-strong);
+}
+
+.fw__crumb-btn:focus-visible {
+  outline: var(--focus-ring);
+  outline-offset: calc(-1 * var(--focus-ring-width));
+}
+
+.fw__goto {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.fw__drag {
+  flex: 1 1 0;
+  align-self: stretch;
+  min-width: var(--space-4);
+}
+
+.fw__notices {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3) 0;
+}
+
+.fw__notices .output {
+  max-height: calc(var(--size-2xl) * 2);
+  overflow: auto;
+}
+
+.fw__body {
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 0;
+  container-type: inline-size;
+}
+
+/* Mac files over the window with no folder under the pointer: they go into the folder shown. */
+.fw__body--target .files__list {
+  box-shadow: inset 0 0 0 var(--border-width-thick) var(--accent);
+}
+
+/* ---- The list ---- */
+.files__table {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+}
+
+/* Name, Modified, Size, Kind, as Finder orders them. The kind goes first as the
+   window narrows, then the time of day, then the date's words. */
+.files__head,
+.files__row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 13rem 5.5rem 9rem;
+  align-items: center;
+  column-gap: var(--space-3);
+  padding-inline: var(--space-3);
+}
+
+.files__head {
+  flex: 0 0 auto;
+  border-block-end: var(--border-width-hairline) solid var(--border-subtle);
+}
+
+.files__heading {
+  appearance: none;
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  padding: var(--space-1) 0;
+  font-family: var(--font-body);
+  font-size: var(--text-sm);
+  line-height: var(--leading-lg);
+  color: var(--text-muted);
+  text-align: start;
+  cursor: default;
+}
+
+.files__heading:hover,
+.files__heading--on {
+  color: var(--text-strong);
+}
+
+.files__heading--on {
+  font-weight: var(--weight-md);
+}
+
+.files__heading:focus-visible {
+  outline: var(--focus-ring);
+  outline-offset: calc(-1 * var(--focus-ring-width));
+  border-radius: var(--radius-chip);
+}
+
+.files__heading.files__c-size {
+  justify-content: flex-end;
+}
+
+.files__heading-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.files__chevron {
+  flex: 0 0 auto;
+  font-family: var(--font-symbols);
+  font-size: var(--text-sm);
+  color: var(--text-muted);
+}
+
+.files__list {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  outline: none;
+}
+
+/* Focus shows as Finder shows it: the selection turns the accent. With nothing
+   selected, the row the keys move from keeps a hairline. */
+.files__list:focus .files__row--active:not([aria-selected="true"]) {
+  box-shadow: inset 0 0 0 var(--border-width-hairline) var(--border-strong);
+}
+
+.files__rows {
+  position: relative;
+}
+
+.files__row {
+  position: absolute;
+  inset-inline: 0;
+  top: 0;
+  height: var(--files-row);
+  font-size: var(--text-sm);
+  line-height: var(--leading-lg);
+  color: var(--text-base-color);
+  cursor: default;
+}
+
+.files__row--alt {
+  background: var(--surface-card);
+}
+
+/* Selected while the list doesn't have focus: a quiet wash of the accent, as Finder greys it. */
+.files__row[aria-selected="true"] {
+  background: color-mix(in srgb, var(--accent) 22%, var(--surface-base));
+  color: var(--text-strong);
+}
+
+/* Selection is the accent while the list has focus, as in Finder. */
+.files__list:focus .files__row[aria-selected="true"],
+.files__list:focus-within .files__row[aria-selected="true"] {
+  background: var(--accent);
+  color: var(--accent-fg);
+}
+
+.files__list:focus .files__row[aria-selected="true"] .files__num,
+.files__list:focus .files__row[aria-selected="true"] .files__kind,
+.files__list:focus .files__row[aria-selected="true"] .files__glyph {
+  color: var(--accent-fg);
+}
+
+/* A folder something is being dragged onto: ringed, so it reads apart from the selection. */
+.files__row--target,
+.files__row--target.files__row--alt,
+.files__list:focus .files__row--target[aria-selected="true"] {
+  background: color-mix(in srgb, var(--accent) 22%, var(--surface-base));
+  color: var(--text-strong);
+  box-shadow: inset 0 0 0 var(--border-width-thick) var(--accent);
+  border-radius: var(--radius-input);
+}
+
+.files__row--target .files__num,
+.files__row--target .files__kind {
+  color: var(--text-base-color);
+}
+
+.files__row--target .files__glyph {
+  color: var(--link);
+}
+
+.files__row--carried {
+  opacity: 0.5;
+}
+
+.files__row--hidden .files__label {
+  color: var(--text-muted);
+}
+
+.files__name {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.files__glyph {
+  flex: 0 0 auto;
+  width: var(--size-sm);
+  font-family: var(--font-symbols);
+  font-size: var(--text-base);
+  line-height: 1;
+  text-align: center;
+  color: var(--text-muted);
+}
+
+.files__glyph--folder {
+  color: var(--link);
+}
+
+.files__label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.files__rename {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: calc(var(--files-row) - var(--border-width-thick));
+  margin: 0;
+  padding: 0 var(--space-1);
+  border: var(--border-width-hairline) solid var(--border-strong);
+  border-radius: var(--radius-chip);
+  background: var(--surface-base);
+  color: var(--text-strong);
+  font-family: var(--font-body);
+  font-size: var(--text-sm);
+  outline: var(--focus-ring);
+  outline-offset: 0;
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+.files__num,
+.files__kind {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-muted);
+}
+
+.files__num {
+  font-variant-numeric: tabular-nums;
+}
+
+.files__c-size {
+  text-align: end;
+}
+
+.files__date-medium,
+.files__date-short {
+  display: none;
+}
+
+@container (max-width: 40rem) {
+  .files__head,
+  .files__row {
+    grid-template-columns: minmax(0, 1fr) 13rem 5.5rem;
+  }
+  .files__c-kind {
+    display: none;
+  }
+}
+
+@container (max-width: 34rem) {
+  .files__head,
+  .files__row {
+    grid-template-columns: minmax(0, 1fr) 9.5rem 5.5rem;
+  }
+  .files__date-long {
+    display: none;
+  }
+  .files__date-medium {
+    display: inline;
+  }
+}
+
+@container (max-width: 24rem) {
+  .files__head,
+  .files__row {
+    grid-template-columns: minmax(0, 1fr) 5.5rem 5.5rem;
+  }
+  .files__date-medium {
+    display: none;
+  }
+  .files__date-short {
+    display: inline;
+  }
+}
+
+.files__empty,
+.files__more {
+  margin: 0;
+  padding: var(--space-4) var(--space-3);
+  font-size: var(--text-sm);
+  color: var(--text-muted);
+}
+
+.files__empty {
+  position: absolute;
+  inset-inline: 0;
+  top: 0;
+  text-align: center;
+}
+
+/* ---- Status bar: how many, what is selected, and what a copy is doing ---- */
+.fw__status {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  flex: 0 0 auto;
+  min-height: var(--size-lg);
+  padding: var(--space-1) var(--space-3);
+  border-block-start: var(--border-width-hairline) solid var(--border-subtle);
+  background: var(--surface-card);
+  font-size: var(--text-sm);
+  line-height: var(--leading-lg);
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.fw__count {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+.fw__activity {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-2);
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.fw__activity > svg {
+  flex: 0 0 auto;
+  width: var(--size-sm);
+  height: var(--size-sm);
+  color: var(--status-success);
+}
+
+.fw__status-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-base-color);
+}
+
+.fw__link {
+  appearance: none;
+  flex: 0 0 auto;
+  border: 0;
+  background: transparent;
+  padding: 0;
+  font-family: var(--font-body);
+  font-size: var(--text-sm);
+  color: var(--link);
+  cursor: pointer;
+}
+
+.fw__link:hover {
+  color: var(--link-hover);
+  text-decoration: underline;
+}
+
+.fw__link:focus-visible {
+  outline: var(--focus-ring);
+  outline-offset: var(--focus-ring-offset);
+  border-radius: var(--radius-chip);
+}
+
+.fw__progress {
+  flex: 0 0 var(--size-2xl);
+  height: var(--border-width-heavy);
+  border-radius: var(--radius-pill);
+  background: var(--surface-control);
+  overflow: hidden;
+}
+
+.fw__progress span {
+  display: block;
+  height: 100%;
+  min-width: var(--border-width-heavy);
+  background: var(--accent);
+  transition: width 120ms ease-out;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .fw__progress span {
+    transition: none;
+  }
+}
+
+/* ---- What follows the pointer while items are dragged inside the window ---- */
+.fw__ghost {
+  position: fixed;
+  top: 0;
+  left: 0;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  max-width: calc(var(--size-2xl) * 6);
+  padding: var(--space-1) var(--space-2);
+  border: var(--border-width-hairline) solid var(--border-subtle);
+  border-radius: var(--radius-input);
+  background: var(--surface-card);
+  box-shadow: var(--elevation-tooltip);
+  font-size: var(--text-sm);
+  line-height: var(--leading-lg);
+  color: var(--text-strong);
+  pointer-events: none;
+}
+
+.fw__ghost-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.fw__ghost-badge {
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  width: var(--size-sm);
+  height: var(--size-sm);
+  border-radius: var(--radius-pill);
+  background: var(--status-success);
+  color: var(--surface-base);
+  font-weight: var(--weight-lg);
+  line-height: 1;
+}
