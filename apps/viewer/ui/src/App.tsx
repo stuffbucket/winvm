@@ -1,5 +1,7 @@
 import type { CSSProperties } from "react"
-import { useCallback, useEffect, useMemo, useState } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
+
+import type { Size } from "@winvm/displayfit"
 
 import {
   announceTitle,
@@ -68,7 +70,7 @@ const isLive = (p: Phase | null): boolean => p === "running" || p === "starting"
 
 export function App(): JSX.Element {
   const w = useWinvm()
-  const [fit, setFit] = useState(false)
+  const [actualSize, setActualSize] = useState(false)
   const [detailsOpen, setDetailsOpen] = useState(false)
   const [confirm, setConfirm] = useState<Confirm | null>(null)
   const [startedFrom, setStartedFrom] = useState<Phase | null>(null)
@@ -92,8 +94,32 @@ export function App(): JSX.Element {
   const runtimeMissing = missing.some((x) => x.hint === "winvm setup")
   const display = displaySize(w.status?.screen ?? null)
   const showScreen = live && w.connection !== null
+  // virtio-gpu: the guest's screen follows the window, one guest pixel per
+  // device pixel, so there is nothing to fit. ramfb stays a fixed 800x600.
+  const resizable = display.device === "virtio-gpu"
   const steps = w.busy === "start" && !showScreen ? startSteps(startedFrom === "missing", w.status) : null
   const activity = w.busy !== null ? t(`busy.${w.busy}`) : phase === "starting" ? t("state.starting") : null
+
+  // The guest switches to the viewer's size through its agent, once it is up;
+  // a size asked for before that waits for it.
+  const pendingSize = useRef<{ size: Size; scale: number } | null>(null)
+  const resizeGuest = useCallback(
+    async (size: Size, scale: number): Promise<void> => {
+      if (w.name === null) return
+      if (!guestReady) {
+        pendingSize.current = { size, scale }
+        return
+      }
+      pendingSize.current = null
+      const out = await winvm("display", "-i", w.name, `${String(size.width)}x${String(size.height)}`, "--scale", String(scale), "--no-request", "--json")
+      if (out.code !== 0) throw new Error(outputText(out))
+    },
+    [w.name, guestReady],
+  )
+  useEffect(() => {
+    const p = pendingSize.current
+    if (guestReady && p !== null) resizeGuest(p.size, p.scale).catch((error: unknown) => console.warn("resizing the guest failed", error))
+  }, [guestReady, resizeGuest])
 
   const run = (verb: Verb, arg?: string): void => {
     if (verb === "start") setStartedFrom(phase)
@@ -264,7 +290,8 @@ export function App(): JSX.Element {
         terminalBlocked={blocked}
         canSaves={phase !== null && phase !== "missing"}
         sharing={share !== null}
-        fit={fit}
+        actualSize={actualSize}
+        canActualSize={!resizable}
         open={filesOpen ? "files" : (open?.id ?? null)}
         detailsOpen={detailsOpen}
         onSelect={w.select}
@@ -276,7 +303,7 @@ export function App(): JSX.Element {
         onOpen={togglePanel}
         onTerminal={() => terminal(null)}
         onTerminalMenu={terminalMenu}
-        onFit={() => setFit((f) => !f)}
+        onActualSize={() => setActualSize((a) => !a)}
         onScreenSharing={() => void w.openScreenSharing()}
         onDetails={() => setDetailsOpen((o) => !o)}
       />
@@ -367,9 +394,18 @@ export function App(): JSX.Element {
           )}
 
           <div className="display-fit">
-            <div className={cx("display", fit && "display--fill", showScreen && "display--on", dropping && "display--drop")} style={frame}>
+            <div
+              className={cx(
+                "display",
+                actualSize && !resizable && "display--actual",
+                resizable && showScreen && "display--live",
+                showScreen && "display--on",
+                dropping && "display--drop",
+              )}
+              style={frame}
+            >
               {showScreen && w.connection !== null ? (
-                <Screen connection={w.connection} />
+                <Screen connection={w.connection} resizable={resizable} onGuestSize={resizeGuest} />
               ) : (
                 <Overview phase={phase} status={w.status} steps={steps} canStart={c.start} onStart={() => run("start")} />
               )}
