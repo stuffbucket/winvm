@@ -30,8 +30,9 @@ Back to front:
    screen goes here"; no monitor art.
 1. **Docked.** The toolbar, always; callouts above the display; the panel
    when open. They take space and push the display, never cover it.
-2. **Floating.** The toolbar's popovers; the Files sheet and the
-   confirmation dialog (`<dialog>`, top layer). Nothing else floats.
+2. **Floating.** The toolbar's popovers and the confirmation dialog
+   (`<dialog>`, top layer). Nothing else floats. Files and terminals are
+   windows of their own.
 
 ## Toolbar
 
@@ -97,43 +98,90 @@ available, as Task Manager counts it), or, until Windows answers, what QEMU
 holds on the Mac, said so. Read every 2.5 s while the window shows, never
 while the machine is off, with one `ps` and one agent call, no CLI.
 
-## Files
+## The Files window
 
-The toolbar's folder button opens a sheet: a `<dialog>` hung from under the
-toolbar, nearly the window's size, rather than a popover. A file list needs
-the room (name, size and date columns still fit at the 640 px minimum), and
-a modal keeps the keyboard in the list.
+A window of its own per instance, as Finder is, so files sit beside the
+screen. The toolbar's folder button opens it, or brings it forward; its
+title names the folder and the instance ("Desktop — demo").
 
-- Left: the known folders the agent reports (Desktop, Documents, Downloads,
-  the profile, `C:\work`), then the drives under a hairline.
-- Top: back, forward, up, the path as crumbs (they wrap, never clip), and
-  refresh. A click beside the crumbs, ⌘L or ⌘⇧G types a path instead.
-- Middle: folders first, then files. Names that don't fit end in an
-  ellipsis, with the whole name in the row's tooltip. As the list narrows,
-  the time of day goes first, then the date.
-- Foot: what a copy is doing, or where a drop lands, then Copy from Mac…,
-  Copy to Mac… (primary) and Done.
+- **Title bar**: an overlay (traffic lights, hidden title), like the main
+  window's. The lights sit over the sidebar; the toolbar beside them holds
+  back, forward, up, the path and refresh, and the rest of it drags the
+  window. The path's last part is the folder shown, in bold; earlier parts
+  give way first as the window narrows, and in a narrow window only the
+  folder shown is left. ⌘L or ⌘⇧G types a path instead.
+- **Sidebar**: the known folders the agent reports (Desktop, Documents,
+  Downloads, the profile, `C:\work`), then the drives.
+- **List**: Name, Date modified, Size and Kind, as Finder orders them. A
+  click on a heading sorts by it (names A to Z, dates and sizes biggest
+  first), and another click reverses it; the chevron says which. Folders
+  stay first whatever the sort, and a missing date or size goes last either
+  way. Each row has a file-type glyph (`--font-symbols`: Octicons and Seti
+  from Symbols Nerd Font Mono, mapped in `features/files/kinds.ts`); folders
+  are `--link`, the rest `--text-muted`. Dates read as Finder's do ("Today
+  at 1:33 PM", "Yesterday at 9:02 AM", "Oct 19, 2026 at 2:02 PM"),
+  shortening to "10/19/26, 2:02 PM" and then "10/19/26" as the list
+  narrows, after Kind has gone. Dates and sizes use tabular figures. Only
+  the rows in view are drawn, so a folder of 5000 scrolls smoothly.
+- **Status bar**: how many items, or how many are selected; while
+  something is dragged, where it would go ("Move to Projects", "Copy to
+  Desktop"); a copy's progress; what an operation did, with Show in Finder
+  after a copy out. Failures are a callout above the list.
+- **No Done button**: it is a window, and ⌘W closes it.
 
-Copy to Mac… asks where with the native panels: the save panel for one file,
-the folder panel for anything else (copies never replace a Mac file; Finder's
-"name 2" is used instead). Copy from Mac… and a drop anywhere on the window
-copy into the folder the sheet last showed, the Desktop until it has shown
-another; copies never replace a Windows file either (Explorer's "name (2)").
-The drop target names that folder: "Drop to copy to Desktop in Windows".
-While the sheet is closed, a copy's progress and result are callouts above
-the display.
+**Menus.** A right-click, Control-click or Option-click shows a native
+menu. On items: Open (a folder), Copy to Mac…, Rename, Move to Recycle Bin,
+Copy path, Open in Terminal (a new tab in the Terminal window, started in
+that folder, or in the folder shown for a file), New folder. On empty
+space: New folder, Copy from Mac…, Open Terminal here, Copy path, Refresh.
 
-| Keys (in the sheet) | |
+**Renaming** is in place, as in Finder: Return (or Rename) edits the name
+with the part before the extension selected; Return or a click elsewhere
+keeps it, Esc puts it back. Names Windows refuses (`\ / : * ? " < > |`,
+CON and the like, a trailing dot or space, a name already there) are
+refused with the reason. New folder makes "New folder" ("New folder (2)"
+when that is taken, as Explorer does) and starts its rename.
+
+**Deleting** moves items to the Recycle Bin (the agent uses shell32 with
+undo, so Explorer can put them back). From 10 items on it asks first.
+
+**Dragging.**
+
+- Inside the window: drag a selection onto a folder row or a sidebar place
+  to move it there; hold Option to copy instead. The target is ringed in
+  the accent. Moves and copies never replace anything; a clash gets
+  Explorer's "name (2)".
+- Out to Finder or the Desktop: dragging past the window's edge hands the
+  drag to macOS as file promises (`src-tauri/src/dragout.rs`). Nothing is
+  fetched until it is dropped; then each item, file or folder, is written
+  where Finder asks with `winvm get`, and the status bar shows it. Once
+  handed over, the drag can't come back into the window as a move.
+- In from the Mac: drop files anywhere on the window. Over a folder row or
+  a place they go into it; anywhere else, into the folder shown (the whole
+  list is ringed). Copies never replace a Windows file.
+
+Copy to Mac… asks where with the native panels: the save panel for one
+file, the folder panel for anything else (copies never replace a Mac file;
+Finder's "name 2" is used instead). Files dropped on the main window go to
+the Desktop in Windows; there, a copy's progress and result are callouts
+above the display.
+
+| Keys (in the Files window) | |
 |---|---|
-| ↑ ↓, Home, End | move; with ⇧, extend the selection |
+| ↑ ↓, Home, End, Page Up, Page Down | move; with ⇧, extend the selection |
 | ⌘A | select all |
-| Return, ⌘↓, double-click | open a folder |
+| Return | rename |
+| ⌘O, ⌘↓, double-click | open a folder |
 | ⌘↑ | the enclosing folder |
 | ⌘[ ⌘] | back, forward |
+| ⌘⌫ | move to the Recycle Bin |
+| ⌘⇧N | new folder |
+| ⌥⌘C | copy the path |
 | ⌘R | read the folder again |
 | ⌘L, ⌘⇧G | type a path |
 | a letter or two | the next name starting with them |
-| Esc | close |
+| Esc | cancel a rename or a drag; clear the selection |
+| ⌘W | close the window |
 
 ## Window behaviour
 
