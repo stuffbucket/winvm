@@ -3,11 +3,12 @@ import { useEffect, useLayoutEffect, useRef, useState } from "react"
 
 import { type Size, drawSize, guestSizeFor, sameSize, scaleFor } from "@winvm/displayfit"
 
-import { onLiveResize, trace } from "../../backend"
+import { copyText, onLiveResize, readText, trace } from "../../backend"
 import { Icon } from "../../components/Icon"
 import { cx } from "../../components/cx"
 import { t } from "../../i18n"
 import type { Connection } from "../../model"
+import { ClipboardSync } from "./clipboard"
 import { HeldSizes, keyVerdict } from "./held"
 import { LiveResize, type ResizePhase } from "./resize"
 import { type WakeSock, keepRefreshing } from "./wake"
@@ -41,6 +42,11 @@ type View = "connecting" | "connected" | "lost" | "refused"
 /** A new size's first frame is the old picture redrawn; the second is the guest's. Without one, this long. */
 const FRAME_WAIT_MS = 150
 
+/** How long after connecting to wait for the server to say its clipboard takes UTF-8 before pasting anyway (as Latin-1). */
+const CLIPBOARD_CAPS_MS = 2000
+/** noVNC's extended-clipboard text format. */
+const CLIPBOARD_TEXT = 1
+
 const dpr = (): number => window.devicePixelRatio || 1
 
 /**
@@ -52,6 +58,10 @@ const dpr = (): number => window.devicePixelRatio || 1
  * screen underneath carries on (sizes the guest passes through, the redraw of a
  * new size), out of sight, and the copy goes once the guest's picture is drawn
  * in full at the size asked for, one guest pixel per device pixel.
+ *
+ * THE CLIPBOARD (clipboard.ts), text only, while the window is in front: what
+ * Windows copies goes on the Mac's clipboard; the Mac's goes to Windows when
+ * the window comes forward, and once on connecting.
  */
 export function Screen({ connection, resizable, onGuestSize, frozen = false, asleep = false, waking = false, onWake, overlay = true }: ScreenProps): JSX.Element {
   const area = useRef<HTMLDivElement | null>(null)
@@ -217,11 +227,40 @@ export function Screen({ connection, resizable, onGuestSize, frozen = false, asl
     }
     watchRatio()
 
+    const clipboard = new ClipboardSync({
+      readMac: readText,
+      writeMac: copyText,
+      toGuest: (text) => conn.clipboardPasteFrom(text),
+      focused: () => document.hasFocus(),
+    })
+    let clipboardReady = false
+    let clipboardWait: ReturnType<typeof setTimeout> | undefined
+    conn.addEventListener("clipboard", (e) => {
+      const text: unknown = (e as CustomEvent<{ text?: unknown } | null>).detail?.text
+      if (typeof text === "string") clipboard.fromGuest(text)
+    })
+    const onFocus = (): void => {
+      if (clipboardReady && connected && !closing) void clipboard.fromMac()
+    }
+    window.addEventListener("focus", onFocus)
+    // The server says what its clipboard takes just after the connection is up;
+    // the first paste waits for that, so it goes as UTF-8.
+    const startClipboard = (since: number): void => {
+      if (closing || !connected) return
+      if (conn._clipboardServerCapabilitiesFormats?.[CLIPBOARD_TEXT] !== true && performance.now() - since < CLIPBOARD_CAPS_MS) {
+        clipboardWait = setTimeout(() => startClipboard(since), 100)
+        return
+      }
+      clipboardReady = true
+      void clipboard.start()
+    }
+
     conn.addEventListener("connect", () => {
       connected = true
       setView("connected")
       // Keep QEMU checking for changes every 30 ms, not backing off (wake.ts).
       stopWake ??= keepRefreshing(conn._sock as WakeSock, () => connected && !closing && document.visibilityState === "visible")
+      startClipboard(performance.now())
       // A new connection may be a different guest state (a save loaded, a restart): ask again.
       if (resize !== null) {
         resize.reset()
@@ -246,6 +285,8 @@ export function Screen({ connection, resizable, onGuestSize, frozen = false, asl
       stopWake?.()
       resize?.cancel()
       clearTimeout(frameWait)
+      clearTimeout(clipboardWait)
+      window.removeEventListener("focus", onFocus)
       observer.disconnect()
       unlisten()
       media?.removeEventListener("change", onRatio)

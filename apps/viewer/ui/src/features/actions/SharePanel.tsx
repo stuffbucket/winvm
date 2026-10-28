@@ -3,6 +3,7 @@ import { useCallback, useEffect, useState } from "react"
 import { outputText, winvm } from "../../backend"
 import { Button } from "../../components/Button"
 import { Icon } from "../../components/Icon"
+import { OneLine } from "../../components/OneLine"
 import { t } from "../../i18n"
 import type { ClaudeClient, ClaudeClientId, Share } from "../../model"
 import { parseClaudeChange, parseClaudeStatus } from "../../model"
@@ -24,17 +25,6 @@ type Busy = { readonly id: ClaudeClientId; readonly verb: "install" | "uninstall
 const AFTER: Record<ClaudeClientId, string> = {
   "claude-code": "claude.newSession",
   "claude-desktop": "claude.restartDesktop",
-}
-
-/** A long value on one line: when it doesn't fit, the middle gives way and both ends stay. */
-function OneLine({ value }: { readonly value: string }): JSX.Element {
-  const keep = value.length > 16 ? 8 : 0
-  return (
-    <code className="mono oneline" title={value}>
-      <span className="oneline__head">{keep === 0 ? value : value.slice(0, -keep)}</span>
-      {keep > 0 && <span className="oneline__tail">{value.slice(-keep)}</span>}
-    </code>
-  )
 }
 
 function CopyRow({ label, copyLabel, value }: { readonly label: string; readonly copyLabel: string; readonly value: string }): JSX.Element {

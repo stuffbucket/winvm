@@ -252,6 +252,12 @@ export const revealGuestPath = (instance: string, path: string): Promise<void> =
 /** Puts text on the Mac's clipboard. */
 export const copyText = (text: string): Promise<void> => tauri().core.invoke<void>("copy_text", { text })
 
+/** The text on the Mac's clipboard; empty when it holds none (an image, files). */
+export const readText = (): Promise<string> => tauri().core.invoke<string>("read_text")
+
+/** The Mac user's home folder, to show paths under it as `~/…`. */
+export const homeDir = (): Promise<string> => tauri().core.invoke<string>("home_dir")
+
 /** One guest file or folder a drag carries out of the window. */
 export interface DragOutItem {
   readonly path: string
