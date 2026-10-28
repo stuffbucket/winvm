@@ -233,6 +233,17 @@ Node can't read Windows' hidden attribute, so the spawner runs `cmd /u /c dir
 /b /a:h` alongside `readdir`. `/u` makes cmd write UTF-16 to the pipe, so names
 outside the OEM code page survive.
 
+### Shared folder change notices
+
+`POST /fs/touch {root, paths}` moves each path's modification time (under
+`root`, a shared folder's drive such as `Z:\`) forward a millisecond and back,
+or its nearest existing folder's when the path is gone. WinFsp reports the
+write, so Windows' change notifications fire for a change made on the Mac
+side, which virtio-fs does not report. The control service calls it for each
+batch of changes it sees in the shared folder (`sharewatch.ts`); see
+[files.md](files.md#for-developers). At most 2000 paths a call; the host sends
+`.` for a bigger change. Agent version 9.
+
 ### Changing files
 
 `POST /fs/mkdir`, `/fs/rename`, `/fs/copy` and `/fs/delete` use Bun's fs

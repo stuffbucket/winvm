@@ -123,6 +123,68 @@ Only your Mac can reach these drives, and only while the machine runs:
 - `winvm files status --json` reports each share's folder, whether it is
   mounted, and whether it is mounted again when the guest comes back.
 
+## Shared folder
+
+A folder on your Mac can show up in Windows as a drive, live: what you change
+on one side is there on the other at once. In the app, open the details panel
+and use **Shared folder → Choose Folder…**; **Stop sharing** ends it. Windows
+shows the folder as **Mac (Z:)** in File Explorer.
+
+```sh
+winvm share set ~/Projects               # share this folder, as Z:
+winvm share set ~/Projects --letter Y    # as Y: instead
+winvm share set ~/Downloads --readonly   # Windows can read it but not change it
+winvm share clear                        # stop sharing
+winvm share status                       # what is shared; --json for scripts
+```
+
+Things to know:
+
+- **One folder per Windows machine.** Sharing another folder replaces the
+  first.
+- **A different folder takes effect the next time Windows starts.** Stop and
+  start it, or `winvm stow` then `winvm start`, which keeps everything you
+  had open. A new drive letter takes effect at once.
+- **When nothing is shared**, Windows still shows the drive, empty and
+  read-only.
+- **Windows machines made before this** need a one-time setup:
+  `winvm share install --restart`, or **Set Up in Windows…** in the app.
+  Windows restarts twice while it installs the driver. Machines made from an
+  image built with this already have it.
+- It needs the resizable display (`winvm display virtio-gpu`, the default for
+  new machines) and a winvm runtime with the shared folder (`share status`
+  says when yours has none).
+- About 850 MB/s writing and 1.3 GB/s reading a large file, measured in the
+  guest.
+
+### For developers
+
+The folder travels over **virtio-fs**: QEMU's `vhost-user-fs-pci` device and
+`virtiofsd` on the Mac, one daemon per QEMU process, started by winvm before
+every boot, load or recall. Its log is `<instance>/virtiofsd.log`
+(`WINVM_VIRTIOFSD_LOG=debug` for more). In Windows, **viofs** (virtio-win's
+driver and its `VirtioFsSvc` service) mounts it through **WinFsp**.
+`share.ts` has the devices and the daemon, `sharecmds.ts` the verbs, and
+[How the VM is configured](windows-vm-qemu.md#the-shared-folder-and-the-clipboard)
+the reasons.
+
+**File watchers.** virtio-fs does not tell Windows when a file changes on the
+Mac, so programs watching the folder (editors, dev servers, Explorer) would
+miss those changes. winvm's control service watches the folder on the Mac and
+asks the in-guest agent to touch each changed path in the drive
+(`sharewatch.ts`, the agent's `POST /fs/touch`), which makes Windows report
+it, as Lima does for Linux guests. Watchers see a *changed* event about a
+second later: a new Mac file arrives as "changed", not "created", and a
+deleted one as a change to its folder. This needs the in-guest agent and a
+writable share.
+
+## Clipboard
+
+Text you copy in Windows can be pasted on the Mac, and the other way round,
+while the winvm app's window is in front. Text only for now. It needs the
+resizable display, a runtime with the clipboard channel, and the SPICE agent
+in Windows, which the UTM guest tools install (every winvm image has them).
+
 ## Over the network
 
 The guest reaches the host at `10.0.2.2`. For large files or whole folders,
