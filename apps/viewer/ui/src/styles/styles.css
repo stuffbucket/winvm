@@ -225,6 +225,11 @@ html[data-os="macos"] .toolbar {
   image-rendering: pixelated;
 }
 
+/* Past the guest's limits the picture is scaled up; smooth it. */
+.screen__canvas--scaled canvas {
+  image-rendering: auto;
+}
+
 .screen__message {
   position: absolute;
   inset: 0;
