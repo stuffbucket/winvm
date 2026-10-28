@@ -212,6 +212,18 @@ switch (sub) {
   case "dir":
     process.exit(await agentcmds.dir(args))
   // eslint-disable-next-line no-fallthrough
+  case "mkdir":
+    process.exit(await agentcmds.mkdir(args))
+  // eslint-disable-next-line no-fallthrough
+  case "mv":
+    process.exit(await agentcmds.mv(args))
+  // eslint-disable-next-line no-fallthrough
+  case "cp":
+    process.exit(await agentcmds.cp(args))
+  // eslint-disable-next-line no-fallthrough
+  case "rm":
+    process.exit(await agentcmds.rm(args))
+  // eslint-disable-next-line no-fallthrough
   case "launch":
     process.exit(await agentcmds.launch(args))
   // eslint-disable-next-line no-fallthrough
