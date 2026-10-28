@@ -218,21 +218,50 @@ export function facts(s: Status): Row[] {
   return out
 }
 
+const SaveNotes = z.object({
+  title: z.string().nullable().default(null),
+  text: z.string().default(""),
+  tags: z.array(z.string()).default([]),
+  updatedAt: z.string().optional(),
+})
+
+export type SaveNotes = z.infer<typeof SaveNotes>
+
+// An older winvm gives only name, kind, createdAt, bytes, compatible and note; the rest default.
 const SaveEntry = z.object({
   name: z.string(),
-  // What the user calls it (`winvm config title=…`); null, or absent from an older winvm: its name.
+  // The title in its notes (`winvm saves note --title`); null, or absent from an older winvm: its name.
   title: z.string().nullable().default(null),
   kind: z.string(),
   createdAt: z.string(),
   bytes: z.number(),
   compatible: z.boolean().nullable(),
+  // The manifest's own note (`winvm save --note`), set when it was taken.
   note: z.string().optional(),
+  format: z.string().optional(),
+  // Absolute paths of its screenshot and thumbnail (`screen.png`, `thumb.png`); null for saves taken before them.
+  screenshot: z.string().nullable().default(null),
+  thumbnail: z.string().nullable().default(null),
+  screenSize: z.object({ width: z.number(), height: z.number() }).optional(),
+  notes: SaveNotes.nullable().default(null),
+  // When it can't load here, which parts differ: "base", "hardware", "display", "firmware", "qemu".
+  incompatible: z.array(z.string()).default([]),
 })
 
 export type SaveEntry = z.infer<typeof SaveEntry>
 
 /** `winvm saves --json`. */
 export const parseSaves = (stdout: string): SaveEntry[] | null => z.array(SaveEntry).safeParse(json(stdout)).data ?? null
+
+/** `winvm saves note … --json`: the note as it now stands, or null when it has none. */
+export function parseNote(stdout: string): SaveNotes | null | undefined {
+  if (stdout.trim() === "") return undefined
+  const raw = json(stdout)
+  // json() reads anything unparseable as null too; only a literal null means "no note".
+  if (raw === null && stdout.trim() !== "null") return undefined
+  const r = SaveNotes.nullable().safeParse(raw)
+  return r.success ? r.data : undefined
+}
 
 export interface Share {
   readonly url: string

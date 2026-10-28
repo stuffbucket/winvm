@@ -126,7 +126,7 @@ describe("pausing in the window", () => {
     expect(w!.phase).toBe("running")
 
     // Pause: while it runs, the poll (now fast) reads again; QEMU still says running to it.
-    let acted: Promise<void> | null = null
+    let acted: Promise<unknown> | null = null
     act(() => {
       acted = w!.act("pause")
     })

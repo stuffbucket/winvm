@@ -21,10 +21,9 @@ const built = [
   ...["loading", "starting", "running", "paused", "asleep", "stopped", "stowed", "missing"].map((s) => `state.${s}`),
   ...["start", "stop", "reboot", "pause", "resume", "sleep", "wake", "lock", "kill", "setup", "save", "load"].map((v) => `busy.${v}`),
   ...["start", "stop", "reboot", "pause", "resume", "sleep", "wake", "lock", "kill", "setup", "save", "load", "open", "put"].map((v) => `error.${v}`),
-  ...["stop", "reboot", "kill", "load"].flatMap((v) => [`confirm.${v}.title`, `confirm.${v}.body`]),
+  ...["stop", "reboot", "kill"].flatMap((v) => [`confirm.${v}.title`, `confirm.${v}.body`]),
   ...["stopped", "stowed", "missing"].map((p) => `overview.${p}.title`),
-  ...["action.files", "action.saves", "action.share", "action.shutDown", "action.restart", "action.forceStop"],
-  "saves.restore",
+  ...["action.files", "action.checkpoints", "action.share", "action.shutDown", "action.restart", "action.forceStop"],
   ...["connecting", "lost", "refused"].map((v) => `screen.${v}`),
   ...["step.disk", "step.machine", "step.windows"],
   ...["fact.image", "fact.cpus", "fact.memory", "fact.changes", "fact.saves"],
@@ -73,6 +72,11 @@ const built = [
   ...["invalid", "taken"].map((p) => `machine.name.${p}`),
   "place.desktop",
   ...["hintOff", "hintOn", "pending", "pendingStop"].map((k) => `folder.${k}`),
+  ...["manual", "auto", "baseline", "stow", "golden"].map((k) => `checkpoints.kind.${k}`),
+  ...["running", "starting", "paused", "stopped", "stowed", "missing"].map((s) => `checkpoints.nowState.${s}`),
+  ...["display", "base", "hardware", "firmware", "qemu", "other"].map((p) => `checkpoints.incompatible.${p}`),
+  ...["baseline", "golden"].map((k) => `checkpoints.keep.${k}`),
+  ...["bodyLive", "bodyStopped"].map((b) => `checkpoints.goBack.${b}`),
 ]
 
 describe("the en catalog", () => {

@@ -31,8 +31,8 @@ export interface Winvm {
   readonly last: Ran | null
   readonly cliPath: string | null
   select(name: string): void
-  /** Runs a verb on this instance; `arg` names the save for save and load. */
-  act(verb: Verb, arg?: string): Promise<void>
+  /** Runs a verb on this instance; `arg` names the save for save and load. Resolves with what it did (null: nothing to run). */
+  act(verb: Verb, arg?: string): Promise<Ran | null>
   openScreenSharing(): Promise<void>
   installCommand(): Promise<void>
   dismissFailure(): void
@@ -164,20 +164,23 @@ export function useWinvm(): Winvm {
   }, [live, pid, name, connection, polls])
 
   const act = useCallback(
-    async (verb: Verb, arg?: string): Promise<void> => {
-      if (name === null && verb !== "setup") return
+    async (verb: Verb, arg?: string): Promise<Ran | null> => {
+      if (name === null && verb !== "setup") return null
       setBusy(verb)
       setFailure(null)
+      let result: Ran
       try {
         const extra = arg === undefined || arg === "" ? [] : [arg]
         const out = verb === "setup" ? await winvm("setup") : await winvm(verb, "-i", name ?? "default", ...extra)
         const ran: Ran = { verb, code: out.code, output: outputText(out) }
+        result = ran
         setLast(ran)
         if (out.code !== 0) setFailure(ran)
         // Show what the verb did at once; reads already out describe the machine before it.
         guard.current.settle(out.code === 0 ? phaseAfter(verb) : null)
       } catch (e) {
         const ran: Ran = { verb, code: -1, output: errorText(e) }
+        result = ran
         setLast(ran)
         setFailure(ran)
         guard.current.settle(null)
@@ -187,6 +190,7 @@ export function useWinvm(): Winvm {
       }
       if (verb === "setup") await loadChecks()
       if (name !== null) await loadStatus(name).catch(() => undefined)
+      return result
     },
     [name, loadChecks, loadStatus],
   )

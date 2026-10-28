@@ -1,4 +1,5 @@
 mod agent;
+mod checkpoints;
 mod dragout;
 mod liveresize;
 mod usage;
@@ -218,7 +219,7 @@ async fn files_open(app: tauri::AppHandle, instance: String, title: Option<Strin
     let shown = title.clone().unwrap_or_else(|| instance.clone());
     let url = format!("files.html?instance={}&title={}", query_value(&instance), query_value(title.as_deref().unwrap_or("")));
     let mut builder = WebviewWindowBuilder::new(&app, &label, WebviewUrl::App(url.into()))
-        .title(format!("Files in Windows — {shown}"))
+        .title(format!("Files in Windows â {shown}"))
         .inner_size(920.0, 560.0)
         .min_inner_size(560.0, 340.0)
         .visible(false);
@@ -383,12 +384,14 @@ fn check_for_update(app: tauri::AppHandle, asked: bool) {
     });
 }
 
-/// The default menu, plus updates and the command line (app menu), terminal tabs (File) and the
+/// The default menu, plus updates and the command line (app menu), terminal tabs and Checkpoints… (File) and the
 /// command reference (Help). File's New Terminal Tab and Close act on the Terminal window's tabs when
 /// it is in front, so Cmd-T and Cmd-W are tab keys there and window keys elsewhere.
 fn menu(app: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
     let menu = Menu::default(app)?;
     let new_tab = MenuItem::with_id(app, "new-tab", "New Terminal Tab", true, Some("CmdOrCtrl+T"))?;
+    // The checkpoints view. A menu key works even while Windows' screen has the keyboard.
+    let checkpoints = MenuItem::with_id(app, "checkpoints", "Checkpoints…", true, Some("CmdOrCtrl+Shift+T"))?;
     let close = MenuItem::with_id(app, "close", "Close", true, Some("CmdOrCtrl+W"))?;
     let file = menu
         .items()?
@@ -399,11 +402,11 @@ fn menu(app: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
         for item in file.items()? {
             file.remove(&item)?;
         }
-        file.append_items(&[&new_tab, &PredefinedMenuItem::separator(app)?, &close])?;
+        file.append_items(&[&new_tab, &checkpoints, &PredefinedMenuItem::separator(app)?, &close])?;
     }
     // The Window menu's own Close Window (after a separator) would take Cmd-W back from File's Close.
-    // Rename Window… names the instance (main window) or the active tab (Terminal).
-    let rename = MenuItem::with_id(app, "rename-window", "Rename Window…", true, None::<&str>)?;
+    // Rename Windowâ¦ names the instance (main window) or the active tab (Terminal).
+    let rename = MenuItem::with_id(app, "rename-window", "Rename Windowâ¦", true, None::<&str>)?;
     if let Some(window) = menu.get(WINDOW_SUBMENU_ID).and_then(|i| i.as_submenu().cloned()) {
         if window.items()?.len() == 4 {
             window.remove_at(3)?;
@@ -411,8 +414,8 @@ fn menu(app: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
         }
         window.append_items(&[&PredefinedMenuItem::separator(app)?, &rename])?;
     }
-    let updates = MenuItem::with_id(app, "check-updates", "Check for Updates…", true, None::<&str>)?;
-    let install = MenuItem::with_id(app, "install-cli", "Install Command Line Tool…", true, None::<&str>)?;
+    let updates = MenuItem::with_id(app, "check-updates", "Check for Updatesâ¦", true, None::<&str>)?;
+    let install = MenuItem::with_id(app, "install-cli", "Install Command Line Toolâ¦", true, None::<&str>)?;
     let reference = MenuItem::with_id(app, "reference", "winvm Command Reference", true, Some("CmdOrCtrl+Shift+/"))?;
     if let Some(app_menu) = menu.items()?.first().and_then(|i| i.as_submenu().cloned()) {
         app_menu.insert_items(&[&install, &PredefinedMenuItem::separator(app)?], 2)?;
@@ -479,6 +482,13 @@ pub fn run() {
                         let _ = app.emit_to("main", "menu", "rename-window");
                     }
                 }
+            } else if id == "checkpoints" {
+                if let Some(main) = app.get_webview_window("main") {
+                    let _ = main.unminimize();
+                    let _ = main.show();
+                    let _ = main.set_focus();
+                }
+                let _ = app.emit_to("main", "menu", "checkpoints");
             } else if id == "check-updates" {
                 check_for_update(app.clone(), true);
             }
@@ -503,6 +513,9 @@ pub fn run() {
             terminal_open,
             terminal_take,
             agent::agent_fetch,
+            checkpoints::checkpoint_image,
+            checkpoints::settings_read,
+            checkpoints::settings_write,
             usage::instance_usage,
             files_open,
             copy_text,

@@ -1,7 +1,7 @@
 /**
  * The Windows machines menu and its flows, rendered in happy-dom: the Menu
  * wrapper over Base UI, the picker's states, New Machine…'s checks and
- * Delete…'s text and Keep saves. And the pure rules under them.
+ * Delete…'s text and Keep checkpoints. And the pure rules under them.
  */
 import { GlobalRegistrator } from "@happy-dom/global-registrator"
 import { afterAll, afterEach, describe, expect, it } from "bun:test"
@@ -206,7 +206,7 @@ describe("Delete…", () => {
     render(<DeleteMachineBody deleting={{ name: "polish-a", title: "Build box", live: true }} keepSaves={false} busy={false} onKeepSaves={(k) => kept.push(k)} />)
     const text = document.body.textContent ?? ""
     expect(text).toContain("deletes Build box's disk")
-    expect(text).toContain("Its saves go too, unless you keep them")
+    expect(text).toContain("Its checkpoints go too, unless you keep them")
     expect(text).toContain("turned off first")
     click(document.querySelector('input[name="keep-saves"]') as HTMLInputElement)
     expect(kept).toEqual([true])
