@@ -27,15 +27,17 @@
  *   GET  /procs                       [{pid,name,session}]
  *   POST /kill    {pid,tree?}
  *   POST /ui      {op,...}             UI Automation via winvm-ui.exe (assets/winvm-ui.cs, docs/gui.md)
+ *   GET  /term?shell=&cwd=&cols=&rows=  a terminal, as a WebSocket (conpty.exe, assets/conpty.cs)
  *   POST /exit                        stop the agent (reinstall)
  */
 import { spawn as nodeSpawn } from "node:child_process"
 import { appendFileSync, existsSync, mkdirSync, readFileSync, statSync } from "node:fs"
 import { dirname, join } from "node:path"
-import { timingSafeEqual } from "node:crypto"
+import { randomBytes, timingSafeEqual } from "node:crypto"
+import type { Server, ServerWebSocket, Socket, TCPSocketListener, WebSocketHandler } from "bun"
 
 /** Bumped whenever the protocol or behaviour changes; the host reinstalls on mismatch. */
-export const AGENT_VERSION = 4
+export const AGENT_VERSION = 5
 /** The port the agent listens on INSIDE the guest. The host side is per instance. */
 export const GUEST_PORT = 7801
 export const WINDOWS_DIR = "C:\\ProgramData\\winvm\\agent"
@@ -92,6 +94,8 @@ export interface AgentOptions {
   /** Peer addresses allowed to connect; null allows any (the token still applies). */
   readonly allowFrom: readonly string[] | null
   readonly log?: string
+  /** The terminal helper's command (tests); default conpty.exe beside the agent. */
+  readonly termHelper?: readonly string[]
 }
 
 const isWin = process.platform === "win32"
@@ -521,6 +525,320 @@ function ensureDir(dir: string): void {
 const json = (v: unknown, status = 200): Response => Response.json(v, { status })
 const fail = (status: number, error: string): Response => json({ error }, status)
 
+// --- terminals (GET /term) ----------------------------------------------------
+
+/**
+ * A terminal is a WebSocket on GET /term, carried in the guest by conpty.exe
+ * (assets/conpty.cs): a shell in a pseudo-console. Binary frames are terminal
+ * bytes both ways; text frames are JSON control messages (TermControl in,
+ * TermEvent out). Browsers cannot set headers on a WebSocket, so the token may
+ * also come as a subprotocol: the client offers `winvm-term,
+ * winvm-token.<token>` and the agent answers `winvm-term`.
+ *
+ * The HTTP server must not spawn (the spawner section above), so the spawner
+ * launches conpty.exe through runinsession.exe, and conpty.exe connects BACK to
+ * a loopback listener here, naming its session with a one-time key. It exits
+ * when that connection ends, and takes the shell's tree with it (a job object),
+ * so closing the WebSocket, or the agent dying, leaves nothing behind.
+ */
+export const TERM_PROTOCOL = "winvm-term"
+export const TERM_TOKEN_PREFIX = "winvm-token."
+export const TERM_SHELLS = ["pwsh", "powershell", "cmd"] as const
+export type TermShell = (typeof TERM_SHELLS)[number]
+
+export interface TermRequest {
+  readonly shell: TermShell
+  readonly cwd: string | null
+  readonly cols: number
+  readonly rows: number
+}
+/** Client to agent, as a text frame. */
+export type TermControl = { readonly type: "resize"; readonly cols: number; readonly rows: number }
+/** Agent to client, as a text frame. */
+export type TermEvent = { readonly type: "exit"; readonly code: number } | { readonly type: "error"; readonly message: string }
+
+/** What a Sec-WebSocket-Protocol header offers: our protocol, and a token. */
+export function termProtocols(header: string | null): { readonly offered: boolean; readonly token: string | null } {
+  const list = (header ?? "").split(",").map((s) => s.trim())
+  const tok = list.find((s) => s.startsWith(TERM_TOKEN_PREFIX))
+  return { offered: list.includes(TERM_PROTOCOL), token: tok === undefined ? null : tok.slice(TERM_TOKEN_PREFIX.length) }
+}
+
+const dim = (v: string | null, dflt: number): number | null => {
+  if (v === null || v === "") return dflt
+  const n = Number(v)
+  return Number.isInteger(n) && n >= 1 && n <= 1000 ? n : null
+}
+
+/** GET /term's query: `shell` (default pwsh), `cwd`, `cols` and `rows` (default 80x24). */
+export function parseTermQuery(q: URLSearchParams): TermRequest | { readonly error: string } {
+  const shell = q.get("shell") ?? "pwsh"
+  if (!(TERM_SHELLS as readonly string[]).includes(shell)) return { error: `shell must be one of ${TERM_SHELLS.join(", ")}` }
+  const cols = dim(q.get("cols"), 80)
+  const rows = dim(q.get("rows"), 24)
+  if (cols === null || rows === null) return { error: "cols and rows must be whole numbers from 1 to 1000" }
+  const cwd = q.get("cwd")
+  return { shell: shell as TermShell, cwd: cwd === null || cwd === "" ? null : cwd, cols, rows }
+}
+
+/** A client's text frame, or null for anything that is not a well-formed control message. */
+export function parseTermControl(text: string): TermControl | null {
+  try {
+    const m = JSON.parse(text) as Record<string, unknown>
+    const ok = (n: unknown): n is number => typeof n === "number" && Number.isInteger(n) && n >= 1 && n <= 1000
+    if (m["type"] === "resize" && ok(m["cols"]) && ok(m["rows"])) return { type: "resize", cols: m["cols"], rows: m["rows"] }
+  } catch {
+    // not JSON
+  }
+  return null
+}
+
+/** One frame on the conpty.exe connection: [type][uint32 LE length][payload]. */
+export function termFrame(type: string, payload: Uint8Array): Uint8Array {
+  const out = new Uint8Array(5 + payload.length)
+  out[0] = type.charCodeAt(0)
+  new DataView(out.buffer).setUint32(1, payload.length, true)
+  out.set(payload, 5)
+  return out
+}
+
+/** The resize frame's payload: cols, rows as uint16 LE. */
+export function resizePayload(cols: number, rows: number): Uint8Array {
+  const b = new Uint8Array(4)
+  const v = new DataView(b.buffer)
+  v.setUint16(0, cols, true)
+  v.setUint16(2, rows, true)
+  return b
+}
+
+/** Reassembles frames from a byte stream that arrives in arbitrary pieces. */
+export class FrameReader {
+  private buf = new Uint8Array(0)
+  push(chunk: Uint8Array): { readonly type: string; readonly payload: Uint8Array }[] {
+    const all = new Uint8Array(this.buf.length + chunk.length)
+    all.set(this.buf)
+    all.set(chunk, this.buf.length)
+    const frames: { type: string; payload: Uint8Array }[] = []
+    let off = 0
+    while (all.length - off >= 5) {
+      const n = new DataView(all.buffer, off + 1, 4).getUint32(0, true)
+      if (all.length - off - 5 < n) break
+      frames.push({ type: String.fromCharCode(all[off] ?? 0), payload: all.slice(off + 5, off + 5 + n) })
+      off += 5 + n
+    }
+    this.buf = all.slice(off)
+    return frames
+  }
+}
+
+/**
+ * The shell's command line in the guest. Images built before PowerShell 7 was
+ * part of them have no pwsh.exe: Windows PowerShell stands in, with a note
+ * for the terminal saying so.
+ */
+export function termShellArgv(
+  shell: TermShell,
+  o: { readonly win?: boolean; readonly exists?: (path: string) => boolean; readonly env?: Readonly<Record<string, string | undefined>> } = {},
+): { readonly argv: string[]; readonly note: string | null } {
+  if (!(o.win ?? isWin)) return { argv: [shell], note: null }
+  if (shell === "cmd") return { argv: ["C:\\Windows\\System32\\cmd.exe"], note: null }
+  const env = o.env ?? process.env
+  const dirs = [`${env["ProgramFiles"] ?? "C:\\Program Files"}\\PowerShell\\7`, ...(env["PATH"] ?? "").split(";")]
+  const pwsh = shell === "pwsh" ? dirs.filter((d) => d !== "").map((d) => `${d.replace(/\\$/, "")}\\pwsh.exe`).find(o.exists ?? existsSync) : undefined
+  if (pwsh !== undefined) return { argv: [pwsh, "-NoLogo"], note: null }
+  const note = shell === "pwsh" ? "PowerShell 7 is not installed in this guest; this is Windows PowerShell.\r\n" : null
+  return { argv: [POWERSHELL, "-NoLogo"], note }
+}
+
+interface TermSession {
+  readonly key: string
+  readonly req: TermRequest
+  ws: ServerWebSocket<TermSession> | null
+  helper: Socket<TermLink> | null
+  /** Frames for conpty.exe sent while it was still connecting, or held back by a full socket. */
+  readonly out: Uint8Array[]
+  pid: number | null
+  done: boolean
+  timer: ReturnType<typeof setTimeout> | null
+}
+interface TermLink {
+  session: TermSession | null
+  readonly frames: FrameReader
+}
+
+/** How long conpty.exe has to start and connect back. */
+const TERM_CONNECT_MS = 20_000
+
+class Terminals {
+  private listener: TCPSocketListener<TermLink> | null = null
+  private readonly sessions = new Map<string, TermSession>()
+  private readonly spawner: Spawner
+  private readonly helper: readonly string[] | undefined
+  private readonly log: (line: string) => void
+
+  constructor(spawner: Spawner, helper: readonly string[] | undefined, log: (line: string) => void) {
+    this.spawner = spawner
+    this.helper = helper
+    this.log = log
+  }
+
+  private port(): number {
+    this.listener ??= Bun.listen<TermLink>({
+      hostname: "127.0.0.1",
+      port: 0,
+      socket: {
+        open: (s) => {
+          s.data = { session: null, frames: new FrameReader() }
+        },
+        data: (s, chunk) => {
+          for (const f of s.data.frames.push(chunk)) this.fromHelper(s, f.type, f.payload)
+        },
+        drain: (s) => {
+          if (s.data.session !== null) this.flush(s.data.session)
+        },
+        close: (s) => {
+          const t = s.data.session
+          if (t !== null) this.finish(t, { type: "error", message: "the terminal helper exited unexpectedly" })
+        },
+        error: () => undefined,
+      },
+    })
+    return this.listener.port
+  }
+
+  /** Upgrade the request, or answer why not. */
+  upgrade(req: Request, srv: Server<TermSession>, u: URL): Response | undefined {
+    const r = parseTermQuery(u.searchParams)
+    if ("error" in r) return fail(400, r.error)
+    const t: TermSession = { key: randomBytes(16).toString("hex"), req: r, ws: null, helper: null, out: [], pid: null, done: false, timer: null }
+    const offered = termProtocols(req.headers.get("sec-websocket-protocol")).offered
+    if (!srv.upgrade(req, { data: t, ...(offered ? { headers: { "Sec-WebSocket-Protocol": TERM_PROTOCOL } } : {}) })) {
+      return fail(400, "expected a WebSocket upgrade")
+    }
+    return undefined
+  }
+
+  readonly websocket: WebSocketHandler<TermSession> = {
+    open: (ws) => {
+      const t = ws.data
+      t.ws = ws
+      this.sessions.set(t.key, t)
+      this.start(t).catch((error: unknown) => {
+        this.finish(t, { type: "error", message: error instanceof Error ? error.message : String(error) })
+      })
+    },
+    message: (ws, msg) => {
+      if (typeof msg === "string") {
+        const c = parseTermControl(msg)
+        if (c !== null) this.toHelper(ws.data, termFrame("r", resizePayload(c.cols, c.rows)))
+      } else {
+        this.toHelper(ws.data, termFrame("i", new Uint8Array(msg)))
+      }
+    },
+    close: (ws) => {
+      this.finish(ws.data, null)
+    },
+    drain: (ws) => {
+      ws.data.helper?.resume()
+    },
+  }
+
+  private async start(t: TermSession): Promise<void> {
+    const exe = this.helper ?? [join(import.meta.dir, "conpty.exe")]
+    if (this.helper === undefined && !existsSync(exe[0] ?? "")) throw new Error(`${exe[0] ?? "conpty.exe"} is missing: reinstall the agent (winvm agent install)`)
+    const sh = termShellArgv(t.req.shell)
+    const argv = [
+      ...exe,
+      ...["--port", String(this.port()), "--key", t.key, "--cols", String(t.req.cols), "--rows", String(t.req.rows)],
+      ...(t.req.cwd === null ? [] : ["--cwd", t.req.cwd]),
+      "--",
+      ...sh.argv,
+    ]
+    if (sh.note !== null) t.ws?.sendBinary(new TextEncoder().encode(sh.note))
+    t.timer = setTimeout(() => {
+      this.finish(t, { type: "error", message: "the terminal helper did not start" })
+    }, TERM_CONNECT_MS)
+    const { pid } = await this.spawner.call<{ pid: number }>({ op: "launch", req: { argv } })
+    t.pid = pid
+    this.log(`term ${t.req.shell} ${String(t.req.cols)}x${String(t.req.rows)}: helper pid ${String(pid)}`)
+    if (t.done) this.kill(t)
+  }
+
+  private fromHelper(s: Socket<TermLink>, type: string, payload: Uint8Array): void {
+    if (type === "H") {
+      const t = this.sessions.get(new TextDecoder().decode(payload))
+      if (t === undefined || t.helper !== null) {
+        s.end()
+        return
+      }
+      if (t.timer !== null) clearTimeout(t.timer)
+      t.helper = s
+      s.data.session = t
+      this.flush(t)
+      return
+    }
+    const t = s.data.session
+    if (t === null || t.done) return
+    if (type === "o") {
+      // Output faster than the client takes it: stop reading until it drains.
+      if (t.ws?.sendBinary(payload) === -1) s.pause()
+    } else if (type === "x") {
+      this.finish(t, { type: "exit", code: new DataView(payload.buffer, payload.byteOffset, 4).getInt32(0, true) })
+    } else if (type === "e") {
+      this.finish(t, { type: "error", message: new TextDecoder().decode(payload) })
+    }
+  }
+
+  private toHelper(t: TermSession, frame: Uint8Array): void {
+    if (t.done) return
+    t.out.push(frame)
+    this.flush(t)
+  }
+
+  /** Write what is queued; a partial write leaves the rest for `drain`. */
+  private flush(t: TermSession): void {
+    const s = t.helper
+    if (s === null) return
+    while (t.out.length > 0) {
+      const f = t.out[0] as Uint8Array
+      const n = s.write(f)
+      if (n < f.length) {
+        t.out[0] = f.subarray(Math.max(n, 0))
+        return
+      }
+      t.out.shift()
+    }
+  }
+
+  /** The end of a session, once: tell the client why (null: it left), and close both ends. */
+  private finish(t: TermSession, ev: TermEvent | null): void {
+    if (t.done) return
+    t.done = true
+    if (t.timer !== null) clearTimeout(t.timer)
+    this.sessions.delete(t.key)
+    this.log(`term ${ev === null ? "closed by the client" : ev.type === "exit" ? `exit ${String(ev.code)}` : `error: ${ev.message}`}`)
+    try {
+      if (ev !== null) t.ws?.send(JSON.stringify(ev))
+      t.ws?.close(ev === null || ev.type === "exit" ? 1000 : 1011)
+    } catch {
+      // already closed
+    }
+    // conpty.exe ends the shell's tree when its connection ends.
+    if (t.helper !== null) t.helper.end()
+    else this.kill(t)
+  }
+
+  /** A helper that has not connected: stop it by pid. */
+  private kill(t: TermSession): void {
+    if (t.pid !== null && t.helper === null) this.spawner.call({ op: "kill", pid: t.pid, tree: true }).catch(() => undefined)
+  }
+
+  stop(): void {
+    for (const t of [...this.sessions.values()]) this.finish(t, { type: "error", message: "the agent is stopping" })
+    this.listener?.stop(true)
+  }
+}
+
 export interface RunningAgent {
   readonly port: number
   stop(): void
@@ -553,23 +871,28 @@ export function startAgent(o: AgentOptions, onFatal: () => void = () => {}): Run
   const ownSession = async (): Promise<number | null> =>
     !isWin ? null : ((await spawner.call<Proc[]>({ op: "procs" })).find((p) => p.pid === process.pid)?.session ?? null)
 
-  let server: ReturnType<typeof Bun.serve>
+  const terms = new Terminals(spawner, o.termHelper, log)
+
+  let server: Server<TermSession>
   try {
-    server = Bun.serve({
+    server = Bun.serve<TermSession>({
       port: o.port,
       hostname: o.hostname,
       maxRequestBodySize: 8 * 1024 ** 3,
       idleTimeout: 0,
+      websocket: terms.websocket,
       async fetch(req, srv) {
         const from = srv.requestIP(req)?.address ?? null
         if (o.allowFrom !== null && (from === null || !o.allowFrom.includes(from.replace(/^::ffff:/, "")))) {
           return fail(403, "forbidden")
         }
+        const u = new URL(req.url)
         const want = token()
-        const got = (req.headers.get("authorization") ?? "").replace(/^Bearer /, "")
+        const bearer = (req.headers.get("authorization") ?? "").replace(/^Bearer /, "")
+        // A browser's WebSocket cannot send headers: a terminal may name the token as a subprotocol.
+        const got = bearer === "" && u.pathname === "/term" ? (termProtocols(req.headers.get("sec-websocket-protocol")).token ?? "") : bearer
         if (want === null || !sameSecret(got, want)) return fail(401, "unauthorized")
 
-        const u = new URL(req.url)
         try {
           switch (`${req.method} ${u.pathname}`) {
             case "GET /health": {
@@ -634,6 +957,8 @@ export function startAgent(o: AgentOptions, onFatal: () => void = () => {}): Run
               const status = { notfound: 404, timeout: 408, bad: 400, covered: 409, unavailable: 501 }[out.code] ?? 500
               return json({ error: out.error, code: out.code }, status)
             }
+            case "GET /term":
+              return terms.upgrade(req, srv, u)
             case "POST /exit":
               log("exit requested")
               setTimeout(() => process.exit(0), 50)
@@ -649,6 +974,7 @@ export function startAgent(o: AgentOptions, onFatal: () => void = () => {}): Run
   } catch (error) {
     stopping = true
     spawner.stop()
+    terms.stop()
     throw error
   }
   log(`listening ${o.hostname}:${String(server.port)} pid ${String(process.pid)} ${process.arch} bun ${Bun.version}`)
@@ -656,6 +982,7 @@ export function startAgent(o: AgentOptions, onFatal: () => void = () => {}): Run
     port: server.port ?? o.port,
     stop: () => {
       stopping = true
+      terms.stop()
       spawner.stop()
       void server.stop(true)
     },

@@ -15,6 +15,8 @@
 #                             compiled here from C# (docs/gui.md)
 #   <Dest>\runinsession.exe   start a program on the logged-on desktop from
 #                             session 0 (qemu-ga); compiled here from C#
+#   <Dest>\conpty.exe         one terminal session (/term): a shell in a
+#                             pseudo-console; compiled here from C#
 #   HKLM Run "winvm-agent"    starts the agent at every logon, IN the user's
 #                             session, so what it launches is on the desktop
 #   firewall rule             the agent's port, from 10.0.2.2 (slirp) only
@@ -34,7 +36,9 @@ $bun = Join-Path $Dest "bun.exe"
 $ris = Join-Path $Dest "runinsession.exe"
 
 # 1. Stop a running agent: it holds bun.exe open, and two would fight over the port.
-$running = @(Get-Process bun, winvm-ui -ErrorAction SilentlyContinue | Where-Object { $_.Path -eq $bun -or $_.Path -eq (Join-Path $Dest "winvm-ui.exe") })
+#    Its helpers too, which hold their exes open (a terminal's shell goes with conpty).
+$helpers = @("winvm-ui.exe", "conpty.exe") | ForEach-Object { Join-Path $Dest $_ }
+$running = @(Get-Process bun, winvm-ui, conpty -ErrorAction SilentlyContinue | Where-Object { $_.Path -eq $bun -or $helpers -contains $_.Path })
 if ($running.Count -gt 0) {
     $running | Stop-Process -Force
     $running | Wait-Process -Timeout 10 -ErrorAction SilentlyContinue
@@ -99,6 +103,20 @@ if (Test-Path $cs) {
         Add-Type -TypeDefinition (Get-Content $cs -Raw) -ReferencedAssemblies ($refs + "System.Core") -OutputAssembly $exe -OutputType ConsoleApplication
         Set-Content $stamp $sum
         Write-Output "winvm-ui: compiled"
+    }
+}
+
+# 4c. The terminal helper, the same way.
+$cs = Join-Path $Source "conpty.cs"
+if (Test-Path $cs) {
+    $exe = Join-Path $Dest "conpty.exe"
+    $sum = (Get-FileHash $cs -Algorithm SHA256).Hash
+    $stamp = Join-Path $Dest "conpty.sha256"
+    if (-not (Test-Path $exe) -or -not (Test-Path $stamp) -or (Get-Content $stamp -Raw).Trim() -ne $sum) {
+        Remove-Item $exe -Force -ErrorAction SilentlyContinue
+        Add-Type -TypeDefinition (Get-Content $cs -Raw) -OutputAssembly $exe -OutputType ConsoleApplication
+        Set-Content $stamp $sum
+        Write-Output "conpty: compiled"
     }
 }
 
