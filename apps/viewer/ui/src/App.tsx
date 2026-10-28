@@ -31,7 +31,7 @@ import { Popover } from "./components/Popover"
 import { cx } from "./components/cx"
 import { t } from "./i18n"
 import type { Phase, Share } from "./model"
-import { controls, displaySize, parseShare, shownTitle, startSteps, terminalBlocked } from "./model"
+import { controls, displaySize, isFrozen, isLivePhase, parseShare, shownTitle, startSteps, terminalBlocked } from "./model"
 import { SavesPanel } from "./features/actions/SavesPanel"
 import { SharePanel } from "./features/actions/SharePanel"
 import { useCopies } from "./features/files/useCopies"
@@ -48,6 +48,8 @@ import { DeleteMachineBody, type Deleting } from "./features/machines/DeleteMach
 import { createArgs, destroyArgs, isLive as machineLive, nextAfterDelete, parseImages } from "./features/machines/machines"
 import { type NewMachine, NewMachineDialog } from "./features/machines/NewMachineDialog"
 import { useUsage } from "./features/usage/useUsage"
+import { DEFAULT_SETTINGS, loadSettings, savePauseOverlay } from "./features/settings/settings"
+import { pauseMenu } from "./features/winvm/pauseMenu"
 
 type Confirm = { kind: "stop" | "reboot" | "kill" } | { kind: "load"; save: string }
 
@@ -70,8 +72,6 @@ const PANEL_LABEL: Record<PanelId, string> = {
   share: "action.share",
 }
 
-const isLive = (p: Phase | null): boolean => p === "running" || p === "starting" || p === "paused"
-
 export function App(): JSX.Element {
   const w = useWinvm()
   const [actualSize, setActualSize] = useState(false)
@@ -89,7 +89,10 @@ export function App(): JSX.Element {
   useEffect(() => showWindow(), [])
 
   const phase = w.phase
-  const live = isLive(phase)
+  const live = isLivePhase(phase)
+  // Paused or asleep: no input, no resize, no agent calls until it runs again.
+  const frozen = isFrozen(phase)
+  const held = phase === "paused" || phase === "asleep" ? phase : null
   const guestReady = phase === "running" && w.busy === null
   const hostReady = w.checks === null || w.checks.ready
   const c = controls(phase ?? "missing", w.busy !== null || phase === null || !hostReady)
@@ -102,7 +105,8 @@ export function App(): JSX.Element {
   // device pixel, so there is nothing to fit. ramfb stays a fixed 800x600.
   const resizable = display.device === "virtio-gpu"
   const steps = w.busy === "start" && !showScreen ? startSteps(startedFrom === "missing", w.status) : null
-  const activity = w.busy !== null ? t(`busy.${w.busy}`) : phase === "starting" ? t("state.starting") : null
+  const activity =
+    w.busy !== null ? t(`busy.${w.busy}`) : phase === "starting" ? t("state.starting") : held !== null ? t(`state.${held}`) : null
 
   // The guest switches to the viewer's size through its agent, called
   // directly (a few ms, not a CLI start per size), once it is up; a size asked
@@ -125,13 +129,41 @@ export function App(): JSX.Element {
     const p = pendingSize.current
     if (guestReady && p !== null) resizeGuest(p.size, p.scale).catch((error: unknown) => console.warn("resizing the guest failed", error))
   }, [guestReady, resizeGuest])
-  const metered = phase === "running" || phase === "starting" ? (w.status?.pid ?? null) : null
+  // `ps` keeps reading while held (the history stays); the agent only while Windows is up.
+  const metered = live ? (w.status?.pid ?? null) : null
   const usage = useUsage(metered, guestReady ? w.name : null, w.status?.cpus ?? null, w.status?.memoryMiB ?? null)
   const usageContext: UsageContext = { cpus: w.status?.cpus ?? null, overlayBytes: w.status?.overlayBytes ?? null }
 
   const run = (verb: Verb, arg?: string): void => {
     if (verb === "start") setStartedFrom(phase)
     void w.act(verb, arg)
+  }
+
+  // The person's own settings (`winvm settings`): whether a held screen is dimmed.
+  const [pauseOverlay, setPauseOverlay] = useState(DEFAULT_SETTINGS.pauseOverlay)
+  useEffect(() => {
+    let gone = false
+    void loadSettings(winvm).then((s) => {
+      if (!gone) setPauseOverlay(s.pauseOverlay)
+    })
+    return () => {
+      gone = true
+    }
+  }, [])
+  const changePauseOverlay = (on: boolean): void => {
+    setPauseOverlay(on)
+    void savePauseOverlay(winvm, on).then((why) => {
+      if (why !== null) setNotice({ tone: "error", title: t("settings.failed"), detail: why })
+    })
+  }
+  const openPauseMenu = (): void => {
+    popupActions(
+      pauseMenu({ t, overlay: pauseOverlay, controls: c, setOverlay: changePauseOverlay, sleep: () => run("sleep"), lock: () => run("lock") }),
+    ).catch(() => undefined)
+  }
+  // A key in an asleep machine's screen wakes it, once.
+  const wake = (): void => {
+    if (w.busy === null && phase === "asleep") run("wake")
   }
 
   // Files dropped on the main window go to the Desktop in Windows; the Files window takes them anywhere.
@@ -401,7 +433,8 @@ export function App(): JSX.Element {
         onShutDown={() => setConfirm({ kind: "stop" })}
         onRestart={() => setConfirm({ kind: "reboot" })}
         onPause={() => run("pause")}
-        onResume={() => run("resume")}
+        onResume={() => run(phase === "asleep" ? "wake" : "resume")}
+        onPauseMenu={openPauseMenu}
         onOpen={togglePanel}
         onTerminal={() => terminal(null)}
         onTerminalMenu={terminalMenu}
@@ -508,7 +541,16 @@ export function App(): JSX.Element {
               style={frame}
             >
               {showScreen && w.connection !== null ? (
-                <Screen connection={w.connection} resizable={resizable} onGuestSize={resizeGuest} />
+                <Screen
+                  connection={w.connection}
+                  resizable={resizable}
+                  onGuestSize={resizeGuest}
+                  frozen={frozen}
+                  asleep={phase === "asleep"}
+                  waking={w.busy === "wake"}
+                  onWake={wake}
+                  overlay={pauseOverlay}
+                />
               ) : (
                 <Overview phase={phase} status={w.status} steps={steps} canStart={c.start} onStart={() => run("start")} />
               )}
@@ -529,6 +571,7 @@ export function App(): JSX.Element {
             last={w.last}
             usage={usage}
             usageContext={usageContext}
+            held={held}
             canForceStop={live && w.busy === null}
             onForceStop={() => setConfirm({ kind: "kill" })}
           />

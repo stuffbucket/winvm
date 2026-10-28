@@ -18,9 +18,9 @@ const catalog = new Set(Object.keys(en))
 
 // Keys built at run time, from the values they are built from.
 const built = [
-  ...["loading", "starting", "running", "paused", "stopped", "stowed", "missing"].map((s) => `state.${s}`),
-  ...["start", "stop", "reboot", "pause", "resume", "kill", "setup", "save", "load"].map((v) => `busy.${v}`),
-  ...["start", "stop", "reboot", "pause", "resume", "kill", "setup", "save", "load", "open", "put"].map((v) => `error.${v}`),
+  ...["loading", "starting", "running", "paused", "asleep", "stopped", "stowed", "missing"].map((s) => `state.${s}`),
+  ...["start", "stop", "reboot", "pause", "resume", "sleep", "wake", "lock", "kill", "setup", "save", "load"].map((v) => `busy.${v}`),
+  ...["start", "stop", "reboot", "pause", "resume", "sleep", "wake", "lock", "kill", "setup", "save", "load", "open", "put"].map((v) => `error.${v}`),
   ...["stop", "reboot", "kill", "load"].flatMap((v) => [`confirm.${v}.title`, `confirm.${v}.body`]),
   ...["stopped", "stowed", "missing"].map((p) => `overview.${p}.title`),
   ...["action.files", "action.saves", "action.share", "action.shutDown", "action.restart", "action.forceStop"],
@@ -66,9 +66,10 @@ const built = [
   ].map((k) => `files.kind.${k}`),
   "files.copiedHere",
   "files.moved",
-  ...["off", "starting", "paused", "busy"].map((v) => `terminal.why.${v}`),
+  ...["off", "starting", "paused", "asleep", "busy"].map((v) => `terminal.why.${v}`),
   ...["pwsh", "powershell", "cmd"].map((s) => `shell.${s}`),
-  ...["running", "starting", "paused", "stopped", "stowed", "missing"].map((s) => `machine.state.${s}`),
+  ...["running", "starting", "paused", "asleep", "stopped", "stowed", "missing"].map((s) => `machine.state.${s}`),
+  ...["paused", "asleep"].map((s) => `usage.${s}`),
   ...["invalid", "taken"].map((p) => `machine.name.${p}`),
   "place.desktop",
 ]

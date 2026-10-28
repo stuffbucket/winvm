@@ -4,8 +4,11 @@ import { useEffect, useLayoutEffect, useRef, useState } from "react"
 import { type Size, drawSize, guestSizeFor, sameSize, scaleFor } from "@winvm/displayfit"
 
 import { onLiveResize, trace } from "../../backend"
+import { Icon } from "../../components/Icon"
+import { cx } from "../../components/cx"
 import { t } from "../../i18n"
 import type { Connection } from "../../model"
+import { HeldSizes, keyVerdict } from "./held"
 import { LiveResize, type ResizePhase } from "./resize"
 
 interface ScreenProps {
@@ -18,6 +21,18 @@ interface ScreenProps {
    */
   readonly resizable: boolean
   readonly onGuestSize?: (size: Size, scale: number) => Promise<void>
+  /**
+   * The machine is held (paused or asleep): the screen takes no input (it would
+   * queue in QEMU and land on resume), and sizes wait until it runs (held.ts).
+   */
+  readonly frozen?: boolean
+  /** Asleep: the first key pressed in the screen wakes it (`onWake`), and isn't typed. */
+  readonly asleep?: boolean
+  /** A wake is under way: keys are dropped until the machine runs. */
+  readonly waking?: boolean
+  onWake?(): void
+  /** Dim the held screen and mark it with a glyph (the "Show Pause Overlay" setting). */
+  readonly overlay?: boolean
 }
 
 type View = "connecting" | "connected" | "lost" | "refused"
@@ -37,7 +52,7 @@ const dpr = (): number => window.devicePixelRatio || 1
  * new size), out of sight, and the copy goes once the guest's picture is drawn
  * in full at the size asked for, one guest pixel per device pixel.
  */
-export function Screen({ connection, resizable, onGuestSize }: ScreenProps): JSX.Element {
+export function Screen({ connection, resizable, onGuestSize, frozen = false, asleep = false, waking = false, onWake, overlay = true }: ScreenProps): JSX.Element {
   const area = useRef<HTMLDivElement | null>(null)
   const target = useRef<HTMLDivElement | null>(null)
   const still = useRef<HTMLCanvasElement | null>(null)
@@ -53,6 +68,13 @@ export function Screen({ connection, resizable, onGuestSize }: ScreenProps): JSX
   const { websocketPort, password } = connection
   const guestSize = useRef(onGuestSize)
   guestSize.current = onGuestSize
+  const heldSizes = useRef(new HeldSizes(frozen))
+  const live = useRef<LiveResize | null>(null)
+  const keys = useRef({ frozen, asleep, waking, onWake })
+  keys.current.frozen = frozen
+  keys.current.asleep = asleep
+  keys.current.waking = waking
+  keys.current.onWake = onWake
 
   useEffect(() => {
     const el = target.current
@@ -73,6 +95,7 @@ export function Screen({ connection, resizable, onGuestSize }: ScreenProps): JSX
     // QEMU's immediate "forwarded" reply as done, dropping later sizes.
     conn.resizeSession = false
     conn.focusOnClick = true
+    conn.viewOnly = keys.current.frozen
 
     const measure = (): Size => {
       const r = outer.getBoundingClientRect()
@@ -94,6 +117,8 @@ export function Screen({ connection, resizable, onGuestSize }: ScreenProps): JSX
       ? new LiveResize({
           request: async (size) => {
             if (!connected || closing) return
+            // Held: kept, and asked for when the machine runs again.
+            if (!heldSizes.current.offer(size)) return
             RFB.messages.setDesktopSize(conn._sock, size.width, size.height, conn._screenID ?? 0, conn._screenFlags ?? 0)
             try {
               await guestSize.current?.(size, scaleFor(dpr()))
@@ -117,6 +142,19 @@ export function Screen({ connection, resizable, onGuestSize }: ScreenProps): JSX
           },
         })
       : null
+    live.current = resize
+
+    // Asleep: the first key in the screen wakes the machine and goes no further
+    // (capture, so it is caught before noVNC's own handler takes it).
+    const onKey = (e: KeyboardEvent): void => {
+      const k = keys.current
+      const verdict = keyVerdict(k, e)
+      if (verdict === "pass") return
+      e.preventDefault()
+      e.stopPropagation()
+      if (verdict === "wake") k.onWake?.()
+    }
+    outer.addEventListener("keydown", onKey, true)
 
     // Each update ends in a flip. After a new size, the first is the old
     // picture redrawn at it; the second is the guest's own.
@@ -197,6 +235,8 @@ export function Screen({ connection, resizable, onGuestSize }: ScreenProps): JSX
     })
     return () => {
       closing = true
+      live.current = null
+      outer.removeEventListener("keydown", onKey, true)
       resize?.cancel()
       clearTimeout(frameWait)
       observer.disconnect()
@@ -209,6 +249,21 @@ export function Screen({ connection, resizable, onGuestSize }: ScreenProps): JSX
       setPhase("settled")
     }
   }, [websocketPort, password, attempt, resizable])
+
+  // Held: no input reaches QEMU. Running again: ask for the size the window
+  // wanted meanwhile, if it wanted one.
+  useEffect(() => {
+    const conn = rfb.current
+    if (conn !== null) conn.viewOnly = frozen
+    const kept = heldSizes.current.setFrozen(frozen)
+    const resize = live.current
+    const outer = area.current
+    if (kept === null || resize === null || outer === null) return
+    const r = outer.getBoundingClientRect()
+    resize.reset()
+    resize.want(guestSizeFor({ width: r.width, height: r.height }, dpr()))
+    resize.flush()
+  }, [frozen])
 
   // One guest pixel per device pixel once the guest is the size this view
   // wants: the box noVNC scales into is the framebuffer's size in CSS pixels,
@@ -238,6 +293,12 @@ export function Screen({ connection, resizable, onGuestSize }: ScreenProps): JSX
         style={exact}
       />
       <canvas ref={still} className="screen__still" hidden={!holding} aria-hidden="true" />
+      <div className={cx("screen__held", frozen && overlay && "screen__held--on")} aria-hidden="true">
+        <div className="screen__held-mark">
+          <Icon name={asleep ? "moon" : "pause"} />
+        </div>
+        {asleep && <p className="screen__held-hint">{t("screen.asleepHint")}</p>}
+      </div>
       {message !== null && (
         <div className="screen__message" role="status">
           <p>{message}</p>

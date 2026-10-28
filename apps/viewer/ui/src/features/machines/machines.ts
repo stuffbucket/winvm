@@ -4,7 +4,7 @@
  */
 import { z } from "zod"
 
-import type { Phase } from "../../model"
+import { isLivePhase, type Phase } from "../../model"
 
 /** A new machine's name: the CLI's rule (packages/core/src/args.ts isValidInstanceName). */
 const NAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/
@@ -20,11 +20,11 @@ export function nameProblem(name: string, existing: readonly string[]): NameProb
   return null
 }
 
-/** The picker's word for a machine's state: Running, Starting, Paused, Stopped, Saved (a stowed machine), Not set up. */
+/** The picker's word for a machine's state: Running, Starting, Paused, Asleep, Stopped, Saved (a stowed machine), Not set up. */
 export const stateKey = (p: Phase): string => `machine.state.${p}`
 
 /** Live machines must be off before they can go. */
-export const isLive = (p: Phase | null | undefined): boolean => p === "running" || p === "starting" || p === "paused"
+export const isLive = (p: Phase | null | undefined): boolean => isLivePhase(p)
 
 /** `winvm create`: a new machine from an image, not started. */
 export const createArgs = (name: string, image: string | null): string[] => ["create", "-i", name.trim(), ...(image === null ? [] : ["--image", image])]
