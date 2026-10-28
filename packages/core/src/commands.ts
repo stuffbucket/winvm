@@ -1039,8 +1039,9 @@ export function configCmd(args: Args): number {
   const set = readOverrides(name)
   console.log(`instance "${name}":`)
   for (const k of CONFIG_KEYS) {
-    const note = Object.hasOwn(set, k) ? `(default ${String(DEFAULTS[k])})` : "(default)"
-    console.log(`  ${k.padEnd(22)} ${String(eff[k]).padEnd(6)} ${note}`)
+    const show = (v: unknown): string => (typeof v === "string" ? JSON.stringify(v) : String(v))
+    const note = Object.hasOwn(set, k) ? `(default ${show(DEFAULTS[k])})` : "(default)"
+    console.log(`  ${k.padEnd(22)} ${show(eff[k]).padEnd(6)} ${note}`)
   }
   return 0
 }
@@ -1113,7 +1114,7 @@ export const USAGE =
   "  destroy [-i name] [--keep-saves]  remove the instance and its saves\n" +
   "  watch   [-i name]             run the idle watcher in the foreground (start runs it in the background)\n" +
   "          [--stop | --status]   end it / print its state\n" +
-  "  config  [-i name] [key=value ...]  autosave/stow/watch settings; bare prints them\n" +
+  "  config  [-i name] [key=value ...]  autosave/stow/watch settings and the app's title; bare prints them\n" +
   "  run     <job.yml>... [-i name] [--golden NAME] [--keep] [--junit f] [--json f] [--artifacts dir]\n" +
   "                                run CI jobs, each from a golden save (instance default \"ci\")\n" +
   "          [--pool N] [--pool-prefix ci]   on N instances at once (ci-1 … ci-N)\n" +
