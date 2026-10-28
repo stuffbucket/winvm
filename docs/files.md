@@ -34,6 +34,95 @@ the in-guest agent. With `--json` they print `{"path": …}` (`rm`:
 
 The winvm app has a file browser for this: the Files button in its toolbar.
 
+## Open Windows' drives in Finder
+
+Windows' C:\ drive and your Windows home folder can show up in Finder like any
+other folder, so you can open, drag and save files there with Mac apps.
+
+In the winvm app, Option-click (or right-click) the Files button and choose
+**Open in Finder: Home** or **Open in Finder: C:\\**. In a Files window, the
+menus have **Open in Finder** for the folder you're in. From a terminal:
+
+```sh
+winvm files open                 # your Windows home folder, in Finder
+winvm files open c               # all of C:\
+winvm files open --path 'C:\work\logs'   # that folder
+winvm files status               # what's mounted, and where
+winvm files unmount              # take them out of Finder
+```
+
+The first time takes several seconds more: winvm sets Windows up to share its
+files with your Mac (below). After that, opening is quick.
+
+The drives appear in `~/winvm/<machine>/Home` and `~/winvm/<machine>/C`. They
+don't show on the desktop or in Finder's sidebar; drag the folder to the
+sidebar if you want it there.
+
+**They come and go with Windows.** When the machine stops, is stowed, paused,
+restarted, or goes back to a save, its drives are taken out of Finder first,
+and put back once Windows is running again. `winvm files unmount` takes them
+out for good, until you open them again. An automatic save keeps them.
+
+**The first time an app opens them, macOS asks** whether it may use files on
+a network volume. That's these drives: allow it, once per app.
+
+**Finder leaves `.DS_Store` files** in the Windows folders it opens, as it does
+on any network drive. They're harmless. To stop it on every network drive:
+`defaults write com.apple.desktopservices DSDontWriteNetworkStores -bool true`,
+then log out and in.
+
+### Security
+
+Only your Mac can reach these drives, and only while the machine runs:
+
+- Windows gets an account, `winvm-share`, with a random password of 24 bytes
+  kept in `<instance>/smb.json` on the Mac (readable only by you). It is an
+  administrator, so it can reach every file, but it can't sign in anywhere
+  but over the network: interactive, Remote Desktop, batch and service logons
+  are all denied before it's ever enabled, so no profile is ever made for it.
+  It doesn't appear on the sign-in screen.
+- Windows' file sharing accepts connections from `10.0.2.2` only (the
+  firewall rule `winvm-smb`), which is the address the Mac's connections come
+  from. Nothing outside the Mac can reach the guest at all.
+- On the Mac, the connection is to `127.0.0.1` only. The password is never on
+  a command line, so `ps` doesn't show it, and it isn't put in your keychain.
+- SMB signing stays on; encryption stays off (the traffic never leaves the Mac).
+
+### For developers
+
+- **Guest setup** is the agent route `POST /smb/setup` (guestagent.ts
+  `smbSetupScript`), with the password in the body. It is idempotent: it
+  creates or resets `winvm-share`, denies its logons with `secedit`, adds it
+  to Administrators, hides it (`SpecialAccounts\UserList`), sets the Server
+  service to Automatic, shares `C` (`C:\`) and `Home` (`C:\Users\Administrator`)
+  with full access for that account and caching off, and adds the firewall
+  rule. winvm runs it the first time, and again whenever a mount is refused
+  or the file server never answers: a machine made from another machine's
+  save holds that machine's password, and one loaded from before the setup has
+  no account at all. With UAC on, it also sets `LocalAccountTokenFilterPolicy`,
+  or the account would reach the profile with a filtered token; winvm images
+  run with UAC off.
+- **The forward**: a host port to the guest's 445, added at runtime like the
+  agent's (see [the agent](agent.md#connection)), kept in `smb.json`.
+- **Mounting** uses macOS's NetFS (`NetFSMountURLSync`, through `bun:ffi`, in
+  a child process so a stuck mount can be abandoned): a soft, unbrowsable
+  mount exactly on the folder, with no UI and no keychain. It retries every
+  half second while the file server starts, up to 30 s after a boot.
+- **Unmounting** first checks the mount table (`mount`) that the folder is an
+  smbfs mount of this instance's share from `127.0.0.1:<port>`, mounted on
+  exactly that folder; anything else is left alone. Then `umount`, and if it's
+  still there `diskutil unmount force`. (`diskutil unmount force` on a folder
+  that isn't a mount point unmounts the volume holding it: for a folder in your
+  home, the Mac's Data volume.) winvm never reads through the mount to check
+  it: macOS stops it until allowed, and a dead server would hang it.
+- **A guest that died** (QEMU killed or crashed) leaves its mounts behind. The
+  idle watcher, the next winvm command, and `winvm diagnose` unmount them.
+  With the server gone, macOS takes about a minute to let go of a mount, and
+  nothing can hurry it; commands that only look (`status`) leave that to a
+  background `winvm files _clean`.
+- `winvm files status --json` reports each share's folder, whether it is
+  mounted, and whether it is mounted again when the guest comes back.
+
 ## Over the network
 
 The guest reaches the host at `10.0.2.2`. For large files or whole folders,
