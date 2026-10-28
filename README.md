@@ -1,484 +1,101 @@
 # winvm
 
-A scriptable Windows 11 ARM64 guest on a Mac (Apple Silicon), on plain QEMU +
-Hypervisor.framework. Driven entirely from the shell: build a golden image
-once, then boot thin copy-on-write instances, run commands in them over the
-QEMU guest agent, snapshot them, and rewind a running guest in ~10-20 seconds
-(no reboot; ~35 s from stopped).
+winvm runs Windows 11 ARM64 virtual machines on an Apple Silicon Mac. You use
+it from a Mac app or from the `winvm` command. It uses QEMU with Apple's
+Hypervisor.framework.
 
-Built for reproducing Windows-only bugs locally (e.g. testing a
-[Maximal](https://github.com/stuffbucket/maximal) build) instead of
-pushing and waiting on CI.
+It exists to reproduce Windows-only bugs on your own Mac, for example in a
+[Maximal](https://github.com/stuffbucket/maximal) build, instead of pushing
+and waiting on CI. You build a Windows image once, then start disposable
+copies of it, run commands in them, and save and restore them in seconds.
 
-The reasoning behind every device and answer-file choice is in
-[`docs/windows-vm-qemu.md`](docs/windows-vm-qemu.md). Read it before changing
-anything in `packages/core/src/qemu.ts` or `packages/core/assets/`.
+## Requirements
 
-## Getting started
+- macOS 15 or later on Apple Silicon. Intel Macs are not supported.
+- About 15 GB of disk for the Windows image, plus more for each instance.
+- A Windows 11 ARM64 ISO. See [Setting up](docs/setup.md#the-windows-iso).
+
+## Install
+
+**The app.** Download `winvm-v<version>-darwin-arm64.dmg` from
+[Releases](https://github.com/stuffbucket/winvm/releases) and drag winvm to
+Applications. The app includes QEMU. To use `winvm` in a terminal, choose
+**winvm → Install Command Line Tool…**, which links `~/.local/bin/winvm` to
+the app's copy. **Help → winvm Command Reference** lists the commands.
+
+**From source.** Install [mise](https://mise.jdx.dev), then in this
+repository:
 
 ```sh
-mise install            # Bun 1.4.3 (.bun-version) and pnpm 12.3.4; checks QEMU and the rest
-pnpm install            # through the package proxy in .npmrc
-winvm doctor            # check the host; changes nothing
-winvm start             # boot the default instance
+mise install     # Bun and pnpm at the pinned versions
+pnpm install
+winvm doctor     # checks the host; changes nothing
+winvm setup      # downloads the pinned QEMU runtime and the guest tools
 ```
 
-`winvm` is on `PATH` inside the repository through mise (`mise.toml` adds
-`node_modules/.bin`); without mise activation, `pnpm winvm <verb>` does the
-same. The repository is a pnpm + Turborepo workspace: the library is
-`packages/core` (`src/`, `assets/`, `firmware/`, `web/`, `tests/`) and the
-command is `apps/cli`. `pnpm check` typechecks and tests everything.
+Inside the repository, mise puts `winvm` on `PATH`. Elsewhere, run
+`mise exec -C <repo> -- winvm <command>`.
 
-## Prerequisites
+## First run
 
-| | |
+```sh
+winvm build --iso ~/vm/Win11_25H2_English_Arm64.iso   # once, about 20 minutes
+winvm start                                           # about 35 seconds to the desktop
+winvm open                                            # see the screen
+```
+
+`build` installs Windows unattended into a base image. Every instance is a
+copy-on-write overlay on that image. The guest runs as the built-in
+Administrator with UAC off, so use it only for testing.
+
+In the app, the Start button does the same as `winvm start`. The image has to
+be built from the command line first.
+
+## Common commands
+
+| Command | What it does |
 |---|---|
-| Host | macOS 15 or later on Apple Silicon (uses `-accel hvf`, `hdiutil`, `newfs_msdos`); no Intel Macs |
-| [mise](https://mise.jdx.dev) | pins Bun 1.4.3 (`.bun-version`) and pnpm 12.3.4 (`mise.toml`) |
-| Runtime: QEMU, `swtpm`, `zstd` | Pinned in `packages/core/runtime.json` and built from source in [stuffbucket/winvm-runtime](https://github.com/stuffbucket/winvm-runtime). `mise install` and `winvm setup` fetch and verify it into `~/.local/share/winvm/runtime/<version>/`. winvm never runs a QEMU, swtpm or zstd from `PATH`; `WINVM_RUNTIME=<dir>` points it at another build for experiments. Homebrew is not needed. |
-| UEFI firmware | vendored in `packages/core/firmware/` (gzipped EDK2), expanded into the state dir on first use |
-| UTM guest tools ISO | downloaded by `setup`/`build` from getutm.app (~121 MB), pinned by SHA-256 |
-| Windows 11 ARM64 ISO | you supply it — see below |
-| Disk | ~15 GB for the base image, plus a few hundred MB to a few GB per instance |
-
-UTM.app itself is **not** needed — only its guest-tools ISO (virtio drivers +
-`qemu-ga`).
-
-```sh
-mise install          # Bun 1.4.3 + pnpm
-pnpm install          # through the package proxy in .npmrc
-winvm doctor          # check the host; changes nothing
-```
-
-`pnpm check` typechecks and tests the workspace (the tests replay recorded
-failure traces through `winvm diagnose`; no VM needed).
-
-## The ISO
-
-- **Windows 11, ARM64, multi-edition retail ISO, English (United States).**
-  Download it from <https://www.microsoft.com/en-us/software-download/windows11arm64>
-  (no sign-in; the generated link expires after 24 h). Microsoft names it like
-  `Win11_25H2_English_Arm64_v2.iso`; the tool was developed against 25H2.
-- The answer file installs **Windows 11 Pro** (selected by image name, using
-  Microsoft's generic, non-activating Pro key) with `en-US` locale. The guest
-  stays unactivated, which is fine for a disposable test fixture.
-- An x64 ISO is rejected up front (no `\efi\boot\bootaa64.efi`).
-
-Where to put it — any one of:
-
-1. `winvm build --iso /path/to/Win11_..._Arm64.iso`
-2. `export WINVM_ISO=/path/to/Win11_..._Arm64.iso`
-3. Drop it in `~/vm/` or `~/isos/` (or one subfolder below) with `arm64` in the
-   file name; `build` finds it if it is the only match.
-
-Avoid `~/Downloads` and `~/Desktop`: they are TCC-protected, so reading from
-them pops a macOS permission dialog. The ISO is **symlinked**, never copied, to
-`~/.local/state/winvm/media/windows-arm64.iso`; later builds reuse that link.
-
-## Using it
-
-All state lives in `~/.local/state/winvm` (`WINVM_HOME` overrides), never in
-this repo. Inside the repository `winvm` is on `PATH` (mise) and runs on the
-pinned Bun. From anywhere else, use `mise exec -C <repo> -- winvm <verb>`;
-winvm warns when it runs on a Bun other than the pin. `pnpm winvm <verb>` also
-works, but runs from the repository root, so relative paths in its arguments
-resolve there.
-
-**After updating winvm**, restart anything long-running that an older version
-started: `winvm web --stop` (`winvm open --web` also replaces a server another
-checkout or version started), and stop and start any instance whose idle
-watcher was running (`winvm status` shows it), since a running watcher keeps
-the code it was started with.
-
-```sh
-winvm setup                       # fetch the pinned runtime and the guest tools
-winvm build --iso ~/vm/Win11_25H2_English_Arm64.iso --bun 1.3.14
-                                         # once: unattended install, ~10-20 min
-winvm start                       # boot instance "default" (~35 s to desktop)
-winvm snapshot                    # checkpoint "fresh" once it is settled
-winvm exec -- cmd /c ver          # run anything in the guest
-winvm smoke --expect 1.3.14       # guest arch + staged bun version
-winvm rewind                      # back to "fresh", no reboot
-winvm stop                        # orderly shutdown via the guest agent
-winvm reset                       # discard all changes, back to the base image
-winvm ls                          # images, instances, VNC ports, disk usage
-winvm status                      # running? guest version, clock, saves, watcher
-winvm open                        # the screen, in macOS Screen Sharing
-winvm open --web                  # the screen + status + buttons, in the browser
-winvm diagnose                    # explain a guest that misbehaved
-winvm config                      # idle watcher settings (see below)
-```
-
-`--bun <version>` is optional; it stages that Bun release in the image at
-`C:\payload\bun-windows-aarch64\bun.exe` (on PATH). Use `-i <name>` for
-additional, independent instances backed by the same image, and
-`--ephemeral` on `start` to discard everything on exit.
-
-An instance keeps the image it was created with; pick one for a new instance
-with `--image <name>` or `WINVM_IMAGE` (default `win11-arm64`). Recommended:
-`win11-arm64-v4`: the agent baked in (v3 had an older one, which `ensure`
-replaces with a ~7 s install), no Start menu or firewall prompt on screen, and
-`launch` able to start console programs such as PowerShell scripts.
-
-Every image also gets PowerShell 7 (`pwsh`, native ARM64), precompiled .NET
-native images (so Windows PowerShell starts fast too), Windows Update /
-indexing / telemetry / maintenance switched off, Defender exclusions for
-`C:\work` and `C:\payload`, and a logon task that closes audit mode's Sysprep
-dialog. What and why, with measurements:
-[`docs/windows-vm-qemu.md`](docs/windows-vm-qemu.md#what-the-image-carries-and-why-it-is-quiet).
-`build` refuses an `--image` name that already exists or that any instance
-still names, so building never replaces a base that overlays depend on.
-
-## Seeing the screen, and driving it without one
-
-`winvm status [-i name]` is the one-screen summary: running / paused / stopped
-/ stowed, uptime, Windows version, whether the guest agent answers, the guest
-clock's offset from the host, CPU/RAM, display, overlay disk use, saves, the
-idle watcher, and Time Machine. It runs no PowerShell, so it takes about a
-second. With no `-i` and several instances it prints a table; `--json` for
-scripts.
-
-**For a person:**
-
-- `winvm open` opens the screen in macOS Screen Sharing.
-- `winvm open --web` opens it in the browser instead, with the status and
-  buttons beside it (start, stop, pause, resume, save, load, stow, Ctrl+Alt+Del,
-  screenshot). Each button runs the CLI (`winvm <verb> -i <name>`) and
-  shows its output. The page is served by `winvm web`, which `open --web` starts
-  in the background (`winvm web --stop` stops it); it uses a vendored copy of
-  [noVNC](https://novnc.com) talking to QEMU's own websocket listener.
-
-The VNC server has a password. **macOS Screen Sharing won't connect to a VNC
-server that offers no authentication** — it asks for a password and then fails
-— so QEMU runs with `password=on`, gets a random 8-character password over QMP
-as soon as it starts (kept in `<instance>/vncpassword`, mode 0600), and `open`
-passes it in the URL (`vnc://:<password>@127.0.0.1:5901`), so nothing prompts.
-The password also keeps other pages in your browser from reaching the screen
-through the websocket. To connect another VNC client by hand:
-`winvm open --print` prints the URL.
-
-The browser view is loopback-only and needs a token that's random per server
-start: `open --web` puts it in the URL's `#fragment`, and every request to the
-server must carry it, so other web pages can't drive the VM. `WINVM_WEB_PORT`
-changes the port (default 5690).
-
-**For a script or an agent — no window at all:**
-
-```sh
-winvm screenshot              # PNG under <instance>/screenshots/, prints the path
-winvm screenshot shot.png
-winvm click 412 300           # screenshot pixels; --right, --middle, --double
-winvm move 412 300
-winvm scroll 5                # wheel notches, positive is down (scroll up 5)
-winvm key win-r               # combos: ctrl-alt-delete, alt-f4, enter, f5 ...
-winvm type "notepad"          # US layout; a newline presses Enter
-```
-
-These go through QEMU's monitor (`screendump`, `input-send-event` on the USB
-tablet and keyboard), so coordinates are exact and nothing needs a display.
-Input goes wherever the guest's focus is — take a screenshot first.
-
-**Reading app UI.** `ui` finds and clicks elements by their UI Automation
-names — any window, the tray icon and its menu, dialogs, WebView2 content —
-`webview` drives WebView2 windows (Tauri apps) over DevTools, `ocr` /
-`click --text` read and click the screen's text, and `toasts` lists the
-notifications apps raised; in jobs, `shell: winvm` steps run them on the host.
-See [`docs/gui.md`](docs/gui.md).
-
-```sh
-winvm ui tray Maximal --menu Settings      # tray icon by tooltip, then the menu item
-winvm ui wait --window Settings --name Account --type Text
-winvm ui click --window Settings --name Models
-winvm webview enable maximal-shell.exe     # then start the app
-winvm webview text 'h2.section__title' --target /ui/settings
-winvm click --text "Cancel"
-winvm toasts --app maximal --since 10m
-```
-
-**Claude computer use.** `cua serve` exposes the guest to Claude's
-computer-use tool on a localhost endpoint (bearer token), and `cua run` is a
-small agent loop that drives it — through `ANTHROPIC_API_KEY`, or Maximal on
-the host. See [`docs/cua.md`](docs/cua.md).
-
-```sh
-winvm cua run -i ui "Open Notepad, type 'hello', and save it to C:\\work\\hello.txt"
-winvm cua serve -i ui            # prints the URL and token
-```
-
-**Screen size.** The default display is `ramfb`, a firmware framebuffer that
-EDK2 fixes at 800x600. For a bigger screen, switch an instance to virtio-gpu:
-
-```sh
-winvm display -i ui 1920x1080   # stopped or running: records the device
-winvm stop -i ui && winvm start -i ui
-winvm display -i ui 1920x1080   # sets Windows' resolution, reboots the guest
-```
-
-The second run is needed because Windows starts a new monitor at the driver's
-1024x768 and has no command-line way to change it; `display` writes the size
-into Windows' saved display configuration over the guest agent and reboots.
-The `viogpudo` driver comes from the guest tools already in the image, so no
-rebuild. **Changing the display device makes that instance's existing snapshots
-and saves unrestorable** (QEMU refuses them; nothing is damaged) — switch back
-with `display ramfb`. `winvm display` alone shows the current setting.
-
-## Saves
-
-Like a game's save files: the whole running machine (RAM, devices, disk,
-firmware variables) written to a directory you can list, keep across restarts,
-and load later, whether or not the guest is running.
-
-```sh
-winvm save before-install        # ~6 s; name defaults to a timestamp
-winvm load before-install        # ~4 s running, ~10 s stopped
-winvm save --fast clean          # mapped-ram: ~7 s to take, ~0.5 s to load
-winvm saves                      # name, kind, format, created, size, compatible
-winvm saves rm before-install
-winvm pause / resume             # freeze the vCPUs / carry on
-winvm stow                       # save and shut QEMU down, freeing the host
-winvm start                      # ...then this recalls the stow in seconds
-winvm clock                      # guest-vs-host offset, and fix it
-```
-
-- **Baseline.** An instance's first `start` (and the first after `reset`) saves
-  `baseline` once the guest is logged on. `rewind` with no snapshot named
-  "fresh" goes back to it. `--no-autosave` skips it — only it: the watcher's
-  idle autosaves are `config autosave.enabled=false`.
-- **Storage.** `~/.local/state/winvm/saves/<instance>/<name>/`: `manifest.json`,
-  `vmstate.zst` (zstd'd QEMU migration stream), plus APFS clones of the overlay
-  and NVRAM, which cost little until the instance overwrites what they share.
-  `destroy` removes an instance's saves with it; `destroy --keep-saves` keeps
-  them, and `load` then recreates the instance from one.
-- **Formats.** `--format zstd` (default) is ~5x smaller and loads in ~2.5 s.
-  `--fast` (`--format mapped`: QEMU mapped-ram + multifd, `vmstate.mapped`) is
-  uncompressed and slower to write, but restores in ~0.5 s — for a save loaded
-  over and over (goldens, test resets). The manifest records the format; `load`
-  reads either.
-- **Compatibility.** A save loads only into the same virtual hardware, base
-  image, firmware and QEMU version. `saves` shows which still do, and `load`
-  says what changed when it refuses.
-- **Clock.** Restoring, resuming or recalling puts the guest's clock back on
-  the host's (it stood still while frozen), and the first boot sets the guest's
-  time zone to the host's.
-- `snapshot`/`rewind <tag>` still work as before, inside the instance's qcow2.
-
-`zstd` comes from the runtime.
-
-The guest boots to **audit mode** as the built-in Administrator, with UAC off.
-Do not use it for anything but testing.
-
-## Goldens: resets in about a second
-
-A golden is the state every test job starts from: a `--fast` (mapped-ram) save
-taken only once Windows has gone quiet.
-
-```sh
-winvm golden create -i ci-1     # boot (or --from <save>), settle, save "golden"
-winvm golden reset  -i ci-1     # back to it: ~1.3 s to a responsive guest
-```
-
-`create` waits until QEMU's CPU time stays at or under `--settle-cpu` (3% of
-all vCPUs) for every 5 s sample across `--settle-for` (60 s), at most
-`--max-wait` (10 min — then it saves anyway and says so). A save taken right
-after boot carries Windows' post-boot work with it and replays it on every
-load. `reset` loads the golden, waits for a `cmd /c echo` round trip through
-the agent, and sets the clock. From code: `createGolden(instance, opts)` and
-`resetToGolden(instance, name)` in `golden.ts`, which return per-phase
-timings and print nothing.
-
-Measured on an M-series host, 4 vCPU / 4 GiB guest, five resets each, medians
-(restored = old QEMU gone, disks cloned back, RAM loaded, running):
-
-| save                        | restored | + responsive | + clock | total  | guest CPU, next 20 s | RAM on disk |
-|-----------------------------|---------:|-------------:|--------:|-------:|---------------------:|------------:|
-| golden (mapped, settled)    |   602 ms |       206 ms |  459 ms | 1.28 s |             0.6-2.1% |      3.9 GB |
-| same state, zstd            |  2734 ms |       206 ms |  556 ms | 3.50 s |             0.8-2.1% |      1.8 GB |
-| mapped, just after boot     |   862 ms |       207 ms |  368 ms | 1.40 s |             1.7-3.1% |      3.8 GB |
-| zstd, just after boot       |  2545 ms |       125 ms |  663 ms | 3.41 s |             6.9-8.2% |      1.6 GB |
-
-A cold boot to a settled guest took 26 s + 245 s; taking the golden, 6 s.
-The clock step varies (10-900 ms) because the guest's clock answers in
-~100 ms jumps for a moment after a restore; it ends within ±50 ms.
-
-## The control service
-
-Each running instance has a service process, started by `winvm start` (and
-by anything else that launches QEMU) and stopped when QEMU has been gone for
-10 seconds. QEMU binds `qmp-qemu.sock` and `qga-qemu.sock`; the service
-listens on `qmp.sock` and `qga.sock` and passes callers through one at a
-time, in arrival order. Connect to `qmp.sock` and `qga.sock` as before; do not
-connect to the `-qemu` sockets directly.
-
-The service also answers HTTP on `control.sock` in the instance directory
-(mode 0600, so only your account can connect; there is no port and no token):
-
-- `GET /events` streams events as server-sent events: QEMU state changes
-  (`paused`, `running`, `stopped`, `reset`, `migration`) and the service
-  starting and stopping.
-- `GET /status` returns the last known state, QEMU's pid and whether the
-  service is connected to QEMU.
-
-```sh
-curl -N --unix-socket ~/.local/state/winvm/instances/NAME/control.sock http://localhost/events
-```
-
-`service.json` (mode 0600) records the service's pid and build. A service
-creates it exclusively when it starts, so a second service for the same
-instance refuses to start while the first is alive.
-
-The same events are appended to `events.jsonl` in the instance directory.
-`winvm status` shows the service; an instance started by an older winvm has
-none and works as before. `winvm kill` and `winvm destroy` stop it.
-
-## The idle watcher
-
-`start` also launches a small background process per instance that watches
-for the guest going idle (`--no-watch` skips it; `load` and `rewind` into a
-stopped instance start one too, and take `--no-watch` as well). It logs to
-`instances/<name>/watch.log`, publishes its state in `watch.json`, and exits
-when QEMU does; `stop` ends it first.
-
-- **Idle** means all of these, continuously: QEMU's CPU time below
-  `watch.idleCpuPercent` (default 10%) of the guest's vCPUs, averaged over a
-  minute; no `winvm exec`/`smoke`/`snapshot` activity; no VNC client
-  connected. An idle desktop measures 0.2-1% here, with background bursts
-  that one sample can't push over the threshold; one busy thread is 25%.
-- **Autosave**: after `autosave.idleMinutes` (10) idle, one save of kind
-  `auto` (named `auto-<UTC timestamp>`); another only once the guest has been
-  used and gone idle again. The newest `autosave.keep` (3) are kept; manual, baseline and stow
-  saves are never touched.
-- **Stow**: after `stow.idleMinutes` (60) idle, `winvm stow`, which saves the
-  guest and shuts QEMU down. `winvm start` recalls it, and the watcher with it.
-- **Clock**: after host sleep (the wall clock jumping between ticks) and
-  whenever a 30-minute check finds the guest more than 2 s off, the guest
-  clock is resynced.
-
-```sh
-winvm config -i default                         # effective settings
-winvm config -i default stow.idleMinutes=120 autosave.keep=5
-winvm config -i default watch.enabled=false     # no watcher for this instance
-winvm watch  -i default                         # run it in the foreground instead
-winvm watch  -i default --status                # or --stop
-```
-
-Settings live in `instances/<name>/config.json` (overrides only); a running
-watcher picks up changes on its next tick.
-
-## Getting files into the guest (e.g. a Maximal build)
-
-There is no shared folder. Three ways, from most to least convenient:
-
-**1. Over the network, into a running instance.** The guest has outbound
-networking through QEMU user-mode NAT, where the host is reachable as
-`10.0.2.2`. Serve a directory on the host and pull from the guest:
-
-```sh
-# host, in the directory holding the build (e.g. maximal's Windows artifacts)
-python3 -m http.server 8000 --bind 127.0.0.1
-
-# guest
-PS='C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe'
-winvm exec -- "$PS" -NoProfile -Command \
-  "Invoke-WebRequest http://10.0.2.2:8000/maximal-setup.msi -OutFile C:\maximal-setup.msi"
-winvm exec -- msiexec /i 'C:\maximal-setup.msi' /qn /l*v 'C:\maximal-install.log'
-```
-
-The guest can equally download a release straight from GitHub. Take a
-`snapshot` before installing so `rewind` gets you a clean guest again.
-
-**2. Baked into the base image, at build time.** `build --payload <dir>` copies
-the directory onto the seed ISO; provisioning expands every `.zip` into
-`C:\payload`, copies everything else there, adds every directory containing an
-`.exe` to the machine PATH, and runs `C:\payload\setup.ps1` if present. Good for
-tools you want in every instance; a rebuild costs a full install.
-
-**3. Small text via the agent.** `exec` passes arguments verbatim, so a short
-file can be written with a PowerShell `Set-Content` one-liner.
-
-Fidelity note: this guest is **ARM64**. Maximal's Windows build targets x64,
-which runs under Windows' x64 emulation — fine for path, shell, file-locking
-and installer bugs, not for timing-sensitive ones. See
-[`docs/windows-vm-qemu.md`](docs/windows-vm-qemu.md#fidelity-limits--read-before-trusting-a-result).
-
-## CI jobs: `winvm run` / `winvm test`
-
-Job files are GitHub-Actions-shaped YAML (the format is documented at the top
-of `job.ts`; `jobs/examples/hello.yml` uses every feature):
-
-```sh
-winvm run jobs/examples/hello.yml -i ci     # one job
-winvm test jobs/maximal/ -i ci --junit out.xml --json out.json
-```
-
-Every job starts by loading a **golden** (`golden.ts`: a mapped-ram save taken
-once the guest has gone quiet; default name `golden`, created on first use with
-the in-guest agent installed, the sysprep dialog closed and `C:\work`
-present), so each job sees the identical machine. Files are fetched on the
-host (release assets via `gh release download`, cached under
-`$WINVM_HOME/cache`) and pushed through the agent, or served on loopback and
-pulled with one `curl.exe` from `http://10.0.2.2:<port>`; `$env:WINVM_FILES`
-is that server, for installers that download their own payload. Steps run
-with timeouts, `continue-on-error`, `if: always()`, `background: true`;
-failures get a screenshot and the job's `artifacts`
-(`$WINVM_HOME/runs/<instance>/<time>/` unless `--artifacts`). The summary
-reports reset time against test time and the reset share of the wall clock.
-
-Use a dedicated instance (the default is `ci`): a run resets it before every
-job, and quits it afterwards unless `--keep`. Steps run through the in-guest
-agent, as the logged-on user in their session (a tray app shows on the
-desktop); without one they fall back to qemu-ga, as SYSTEM in session 0
-(`%LOCALAPPDATA%` and `HKCU` are SYSTEM's, nothing launched is visible).
-`WINVM_CHANNEL=qga` forces the fallback.
-
-`--pool N` runs the jobs side by side on N instances (`ci-1` … `ci-N`), each
-reset between its own jobs while the others keep working; the golden is made
-once and APFS-cloned to the rest. The 6 Maximal jobs take ~74 s on one
-instance, ~43 s on 2, ~30-34 s on 3. See [`docs/pool.md`](docs/pool.md).
-
-`jobs/maximal/` holds end-to-end jobs for Maximal's Windows releases (MSI,
-portable zip, install.ps1, NSIS tray app, MCP broker containment); each
-downloads the latest release, or `MAXIMAL_TAG=vX.Y.Z`.
-
-## Time Machine
-
-The VM disks are large and change constantly. Keep them out of backups:
-
-```sh
-winvm timemachine          # report, and offer to exclude each folder
-winvm timemachine --yes    # exclude without asking
-```
-
-It adds Time Machine's sticky exclusion (`tmutil addexclusion`, no sudo) to the
-state directory and to the folder holding the ISO; `winvm doctor` reports
-whether that's in place. Undo with `tmutil removeexclusion <path>`.
-
-Local Time Machine snapshots are a different thing: they cover the whole APFS
-volume and ignore exclusions, so each one keeps disk blocks the VM has since
-overwritten until macOS removes it (usually within 24 hours). The command lists
-them and prints how to remove them; it doesn't remove them itself.
-
-## Troubleshooting
-
-Start with `winvm diagnose [-i name]`; see the troubleshooting section of
-the design notes. If you get stuck, Linaro's reference is the closest upstream
-match for this setup:
-<https://linaro.atlassian.net/wiki/spaces/WOAR/pages/28914909194/windows-arm64+VM+using+qemu-system>
-
-If the QEMU process is still running and QMP `info status` reports `running`,
-but the OS intermittently fails to boot after a long wait, watch the guest with
-`top -pid $(cat ~/.local/state/winvm/instances/<name>/qemu.pid)` — a square
-wave, CPU spiking and then settling back down, means it stopped early; check
-whether the serial output stopped prematurely and check hardware device
-firmware in the VM.
-
-If `setup` or `build` reports that the guest-tools ISO does not match its pin,
-upstream has published a new build: review it, then update `TOOLS_SHA256` in
-`host.ts`.
-
-## Provenance
-
-Extracted from `stuffbucket/monimal`
-(`packages/maximal-core/scripts/dev/win11/`, design notes from
-`packages/maximal-core/docs/dev/windows-vm-qemu.md`) with `git subtree split`,
-so the history of that directory is preserved. MIT licensed (see `LICENSE`);
-third-party notices in `THIRD-PARTY-LICENSE.md`.
+| `winvm start` / `stop` | Start or shut down an instance |
+| `winvm status` | Whether it's running, the Windows version, saves, and more |
+| `winvm exec -- <cmd>` | Run a command in Windows |
+| `winvm put <file> <guest path>` / `get` | Copy a file into or out of Windows |
+| `winvm save [name]` / `load [name]` | Save the running machine to disk, and load it back |
+| `winvm reset` | Discard all changes and go back to the base image |
+| `winvm open` | Show the screen in Screen Sharing (`--web` for the browser) |
+| `winvm screenshot`, `click`, `type`, `key` | Drive the screen without a window |
+| `winvm diagnose` | Explain why a guest misbehaved |
+| `winvm help` | Every command and option |
+
+Most commands take `-i <name>` to pick an instance. The default instance is
+`default`. All state lives in `~/.local/state/winvm`, or in `WINVM_HOME` if
+you set it.
+
+## More
+
+- [Setting up](docs/setup.md): the ISO, building images, instances, screen
+  size, Time Machine, troubleshooting
+- [The screen](docs/screen.md): Screen Sharing, the browser view, and driving
+  the guest from scripts
+- [Saves and goldens](docs/saves.md): saving, loading, and one-second resets
+- [Getting files in and out](docs/files.md)
+- [CI jobs](docs/jobs.md): `winvm run` and `winvm test`, and
+  [running them in parallel](docs/pool.md)
+- [Background processes](docs/background.md): the control service and the
+  idle watcher
+- [The in-guest agent](docs/agent.md), [driving app UI](docs/gui.md),
+  [Claude computer use](docs/cua.md)
+- [How the VM is configured, and why](docs/windows-vm-qemu.md): read before
+  changing `packages/core/src/qemu.ts` or `packages/core/assets/`
+- [Releasing](docs/release-runbook.md)
+
+## Development
+
+The repository is a pnpm and Turborepo workspace. The library is
+`packages/core`, the command is `apps/cli`, and the Mac app is `apps/viewer`.
+`pnpm check` typechecks and tests everything without a VM.
+
+## License
+
+MIT (see `LICENSE`). Third-party notices are in `THIRD-PARTY-LICENSE.md`.
+winvm was split out of `stuffbucket/monimal` with `git subtree split`, so its
+history is preserved.

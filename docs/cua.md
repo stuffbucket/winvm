@@ -1,126 +1,149 @@
 # Claude computer use (`winvm cua`)
 
-`cua.ts` executes Claude's computer-use tool against a guest; `cuacmds.ts`
-serves it over HTTP (`cua serve`) and runs a small agent loop with it
-(`cua run`). Nothing opens a window on the host: screenshots are QMP
-screendumps and input is QMP `input-send-event` on the USB tablet and
-keyboard, as in `input.ts`.
+`winvm cua` lets Claude operate the guest's desktop with its computer-use
+tool. Claude sees screenshots of the guest and sends clicks and key presses
+back. There are two ways to use it:
 
-## Which tool version
+- `winvm cua run` runs a complete agent loop for one task.
+- `winvm cua serve` starts a local HTTP endpoint for your own agent loop.
 
-The current tool is the **computer toolset**, `computer_toolset_20260801`:
-one `tools` entry `{"type": "computer_toolset_20260801"}` with no name, no
-display size and no beta header. Claude's calls arrive as `tool_use` blocks
-whose `name` is the member (`screenshot`, `left_click`, `type`, `zoom`, ...)
-with `"toolset_name": "computer"`, often several per turn (a batch, run in
-order); every `tool_result` must echo `"toolset_name": "computer"`. Claude
-Opus 5.5 / Sonnet 5.5 / Haiku 5.5 on the Claude API accept only the toolset;
-the earlier `computer_20251124` tool (beta header, `display_width_px`,
-`input.action`) 400s there. `cua run` sends the toolset.
+Nothing opens a window on the Mac. Screenshots and input go through QEMU's
+monitor.
 
-The executor takes both shapes: a member name plus its input, or
-`{"action": "...", ...}` (the earlier tool's shape, and the server's wire
-format). All 17 members are implemented:
+## Run a task: `winvm cua run`
 
-| member | how |
-|---|---|
-| `screenshot` | screendump, scaled to fit the box (below), PNG |
-| `zoom {region}` | the region at full resolution, fitted to the screenshot size |
-| `left_click` `right_click` `middle_click` `double_click` `triple_click` `{coordinate?, text?}` | tablet move + button events; `text` = modifiers held for the click |
-| `left_click_drag {start_coordinate, coordinate}` | press, 8 intermediate moves, release |
-| `mouse_move`, `left_mouse_down`, `left_mouse_up` | |
-| `cursor_position` | the last position this executor moved to (QMP can't report it) |
-| `scroll {scroll_direction, scroll_amount, coordinate?}` | wheel notches; left/right is shift+wheel (the USB tablet has no horizontal wheel) |
-| `type {text}` | US-layout key strokes; non-ASCII is refused with an error |
-| `key {text, repeat?}`, `hold_key {text, duration}` | xdotool keysym names -> QMP qcodes |
-| `wait {duration}` | |
+```sh
+winvm cua run -i ui "Open Notepad, type 'hello from winvm', and save it to C:\\work\\hello.txt"
+```
 
-**Coordinates.** The toolset takes no display size: the screenshots you
-return *are* the coordinate space, and the API doesn't downscale. Screenshots
-are fitted into a box (`--size`, default 1280x800, the docs' recommended
-range; the hard limit is 2576 px on the long edge); the scale is
-`min(1, boxW/w, boxH/h)` and a coordinate maps back as `x / scale`, clamped.
-A 1920x1080 guest is sent at 1280x720; the default 800x600 is sent as is (via
-QEMU's own PNG encoder, ~12 ms). UIA bounds and OCR boxes in the extra
-actions are converted to the same space.
+Options:
 
-**Keys.** `Return`, `ctrl+s`, `alt+Tab`, `super` (Windows key), `Page_Down`
-/ `Prior` / `Next`, `BackSpace`, `KP_Enter`, `F1`-`F12`, `XF86AudioMute`,
-shifted punctuation by keysym (`plus`, `exclam`, `question`), single
-characters. Letters ignore case (`ctrl+S` is ctrl+s), as in xdotool.
+| flag | default | meaning |
+|---|---|---|
+| `--model M` | `claude-opus-5-5` | the model |
+| `--max-steps N` | 40 | stop after this many model calls |
+| `--effort E` | `medium` | `low`, `medium`, `high`, `xhigh` or `max` |
+| `--size WxH` | `1280x800` | the largest screenshot size sent to the model (see [Coordinates](#coordinates)) |
+| `--extras` | off | also offer the [extra tools](#extra-tools) |
+| `--shots DIR` | none | save every screenshot to DIR |
+| `--base-url URL` | | send requests to this Anthropic-compatible endpoint |
 
-## `winvm cua serve`
+Where requests go:
+
+- If `ANTHROPIC_API_KEY` is set and there is no `--base-url`: the Anthropic
+  API (or `ANTHROPIC_BASE_URL`).
+- Otherwise: `--base-url`, or Maximal on the host at `http://localhost:4141`.
+
+At the end, `cua run` prints the median latencies and the total tokens used.
+
+## Your own loop: `winvm cua serve`
 
 ```sh
 winvm cua serve -i ui [--port N] [--size WxH]    # also: winvm cua-serve
 ```
 
-Binds 127.0.0.1 only. A random bearer token is printed and written, with the
-URL and pid, to `<instance>/cua.json` (mode 0600), which is removed on
-SIGINT/SIGTERM. Requests run one at a time in arrival order.
+The server listens on 127.0.0.1 only. It prints a random bearer token, and
+writes the token, URL and process ID to `<instance>/cua.json` (mode 0600).
+The file is removed when the server stops. Every request must send
+`Authorization: Bearer <token>`. Requests run one at a time, in the order
+they arrive.
 
 | route | body | answer |
 |---|---|---|
-| `GET /v1/info` | | `native`, `scale`, `size`, `actions`, the `tool` entry to declare (and `legacy_tool` with display size for `computer_20251124`) |
+| `GET /v1/info` | | screen size, screenshot size, scale, the action names, and the tool entry to declare |
 | `POST /v1/computer` | `{"action": "left_click", "coordinate": [x, y]}` | `{"content": [...], "is_error": bool, "ms": {...}}` |
-| `GET /v1/extra` | | `{"tools": [...]}`: custom tool definitions for the extras |
-| `POST /v1/extra` | `{"action": "ui_find" \| "ui_click" \| "ocr_find", ...}` | same shape as `/v1/computer` |
+| `GET /v1/extra` | | `{"tools": [...]}`: definitions for the extra tools |
+| `POST /v1/extra` | `{"action": "ui_find" \| "ui_click" \| "ocr_find", ...}` | same as `/v1/computer` |
 
-`content` goes into the `tool_result` unchanged. Bad input is an `is_error`
-result, not an HTTP error.
+Put `content` into your `tool_result` unchanged. Invalid input comes back as
+a result with `is_error: true`, not as an HTTP error.
 
-The extras are non-standard tools a harness can declare beside the toolset:
-`ui_find` / `ui_click` (UI Automation by name, automationId, control type,
-window; needs the in-guest agent, installed on first use, ~10 s) and
-`ocr_find` (macOS Vision). Their coordinates are screenshot coordinates.
+`/v1/info` returns the tool entry for the computer toolset
+(`computer_toolset_20260801`) as `tool`, and an entry for the earlier
+`computer_20251124` tool, with the display size, as `legacy_tool`.
 
-## `winvm cua run`
+## What Claude can do
 
-```sh
-winvm cua run -i ui "Open Notepad, type 'hello from winvm', and save it to C:\\work\\hello.txt" \
-  [--model claude-opus-5-5] [--max-steps 40] [--effort medium] [--size WxH] [--extras] [--shots DIR] [--base-url URL]
-```
+`cua run` declares the computer toolset, `computer_toolset_20260801`.
+Claude's tool calls name the action (`screenshot`, `left_click`, `type`, and
+so on), and every `tool_result` must include `"toolset_name": "computer"`.
+The server also accepts the earlier tool's `{"action": "...", ...}` form.
 
-A manual tool-use loop on `@anthropic-ai/sdk` (loaded only by this verb).
-API access: `ANTHROPIC_API_KEY` if set (Anthropic's API, with the server-side
-refusal fallback on); otherwise Maximal at `http://localhost:4141`
-(Anthropic-compatible, the toolset passes through), or `--base-url`. Default
-model `claude-opus-5-5` (Opus 5.5 via Maximal; the toolset is also supported
-on Sonnet 5.5 and Haiku 5.5). The assistant's content goes back unchanged
-(thinking blocks included) and screenshots are not pruned client-side —
-on the 5.5 models pruning invalidates later thinking blocks. A batch stops at
-its first failed action and the rest are answered "Not executed: an earlier
-computer action in this turn failed.", as the docs require. `--shots` saves
-every screenshot; at the end it prints median latencies and token totals.
+All 17 actions are supported:
 
-## Numbers
+| action | what winvm does |
+|---|---|
+| `screenshot` | takes a screenshot, scaled down to fit the size limit, as PNG |
+| `zoom {region}` | the region at full resolution, scaled to the screenshot size |
+| `left_click`, `right_click`, `middle_click`, `double_click`, `triple_click` `{coordinate?, text?}` | moves the pointer and clicks; `text` lists modifier keys to hold |
+| `left_click_drag {start_coordinate, coordinate}` | press, move in 8 steps, release |
+| `mouse_move`, `left_mouse_down`, `left_mouse_up` | |
+| `cursor_position` | the last position winvm moved the pointer to (QEMU cannot report it) |
+| `scroll {scroll_direction, scroll_amount, coordinate?}` | wheel steps; left and right are sent as shift + wheel |
+| `type {text}` | types the text on a US keyboard layout; non-ASCII characters return an error |
+| `key {text, repeat?}`, `hold_key {text, duration}` | xdotool key names |
+| `wait {duration}` | |
 
-Measured 2026-10-22 on `win11-arm64-v4` at 1920x1080 (virtio-gpu), sent at
-1280x720, M-series host.
+### Coordinates
 
-Executor, 20 runs each (median / p90 ms):
+Claude gives coordinates in the pixels of the screenshots it receives. winvm
+scales each screenshot down to fit within `--size` (default 1280x800, at
+most 2576 on a side) and scales coordinates back up before clicking. For
+example, a 1920x1080 screen is sent at 1280x720. The default 800x600 screen
+is sent unscaled.
 
-| action | median | p90 |
-|---|---|---|
-| `screenshot` total | **38.7** | 45.5 |
-| — capture (QMP screendump, raw PPM) | 20.1 | 25.5 |
-| — scale 1920x1080 -> 1280x720 + PNG encode | 18.6 | 19.8 |
-| `zoom` (crop, upscale, encode) | 25.3 | 26.9 |
-| `mouse_move` | 1.5 | 1.6 |
-| `left_click` (move, settle, press, release) | 154.7 | 155.3 |
-| `key` (one key) | 126.5 | 128.4 |
-| `scroll` (one notch) | 64.7 | 66.3 |
-| `type` (10 characters) | 643 | |
+Positions from the extra tools use the same scaled coordinates.
 
-Clicks and keys are dominated by the deliberate press/release gaps
-(input.ts's `GAP_MS`, 30 ms, which the USB HID poll needs); typing is ~64 ms
-a character. The PNG is 150-750 KB depending on the screen (the default
-wallpaper is the worst case).
+### Keys
 
-End to end, `cua run` through Maximal with `claude-opus-5-5`, effort medium,
-task "Open Notepad, type 'hello from winvm', and save it to
-C:\work\hello.txt": **done in 5 model calls**, 18 actions (Win+R, type, Enter,
-click, type, Ctrl+S, triple-click the file name, Ctrl+A, type the path, Enter,
-plus waits and screenshots); model calls median 2.2 s (8.5 s for the final
-summary), 37.5k input / 750 output tokens; the file was verified over the
-agent (`hello from winvm`, 16 bytes).
+Key names follow xdotool: `Return`, `ctrl+s`, `alt+Tab`, `super` (the
+Windows key), `Page_Down`, `Prior`, `Next`, `BackSpace`, `KP_Enter`,
+`F1`-`F12`, `XF86AudioMute`, shifted punctuation by name (`plus`, `exclam`,
+`question`), and single characters. Case does not matter: `ctrl+S` is the
+same as `ctrl+s`.
+
+### Extra tools
+
+These are optional custom tools a loop can declare next to the toolset:
+
+- `ui_find` and `ui_click`: find or click an element by name, AutomationId,
+  control type or window, using UI Automation (see [Driving app UI](gui.md)).
+  They need the in-guest agent, which winvm installs on first use if needed.
+- `ocr_find`: find text on the screen with macOS Vision.
+
+## How fast it is
+
+Measured 2026-10-22 on `win11-arm64-v4` with a 1920x1080 screen sent at
+1280x720, on an M-series Mac. Medians of 20 runs:
+
+| action | time |
+|---|---|
+| `screenshot` | 39 ms |
+| `zoom` | 25 ms |
+| `left_click` | 155 ms |
+| `key` (one key) | 127 ms |
+| `scroll` (one step) | 65 ms |
+| `type` | about 64 ms per character |
+
+Clicks and key presses are slow on purpose: winvm pauses between press and
+release so the guest's USB input picks them up.
+
+The example task above, run through Maximal with `claude-opus-5-5` at medium
+effort, finished in 5 model calls and 18 actions, using about 37,500 input
+and 750 output tokens. Most model calls took about 2 seconds.
+
+## For developers
+
+- `cua.ts` executes actions. It turns them into QMP screendumps and
+  `input-send-event` calls on the USB tablet and keyboard, as `input.ts`
+  does.
+- `cuacmds.ts` has the `serve` HTTP server and the `run` loop. The loop uses
+  `@anthropic-ai/sdk`, which is loaded only by `cua run`.
+- `cua run` sends Claude's previous responses back unchanged, including
+  thinking blocks, and does not remove old screenshots, since removing them
+  would invalidate later thinking blocks.
+- When Claude sends several actions in one turn, they run in order. If one
+  fails, the rest are answered with "Not executed: an earlier computer action
+  in this turn failed."
+- When talking to the Anthropic API directly, `cua run` turns on the
+  server-side fallback for refusals.
