@@ -1,8 +1,27 @@
 # Keyboard
 
-CLI users and power users reach for keys before mouse. These bindings
-are honored across every window unless a window-specific section
-overrides; bindings that conflict with OS conventions lose to the OS.
+The Windows display has two explicit input modes:
+
+- **Not captured (default):** Mac shortcuts stay on the Mac. Left Command is
+  never forwarded. Right Command is Windows/Super, so right Command-R opens
+  Run. Input → Send Windows Key and Send Ctrl-Alt-Delete are the discoverable
+  alternatives.
+- **Captured:** the toolbar keyboard button, Input → Capture Keyboard, or
+  Control-Option captures. All keys, including Command as Windows/Super, go to
+  the guest. The pressed toolbar control and “Keyboard captured — ⌃⌥ to
+  release” indicator remain visible. Control-Option releases capture.
+
+Focus loss or a hidden page releases capture and all held guest keys. If a
+Windows key is held, Ctrl is pressed and released before Windows is released;
+Windows therefore never interprets cleanup as a lone Windows-key press.
+
+This follows UTM's useful division between host and captured routing, while
+using one fixed capture chord and one fixed uncaptured Windows modifier rather
+than exposing a matrix of modifier swaps.
+
+Other CLI and power-user bindings are honored across every window unless a
+window-specific section overrides; bindings that conflict with OS conventions
+lose to the OS outside capture.
 
 | Binding | Action | Scope | Status | Notes |
 |---|---|---|---|---|
