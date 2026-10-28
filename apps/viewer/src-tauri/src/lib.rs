@@ -18,7 +18,7 @@ struct Output {
 
 const VERBS: &[&str] = &[
     "status", "doctor", "start", "stop", "reboot", "pause", "resume", "kill", "open", "setup", "exec", "put", "get",
-    "dir", "save", "load", "saves", "help", "terminal",
+    "dir", "save", "load", "saves", "help", "terminal", "config",
 ];
 
 #[tauri::command]
@@ -106,7 +106,7 @@ const TERMINAL: &str = "terminal";
 const SHELLS: &[&str] = &["pwsh", "powershell", "cmd"];
 
 /// One tab the Terminal window should open: a shell in an instance, started in `cwd` (home when absent),
-/// with the shells that instance has when the main window already asked.
+/// with the shells that instance has when the main window already asked, and the instance's title.
 #[derive(Clone, Deserialize, Serialize)]
 struct TerminalRequest {
     instance: String,
@@ -114,6 +114,8 @@ struct TerminalRequest {
     cwd: Option<String>,
     #[serde(default)]
     installed: Option<Vec<String>>,
+    #[serde(default)]
+    title: Option<String>,
 }
 
 /// Tabs asked for and not yet taken by the Terminal window, which may still be loading.
@@ -304,11 +306,14 @@ fn menu(app: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
         file.append_items(&[&new_tab, &PredefinedMenuItem::separator(app)?, &close])?;
     }
     // The Window menu's own Close Window (after a separator) would take Cmd-W back from File's Close.
+    // Rename Window… names the instance (main window) or the active tab (Terminal).
+    let rename = MenuItem::with_id(app, "rename-window", "Rename Window…", true, None::<&str>)?;
     if let Some(window) = menu.get(WINDOW_SUBMENU_ID).and_then(|i| i.as_submenu().cloned()) {
         if window.items()?.len() == 4 {
             window.remove_at(3)?;
             window.remove_at(2)?;
         }
+        window.append_items(&[&PredefinedMenuItem::separator(app)?, &rename])?;
     }
     let updates = MenuItem::with_id(app, "check-updates", "Check for Updates…", true, None::<&str>)?;
     let install = MenuItem::with_id(app, "install-cli", "Install Command Line Tool…", true, None::<&str>)?;
@@ -356,6 +361,20 @@ pub fn run() {
                         let _ = app.emit_to("main", "menu", "new-terminal");
                     }
                     _ => {}
+                }
+            } else if id == "rename-window" {
+                match focused_window(app) {
+                    Some(w) if w.label() == TERMINAL => {
+                        let _ = app.emit_to(TERMINAL, "terminal-menu", "rename-tab");
+                    }
+                    _ => {
+                        if let Some(main) = app.get_webview_window("main") {
+                            let _ = main.unminimize();
+                            let _ = main.show();
+                            let _ = main.set_focus();
+                        }
+                        let _ = app.emit_to("main", "menu", "rename-window");
+                    }
                 }
             } else if id == "check-updates" {
                 check_for_update(app.clone(), true);

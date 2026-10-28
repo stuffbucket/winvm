@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react"
 
 import { installCli, outputText, winvm } from "../../backend"
 import type { Checks, Connection, Phase, Status } from "../../model"
-import { parseChecks, parseConnection, parseStatus, phase } from "../../model"
+import { parseChecks, parseConnection, parseStatus, phase, titleAssignment } from "../../model"
 
 export type Verb = "start" | "stop" | "reboot" | "pause" | "resume" | "kill" | "setup" | "save" | "load"
 
@@ -15,6 +15,8 @@ export interface Ran {
 export interface Winvm {
   readonly names: readonly string[]
   readonly name: string | null
+  /** Each instance's title (`winvm config title=…`); null or absent: its name. */
+  readonly titles: Readonly<Record<string, string | null>>
   readonly status: Status | null
   readonly phase: Phase | null
   readonly statusError: string | null
@@ -31,6 +33,8 @@ export interface Winvm {
   openScreenSharing(): Promise<void>
   installCommand(): Promise<void>
   dismissFailure(): void
+  /** Sets this instance's title (empty clears it); resolves with why it couldn't, or null. */
+  rename(title: string): Promise<string | null>
 }
 
 const errorText = (e: unknown): string => (e instanceof Error ? e.message : String(e))
@@ -38,6 +42,7 @@ const errorText = (e: unknown): string => (e instanceof Error ? e.message : Stri
 export function useWinvm(): Winvm {
   const [names, setNames] = useState<readonly string[]>([])
   const [name, setName] = useState<string | null>(null)
+  const [titles, setTitles] = useState<Readonly<Record<string, string | null>>>({})
   const [status, setStatus] = useState<Status | null>(null)
   const [statusError, setStatusError] = useState<string | null>(null)
   const [checks, setChecks] = useState<Checks | null>(null)
@@ -59,6 +64,7 @@ export function useWinvm(): Winvm {
     }
     const found = list.map((s) => s.name)
     setNames(found)
+    setTitles(Object.fromEntries(list.map((s) => [s.name, s.title])))
     return found[0] ?? "default"
   }, [])
 
@@ -71,6 +77,7 @@ export function useWinvm(): Winvm {
     }
     setStatusError(null)
     setStatus(s)
+    setTitles((was) => (was[s.name] === s.title ? was : { ...was, [s.name]: s.title }))
   }, [])
 
   const loadChecks = useCallback(async (): Promise<void> => {
@@ -185,9 +192,23 @@ export function useWinvm(): Winvm {
     setName(next)
   }, [])
 
+  const rename = useCallback(
+    async (title: string): Promise<string | null> => {
+      if (name === null) return null
+      const out = await winvm("config", "-i", name, titleAssignment(title))
+      if (out.code !== 0) return outputText(out) || `winvm config exited ${String(out.code)}`
+      const set = title.trim()
+      setTitles((was) => ({ ...was, [name]: set === "" ? null : set }))
+      return null
+    },
+    [name],
+  )
+
   return {
     names,
     name,
+    titles,
+    rename,
     status: current,
     phase: p,
     statusError,

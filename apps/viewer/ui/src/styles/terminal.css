@@ -87,6 +87,11 @@ html[data-os="macos"] .term__bar {
   cursor: default;
 }
 
+.term__tab-rename {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
 .term__tab-name {
   flex: 0 1 auto;
   min-width: 0;

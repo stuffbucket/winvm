@@ -26,7 +26,10 @@ interface TauriGlobal {
   readonly core: { invoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T> }
   readonly window: { getCurrentWindow(): { show(): Promise<void>; setTitle(title: string): Promise<void>; close(): Promise<void> } }
   readonly menu: { readonly Menu: { "new"(options: { items: unknown[] }): Promise<NativeMenu> } }
-  readonly event: { listen<T>(name: string, cb: (e: { payload: T }) => void): Promise<Unlisten> }
+  readonly event: {
+    listen<T>(name: string, cb: (e: { payload: T }) => void): Promise<Unlisten>
+    emit(name: string, payload?: unknown): Promise<void>
+  }
   readonly webview: { getCurrentWebview(): { onDragDropEvent(cb: (e: DragDrop) => void): Promise<Unlisten> } }
 }
 
@@ -92,7 +95,7 @@ function listen<T>(name: string, cb: (payload: T) => void): Unlisten {
   }
 }
 
-/** App menu items the main window acts on: "install-cli", "reference" and "new-terminal". */
+/** App menu items the main window acts on: "install-cli", "reference", "new-terminal" and "rename-window". */
 export const onMenu = (cb: (id: string) => void): Unlisten => listen<string>("menu", cb)
 
 /** Which shells an instance has (`winvm terminal --shells --json`), or null if that couldn't be told. */
@@ -103,10 +106,11 @@ export async function installedShells(instance: string): Promise<Installed | nul
 
 /**
  * One tab for the Terminal window, with the shells its instance has when the
- * app knows (so the window need not ask again).
+ * app knows (so the window need not ask again), and the instance's title.
  */
 export interface TerminalRequest extends OpenRequest {
   readonly installed: readonly Shell[] | null
+  readonly title: string | null
 }
 
 /** Opens a tab in the Terminal window, opening the window first or bringing it forward. */
@@ -118,8 +122,42 @@ export const takeTerminalRequests = (): Promise<TerminalRequest[]> => tauri().co
 /** Rung when tabs have been asked for. */
 export const onTerminalOpen = (cb: () => void): Unlisten => listen<unknown>("terminal-open", () => cb())
 
-/** File menu items the Terminal window acts on: "new-tab" and "close-tab". */
-export const onTerminalMenu = (cb: (id: "new-tab" | "close-tab") => void): Unlisten => listen<"new-tab" | "close-tab">("terminal-menu", cb)
+export type TerminalMenuId = "new-tab" | "close-tab" | "rename-tab"
+
+/** Menu items the Terminal window acts on: File's New Tab and Close, and Window's Rename Window… (its active tab). */
+export const onTerminalMenu = (cb: (id: TerminalMenuId) => void): Unlisten => listen<TerminalMenuId>("terminal-menu", cb)
+
+/** An instance's title, as every window shows it: null is its name. */
+export interface InstanceTitle {
+  readonly instance: string
+  readonly title: string | null
+}
+
+/** Tells every window an instance's title (the main window does, when it learns or changes it). */
+export function announceTitle(t: InstanceTitle): void {
+  try {
+    void tauri().event.emit("instance-title", t)
+  } catch {
+    // not in the app
+  }
+}
+
+export const onInstanceTitle = (cb: (t: InstanceTitle) => void): Unlisten => listen<InstanceTitle>("instance-title", cb)
+
+/** A plain native menu: actions, separators, and a check mark where `checked` is given. */
+export type Action =
+  | { readonly kind: "action"; readonly label: string; readonly enabled?: boolean; readonly checked?: boolean; run(): void }
+  | { readonly kind: "separator" }
+
+export async function popupActions(actions: readonly Action[]): Promise<void> {
+  const items = actions.map((a) => {
+    if (a.kind === "separator") return { item: "Separator" }
+    const base = { text: a.label, enabled: a.enabled ?? true, action: () => a.run() }
+    return a.checked === undefined ? base : { ...base, checked: a.checked }
+  })
+  const menu = await tauri().menu.Menu.new({ items })
+  await menu.popup()
+}
 
 const menuItems = (nodes: readonly MenuNode[], pick: (node: Extract<MenuNode, { kind: "item" }>) => void): unknown[] =>
   nodes.map((n) => {

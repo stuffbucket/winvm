@@ -8,6 +8,8 @@ const Guest = z.object({
 
 const Status = z.object({
   name: z.string(),
+  // What the user calls it (`winvm config title=…`); null, or absent from an older winvm: its name.
+  title: z.string().nullable().default(null),
   state: z.enum(["running", "paused", "stopped", "stowed", "missing"]),
   vmStatus: z.string().nullable(),
   image: z.string().nullable(),
@@ -23,6 +25,15 @@ const Status = z.object({
 })
 
 export type Status = z.infer<typeof Status>
+
+/** The longest title, for an instance or a tab: what `winvm config title=` allows (core's config.ts). */
+export const TITLE_MAX = 80
+
+/** What the app calls an instance: the title the user gave it, else its name. */
+export const shownTitle = (name: string, title: string | null | undefined): string => title ?? name
+
+/** The `winvm config` assignment that sets an instance's title; empty (or only spaces) clears it. */
+export const titleAssignment = (title: string): string => `title=${title.trim()}`
 
 const Checks = z.object({
   ready: z.boolean(),
@@ -192,6 +203,8 @@ export function facts(s: Status): Row[] {
 
 const SaveEntry = z.object({
   name: z.string(),
+  // What the user calls it (`winvm config title=…`); null, or absent from an older winvm: its name.
+  title: z.string().nullable().default(null),
   kind: z.string(),
   createdAt: z.string(),
   bytes: z.number(),

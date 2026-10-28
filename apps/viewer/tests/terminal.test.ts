@@ -21,7 +21,7 @@ import {
   START_IN,
 } from "../ui/src/features/terminal/shells"
 import { createSocketTransport, type SessionStatus, sizedUrl } from "../ui/src/features/terminal/socket"
-import { noTabs, type Tabs, tabsReducer } from "../ui/src/features/terminal/tabs"
+import { noTabs, tabName, type Tabs, tabsReducer } from "../ui/src/features/terminal/tabs"
 import { type FakeTermServer, startFakeTermServer } from "./fake-term-server"
 
 const until = async (ok: () => boolean, what: string): Promise<void> => {
@@ -273,6 +273,34 @@ describe("tabs", () => {
     const ended = tabsReducer(tabsReducer(three, { type: "title", id: "t3", title: "vim" }), { type: "state", id: "t3", state: { kind: "lost", message: null } })
     const again = tabsReducer(ended, { type: "reopen", id: "t3", newId: "t4" })
     expect(again.active).toBe("t4")
-    expect(again.tabs[2]).toEqual({ ...req, id: "t4", title: null, state: { kind: "connecting" } })
+    expect(again.tabs[2]).toEqual({ ...req, id: "t4", title: null, customTitle: null, state: { kind: "connecting" } })
+  })
+
+  it("names a tab by the user's name, else the shell's title, else the shell", () => {
+    const t3 = (x: Tabs) => x.tabs[2]
+    const shellName = "PowerShell 7"
+    const plain = t3(three)
+    expect(plain && tabName(plain, shellName)).toBe("PowerShell 7")
+    const titled = tabsReducer(three, { type: "title", id: "t3", title: "vim notes.txt" })
+    expect(t3(titled) && tabName(t3(titled)!, shellName)).toBe("vim notes.txt")
+    const renamed = tabsReducer(titled, { type: "rename", id: "t3", title: "  build  " })
+    expect(t3(renamed) && tabName(t3(renamed)!, shellName)).toBe("build")
+    // The shell setting its title again doesn't take the user's name away.
+    const retitled = tabsReducer(renamed, { type: "title", id: "t3", title: "less log.txt" })
+    expect(tabName(t3(retitled)!, shellName)).toBe("build")
+    // Nor does reopening it.
+    const reopened = tabsReducer(retitled, { type: "reopen", id: "t3", newId: "t9" })
+    expect(tabName(t3(reopened)!, shellName)).toBe("build")
+    // An empty name goes back to automatic.
+    const cleared = tabsReducer(retitled, { type: "rename", id: "t3", title: "   " })
+    expect(t3(cleared)?.customTitle).toBeNull()
+    expect(tabName(t3(cleared)!, shellName)).toBe("less log.txt")
+  })
+
+  it("closes the other tabs", () => {
+    const only = tabsReducer(three, { type: "closeOthers", id: "t2" })
+    expect(only.tabs.map((t) => t.id)).toEqual(["t2"])
+    expect(only.active).toBe("t2")
+    expect(tabsReducer(three, { type: "closeOthers", id: "nope" })).toBe(three)
   })
 })

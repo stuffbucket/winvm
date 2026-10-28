@@ -6,15 +6,17 @@
  * (Cmd-T, the + button and its menu). Each tab is a TerminalView on the
  * guest's terminal WebSocket. Closing the last tab closes the window.
  */
-import { useCallback, useEffect, useMemo, useReducer, useRef } from "react"
+import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react"
 
 import { TerminalView, terminalProcessTitle } from "@winvm/terminal"
 
 import {
   closeWindow,
   installedShells,
+  onInstanceTitle,
   onTerminalMenu,
   onTerminalOpen,
+  popupActions,
   popupMenu,
   setWindowTitle,
   showWindow,
@@ -23,8 +25,10 @@ import {
 } from "../../backend"
 import { Button } from "../../components/Button"
 import { Icon } from "../../components/Icon"
+import { InlineRename } from "../../components/InlineRename"
 import { cx } from "../../components/cx"
 import { t } from "../../i18n"
+import { TITLE_MAX } from "../../model"
 import { terminalTheme, terminalTypography, useDark } from "./appearance"
 import {
   connectArgs,
@@ -39,11 +43,11 @@ import {
   shellTitle,
 } from "./shells"
 import { createSocketTransport, type SessionStatus } from "./socket"
-import { activeTab, noTabs, type Tab, type TabState, tabsReducer } from "./tabs"
+import { activeTab, noTabs, type Tab, tabName, type TabState, tabsReducer } from "./tabs"
 
 const newId = (): string => crypto.randomUUID()
 
-export const tabTitle = (tab: Tab): string => tab.title ?? t(`shell.${tab.shell}`)
+export const tabTitle = (tab: Tab): string => tabName(tab, t(`shell.${tab.shell}`))
 
 function stateOf(status: SessionStatus): TabState | null {
   switch (status.kind) {
@@ -72,6 +76,11 @@ export function TerminalWindow(): JSX.Element {
   const dark = useDark()
   const theme = useMemo(() => terminalTheme(dark), [dark])
   const active = activeTab(s)
+  /** The tab whose name is being edited. */
+  const [editing, setEditing] = useState<string | null>(null)
+  /** Each instance's title, from the app (null: its name). */
+  const [titles, setTitles] = useState<Readonly<Record<string, string | null>>>({})
+  useEffect(() => onInstanceTitle(({ instance, title }) => setTitles((was) => ({ ...was, [instance]: title }))), [])
   // Which shells each instance has: from the app with its first tab, or asked here.
   const shells = useMemo(() => shellCache(installedShells), [])
 
@@ -104,8 +113,9 @@ export function TerminalWindow(): JSX.Element {
     const take = (): void => {
       takeTerminalRequests()
         .then((requests) => {
-          for (const { installed, ...request } of requests) {
+          for (const { installed, title, ...request } of requests) {
             if (installed !== null) shells.seed(request.instance, fromList(installed))
+            setTitles((was) => ({ ...was, [request.instance]: title }))
             dispatch({ type: "open", id: newId(), request })
           }
         })
@@ -144,9 +154,32 @@ export function TerminalWindow(): JSX.Element {
         if (id === "new-tab") openDefault()
         const at = current.current.active
         if (id === "close-tab" && at !== null) dispatch({ type: "close", id: at })
+        if (id === "rename-tab" && at !== null) setEditing(at)
       }),
     [openDefault],
   )
+
+  /** Right-click on a tab: rename it, close it, or close the others. */
+  const tabMenu = (tab: Tab): void => {
+    void popupActions([
+      { kind: "action", label: t("terminal.renameTab"), run: () => setEditing(tab.id) },
+      { kind: "separator" },
+      { kind: "action", label: t("terminal.closeThisTab"), run: () => dispatch({ type: "close", id: tab.id }) },
+      {
+        kind: "action",
+        label: t("terminal.closeOtherTabs"),
+        enabled: current.current.tabs.length > 1,
+        run: () => dispatch({ type: "closeOthers", id: tab.id }),
+      },
+    ]).catch(() => undefined)
+  }
+
+  const rename = (tab: Tab, next: string | null): void => {
+    setEditing(null)
+    // Unchanged is no rename: an automatic name stays automatic.
+    if (next === null || next.trim() === tabTitle(tab)) return
+    dispatch({ type: "rename", id: tab.id, title: next })
+  }
 
   // Tab switching the way Terminal and Safari do it.
   useEffect(() => {
@@ -172,8 +205,10 @@ export function TerminalWindow(): JSX.Element {
     return () => window.removeEventListener("keydown", keys, { capture: true })
   }, [])
 
-  // The title bar shows tabs, not this; it names the window in the Window menu and Mission Control.
-  const title = t("terminal.windowTitle", { title: active === null ? t("terminal.title") : tabTitle(active) })
+  // The title bar shows tabs, not this; it names the window in the Window menu and Mission Control:
+  // the active tab's instance and the tab.
+  const title =
+    active === null ? t("terminal.title") : t("terminal.windowTitle", { instance: titles[active.instance] ?? active.instance, tab: tabTitle(active) })
   useEffect(() => setWindowTitle(title), [title])
 
   // The last tab closing closes the window, as in Terminal.
@@ -193,26 +228,50 @@ export function TerminalWindow(): JSX.Element {
           {s.tabs.map((tab) => {
             const name = tabTitle(tab)
             const done = tab.state.kind === "exited" || tab.state.kind === "lost" || tab.state.kind === "failed"
+            // Windows' sign for elevated; after the name in the accessible name, before it on screen.
+            const shield = (
+              <span className="term__tab-admin" role="img" aria-label={t("terminal.runsAsAdmin")} title={t("terminal.runsAsAdmin")}>
+                <Icon name="shield" />
+              </span>
+            )
             return (
-              <div key={tab.id} className={cx("term__tab", tab.id === s.active && "term__tab--active", done && "term__tab--ended")}>
-                <button
-                  type="button"
-                  role="tab"
-                  className="term__tab-label"
-                  aria-selected={tab.id === s.active}
-                  onClick={() => dispatch({ type: "activate", id: tab.id })}
-                  onAuxClick={(e) => {
-                    if (e.button === 1) dispatch({ type: "close", id: tab.id })
-                  }}
-                >
-                  <span className="term__tab-name" title={name}>
-                    {name}
-                  </span>
-                  {/* Windows' sign for elevated; after the name in the accessible name, before it on screen. */}
-                  <span className="term__tab-admin" role="img" aria-label={t("terminal.runsAsAdmin")} title={t("terminal.runsAsAdmin")}>
-                    <Icon name="shield" />
-                  </span>
-                </button>
+              <div
+                key={tab.id}
+                className={cx("term__tab", tab.id === s.active && "term__tab--active", done && "term__tab--ended")}
+                onContextMenu={(e) => {
+                  e.preventDefault()
+                  tabMenu(tab)
+                }}
+              >
+                {editing === tab.id ? (
+                  <div className="term__tab-label">
+                    <InlineRename
+                      className="term__tab-rename"
+                      value={name}
+                      label={t("terminal.tabName")}
+                      maxLength={TITLE_MAX}
+                      onDone={(next) => rename(tab, next)}
+                    />
+                    {shield}
+                  </div>
+                ) : (
+                  <button
+                    type="button"
+                    role="tab"
+                    className="term__tab-label"
+                    aria-selected={tab.id === s.active}
+                    onClick={() => dispatch({ type: "activate", id: tab.id })}
+                    onDoubleClick={() => setEditing(tab.id)}
+                    onAuxClick={(e) => {
+                      if (e.button === 1) dispatch({ type: "close", id: tab.id })
+                    }}
+                  >
+                    <span className="term__tab-name" title={t("terminal.tabTip", { name })}>
+                      {name}
+                    </span>
+                    {shield}
+                  </button>
+                )}
                 <button
                   type="button"
                   className="term__tab-close"
