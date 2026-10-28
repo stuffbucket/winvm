@@ -167,7 +167,14 @@ function when(v: string | null, where: string, key: string, dflt: When): When {
   throw new JobError(`${where}: "${key}" must be failure, always or never`)
 }
 
-function fileSpec(v: unknown, where: string, baseDir: string): FileSpec {
+/** A host path from a job file: `~/` is the home folder; relative is to the job file. */
+const hostPath = (src: string, baseDir: string): string => {
+  const expanded = src.startsWith("~/") ? resolve(process.env["HOME"] ?? "", src.slice(2)) : src
+  return isAbsolute(expanded) || baseDir === "" ? expanded : resolve(baseDir, expanded)
+}
+
+/** A file entry, its `src` resolved only after interpolation (interpolateFile), so `${{ env.DIR }}/x` can be absolute. */
+function fileSpec(v: unknown, where: string): FileSpec {
   if (!isObj(v)) throw new JobError(`${where}: each file is a mapping (src/url/release + dest)`)
   const dest = str(v, "dest", where)
   const src = str(v, "src", where)
@@ -175,10 +182,7 @@ function fileSpec(v: unknown, where: string, baseDir: string): FileSpec {
   const repo = str(v, "release", where)
   const given = [src, url, repo].filter((x) => x !== null).length
   if (given !== 1) throw new JobError(`${where}: give exactly one of "src", "url" or "release"`)
-  if (src !== null) {
-    const expanded = src.startsWith("~/") ? resolve(process.env["HOME"] ?? "", src.slice(2)) : src
-    return { kind: "path", src: isAbsolute(expanded) || baseDir === "" ? expanded : resolve(baseDir, expanded), dest }
-  }
+  if (src !== null) return { kind: "path", src, dest }
   if (url !== null) {
     if (!/^https?:\/\//.test(url)) throw new JobError(`${where}: url must be http(s)`)
     return { kind: "url", url, dest }
@@ -206,12 +210,12 @@ export function interpolate(text: string, vars: Readonly<Record<string, string>>
   )
 }
 
-function interpolateFile(f: FileSpec, vars: Record<string, string>, where: string): FileSpec {
+function interpolateFile(f: FileSpec, vars: Record<string, string>, where: string, baseDir: string): FileSpec {
   const i = (s: string): string => interpolate(s, vars, where)
   const dest = f.dest === null ? null : i(f.dest)
   switch (f.kind) {
     case "path":
-      return { ...f, src: i(f.src), dest }
+      return { ...f, src: hostPath(i(f.src), baseDir), dest }
     case "url":
       return { ...f, url: i(f.url), dest }
     case "release":
@@ -255,7 +259,7 @@ export function parseJob(text: string, file = ""): Job {
   if (!Array.isArray(filesRaw)) throw new JobError(`${where}: "files" must be a list`)
   const files = filesRaw.map((f, i) => {
     const fw = `${where}: file ${String(i + 1)}`
-    return interpolateFile(fileSpec(f, fw, baseDir), jobEnv, fw)
+    return interpolateFile(fileSpec(f, fw), jobEnv, fw, baseDir)
   })
   let artifacts: Job["artifacts"] = { when: "failure", paths: [] }
   const a = raw["artifacts"]

@@ -73,6 +73,13 @@ describe("parseJob", () => {
     expect(j.name).toBe("job")
   })
 
+  it("resolves src after ${{ env }}, so an absolute folder from the env stays absolute", () => {
+    const yml = "env:\n  T: /skills/templates\nfiles:\n  - src: ${{ env.T }}/a.ps1\n  - src: ${{ env.REL || 'sub' }}/b.ps1\n" + minimal
+    const j = parseJob(yml, "/jobs/a/job.yml")
+    expect(j.files[0]).toMatchObject({ src: "/skills/templates/a.ps1" })
+    expect(j.files[1]).toMatchObject({ src: "/jobs/a/sub/b.ps1" })
+  })
+
   it("rejects what it cannot run", () => {
     for (const bad of [
       "name: x",
