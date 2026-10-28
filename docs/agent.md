@@ -114,6 +114,7 @@ await c.procs()                       // [{pid, name, session}]
 await c.kill(pid, { tree })           // kills the whole tree unless tree is false
 await c.health()                      // {version, pid, arch, session, uptimeMs, ...}
 await c.ui({ op, ... })               // UI Automation; use ui.ts instead (see gui.md)
+await c.display({ op, ... })          // screen size and scaling; use guestdisplay.ts (windows-vm-qemu.md#the-display)
 
 agent.qgaLaunch(name, argv)           // start a GUI program over qemu-ga, without the agent
 ```

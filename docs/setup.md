@@ -58,19 +58,40 @@ winvm ls                          # images and instances, with disk use
 
 ## Screen size
 
-The default display is fixed at 800x600. For a larger screen, switch the
-instance to virtio-gpu:
+New instances use a resizable display (virtio-gpu). In the app, the Windows
+screen follows the window: it is the window's size in real pixels, with
+Windows scaling set to match your Mac (200% on a Retina display), so it is
+sharp. Nothing to set up.
+
+From the command line, while the instance runs:
 
 ```sh
-winvm display -i test 1920x1080   # records the device
-winvm stop -i test && winvm start -i test
-winvm display -i test 1920x1080   # sets the Windows resolution and reboots
+winvm display -i test                    # device, size and scaling now
+winvm display -i test 2560x1600          # resize, live, in well under a second
+winvm display -i test --scale 200        # Windows display scaling, live
 ```
 
-The second `display` is needed because Windows starts a new monitor at
-1024x768. Changing the display device means that instance's existing
-snapshots and saves no longer load. `winvm display -i test ramfb` switches
-back.
+Sizes are kept to what the guest can show: up to 5120 wide and 2160 tall, and
+at most 30 MiB of picture (3840x2048 fits; a bigger request is shrunk to fit,
+keeping its shape). Windows' smallest is 1024x768.
+
+**Instances made before this** keep the fixed 800x600 display (ramfb), so
+their saves keep loading. To switch one, stop it first:
+
+```sh
+winvm stop -i test
+winvm display -i test virtio-gpu         # or: winvm display -i test ramfb
+winvm start -i test
+```
+
+Saves taken on the other display won't load after a switch. winvm says which,
+keeps them, and loads them again if you switch back. A stowed instance must be
+started and shut down cleanly before it can switch. The first start on
+virtio-gpu comes up at 1024x768 until the app (or `winvm display WxH`) sizes
+it.
+
+For developers: how the resize works, and why the size is never on QEMU's
+command line, is in [How the VM is configured](windows-vm-qemu.md#the-display).
 
 ## Time Machine
 
