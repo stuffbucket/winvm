@@ -2,13 +2,16 @@
  * A paused or asleep guest (frozen.ts): what status reports, that nothing calls
  * into it, and the asleep mark. QEMU is a FakeQmp; the "QEMU process" is this one.
  */
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { createServer, type Server } from "node:net"
+import { resolve } from "node:path"
 
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "bun:test"
 
 import * as agent from "../src/agent"
-import { GuestFrozen, frozenFrom, frozenState, isFrozenRunState, markAsleep, clearAsleep, markedAsleep, refuseFrozen } from "../src/frozen"
+import { parseArgs } from "../src/args"
+import { filesCmd } from "../src/finder"
+import { GuestFrozen, clearSavingRunning, frozenFrom, frozenState, isFrozenRunState, markAsleep, clearAsleep, markSavingRunning, markedAsleep, refuseFrozen, savingRunning } from "../src/frozen"
 import { pathsFor } from "../src/paths"
 import { deriveState, gather } from "../src/status"
 import { FakeQmp } from "./fakes/qmp"
@@ -71,6 +74,43 @@ describe("run states", () => {
   })
 })
 
+describe("a save of a running guest", () => {
+  it("is running, not paused, through its stop and postmigrate", () => {
+    expect(deriveState(true, "paused", [], false, true)).toBe("running")
+    expect(deriveState(true, "postmigrate", [], false, true)).toBe("running")
+    expect(deriveState(true, "postmigrate", [], false, false)).toBe("paused")
+    expect(deriveState(false, null, [], false, true)).toBe("stopped")
+  })
+
+  it("is marked by the process saving, and the mark of a process gone counts for nothing", () => {
+    const p = pathsFor(NAME)
+    expect(savingRunning(p)).toBe(false)
+    markSavingRunning(p)
+    expect(savingRunning(p)).toBe(true)
+    // A pid no process has: a save that died left its mark behind.
+    markSavingRunning(p, 2 ** 22 + 12_345)
+    expect(savingRunning(p)).toBe(false)
+    clearSavingRunning(p)
+    expect(savingRunning(p)).toBe(false)
+  })
+
+  it("status says running while the save holds it stopped, and does not wait on its guest agent", async () => {
+    runState = "postmigrate"
+    markSavingRunning(pathsFor(NAME))
+    try {
+      const t0 = Date.now()
+      const s = await gather(NAME, true)
+      expect(s.state).toBe("running")
+      expect(s.vmStatus).toBe("postmigrate")
+      expect(s.guest).toBeNull()
+      expect(Date.now() - t0).toBeLessThan(1500)
+    } finally {
+      clearSavingRunning(pathsFor(NAME))
+    }
+    expect((await gather(NAME, false)).state).toBe("paused")
+  })
+})
+
 describe("the asleep mark", () => {
   it("applies only to the QEMU process it names", () => {
     const p = pathsFor(NAME)
@@ -114,6 +154,17 @@ describe("nothing calls into a frozen guest", () => {
     expect(got).toBeInstanceOf(GuestFrozen)
     expect(Date.now() - t0).toBeLessThan(2000)
     expect(fake.commands.filter((c) => c !== "qmp_capabilities")).toEqual(["query-status"])
+  })
+
+  it("winvm files open and mount refuse at once, before any mount or setup", async () => {
+    runState = "paused"
+    for (const sub of ["open", "mount"]) {
+      const t0 = Date.now()
+      expect(await filesCmd(parseArgs([sub, "-i", NAME]))).toBe(1)
+      expect(Date.now() - t0).toBeLessThan(2000)
+    }
+    expect(fake.commands.filter((c) => c !== "qmp_capabilities" && c !== "query-status")).toEqual([])
+    expect(existsSync(resolve(pathsFor(NAME).dir, "smb.json"))).toBe(false)
   })
 
   it("agent.requireAgent refuses too", async () => {
