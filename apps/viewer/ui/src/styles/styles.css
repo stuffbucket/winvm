@@ -88,18 +88,55 @@ html[data-os="macos"] .toolbar {
   text-overflow: ellipsis;
 }
 
-/* The instance's title, as a window title reads; double-click renames it. */
-.toolbar__title {
+/* Which Windows machine: one trigger, a computer, its name or title and a
+   chevron, opening the Windows machines menu (features/machines). Not a drag
+   region: a click opens the menu. */
+.machine-picker {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
   flex: 0 1 auto;
   min-width: 0;
-  align-self: center;
+  max-width: calc(var(--size-2xl) * 7);
+  padding: var(--space-1) var(--space-2);
+  margin-inline-start: calc(var(--space-2) * -1);
+  border: 0;
+  border-radius: var(--radius-input);
+  background: transparent;
+  color: var(--text-strong);
+  font-family: var(--font-body);
   font-size: var(--text-sm);
   font-weight: var(--weight-md);
-  color: var(--text-strong);
+  line-height: var(--leading-lg);
+  cursor: default;
+}
+
+.machine-picker:hover,
+.machine-picker[data-popup-open] {
+  background: var(--surface-control);
+}
+
+.machine-picker:focus-visible {
+  outline: var(--focus-ring);
+  outline-offset: var(--focus-ring-offset);
+}
+
+.machine-picker svg {
+  flex-shrink: 0;
+  width: var(--size-sm);
+  height: var(--size-sm);
+}
+
+.machine-picker__name {
+  min-width: 0;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  cursor: default;
+}
+
+.machine-picker__chevron {
+  display: inline-flex;
+  color: var(--text-muted);
 }
 
 .toolbar__rename {
@@ -108,8 +145,96 @@ html[data-os="macos"] .toolbar {
   min-width: 0;
 }
 
-.toolbar__switch {
-  margin-inline-start: calc(var(--space-2) * -1);
+/* ---- Menu (components/Menu.tsx): Base UI's Menu, in the window's style ---- */
+.menu-positioner {
+  z-index: 30;
+}
+
+.menu {
+  min-width: calc(var(--size-2xl) * 6);
+  max-width: calc(100vw - var(--space-6));
+  max-height: var(--available-height, 70vh);
+  overflow-y: auto;
+  padding: var(--space-1);
+  background: var(--surface-card);
+  border: var(--border-width-hairline) solid var(--border-subtle);
+  border-radius: var(--radius-card);
+  box-shadow: var(--elevation-modal);
+  outline: none;
+}
+
+.menu__heading {
+  padding: var(--space-2) var(--space-3) var(--space-1);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-md);
+  color: var(--text-muted);
+}
+
+.menu__separator {
+  height: var(--border-width-hairline);
+  margin: var(--space-1) var(--space-2);
+  background: var(--border-subtle);
+  border: 0;
+}
+
+.menu-item {
+  display: grid;
+  grid-template-columns: var(--size-sm) minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-1) var(--space-3) var(--space-1) var(--space-2);
+  border-radius: var(--radius-chip);
+  font-size: var(--text-sm);
+  line-height: var(--leading-lg);
+  color: var(--text-strong);
+  cursor: default;
+  user-select: none;
+  outline: none;
+}
+
+.menu-item[data-highlighted] {
+  background: var(--accent);
+  color: var(--accent-fg);
+}
+
+.menu-item[data-disabled] {
+  color: var(--text-muted);
+}
+
+.menu-item--danger {
+  color: var(--status-error);
+}
+
+.menu-item--danger[data-highlighted] {
+  background: var(--accent-destructive);
+  color: var(--accent-destructive-foreground);
+}
+
+.menu-item__leading,
+.menu-item__check {
+  display: inline-flex;
+  width: var(--size-sm);
+  height: var(--size-sm);
+}
+
+.menu-item__check:not([data-checked]) {
+  visibility: hidden;
+}
+
+.menu-item__label {
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.menu-item__trailing {
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.menu-item[data-highlighted] .menu-item__trailing {
+  color: inherit;
 }
 
 /* A name edited in place (components/InlineRename): the title, a tab. */
@@ -712,6 +837,125 @@ html[data-os="macos"] .toolbar {
   font-size: var(--text-sm);
   color: var(--text-strong);
   overflow-wrap: anywhere;
+}
+
+/* The panel's Resources: each a label and its value, then the last minute
+   and a half as a line (CPU, memory) or a hairline bar (disk), and a note. */
+.resources {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.resource__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-3);
+  margin-block-end: var(--space-1);
+  font-size: var(--text-sm);
+}
+
+.resource__label {
+  color: var(--text-muted);
+}
+
+.resource__value {
+  color: var(--text-strong);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.resource__note {
+  margin: var(--space-1) 0 0;
+  font-size: var(--text-sm);
+  color: var(--text-muted);
+}
+
+.sparkline {
+  display: block;
+  inline-size: 100%;
+  block-size: var(--size-lg);
+  color: var(--accent);
+}
+
+.sparkline__line {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: var(--border-width-thick);
+  stroke-linejoin: round;
+}
+
+.sparkline__area {
+  fill: color-mix(in srgb, currentColor 14%, transparent);
+  stroke: none;
+}
+
+.resource__bar {
+  display: block;
+  height: var(--border-width-heavy);
+  background: var(--border-subtle);
+  border-radius: var(--radius-pill);
+  overflow: hidden;
+}
+
+.resource__fill {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+}
+
+/* New Machine…: labelled fields, the advanced ones folded away. */
+.new-machine__body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.field__label {
+  font-size: var(--text-sm);
+  font-weight: var(--weight-md);
+  color: var(--text-strong);
+}
+
+.field__hint {
+  font-size: var(--text-sm);
+  color: var(--text-muted);
+}
+
+.field__hint--error {
+  margin: 0;
+  color: var(--status-error);
+}
+
+.new-machine__advanced {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.new-machine__advanced > summary {
+  font-size: var(--text-sm);
+  color: var(--text-muted);
+  cursor: default;
+}
+
+.check-field {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--text-sm);
+  color: var(--text-strong);
+}
+
+.check-field input {
+  accent-color: var(--accent);
 }
 
 /* ---- Disclosure (native <details>) ---- */

@@ -1,4 +1,6 @@
 mod agent;
+mod liveresize;
+mod usage;
 
 use serde::{Deserialize, Serialize};
 use std::path::Path;
@@ -20,7 +22,7 @@ struct Output {
 
 const VERBS: &[&str] = &[
     "status", "doctor", "start", "stop", "reboot", "pause", "resume", "kill", "open", "setup", "exec", "put", "get",
-    "dir", "save", "load", "saves", "help", "terminal", "config", "display",
+    "dir", "save", "load", "saves", "help", "terminal", "config", "display", "create", "destroy", "ls",
 ];
 
 #[tauri::command]
@@ -330,6 +332,12 @@ fn menu(app: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
     Ok(menu)
 }
 
+/// A line on stderr, for the viewer's timings (a resize from release to its first sharp frame).
+#[tauri::command]
+fn trace(line: String) {
+    eprintln!("{line}");
+}
+
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
@@ -384,6 +392,9 @@ pub fn run() {
             }
         })
         .setup(|app| {
+            if let Some(main) = app.get_webview_window("main") {
+                liveresize::watch(&main);
+            }
             if !cfg!(debug_assertions) {
                 check_for_update(app.handle().clone(), false);
             }
@@ -399,7 +410,9 @@ pub fn run() {
             reveal,
             terminal_open,
             terminal_take,
-            agent::agent_fetch
+            agent::agent_fetch,
+            usage::instance_usage,
+            trace
         ])
         .build(tauri::generate_context!())
         .expect("winvm could not start")

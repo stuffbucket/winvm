@@ -17,6 +17,8 @@ export interface Winvm {
   readonly name: string | null
   /** Each instance's title (`winvm config title=…`); null or absent: its name. */
   readonly titles: Readonly<Record<string, string | null>>
+  /** Each machine's state, as last read (the others' every 40 s or so). */
+  readonly phases: Readonly<Record<string, Phase>>
   readonly status: Status | null
   readonly phase: Phase | null
   readonly statusError: string | null
@@ -35,6 +37,8 @@ export interface Winvm {
   dismissFailure(): void
   /** Sets this instance's title (empty clears it); resolves with why it couldn't, or null. */
   rename(title: string): Promise<string | null>
+  /** Reads the list of machines again (after one is made or deleted). */
+  refresh(): Promise<void>
 }
 
 const errorText = (e: unknown): string => (e instanceof Error ? e.message : String(e))
@@ -43,6 +47,7 @@ export function useWinvm(): Winvm {
   const [names, setNames] = useState<readonly string[]>([])
   const [name, setName] = useState<string | null>(null)
   const [titles, setTitles] = useState<Readonly<Record<string, string | null>>>({})
+  const [phases, setPhases] = useState<Readonly<Record<string, Phase>>>({})
   const [status, setStatus] = useState<Status | null>(null)
   const [statusError, setStatusError] = useState<string | null>(null)
   const [checks, setChecks] = useState<Checks | null>(null)
@@ -65,6 +70,7 @@ export function useWinvm(): Winvm {
     const found = list.map((s) => s.name)
     setNames(found)
     setTitles(Object.fromEntries(list.map((s) => [s.name, s.title])))
+    setPhases(Object.fromEntries(list.map((s) => [s.name, phase(s)])))
     return found[0] ?? "default"
   }, [])
 
@@ -78,6 +84,7 @@ export function useWinvm(): Winvm {
     setStatusError(null)
     setStatus(s)
     setTitles((was) => (was[s.name] === s.title ? was : { ...was, [s.name]: s.title }))
+    setPhases((was) => (was[s.name] === phase(s) ? was : { ...was, [s.name]: phase(s) }))
   }, [])
 
   const loadChecks = useCallback(async (): Promise<void> => {
@@ -208,7 +215,11 @@ export function useWinvm(): Winvm {
     names,
     name,
     titles,
+    phases,
     rename,
+    refresh: async () => {
+      await loadNames()
+    },
     status: current,
     phase: p,
     statusError,
