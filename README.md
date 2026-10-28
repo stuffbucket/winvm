@@ -59,6 +59,7 @@ be built from the command line first.
 | `winvm status` | Whether it's running, the Windows version, saves, and more |
 | `winvm exec -- <cmd>` | Run a command in Windows |
 | `winvm put <file> <guest path>` / `get` | Copy a file into or out of Windows |
+| `winvm files open [c]` | Show Windows' home folder (or C:\) in Finder |
 | `winvm save [name]` / `load [name]` | Save the running machine to disk, and load it back |
 | `winvm reset` | Discard all changes and go back to the base image |
 | `winvm open` | Show the screen in Screen Sharing (`--web` for the browser) |

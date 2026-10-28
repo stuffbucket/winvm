@@ -174,6 +174,16 @@ survives start, load, stow and golden resets.
 free host port the first time and keeps it. If that port is taken later, it
 picks a new one.
 
+The same code (agentfwd.ts `forwardPort`) forwards a second port for an
+instance whose drives were ever opened in Finder: `127.0.0.1:<hostPort>` to
+the guest's SMB port, 445, with the port kept in `<instance>/smb.json`
+(`ensureSmbForward`). `restoreForward` puts it back next to the agent's on
+every launch, so it too stays off the command line and out of the save hash.
+See [Open Windows' drives in Finder](files.md#open-windows-drives-in-finder).
+`POST /smb/setup {user, password}` is the agent route that sets the guest up
+for it; the password travels in the request body, never on a command line,
+and the agent never logs it.
+
 Inside the guest, `http://10.0.2.2:<port>` reaches the host's loopback.
 `agent install` uses this to serve bun to a guest that has none.
 
