@@ -16,7 +16,8 @@
     "skipLibCheck": true,
     "noEmit": true,
     "paths": {
-      "novnc/*": ["../../packages/core/web/novnc/*"]
+      "novnc/*": ["../../packages/core/web/novnc/*"],
+      "@winvm/displayfit": ["../../packages/core/src/displayfit.ts"]
     }
   },
   "include": ["ui/src", "scripts", "tests"]
