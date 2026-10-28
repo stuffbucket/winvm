@@ -163,7 +163,9 @@ Inside the guest, `http://10.0.2.2:<port>` reaches the host's loopback.
 
 Each instance has a random 32-byte token. The host writes it over qemu-ga to
 `C:\ProgramData\winvm\agent\token`, readable only by Administrators and
-SYSTEM. Every request must send `Authorization: Bearer <token>`. Without a
+SYSTEM. Every request must send `Authorization: Bearer <token>`, except that
+`GET /term` may offer the subprotocol `winvm-token.<token>` instead, because a
+browser's WebSocket cannot set headers (see [Terminal](#terminal)). Without a
 token file, the agent refuses every request.
 
 The agent re-reads the token file when it changes. This lets the host take
@@ -192,6 +194,16 @@ The registry value `HKLM\...\Run\winvm-agent` starts the agent at every logon
 in the user's session, through `conhost.exe --headless` so it has no window.
 It runs with `--supervise`, which restarts the agent if it exits. The agent
 also closes the audit-mode Sysprep dialog after logon.
+
+### Folder listings
+
+`GET /fs/list` reads the folder with `readdir` and stats only the entries it
+returns, plus links (to learn whether they lead to a folder), 256 at a time.
+`C:\Windows\WinSxS`, about 17,000 entries, lists its first 5000 in about half a
+second.
+Node can't read Windows' hidden attribute, so the spawner runs `cmd /u /c dir
+/b /a:h` alongside `readdir`. `/u` makes cmd write UTF-16 to the pipe, so names
+outside the OEM code page survive.
 
 ### Processes
 
@@ -245,16 +257,6 @@ and waits for the agent that started at logon.
 
 For an image without the agent, `ensure` falls back to `agent.install`, which
 copies the same files over qemu-ga and runs the same script.
-
-### Folder listings
-
-`GET /fs/list` reads the folder with `readdir` and stats only the entries it
-returns, plus links (to learn whether they lead to a folder), 256 at a time.
-`C:\Windows\WinSxS`, about 17,000 entries, lists its first 5000 in about half a
-second.
-Node can't read Windows' hidden attribute, so the spawner runs `cmd /u /c dir
-/b /a:h` alongside `readdir`. `/u` makes cmd write UTF-16 to the pipe, so names
-outside the OEM code page survive.
 
 ### Bun issues found
 
