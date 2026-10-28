@@ -1,0 +1,89 @@
+/*
+ * Starlight's theme, mapped onto the winvm app's design tokens (apps/viewer/ui/src/styles/tokens.css, generated
+ * from theme.ts and loaded just before this file). The tokens switch between dark and light themselves: dark by
+ * default, light under data-theme="light", which Starlight's theme select sets on <html>. So each Starlight
+ * variable is set once, to a token, and follows the theme.
+ *
+ * Starlight declares its own values in cascade layers; these rules are unlayered, so they win.
+ */
+:root,
+:root[data-theme='light'] {
+  /* Gray scale: Starlight's "white" is the strongest text and "black" the page ground, in both themes. */
+  --sl-color-white: var(--text-strong);
+  --sl-color-gray-1: var(--text-strong);
+  --sl-color-gray-2: var(--text-base-color);
+  --sl-color-gray-3: var(--text-muted);
+  --sl-color-gray-4: var(--border-strong);
+  --sl-color-gray-5: var(--border-subtle);
+  --sl-color-gray-6: var(--surface-control);
+  --sl-color-gray-7: var(--surface-card);
+  --sl-color-black: var(--surface-base);
+
+  /* Accent: the app's teal. `accent` is for fills and focus; `link` is the teal used as text. */
+  --sl-color-accent-low: var(--backdrop-glow-accent);
+  --sl-color-accent: var(--accent);
+  --sl-color-accent-high: var(--link);
+
+  --sl-color-text: var(--text-base-color);
+  --sl-color-text-accent: var(--link);
+  /* Text on a text-accent fill (the current page in the sidebar, the skip link). */
+  --sl-color-text-invert: var(--surface-base);
+  --sl-color-bg: var(--surface-base);
+  --sl-color-bg-nav: var(--surface-card);
+  --sl-color-bg-sidebar: var(--surface-base);
+  --sl-color-bg-inline-code: var(--surface-control);
+  --sl-color-bg-accent: var(--accent);
+  --sl-color-hairline-light: var(--border-subtle);
+  --sl-color-hairline: var(--border-subtle);
+  --sl-color-hairline-shade: var(--border-subtle);
+  --sl-color-backdrop-overlay: var(--scrim);
+
+  /* Asides: note, tip, caution, danger take the status colors. */
+  --sl-color-blue-high: var(--status-info);
+  --sl-color-blue: var(--status-info);
+  --sl-color-green-high: var(--status-success);
+  --sl-color-green: var(--status-success);
+  --sl-color-orange-high: var(--status-warning);
+  --sl-color-orange: var(--status-warning);
+  --sl-color-red-high: var(--status-error);
+  --sl-color-red: var(--status-error);
+
+  /* Type: the app's body and mono stacks. */
+  --sl-font: var(--font-body);
+  --sl-font-mono: var(--font-mono);
+  --sl-line-height: var(--leading-base);
+  --sl-line-height-headings: var(--leading-2xl);
+}
+
+/* The app gives one heading per window the display face (Fraunces); here that is the page title and the site
+   title. Section headings stay in the body face. */
+.content-panel h1#_top,
+.site-title {
+  font-family: var(--font-display);
+  letter-spacing: var(--tracking-2xl);
+}
+.sl-markdown-content :is(h2, h3, h4) {
+  letter-spacing: var(--tracking-xl);
+}
+
+/* Radii from the app: chips for inline code, cards for asides. */
+.sl-markdown-content code:not(:where(.not-content *, pre *)) {
+  border-radius: var(--radius-chip);
+}
+.starlight-aside {
+  border-radius: var(--radius-card);
+}
+
+/* Focus ring as in the app. */
+:focus-visible {
+  outline: var(--focus-ring);
+  outline-offset: var(--focus-ring-offset);
+}
+
+/* Links: the app's link and hover colors. */
+.sl-markdown-content a:not(:where(.not-content *)) {
+  color: var(--link);
+}
+.sl-markdown-content a:not(:where(.not-content *)):hover {
+  color: var(--link-hover);
+}

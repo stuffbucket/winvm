@@ -1,0 +1,6 @@
+dist/
+.astro/
+node_modules/
+# Written by scripts/generate.mjs from README.md, docs/ and the app's icon
+src/content/docs/
+public/favicon.png

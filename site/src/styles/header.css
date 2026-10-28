@@ -1,0 +1,144 @@
+/*
+ * The header: site title, search, GitHub link, theme select and, below 50rem, the menu button.
+ * Loaded through customCss in astro.config.mjs. Colours are Starlight's theme variables, as in tables.css.
+ *
+ * The header keeps Starlight's height (--sl-nav-height) and gutters (--sl-nav-pad-x), and its grid,
+ * so the search box starts where the page's text starts.
+ *
+ * Every control is the same height, and the ones with an edge use the app's card radius
+ * (--radius-card). The search box is a field: a hairline border on the header's own background. The
+ * GitHub link, theme select and menu button are buttons: no border, a background only on hover.
+ */
+:root {
+  --header-control-height: 2.25rem;
+  --header-control-radius: var(--radius-card);
+  --header-control-hover: var(--sl-color-gray-5);
+  --header-icon-size: 1.125rem;
+  /* Starlight sizes the menu button and the header's room for it from this. */
+  --sl-menu-button-size: var(--header-control-height);
+}
+:root[data-theme='light'] {
+  --header-control-hover: var(--sl-color-gray-6);
+}
+
+/* Site title: the page's heading colour, not the link colour. */
+.site-title {
+  color: var(--sl-color-white);
+  font-size: var(--sl-text-lg);
+  font-weight: 600;
+}
+
+/* Search */
+button[data-open-modal] {
+  justify-content: center;
+  width: var(--header-control-height);
+  height: var(--header-control-height);
+  padding: 0;
+  border-radius: var(--header-control-radius);
+  color: var(--sl-color-gray-2);
+  font-size: var(--header-icon-size);
+}
+button[data-open-modal]:hover {
+  background-color: var(--header-control-hover);
+  color: var(--sl-color-white);
+}
+
+@media (min-width: 50rem) {
+  button[data-open-modal] {
+    justify-content: flex-start;
+    width: 100%;
+    max-width: 22rem;
+    padding-inline: 0.75rem 0.4375rem;
+    border-color: var(--sl-color-gray-5);
+    background-color: transparent;
+    font-size: var(--sl-text-sm);
+  }
+  button[data-open-modal]:hover {
+    border-color: var(--sl-color-gray-4);
+    background-color: transparent;
+  }
+  button[data-open-modal] > svg {
+    flex: none;
+    font-size: 1rem;
+  }
+}
+
+/* The shortcut, ⌘K or Ctrl K, as one quiet key. */
+button[data-open-modal] > kbd {
+  align-items: center;
+  gap: 0.125rem;
+  height: 1.375rem;
+  padding-inline: 0.375rem;
+  border: 1px solid var(--sl-color-gray-5);
+  border-radius: var(--radius-chip);
+  background-color: transparent;
+  color: var(--sl-color-gray-3);
+  font-size: var(--sl-text-2xs);
+  line-height: 1;
+}
+
+/* GitHub and theme: one gap, no divider. */
+.header .right-group,
+.header .social-icons {
+  gap: 0.25rem;
+}
+.header .social-icons::after {
+  content: none;
+}
+
+.header .social-icons a {
+  align-items: center;
+  justify-content: center;
+  width: var(--header-control-height);
+  height: var(--header-control-height);
+  margin: 0;
+  padding: 0;
+  border-radius: var(--header-control-radius);
+  color: var(--sl-color-gray-2);
+  font-size: var(--header-icon-size);
+}
+.header .social-icons a:hover {
+  background-color: var(--header-control-hover);
+  color: var(--sl-color-white);
+}
+
+/* Theme select: the label and a small caret. The label already says which theme, so its icon goes. */
+starlight-theme-select label {
+  --sl-caret-size: 1rem;
+}
+starlight-theme-select .label-icon {
+  display: none;
+}
+starlight-theme-select select {
+  width: auto;
+  height: var(--header-control-height);
+  margin: 0;
+  padding-block: 0;
+  padding-inline: 0.625rem calc(0.625rem + var(--sl-caret-size));
+  border-radius: var(--header-control-radius);
+}
+starlight-theme-select select:hover {
+  background-color: var(--header-control-hover);
+}
+starlight-theme-select .caret {
+  inset-inline-end: 0.5rem;
+}
+
+/* Menu button (below 50rem): a button like the others, not a filled circle. Its display is left to
+   Starlight's classes, which hide it from 50rem up. */
+.sl-menu-button {
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border-radius: var(--header-control-radius);
+  background-color: var(--sl-color-bg-nav);
+  color: var(--sl-color-gray-2);
+  box-shadow: none;
+  font-size: var(--header-icon-size);
+}
+.sl-menu-button:hover,
+.sl-menu-button:has(~ :popover-open) {
+  background-color: var(--header-control-hover);
+  color: var(--sl-color-white);
+  box-shadow: none;
+}
