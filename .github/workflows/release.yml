@@ -1,9 +1,9 @@
 name: Release
 
 # Runs on a vX.Y.Z tag (dispatched by release-please.yml, or by hand with the
-# tag selected). Creates the draft release, has stuffbucket/macos-builder build,
-# sign, notarize and attach the .dmg, then publishes once. A release is never
-# published without its .dmg. Adapted from stuffbucket/maximal's release.yml.
+# tag selected). Creates the draft release, starts stuffbucket/macos-builder,
+# which builds, signs, notarizes and attaches the .dmg and the app update, then
+# publishes once. A release is never published without them. Adapted from stuffbucket/maximal's release.yml.
 
 on:
   push:
@@ -113,6 +113,10 @@ jobs:
     needs: release
     runs-on: ubuntu-latest
     timeout-minutes: 60
+    # The release environment, which only v* tags can use, holds app-repoman's
+    # APP_ID and APP_PRIVATE_KEY. They start the signed build on
+    # stuffbucket/macos-builder.
+    environment: release
     env:
       TAG: ${{ github.ref_name }}
     steps:
@@ -120,18 +124,47 @@ jobs:
         with:
           persist-credentials: false
 
-      # winvm stores no token for macos-builder: a person with access to it
-      # starts the signed build, and this waits for the result.
-      - name: Ask for the signed build
+      - name: Check whether the signed build is already on the draft
+        id: built
         env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          names=$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name')
+          if grep -Eq '^winvm(-.+-darwin-arm64)?\.dmg$' <<< "$names"; then
+            echo "already=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "already=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      # Good for an hour, and only for starting workflows on macos-builder.
+      - name: Get a token for macos-builder
+        id: token
+        if: steps.built.outputs.already == 'false' && vars.APP_ID != ''
+        uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349 # v2.2.2
+        with:
+          app-id: ${{ vars.APP_ID }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+          owner: stuffbucket
+          repositories: macos-builder
+          permission-actions: write
+
+      - name: Start the signed build
+        if: steps.built.outputs.already == 'false'
+        env:
+          BUILDER_TOKEN: ${{ steps.token.outputs.token }}
           REPO: ${{ github.repository }}
         run: |
+          if [ -n "$BUILDER_TOKEN" ]; then
+            GH_TOKEN="$BUILDER_TOKEN" gh workflow run build.yml --repo stuffbucket/macos-builder --ref main -f repo="$REPO" -f ref="$TAG"
+            echo "Started the signed build for ${TAG} on stuffbucket/macos-builder." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
           cmd="gh workflow run build.yml --repo stuffbucket/macos-builder --ref main -f repo=${REPO} -f ref=${TAG}"
-          echo "::notice::Start the signed build for ${TAG}: ${cmd}"
+          echo "::notice::The release environment has no APP_ID. Start the signed build for ${TAG}: ${cmd}"
           {
             echo "### Start the signed build"
             echo
-            echo "Someone with access to stuffbucket/macos-builder runs:"
+            echo "The release environment has no app key, so someone with access to stuffbucket/macos-builder runs:"
             echo
             echo '```'
             echo "$cmd"
