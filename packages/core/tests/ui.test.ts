@@ -9,8 +9,6 @@ import { resolve } from "node:path"
 
 import { afterAll, beforeAll, describe, expect, it } from "bun:test"
 
-import { displayArgs, parseDisplay } from "../src/display"
-import { deviceFromCommandLine, resolutionValues, virtioMonitorKeys } from "../src/guestdisplay"
 import { ABS_MAX, charToStroke, parseCombo, pngSize, ppmSize, scaleAxis, textToStrokes } from "../src/input"
 import type { InstanceStatus } from "../src/status"
 import {
@@ -316,40 +314,5 @@ describe("reusing a running web server", () => {
   it("replaces one started by another CLI: another checkout, or the layout before the move", () => {
     expect(serverServesCli({ ...server, cli: "/other/apps/cli/src/winvm.ts" }, "/repo/apps/cli/src/winvm.ts")).toBe(false)
     expect(serverServesCli(server, "/repo/apps/cli/src/winvm.ts")).toBe(false)
-  })
-})
-
-describe("display", () => {
-  it("parses sizes and maps them to devices", () => {
-    expect(parseDisplay("1920x1080")).toEqual({ device: "virtio-gpu", width: 1920, height: 1080 })
-    expect(parseDisplay("ramfb")).toEqual({ device: "ramfb" })
-    expect(parseDisplay("10x10")).toBeNull()
-    expect(parseDisplay("big")).toBeNull()
-    expect(displayArgs({ device: "ramfb" })).toEqual(["-device", "ramfb"])
-    expect(displayArgs({ device: "virtio-gpu", width: 1600, height: 900 })).toEqual([
-      "-device",
-      "virtio-gpu-pci,xres=1600,yres=900",
-    ])
-  })
-
-  it("reads the running device back off a command line", () => {
-    expect(deviceFromCommandLine("qemu -device virtio-gpu-pci,xres=1920,yres=1080 -display none")).toBe(
-      "virtio-gpu 1920x1080",
-    )
-    expect(deviceFromCommandLine("qemu -device ramfb -display none")).toBe("ramfb")
-  })
-
-  it("finds the virtio GPU's monitor entries in `reg query` output", () => {
-    const base = "HKEY_LOCAL_MACHINE\\SYSTEM\\CurrentControlSet\\Control\\GraphicsDrivers\\Configuration"
-    const out = [
-      "",
-      `${base}\\MSNILNOEDID_1414_008D_FFFFFFFF_FFFFFFFF_0^030B4FCE`,
-      `${base}\\NOEDID_1AF4_1050_00000000_00050000_0^2405D464`,
-      `${base}\\NOEDID_1AF4_1050_00000000_00050000_0^2405D464\\00`,
-      "",
-    ].join("\r\n")
-    expect(virtioMonitorKeys(out)).toEqual([`${base}\\NOEDID_1AF4_1050_00000000_00050000_0^2405D464`])
-    expect(virtioMonitorKeys(out.replaceAll("HKEY_LOCAL_MACHINE", "HKLM"))).toHaveLength(1)
-    expect(resolutionValues(1600, 900)).toContainEqual(["00\\00", "ActiveSize.cx", 1600])
   })
 })

@@ -13,6 +13,8 @@
 #   <Dest>\guestagent.ts      the agent
 #   <Dest>\winvm-ui.exe       UI Automation helper the agent drives (/ui);
 #                             compiled here from C# (docs/gui.md)
+#   <Dest>\winvm-display.exe  screen size and display scaling, set live
+#                             (/display); compiled here from C# (display.ts)
 #   <Dest>\runinsession.exe   start a program on the logged-on desktop from
 #                             session 0 (qemu-ga); compiled here from C#
 #   <Dest>\conpty.exe         one terminal session (/term): a shell in a
@@ -37,8 +39,8 @@ $ris = Join-Path $Dest "runinsession.exe"
 
 # 1. Stop a running agent: it holds bun.exe open, and two would fight over the port.
 #    Its helpers too, which hold their exes open (a terminal's shell goes with conpty).
-$helpers = @("winvm-ui.exe", "conpty.exe") | ForEach-Object { Join-Path $Dest $_ }
-$running = @(Get-Process bun, winvm-ui, conpty -ErrorAction SilentlyContinue | Where-Object { $_.Path -eq $bun -or $helpers -contains $_.Path })
+$helpers = @("winvm-ui.exe", "conpty.exe", "winvm-display.exe") | ForEach-Object { Join-Path $Dest $_ }
+$running = @(Get-Process bun, winvm-ui, conpty, winvm-display -ErrorAction SilentlyContinue | Where-Object { $_.Path -eq $bun -or $helpers -contains $_.Path })
 if ($running.Count -gt 0) {
     $running | Stop-Process -Force
     $running | Wait-Process -Timeout 10 -ErrorAction SilentlyContinue
@@ -117,6 +119,20 @@ if (Test-Path $cs) {
         Add-Type -TypeDefinition (Get-Content $cs -Raw) -OutputAssembly $exe -OutputType ConsoleApplication
         Set-Content $stamp $sum
         Write-Output "conpty: compiled"
+    }
+}
+
+# 4d. The display helper, the same way: a one-shot console program per request.
+$cs = Join-Path $Source "winvm-display.cs"
+if (Test-Path $cs) {
+    $exe = Join-Path $Dest "winvm-display.exe"
+    $sum = (Get-FileHash $cs -Algorithm SHA256).Hash
+    $stamp = Join-Path $Dest "winvm-display.sha256"
+    if (-not (Test-Path $exe) -or -not (Test-Path $stamp) -or (Get-Content $stamp -Raw).Trim() -ne $sum) {
+        Remove-Item $exe -Force -ErrorAction SilentlyContinue
+        Add-Type -TypeDefinition (Get-Content $cs -Raw) -OutputAssembly $exe -OutputType ConsoleApplication
+        Set-Content $stamp $sum
+        Write-Output "winvm-display: compiled"
     }
 }
 
