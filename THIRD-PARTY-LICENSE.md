@@ -94,7 +94,57 @@ The ISO itself carries:
   `virtio-win_license.txt`.
 - **`utm-guest-tools-*.exe`** — the UTM guest tools installer, which bundles
   `qemu-ga` (**GPL-2.0**, © the QEMU authors). Source for QEMU is at
-  <https://gitlab.com/qemu-project/qemu>.
+  <https://gitlab.com/qemu-project/qemu>. It also installs the SPICE agent
+  (`vdservice`/`vdagent`, with an ARM64 build; GPL-2.0, Red Hat), which
+  carries winvm's clipboard: <https://gitlab.freedesktop.org/spice/win32/vd_agent>.
+
+### viofs (virtio-win 0.1.302) — the shared folder's driver
+
+`winvm share install` and `winvm build` fetch four files of virtio-win's
+`viofs/w11/ARM64` (`viofs.inf`, `viofs.sys`, `viofs.cat`, `virtiofs.exe`) from
+<https://fedorapeople.org/groups/virt/virtio-win/direct-downloads/archive-virtio/virtio-win-0.1.302-1/virtio-win-0.1.302.iso>,
+reading them out of the ISO by HTTP ranges, into the state directory, and
+pin each by SHA-256 (`VIOFS_FILES` in `sharemedia.ts`). Copyright Red Hat,
+Inc. and the virtio-win authors; BSD 3-clause, the same terms as the
+virtio-win drivers above (`virtio-win_license.txt` on that ISO). They could be
+redistributed with the notice, but are fetched like the other guest files.
+Source: <https://github.com/virtio-win/kvm-guest-drivers-windows>.
+
+### WinFsp 2.1 — `winfsp-2.1.25156.msi`
+
+WinFsp - Windows File System Proxy, Copyright (C) Bill Zissimopoulos.
+<https://github.com/winfsp/winfsp>. Fetched by `winvm share install` and
+`winvm build` from
+<https://github.com/winfsp/winfsp/releases/download/v2.1/winfsp-2.1.25156.msi>,
+pinned by SHA-256 (`WINFSP_SHA256` in `sharemedia.ts`), and installed in the
+user's own Windows guest. viofs's `virtiofs.exe` links its DLL; winvm itself
+links nothing of it.
+
+WinFsp is **GPLv3 with a FLOSS exception**. The exception lets FLOSS software
+(1) link the platform WinFsp DLL and (2) "distribute unmodified binary
+releases of the WinFsp installer", provided that the software (1) is under a
+licence meeting the Free Software or Open Source Definition, (2) includes the
+notice "WinFsp - Windows File System Proxy, Copyright (C) Bill Zissimopoulos"
+and a link to the WinFsp repository in its user interface and any user-facing
+documentation, and (3) "is not linked or distributed with proprietary
+(non-FLOSS) software".
+
+**Why it is downloaded, not bundled.** winvm's own code is MIT, which meets
+(1), and this file gives the notice for (2). Condition (3) is the unclear
+one: the signed winvm app ships beside things that are not FLOSS, and every
+image it builds contains Windows. Without the exception, bundling the MSI
+would be plain GPLv3 conveyance, with its source-offer duty. So winvm does
+not redistribute WinFsp: the host downloads the unmodified release from
+WinFsp's own GitHub release, as the user, and copies it into their own guest,
+as it does with the UTM guest tools. Bundling it later would need the notice
+in the app's UI as well, and a decision on (3).
+
+### virtiofsd and the rest of the runtime
+
+QEMU, `virtiofsd` (Chris Thomas's macOS port, Apache-2.0 AND BSD-3-Clause,
+with its crates' notices under `share/licenses/virtiofsd/`) and the other
+runtime components come from the winvm runtime, which carries their licences
+and sources: <https://github.com/stuffbucket/winvm-runtime>.
 
 ### Windows 11 ARM64 installation media
 
