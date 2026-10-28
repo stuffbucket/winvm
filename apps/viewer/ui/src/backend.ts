@@ -222,16 +222,32 @@ export type ActionNode = Action
 export const openFiles = (instance: string, title: string | null): Promise<void> => tauri().core.invoke<void>("files_open", { instance, title })
 
 /**
- * Whether a guest folder can be shown in Finder yet: the guest's drives
- * mounted on the Mac (Windows' file sharing through a forwarded port) is
- * still to come, so the menu offers it disabled.
+ * Whether guest folders can be shown in Finder: the guest's C:\ and home folder
+ * are mounted on the Mac (Windows' own file sharing, through a forwarded port;
+ * `winvm files`).
  */
-export const GUEST_FOLDERS_IN_FINDER = false
+export const GUEST_FOLDERS_IN_FINDER = true
 
-/** Shows a guest folder in Finder, once the guest's drives can be mounted on the Mac. Not yet. */
-export async function revealGuestPath(instance: string, path: string): Promise<void> {
-  throw new Error(`showing ${path} of ${instance} in Finder isn't available yet`)
+/** The shares `winvm files` mounts: the home folder, and the whole of C:\. */
+export type GuestShare = "home" | "c"
+
+const filesOpen = async (instance: string, ...what: string[]): Promise<void> => {
+  const out = await winvm("files", "open", "-i", instance, ...what)
+  if (out.code !== 0) throw new Error(outputText(out) || `winvm files open exited ${String(out.code)}`)
 }
+
+/**
+ * Opens one of the guest's shares in Finder, mounting it on ~/winvm/<instance>
+ * first if it is not. The first time also sets Windows up to share, which takes
+ * a few seconds more.
+ */
+export const openShareInFinder = (instance: string, share: GuestShare): Promise<void> => filesOpen(instance, share)
+
+/** Whether `path` is on a share Finder can show (anything on C:). */
+export const inFinderReach = (path: string): boolean => /^[cC]:(\\|\/|$)/.test(path)
+
+/** Shows a guest folder in Finder, through the share that holds it (see openShareInFinder). */
+export const revealGuestPath = (instance: string, path: string): Promise<void> => filesOpen(instance, "--path", path)
 
 /** Puts text on the Mac's clipboard. */
 export const copyText = (text: string): Promise<void> => tauri().core.invoke<void>("copy_text", { text })
