@@ -215,3 +215,41 @@ export function parseShare(stdout: string): Share | null {
   const token = /^\s*token (\S+)$/m.exec(stdout)?.[1]
   return url === undefined || token === undefined ? null : { url, token }
 }
+
+const ClaudeClientId = z.enum(["claude-code", "claude-desktop"])
+
+const ClaudeClient = z.object({
+  id: ClaudeClientId,
+  name: z.string(),
+  /** The client is on this Mac. */
+  available: z.boolean(),
+  /** It has this instance's server. */
+  added: z.boolean(),
+  /** …and that server runs this winvm. */
+  current: z.boolean(),
+  config: z.string(),
+})
+
+export type ClaudeClient = z.infer<typeof ClaudeClient>
+export type ClaudeClientId = z.infer<typeof ClaudeClientId>
+
+const ClaudeStatus = z.object({
+  instance: z.string(),
+  server: z.string(),
+  clients: z.array(ClaudeClient),
+})
+
+export type ClaudeStatus = z.infer<typeof ClaudeStatus>
+
+/** `winvm mcp status -i <name> --json`: which Claude apps have this instance's MCP server. */
+export const parseClaudeStatus = (stdout: string): ClaudeStatus | null => ClaudeStatus.safeParse(json(stdout)).data ?? null
+
+const ClaudeChange = z.discriminatedUnion("ok", [
+  z.object({ ok: z.literal(true), client: ClaudeClientId, changed: z.boolean(), restart: z.boolean() }),
+  z.object({ ok: z.literal(false), error: z.string() }),
+])
+
+export type ClaudeChange = z.infer<typeof ClaudeChange>
+
+/** `winvm mcp install|uninstall <client> -i <name> --json`. */
+export const parseClaudeChange = (stdout: string): ClaudeChange | null => ClaudeChange.safeParse(json(stdout)).data ?? null

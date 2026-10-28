@@ -1,6 +1,21 @@
 import { describe, expect, it } from "bun:test"
 
-import { controls, detailRows, displaySize, facts, parseChecks, parseConnection, parseSaves, parseShare, parseStatus, phase, startSteps, terminalBlocked } from "../ui/src/model"
+import {
+  controls,
+  detailRows,
+  displaySize,
+  facts,
+  parseChecks,
+  parseClaudeChange,
+  parseClaudeStatus,
+  parseConnection,
+  parseSaves,
+  parseShare,
+  parseStatus,
+  phase,
+  startSteps,
+  terminalBlocked,
+} from "../ui/src/model"
 
 const base = {
   name: "default",
@@ -215,6 +230,46 @@ describe("parseShare", () => {
 
   it("is null until both are printed", () => {
     expect(parseShare('computer use for "default" on http://127.0.0.1:61234')).toBeNull()
+  })
+})
+
+describe("parseClaudeStatus", () => {
+  // As `winvm mcp status -i mcp-test --json` printed it, from a source checkout.
+  const out = JSON.stringify({
+    instance: "mcp-test",
+    server: "winvm-mcp-test",
+    command: "/x/bun",
+    args: ["/x/apps/cli/src/winvm.ts", "mcp", "-i", "mcp-test"],
+    env: { WINVM_HOME: "/x/state" },
+    from: "source",
+    clients: [
+      { id: "claude-code", name: "Claude Code", available: true, added: false, current: false, config: "/x/.claude.json" },
+      { id: "claude-desktop", name: "Claude Desktop", available: true, added: true, current: true, config: "/x/claude_desktop_config.json" },
+    ],
+  })
+
+  it("reads which Claude apps have the server", () => {
+    const s = parseClaudeStatus(out)
+    expect(s?.server).toBe("winvm-mcp-test")
+    expect(s?.clients.map((c) => [c.id, c.added, c.current])).toEqual([
+      ["claude-code", false, false],
+      ["claude-desktop", true, true],
+    ])
+  })
+
+  it("is null for an unknown client or text", () => {
+    expect(parseClaudeStatus(out.replace("claude-desktop", "claude-web"))).toBeNull()
+    expect(parseClaudeStatus("usage: winvm mcp …")).toBeNull()
+  })
+})
+
+describe("parseClaudeChange", () => {
+  it("reads a change, and a refusal", () => {
+    const done = { ok: true, client: "claude-desktop", server: "winvm-x", changed: true, config: "/x", backup: "/x.bak", restart: true }
+    expect(parseClaudeChange(JSON.stringify(done))).toEqual({ ok: true, client: "claude-desktop", changed: true, restart: true })
+    const refused = { ok: false as const, error: "say which: winvm mcp install claude-code|claude-desktop [-i name]" }
+    expect(parseClaudeChange(JSON.stringify(refused))).toEqual(refused)
+    expect(parseClaudeChange("")).toBeNull()
   })
 })
 

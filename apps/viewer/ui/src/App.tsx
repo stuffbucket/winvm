@@ -223,6 +223,7 @@ export function App(): JSX.Element {
         guestReady={guestReady}
         terminalBlocked={blocked}
         canSaves={phase !== null && phase !== "missing"}
+        canShare={phase !== null && phase !== "missing"}
         sharing={share !== null}
         actualSize={actualSize}
         canActualSize={!resizable}
@@ -376,7 +377,15 @@ export function App(): JSX.Element {
             />
           )}
           {open.id === "share" && (
-            <SharePanel share={share} starting={sharing.starting} error={sharing.error} onStart={startSharing} onStop={stopSharing} />
+            <SharePanel
+              instance={w.name}
+              guestReady={guestReady}
+              share={share}
+              starting={sharing.starting}
+              error={sharing.error}
+              onStart={startSharing}
+              onStop={stopSharing}
+            />
           )}
         </Popover>
       )}

@@ -15,6 +15,8 @@ interface ToolbarProps {
   /** Why the terminal can't open (an i18n key), or null when it can. */
   readonly terminalBlocked: string | null
   readonly canSaves: boolean
+  /** Whether "Use with Claude" can open: there is an instance to add (its HTTP endpoint also needs Windows up). */
+  readonly canShare: boolean
   readonly sharing: boolean
   readonly actualSize: boolean
   /** Whether "Actual size" means anything: not when the guest's screen follows the window (virtio-gpu). */
@@ -133,7 +135,7 @@ export function Toolbar(p: ToolbarProps): JSX.Element {
         <TerminalButton blocked={p.terminalBlocked} onOpen={p.onTerminal} onMenu={p.onTerminalMenu} />
         {panel("files", "folder", t("action.files"), p.guestReady)}
         {panel("saves", "history", t("action.saves"), p.canSaves)}
-        {panel("share", "agent", t("action.share"), p.guestReady || p.sharing, p.sharing)}
+        {panel("share", "agent", t("action.share"), p.canShare || p.sharing, p.sharing)}
       </div>
 
       <span className="toolbar__divider" aria-hidden="true" />
