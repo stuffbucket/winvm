@@ -194,6 +194,9 @@ export function CheckpointCanvas(p: CheckpointCanvasProps): JSX.Element {
   const shown = useMemo(() => (list ?? []).filter((c) => settings.showAutomatic || !isAutomatic(c) || c.name === selected), [list, settings.showAutomatic, selected])
   const byName = useMemo(() => new Map((list ?? []).map((c) => [c.name, c])), [list])
   const layout = useMemo(() => layoutTimeline(shown, p.aspect), [shown, p.aspect])
+  // For work that finishes later (a load), to find a card where it is then, not where it was.
+  const layoutNow = useRef(layout)
+  layoutNow.current = layout
   const ticks = useMemo(
     () => timelineTicks(layout.days, new Date(nowMs), { now: t("checkpoints.now"), today: t("checkpoints.today"), yesterday: t("checkpoints.yesterday") }),
     [layout.days, nowMs],
@@ -530,7 +533,7 @@ export function CheckpointCanvas(p: CheckpointCanvasProps): JSX.Element {
         await reload()
         return
       }
-      const box = layout.cards.get(name)
+      const box = layoutNow.current.cards.get(name)
       void leave(box === undefined ? undefined : frameOf(box))
     }
   }
@@ -645,7 +648,7 @@ export function CheckpointCanvas(p: CheckpointCanvasProps): JSX.Element {
       const dx = e.key === "ArrowLeft" ? d : e.key === "ArrowRight" ? -d : 0
       const dy = e.key === "ArrowUp" ? d : e.key === "ArrowDown" ? -d : 0
       fly({ ...now, x: now.x + dx, y: now.y + dy }, 180)
-    } else if (!cmd && e.key === " " && selected !== null) {
+    } else if (!cmd && e.key === " " && selected !== null && (target.closest("button, a, [role=slider]") === null || target.closest(".checkpoint__hit") !== null)) {
       // Quick Look, as in Finder: the screenshot, as big as the window allows.
       e.preventDefault()
       setLooking((l) => !l)
