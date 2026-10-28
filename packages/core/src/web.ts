@@ -287,7 +287,7 @@ function staticFile(rel: string): Response {
 
 async function statusBody(name: string): Promise<unknown> {
   const s = await status.gather(name, true)
-  const live = s.state === "running" || s.state === "paused"
+  const live = s.state === "running" || s.state === "paused" || s.state === "asleep"
   const meta = readMeta(name)
   return {
     status: s,
