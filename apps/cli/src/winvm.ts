@@ -27,6 +27,7 @@
  *   winvm webview enable|eval|click|wait|text   WebView2 windows over DevTools
  *   winvm ocr [--find T] / click --text T   read the screen with macOS Vision
  *   winvm cua serve | run "<task>"   Claude's computer-use tool against the guest; see cuacmds.ts
+ *   winvm mcp [install|uninstall|status]   the guest as an MCP server for Claude Code and Claude Desktop; see mcpcmds.ts
  *   winvm toasts [--since T] [--find T]     notifications apps raised, from Windows' record
  *   winvm watch [-i name] [--stop]   idle watcher: autosave, stow, clock sync
  *   winvm config [-i name] [k=v ...] per-instance watcher settings
@@ -138,6 +139,7 @@ import * as termcmds from "@winvm/core/termcmds"
 import * as uicmds from "@winvm/core/uicmds"
 import * as commands from "@winvm/core/commands"
 import * as cuacmds from "@winvm/core/cuacmds"
+import * as mcpcmds from "@winvm/core/mcpcmds"
 import * as goldens from "@winvm/core/golden"
 import * as ocr from "@winvm/core/ocr"
 import * as runcmds from "@winvm/core/runcmds"
@@ -346,6 +348,9 @@ switch (sub) {
   // eslint-disable-next-line no-fallthrough
   case "cua-serve":
     process.exit(await cuacmds.cua(args, "serve"))
+  // eslint-disable-next-line no-fallthrough
+  case "mcp":
+    process.exit(await mcpcmds.mcpCmd(args))
   // eslint-disable-next-line no-fallthrough
   case "help":
   case "--help":
