@@ -35,6 +35,7 @@ winvm rmi <image>                    # remove a base image
 | QEMU, `swtpm`, `zstd` | the winvm runtime, fetched by `winvm setup` |
 | UEFI firmware | **vendored** in `packages/core/firmware/`, gzipped, expanded into the state directory on first use |
 | UTM guest tools | **downloaded and pinned by SHA-256**, not vendored |
+| viofs (virtio-win) and WinFsp, for the shared folder | **downloaded and pinned by SHA-256** when an image is built or `winvm share install` runs (`sharemedia.ts`) |
 
 The runtime is a tarball from
 [stuffbucket/winvm-runtime](https://github.com/stuffbucket/winvm-runtime),
@@ -576,6 +577,122 @@ and sends the size as a SPICE monitors-config message. spice-server turns
 that into the same `qemu_console_set_ui_info` call, and its viogpudo fork
 reconnects the display itself. Its "Retina" mode requests points × backing
 scale and draws 1:1, with the Windows scale left to the user.
+
+## The shared folder and the clipboard
+
+How to use them is in [Getting files in and out](files.md#shared-folder).
+This is why they are built the way they are (`share.ts`, `sharecmds.ts`).
+
+**Three devices, on every virtio-gpu instance, always.** On a runtime that
+has them (winvm-runtime with `virtiofsd`, `vhost-user-fs-pci` and
+`qemu-vdagent`; `share.runtimeSupport` asks QEMU):
+
+```
+-machine virt,accel=hvf,memory-backend=mem
+-object memory-backend-shm,id=mem,size=4096M,share=on
+-chardev socket,id=vfs0,path=<instance>/virtiofsd.sock
+-device vhost-user-fs-pci,chardev=vfs0,tag=winvm,queue-size=1024,addr=0x10
+-chardev qemu-vdagent,id=vdagent,clipboard=on,mouse=off
+-device virtserialport,chardev=vdagent,name=com.redhat.spice.0
+```
+
+- Guest RAM comes from a **shared memory backend** because virtiofsd, another
+  process, reads and writes the guest's buffers directly.
+- The virtio-fs tag is fixed (`winvm`) and the device sits in a **fixed PCI
+  slot** (`addr=0x10`, clear of the slots QEMU hands out in order), so
+  Windows sees one device whatever the display: see the bugcheck below.
+- The clipboard port joins the guest agent's virtio-serial bus. QEMU bridges
+  the SPICE agent protocol to the VNC extended clipboard that noVNC speaks;
+  Windows' side is the SPICE agent from the UTM guest tools (`vdservice`,
+  ARM64).
+
+**Sharing never changes the save hash.** Everything above is fixed: the
+socket path is per instance, and `hardwareArgs` blanks `path=` values.
+virtiofsd serves the chosen folder, or `<instance>/share-empty` (read-only)
+when none is chosen, so adding, changing or removing a share leaves the hash
+alone. The devices themselves changed it **once**: saves of virtio-gpu
+instances taken before them do not load. `start`, `saves` ("no (before the
+shared folder)"), `load` and the stow recall name those saves
+(`saves.strandedByDevices`), as `display` names the saves a device switch
+strands. A stowed machine whose stow predates the devices boots instead,
+from its disk. ramfb instances get none of the devices and keep their saves.
+The new runtime's patch set changes the hash's `qemu` part too, so in
+practice every save made on the old runtime stops loading with it.
+
+**One virtiofsd per QEMU, started before it.** virtiofsd exits when its QEMU
+disconnects, so `qemu.launch` starts a fresh one before every boot, load and
+recall (`--sandbox none --cache auto --migration-on-error guest-error`, plus
+`--readonly` for a read-only share), waits for its socket, and records what
+it serves in `virtiofsd.json`. Every teardown path stops what is left, with
+swtpm (`qemu.stopSidecars`). It is found by its `--socket-path`, so one
+instance never touches another's. The launch owns it rather than the control
+service: the daemon's life is QEMU's, it must exist before QEMU starts, and
+the service may be the previous QEMU's, about to exit.
+
+**QEMU does not survive its daemon.** Killing virtiofsd under a running guest
+ended QEMU ("vhost_set_vring_call failed 22"): vhost-user-fs has no reconnect.
+So the folder cannot be swapped live (stop VirtioFsSvc, swap the daemon,
+start it again does not work), and a new folder or read-only setting takes
+effect at the next QEMU start. A stow and start does it in seconds and keeps
+the session: the save carries virtiofsd's state, and with
+`--migration-on-error guest-error` the handles the new folder lacks become
+errors in the guest instead of a failed load (measured: the guest listed the
+new folder at once). The drive letter changes live (the registry value and
+`VirtioFsSvc` restarted through the agent).
+
+**Saves.** zstd, mapped-ram and the stow round trip all load with the
+devices attached; virtiofsd's state travels in the stream ("migration through
+qemu"), and `qemu-vdagent` does not block migration.
+
+**The bugcheck, and why `share install` boots on ramfb.** Binding viofs to
+the device while the virtio-gpu driver runs bugchecks Windows: `0x7E` in
+`viogpudo.sys+0x1180`. It happened live (`pnputil /install` with the device
+present) and at the next boot after staging the driver with no device
+present, which then hung at "Display output is not active". Binding it while
+the display is **ramfb**, with the device present, does not; and once bound,
+boots on virtio-gpu find the device already installed (same slot, same
+instance ID) and start normally. So:
+
+- **New images**: a build always runs on ramfb, and gets the virtio-fs device
+  alone (no clipboard port) with a daemon serving an empty folder.
+  `provision.ps1` runs `viofs-install.ps1` from the seed, which installs
+  WinFsp, binds viofs and creates the service. Untested end to end: no build
+  has been run with it yet.
+- **Existing machines**: `winvm share install` shuts Windows down (with
+  `--restart`, or refuses), switches the display to ramfb, boots with all the
+  devices and no watcher or autosave, stages the files through the agent and
+  runs the same script, shuts down, puts the display back (also on failure),
+  and starts again if it was running. A stowed machine is refused, as
+  `display` refuses it.
+
+`viofs-install.ps1` installs WinFsp, binds viofs, copies `winfsp-a64.dll`
+beside `virtiofs.exe` (WinFsp's own lookup reads the 64-bit registry view,
+where an ARM64 WinFsp has no `InstallDir`), creates `VirtioFsSvc` (auto,
+depending on `VirtioFsDrv` and `WinFsp.Launcher`, restarting on failure), and
+sets `HKLM\Software\VirtIO-FS\MountPoint`. The volume's label is the tag
+(viofs reports it and cannot set another), so Explorer's name, **Mac**, is
+the per-user `MountPoints2\<letter>\_LabelFromReg`, which the script sets for
+the user it runs as and `logon.ps1` sets for whoever logs on.
+`DriveIcons\<letter>\DefaultLabel` does not override a volume label.
+
+**Where the guest's files come from**, pinned by SHA-256 like the guest tools
+(`sharemedia.ts`): viofs 0.1.302 (`viofs/w11/ARM64`: `viofs.inf`, `.sys`,
+`.cat`, `virtiofs.exe`) read out of virtio-win's 840 MB ISO with HTTP range
+requests (four files, 300 KB), and WinFsp 2.1 (`winfsp-2.1.25156.msi`) from
+its GitHub release. virtio-win 0.1.285 is the first with ARM64 viofs; UTM's
+guest tools have none. Licences: [THIRD-PARTY-LICENSE.md](../THIRD-PARTY-LICENSE.md).
+
+**Change notices** are in [files.md](files.md#for-developers). Two findings:
+writing a file's time back unchanged makes WinFsp report nothing (it skips a
+no-op), so the agent moves the time forward a millisecond and back; and a
+read-only share cannot be touched, so it gets no notices.
+
+**Measured** (Windows 11 ARM64, M-series Mac): 850-880 MiB/s writing and
+1250-1370 MiB/s reading 1 GiB in 1 MiB blocks; a Mac change visible in the
+guest at once; watchers firing about a second after a Mac change. Clipboard
+both ways through a VNC client speaking the extended clipboard. Copying from
+PowerShell's `Set-Clipboard` makes the guest's SPICE agent send an empty
+clipboard and restart; `clip.exe` and ordinary copies work.
 
 ## The command channel
 
