@@ -1,5 +1,6 @@
 /**
- * Bundles the viewer UI into dist/, which Tauri serves as the app's frontend.
+ * Bundles the viewer UI into dist/, which Tauri serves as the app's frontend:
+ * index.html (the main window) and terminal.html (the Terminal window).
  * Bun's bundler takes the HTML entry, its stylesheet and script, as maximal's
  * scripts/build-ui.ts does for its Settings window.
  *
@@ -19,7 +20,7 @@ async function build(): Promise<void> {
   await rm(DIST, { recursive: true, force: true })
   await mkdir(DIST, { recursive: true })
   const result = await Bun.build({
-    entrypoints: [resolve(UI, "index.html")],
+    entrypoints: [resolve(UI, "index.html"), resolve(UI, "terminal.html")],
     outdir: DIST,
     minify: true,
     sourcemap: "none",
