@@ -20,7 +20,7 @@ import { resolve } from "node:path"
 
 import type { AgentState } from "./agentfwd"
 import { ensureForward, ensureState, readState, restoreForward } from "./agentfwd"
-import type { ExecRequest, ExecResponse, Health, LaunchRequest, Proc, PwshResponse } from "./guestagent"
+import type { DirListing, ExecRequest, ExecResponse, Health, LaunchRequest, Proc, PwshResponse } from "./guestagent"
 import { AGENT_VERSION, GUEST_PORT, WINDOWS_DIR } from "./guestagent"
 import { bunZip } from "./media"
 import { PACKAGE_DIR, pathsFor } from "./paths"
@@ -29,14 +29,17 @@ import * as qga from "./qga"
 
 export type { AgentState } from "./agentfwd"
 export { ensureForward, forwardedPorts, readState, statePath } from "./agentfwd"
-export type { ExecResponse, Health, Proc, PwshResponse } from "./guestagent"
+export type { DirEntry, DirListing, ExecResponse, Health, Place, Proc, PwshResponse } from "./guestagent"
 export { AGENT_VERSION, GUEST_PORT } from "./guestagent"
 
 export class AgentError extends Error {
   readonly status: number
-  constructor(message: string, status: number) {
+  /** What the agent said went wrong, when it says (a listing's notfound, denied or notdir). */
+  readonly code: string | null
+  constructor(message: string, status: number, code: string | null = null) {
     super(message)
     this.status = status
+    this.code = code
   }
 }
 
@@ -81,12 +84,15 @@ export class AgentClient {
     if (!r.ok) {
       const text = await r.text()
       let msg = text
+      let code: string | null = null
       try {
-        msg = (JSON.parse(text) as { error?: string }).error ?? text
+        const body = JSON.parse(text) as { error?: string; code?: string }
+        msg = body.error ?? text
+        code = body.code ?? null
       } catch {
         // not JSON
       }
-      throw new AgentError(`agent ${method} ${path.split("?")[0] ?? path}: ${String(r.status)} ${msg}`, r.status)
+      throw new AgentError(`agent ${method} ${path.split("?")[0] ?? path}: ${String(r.status)} ${msg}`, r.status, code)
     }
     return r
   }
@@ -152,6 +158,19 @@ export class AgentClient {
   async launch(argv: readonly string[], o: LaunchOptions = {}): Promise<{ readonly pid: number }> {
     const body: LaunchRequest = { argv, ...o }
     return await this.post<{ pid: number }>("/launch", body)
+  }
+
+  /**
+   * A guest folder's entries, folders first, and the known folders (Desktop,
+   * Documents, Downloads, the profile, C:\work, the drives). No path: the
+   * Desktop. Hidden and system entries only with `hidden`. Throws AgentError
+   * with code notfound (404), denied (403) or notdir (400).
+   */
+  async list(guestPath = "", o: { readonly hidden?: boolean; readonly limit?: number } = {}): Promise<DirListing> {
+    const q = new URLSearchParams({ path: guestPath })
+    if (o.hidden === true) q.set("hidden", "1")
+    if (o.limit !== undefined) q.set("limit", String(o.limit))
+    return (await (await this.req("GET", `/fs/list?${q.toString()}`)).json()) as DirListing
   }
 
   async procs(): Promise<readonly Proc[]> {
@@ -297,6 +316,7 @@ export async function install(name: string, o: InstallOptions = {}): Promise<Age
     [resolve(ASSETS, "agent-install.ps1"), `${stage}\\agent-install.ps1`],
     [resolve(ASSETS, "runinsession.cs"), `${stage}\\runinsession.cs`],
     [resolve(ASSETS, "winvm-ui.cs"), `${stage}\\winvm-ui.cs`],
+    [resolve(ASSETS, "conpty.cs"), `${stage}\\conpty.cs`],
   ] as const) {
     await qgaWriteFile(p.qga, to, new Uint8Array(readFileSync(from)))
   }

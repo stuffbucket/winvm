@@ -1,7 +1,21 @@
 import type { CSSProperties } from "react"
-import { useCallback, useEffect, useState } from "react"
+import { useCallback, useEffect, useMemo, useState } from "react"
 
-import { onFileDrop, onMenu, outputText, shareStart, shareStop, showWindow, winvm } from "./backend"
+import {
+  announceTitle,
+  installedShells,
+  onFileDrop,
+  onMenu,
+  openTerminal,
+  outputText,
+  popupMenu,
+  revealInFinder,
+  setWindowTitle,
+  shareStart,
+  shareStop,
+  showWindow,
+  winvm,
+} from "./backend"
 import { Button } from "./components/Button"
 import { Callout } from "./components/Callout"
 import { ConfirmDialog } from "./components/ConfirmDialog"
@@ -9,15 +23,16 @@ import { Popover } from "./components/Popover"
 import { cx } from "./components/cx"
 import { t } from "./i18n"
 import type { Phase, Share } from "./model"
-import { controls, displaySize, parseShare, startSteps } from "./model"
-import { CommandPanel } from "./features/actions/CommandPanel"
-import { FilesPanel } from "./features/actions/FilesPanel"
+import { controls, displaySize, parseShare, shownTitle, startSteps, terminalBlocked } from "./model"
 import { SavesPanel } from "./features/actions/SavesPanel"
 import { SharePanel } from "./features/actions/SharePanel"
+import { FilesDialog } from "./features/files/FilesDialog"
+import { useCopies } from "./features/files/useCopies"
 import { Overview } from "./features/overview/Overview"
 import { Panel } from "./features/panel/Panel"
 import { ReferenceDialog } from "./features/reference/ReferenceDialog"
 import { Screen } from "./features/screen/Screen"
+import { defaultShell, installedList, type Launch, runnable, shellCache, shellMenu } from "./features/terminal/shells"
 import { type PanelId, Toolbar } from "./features/toolbar/Toolbar"
 import type { Verb } from "./features/winvm/useWinvm"
 import { useWinvm } from "./features/winvm/useWinvm"
@@ -38,17 +53,18 @@ const CONFIRM_ACTION: Record<Confirm["kind"], string> = {
 }
 
 const PANEL_LABEL: Record<PanelId, string> = {
-  command: "action.command",
   files: "action.files",
   saves: "action.saves",
   share: "action.share",
 }
 
-/** Where copied-in files land: the desktop every Windows user sees. */
-const GUEST_DROP_DIR = "C:\\Users\\Public\\Desktop"
+/** The Files sheet's folder: where copies in land, the Desktop until the sheet goes elsewhere. */
+interface Folder {
+  readonly path: string
+  readonly name: string
+}
 
 const isLive = (p: Phase | null): boolean => p === "running" || p === "starting" || p === "paused"
-const baseName = (path: string): string => path.split("/").filter((x) => x !== "").pop() ?? path
 
 export function App(): JSX.Element {
   const w = useWinvm()
@@ -71,6 +87,7 @@ export function App(): JSX.Element {
   const guestReady = phase === "running" && w.busy === null
   const hostReady = w.checks === null || w.checks.ready
   const c = controls(phase ?? "missing", w.busy !== null || phase === null || !hostReady)
+  const blocked = terminalBlocked(phase ?? "missing", w.busy !== null || phase === null || !hostReady)
   const missing = w.checks?.checks.filter((x) => !x.ok) ?? []
   const runtimeMissing = missing.some((x) => x.hint === "winvm setup")
   const display = displaySize(w.status?.screen ?? null)
@@ -83,40 +100,93 @@ export function App(): JSX.Element {
     void w.act(verb, arg)
   }
 
-  const copyIn = useCallback(
-    async (paths: readonly string[]): Promise<void> => {
-      if (w.name === null || paths.length === 0) return
-      const failed: string[] = []
-      setNotice({ tone: "notice", title: t("files.copyingIn", { count: paths.length }) })
-      for (const path of paths) {
-        const out = await winvm("put", "-i", w.name, path, `${GUEST_DROP_DIR}\\${baseName(path)}`)
-        if (out.code !== 0) failed.push(`${baseName(path)}: ${outputText(out)}`)
-      }
-      setNotice(
-        failed.length === 0
-          ? { tone: "notice", title: t("files.copiedIn", { count: paths.length }) }
-          : { tone: "error", title: t("files.copyInFailed", { count: failed.length }), detail: failed.join("\n") },
-      )
-    },
-    [w.name],
-  )
+  const copies = useCopies(w.name)
+  const [filesOpen, setFilesOpen] = useState(false)
+  const [folder, setFolder] = useState<Folder | null>(null)
+  const copyIn = copies.copyIn
+  const onFolder = useCallback((path: string, name: string) => setFolder({ path, name }), [])
+  /** A copy's progress and result go above the display while the Files sheet isn't there to show them. */
+  const copyNotice = !filesOpen && (copies.job !== null || copies.result !== null)
+
+  // Another instance has other folders: back to its Desktop.
+  useEffect(() => setFolder(null), [w.name])
 
   useEffect(
     () =>
       onFileDrop(
         (paths) => {
-          if (guestReady) void copyIn(paths)
+          if (guestReady) copyIn(paths, folder?.path ?? null)
           else if (paths.length > 0) setNotice({ tone: "error", title: t("files.notRunning") })
         },
         (over) => setDropping(over && guestReady),
       ),
-    [guestReady, copyIn],
+    [guestReady, copyIn, folder],
   )
+
+  // The instance's title: the toolbar shows it, the window is named by it, and
+  // every window hears it (the Terminal names itself by its tab's instance).
+  const titles = w.titles
+  const title = w.name === null ? null : shownTitle(w.name, titles[w.name])
+  const [renaming, setRenaming] = useState(false)
+  useEffect(() => setWindowTitle(title ?? t("app.name")), [title])
+  useEffect(() => {
+    for (const [instance, set] of Object.entries(titles)) announceTitle({ instance, title: set })
+  }, [titles])
+  const rename = w.rename
+  const renamed = (next: string | null): void => {
+    setRenaming(false)
+    if (next === null || title === null || next.trim() === title) return
+    rename(next)
+      .then((why) => {
+        if (why !== null) setNotice({ tone: "error", title: t("rename.failed"), detail: why })
+      })
+      .catch((e: unknown) => setNotice({ tone: "error", title: t("rename.failed"), detail: String(e) }))
+  }
+
+  // Which shells the guest has: asked once Windows is ready, so the first tab
+  // already knows, and asked again after it stops, restarts or is busy.
+  const shells = useMemo(() => shellCache(installedShells), [])
+  useEffect(() => {
+    if (w.name === null) return
+    if (guestReady) void shells.get(w.name)
+    else shells.forget(w.name)
+  }, [shells, w.name, guestReady])
+
+  /** A tab of `launch`, or of the default shell (PowerShell 7 if the guest has it). */
+  const terminal = useCallback(
+    (launch: Launch | null): void => {
+      const instance = w.name
+      if (instance === null || !c.terminal) return
+      shells
+        .get(instance)
+        .then((installed) =>
+          openTerminal({
+            instance,
+            ...runnable(launch ?? { shell: defaultShell(installed), cwd: null }, installed),
+            installed: installedList(installed),
+            title: titles[instance] ?? null,
+          }),
+        )
+        .catch((e: unknown) => setNotice({ tone: "error", title: t("terminal.failed"), detail: String(e) }))
+    },
+    [shells, w.name, c.terminal, titles],
+  )
+
+  const terminalMenu = (): void => {
+    const instance = w.name
+    if (instance === null) return
+    shells
+      .get(instance)
+      .then((installed) => popupMenu(shellMenu(t, installed), (item) => terminal(item.launch)))
+      .catch((e: unknown) => setNotice({ tone: "error", title: t("terminal.failed"), detail: String(e) }))
+  }
 
   const install = w.installCommand
   useEffect(
     () =>
       onMenu((id) => {
+        if (id === "new-terminal") terminal(null)
+        if (id === "rename-window") setRenaming(true)
         if (id === "install-cli") void install()
         if (id === "reference") {
           setReference({ text: null })
@@ -125,7 +195,7 @@ export function App(): JSX.Element {
             .catch((e: unknown) => setReference({ text: String(e) }))
         }
       }),
-    [install],
+    [install, terminal],
   )
 
   useEffect(() => {
@@ -163,7 +233,12 @@ export function App(): JSX.Element {
     setShare(null)
   }
 
-  const togglePanel = (id: PanelId, anchor: HTMLElement): void => setOpen((cur) => (cur?.id === id ? null : { id, anchor }))
+  const togglePanel = (id: PanelId, anchor: HTMLElement): void => {
+    if (id === "files") {
+      setOpen(null)
+      setFilesOpen(true)
+    } else setOpen((cur) => (cur?.id === id ? null : { id, anchor }))
+  }
   const closePanel = useCallback(() => setOpen(null), [])
 
   const frame = {
@@ -177,14 +252,20 @@ export function App(): JSX.Element {
       <Toolbar
         names={w.names}
         name={w.name}
+        titles={titles}
+        title={title}
+        renaming={renaming}
+        onRenameStart={() => setRenaming(true)}
+        onRenamed={renamed}
         phase={phase}
         activity={activity}
         controls={c}
         guestReady={guestReady}
+        terminalBlocked={blocked}
         canSaves={phase !== null && phase !== "missing"}
         sharing={share !== null}
         fit={fit}
-        open={open?.id ?? null}
+        open={filesOpen ? "files" : (open?.id ?? null)}
         detailsOpen={detailsOpen}
         onSelect={w.select}
         onStart={() => run("start")}
@@ -193,6 +274,8 @@ export function App(): JSX.Element {
         onPause={() => run("pause")}
         onResume={() => run("resume")}
         onOpen={togglePanel}
+        onTerminal={() => terminal(null)}
+        onTerminalMenu={terminalMenu}
         onFit={() => setFit((f) => !f)}
         onScreenSharing={() => void w.openScreenSharing()}
         onDetails={() => setDetailsOpen((o) => !o)}
@@ -200,7 +283,7 @@ export function App(): JSX.Element {
 
       <div className="stage">
         <div className="display-area">
-          {(w.failure !== null || notice !== null || (w.checks !== null && !w.checks.ready) || w.statusError !== null) && (
+          {(w.failure !== null || notice !== null || copyNotice || (w.checks !== null && !w.checks.ready) || w.statusError !== null) && (
             <div className="notices">
               {w.failure !== null && (
                 <Callout
@@ -226,6 +309,30 @@ export function App(): JSX.Element {
                   }
                 >
                   {notice.detail !== undefined && <pre className="output">{notice.detail}</pre>}
+                </Callout>
+              )}
+              {copyNotice && copies.job !== null && (
+                <Callout tone="notice" title={t("files.copying", { name: copies.job.name })}>
+                  {copies.job.total > 1 && <p>{t("files.ofTotal", { done: copies.job.done + 1, total: copies.job.total })}</p>}
+                </Callout>
+              )}
+              {copyNotice && copies.job === null && copies.result !== null && (
+                <Callout
+                  tone={copies.result.ok ? "notice" : "error"}
+                  title={copies.result.title}
+                  action={
+                    copies.result.reveal !== undefined ? (
+                      <Button size="sm" variant="ghost" onClick={() => void revealInFinder(copies.result?.reveal ?? "")}>
+                        {t("files.reveal")}
+                      </Button>
+                    ) : (
+                      <Button size="sm" variant="ghost" onClick={copies.dismiss}>
+                        {t("action.dismiss")}
+                      </Button>
+                    )
+                  }
+                >
+                  {copies.result.detail !== undefined && <pre className="output">{copies.result.detail}</pre>}
                 </Callout>
               )}
               {w.checks !== null && !w.checks.ready && (
@@ -268,7 +375,7 @@ export function App(): JSX.Element {
               )}
               {dropping && (
                 <div className="display__drop" aria-hidden="true">
-                  <p>{t("files.dropHere")}</p>
+                  <p>{t("files.dropOn", { folder: folder?.name ?? t("files.place.desktop") })}</p>
                 </div>
               )}
             </div>
@@ -289,8 +396,6 @@ export function App(): JSX.Element {
 
       {open !== null && w.name !== null && (
         <Popover anchor={open.anchor} label={t(PANEL_LABEL[open.id])} onClose={closePanel}>
-          {open.id === "command" && <CommandPanel instance={w.name} />}
-          {open.id === "files" && <FilesPanel instance={w.name} onCopyIn={(paths) => void copyIn(paths)} />}
           {open.id === "saves" && (
             <SavesPanel
               instance={w.name}
@@ -307,6 +412,18 @@ export function App(): JSX.Element {
       )}
 
       {reference !== null && <ReferenceDialog text={reference.text} onClose={() => setReference(null)} />}
+
+      {filesOpen && live && w.name !== null && (
+        <FilesDialog
+          instance={w.name}
+          title={title ?? w.name}
+          folder={folder?.path ?? null}
+          dropping={dropping}
+          copies={copies}
+          onFolder={onFolder}
+          onClose={() => setFilesOpen(false)}
+        />
+      )}
 
       <ConfirmDialog
         open={confirm !== null}

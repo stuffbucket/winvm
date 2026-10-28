@@ -20,7 +20,7 @@ const ASSETS = resolve(PACKAGE_DIR, "assets")
  * runs or installs from there. Not copied to C:\Windows\Setup\Scripts by the
  * answer file: nothing needs them before provisioning starts.
  */
-const WINVM_EXTRAS = ["defender.ps1", "logon.ps1", "agent-install.ps1", "runinsession.cs", "winvm-ui.cs"] as const
+const WINVM_EXTRAS = ["defender.ps1", "logon.ps1", "agent-install.ps1", "runinsession.cs", "winvm-ui.cs", "conpty.cs"] as const
 
 /**
  * The Bun guest agents run: the checkout's pin, so an image or an agent install

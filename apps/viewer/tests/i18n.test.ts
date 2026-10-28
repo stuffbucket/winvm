@@ -23,13 +23,18 @@ const built = [
   ...["start", "stop", "reboot", "pause", "resume", "kill", "setup", "save", "load", "open", "put"].map((v) => `error.${v}`),
   ...["stop", "reboot", "kill", "load"].flatMap((v) => [`confirm.${v}.title`, `confirm.${v}.body`]),
   ...["stopped", "stowed", "missing"].map((p) => `overview.${p}.title`),
-  ...["action.command", "action.files", "action.saves", "action.share", "action.shutDown", "action.restart", "action.forceStop"],
+  ...["action.files", "action.saves", "action.share", "action.shutDown", "action.restart", "action.forceStop"],
   "saves.restore",
   ...["connecting", "lost", "refused"].map((v) => `screen.${v}`),
   ...["step.disk", "step.machine", "step.windows"],
   ...["fact.image", "fact.cpus", "fact.memory", "fact.changes", "fact.saves"],
   ...["detail.windows", "detail.uptime", "detail.hardware", "detail.image", "detail.screen", "detail.disk", "detail.saves"],
   ...["ability.exec", "ability.files", "ability.saves", "ability.agent"],
+  ...["desktop", "documents", "downloads"].map((p) => `files.place.${p}`),
+  ...["notfound", "denied", "notdir", "notrunning", "other"].map((c) => `files.error.${c}`),
+  ...["off", "starting", "paused", "busy"].map((v) => `terminal.why.${v}`),
+  ...["pwsh", "powershell", "cmd"].map((s) => `shell.${s}`),
+  "place.desktop",
 ]
 
 describe("the en catalog", () => {

@@ -1039,8 +1039,9 @@ export function configCmd(args: Args): number {
   const set = readOverrides(name)
   console.log(`instance "${name}":`)
   for (const k of CONFIG_KEYS) {
-    const note = Object.hasOwn(set, k) ? `(default ${String(DEFAULTS[k])})` : "(default)"
-    console.log(`  ${k.padEnd(22)} ${String(eff[k]).padEnd(6)} ${note}`)
+    const show = (v: unknown): string => (typeof v === "string" ? JSON.stringify(v) : String(v))
+    const note = Object.hasOwn(set, k) ? `(default ${show(DEFAULTS[k])})` : "(default)"
+    console.log(`  ${k.padEnd(22)} ${show(eff[k]).padEnd(6)} ${note}`)
   }
   return 0
 }
@@ -1061,9 +1062,14 @@ export const USAGE =
   "                                --no-watch: no idle watcher (no autosave, stow or clock sync)\n" +
   "  exec    [-i name] [--qga] -- <cmd>  run a command in the guest (via the agent when installed)\n" +
   "  agent   [-i name] install | status [--json]   the in-guest agent (fast exec, files, GUI)\n" +
-  "  put     [-i name] <host file> <guest path>    copy a file into the guest\n" +
-  "  get     [-i name] <guest path> <host file>    copy a file out of the guest\n" +
+  "  put     [-i name] <host path> <guest path>    copy a file, or a folder and all in it, into the guest\n" +
+  "  get     [-i name] <guest path> <host path>    copy a file, or a folder and all in it, out of the guest\n" +
+  "  dir     [-i name] [path] [--all] [--places] [--json]   a guest folder (default the Desktop);\n" +
+  "                                --all: hidden files too; --places: the known folders\n" +
   "  launch  [-i name] -- <program> [args]         start it on the guest's desktop, detached\n" +
+  "  terminal [-i name] [--shell pwsh|powershell|cmd] [--cwd PATH]   a guest shell, in this terminal\n" +
+  "          [--connect --json]    print the WebSocket URL and subprotocols for another client\n" +
+  "          --shells [--json]     which shells the guest has (PowerShell 7 may be missing)\n" +
   "  smoke   [-i name] [--expect <v> | --expect-file <path>] [--probe <exe>]\n" +
   "  snapshot [-i name] [tag]      capture the running guest, RAM and all\n" +
   "           [--delete]           remove that snapshot instead\n" +
@@ -1108,7 +1114,7 @@ export const USAGE =
   "  destroy [-i name] [--keep-saves]  remove the instance and its saves\n" +
   "  watch   [-i name]             run the idle watcher in the foreground (start runs it in the background)\n" +
   "          [--stop | --status]   end it / print its state\n" +
-  "  config  [-i name] [key=value ...]  autosave/stow/watch settings; bare prints them\n" +
+  "  config  [-i name] [key=value ...]  autosave/stow/watch settings and the app's title; bare prints them\n" +
   "  run     <job.yml>... [-i name] [--golden NAME] [--keep] [--junit f] [--json f] [--artifacts dir]\n" +
   "                                run CI jobs, each from a golden save (instance default \"ci\")\n" +
   "          [--pool N] [--pool-prefix ci]   on N instances at once (ci-1 … ci-N)\n" +

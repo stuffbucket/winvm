@@ -1,0 +1,16 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "terminal",
+  "description": "The Terminal window may run winvm's own commands (to reach a shell in Windows), show itself once drawn, title itself after its tab, move itself by its tab strip (its title bar), close itself after its last tab and show the shell menu.",
+  "windows": [
+    "terminal"
+  ],
+  "permissions": [
+    "core:default",
+    "core:window:allow-start-dragging",
+    "core:window:allow-internal-toggle-maximize",
+    "core:window:allow-show",
+    "core:window:allow-set-title",
+    "core:window:allow-close"
+  ]
+}

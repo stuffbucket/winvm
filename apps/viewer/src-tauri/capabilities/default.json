@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "The main window may run winvm's own commands, pick files to copy into Windows, move itself and show itself once drawn.",
+  "description": "The main window may run winvm's own commands, pick files to copy into Windows and where to copy files out of it, open the Terminal window and show its shell menu, move itself and show itself once drawn.",
   "windows": [
     "main"
   ],
@@ -10,6 +10,8 @@
     "core:window:allow-start-dragging",
     "core:window:allow-internal-toggle-maximize",
     "core:window:allow-show",
-    "dialog:allow-open"
+    "core:window:allow-set-title",
+    "dialog:allow-open",
+    "dialog:allow-save"
   ]
 }

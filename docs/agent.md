@@ -12,9 +12,11 @@ winvm agent install            # install (or reinstall) the agent in a running g
 winvm agent status [--json]    # is it answering, which version, which host port
 winvm exec -- cmd /c ver       # runs through the agent when it answers
 winvm exec --qga -- whoami     # force qemu-ga instead
-winvm put  <host file> <guest path>
-winvm get  <guest path> <host file>
+winvm put  <host path> <guest path>   # a file, or a folder and everything in it
+winvm get  <guest path> <host path>   # a file, or a folder and everything in it
+winvm dir  ['C:\Users']          # a guest folder (default the Desktop); --all, --places, --json
 winvm launch -- notepad.exe    # start a program on the desktop and return at once
+winvm terminal                 # a shell in the guest, in this terminal
 ```
 
 All of these take `-i <instance>`. Images built by `winvm build` already
@@ -50,6 +52,55 @@ Measured on `win11-arm64`, M-series Mac, 2026-10-22:
 After a cold `winvm start`, the agent answers about 3.4 seconds after `start`
 returns.
 
+### Terminal
+
+`winvm terminal` opens a shell in the guest in your Mac terminal. Every key
+goes to the guest, Ctrl-C included, and resizing your window resizes the
+guest's. It ends when the shell does, with the shell's exit code.
+
+```sh
+winvm terminal [-i name] [--shell pwsh|powershell|cmd] [--cwd PATH]
+winvm terminal [-i name] [--shell ..] [--cwd ..] --connect --json
+winvm terminal [-i name] --shells [--json]
+```
+
+The shell is PowerShell 7 (`pwsh`) unless you pick Windows PowerShell or
+`cmd`, and starts in the user's profile folder unless you give `--cwd`. An
+image built before PowerShell 7 was part of images gets Windows PowerShell
+instead, with a note in the terminal saying so.
+
+`--shells` says which shells the guest has, so a client can offer only
+those: with `--json`, one line such as
+`{"pwsh":false,"powershell":true,"cmd":true}`. It looks for PowerShell 7
+where the agent does (its install folder, then `PATH`), through the agent's
+ordinary exec. The Mac app asks once per instance and opens Windows
+PowerShell where PowerShell 7 is missing.
+
+Shells run as the logged-on Administrator, elevated: images have UAC off, so
+`whoami /groups` shows `High Mandatory Level`. For a SYSTEM command line, use
+`winvm exec --qga`.
+
+`--connect --json` is for another program that shows the terminal itself,
+such as the Mac app. It makes sure the agent is current and answering, then
+prints one line:
+
+```json
+{"url":"ws://127.0.0.1:<hostPort>/term?shell=pwsh","protocols":["winvm-term","winvm-token.<token>"]}
+```
+
+Open a WebSocket to `url` (add `&cols=N&rows=M` for the starting size),
+offering `protocols`. The agent answers with the `winvm-term` subprotocol.
+Then:
+
+- binary frames are terminal bytes, both ways: keystrokes in, output out;
+- the client may send the text frame `{"type":"resize","cols":N,"rows":M}`;
+- when the shell exits, the agent sends `{"type":"exit","code":N}` and closes;
+- on a failure it sends `{"type":"error","message":"..."}` and closes.
+
+Closing the WebSocket ends the shell and everything started from it. Several
+terminals can be open at once. A client that can set headers may send
+`Authorization: Bearer <token>` instead of the token subprotocol.
+
 ## Using it from TypeScript (`agent.ts`)
 
 ```ts
@@ -65,6 +116,7 @@ await c.put(guestPath, data)          // data: bytes, string, Blob or stream
 await c.putFile(hostPath, guestPath)
 await c.get(guestPath)                // throws AgentError with status 404 if the file is missing
 await c.getFile(guestPath, hostPath)
+await c.list(guestPath, { hidden, limit })  // a folder: {path, parent, entries, total, places}
 await c.launch(argv, { cwd, env })    // start on the desktop, detached: {pid}
 await c.procs()                       // [{pid, name, session}]
 await c.kill(pid, { tree })           // kills the whole tree unless tree is false
@@ -77,7 +129,18 @@ agent.qgaLaunch(name, argv)           // start a GUI program over qemu-ga, witho
 `ensure` waits up to 15 seconds for an agent that is still starting after
 logon, before it decides to install one.
 
-Errors throw `AgentError`, which has the HTTP `status`.
+Errors throw `AgentError`, which has the HTTP `status`, and a `code` when the
+agent gives one: `list` throws `notfound` (404), `denied` (403) or `notdir`
+(400).
+
+`list` returns folders first, then files, each sorted by name as Explorer
+sorts them. Each entry is `{name, dir, size, modified, hidden}`; `size` and
+`modified` are null when Windows won't say. Hidden and system entries are
+left out unless you pass `hidden: true`. A folder with more than `limit`
+entries (5000 by default) returns the first `limit`, and `total` says how many
+there are. `places` lists the known folders that exist: the agent user's
+Desktop, Documents and Downloads, their profile, `C:\work`, and the drives.
+With no path, `list` lists the Desktop.
 
 `exec` takes an argument list, not a shell command line. Bun quotes arguments
 in a way that `cmd.exe` does not always parse. For `cmd /c` with embedded
@@ -108,7 +171,9 @@ Inside the guest, `http://10.0.2.2:<port>` reaches the host's loopback.
 
 Each instance has a random 32-byte token. The host writes it over qemu-ga to
 `C:\ProgramData\winvm\agent\token`, readable only by Administrators and
-SYSTEM. Every request must send `Authorization: Bearer <token>`. Without a
+SYSTEM. Every request must send `Authorization: Bearer <token>`, except that
+`GET /term` may offer the subprotocol `winvm-token.<token>` instead, because a
+browser's WebSocket cannot set headers (see [Terminal](#terminal)). Without a
 token file, the agent refuses every request.
 
 The agent re-reads the token file when it changes. This lets the host take
@@ -129,12 +194,24 @@ Everything is in `C:\ProgramData\winvm\agent\`:
   install from `assets/winvm-ui.cs`. See [gui.md](gui.md#how-ui-automation-works).
 - `runinsession.exe`: starts programs detached, compiled at install from
   `assets/runinsession.cs`.
+- `conpty.exe`: one terminal session, compiled at install from
+  `assets/conpty.cs`. See [Terminals](#terminals).
 - `token` and `agent.log`.
 
 The registry value `HKLM\...\Run\winvm-agent` starts the agent at every logon
 in the user's session, through `conhost.exe --headless` so it has no window.
 It runs with `--supervise`, which restarts the agent if it exits. The agent
 also closes the audit-mode Sysprep dialog after logon.
+
+### Folder listings
+
+`GET /fs/list` reads the folder with `readdir` and stats only the entries it
+returns, plus links (to learn whether they lead to a folder), 256 at a time.
+`C:\Windows\WinSxS`, about 17,000 entries, lists its first 5000 in about half a
+second.
+Node can't read Windows' hidden attribute, so the spawner runs `cmd /u /c dir
+/b /a:h` alongside `readdir`. `/u` makes cmd write UTF-16 to the pipe, so names
+outside the OEM code page survive.
 
 ### Processes
 
@@ -155,6 +232,27 @@ Launched programs therefore keep running when the agent restarts. Console
 programs get a console with no window. Node-style `detached` is not used: it
 starts programs with no console at all, and Windows PowerShell started that
 way exits without running anything.
+
+### Terminals
+
+`GET /term` upgrades to a WebSocket. The HTTP server cannot start programs
+itself (see Processes), so for each terminal the spawner starts `conpty.exe`
+through `runinsession.exe`. `conpty.exe` creates a pseudo-console
+(`CreatePseudoConsole`) at the requested size, starts the shell in it, and
+connects back to a loopback port the agent listens on, naming its session
+with a one-time key. Over that connection the two exchange small frames:
+keystrokes and resizes one way, output and the exit code the other. The agent
+relays them to and from the WebSocket.
+
+The shell and everything it starts run in a job object that only
+`conpty.exe` holds, and `conpty.exe` exits when its connection ends. So
+closing the WebSocket, or the agent dying, ends the whole tree: nothing is
+left running. A program started from a terminal, even a GUI one, closes with
+the terminal; use `winvm launch` for programs that should stay.
+
+`conpty.exe` is a separate program per session, started without inherited
+handles, so it never holds the agent's listening socket, and a restarted
+agent serves new terminals at once.
 
 ### Built into images
 

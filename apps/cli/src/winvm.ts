@@ -9,6 +9,8 @@
  *   winvm exec  [-i name] -- <cmd>   run a command in the guest; --timeout S (900), 124 if hit
  *   winvm agent [-i name] install    the in-guest agent: fast exec/files/GUI (agent.ts)
  *   winvm put / get / launch         files in and out; a program on the guest's desktop
+ *   winvm dir [-i name] [path]       a guest folder (default the Desktop); --json for the app
+ *   winvm terminal [-i name]         a shell in the guest (pwsh, powershell, cmd), here
  *   winvm ui tree|find|click|wait|tray …   drive the GUI by UI Automation names; see ui.ts
  *   winvm snapshot [-i name] [tag]   capture the running guest, RAM and all
  *   winvm rewind   [-i name] [tag]   put it back — ~10-20 s running, no reboot
@@ -98,6 +100,7 @@
  *   qga.ts        guest-agent client (the scriptable channel)
  *   agent.ts      the in-guest agent's client and install; agentfwd.ts its port forward
  *   guestagent.ts the in-guest agent itself (runs IN the guest); agentcmds.ts its verbs
+ *   termcmds.ts   `terminal`: a guest shell over the agent's WebSocket (assets/conpty.cs)
  *   qmp.ts        QEMU monitor client (keystrokes, snapshots)
  *   snapshot.ts   capture and restore a running guest
  *   saves.ts      file saves: format, compatibility, save/load mechanics
@@ -131,6 +134,7 @@
 import { instanceName, parseArgs } from "@winvm/core/args"
 import { bunVersionWarning, pinnedBunVersion, recordCliEntry } from "@winvm/core/paths"
 import * as agentcmds from "@winvm/core/agentcmds"
+import * as termcmds from "@winvm/core/termcmds"
 import * as uicmds from "@winvm/core/uicmds"
 import * as commands from "@winvm/core/commands"
 import * as cuacmds from "@winvm/core/cuacmds"
@@ -205,11 +209,17 @@ switch (sub) {
   case "get":
     process.exit(await agentcmds.get(args))
   // eslint-disable-next-line no-fallthrough
+  case "dir":
+    process.exit(await agentcmds.dir(args))
+  // eslint-disable-next-line no-fallthrough
   case "launch":
     process.exit(await agentcmds.launch(args))
   // eslint-disable-next-line no-fallthrough
   case "ui":
     process.exit(await uicmds.uiCmd(args))
+  // eslint-disable-next-line no-fallthrough
+  case "terminal":
+    process.exit(await termcmds.terminal(args))
   // eslint-disable-next-line no-fallthrough
   case "smoke":
     process.exit(await commands.smoke(args))

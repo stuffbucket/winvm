@@ -1,5 +1,6 @@
 /**
- * Per-instance settings: what the watcher does when the guest goes idle.
+ * Per-instance settings: what the watcher does when the guest goes idle, and
+ * the title the Mac app shows for the instance.
  *
  * Stored as OVERRIDES ONLY in `instances/<name>/config.json`, so a default that
  * changes in a later version reaches every instance that never chose otherwise.
@@ -33,6 +34,8 @@ export interface InstanceConfig {
    * minute does.
    */
   readonly "watch.idleCpuPercent": number
+  /** What the Mac app calls this instance (its window, Terminal and Files); "" is the instance's name. */
+  readonly title: string
 }
 
 export type ConfigKey = keyof InstanceConfig
@@ -45,6 +48,35 @@ export const DEFAULTS: InstanceConfig = {
   "stow.idleMinutes": 60,
   "watch.enabled": true,
   "watch.idleCpuPercent": 10,
+  title: "",
+}
+
+/** The longest title, in characters. */
+export const TITLE_MAX = 80
+
+/**
+ * A title as stored: trimmed, at most TITLE_MAX characters, and no control
+ * characters (it is shown on one line, in a window title and a menu). Throws
+ * with a message fit for the user.
+ */
+export function checkTitle(raw: string): string {
+  const title = raw.trim()
+  if ([...title].length > TITLE_MAX) throw new Error(`title is at most ${String(TITLE_MAX)} characters`)
+  // eslint-disable-next-line no-control-regex
+  if (/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/.test(title)) throw new Error("title is one line of text, without control characters")
+  return title
+}
+
+type Value = InstanceConfig[ConfigKey]
+
+const valid = (k: ConfigKey, v: unknown): v is Value => {
+  if (typeof v !== typeof DEFAULTS[k]) return false
+  if (typeof v !== "string") return true
+  try {
+    return checkTitle(v) === v
+  } catch {
+    return false
+  }
 }
 
 export const CONFIG_KEYS = Object.keys(DEFAULTS) as readonly ConfigKey[]
@@ -62,9 +94,9 @@ export function readOverrides(name: string): Partial<InstanceConfig> {
     return {}
   }
   if (typeof raw !== "object" || raw === null) return {}
-  const out: Partial<Record<ConfigKey, boolean | number>> = {}
+  const out: Partial<Record<ConfigKey, Value>> = {}
   for (const [k, v] of Object.entries(raw)) {
-    if (isKey(k) && typeof v === typeof DEFAULTS[k]) out[k] = v as boolean | number
+    if (isKey(k) && valid(k, v)) out[k] = v
   }
   return out as Partial<InstanceConfig>
 }
@@ -78,12 +110,14 @@ export function effectiveConfig(name: string): InstanceConfig {
  * alternative — storing a string where a number belongs — surfaces much later
  * as a watcher that silently never saves.
  */
-export function parseAssignment(assignment: string): [ConfigKey, boolean | number] {
+export function parseAssignment(assignment: string): [ConfigKey, Value] {
   const eq = assignment.indexOf("=")
   if (eq < 1) throw new Error(`expected key=value, got "${assignment}"`)
   const key = assignment.slice(0, eq).trim()
   const value = assignment.slice(eq + 1).trim()
   if (!isKey(key)) throw new Error(`unknown setting "${key}" — one of: ${CONFIG_KEYS.join(", ")}`)
+  // An empty title clears it, back to the instance's name.
+  if (typeof DEFAULTS[key] === "string") return [key, checkTitle(value)]
   if (typeof DEFAULTS[key] === "boolean") {
     if (/^(true|on|yes|1)$/i.test(value)) return [key, true]
     if (/^(false|off|no|0)$/i.test(value)) return [key, false]
@@ -96,8 +130,8 @@ export function parseAssignment(assignment: string): [ConfigKey, boolean | numbe
 }
 
 /** Apply assignments and write the file atomically. Setting a key to its default removes the override. */
-export function writeAssignments(name: string, assignments: readonly (readonly [ConfigKey, boolean | number])[]): void {
-  const next: Partial<Record<ConfigKey, boolean | number>> = { ...readOverrides(name) }
+export function writeAssignments(name: string, assignments: readonly (readonly [ConfigKey, Value])[]): void {
+  const next: Partial<Record<ConfigKey, Value>> = { ...readOverrides(name) }
   for (const [k, v] of assignments) {
     if (DEFAULTS[k] === v) delete next[k]
     else next[k] = v

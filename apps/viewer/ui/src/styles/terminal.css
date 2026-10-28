@@ -1,0 +1,246 @@
+@import url("./styles.css");
+
+/* =========================================================
+   The Terminal window: tabs in the title bar over the terminals, and a
+   status line when the active tab's shell has ended. The terminal's own
+   colours are xterm's theme, from the same tokens
+   (features/terminal/appearance.ts); these rules are the frame around it.
+   The title bar is an overlay (TitleBarStyle::Overlay, traffic lights where
+   the main window has them), so the tab strip is the title bar: as tall as
+   the main window's toolbar, clear of the traffic lights, and a drag region
+   wherever there is no tab.
+   ========================================================= */
+
+.term {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  overflow: hidden;
+  background: var(--surface-base);
+}
+
+/* ---- Title bar: the tabs ---- */
+.term__bar {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+  /* The main toolbar's height: its padding around a toolbar button. */
+  min-height: calc(var(--size-xl) + var(--space-2) * 2 + var(--border-width-hairline));
+  padding-inline: var(--space-2) var(--space-3);
+  background: var(--surface-card);
+  border-block-end: var(--border-width-hairline) solid var(--border-subtle);
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+html[data-os="macos"] .term__bar {
+  padding-inline-start: calc(var(--space-8) + var(--space-6));
+}
+
+.term__tabs {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  flex: 1 1 auto;
+  align-self: stretch;
+  min-width: 0;
+}
+
+.term__tab {
+  display: flex;
+  align-items: center;
+  flex: 0 1 calc(var(--size-2xl) * 5);
+  min-width: calc(var(--size-2xl) * 2);
+  height: var(--size-xl);
+  border: var(--border-width-hairline) solid transparent;
+  border-radius: var(--radius-input);
+}
+
+.term__tab:hover {
+  background: var(--surface-control);
+}
+
+.term__tab--active,
+.term__tab--active:hover {
+  background: var(--surface-base);
+  border-color: var(--border-subtle);
+}
+
+.term__tab-label {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  flex: 1 1 auto;
+  min-width: 0;
+  align-self: stretch;
+  padding-block: 0;
+  padding-inline: var(--space-2) var(--space-1);
+  font-family: var(--font-body);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-base);
+  line-height: var(--leading-lg);
+  text-align: start;
+  color: var(--text-muted);
+  background: none;
+  border: 0;
+  border-radius: inherit;
+  cursor: default;
+}
+
+.term__tab-rename {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.term__tab-name {
+  flex: 0 1 auto;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Windows' elevation shield: every shell here runs as Administrator. Shown
+   before the name, read after it. */
+.term__tab-admin {
+  display: inline-flex;
+  flex: 0 0 auto;
+  order: -1;
+  color: var(--text-muted);
+}
+
+.term__tab-admin svg {
+  width: var(--size-xs);
+  height: var(--size-xs);
+}
+
+.term__tab--active .term__tab-label {
+  color: var(--text-strong);
+  font-weight: var(--weight-md);
+}
+
+.term__tab--ended .term__tab-label {
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+.term__tab-label:focus-visible,
+.term__tab-close:focus-visible {
+  outline: var(--focus-ring);
+  outline-offset: calc(var(--focus-ring-offset) * -1);
+}
+
+.term__tab-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: var(--size-md);
+  height: var(--size-md);
+  margin-inline-end: var(--space-1);
+  padding: 0;
+  color: var(--text-muted);
+  background: none;
+  border: 0;
+  border-radius: var(--radius-chip);
+  visibility: hidden;
+}
+
+.term__tab:hover .term__tab-close,
+.term__tab--active .term__tab-close,
+.term__tab-close:focus-visible {
+  visibility: visible;
+}
+
+.term__tab-close:hover {
+  color: var(--text-strong);
+  background: var(--surface-control);
+}
+
+.term__tab-close svg {
+  width: var(--size-xs);
+  height: var(--size-xs);
+}
+
+.term__new {
+  flex-shrink: 0;
+  margin-inline-start: var(--space-1);
+}
+
+/* ---- Terminals ---- */
+.term__panes {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.term__pane {
+  position: absolute;
+  inset: 0;
+  padding: var(--space-2) var(--space-3);
+}
+
+.term__pane[hidden] {
+  display: none;
+}
+
+/* TerminalView's host; xterm's own element inside it is .terminal.xterm. */
+.term__pane > .terminal {
+  position: relative;
+  height: 100%;
+}
+
+.term__pane .terminal__error {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-3);
+  font-size: var(--text-base);
+  color: var(--text-strong);
+  background: var(--surface-base);
+}
+
+.term__pane .terminal__error button {
+  font-family: var(--font-body);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-md);
+  padding: var(--space-1) var(--space-3);
+  min-height: var(--size-lg);
+  color: var(--text-strong);
+  background: var(--surface-control);
+  border: var(--border-width-hairline) solid var(--border-strong);
+  border-radius: var(--radius-input);
+}
+
+.term__none {
+  margin: 0;
+  padding: var(--space-6);
+  text-align: center;
+  font-size: var(--text-sm);
+  color: var(--text-muted);
+}
+
+/* ---- The active tab's shell has ended ---- */
+.term__status {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-shrink: 0;
+  padding: var(--space-2) var(--space-3);
+  background: var(--surface-card);
+  border-block-start: var(--border-width-hairline) solid var(--border-subtle);
+}
+
+.term__status-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  margin: 0;
+  font-size: var(--text-sm);
+  color: var(--text-base-color);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

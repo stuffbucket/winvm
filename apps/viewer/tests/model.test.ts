@@ -1,6 +1,21 @@
 import { describe, expect, it } from "bun:test"
 
-import { controls, detailRows, displaySize, facts, parseChecks, parseConnection, parseSaves, parseShare, parseStatus, phase, startSteps } from "../ui/src/model"
+import {
+  controls,
+  detailRows,
+  displaySize,
+  facts,
+  parseChecks,
+  parseConnection,
+  parseSaves,
+  parseShare,
+  parseStatus,
+  phase,
+  shownTitle,
+  startSteps,
+  terminalBlocked,
+  titleAssignment,
+} from "../ui/src/model"
 
 const base = {
   name: "default",
@@ -64,11 +79,11 @@ describe("phase", () => {
 
 describe("controls", () => {
   it("offers start only when stopped", () => {
-    expect(controls("stopped", false)).toEqual({ start: true, shutDown: false, restart: false, pause: false, resume: false, screen: false })
+    expect(controls("stopped", false)).toEqual({ start: true, shutDown: false, restart: false, pause: false, resume: false, screen: false, terminal: false })
   })
 
-  it("offers shut down, restart, pause and the screen when running", () => {
-    expect(controls("running", false)).toEqual({ start: false, shutDown: true, restart: true, pause: true, resume: false, screen: true })
+  it("offers shut down, restart, pause, the screen and a terminal when running", () => {
+    expect(controls("running", false)).toEqual({ start: false, shutDown: true, restart: true, pause: true, resume: false, screen: true, terminal: true })
   })
 
   it("offers resume instead of pause when paused", () => {
@@ -82,7 +97,27 @@ describe("controls", () => {
 
   it("offers nothing that changes state while a command runs", () => {
     const c = controls("running", true)
-    expect([c.start, c.shutDown, c.restart, c.pause, c.resume, c.screen]).toEqual([false, false, false, false, false, true])
+    expect([c.start, c.shutDown, c.restart, c.pause, c.resume, c.screen, c.terminal]).toEqual([false, false, false, false, false, true, false])
+  })
+})
+
+describe("terminalBlocked", () => {
+  it("says nothing when Windows is up and its agent answers", () => {
+    expect(terminalBlocked("running", false)).toBeNull()
+  })
+
+  it("says why otherwise", () => {
+    expect(terminalBlocked("stopped", false)).toBe("terminal.why.off")
+    expect(terminalBlocked("missing", false)).toBe("terminal.why.off")
+    expect(terminalBlocked("stowed", false)).toBe("terminal.why.off")
+    expect(terminalBlocked("starting", false)).toBe("terminal.why.starting")
+    expect(terminalBlocked("paused", false)).toBe("terminal.why.paused")
+    expect(terminalBlocked("running", true)).toBe("terminal.why.busy")
+  })
+
+  it("agrees with controls on when a terminal opens", () => {
+    for (const p of ["starting", "running", "paused", "stopped", "stowed", "missing"] as const)
+      for (const busy of [false, true]) expect(controls(p, busy).terminal).toBe(terminalBlocked(p, busy) === null)
   })
 })
 
@@ -217,5 +252,24 @@ describe("parseConnection", () => {
 
   it("is null without a websocket port", () => {
     expect(parseConnection(JSON.stringify({ display: 1 }))).toBeNull()
+  })
+})
+
+describe("an instance's title", () => {
+  it("reads it from status, absent (an older winvm) or null meaning its name", () => {
+    expect(one()?.title).toBeNull()
+    expect(one({ title: null })?.title).toBeNull()
+    expect(one({ title: "Build box" })?.title).toBe("Build box")
+  })
+
+  it("shows the title the user gave, else the name", () => {
+    expect(shownTitle("demo", "Build box")).toBe("Build box")
+    expect(shownTitle("demo", null)).toBe("demo")
+    expect(shownTitle("demo", undefined)).toBe("demo")
+  })
+
+  it("sets it with winvm config, trimmed; empty clears it", () => {
+    expect(titleAssignment("  Build box ")).toBe("title=Build box")
+    expect(titleAssignment("   ")).toBe("title=")
   })
 })

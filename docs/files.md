@@ -9,6 +9,17 @@ winvm get 'C:\work\install.log' install.log
 
 These copy one file through the in-guest agent, or through the QEMU guest
 agent if the in-guest agent isn't running. The instance has to be running.
+Through the in-guest agent, they also copy a folder and everything in it.
+
+To see what's in a guest folder:
+
+```sh
+winvm dir                        # the Desktop
+winvm dir 'C:\work' --all        # hidden files too
+winvm dir --places               # Desktop, Documents, Downloads, the profile, C:\work, drives
+```
+
+The winvm app has a file browser for this: the Files button in its toolbar.
 
 ## Over the network
 
