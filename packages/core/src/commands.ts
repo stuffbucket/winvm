@@ -1062,7 +1062,9 @@ export const USAGE =
   "  exec    [-i name] [--qga] -- <cmd>  run a command in the guest (via the agent when installed)\n" +
   "  agent   [-i name] install | status [--json]   the in-guest agent (fast exec, files, GUI)\n" +
   "  put     [-i name] <host file> <guest path>    copy a file into the guest\n" +
-  "  get     [-i name] <guest path> <host file>    copy a file out of the guest\n" +
+  "  get     [-i name] <guest path> <host path>    copy a file, or a folder and all in it, out of the guest\n" +
+  "  dir     [-i name] [path] [--all] [--places] [--json]   a guest folder (default the Desktop);\n" +
+  "                                --all: hidden files too; --places: the known folders\n" +
   "  launch  [-i name] -- <program> [args]         start it on the guest's desktop, detached\n" +
   "  smoke   [-i name] [--expect <v> | --expect-file <path>] [--probe <exe>]\n" +
   "  snapshot [-i name] [tag]      capture the running guest, RAM and all\n" +
