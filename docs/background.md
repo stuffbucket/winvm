@@ -55,3 +55,13 @@ winvm watch  -i default --status               # or --stop
 
 Settings are stored in `instances/<name>/config.json`. A running watcher picks
 up changes within a minute.
+
+The same file holds the instance's `title`, which the Mac app shows for it (its
+window, Terminal and Files) in place of the instance's name. It is one line of
+up to 80 characters; an empty title goes back to the name. The app sets it when
+you double-click the title in its toolbar, or choose Window > Rename Window….
+
+```sh
+winvm config -i default title="Build box"
+winvm config -i default title=                 # back to "default"
+```

@@ -3,13 +3,14 @@
  *
  *   pnpm test   (or: bun test)
  */
-import { mkdtempSync, rmSync } from "node:fs"
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { resolve } from "node:path"
 
 import { afterAll, beforeAll, describe, expect, it } from "bun:test"
 
-import { DEFAULTS, effectiveConfig, parseAssignment, readOverrides, writeAssignments } from "../src/config"
+import { DEFAULTS, configPath, effectiveConfig, parseAssignment, readOverrides, writeAssignments } from "../src/config"
+import { instanceDir } from "../src/paths"
 import type { Decision, Sample, Settings, Timing } from "../src/idle"
 import { IdleMachine, autosaveName, savesToRotate } from "../src/idle"
 import { ensureWatcher, parseCpuTime, watchAfterRestore } from "../src/watch"
@@ -278,6 +279,26 @@ describe("instance config", () => {
     expect(() => parseAssignment("stow.enabled=maybe")).toThrow()
     expect(() => parseAssignment("nope=1")).toThrow()
     expect(() => parseAssignment("autosave.enabled")).toThrow()
+  })
+
+  it("keeps a title for the Mac app, checked, and clears it when empty", () => {
+    expect(effectiveConfig("titled").title).toBe("")
+    expect(parseAssignment("title=  Build box  ")).toEqual(["title", "Build box"])
+    expect(parseAssignment("title=a=b")).toEqual(["title", "a=b"])
+    writeAssignments("titled", [parseAssignment("title=Build box"), parseAssignment("stow.enabled=off")])
+    expect(effectiveConfig("titled").title).toBe("Build box")
+    writeAssignments("titled", [parseAssignment("title=")])
+    expect(readOverrides("titled")).toEqual({ "stow.enabled": false })
+    expect(() => parseAssignment(`title=${"x".repeat(81)}`)).toThrow("80")
+    expect(() => parseAssignment("title=two\nlines")).toThrow("control")
+  })
+
+  it("ignores a title in config.json that would not pass the check", () => {
+    mkdirSync(instanceDir("edited"), { recursive: true })
+    writeFileSync(configPath("edited"), JSON.stringify({ title: "bad\u0007bell", "stow.enabled": false }))
+    expect(readOverrides("edited")).toEqual({ "stow.enabled": false })
+    writeFileSync(configPath("edited"), JSON.stringify({ title: 42 }))
+    expect(effectiveConfig("edited").title).toBe("")
   })
 })
 

@@ -19,6 +19,7 @@ import { existsSync, readFileSync, readdirSync, statSync } from "node:fs"
 import { connect } from "node:net"
 import { resolve } from "node:path"
 
+import { effectiveConfig } from "./config"
 import { describeDisplay, readDisplay } from "./display"
 import { qmpCommand } from "./monitor"
 import { home, instanceDir, listInstances, pathsFor, readImageMeta, readMeta } from "./paths"
@@ -63,6 +64,8 @@ export interface GuestInfo {
 
 export interface InstanceStatus {
   readonly name: string
+  /** What the Mac app calls it (`winvm config title=…`); null: its name. */
+  readonly title: string | null
   readonly state: State
   /** QEMU's own run state (`query-status`), when the monitor answered. */
   readonly vmStatus: string | null
@@ -348,10 +351,12 @@ export async function gather(name: string, deep = true): Promise<InstanceStatus>
   const latest = saves[0] ?? null
   const latestBaseline = saves.find((s) => s.kind === "baseline") ?? null
   const savesSummary = { count: saves.length, bytes: saves.reduce((n, s) => n + (s.bytes ?? 0), 0), latest, latestBaseline }
+  const title = effectiveConfig(name).title || null
 
   if (meta === null) {
     return {
       name,
+      title,
       state: "missing",
       vmStatus: null,
       image: null,
@@ -386,6 +391,7 @@ export async function gather(name: string, deep = true): Promise<InstanceStatus>
 
   return {
     name,
+    title,
     state,
     vmStatus,
     image: meta.image,
