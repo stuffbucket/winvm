@@ -17,6 +17,8 @@ interface ToolbarProps {
   readonly canSaves: boolean
   readonly sharing: boolean
   readonly actualSize: boolean
+  /** Whether "Actual size" means anything: not when the guest's screen follows the window (virtio-gpu). */
+  readonly canActualSize: boolean
   readonly open: PanelId | null
   readonly detailsOpen: boolean
   onSelect(name: string): void
@@ -137,7 +139,13 @@ export function Toolbar(p: ToolbarProps): JSX.Element {
       <span className="toolbar__divider" aria-hidden="true" />
 
       <div className="toolbar__group">
-        <ToolButton icon="fit" label={t("action.actualSize")} enabled={c.screen} pressed={p.actualSize} onClick={p.onActualSize} />
+        <ToolButton
+          icon="fit"
+          label={t("action.actualSize")}
+          enabled={c.screen && p.canActualSize}
+          pressed={p.actualSize && p.canActualSize}
+          onClick={p.onActualSize}
+        />
         <ToolButton icon="screenSharing" label={t("action.screenSharing")} enabled={c.screen} onClick={p.onScreenSharing} />
         <ToolButton icon="panel" label={t("action.details")} enabled pressed={p.detailsOpen} onClick={p.onDetails} />
       </div>
