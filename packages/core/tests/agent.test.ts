@@ -14,7 +14,7 @@ import { TIMED_OUT, execResult, execTimeoutMs, formatListing } from "../src/agen
 import { ensureState, forwardedPorts, hostfwdRule, readState } from "../src/agentfwd"
 import { parseArgs } from "../src/args"
 import type { Paths } from "../src/paths"
-import { AGENT_VERSION, launcherArgv, normalizeDir, parseLauncherPid, parseTasklist, startAgent } from "../src/guestagent"
+import { AGENT_VERSION, DisplayHost, launcherArgv, normalizeDir, parseLauncherPid, parseTasklist, startAgent } from "../src/guestagent"
 
 let dir: string
 let tokenFile: string
@@ -134,6 +134,63 @@ describe("agent over HTTP", () => {
   it("reports a missing program as an error, not a hang", async () => {
     const err = (await client.exec(["/no/such/program"]).catch((e: unknown) => e)) as AgentError
     expect(err.status).toBe(500)
+  }, SLOW_HOST_MS)
+
+  it("reports memory and the system drive's space without starting anything", async () => {
+    const s = await client.stats()
+    expect(s.memory.total).toBeGreaterThan(0)
+    expect(s.memory.available).toBeGreaterThan(0)
+    expect(s.memory.available).toBeLessThanOrEqual(s.memory.total)
+    expect(s.disk?.path).toBe("/")
+    expect(s.disk?.free).toBeLessThanOrEqual(s.disk?.total ?? 0)
+  })
+})
+
+describe("the display helper, kept running", () => {
+  // A stand-in for `winvm-display.exe serve`: echoes each request's words; "hang" never answers; "die" exits.
+  const fake = (): string => {
+    const f = resolve(dir, "fake-display.ts")
+    writeFileSync(
+      f,
+      `let buf = ""
+for await (const c of Bun.stdin.stream()) {
+  buf += new TextDecoder().decode(c)
+  for (let nl = buf.indexOf("\\n"); nl >= 0; nl = buf.indexOf("\\n")) {
+    const line = buf.slice(0, nl); buf = buf.slice(nl + 1)
+    if (line === "die") process.exit(1)
+    if (line !== "hang") console.log(JSON.stringify({ words: line.split(" "), pid: process.pid }))
+  }
+}`,
+    )
+    return f
+  }
+
+  it("answers requests in order from one process", async () => {
+    const host = new DisplayHost([process.execPath, fake()])
+    try {
+      const [a, b] = await Promise.all([host.call(["set", "1920", "1200", "2000", "200"], 10_000), host.call(["get"], 10_000)])
+      const ja = JSON.parse(a) as { words: string[]; pid: number }
+      const jb = JSON.parse(b) as { words: string[]; pid: number }
+      expect(ja.words).toEqual(["set", "1920", "1200", "2000", "200"])
+      expect(jb.words).toEqual(["get"])
+      expect(ja.pid).toBe(jb.pid)
+    } finally {
+      host.stop()
+    }
+  }, SLOW_HOST_MS)
+
+  it("stops a helper that does not answer, and starts a fresh one for the next request", async () => {
+    const host = new DisplayHost([process.execPath, fake()])
+    try {
+      const first = JSON.parse(await host.call(["get"], 10_000)) as { pid: number }
+      expect(await host.call(["hang"], 300).catch((e: unknown) => String(e))).toContain("did not answer")
+      const next = JSON.parse(await host.call(["get"], 10_000)) as { pid: number }
+      expect(next.pid).not.toBe(first.pid)
+      expect(await host.call(["die"], 10_000).catch((e: unknown) => String(e))).toContain("exited")
+      expect((JSON.parse(await host.call(["get"], 10_000)) as { words: string[] }).words).toEqual(["get"])
+    } finally {
+      host.stop()
+    }
   }, SLOW_HOST_MS)
 })
 

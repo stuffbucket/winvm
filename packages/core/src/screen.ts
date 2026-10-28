@@ -251,6 +251,10 @@ export async function scroll(args: Args): Promise<number> {
  *   --scale PCT      Windows' display scale (100, 125, 150, 200, …), live
  *   virtio-gpu|ramfb switch the display device of a STOPPED instance; saves
  *                    taken on the other device stop loading (display.ts)
+ *
+ * A viewer that resizes on every window drag calls the agent's POST /display
+ * itself (`winvm agent connect --json` says where), as this does with
+ * `--no-request`: that costs a few ms, this command a process start.
  */
 export async function display(args: Args): Promise<number> {
   const name = instanceName(args)
