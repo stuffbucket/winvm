@@ -11,17 +11,15 @@ builds and verifies the release before publishing it. The signed and notarized
    `main`.
 2. Merge the release PR. Do not create or move a tag during the normal flow.
 3. Open the resulting `release.yml` run. When `release` has made the draft,
-   start the signed build; its `macos-dmg` job prints the command in its
-   summary:
+   `macos-dmg` starts the signed build on `stuffbucket/macos-builder` with a
+   short-lived app-repoman token. If the `release` environment has no
+   `APP_ID`, it prints the command in its summary for someone with access to
+   the builder to run instead:
 
    ```sh
    gh workflow run build.yml --repo stuffbucket/macos-builder --ref main \
      -f repo=stuffbucket/winvm -f ref=vX.Y.Z
    ```
-
-   winvm stores no token for macos-builder, so nothing starts this
-   automatically: each signed build is a deliberate step by someone with
-   access to the builder.
 4. `macos-dmg` waits about 50 minutes for the DMG and the update bundle,
    attaches them with `latest.json`, and `publish` publishes. Confirm the
    GitHub release changes from draft to published.
@@ -122,7 +120,13 @@ and baseline saves need rebuilding.
   (stuffbucket/macos-builder#33).
 - The app-repoman GitHub App installed on winvm (Contents: read and write).
   The builder checks winvm out and uploads the DMG with it.
+- app-repoman with Actions: read and write on `stuffbucket/macos-builder`, and
+  a `release` environment in winvm that only `v*` tags can use, holding the
+  variable `APP_ID` (3892691) and the secret `APP_PRIVATE_KEY` (an app-repoman
+  private key; maximal's `release` environment holds the same one). `macos-dmg`
+  mints a token from them that can only start workflows on macos-builder, for
+  an hour. App keys don't expire, unlike a PAT; revoke one on the app's
+  settings page.
 
-winvm deliberately has no `MACOS_BUILDER_PAT`: a stored token would let any
-workflow in this public repo start builds on the signing Mac, and it would
-expire silently. Starting the build by hand costs one command per release.
+A workflow on a branch can't reach the key, because the environment admits only
+`v*` tags.

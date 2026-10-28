@@ -5,10 +5,8 @@
 #
 # stuffbucket/macos-builder builds, signs and notarizes the app and uploads
 # winvm.dmg and the update bundle (winvm-<tag>-darwin-arm64.app.tar.gz, with
-# its .sig and .sha256) to the draft. Nothing here starts that build: winvm
-# stores no token for macos-builder, so a person with access to it starts each
-# signed build, which also makes every signing a deliberate step. This waits up
-# to WAIT_SECONDS (default 0) for those files, then:
+# its .sig and .sha256) to the draft. release.yml's macos-dmg job starts that
+# build. This waits up to WAIT_SECONDS (default 0) for those files, then:
 #   - replaces winvm.dmg with winvm-<tag>-darwin-arm64.dmg and its .sha256;
 #   - checks the bundle's signature the way the app will, and attaches
 #     latest.json, the manifest the app's updater reads.
