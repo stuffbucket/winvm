@@ -221,6 +221,33 @@ export type ActionNode = Action
 /** Opens the instance's Files window, or brings it forward; `title` is what the instance is called. */
 export const openFiles = (instance: string, title: string | null): Promise<void> => tauri().core.invoke<void>("files_open", { instance, title })
 
+/** What a machine's agent answered: its HTTP status, and its body (JSON, or the text when it isn't). */
+export interface AgentReply {
+  readonly status: number
+  readonly body: unknown
+}
+
+/**
+ * One request to a machine's in-guest agent, straight from the app: a few
+ * milliseconds, where running the CLI costs a process start. The app asks
+ * `winvm agent connect` where the agent is once per machine and keeps it.
+ * Rejects only when the agent can't be reached; an error status is a reply.
+ */
+export const agentFetch = (instance: string, method: "GET" | "POST", path: string, body?: unknown, timeoutMs?: number): Promise<AgentReply> =>
+  tauri().core.invoke<AgentReply>("agent_fetch", { instance, method, path, body: body ?? null, timeoutMs: timeoutMs ?? null })
+
+/**
+ * Whether a guest folder can be shown in Finder yet: the guest's drives
+ * mounted on the Mac (Windows' file sharing through a forwarded port) is
+ * still to come, so the menu offers it disabled.
+ */
+export const GUEST_FOLDERS_IN_FINDER = false
+
+/** Shows a guest folder in Finder, once the guest's drives can be mounted on the Mac. Not yet. */
+export async function revealGuestPath(instance: string, path: string): Promise<void> {
+  throw new Error(`showing ${path} of ${instance} in Finder isn't available yet`)
+}
+
 /** Puts text on the Mac's clipboard. */
 export const copyText = (text: string): Promise<void> => tauri().core.invoke<void>("copy_text", { text })
 
