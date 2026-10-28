@@ -3,6 +3,7 @@
  * agent-first `exec` that commands.ts calls. Each uses the in-guest agent when
  * one answers and falls back to qemu-ga, so they work on any running guest;
  * the agent only makes them fast (and puts launched programs on the desktop).
+ * `mkdir`, `mv`, `cp` and `rm` change the guest's files, through the agent only.
  *
  * Note the two channels run as different users: the agent as the logged-on
  * Administrator in session 1, qemu-ga as SYSTEM in session 0. `--qga` forces
@@ -232,6 +233,103 @@ export async function dir(args: Args): Promise<number> {
   } catch (error) {
     return failed(msg(error), error instanceof agent.AgentError ? error.code : null)
   }
+}
+
+/** What a file verb did: its `--json` answer, and the line it prints otherwise. */
+interface Changed {
+  readonly result: agent.FsPathResult | agent.FsDeleteResult
+  readonly text: string
+}
+
+/**
+ * The frame the file verbs share: the instance running, the agent ensured (an
+ * older one can't change files), and the outcome printed. With `--json` a
+ * failure is `{error, code}` on stdout too, as for `dir` (code: an FsCode,
+ * notrunning, or bad for a usage error).
+ */
+async function changeFiles(
+  args: Args,
+  o: { readonly usage: string; readonly bare?: readonly string[]; readonly paths: (n: number) => boolean },
+  act: (c: agent.AgentClient, paths: readonly string[]) => Promise<Changed>,
+): Promise<number> {
+  const name = instanceName(args)
+  const json = args.flags.has("json")
+  const paths = positionals(args, ["json", ...(o.bare ?? [])])
+  const failed = (error: string, code: string | null): number => {
+    if (!json) return fail(error)
+    console.log(JSON.stringify({ error, code }))
+    return 1
+  }
+  if (!o.paths(paths.length)) return failed(`usage: ${o.usage}`, "bad")
+  const notUp = running(name)
+  if (notUp !== null) return failed(notUp, "notrunning")
+  try {
+    const c = await agent.ensure(name)
+    const done = await watcher.whileActive(name, act(c, paths))
+    console.log(json ? JSON.stringify(done.result) : done.text)
+    return 0
+  } catch (error) {
+    return failed(msg(error), error instanceof agent.AgentError ? error.code : null)
+  }
+}
+
+const trimSep = (p: string): string => p.replace(/(?<=[^:\\/])[\\/]+$/, "")
+
+/**
+ * Where `mv` and `cp` put `from`: into `to` when it is a folder (keeping the
+ * name, as mv(1) does), else at `to` itself. A folder that is `from` in
+ * another case is a rename, not a move into itself.
+ */
+export async function destination(c: agent.AgentClient, from: string, to: string): Promise<string> {
+  let l: agent.DirListing
+  try {
+    l = await c.list(to, { limit: 0 })
+  } catch (error) {
+    if (error instanceof agent.AgentError && (error.code === "notfound" || error.code === "notdir")) return to
+    throw error
+  }
+  if (trimSep(l.path).toLowerCase() === trimSep(from).toLowerCase()) return to
+  const name = from.split(/[\\/]/).filter((p) => p !== "").pop() ?? from
+  const sep = l.path.includes("\\") || !l.path.includes("/") ? "\\" : "/"
+  return `${trimSep(l.path)}${l.path.endsWith(sep) ? "" : sep}${name}`
+}
+
+/** `mkdir [-i name] <guest path> [--json]`: a new folder, in one that exists. */
+export async function mkdir(args: Args): Promise<number> {
+  return await changeFiles(args, { usage: "winvm mkdir [-i name] <guest path> [--json]", paths: (n) => n === 1 }, async (c, [path]) => {
+    const r = await c.mkdir(path ?? "")
+    return { result: r, text: `created ${r.path}` }
+  })
+}
+
+/** `mv [-i name] <from> <to> [--json]`: rename, or move into a folder. Nothing is replaced. */
+export async function mv(args: Args): Promise<number> {
+  return await changeFiles(args, { usage: "winvm mv [-i name] <guest path> <new path or folder> [--json]", paths: (n) => n === 2 }, async (c, [from = "", to = ""]) => {
+    const r = await c.rename(from, await destination(c, from, to))
+    return { result: r, text: `${from} -> ${r.path}` }
+  })
+}
+
+/** `cp [-i name] <from> <to> [--json]`: a copy in the guest, of a file or a whole folder. Nothing is replaced. */
+export async function cp(args: Args): Promise<number> {
+  return await changeFiles(args, { usage: "winvm cp [-i name] <guest path> <new path or folder> [--json]", paths: (n) => n === 2 }, async (c, [from = "", to = ""]) => {
+    const r = await c.copy(from, await destination(c, from, to))
+    return { result: r, text: `${from} -> ${r.path}` }
+  })
+}
+
+/** `rm [-i name] <guest path>... [--permanently] [--json]`: to the Recycle Bin, or (--permanently) for good. */
+export async function rm(args: Args): Promise<number> {
+  const recycle = !args.flags.has("permanently")
+  return await changeFiles(
+    args,
+    { usage: "winvm rm [-i name] <guest path>... [--permanently] [--json]", bare: ["permanently"], paths: (n) => n > 0 },
+    async (c, paths) => {
+      const r = await c.remove(paths, { recycle })
+      const items = `${String(r.deleted)} ${r.deleted === 1 ? "item" : "items"}`
+      return { result: r, text: recycle ? `moved ${items} to the Recycle Bin` : `deleted ${items}` }
+    },
+  )
 }
 
 /** Start a program on the guest's desktop and return at once. */

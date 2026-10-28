@@ -19,6 +19,19 @@ winvm dir 'C:\work' --all        # hidden files too
 winvm dir --places               # Desktop, Documents, Downloads, the profile, C:\work, drives
 ```
 
+To change them:
+
+```sh
+winvm mkdir 'C:\work\logs'                   # a new folder
+winvm mv 'C:\work\a.txt' 'C:\work\b.txt'     # rename; into the folder <to> if it is one
+winvm cp 'C:\work\logs' 'C:\work\logs-old'   # a copy in the guest, folders too
+winvm rm 'C:\work\b.txt'                     # to the Recycle Bin; --permanently for good
+```
+
+None of these replaces anything: a name that's taken is an error. They need
+the in-guest agent. With `--json` they print `{"path": …}` (`rm`:
+`{"deleted": n}`), or `{"error": …, "code": …}` when they fail.
+
 The winvm app has a file browser for this: the Files button in its toolbar.
 
 ## Over the network

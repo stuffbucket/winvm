@@ -26,6 +26,11 @@
  *   POST /launch  {argv,cwd?,env?}    detached, in this session  -> {pid}
  *   GET  /procs                       [{pid,name,session}]
  *   GET  /fs/list?path=…&hidden=1&limit=N  a folder's entries, and the known folders -> DirListing
+ *   POST /fs/mkdir  {path}            a new folder (its parent must exist)       -> {path}
+ *   POST /fs/rename {from,to}         rename or move; never replaces anything     -> {path}
+ *   POST /fs/copy   {from,to}         a file or a whole folder; never replaces    -> {path}
+ *   POST /fs/delete {paths,recycle?}  to the Recycle Bin (default), or for good  -> {deleted}
+ *                                     the /fs/* routes fail with {error, code}: see FsCode
  *   POST /kill    {pid,tree?}
  *   POST /ui      {op,...}             UI Automation via winvm-ui.exe (assets/winvm-ui.cs, docs/gui.md)
  *   GET  /term?shell=&cwd=&cols=&rows=  a terminal, as a WebSocket (conpty.exe, assets/conpty.cs)
@@ -34,15 +39,15 @@
  *   POST /exit                        stop the agent (reinstall)
  */
 import { spawn as nodeSpawn } from "node:child_process"
-import { appendFileSync, existsSync, mkdirSync, readFileSync, statSync } from "node:fs"
-import { readdir, stat, statfs } from "node:fs/promises"
+import { appendFileSync, existsSync, mkdirSync, readFileSync, statSync, type Stats as FileStats } from "node:fs"
+import { cp, lstat, mkdir, readdir, rename, rm, stat, statfs } from "node:fs/promises"
 import { freemem, homedir, totalmem } from "node:os"
-import { dirname, join, resolve } from "node:path"
+import { dirname, isAbsolute, join, relative, resolve } from "node:path"
 import { randomBytes, timingSafeEqual } from "node:crypto"
 import type { Server, ServerWebSocket, Socket, TCPSocketListener, WebSocketHandler } from "bun"
 
 /** Bumped whenever the protocol or behaviour changes; the host reinstalls on mismatch. */
-export const AGENT_VERSION = 7
+export const AGENT_VERSION = 8
 /** The port the agent listens on INSIDE the guest. The host side is per instance. */
 export const GUEST_PORT = 7801
 export const WINDOWS_DIR = "C:\\ProgramData\\winvm\\agent"
@@ -377,19 +382,40 @@ export interface DirListing {
   readonly places: readonly Place[]
 }
 
+/** What /fs/mkdir, /fs/rename and /fs/copy answer: where the item is now. */
+export interface FsPathResult {
+  readonly path: string
+}
+
+/** What /fs/delete answers: how many of the paths went. */
+export interface FsDeleteResult {
+  readonly deleted: number
+}
+
 /** The most entries a listing returns unless asked for more: a huge folder still answers at once. */
 export const LIST_LIMIT = 5000
 const LIST_LIMIT_MAX = 100_000
 /** Stats at a time: each one opens the file on Windows, so a 20 000-entry folder is not 20 000 handles at once. */
 const STAT_BATCH = 256
 
-/** Why a folder could not be listed: the route's status, and a `code` the caller can branch on. */
-export class ListError extends Error {
+/**
+ * Why a file operation failed, as the /fs/* routes say it: `notfound` (404),
+ * `denied` (403), `notdir` (400, a file where a folder is needed), `exists`
+ * (409, the target is taken: nothing is ever replaced), `busy` (409, in use by
+ * a program), `into` (400, a folder moved or copied into itself), `bad` (400,
+ * a malformed request or name) and `unavailable` (501, no Recycle Bin here).
+ */
+export type FsCode = "notfound" | "denied" | "notdir" | "exists" | "busy" | "into" | "bad" | "unavailable"
+
+const FS_STATUS: Readonly<Record<FsCode, number>> = { notfound: 404, denied: 403, notdir: 400, exists: 409, busy: 409, into: 400, bad: 400, unavailable: 501 }
+
+/** A file operation's failure: the route's status, and a `code` the caller can branch on. */
+export class FsError extends Error {
   readonly status: number
-  readonly code: "notfound" | "denied" | "notdir"
-  constructor(message: string, status: number, code: "notfound" | "denied" | "notdir") {
+  readonly code: FsCode
+  constructor(code: FsCode, message: string) {
     super(message)
-    this.status = status
+    this.status = FS_STATUS[code]
     this.code = code
   }
 }
@@ -445,12 +471,12 @@ async function hiddenNames(dir: string): Promise<string[]> {
 function listError(error: unknown, path: string): Error {
   switch ((error as { code?: string }).code) {
     case "ENOENT":
-      return new ListError(`no such folder: ${path}`, 404, "notfound")
+      return new FsError("notfound", `no such folder: ${path}`)
     case "EACCES":
     case "EPERM":
-      return new ListError(`access denied: ${path}`, 403, "denied")
+      return new FsError("denied", `access denied: ${path}`)
     case "ENOTDIR":
-      return new ListError(`not a folder: ${path}`, 400, "notdir")
+      return new FsError("notdir", `not a folder: ${path}`)
     default:
       return error instanceof Error ? error : new Error(String(error))
   }
@@ -502,6 +528,236 @@ export async function listDir(
   })
   const up = dirname(path)
   return { path, parent: up === path ? null : up, entries, total: kept.length }
+}
+
+// --- changing files ----------------------------------------------------------
+
+/** An fs call's failure as an FsError, naming `path`. */
+function fsFailure(error: unknown, path: string): Error {
+  switch ((error as { code?: string }).code) {
+    case "ENOENT":
+      return new FsError("notfound", `no such file or folder: ${path}`)
+    case "EACCES":
+    case "EPERM":
+      return new FsError("denied", `access denied: ${path}`)
+    case "ENOTDIR":
+      return new FsError("notdir", `not a folder: ${path}`)
+    case "EEXIST":
+    case "ENOTEMPTY":
+      return new FsError("exists", `already exists: ${path}`)
+    case "EBUSY":
+      return new FsError("busy", `in use by a program: ${path}`)
+    case "EINVAL":
+    case "ENAMETOOLONG":
+      return new FsError("bad", `not a name Windows takes: ${path}`)
+    default:
+      return error instanceof Error ? error : new Error(String(error))
+  }
+}
+
+/** A request's path: a non-empty string, made absolute and tidy. */
+export function fsPath(value: unknown): string {
+  if (typeof value !== "string" || value.trim() === "") throw new FsError("bad", "a path is required")
+  return normalizeDir(value)
+}
+
+const there = async (path: string): Promise<boolean> => (await lstat(path).catch(() => null)) !== null
+
+async function lstatOf(path: string): Promise<FileStats> {
+  try {
+    return await lstat(path)
+  } catch (error) {
+    throw fsFailure(error, path)
+  }
+}
+
+/** `b` is `a` itself, perhaps spelt in another case: renaming it only changes its case. */
+async function sameItem(a: string, b: string, aStat: FileStats): Promise<boolean> {
+  if (isWin) return a.toLowerCase() === b.toLowerCase()
+  const bStat = await lstat(b).catch(() => null)
+  return bStat !== null && bStat.ino === aStat.ino && bStat.dev === aStat.dev
+}
+
+/** `path` is `folder` or somewhere under it (Windows' paths compare without case). */
+export function isWithin(folder: string, path: string): boolean {
+  const rel = isWin ? relative(folder.toLowerCase(), path.toLowerCase()) : relative(folder, path)
+  return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel))
+}
+
+/** The folder a new item goes in must be there, and be a folder. */
+async function needFolder(path: string): Promise<void> {
+  const parent = dirname(path)
+  const st = await stat(parent).catch(() => null)
+  if (st === null) throw new FsError("notfound", `no such folder: ${parent}`)
+  if (!st.isDirectory()) throw new FsError("notdir", `not a folder: ${parent}`)
+}
+
+/** A new, empty folder. Its parent must exist. */
+export async function makeFolder(raw: unknown): Promise<string> {
+  const path = fsPath(raw)
+  if (await there(path)) throw new FsError("exists", `already exists: ${path}`)
+  await needFolder(path)
+  try {
+    await mkdir(path)
+  } catch (error) {
+    throw fsFailure(error, path)
+  }
+  return path
+}
+
+/** A file or folder, and everything in it, copied to `to`. Links stay links. */
+async function copyTree(from: string, to: string): Promise<void> {
+  try {
+    await cp(from, to, { recursive: true, force: false, errorOnExist: true, preserveTimestamps: true, verbatimSymlinks: true })
+  } catch (error) {
+    throw fsFailure(error, to)
+  }
+}
+
+/**
+ * Rename or move `from` to `to`, a full path (moving into a folder is
+ * `folder\name`). Nothing is ever replaced: a taken `to` is `exists`, unless it
+ * is `from` itself in another case, which renames it. Onto another drive it
+ * copies, then removes the original.
+ */
+export async function movePath(rawFrom: unknown, rawTo: unknown): Promise<string> {
+  const from = fsPath(rawFrom)
+  const to = fsPath(rawTo)
+  const st = await lstatOf(from)
+  if (!(await sameItem(from, to, st))) {
+    if (st.isDirectory() && isWithin(from, to)) throw new FsError("into", `can't move a folder into itself: ${to}`)
+    if (await there(to)) throw new FsError("exists", `already exists: ${to}`)
+    await needFolder(to)
+  }
+  try {
+    await rename(from, to)
+  } catch (error) {
+    const code = (error as { code?: string }).code
+    if (code !== "EXDEV") throw fsFailure(error, code === "ENOENT" ? from : to)
+    await copyTree(from, to)
+    try {
+      await rm(from, { recursive: true })
+    } catch (e) {
+      throw fsFailure(e, from)
+    }
+  }
+  return to
+}
+
+/** Copy a file, or a folder and all in it, to `to`. Nothing is ever replaced. */
+export async function copyPath(rawFrom: unknown, rawTo: unknown): Promise<string> {
+  const from = fsPath(rawFrom)
+  const to = fsPath(rawTo)
+  const st = await lstatOf(from)
+  if (await there(to)) throw new FsError("exists", `already exists: ${to}`)
+  if (st.isDirectory() && isWithin(from, to)) throw new FsError("into", `can't copy a folder into itself: ${to}`)
+  await needFolder(to)
+  await copyTree(from, to)
+  return to
+}
+
+/**
+ * Sends one item to the Recycle Bin through shell32's SHFileOperation,
+ * compiled once into the agent's warm PowerShell. Not Microsoft.VisualBasic's
+ * FileSystem.DeleteFile: its recycling overloads take a UIOption whose quietest
+ * value is OnlyErrorDialogs, and an error dialog in the logged-on session
+ * would hold the request until someone clicked it. These flags show nothing,
+ * ever: FOF_ALLOWUNDO (0x40, the Recycle Bin) | FOF_NOCONFIRMATION (0x10) |
+ * FOF_NOERRORUI (0x400) | FOF_SILENT (0x4). It returns the shell's code, or
+ * -1 when the operation was aborted.
+ */
+const RECYCLE_CS = `using System;
+using System.Runtime.InteropServices;
+public static class WinvmRecycle {
+  [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+  struct SHFILEOPSTRUCT {
+    public IntPtr hwnd;
+    public uint wFunc;
+    [MarshalAs(UnmanagedType.LPWStr)] public string pFrom;
+    [MarshalAs(UnmanagedType.LPWStr)] public string pTo;
+    public ushort fFlags;
+    [MarshalAs(UnmanagedType.Bool)] public bool fAnyOperationsAborted;
+    public IntPtr hNameMappings;
+    [MarshalAs(UnmanagedType.LPWStr)] public string lpszProgressTitle;
+  }
+  [DllImport("shell32.dll", CharSet = CharSet.Unicode)]
+  static extern int SHFileOperation(ref SHFILEOPSTRUCT op);
+  public static int Recycle(string path) {
+    var op = new SHFILEOPSTRUCT { wFunc = 3, pFrom = path + "\\0\\0", fFlags = 0x0454 };
+    int r = SHFileOperation(ref op);
+    return r == 0 && op.fAnyOperationsAborted ? -1 : r;
+  }
+}`
+
+/**
+ * The PowerShell that recycles `paths`, printing `recycle <index> <code>` for
+ * each. The paths travel as base64, so no name can break out of the script.
+ */
+export function recycleScript(paths: readonly string[]): string {
+  const b64 = paths.map((p) => `'${Buffer.from(p, "utf8").toString("base64")}'`).join(",")
+  return [
+    "if (-not ('WinvmRecycle' -as [type])) { Add-Type -TypeDefinition @'",
+    RECYCLE_CS,
+    "'@ }",
+    `$paths = @(@(${b64}) | ForEach-Object { [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($_)) })`,
+    'for ($i = 0; $i -lt $paths.Count; $i++) { "recycle $i $([WinvmRecycle]::Recycle($paths[$i]))" }',
+  ].join("\n")
+}
+
+/** What SHFileOperation's codes (Win32 errors, or its own DE_* ones) mean here. */
+export function recycleFailure(code: number, path: string): Error {
+  if ([0x2, 0x3, 0x7c, 0x402].includes(code)) return new FsError("notfound", `no such file or folder: ${path}`)
+  if ([0x5, 0x78].includes(code)) return new FsError("denied", `access denied: ${path}`)
+  if ([0x20, 0x21].includes(code)) return new FsError("busy", `in use by a program: ${path}`)
+  if (code === -1) return new Error(`moving ${path} to the Recycle Bin was cancelled`)
+  return new Error(`couldn't move ${path} to the Recycle Bin (shell error 0x${code.toString(16)})`)
+}
+
+/** The codes `recycleScript` printed, by index; null where it printed none. */
+export function parseRecycled(output: string, count: number): (number | null)[] {
+  const codes: (number | null)[] = Array.from({ length: count }, () => null)
+  for (const m of output.matchAll(/^recycle (\d+) (-?\d+)\s*$/gm)) {
+    const i = Number(m[1])
+    if (i < count) codes[i] = Number(m[2])
+  }
+  return codes
+}
+
+/**
+ * Delete files and folders: to the Recycle Bin (Windows only), or for good,
+ * with everything in them. Every path is checked first, so a missing one
+ * deletes nothing. Recycling runs PowerShell, which only the spawner may start,
+ * so the caller passes the way to it.
+ */
+export async function removePaths(
+  raw: unknown,
+  o: { readonly recycle: boolean; readonly pwsh: (script: string) => Promise<PwshResponse> },
+): Promise<number> {
+  if (!Array.isArray(raw) || raw.length === 0) throw new FsError("bad", "paths must be a non-empty array")
+  const paths = raw.map(fsPath)
+  for (const p of paths) {
+    if (dirname(p) === p) throw new FsError("denied", `won't delete a drive: ${p}`)
+    await lstatOf(p)
+  }
+  if (!o.recycle) {
+    for (const p of paths) {
+      try {
+        await rm(p, { recursive: true })
+      } catch (error) {
+        throw fsFailure(error, p)
+      }
+    }
+    return paths.length
+  }
+  if (!isWin) throw new FsError("unavailable", "there is no Recycle Bin here: delete permanently instead")
+  const out = await o.pwsh(recycleScript(paths))
+  const codes = parseRecycled(out.output, paths.length)
+  const bad = codes.findIndex((c) => c !== 0)
+  if (bad === -1) return paths.length
+  const code = codes[bad] ?? null
+  const path = paths[bad] ?? ""
+  if (code === null) throw new Error(`couldn't move ${path} to the Recycle Bin: ${out.output.trim() || `exit ${String(out.code)}`}`)
+  throw recycleFailure(code, path)
 }
 
 /**
@@ -1261,14 +1517,31 @@ export function startAgent(o: AgentOptions, onFatal: () => void = () => {}): Run
               const hidden = (isWin ? spawner.call<string[]>({ op: "hidden", path }) : Promise.resolve([]))
                 .then((names) => new Set(names))
                 .catch(() => new Set<string>())
-              try {
-                const withHidden = u.searchParams.get("hidden") === "1"
-                const listing = await listDir(path, { withHidden, limit: Number.isFinite(limit) ? limit : LIST_LIMIT, hidden })
-                return json({ ...listing, places } satisfies DirListing)
-              } catch (error) {
-                if (error instanceof ListError) return json({ error: error.message, code: error.code }, error.status)
-                throw error
-              }
+              const withHidden = u.searchParams.get("hidden") === "1"
+              const listing = await listDir(path, { withHidden, limit: Number.isFinite(limit) ? limit : LIST_LIMIT, hidden })
+              return json({ ...listing, places } satisfies DirListing)
+            }
+            case "POST /fs/mkdir": {
+              const r = (await req.json()) as { path?: unknown }
+              return json({ path: await makeFolder(r.path) } satisfies FsPathResult)
+            }
+            case "POST /fs/rename": {
+              const r = (await req.json()) as { from?: unknown; to?: unknown }
+              const path = await movePath(r.from, r.to)
+              log(`rename ${String(r.from)} -> ${path}`)
+              return json({ path } satisfies FsPathResult)
+            }
+            case "POST /fs/copy": {
+              const r = (await req.json()) as { from?: unknown; to?: unknown }
+              return json({ path: await copyPath(r.from, r.to) } satisfies FsPathResult)
+            }
+            case "POST /fs/delete": {
+              const r = (await req.json()) as { paths?: unknown; recycle?: unknown }
+              const recycle = r.recycle !== false
+              const pwsh = async (script: string): Promise<PwshResponse> => await spawner.call<PwshResponse>({ op: "pwsh", script, timeoutMs: 600_000 })
+              const deleted = await removePaths(r.paths, { recycle, pwsh })
+              log(`delete ${JSON.stringify(r.paths)} ${recycle ? "to the Recycle Bin" : "for good"}`)
+              return json({ deleted } satisfies FsDeleteResult)
             }
             case "POST /kill": {
               const r = (await req.json()) as { pid?: number; tree?: boolean }
@@ -1314,6 +1587,7 @@ export function startAgent(o: AgentOptions, onFatal: () => void = () => {}): Run
               return fail(404, `no route ${req.method} ${u.pathname}`)
           }
         } catch (error) {
+          if (error instanceof FsError) return json({ error: error.message, code: error.code }, error.status)
           return fail(500, error instanceof Error ? error.message : String(error))
         }
       },

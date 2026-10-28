@@ -3,18 +3,30 @@
  * host (it is plain Bun) — no VM. Windows-only parts (PowerShell, tasklist,
  * sessions) are covered by their parsers.
  */
-import { chmodSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, utimesSync, writeFileSync } from "node:fs"
+import { chmodSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { resolve } from "node:path"
 
 import { afterAll, beforeAll, describe, expect, it, spyOn } from "bun:test"
 
 import { AgentClient, AgentError } from "../src/agent"
-import { TIMED_OUT, execResult, execTimeoutMs, formatListing } from "../src/agentcmds"
+import { TIMED_OUT, destination, execResult, execTimeoutMs, formatListing } from "../src/agentcmds"
 import { ensureState, forwardedPorts, hostfwdRule, readState } from "../src/agentfwd"
 import { parseArgs } from "../src/args"
 import type { Paths } from "../src/paths"
-import { AGENT_VERSION, DisplayHost, launcherArgv, normalizeDir, parseLauncherPid, parseTasklist, startAgent } from "../src/guestagent"
+import {
+  AGENT_VERSION,
+  DisplayHost,
+  isWithin,
+  launcherArgv,
+  normalizeDir,
+  parseLauncherPid,
+  parseRecycled,
+  parseTasklist,
+  recycleFailure,
+  recycleScript,
+  startAgent,
+} from "../src/guestagent"
 
 let dir: string
 let tokenFile: string
@@ -299,6 +311,129 @@ describe("folder listings", () => {
     expect(text[1]).toEndWith("<DIR>  Projects")
     expect(text[2]).toEndWith("12,345  notes.txt")
     expect(text[3]).toContain("1 more")
+  })
+})
+
+describe("changing files", () => {
+  let root: string
+  const at = (...parts: string[]): string => resolve(root, ...parts)
+  const code = async (p: Promise<unknown>): Promise<[number, string | null]> => {
+    const e = (await p.catch((x: unknown) => x)) as AgentError
+    expect(e).toBeInstanceOf(AgentError)
+    return [e.status, e.code]
+  }
+
+  beforeAll(() => {
+    root = resolve(dir, "changing")
+    mkdirSync(at("folder", "inner"), { recursive: true })
+    writeFileSync(at("folder", "inner", "deep.txt"), "deep")
+    writeFileSync(at("folder", "top.txt"), "top")
+    writeFileSync(at("taken.txt"), "taken")
+  })
+
+  it("makes a folder, but not one that's there or in a folder that isn't", async () => {
+    expect(await client.mkdir(at("New folder"))).toEqual({ path: at("New folder") })
+    expect(statSync(at("New folder")).isDirectory()).toBe(true)
+    expect(await code(client.mkdir(at("New folder")))).toEqual([409, "exists"])
+    expect(await code(client.mkdir(at("nowhere", "New folder")))).toEqual([404, "notfound"])
+    expect(await code(client.mkdir(at("taken.txt", "New folder")))).toEqual([400, "notdir"])
+  })
+
+  it("renames, and changes only the case of a name", async () => {
+    writeFileSync(at("a.txt"), "a")
+    expect(await client.rename(at("a.txt"), at("b.txt"))).toEqual({ path: at("b.txt") })
+    expect(readFileSync(at("b.txt"), "utf8")).toBe("a")
+    await client.rename(at("b.txt"), at("B.txt"))
+    expect(readdirSync(root)).toContain("B.txt")
+    expect(readdirSync(root)).not.toContain("b.txt")
+    rmSync(at("B.txt"))
+  })
+
+  it("never renames over something, nor something that isn't there", async () => {
+    writeFileSync(at("mine.txt"), "mine")
+    expect(await code(client.rename(at("mine.txt"), at("taken.txt")))).toEqual([409, "exists"])
+    expect(readFileSync(at("taken.txt"), "utf8")).toBe("taken")
+    expect(await code(client.rename(at("ghost.txt"), at("spirit.txt")))).toEqual([404, "notfound"])
+    expect(await code(client.rename(at("mine.txt"), at("nowhere", "mine.txt")))).toEqual([404, "notfound"])
+    rmSync(at("mine.txt"))
+  })
+
+  it("moves into a folder, but not a folder into itself", async () => {
+    writeFileSync(at("moving.txt"), "moving")
+    await client.rename(at("moving.txt"), at("folder", "moving.txt"))
+    expect(readFileSync(at("folder", "moving.txt"), "utf8")).toBe("moving")
+    expect(await code(client.rename(at("folder"), at("folder", "inner", "folder")))).toEqual([400, "into"])
+    expect(await client.rename(at("folder"), at("folder"))).toEqual({ path: at("folder") })
+  })
+
+  it("copies a file and a whole folder, and never over something", async () => {
+    expect(await client.copy(at("taken.txt"), at("copy.txt"))).toEqual({ path: at("copy.txt") })
+    expect(readFileSync(at("copy.txt"), "utf8")).toBe("taken")
+    await client.copy(at("folder"), at("folder copy"))
+    expect(readFileSync(at("folder copy", "inner", "deep.txt"), "utf8")).toBe("deep")
+    expect(readFileSync(at("folder", "inner", "deep.txt"), "utf8")).toBe("deep")
+    expect(await code(client.copy(at("copy.txt"), at("taken.txt")))).toEqual([409, "exists"])
+    expect(await code(client.copy(at("folder"), at("folder", "inner", "again")))).toEqual([400, "into"])
+    expect(await code(client.copy(at("ghost"), at("ghost copy")))).toEqual([404, "notfound"])
+  })
+
+  it("deletes for good, files and folders, and nothing when one path is missing", async () => {
+    writeFileSync(at("gone.txt"), "")
+    mkdirSync(at("gone", "sub"), { recursive: true })
+    writeFileSync(at("gone", "sub", "x"), "")
+    writeFileSync(at("stays.txt"), "")
+    expect(await code(client.remove([at("stays.txt"), at("ghost")], { recycle: false }))).toEqual([404, "notfound"])
+    expect(readdirSync(root)).toContain("stays.txt")
+    expect(await client.remove([at("gone.txt"), at("gone")], { recycle: false })).toEqual({ deleted: 2 })
+    expect(readdirSync(root)).not.toContain("gone.txt")
+    expect(readdirSync(root)).not.toContain("gone")
+    expect(await code(client.remove([], { recycle: false }))).toEqual([400, "bad"])
+    expect(await code(client.remove(["/"], { recycle: false }))).toEqual([403, "denied"])
+  })
+
+  it("has no Recycle Bin outside Windows", async () => {
+    // The Recycle Bin is the default; here it is unavailable and nothing goes.
+    expect(await code(client.remove([at("stays.txt")]))).toEqual([501, "unavailable"])
+    expect(readdirSync(root)).toContain("stays.txt")
+  })
+
+  it("puts mv and cp into a folder that is there, else at the path given", async () => {
+    expect(await destination(client, at("taken.txt"), at("folder"))).toBe(at("folder", "taken.txt"))
+    expect(await destination(client, at("taken.txt"), `${at("folder")}/`)).toBe(at("folder", "taken.txt"))
+    expect(await destination(client, at("taken.txt"), at("fresh.txt"))).toBe(at("fresh.txt"))
+    expect(await destination(client, at("taken.txt"), at("copy.txt"))).toBe(at("copy.txt"))
+    // A folder that is `from` itself, in another case, is a rename.
+    expect(await destination(client, at("folder"), at("FOLDER"))).toBe(at("FOLDER"))
+  })
+})
+
+describe("the Recycle Bin's PowerShell", () => {
+  it("carries every path as base64, so no name can break out of the script", () => {
+    const evil = "C:\\it's ‘here’ $(Remove-Item C:\\) `n\".txt"
+    const script = recycleScript(["C:\\a.txt", evil])
+    expect(script).not.toContain("it's")
+    expect(script).not.toContain("Remove-Item")
+    expect(script).toContain(Buffer.from(evil, "utf8").toString("base64"))
+    expect(script).toContain("SHFileOperation")
+    // The here-string's closing '@ must start its own line.
+    expect(script).toMatch(/\n'@ }\n/)
+  })
+
+  it("reads each path's result, and says what a failure means", () => {
+    expect(parseRecycled("recycle 0 0\r\nrecycle 1 32\r\n", 2)).toEqual([0, 32])
+    expect(parseRecycled("ERROR: Add-Type failed\n", 1)).toEqual([null])
+    expect(recycleFailure(0x20, "C:\\x")).toMatchObject({ code: "busy", status: 409 })
+    expect(recycleFailure(0x7c, "C:\\x")).toMatchObject({ code: "notfound", status: 404 })
+    expect(recycleFailure(0x5, "C:\\x")).toMatchObject({ code: "denied", status: 403 })
+    expect(recycleFailure(-1, "C:\\x").message).toContain("cancelled")
+    expect(recycleFailure(0x10000, "C:\\x").message).toContain("0x10000")
+  })
+
+  it("knows when one path is inside another", () => {
+    expect(isWithin("/a/b", "/a/b")).toBe(true)
+    expect(isWithin("/a/b", "/a/b/c")).toBe(true)
+    expect(isWithin("/a/b", "/a/bc")).toBe(false)
+    expect(isWithin("/a/b", "/a")).toBe(false)
   })
 })
 

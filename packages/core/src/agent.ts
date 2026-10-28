@@ -8,6 +8,7 @@
  *   const c = await agent.install(name)        // (re)install, start, connect
  *   await c.exec([...]); await c.pwsh("..."); await c.putFile(host, guest)
  *   await c.getFile(guest, host); await c.launch([exe]); await c.kill(pid)
+ *   await c.list(dir); await c.mkdir(dir); await c.rename(a, b); await c.copy(a, b); await c.remove([a])
  *
  * The token is generated once per instance and kept: a guest restored from a
  * save still holds the token it had, and the guest agent re-reads its token
@@ -20,7 +21,19 @@ import { resolve } from "node:path"
 
 import type { AgentState } from "./agentfwd"
 import { ensureForward, ensureState, readState, restoreForward } from "./agentfwd"
-import type { DirListing, DisplayRequest, ExecRequest, ExecResponse, GuestStats, Health, LaunchRequest, Proc, PwshResponse } from "./guestagent"
+import type {
+  DirListing,
+  DisplayRequest,
+  ExecRequest,
+  ExecResponse,
+  FsDeleteResult,
+  FsPathResult,
+  GuestStats,
+  Health,
+  LaunchRequest,
+  Proc,
+  PwshResponse,
+} from "./guestagent"
 import { AGENT_VERSION, GUEST_PORT, WINDOWS_DIR } from "./guestagent"
 import { bunZip } from "./media"
 import { PACKAGE_DIR, pathsFor } from "./paths"
@@ -29,12 +42,24 @@ import * as qga from "./qga"
 
 export type { AgentState } from "./agentfwd"
 export { ensureForward, forwardedPorts, readState, statePath } from "./agentfwd"
-export type { DirEntry, DirListing, ExecResponse, GuestStats, Health, Place, Proc, PwshResponse } from "./guestagent"
+export type {
+  DirEntry,
+  DirListing,
+  ExecResponse,
+  FsCode,
+  FsDeleteResult,
+  FsPathResult,
+  GuestStats,
+  Health,
+  Place,
+  Proc,
+  PwshResponse,
+} from "./guestagent"
 export { AGENT_VERSION, GUEST_PORT } from "./guestagent"
 
 export class AgentError extends Error {
   readonly status: number
-  /** What the agent said went wrong, when it says (a listing's notfound, denied or notdir). */
+  /** What the agent said went wrong, when it says: an FsCode from a listing or a file operation (notfound, denied, exists…). */
   readonly code: string | null
   constructor(message: string, status: number, code: string | null = null) {
     super(message)
@@ -171,6 +196,34 @@ export class AgentClient {
     if (o.hidden === true) q.set("hidden", "1")
     if (o.limit !== undefined) q.set("limit", String(o.limit))
     return (await (await this.req("GET", `/fs/list?${q.toString()}`)).json()) as DirListing
+  }
+
+  /** A new folder; its parent must exist. Throws AgentError with an FsCode (exists, notfound, notdir…). */
+  async mkdir(guestPath: string): Promise<FsPathResult> {
+    return await this.post<FsPathResult>("/fs/mkdir", { path: guestPath })
+  }
+
+  /**
+   * Rename or move to `to`, a full path. Never replaces anything (code exists),
+   * but a change of case alone renames. Onto another drive it copies, so it
+   * may take a while.
+   */
+  async rename(from: string, to: string, timeoutMs = 600_000): Promise<FsPathResult> {
+    return await this.post<FsPathResult>("/fs/rename", { from, to }, timeoutMs)
+  }
+
+  /** Copy a file, or a folder and all in it, to `to`, a full path. Never replaces anything (code exists). */
+  async copy(from: string, to: string, timeoutMs = 600_000): Promise<FsPathResult> {
+    return await this.post<FsPathResult>("/fs/copy", { from, to }, timeoutMs)
+  }
+
+  /**
+   * Delete files and folders: to the Recycle Bin unless `recycle` is false,
+   * then for good. A missing path deletes nothing (code notfound); with no
+   * Recycle Bin (not Windows) the code is unavailable.
+   */
+  async remove(paths: readonly string[], o: { readonly recycle?: boolean } = {}): Promise<FsDeleteResult> {
+    return await this.post<FsDeleteResult>("/fs/delete", { paths, recycle: o.recycle ?? true }, 630_000)
   }
 
   async procs(): Promise<readonly Proc[]> {
