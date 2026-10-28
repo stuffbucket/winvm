@@ -15,6 +15,7 @@ winvm exec --qga -- whoami     # force qemu-ga instead
 winvm put  <host file> <guest path>
 winvm get  <guest path> <host file>
 winvm launch -- notepad.exe    # start a program on the desktop and return at once
+winvm terminal                 # a shell in the guest, in this terminal
 ```
 
 All of these take `-i <instance>`. Images built by `winvm build` already
@@ -49,6 +50,47 @@ Measured on `win11-arm64`, M-series Mac, 2026-10-22:
 
 After a cold `winvm start`, the agent answers about 3.4 seconds after `start`
 returns.
+
+### Terminal
+
+`winvm terminal` opens a shell in the guest in your Mac terminal. Every key
+goes to the guest, Ctrl-C included, and resizing your window resizes the
+guest's. It ends when the shell does, with the shell's exit code.
+
+```sh
+winvm terminal [-i name] [--shell pwsh|powershell|cmd] [--cwd PATH]
+winvm terminal [-i name] [--shell ..] [--cwd ..] --connect --json
+```
+
+The shell is PowerShell 7 (`pwsh`) unless you pick Windows PowerShell or
+`cmd`, and starts in the user's profile folder unless you give `--cwd`. An
+image built before PowerShell 7 was part of images gets Windows PowerShell
+instead, with a note in the terminal saying so.
+
+Shells run as the logged-on Administrator, elevated: images have UAC off, so
+`whoami /groups` shows `High Mandatory Level`. For a SYSTEM command line, use
+`winvm exec --qga`.
+
+`--connect --json` is for another program that shows the terminal itself,
+such as the Mac app. It makes sure the agent is current and answering, then
+prints one line:
+
+```json
+{"url":"ws://127.0.0.1:<hostPort>/term?shell=pwsh","protocols":["winvm-term","winvm-token.<token>"]}
+```
+
+Open a WebSocket to `url` (add `&cols=N&rows=M` for the starting size),
+offering `protocols`. The agent answers with the `winvm-term` subprotocol.
+Then:
+
+- binary frames are terminal bytes, both ways: keystrokes in, output out;
+- the client may send the text frame `{"type":"resize","cols":N,"rows":M}`;
+- when the shell exits, the agent sends `{"type":"exit","code":N}` and closes;
+- on a failure it sends `{"type":"error","message":"..."}` and closes.
+
+Closing the WebSocket ends the shell and everything started from it. Several
+terminals can be open at once. A client that can set headers may send
+`Authorization: Bearer <token>` instead of the token subprotocol.
 
 ## Using it from TypeScript (`agent.ts`)
 
@@ -129,6 +171,8 @@ Everything is in `C:\ProgramData\winvm\agent\`:
   install from `assets/winvm-ui.cs`. See [gui.md](gui.md#how-ui-automation-works).
 - `runinsession.exe`: starts programs detached, compiled at install from
   `assets/runinsession.cs`.
+- `conpty.exe`: one terminal session, compiled at install from
+  `assets/conpty.cs`. See [Terminals](#terminals).
 - `token` and `agent.log`.
 
 The registry value `HKLM\...\Run\winvm-agent` starts the agent at every logon
@@ -155,6 +199,27 @@ Launched programs therefore keep running when the agent restarts. Console
 programs get a console with no window. Node-style `detached` is not used: it
 starts programs with no console at all, and Windows PowerShell started that
 way exits without running anything.
+
+### Terminals
+
+`GET /term` upgrades to a WebSocket. The HTTP server cannot start programs
+itself (see Processes), so for each terminal the spawner starts `conpty.exe`
+through `runinsession.exe`. `conpty.exe` creates a pseudo-console
+(`CreatePseudoConsole`) at the requested size, starts the shell in it, and
+connects back to a loopback port the agent listens on, naming its session
+with a one-time key. Over that connection the two exchange small frames:
+keystrokes and resizes one way, output and the exit code the other. The agent
+relays them to and from the WebSocket.
+
+The shell and everything it starts run in a job object that only
+`conpty.exe` holds, and `conpty.exe` exits when its connection ends. So
+closing the WebSocket, or the agent dying, ends the whole tree: nothing is
+left running. A program started from a terminal, even a GUI one, closes with
+the terminal; use `winvm launch` for programs that should stay.
+
+`conpty.exe` is a separate program per session, started without inherited
+handles, so it never holds the agent's listening socket, and a restarted
+agent serves new terminals at once.
 
 ### Built into images
 
