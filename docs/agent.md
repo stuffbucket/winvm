@@ -12,7 +12,7 @@ winvm agent install            # install (or reinstall) the agent in a running g
 winvm agent status [--json]    # is it answering, which version, which host port
 winvm exec -- cmd /c ver       # runs through the agent when it answers
 winvm exec --qga -- whoami     # force qemu-ga instead
-winvm put  <host file> <guest path>
+winvm put  <host path> <guest path>   # a file, or a folder and everything in it
 winvm get  <guest path> <host path>   # a file, or a folder and everything in it
 winvm dir  ['C:\Users']          # a guest folder (default the Desktop); --all, --places, --json
 winvm launch -- notepad.exe    # start a program on the desktop and return at once
