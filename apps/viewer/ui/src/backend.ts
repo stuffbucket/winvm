@@ -123,6 +123,9 @@ function listen<T>(name: string, cb: (payload: T) => void): Unlisten {
 /** App menu items the main window acts on: "install-cli", "reference", "new-terminal", "rename-window" and "checkpoints". */
 export const onMenu = (cb: (id: string) => void): Unlisten => listen<string>("menu", cb)
 
+/** Disables macOS global hotkeys while the guest keyboard is explicitly captured. */
+export const setSystemKeyboardCapture = (captured: boolean): Promise<void> => tauri().core.invoke<void>("set_system_keyboard_capture", { captured })
+
 /** The window's edge is being dragged (true), or was let go (false). */
 export const onLiveResize = (cb: (live: boolean) => void): Unlisten => listen<boolean>("live-resize", cb)
 
