@@ -1062,6 +1062,7 @@ export const USAGE =
   "                                --no-watch: no idle watcher (no autosave, stow or clock sync)\n" +
   "  exec    [-i name] [--qga] -- <cmd>  run a command in the guest (via the agent when installed)\n" +
   "  agent   [-i name] install | status [--json]   the in-guest agent (fast exec, files, GUI)\n" +
+  "          [-i name] connect [--json]   update it if need be, then print its address and token\n" +
   "  put     [-i name] <host path> <guest path>    copy a file, or a folder and all in it, into the guest\n" +
   "  get     [-i name] <guest path> <host path>    copy a file, or a folder and all in it, out of the guest\n" +
   "  dir     [-i name] [path] [--all] [--places] [--json]   a guest folder (default the Desktop);\n" +

@@ -76,6 +76,26 @@ export const unusedPath = (dir: string, name: string, folder: boolean): Promise<
 /** Shows a Mac file or folder in Finder, selected. */
 export const revealInFinder = (path: string): Promise<void> => tauri().core.invoke<void>("reveal", { path })
 
+/** What a machine's agent answered: its HTTP status and body (JSON, or the text when it isn't). */
+export interface AgentReply {
+  readonly status: number
+  readonly body: unknown
+}
+
+/**
+ * A request to a machine's in-guest agent, made by the app directly (a few
+ * ms; the CLI would cost a process start). The app asks `winvm agent connect`
+ * where the agent is once, and again when it moves. Rejects only when the
+ * agent can't be reached; an error status is a reply.
+ */
+export const agentFetch = (
+  instance: string,
+  method: "GET" | "POST" | "PUT" | "DELETE",
+  path: string,
+  body?: unknown,
+  timeoutMs?: number,
+): Promise<AgentReply> => tauri().core.invoke<AgentReply>("agent_fetch", { instance, method, path, body: body ?? null, timeoutMs: timeoutMs ?? null })
+
 function listen<T>(name: string, cb: (payload: T) => void): Unlisten {
   let unlisten: Unlisten | null = null
   let gone = false
