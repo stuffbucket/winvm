@@ -1104,6 +1104,9 @@ export const USAGE =
   "  ui      [-i name] <verb> [selector]   find and click windows, controls, the tray (winvm ui help)\n" +
   "  cua serve [-i name] [--port N] [--size WxH]   Claude computer-use endpoint on 127.0.0.1 (bearer token)\n" +
   "  cua run [-i name] \"<task>\" [--model M] [--max-steps N] [--extras]   a computer-use agent loop\n" +
+  "  mcp     [-i name]             the guest as an MCP server on stdio, for Claude Code and Claude Desktop\n" +
+  "  mcp install|uninstall claude-code|claude-desktop [-i name] [--json]   add it to Claude, or take it out\n" +
+  "  mcp status [-i name] [--json] whether Claude Code and Claude Desktop have it\n" +
   "  timemachine [--yes]           exclude the VM files from Time Machine backups\n" +
   "  snapshots [-i name]           list them\n" +
   "  reset   [-i name]             discard changes, back to the base image\n" +
