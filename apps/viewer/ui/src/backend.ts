@@ -118,6 +118,22 @@ function listen<T>(name: string, cb: (payload: T) => void): Unlisten {
 /** App menu items the main window acts on: "install-cli", "reference", "new-terminal" and "rename-window". */
 export const onMenu = (cb: (id: string) => void): Unlisten => listen<string>("menu", cb)
 
+/** The window's edge is being dragged (true), or was let go (false). */
+export const onLiveResize = (cb: (live: boolean) => void): Unlisten => listen<boolean>("live-resize", cb)
+
+/** One sample for the meters: QEMU's CPU time and memory (`ps`), and Windows' own figures from `instance`'s agent when given. */
+export const instanceUsage = (pid: number, instance: string | null): Promise<unknown> =>
+  tauri().core.invoke<unknown>("instance_usage", { pid, instance })
+
+/** A line on the app's stderr: the viewer's timings. */
+export function trace(line: string): void {
+  try {
+    void tauri().core.invoke("trace", { line })
+  } catch {
+    // not in the app
+  }
+}
+
 /** Which shells an instance has (`winvm terminal --shells --json`), or null if that couldn't be told. */
 export async function installedShells(instance: string): Promise<Installed | null> {
   const out = await winvm(...shellsArgs(instance))

@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import type { Size } from "@winvm/displayfit"
 
 import {
+  agentFetch,
   announceTitle,
   installedShells,
   onFileDrop,
@@ -38,6 +39,11 @@ import { defaultShell, installedList, type Launch, runnable, shellCache, shellMe
 import { type PanelId, Toolbar } from "./features/toolbar/Toolbar"
 import type { Verb } from "./features/winvm/useWinvm"
 import { useWinvm } from "./features/winvm/useWinvm"
+import type { UsageContext } from "./features/usage/Resources"
+import { DeleteMachineBody, type Deleting } from "./features/machines/DeleteMachine"
+import { createArgs, destroyArgs, isLive as machineLive, nextAfterDelete, parseImages } from "./features/machines/machines"
+import { type NewMachine, NewMachineDialog } from "./features/machines/NewMachineDialog"
+import { useUsage } from "./features/usage/useUsage"
 
 type Confirm = { kind: "stop" | "reboot" | "kill" } | { kind: "load"; save: string }
 
@@ -100,8 +106,9 @@ export function App(): JSX.Element {
   const steps = w.busy === "start" && !showScreen ? startSteps(startedFrom === "missing", w.status) : null
   const activity = w.busy !== null ? t(`busy.${w.busy}`) : phase === "starting" ? t("state.starting") : null
 
-  // The guest switches to the viewer's size through its agent, once it is up;
-  // a size asked for before that waits for it.
+  // The guest switches to the viewer's size through its agent, called
+  // directly (a few ms, not a CLI start per size), once it is up; a size asked
+  // for before that waits for it.
   const pendingSize = useRef<{ size: Size; scale: number } | null>(null)
   const resizeGuest = useCallback(
     async (size: Size, scale: number): Promise<void> => {
@@ -111,8 +118,8 @@ export function App(): JSX.Element {
         return
       }
       pendingSize.current = null
-      const out = await winvm("display", "-i", w.name, `${String(size.width)}x${String(size.height)}`, "--scale", String(scale), "--no-request", "--json")
-      if (out.code !== 0) throw new Error(outputText(out))
+      const reply = await agentFetch(w.name, "POST", "/display", { op: "set", width: size.width, height: size.height, waitMs: 2000, scale }, 22_000)
+      if (reply.status !== 200) throw new Error(`the agent answered ${String(reply.status)}: ${JSON.stringify(reply.body)}`)
     },
     [w.name, guestReady],
   )
@@ -120,6 +127,9 @@ export function App(): JSX.Element {
     const p = pendingSize.current
     if (guestReady && p !== null) resizeGuest(p.size, p.scale).catch((error: unknown) => console.warn("resizing the guest failed", error))
   }, [guestReady, resizeGuest])
+  const metered = phase === "running" || phase === "starting" ? (w.status?.pid ?? null) : null
+  const usage = useUsage(metered, guestReady ? w.name : null, w.status?.cpus ?? null, w.status?.memoryMiB ?? null)
+  const usageContext: UsageContext = { cpus: w.status?.cpus ?? null, overlayBytes: w.status?.overlayBytes ?? null }
 
   const run = (verb: Verb, arg?: string): void => {
     if (verb === "start") setStartedFrom(phase)
@@ -167,6 +177,72 @@ export function App(): JSX.Element {
         if (why !== null) setNotice({ tone: "error", title: t("rename.failed"), detail: why })
       })
       .catch((e: unknown) => setNotice({ tone: "error", title: t("rename.failed"), detail: String(e) }))
+  }
+
+  // New Machine…: a name (and, under Advanced, the image and whether to start
+  // it), `winvm create`, then this window shows it, starting if asked.
+  const [newOpen, setNewOpen] = useState(false)
+  const [creating, setCreating] = useState(false)
+  const [createError, setCreateError] = useState<string | null>(null)
+  const [images, setImages] = useState<string[] | null>(null)
+  const [startNext, setStartNext] = useState<string | null>(null)
+  const openNew = (): void => {
+    setCreateError(null)
+    setImages(null)
+    setNewOpen(true)
+    winvm("ls", "--json")
+      .then((out) => setImages(parseImages(out.stdout)))
+      .catch(() => setImages([]))
+  }
+  const createMachine = (m: NewMachine): void => {
+    setCreating(true)
+    setCreateError(null)
+    winvm(...createArgs(m.name, m.image))
+      .then(async (out) => {
+        if (out.code !== 0) {
+          setCreateError(outputText(out) || t("machine.createFailed"))
+          return
+        }
+        await w.refresh()
+        w.select(m.name)
+        if (m.start) setStartNext(m.name)
+        setNewOpen(false)
+      })
+      .catch((e: unknown) => setCreateError(String(e)))
+      .finally(() => setCreating(false))
+  }
+  // Start it once this window has read its (stopped) state.
+  useEffect(() => {
+    if (startNext !== null && w.name === startNext && phase === "stopped" && w.busy === null) {
+      setStartNext(null)
+      setStartedFrom("missing")
+      void w.act("start")
+    }
+  }, [startNext, w.name, phase, w.busy, w.act])
+
+  // Delete "<name>"…: what goes, Keep saves, and a running machine turned off first.
+  const [deleting, setDeleting] = useState<Deleting | null>(null)
+  const [keepSaves, setKeepSaves] = useState(false)
+  const [deleteBusy, setDeleteBusy] = useState(false)
+  const deleteMachine = async (d: Deleting): Promise<void> => {
+    setDeleteBusy(true)
+    try {
+      if (d.live) await winvm("kill", "-i", d.name)
+      const out = await winvm(...destroyArgs(d.name, keepSaves))
+      if (out.code !== 0) {
+        setNotice({ tone: "error", title: t("machine.deleteFailed", { title: d.title }), detail: outputText(out) })
+        return
+      }
+      const next = nextAfterDelete(w.names, d.name)
+      await w.refresh()
+      w.select(next ?? "default")
+      setNotice({ tone: "notice", title: t(keepSaves ? "machine.deletedKept" : "machine.deleted", { title: d.title }) })
+    } catch (e) {
+      setNotice({ tone: "error", title: t("machine.deleteFailed", { title: d.title }), detail: String(e) })
+    } finally {
+      setDeleteBusy(false)
+      setDeleting(null)
+    }
   }
 
   // Which shells the guest has: asked once Windows is ready, so the first tab
@@ -276,13 +352,23 @@ export function App(): JSX.Element {
     <div className="viewer" data-busy={w.busy !== null}>
       <div className="busybar" aria-hidden="true" />
       <Toolbar
-        names={w.names}
-        name={w.name}
-        titles={titles}
-        title={title}
-        renaming={renaming}
-        onRenameStart={() => setRenaming(true)}
-        onRenamed={renamed}
+        picker={{
+          names: w.names,
+          name: w.name,
+          titles,
+          phases: w.phases,
+          phase,
+          renaming,
+          onRenamed: renamed,
+          onSelect: w.select,
+          onNew: openNew,
+          onRename: () => setRenaming(true),
+          onDelete: () => {
+            if (w.name === null || title === null) return
+            setKeepSaves(false)
+            setDeleting({ name: w.name, title, live: machineLive(phase) })
+          },
+        }}
         phase={phase}
         activity={activity}
         controls={c}
@@ -294,7 +380,6 @@ export function App(): JSX.Element {
         canActualSize={!resizable}
         open={filesOpen ? "files" : (open?.id ?? null)}
         detailsOpen={detailsOpen}
-        onSelect={w.select}
         onStart={() => run("start")}
         onShutDown={() => setConfirm({ kind: "stop" })}
         onRestart={() => setConfirm({ kind: "reboot" })}
@@ -424,6 +509,8 @@ export function App(): JSX.Element {
             checks={w.checks}
             checksError={w.checksError}
             last={w.last}
+            usage={usage}
+            usageContext={usageContext}
             canForceStop={live && w.busy === null}
             onForceStop={() => setConfirm({ kind: "kill" })}
           />
@@ -477,6 +564,30 @@ export function App(): JSX.Element {
           if (chosen.kind === "load") run("load", chosen.save)
           else run(chosen.kind)
         }}
+      />
+
+      <ConfirmDialog
+        open={deleting !== null}
+        title={deleting === null ? "" : t("machine.deleteTitle", { title: deleting.title })}
+        body={
+          deleting === null ? "" : <DeleteMachineBody deleting={deleting} keepSaves={keepSaves} busy={deleteBusy} onKeepSaves={setKeepSaves} />
+        }
+        confirmLabel={deleting?.live === true ? t("machine.deleteLive") : t("machine.deleteConfirm")}
+        cancelLabel={t("confirm.cancel")}
+        tone="danger"
+        busy={deleteBusy}
+        onCancel={() => setDeleting(null)}
+        onConfirm={() => (deleting === null ? undefined : deleteMachine(deleting))}
+      />
+
+      <NewMachineDialog
+        open={newOpen}
+        names={w.names}
+        images={images}
+        busy={creating}
+        error={createError}
+        onCreate={createMachine}
+        onCancel={() => setNewOpen(false)}
       />
     </div>
   )
