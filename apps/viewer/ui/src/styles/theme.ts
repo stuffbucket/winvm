@@ -2,6 +2,8 @@ export const fontStacks = {
   display: '"Fraunces", Georgia, "Times New Roman", serif',
   body: '"Commissioner", "Segoe UI", Helvetica, Arial, sans-serif',
   mono: 'ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace',
+  /** File-type glyphs and sort chevrons (a vendored subset of Symbols Nerd Font Mono); never text. */
+  symbols: '"Symbols Nerd Font Mono"',
 } as const;
 
 export const text = {

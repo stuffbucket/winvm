@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react"
 
-import { downloadsDir, outputText, pickFolder, pickSavePath, unusedPath, winvm } from "../../backend"
+import { downloadsDir, onDragOutEnd, onPromise, outputText, pickFolder, pickSavePath, unusedPath, winvm } from "../../backend"
 import { t } from "../../i18n"
 import type { Entry } from "./files"
 import { childPath, freeName, hostName, isListing, leafName, parseListing } from "./files"
@@ -30,6 +30,10 @@ export interface Copies {
   copyIn(paths: readonly string[], folder: string | null): void
   /** Copy Windows files and folders to the Mac, asking where with the native panels. */
   copyOut(folder: string, entries: readonly Entry[]): void
+  /** A drag carrying `count` items left for the Mac: their promises' progress and result are this hook's. */
+  expectPromises(count: number): void
+  /** Say something in the copies' place: what an operation did, or why it failed. */
+  report(result: CopyResult): void
   dismiss(): void
 }
 
@@ -125,6 +129,54 @@ export function useCopies(instance: string | null): Copies {
   )
 
   const dismiss = useCallback(() => setResult(null), [])
+  const report = useCallback((r: CopyResult) => setResult(r), [])
+
+  // Files promised to Finder by a drag out of the window, written as Finder asks for them.
+  const promised = useRef<{ total: number; done: number; failed: string[]; dest: string | null; name: string } | null>(null)
+  const expectPromises = useCallback((count: number): void => {
+    promised.current = { total: count, done: 0, failed: [], dest: null, name: "" }
+  }, [])
+  useEffect(
+    () =>
+      onPromise((e) => {
+        const p = promised.current ?? { total: 1, done: 0, failed: [], dest: null, name: "" }
+        promised.current = p
+        if (e.state === "start") {
+          setResult(null)
+          setJob({ way: "out", done: p.done, total: Math.max(p.total, p.done + 1), name: e.name })
+          return
+        }
+        p.done += 1
+        if (e.state === "failed") p.failed.push(`${e.name}: ${e.error ?? ""}`)
+        else if (p.dest === null) {
+          p.dest = e.dest ?? null
+          p.name = e.name
+        }
+        if (p.done < p.total) return
+        promised.current = null
+        setJob(null)
+        if (p.failed.length > 0) {
+          setResult({ ok: false, title: t("files.notCopied", { count: p.failed.length }), detail: p.failed.join("\n") })
+          return
+        }
+        const reveal = p.dest ?? undefined
+        const where = reveal === undefined ? "" : hostName(dirOf(reveal))
+        setResult(
+          p.total === 1
+            ? { ok: true, title: t("files.copiedOut", { name: p.name, folder: where }), ...(reveal === undefined ? {} : { reveal }) }
+            : { ok: true, title: t("files.copiedOutMany", { count: p.total, folder: where }), ...(reveal === undefined ? {} : { reveal }) },
+        )
+      }),
+    [],
+  )
+  useEffect(
+    () =>
+      onDragOutEnd((e) => {
+        // Dropped nowhere that takes files: nothing will be asked for.
+        if (e.operation === "none") promised.current = null
+      }),
+    [],
+  )
 
   // A copy that worked is said for a while; one that didn't stays until dismissed.
   useEffect(() => {
@@ -133,5 +185,5 @@ export function useCopies(instance: string | null): Copies {
     return () => clearTimeout(timer)
   }, [result])
 
-  return { job, result, landed, copyIn, copyOut, dismiss }
+  return { job, result, landed, copyIn, copyOut, expectPromises, report, dismiss }
 }

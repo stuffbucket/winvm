@@ -71,6 +71,24 @@ export function crumbs(path: string): { readonly name: string; readonly path: st
 
 export const childPath = (folder: string, name: string): string => (folder.endsWith("\\") ? `${folder}${name}` : `${folder}\\${name}`)
 
+/** The folder a Windows path is in; a drive's root is its own. */
+export function parentPath(path: string): string {
+  const parts = path.split("\\").filter((p) => p !== "")
+  return parts.length <= 1 ? `${parts[0] ?? path}\\` : parts.length === 2 ? `${parts[0] ?? ""}\\` : parts.slice(0, -1).join("\\")
+}
+
+const tidy = (path: string): string => path.replace(/\\+$/, "").toLowerCase()
+
+/** Whether `path` is `folder` or somewhere inside it (Windows paths don't differ by case). */
+export const isWithin = (path: string, folder: string): boolean => {
+  const p = tidy(path)
+  const f = tidy(folder)
+  return p === f || p.startsWith(`${f}\\`)
+}
+
+/** Whether two Windows paths name the same place. */
+export const samePath = (a: string, b: string): boolean => tidy(a) === tidy(b)
+
 /** Mac paths: the name after the last slash. */
 export const hostName = (path: string): string => path.split("/").filter((p) => p !== "").pop() ?? path
 
@@ -102,11 +120,87 @@ export function formatBytes(bytes: number, locale?: string): string {
   return new Intl.NumberFormat(locale, { style: "unit", unit: units[i], unitDisplay: i === 0 ? "long" : "short", maximumFractionDigits: digits }).format(value)
 }
 
-/** A last-written time as its day and its time of day, so a narrow list can drop the time. */
-export const formatModified = (ms: number, locale?: string): { readonly day: string; readonly time: string } => ({
-  day: new Intl.DateTimeFormat(locale, { dateStyle: "medium" }).format(new Date(ms)),
-  time: new Intl.DateTimeFormat(locale, { timeStyle: "short" }).format(new Date(ms)),
-})
+type Label = (key: string, values?: Record<string, string>) => string
+
+/** A last-written time as Finder words it, at three widths: the list shows the widest that fits. */
+export interface FinderDate {
+  /** "Today at 1:33 PM", "Yesterday at 9:02 AM", "Oct 19, 2026 at 2:02 PM" */
+  readonly long: string
+  /** "Today, 1:33 PM", "10/19/26, 2:02 PM" */
+  readonly medium: string
+  /** "Today", "Yesterday", "10/19/26" */
+  readonly short: string
+}
+
+const dayNumber = (d: Date): number => Math.round(new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime() / 86_400_000)
+
+export function finderDate(ms: number, now: number, label: Label, locale?: string): FinderDate {
+  const when = new Date(ms)
+  const time = new Intl.DateTimeFormat(locale, { timeStyle: "short" }).format(when)
+  const ago = dayNumber(new Date(now)) - dayNumber(when)
+  const day = ago === 0 ? "today" : ago === 1 ? "yesterday" : null
+  if (day !== null) {
+    return {
+      long: label(`files.date.${day}`, { time }),
+      medium: label(`files.date.${day}Medium`, { time }),
+      short: label(`files.date.${day}Short`),
+    }
+  }
+  const short = new Intl.DateTimeFormat(locale, { dateStyle: "short" }).format(when)
+  return {
+    long: label("files.date.other", { date: new Intl.DateTimeFormat(locale, { dateStyle: "medium" }).format(when), time }),
+    medium: label("files.date.otherMedium", { date: short, time }),
+    short,
+  }
+}
+
+export type SortKey = "name" | "modified" | "size" | "kind"
+
+export interface Sort {
+  readonly key: SortKey
+  readonly descending: boolean
+}
+
+const byName = new Intl.Collator(undefined, { numeric: true, sensitivity: "base" })
+
+/**
+ * Entries in the order the list shows them: folders first whatever the
+ * column, then by the column (ties by name), reversed when descending. An
+ * entry with no size or time sorts after those that have one.
+ */
+export function sortEntries(entries: readonly Entry[], sort: Sort, kind: (e: Entry) => string): Entry[] {
+  const sign = sort.descending ? -1 : 1
+  // Missing values go last whichever way the column runs; only real values reverse.
+  const numbers = (a: number | null, b: number | null): number => (a === b ? 0 : a === null ? 1 : b === null ? -1 : sign * (a - b))
+  const column = (a: Entry, b: Entry): number => {
+    switch (sort.key) {
+      case "name":
+        return 0
+      case "size":
+        return numbers(a.size, b.size)
+      case "modified":
+        return numbers(a.modified, b.modified)
+      case "kind":
+        return sign * byName.compare(kind(a), kind(b))
+    }
+  }
+  return [...entries].sort((a, b) => {
+    if (a.dir !== b.dir) return a.dir ? -1 : 1
+    const c = column(a, b)
+    // Ties go by name, A to Z, unless the names are what is reversed.
+    return c !== 0 ? c : (sort.key === "name" ? sign : 1) * byName.compare(a.name, b.name)
+  })
+}
+
+/** Why Windows would refuse `name` for a file or folder, or null when it is fine. */
+export function nameProblem(name: string): "empty" | "chars" | "reserved" | "ends" | null {
+  if (name.trim() === "" || name === "." || name === "..") return "empty"
+  // eslint-disable-next-line no-control-regex
+  if (/[<>:"/\\|?*\u0000-\u001f]/.test(name)) return "chars"
+  if (/^(con|prn|aux|nul|com[1-9]|lpt[1-9])(\..*)?$/i.test(name)) return "reserved"
+  if (/[. ]$/.test(name)) return "ends"
+  return null
+}
 
 /**
  * The selection after a click on row `i`: plain picks it alone, ⌘ toggles it,

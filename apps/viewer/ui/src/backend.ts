@@ -15,7 +15,12 @@ export interface Output {
 type Unlisten = () => void
 
 interface DragDrop {
-  readonly payload: { readonly type: "enter" | "over" | "drop" | "leave"; readonly paths?: readonly string[] }
+  readonly payload: {
+    readonly type: "enter" | "over" | "drop" | "leave"
+    readonly paths?: readonly string[]
+    /** Physical pixels from the webview's top left. */
+    readonly position?: { readonly x: number; readonly y: number }
+  }
 }
 
 interface NativeMenu {
@@ -182,13 +187,21 @@ export const onInstanceTitle = (cb: (t: InstanceTitle) => void): Unlisten => lis
 
 /** A plain native menu: actions, separators, and a check mark where `checked` is given. */
 export type Action =
-  | { readonly kind: "action"; readonly label: string; readonly enabled?: boolean; readonly checked?: boolean; run(): void }
+  | {
+      readonly kind: "action"
+      readonly label: string
+      readonly enabled?: boolean
+      readonly checked?: boolean
+      /** Shown beside the label, e.g. "CmdOrCtrl+O"; the window's own keys do the work. */
+      readonly accelerator?: string
+      run(): void
+    }
   | { readonly kind: "separator" }
 
 export async function popupActions(actions: readonly Action[]): Promise<void> {
   const items = actions.map((a) => {
     if (a.kind === "separator") return { item: "Separator" }
-    const base = { text: a.label, enabled: a.enabled ?? true, action: () => a.run() }
+    const base = { text: a.label, enabled: a.enabled ?? true, action: () => a.run(), ...(a.accelerator === undefined ? {} : { accelerator: a.accelerator }) }
     return a.checked === undefined ? base : { ...base, checked: a.checked }
   })
   const menu = await tauri().menu.Menu.new({ items })
@@ -201,6 +214,77 @@ const menuItems = (nodes: readonly MenuNode[], pick: (node: Extract<MenuNode, { 
     if (n.kind === "submenu") return { text: n.label, items: menuItems(n.items, pick) }
     return { text: n.label, enabled: n.enabled, action: () => pick(n) }
   })
+
+/** A native menu's rows, each item carrying what it does. */
+export type ActionNode = Action
+
+/** Opens the instance's Files window, or brings it forward; `title` is what the instance is called. */
+export const openFiles = (instance: string, title: string | null): Promise<void> => tauri().core.invoke<void>("files_open", { instance, title })
+
+/** Puts text on the Mac's clipboard. */
+export const copyText = (text: string): Promise<void> => tauri().core.invoke<void>("copy_text", { text })
+
+/** One guest file or folder a drag carries out of the window. */
+export interface DragOutItem {
+  readonly path: string
+  readonly name: string
+  readonly dir: boolean
+}
+
+/**
+ * Hands a drag that left the window to macOS, as file promises: Finder (or
+ * whatever takes the drop) asks for each item only once it is dropped.
+ */
+export const dragOut = (instance: string, items: readonly DragOutItem[]): Promise<void> =>
+  tauri().core.invoke<void>("files_drag_out", { instance, items })
+
+/** A promised file being written where Finder asked. */
+export interface PromiseEvent {
+  readonly state: "start" | "done" | "failed"
+  readonly name: string
+  readonly dest?: string | null
+  readonly error?: string | null
+}
+
+export const onPromise = (cb: (e: PromiseEvent) => void): Unlisten => listen<PromiseEvent>("files-promise", cb)
+
+/** A drag handed to macOS has ended: dropped somewhere that took it ("copy"), or not. */
+export const onDragOutEnd = (cb: (e: { readonly operation: "copy" | "none" }) => void): Unlisten =>
+  listen<{ operation: "copy" | "none" }>("files-drag-end", cb)
+
+/** Files dragged over the window from the Mac, with where the pointer is in CSS pixels. */
+export type HostDrag =
+  | { readonly type: "enter"; readonly paths: readonly string[]; readonly at: { x: number; y: number } | null }
+  | { readonly type: "over"; readonly at: { x: number; y: number } | null }
+  | { readonly type: "drop"; readonly paths: readonly string[]; readonly at: { x: number; y: number } | null }
+  | { readonly type: "leave" }
+
+export function onHostDrag(cb: (e: HostDrag) => void): Unlisten {
+  let unlisten: Unlisten | null = null
+  let gone = false
+  const css = (p: { x: number; y: number } | undefined): { x: number; y: number } | null =>
+    p === undefined ? null : { x: p.x / window.devicePixelRatio, y: p.y / window.devicePixelRatio }
+  try {
+    void tauri()
+      .webview.getCurrentWebview()
+      .onDragDropEvent((e) => {
+        const p = e.payload
+        if (p.type === "leave") cb({ type: "leave" })
+        else if (p.type === "over") cb({ type: "over", at: css(p.position) })
+        else cb({ type: p.type, paths: p.paths ?? [], at: css(p.position) })
+      })
+      .then((u) => {
+        if (gone) u()
+        else unlisten = u
+      })
+  } catch {
+    // not in the app
+  }
+  return () => {
+    gone = true
+    unlisten?.()
+  }
+}
 
 /** Shows a native menu at the pointer; `pick` gets the item chosen, if any. */
 export async function popupMenu(nodes: readonly MenuNode[], pick: (node: Extract<MenuNode, { kind: "item" }>) => void): Promise<void> {

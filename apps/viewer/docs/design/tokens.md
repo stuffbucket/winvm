@@ -22,6 +22,7 @@ in a doc or commit message, use its name — never inline the value.
 | `--font-display` | Display serif (Fraunces) | Brand mark, one display heading per window | Body, buttons, labels |
 | `--font-body` | Workhorse sans (Commissioner) | Everything that isn't display or mono | Brand mark |
 | `--font-mono` | Code / identifiers | API keys, device codes, file paths, code blocks, in-place updating numerics (with `tabular-nums`) | Prose, labels |
+| `--font-symbols` | File-type glyphs (a vendored subset of Symbols Nerd Font Mono) | The Files window's row glyphs and sort chevrons | Any text |
 | `--text-xs` … `--text-4xl` | Type ramp | Reference by name; see [`type.md`](type.md) | Inline raw rem/px values |
 | `--weight-base` … `--weight-2xl` | Weight ramp | Pair with a `--text-*` size | Weights outside the ramp |
 | `--leading-base` … `--leading-2xl` | Line-height ramp | Pair with text size | Hand-tuned values |

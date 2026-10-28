@@ -51,6 +51,24 @@ MPL-2.0 is file-level copyleft: these files stay under MPL-2.0 and their source
 is this source. Modifying one means publishing that file's changes under MPL-2.0;
 nothing else in winvm is affected. None are modified.
 
+### Symbols Nerd Font Mono 3.4.0 (subset) — `apps/viewer/ui/src/styles/fonts/`
+
+The app's Files window draws file-type icons and its sort chevrons with 24
+glyphs cut from Symbols Nerd Font Mono, from the Nerd Fonts v3.4.0 release
+(<https://github.com/ryanoasis/nerd-fonts/releases/tag/v3.4.0>,
+`NerdFontsSymbolsOnly.zip` SHA-256
+`8e617904b980fe3648a4b116808788fe50c99d2d495376cb7c0badbd8a564c47`). The
+subset (`symbols-nerd-font-mono-3.4.0-subset.woff2`, ~5 KB) was made with
+fonttools' `pyftsubset`; the code points it keeps are the ones named in
+`apps/viewer/ui/src/features/files/kinds.ts`.
+
+- Nerd Fonts (Symbols Only): Copyright (c) 2014 Ryan L McIntyre. **MIT**.
+- Every glyph kept is from GitHub's Octicons (Copyright (c) 2023 GitHub Inc.,
+  **MIT**) or Seti-UI (Copyright (c) 2014 Jesse Weed, **MIT**), as Nerd Fonts'
+  `license-audit.md` records. They are unchanged apart from being cut out of
+  the font.
+- Full texts: [`apps/viewer/ui/src/styles/fonts/LICENSE-nerd-fonts.txt`](apps/viewer/ui/src/styles/fonts/LICENSE-nerd-fonts.txt).
+
 ---
 
 ## Downloaded at run time, NOT redistributed here

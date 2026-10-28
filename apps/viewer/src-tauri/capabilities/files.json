@@ -1,0 +1,18 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "files",
+  "description": "A Files window may run winvm's own commands (to list, rename, move, copy and delete guest files), pick Mac files to copy in and where to copy out, show its item and folder menus, show itself once drawn, title itself after its folder, move and zoom itself from its toolbar, and close itself.",
+  "windows": [
+    "files-*"
+  ],
+  "permissions": [
+    "core:default",
+    "core:window:allow-show",
+    "core:window:allow-set-title",
+    "core:window:allow-close",
+    "core:window:allow-start-dragging",
+    "core:window:allow-internal-toggle-maximize",
+    "dialog:allow-open",
+    "dialog:allow-save"
+  ]
+}
