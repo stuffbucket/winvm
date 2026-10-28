@@ -1,0 +1,29 @@
+{
+  "name": "@winvm/canvas",
+  "version": "0.1.0",
+  "private": true,
+  "description": "An infinite, pannable and zoomable canvas for React, with an eased camera. Vendored from monimal's spatial canvas.",
+  "license": "MIT",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./canvas.css": "./src/canvas.css"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "bun test tests"
+  },
+  "peerDependencies": {
+    "react": ">=18.0.0 <20.0.0",
+    "react-dom": ">=18.0.0 <20.0.0"
+  },
+  "devDependencies": {
+    "@happy-dom/global-registrator": "20.8.4",
+    "@types/bun": "1.4.0",
+    "@types/react": "18.3.12",
+    "@types/react-dom": "18.3.1",
+    "react": "18.3.1",
+    "react-dom": "18.3.1",
+    "typescript": "6.0.3"
+  }
+}

@@ -136,6 +136,9 @@ importers:
       '@base-ui/react':
         specifier: 1.8.0
         version: 1.8.0(@types/react@18.3.12)(react-dom@18.3.1(react@18.3.1))(react@18.3.1)
+      '@winvm/canvas':
+        specifier: workspace:*
+        version: link:../../packages/canvas
       '@winvm/terminal':
         specifier: workspace:*
         version: link:../../packages/terminal
@@ -167,6 +170,30 @@ importers:
       '@types/react-dom':
         specifier: 18.3.1
         version: 18.3.1
+      typescript:
+        specifier: 6.0.3
+        version: 6.0.3
+
+  packages/canvas:
+    devDependencies:
+      '@happy-dom/global-registrator':
+        specifier: 20.8.4
+        version: 20.8.4
+      '@types/bun':
+        specifier: 1.4.0
+        version: 1.4.0
+      '@types/react':
+        specifier: 18.3.12
+        version: 18.3.12
+      '@types/react-dom':
+        specifier: 18.3.1
+        version: 18.3.1
+      react:
+        specifier: 18.3.1
+        version: 18.3.1
+      react-dom:
+        specifier: 18.3.1
+        version: 18.3.1(react@18.3.1)
       typescript:
         specifier: 6.0.3
         version: 6.0.3
