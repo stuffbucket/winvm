@@ -13,6 +13,8 @@ import type { Copies } from "./useCopies"
 
 interface FilesDialogProps {
   readonly instance: string
+  /** What the user calls the instance, which names the sheet. */
+  readonly title: string
   /** The folder to open in: where it was last, or null for the Desktop. */
   readonly folder: string | null
   /** Something is being dragged over the window. */
@@ -60,7 +62,7 @@ const mod = (e: { metaKey: boolean; ctrlKey: boolean }): boolean => (isMac() ? e
  * or folder panel and come in through the open panel or a drop on the window,
  * into the folder shown here.
  */
-export function FilesDialog({ instance, folder, dropping, copies, onFolder, onClose }: FilesDialogProps): JSX.Element {
+export function FilesDialog({ instance, title, folder, dropping, copies, onFolder, onClose }: FilesDialogProps): JSX.Element {
   const dialog = useRef<HTMLDialogElement | null>(null)
   const list = useRef<HTMLDivElement | null>(null)
   const [listing, setListing] = useState<Listing | null>(null)
@@ -222,7 +224,7 @@ export function FilesDialog({ instance, folder, dropping, copies, onFolder, onCl
     <dialog
       ref={dialog}
       className="files"
-      aria-label={t("files.title")}
+      aria-label={t("files.windowTitle", { title })}
       onKeyDown={onDialogKey}
       onCancel={(e) => {
         e.preventDefault()

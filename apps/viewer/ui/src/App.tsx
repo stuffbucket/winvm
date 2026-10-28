@@ -2,6 +2,7 @@ import type { CSSProperties } from "react"
 import { useCallback, useEffect, useMemo, useState } from "react"
 
 import {
+  announceTitle,
   installedShells,
   onFileDrop,
   onMenu,
@@ -9,6 +10,7 @@ import {
   outputText,
   popupMenu,
   revealInFinder,
+  setWindowTitle,
   shareStart,
   shareStop,
   showWindow,
@@ -21,7 +23,7 @@ import { Popover } from "./components/Popover"
 import { cx } from "./components/cx"
 import { t } from "./i18n"
 import type { Phase, Share } from "./model"
-import { controls, displaySize, parseShare, startSteps, terminalBlocked } from "./model"
+import { controls, displaySize, parseShare, shownTitle, startSteps, terminalBlocked } from "./model"
 import { SavesPanel } from "./features/actions/SavesPanel"
 import { SharePanel } from "./features/actions/SharePanel"
 import { FilesDialog } from "./features/files/FilesDialog"
@@ -121,6 +123,26 @@ export function App(): JSX.Element {
     [guestReady, copyIn, folder],
   )
 
+  // The instance's title: the toolbar shows it, the window is named by it, and
+  // every window hears it (the Terminal names itself by its tab's instance).
+  const titles = w.titles
+  const title = w.name === null ? null : shownTitle(w.name, titles[w.name])
+  const [renaming, setRenaming] = useState(false)
+  useEffect(() => setWindowTitle(title ?? t("app.name")), [title])
+  useEffect(() => {
+    for (const [instance, set] of Object.entries(titles)) announceTitle({ instance, title: set })
+  }, [titles])
+  const rename = w.rename
+  const renamed = (next: string | null): void => {
+    setRenaming(false)
+    if (next === null || title === null || next.trim() === title) return
+    rename(next)
+      .then((why) => {
+        if (why !== null) setNotice({ tone: "error", title: t("rename.failed"), detail: why })
+      })
+      .catch((e: unknown) => setNotice({ tone: "error", title: t("rename.failed"), detail: String(e) }))
+  }
+
   // Which shells the guest has: asked once Windows is ready, so the first tab
   // already knows, and asked again after it stops, restarts or is busy.
   const shells = useMemo(() => shellCache(installedShells), [])
@@ -138,11 +160,16 @@ export function App(): JSX.Element {
       shells
         .get(instance)
         .then((installed) =>
-          openTerminal({ instance, ...runnable(launch ?? { shell: defaultShell(installed), cwd: null }, installed), installed: installedList(installed) }),
+          openTerminal({
+            instance,
+            ...runnable(launch ?? { shell: defaultShell(installed), cwd: null }, installed),
+            installed: installedList(installed),
+            title: titles[instance] ?? null,
+          }),
         )
         .catch((e: unknown) => setNotice({ tone: "error", title: t("terminal.failed"), detail: String(e) }))
     },
-    [shells, w.name, c.terminal],
+    [shells, w.name, c.terminal, titles],
   )
 
   const terminalMenu = (): void => {
@@ -159,6 +186,7 @@ export function App(): JSX.Element {
     () =>
       onMenu((id) => {
         if (id === "new-terminal") terminal(null)
+        if (id === "rename-window") setRenaming(true)
         if (id === "install-cli") void install()
         if (id === "reference") {
           setReference({ text: null })
@@ -224,6 +252,11 @@ export function App(): JSX.Element {
       <Toolbar
         names={w.names}
         name={w.name}
+        titles={titles}
+        title={title}
+        renaming={renaming}
+        onRenameStart={() => setRenaming(true)}
+        onRenamed={renamed}
         phase={phase}
         activity={activity}
         controls={c}
@@ -383,6 +416,7 @@ export function App(): JSX.Element {
       {filesOpen && live && w.name !== null && (
         <FilesDialog
           instance={w.name}
+          title={title ?? w.name}
           folder={folder?.path ?? null}
           dropping={dropping}
           copies={copies}

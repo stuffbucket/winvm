@@ -3,6 +3,9 @@
  * id is the session's id, so reopening a tab gives it a new id and a new
  * shell. A shell that exits with 0 closes its tab, as `exit` does in
  * Terminal; any other end keeps the tab, and its scrollback, marked.
+ *
+ * A tab's name is the one the user gave it, else what its shell set (OSC 0
+ * or 2), else the shell's own name: `tabName`.
  */
 import type { OpenRequest } from "./shells"
 
@@ -17,6 +20,8 @@ export interface Tab extends OpenRequest {
   readonly id: string
   /** What the shell set as its title, already made presentable; null uses the shell's name. */
   readonly title: string | null
+  /** The name the user gave the tab, which wins over the shell's until cleared; null when none. */
+  readonly customTitle: string | null
   readonly state: TabState
 }
 
@@ -33,6 +38,9 @@ export type TabAction =
   | { readonly type: "title"; readonly id: string; readonly title: string | null }
   | { readonly type: "state"; readonly id: string; readonly state: TabState }
   | { readonly type: "reopen"; readonly id: string; readonly newId: string }
+  /** The user's name for a tab; empty (or only spaces) goes back to the automatic one. */
+  | { readonly type: "rename"; readonly id: string; readonly title: string }
+  | { readonly type: "closeOthers"; readonly id: string }
 
 export const noTabs: Tabs = { tabs: [], active: null }
 
@@ -54,9 +62,15 @@ export function tabsReducer(s: Tabs, a: TabAction): Tabs {
   switch (a.type) {
     case "open":
       if (s.tabs.some((t) => t.id === a.id)) return s
-      return { tabs: [...s.tabs, { ...a.request, id: a.id, title: null, state: { kind: "connecting" } }], active: a.id }
+      return { tabs: [...s.tabs, { ...a.request, id: a.id, title: null, customTitle: null, state: { kind: "connecting" } }], active: a.id }
     case "close":
       return close(s, a.id)
+    case "closeOthers":
+      return s.tabs.some((t) => t.id === a.id) ? { tabs: s.tabs.filter((t) => t.id === a.id), active: a.id } : s
+    case "rename": {
+      const title = a.title.trim()
+      return update(s, a.id, (t) => ({ ...t, customTitle: title === "" ? null : title }))
+    }
     case "activate":
       return s.tabs.some((t) => t.id === a.id) ? { ...s, active: a.id } : s
     case "step": {
@@ -81,6 +95,9 @@ export function tabsReducer(s: Tabs, a: TabAction): Tabs {
     }
   }
 }
+
+/** A tab's name: the user's, else the shell's title, else `shellName` (the shell's own name). */
+export const tabName = (tab: Tab, shellName: string): string => tab.customTitle ?? tab.title ?? shellName
 
 /** The instance a new tab from inside the window opens on: the active tab's. */
 export const activeTab = (s: Tabs): Tab | null => s.tabs.find((t) => t.id === s.active) ?? null

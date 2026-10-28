@@ -31,7 +31,7 @@
   "action.fit": "Fit to window",
   "action.screenSharing": "Open in Screen Sharing",
   "action.details": "Details",
-  "action.instance": "Instance",
+  "action.instance": "Switch to another Windows",
   "action.setup": "Install",
   "action.dismiss": "Dismiss",
   "action.forceStop": "Turn off",
@@ -71,7 +71,12 @@
   "terminal.newTab": "New tab (⌘T)",
   "terminal.closeTab": "Close tab (⌘W)",
   "terminal.runsAsAdmin": "Runs as Administrator",
-  "terminal.windowTitle": "{title} — Administrator",
+  "terminal.windowTitle": "{instance} — {tab}",
+  "terminal.tabTip": "{name} (double-click to rename)",
+  "terminal.tabName": "Tab name",
+  "terminal.renameTab": "Rename Tab…",
+  "terminal.closeThisTab": "Close Tab",
+  "terminal.closeOtherTabs": "Close Other Tabs",
   "terminal.none": "No terminals open.",
   "terminal.exited": "Exited with code {code}.",
   "terminal.lost": "Lost the connection to Windows.",
@@ -88,6 +93,7 @@
   "place.desktop": "Desktop",
 
   "files.title": "Files in Windows",
+  "files.windowTitle": "{title} — Files",
   "files.places": "Places",
   "files.place.desktop": "Desktop",
   "files.place.documents": "Documents",
@@ -202,5 +208,10 @@
   "confirm.kill.title": "Turn off Windows?",
   "confirm.kill.body": "Windows turns off immediately, like pulling the plug. Anything you haven't saved in Windows is lost.",
   "confirm.load.title": "Go back to “{name}”?",
-  "confirm.load.body": "Windows returns to exactly how it was at that moment. Anything since then is lost unless you save it first."
+  "confirm.load.body": "Windows returns to exactly how it was at that moment. Anything since then is lost unless you save it first.",
+
+  "app.name": "winvm",
+  "rename.windowTip": "Double-click to rename",
+  "rename.windowLabel": "Window title",
+  "rename.failed": "Couldn't rename this window."
 }

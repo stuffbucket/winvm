@@ -1,6 +1,21 @@
 import { describe, expect, it } from "bun:test"
 
-import { controls, detailRows, displaySize, facts, parseChecks, parseConnection, parseSaves, parseShare, parseStatus, phase, startSteps, terminalBlocked } from "../ui/src/model"
+import {
+  controls,
+  detailRows,
+  displaySize,
+  facts,
+  parseChecks,
+  parseConnection,
+  parseSaves,
+  parseShare,
+  parseStatus,
+  phase,
+  shownTitle,
+  startSteps,
+  terminalBlocked,
+  titleAssignment,
+} from "../ui/src/model"
 
 const base = {
   name: "default",
@@ -237,5 +252,24 @@ describe("parseConnection", () => {
 
   it("is null without a websocket port", () => {
     expect(parseConnection(JSON.stringify({ display: 1 }))).toBeNull()
+  })
+})
+
+describe("an instance's title", () => {
+  it("reads it from status, absent (an older winvm) or null meaning its name", () => {
+    expect(one()?.title).toBeNull()
+    expect(one({ title: null })?.title).toBeNull()
+    expect(one({ title: "Build box" })?.title).toBe("Build box")
+  })
+
+  it("shows the title the user gave, else the name", () => {
+    expect(shownTitle("demo", "Build box")).toBe("Build box")
+    expect(shownTitle("demo", null)).toBe("demo")
+    expect(shownTitle("demo", undefined)).toBe("demo")
+  })
+
+  it("sets it with winvm config, trimmed; empty clears it", () => {
+    expect(titleAssignment("  Build box ")).toBe("title=Build box")
+    expect(titleAssignment("   ")).toBe("title=")
   })
 })

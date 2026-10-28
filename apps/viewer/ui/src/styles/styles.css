@@ -88,20 +88,43 @@ html[data-os="macos"] .toolbar {
   text-overflow: ellipsis;
 }
 
-.toolbar__picker {
-  font-family: var(--font-body);
+/* The instance's title, as a window title reads; double-click renames it. */
+.toolbar__title {
+  flex: 0 1 auto;
+  min-width: 0;
+  align-self: center;
   font-size: var(--text-sm);
   font-weight: var(--weight-md);
   color: var(--text-strong);
-  background: var(--surface-control);
-  border: var(--border-width-hairline) solid var(--border-strong);
-  border-radius: var(--radius-input);
-  padding: var(--space-1) var(--space-2);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: default;
 }
 
-.toolbar__picker:focus-visible {
+.toolbar__rename {
+  align-self: center;
+  width: calc(var(--size-2xl) * 5);
+  min-width: 0;
+}
+
+.toolbar__switch {
+  margin-inline-start: calc(var(--space-2) * -1);
+}
+
+/* A name edited in place (components/InlineRename): the title, a tab. */
+.rename {
+  font-family: var(--font-body);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-md);
+  line-height: var(--leading-lg);
+  color: var(--text-strong);
+  background: var(--surface-base);
+  border: var(--border-width-hairline) solid var(--border-strong);
+  border-radius: var(--radius-chip);
+  padding: 0 var(--space-1);
   outline: var(--focus-ring);
-  outline-offset: var(--focus-ring-offset);
+  outline-offset: 0;
 }
 
 .toolbar__group {
