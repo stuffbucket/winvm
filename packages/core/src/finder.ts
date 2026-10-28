@@ -48,6 +48,7 @@ import * as agent from "./agent"
 import { ensureSmbForward } from "./agentfwd"
 import type { Args } from "./args"
 import { instanceName } from "./args"
+import { refuseFrozen } from "./frozen"
 import { cliArgv, pathsFor, readMeta } from "./paths"
 import { netfsMount } from "./netfs"
 import * as qemu from "./qemu"
@@ -503,7 +504,13 @@ export async function filesCmd(args: Args): Promise<number> {
     return r.failed.length === 0 ? 0 : 1
   }
 
-  // mount, open
+  // mount, open. A paused or asleep guest's file server cannot answer: a mount
+  // would wait on it, and one abandoned could land once it runs again.
+  try {
+    await refuseFrozen(instance)
+  } catch (error) {
+    return fail(errMsg(error))
+  }
   const guestPath = args.flags.get("path")
   let keys: readonly ShareKey[] | string
   let rel: readonly string[] = []

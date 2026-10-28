@@ -82,6 +82,42 @@ export class GuestFrozen extends Error {
   }
 }
 
+/**
+ * A SAVE OF A RUNNING GUEST IS NOT A PAUSE. createSave (saves.ts) stops the
+ * vCPUs for the save and starts them again after (or quits, for a stow), so
+ * QEMU says "paused" and then "postmigrate" for those seconds. Shown as paused,
+ * the app would dim the screen and offer Resume in the middle of every autosave
+ * and checkpoint. So the save marks it (`saving.json`, naming the winvm process
+ * saving) and status reports such a guest as running. A save of a guest that
+ * was already paused leaves no mark: that one stays paused.
+ */
+export const savingPath = (p: Paths): string => resolve(p.dir, "saving.json")
+
+export function markSavingRunning(p: Paths, pid: number = process.pid): void {
+  writeFileSync(savingPath(p), `${JSON.stringify({ pid })}\n`)
+}
+
+export function clearSavingRunning(p: Paths): void {
+  rmSync(savingPath(p), { force: true })
+}
+
+/** Whether a save of this running guest is under way: the mark is there and the process that left it is alive. */
+export function savingRunning(p: Paths): boolean {
+  let pid: unknown
+  try {
+    pid = (JSON.parse(readFileSync(savingPath(p), "utf8")) as { pid?: unknown }).pid
+  } catch {
+    return false
+  }
+  if (typeof pid !== "number") return false
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch {
+    return false
+  }
+}
+
 /** Throws GuestFrozen when `name`'s guest is paused or asleep. */
 export async function refuseFrozen(name: string): Promise<void> {
   const f = await frozenState(pathsFor(name))

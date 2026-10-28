@@ -108,6 +108,7 @@ import { basePath, home, imageMetaPath, instanceDir, pathsFor, readImageMeta, re
 import * as qemu from "./qemu"
 import * as qmp from "./qmp"
 import * as finder from "./finder"
+import { clearSavingRunning, markSavingRunning } from "./frozen"
 import { instanceOf } from "./smbstate"
 
 // ---------------------------------------------------------------------------
@@ -868,6 +869,8 @@ export async function createSave(instance: string, o: CreateOptions): Promise<Cr
   const started = Date.now()
   let migrated: Record<string, unknown>
   let ppm: string | null = null
+  // Not the user's pause, for anyone reading the status meanwhile (frozen.ts).
+  if (wasRunning) markSavingRunning(p)
   try {
     if (wasRunning) await qmp.execute(p.qmp, "stop")
     // The screen exactly as saved; encoded once the guest runs again.
@@ -883,12 +886,17 @@ export async function createSave(instance: string, o: CreateOptions): Promise<Cr
   } catch (error) {
     rmSync(tmp, { recursive: true, force: true })
     if (wasRunning) await qmp.execute(p.qmp, "cont").catch(() => undefined)
+    clearSavingRunning(p)
     throw error
   }
-  if (o.quitAfter === true) {
-    await quitQemu(p)
-  } else if (wasRunning) {
-    await qmp.execute(p.qmp, "cont")
+  try {
+    if (o.quitAfter === true) {
+      await quitQemu(p)
+    } else if (wasRunning) {
+      await qmp.execute(p.qmp, "cont")
+    }
+  } finally {
+    clearSavingRunning(p)
   }
   const saveMs = Date.now() - started
   const screen = ppm === null ? null : writeScreenshots(ppm, tmp)
