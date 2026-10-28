@@ -268,7 +268,10 @@ async function install(name: string, p: Paths, args: Args, asJson: boolean): Pro
     if ((await quietly(asJson, async () => await commands.stop(cli()))) !== 0) return fail(`could not shut "${name}" down`)
   }
   try {
-    await installGuest(name, p, media, log)
+    await quietly(asJson, async () => {
+      await installGuest(name, p, media, log)
+      return 0
+    })
   } catch (error) {
     return fail(`the shared folder's setup failed: ${msg(error)}`)
   } finally {
@@ -280,22 +283,31 @@ async function install(name: string, p: Paths, args: Args, asJson: boolean): Pro
   if (wasRunning || args.flags.has("start")) {
     log("starting Windows again")
     if ((await quietly(asJson, async () => await commands.start(cli()))) !== 0) return fail(`"${name}" did not start again`)
+    // So the status below can say what Windows has: its agent starts at logon, just after `start` returns.
+    await agent.connect(name, { timeoutMs: 60_000 })
   }
   printStatus(name, await gather(name, p), asJson)
   return 0
 }
 
-/** Run a verb that prints, with its output on stderr when stdout must stay JSON. */
+/**
+ * Run a verb that prints, with all it prints on stderr when stdout must stay
+ * one JSON object (the app parses it). Verbs write with console.log and, for
+ * progress dots, process.stdout.write.
+ */
 async function quietly(toStderr: boolean, f: () => Promise<number>): Promise<number> {
   if (!toStderr) return await f()
-  const out = console.log
+  const log = console.log
+  const write = process.stdout.write.bind(process.stdout)
   console.log = (...a: unknown[]): void => {
     console.error(...a)
   }
+  process.stdout.write = ((chunk: string | Uint8Array): boolean => process.stderr.write(chunk)) as typeof process.stdout.write
   try {
     return await f()
   } finally {
-    console.log = out
+    console.log = log
+    process.stdout.write = write
   }
 }
 
