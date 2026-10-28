@@ -9,7 +9,7 @@ winvm get 'C:\work\install.log' install.log
 
 These copy one file through the in-guest agent, or through the QEMU guest
 agent if the in-guest agent isn't running. The instance has to be running.
-Through the in-guest agent, `get` also copies a folder and everything in it.
+Through the in-guest agent, they also copy a folder and everything in it.
 
 To see what's in a guest folder:
 

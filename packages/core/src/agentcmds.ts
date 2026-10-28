@@ -8,7 +8,7 @@
  * Administrator in session 1, qemu-ga as SYSTEM in session 0. `--qga` forces
  * the old path.
  */
-import { mkdirSync, statSync } from "node:fs"
+import { mkdirSync, readdirSync, statSync } from "node:fs"
 import { join, win32 } from "node:path"
 
 import * as agent from "./agent"
@@ -88,12 +88,18 @@ function running(name: string): string | null {
 export async function put(args: Args): Promise<number> {
   const name = instanceName(args)
   const [from, to] = positionals(args)
-  if (from === undefined || to === undefined) return fail("usage: winvm put [-i name] <host file> <guest path>")
+  if (from === undefined || to === undefined) return fail("usage: winvm put [-i name] <host file or folder> <guest path>")
   const notUp = running(name)
   if (notUp !== null) return fail(notUp)
   const t0 = performance.now()
   try {
     const c = await preferred(name, args)
+    if (statSync(from).isDirectory()) {
+      if (c === null) return fail("copying a folder needs the in-guest agent — `winvm agent install`")
+      const got = await watcher.whileActive(name, putTree(c, from, to))
+      console.log(`${from} -> ${to}: ${String(got.files)} files, ${String(got.bytes)} bytes in ${(performance.now() - t0).toFixed(0)} ms (agent)`)
+      return 0
+    }
     const bytes = statSync(from).size
     await watcher.whileActive<unknown>(
       name,
@@ -104,6 +110,19 @@ export async function put(args: Args): Promise<number> {
   } catch (error) {
     return fail(msg(error))
   }
+}
+
+/** Copy a host folder's files, at any depth, under the guest folder `to` (the agent creates folders as it writes). */
+async function putTree(c: agent.AgentClient, from: string, to: string): Promise<{ files: number; bytes: number }> {
+  let files = 0
+  let bytes = 0
+  for (const rel of readdirSync(from, { recursive: true, encoding: "utf8" })) {
+    const src = join(from, rel)
+    if (!statSync(src).isFile()) continue
+    bytes += (await c.putFile(src, win32.join(to, ...rel.split("/")))).bytes
+    files += 1
+  }
+  return { files, bytes }
 }
 
 export async function get(args: Args): Promise<number> {
