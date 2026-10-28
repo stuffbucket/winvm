@@ -10,6 +10,7 @@ uses to install the agent and as a fallback when the agent is not running.
 ```sh
 winvm agent install            # install (or reinstall) the agent in a running guest
 winvm agent status [--json]    # is it answering, which version, which host port
+winvm agent connect [--json]   # update it if need be, then print its address and token (for the app)
 winvm exec -- cmd /c ver       # runs through the agent when it answers
 winvm exec --qga -- whoami     # force qemu-ga instead
 winvm put  <host path> <guest path>   # a file, or a folder and everything in it
