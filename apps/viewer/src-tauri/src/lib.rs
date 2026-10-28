@@ -1,4 +1,5 @@
 mod agent;
+mod dragout;
 mod liveresize;
 mod usage;
 
@@ -12,8 +13,6 @@ use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
 use tauri_plugin_shell::process::{CommandChild, CommandEvent};
 use tauri_plugin_shell::ShellExt;
 use tauri_plugin_updater::UpdaterExt;
-
-mod dragout;
 
 #[derive(Serialize)]
 struct Output {

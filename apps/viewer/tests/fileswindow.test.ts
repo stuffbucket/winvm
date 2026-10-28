@@ -1,11 +1,10 @@
 import { describe, expect, it } from "bun:test"
 import { z } from "zod"
 
-import type { Output } from "../ui/src/backend"
 import type { Entry, Sort } from "../ui/src/features/files/files"
 import { finderDate, isWithin, nameProblem, parentPath, samePath, sortEntries } from "../ui/src/features/files/files"
 import { glyphOf, kindLabel, kindOf } from "../ui/src/features/files/kinds"
-import { parseOp } from "../ui/src/features/files/ops"
+import { parseReply, unreachable } from "../ui/src/features/files/ops"
 
 describe("the Files window's model", () => {
   const e = (name: string, dir: boolean, size: number | null, modified: number | null): Entry => ({ name, dir, size, modified, hidden: false })
@@ -67,18 +66,24 @@ describe("the Files window's model", () => {
   })
 })
 
-describe("guest operations' answers", () => {
-  const out = (code: number, stdout: string, stderr = ""): Output => ({ code, stdout, stderr })
+describe("the agent's answers", () => {
   const Path = z.object({ path: z.string() })
 
   it("reads a result, or why it failed by the agent's code", () => {
-    expect(parseOp(out(0, '{"path":"C:\\\\x\\\\New folder"}\n'), Path)).toEqual({ ok: true, value: { path: "C:\\x\\New folder" } })
-    expect(parseOp(out(1, '{"error":"agent POST /fs/rename: 409 exists","code":"exists"}'), Path)).toEqual({
+    expect(parseReply({ status: 200, body: { path: "C:\\x\\New folder" } }, Path)).toEqual({ ok: true, value: { path: "C:\\x\\New folder" } })
+    expect(parseReply({ status: 409, body: { error: "already exists: C:\\x", code: "exists" } }, Path)).toEqual({
       ok: false,
       code: "exists",
-      detail: "agent POST /fs/rename: 409 exists",
+      detail: "already exists: C:\\x",
     })
-    expect(parseOp(out(1, '{"error":"odd","code":"weird"}'), Path)).toMatchObject({ ok: false, code: "other" })
-    expect(parseOp(out(1, "", "::error::boom"), Path)).toEqual({ ok: false, code: "other", detail: "::error::boom" })
+    expect(parseReply({ status: 400, body: { error: "odd", code: "weird" } }, Path)).toMatchObject({ ok: false, code: "other" })
+    expect(parseReply({ status: 500, body: "boom" }, Path)).toEqual({ ok: false, code: "other", detail: "500 boom" })
+    // A success that isn't the shape asked for is a failure, not a lie.
+    expect(parseReply({ status: 200, body: { nope: 1 } }, Path)).toMatchObject({ ok: false, code: "other" })
+  })
+
+  it("tells a machine that isn't running from other ways of not reaching it", () => {
+    expect(unreachable(new Error('::error::instance "x" is not running — `winvm start -i x`')).code).toBe("notrunning")
+    expect(unreachable("connection refused").code).toBe("other")
   })
 })

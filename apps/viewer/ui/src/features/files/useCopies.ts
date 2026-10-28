@@ -3,7 +3,8 @@ import { useCallback, useEffect, useRef, useState } from "react"
 import { downloadsDir, onDragOutEnd, onPromise, outputText, pickFolder, pickSavePath, unusedPath, winvm } from "../../backend"
 import { t } from "../../i18n"
 import type { Entry } from "./files"
-import { childPath, freeName, hostName, isListing, leafName, parseListing } from "./files"
+import { childPath, freeName, hostName, isListing, leafName } from "./files"
+import { listFolder } from "./ops"
 
 /** A copy under way: which way, how far, and what it's on. */
 export interface CopyJob {
@@ -66,9 +67,7 @@ export function useCopies(instance: string | null): Copies {
         setResult(null)
         setJob({ way: "in", done: 0, total: paths.length, name: hostName(paths[0] ?? "") })
         // The folder as it is now: where "Desktop" is, and the names a copy must not replace.
-        const args = ["dir", "-i", instance, ...(folder === null ? [] : [folder]), "--all", "--json"]
-        const out = await winvm(...args)
-        const listing = parseListing(out.stdout, out.stderr)
+        const listing = await listFolder(instance, folder, { hidden: true })
         if (!isListing(listing)) return { ok: false, title: t("files.copyFailed"), detail: listing.detail }
         const taken = new Set(listing.entries.map((e) => e.name))
         const failed: string[] = []
