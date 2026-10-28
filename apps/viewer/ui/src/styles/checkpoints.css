@@ -94,6 +94,17 @@
   right: var(--space-3);
 }
 
+/*
+ * The chrome over the canvas is opaque. Cards pan and zoom under it, and
+ * through the canvas package's translucent glass a card's title read through
+ * the heading's own text. Opaque, it simply covers what passes under it.
+ */
+.checkpoints :is(.spatial-canvas__corner, .spatial-canvas__zoom) {
+  background: var(--surface-card);
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+
 .checkpoints__heading {
   gap: var(--space-2);
   padding-inline: var(--space-3);
@@ -195,7 +206,7 @@
 
 .checkpoints__zoom > .spatial-canvas__button {
   border: var(--border-width-hairline) solid var(--border-subtle);
-  background: color-mix(in srgb, var(--surface-card) 86%, transparent);
+  background: var(--surface-card);
   box-shadow: var(--elevation-tooltip);
 }
 
@@ -507,7 +518,7 @@
   padding: 0;
   border: var(--border-width-hairline) solid var(--border-subtle);
   border-radius: var(--radius-pill);
-  background: color-mix(in srgb, var(--surface-card) 86%, transparent);
+  background: var(--surface-card);
   box-shadow: var(--elevation-tooltip);
   color: var(--text-strong);
   cursor: default;
