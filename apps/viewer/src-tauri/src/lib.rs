@@ -9,6 +9,8 @@ use tauri_plugin_shell::process::{CommandChild, CommandEvent};
 use tauri_plugin_shell::ShellExt;
 use tauri_plugin_updater::UpdaterExt;
 
+mod dragout;
+
 #[derive(Serialize)]
 struct Output {
     code: i32,
@@ -395,7 +397,8 @@ pub fn run() {
             unused_path,
             reveal,
             terminal_open,
-            terminal_take
+            terminal_take,
+            dragout::files_drag_out
         ])
         .build(tauri::generate_context!())
         .expect("winvm could not start")
