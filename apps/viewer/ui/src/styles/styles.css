@@ -175,12 +175,12 @@ html[data-os="macos"] .toolbar {
   container-type: size;
 }
 
-/* Where the guest's screen is, in the guest display's shape: at most one
-   guest pixel per point, smaller when the window is; "Fit to window" lifts
-   the cap. Edge to edge when it fills; otherwise it sits on the backdrop. */
+/* Where the guest's screen is, in the guest display's shape, as large as the
+   window allows. "Actual size" caps it at one guest pixel per point, which is
+   sharper but smaller; it then sits on the backdrop. */
 .display {
   position: relative;
-  width: min(100cqw, calc(100cqh * var(--display-ratio)), var(--display-width));
+  width: min(100cqw, calc(100cqh * var(--display-ratio)));
   aspect-ratio: var(--display-ratio);
   container-type: size;
   overflow: hidden;
@@ -188,8 +188,8 @@ html[data-os="macos"] .toolbar {
   box-shadow: var(--elevation-modal);
 }
 
-.display--fill {
-  width: min(100cqw, calc(100cqh * var(--display-ratio)));
+.display--actual {
+  width: min(100cqw, calc(100cqh * var(--display-ratio)), var(--display-width));
 }
 
 .display--on {
