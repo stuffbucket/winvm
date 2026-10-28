@@ -1,8 +1,10 @@
 // winvm-display: the guest's screen size and display scaling, set live from
-// the logged-on session. Compiled at agent install (agent-install.ps1) and run
-// by the agent's POST /display route, one process per request. One JSON line
-// out; exit 0 on success.
+// the logged-on session. Compiled at agent install (agent-install.ps1). The
+// agent's POST /display route keeps one `serve` process running and writes it
+// one request per line; run with a request's arguments, it answers that one.
+// One JSON line out per request; exit 0 on success.
 //
+//   winvm-display serve                     requests on stdin, one per line, as below
 //   winvm-display get                       size, scale, effective DPI
 //   winvm-display modes                     the sizes the driver offers now
 //   winvm-display set W H [waitMs] [scale]  wait until the driver offers WxH, set it,
@@ -167,8 +169,8 @@ public static class WinvmDisplay {
 
   static int Int(string[] a, int i, int dflt) { return a.Length > i ? int.Parse(a[i]) : dflt; }
 
-  public static int Main(string[] a) {
-    SetProcessDpiAwarenessContext(new IntPtr(-4)); // per-monitor v2, so DPI reads are real
+  // One request: its JSON line, and 0 on success.
+  static int Run(string[] a, out string json) {
     var j = new StringBuilder("{");
     try {
       string dev = Primary();
@@ -211,14 +213,40 @@ public static class WinvmDisplay {
         throw new Fail("bad", "usage: get | modes | set W H [waitMs] [scale] | scale PCT");
       }
       j.Append('}');
-      Console.WriteLine(j.ToString());
+      json = j.ToString();
       return 0;
     } catch (Fail f) {
-      Console.WriteLine("{\"error\":\"" + f.Message.Replace("\\", "\\\\").Replace("\"", "'") + "\",\"code\":\"" + f.Code + "\"}");
+      json = Error(f.Message, f.Code);
       return 1;
     } catch (Exception e) {
-      Console.WriteLine("{\"error\":\"" + e.Message.Replace("\\", "\\\\").Replace("\"", "'") + "\",\"code\":\"fail\"}");
+      json = Error(e.Message, "fail");
       return 1;
     }
+  }
+
+  static string Error(string msg, string code) {
+    return "{\"error\":\"" + msg.Replace("\\", "\\\\").Replace("\"", "'") + "\",\"code\":\"" + code + "\"}";
+  }
+
+  public static int Main(string[] a) {
+    SetProcessDpiAwarenessContext(new IntPtr(-4)); // per-monitor v2, so DPI reads are real
+    string json;
+    if (a.Length > 0 && a[0] == "serve") {
+      // Requests on stdin, one per line in the same words as the arguments;
+      // one JSON line back for each, until stdin closes. Starting .NET costs
+      // ~0.6 s in the guest, which a live resize cannot afford every time.
+      for (string line = Console.In.ReadLine(); line != null; line = Console.In.ReadLine()) {
+        var words = line.Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
+        if (words.Length == 0) continue;
+        if (words[0] == "serve") json = Error("already serving", "bad");
+        else Run(words, out json);
+        Console.Out.WriteLine(json);
+        Console.Out.Flush();
+      }
+      return 0;
+    }
+    int code = Run(a, out json);
+    Console.WriteLine(json);
+    return code;
   }
 }

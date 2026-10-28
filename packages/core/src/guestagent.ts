@@ -30,18 +30,19 @@
  *   POST /ui      {op,...}             UI Automation via winvm-ui.exe (assets/winvm-ui.cs, docs/gui.md)
  *   GET  /term?shell=&cwd=&cols=&rows=  a terminal, as a WebSocket (conpty.exe, assets/conpty.cs)
  *   POST /display {op,...}             screen size and scaling via winvm-display.exe (assets/winvm-display.cs)
+ *   GET  /stats                       memory in use and the system drive's space -> GuestStats
  *   POST /exit                        stop the agent (reinstall)
  */
 import { spawn as nodeSpawn } from "node:child_process"
 import { appendFileSync, existsSync, mkdirSync, readFileSync, statSync } from "node:fs"
-import { readdir, stat } from "node:fs/promises"
-import { homedir } from "node:os"
+import { readdir, stat, statfs } from "node:fs/promises"
+import { freemem, homedir, totalmem } from "node:os"
 import { dirname, join, resolve } from "node:path"
 import { randomBytes, timingSafeEqual } from "node:crypto"
 import type { Server, ServerWebSocket, Socket, TCPSocketListener, WebSocketHandler } from "bun"
 
 /** Bumped whenever the protocol or behaviour changes; the host reinstalls on mismatch. */
-export const AGENT_VERSION = 6
+export const AGENT_VERSION = 7
 /** The port the agent listens on INSIDE the guest. The host side is per instance. */
 export const GUEST_PORT = 7801
 export const WINDOWS_DIR = "C:\\ProgramData\\winvm\\agent"
@@ -534,6 +535,29 @@ export function displayArgv(r: DisplayRequest): string[] | null {
   }
 }
 
+/**
+ * What the meters show: Windows' memory (total and available, as Task Manager
+ * counts "in use" = total - available) and the system drive's space. Cheap:
+ * no process is started, so the host can ask every few seconds.
+ */
+export interface GuestStats {
+  readonly memory: { readonly total: number; readonly available: number }
+  /** The system drive (C:\ on Windows); null if it could not be read. */
+  readonly disk: { readonly path: string; readonly total: number; readonly free: number } | null
+}
+
+export async function guestStats(): Promise<GuestStats> {
+  const path = isWin ? `${process.env["SystemDrive"] ?? "C:"}\\` : "/"
+  let disk: GuestStats["disk"] = null
+  try {
+    const s = await statfs(path)
+    disk = { path, total: Number(s.blocks) * Number(s.bsize), free: Number(s.bavail) * Number(s.bsize) }
+  } catch {
+    // reported as unknown
+  }
+  return { memory: { total: totalmem(), available: freemem() }, disk }
+}
+
 /** A UI Automation request: `op` plus its fields (see assets/winvm-ui.cs). */
 export type UiRequest = { readonly op: string } & Readonly<Record<string, unknown>>
 /** What the helper answered: a result, or an error with a code (notfound | timeout | covered | bad | fail | unavailable). */
@@ -591,6 +615,83 @@ class UiHost {
   }
 }
 
+const LATE = Symbol("late")
+
+/**
+ * winvm-display.exe kept running (`serve`, assets/winvm-display.cs): a
+ * request's words in, one JSON line out, in order. Starting it costs ~0.6 s in
+ * the guest, most of a live resize, so it starts once. One request at a time:
+ * a `set` waiting for the driver's mode holds the next rather than interleave.
+ * A helper that does not answer in time is stopped; the next request starts a
+ * fresh one, as does one after it exits.
+ */
+export class DisplayHost {
+  private proc: ReturnType<typeof Bun.spawn<"pipe", "pipe", "ignore">> | null = null
+  private answer: ((line: string | null) => void) | null = null
+  private queue: Promise<unknown> = Promise.resolve()
+  private readonly argv: readonly string[]
+  /** `argv`: the helper's command, without `serve`. */
+  constructor(argv: readonly string[]) {
+    this.argv = argv
+  }
+
+  call(args: readonly string[], timeoutMs: number): Promise<string> {
+    const run = this.queue.then(async () => await this.send(args, timeoutMs))
+    this.queue = run.catch(() => undefined)
+    return run
+  }
+
+  stop(): void {
+    const proc = this.proc
+    this.proc = null
+    this.answer?.(null)
+    proc?.kill()
+  }
+
+  private async send(args: readonly string[], timeoutMs: number): Promise<string> {
+    const proc = this.proc ?? this.start()
+    const line = new Promise<string | null>((res) => (this.answer = res))
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const late = new Promise<typeof LATE>((res) => (timer = setTimeout(() => res(LATE), timeoutMs)))
+    try {
+      proc.stdin.write(`${args.join(" ")}\n`)
+      await proc.stdin.flush()
+      const got = await Promise.race([line, late])
+      if (got === LATE) {
+        this.stop()
+        throw new Error(`winvm-display.exe did not answer within ${String(timeoutMs)} ms`)
+      }
+      if (got === null) throw new Error("winvm-display.exe exited")
+      return got
+    } finally {
+      clearTimeout(timer)
+      this.answer = null
+    }
+  }
+
+  private start(): ReturnType<typeof Bun.spawn<"pipe", "pipe", "ignore">> {
+    const proc = Bun.spawn([...this.argv, "serve"], { stdin: "pipe", stdout: "pipe", stderr: "ignore" })
+    this.proc = proc
+    void (async () => {
+      const dec = new TextDecoder()
+      let buf = ""
+      for await (const chunk of proc.stdout) {
+        buf += dec.decode(chunk, { stream: true })
+        for (let nl = buf.indexOf("\n"); nl >= 0; nl = buf.indexOf("\n")) {
+          const got = buf.slice(0, nl).trim()
+          buf = buf.slice(nl + 1)
+          if (got !== "" && this.proc === proc) this.answer?.(got)
+        }
+      }
+      if (this.proc === proc) {
+        this.proc = null
+        this.answer?.(null)
+      }
+    })()
+    return proc
+  }
+}
+
 // --- the spawner -------------------------------------------------------------
 
 /**
@@ -614,9 +715,14 @@ type Op =
   | { readonly op: "kill"; readonly pid: number; readonly tree: boolean }
   | { readonly op: "ui"; readonly req: UiRequest }
   | { readonly op: "hidden"; readonly path: string }
+  | { readonly op: "display"; readonly args: readonly string[]; readonly timeoutMs: number }
+
+/** Where winvm-display.exe is: beside the agent, or WINVM_DISPLAY_EXE (tests). */
+const displayExe = (): string => process.env["WINVM_DISPLAY_EXE"] ?? join(import.meta.dir, "winvm-display.exe")
 
 let pwshHost: PwshHost | null = null
 let uiHost: UiHost | null = null
+let displayHost: DisplayHost | null = null
 async function runOp(o: Op): Promise<unknown> {
   switch (o.op) {
     case "exec":
@@ -637,6 +743,9 @@ async function runOp(o: Op): Promise<unknown> {
       return await uiHost.call(o.req)
     case "hidden":
       return await hiddenNames(o.path)
+    case "display":
+      displayHost ??= new DisplayHost([displayExe()])
+      return { line: await displayHost.call(o.args, o.timeoutMs) }
   }
 }
 
@@ -1181,20 +1290,22 @@ export function startAgent(o: AgentOptions, onFatal: () => void = () => {}): Run
               const args = displayArgv(r)
               if (args === null) return fail(400, "op must be get, modes, set {width,height,waitMs?,scale?} or scale {scale}")
               if (!isWin) return fail(501, "the display helper exists only in the Windows guest")
-              const exe = process.env["WINVM_DISPLAY_EXE"] ?? join(import.meta.dir, "winvm-display.exe")
+              const exe = displayExe()
               if (!existsSync(exe)) return fail(501, `${exe} is missing: reinstall the agent (winvm agent install)`)
               const timeoutMs = (r.waitMs ?? 2000) + 15_000
-              const out = await spawner.call<ExecResponse>({ op: "exec", req: { argv: [exe, ...args], timeoutMs } })
+              const { line } = await spawner.call<{ line: string }>({ op: "display", args, timeoutMs })
               let body: Record<string, unknown>
               try {
-                body = JSON.parse(out.stdout.trim()) as Record<string, unknown>
+                body = JSON.parse(line) as Record<string, unknown>
               } catch {
-                return fail(500, `winvm-display.exe said: ${(out.stdout + out.stderr).trim() || `exit ${String(out.code)}`}`)
+                return fail(500, `winvm-display.exe said: ${line}`)
               }
-              if (out.code === 0) return json(body)
+              if (body["error"] === undefined) return json(body)
               const status = { bad: 400, badmode: 409, toobig: 413, timeout: 408 }[String(body["code"])] ?? 500
               return json(body, status)
             }
+            case "GET /stats":
+              return json(await guestStats())
             case "POST /exit":
               log("exit requested")
               setTimeout(() => process.exit(0), 50)
