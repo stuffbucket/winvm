@@ -496,6 +496,67 @@ nobody can answer (`The operation was canceled by the user`). The UAC dialog
 focuses **No**, so sending Enter denies it. GitHub's Windows runners also run
 with UAC disabled.
 
+## The display
+
+**New instances use `virtio-gpu-pci`, with no size on the command line.**
+The screen is resized while the guest runs, so the size never enters the save
+compatibility hash (`saves.ts` hashes the QEMU arguments). A save restores at
+the size it was taken at, and the app asks for its window's size again after.
+Builds always use `ramfb`, because WinPE has no virtio-gpu driver. Instances
+created before this keep `ramfb` (EDK2 fixes it at 800x600, and QEMU cannot
+resize it) until switched with `winvm display virtio-gpu` while stopped. An
+instance switched by an earlier winvm has `xres`/`yres` in its `display.json`;
+it keeps them on the command line, so its saves still load.
+
+**A resize takes two steps, in this order** (`guestdisplay.ts`):
+
+1. **VNC SetDesktopSize.** QEMU 11.1 (`ui/vnc.c`) passes the width and height
+   to virtio-gpu (`qemu_console_set_ui_info`, no delay) and answers at once
+   with ExtendedDesktopSize status 4, "forwarded". virtio-gpu raises a
+   display-change event. The guest's viogpudo driver (UTM's build, 22.7.38.43)
+   then adds exactly that size to its mode list, in one "custom" slot that the
+   next request replaces. It does **not** switch to it. The app sends this
+   over its own noVNC connection; `winvm display WxH` opens a short shared VNC
+   connection (`desktopsize.ts`).
+2. **The agent sets the mode.** `winvm-display.exe` (`assets/winvm-display.cs`,
+   compiled at agent install, behind the agent's `POST /display`) polls the
+   mode list until the size appears, then calls `ChangeDisplaySettingsEx` in
+   the logged-on session. Through qemu-ga (session 0), the same call returns
+   success and changes nothing.
+
+Measured on win11-arm64: about 80 ms from the VNC request to QEMU's new
+framebuffer, of which the guest helper takes 60–160 ms including its wait.
+Through the CLI as a separate process it is 0.6–1 s, mostly bun starting up.
+
+**Display scaling is set live too.** `DisplayConfigSetDeviceInfo` with the
+undocumented `DISPLAYCONFIG_DEVICE_INFO_SET_DPI_SCALE` (-4), which is what the
+Settings app uses. It takes effect without signing out; the shell finishes
+re-laying out in about 5 s. Windows stores it per monitor
+(`HKCU\Control Panel\Desktop\PerMonitorSettings\NOEDID_1AF4_1050_…\DpiValue`)
+as steps from the recommended scale. The recommended scale is always 100%
+here, because QEMU sends no physical size over VNC. Windows clamps it for
+small sizes (1280x800 allows 125%) and restores it when the size grows. The
+app asks for its window's size in device pixels, at DPR×100% scale.
+
+**Limits** (`displayfit.ts`), all measured:
+
+| Limit | Why |
+|---|---|
+| at most 30 MiB of framebuffer (W×H×4) | viogpudo cannot back more. 3840x2048 and 4096x1920 work; 3840x2050 and larger are accepted by Windows (`ChangeDisplaySettingsEx` returns 0) but QEMU shows "Display output is not active". A QEMU trace shows `res_create_2d` with no `res_back_attach`. A larger `xres`/`yres` at boot does not raise it. A save taken in that state restores to a dead screen. |
+| at most 5120x2160 | QEMU's VNC server (`ui/vnc.h` `VNC_MAX_WIDTH`/`VNC_MAX_HEIGHT`) crops anything larger. |
+| at least 1024x768 | The driver's fixed modes start there. |
+| width a multiple of 16 | QEMU's VNC server pads other widths in ServerInit (1500 shows as 1504). |
+
+The host clamps every request. The guest helper refuses over 30 MiB as well.
+A Windows that saved a too-big mode falls back to a fixed mode at the next
+boot (seen: 3456x2234).
+
+**How UTM does it, for comparison.** UTM uses its own `virtio-ramfb` device
+and sends the size as a SPICE monitors-config message. spice-server turns
+that into the same `qemu_console_set_ui_info` call, and its viogpudo fork
+reconnects the display itself. Its "Retina" mode requests points × backing
+scale and draws 1:1, with the Windows scale left to the user.
+
 ## The command channel
 
 `winvm exec` runs a command in the guest and returns stdout, stderr and the exit
