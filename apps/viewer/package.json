@@ -22,6 +22,7 @@
   },
   "dependencies": {
     "@base-ui/react": "1.8.0",
+    "@winvm/canvas": "workspace:*",
     "@winvm/terminal": "workspace:*",
     "intl-messageformat": "11.2.9",
     "react": "18.3.1",
