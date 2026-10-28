@@ -2,9 +2,10 @@ import { useCallback, useEffect, useRef, useState } from "react"
 
 import { installCli, outputText, winvm } from "../../backend"
 import type { Checks, Connection, Phase, Status } from "../../model"
-import { parseChecks, parseConnection, parseStatus, phase, titleAssignment } from "../../model"
+import { isLivePhase, parseChecks, parseConnection, parseStatus, phase, titleAssignment } from "../../model"
+import { phaseAfter, shownPhase, StatusGuard, type Verb } from "./statusGuard"
 
-export type Verb = "start" | "stop" | "reboot" | "pause" | "resume" | "kill" | "setup" | "save" | "load"
+export type { Verb } from "./statusGuard"
 
 export interface Ran {
   readonly verb: Verb | "open" | "put"
@@ -58,6 +59,9 @@ export function useWinvm(): Winvm {
   const [last, setLast] = useState<Ran | null>(null)
   const [cliPath, setCliPath] = useState<string | null>(null)
   const [polls, setPolls] = useState(0)
+  // What the last verb left (paused, asleep, running), shown until a read started after it lands.
+  const [held, setHeld] = useState<Phase | null>(null)
+  const guard = useRef(new StatusGuard())
   const tick = useRef(0)
 
   const loadNames = useCallback(async (): Promise<string | null> => {
@@ -75,12 +79,16 @@ export function useWinvm(): Winvm {
   }, [])
 
   const loadStatus = useCallback(async (target: string): Promise<void> => {
+    const ticket = guard.current.begin()
     const out = await winvm("status", "--json", "-i", target)
     const s = parseStatus(out.stdout)?.[0]
     if (s === undefined) {
       setStatusError(outputText(out) || `winvm status exited ${String(out.code)}`)
       return
     }
+    // Overtaken by a read started later, or started before the last verb ended: stale.
+    if (!guard.current.land(ticket)) return
+    setHeld(null)
     setStatusError(null)
     setStatus(s)
     setTitles((was) => (was[s.name] === s.title ? was : { ...was, [s.name]: s.title }))
@@ -108,7 +116,7 @@ export function useWinvm(): Winvm {
   }, [loadChecks, loadNames])
 
   const current = status !== null && status.name === name ? status : null
-  const p = current === null ? null : phase(current)
+  const p = shownPhase(held, current, phase)
   const fast = busy !== null || p === "starting"
 
   useEffect(() => {
@@ -133,7 +141,7 @@ export function useWinvm(): Winvm {
     }
   }, [name, fast, loadNames, loadStatus])
 
-  const live = p === "running" || p === "starting" || p === "paused"
+  const live = isLivePhase(p)
   const pid = current?.pid ?? null
   const asking = useRef(false)
   // Asked again on every poll until it answers: the monitor can be busy (a save) the first time.
@@ -166,11 +174,15 @@ export function useWinvm(): Winvm {
         const ran: Ran = { verb, code: out.code, output: outputText(out) }
         setLast(ran)
         if (out.code !== 0) setFailure(ran)
+        // Show what the verb did at once; reads already out describe the machine before it.
+        guard.current.settle(out.code === 0 ? phaseAfter(verb) : null)
       } catch (e) {
         const ran: Ran = { verb, code: -1, output: errorText(e) }
         setLast(ran)
         setFailure(ran)
+        guard.current.settle(null)
       } finally {
+        setHeld(guard.current.held)
         setBusy(null)
       }
       if (verb === "setup") await loadChecks()
@@ -194,6 +206,9 @@ export function useWinvm(): Winvm {
   }, [])
 
   const select = useCallback((next: string): void => {
+    // Another machine: nothing held, and the last one's reads still out are stale.
+    guard.current.settle(null)
+    setHeld(null)
     setStatus(null)
     setConnection(null)
     setName(next)
@@ -215,7 +230,8 @@ export function useWinvm(): Winvm {
     names,
     name,
     titles,
-    phases,
+    // This machine's state as shown here, so the picker agrees with the toolbar.
+    phases: name !== null && p !== null && phases[name] !== p ? { ...phases, [name]: p } : phases,
     rename,
     refresh: async () => {
       await loadNames()

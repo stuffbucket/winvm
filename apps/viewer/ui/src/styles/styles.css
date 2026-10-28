@@ -378,6 +378,60 @@ html[data-os="macos"] .toolbar {
   image-rendering: auto;
 }
 
+/* The machine is paused or asleep: the picture dims under a large glyph, and
+   fades in and out quickly. Off with "Show Pause Overlay" (clean screenshots). */
+.screen__held {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-4);
+  background: var(--scrim-paused);
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transition:
+    opacity 150ms ease-out,
+    visibility 0s linear 150ms;
+}
+
+.screen__held--on {
+  opacity: 1;
+  visibility: visible;
+  transition:
+    opacity 150ms ease-out,
+    visibility 0s;
+}
+
+.screen__held-mark {
+  display: grid;
+  place-items: center;
+  inline-size: calc(var(--size-2xl) * 2.5);
+  block-size: calc(var(--size-2xl) * 2.5);
+  border-radius: var(--radius-pill);
+  background: var(--surface-card);
+  border: var(--border-width-hairline) solid var(--border-subtle);
+  box-shadow: var(--elevation-modal);
+  color: var(--text-strong);
+}
+
+.screen__held-mark svg {
+  inline-size: calc(var(--size-2xl) * 1.2);
+  block-size: calc(var(--size-2xl) * 1.2);
+}
+
+.screen__held-hint {
+  margin: 0;
+  padding: var(--space-1) var(--space-3);
+  border-radius: var(--radius-pill);
+  background: var(--surface-card);
+  border: var(--border-width-hairline) solid var(--border-subtle);
+  font-size: var(--text-sm);
+  color: var(--text-base-color);
+}
+
 .screen__message {
   position: absolute;
   inset: 0;

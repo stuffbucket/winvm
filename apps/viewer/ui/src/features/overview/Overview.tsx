@@ -48,7 +48,7 @@ export function Overview(p: OverviewProps): JSX.Element {
       </div>
     )
   }
-  if (p.phase === null || p.phase === "running" || p.phase === "starting" || p.phase === "paused") {
+  if (p.phase === null || p.phase === "running" || p.phase === "starting" || p.phase === "paused" || p.phase === "asleep") {
     return (
       <div className="overview overview--quiet">
         <div className="overview__content">

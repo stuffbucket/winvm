@@ -70,6 +70,7 @@
   --accent-destructive: #b32d3f;
   --accent-destructive-foreground: #ffffff;
   --scrim: rgb(0 0 0 / 0.5);
+  --scrim-paused: rgb(143 143 143 / 0.2);
 
   /* ---- Focus ring ---- */
   --focus-ring-width: 2px;
