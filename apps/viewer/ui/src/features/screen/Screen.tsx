@@ -1,15 +1,19 @@
 import RFB from "novnc/core/rfb.js"
-import { useEffect, useLayoutEffect, useRef, useState } from "react"
+import * as KeyboardUtil from "novnc/core/input/util.js"
+import { forwardRef, useEffect, useImperativeHandle, useLayoutEffect, useRef, useState } from "react"
 
 import { type Size, drawSize, guestSizeFor, sameSize, scaleFor } from "@winvm/displayfit"
 
 import { onLiveResize, trace } from "../../backend"
 import { t } from "../../i18n"
 import type { Connection } from "../../model"
+import { GuestKeyboardRouter, sendCtrlAltDelete, sendWindowsKey } from "./keyboard"
 import { LiveResize, type ResizePhase } from "./resize"
 
 interface ScreenProps {
   readonly connection: Connection
+  readonly keyboardCaptured: boolean
+  onKeyboardCaptured(captured: boolean): void
   /**
    * The guest's screen can follow the view (virtio-gpu). Then the viewer asks
    * QEMU for the view's size in device pixels and `onGuestSize` has the guest
@@ -18,6 +22,11 @@ interface ScreenProps {
    */
   readonly resizable: boolean
   readonly onGuestSize?: (size: Size, scale: number) => Promise<void>
+}
+
+export interface ScreenHandle {
+  sendWindowsKey(): void
+  sendCtrlAltDelete(): void
 }
 
 type View = "connecting" | "connected" | "lost" | "refused"
@@ -37,11 +46,15 @@ const dpr = (): number => window.devicePixelRatio || 1
  * new size), out of sight, and the copy goes once the guest's picture is drawn
  * in full at the size asked for, one guest pixel per device pixel.
  */
-export function Screen({ connection, resizable, onGuestSize }: ScreenProps): JSX.Element {
+export const Screen = forwardRef<ScreenHandle, ScreenProps>(function Screen(
+  { connection, keyboardCaptured, onKeyboardCaptured, resizable, onGuestSize },
+  ref,
+): JSX.Element {
   const area = useRef<HTMLDivElement | null>(null)
   const target = useRef<HTMLDivElement | null>(null)
   const still = useRef<HTMLCanvasElement | null>(null)
   const rfb = useRef<RFB | null>(null)
+  const keyboard = useRef<GuestKeyboardRouter | null>(null)
   const [view, setView] = useState<View>("connecting")
   const [attempt, setAttempt] = useState(0)
   // The framebuffer drawn, and the view's size in CSS pixels, for the 1:1 box.
@@ -53,6 +66,27 @@ export function Screen({ connection, resizable, onGuestSize }: ScreenProps): JSX
   const { websocketPort, password } = connection
   const guestSize = useRef(onGuestSize)
   guestSize.current = onGuestSize
+  const captured = useRef(keyboardCaptured)
+  captured.current = keyboardCaptured
+  const captureChanged = useRef(onKeyboardCaptured)
+  captureChanged.current = onKeyboardCaptured
+
+  useImperativeHandle(
+    ref,
+    () => ({
+      sendWindowsKey: () => {
+        const conn = rfb.current
+        if (conn !== null) sendWindowsKey((keysym, code, down) => conn.sendKey(keysym, code, down))
+      },
+      sendCtrlAltDelete: () => {
+        const conn = rfb.current
+        if (conn !== null) sendCtrlAltDelete((keysym, code, down) => conn.sendKey(keysym, code, down))
+      },
+    }),
+    [],
+  )
+
+  useEffect(() => keyboard.current?.setCaptured(keyboardCaptured), [keyboardCaptured])
 
   useEffect(() => {
     const el = target.current
@@ -60,9 +94,33 @@ export function Screen({ connection, resizable, onGuestSize }: ScreenProps): JSX
     if (el === null || outer === null) return
     let closing = false
     let connected = false
+    let conn: RFB | null = null
     let retry: ReturnType<typeof setTimeout> | undefined
     setView("connecting")
-    const conn = new RFB(el, `ws://127.0.0.1:${String(websocketPort)}`, {
+    const router = new GuestKeyboardRouter({
+      send: (keysym, code, down) => conn?.sendKey(keysym, code, down),
+      translate: (event) => {
+        const keyboardEvent = event as KeyboardEvent
+        const keysym = KeyboardUtil.getKeysym(keyboardEvent)
+        return keysym === null ? null : { keysym, code: KeyboardUtil.getKeycode(keyboardEvent) }
+      },
+      releaseNoVnc: () => conn?._keyboard._allKeysUp(),
+      onCaptured: (next) => captureChanged.current(next),
+    })
+    router.setCaptured(captured.current)
+    const onKeyDown = (event: KeyboardEvent): void => router.keyDown(event)
+    const onKeyUp = (event: KeyboardEvent): void => router.keyUp(event)
+    const onBlur = (): void => router.lostFocus()
+    const onVisibility = (): void => {
+      if (document.visibilityState === "hidden") router.lostFocus()
+    }
+    el.addEventListener("keydown", onKeyDown, true)
+    el.addEventListener("keyup", onKeyUp, true)
+    window.addEventListener("blur", onBlur, true)
+    document.addEventListener("visibilitychange", onVisibility)
+    keyboard.current = router
+
+    conn = new RFB(el, `ws://127.0.0.1:${String(websocketPort)}`, {
       credentials: { password: password ?? "" },
       wsProtocols: ["binary"],
     })
@@ -203,7 +261,13 @@ export function Screen({ connection, resizable, onGuestSize }: ScreenProps): JSX
       unlisten()
       media?.removeEventListener("change", onRatio)
       if (retry !== undefined) clearTimeout(retry)
+      el.removeEventListener("keydown", onKeyDown, true)
+      el.removeEventListener("keyup", onKeyUp, true)
+      window.removeEventListener("blur", onBlur, true)
+      document.removeEventListener("visibilitychange", onVisibility)
+      router.lostFocus()
       conn.disconnect()
+      keyboard.current = null
       rfb.current = null
       setHeld(false)
       setPhase("settled")
@@ -245,4 +309,4 @@ export function Screen({ connection, resizable, onGuestSize }: ScreenProps): JSX
       )}
     </div>
   )
-}
+})

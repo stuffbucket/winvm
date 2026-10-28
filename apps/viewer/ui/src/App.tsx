@@ -18,6 +18,7 @@ import {
   popupMenu,
   revealGuestPath,
   revealInFinder,
+  setSystemKeyboardCapture,
   setWindowTitle,
   shareStart,
   shareStop,
@@ -38,7 +39,7 @@ import { useCopies } from "./features/files/useCopies"
 import { Overview } from "./features/overview/Overview"
 import { Panel } from "./features/panel/Panel"
 import { ReferenceDialog } from "./features/reference/ReferenceDialog"
-import { Screen } from "./features/screen/Screen"
+import { Screen, type ScreenHandle } from "./features/screen/Screen"
 import { defaultShell, installedList, type Launch, runnable, shellCache, shellMenu } from "./features/terminal/shells"
 import { type PanelId, Toolbar } from "./features/toolbar/Toolbar"
 import type { Verb } from "./features/winvm/useWinvm"
@@ -84,9 +85,20 @@ export function App(): JSX.Element {
   const [notice, setNotice] = useState<Notice | null>(null)
   const [reference, setReference] = useState<{ text: string | null } | null>(null)
   const [dropping, setDropping] = useState(false)
+  const [keyboardCaptured, setKeyboardCaptured] = useState(false)
+  const screen = useRef<ScreenHandle | null>(null)
 
   // A hidden window gets no animation frames, so show it straight after the first commit.
   useEffect(() => showWindow(), [])
+  useEffect(() => {
+    setSystemKeyboardCapture(keyboardCaptured).catch((error: unknown) => {
+      console.warn("changing keyboard capture failed", error)
+      if (keyboardCaptured) setKeyboardCaptured(false)
+    })
+    return () => {
+      if (keyboardCaptured) void setSystemKeyboardCapture(false)
+    }
+  }, [keyboardCaptured])
 
   const phase = w.phase
   const live = isLive(phase)
@@ -280,6 +292,10 @@ export function App(): JSX.Element {
     () =>
       onMenu((id) => {
         if (id === "new-terminal") terminal(null)
+        if (id === "capture-keyboard" && showScreen) setKeyboardCaptured(true)
+        if (id === "release-keyboard") setKeyboardCaptured(false)
+        if (id === "send-windows-key") screen.current?.sendWindowsKey()
+        if (id === "send-ctrl-alt-delete") screen.current?.sendCtrlAltDelete()
         if (id === "rename-window") setRenaming(true)
         if (id === "install-cli") void install()
         if (id === "reference") {
@@ -289,7 +305,7 @@ export function App(): JSX.Element {
             .catch((e: unknown) => setReference({ text: String(e) }))
         }
       }),
-    [install, terminal],
+    [install, terminal, showScreen],
   )
 
   useEffect(() => {
@@ -397,6 +413,7 @@ export function App(): JSX.Element {
         canActualSize={!resizable}
         open={open?.id ?? null}
         detailsOpen={detailsOpen}
+        keyboardCaptured={keyboardCaptured}
         onStart={() => run("start")}
         onShutDown={() => setConfirm({ kind: "stop" })}
         onRestart={() => setConfirm({ kind: "reboot" })}
@@ -409,6 +426,7 @@ export function App(): JSX.Element {
         onActualSize={() => setActualSize((a) => !a)}
         onScreenSharing={() => void w.openScreenSharing()}
         onDetails={() => setDetailsOpen((o) => !o)}
+        onKeyboardCapture={() => setKeyboardCaptured((captured) => !captured)}
       />
 
       <div className="stage">
@@ -508,7 +526,14 @@ export function App(): JSX.Element {
               style={frame}
             >
               {showScreen && w.connection !== null ? (
-                <Screen connection={w.connection} resizable={resizable} onGuestSize={resizeGuest} />
+                <Screen
+                  ref={screen}
+                  connection={w.connection}
+                  keyboardCaptured={keyboardCaptured}
+                  onKeyboardCaptured={setKeyboardCaptured}
+                  resizable={resizable}
+                  onGuestSize={resizeGuest}
+                />
               ) : (
                 <Overview phase={phase} status={w.status} steps={steps} canStart={c.start} onStart={() => run("start")} />
               )}

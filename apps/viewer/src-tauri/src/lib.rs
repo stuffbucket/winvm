@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
-use tauri::menu::{Menu, MenuItem, PredefinedMenuItem, HELP_SUBMENU_ID, WINDOW_SUBMENU_ID};
+use tauri::menu::{Menu, MenuItem, PredefinedMenuItem, Submenu, HELP_SUBMENU_ID, WINDOW_SUBMENU_ID};
 use tauri::{Emitter, Manager, RunEvent, WebviewUrl, WebviewWindowBuilder, WindowEvent};
 use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
 use tauri_plugin_shell::process::{CommandChild, CommandEvent};
@@ -387,6 +387,25 @@ fn menu(app: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
     let updates = MenuItem::with_id(app, "check-updates", "Check for Updates…", true, None::<&str>)?;
     let install = MenuItem::with_id(app, "install-cli", "Install Command Line Tool…", true, None::<&str>)?;
     let reference = MenuItem::with_id(app, "reference", "winvm Command Reference", true, Some("CmdOrCtrl+Shift+/"))?;
+    let capture = MenuItem::with_id(app, "capture-keyboard", "Capture Keyboard", true, None::<&str>)?;
+    let windows_key = MenuItem::with_id(app, "send-windows-key", "Send Windows Key", true, None::<&str>)?;
+    let ctrl_alt_delete = MenuItem::with_id(app, "send-ctrl-alt-delete", "Send Ctrl-Alt-Delete", true, None::<&str>)?;
+    let release = MenuItem::with_id(app, "release-keyboard", "Release Keyboard", true, None::<&str>)?;
+    let input = Submenu::with_items(
+        app,
+        "Input",
+        true,
+        &[
+            &capture,
+            &PredefinedMenuItem::separator(app)?,
+            &windows_key,
+            &ctrl_alt_delete,
+            &PredefinedMenuItem::separator(app)?,
+            &release,
+        ],
+    )?;
+    let input_index = menu.items()?.len().saturating_sub(2);
+    menu.insert(&input, input_index)?;
     if let Some(app_menu) = menu.items()?.first().and_then(|i| i.as_submenu().cloned()) {
         app_menu.insert_items(&[&install, &PredefinedMenuItem::separator(app)?], 2)?;
         app_menu.insert(&updates, 1)?;
@@ -401,6 +420,29 @@ fn menu(app: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
 #[tauri::command]
 fn trace(line: String) {
     eprintln!("{line}");
+}
+
+#[tauri::command]
+fn set_system_keyboard_capture(captured: bool) -> Result<(), String> {
+    system_keyboard_capture(captured)
+}
+
+fn system_keyboard_capture(captured: bool) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    {
+        type Connection = u32;
+        #[link(name = "CoreGraphics", kind = "framework")]
+        unsafe extern "C" {
+            fn CGSMainConnectionID() -> Connection;
+            fn CGSSetGlobalHotKeyOperatingMode(connection: Connection, mode: u32) -> i32;
+        }
+        // The same CoreGraphics SPI UTM uses: 0 enables host hotkeys, 1 disables them.
+        let result = unsafe { CGSSetGlobalHotKeyOperatingMode(CGSMainConnectionID(), u32::from(captured)) };
+        if result != 0 {
+            return Err(format!("CoreGraphics rejected keyboard capture ({result})"));
+        }
+    }
+    Ok(())
 }
 
 pub fn run() {
@@ -423,7 +465,15 @@ pub fn run() {
         })
         .on_menu_event(|app, event| {
             let id = event.id().as_ref();
-            if id == "install-cli" || id == "reference" {
+            if matches!(
+                id,
+                "install-cli"
+                    | "reference"
+                    | "capture-keyboard"
+                    | "release-keyboard"
+                    | "send-windows-key"
+                    | "send-ctrl-alt-delete"
+            ) {
                 let _ = app.emit("menu", id);
             } else if id == "new-tab" || id == "close" {
                 match focused_window(app) {
@@ -480,12 +530,14 @@ pub fn run() {
             files_open,
             copy_text,
             dragout::files_drag_out,
-            trace
+            trace,
+            set_system_keyboard_capture
         ])
         .build(tauri::generate_context!())
         .expect("winvm could not start")
         .run(|app, event| {
             if let RunEvent::Exit = event {
+                let _ = system_keyboard_capture(false);
                 stop_sharing(&app.state::<Sharing>());
             }
         });

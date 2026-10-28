@@ -28,11 +28,25 @@ export type IconName =
   | "shield"
   | "chevronDown"
   | "copy"
+  | "keyboard"
 
 // Lucide glyphs: play, power, rotate-ccw, pause, maximize, screen-share, panel-right, check, x,
 // terminal, folder, history, bot, file, monitor, file-text, download, house, hard-drive,
-// chevron-left, chevron-right, arrow-up, refresh-cw, plus; shield, quartered as Windows' elevation shield; chevron-down; copy.
+// chevron-left, chevron-right, arrow-up, refresh-cw, plus; shield, quartered as Windows' elevation shield; chevron-down; copy; keyboard.
 const PATHS: Record<IconName, ReactNode> = {
+  keyboard: (
+    <>
+      <rect width="20" height="14" x="2" y="5" rx="2" />
+      <path d="M6 9h.01" />
+      <path d="M10 9h.01" />
+      <path d="M14 9h.01" />
+      <path d="M18 9h.01" />
+      <path d="M8 13h.01" />
+      <path d="M12 13h.01" />
+      <path d="M16 13h.01" />
+      <path d="M7 17h10" />
+    </>
+  ),
   terminal: (
     <>
       <polyline points="4 17 10 11 4 5" />

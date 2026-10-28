@@ -11,6 +11,7 @@ declare module "novnc/core/rfb.js" {
     background: string
     focusOnClick: boolean
     disconnect(): void
+    sendKey(keysym: number, code: string, down?: boolean): void
     sendCredentials(credentials: { readonly password: string }): void
     /** Private in noVNC, read to send SetDesktopSize ourselves (see Screen.tsx). */
     readonly _sock: unknown
@@ -27,8 +28,17 @@ declare module "novnc/core/rfb.js" {
       readonly _fbWidth: number
       readonly _fbHeight: number
     }
+    readonly _keyboard: {
+      _allKeysUp(): void
+    }
     static readonly messages: {
       setDesktopSize(sock: unknown, width: number, height: number, id: number, flags: number): void
     }
   }
+
+}
+
+declare module "novnc/core/input/util.js" {
+  export function getKeycode(event: KeyboardEvent): string
+  export function getKeysym(event: KeyboardEvent): number | null
 }
