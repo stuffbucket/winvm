@@ -12,7 +12,7 @@ Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true })
 const { act } = await import("react")
 const { createRoot } = await import("react-dom/client")
 const cp = await import("../ui/src/features/checkpoints/checkpoints")
-const { parseSettings } = await import("../ui/src/features/checkpoints/settings")
+const { loadSettings, parseSettings, saveSettings } = await import("../ui/src/features/checkpoints/settings")
 const { draftOf, tagsOf } = await import("../ui/src/features/checkpoints/CheckpointDetails")
 const { ConfirmDialog } = await import("../ui/src/components/ConfirmDialog")
 const { parseNote, parseSaves } = await import("../ui/src/model")
@@ -338,5 +338,27 @@ describe("settings", () => {
     expect(parseSettings({ showAutomatic: false, zoom: 0.5 })).toEqual({ showAutomatic: false, zoom: 0.5 })
     expect(parseSettings({ showAutomatic: "yes", zoom: -1 })).toEqual({ showAutomatic: true, zoom: null })
     expect(parseSettings("nonsense")).toEqual({ showAutomatic: true, zoom: null })
+  })
+
+  it("go through `winvm settings --section checkpoints`, the file's one writer", async () => {
+    const calls: string[][] = []
+    let stored: unknown = null
+    const invoke = async (cmd: string, a: { args: string[] }): Promise<unknown> => {
+      if (cmd !== "winvm") throw new Error(`unexpected ${cmd}`)
+      calls.push(a.args)
+      const set = a.args.find((x) => x.startsWith("--set="))
+      if (set !== undefined) stored = JSON.parse(set.slice("--set=".length))
+      return { code: 0, stdout: JSON.stringify(stored), stderr: "" }
+    }
+    Object.assign(window, { __TAURI__: { core: { invoke } } })
+    try {
+      expect(await loadSettings()).toEqual({ showAutomatic: true, zoom: null })
+      await saveSettings({ showAutomatic: false, zoom: 2 })
+      expect(await loadSettings()).toEqual({ showAutomatic: false, zoom: 2 })
+      expect(calls[0]).toEqual(["settings", "--section", "checkpoints"])
+      expect(calls[1]).toEqual(["settings", "--section", "checkpoints", '--set={"showAutomatic":false,"zoom":2}'])
+    } finally {
+      delete (window as { __TAURI__?: unknown }).__TAURI__
+    }
   })
 })

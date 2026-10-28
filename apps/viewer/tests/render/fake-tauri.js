@@ -66,6 +66,11 @@
   async function run(args) {
     const [verb, ...rest] = args
     if (verb === "status") return out(status)
+    if (verb === "settings" && rest[0] === "--section") {
+      const set = rest.find((a) => a.startsWith("--set="))
+      if (set !== undefined) settings[rest[1]] = JSON.parse(set.slice("--set=".length))
+      return out(settings[rest[1]] ?? null)
+    }
     if (verb === "doctor") return out({ ready: true, checks: [], timeMachine: "ok" })
     if (verb === "open") return out("no screen in the fake", 1)
     if (verb === "saves" && rest.includes("note")) {
@@ -176,11 +181,6 @@
       async invoke(cmd, args = {}) {
         if (cmd === "winvm") return await run(args.args)
         if (cmd === "checkpoint_image") return await picture(args.path)
-        if (cmd === "settings_read") return settings[args.section] ?? null
-        if (cmd === "settings_write") {
-          settings[args.section] = args.value
-          return null
-        }
         if (cmd === "instance_usage") return { cpuSeconds: 1, rssKiB: 1, windows: null }
         if (cmd === "agent_fetch") throw new Error("no agent in the fake")
         if (cmd === "trace") return null
