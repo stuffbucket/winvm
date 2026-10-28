@@ -16,6 +16,7 @@ import { runtimeBin } from "./runtime"
 import { ensureService } from "./service"
 import type { InstanceMeta, Paths } from "./paths"
 import { media } from "./paths"
+import type { DisplayConfig } from "./display"
 import { RAMFB, displayArgs, readDisplay } from "./display"
 import * as share from "./share"
 import * as qga from "./qga"
@@ -42,6 +43,12 @@ export interface LaunchOptions {
    * binds viofs while no virtio-gpu driver is running. Default: share.devicesFor.
    */
   readonly shareDevices?: share.DeviceSet
+  /**
+   * The display device to use instead of the instance's display.json. Only for
+   * working out a command line (saves.currentCompat asking "what if this had
+   * the other device?"), so nothing is written to find out.
+   */
+  readonly display?: DisplayConfig
 }
 
 export function qemuArgs(name: string, p: Paths, meta: InstanceMeta, o: LaunchOptions): readonly string[] {
@@ -52,7 +59,7 @@ export function qemuArgs(name: string, p: Paths, meta: InstanceMeta, o: LaunchOp
   // even found, let alone run. Once installed, the disk is the boot device and
   // the CDs are gone.
   const diskBootIndex = o.installMedia ? 1 : 0
-  const display = o.installMedia ? RAMFB : readDisplay(p)
+  const display = o.installMedia ? RAMFB : (o.display ?? readDisplay(p))
   // The shared folder and the clipboard on virtio-gpu instances; the shared
   // folder's device alone on a build, so provisioning binds its driver on
   // ramfb. Nothing on ramfb instances or a runtime without them. Guest RAM

@@ -7,7 +7,9 @@
  *                      --fast (= --format mapped) for a save loaded over and over
  *   load [name]        back to a save, running or stopped (default: the newest);
  *                      the save's manifest says which RAM format to read
- *   saves [rm <name>]  list them, with compatibility; or delete one
+ *   saves [rm <name>]  list them, with compatibility; or delete one (and its note)
+ *   saves note <name>  a person's note on a save — title, text, tags (notes.ts);
+ *                      shown with none of --title/--text/--tags/--clear, else written
  *   pause / resume     freeze / unfreeze the vCPUs (resume fixes the clock)
  *   sleep / wake       lock Windows, then freeze it marked asleep / resume it
  *   lock               Windows back to its lock screen
@@ -21,6 +23,8 @@
  * instance, where no one has taken "fresh", `rewind` goes back to the baseline
  * taken at its first boot — the state you most often want back.
  */
+import { readFileSync } from "node:fs"
+
 import type { Args } from "./args"
 import { instanceName } from "./args"
 import * as agent from "./agent"
@@ -28,6 +32,7 @@ import { alignGuestTimeZone, formatOffset, measureOffset, syncGuestClock } from 
 import * as finder from "./finder"
 import * as frozen from "./frozen"
 import { lockWindows } from "./lock"
+import * as notes from "./notes"
 import type { InstanceMeta, Paths } from "./paths"
 import { pathsFor, readImageMeta, readMeta } from "./paths"
 import * as qemu from "./qemu"
@@ -198,11 +203,23 @@ export function list(args: Args): number {
     const target = args.positional[1]
     if (target === undefined) return fail("usage: winvm saves rm <name>")
     if (!saves.hasSave(name, target)) return fail(`instance "${name}" has no save "${target}"`)
+    let hadNote = false
+    try {
+      hadNote = notes.readNote(name, target) !== null
+    } catch {
+      hadNote = false
+    }
     saves.removeSave(name, target)
-    console.log(`deleted save "${target}"`)
+    console.log(`deleted save "${target}"${hadNote ? " and its note" : ""}`)
     return 0
   }
+  if (args.positional[0] === "note") return note(args)
   const rows = saves.listSaves(name)
+  if (args.flags.has("json")) {
+    const ctx = rows.length > 0 ? saves.reportContext(name) : { compat: null }
+    console.log(JSON.stringify(saves.savesReport(rows, ctx), null, 2))
+    return 0
+  }
   const meta = readMeta(name)
   let compat: string | null = null
   let before: string | null = null
@@ -213,10 +230,6 @@ export function list(args: Args): number {
     }
   } catch {
     compat = null
-  }
-  if (args.flags.has("json")) {
-    console.log(JSON.stringify(saves.savesReport(rows, compat, before), null, 2))
-    return 0
   }
   if (rows.length === 0) {
     console.log(`instance "${name}" has no saves (${saves.savesDir(name)})`)
@@ -239,6 +252,62 @@ export function list(args: Args): number {
   }
   console.log(`\n  ${saves.savesDir(name)}`)
   return 0
+}
+
+const NOTE_USAGE = "usage: winvm saves note [-i name] <save> [--title T] [--text TEXT|-] [--tags a,b,c] [--clear] [--json]"
+
+/** Standard input, whole: `--text -`. */
+const readStdin = (): string => readFileSync(0, "utf8")
+
+/**
+ * `saves note <save>`: with none of --title/--text/--tags/--clear, show the
+ * note; otherwise change it — --clear first (so `--clear --title T` replaces
+ * the whole note), then the fields given, merged into what is there.
+ */
+export function note(args: Args, stdin: () => string = readStdin): number {
+  const name = instanceName(args)
+  const target = args.positional[1]
+  if (target === undefined) return fail(NOTE_USAGE)
+  const err = saves.nameError(target)
+  if (err !== null) return fail(err)
+  if (!saves.hasSave(name, target)) return fail(`instance "${name}" has no save "${target}"`)
+  const json = args.flags.has("json")
+  const title = args.flags.get("title")
+  let text = args.flags.get("text")
+  const tags = args.flags.get("tags")
+  const clear = args.flags.has("clear")
+  try {
+    if (title === undefined && text === undefined && tags === undefined && !clear) {
+      const n = notes.readNote(name, target)
+      if (json) console.log(JSON.stringify(n, null, 2))
+      else if (n === null) console.log(`save "${target}" has no note`)
+      else printNote(n)
+      return 0
+    }
+    if (text === "-") text = stdin().replace(/\s+$/, "")
+    const had = notes.readNote(name, target) !== null
+    if (clear) notes.removeNote(name, target)
+    const patch: notes.NotePatch = {
+      ...(title === undefined ? {} : { title }),
+      ...(text === undefined ? {} : { text }),
+      ...(tags === undefined ? {} : { tags: tags.split(",") }),
+    }
+    const written = Object.keys(patch).length === 0 ? null : notes.writeNote(name, target, patch)
+    const result = written === null || notes.isEmptyNote(written) ? null : written
+    if (json) console.log(JSON.stringify(result, null, 2))
+    else if (result !== null) console.log(`updated the note on save "${target}"`)
+    else console.log(had ? `deleted the note on save "${target}"` : `save "${target}" has no note`)
+    return 0
+  } catch (error) {
+    return fail(msg(error))
+  }
+}
+
+function printNote(n: notes.Note): void {
+  console.log(`title: ${n.title ?? "(none)"}`)
+  if (n.tags.length > 0) console.log(`tags:  ${n.tags.join(", ")}`)
+  console.log(`updated ${new Date(n.updatedAt).toLocaleString()}`)
+  if (n.text !== "") console.log(`\n${n.text}`)
 }
 
 /**

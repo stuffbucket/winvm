@@ -246,9 +246,12 @@ describe("the save hash and the guest's resolution", () => {
   })
 
   it("qemu.ts builds the display arguments from display.json alone", () => {
+    // `o.display` is a device, never a size: saves.currentCompat passes one to
+    // ask "what if this instance had the other device?" without writing it.
     const src = readFileSync(resolve(import.meta.dir, "../src/qemu.ts"), "utf8")
-    expect(src).toContain("const display = o.installMedia ? RAMFB : readDisplay(p)")
+    expect(src).toContain("const display = o.installMedia ? RAMFB : (o.display ?? readDisplay(p))")
     expect(src).toContain("...displayArgs(display),")
+    expect(src).toContain("readonly display?: DisplayConfig")
   })
 })
 

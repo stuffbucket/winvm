@@ -8,6 +8,7 @@ import { formatOffset, parseGuestTz } from "../src/clock"
 import {
   baseIdentity,
   compatDiff,
+  compatDiffKeys,
   compatHash,
   defaultName,
   FILES,
@@ -18,6 +19,7 @@ import {
   ramFileFor,
   ramFormatOf,
   savesReport,
+  thumbSize,
   shQuote,
 } from "../src/saves"
 
@@ -183,7 +185,31 @@ describe("helpers", () => {
   })
 })
 
+describe("compatDiffKeys", () => {
+  const parts = { base: "b", hardware: "h", firmware: "f", qemu: "11.1.2" }
+  it("names the parts that differ, in a fixed order", () => {
+    expect(compatDiffKeys(parts, parts)).toEqual([])
+    expect(compatDiffKeys(parts, { ...parts, qemu: "11.2.0", base: "x" })).toEqual(["base", "qemu"])
+    expect(compatDiffKeys(parts, { base: "1", hardware: "2", firmware: "3", qemu: "4" })).toEqual(["base", "hardware", "firmware", "qemu"])
+  })
+})
+
+describe("thumbSize", () => {
+  it("fits a landscape screen to the box's width, keeping its aspect", () => {
+    expect(thumbSize({ width: 1920, height: 1080 })).toEqual({ width: 480, height: 270 })
+    expect(thumbSize({ width: 800, height: 600 })).toEqual({ width: 400, height: 300 })
+  })
+  it("fits a portrait screen to the box's height", () => {
+    expect(thumbSize({ width: 1080, height: 1920 })).toEqual({ width: 169, height: 300 })
+  })
+  it("never enlarges a screen smaller than the box", () => {
+    expect(thumbSize({ width: 320, height: 200 })).toEqual({ width: 320, height: 200 })
+    expect(thumbSize({ width: 100, height: 100 }, { width: 50, height: 400 })).toEqual({ width: 50, height: 50 })
+  })
+})
+
 describe("savesReport", () => {
+  const parts = { base: "b", hardware: "h", firmware: "f", qemu: "11.1.2" }
   const m = {
     name: "before-update",
     instance: "default",
@@ -193,26 +219,75 @@ describe("savesReport", () => {
     compat: "abc",
     image: "win11-arm64",
   }
+  const plain = { format: "zstd" as const, screenshot: null, thumbnail: null, title: null, notes: null }
 
-  it("lists each save with whether it loads here", () => {
-    expect(savesReport([{ name: m.name, manifest: m }, { name: "old", manifest: { ...m, name: "old", compat: "zzz" } }], "abc")).toEqual([
-      { name: "before-update", kind: "manual", createdAt: m.createdAt, bytes: 2048, compatible: true },
-      { name: "old", kind: "manual", createdAt: m.createdAt, bytes: 2048, compatible: false },
+  it("lists each save with whether it loads here, and its format", () => {
+    const rows = [
+      { name: m.name, manifest: m },
+      { name: "old", manifest: { ...m, name: "old", compat: "zzz", ramFile: FILES.ramMapped } },
+    ]
+    expect(savesReport(rows, { compat: { hash: "abc", parts } })).toEqual([
+      { name: "before-update", kind: "manual", createdAt: m.createdAt, bytes: 2048, compatible: true, ...plain },
+      { name: "old", kind: "manual", createdAt: m.createdAt, bytes: 2048, compatible: false, ...plain, format: "mapped" as const },
     ])
   })
 
-  it("says compatibility is unknown when it cannot be worked out, and keeps the note", () => {
-    expect(savesReport([{ name: m.name, manifest: { ...m, note: "clean install" } }], null)[0]).toEqual({
+  it("says compatibility is unknown when it cannot be worked out, and keeps the manifest's note", () => {
+    expect(savesReport([{ name: m.name, manifest: { ...m, note: "clean install" } }], { compat: null })[0]).toEqual({
       name: "before-update",
       kind: "manual",
       createdAt: m.createdAt,
       bytes: 2048,
       compatible: null,
       note: "clean install",
+      ...plain,
     })
   })
 
   it("leaves out a save whose manifest cannot be read", () => {
-    expect(savesReport([{ name: "broken", manifest: null, error: "bad json" }], "abc")).toEqual([])
+    expect(savesReport([{ name: "broken", manifest: null, error: "bad json" }], { compat: { hash: "abc", parts } })).toEqual([])
+  })
+
+  it("points at the screenshots that exist, with the size the manifest recorded", () => {
+    const shot = { ...m, screenshot: FILES.screen, thumbnail: FILES.thumb, screenSize: { width: 1920, height: 1080 } }
+    const file = (save: string, f: string): string | null => (f === FILES.screen ? `/saves/${save}/${f}` : null)
+    const [e] = savesReport([{ name: m.name, manifest: shot }], { compat: null, file })
+    expect(e?.screenshot).toBe("/saves/before-update/screen.png")
+    // The file decides, not the manifest: thumb.png is not there.
+    expect(e?.thumbnail).toBeNull()
+    expect(e?.screenSize).toEqual({ width: 1920, height: 1080 })
+  })
+
+  it("carries the person's note and its title", () => {
+    const n = { title: "Clean", text: "before Office", tags: ["win11"], updatedAt: "2026-10-28T00:00:00.000Z" }
+    const [e] = savesReport([{ name: m.name, manifest: m }], { compat: null, note: (s) => (s === m.name ? n : null) })
+    expect(e?.title).toBe("Clean")
+    expect(e?.notes).toEqual(n)
+    const [untitled] = savesReport([{ name: m.name, manifest: m }], { compat: null, note: () => ({ ...n, title: null }) })
+    expect(untitled?.title).toBeNull()
+    expect(untitled?.notes?.text).toBe("before Office")
+  })
+
+  it("says which parts keep an incompatible save from loading, telling a display change apart", () => {
+    const now = { hash: "now", parts }
+    const why = (saved: typeof parts, displayHardware: string[] = []): unknown =>
+      savesReport([{ name: m.name, manifest: { ...m, compat: "then", compatParts: saved } }], { compat: now, displayHardware })[0]
+        ?.incompatible
+    expect(why({ ...parts, qemu: "11.0.0", base: "old" })).toEqual(["base", "qemu"])
+    expect(why({ ...parts, hardware: "other" })).toEqual(["hardware"])
+    // The save's hardware is what this instance would be with the other display device.
+    expect(why({ ...parts, hardware: "ramfb-h" }, ["ramfb-h"])).toEqual(["display"])
+    expect(why({ ...parts, hardware: "ramfb-h", firmware: "old" }, ["ramfb-h"])).toEqual(["display", "firmware"])
+  })
+
+  it("leaves out `incompatible` unless the save is known not to load and says why", () => {
+    const now = { hash: "abc", parts }
+    expect(savesReport([{ name: m.name, manifest: { ...m, compatParts: parts } }], { compat: now })[0]).not.toHaveProperty("incompatible")
+    const unknown = { ...m, compat: "x", compatParts: { ...parts, base: "o" } }
+    expect(savesReport([{ name: m.name, manifest: unknown }], { compat: null })[0]).not.toHaveProperty("incompatible")
+    // An old save with no recorded parts: incompatible, but no way to say why.
+    const [old] = savesReport([{ name: m.name, manifest: { ...m, compat: "x" } }], { compat: now })
+    expect(old?.compatible).toBe(false)
+    expect(old).not.toHaveProperty("incompatible")
   })
 })
