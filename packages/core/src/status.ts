@@ -19,7 +19,7 @@ import { existsSync, readFileSync, readdirSync, statSync } from "node:fs"
 import { connect } from "node:net"
 import { resolve } from "node:path"
 
-import { describeDisplay, readDisplay } from "./display"
+import { describeDisplay, displayFromCommandLine, readDisplay } from "./display"
 import { qmpCommand } from "./monitor"
 import { home, instanceDir, listInstances, pathsFor, readImageMeta, readMeta } from "./paths"
 import type { Paths } from "./paths"
@@ -73,7 +73,7 @@ export interface InstanceStatus {
   readonly cpus: number | null
   readonly memoryMiB: number | null
   readonly display: number | null
-  /** The display device and its size, as configured for this instance (display.ts). */
+  /** The running display's launch profile, or the cold-boot preference when stopped or unavailable. */
   readonly screen: string | null
   readonly vncPort: number | null
   readonly websocketPort: number | null
@@ -199,21 +199,26 @@ export function parseHardware(argv: readonly string[]): { cpus: number | null; m
 }
 
 const psField = (pid: number, field: string): string =>
-  (spawnSync("ps", ["-o", `${field}=`, "-p", String(pid)], { encoding: "utf8" }).stdout ?? "").trim()
+  (spawnSync("ps", ["-ww", "-o", `${field}=`, "-p", String(pid)], { encoding: "utf8" }).stdout ?? "").trim()
 
-function hardwareFor(name: string, p: Paths, pid: number | null): { cpus: number | null; memoryMiB: number | null } {
+function hardwareFor(name: string, p: Paths, pid: number | null): Pick<InstanceStatus, "cpus" | "memoryMiB" | "screen"> {
+  const configured = readDisplay(p)
+  const screen = describeDisplay(configured)
   // A running guest: what it was actually started with.
   if (pid !== null) {
     const cmd = psField(pid, "command")
-    if (cmd !== "") return parseHardware(cmd.split(/\s+/))
+    if (cmd !== "") return {
+      ...parseHardware(cmd.split(/\s+/)),
+      screen: describeDisplay(displayFromCommandLine(cmd) ?? configured),
+    }
   }
   // A stopped one: what the next start would use.
   const meta = readMeta(name)
-  if (meta === null) return { cpus: null, memoryMiB: null }
+  if (meta === null) return { cpus: null, memoryMiB: null, screen }
   try {
-    return parseHardware(qemu.qemuArgs(name, p, meta, { installMedia: false, ephemeral: false, virtioBoot: false }))
+    return { ...parseHardware(qemu.qemuArgs(name, p, meta, { installMedia: false, ephemeral: false, virtioBoot: false })), screen }
   } catch {
-    return { cpus: null, memoryMiB: null }
+    return { cpus: null, memoryMiB: null, screen }
   }
 }
 
@@ -394,7 +399,6 @@ export async function gather(name: string, deep = true): Promise<InstanceStatus>
     uptimeSeconds: pid === null ? null : parseEtime(psField(pid, "etime")),
     ...hardwareFor(name, p, pid),
     display: meta.vnc,
-    screen: describeDisplay(readDisplay(p)),
     vncPort: vncPort(meta.vnc),
     websocketPort: websocketPort(meta.vnc),
     overlayBytes: allocatedBytes(p.overlay),

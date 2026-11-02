@@ -68,9 +68,11 @@ winvm display -i test 1920x1080   # sets the Windows resolution and reboots
 ```
 
 The second `display` is needed because Windows starts a new monitor at
-1024x768. Changing the display device means that instance's existing
-snapshots and saves no longer load. `winvm display -i test ramfb` switches
-back.
+1024x768. New file saves remember and automatically restore their captured
+display, even after you change this preference. Internal snapshots and older
+file saves without a recorded display profile still need the original display.
+`winvm display -i test ramfb` switches back to the default device. See
+[saves](saves.md) for restore behavior and compatibility limits.
 
 ## Time Machine
 

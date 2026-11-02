@@ -195,14 +195,16 @@ export function list(args: Args): number {
   }
   const rows = saves.listSaves(name)
   const meta = readMeta(name)
-  let compat: string | null = null
-  try {
-    if (meta !== null && rows.length > 0) compat = saves.currentCompat(name, meta).hash
-  } catch {
-    compat = null
-  }
+  const report = saves.savesReport(rows, (m) => {
+    try {
+      const target = meta ?? { image: m.image, vnc: 0, created: "" }
+      return saves.compatForSave(name, target, m).compatible
+    } catch {
+      return null
+    }
+  })
   if (args.flags.has("json")) {
-    console.log(JSON.stringify(saves.savesReport(rows, compat), null, 2))
+    console.log(JSON.stringify(report, null, 2))
     return 0
   }
   if (rows.length === 0) {
@@ -218,7 +220,8 @@ export function list(args: Args): number {
     }
     const d = new Date(m.createdAt)
     const created = `${saves.defaultName(d).slice(0, 10)} ${saves.defaultName(d).slice(11).replaceAll("-", ":")}`
-    const ok = compat === null ? "?" : m.compat === compat ? "yes" : "no"
+    const compatible = report.find((entry) => entry.name === m.name)?.compatible
+    const ok = compatible == null ? "?" : compatible ? "yes" : "no"
     console.log(
       `  ${m.name.padEnd(22)} ${m.kind.padEnd(9)} ${saves.ramFormatOf(m).padEnd(7)} ${created.padEnd(19)} ${saves.formatBytes(m.bytes).padStart(8)}  ${ok}` +
         (m.note === undefined ? "" : `  ${m.note}`),
@@ -311,7 +314,7 @@ export async function recallStow(name: string, args: Args): Promise<number | nul
   const meta = readMeta(name)
   if (meta !== null) {
     const m = saves.readSave(name, saves.STOW)
-    if (m !== null && m.compat !== saves.currentCompat(name, meta).hash) {
+    if (m !== null && !saves.compatForSave(name, meta, m).compatible) {
       console.warn(`warning: the stow save no longer matches this VM's hardware; booting instead (it is kept — \`winvm saves -i ${name}\`)`)
       return null
     }
@@ -347,7 +350,7 @@ export async function afterBoot(name: string, args: Args): Promise<void> {
     return
   }
   const existing = saves.readSave(name, saves.BASELINE)
-  if (existing !== null && existing.compat === saves.currentCompat(name, meta).hash) {
+  if (existing !== null && saves.compatForSave(name, meta, existing).compatible) {
     saves.clearPristine(name)
     return
   }

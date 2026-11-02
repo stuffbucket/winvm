@@ -339,6 +339,12 @@ describe("display", () => {
     expect(deviceFromCommandLine("qemu -device ramfb -display none")).toBe("ramfb")
   })
 
+  it("does not mistake unrelated arguments or ambiguous GPUs for the running display", () => {
+    expect(deviceFromCommandLine("qemu -name virtio-gpu-pci,xres=1920,yres=1080 -device ramfb")).toBe("ramfb")
+    expect(deviceFromCommandLine("qemu -device ramfb -device virtio-gpu-pci,xres=1920,yres=1080")).toBeNull()
+    expect(deviceFromCommandLine("qemu -device virtio-gpu-pci,xres=1920,yres=1080,extra=on")).toBeNull()
+  })
+
   it("finds the virtio GPU's monitor entries in `reg query` output", () => {
     const base = "HKEY_LOCAL_MACHINE\\SYSTEM\\CurrentControlSet\\Control\\GraphicsDrivers\\Configuration"
     const out = [

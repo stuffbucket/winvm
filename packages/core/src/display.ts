@@ -21,10 +21,10 @@
  *
  * The display device is part of the machine. A snapshot or a saved state holds
  * the state of every device and only restores into a machine with the same
- * set, so switching an instance's display makes its existing snapshots and
- * saves unrestorable (QEMU refuses them; nothing is corrupted). That is why it
- * is a deliberate per-instance choice, stored in the instance directory, rather
- * than a new default that would silently strand every snapshot already taken.
+ * set. File saves record and replay the captured display on restore, independent
+ * of this cold-boot preference. Internal snapshots and legacy file saves without
+ * a display profile still need the original configuration. The default stays
+ * unchanged so those older checkpoints are not silently stranded.
  * A build always uses ramfb: WinPE has no virtio-gpu driver.
  */
 import { readFileSync, rmSync, writeFileSync } from "node:fs"
@@ -39,6 +39,28 @@ export type DisplayConfig =
 export const RAMFB: DisplayConfig = { device: "ramfb" }
 
 export const displayPath = (p: Paths): string => resolve(p.dir, "display.json")
+
+/** A recorded launch profile, not a measured framebuffer size. */
+export function parseDisplayConfig(value: unknown): DisplayConfig | null {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return null
+  const r = value as Record<string, unknown>
+  if (r["device"] === "ramfb") return RAMFB
+  const width = r["width"]
+  const height = r["height"]
+  if (r["device"] !== "virtio-gpu" || typeof width !== "number" || typeof height !== "number" ||
+    !Number.isInteger(width) || !Number.isInteger(height) ||
+    width < 640 || width > 7680 || height < 480 || height > 4320) return null
+  return { device: "virtio-gpu", width, height }
+}
+
+export function displayFromCommandLine(cmd: string): DisplayConfig | null {
+  const devices = [...cmd.matchAll(/(?:^|\s)-device\s+(ramfb|virtio-gpu-pci[^\s]*)(?=\s|$)/g)]
+  if (devices.length !== 1) return null
+  const device = devices[0]?.[1]
+  if (device === "ramfb") return RAMFB
+  const gpu = /^virtio-gpu-pci,xres=(\d+),yres=(\d+)$/.exec(device ?? "")
+  return gpu === null ? null : parseDisplayConfig({ device: "virtio-gpu", width: Number(gpu[1]), height: Number(gpu[2]) })
+}
 
 /** The instance's display; ramfb when it has never been set. */
 export function readDisplay(p: Paths): DisplayConfig {

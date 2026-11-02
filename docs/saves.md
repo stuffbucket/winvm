@@ -30,6 +30,24 @@ winvm clock                      # the guest's clock offset, and fix it
 - **Compatibility.** A save loads only into the same virtual hardware, image,
   firmware and QEMU version. `saves` shows which ones still load, and `load`
   says what changed when it refuses.
+- **Display.** New file saves record the display device and its launch dimensions
+  from the running VM, not a preference waiting for a restart. Loading restarts
+  QEMU with that captured display automatically: a save taken with a 1920×1080
+  virtio-GPU still loads after you configure 2560×1440, and a ramfb save restores
+  ramfb. The viewer can fit the restored framebuffer into its current window.
+  This does not resize Windows after restore or implement live guest resizing.
+  Your configured preference is unchanged and applies on the next cold boot
+  (`start --boot` bypasses a stow; ordinary `start` recalls its captured display).
+  `winvm display` shows both configured and running displays. Saves made after a
+  restore record the running display again. Listing, stow recall and golden
+  cloning use the same display-aware compatibility check, including saves kept
+  after `destroy --keep-saves`.
+- **Older checkpoints.** File saves without a recorded display profile still
+  require the original configured display. Restore that preference with
+  `winvm display` before loading; an old hardware hash cannot reveal its
+  dimensions. Internal `snapshot`/`rewind` checkpoints also still require their
+  original display. Other hardware, image, firmware and QEMU compatibility
+  checks remain strict; recording the display does not migrate old runtime keys.
 - **Clock.** Loading, resuming or recalling a stow sets the guest's clock to
   the host's.
 

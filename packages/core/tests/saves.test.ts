@@ -65,6 +65,19 @@ describe("manifest", () => {
     expect(() => parseManifest(JSON.stringify({ ...good, note: 3 }))).toThrow(/note/)
     expect(() => parseManifest(JSON.stringify({ ...good, format: "lz4" }))).toThrow(/format/)
   })
+  it("rejects malformed saved display profiles rather than launching different hardware", () => {
+    for (const display of [null, "ramfb", {}, { device: "other" }, { device: "virtio-gpu" },
+      { device: "virtio-gpu", width: 0, height: 900 },
+      { device: "virtio-gpu", width: 1600.5, height: 900 },
+      { device: "virtio-gpu", width: 1600, height: "900" }]) {
+      expect(() => parseManifest(JSON.stringify({ ...good, display }))).toThrow(/display/)
+    }
+  })
+  it("retains the saved display without requiring one in legacy manifests", () => {
+    const display = { device: "virtio-gpu", width: 1600, height: 900 } as const
+    expect(parseManifest(JSON.stringify({ ...good, display })).display).toEqual(display)
+    expect(parseManifest(JSON.stringify(good)).display).toBeUndefined()
+  })
   it("accepts golden saves and a RAM format", () => {
     const m = parseManifest(JSON.stringify({ ...good, name: "golden", kind: "golden", format: "mapped" }))
     expect(m.kind).toBe("golden")

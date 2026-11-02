@@ -16,7 +16,7 @@ import { runtimeBin } from "./runtime"
 import { ensureService } from "./service"
 import type { InstanceMeta, Paths } from "./paths"
 import { media } from "./paths"
-import { RAMFB, displayArgs, readDisplay } from "./display"
+import { RAMFB, displayArgs, readDisplay, type DisplayConfig } from "./display"
 import * as qga from "./qga"
 import * as qmp from "./qmp"
 import { applyPassword, ensureFreeDisplay, vncArg } from "./vnc"
@@ -35,6 +35,8 @@ export interface LaunchOptions {
   readonly loadvm?: string
   /** QEMU `-incoming <uri>`: start paused, fed a migration stream (a file save). See saves.ts. */
   readonly incoming?: string
+  /** Restore hardware without changing the instance's cold-boot preference. */
+  readonly display?: DisplayConfig
 }
 
 export function qemuArgs(name: string, p: Paths, meta: InstanceMeta, o: LaunchOptions): readonly string[] {
@@ -124,7 +126,7 @@ export function qemuArgs(name: string, p: Paths, meta: InstanceMeta, o: LaunchOp
     // Not virtio-gpu by default, which needs viogpudo — UTM's own docs report
     // that driver black-screening recent Windows 11. An instance can opt in to
     // it for a larger screen (`winvm display`); a build never does. See display.ts.
-    ...displayArgs(o.installMedia ? RAMFB : readDisplay(p)),
+    ...displayArgs(o.installMedia ? RAMFB : o.display ?? readDisplay(p)),
     "-display", "none",
     // Loopback only, with a websocket listener for the browser view and a
     // password, which macOS Screen Sharing needs and the websocket must have.

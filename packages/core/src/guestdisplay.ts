@@ -17,7 +17,7 @@
  */
 import { spawnSync } from "node:child_process"
 
-import type { DisplayConfig } from "./display"
+import { displayFromCommandLine, type DisplayConfig } from "./display"
 import { withQmp } from "./monitor"
 import type { Paths } from "./paths"
 import * as qemu from "./qemu"
@@ -34,17 +34,20 @@ export const deviceLabel = (cfg: DisplayConfig): string =>
 
 /** The device the RUNNING QEMU was started with, read off its command line. */
 export function liveDevice(p: Paths): string | null {
+  const display = liveDisplay(p)
+  return display === null ? null : deviceLabel(display)
+}
+
+export function liveDisplay(p: Paths): DisplayConfig | null {
   const pid = qemu.pidOf(p)
   if (pid === null) return null
-  const cmd = (spawnSync("ps", ["-o", "command=", "-p", String(pid)], { encoding: "utf8" }).stdout ?? "").trim()
-  return deviceFromCommandLine(cmd)
+  const r = spawnSync("ps", ["-ww", "-o", "command=", "-p", String(pid)], { encoding: "utf8" })
+  return r.status === 0 ? displayFromCommandLine(r.stdout.trim()) : null
 }
 
 export function deviceFromCommandLine(cmd: string): string | null {
-  const gpu = /virtio-gpu-pci,xres=(\d+),yres=(\d+)/.exec(cmd)
-  if (gpu !== null) return `virtio-gpu ${String(gpu[1])}x${String(gpu[2])}`
-  if (/(^|\s)ramfb(\s|$)/.test(cmd)) return "ramfb"
-  return null
+  const display = displayFromCommandLine(cmd)
+  return display === null ? null : deviceLabel(display)
 }
 
 /** The framebuffer's current size, or null if the monitor didn't answer. */

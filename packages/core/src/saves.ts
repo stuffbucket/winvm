@@ -78,6 +78,8 @@ import { createHash } from "node:crypto"
 import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs"
 import { resolve } from "node:path"
 
+import { parseDisplayConfig, readDisplay, type DisplayConfig } from "./display"
+import { liveDisplay } from "./guestdisplay"
 import { capture, requireFirmware } from "./host"
 import { currentQemuCompat, runtimeBin } from "./runtime"
 import { ensureInstance } from "./instance"
@@ -134,6 +136,8 @@ export interface Manifest {
   readonly note?: string
   /** The parts `compat` hashes, so a refusal can say which one differs. */
   readonly compatParts?: CompatParts
+  /** The running display's launch configuration. Absent in legacy saves. */
+  readonly display?: DisplayConfig
   /** RAM/device stream file name within the save directory. */
   readonly ramFile?: string
   /** Bytes of that stream on disk. */
@@ -220,7 +224,9 @@ export function parseManifest(text: string): Manifest {
   if (format !== undefined && !(RAM_FORMATS as readonly unknown[]).includes(format)) {
     throw new Error(`manifest.format must be one of ${RAM_FORMATS.join(", ")}, got ${JSON.stringify(format)}`)
   }
-  return { ...(r as object), name, instance: str("instance"), kind: kind as SaveKind, createdAt, bytes, compat: str("compat"), image: str("image") } as Manifest
+  const display = r["display"] === undefined ? undefined : parseDisplayConfig(r["display"])
+  if (display === null) throw new Error("manifest.display must be ramfb or a virtio-gpu profile with valid integer dimensions")
+  return { ...(r as object), ...(display === undefined ? {} : { display }), name, instance: str("instance"), kind: kind as SaveKind, createdAt, bytes, compat: str("compat"), image: str("image") } as Manifest
 }
 
 const sha = (s: string | Buffer): string => createHash("sha256").update(s).digest("hex")
@@ -342,7 +348,7 @@ export function migrationPlan(format: RamFormat, ramPath: string, zstd: string, 
 let firmwareDigest: string | null = null
 let qemuVersion: string | null = null
 
-export function currentCompat(instance: string, meta: InstanceMeta): { readonly hash: string; readonly parts: CompatParts } {
+export function currentCompat(instance: string, meta: InstanceMeta, display?: DisplayConfig): { readonly hash: string; readonly parts: CompatParts } {
   const st = statSync(basePath(meta.image))
   let created = ""
   try {
@@ -356,6 +362,7 @@ export function currentCompat(instance: string, meta: InstanceMeta): { readonly 
     installMedia: false,
     ephemeral: false,
     virtioBoot: readImageMeta(meta.image)?.virtioBoot === true,
+    ...(display === undefined ? {} : { display }),
   })
   const parts: CompatParts = {
     base: baseIdentity(meta.image, st.size, st.mtimeMs, created),
@@ -364,6 +371,18 @@ export function currentCompat(instance: string, meta: InstanceMeta): { readonly 
     qemu: qemuVersion,
   }
   return { hash: compatHash(parts), parts }
+}
+
+/** Resolve once: the launch must use the same display whose hardware was checked. */
+export function compatForSave(instance: string, meta: InstanceMeta, save: Manifest): {
+  readonly hash: string
+  readonly parts: CompatParts
+  readonly display: DisplayConfig
+  readonly compatible: boolean
+} {
+  const display = save.display ?? readDisplay(pathsFor(instance))
+  const now = currentCompat(instance, meta, display)
+  return { ...now, display, compatible: meta.image === save.image && now.hash === save.compat }
 }
 
 // ---------------------------------------------------------------------------
@@ -394,7 +413,7 @@ export interface SaveEntry {
 }
 
 /** `winvm saves --json`: the readable saves, oldest name first, and whether each loads here. */
-export function savesReport(rows: readonly Listed[], compat: string | null): SaveEntry[] {
+export function savesReport(rows: readonly Listed[], compat: string | null | ((m: Manifest) => boolean | null)): SaveEntry[] {
   return rows.flatMap((r) =>
     r.manifest === null
       ? []
@@ -404,7 +423,7 @@ export function savesReport(rows: readonly Listed[], compat: string | null): Sav
             kind: r.manifest.kind,
             createdAt: r.manifest.createdAt,
             bytes: r.manifest.bytes,
-            compatible: compat === null ? null : r.manifest.compat === compat,
+            compatible: typeof compat === "function" ? compat(r.manifest) : compat === null ? null : r.manifest.compat === compat,
             ...(r.manifest.note === undefined ? {} : { note: r.manifest.note }),
           },
         ],
@@ -588,7 +607,9 @@ export async function createSave(instance: string, o: CreateOptions): Promise<Cr
   if (isEphemeral(p)) throw new Error(`instance "${instance}" is --ephemeral; its disk changes are not durable, so it cannot be saved`)
   const nameErr = nameError(o.name)
   if (nameErr !== null) throw new Error(nameErr)
-  const compat = currentCompat(instance, meta)
+  const display = liveDisplay(p)
+  if (display === null) throw new Error("cannot determine the running display configuration; refusing to save unknown hardware")
+  const compat = currentCompat(instance, meta, display)
 
   const tmp = resolve(savesDir(instance), `.${o.name}.partial-${String(process.pid)}`)
   rmSync(tmp, { recursive: true, force: true })
@@ -636,6 +657,7 @@ export async function createSave(instance: string, o: CreateOptions): Promise<Cr
     image: meta.image,
     ...(o.note === undefined ? {} : { note: o.note }),
     compatParts: compat.parts,
+    display,
     ramFile,
     ramBytes,
     saveMs,
@@ -682,8 +704,8 @@ export async function cloneSave(from: string, to: string, name: string): Promise
   if (meta.image !== m.image) {
     throw new IncompatibleSave(`save "${name}" is of image "${m.image}", but instance "${to}" runs "${meta.image}"`)
   }
-  const now = currentCompat(to, meta)
-  if (now.hash !== m.compat) {
+  const now = compatForSave(to, meta, m)
+  if (!now.compatible) {
     const why = m.compatParts === undefined ? [] : compatDiff(m.compatParts, now.parts)
     throw new IncompatibleSave(`"${to}" differs from "${from}"${why.length > 0 ? `: ${why.join("; ")}` : ""}`)
   }
@@ -727,13 +749,14 @@ export async function loadSave(instance: string, name: string): Promise<Manifest
   if (meta.image !== m.image) {
     throw new IncompatibleSave(`save "${name}" is of image "${m.image}", but instance "${instance}" runs "${meta.image}"`)
   }
-  const now = currentCompat(instance, meta)
-  if (m.compat !== now.hash) {
+  const now = compatForSave(instance, meta, m)
+  if (!now.compatible) {
     const why = m.compatParts === undefined ? [] : compatDiff(m.compatParts, now.parts)
     throw new IncompatibleSave(
       `save "${name}" was taken on different virtual hardware and cannot be loaded here` +
         (why.length > 0 ? `: ${why.join("; ")}` : "") +
-        ` (save ${m.compat}, now ${now.hash})`,
+        ` (save ${m.compat}, now ${now.hash})` +
+        (m.display === undefined ? "; this legacy save has no display profile — restore its original display with `winvm display` before loading" : ""),
     )
   }
   const dir = saveDir(instance, name)
@@ -763,6 +786,7 @@ export async function loadSave(instance: string, name: string): Promise<Manifest
     ephemeral: false,
     virtioBoot: readImageMeta(meta.image)?.virtioBoot === true,
     incoming: plan.incoming,
+    display: now.display,
   })
   if (plan.incoming === "defer") {
     await qmp.execute(p.qmp, "migrate-set-capabilities", { capabilities: plan.capabilities })

@@ -287,7 +287,7 @@ export async function display(args: Args): Promise<number> {
     writeDisplay(p, want)
     console.log(`display for "${name}": ${describeDisplay(want)} (was ${describeDisplay(configured)})`)
     console.log(
-      "  note: snapshots and saves taken with the previous display can't be restored on this one;\n" +
+      "  note: new file saves restore their captured display automatically; internal snapshots and legacy saves still need the original display.\n" +
         `  \`winvm display${flag} ${configured.device === "ramfb" ? "ramfb" : `${String(configured.width)}x${String(configured.height)}`}\` switches back.`,
     )
   }
