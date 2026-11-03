@@ -251,7 +251,11 @@ describe("the meters while held", () => {
   })
 
   it("say Paused or Asleep instead of Windows' figures", () => {
-    const usage = { now: { cpu: 3, memory: { used: 1, total: 4, source: "windows" as const }, disk: null }, cpuHistory: [], memoryHistory: [] }
+    const usage = {
+      now: { cpu: 3, cpuSource: "windows" as const, macCpu: 12, memory: { used: 1, total: 4, source: "windows" as const }, disk: null },
+      cpuHistory: [],
+      memoryHistory: [],
+    }
     const ctx = { cpus: 4, overlayBytes: null }
     const paused = render(<Resources usage={usage} context={ctx} held="paused" />)
     expect(paused.textContent).toBe(en["usage.paused"] ?? "?")
@@ -261,5 +265,8 @@ describe("the meters while held", () => {
     act(() => root?.unmount())
     const running = render(<Resources usage={usage} context={ctx} />)
     expect(running.textContent).toContain(en["usage.cpu"] ?? "?")
+    // Windows' own figure leads; what the Mac spends is beside it, so the two aren't confused.
+    expect(running.textContent).toContain("3%")
+    expect(running.textContent).toContain("On the Mac, with the screen and disk: 12%")
   })
 })

@@ -17,9 +17,21 @@ describe("the meters", () => {
     const a = sample({ atMs: 10_000, host: { cpuSeconds: 100, rssBytes: GB } })
     const b = sample({ atMs: 12_500, host: { cpuSeconds: 105, rssBytes: GB } })
     // 5 s of CPU in 2.5 s is two processors' worth: half of four.
-    expect(usageFrom(a, b, 4, 4096).cpu).toBe(50)
+    expect(usageFrom(a, b, 4, 4096)).toMatchObject({ cpu: 50, cpuSource: "mac", macCpu: 50 })
     expect(usageFrom(null, b, 4, 4096).cpu).toBeNull()
     expect(usageFrom(a, b, null, 4096).cpu).toBeNull()
+  })
+
+  it("lead with Windows' own CPU when the agent gives it, QEMU's on the Mac beside it", () => {
+    const guest = { cpu: 0.04, memory: { total: 4 * GB, available: 1.5 * GB }, disk: null }
+    const a = sample({ atMs: 10_000, host: { cpuSeconds: 100, rssBytes: GB }, guest })
+    const b = sample({ atMs: 12_500, host: { cpuSeconds: 105, rssBytes: GB }, guest })
+    expect(usageFrom(a, b, 4, 4096)).toMatchObject({ cpu: 4, cpuSource: "windows", macCpu: 50 })
+    // Before a second ps sample, Windows' figure still shows.
+    expect(usageFrom(null, b, 4, 4096)).toMatchObject({ cpu: 4, cpuSource: "windows", macCpu: null })
+    // The agent's first answer has none yet, and an older agent never does: QEMU's, said so.
+    expect(usageFrom(a, sample({ ...b, guest: { ...guest, cpu: null } }), 4, 4096)).toMatchObject({ cpu: 50, cpuSource: "mac" })
+    expect(parseSample(sample({ guest: { memory: guest.memory, disk: null } }))?.guest?.cpu).toBeUndefined()
   })
 
   it("keep CPU between 0 and 100 (QEMU's own threads, a restarted process)", () => {
@@ -42,7 +54,7 @@ describe("the meters", () => {
 
   it("leave out what can't be told", () => {
     const u = usageFrom(null, sample({ host: null, guest: { memory: { total: 0, available: 0 }, disk: null } }), 4, null)
-    expect(u).toEqual({ cpu: null, memory: null, disk: null })
+    expect(u).toEqual({ cpu: null, cpuSource: "mac", macCpu: null, memory: null, disk: null })
   })
 
   it("take the app's samples only in the shape it sends", () => {

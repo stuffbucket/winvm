@@ -1,5 +1,5 @@
 import { t } from "../../i18n"
-import { type Amount, formatGB, formatPercent, fraction } from "./usage"
+import { type Amount, formatGB, formatPercent, fraction, type Usage } from "./usage"
 import type { UsageView } from "./useUsage"
 
 export interface UsageContext {
@@ -58,6 +58,10 @@ function Resource({ label, value, fill, note, children }: ResourceProps): JSX.El
   )
 }
 
+/** Windows' own figure with QEMU's on the Mac beside it, so a busy Mac isn't read as a busy Windows. */
+const cpuNote = (u: Usage, cpus: number): string =>
+  u.cpuSource === "windows" ? t("usage.cpuWindowsNote", { mac: u.macCpu === null ? "…" : formatPercent(u.macCpu) }) : t("usage.cpuNote", { cpus })
+
 const memoryValue = (m: Amount & { readonly source: "windows" | "mac" }): string =>
   m.source === "windows" ? t("usage.memoryValue", { used: formatGB(m.used), total: formatGB(m.total) }) : t("usage.memoryMacValue", { used: formatGB(m.used) })
 
@@ -82,7 +86,7 @@ export function Resources({
   return (
     <div className="resources">
       {u.cpu !== null && (
-        <Resource label={t("usage.cpu")} value={formatPercent(u.cpu)} fill={u.cpu / 100} note={t("usage.cpuNote", { cpus: context.cpus ?? 1 })}>
+        <Resource label={t("usage.cpu")} value={formatPercent(u.cpu)} fill={u.cpu / 100} note={cpuNote(u, context.cpus ?? 1)}>
           <Sparkline values={usage.cpuHistory.map((v) => v / 100)} />
         </Resource>
       )}
