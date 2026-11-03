@@ -418,8 +418,17 @@ export async function waitForSerial(p: Paths, marker: string, timeoutMs: number)
  * exactly that bug.
  */
 export function pidOf(p: Paths): number | null {
-  if (!existsSync(p.pid)) return null
-  const pid = Number.parseInt(readFileSync(p.pid, "utf8").trim(), 10)
+  // One read, no existsSync first: QEMU removes its pidfile as it exits, so a
+  // file there a moment ago may be gone by the read (a load or stop waiting
+  // for the old QEMU to go). Gone is "not running", never an error.
+  let text: string
+  try {
+    text = readFileSync(p.pid, "utf8")
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return null
+    throw error
+  }
+  const pid = Number.parseInt(text.trim(), 10)
   if (!Number.isFinite(pid)) return null
   try {
     // Signal 0 tests for existence without delivering anything.
