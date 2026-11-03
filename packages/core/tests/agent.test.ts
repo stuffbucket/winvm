@@ -16,7 +16,10 @@ import { parseArgs } from "../src/args"
 import type { Paths } from "../src/paths"
 import {
   AGENT_VERSION,
+  CPU_WINDOW_MS,
+  CpuMeter,
   DisplayHost,
+  cpuTimes,
   isWithin,
   launcherArgv,
   normalizeDir,
@@ -155,6 +158,11 @@ describe("agent over HTTP", () => {
     expect(s.memory.available).toBeLessThanOrEqual(s.memory.total)
     expect(s.disk?.path).toBe("/")
     expect(s.disk?.free).toBeLessThanOrEqual(s.disk?.total ?? 0)
+    // How busy the processors were since the last ask: a fraction once there was one.
+    await Bun.sleep(CPU_WINDOW_MS + 50)
+    const cpu = (await client.stats()).cpu
+    expect(cpu).toBeGreaterThanOrEqual(0)
+    expect(cpu).toBeLessThanOrEqual(1)
   })
 })
 
@@ -434,6 +442,31 @@ describe("the Recycle Bin's PowerShell", () => {
     expect(isWithin("/a/b", "/a/b/c")).toBe(true)
     expect(isWithin("/a/b", "/a/bc")).toBe(false)
     expect(isWithin("/a/b", "/a")).toBe(false)
+  })
+})
+
+describe("how busy Windows' processors are", () => {
+  const times = (user: number, sys: number, idle: number) => ({ times: { user, nice: 0, sys, idle, irq: 5 } })
+
+  it("adds up every processor's busy and idle time, leaving out interrupts (already in kernel time)", () => {
+    expect(cpuTimes([times(10, 5, 85), times(20, 0, 80)])).toEqual({ busy: 35, total: 200 })
+  })
+
+  it("is the busy share of the time between two readings, null until there are two", () => {
+    const m = new CpuMeter()
+    expect(m.read({ busy: 100, total: 1000 }, 0)).toBeNull()
+    // 4 processors over 2.5 s: 10 s in all, 3 s of it busy.
+    expect(m.read({ busy: 3100, total: 11_000 }, 2500)).toBeCloseTo(0.3)
+    expect(m.read({ busy: 3100, total: 21_000 }, 5000)).toBe(0)
+  })
+
+  it("gives a reading that comes too soon after the last the figure it already has", () => {
+    const m = new CpuMeter()
+    m.read({ busy: 0, total: 0 }, 0)
+    expect(m.read({ busy: 500, total: 1000 }, 2000)).toBe(0.5)
+    expect(m.read({ busy: 510, total: 1010 }, 2000 + CPU_WINDOW_MS - 1)).toBe(0.5)
+    // ...and the next window still starts from the last full one.
+    expect(m.read({ busy: 1500, total: 2000 }, 4000)).toBe(1)
   })
 })
 

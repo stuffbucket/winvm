@@ -47,13 +47,13 @@
 import { spawn as nodeSpawn } from "node:child_process"
 import { appendFileSync, existsSync, mkdirSync, readFileSync, statSync, type Stats as FileStats } from "node:fs"
 import { cp, lstat, mkdir, readdir, rename, rm, stat, statfs, utimes } from "node:fs/promises"
-import { freemem, homedir, totalmem } from "node:os"
+import { cpus, freemem, homedir, totalmem } from "node:os"
 import { dirname, isAbsolute, join, relative, resolve } from "node:path"
 import { randomBytes, timingSafeEqual } from "node:crypto"
 import type { Server, ServerWebSocket, Socket, TCPSocketListener, WebSocketHandler } from "bun"
 
 /** Bumped whenever the protocol or behaviour changes; the host reinstalls on mismatch. */
-export const AGENT_VERSION = 10
+export const AGENT_VERSION = 11
 /** The port the agent listens on INSIDE the guest. The host side is per instance. */
 export const GUEST_PORT = 7801
 export const WINDOWS_DIR = "C:\\ProgramData\\winvm\\agent"
@@ -923,15 +923,67 @@ export const lockScreenUp = (procs: readonly Proc[], session: number | null): bo
   procs.some((p) => p.name.toLowerCase() === "logonui.exe" && (session === null || p.session === session))
 
 /**
- * What the meters show: Windows' memory (total and available, as Task Manager
- * counts "in use" = total - available) and the system drive's space. Cheap:
- * no process is started, so the host can ask every few seconds.
+ * What the meters show: how busy Windows' processors are, Windows' memory
+ * (total and available, as Task Manager counts "in use" = total - available)
+ * and the system drive's space. Cheap: no process is started, so the host can
+ * ask every few seconds.
  */
 export interface GuestStats {
+  /**
+   * How busy all of Windows' processors were, 0-1, since an earlier reading (at
+   * least CPU_WINDOW_MS before); null on the first. Windows' own count, as Task
+   * Manager's. QEMU spends more than this on the Mac: the screen, the disk and
+   * the network are its work, not the guest's. Absent from agents before 11.
+   */
+  readonly cpu?: number | null
   readonly memory: { readonly total: number; readonly available: number }
   /** The system drive (C:\ on Windows); null if it could not be read. */
   readonly disk: { readonly path: string; readonly total: number; readonly free: number } | null
 }
+
+/** All processors' time so far, in ms: busy (idle left out) and in all. */
+export interface CpuTimes {
+  readonly busy: number
+  readonly total: number
+}
+
+type CpuInfo = { readonly times: { readonly user: number; readonly nice: number; readonly sys: number; readonly idle: number } }
+
+/**
+ * From os.cpus(), a read of the kernel's counters (no process started). On
+ * Windows libuv takes them from NtQuerySystemInformation: `sys` is kernel time
+ * less idle, and `irq` is already part of kernel time, so it is not added.
+ */
+export function cpuTimes(list: readonly CpuInfo[] = cpus()): CpuTimes {
+  let busy = 0
+  let total = 0
+  for (const { times: t } of list) {
+    busy += t.user + t.nice + t.sys
+    total += t.user + t.nice + t.sys + t.idle
+  }
+  return { busy, total }
+}
+
+/** Readings closer together than this get the last figure, so two windows asking at once don't each get a sliver. */
+export const CPU_WINDOW_MS = 1000
+
+/** How busy the processors were between readings, 0-1 (GuestStats.cpu). */
+export class CpuMeter {
+  private since: { readonly at: number; readonly times: CpuTimes } | null = null
+  private last: number | null = null
+
+  read(times: CpuTimes, at: number): number | null {
+    if (this.since !== null && at - this.since.at < CPU_WINDOW_MS) return this.last
+    if (this.since !== null) {
+      const total = times.total - this.since.times.total
+      if (total > 0) this.last = Math.min(1, Math.max(0, (times.busy - this.since.times.busy) / total))
+    }
+    this.since = { at, times }
+    return this.last
+  }
+}
+
+const cpuMeter = new CpuMeter()
 
 export async function guestStats(): Promise<GuestStats> {
   const path = isWin ? `${process.env["SystemDrive"] ?? "C:"}\\` : "/"
@@ -942,7 +994,7 @@ export async function guestStats(): Promise<GuestStats> {
   } catch {
     // reported as unknown
   }
-  return { memory: { total: totalmem(), available: freemem() }, disk }
+  return { cpu: cpuMeter.read(cpuTimes(), Date.now()), memory: { total: totalmem(), available: freemem() }, disk }
 }
 
 // --- file sharing with the Mac (finder.ts) -----------------------------------
