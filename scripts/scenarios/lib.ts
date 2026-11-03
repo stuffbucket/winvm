@@ -111,7 +111,14 @@ export class AppPoller {
   private link: { url: string; token: string } | null = null
   private connectFailedAt = 0
   /** Until a read says otherwise, Windows is not ready for a size. */
-  private readonly held = new HeldSizes(true, { onRetry: (size) => void this.resize(size) })
+  private readonly held = new HeldSizes(true, { onRetry: (size) => this.track(this.resize(size)) })
+  /** Resizes under way that nothing awaits (a retry, a size kept while held): stop() waits for them. */
+  private readonly inflight = new Set<Promise<void>>()
+
+  private track(p: Promise<void>): void {
+    this.inflight.add(p)
+    void p.finally(() => this.inflight.delete(p))
+  }
   private readonly guard = new StatusGuard()
   /** The state the window shows: what the last verb left until a fresh read lands, else the newest read. */
   private shown: string | null = null
@@ -140,6 +147,8 @@ export class AppPoller {
     this.stopped = true
     await Promise.all(this.loops)
     this.loops = []
+    // Their answers belong in the record: a retry still out at the end is waited for.
+    while (this.inflight.size > 0) await Promise.all([...this.inflight])
     this.held.cancel()
     // A size still waiting is a size lost, unless the machine can't take one now (stopped, say: the
     // app's screen asks again when it connects). Once more, as a retry would, before calling it lost.
@@ -210,7 +219,7 @@ export class AppPoller {
     const s = this.state
     if (s === null) return
     const thawed = this.held.setFrozen(FROZEN.has(s) || !this.guestReady)
-    if (thawed !== null) void this.resize(thawed)
+    if (thawed !== null) this.track(this.resize(thawed))
   }
 
   /** One `winvm status --json -i NAME`: kept as the machine's truth, and shown if the guard lets it land. */
