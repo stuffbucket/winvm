@@ -1,5 +1,5 @@
 {
-  "version": "11.1.2-1",
-  "url": "https://github.com/stuffbucket/winvm-runtime/releases/download/v11.1.2-1/winvm-runtime-11.1.2-1-darwin-arm64.tar.gz",
-  "sha256": "c6fa54bed0bfd9a18cabe3743d7c2f797fb034efa5cbf9033c4dc62faca31b27"
+  "version": "11.1.2-2",
+  "url": "https://github.com/stuffbucket/winvm-runtime/releases/download/v11.1.2-2/winvm-runtime-11.1.2-2-darwin-arm64.tar.gz",
+  "sha256": "9337f5b8ca201786296b880894fc671c4a45d1486ce6a329ee5491be685bb9d2"
 }
