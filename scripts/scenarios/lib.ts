@@ -13,8 +13,11 @@
  *     (useUsage.ts);
  *   - a live resize, SetDesktopSize over VNC and then POST /display {op:"set"}
  *     (guestdisplay.ts), through the app's own HeldSizes
- *     (features/screen/held.ts): held while the machine is paused or asleep and
- *     asked for once it runs again;
+ *     (features/screen/held.ts): held while the machine is paused or asleep,
+ *     or Windows is not ready (App.tsx guestReady: the app's phase is
+ *     "running", so its guest agent answers, and no verb is under way), and
+ *     asked for, both steps, once it is; a size the guest misses is asked for
+ *     again, as Screen.tsx does;
  *   - verbs run as useWinvm's `act` runs them, the shown state settled through
  *     the app's own StatusGuard (features/winvm/statusGuard.ts), so a read that
  *     raced a verb is dropped as the app drops it.
@@ -29,6 +32,7 @@ import { resolve } from "node:path"
 import type { Size } from "@winvm/displayfit"
 
 import { HeldSizes } from "../../apps/viewer/ui/src/features/screen/held"
+import { parseStatus, phase } from "../../apps/viewer/ui/src/model"
 import { StatusGuard, type Verb, phaseAfter } from "../../apps/viewer/ui/src/features/winvm/statusGuard"
 import { requestSize } from "../../packages/core/src/guestdisplay"
 import { pathsFor, readMeta } from "../../packages/core/src/paths"
@@ -106,7 +110,8 @@ export class AppPoller {
   private loops: Promise<void>[] = []
   private link: { url: string; token: string } | null = null
   private connectFailedAt = 0
-  private readonly held = new HeldSizes(false)
+  /** Until a read says otherwise, Windows is not ready for a size. */
+  private readonly held = new HeldSizes(true, { onRetry: (size) => void this.resize(size) })
   private readonly guard = new StatusGuard()
   /** The state the window shows: what the last verb left until a fresh read lands, else the newest read. */
   private shown: string | null = null
@@ -135,6 +140,20 @@ export class AppPoller {
     this.stopped = true
     await Promise.all(this.loops)
     this.loops = []
+    this.held.cancel()
+    // A size still waiting is a size lost, unless the machine can't take one now (stopped, say: the
+    // app's screen asks again when it connects). Once more, as a retry would, before calling it lost.
+    const left = this.held.pending
+    if (left === null) return
+    const label = `${String(left.width)}x${String(left.height)}`
+    if (!this.guestReady) {
+      this.calls.push({ at: Date.now(), what: "resize-left", ok: true, detail: `${label} kept: the machine is ${this.state ?? "unknown"} at the end` })
+      return
+    }
+    this.held.offer(left)
+    await this.resize(left)
+    this.held.cancel()
+    if (this.held.pending !== null) this.calls.push({ at: Date.now(), what: "resize", ok: false, detail: `${label}: never taken` })
   }
 
   /** The state the app shows now. */
@@ -142,7 +161,7 @@ export class AppPoller {
     return this.guard.held ?? this.shown
   }
 
-  /** Windows is up and nothing is under way: when the app calls the agent (App.tsx guestReady). */
+  /** Windows is up (its guest agent answers) and nothing is under way: when the app calls the agent (App.tsx guestReady). */
   get guestReady(): boolean {
     return this.state === "running" && !this.busy
   }
@@ -153,6 +172,7 @@ export class AppPoller {
    */
   async act(verb: Verb, ...extra: string[]): Promise<Ran> {
     this.busy = true
+    this.follow()
     try {
       const r = await winvm([verb, "-i", this.name, ...extra])
       this.calls.push({ at: Date.now(), what: `verb ${verb}`, ok: r.code === 0, detail: `exit ${String(r.code)} in ${String(r.ms)} ms: ${(r.stdout + r.stderr).trim().split("\n").slice(-2).join(" / ").slice(0, 300)}` })
@@ -162,7 +182,7 @@ export class AppPoller {
       return r
     } finally {
       this.busy = false
-      this.flushPending()
+      this.follow()
     }
   }
 
@@ -182,23 +202,15 @@ export class AppPoller {
     return "sent"
   }
 
-  /** The held sizes follow the state shown; a size kept while held is asked for once it runs again. */
+  /**
+   * The held sizes follow the state shown (Screen.tsx: frozen || !ready); a
+   * size kept meanwhile is asked for, both steps, once Windows can take it.
+   */
   private follow(): void {
     const s = this.state
     if (s === null) return
-    const thawed = this.held.setFrozen(FROZEN.has(s))
+    const thawed = this.held.setFrozen(FROZEN.has(s) || !this.guestReady)
     if (thawed !== null) void this.resize(thawed)
-    this.flushPending()
-  }
-
-  /** A size the agent could not be asked for yet (App.tsx pendingSize): asked once Windows is ready. */
-  private pending: Size | null = null
-
-  private flushPending(): void {
-    const size = this.pending
-    if (size === null || !this.guestReady) return
-    this.pending = null
-    void this.setMode(size, Date.now())
   }
 
   /** One `winvm status --json -i NAME`: kept as the machine's truth, and shown if the guard lets it land. */
@@ -209,13 +221,12 @@ export class AppPoller {
     const one = await winvm(["status", "--json", "-i", this.name], { timeoutMs: 30_000 })
     let state: string | null = null
     if (one.code === 0) {
-      try {
-        const s = json<Status>(one)
-        state = s.state
-        this.samples.push({ at, state, vmStatus: s.vmStatus ?? null })
-      } catch (error) {
-        this.samples.push({ at, state: null, vmStatus: null, error: `unreadable status: ${String(error)}` })
-      }
+      // The app shows its phase: "starting" while the machine runs but its guest agent is silent (model.ts).
+      const s = parseStatus(one.stdout)?.[0]
+      if (s !== undefined) {
+        state = phase(s)
+        this.samples.push({ at, state: s.state, vmStatus: s.vmStatus })
+      } else this.samples.push({ at, state: null, vmStatus: null, error: `unreadable status: ${one.stdout.slice(0, 200)}` })
     } else this.samples.push({ at, state: null, vmStatus: null, error: (one.stderr || one.stdout).trim().slice(0, 300) })
     if (state !== null && this.guard.land(ticket)) {
       this.shown = state
@@ -325,31 +336,33 @@ export class AppPoller {
   private async resize(size: Size): Promise<void> {
     const at = Date.now()
     const label = `${String(size.width)}x${String(size.height)}`
+    // Missed: kept and asked for again (held.ts), as Screen.tsx does; only a size never taken is a failure.
+    const missed = (why: string): void => {
+      this.calls.push({ at, what: "resize-missed", ok: true, detail: `${label}: ${why}; asked for again` })
+      this.held.missed(size)
+    }
     try {
       const meta = readMeta(this.name)
       if (meta === null) throw new Error(`no instance "${this.name}"`)
       await requestSize(pathsFor(this.name), meta, size)
     } catch (error) {
-      this.calls.push({ at, what: "resize", ok: false, detail: `${label}: SetDesktopSize: ${String(error).slice(0, 200)}` })
+      missed(`SetDesktopSize: ${String(error).slice(0, 200)}`)
       return
     }
+    // App.tsx resizeGuest refuses a size while Windows is not ready (the state moved on meanwhile).
     if (!this.guestReady) {
-      this.pending = size
-      this.calls.push({ at, what: "resize-pending", ok: true, detail: `${label} until Windows is ready` })
+      missed(`Windows not ready (${this.state ?? "unknown"})`)
       return
     }
-    await this.setMode(size, at)
-  }
-
-  private async setMode(size: Size, at: number): Promise<void> {
-    const label = `${String(size.width)}x${String(size.height)}`
     try {
       const r = await this.agent("POST", "/display", { op: "set", width: size.width, height: size.height, waitMs: 2000, scale: 100 }, 22_000)
       // 202: Windows is at its lock screen; the agent sets the size at sign-in (App.tsx takes it as done).
-      const why = r === null || r.status === 200 ? "" : ` ${JSON.stringify(r.body).slice(0, 200)}`
-      this.calls.push({ at, what: "resize", ok: r !== null && (r.status === 200 || r.status === 202), detail: `${label}: ${r === null ? "no agent" : `status ${String(r.status)}`}${why}` })
+      if (r !== null && (r.status === 200 || r.status === 202)) {
+        this.held.took()
+        this.calls.push({ at, what: "resize", ok: true, detail: `${label}: status ${String(r.status)}${r.status === 200 ? "" : ` ${JSON.stringify(r.body).slice(0, 200)}`}` })
+      } else missed(r === null ? "no agent" : `status ${String(r.status)} ${JSON.stringify(r.body).slice(0, 200)}`)
     } catch (error) {
-      this.calls.push({ at, what: "resize", ok: false, detail: `${label}: ${String(error).slice(0, 200)}` })
+      missed(String(error).slice(0, 200))
     }
   }
 

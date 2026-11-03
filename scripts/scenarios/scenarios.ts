@@ -87,8 +87,17 @@ async function polled(sc: Scenario, name: string, body: (poller: AppPoller) => P
     sc.check("ran to the end", false, String(error instanceof Error ? error.message : error))
   } finally {
     await poller.stop()
+    // A size the guest missed (not ready yet, a restart under way) is asked for again, as the app does;
+    // only one never taken fails.
     const resizes = poller.calls.filter((c) => c.what === "resize")
-    if (resizes.length > 0) sc.check("every live resize the app sent was answered", resizes.every((c) => c.ok), resizes.map((c) => `${c.detail}${c.ok ? "" : " FAILED"}`).join("; "))
+    const missed = poller.calls.filter((c) => c.what === "resize-missed").length
+    const left = poller.calls.filter((c) => c.what === "resize-left").map((c) => c.detail)
+    if (resizes.length > 0)
+      sc.check(
+        "every live resize the app sent was taken",
+        resizes.every((c) => c.ok),
+        `${resizes.map((c) => `${c.detail}${c.ok ? "" : " FAILED"}`).join("; ")}${missed > 0 ? `; ${String(missed)} missed and asked for again` : ""}${left.length > 0 ? `; ${left.join("; ")}` : ""}`,
+      )
     sc.note(`poller trace: ${sc.saveTrace(poller, from, Date.now(), "trace.txt")}`)
     sc.note(`states: ${path(poller.samples, from, Date.now())}`)
   }
@@ -300,9 +309,17 @@ export async function saveLoad(ctx: Context): Promise<Scenario> {
     // A checkpoint while running, as New Checkpoint takes one.
     let from = Date.now()
     const r = await poller.act("save", live)
+    // act returns after its fresh read: reads that began before the save ended may have found QEMU
+    // stopped for the save, which winvm shows as running by design (the saving marker, status.ts).
+    const saved = Date.now()
     sc.check("winvm save (running)", r.code === 0, r.stdout.trim().split("\n").slice(-1).join(""))
     await runsAgain(sc, ctx, poller, "after the save")
-    sc.check("no postmigrate shown as running, during or after", !poller.between(from, Date.now()).samples.some((s) => s.state === "running" && s.vmStatus === "postmigrate"), path(poller.samples, from, Date.now()))
+    const midSave = poller.between(from, saved).samples.filter((s) => s.state === "running" && (s.vmStatus === "postmigrate" || s.vmStatus === "paused")).length
+    sc.check(
+      "QEMU running again once the save is done (no postmigrate left behind)",
+      !poller.between(saved, Date.now()).samples.some((s) => s.vmStatus === "postmigrate" || s.vmStatus === "paused"),
+      `${path(poller.samples, saved, Date.now())}${midSave > 0 ? `; during the save, ${String(midSave)} read(s) found QEMU stopped for it and showed running, by design` : ""}`,
+    )
     const during = heldThroughout(poller.samples, from, Date.now(), ["running"])
     sc.check("a save of a running machine never shows it paused (no Resume, no overlay mid-save)", during.ok, path(poller.samples, from, Date.now()))
 
