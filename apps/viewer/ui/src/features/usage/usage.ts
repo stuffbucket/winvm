@@ -1,10 +1,15 @@
 /**
  * The title bar's meters, from samples the app takes every few seconds
  * (src-tauri/src/guest.rs `instance_usage`): QEMU's CPU time and memory from
- * `ps`, and Windows' own memory and C: from the agent's GET /stats. Pure.
+ * `ps`, and Windows' own CPU, memory and C: from the agent's GET /stats. Pure.
  *
- * - CPU: QEMU's CPU time between two samples over the time between them, out
- *   of all the machine's processors (100% is every one busy).
+ * - CPU: how busy Windows' processors are, as Windows counts it (the agent's
+ *   `cpu`), out of all of them (100% is every one busy). Beside it, what QEMU
+ *   spends on the Mac: its CPU time between two samples over the time between
+ *   them, out of as many of the Mac's processors. That is more than Windows'
+ *   figure (the screen, the disk and the network are QEMU's work, not
+ *   Windows'), so it alone read as "Windows is busy" when it was not. Without
+ *   the agent, or one older than 11, QEMU's figure is the headline, said so.
  * - Memory: what Windows has in use (total less available, as Task Manager
  *   counts it) out of what it has. Without the agent, what QEMU holds on the
  *   Mac instead, said so.
@@ -13,6 +18,7 @@
 import { z } from "zod"
 
 const GuestStats = z.object({
+  cpu: z.number().nullable().optional(),
   memory: z.object({ total: z.number(), available: z.number() }),
   disk: z.object({ path: z.string(), total: z.number(), free: z.number() }).nullable(),
 })
@@ -34,8 +40,11 @@ export interface Amount {
 }
 
 export interface Usage {
-  /** Percent of all the machine's processors, 0-100; null until two samples. */
+  /** Percent of all the machine's processors busy, 0-100: Windows' own figure, or (cpuSource "mac") QEMU's; null until there is one. */
   readonly cpu: number | null
+  readonly cpuSource: "windows" | "mac"
+  /** What QEMU spends on the Mac, as a percent of as many of its processors, 0-100; null until two samples. */
+  readonly macCpu: number | null
   /** Windows' memory in use, or (source "mac") QEMU's resident memory on the Mac. */
   readonly memory: (Amount & { readonly source: "windows" | "mac" }) | null
   /** C: in Windows. */
@@ -45,13 +54,14 @@ export interface Usage {
 const MiB = 1024 ** 2
 
 export function usageFrom(prev: Sample | null, cur: Sample, cpus: number | null, memoryMiB: number | null): Usage {
-  let cpu: number | null = null
+  let macCpu: number | null = null
   const seconds = prev === null ? 0 : (cur.atMs - prev.atMs) / 1000
   if (prev !== null && prev.host !== null && cur.host !== null && cpus !== null && cpus > 0 && seconds > 0) {
     const busy = (cur.host.cpuSeconds - prev.host.cpuSeconds) / seconds / cpus
-    cpu = Math.min(100, Math.max(0, busy * 100))
+    macCpu = Math.min(100, Math.max(0, busy * 100))
   }
   const g = cur.guest
+  const windowsCpu = g?.cpu ?? null
   const memory: Usage["memory"] =
     g !== null && g.memory.total > 0
       ? { used: Math.max(0, g.memory.total - g.memory.available), total: g.memory.total, source: "windows" }
@@ -59,7 +69,9 @@ export function usageFrom(prev: Sample | null, cur: Sample, cpus: number | null,
         ? { used: cur.host.rssBytes, total: memoryMiB * MiB, source: "mac" }
         : null
   const disk = g !== null && g.disk !== null && g.disk.total > 0 ? { used: Math.max(0, g.disk.total - g.disk.free), total: g.disk.total } : null
-  return { cpu, memory, disk }
+  return windowsCpu !== null
+    ? { cpu: Math.min(100, Math.max(0, windowsCpu * 100)), cpuSource: "windows", macCpu, memory, disk }
+    : { cpu: macCpu, cpuSource: "mac", macCpu, memory, disk }
 }
 
 /** How much of `a` is used, 0-1. */
