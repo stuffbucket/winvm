@@ -88,6 +88,11 @@
  * the QEMU device/machine arguments with per-instance paths and ports removed,
  * the firmware code image, and the QEMU version. `load` refuses a mismatch and
  * names which part differs.
+ *
+ * Processors and memory are among those arguments, and the machine's setting
+ * for them can change (hardware.ts). So a save records the size QEMU ran at
+ * (`hardware`; absent: LEGACY), is judged against the instance measured at
+ * that size (compatFor), and loads at that size.
  */
 import { spawnSync } from "node:child_process"
 import { createHash } from "node:crypto"
@@ -98,6 +103,8 @@ import type { Size } from "./cua"
 import { encodePng, fitScale, parsePpm, resize, scaled } from "./cua"
 import type { DisplayConfig } from "./display"
 import { RAMFB, VIRTIO_GPU, readDisplay, sameDevice, writeDisplay } from "./display"
+import type { Hardware } from "./hardware"
+import { LEGACY, hardwareFrom, readHardware, runningHardware } from "./hardware"
 import { capture, requireFirmware } from "./host"
 import { currentQemuCompat, runtimeBin } from "./runtime"
 import { ensureInstance } from "./instance"
@@ -175,6 +182,12 @@ export interface Manifest {
   readonly thumbnail?: string
   /** The framebuffer's size when the screenshot was taken. */
   readonly screenSize?: { readonly width: number; readonly height: number }
+  /**
+   * The processors and memory QEMU ran with (hardware.ts). `load` and the stow
+   * recall start QEMU at this size, so changing the machine's setting never
+   * strands a save. Absent in saves from before the setting: LEGACY.
+   */
+  readonly hardware?: Hardware
 }
 
 export const FILES = {
@@ -256,8 +269,19 @@ export function parseManifest(text: string): Manifest {
   if (format !== undefined && !(RAM_FORMATS as readonly unknown[]).includes(format)) {
     throw new Error(`manifest.format must be one of ${RAM_FORMATS.join(", ")}, got ${JSON.stringify(format)}`)
   }
+  const hw = r["hardware"]
+  if (hw !== undefined) {
+    const h = hw as Record<string, unknown> | null
+    const whole = (v: unknown): boolean => typeof v === "number" && Number.isInteger(v) && v > 0
+    if (typeof hw !== "object" || h === null || !whole(h["cpus"]) || !whole(h["memoryMiB"])) {
+      throw new Error("manifest.hardware must be { cpus, memoryMiB }, positive whole numbers")
+    }
+  }
   return { ...(r as object), name, instance: str("instance"), kind: kind as SaveKind, createdAt, bytes, compat: str("compat"), image: str("image") } as Manifest
 }
+
+/** The size a save was taken at: its record, or LEGACY for a save from before the record. */
+export const saveHardware = (m: Pick<Manifest, "hardware">): Hardware => (m.hardware === undefined ? LEGACY : hardwareFrom(m.hardware))
 
 const sha = (s: string | Buffer): string => createHash("sha256").update(s).digest("hex")
 
@@ -389,11 +413,14 @@ let qemuVersion: string | null = null
  * `display` measures the instance as if it had that display device instead of
  * its own, without touching display.json: `saves` uses it to tell a save that
  * differs only by its display device from one that differs by more.
+ * `hardware` likewise measures it at a size other than its setting: a save is
+ * judged, and loaded, at the size it was taken at (compatFor).
  */
 export function currentCompat(
   instance: string,
   meta: InstanceMeta,
   display?: DisplayConfig,
+  hardware?: Hardware,
 ): { readonly hash: string; readonly parts: CompatParts } {
   const st = statSync(basePath(meta.image))
   let created = ""
@@ -409,6 +436,7 @@ export function currentCompat(
     ephemeral: false,
     virtioBoot: readImageMeta(meta.image)?.virtioBoot === true,
     ...(display === undefined ? {} : { display }),
+    ...(hardware === undefined ? {} : { hardware }),
   })
   const parts: CompatParts = {
     base: baseIdentity(meta.image, st.size, st.mtimeMs, created),
@@ -419,13 +447,18 @@ export function currentCompat(
   return { hash: compatHash(parts), parts }
 }
 
+/** The instance's compatibility measured at the size `m` was taken at: what decides whether `m` loads here. */
+export const compatFor = (instance: string, meta: InstanceMeta, m: Pick<Manifest, "hardware">): ReturnType<typeof currentCompat> =>
+  currentCompat(instance, meta, undefined, saveHardware(m))
+
 /**
  * The hardware digest this instance had before winvm added the shared folder
  * and clipboard devices (share.ts), or null when it has none of them (ramfb,
- * or a runtime without them), so nothing was stranded.
+ * or a runtime without them), so nothing was stranded. Measured at `hardware`
+ * (default LEGACY: every save from before the devices was taken at that size).
  */
-export function hardwareBeforeDevices(instance: string, meta: InstanceMeta): string | null {
-  const o = { installMedia: false, ephemeral: false, virtioBoot: readImageMeta(meta.image)?.virtioBoot === true }
+export function hardwareBeforeDevices(instance: string, meta: InstanceMeta, hardware: Hardware = LEGACY): string | null {
+  const o = { installMedia: false, ephemeral: false, virtioBoot: readImageMeta(meta.image)?.virtioBoot === true, hardware }
   const p = pathsFor(instance)
   const now = qemu.qemuArgs(instance, p, meta, o)
   const before = qemu.qemuArgs(instance, p, meta, { ...o, shareDevices: "none" })
@@ -524,7 +557,17 @@ export interface ReportContext {
   /** Absolute path of `file` in save `save`'s directory when it exists, else null. */
   readonly file?: (save: string, file: string) => string | null
   readonly note?: (save: string) => Note | null
+  /**
+   * `compat` and `displayHardware` measured at another size (hardware.ts): a
+   * save is judged at the size it was taken at. Absent: every save is judged
+   * against `compat` as it is.
+   */
+  readonly at?: (hw: Hardware) => Pick<ReportContext, "compat" | "displayHardware">
 }
+
+/** The context a save is judged in: the instance measured at the save's own size. */
+const contextFor = (m: Manifest, ctx: ReportContext): ReportContext =>
+  ctx.at === undefined ? ctx : { ...ctx, ...ctx.at(saveHardware(m)) }
 
 /** Why `m` will not load here; null when it will, or when it cannot say. */
 function reasons(m: Manifest, ctx: ReportContext): IncompatibleReason[] | null {
@@ -543,7 +586,8 @@ export function savesReport(rows: readonly Listed[], ctx: ReportContext): SaveEn
   return rows.flatMap((r) => {
     const m = r.manifest
     if (m === null) return []
-    const differ = reasons(m, ctx)
+    const c = contextFor(m, ctx)
+    const differ = reasons(m, c)
     const n = note(r.name)
     return [
       {
@@ -552,10 +596,10 @@ export function savesReport(rows: readonly Listed[], ctx: ReportContext): SaveEn
         createdAt: m.createdAt,
         bytes: m.bytes,
         format: ramFormatOf(m),
-        compatible: ctx.compat === null ? null : m.compat === ctx.compat.hash,
+        compatible: c.compat === null ? null : m.compat === c.compat.hash,
         ...(differ === null ? {} : { incompatible: differ }),
         ...(m.note === undefined ? {} : { note: m.note }),
-        ...(ctx.compat !== null && m.compat !== ctx.compat.hash && takenBeforeDevices(m, ctx.beforeDevices ?? null)
+        ...(c.compat !== null && m.compat !== c.compat.hash && takenBeforeDevices(m, ctx.beforeDevices ?? null)
           ? { why: "taken before the shared folder and clipboard devices" }
           : {}),
         screenshot: file(r.name, FILES.screen),
@@ -580,25 +624,39 @@ export function saveFile(instance: string, save: string, file: string): string |
  */
 export function reportContext(instance: string): ReportContext {
   const meta = readMeta(instance)
-  let compat: ReportContext["compat"] = null
-  let displayHardware: string[] = []
+  const measured = new Map<string, Pick<ReportContext, "compat" | "displayHardware">>()
+  /** The instance's compatibility, and with each other display device, at `hw`; memoised per size. */
+  const at = (hw?: Hardware): Pick<ReportContext, "compat" | "displayHardware"> => {
+    const key = hw === undefined ? "" : `${String(hw.cpus)}/${String(hw.memoryMiB)}`
+    const seen = measured.get(key)
+    if (seen !== undefined) return seen
+    let compat: ReportContext["compat"] = null
+    let displayHardware: string[] = []
+    try {
+      if (meta !== null) {
+        compat = currentCompat(instance, meta, undefined, hw)
+        const own = readDisplay(pathsFor(instance))
+        displayHardware = [RAMFB, VIRTIO_GPU]
+          .filter((d) => !sameDevice(d, own))
+          .map((d) => currentCompat(instance, meta, d, hw).parts.hardware)
+      }
+    } catch {
+      // Unknown is reported as unknown; `compat` keeps whatever was worked out.
+    }
+    const out = { compat, displayHardware }
+    measured.set(key, out)
+    return out
+  }
   let beforeDevices: string | null = null
   try {
-    if (meta !== null) {
-      compat = currentCompat(instance, meta)
-      beforeDevices = hardwareBeforeDevices(instance, meta)
-      const own = readDisplay(pathsFor(instance))
-      displayHardware = [RAMFB, VIRTIO_GPU]
-        .filter((d) => !sameDevice(d, own))
-        .map((d) => currentCompat(instance, meta, d).parts.hardware)
-    }
+    if (meta !== null) beforeDevices = hardwareBeforeDevices(instance, meta)
   } catch {
-    // Unknown is reported as unknown; `compat` keeps whatever was worked out.
+    // unknown
   }
   return {
-    compat,
-    displayHardware,
+    ...at(),
     beforeDevices,
+    at,
     file: (save, f) => saveFile(instance, save, f),
     note: (save) => readNoteSafe(instance, save),
   }
@@ -854,7 +912,11 @@ export async function createSave(instance: string, o: CreateOptions): Promise<Cr
   if (isEphemeral(p)) throw new Error(`instance "${instance}" is --ephemeral; its disk changes are not durable, so it cannot be saved`)
   const nameErr = nameError(o.name)
   if (nameErr !== null) throw new Error(nameErr)
-  const compat = currentCompat(instance, meta)
+  // The size QEMU runs at, not the setting: a guest loaded from a save runs at
+  // the save's size whatever the machine is set to (hardware.ts).
+  const pid = qemu.pidOf(p)
+  const hardware = (pid === null ? null : runningHardware(pid)) ?? readHardware(p)
+  const compat = currentCompat(instance, meta, undefined, hardware)
 
   const tmp = resolve(savesDir(instance), `.${o.name}.partial-${String(process.pid)}`)
   rmSync(tmp, { recursive: true, force: true })
@@ -917,6 +979,7 @@ export async function createSave(instance: string, o: CreateOptions): Promise<Cr
     ramBytes,
     saveMs,
     format,
+    hardware,
     ...(screen === null ? {} : { screenshot: FILES.screen, thumbnail: FILES.thumb, screenSize: screen }),
   }
   writeFileSync(resolve(tmp, FILES.manifest), `${JSON.stringify(manifest, null, 2)}\n`)
@@ -964,7 +1027,7 @@ export async function cloneSave(from: string, to: string, name: string): Promise
   if (meta.image !== m.image) {
     throw new IncompatibleSave(`save "${name}" is of image "${m.image}", but instance "${to}" runs "${meta.image}"`)
   }
-  const now = currentCompat(to, meta)
+  const now = compatFor(to, meta, m)
   if (now.hash !== m.compat) {
     const why = m.compatParts === undefined ? [] : compatDiff(m.compatParts, now.parts)
     throw new IncompatibleSave(`"${to}" differs from "${from}"${why.length > 0 ? `: ${why.join("; ")}` : ""}`)
@@ -1013,16 +1076,19 @@ export async function loadSave(instance: string, name: string): Promise<Manifest
   const meta = readMeta(instance)
   if (meta === null) throw new Error(`no such instance "${instance}"`)
   // An instance made just now for a kept save: give it whichever display device the save was taken on.
-  if (created && currentCompat(instance, meta).hash !== m.compat) {
+  if (created && compatFor(instance, meta, m).hash !== m.compat) {
     for (const d of [RAMFB, VIRTIO_GPU]) {
       writeDisplay(pathsFor(instance), d)
-      if (currentCompat(instance, meta).hash === m.compat) break
+      if (compatFor(instance, meta, m).hash === m.compat) break
     }
   }
   if (meta.image !== m.image) {
     throw new IncompatibleSave(`save "${name}" is of image "${m.image}", but instance "${instance}" runs "${meta.image}"`)
   }
-  const now = currentCompat(instance, meta)
+  // Measured, and launched below, at the save's own size: changing the
+  // machine's setting never makes a save unloadable (hardware.ts).
+  const hardware = saveHardware(m)
+  const now = currentCompat(instance, meta, undefined, hardware)
   if (m.compat !== now.hash) {
     const devices = takenBeforeDevices(m, hardwareBeforeDevices(instance, meta))
     const why = (m.compatParts === undefined ? [] : compatDiff(m.compatParts, now.parts)).map((w) =>
@@ -1061,6 +1127,7 @@ export async function loadSave(instance: string, name: string): Promise<Manifest
     ephemeral: false,
     virtioBoot: readImageMeta(meta.image)?.virtioBoot === true,
     incoming: plan.incoming,
+    hardware,
   })
   if (plan.incoming === "defer") {
     await qmp.execute(p.qmp, "migrate-set-capabilities", { capabilities: plan.capabilities })

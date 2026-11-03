@@ -60,9 +60,6 @@ export const SHARE_TAG = "winvm"
 export const DEFAULT_LETTER = "Z"
 /** What Explorer calls the drive. The volume's own label is the tag (viofs reports it). */
 export const DRIVE_LABEL = "Mac"
-/** The guest's RAM, MiB: `-m` and the shared memory backend must agree. */
-export const GUEST_MEM_MIB = 4096
-
 export const VDAGENT_CHARDEV = "vdagent"
 export const VDAGENT_PORT = "com.redhat.spice.0"
 
@@ -247,10 +244,10 @@ export const MACHINE_WITH_SHM = "virt,accel=hvf,memory-backend=mem"
  * (saves.ts) blanks `path=` values, so the hash is the same for every instance.
  * The clipboard port joins the existing virtio-serial bus (the guest agent's).
  */
-export function deviceArgs(p: Paths, set: DeviceSet): readonly string[] {
+export function deviceArgs(p: Paths, set: DeviceSet, memoryMiB: number): readonly string[] {
   if (set === "none") return []
   return [
-    "-object", `memory-backend-shm,id=mem,size=${String(GUEST_MEM_MIB)}M,share=on`,
+    "-object", `memory-backend-shm,id=mem,size=${String(memoryMiB)}M,share=on`,
     "-chardev", `socket,id=vfs0,path=${virtiofsdSocket(p)}`,
     // queue-size 1024: virtiofsd's maximum, and what the spike measured
     // (668 MiB/s write, 1359 MiB/s read in the guest).

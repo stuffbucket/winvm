@@ -6,6 +6,10 @@ import { cx } from "../../components/cx"
 import { t } from "../../i18n"
 import type { Checks, Status } from "../../model"
 import { detailRows, phase } from "../../model"
+import { Hardware } from "../hardware/Hardware"
+import { formatMemory } from "../hardware/info"
+import { Network } from "../hardware/Network"
+import type { MachineInfoView } from "../hardware/useMachineInfo"
 import { SharedFolder } from "../sharedfolder/SharedFolder"
 import { needsSetup, sectionHint } from "../sharedfolder/folder"
 import type { SharedFolderView } from "../sharedfolder/useSharedFolder"
@@ -24,6 +28,8 @@ interface PanelProps {
   readonly held?: "paused" | "asleep" | null
   readonly canForceStop: boolean
   readonly sharedFolder: SharedFolderView
+  /** Processors, memory and disk, and the network (`winvm info`). */
+  readonly machineInfo: MachineInfoView
   /** Windows is up and its agent answers. */
   readonly guestReady: boolean
   onForceStop(): void
@@ -46,10 +52,19 @@ export function Panel(p: PanelProps): JSX.Element {
   const rows = p.status === null ? [] : detailRows(p.status)
   const macReady = p.checks?.ready ?? false
   const folderHint = sectionHint(p.sharedFolder.status)
+  const next = p.machineInfo.info?.hardware.next ?? null
   return (
     <aside className="panel" aria-label={t("action.details")}>
       <Section title={t("panel.resources")} open>
         <Resources usage={p.usage} context={p.usageContext} held={p.held ?? null} />
+      </Section>
+
+      <Section title={t("panel.hardware")} hint={next === null ? undefined : t("hardware.hint", { cpus: next.cpus, memory: formatMemory(next.memoryMiB) })}>
+        <Hardware view={p.machineInfo} />
+      </Section>
+
+      <Section title={t("panel.network")}>
+        <Network view={p.machineInfo} />
       </Section>
 
       <Section title={t("panel.status")} open>

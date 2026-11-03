@@ -19,10 +19,11 @@ the job before it, so `--pool` refuses it.
 
 ## Choosing N
 
-Each instance uses 4 virtual CPUs and 4 GiB of memory. You can't change this
-per pool, because it is part of a save's compatibility hash. winvm warns if N
-x 4 is more than the host's CPU cores, or N x 4 GiB is more than half its
-memory. For example, an 18-core Mac with 128 GB fits a pool of 4.
+Each instance runs at the size its golden was taken at, which is the golden
+instance's size (`winvm config cpus= memory=`; a new one has 4 virtual CPUs
+and 8 GiB). winvm warns if N x 4 is more than the host's CPU cores, or N x
+8 GiB is more than half its memory. For example, an 18-core Mac with 128 GB
+fits a pool of 4.
 
 A pool cannot finish faster than its longest job plus one reset. Adding
 instances past that point gains nothing.

@@ -18,6 +18,8 @@ import type { InstanceMeta, Paths } from "./paths"
 import { media } from "./paths"
 import type { DisplayConfig } from "./display"
 import { RAMFB, displayArgs, readDisplay } from "./display"
+import type { Hardware } from "./hardware"
+import { readHardware } from "./hardware"
 import * as share from "./share"
 import * as qga from "./qga"
 import * as qmp from "./qmp"
@@ -49,6 +51,8 @@ export interface LaunchOptions {
    * the other device?"), so nothing is written to find out.
    */
   readonly display?: DisplayConfig
+  /** Processors and memory instead of the instance's hardware.json: a save loads at its own size. */
+  readonly hardware?: Hardware
 }
 
 export function qemuArgs(name: string, p: Paths, meta: InstanceMeta, o: LaunchOptions): readonly string[] {
@@ -65,14 +69,15 @@ export function qemuArgs(name: string, p: Paths, meta: InstanceMeta, o: LaunchOp
   // ramfb. Nothing on ramfb instances or a runtime without them. Guest RAM
   // then comes from a shared memory backend so virtiofsd can reach it. See share.ts.
   const devices = o.shareDevices ?? share.devicesFor(display, o.installMedia)
+  const hw = o.hardware ?? readHardware(p)
   const a: string[] = [
     "-name", `winvm-${name}`,
     "-machine", devices === "none" ? "virt,accel=hvf" : share.MACHINE_WITH_SHM,
     // `host` under HVF is what UTM uses for this guest. `max` falls back to TCG
     // for features HVF cannot provide, and boots far slower.
     "-cpu", "host",
-    "-smp", "4",
-    "-m", String(share.GUEST_MEM_MIB),
+    "-smp", String(hw.cpus),
+    "-m", String(hw.memoryMiB),
     "-drive", `if=pflash,format=raw,readonly=on,file=${requireFirmware().code}`,
     // QCOW2, not the raw vars image. A writable raw device blocks `savevm` for
     // the entire machine — see Paths.vars.
@@ -145,7 +150,7 @@ export function qemuArgs(name: string, p: Paths, meta: InstanceMeta, o: LaunchOp
     // never part of the save hash. Older instances keep ramfb until switched;
     // a build always uses ramfb (WinPE has no virtio-gpu driver). See display.ts.
     ...displayArgs(display),
-    ...share.deviceArgs(p, devices),
+    ...share.deviceArgs(p, devices, hw.memoryMiB),
     "-display", "none",
     // Loopback only, with a websocket listener for the browser view and a
     // password, which macOS Screen Sharing needs and the websocket must have.

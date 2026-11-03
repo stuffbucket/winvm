@@ -53,6 +53,7 @@ import { useUsage } from "./features/usage/useUsage"
 import { DEFAULT_SETTINGS, loadSettings, savePauseOverlay } from "./features/settings/settings"
 import { pauseMenu } from "./features/winvm/pauseMenu"
 import { useSharedFolder } from "./features/sharedfolder/useSharedFolder"
+import { useMachineInfo } from "./features/hardware/useMachineInfo"
 
 type Confirm = { kind: "stop" | "reboot" | "kill" }
 
@@ -154,6 +155,7 @@ export function App(): JSX.Element {
   const usage = useUsage(metered, guestReady ? w.name : null, w.status?.cpus ?? null, w.status?.memoryMiB ?? null)
   const usageContext: UsageContext = { cpus: w.status?.cpus ?? null, overlayBytes: w.status?.overlayBytes ?? null }
   const sharedFolder = useSharedFolder(w.name, phase, guestReady, detailsOpen)
+  const machineInfo = useMachineInfo(w.name, phase, guestReady, detailsOpen)
 
   const run = (verb: Verb, arg?: string): void => {
     if (verb === "start") setStartedFrom(phase)
@@ -636,6 +638,7 @@ export function App(): JSX.Element {
             held={held}
             canForceStop={live && w.busy === null}
             sharedFolder={sharedFolder}
+            machineInfo={machineInfo}
             guestReady={guestReady}
             onForceStop={() => setConfirm({ kind: "kill" })}
           />
