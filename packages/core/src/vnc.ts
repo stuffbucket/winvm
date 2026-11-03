@@ -59,9 +59,15 @@ export const connection = (display: number, password: string | null): Connection
   password,
 })
 
-/** The `-vnc` argument: loopback only, websocket alongside, password required. */
+/**
+ * The `-vnc` argument: loopback only, websocket alongside, password required,
+ * and `lossy=on` so Tight may send JPEG rectangles to a client that asks for a
+ * JPEG quality (noVNC does by default). winvm-runtime's QEMU is built with
+ * libjpeg-turbo from 11.1.2-2; a QEMU without it accepts the option and stays
+ * lossless. Screenshots come from QMP's screendump, not VNC, so they stay exact.
+ */
 export function vncArg(display: number): string {
-  return `127.0.0.1:${String(display)},websocket=127.0.0.1:${String(websocketPort(display))},password=on`
+  return `127.0.0.1:${String(display)},websocket=127.0.0.1:${String(websocketPort(display))},password=on,lossy=on`
 }
 
 /** Whether nothing on this host listens on the display's VNC or websocket port. */
