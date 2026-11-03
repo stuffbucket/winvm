@@ -406,7 +406,8 @@ describe("the agent's /fs/touch", () => {
   })
 })
 
-describe("reading an ISO by ranges", () => {
+// The fixture ISO is made with hdiutil, which only macOS has.
+describe.skipIf(process.platform !== "darwin")("reading an ISO by ranges", () => {
   let dir = ""
   let iso = ""
   beforeAll(() => {
