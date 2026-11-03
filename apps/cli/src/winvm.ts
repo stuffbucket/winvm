@@ -26,6 +26,7 @@
  *   winvm reset [-i name]            discard all changes, back to the base
  *   winvm ls                         images and instances, with disk usage
  *   winvm status [-i name]           what an instance is doing, in one screen
+ *   winvm info [-i name]             its processors, memory, disk and network
  *   winvm open [-i name] [--web]     its screen: Screen Sharing, or the browser
  *   winvm screenshot | type | key | click | move | scroll   drive it with no window
  *   winvm webview enable|eval|click|wait|text   WebView2 windows over DevTools
@@ -147,6 +148,7 @@ import * as cuacmds from "@winvm/core/cuacmds"
 import * as finder from "@winvm/core/finder"
 import * as mcpcmds from "@winvm/core/mcpcmds"
 import * as goldens from "@winvm/core/golden"
+import * as machineinfo from "@winvm/core/machineinfo"
 import * as ocr from "@winvm/core/ocr"
 import * as runcmds from "@winvm/core/runcmds"
 import * as savecmds from "@winvm/core/savecmds"
@@ -176,7 +178,7 @@ const args = parseArgs(rawArgs)
 // drives and is not running. Unmounting from a dead server takes a minute, so
 // a command that only looks leaves it to a detached `winvm files _clean`.
 const NO_SWEEP = ["help", "--help", "ls", "list", "doctor", "timemachine", "tm", "watch", "serve"]
-const LOOK_ONLY = ["status", "saves", "snapshots", "config", "screenshot", "mcp", "cua-serve"]
+const LOOK_ONLY = ["status", "info", "saves", "snapshots", "config", "screenshot", "mcp", "cua-serve"]
 if (sub !== undefined && !NO_SWEEP.includes(sub) && !(sub === "files" && args.positional[0]?.startsWith("_") === true)) {
   if (LOOK_ONLY.includes(sub) || (sub === "files" && args.positional[0] === "status")) finder.cleanStaleLater(instanceName(args))
   else finder.cleanStale(instanceName(args))
@@ -341,6 +343,9 @@ switch (sub) {
   // eslint-disable-next-line no-fallthrough
   case "status":
     process.exit(await status.run({ instance: args.flags.get("instance") ?? process.env["WINVM_INSTANCE"] ?? null, json: args.flags.has("json") }))
+  // eslint-disable-next-line no-fallthrough
+  case "info":
+    process.exit(await machineinfo.infoCmd(args))
   // eslint-disable-next-line no-fallthrough
   case "open":
     process.exit(await screen.open(args))

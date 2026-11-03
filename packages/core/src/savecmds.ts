@@ -221,16 +221,10 @@ export function list(args: Args): number {
     return 0
   }
   const meta = readMeta(name)
-  let compat: string | null = null
-  let before: string | null = null
-  try {
-    if (meta !== null && rows.length > 0) {
-      compat = saves.currentCompat(name, meta).hash
-      before = saves.hardwareBeforeDevices(name, meta)
-    }
-  } catch {
-    compat = null
-  }
+  const ctx = meta !== null && rows.length > 0 ? saves.reportContext(name) : null
+  const before = ctx?.beforeDevices ?? null
+  /** The instance's hash at the size `m` was taken at; null when it cannot be worked out. */
+  const compatOf = (m: saves.Manifest): string | null => (ctx?.at?.(saves.saveHardware(m)).compat ?? ctx?.compat ?? null)?.hash ?? null
   if (rows.length === 0) {
     console.log(`instance "${name}" has no saves (${saves.savesDir(name)})`)
     return 0
@@ -244,6 +238,7 @@ export function list(args: Args): number {
     }
     const d = new Date(m.createdAt)
     const created = `${saves.defaultName(d).slice(0, 10)} ${saves.defaultName(d).slice(11).replaceAll("-", ":")}`
+    const compat = compatOf(m)
     const ok = compat === null ? "?" : m.compat === compat ? "yes" : saves.takenBeforeDevices(m, before) ? "no (before the shared folder)" : "no"
     console.log(
       `  ${m.name.padEnd(22)} ${m.kind.padEnd(9)} ${saves.ramFormatOf(m).padEnd(7)} ${created.padEnd(19)} ${saves.formatBytes(m.bytes).padStart(8)}  ${ok}` +
@@ -456,7 +451,7 @@ export async function recallStow(name: string, args: Args): Promise<number | nul
   const meta = readMeta(name)
   if (meta !== null) {
     const m = saves.readSave(name, saves.STOW)
-    if (m !== null && m.compat !== saves.currentCompat(name, meta).hash) {
+    if (m !== null && m.compat !== saves.compatFor(name, meta, m).hash) {
       const devices = saves.takenBeforeDevices(m, saves.hardwareBeforeDevices(name, meta))
       console.warn(
         devices
@@ -498,7 +493,7 @@ export async function afterBoot(name: string, args: Args): Promise<void> {
     return
   }
   const existing = saves.readSave(name, saves.BASELINE)
-  if (existing !== null && existing.compat === saves.currentCompat(name, meta).hash) {
+  if (existing !== null && existing.compat === saves.compatFor(name, meta, existing).hash) {
     saves.clearPristine(name)
     return
   }

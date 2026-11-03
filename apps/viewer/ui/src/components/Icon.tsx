@@ -26,6 +26,7 @@ export type IconName =
   | "up"
   | "refresh"
   | "plus"
+  | "minus"
   | "shield"
   | "chevronDown"
   | "copy"
@@ -33,7 +34,7 @@ export type IconName =
 
 // Lucide glyphs: play, power, rotate-ccw, pause, maximize, screen-share, panel-right, check, x,
 // terminal, folder, history, bot, file, monitor, file-text, download, house, hard-drive,
-// chevron-left, chevron-right, arrow-up, refresh-cw, plus; shield, quartered as Windows' elevation shield; chevron-down; copy;
+// chevron-left, chevron-right, arrow-up, refresh-cw, plus, minus; shield, quartered as Windows' elevation shield; chevron-down; copy;
 // moon (asleep); keyboard.
 const PATHS: Record<IconName, ReactNode> = {
   keyboard: (
@@ -190,6 +191,7 @@ const PATHS: Record<IconName, ReactNode> = {
       <path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2" />
     </>
   ),
+  minus: <path d="M5 12h14" />,
   plus: (
     <>
       <path d="M5 12h14" />

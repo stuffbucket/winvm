@@ -43,6 +43,7 @@ import { dirname, resolve } from "node:path"
 
 import { ensureState, readState, writeState } from "./agentfwd"
 import type { Args } from "./args"
+import { NEW_DEFAULT } from "./hardware"
 import type { Job } from "./job"
 import { home, pathsFor, readMeta } from "./paths"
 import { parseDuration } from "./golden"
@@ -55,9 +56,9 @@ import * as watcher from "./watch"
 const errMsg = (e: unknown): string => (e instanceof Error ? e.message : String(e))
 const sleep = async (ms: number): Promise<void> => await new Promise((r) => setTimeout(r, ms))
 
-/** Per instance, as qemu.ts launches it. */
-export const VCPUS = 4
-export const MEMORY_BYTES = 4 * 1024 ** 3
+/** Per instance, as a new machine is made (hardware.ts NEW_DEFAULT). */
+export const VCPUS = NEW_DEFAULT.cpus
+export const MEMORY_BYTES = NEW_DEFAULT.memoryMiB * 1024 ** 2
 /** A job gets this long past its own timeout before the watchdog gives up on it. WINVM_POOL_GRACE overrides. */
 export const WATCHDOG_GRACE_MS = 5 * 60_000
 const watchdogGraceMs = (): number => {

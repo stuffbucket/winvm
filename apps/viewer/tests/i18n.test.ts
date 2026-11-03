@@ -77,6 +77,8 @@ const built = [
   ...["display", "base", "hardware", "firmware", "qemu", "other"].map((p) => `checkpoints.incompatible.${p}`),
   ...["baseline", "golden"].map((k) => `checkpoints.keep.${k}`),
   ...["bodyLive", "bodyStopped"].map((b) => `checkpoints.goBack.${b}`),
+  ...["finder", "agent", "other"].map((k) => `network.forward.${k}`),
+  ...["vnc", "websocket", "other"].map((k) => `network.listener.${k}`),
 ]
 
 describe("the en catalog", () => {

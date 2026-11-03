@@ -10,6 +10,8 @@ import { resolve } from "node:path"
 
 import type { DisplayConfig } from "./display"
 import { VIRTIO_GPU, writeDisplay } from "./display"
+import type { Hardware } from "./hardware"
+import { NEW_DEFAULT, writeHardware } from "./hardware"
 import { requireFirmware, run } from "./host"
 import { runtimeBin } from "./runtime"
 import { makeResultVolume } from "./media"
@@ -46,10 +48,10 @@ function createOverlay(p: Paths, image: string): void {
 
 /**
  * The instance, created from `image` if it does not exist yet. A new instance
- * gets `display` (default: virtio-gpu, resizable; display.ts); an existing one
- * keeps the device it has.
+ * gets `display` (default: virtio-gpu, resizable; display.ts) and `hardware`
+ * (default: hardware.ts NEW_DEFAULT); an existing one keeps what it has.
  */
-export function ensureInstance(name: string, image: string, display: DisplayConfig = VIRTIO_GPU): Paths {
+export function ensureInstance(name: string, image: string, display: DisplayConfig = VIRTIO_GPU, hardware: Hardware = NEW_DEFAULT): Paths {
   const p = pathsFor(name)
   if (readMeta(name) !== null) {
     // Instances created before firmware variables moved to qcow2 still have the
@@ -79,6 +81,7 @@ export function ensureInstance(name: string, image: string, display: DisplayConf
   makeVars(p.vars)
   makeResultVolume(p.result)
   writeDisplay(p, display)
+  writeHardware(p, hardware)
   const meta: InstanceMeta = { image, vnc: allocateVnc(), created: new Date().toISOString() }
   writeFileSync(p.meta, `${JSON.stringify(meta, null, 2)}\n`)
   console.log(`created instance "${name}" from image "${image}" (vnc :${String(meta.vnc)})`)

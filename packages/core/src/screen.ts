@@ -354,13 +354,15 @@ function switchDevice(name: string, meta: InstanceMeta, p: Paths, from: DisplayC
     )
     return 1
   }
-  const before = saves.currentCompat(name, meta).hash
+  // Each save judged at its own size (saves.compatFor), before and after the switch.
+  const listed = saves.listSaves(name).flatMap((s) => (s.manifest === null ? [] : [s.manifest]))
+  const loads = (): ReadonlySet<string> => new Set(listed.filter((m) => m.compat === saves.compatFor(name, meta, m).hash).map((m) => m.name))
+  const before = loads()
   writeDisplay(p, to)
-  const after = saves.currentCompat(name, meta).hash
+  const after = loads()
   console.log(`display for "${name}": ${describeDisplay(to)} (was ${describeDisplay(from)}); takes effect at the next \`winvm start${flag}\``)
-  const listed = saves.listSaves(name).filter((s) => s.manifest !== null)
-  const stranded = listed.filter((s) => s.manifest?.compat === before).map((s) => s.name)
-  const regained = listed.filter((s) => s.manifest?.compat === after).map((s) => s.name)
+  const stranded = [...before].filter((n) => !after.has(n))
+  const regained = [...after].filter((n) => !before.has(n))
   if (stranded.length > 0) {
     console.log(
       `${String(stranded.length)} save${stranded.length === 1 ? "" : "s"} of "${name}" (${stranded.join(", ")}) ` +

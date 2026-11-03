@@ -56,6 +56,37 @@ winvm destroy -i test             # remove it and its saves
 winvm ls                          # images and instances, with disk use
 ```
 
+## Processors, memory and network
+
+A new instance gets 4 processors and 8 GB of memory. Instances made before
+this keep the 4 GB they always had until you change it. The app shows both
+under **Hardware** in the details panel, with the disk's size, and lets you
+change them there.
+
+```sh
+winvm info -i test                       # processors, memory, disk, network
+winvm info -i test --json                # the same, for scripts and the app
+winvm config -i test cpus=6 memory=12G   # takes effect the next time Windows boots
+```
+
+Processors go from 2 up to the Mac's performance cores; memory from 4 GB up to
+half the Mac's memory, in whole GB. A change never resizes a running Windows:
+it applies the next time `winvm start` boots it. Restarting from inside
+Windows keeps the old size, because QEMU keeps running.
+
+Saves keep working when the size changes. Each save records the size it was
+taken at, and loading it (or recalling a stow) runs Windows at that size;
+saves from before this were taken at 4 processors and 4 GB. The new size
+applies again at the next boot.
+
+The network is QEMU's user-mode NAT. Windows is at 10.0.2.15, its gateway
+10.0.2.2 is this Mac, and 10.0.2.3 is the DNS server, which asks the Mac's own.
+Windows can reach the internet and services on the Mac at 10.0.2.2. Nothing
+can reach Windows except what winvm forwards, each from `127.0.0.1` on the
+Mac only: the Finder drives (a port to Windows' 445) and the winvm agent
+(a port to 7801). The screen's VNC and WebSocket ports are QEMU's, also on
+`127.0.0.1`. `winvm info` lists them all with their ports.
+
 ## Screen size
 
 New instances use a resizable display (virtio-gpu). In the app, the Windows

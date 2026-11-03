@@ -45,6 +45,7 @@ import * as share from "./share"
 import { ensureShareMedia } from "./sharemedia"
 import * as watcher from "./watch"
 import { CONFIG_KEYS, DEFAULTS, effectiveConfig, parseAssignment, readOverrides, writeAssignments } from "./config"
+import * as machineinfo from "./machineinfo"
 
 /**
  * Whether this instance's image can boot on virtio-blk, which is what live
@@ -1098,13 +1099,18 @@ export async function watchCmd(args: Args): Promise<number> {
 /** `winvm config [-i name] [key=value ...]`: set, then print the effective settings. */
 export function configCmd(args: Args): number {
   const name = instanceName(args)
+  let sized: string | null = null
   if (args.positional.length > 0) {
     if (readMeta(name) === null) {
       console.error(`::error::no such instance "${name}"`)
       return 1
     }
     try {
-      writeAssignments(name, args.positional.map(parseAssignment))
+      // Everything checked before anything is written.
+      const parsed = args.positional.filter((a) => !machineinfo.isHardwareKey(a)).map(parseAssignment)
+      const hw = args.positional.filter(machineinfo.isHardwareKey)
+      if (hw.length > 0) sized = machineinfo.setHardware(name, hw)
+      if (parsed.length > 0) writeAssignments(name, parsed)
     } catch (error) {
       console.error(`::error::${error instanceof Error ? error.message : String(error)}`)
       return 1
@@ -1118,6 +1124,8 @@ export function configCmd(args: Args): number {
     const note = Object.hasOwn(set, k) ? `(default ${show(DEFAULTS[k])})` : "(default)"
     console.log(`  ${k.padEnd(22)} ${show(eff[k]).padEnd(6)} ${note}`)
   }
+  if (readMeta(name) !== null) for (const l of machineinfo.hardwareLines(name)) console.log(l)
+  if (sized !== null) console.log(`\n${sized}`)
   return 0
 }
 
@@ -1172,6 +1180,8 @@ export const USAGE =
   "  stow    [-i name]             save and shut QEMU down; the next start recalls it\n" +
   "  clock   [-i name] [--check]   guest-vs-host clock offset, and fix it\n" +
   "  status  [-i name] [--json]    what it's doing; with no -i and several instances, a table\n" +
+  "  info    [-i name] [--json]    processors, memory and disk (running, and set for the next start),\n" +
+  "                                and the network: addresses and the ports forwarded into Windows\n" +
   "  open    [-i name] [--web]     show the screen in Screen Sharing, or (--web) the browser;\n" +
   "          [--json]              or print the VNC ports and password for a client\n" +
   "          [--print]             print the URL instead of opening it\n" +
@@ -1210,6 +1220,7 @@ export const USAGE =
   "  watch   [-i name]             run the idle watcher in the foreground (start runs it in the background)\n" +
   "          [--stop | --status]   end it / print its state\n" +
   "  config  [-i name] [key=value ...]  autosave/stow/watch settings and the app's title; bare prints them\n" +
+  "          [-i name] cpus=N memory=8G  processors and memory, from the next time Windows starts\n" +
   "  settings [key=value ...] [--json]  your own settings, for every instance (viewer.pauseOverlay);\n" +
   "                                in $XDG_CONFIG_HOME/winvm/settings.json (default ~/.config/winvm)\n" +
   "          [--section NAME [--set JSON]]   one part the app keeps there (checkpoints), as JSON\n" +

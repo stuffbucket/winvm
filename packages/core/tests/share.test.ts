@@ -14,6 +14,7 @@ import { resolve } from "node:path"
 import { parseArgs } from "../src/args"
 import { RAMFB, VIRTIO_GPU, writeDisplay } from "../src/display"
 import { touchPaths } from "../src/guestagent"
+import { LEGACY } from "../src/hardware"
 import { pathsFor, type InstanceMeta, type Paths } from "../src/paths"
 import { qemuArgs } from "../src/qemu"
 import { hardwareArgs, hardwareBeforeDevices, takenBeforeDevices } from "../src/saves"
@@ -62,12 +63,12 @@ describe("the QEMU command line", () => {
     const p = instance("gpu")
     const a = qemuArgs("gpu", p, META, LAUNCH)
     expect(a[a.indexOf("-machine") + 1]).toBe("virt,accel=hvf,memory-backend=mem")
-    expect(a).toContain(`memory-backend-shm,id=mem,size=${String(share.GUEST_MEM_MIB)}M,share=on`)
+    expect(a).toContain(`memory-backend-shm,id=mem,size=${String(LEGACY.memoryMiB)}M,share=on`)
     expect(a).toContain(`socket,id=vfs0,path=${share.virtiofsdSocket(p)}`)
     expect(a).toContain("vhost-user-fs-pci,chardev=vfs0,tag=winvm,queue-size=1024,addr=0x10")
     expect(a).toContain("qemu-vdagent,id=vdagent,clipboard=on,mouse=off")
     expect(a).toContain("virtserialport,chardev=vdagent,name=com.redhat.spice.0")
-    expect(a[a.indexOf("-m") + 1]).toBe(String(share.GUEST_MEM_MIB))
+    expect(a[a.indexOf("-m") + 1]).toBe(String(LEGACY.memoryMiB))
   })
 
   it("leaves a ramfb instance exactly as it was", () => {
@@ -99,8 +100,8 @@ describe("the QEMU command line", () => {
 
   it("puts virtio-fs in a fixed PCI slot whatever the display", () => {
     const p = instance("slot")
-    for (const set of ["fs", "all"] as const) expect(share.deviceArgs(p, set).join(" ")).toContain(",addr=0x10")
-    expect(share.deviceArgs(p, "none")).toEqual([])
+    for (const set of ["fs", "all"] as const) expect(share.deviceArgs(p, set, 4096).join(" ")).toContain(",addr=0x10")
+    expect(share.deviceArgs(p, "none", 4096)).toEqual([])
   })
 })
 
