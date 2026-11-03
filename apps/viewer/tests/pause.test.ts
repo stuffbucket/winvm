@@ -155,6 +155,122 @@ describe("sizes while held", () => {
   it("ask for nothing on running again when nothing was asked meanwhile", () => {
     const h = new HeldSizes(true)
     expect(h.setFrozen(false)).toBeNull()
+  })})
+
+/** Timers that fire only when the test says so. */
+class Timers {
+  private next = 1
+  readonly due = new Map<number, { ms: number; fn: () => void }>()
+  set(fn: () => void, ms: number): unknown {
+    const id = this.next++
+    this.due.set(id, { ms, fn })
+    return id
+  }
+  clear(t: unknown): void {
+    this.due.delete(t as number)
+  }
+  /** The waits armed now, in ms. */
+  get waits(): number[] {
+    return [...this.due.values()].map((d) => d.ms)
+  }
+  /** Fire every timer armed now. */
+  fire(): void {
+    const now = [...this.due.entries()]
+    this.due.clear()
+    for (const [, d] of now) d.fn()
+  }
+}
+
+describe("sizes Windows is not ready for, or misses", () => {
+  const a = { width: 1280, height: 800 }
+  const b = { width: 1600, height: 1000 }
+  const setup = (frozen: boolean, tries?: number) => {
+    const timers = new Timers()
+    const retried: { width: number; height: number }[] = []
+    const h = new HeldSizes(frozen, { timers, retryMs: 2000, ...(tries === undefined ? {} : { tries }), onRetry: (s) => retried.push(s) })
+    return { h, timers, retried }
+  }
+
+  it("wait while Windows starts, and go once it is ready (not ready holds like paused)", () => {
+    const { h, timers } = setup(true)
+    expect(h.offer(a)).toBe(false)
+    expect(h.pending).toEqual(a)
+    expect(h.setFrozen(false)).toEqual(a)
+    expect(h.pending).toBeNull()
+    expect(timers.due.size).toBe(0)
+  })
+
+  it("a size the guest missed while running is asked for again on a timer, backing off", () => {
+    const { h, timers, retried } = setup(false)
+    expect(h.offer(a)).toBe(true)
+    h.missed(a)
+    expect(h.pending).toEqual(a)
+    expect(timers.waits).toEqual([2000])
+    timers.fire()
+    expect(retried).toEqual([a])
+    expect(h.pending).toBeNull()
+    // Asked again (offer) and missed again: the next wait doubles.
+    expect(h.offer(a)).toBe(true)
+    h.missed(a)
+    expect(timers.waits).toEqual([4000])
+    // Taken at last: the waits start over.
+    timers.fire()
+    expect(h.offer(a)).toBe(true)
+    h.took()
+    h.missed(b)
+    expect(timers.waits).toEqual([2000])
+  })
+
+  it("a miss never drops the size: past the tries it waits for the guest to be ready again", () => {
+    const { h, timers, retried } = setup(false, 2)
+    for (let i = 0; i < 2; i++) {
+      expect(h.offer(a)).toBe(true)
+      h.missed(a)
+      timers.fire()
+    }
+    expect(retried).toEqual([a, a])
+    expect(h.offer(a)).toBe(true)
+    h.missed(a)
+    expect(timers.due.size).toBe(0)
+    expect(h.pending).toEqual(a)
+    // Windows restarts (not ready), then is ready: the size is asked for.
+    expect(h.setFrozen(true)).toBeNull()
+    expect(h.setFrozen(false)).toEqual(a)
+  })
+
+  it("a miss while not ready waits for ready, with no timer", () => {
+    const { h, timers } = setup(false)
+    expect(h.offer(a)).toBe(true)
+    // The restart began while the size was out.
+    expect(h.setFrozen(true)).toBeNull()
+    h.missed(a)
+    expect(timers.due.size).toBe(0)
+    expect(h.setFrozen(false)).toEqual(a)
+  })
+
+  it("going not ready stops a retry; the size goes once ready", () => {
+    const { h, timers, retried } = setup(false)
+    expect(h.offer(a)).toBe(true)
+    h.missed(a)
+    expect(h.setFrozen(true)).toBeNull()
+    expect(timers.due.size).toBe(0)
+    timers.fire()
+    expect(retried).toEqual([])
+    expect(h.setFrozen(false)).toEqual(a)
+  })
+
+  it("a newer size wins over one missed", () => {
+    const { h, timers, retried } = setup(true)
+    expect(h.offer(b)).toBe(false)
+    h.missed(a)
+    expect(h.pending).toEqual(b)
+    expect(h.setFrozen(false)).toEqual(b)
+    // A size asked for now replaces a missed one waiting, and its retry.
+    h.missed(a)
+    expect(h.offer(b)).toBe(true)
+    expect(h.pending).toBeNull()
+    expect(timers.due.size).toBe(0)
+    expect(retried).toEqual([])
   })
 })
 

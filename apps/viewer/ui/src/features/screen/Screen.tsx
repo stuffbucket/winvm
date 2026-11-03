@@ -32,6 +32,12 @@ interface ScreenProps {
    * queue in QEMU and land on resume), and sizes wait until it runs (held.ts).
    */
   readonly frozen?: boolean
+  /**
+   * Windows can take a size now (the app's guestReady: it runs, its agent
+   * answers, no verb under way). Until then sizes wait, as while frozen, and
+   * the window's size is asked for, both steps, once it can.
+   */
+  readonly ready?: boolean
   /** Asleep: the first key pressed in the screen wakes it (`onWake`), and isn't typed. */
   readonly asleep?: boolean
   /** A wake is under way: keys are dropped until the machine runs. */
@@ -73,7 +79,7 @@ const dpr = (): number => window.devicePixelRatio || 1
  * the window comes forward, and once on connecting.
  */
 export const Screen = forwardRef<ScreenHandle, ScreenProps>(function Screen(
-  { connection, keyboardCaptured, onKeyboardCaptured, resizable, onGuestSize, frozen = false, asleep = false, waking = false, onWake, overlay = true },
+  { connection, keyboardCaptured, onKeyboardCaptured, resizable, onGuestSize, frozen = false, ready = true, asleep = false, waking = false, onWake, overlay = true },
   ref,
 ): JSX.Element {
   const area = useRef<HTMLDivElement | null>(null)
@@ -92,8 +98,21 @@ export const Screen = forwardRef<ScreenHandle, ScreenProps>(function Screen(
   const { websocketPort, password } = connection
   const guestSize = useRef(onGuestSize)
   guestSize.current = onGuestSize
-  const heldSizes = useRef(new HeldSizes(frozen))
   const live = useRef<LiveResize | null>(null)
+  // Ask again for the size the window wants now, both steps: after a hold, or a size the guest missed.
+  const askAgain = (): void => {
+    const resize = live.current
+    const outer = area.current
+    if (resize === null || outer === null) return
+    const r = outer.getBoundingClientRect()
+    resize.reset()
+    resize.want(guestSizeFor({ width: r.width, height: r.height }, dpr()))
+    resize.flush()
+  }
+  const askAgainRef = useRef(askAgain)
+  askAgainRef.current = askAgain
+  const heldSizes = useRef<HeldSizes | null>(null)
+  heldSizes.current ??= new HeldSizes(frozen || !ready, { onRetry: () => askAgainRef.current() })
   const keys = useRef({ frozen, asleep, waking, onWake })
   keys.current.frozen = frozen
   keys.current.asleep = asleep
@@ -187,13 +206,18 @@ export const Screen = forwardRef<ScreenHandle, ScreenProps>(function Screen(
       ? new LiveResize({
           request: async (size) => {
             if (!connected || closing) return
-            // Held: kept, and asked for when the machine runs again.
-            if (!heldSizes.current.offer(size)) return
+            const sizes = heldSizes.current
+            // Held, or Windows not ready: kept, and asked for once it can take it.
+            if (sizes === null || !sizes.offer(size)) return
             RFB.messages.setDesktopSize(conn._sock, size.width, size.height, conn._screenID ?? 0, conn._screenFlags ?? 0)
             try {
               await guestSize.current?.(size, scaleFor(dpr()))
+              sizes.took()
             } catch (error) {
-              console.warn("resizing the guest failed", error)
+              // Not taken (its display driver or agent not up yet, a restart begun):
+              // kept, and asked for again, both steps, never dropped.
+              console.warn("resizing the guest failed; asking again", error)
+              sizes.missed(size)
             }
           },
           onPhase: (next, settled) => {
@@ -342,6 +366,7 @@ export const Screen = forwardRef<ScreenHandle, ScreenProps>(function Screen(
       outer.removeEventListener("keydown", onKey, true)
       stopWake?.()
       resize?.cancel()
+      heldSizes.current?.cancel()
       clearTimeout(frameWait)
       clearTimeout(clipboardWait)
       window.removeEventListener("focus", onFocus)
@@ -367,15 +392,13 @@ export const Screen = forwardRef<ScreenHandle, ScreenProps>(function Screen(
   useEffect(() => {
     const conn = rfb.current
     if (conn !== null) conn.viewOnly = frozen
-    const kept = heldSizes.current.setFrozen(frozen)
-    const resize = live.current
-    const outer = area.current
-    if (kept === null || resize === null || outer === null) return
-    const r = outer.getBoundingClientRect()
-    resize.reset()
-    resize.want(guestSizeFor({ width: r.width, height: r.height }, dpr()))
-    resize.flush()
   }, [frozen])
+  // Held or not ready: sizes wait. Able to take one again: ask for the size the
+  // window wants now, both steps, if one was kept.
+  useEffect(() => {
+    const kept = heldSizes.current?.setFrozen(frozen || !ready) ?? null
+    if (kept !== null) askAgainRef.current()
+  }, [frozen, ready])
 
   // One guest pixel per device pixel once the guest is the size this view
   // wants: the box noVNC scales into is the framebuffer's size in CSS pixels,

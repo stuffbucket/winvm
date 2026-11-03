@@ -136,27 +136,19 @@ export function App(): JSX.Element {
     w.busy !== null ? t(`busy.${w.busy}`) : phase === "starting" ? t("state.starting") : held !== null ? t(`state.${held}`) : null
 
   // The guest switches to the viewer's size through its agent, called
-  // directly (a few ms, not a CLI start per size), once it is up; a size asked
-  // for before that waits for it.
-  const pendingSize = useRef<{ size: Size; scale: number } | null>(null)
+  // directly (a few ms, not a CLI start per size), once it is up. The screen
+  // keeps a size asked for before that, or one this refuses, and asks again,
+  // both steps, once Windows can take it (held.ts).
   const resizeGuest = useCallback(
     async (size: Size, scale: number): Promise<void> => {
       if (w.name === null) return
-      if (!guestReady) {
-        pendingSize.current = { size, scale }
-        return
-      }
-      pendingSize.current = null
+      if (!guestReady) throw new Error("Windows is not ready for a new size yet")
       const reply = await agentFetch(w.name, "POST", "/display", { op: "set", width: size.width, height: size.height, waitMs: 2000, scale }, 22_000)
       // 202: Windows is at its lock screen (after a wake, say); the agent sets the size at sign-in.
       if (reply.status !== 200 && reply.status !== 202) throw new Error(`the agent answered ${String(reply.status)}: ${JSON.stringify(reply.body)}`)
     },
     [w.name, guestReady],
   )
-  useEffect(() => {
-    const p = pendingSize.current
-    if (guestReady && p !== null) resizeGuest(p.size, p.scale).catch((error: unknown) => console.warn("resizing the guest failed", error))
-  }, [guestReady, resizeGuest])
   // `ps` keeps reading while held (the history stays); the agent only while Windows is up.
   const metered = live ? (w.status?.pid ?? null) : null
   const usage = useUsage(metered, guestReady ? w.name : null, w.status?.cpus ?? null, w.status?.memoryMiB ?? null)
@@ -615,6 +607,7 @@ export function App(): JSX.Element {
                   resizable={resizable}
                   onGuestSize={resizeGuest}
                   frozen={frozen}
+                  ready={guestReady}
                   asleep={phase === "asleep"}
                   waking={w.busy === "wake"}
                   onWake={wake}
