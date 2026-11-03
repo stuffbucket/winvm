@@ -13,6 +13,8 @@ interface TimelineProps {
   onPick(tick: Tick): void
   /** Follow the pointer while it drags. */
   onScrub(tick: Tick): void
+  /** The pointer is over this tick (null: it left). */
+  onHover?(tick: Tick | null): void
   onOlder(): void
   onNewer(): void
   readonly canOlder: boolean
@@ -29,7 +31,7 @@ const DOWN = <path d="m6 9 6 6 6-6" />
  * the day; click, drag or the arrow keys go there. The chevrons above and
  * below step one checkpoint older or newer.
  */
-export function Timeline({ ticks, active, onPick, onScrub, onOlder, onNewer, canOlder, canNewer }: TimelineProps): JSX.Element {
+export function Timeline({ ticks, active, onPick, onScrub, onHover, onOlder, onNewer, canOlder, canNewer }: TimelineProps): JSX.Element {
   const track = useRef<HTMLDivElement>(null)
   const [hover, setHover] = useState<Tick | null>(null)
   const dragging = useRef(false)
@@ -55,6 +57,7 @@ export function Timeline({ ticks, active, onPick, onScrub, onOlder, onNewer, can
   const move = (e: PointerEvent<HTMLDivElement>): void => {
     const tick = at(e.clientY)
     setHover(tick)
+    onHover?.(tick)
     if (!dragging.current || tick === null || tick.key === last.current) return
     last.current = tick.key
     onScrub(tick)
@@ -98,7 +101,10 @@ export function Timeline({ ticks, active, onPick, onScrub, onOlder, onNewer, can
         onPointerCancel={() => {
           dragging.current = false
         }}
-        onPointerLeave={() => setHover(null)}
+        onPointerLeave={() => {
+          setHover(null)
+          onHover?.(null)
+        }}
         onKeyDown={key}
       >
         <span className="timeline__rail" aria-hidden="true" />

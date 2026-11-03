@@ -4,15 +4,23 @@
    Every color, size and space comes from a token.
    ========================================================= */
 
-/* ---- The surface: a dimmed, blurred window behind a transparent canvas ---- */
+/* ---- The surface: the whole window, receding behind a transparent canvas ---- */
 
 .checkpoints {
   --checkpoints-timeline: calc(var(--size-2xl) * 3);
   --checkpoints-ease: cubic-bezier(0.65, 0, 0.35, 1);
+  /* The bar's height and its gap to the window's edge: what the status line and the panels clear. */
+  --checkpoints-bar: calc(var(--size-xl) + var(--space-2) + var(--border-width-hairline) * 2);
   color: var(--text-base-color);
   font-family: var(--font-body);
 }
 
+/*
+ * Time Machine's way of showing time as depth, on the window's own tokens:
+ * the live screen, blurred and dimmed, is the room; a vignette closes it in
+ * at the edges, and the far end (the top, where the oldest checkpoints are)
+ * sinks into the surface color.
+ */
 .checkpoints__backdrop {
   position: absolute;
   inset: 0;
@@ -37,7 +45,10 @@
   content: "";
   position: absolute;
   inset: 0;
-  background: color-mix(in srgb, var(--surface-base) 62%, transparent);
+  background:
+    linear-gradient(to bottom, color-mix(in srgb, var(--surface-base) 78%, transparent), transparent 62%),
+    radial-gradient(ellipse 85% 75% at 50% 62%, transparent 30%, color-mix(in srgb, var(--surface-base) 66%, transparent) 100%),
+    color-mix(in srgb, var(--surface-base) 52%, transparent);
 }
 
 .checkpoints .spatial-canvas__viewport {
@@ -55,10 +66,8 @@
   opacity: 0;
 }
 
-.checkpoints .spatial-canvas__grid,
-.checkpoints .spatial-canvas__topbar,
+.checkpoints .spatial-canvas__controls,
 .checkpoints .timeline,
-.checkpoints__zoom,
 .checkpoints__status,
 .checkpoints .spatial-canvas__side-panel,
 .checkpoints .spatial-canvas__floating-panel,
@@ -67,8 +76,8 @@
   transition: opacity 320ms var(--checkpoints-ease);
 }
 
-.checkpoints[data-phase="entering"] :is(.spatial-canvas__grid, .spatial-canvas__topbar, .timeline, .checkpoints__zoom, .checkpoints__status, .checkpoints__day, .checkpoint:not(.checkpoint--now)),
-.checkpoints[data-phase="leaving"] :is(.spatial-canvas__grid, .spatial-canvas__topbar, .timeline, .checkpoints__zoom, .checkpoints__status, .spatial-canvas__side-panel, .spatial-canvas__floating-panel, .checkpoints__day, .checkpoint:not(.checkpoint--now)) {
+.checkpoints[data-phase="entering"] :is(.spatial-canvas__controls, .timeline, .checkpoints__status, .checkpoints__day, .checkpoint:not(.checkpoint--now)),
+.checkpoints[data-phase="leaving"] :is(.spatial-canvas__controls, .timeline, .checkpoints__status, .spatial-canvas__side-panel, .spatial-canvas__floating-panel, .checkpoints__day, .checkpoint:not(.checkpoint--now)) {
   opacity: 0;
 }
 
@@ -76,76 +85,89 @@
   opacity: 0;
 }
 
-/* The window's title bar is under the view: this strip still moves the window. */
+/*
+ * The window's title bar is under the view, with the traffic lights at its
+ * top left: nothing of ours sits there, and this strip still moves the window.
+ */
 .checkpoints__drag {
   position: absolute;
   z-index: 1;
   top: 0;
   right: 0;
   left: 0;
-  height: calc(var(--size-2xl) + var(--space-4));
+  height: var(--size-2xl);
 }
 
-/* ---- Top bar ---- */
-
-.checkpoints .spatial-canvas__topbar {
-  /* Clear of the traffic lights, which sit over the window's top left. */
-  left: calc(var(--size-2xl) + var(--size-xl));
-  right: var(--space-3);
-}
+/* ---- The control bar, floating at the bottom ---- */
 
 /*
  * The chrome over the canvas is opaque. Cards pan and zoom under it, and
  * through the canvas package's translucent glass a card's title read through
- * the heading's own text. Opaque, it simply covers what passes under it.
+ * the bar's own text. Opaque, it simply covers what passes under it.
  */
-.checkpoints :is(.spatial-canvas__corner, .spatial-canvas__zoom) {
+.checkpoints :is(.spatial-canvas__controls, .spatial-canvas__zoom) {
   background: var(--surface-card);
   -webkit-backdrop-filter: none;
   backdrop-filter: none;
 }
 
-.checkpoints__heading {
-  gap: var(--space-2);
+.checkpoints .spatial-canvas__controls {
+  gap: var(--space-1);
+  box-shadow: var(--elevation-modal);
+}
+
+.checkpoints .spatial-canvas__button[aria-pressed="true"] {
+  color: var(--link);
+}
+
+.checkpoints__divider {
+  width: var(--border-width-hairline);
+  height: var(--size-md);
+  margin-inline: var(--space-1);
+  background: var(--border-subtle);
+}
+
+.checkpoints__new-button {
   padding-inline: var(--space-3);
-  min-height: calc(var(--size-xl) + var(--space-2));
 }
 
-.checkpoints__heading strong {
-  color: var(--text-strong);
-  font-weight: var(--weight-lg);
-}
-
-.checkpoints__heading span {
-  color: var(--text-muted);
-  font-size: var(--text-sm);
-  white-space: nowrap;
-}
-
-.checkpoints__actions {
-  gap: var(--space-2);
-}
-
+/* Search: a magnifier until it's used, then a field that eases out to the left of it. */
 .checkpoints__search {
+  position: relative;
+  display: flex;
+}
+
+.checkpoints__search-field {
+  position: absolute;
+  top: calc(-1 * (var(--space-1) + var(--border-width-hairline)));
+  right: 100%;
+  bottom: calc(-1 * (var(--space-1) + var(--border-width-hairline)));
   display: flex;
   align-items: center;
-  gap: var(--space-2);
-  height: var(--size-xl);
-  padding-inline: var(--space-2);
+  width: 0;
+  overflow: hidden;
+  border-radius: var(--radius-card) 0 0 var(--radius-card);
+  background: var(--surface-card);
+  opacity: 0;
+  pointer-events: none;
+  transition:
+    width 200ms ease-out,
+    opacity 160ms ease-out;
+}
+
+.checkpoints__search[data-open="true"] .checkpoints__search-field {
+  width: calc(var(--size-2xl) * 6);
   border: var(--border-width-hairline) solid var(--border-subtle);
-  border-radius: var(--radius-input);
-  background: var(--surface-control);
-  color: var(--text-muted);
+  border-right: 0;
+  opacity: 1;
+  pointer-events: auto;
 }
 
-.checkpoints__search:focus-within {
-  outline: var(--focus-ring);
-  outline-offset: var(--focus-ring-offset);
-}
-
-.checkpoints__search input {
-  width: calc(var(--size-2xl) * 5.5);
+.checkpoints__search-field input {
+  flex: 1;
   min-width: 0;
+  height: 100%;
+  padding: 0 var(--space-3) 0 var(--space-4);
   border: 0;
   background: transparent;
   color: var(--text-strong);
@@ -154,24 +176,58 @@
   outline: none;
 }
 
-.checkpoints__search input::placeholder {
+.checkpoints__search-field input::placeholder {
   color: var(--text-muted);
 }
 
-.checkpoints__divider {
-  width: var(--border-width-hairline);
-  height: var(--size-md);
-  background: var(--border-subtle);
+.checkpoints__search-field input::-webkit-search-cancel-button {
+  display: none;
 }
 
-.checkpoints .spatial-canvas__button[aria-pressed="true"] {
-  color: var(--link);
+.checkpoints__search:focus-within .checkpoints__search-field {
+  box-shadow: inset 0 0 0 var(--border-width-hairline) var(--accent);
+}
+
+/* Zoom: the figure takes room only while the zoom is changing, or when the pointer or focus is there. */
+.checkpoints__zoom {
+  display: flex;
+  align-items: center;
+}
+
+.checkpoints__zoom-figure {
+  display: block;
+  width: 0;
+  overflow: hidden;
+  opacity: 0;
+  color: var(--text-base-color);
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+  transition:
+    width 200ms ease-out,
+    opacity 200ms ease-out;
+}
+
+.checkpoints__zoom-figure > span {
+  display: block;
+  min-width: calc(var(--size-2xl) + var(--space-3));
+}
+
+.checkpoints__zoom[data-figure="true"] .checkpoints__zoom-figure,
+.checkpoints__zoom:hover .checkpoints__zoom-figure,
+.checkpoints__zoom:focus-within .checkpoints__zoom-figure {
+  width: calc(var(--size-2xl) + var(--space-3));
+  opacity: 1;
 }
 
 .checkpoints__results,
 .checkpoints__new {
-  top: calc(var(--size-2xl) + var(--space-5));
-  right: var(--space-3);
+  top: auto;
+  right: auto;
+  bottom: calc(var(--space-4) + var(--checkpoints-bar) + var(--space-3));
+  left: 50%;
+  transform: translateX(-50%);
   width: min(calc(var(--panel-width) + var(--space-6)), calc(100% - var(--space-5)));
 }
 
@@ -192,28 +248,11 @@
   gap: var(--space-2);
 }
 
-/* ---- Bottom: zoom and the status line ---- */
-
-.checkpoints__zoom {
-  position: absolute;
-  z-index: 3;
-  bottom: var(--space-3);
-  left: var(--space-3);
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-}
-
-.checkpoints__zoom > .spatial-canvas__button {
-  border: var(--border-width-hairline) solid var(--border-subtle);
-  background: var(--surface-card);
-  box-shadow: var(--elevation-tooltip);
-}
-
+/* The status line sits just above the bar. */
 .checkpoints__status {
   position: absolute;
   z-index: 3;
-  bottom: var(--space-4);
+  bottom: calc(var(--space-4) + var(--checkpoints-bar) + var(--space-3));
   left: 50%;
   display: flex;
   align-items: center;
@@ -262,6 +301,13 @@
 
 /* ---- A checkpoint card ---- */
 
+/*
+ * A card is its picture. Its words hang below it, drawn in a box scaled by
+ * --m (set on the button): the card's own scale, but never so small that
+ * the words stop reading on screen. Frame chrome (kind, warning, progress)
+ * is scaled the same way. Strokes use --m too, so an outline stays a line
+ * at every zoom.
+ */
 .checkpoint {
   --card-radius: var(--radius-card);
 }
@@ -271,14 +317,14 @@
 }
 
 .checkpoint__hit {
-  display: flex;
-  flex-direction: column;
+  --stroke: calc(var(--border-width-hairline) * var(--m, 1));
+  position: relative;
+  display: block;
   width: 100%;
   height: 100%;
   margin: 0;
   padding: 0;
-  overflow: hidden;
-  border: var(--border-width-hairline) solid var(--border-subtle);
+  border: var(--stroke) solid var(--border-subtle);
   border-radius: calc(var(--card-radius) * var(--card-scale, 1));
   background: var(--surface-card);
   box-shadow: var(--elevation-modal);
@@ -295,6 +341,17 @@
 
 .checkpoint__hit:hover {
   border-color: var(--border-strong);
+  opacity: 1;
+}
+
+/* Older days recede: a little fainter with each step back, the way Time Machine's windows sink. */
+.checkpoint:not(.checkpoint--now) .checkpoint__hit {
+  opacity: calc(0.3 + var(--card-scale, 1) * 0.7);
+}
+
+/* While the timeline or a filter picks some out, the rest step back. */
+.spatial-canvas__viewport[data-picking="true"] .checkpoint:not([data-lit="true"], .checkpoint--now) .checkpoint__hit {
+  opacity: 0.55;
 }
 
 .checkpoint__hit:focus-visible {
@@ -305,9 +362,21 @@
 .checkpoint[data-selected="true"] .checkpoint__hit {
   border-color: var(--accent);
   box-shadow:
-    0 0 0 var(--border-width-thick) var(--accent),
-    var(--elevation-modal),
+    0 0 0 calc(var(--border-width-thick) * var(--m, 1)) var(--accent),
     var(--elevation-modal);
+}
+
+/* Picked out by the timeline or a filter: a soft ring and glow, the rest step back a little. */
+.checkpoint[data-lit="true"] .checkpoint__hit {
+  border-color: var(--accent);
+  box-shadow:
+    0 0 0 calc(var(--border-width-thick) * var(--m, 1)) color-mix(in srgb, var(--accent) 70%, transparent),
+    0 0 calc(var(--space-5) * var(--m, 1)) color-mix(in srgb, var(--accent) 40%, transparent),
+    var(--elevation-modal);
+}
+
+.checkpoint[data-lit="true"] .checkpoint__name {
+  color: var(--link);
 }
 
 .checkpoint__frame {
@@ -319,6 +388,12 @@
   aspect-ratio: 16 / 10;
   overflow: hidden;
   background: var(--surface-base);
+}
+
+.checkpoint__hit > .checkpoint__frame {
+  height: 100%;
+  aspect-ratio: auto;
+  border-radius: inherit;
 }
 
 .checkpoint__frame img,
@@ -347,39 +422,58 @@
   height: calc(var(--size-2xl) * var(--card-scale, 1));
 }
 
+/* The box the words and marks on a card are laid out in: scaled by --m about its top left, so it is --m times narrower. */
+.checkpoint__fit {
+  position: absolute;
+  left: 0;
+  width: calc(100% / var(--m, 1));
+  transform: scale(var(--m, 1));
+  transform-origin: 0 0;
+}
+
+.checkpoint__fit--frame {
+  top: 0;
+  height: calc(100% / var(--m, 1));
+  pointer-events: none;
+}
+
 .checkpoint__working {
   position: absolute;
-  z-index: 1;
-  padding: calc(var(--space-2) * var(--card-scale, 1)) calc(var(--space-4) * var(--card-scale, 1));
+  top: 50%;
+  left: 50%;
+  padding: var(--space-2) var(--space-4);
+  transform: translate(-50%, -50%);
   border-radius: var(--radius-pill);
   background: var(--surface-card);
   box-shadow: var(--elevation-modal);
   color: var(--text-strong);
-  font-size: calc(var(--text-base) * var(--card-scale, 1));
+  font-size: var(--text-sm);
+  white-space: nowrap;
 }
 
 .checkpoint__caption {
+  top: 100%;
   display: grid;
-  align-content: start;
-  gap: calc(var(--space-1) * var(--card-scale, 1) / 2);
-  min-height: 0;
-  padding: calc(var(--space-3) * var(--card-scale, 1)) calc(var(--space-4) * var(--card-scale, 1));
-  font-size: calc(var(--text-sm) * var(--card-scale, 1));
+  gap: 0;
+  padding: var(--space-2) var(--space-1) 0;
+  color: var(--text-base-color);
+  font-size: var(--text-sm);
   line-height: var(--leading-lg);
+  pointer-events: none;
   transition: opacity 200ms ease-out;
 }
 
 .checkpoint__title {
   display: flex;
   align-items: center;
-  gap: calc(var(--space-2) * var(--card-scale, 1));
+  gap: var(--space-2);
   min-width: 0;
 }
 
 .checkpoint__name {
   overflow: hidden;
   color: var(--text-strong);
-  font-size: calc(var(--text-base) * var(--card-scale, 1));
+  font-size: var(--text-base);
   font-weight: var(--weight-lg);
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -392,39 +486,61 @@
 }
 
 .checkpoint__notes svg {
-  width: calc(var(--size-sm) * var(--card-scale, 1));
-  height: calc(var(--size-sm) * var(--card-scale, 1));
+  width: var(--size-sm);
+  height: var(--size-sm);
 }
 
 .checkpoint__when {
+  overflow: hidden;
   color: var(--text-base-color);
-}
-
-.checkpoint__meta {
-  display: flex;
-  align-items: center;
-  gap: calc(var(--space-2) * var(--card-scale, 1));
-  color: var(--text-muted);
   font-variant-numeric: tabular-nums;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
+/* What kind, when it isn't one somebody took: a small tag on the picture's corner. */
 .checkpoint__kind {
-  padding: 0 calc(var(--space-1) * var(--card-scale, 1) * 1.5);
+  position: absolute;
+  top: var(--space-2);
+  left: var(--space-2);
+  padding: 0 var(--space-2);
   border: var(--border-width-hairline) solid var(--border-subtle);
-  border-radius: var(--radius-chip);
+  border-radius: var(--radius-pill);
+  background: color-mix(in srgb, var(--surface-card) 88%, transparent);
+  color: var(--text-base-color);
+  font-size: var(--text-sm);
+  line-height: var(--leading-lg);
 }
 
 .checkpoint__badge {
   position: absolute;
-  z-index: 1;
   right: 0;
   bottom: 0;
   left: 0;
-  padding: calc(var(--space-2) * var(--card-scale, 1)) calc(var(--space-3) * var(--card-scale, 1));
-  background: color-mix(in srgb, var(--surface-card) 90%, transparent);
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  background: color-mix(in srgb, var(--surface-card) 92%, transparent);
   color: var(--status-warning);
-  font-size: calc(var(--text-sm) * var(--card-scale, 1));
+  font-size: var(--text-sm);
   line-height: var(--leading-lg);
+}
+
+.checkpoint__badge svg {
+  flex: none;
+  width: var(--size-sm);
+  height: var(--size-sm);
+}
+
+/* Too narrow for the sentence: a warning sign in the corner, its words in the tooltip. */
+.checkpoint[data-level="name"] .checkpoint__badge {
+  top: var(--space-2);
+  right: var(--space-2);
+  bottom: auto;
+  left: auto;
+  padding: var(--space-1);
+  border-radius: var(--radius-pill);
 }
 
 /* Can't load here: the picture steps back, the words say why. */
@@ -468,15 +584,9 @@
   box-shadow: none;
 }
 
-/* Far away, a card is its picture: the words are too small to read. */
-.spatial-canvas__viewport[data-far="true"] .checkpoint:not(.checkpoint--now) .checkpoint__caption {
-  opacity: 0;
-}
-
 /* ---- Now: the running machine ---- */
 
 .checkpoint--now .checkpoint__hit {
-  --card-scale: 1.4;
   border-color: var(--border-strong);
 }
 
@@ -484,15 +594,19 @@
   aspect-ratio: auto;
 }
 
+.checkpoint--now .checkpoint__name {
+  color: var(--link);
+}
+
 .checkpoint--now .checkpoint__caption {
-  display: flex;
+  grid-auto-flow: column;
   align-items: baseline;
   justify-content: space-between;
   gap: var(--space-4);
 }
 
-.checkpoint--now .checkpoint__name {
-  color: var(--link);
+.checkpoint--now .checkpoint__when {
+  color: var(--text-muted);
 }
 
 /* ---- Timeline, down the right edge ---- */
@@ -500,7 +614,7 @@
 .timeline {
   position: absolute;
   z-index: 3;
-  top: calc(var(--size-2xl) + var(--space-5));
+  top: var(--space-5);
   right: var(--space-3);
   bottom: var(--space-3);
   display: flex;
@@ -631,7 +745,9 @@
 /* ---- The selected checkpoint, up close ---- */
 
 .checkpoints .checkpoint-details {
+  top: var(--space-5);
   right: calc(var(--checkpoints-timeline) + var(--space-4));
+  bottom: calc(var(--space-4) + var(--checkpoints-bar) + var(--space-3));
   width: min(calc(var(--panel-width) + var(--space-7)), calc(100% - var(--checkpoints-timeline) - var(--space-7)));
 }
 
