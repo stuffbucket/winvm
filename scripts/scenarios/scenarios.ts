@@ -520,6 +520,15 @@ export async function sharedFolder(ctx: Context): Promise<Scenario> {
     sc.check("a Mac change fires Windows' watcher", /EVENT/.test(ev.stdout), ev.stdout.trim())
     const later = await waitFor(async () => await winvm(["dir", "-i", ctx.name, "Z:\\", "--json"]), (r) => r.stdout.includes("later.txt"), 30_000, 2000)
     sc.check("and the new file is in Z:", later.ok, "later.txt listed")
+    // The other way: a file Windows writes to Z: lands in the Mac folder.
+    const wrote = await winvm(["exec", "-i", ctx.name, "--", "powershell", "-NoProfile", "-Command", "[IO.File]::WriteAllText('Z:\\from-windows.txt', 'three')"], { timeoutMs: 60_000 })
+    const back = await waitFor(
+      async () => (existsSync(resolve(dir, "from-windows.txt")) ? readFileSync(resolve(dir, "from-windows.txt"), "utf8") : ""),
+      (s) => s === "three",
+      30_000,
+      1000,
+    )
+    sc.check("a file Windows writes to Z: is in the Mac folder", wrote.code === 0 && back.ok, back.value === "" ? (wrote.stderr.trim() || "not there") : JSON.stringify(back.value))
     await must(["share", "-i", ctx.name, "clear"])
     rmSync(dir, { recursive: true, force: true })
   })
