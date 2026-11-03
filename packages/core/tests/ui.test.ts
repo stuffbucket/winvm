@@ -197,7 +197,7 @@ describe("screen access", () => {
     expect(screenSharingUrl(4, "abc23456")).toBe("vnc://:abc23456@127.0.0.1:5904")
     expect(screenSharingUrl(1, null)).toBe("vnc://127.0.0.1:5901")
     expect(websocketPort(4)).toBe(5704)
-    expect(vncArg(4)).toBe("127.0.0.1:4,websocket=127.0.0.1:5704,password=on")
+    expect(vncArg(4)).toBe("127.0.0.1:4,websocket=127.0.0.1:5704,password=on,lossy=on")
   })
 
   it("generates 8-character URL-safe passwords", () => {
