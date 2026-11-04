@@ -91,9 +91,9 @@ The plate's rows, each fact in one place (`windows.md` → *Checkpoints*):
   transform.
 - Glyphs are the shared `Icon` set: camera (Manual), timer (Automatic), flag
   (Fresh install), archive (Saved on suspend), flask (Test starting point),
-  notebook-pen (a note), triangle-alert (can't go back here).
-- Status is not a row: a card Windows can't go back to is dashed and its
-  picture greyed, with a warning pill ("Can't go back here") inset at the
+  notebook-pen (a note), triangle-alert (can't restore).
+- Status is not a row: a card Windows can't restore here is dashed and its
+  picture greyed, with a warning pill ("Can't restore") inset at the
   picture's bottom edge (`--status-warning`), the whole reason in its `title`.
   Narrower than the plate's
   full width the pill is the icon alone in the picture's corner.
@@ -284,11 +284,11 @@ caption and in no properties list.
   point. Each has one sentence (the chip's `title`, and the line under it in the
   panel); no "stow", "pristine" or "golden" in what a person reads. The table is
   in `windows.md` → *Checkpoints*.
-- **Can't go back here is a status, not a property.** When it can, nothing is
+- **Can't restore is a status, not a property.** When it can, nothing is
   said (compatible is the default and not worth a row). When it can't: one calm
-  line under the kind, `--status-warning`, the warning glyph, "Can't go back
-  here" in `--weight-lg` and under it the few words why ("Made with a different
-  QEMU version", `--text-muted`); the whole sentence is its `title` and the
+  line under the kind, `--status-warning`, the warning glyph, "Can't restore"
+  in `--weight-lg` and under it the few words why ("Wrong QEMU version",
+  `--text-muted`); the whole sentence is its `title` and the
   accessible description (`aria-describedby`) of Go Back, which is disabled with
   the same sentence as its tooltip. The card's pill says the same three words.
   One verb for the whole feature, the one the app already uses for the action:

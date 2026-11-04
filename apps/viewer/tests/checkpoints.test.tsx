@@ -772,7 +772,7 @@ describe("the checkpoint's panel", () => {
     for (const compatible of [true, null]) {
       const { host } = panel(checkpoint("ok", at(2026, 10, 22, 14), { compatible }))
       expect(host.querySelector(".checkpoint-details__status")).toBeNull()
-      expect(host.textContent).not.toContain("Can't go back")
+      expect(host.textContent).not.toContain("Can't restore")
       const goBack = [...host.querySelectorAll("button")].find((b) => b.textContent === "Go Back to This")
       expect(goBack?.disabled).toBe(false)
       expect(goBack?.getAttribute("title")).toBe("Put Windows back exactly as it was at this moment")
@@ -781,13 +781,13 @@ describe("the checkpoint's panel", () => {
     }
   })
 
-  it("says it can't go back here as a status under the facts, in a few words, the whole reason on hover and in Go Back's description", () => {
+  it("says it can't be restored as a status under the facts, in a few words, the whole reason on hover and in Go Back's description", () => {
     const { host } = panel(checkpoint("q", at(2026, 10, 21, 12), { compatible: false, incompatible: ["qemu"] }))
     const status = host.querySelector<HTMLElement>(".checkpoint-details__status")
-    const full = "It was made with a different version of QEMU, so Windows can't go back to it on this machine."
+    const full = "It was made with a different version of QEMU, so it can't be restored on this machine."
     expect(status?.firstElementChild?.tagName.toLowerCase()).toBe("svg")
-    expect(status?.querySelector("strong")?.textContent).toBe("Can't go back here")
-    expect(status?.querySelector(".checkpoint-details__why")?.textContent).toBe("Made with a different QEMU version")
+    expect(status?.querySelector("strong")?.textContent).toBe("Can't restore")
+    expect(status?.querySelector(".checkpoint-details__why")?.textContent).toBe("Wrong QEMU version")
     expect(status?.getAttribute("title")).toBe(full)
     // It sits after the facts and before the note, and is not a row of the properties.
     const all = [...(host.querySelector("aside")?.querySelectorAll("*") ?? [])]
@@ -802,15 +802,15 @@ describe("the checkpoint's panel", () => {
     expect(host.querySelector(`[id="${goBack?.getAttribute("aria-describedby") ?? ""}"]`)?.textContent).toBe(full)
   })
 
-  it("has a short, plain phrase and a whole sentence for every reason a checkpoint can't go back", () => {
+  it("has a short, plain phrase and a whole sentence for every reason a checkpoint can't be restored", () => {
     for (const part of ["display", "base", "hardware", "firmware", "qemu", "other"]) {
       const reason = cp.incompatibleReason({ compatible: false, incompatible: part === "other" ? [] : [part] })
       expect(reason).not.toBeNull()
       const key = shortReason(reason as string)
       expect(t(key)).not.toBe(key)
       expect(t(key).length).toBeLessThan(40)
-      expect(t(key)).toMatch(/^Made (with|from) /)
-      expect(t(reason as string)).toContain("can't go back to it on this machine")
+      expect(t(key)).toMatch(/^(Wrong|Incompatible) /)
+      expect(t(reason as string)).toContain("can't be restored on this machine")
       expect(`${t(key)}${t(reason as string)}`).not.toMatch(/load/i)
     }
   })
@@ -1204,13 +1204,13 @@ describe("a card", () => {
     }
   })
 
-  it("states Can't go back here on the picture, with the reason in its tooltip, not as a caption row", () => {
+  it("states Can't restore on the picture, with the reason in its tooltip, not as a caption row", () => {
     const host = card(checkpoint("x", taken, { compatible: false, incompatible: ["display"] }))
     const badge = host.querySelector(".checkpoint__badge")
     expect(badge?.closest(".checkpoint__frame")).not.toBeNull()
     expect(badge?.closest(".checkpoint__caption")).toBeNull()
-    expect(badge?.textContent).toBe("Can't go back here")
-    expect(badge?.getAttribute("title")).toBe("It was made with a different display setup, so Windows can't go back to it on this machine.")
+    expect(badge?.textContent).toBe("Can't restore")
+    expect(badge?.getAttribute("title")).toBe("It was made with a different display setup, so it can't be restored on this machine.")
   })
 
   it("names every fact in its one accessible name", () => {
@@ -1222,11 +1222,11 @@ describe("a card", () => {
     expect(label).toContain("Oct 21, 2026 at")
     expect(label).toContain("7.8 GiB")
     expect(label).toContain("Has notes")
-    expect(label).toContain("can't go back to it on this machine")
+    expect(label).toContain("can't be restored on this machine")
     // Without a note or a problem, it says neither.
     const plain = cardLabel(checkpoint("y", taken), NOW)
     expect(plain).not.toContain("Has notes")
-    expect(plain).not.toContain("can't go back")
+    expect(plain).not.toContain("can't be restored")
   })
 
   it("thins its caption out with its width on screen: all, then the name alone, then the picture", () => {

@@ -20,7 +20,7 @@ docs' code references; they are the command line's words. Kinds of
 checkpoint say how each came about, never the CLI's word for it: Taken by you
 (manual), Saved while idle (auto), Fresh install (baseline), Saved on suspend
 (stow) and Test starting point (golden); see *Checkpoints* for what makes
-each. A checkpoint Windows can't go back to on this machine "can't go back
+each. A checkpoint Windows can't restore on this machine "can't restore
 here", not "can't load".
 
 ## Layers
@@ -443,8 +443,8 @@ by position and weight (`components.md` → *Checkpoint card*):
 
 The kind is never on the picture, and the note is never an icon beside the
 name: they are different facts and read differently. Absent data shows
-nothing. One that Windows can't go back to here is dashed and grey, with a warning pill
-("Can't go back here") inset at its picture's bottom edge, which is the card's
+nothing. One that Windows can't restore here is dashed and grey, with a warning pill
+("Can't restore") inset at its picture's bottom edge, which is the card's
 state, not a row of its caption (the reason is its tooltip and part of its
 accessible name; the panel says it in a few words, the whole reason on hover). The accessible name is the
 whole of it: name, kind, when, size, "Has notes" when it has, and the reason
@@ -517,8 +517,8 @@ close button floats over its top right); under it the **title**, edited where
 it stands (click, Return or F2; Return keeps, Esc puts it back; one that can't
 be kept says why under it); when it was taken, muted; how it came about as the
 card's chip, with its size at the row's end, and a sentence under it that says
-what made it; **only when Windows can't go back to it here, one status line**
-("Can't go back here" and the few words why, with the warning glyph; the whole
+what made it; **only when Windows can't restore it here, one status line**
+("Can't restore" and the few words why, such as "Wrong QEMU version", with the warning glyph; the whole
 reason on hover, in Go Back's tooltip and as its accessible description; nothing
 at all when it can); its **note**, written as text (placeholder "Add a note"),
 saved by itself after a pause with no Save button (Esc puts it back), to
