@@ -289,7 +289,7 @@ describe("the meters' two values", () => {
     const host = render(<Resources usage={view(now())} context={{ cpus: 4, overlayBytes: 3.2 * GB }} />)
     const cpu = meter(host, "CPU")
     expect(cpu?.getAttribute("role")).toBe("img")
-    expect(cpu?.getAttribute("aria-label")).toBe("CPU. Windows: 3%. On this Mac: 12%.")
+    expect(cpu?.getAttribute("aria-label")).toBe("CPU. Windows: 3%. macOS: 12%.")
     expect(cpu?.getAttribute("tabindex")).toBe("0")
     expect(cpu?.querySelectorAll(".sparkline__line")).toHaveLength(2)
     expect(cpu?.querySelectorAll(".sparkline__line--other")).toHaveLength(1)
@@ -300,7 +300,7 @@ describe("the meters' two values", () => {
   it("name both disk values in full and lay the Mac's changes over the same bar", () => {
     const host = render(<Resources usage={view(now())} context={{ cpus: 4, overlayBytes: 3.2 * GB }} />)
     const disk = meter(host, "Disk")
-    expect(disk?.getAttribute("aria-label")).toBe("Disk. Windows: 12 GB of 63 GB. Changes on this Mac: 3.2 GB.")
+    expect(disk?.getAttribute("aria-label")).toBe("Disk. Windows: 12 GB of 63 GB. Changes on macOS: 3.2 GB.")
     expect(disk?.querySelector(".resource__value")?.textContent).toBe("C: 12 GB of 63 GB")
     // The same total: 12/63 and 3.2/63 of one track.
     expect((disk?.querySelector(".resource__fill") as HTMLElement).style.inlineSize).toBe("19.05%")
@@ -314,7 +314,7 @@ describe("the meters' two values", () => {
     act(() => root?.unmount())
     const big = render(<Resources usage={view(now())} context={{ cpus: 4, overlayBytes: 90 * GB }} />)
     expect((big.querySelector(".resource__overlay") as HTMLElement).style.inlineSize).toContain("100%")
-    expect(meter(big, "Disk")?.getAttribute("aria-label")).toContain("Changes on this Mac: 90 GB")
+    expect(meter(big, "Disk")?.getAttribute("aria-label")).toContain("Changes on macOS: 90 GB")
   })
 
   it("have no second value without the Mac's figures", () => {
@@ -326,7 +326,7 @@ describe("the meters' two values", () => {
     act(() => root?.unmount())
     // Without the agent QEMU's figure is the headline, said so, and not drawn twice.
     const mac = render(<Resources usage={view(now({ cpu: 12, cpuSource: "mac", disk: null }))} context={{ cpus: 4, overlayBytes: 3 * GB }} />)
-    expect(mac.querySelector(".resource__value")?.textContent).toBe("12% on the Mac")
+    expect(mac.querySelector(".resource__value")?.textContent).toBe("12% on macOS")
     expect(mac.querySelector(".sparkline__line--other")).toBeNull()
   })
 
@@ -345,6 +345,6 @@ describe("the meters' two values", () => {
       cpu.dispatchEvent(new window.FocusEvent("focusout", { bubbles: true }))
     })
     expect(cpu.hasAttribute("data-dismissed")).toBe(false)
-    expect(cpu.querySelector(".resource__legend")?.textContent).toBe("Windows: 3%On this Mac: 12%")
+    expect(cpu.querySelector(".resource__legend")?.textContent).toBe("Windows: 3%macOS: 12%")
   })
 })

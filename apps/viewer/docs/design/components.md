@@ -276,8 +276,8 @@ the same meter**, and named only on hover.
   line over it, no fill, on the same 0-100 scale. Weight and dash tell them
   apart, so the pair never relies on color (a dashed ink line clears 3:1 on
   the card in both themes). The Mac's line is left out when it would repeat
-  the headline (without the agent QEMU's figure leads, as "12% on the Mac")
-  or when there is no Mac figure yet. Ink means "on the Mac", teal "Windows",
+  the headline (without the agent QEMU's figure leads, as "12% on macOS")
+  or when there is no Mac figure yet. Ink means "macOS", teal "Windows",
   on both meters.
 - **Overlaid bar (Disk).** An 8px track. The main fill is C: used out of C:'s
   size, `--accent`, full height. The machine's changes on the Mac (the size of
@@ -290,10 +290,10 @@ the same meter**, and named only on hover.
   Never stack or add them.
 - **Legend on hover.** With two values the meter is `role="img"`, takes
   focus (`tabIndex=0`, the focus ring) and carries the whole sentence as its
-  `aria-label` ("CPU. Windows: 3%. On this Mac: 12%."). Pointing at it or
+  `aria-label` ("CPU. Windows: 3%. macOS: 12%."). Pointing at it or
   focusing it shows a layer-20 tooltip under it with one row per value: its mark
-  (the same stroke or fill) and "Windows: 3%", "On this Mac: 12%" /
-  "Windows: 12 GB of 63 GB", "Changes on this Mac: 3.2 GB", in text ink. Escape
+  (the same stroke or fill) and "Windows: 3%", "macOS: 12%" /
+  "Windows: 12 GB of 63 GB", "Changes on macOS: 3.2 GB", in text ink. Escape
   hides it while it stays pointed at or focused. The tooltip is `aria-hidden`;
   the label already says it. With one value it is a plain `role="meter"`.
 - `scripts/render-resources.mjs` renders every state and checks the above.

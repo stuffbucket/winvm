@@ -72,7 +72,7 @@ interface ResourceProps {
 
 /**
  * A meter. With two values to tell apart (`legend`) it is one image named in
- * full ("CPU. Windows: 3%. On this Mac: 12%.") that takes focus; pointing at it
+ * full ("CPU. Windows: 3%. macOS: 12%.") that takes focus; pointing at it
  * or focusing it shows each value in words, Escape hides them. At rest only the
  * headline value shows.
  */
