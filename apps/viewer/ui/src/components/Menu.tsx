@@ -37,9 +37,10 @@ export function MenuRoot({ trigger, children, align = "start", side = "bottom", 
   )
 }
 
-export function MenuGroup({ label, children }: { readonly label?: ReactNode; readonly children: ReactNode }): JSX.Element {
+/** A run of items. `label` heads it on screen; `name` only names it for assistive tech (a run of commands needs no heading). */
+export function MenuGroup({ label, name, children }: { readonly label?: ReactNode; readonly name?: string; readonly children: ReactNode }): JSX.Element {
   return (
-    <BaseMenu.Group className="menu__group">
+    <BaseMenu.Group className="menu__group" aria-label={label === undefined ? name : undefined}>
       {label !== undefined && <BaseMenu.GroupLabel className="menu__heading">{label}</BaseMenu.GroupLabel>}
       {children}
     </BaseMenu.Group>

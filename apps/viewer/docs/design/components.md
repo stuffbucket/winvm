@@ -209,6 +209,72 @@ leads with the same reason. See [`windows.md`](windows.md) → *Disclosure*.
   block makes it instant.
 - **Anchors** are buttons with `aria-haspopup="dialog"` and `aria-expanded`.
 
+## Menus
+
+`components/Menu.tsx` (Base UI's Menu: focus, arrow keys, type-to-select,
+Esc, dismissal) in the window's style (`.menu*`). Rules for one that mixes a
+choice with commands, as the Windows machines menu does:
+
+- **Runs, not one long list.** The things you choose among are one group
+  (`MenuRadioGroup`, `menuitemradio`, a check on the chosen one) with its
+  muted heading ("Windows machines"). Commands that act on or beyond it are
+  the next group (`menuitem`), with no heading on screen but a name for
+  assistive tech (`MenuGroup name`). A command that destroys something is its
+  own last group. Hairline separators between runs.
+- **One leading column.** The check of the chosen item and the glyph of each
+  command share it (`--size-sm`), so a command lines up under the names. Every
+  command has a glyph from the app's `Icon` set (`plus`, `pencil`, `trash`); the
+  items you choose among do not.
+- **State at the right, in one shape.** A state is a dot and its word
+  (`.state`), in a column of one width so the dots line up and the words are
+  left-aligned in it, the whole right-aligned in the row. The dot differs by
+  shape as well as colour, so it never relies on colour: filled
+  (running, starting; `--status-success`), half (paused, asleep;
+  `--status-warning`), ring with a centre (saved; `--status-info`), empty ring
+  (stopped, not set up; `--text-muted`). The word is always there. On the
+  highlighted row the dot, ring and word take the row's own colour.
+- **Destructive** (`tone="danger"`): the text and glyph in `--status-error`; the
+  highlighted row `--accent-destructive` with its foreground. Always confirms
+  before acting, as every red control does.
+- **Typing a letter** goes to the item whose `label` starts with it: pass the
+  machine's name as `label`, not the text with its state.
+
+## A name edited in its heading
+
+`features/machines/MachineHeading.tsx`. For a name that sits inside a sentence
+(a heading such as "Windows machine `name` is off") and can be changed where it
+stands, as a tab's name can in VS Code.
+
+- **At rest** it is a `<button>` that reads as text: the name in `--font-mono`
+  (`0.8em` of the heading, `--weight-md`), the same padding and a clear 1px
+  border as the field. Pointed at it gets a soft background (10% of
+  `--text-strong`, which shows over a backdrop in both themes where a surface
+  step does not) and the text cursor; focused from the keyboard it gets the
+  focus ring. There is no pencil: the cursor and the tooltip ("Rename (F2)") say
+  it, and a pencil would have to take room from the sentence. VoiceOver reads
+  the name as a button, described by "Press Return to rename it."
+- **Editing.** A click, Return or F2 swaps in an `<input>` in the same place:
+  same face, size and box (the field is as wide as its text, in `ch`, and never
+  moves the line), selected, labelled "Machine name", with `--surface-base`
+  fill, `--border-strong` and the focus ring.
+- **Keys.** Return, or leaving the field, keeps it. Esc puts the name back. Keys
+  typed in the field do not reach the window's shortcuts. Focus returns to the
+  button after Return, Esc and F2. (WebKit clicks the button the focus has just
+  gone back to when Return is still down; a click with no pointer within 400 ms
+  of closing is ignored.)
+- **Empty or unchanged does nothing.** The exception is a name that has been
+  set: emptying it gives back the machine's own name.
+- **Not allowed** is said where it happens: a `--text-sm` line in
+  `--status-error` under the heading (`role="alert"`, linked by
+  `aria-describedby`; the field gets `aria-invalid` and a red border). It
+  appears as you type, Return does nothing while it shows, and leaving the field
+  drops the change. No dialog. The rules are the CLI's (`checkTitle` in
+  `packages/core/src/config.ts`: at most 80 characters, one line, no control
+  characters), kept in `features/machines/machines.ts`. A failure to save is
+  said the same way and leaves the field open.
+- **Motion.** Only the hover background fades (150 ms), and not under
+  `prefers-reduced-motion`.
+
 ## Focus rings
 
 - **Always visible on keyboard navigation; hidden on mouse use** via

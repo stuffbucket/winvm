@@ -76,7 +76,29 @@
 
   async function run(args) {
     const [verb, ...rest] = args
-    if (verb === "status") return out(status)
+    if (verb === "status") {
+      // ?machines=name:state,… : more machines beside this one (scripts/render-machines.mjs).
+      const target = rest[rest.indexOf("-i") + 1]
+      const more = (query.get("machines") ?? "")
+        .split(",")
+        .filter(Boolean)
+        .map((m) => {
+          const [name, st] = m.split(":")
+          return { ...status, name, title: null, state: st, vmStatus: st === "stowed" || st === "stopped" ? "stopped" : "running" }
+        })
+      if (rest.includes("-i")) return out([status, ...more].find((s) => s.name === target) ?? status)
+      return out(more.length === 0 ? status : { instances: [status, ...more] })
+    }
+    if (verb === "config") {
+      // `winvm config -i NAME title=…`: ?renamefail=1 refuses, with a reason.
+      const set = rest.find((a) => a.startsWith("title="))
+      if (query.get("renamefail") === "1") return out("config.json is read-only", 1)
+      if (set !== undefined) {
+        status.title = set.slice("title=".length) || null
+        window.__titleWrites = [...(window.__titleWrites ?? []), set]
+      }
+      return out("")
+    }
     if (verb === "settings" && rest[0] === "--section") {
       const set = rest.find((a) => a.startsWith("--set="))
       if (set !== undefined) settings[rest[1]] = JSON.parse(set.slice("--set=".length))

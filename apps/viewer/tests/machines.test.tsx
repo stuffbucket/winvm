@@ -5,6 +5,8 @@
  */
 import { GlobalRegistrator } from "@happy-dom/global-registrator"
 import { afterAll, afterEach, describe, expect, it } from "bun:test"
+import { readFileSync } from "node:fs"
+import { resolve } from "node:path"
 
 GlobalRegistrator.register()
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true })
@@ -17,6 +19,7 @@ const { NewMachineDialog } = await import("../ui/src/features/machines/NewMachin
 const { DeleteMachineBody } = await import("../ui/src/features/machines/DeleteMachine")
 const machines = await import("../ui/src/features/machines/machines")
 const { isValidInstanceName } = await import("../../../packages/core/src/args")
+const { checkTitle } = await import("../../../packages/core/src/config")
 
 type Root = ReturnType<typeof createRoot>
 let root: Root | null = null
@@ -139,6 +142,76 @@ describe("the machine picker", () => {
     expect(deleting).toBe(1)
   })
 
+  it("reads as one list of machines, then the commands, then Delete, each its own group with the right roles", async () => {
+    render(<MachinePicker {...pickerProps} />)
+    const menu = await open(document.querySelector(".machine-picker") as HTMLElement)
+    const groups = [...menu.querySelectorAll<HTMLElement>('.menu__group')]
+    // The machines: radios (a check on this one); the commands: plain menu items.
+    const [machines_, commands, removal] = groups as [HTMLElement, HTMLElement, HTMLElement]
+    expect(groups).toHaveLength(3)
+    expect([...machines_.querySelectorAll('[role="menuitemradio"]')].map((e) => e.getAttribute("role"))).toEqual(["menuitemradio", "menuitemradio", "menuitemradio"])
+    expect([...commands.querySelectorAll('[role="menuitem"]')].map((e) => e.textContent)).toEqual(["New Machine…", "Rename…"])
+    expect([...removal.querySelectorAll('[role="menuitem"]')].map((e) => e.textContent)).toEqual(["Delete “polish-a”…"])
+    expect(menu.querySelectorAll('[role="separator"]')).toHaveLength(2)
+    // Only the machines' group has a heading on screen; the commands are named for assistive tech alone.
+    expect(machines_.querySelector(".menu__heading")?.textContent).toBe("Windows machines")
+    expect(commands.getAttribute("aria-label")).toBe("Machine commands")
+    expect(commands.querySelector(".menu__heading")).toBeNull()
+    // Each command has its glyph in the leading column; Delete's is red, like its text.
+    for (const el of [...commands.querySelectorAll(".menu-item"), ...removal.querySelectorAll(".menu-item")]) {
+      expect(el.querySelector(".menu-item__leading svg")).not.toBeNull()
+    }
+    expect(removal.querySelector(".menu-item--danger")).not.toBeNull()
+    expect(commands.querySelector(".menu-item--danger")).toBeNull()
+  })
+
+  it("gives each state a dot of its own shape beside its word, so colour is never the only cue", async () => {
+    render(<MachinePicker {...pickerProps} />)
+    await open(document.querySelector(".machine-picker") as HTMLElement)
+    const states = [...document.querySelectorAll('[role="menuitemradio"] .state')]
+    expect(states.map((s) => s.textContent)).toEqual(["Running", "Stopped", "Saved"])
+    expect(states.map((s) => s.querySelector(".state__dot")?.className)).toEqual(["state__dot state__dot--on", "state__dot state__dot--off", "state__dot state__dot--saved"])
+    expect(machines.stateShape("starting")).toBe("on")
+    expect(new Set((["running", "paused", "stowed", "stopped"] as const).map(machines.stateShape)).size).toBe(4)
+    const css = readFileSync(resolve(import.meta.dir, "../ui/src/styles/styles.css"), "utf8")
+    expect(css).toMatch(/\.state__dot--on \{[^}]*--status-success/)
+    expect(css).toMatch(/\.menu-item\[data-highlighted\] \.state__dot \{[^}]*currentColor/)
+  })
+
+  it("moves with the arrow keys through machines, then commands, then Delete, and Escape closes it", async () => {
+    render(<MachinePicker {...pickerProps} />)
+    const menu = await open(document.querySelector(".machine-picker") as HTMLElement)
+    const press = (k: string): void =>
+      act(() => {
+        ;(document.activeElement ?? menu).dispatchEvent(new KeyboardEvent("keydown", { key: k, bubbles: true }))
+      })
+    const lit = (): string => items().find((i) => i.hasAttribute("data-highlighted"))?.textContent ?? ""
+    const walked: string[] = [lit()]
+    for (let i = 0; i < 5; i++) {
+      press("ArrowDown")
+      await flush()
+      walked.push(lit())
+    }
+    // Down the list, across the groups, to the last command.
+    expect(walked).toContain("polish-cSaved")
+    expect(walked).toContain("New Machine…")
+    expect(walked.at(-1)).toBe("Delete “polish-a”…")
+    expect(walked.indexOf("New Machine…")).toBeGreaterThan(walked.indexOf("polish-cSaved"))
+    press("Escape")
+    await flush()
+    expect(document.querySelector('[role="menu"]')).toBeNull()
+  })
+
+  it("jumps to a machine by typing its first letters (the machine's name, not its state)", async () => {
+    render(<MachinePicker {...pickerProps} />)
+    const menu = await open(document.querySelector(".machine-picker") as HTMLElement)
+    act(() => {
+      menu.dispatchEvent(new KeyboardEvent("keydown", { key: "b", bubbles: true }))
+    })
+    await flush()
+    expect(items().find((i) => i.hasAttribute("data-highlighted"))?.textContent).toBe("Build boxStopped")
+  })
+
   it("still opens with one machine, so New Machine… is always there", async () => {
     let made = 0
     render(<MachinePicker {...pickerProps} names={["polish-a"]} onNew={() => (made += 1)} />)
@@ -220,6 +293,24 @@ describe("Delete…", () => {
 })
 
 describe("the machine rules", () => {
+  it("take a title as the CLI does (one line, at most 80 characters), and read emptying it as clearing it", () => {
+    for (const title of ["Build box", "", "  spaced  ", "x".repeat(80), "x".repeat(81), "a\nb", "a\u0007b", "tab\there", "a b", "ünï😀"]) {
+      let ok = true
+      try {
+        checkTitle(title)
+      } catch {
+        ok = false
+      }
+      expect(machines.titleProblem(title) === null).toBe(ok)
+    }
+    expect(machines.titleProblem("x".repeat(81))).toBe("long")
+    expect(machines.titleProblem("a\nb")).toBe("control")
+    expect(machines.titleEdit("  ", "Build box", true)).toBe("clear")
+    expect(machines.titleEdit("", "dev", false)).toBe("none")
+    expect(machines.titleEdit(" Build box ", "Build box", true)).toBe("none")
+    expect(machines.titleEdit("Other", "Build box", true)).toBe("set")
+  })
+
   it("take the names the CLI takes, and no taken one", () => {
     for (const n of ["polish-new", "a", "demo_2", "x.y", "", " ", "bad name", "-i", ".x", "a/b", "x".repeat(65)]) {
       const ok = machines.nameProblem(n, []) === null

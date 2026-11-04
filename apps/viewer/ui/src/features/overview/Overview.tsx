@@ -5,6 +5,7 @@ import { t } from "../../i18n"
 import type { Phase, Status, Step } from "../../model"
 import { facts } from "../../model"
 import { Abilities } from "../help/Abilities"
+import { MachineHeading, TITLE_MARK } from "../machines/MachineHeading"
 import { Backdrop } from "./Backdrop"
 import { useBackdropPicture } from "./backdropPicture"
 import { MachineNotes } from "./MachineNotes"
@@ -12,6 +13,12 @@ import { MachineNotes } from "./MachineNotes"
 interface OverviewProps {
   /** The machine shown: whose note and picture a suspended one has. */
   readonly instance?: string | null
+  /** What the machine is called: its title, else its name (instance). */
+  readonly title?: string
+  /** It has a title of its own, so clearing the field in its heading gives the name back. */
+  readonly hasTitle?: boolean
+  /** Sets the machine's title (empty clears it); resolves with why it couldn't, or null. Absent: the heading's name can't be edited. */
+  onRename?(title: string): Promise<string | null>
   readonly phase: Phase | null
   readonly status: Status | null
   readonly steps: readonly Step[] | null
@@ -62,15 +69,24 @@ export function Overview(p: OverviewProps): JSX.Element {
 
   const which = p.phase === "missing" || p.phase === "stowed" ? p.phase : "stopped"
   const rows = p.status === null ? [] : facts(p.status)
+  // Off and suspended machines say which machine, and the name can be changed where it stands.
+  const heading =
+    which === "missing" ? (
+      <h1 className="overview__title">{t("overview.missing.title")}</h1>
+    ) : (
+      <MachineHeading
+        key={p.instance ?? ""}
+        text={t(`overview.${which}.title`, { title: TITLE_MARK })}
+        shown={p.title ?? p.instance ?? ""}
+        hasTitle={p.hasTitle === true}
+        onRename={p.onRename}
+      />
+    )
   return (
     <div className={cx("overview", which === "stowed" && "overview--notes")}>
       {which === "stowed" && <Backdrop picture={picture} />}
       <div className="overview__content">
-        {which === "stowed" ? (
-          <MachineNotes instance={p.instance ?? null} title={t("overview.stowed.title")} />
-        ) : (
-          <h1 className="overview__title">{t(`overview.${which}.title`)}</h1>
-        )}
+        {which === "stowed" ? <MachineNotes instance={p.instance ?? null} heading={heading} /> : heading}
         {rows.length > 0 && (
           <dl className="facts">
             {rows.map((r) => (
