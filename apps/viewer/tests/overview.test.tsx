@@ -204,7 +204,7 @@ describe("the note's store", () => {
 describe("the note", () => {
   it("is empty with a quiet placeholder, and a label for screen readers", async () => {
     install()
-    render(<MachineNotes instance="dev" title="Windows is suspended" />)
+    render(<MachineNotes instance="dev" heading={<h1 className="overview__title">Windows is suspended</h1>} />)
     await flush()
     expect(field().value).toBe("")
     expect(field().placeholder).toBe(word("overview.notes.placeholder"))
@@ -214,7 +214,7 @@ describe("the note", () => {
 
   it("shows what the machine's note already says, and is read-only until it has", async () => {
     install({ notes: new Map([["dev", "Licence key is in the drawer."]]) })
-    render(<MachineNotes instance="dev" title="t" />)
+    render(<MachineNotes instance="dev" heading={<h1 className="overview__title">t</h1>} />)
     expect(field().readOnly).toBe(true)
     await flush()
     expect(field().readOnly).toBe(false)
@@ -223,7 +223,7 @@ describe("the note", () => {
 
   it("saves when the field is left, with the whole text and no Save button", async () => {
     const fake = install()
-    render(<MachineNotes instance="dev" title="t" />)
+    render(<MachineNotes instance="dev" heading={<h1 className="overview__title">t</h1>} />)
     await flush()
     type(field(), "Check the display size")
     expect(fake.writes).toEqual([])
@@ -236,7 +236,7 @@ describe("the note", () => {
 
   it("saves on a pause in typing", async () => {
     const fake = install()
-    render(<MachineNotes instance="dev" title="t" />)
+    render(<MachineNotes instance="dev" heading={<h1 className="overview__title">t</h1>} />)
     await flush()
     jest.useFakeTimers()
     type(field(), "first")
@@ -249,7 +249,7 @@ describe("the note", () => {
 
   it("commits on Escape and leaves the field, and keeps Escape to itself", async () => {
     const fake = install()
-    render(<MachineNotes instance="dev" title="t" />)
+    render(<MachineNotes instance="dev" heading={<h1 className="overview__title">t</h1>} />)
     await flush()
     act(() => field().focus())
     type(field(), "done for now")
@@ -270,7 +270,7 @@ describe("the note", () => {
 
   it("does not take any other key from the app", async () => {
     install()
-    render(<MachineNotes instance="dev" title="t" />)
+    render(<MachineNotes instance="dev" heading={<h1 className="overview__title">t</h1>} />)
     await flush()
     const seen: string[] = []
     const onWindow = (e: Event): void => void seen.push((e as KeyboardEvent).key)
@@ -286,7 +286,7 @@ describe("the note", () => {
 
   it("is saved when the screen goes away (the machine starts), without a blur", async () => {
     const fake = install()
-    render(<MachineNotes instance="dev" title="t" />)
+    render(<MachineNotes instance="dev" heading={<h1 className="overview__title">t</h1>} />)
     await flush()
     type(field(), "written just before Start")
     act(() => root?.unmount())
@@ -298,21 +298,21 @@ describe("the note", () => {
 
   it("persists per machine: switching saves the old one's text to it, and shows the new one's", async () => {
     const fake = install({ notes: new Map([["other", "The other machine's note"]]) })
-    render(<MachineNotes instance="dev" title="t" />)
+    render(<MachineNotes instance="dev" heading={<h1 className="overview__title">t</h1>} />)
     await flush()
     type(field(), "dev's note")
-    rerender(<MachineNotes instance="other" title="t" />)
+    rerender(<MachineNotes instance="other" heading={<h1 className="overview__title">t</h1>} />)
     await flush()
     expect(fake.writes).toEqual([{ instance: "dev", text: "dev's note" }])
     expect(field().value).toBe("The other machine's note")
-    rerender(<MachineNotes instance="dev" title="t" />)
+    rerender(<MachineNotes instance="dev" heading={<h1 className="overview__title">t</h1>} />)
     await flush()
     expect(field().value).toBe("dev's note")
   })
 
   it("clearing it removes the note", async () => {
     const fake = install({ notes: new Map([["dev", "old"]]) })
-    render(<MachineNotes instance="dev" title="t" />)
+    render(<MachineNotes instance="dev" heading={<h1 className="overview__title">t</h1>} />)
     await flush()
     type(field(), "")
     act(() => field().focus())
@@ -323,7 +323,7 @@ describe("the note", () => {
 
   it("says when it could not save, and tries again at the next chance", async () => {
     const fake = install({ failWrites: true })
-    render(<MachineNotes instance="dev" title="t" />)
+    render(<MachineNotes instance="dev" heading={<h1 className="overview__title">t</h1>} />)
     await flush()
     type(field(), "keep this")
     act(() => field().focus())
@@ -341,7 +341,7 @@ describe("the note", () => {
 
   it("mirrors its text on the wrapper, which is what gives the area the height of its text", async () => {
     install()
-    render(<MachineNotes instance="dev" title="t" />)
+    render(<MachineNotes instance="dev" heading={<h1 className="overview__title">t</h1>} />)
     await flush()
     type(field(), "one\ntwo\nthree")
     expect(document.querySelector(".notes")?.getAttribute("data-value")).toBe("one\ntwo\nthree")
@@ -372,7 +372,7 @@ describe("the layout that lets the note grow upward", () => {
     expect(kids[0]).toBe("overview__upper")
     expect(kids.slice(1)).toEqual(["facts", "actions", "abilities"].filter((k) => host.querySelector(`.${k}`) !== null))
     const upper = host.querySelector(".overview__upper")
-    expect([...(upper?.children ?? [])].map((c) => c.tagName + "." + c.className)).toEqual(["H1.overview__title", "DIV.notes"])
+    expect([...(upper?.children ?? [])].map((c) => c.tagName + "." + c.className)).toEqual(["DIV.overview__heading", "DIV.notes"])
   })
 
   it("makes that block the only part that takes up the slack, aligned to its bottom", () => {
@@ -380,7 +380,7 @@ describe("the layout that lets the note grow upward", () => {
     expect(upper).toMatch(/flex:\s*1 1 0/)
     expect(upper).toMatch(/justify-content:\s*flex-end/)
     expect(upper).toMatch(/min-height:/)
-    expect(rule(".overview__upper > .overview__title")).toMatch(/flex:\s*none/)
+    expect(rule(".overview__upper > .overview__heading")).toMatch(/flex:\s*none/)
     // The note itself shrinks (and then scrolls) rather than pushing anything down.
     expect(rule(".notes")).toMatch(/flex:\s*0 1 auto/)
     expect(rule(".notes")).toMatch(/min-height:\s*var\(--notes-min\)/)
@@ -474,7 +474,7 @@ describe("the backdrop", () => {
     expect(host.querySelector(".backdrop")).not.toBeNull()
     // The old line is gone.
     expect(host.textContent).not.toContain("picks up exactly where you left off")
-    expect(host.textContent).toContain(word("overview.stowed.title"))
+    expect(host.textContent).toContain("Windows machine dev is suspended")
   })
 })
 
@@ -549,5 +549,262 @@ describe("text over the backdrop", () => {
     const source = readFileSync(resolve(import.meta.dir, "../ui/src/features/overview/Backdrop.tsx"), "utf8")
     expect(source).not.toMatch(/#[0-9a-fA-F]{3,8}\b|\brgba?\(|\bhsla?\(/)
     expect(source).toMatch(/var\(--accent\)/)
+  })
+})
+
+// ---- The machine's name in the heading, edited where it stands --------------------
+
+const { checkTitle } = await import("../../../packages/core/src/config")
+
+interface Renamer {
+  /** Every title it was asked to set, in order ("" clears). */
+  readonly asked: string[]
+  fail: string | null
+}
+
+function headed(phase: "stowed" | "stopped", opts: { title?: string; hasTitle?: boolean; renamer?: Renamer; editable?: boolean } = {}): { host: HTMLElement; renamer: Renamer } {
+  const renamer = opts.renamer ?? { asked: [], fail: null }
+  const host = render(
+    <Overview
+      instance="dev"
+      title={opts.title}
+      hasTitle={opts.hasTitle}
+      onRename={
+        opts.editable === false
+          ? undefined
+          : async (title) => {
+              renamer.asked.push(title)
+              return renamer.fail
+            }
+      }
+      phase={phase}
+      status={null}
+      steps={null}
+      canStart
+      onStart={() => undefined}
+    />,
+  )
+  return { host, renamer }
+}
+
+const nameButton = (): HTMLButtonElement | null => document.querySelector<HTMLButtonElement>("button.name-field")
+const nameField = (): HTMLInputElement | null => document.querySelector<HTMLInputElement>("input.name-field")
+const key = (el: HTMLElement, k: string): void =>
+  act(() => {
+    el.dispatchEvent(new KeyboardEvent("keydown", { key: k, bubbles: true, cancelable: true }))
+  })
+const typeName = (el: HTMLInputElement, value: string): void =>
+  act(() => {
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set?.call(el, value)
+    el.dispatchEvent(new Event("input", { bubbles: true }))
+  })
+const edit = (): HTMLInputElement => {
+  // A click of the pointer (detail 1), as a person's: one with no pointer, just after a rename, is ignored.
+  act(() => nameButton()?.dispatchEvent(new MouseEvent("click", { bubbles: true, detail: 1 })))
+  const field = nameField()
+  if (field === null) throw new Error("the name did not become a field")
+  return field
+}
+const unmount = (): void => {
+  act(() => root?.unmount())
+  root = null
+  document.body.replaceChildren()
+}
+
+describe("the machine's name in the heading", () => {
+  it("reads 'Windows machine <name> is suspended' (or off), the name in the mono face, in a heading", async () => {
+    install()
+    const { host } = headed("stowed", { title: "Build box" })
+    await flush()
+    const h1 = host.querySelector("h1")
+    expect(h1?.textContent).toBe("Windows machine Build box is suspended")
+    expect(nameButton()?.textContent).toBe("Build box")
+    expect(h1?.contains(nameButton())).toBe(true)
+    const css = readFileSync(resolve(import.meta.dir, "../ui/src/styles/styles.css"), "utf8")
+    expect(css).toMatch(/\.name-field \{[^}]*font-family:\s*var\(--font-mono\)/)
+    unmount()
+    const off = headed("stopped", { title: "Build box" })
+    await flush()
+    expect(off.host.querySelector("h1")?.textContent).toBe("Windows machine Build box is off")
+  })
+
+  it("is a button with a hint for assistive tech, which becomes a labelled textbox, selected, in the same place", async () => {
+    install()
+    const { host } = headed("stowed", { title: "Build box" })
+    await flush()
+    const button = nameButton() as HTMLButtonElement
+    expect(button.getAttribute("title")).toBe("Rename (F2)")
+    expect(document.getElementById(button.getAttribute("aria-describedby") ?? "")?.textContent).toBe("Press Return to rename it.")
+    const field = edit()
+    expect(field.getAttribute("aria-label")).toBe("Machine name")
+    expect(field.value).toBe("Build box")
+    expect(document.activeElement).toBe(field)
+    expect(nameButton()).toBeNull()
+    // Same place in the heading: between the same two words.
+    expect(host.querySelector("h1")?.textContent).toBe("Windows machine  is suspended")
+  })
+
+  it("does not reopen from the Return that kept the name, which can land on the button as a click", async () => {
+    install()
+    headed("stowed", { title: "Build box", hasTitle: true })
+    await flush()
+    const field = edit()
+    typeName(field, "Other")
+    key(field, "Enter")
+    await flush()
+    expect(nameField()).toBeNull()
+    act(() => nameButton()?.click())
+    expect(nameField()).toBeNull()
+  })
+
+  it("opens with F2 on the name as well as a click", async () => {
+    install()
+    headed("stowed")
+    await flush()
+    key(nameButton() as HTMLElement, "F2")
+    expect(nameField()).not.toBeNull()
+  })
+
+  it("commits on Return: asks for the title, then returns to the button, focused", async () => {
+    install()
+    const { renamer } = headed("stopped", { title: "Build box", hasTitle: true })
+    await flush()
+    const field = edit()
+    typeName(field, "  Test box ")
+    key(field, "Enter")
+    await flush()
+    expect(renamer.asked).toEqual(["Test box"])
+    expect(nameField()).toBeNull()
+    expect(document.activeElement).toBe(nameButton())
+  })
+
+  it("commits when the field is left", async () => {
+    install()
+    const { renamer } = headed("stowed", { title: "Build box", hasTitle: true })
+    await flush()
+    const field = edit()
+    typeName(field, "Elsewhere")
+    act(() => field.blur())
+    await flush()
+    expect(renamer.asked).toEqual(["Elsewhere"])
+    expect(nameField()).toBeNull()
+  })
+
+  it("cancels on Escape, and when nothing changed", async () => {
+    install()
+    const { renamer } = headed("stowed", { title: "Build box", hasTitle: true })
+    await flush()
+    let field = edit()
+    typeName(field, "Never kept")
+    key(field, "Escape")
+    await flush()
+    expect(renamer.asked).toEqual([])
+    expect(nameButton()?.textContent).toBe("Build box")
+    field = edit()
+    key(field, "Enter")
+    await flush()
+    expect(renamer.asked).toEqual([])
+    expect(nameButton()).not.toBeNull()
+  })
+
+  it("on Escape does not let the key reach the window", async () => {
+    install()
+    headed("stowed")
+    await flush()
+    const field = edit()
+    let reached = false
+    document.addEventListener("keydown", () => (reached = true), { once: true })
+    key(field, "Escape")
+    expect(reached).toBe(false)
+  })
+
+  it("clears the title when emptied (back to the machine's name), but empty is nothing for one with no title", async () => {
+    install()
+    const { renamer } = headed("stowed", { title: "Build box", hasTitle: true })
+    await flush()
+    let field = edit()
+    typeName(field, "   ")
+    key(field, "Enter")
+    await flush()
+    expect(renamer.asked).toEqual([""])
+    unmount()
+    const plain = headed("stowed", { hasTitle: false })
+    await flush()
+    field = edit()
+    typeName(field, "")
+    key(field, "Enter")
+    await flush()
+    expect(plain.renamer.asked).toEqual([])
+    expect(nameButton()?.textContent).toBe("dev")
+  })
+
+  it("refuses what the CLI refuses, saying why in a line under the heading and staying in the field", async () => {
+    install()
+    const { renamer, host } = headed("stowed", { title: "Build box", hasTitle: true })
+    await flush()
+    const field = edit()
+    const tooLong = "x".repeat(81)
+    expect(() => checkTitle(tooLong)).toThrow()
+    typeName(field, tooLong)
+    expect(host.querySelector(".overview__problem")?.textContent).toBe("Keep it to 80 characters or fewer.")
+    expect(field.getAttribute("aria-invalid")).toBe("true")
+    expect(document.getElementById(field.getAttribute("aria-describedby") ?? "")).not.toBeNull()
+    key(field, "Enter")
+    await flush()
+    expect(renamer.asked).toEqual([])
+    expect(nameField()).not.toBeNull()
+    typeName(field, "a\u0007b")
+    expect(() => checkTitle("a\u0007b")).toThrow()
+    expect(host.querySelector(".overview__problem")?.textContent).toBe("Use one line of plain text.")
+    // Fixing it takes the message away, and then it is kept.
+    typeName(field, "Fine")
+    expect(host.querySelector(".overview__problem")).toBeNull()
+    key(field, "Enter")
+    await flush()
+    expect(renamer.asked).toEqual(["Fine"])
+  })
+
+  it("says so, in the field, when the rename itself fails", async () => {
+    install()
+    const renamer: Renamer = { asked: [], fail: "disk full" }
+    const { host } = headed("stowed", { title: "Build box", hasTitle: true, renamer })
+    await flush()
+    const field = edit()
+    typeName(field, "Other")
+    key(field, "Enter")
+    await flush()
+    expect(host.querySelector(".overview__problem")?.textContent).toBe("Couldn't rename it: disk full")
+    expect(nameField()?.value).toBe("Other")
+  })
+
+  it("is plain text where it can't be renamed, and a missing machine keeps its own heading", async () => {
+    install()
+    const { host } = headed("stowed", { editable: false })
+    await flush()
+    expect(nameButton()).toBeNull()
+    expect(host.querySelector("h1")?.textContent).toBe("Windows machine dev is suspended")
+    unmount()
+    const missing = render(<Overview instance="dev" phase="missing" status={null} steps={null} canStart onStart={() => undefined} />)
+    expect(missing.querySelector("h1")?.textContent).toBe("Set up Windows")
+  })
+
+  it("keeps the note on the instance, which a new title never changes", async () => {
+    const fake = install({ notes: new Map([["dev", "kept"]]) })
+    const first = headed("stowed", { title: "Build box", hasTitle: true })
+    await flush()
+    expect(first.host.querySelector<HTMLTextAreaElement>(".notes__field")?.value).toBe("kept")
+    rerender(<Overview instance="dev" title="Renamed" hasTitle phase="stowed" status={null} steps={null} canStart onStart={() => undefined} />)
+    await flush()
+    expect(document.querySelector<HTMLTextAreaElement>(".notes__field")?.value).toBe("kept")
+    expect(fake.writes).toEqual([])
+  })
+
+  it("has the quiet look: a text cursor and a hover background, a focus ring, the same box as the field, no motion under reduced motion", () => {
+    const css = readFileSync(resolve(import.meta.dir, "../ui/src/styles/styles.css"), "utf8")
+    expect(css).toMatch(/\.name-field--button \{[^}]*cursor:\s*text/)
+    expect(css).toMatch(/\.name-field--button:hover \{[^}]*background:\s*color-mix\([^)]*var\(--text-strong\)/)
+    expect(css).toMatch(/\.name-field--button:focus-visible \{[^}]*outline:\s*var\(--focus-ring\)/)
+    expect(css).toMatch(/\.name-field \{[^}]*border:\s*var\(--border-width-hairline\) solid transparent/)
+    expect(css).toMatch(/@media \(prefers-reduced-motion: no-preference\) \{\s*\.name-field--button \{[^}]*transition/)
   })
 })
