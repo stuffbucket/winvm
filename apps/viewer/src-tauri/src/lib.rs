@@ -219,7 +219,7 @@ async fn files_open(app: tauri::AppHandle, instance: String, title: Option<Strin
     let shown = title.clone().unwrap_or_else(|| instance.clone());
     let url = format!("files.html?instance={}&title={}", query_value(&instance), query_value(title.as_deref().unwrap_or("")));
     let mut builder = WebviewWindowBuilder::new(&app, &label, WebviewUrl::App(url.into()))
-        .title(format!("Files in Windows â {shown}"))
+        .title(format!("Files in Windows — {shown}"))
         .inner_size(920.0, 560.0)
         .min_inner_size(560.0, 340.0)
         .visible(false);
@@ -405,8 +405,8 @@ fn menu(app: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
         file.append_items(&[&new_tab, &checkpoints, &PredefinedMenuItem::separator(app)?, &close])?;
     }
     // The Window menu's own Close Window (after a separator) would take Cmd-W back from File's Close.
-    // Rename Windowâ¦ names the instance (main window) or the active tab (Terminal).
-    let rename = MenuItem::with_id(app, "rename-window", "Rename Windowâ¦", true, None::<&str>)?;
+    // Rename Window… names the instance (main window) or the active tab (Terminal).
+    let rename = MenuItem::with_id(app, "rename-window", "Rename Window…", true, None::<&str>)?;
     if let Some(window) = menu.get(WINDOW_SUBMENU_ID).and_then(|i| i.as_submenu().cloned()) {
         if window.items()?.len() == 4 {
             window.remove_at(3)?;
@@ -414,8 +414,8 @@ fn menu(app: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
         }
         window.append_items(&[&PredefinedMenuItem::separator(app)?, &rename])?;
     }
-    let updates = MenuItem::with_id(app, "check-updates", "Check for Updatesâ¦", true, None::<&str>)?;
-    let install = MenuItem::with_id(app, "install-cli", "Install Command Line Toolâ¦", true, None::<&str>)?;
+    let updates = MenuItem::with_id(app, "check-updates", "Check for Updates…", true, None::<&str>)?;
+    let install = MenuItem::with_id(app, "install-cli", "Install Command Line Tool…", true, None::<&str>)?;
     let reference = MenuItem::with_id(app, "reference", "winvm Command Reference", true, Some("CmdOrCtrl+Shift+/"))?;
     let capture = MenuItem::with_id(app, "capture-keyboard", "Capture Keyboard", true, None::<&str>)?;
     let windows_key = MenuItem::with_id(app, "send-windows-key", "Send Windows Key", true, None::<&str>)?;
