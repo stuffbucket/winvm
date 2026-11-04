@@ -101,6 +101,36 @@ is a moon, and the first key pressed in the screen wakes it and isn't typed)
 and **Lock (Ctrl+Alt+Del)** (back to Windows' sign-in screen). Asleep, the
 button reads Wake.
 
+**Input over the screen** follows one rule (`features/screen/input.ts`, tested
+in `tests/input.test.ts` and `tests/screen-input.test.tsx`): the guest gets
+the pointer, wheel, keys and clipboard only while Windows runs with no verb
+under way. Paused, asleep, starting, stopped, put away, or busy (saving,
+loading, pausing, restarting, waking), the frame is a picture:
+
+| Phase | Input to the guest | Cursor over the frame | Keyboard capture |
+|---|---|---|---|
+| Running, idle | yes | the guest's own | allowed |
+| Running, a verb under way | no | the Mac's arrow | released |
+| Starting (agent silent) | no | the Mac's arrow | released |
+| Paused | no | the Mac's arrow | released |
+| Asleep | no (the first key wakes) | the Mac's arrow | released |
+| Stopped, put away, none | no | the Mac's arrow | released |
+
+Not forwarded means not sent and not swallowed: noVNC is view-only, the
+canvas takes no pointer events (so the Mac's arrow shows, whatever cursor noVNC
+set, even none), a click doesn't move focus, no key is stopped or prevented, and
+the Mac's own shortcuts (Cmd-Tab, the menu accelerators) work. The pause overlay
+has no controls and takes no pointer events either; Resume is on the toolbar.
+Asleep alone takes focus on a click, so a key can wake the machine. A button
+or key held when input ends is let go of on the guest first, while noVNC can
+still send (the verb starts the moment Pause is clicked, before QEMU stops), so
+no modifier is left down across a resume. Capture Keyboard is disabled with a
+tooltip that says why, and the native Input menu items (Capture Keyboard, Send
+Windows Key, Send Ctrl-Alt-Delete) answer with a notice that says why. The Mac's
+clipboard is not sent to a guest that takes no input and is not marked as sent:
+it goes when input resumes. Dropping files needs Windows running and idle too
+(`guestReady`).
+
 ## Resizing the window
 
 On virtio-gpu the guest's screen follows the window, one guest pixel per

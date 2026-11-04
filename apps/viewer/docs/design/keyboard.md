@@ -15,6 +15,18 @@ Focus loss or a hidden page releases capture and all held guest keys. If a
 Windows key is held, Ctrl is pressed and released before Windows is released;
 Windows therefore never interprets cleanup as a lone Windows-key press.
 
+**Only while Windows takes input.** Capture, the Windows key and Ctrl-Alt-Delete
+act only while Windows runs with no verb under way (`features/screen/input.ts`;
+the table is in [`windows.md`](windows.md)). When it stops (Pause, Sleep, a
+save, a restart), the Mac gets everything back: held keys and buttons are
+released on the guest first, capture is released, the toolbar says quietly
+"Keyboard released: Windows is paused" (a note, not a state), no key is swallowed
+and the Mac's cursor shows over the frame. When Windows runs again, capture is
+**not** resumed: it was released, so the person asks for it again (the toolbar
+button or Control-Option). A capture the person had chosen isn't a standing
+preference, and a pause is a good moment to have the Mac's shortcuts back.
+Focus loss still releases as before.
+
 This follows UTM's useful division between host and captured routing, while
 using one fixed capture chord and one fixed uncaptured Windows modifier rather
 than exposing a matrix of modifier swaps.
