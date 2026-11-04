@@ -21,27 +21,31 @@ import type { SaveEntry } from "../../model"
 export type Checkpoint = SaveEntry
 
 /**
- * World units (CSS pixels at 100%). A card is a 16:10 picture and nothing
- * else: its words hang below it, drawn at a size that reads at any zoom (see
- * CheckpointCard), so the gaps between lines and days leave them room.
+ * World units (CSS pixels at 100%). A card is a 16:10 picture with its
+ * caption plate attached below it (one surface, see CheckpointCard). The
+ * layout positions the picture; the plate hangs below it, drawn at a size
+ * that reads at any zoom, so the gaps between lines and days leave it room.
  */
 export const CARD_WIDTH = 240
 export const CARD_FRAME = 150
 export const NOW_WIDTH = 440
 export const COLUMN_GAP = 32
-/** Between one line of a day's cards and the next: room for the first line's captions. */
-export const LINE_GAP = 76
-/** Room above a day's block: its date, and the captions of the block above. */
-export const DAY_GAP = 108
+/** Between one line of a day's cards and the next: room for the first line's caption plates (name, time, kind and size, a note). */
+export const LINE_GAP = 128
+/** Room above a day's block: its date, and the caption plates of the block above. */
+export const DAY_GAP = 176
 /** Between Now and the newest day. */
-export const NOW_GAP = 112
-/** Under the last card: its caption, and Now's. */
-export const CAPTION_ROOM = 64
+export const NOW_GAP = 144
+/** Under the last card: its caption plate, and Now's. */
+export const CAPTION_ROOM = 120
 /** Each older day is this much smaller than the one in front of it... */
 export const DEPTH_STEP = 0.93
 /** ...down to this. */
 export const DEPTH_MIN = 0.62
 export const COLUMNS = 6
+
+/** How far above its group a day's date sits (its bottom edge), before the day's scale. */
+export const LABEL_LIFT = 14
 
 export interface CardBox extends Rect {
   readonly name: string
@@ -61,7 +65,7 @@ export interface DayBlock extends Rect {
   /** Local midnight of that day. */
   readonly date: Date
   readonly scale: number
-  /** Where its date label sits (top left, world). */
+  /** Where its date label sits (top left, world) while the day's cards are where the layout put them; see `dayGroup` for after they are moved. */
   readonly label: Point
   /** Names of its checkpoints, oldest first. */
   readonly names: readonly string[]
@@ -157,7 +161,7 @@ export function layoutTimeline(checkpoints: readonly Checkpoint[], nowAspect: nu
       width,
       height,
       scale,
-      label: { x: left, y: top - 14 * scale },
+      label: { x: left, y: top - LABEL_LIFT * scale },
       names: list.map((c) => c.name),
     })
     bottom = top - DAY_GAP * scale
@@ -196,6 +200,52 @@ export function placeCards(layout: TimelineLayout, moves: Moves): TimelineLayout
   }
   if (moved.length === 0) return layout
   return { ...layout, cards, bounds: union([layout.bounds, ...moved]) }
+}
+
+/**
+ * Where a day's date belongs: with its cards, wherever they have been put.
+ *
+ * The group is the day's biggest cluster of cards: cards are in one cluster
+ * while each is within one line gap of another (the gap the layout leaves
+ * between them), so dragging a card out of a day leaves the date with the rest.
+ * Ties (every card on its own, or two clusters of the same size) go to the
+ * cluster holding the day's earliest card. The date sits at the top left of
+ * the cluster's bounds, a little above; `rect` is those bounds (the caption
+ * plates hang below it and are not counted). A day with none of its cards
+ * shown keeps the place the layout gave it.
+ */
+export function dayGroup(day: Pick<DayBlock, "names" | "scale" | "label" | "x" | "y" | "width" | "height">, cards: ReadonlyMap<string, Rect>): { readonly rect: Rect; readonly label: Point } {
+  const boxes = day.names.flatMap((n) => {
+    const b = cards.get(n)
+    return b === undefined ? [] : [b]
+  })
+  if (boxes.length === 0) return { rect: { x: day.x, y: day.y, width: day.width, height: day.height }, label: day.label }
+  const link = LINE_GAP * day.scale + 0.5
+  const gap = (a: Rect, b: Rect): { readonly x: number; readonly y: number } => ({
+    x: Math.max(0, a.x - (b.x + b.width), b.x - (a.x + a.width)),
+    y: Math.max(0, a.y - (b.y + b.height), b.y - (a.y + a.height)),
+  })
+  // Each card joins the cluster of the first card it is near; clusters it bridges merge.
+  const cluster = boxes.map((_, i) => i)
+  const find = (i: number): number => {
+    let r = i
+    while (cluster[r] !== r) r = cluster[r] ?? r
+    return r
+  }
+  boxes.forEach((a, i) =>
+    boxes.slice(0, i).forEach((b, j) => {
+      const g = gap(a, b)
+      if (g.x <= link && g.y <= link) cluster[Math.max(find(i), find(j))] = Math.min(find(i), find(j))
+    }),
+  )
+  const sizes = new Map<number, number>()
+  boxes.forEach((_, i) => sizes.set(find(i), (sizes.get(find(i)) ?? 0) + 1))
+  // The first (earliest) root with the most cards.
+  let best = find(0)
+  for (const [root, n] of sizes) if (n > (sizes.get(best) ?? 0)) best = root
+  const mine = boxes.filter((_, i) => find(i) === best)
+  const rect = union(mine)
+  return { rect, label: { x: rect.x, y: rect.y - LABEL_LIFT * day.scale } }
 }
 
 /** A day's block with room for its date above it (the label sits on the block, drawn upwards). */
@@ -326,6 +376,28 @@ export const shownName = (c: Pick<Checkpoint, "name" | "title" | "notes">): stri
 /** Whether there are notes to show (a title alone is shown as the name, not as notes). */
 export const hasNotes = (c: Pick<Checkpoint, "notes" | "note">): boolean =>
   (c.notes !== null && (c.notes.text.trim() !== "" || c.notes.tags.length > 0)) || (c.note !== undefined && c.note !== "")
+
+const NOTE_MARK = /^(?:#{1,6}\s+|[-*+]\s+|>\s+)/
+const NOTE_EMPHASIS = /\*\*|__|`/g
+
+/**
+ * What a card says of a checkpoint's note, or null when it has none: the
+ * first line of its text (the note's markdown marks stripped), else the older
+ * manifest `note`, else its tags; and the whole of it for a tooltip.
+ */
+export function noteOf(c: Pick<Checkpoint, "notes" | "note">): { readonly line: string; readonly full: string } | null {
+  if (!hasNotes(c)) return null
+  const text = c.notes?.text.trim() ?? ""
+  const tags = c.notes?.tags.join(", ") ?? ""
+  const body = text !== "" ? text : (c.note ?? "").trim()
+  const first = body
+    .split("\n")
+    .map((l) => l.trim().replace(NOTE_MARK, "").replace(NOTE_EMPHASIS, "").trim())
+    .find((l) => l !== "")
+  const line = first ?? tags
+  if (line === "") return null
+  return { line, full: [body, tags].filter((x) => x !== "").join("\n") }
+}
 
 const SAVE_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]*$/
 
