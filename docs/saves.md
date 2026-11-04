@@ -12,6 +12,7 @@ winvm load before-install        # running or stopped
 winvm save --fast clean          # larger, but faster to load
 winvm saves                      # name, kind, format, created, size, compatible
 winvm saves rm before-install    # deletes its note too
+winvm saves path before-install  # the save's folder (--json: {"path": …}); the app's Show in Finder
 winvm saves note before-install --title "Clean install" --tags win11,clean
 winvm pause / resume             # freeze the guest / carry on
 winvm sleep / wake               # lock Windows and freeze it / carry on at the lock screen
@@ -35,6 +36,24 @@ winvm clock                      # the guest's clock offset, and fix it
   says what changed when it refuses.
 - **Clock.** Loading, resuming or recalling a stow sets the guest's clock to
   the host's.
+- **Loading replaces this machine.** `load` never makes a new machine. It
+  quits the instance's QEMU if one is running (running or paused: what it was
+  doing is thrown away, with no copy made), puts the save's disk and firmware
+  back, and starts QEMU again from the save's memory. Windows ends up running
+  at that moment, even if it was paused. A stopped machine is simply started
+  from the save. Nothing keeps the present first: do that with `save`. (The
+  app's Restore confirmation offers "Save Current First", which takes a
+  checkpoint of the running machine and then loads.) Loading also discards a
+  waiting `stow`, since the next `start` would otherwise replace what you loaded.
+- **Size.** `saves` shows `bytes`: the memory file plus the disk copy's
+  allocated blocks plus the firmware variables. That is what the save takes on
+  your Mac's disk, but the disk copies are APFS clones that share blocks with
+  the machine and with other saves, so it overstates what deleting one frees. It
+  is an upper bound. The screenshots aren't counted.
+- **How many machines.** There is no limit in winvm. Each instance is its own
+  QEMU with its own memory (4 GiB to half the Mac's RAM, 8 GiB by default for a
+  new one) and processors, and its own VNC display (`:1` to `:99`, so at most 99
+  instances). In practice the Mac's memory is the limit.
 - **Paused stays paused.** Only `resume` (or `wake`) starts a paused or asleep
   guest again. Nothing else calls into it meanwhile: `status` reports it at once
   without asking its agent, the agent verbs refuse it (`agent connect` exits 3),

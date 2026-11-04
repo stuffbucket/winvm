@@ -214,6 +214,7 @@ export function list(args: Args): number {
     return 0
   }
   if (args.positional[0] === "note") return note(args)
+  if (args.positional[0] === "path") return pathOf(name, args)
   const rows = saves.listSaves(name)
   if (args.flags.has("json")) {
     const ctx = rows.length > 0 ? saves.reportContext(name) : { compat: null }
@@ -246,6 +247,23 @@ export function list(args: Args): number {
     )
   }
   console.log(`\n  ${saves.savesDir(name)}`)
+  return 0
+}
+
+/**
+ * `saves path <save>`: the folder the save lives in, as an absolute path, for
+ * Finder or a script (`--json`: `{"path": …}`). The name is checked and the
+ * save must exist, so what is printed is always a real save folder under this
+ * instance's saves directory and never a path built from stray input.
+ */
+function pathOf(name: string, args: Args): number {
+  const target = args.positional[1]
+  if (target === undefined) return fail("usage: winvm saves path [-i name] <save> [--json]")
+  const bad = saves.nameError(target)
+  if (bad !== null) return fail(bad)
+  if (!saves.hasSave(name, target)) return fail(`instance "${name}" has no save "${target}"`)
+  const dir = saves.saveDir(name, target)
+  console.log(args.flags.has("json") ? JSON.stringify({ path: dir }) : dir)
   return 0
 }
 
