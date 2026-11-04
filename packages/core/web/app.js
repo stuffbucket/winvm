@@ -54,6 +54,9 @@ function connectScreen(vnc) {
     wsProtocols: ["binary"],
   })
   conn.scaleViewport = true
+  // Best-effort for a QEMU still running with lossy=on. The next restart uses
+  // vnc.ts's lossless policy; quality 9 alone does not prevent JPEG artifacts.
+  conn.qualityLevel = 9
   conn.background = "#000"
   conn.addEventListener("connect", () => {
     screenMessage("")

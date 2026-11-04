@@ -22,6 +22,7 @@ import { resolve } from "node:path"
 import { effectiveConfig } from "./config"
 import { describeDisplay, readDisplay } from "./display"
 import { frozenFrom, markedAsleep, savingRunning } from "./frozen"
+import { readHardware } from "./hardware"
 import { qmpCommand } from "./monitor"
 import { home, instanceDir, listInstances, pathsFor, readImageMeta, readMeta } from "./paths"
 import type { Paths } from "./paths"
@@ -202,23 +203,19 @@ export function parseHardware(argv: readonly string[]): { cpus: number | null; m
   return { cpus, memoryMiB }
 }
 
-const psField = (pid: number, field: string): string =>
-  (spawnSync("ps", ["-o", `${field}=`, "-p", String(pid)], { encoding: "utf8" }).stdout ?? "").trim()
-
-function hardwareFor(name: string, p: Paths, pid: number | null): { cpus: number | null; memoryMiB: number | null } {
-  // A running guest: what it was actually started with.
+function hostProcess(p: Paths, pid: number | null): { uptimeSeconds: number | null; cpus: number | null; memoryMiB: number | null } {
+  // Uptime and actual hardware in one process query, not two on every UI poll.
   if (pid !== null) {
-    const cmd = psField(pid, "command")
-    if (cmd !== "") return parseHardware(cmd.split(/\s+/))
+    const r = spawnSync("ps", ["-o", "etime=,command=", "-p", String(pid)], { encoding: "utf8" })
+    const fields = /^\s*(\S+)\s+(.+?)\s*$/.exec(r.stdout ?? "")
+    if (r.status === 0 && fields !== null) {
+      return { uptimeSeconds: parseEtime(fields[1] ?? ""), ...parseHardware((fields[2] ?? "").split(/\s+/)) }
+    }
   }
-  // A stopped one: what the next start would use.
-  const meta = readMeta(name)
-  if (meta === null) return { cpus: null, memoryMiB: null }
-  try {
-    return parseHardware(qemu.qemuArgs(name, p, meta, { installMedia: false, ephemeral: false, virtioBoot: false }))
-  } catch {
-    return { cpus: null, memoryMiB: null }
-  }
+  // A stopped machine needs only its settings. Constructing qemuArgs here used
+  // to discover firmware and spawn QEMU capability probes just to read -smp/-m.
+  const hw = readHardware(p)
+  return { uptimeSeconds: null, cpus: hw.cpus, memoryMiB: hw.memoryMiB }
 }
 
 function allocatedBytes(path: string): number | null {
@@ -404,8 +401,7 @@ export async function gather(name: string, deep = true): Promise<InstanceStatus>
     image: meta.image,
     snapshotsCapable: readImageMeta(meta.image)?.virtioBoot ?? null,
     pid,
-    uptimeSeconds: pid === null ? null : parseEtime(psField(pid, "etime")),
-    ...hardwareFor(name, p, pid),
+    ...hostProcess(p, pid),
     display: meta.vnc,
     screen: describeDisplay(readDisplay(p)),
     vncPort: vncPort(meta.vnc),

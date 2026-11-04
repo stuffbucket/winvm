@@ -93,6 +93,13 @@ for (const scheme of ["dark", "light"]) {
   check(new Set(trailing).size === 1, `${scheme}: the states are right-aligned together`)
   const leading = await m.locator(".menu-item__leading svg").evaluateAll((els) => els.map((e) => Math.round(e.getBoundingClientRect().x)))
   check(new Set(leading).size === 1, `${scheme}: checks and command icons share a column`)
+  const labels = await m.locator(".menu-item__label").evaluateAll((els) => els.map((el) => {
+    const range = document.createRange()
+    range.selectNodeContents(el)
+    return { text: el.textContent, x: Math.round(range.getBoundingClientRect().x) }
+  }))
+  check(new Set(labels.map((label) => label.x)).size === 1, `${scheme}: every machine and command label starts in the same text column`)
+  check(JSON.stringify(labels.slice(-3).map((label) => label.text)) === JSON.stringify(["New Machine…", "Rename…", "Delete “Work PC”…"]), `${scheme}: command labels keep their Unicode quotes and ellipses`)
   // Keyboard: End goes to the last row, Delete.
   await m.keyboard.press("ArrowUp")
   await wait(150)

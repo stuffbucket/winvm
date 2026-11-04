@@ -47,6 +47,7 @@ import type { Decision, SaveInfo, Settings, Timing } from "./idle"
 import { DEFAULT_TIMING, DRIFT_TOLERANCE_MS, IdleMachine, autosaveName, savesToRotate } from "./idle"
 import { isFrozenRunState } from "./frozen"
 import { AT_THE_MAC_S, LivenessLog, hostIdleSeconds, processState } from "./inputcheck"
+import { qmpCommand } from "./monitor"
 import type { Paths } from "./paths"
 import { cliArgv, instanceDir, pathsFor } from "./paths"
 import * as qemu from "./qemu"
@@ -311,27 +312,38 @@ export function vcpusOf(pid: number): number {
 }
 
 /**
- * Whether the vCPUs are stopped (paused or asleep; false when the monitor does
- * not answer), and how long the monitor took to (null when it did not): QEMU
- * answers on the loop that reads VNC input, so a slow answer is a slow mouse.
+ * Whether the vCPUs are stopped (paused or asleep; null when unknown), and how
+ * long the monitor took to answer (null when it did not): QEMU answers on the
+ * loop that reads VNC input, so a slow answer is a slow mouse.
  */
-async function isFrozen(p: Paths): Promise<{ readonly frozen: boolean; readonly ms: number | null }> {
+async function isFrozen(sockPath: string, timeoutMs: number): Promise<{ readonly frozen: boolean | null; readonly ms: number | null }> {
   const t0 = performance.now()
   try {
-    const r = (await qmp.execute(p.qmp, "query-status", undefined, 5000)) as { status?: unknown } | undefined
-    return { frozen: isFrozenRunState(typeof r?.status === "string" ? r.status : null), ms: Math.round(performance.now() - t0) }
+    const r = (await qmpCommand(sockPath, "query-status", undefined, timeoutMs)) as { status?: unknown } | undefined
+    return { frozen: typeof r?.status === "string" ? isFrozenRunState(r.status) : null, ms: Math.round(performance.now() - t0) }
   } catch {
-    return { frozen: false, ms: null }
+    return { frozen: null, ms: null }
   }
 }
 
-async function vncClients(p: Paths): Promise<number | null> {
+async function vncClients(sockPath: string, timeoutMs: number): Promise<number | null> {
   try {
-    const r = (await qmp.execute(p.qmp, "query-vnc", undefined, 5000)) as { clients?: unknown[] } | undefined
-    return Array.isArray(r?.clients) ? r.clients.length : 0
+    const r = (await qmpCommand(sockPath, "query-vnc", undefined, timeoutMs)) as { enabled?: unknown; clients?: unknown } | undefined
+    return Array.isArray(r?.clients) ? r.clients.length : r?.enabled === false ? 0 : null
   } catch {
     return null
   }
+}
+
+/**
+ * Read-only probes must give up while queued behind a save, not wait out the
+ * boot client's 20 s capability timeout and THEN their own 5 s command timeout.
+ * Start together so an unresponsive monitor costs one admission wait, not two.
+ * Unknown VNC stays null (not zero), so a failed sample never declares idle.
+ */
+export async function probeMonitor(sockPath: string, timeoutMs = 5000): Promise<{ readonly frozen: boolean | null; readonly ms: number | null; readonly clients: number | null }> {
+  const [monitor, clients] = await Promise.all([isFrozen(sockPath, timeoutMs), vncClients(sockPath, timeoutMs)])
+  return { ...monitor, clients }
 }
 
 function activityAt(path: string): number | null {
@@ -758,8 +770,8 @@ export async function watch(name: string, o: WatchOptions = {}): Promise<number>
     prevCpu = { sec: nowCpu, at: now }
 
     const settings = settingsOf(cfg)
-    const clients = await vncClients(p)
-    const monitor = await isFrozen(p)
+    const monitor = await probeMonitor(p.qmp)
+    const clients = monitor.clients
     // A viewer coming or going, and a monitor that is slow or silent, are kept in
     // the log (nothing else is while the guest is quiet): the timeline for "the
     // mouse stopped working".

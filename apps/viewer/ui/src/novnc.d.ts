@@ -8,6 +8,8 @@ declare module "novnc/core/rfb.js" {
     scaleViewport: boolean
     clipViewport: boolean
     resizeSession: boolean
+    /** JPEG quality QEMU may use for Tight rectangles, 0 (smallest) to 9 (best); noVNC's default is 6. */
+    qualityLevel: number
     background: string
     focusOnClick: boolean
     /** No keys or pointer sent to the server (the screen still updates). */

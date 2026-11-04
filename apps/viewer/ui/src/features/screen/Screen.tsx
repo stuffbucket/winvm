@@ -191,6 +191,10 @@ export const Screen = forwardRef<ScreenHandle, ScreenProps>(function Screen(
     // We send SetDesktopSize ourselves: noVNC asks in CSS pixels, and treats
     // QEMU's immediate "forwarded" reply as done, dropping later sizes.
     conn.resizeSession = false
+    // New QEMU processes forbid JPEG (vnc.ts). For one already running with
+    // lossy=on, request its best quality until the next restart. Still lossy:
+    // quality 9 cannot replace the server's lossless policy.
+    conn.qualityLevel = 9
     conn.focusOnClick = keys.current.forward || keys.current.asleep
     conn.viewOnly = !keys.current.forward
 

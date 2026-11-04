@@ -27,11 +27,35 @@ curl -N --unix-socket ~/.local/state/winvm/instances/NAME/control.sock http://lo
 The same events are appended to `events.jsonl` in the instance folder.
 `winvm status` shows the service. `winvm kill` and `winvm destroy` stop it.
 
+### Status polling
+
+A stopped or stowed machine's status reads its CPU and memory settings directly
+from `hardware.json` (or the legacy defaults). It does not construct a QEMU
+command line, discover firmware, or run capability probes. A running machine's
+uptime and actual CPU/memory allocation come from one `ps` invocation rather
+than two; changing the next-boot settings does not change those live values.
+
+`mise exec -- bun scripts/bench-status.ts` measures stopped-status gathering in
+fresh Bun processes against a temporary instance, without starting a guest.
+It reports gathering time separately from process startup and module loading.
+On the development Mac, nine samples before/after this change measured median
+gathering time of **52.6 ms → 0.48 ms**. This is host-side status overhead, not
+a measurement of guest throughput or input latency.
+
 ## The idle watcher
 
 `start` also starts an idle watcher, unless you pass `--no-watch`. `load` and
 `rewind` into a stopped instance start one too. It logs to
 `instances/<name>/watch.log` and exits when QEMU does.
+
+Its run-state and VNC checks start together and use the short-deadline QMP
+client: a five-second timeout applies while waiting for broker admission and
+to each negotiation/command phase. They do not use the boot client's long
+connection retries or its extra 20-second capability wait. A failed or
+incomplete sample is unknown, not idle: no autosave, stow or drift check is
+scheduled until the monitor is available again, and the quiet period restarts.
+The failure alone does not re-arm an autosave already taken; known command or
+viewer activity still does.
 
 The guest counts as idle when QEMU's CPU use stays below a threshold, no
 `winvm` command is using the guest, and no VNC client is connected. When it

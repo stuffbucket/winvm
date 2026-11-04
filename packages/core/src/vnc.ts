@@ -60,14 +60,14 @@ export const connection = (display: number, password: string | null): Connection
 })
 
 /**
- * The `-vnc` argument: loopback only, websocket alongside, password required,
- * and `lossy=on` so Tight may send JPEG rectangles to a client that asks for a
- * JPEG quality (noVNC does by default). winvm-runtime's QEMU is built with
- * libjpeg-turbo from 11.1.2-2; a QEMU without it accepts the option and stays
- * lossless. Screenshots come from QMP's screendump, not VNC, so they stay exact.
+ * The `-vnc` argument: loopback only, websocket alongside, password required.
+ * Keep the screen lossless even when a client requests JPEG (noVNC does by
+ * default). Tight JPEG blurs text after motion, and even quality 9 is lossy.
+ * This is transport policy, not guest hardware: existing RAM saves still load.
+ * Screenshots use QMP's screendump independently of the VNC encoding.
  */
 export function vncArg(display: number): string {
-  return `127.0.0.1:${String(display)},websocket=127.0.0.1:${String(websocketPort(display))},password=on,lossy=on`
+  return `127.0.0.1:${String(display)},websocket=127.0.0.1:${String(websocketPort(display))},password=on,lossy=off`
 }
 
 /** Whether nothing on this host listens on the display's VNC or websocket port. */

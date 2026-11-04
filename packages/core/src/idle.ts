@@ -50,9 +50,10 @@ export interface Sample {
   /**
    * The vCPUs are stopped — paused or asleep (frozen.ts). Such a guest is held
    * as the user left it: no autosave, no stow, and the time frozen is not idle
-   * time (the idle clock starts again when it resumes). Absent: not frozen.
+   * time (the idle clock starts again when it resumes). Null: unknown, so no
+   * automatic action is safe. Absent: not frozen (legacy callers).
    */
-  readonly frozen?: boolean
+  readonly frozen?: boolean | null
 }
 
 export interface Settings {
@@ -170,6 +171,18 @@ export class IdleMachine {
       this.restartIdle(s.wallMs)
       this.lastDriftCheckMs = s.wallMs
       this.lastVerdict = { quiet: false, cpuAvg: null, reasons: ["paused"], woke }
+      return decisions
+    }
+
+    // Unknown is not idle: a busy monitor may hide a paused guest or a viewer.
+    // The failure is not activity, but a known command or viewer still is.
+    if (s.frozen === null || s.vncClients === null) {
+      if ((s.activityAtMs !== null && s.activityAtMs > this.idleSinceMs) || (s.vncClients !== null && s.vncClients > 0)) {
+        this.autosaveArmed = true
+      }
+      this.restartIdle(s.wallMs)
+      this.lastDriftCheckMs = s.wallMs
+      this.lastVerdict = { quiet: false, cpuAvg: null, reasons: ["monitor unavailable"], woke }
       return decisions
     }
 

@@ -28,6 +28,14 @@ winvm prune                          # remove leftover build scratch instances
 winvm rmi <image>                    # remove a base image
 ```
 
+## Backend direction
+
+QEMU with Hypervisor.framework (HVF) remains the supported backend and the
+performance target. The Virtualization.framework (VZ) spike is deferred.
+HVF accelerates QEMU's vCPUs; QEMU still supplies the virtual devices and
+`swtpm` supplies TPM 2.0. Performance work should measure this path before
+changing devices: the QEMU command line is part of save compatibility.
+
 ## Dependencies
 
 | | |
@@ -711,8 +719,6 @@ UTM's `utmctl` has the same verbs and is *not* used. It drives UTM.app over
 Apple Events, so it needs a logged-in Aqua session and an interactive TCC grant.
 Upstream's own error text says "utmctl does not work from SSH sessions or before
 logging in"; in practice it hangs silently or fails with `OSStatus -1712`.
-Apple's Virtualization.framework cannot run Windows at all, because it has no
-virtual TPM.
 
 `qemu-ga` on Windows ARM64 is the **x64 build, running under emulation**. UTM's
 installer has no ARM64 build of it. It works, but it is not native.

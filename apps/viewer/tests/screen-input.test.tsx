@@ -23,6 +23,7 @@ class FakeRFB extends EventTarget {
   scaleViewport = false
   clipViewport = false
   resizeSession = true
+  qualityLevel = 6
   background = ""
   focusOnClick = true
   _viewOnly = false
@@ -169,6 +170,11 @@ const key = (target: EventTarget, type: "keydown" | "keyup", code: string, init:
 }
 
 describe("the screen's input", () => {
+  it("requests the best JPEG quality for a server still running the older lossy policy", async () => {
+    const s = await mount({ phase: "running" })
+    expect(s.rfb.qualityLevel).toBe(9)
+  })
+
   it("is live while Windows runs with nothing under way: noVNC takes input, the guest's cursor shows", async () => {
     const s = await mount({ phase: "running" })
     expect(s.rfb.viewOnly).toBe(false)

@@ -28,9 +28,9 @@ class Harness {
   now = 1_700_000_000_000
   readonly machine = new IdleMachine(this.now, TIMING)
   activityAt: number | null = null
-  vnc = 0
-  /** The guest is paused or asleep. */
-  frozen = false
+  vnc: number | null = 0
+  /** The guest is paused or asleep; null when the monitor did not answer. */
+  frozen: boolean | null = false
   readonly log: { readonly at: number; readonly d: Decision }[] = []
 
   private readonly settings: Settings
@@ -134,6 +134,61 @@ describe("idle state machine", () => {
     h.vnc = 0
     h.run(10.25, IDLE)
     expect(h.kinds("autosave")).toHaveLength(1)
+  })
+
+  it("does not turn an unknown monitor or viewer count into an idle guest", () => {
+    for (const sample of [{ frozen: null, vnc: 0 }, { frozen: false, vnc: null }, { frozen: null, vnc: null }]) {
+      const h = new Harness()
+      h.run(9.75, IDLE)
+      h.frozen = sample.frozen
+      h.vnc = sample.vnc
+      h.run(90, IDLE)
+      expect(h.kinds("autosave")).toHaveLength(0)
+      expect(h.kinds("stow")).toHaveLength(0)
+      expect(h.kinds("checkDrift")).toHaveLength(0)
+      expect(h.machine.lastVerdict.quiet).toBe(false)
+      expect(h.machine.idleMs(h.now)).toBe(0)
+      h.frozen = false
+      h.vnc = 0
+      h.run(9.5, IDLE)
+      expect(h.kinds("autosave")).toHaveLength(0)
+      h.run(1, IDLE)
+      expect(h.kinds("autosave")).toHaveLength(1)
+    }
+  })
+
+  it("a missing monitor sample does not re-arm an autosave already taken", () => {
+    const h = new Harness()
+    h.run(10.25, IDLE)
+    expect(h.kinds("autosave")).toHaveLength(1)
+    h.vnc = null
+    h.run(20, IDLE)
+    expect(h.machine.autosaveArmed).toBe(false)
+    h.vnc = 0
+    h.run(10.25, IDLE)
+    expect(h.kinds("autosave")).toHaveLength(1)
+  })
+
+  it("still records known command or viewer activity when another monitor field is unknown", () => {
+    for (const kind of ["command", "viewer"]) {
+      const h = new Harness()
+      h.run(10.25, IDLE)
+      expect(h.machine.autosaveArmed).toBe(false)
+      if (kind === "command") {
+        h.vnc = null
+        h.activityAt = h.now + 1000
+      } else {
+        h.vnc = 1
+        h.frozen = null
+      }
+      h.run(1, IDLE)
+      expect(h.machine.autosaveArmed).toBe(true)
+      expect(h.kinds("autosave")).toHaveLength(1)
+      h.vnc = 0
+      h.frozen = false
+      h.run(10.25, IDLE)
+      expect(h.kinds("autosave")).toHaveLength(2)
+    }
   })
 
   it("stows after the longer threshold, once, and stops deciding", () => {

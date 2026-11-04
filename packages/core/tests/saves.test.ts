@@ -136,6 +136,15 @@ describe("compatibility", () => {
     expect(a).not.toContain("-rtc")
     expect(a).toContain("virt,accel=hvf")
   })
+  it("keeps existing saves compatible when VNC switches from JPEG to lossless", () => {
+    const args = argv("a", 1)
+    const vnc = args.indexOf("-vnc") + 1
+    const old = [...args]
+    old[vnc] = "127.0.0.1:1,websocket=127.0.0.1:5701,password=on,lossy=on"
+    const lossless = [...args]
+    lossless[vnc] = "127.0.0.1:1,websocket=127.0.0.1:5701,password=on,lossy=off"
+    expect(hardwareArgs(old)).toEqual(hardwareArgs(lossless))
+  })
   it("notices a hardware change", () => {
     const a = hardwareArgs(argv("a", 1))
     const more = argv("a", 1).map((x) => (x === "4096" ? "8192" : x))

@@ -457,7 +457,9 @@ fn menu(app: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
     let input_index = menu.items()?.len().saturating_sub(2);
     menu.insert(&input, input_index)?;
     if let Some(app_menu) = menu.items()?.first().and_then(|i| i.as_submenu().cloned()) {
-        app_menu.insert_items(&[&install, &PredefinedMenuItem::separator(app)?], 2)?;
+        // Keep app-management commands in About's section: AppKit aligns text
+        // with that section's icons; a separate iconless section shifts left.
+        app_menu.insert(&install, 1)?;
         app_menu.insert(&updates, 1)?;
     }
     if let Some(help) = menu.get(HELP_SUBMENU_ID).and_then(|i| i.as_submenu().cloned()) {
