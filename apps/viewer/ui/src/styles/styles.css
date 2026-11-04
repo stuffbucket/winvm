@@ -383,7 +383,8 @@ html[data-os="macos"] .toolbar {
 
 /* A resizable (virtio-gpu) guest: its screen is the window's size, so the
    frame fills the area edge to edge and there is no shape to keep. */
-.display--live {
+.display--live,
+.display--fill {
   width: 100cqw;
   height: 100cqh;
   aspect-ratio: auto;
@@ -517,12 +518,18 @@ html[data-os="macos"] .toolbar {
   overflow-y: auto;
 }
 
-/* Centered while it fits, scrolling from the top when it doesn't. */
+/* THE COLUMN: the heading, note, facts, Start and list all stand in this one
+   column, as wide as the window allows up to --overview-measure and centered in
+   it (blocks inside start at its left edge). It is centered up and down too,
+   when the window is taller than it needs; when the window is shorter it
+   scrolls from the top. docs/design/layout.md, "The overview". */
 .overview__content {
   display: flex;
   flex-direction: column;
   align-items: flex-start;
   gap: var(--space-5);
+  width: min(100%, var(--overview-measure));
+  margin-inline: auto;
   margin-block: auto;
 }
 
@@ -661,9 +668,15 @@ html[data-os="macos"] .toolbar {
   position: relative;
   flex: 1 1 auto;
   min-height: 0;
+  max-height: var(--overview-height);
   align-self: stretch;
-  margin-block: 0;
-  padding: var(--space-6) var(--space-7) var(--space-8);
+  width: auto;
+  margin-inline: 0;
+  margin-block: auto;
+  /* The scroll box spans the window (so its scrollbar is at the window's edge);
+     the padding makes the column inside it. Percentages are of that box's width. */
+  padding-block: var(--space-7) var(--space-5);
+  padding-inline: max(var(--space-7), calc((100% - var(--overview-measure)) / 2));
   overflow-y: auto;
 }
 
@@ -677,11 +690,24 @@ html[data-os="macos"] .toolbar {
   flex: 1 1 0;
   min-height: calc(var(--text-2xl) * var(--leading-2xl) + var(--space-4) + var(--notes-min));
   align-self: stretch;
-  max-width: var(--content-max);
   display: flex;
   flex-direction: column;
   justify-content: flex-end;
   gap: var(--space-4);
+}
+
+/* A taller display gives the note more room at rest, so the extra height is a
+   place to write rather than empty air above the heading. */
+@container ((min-height: 28rem) and (max-height: 46rem)) or (min-height: 52rem) {
+  .overview__upper {
+    --notes-lines: 5;
+  }
+}
+
+@container (min-height: 62rem) {
+  .overview__upper {
+    --notes-lines: 7;
+  }
 }
 
 /* The heading never shrinks; the note does, and then scrolls. */
@@ -888,7 +914,7 @@ html[data-os="macos"] .toolbar {
   list-style: none;
   margin: 0;
   padding: 0;
-  width: min(100%, 32rem);
+  width: 100%;
   border: var(--border-width-hairline) solid var(--border-subtle);
   border-radius: var(--radius-card);
   overflow: hidden;
@@ -965,10 +991,20 @@ html[data-os="macos"] .toolbar {
   color: var(--text-muted);
 }
 
-/* Only when the display has room for it. */
-@container (max-height: 36rem) {
+/* Only when the display has room for the whole screen: the column with the list is
+   about 46rem tall at the default type size (heading, a three-line note, facts,
+   Start, five rows, and the column's padding), so a shorter display drops the
+   list rather than scrolling Start's neighbours out of sight. */
+@container (max-height: 46rem) {
   .abilities {
     display: none;
+  }
+
+  /* Without the list the column is about 26rem tall; give the note room to grow
+     above that, and no more, so a display between 30 and 46rem tall does not
+     leave the heading adrift in the middle of a tall column. */
+  .overview--notes .overview__content {
+    max-height: 32rem;
   }
 }
 

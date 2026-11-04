@@ -385,13 +385,26 @@ describe("the layout that lets the note grow upward", () => {
     expect(rule(".notes")).toMatch(/flex:\s*0 1 auto/)
     expect(rule(".notes")).toMatch(/min-height:\s*var\(--notes-min\)/)
     expect(rule(".notes__field")).toMatch(/overflow-y:\s*auto/)
-    // Nothing is centered by auto margins any more, which is what would have moved the controls.
-    expect(rule(".overview--notes .overview__content")).toMatch(/margin-block:\s*0/)
-    expect(rule(".overview--notes .overview__content")).toMatch(/overflow-y:\s*auto/)
+    // The column's own height does not depend on the note (it fills the display, up to a cap, and
+    // is then centered by auto margins as a whole), so nothing inside it moves as the note grows.
+    const column = rule(".overview--notes .overview__content")
+    expect(column).toMatch(/flex:\s*1 1 auto/)
+    expect(column).toMatch(/max-height:\s*var\(--overview-height\)/)
+    expect(column).toMatch(/overflow-y:\s*auto/)
   })
 
   it("leaves the top of the column (the heading's stop) as clearance below the toolbar", () => {
-    expect(rule(".overview--notes .overview__content")).toMatch(/padding:\s*var\(--space-6\)/)
+    expect(rule(".overview--notes .overview__content")).toMatch(/padding-block:\s*var\(--space-7\)/)
+  })
+
+  it("is one column for everything on the screen: as wide as the window allows up to a measure, then centered", () => {
+    expect(rule(".overview__content")).toMatch(/width:\s*min\(100%,\s*var\(--overview-measure\)\)/)
+    expect(rule(".overview__content")).toMatch(/margin-inline:\s*auto/)
+    expect(rule(".overview--notes .overview__content")).toMatch(/padding-inline:\s*max\(var\(--space-7\),\s*calc\(\(100% - var\(--overview-measure\)\) \/ 2\)\)/)
+    // The note, the heading and the list take the column's width; none sets a width or a measure of its own.
+    expect(rule(".abilities__list")).toMatch(/width:\s*100%/)
+    expect(rule(".overview__upper")).not.toMatch(/max-width/)
+    expect(rule(".notes")).not.toMatch(/max-width|[^-]width:/)
   })
 })
 

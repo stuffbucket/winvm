@@ -114,6 +114,13 @@ export const focusRing = {
 export const layout = {
   contentMax: "640px",
   panelWidth: "320px",
+  /**
+   * The overview's one column (heading, note, facts, Start, list): as wide as the
+   * window allows up to this, then centered. Rem, so it follows the type size.
+   */
+  overviewMeasure: "48rem",
+  /** The overview's column is no taller than this: on a taller window it is centered, not stretched. */
+  overviewHeight: "52rem",
 } as const;
 
 /**
