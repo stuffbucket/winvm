@@ -1,7 +1,7 @@
 /**
  * The controls over the canvas, in one bar floating at the bottom of the
  * window (monimal's canvas puts its controls there too): search, New
- * Checkpoint, back to the newest, the Automatic filter, Reset layout, and Done.
+ * Checkpoint, back to the newest, the Automatic filter, the Section tool, Reset layout, and Done.
  *
  * Search is a magnifier until it is used, then the bar grows to the left (its
  * right end stays put) and the magnifier becomes the field's leading icon:
@@ -45,6 +45,22 @@ const RESET = (
   </>
 )
 
+// A section (after lucide's square-dashed): a dashed region with its name's tab at the top left.
+const SECTION = (
+  <>
+    <path d="M3 8V5a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v3" />
+    <path d="M14 8h1" />
+    <path d="M19 8a2 2 0 0 1 2 2" />
+    <path d="M21 14v1" />
+    <path d="M21 19a2 2 0 0 1-2 2" />
+    <path d="M14 21h1" />
+    <path d="M9 21h1" />
+    <path d="M5 21a2 2 0 0 1-2-2" />
+    <path d="M3 15v1" />
+    <path d="M3 11v1" />
+  </>
+)
+
 /** How long the zoom's figure stays after the zoom stops changing. */
 export const ZOOM_FIGURE_MS = 1600
 
@@ -69,6 +85,9 @@ export interface ControlBarProps {
   onSearchBlur(): void
   onQuery(value: string): void
   onSearchKey(e: KeyboardEvent<HTMLInputElement>): void
+  /** The Section tool is on: a drag on the canvas draws a section. */
+  readonly sectionTool: boolean
+  onSectionTool(): void
   /** Some cards have been moved from where winvm put them. */
   readonly arranged: boolean
   onReset(): void
@@ -157,6 +176,9 @@ export function ControlBar(p: ControlBarProps): JSX.Element {
             <CanvasGlyph>{AUTOMATIC}</CanvasGlyph>
           </CanvasIconButton>
         </span>
+        <CanvasIconButton label={t("checkpoints.section")} title={t("checkpoints.sectionTip")} selected={p.sectionTool} onClick={p.onSectionTool}>
+          <CanvasGlyph>{SECTION}</CanvasGlyph>
+        </CanvasIconButton>
         <CanvasIconButton label={t("checkpoints.reset")} title={t(p.arranged ? "checkpoints.resetTip" : "checkpoints.resetNone")} disabled={!p.arranged} onClick={p.onReset}>
           <CanvasGlyph>{RESET}</CanvasGlyph>
         </CanvasIconButton>

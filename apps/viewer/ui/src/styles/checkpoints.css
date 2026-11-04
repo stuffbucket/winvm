@@ -405,6 +405,333 @@
   transform: translate(-100%, -50%);
 }
 
+/* ---- Sections ---- */
+
+/*
+ * A section is a soft region with its name on a tab above its top left corner
+ * (Section.tsx; the rules are in sections.ts). The tab, the strokes and the
+ * handles are drawn the same size on screen at every zoom: --inv, the zoom's
+ * reciprocal, set on .section__frame, scales their world lengths back. The
+ * section takes no pointer itself: its body passes through to the canvas
+ * until it is selected; the tab, the border and, selected, the handles are
+ * its own.
+ */
+.section {
+  --section-line: color-mix(in srgb, var(--accent) 38%, var(--border-subtle));
+  pointer-events: none;
+  outline: none;
+}
+
+.section__frame {
+  position: absolute;
+  inset: 0;
+}
+
+.section__body {
+  position: absolute;
+  inset: 0;
+  box-sizing: border-box;
+  border: calc(var(--border-width-hairline) * var(--inv)) solid var(--section-line);
+  border-radius: calc(var(--radius-card) * var(--inv));
+  border-top-left-radius: 0;
+  background: color-mix(in srgb, var(--accent) 7%, transparent);
+  transition:
+    border-color 150ms ease-out,
+    background-color 150ms ease-out,
+    box-shadow 150ms ease-out;
+}
+
+.section[data-selected="true"] .section__body {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 calc(var(--border-width-thick) * var(--inv)) color-mix(in srgb, var(--accent) 30%, transparent);
+  pointer-events: auto;
+  cursor: move;
+}
+
+/* A card being carried over it would join it. */
+.section[data-target="true"] .section__body {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+}
+
+.section:focus-visible .section__body {
+  outline: calc(var(--focus-ring-width) * var(--inv)) solid var(--focus-ring-color);
+  outline-offset: calc(var(--focus-ring-offset) * var(--inv));
+}
+
+.section__tab {
+  position: absolute;
+  bottom: 100%;
+  left: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  box-sizing: border-box;
+  max-width: var(--tab-max);
+  height: var(--size-lg);
+  margin-bottom: calc(var(--border-width-hairline) * -1 * var(--inv));
+  padding-inline: var(--space-2);
+  border: var(--border-width-hairline) solid var(--section-line);
+  border-bottom: 0;
+  border-radius: var(--radius-input) var(--radius-input) 0 0;
+  background: color-mix(in srgb, var(--accent) 16%, var(--surface-card));
+  color: var(--text-strong);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-md);
+  line-height: var(--leading-lg);
+  white-space: nowrap;
+  pointer-events: auto;
+  cursor: grab;
+  transform: scale(var(--inv));
+  transform-origin: 0 100%;
+}
+
+.section[data-selected="true"] .section__tab {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 26%, var(--surface-card));
+}
+
+.section[data-moving="true"] .section__tab {
+  cursor: grabbing;
+}
+
+.section__name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* The field takes the name's place at its size and face: a hidden copy of the text sets the width. */
+.section__field {
+  display: inline-grid;
+  min-width: 6ch;
+}
+
+.section__field::after {
+  content: attr(data-value) " ";
+  grid-area: 1 / 1;
+  visibility: hidden;
+  white-space: pre;
+}
+
+.section__input {
+  grid-area: 1 / 1;
+  box-sizing: border-box;
+  /* No width of its own: the hidden copy of the text sets the cell's, the field fills it. */
+  width: 0;
+  min-width: 100%;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  outline: none;
+  cursor: text;
+}
+
+.section__tab[data-editing="true"] {
+  outline: var(--focus-ring);
+  outline-offset: calc(var(--focus-ring-offset) * -1);
+  cursor: text;
+}
+
+.section__input[aria-invalid="true"] {
+  color: var(--status-error);
+}
+
+.section__problem {
+  position: absolute;
+  top: calc(100% + var(--space-1));
+  left: 0;
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-input);
+  background: var(--surface-card);
+  box-shadow: var(--elevation-tooltip);
+  color: var(--status-error);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-base);
+}
+
+.section__remove {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: var(--size-sm);
+  height: var(--size-sm);
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-chip);
+  background: transparent;
+  color: var(--text-muted);
+  cursor: default;
+}
+
+.section__remove:hover {
+  background: var(--surface-control);
+  color: var(--text-strong);
+}
+
+.section__remove:focus-visible {
+  outline: var(--focus-ring);
+  outline-offset: 0;
+}
+
+/* The border: a strip along each edge, the section's own (a move; once selected, a resize). */
+.section__edge,
+.section__corner {
+  position: absolute;
+  pointer-events: auto;
+  cursor: grab;
+}
+
+.section__edge {
+  --hit: calc(var(--size-xs) * var(--inv));
+}
+
+.section__edge[data-handle="n"],
+.section__edge[data-handle="s"] {
+  right: 0;
+  left: 0;
+  height: var(--hit);
+}
+
+.section__edge[data-handle="n"] {
+  top: calc(var(--hit) / -2);
+}
+
+.section__edge[data-handle="s"] {
+  bottom: calc(var(--hit) / -2);
+}
+
+.section__edge[data-handle="e"],
+.section__edge[data-handle="w"] {
+  top: 0;
+  bottom: 0;
+  width: var(--hit);
+}
+
+.section__edge[data-handle="e"] {
+  right: calc(var(--hit) / -2);
+}
+
+.section__edge[data-handle="w"] {
+  left: calc(var(--hit) / -2);
+}
+
+.section[data-selected="true"] .section__edge[data-handle="n"],
+.section[data-selected="true"] .section__edge[data-handle="s"] {
+  cursor: ns-resize;
+}
+
+.section[data-selected="true"] .section__edge[data-handle="e"],
+.section[data-selected="true"] .section__edge[data-handle="w"] {
+  cursor: ew-resize;
+}
+
+/* Selected: a small pill at each edge's middle and a square at each corner, drawn the same size at every zoom, each with a hit area of at least 12 px. */
+.section[data-selected="true"] .section__edge::after,
+.section__corner::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  box-sizing: border-box;
+  border: calc(var(--border-width-thick) * var(--inv)) solid var(--accent);
+  background: var(--surface-card);
+  transform: translate(-50%, -50%);
+}
+
+.section[data-selected="true"] .section__edge[data-handle="n"]::after,
+.section[data-selected="true"] .section__edge[data-handle="s"]::after {
+  width: calc(var(--size-lg) * var(--inv));
+  height: calc(var(--space-2) * var(--inv));
+  border-radius: var(--radius-pill);
+}
+
+.section[data-selected="true"] .section__edge[data-handle="e"]::after,
+.section[data-selected="true"] .section__edge[data-handle="w"]::after {
+  width: calc(var(--space-2) * var(--inv));
+  height: calc(var(--size-lg) * var(--inv));
+  border-radius: var(--radius-pill);
+}
+
+.section__corner {
+  width: calc(var(--size-sm) * var(--inv));
+  height: calc(var(--size-sm) * var(--inv));
+  transform: translate(-50%, -50%);
+}
+
+.section__corner::after {
+  width: calc(var(--space-2) * var(--inv));
+  height: calc(var(--space-2) * var(--inv));
+  border-radius: calc(var(--border-width-thick) * var(--inv));
+}
+
+.section__corner[data-handle="nw"] {
+  top: 0;
+  left: 0;
+  cursor: nwse-resize;
+}
+
+.section__corner[data-handle="ne"] {
+  top: 0;
+  left: 100%;
+  cursor: nesw-resize;
+}
+
+.section__corner[data-handle="se"] {
+  top: 100%;
+  left: 100%;
+  cursor: nwse-resize;
+}
+
+.section__corner[data-handle="sw"] {
+  top: 100%;
+  left: 0;
+  cursor: nesw-resize;
+}
+
+/* While the tool is on, the whole canvas is for drawing. */
+.spatial-canvas__viewport[data-tool="section"],
+.spatial-canvas__viewport[data-tool="section"] * {
+  cursor: crosshair;
+}
+
+/* The rectangle being drawn: the section it will be, dashed. */
+.section-draft {
+  position: absolute;
+  top: 0;
+  left: 0;
+  box-sizing: border-box;
+  border: var(--border-width-thick) dashed var(--accent);
+  border-radius: var(--radius-card);
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  pointer-events: none;
+}
+
+.section-draft[data-ok="false"] {
+  border-color: var(--text-muted);
+  background: transparent;
+}
+
+/* The dot grid: only while a section is drawn, moved or resized. */
+.checkpoints__grid {
+  position: absolute;
+  inset: 0;
+  color: color-mix(in srgb, var(--text-muted) 45%, transparent);
+  background-image: radial-gradient(circle, currentColor 1px, transparent 1.6px);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 150ms ease-out;
+}
+
+.checkpoints__grid[data-on="true"] {
+  opacity: 1;
+  transition-duration: 200ms;
+}
+
 /* ---- A checkpoint card ---- */
 
 /*
