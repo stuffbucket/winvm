@@ -317,6 +317,17 @@ fn reveal(path: String) -> Result<(), String> {
     Ok(())
 }
 
+/// Opens a folder in Finder (its contents, not the folder selected in its parent). Only an existing absolute folder: never a file, never a program.
+#[tauri::command]
+fn open_folder(path: String) -> Result<(), String> {
+    let dir = Path::new(&path);
+    if !dir.is_absolute() || !dir.is_dir() {
+        return Err(format!("not a folder: {path}"));
+    }
+    std::process::Command::new("/usr/bin/open").arg("--").arg(dir).status().map_err(|e| e.to_string())?;
+    Ok(())
+}
+
 #[tauri::command]
 fn install_cli() -> Result<String, String> {
     let exe = std::env::current_exe().map_err(|e| e.to_string())?;
@@ -569,6 +580,7 @@ pub fn run() {
             downloads_dir,
             unused_path,
             reveal,
+            open_folder,
             terminal_open,
             terminal_take,
             agent::agent_fetch,

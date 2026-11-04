@@ -1181,6 +1181,7 @@ export const USAGE =
   "  load    [-i name] [name] [--no-watch]  load a save, running or stopped (default: the newest)\n" +
   "                                into a stopped instance it starts the watcher, like start\n" +
   "  saves   [-i name] [rm <name>] [--json]  list saves (kind, size, compatible) or delete one (and its note)\n" +
+  "  saves path [-i name] <save> [--json]  the save's folder, as an absolute path\n" +
   "  saves note [-i name] <save> [--title T] [--text TEXT|-] [--tags a,b,c] [--clear] [--json]\n" +
   "                                show a save's note, or set it (--text - reads stdin;\n" +
   "                                --text=<markdown> is the safe form when it may start with -)\n" +

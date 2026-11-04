@@ -40,13 +40,20 @@ export type IconName =
   | "flask"
   | "notes"
   | "warning"
+  | "rewind"
 
 // Lucide glyphs: play, power, rotate-ccw, pause, maximize, screen-share, panel-right, check, x,
 // terminal, folder, history, bot, file, monitor, file-text, download, house, hard-drive,
 // chevron-left, chevron-right, arrow-up, refresh-cw, plus, minus; shield, quartered as Windows' elevation shield; chevron-down; copy;
 // moon (asleep); keyboard; pencil, trash-2; camera, timer, flag, archive, flask-conical (a checkpoint's kind),
-// notebook-pen (it has a note), triangle-alert (it can't load here).
+// notebook-pen (it has a note), triangle-alert (it can't load here), rewind (restore a checkpoint).
 const PATHS: Record<IconName, ReactNode> = {
+  rewind: (
+    <>
+      <polygon points="11 19 2 12 11 5 11 19" />
+      <polygon points="22 19 13 12 22 5 22 19" />
+    </>
+  ),
   camera: (
     <>
       <path d="M13.997 4a2 2 0 0 1 1.76 1.05l.486.9A2 2 0 0 0 18.003 7H20a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2h1.997a2 2 0 0 0 1.759-1.048l.489-.904A2 2 0 0 1 10.004 4z" />

@@ -8,6 +8,7 @@
  *   load [name]        back to a save, running or stopped (default: the newest);
  *                      the save's manifest says which RAM format to read
  *   saves [rm <name>]  list them, with compatibility; or delete one (and its note)
+ *   saves path <name>  the save's folder, absolute (--json: {"path"}); the app's Show in Finder
  *   saves note <name>  a person's note on a save — title, text, tags (notes.ts);
  *                      shown with none of --title/--text/--tags/--clear, else written
  *   pause / resume     freeze / unfreeze the vCPUs (resume fixes the clock)
