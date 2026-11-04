@@ -36,7 +36,7 @@ import { randomUUID } from "node:crypto"
 import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync } from "node:fs"
 import { resolve } from "node:path"
 
-import { exitOnSignals, once, runtimePin, signalExitCode, socketPathProblem, type TerminationSignal } from "./accept-saved-display-lib.ts"
+import { exitOnSignals, finish, once, runtimePin, socketPathProblem, type TerminationSignal } from "./accept-saved-display-lib.ts"
 
 const source = process.argv[2]
 if (source === undefined || !existsSync(resolve(source, "base.qcow2")) || !existsSync(resolve(source, "image.json"))) {
@@ -276,7 +276,7 @@ const cleanup = once(async (): Promise<void> => {
     console.error(`could not stop the disposable sidecars: ${String(error)}`)
   }
   stopped = ok
-  if (passed && interrupted === null) rmSync(state, { recursive: true, force: true })
+  if (finish({ passed, interrupted, stopped: ok }).removeRoot) rmSync(state, { recursive: true, force: true })
 })
 
 /** One line after any failed or interrupted run: where it is, and whether its processes are known to be stopped. */
@@ -320,7 +320,10 @@ try {
   console.error(`FAIL ${error instanceof Error ? error.message : String(error)}`)
 } finally {
   await cleanup()
+  const end = finish({ passed, interrupted, stopped })
+  if (passed && !end.passed) console.error("every check passed, but the disposable processes could not all be confirmed stopped")
+  passed = end.passed
   if (!passed) console.error(`acceptance failed; ${retained()}`)
 }
-// An interrupt exits with its signal's code, as its handler does; any other failure with 1.
-process.exit(passed ? 0 : interrupted === null ? 1 : signalExitCode(interrupted))
+// An interrupt exits with its signal's code, as its handler does; any other failure, including a pass whose cleanup could not confirm a stop, with 1.
+process.exit(finish({ passed, interrupted, stopped }).exitCode)
