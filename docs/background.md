@@ -39,7 +39,11 @@ has been idle long enough, the watcher:
 
 - **autosaves**: one save named `auto-<time>`, then another only after the
   guest has been used and gone idle again. It keeps the newest three
-  (`autosave.keep`) and never touches other saves.
+  (`autosave.keep`) and never touches other saves. A save stops the guest
+  for about 1.5 s (`events.jsonl` shows it as paused, then running), so the
+  watcher only saves when no viewer has been connected for the whole idle
+  period and the Mac's keyboard and mouse have been untouched for 20 s;
+  otherwise it waits for a quiet moment.
 - **stows**: after a longer idle time, runs `winvm stow`, which saves the
   guest and shuts QEMU down. `winvm start` brings it back.
 - **fixes the clock**: after the Mac sleeps, or when the guest's clock has
@@ -55,6 +59,17 @@ winvm watch  -i default --status               # or --stop
 
 Settings are stored in `instances/<name>/config.json`. A running watcher picks
 up changes within a minute.
+
+**A Mac that sleeps freezes the guest.** QEMU stops with the rest of the Mac,
+and Windows' clock is behind by the length of the sleep until the watcher
+resyncs it on wake. Nothing in winvm holds the Mac awake, so a long job in the
+guest stops while you are away from the keyboard. `power.keepAwake=true` makes
+the watcher run `caffeinate -i` for as long as QEMU runs (the display may still
+turn off; it is off by default because it costs battery on a laptop):
+
+```sh
+winvm config -i default power.keepAwake=true
+```
 
 The same file holds the instance's `title`, which the Mac app shows for it (its
 window, Terminal and Files) in place of the instance's name. It is one line of

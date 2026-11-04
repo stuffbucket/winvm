@@ -10,6 +10,7 @@ import { imageName, instanceName, isValidImageName, isValidInstanceName } from "
 import { PWSH_SHA256, PWSH_URL, TOOLS_SHA256, TOOLS_URL, checksReport, download, du, hostChecks, printChecks, requireHost, run, sha256Of } from "./host"
 import { diagnose, formatFindings } from "./diagnose"
 import { formatInput, judgeInput, probeInput } from "./inputcheck"
+import { lagCommand } from "./lag"
 import { ensureInstance, makeVars, resetInstance, sealBase } from "./instance"
 import { ISO_SOURCE, buildSeed, checkIsoIsArm64, makeResultVolume, readResult, resolveWindowsIso } from "./media"
 import type { InstanceMeta } from "./paths"
@@ -1063,6 +1064,15 @@ export async function smoke(args: Args): Promise<number> {
  */
 export async function diagnoseCmd(args: Args): Promise<number> {
   const name = instanceName(args)
+  // `--lag [--seconds N]`: time every layer once a second while a stall happens (lag.ts).
+  if (args.flags.has("lag")) {
+    const n = Number(args.flags.get("seconds") ?? 60)
+    if (!(n >= 3 && n <= 3600)) {
+      console.error("::error::--seconds is a number from 3 to 3600")
+      return 1
+    }
+    return await lagCommand(name, pathsFor(name), Math.round(n), args.flags.has("json"), args.flags.has("sample"))
+  }
   // `--input`: a RUNNING machine's mouse and keyboard path, asked live and read-only (inputcheck.ts).
   if (args.flags.has("input")) {
     const findings = judgeInput(await probeInput(pathsFor(name)))
@@ -1145,6 +1155,9 @@ export const USAGE =
   "  doctor  [--json]              check host prerequisites (the HOST, before anything runs)\n" +
   "  diagnose [-i name]            explain a guest that misbehaved, from its files\n" +
   "           [--input]            a running guest's mouse/keyboard path, live and read-only\n" +
+  "           [--lag [--seconds N] [--sample]]  time the monitor, the agent and QEMU once a\n" +
+  "                                second (default 60 s): which layer stops answering in a\n" +
+  "                                stall; --sample also profiles QEMU's threads during one\n" +
   "  build --iso <win11.iso>       build a base image (once, ~20 min)\n" +
   "        [--payload <dir>] [--bun <version>] [--image <name>]\n" +
   "  adopt <disk.qcow2>            adopt an installed disk as a base image\n" +

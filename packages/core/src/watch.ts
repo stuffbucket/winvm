@@ -46,7 +46,7 @@ import * as finder from "./finder"
 import type { Decision, SaveInfo, Settings, Timing } from "./idle"
 import { DEFAULT_TIMING, DRIFT_TOLERANCE_MS, IdleMachine, autosaveName, savesToRotate } from "./idle"
 import { isFrozenRunState } from "./frozen"
-import { LivenessLog, processState } from "./inputcheck"
+import { AT_THE_MAC_S, LivenessLog, hostIdleSeconds, processState } from "./inputcheck"
 import type { Paths } from "./paths"
 import { cliArgv, instanceDir, pathsFor } from "./paths"
 import * as qemu from "./qemu"
@@ -191,6 +191,7 @@ export function realActions(instance: string, p: Paths, log: (s: string) => void
   // on restore (see qga.waitReady). `start` launches the watcher only after the
   // guest is ready, but `winvm watch` can be run by hand at any time.
   let ready = false
+  let waitingForQuiet = false
   return {
     save: async (name) => {
       try {
@@ -202,6 +203,17 @@ export function realActions(instance: string, p: Paths, log: (s: string) => void
             return "busy"
           }
         }
+        // THE LAST CHECK BEFORE THE GUEST STOPS. A save holds the vCPUs for ~1.5 s, which is
+        // a stall for anyone using the guest. No viewer has been connected for the whole
+        // idle period, but the person may be at the Mac this very moment (about to open the
+        // window): leave it for a quiet moment, asked again every tick.
+        const away = hostIdleSeconds()
+        if (away !== null && away < AT_THE_MAC_S) {
+          if (!waitingForQuiet) log(`autosave: the Mac was used ${String(Math.round(away))} s ago — waiting for a quiet moment`)
+          waitingForQuiet = true
+          return "busy"
+        }
+        waitingForQuiet = false
         const r = await saves.withLock(instance, async () => await saves.createSave(instance, { name, kind: "auto" }))
         const m = r.manifest
         log(
@@ -474,6 +486,53 @@ export async function stopWatcher(name: string): Promise<boolean> {
   return true
 }
 
+/** `caffeinate` holding the Mac awake for as long as QEMU `pid` lives (-i: no idle system sleep; the display may still turn off). */
+export const caffeinateArgs = (pid: number): readonly string[] => ["-i", "-w", String(pid)]
+
+/**
+ * `power.keepAwake`: one `caffeinate` per QEMU process, ended by it exiting
+ * (-w) or by the setting going off again. Never throws: a Mac without it just
+ * sleeps as before.
+ */
+export class KeepAwake {
+  private child: ReturnType<typeof spawn> | null = null
+  private pid: number | null = null
+
+  private readonly start: (args: readonly string[]) => ReturnType<typeof spawn> | null
+
+  constructor(start: (args: readonly string[]) => ReturnType<typeof spawn> | null = realCaffeinate) {
+    this.start = start
+  }
+
+  /** Returns a line to log when something changed, else null. */
+  update(want: boolean, qemuPid: number): string | null {
+    if (!want) {
+      if (this.child === null) return null
+      this.child.kill()
+      this.child = null
+      this.pid = null
+      return "power: no longer keeping the Mac awake"
+    }
+    if (this.child !== null && this.pid === qemuPid) return null
+    this.child?.kill()
+    this.child = this.start(caffeinateArgs(qemuPid))
+    this.pid = qemuPid
+    return this.child === null ? "power: could not start caffeinate; the Mac may sleep" : `power: keeping the Mac awake while QEMU ${String(qemuPid)} runs (caffeinate -i)`
+  }
+}
+
+function realCaffeinate(args: readonly string[]): ReturnType<typeof spawn> | null {
+  if (process.platform !== "darwin") return null
+  try {
+    const c = spawn("caffeinate", [...args], { stdio: "ignore" })
+    c.on("error", () => undefined)
+    c.unref()
+    return c
+  } catch {
+    return null
+  }
+}
+
 // ---------------------------------------------------------------------------
 // The loop
 
@@ -657,7 +716,8 @@ export async function watch(name: string, o: WatchOptions = {}): Promise<number>
   // Ticks are logged while the guest is active, on every change, and otherwise every 5 min.
   let lastSummary = ""
   let lastTickLogAt = 0
-  const liveness = new LivenessLog()
+  const liveness = new LivenessLog(timing.tickMs)
+  const awake = new KeepAwake()
   for (;;) {
     await sleep(timing.tickMs)
     const livePid = qemu.pidOf(p)
@@ -665,7 +725,10 @@ export async function watch(name: string, o: WatchOptions = {}): Promise<number>
       if (livePid === null) {
         // A load quits QEMU and starts another; only a QEMU gone with nobody
         // holding the instance means it has stopped for good.
-        if (saveLockHeld(name)) continue
+        if (saveLockHeld(name)) {
+          liveness.rebase(Date.now())
+          continue
+        }
         // Its drives in Finder would hang whatever touches them now.
         finder.cleanStale(name)
         finish("qemu exited")
@@ -675,6 +738,7 @@ export async function watch(name: string, o: WatchOptions = {}): Promise<number>
       qemuPid = livePid
       vcpus = vcpusOf(livePid)
       machine.restarted(Date.now())
+      liveness.rebase(Date.now())
       rebaseCpu()
       publish()
       continue
@@ -684,6 +748,8 @@ export async function watch(name: string, o: WatchOptions = {}): Promise<number>
       finish("watch.enabled is false")
       return 0
     }
+    const power = awake.update(cfg["power.keepAwake"], qemuPid)
+    if (power !== null) log(power)
 
     const nowCpu = cpuSeconds(qemuPid)
     const now = Date.now()
@@ -735,6 +801,8 @@ export async function watch(name: string, o: WatchOptions = {}): Promise<number>
         return 0
       }
     }
+    // The next tick is late by however long the action took: not a stall of the Mac.
+    if (decisions.length > 0) liveness.rebase(Date.now())
     publish()
   }
 }

@@ -28,8 +28,27 @@ import { qmpCommand } from "./monitor"
 import type { Paths } from "./paths"
 import * as qemu from "./qemu"
 
+/** `HIDIdleTime` (nanoseconds since the last key, click or mouse move on the Mac) from `ioreg -c IOHIDSystem`, in seconds. */
+export function parseHidIdleSeconds(ioreg: string): number | null {
+  const m = /"HIDIdleTime"\s*=\s*(\d+)/.exec(ioreg)
+  return m?.[1] === undefined ? null : Number(m[1]) / 1e9
+}
+
+/** Seconds since the person last touched the Mac's keyboard or mouse; null where it cannot be read. */
+export function hostIdleSeconds(): number | null {
+  if (process.platform !== "darwin") return null
+  const r = spawnSync("ioreg", ["-c", "IOHIDSystem", "-d", "4"], { encoding: "utf8", timeout: 3000 })
+  return r.status === 0 ? parseHidIdleSeconds(r.stdout) : null
+}
+
+/** An autosave waits while the Mac was used this recently: saving stops the guest for ~1.5 s, and that is the moment someone is about to look at it. */
+export const AT_THE_MAC_S = 20
+
 /** A monitor command answering slower than this means QEMU's main loop is busy. */
 export const SLOW_MONITOR_MS = 1500
+
+/** A watcher tick that runs this much later than its interval means the whole Mac (QEMU with it) stood still. */
+export const LATE_TICK_MS = 2500
 
 export interface Timed<T> {
   /** How long the monitor took to answer; null when it did not answer or errored. */
@@ -203,9 +222,37 @@ export interface Liveness {
 export class LivenessLog {
   private clients: number | null = null
   private slowSince: number | null = null
+  private lastAt: number | null = null
+
+  /**
+   * `tickMs` is the watcher's interval. A tick that comes much later than that
+   * is a Mac that stopped (a brief sleep or nap, which freezes QEMU and the
+   * guest with it, or a host too starved to run a process): the stall a person
+   * feels as "the VM froze for a few seconds", which nothing else records unless
+   * the sleep is long enough for the clock code to see it.
+   */
+  private readonly tickMs: number
+
+  constructor(tickMs = 15_000) {
+    this.tickMs = tickMs
+  }
+
+  /** After the watcher's own long action (a save, a stow): the next tick is late because of that, not the Mac. */
+  rebase(at: number): void {
+    this.lastAt = at
+  }
 
   observe(o: Liveness): string[] {
     const lines: string[] = []
+    if (this.lastAt !== null) {
+      const late = o.at - this.lastAt - this.tickMs
+      if (late >= LATE_TICK_MS) {
+        lines.push(
+          `host: this tick came ${(late / 1000).toFixed(1)} s late — the Mac slept briefly or could not run processes; QEMU and the guest stood still that long (see \`pmset -g log\`)`,
+        )
+      }
+    }
+    this.lastAt = o.at
     if (o.clients !== null) {
       if (this.clients !== null && o.clients !== this.clients) {
         lines.push(`viewer: ${String(this.clients)} -> ${String(o.clients)} VNC client(s)${o.clients === 0 ? " (the window's connection dropped, or it closed the screen)" : ""}`)

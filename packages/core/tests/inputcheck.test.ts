@@ -5,7 +5,7 @@
 import { describe, expect, it } from "bun:test"
 
 import type { InputProbe, Timed } from "../src/inputcheck"
-import { LivenessLog, SLOW_MONITOR_MS, judgeInput } from "../src/inputcheck"
+import { LATE_TICK_MS, LivenessLog, SLOW_MONITOR_MS, judgeInput, parseHidIdleSeconds } from "../src/inputcheck"
 
 const ok = <T>(value: T, ms = 12): Timed<T> => ({ ms, value })
 const probe = (over: Partial<InputProbe> = {}): InputProbe => ({
@@ -90,5 +90,33 @@ describe("LivenessLog", () => {
     expect(first[0]).toContain("state U")
     expect(log.observe({ at: at(15), monitorMs: null, clients: 1 })).toEqual([])
     expect(log.observe({ at: at(30), monitorMs: 9, clients: 1 })[0]).toContain("normally again after 30 s")
+  })
+
+  it("notes a tick that came late: the Mac stood still, and QEMU with it", () => {
+    const log = new LivenessLog(15_000)
+    expect(log.observe({ at: at(0), monitorMs: 3, clients: 1 })).toEqual([])
+    // 15 s tick, jitter of a second: nothing to say.
+    expect(log.observe({ at: at(16), monitorMs: 3, clients: 1 })).toEqual([])
+    const late = log.observe({ at: at(16 + 15 + 3.5), monitorMs: 3, clients: 1 })
+    expect(late).toHaveLength(1)
+    expect(late[0]).toContain("3.5 s late")
+    expect(late[0]).toContain("pmset")
+    expect(LATE_TICK_MS).toBeLessThan(3500)
+  })
+
+  it("does not call the time of its own save or stow a stall of the Mac", () => {
+    const log = new LivenessLog(15_000)
+    log.observe({ at: at(0), monitorMs: 3, clients: 0 })
+    log.rebase(at(40)) // a 40 s action ended here
+    expect(log.observe({ at: at(55), monitorMs: 3, clients: 0 })).toEqual([])
+  })
+})
+
+describe("parseHidIdleSeconds", () => {
+  it("reads ioreg's nanoseconds as seconds", () => {
+    expect(parseHidIdleSeconds('    | |     "HIDIdleTime" = 1067308458\n')).toBeCloseTo(1.067, 3)
+  })
+  it("says nothing when the figure is missing", () => {
+    expect(parseHidIdleSeconds("no such thing")).toBeNull()
   })
 })
