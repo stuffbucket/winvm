@@ -26,7 +26,7 @@ const children: Bun.Subprocess[] = []
 
 function freePort(): number {
   const s = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: () => new Response("") })
-  const p = s.port
+  const p = s.port ?? 0
   void s.stop(true)
   return p
 }
@@ -107,7 +107,7 @@ describe("agentServes", () => {
     const held: unknown[] = []
     const silent = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { open: (s) => void held.push(s), data() {} } })
     try {
-      expect(await agentServes(silent.port, TOKEN, 200)).toBe(false)
+      expect(await agentServes(silent.port ?? 0, TOKEN, 200)).toBe(false)
     } finally {
       silent.stop(true)
     }
@@ -117,7 +117,7 @@ describe("agentServes", () => {
   it("is false for another web server", async () => {
     const other = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: () => new Response("hello") })
     try {
-      expect(await agentServes(other.port, TOKEN, 1000)).toBe(false)
+      expect(await agentServes(other.port ?? 0, TOKEN, 1000)).toBe(false)
     } finally {
       void other.stop(true)
     }
@@ -195,5 +195,36 @@ describe("superviseLoop", () => {
     expect(await superviseLoop(s.hooks, 7801, { staleLimitMs: 120_000 })).toBe(0)
     expect(s.runs()).toBe(4)
     expect(s.log).toEqual([])
+  })
+})
+
+/**
+ * No PowerShell on the host to run agent-install.ps1, so what can be checked is
+ * its shape: balanced, and every start of the agent is preceded by a sweep that
+ * stops supervisors by command line.
+ */
+describe("agent-install.ps1", () => {
+  const ps1 = readFileSync(resolve(import.meta.dir, "..", "assets", "agent-install.ps1"), "utf8")
+  const code = ps1
+    .split("\n")
+    .map((l) => l.replace(/^\s*#.*$/, ""))
+    .join("\n")
+    .replace(/"(?:[^"`]|`.)*"|'[^']*'/g, '""')
+  const count = (c: string): number => code.split(c).length - 1
+
+  it("has balanced braces, parentheses and brackets", () => {
+    expect(count("{")).toBe(count("}"))
+    expect(count("(")).toBe(count(")"))
+    expect(count("[")).toBe(count("]"))
+  })
+
+  it("stops supervisors by command line before the files are replaced, and again before it starts one", () => {
+    const sweeps = [...ps1.matchAll(/^\s*Stop-Agent\s*$/gm)].map((m) => m.index ?? -1)
+    expect(sweeps).toHaveLength(2)
+    expect(sweeps[0]).toBeLessThan(ps1.indexOf("Copy-Item (Join-Path $Source \"guestagent.ts\")"))
+    expect(sweeps[1]).toBeLessThan(ps1.indexOf("& $ris --hidden"))
+    expect(sweeps[1]).toBeGreaterThan(ps1.indexOf("Set-ItemProperty"))
+    expect(ps1).toContain("Win32_Process")
+    expect(ps1).toContain("--supervise")
   })
 })

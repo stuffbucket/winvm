@@ -223,6 +223,45 @@ in the user's session, through `conhost.exe --headless` so it has no window.
 It runs with `--supervise`, which restarts the agent if it exits. The agent
 also closes the audit-mode Sysprep dialog after logon.
 
+A supervisor is single-instance per port. The Run key at logon and the
+installer's own start (`agent-install.ps1` step 7, when someone is logged on)
+can overlap, and each starts a supervisor. Only one agent can bind the port;
+the other's child exits with code 2 ("could not start"). The supervisor then
+asks `GET /health` on `127.0.0.1:<port>` (the token from `--token-file` goes
+to that loopback port only; a 401 from an agent counts, since it is still the
+one holding the port):
+
+- An agent answers: another supervisor won. The loser logs one line to
+  `agent.log` (`another agent already serves port N; exiting`) and exits 0.
+- The port is held but nothing answers (a stale listener): it retries with the
+  usual backoff (1 s doubling to 30 s) for ten minutes, then logs once and
+  gives up.
+- Any other exit code is a crash: restart with backoff, as before. A clean
+  exit (`/exit`) ends the supervisor.
+
+Whichever agent binds first wins, so the outcome does not depend on which
+supervisor started first. The installer also stops every `bun.exe` running
+`guestagent.ts` from its directory, supervisors first (found by their command
+line), before it replaces the files, and again just before it starts the new
+tree.
+
+An existing guest that already has a duplicate supervisor (agent version 11 or
+older) is cleaned by `winvm agent connect`: the version differs from 12, so it
+reinstalls, and step 1 ends both supervisors. Without reinstalling, end the
+supervisors that are not the parent of the agent holding the port, in the
+guest (`winvm exec -i NAME -- powershell -NoProfile -Command "..."`):
+
+```powershell
+$a = (Get-NetTCPConnection -LocalPort 7801 -State Listen).OwningProcess
+$keep = (Get-CimInstance Win32_Process -Filter "ProcessId=$a").ParentProcessId
+Get-CimInstance Win32_Process -Filter "Name='bun.exe'" |
+  Where-Object { $_.CommandLine -like '*--supervise*' -and $_.ProcessId -ne $keep } |
+  ForEach-Object { Stop-Process -Id $_.ProcessId -Force }
+```
+
+The duplicate's own agent child already exited, so only the idle supervisor
+goes.
+
 ### Folder listings
 
 `GET /fs/list` reads the folder with `readdir` and stats only the entries it
