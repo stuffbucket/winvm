@@ -118,17 +118,39 @@ out when the display is too short for it. Everything else is in the panel:
 Resources and Status open by default, This Mac open only when something is
 missing.
 
-**What you can do with this Windows machine** (`features/help/`), a
-`--text-sm` muted title over one outlined list (a hairline border and
-`--radius-card`, no fill, rows split by hairlines) of five rows: Open a
-Windows terminal, Copy files between your Mac and Windows, Save a
-checkpoint, Go back to a checkpoint, Use winvm from Claude Code and Claude
-Desktop. A row is a button: the toolbar button's own glyph in a column of
-its own (`--size-md`, `--link`), the label in `--text-base`, and a
-muted chevron at the end. The columns are fixed and top-aligned, so a label
-that wraps stays under its first line. The list is `min(100%, 32rem)` wide.
-Hover and the open row step to `--surface-control`. Up and Down, Home and
-End move between rows; Tab still visits each.
+**What you can do** (`features/help/`), a `--text-sm` muted title over one
+outlined list (a hairline border and `--radius-card`, no fill, rows split by
+hairlines) of five rows: Open a Windows terminal, Copy files between your Mac
+and Windows, Save a checkpoint, Go back to a checkpoint, Use winvm from
+Claude Code and Claude Desktop. The title is the same whatever the state;
+the rows say what the state allows. A row is a button: the toolbar button's
+own glyph in a column of its own (`--size-md`, `--link`), the label in
+`--text-base`, and a muted chevron at the end. The columns are fixed and
+top-aligned, so a label that wraps stays under its first line. The list is
+`min(100%, 32rem)` wide. Hover and the open row step to `--surface-control`.
+Up and Down, Home and End move between rows; Tab still visits each.
+
+**What the state allows** (`features/help/availability.ts`, which names the
+code each rule follows). The list is on the overview of a machine that is off,
+put away or not set up, so most rows are unavailable there:
+
+| Topic | Running | Paused | Stopped, suspended | No machine |
+|---|---|---|---|---|
+| Open a Windows terminal | yes | Resume Windows first | Start Windows first | Set up Windows first |
+| Copy files between your Mac and Windows | yes | Resume Windows first | Start Windows first | Set up Windows first |
+| Save a checkpoint | yes | yes | Start Windows first | Set up Windows first |
+| Go back to a checkpoint | yes | yes | yes (it starts Windows from the checkpoint) | Set up Windows first |
+| Use winvm from Claude Code and Claude Desktop | yes | Resume Windows first | Start Windows first | Set up Windows first |
+
+Asleep is the same as paused except that Save a checkpoint also asks to
+resume (the Checkpoints view takes one only while Windows runs or is paused),
+and while Windows is starting every row but Go back to a checkpoint waits
+("Windows is still starting"). An unavailable row is `aria-disabled="true"`,
+not `disabled`: it stays in the Tab order and opens its help, because help is
+information and only the action is unavailable. It is quiet (`--text-muted` label and glyph, not faded, so it
+keeps its contrast) with the reason under the label in `--text-sm`, and its
+popover begins with "Not available right now. Start Windows first." A row
+that works looks as it always does.
 
 A row opens a **help popover** (`components/HelpPopover.tsx`, see
 [`components.md`](components.md)): a screenshot of the real window, the
@@ -151,7 +173,8 @@ time. It writes `<topic>-<figure>.light.jpg` and `.dark.jpg` (1200 × 675)
 into `features/help/img/`; commit them. They are the real windows, so run it
 again, and commit, whenever the Terminal, Files, Checkpoints or Use with
 Claude panel changes shape. `--preview <dir>` also screenshots the list and
-every popover at three sizes.
+every popover at three sizes, and the list of a suspended machine with the
+help of an unavailable row open.
 
 **Resources**, while the machine runs: CPU and Memory, each a label, its
 value ("19%", "2.1 GB of 4 GB") and the last minute and a half as a line;

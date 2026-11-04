@@ -175,7 +175,10 @@ chrome the native title bar already supplies.
 thing with a picture: a panel that opens **beside** the control it explains
 (layer 2, not modal), used by the overview's list of things to do
 (`features/help/Abilities.tsx`). Reuse it for another explanation; give it
-`anchor`, `title`, `media`, `footer` and children.
+`anchor`, `title`, `media`, `footer` and children. Help is information, so it
+opens for a row whose action is unavailable in the machine's state: that row
+is `aria-disabled` (not `disabled`), says why under its label, and the popover
+leads with the same reason. See [`windows.md`](windows.md) → *Disclosure*.
 
 - **Shape.** Width `min(32rem, 100vw − --space-6)`, `--surface-card`,
   hairline `--border-subtle`, `--radius-card`, `--elevation-modal`. Top to
