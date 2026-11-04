@@ -168,8 +168,8 @@ for (const scheme of only === undefined ? ["dark", "light"] : []) {
   await page.keyboard.press(" ")
   await wait(200)
 
-  // Go Back's confirmation.
-  await page.getByRole("button", { name: "Go Back to This" }).click()
+  // Restore's confirmation.
+  await page.getByRole("button", { name: "Restore this checkpoint" }).click()
   await wait(300)
   await shot(page, `${scheme}-07-go-back`)
   await page.getByRole("button", { name: "Cancel" }).click()
@@ -342,14 +342,17 @@ for (const scheme of ["dark", "light"]) {
   check((await page.evaluate(() => document.activeElement?.classList.contains("checkpoint-details"))) === true, "focus moved into the panel")
   check((await panel.getByText("Office installed").count()) === 1, "the checkpoint's name appears once in its panel")
   check((await panel.getByText("Name", { exact: true }).count()) === 0, "no separate Name field")
-  for (const gone of ["Taken", "Kind", "Size", "Loads here", "Name in winvm"]) check((await panel.getByText(gone, { exact: true }).count()) === 0, `no ${gone} row`)
-  const order = [await top(".checkpoint-details__picture"), await top(".checkpoint-details__title-field"), await top(".checkpoint-details__when"), await top(".checkpoint-details__facts"), await top("textarea"), await top(".checkpoint-details__props"), await top("footer")]
-  check(order.every((y, i) => i === 0 || y > order[i - 1]), `picture, title, when, kind and size, note, properties, actions in that order (${order.map((y) => Math.round(y)).join(", ")})`)
+  for (const gone of ["Taken", "Kind", "Size", "Loads here", "Name in winvm", "Save name"]) check((await panel.getByText(gone, { exact: true }).count()) === 0, `no ${gone} row`)
+  const order = [await top(".checkpoint-details__picture"), await top(".checkpoint-details__title-field"), await top(".checkpoint-details__when"), await top(".checkpoint-details__facts"), await top(".checkpoint-details__break"), await top("textarea"), await top(".checkpoint-details__props"), await top("footer")]
+  check(order.every((y, i) => i === 0 || y > order[i - 1]), `picture, title, when, kind and size, break, note, properties, actions in that order (${order.map((y) => Math.round(y)).join(", ")})`)
   check((await panel.locator(".checkpoint-details__kind").innerText()) === "Taken by you", "the manual kind chip says Taken by you")
-  check((await panel.locator(".checkpoint-details__prop--name .mono").innerText()) === "office-installed", "the save name is a row, since it isn't the title")
   const closeBox = await panel.locator(".checkpoint-details__close").boundingBox()
   const pictureBox = await panel.locator(".checkpoint-details__picture").boundingBox()
   check(closeBox !== null && pictureBox !== null && closeBox.y >= pictureBox.y && closeBox.x + closeBox.width <= pictureBox.x + pictureBox.width, "the close button floats over the picture's top right")
+  // The folder button asks the CLI for the checkpoint's folder and has the app open it in Finder.
+  await panel.getByRole("button", { name: "Show in Finder" }).click()
+  await wait(300)
+  check(JSON.stringify(await page.evaluate(() => window.__opened)) === JSON.stringify(["/fake/saves/canvas-test/office-installed"]), "Show in Finder opens the checkpoint's folder")
 
   // The title: edited where it stands.
   await title.hover()
@@ -413,27 +416,26 @@ for (const scheme of ["dark", "light"]) {
   await page.keyboard.press("Escape")
   await wait(900)
 
-  // An automatic one: no save name row (its name is its title); the kind says when.
+  // An automatic one: the kind says when.
   await page.keyboard.press("Meta+0")
   await wait(900)
   await page.locator('.checkpoint[data-name="auto-3"] .checkpoint__hit').click()
   await wait(1200)
   await shot(page, `${scheme}-48-details-automatic`)
   check((await panel.locator(".checkpoint-details__kind").innerText()) === "Saved while idle", "the automatic kind chip says when")
-  check((await panel.locator(".checkpoint-details__prop--name").count()) === 0, "no save name row when it is the title")
   await page.keyboard.press("Escape")
   await wait(900)
 
-  // One that can't be gone back to: a calm line under the facts, Go Back off with the reason.
+  // One that can't be restored: a banner across the picture's foot, Restore off with the reason.
   await page.keyboard.press("Meta+0")
   await wait(900)
   await page.locator('.checkpoint[data-name="before-qemu-upgrade"] .checkpoint__hit').click()
   await wait(1200)
   await shot(page, `${scheme}-45-details-cant-load`)
-  const why = panel.locator(".checkpoint-details__status")
-  check(((await why.innerText()) ?? "").replace(/\s+/g, " ").trim() === "Can't go back here Made with a different QEMU version", "the reason is a few words")
-  check(((await why.getAttribute("title")) ?? "").includes("can't go back to it"), "the whole reason is its tooltip")
-  check(await panel.getByRole("button", { name: "Go Back to This" }).isDisabled(), "Go Back is off")
+  const why = panel.locator(".checkpoint-details__banner")
+  check(((await why.innerText()) ?? "").replace(/\s+/g, " ").trim() === "Can't restore · Wrong QEMU version", "the reason is one line")
+  check(((await why.getAttribute("title")) ?? "").includes("can't be restored on this machine"), "the whole reason is its tooltip")
+  check(await panel.getByRole("button", { name: "Restore this checkpoint" }).isDisabled(), "Restore is off")
   await page.keyboard.press("Escape")
   await wait(900)
 

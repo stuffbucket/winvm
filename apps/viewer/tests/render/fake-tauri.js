@@ -148,6 +148,10 @@
       s.title = n.title
       return out(n)
     }
+    if (verb === "saves" && rest.includes("path")) {
+      const name = rest[rest.indexOf("path") + 1]
+      return saves.some((x) => x.name === name) ? out({ path: `${home}/${name}` }) : out("", 1)
+    }
     if (verb === "saves" && rest.includes("rm")) {
       const name = rest[rest.indexOf("rm") + 1]
       saves = saves.filter((x) => x.name !== name)
@@ -250,6 +254,7 @@
         if (cmd === "instance_usage") return usage()
         if (cmd === "agent_fetch") throw new Error("no agent in the fake")
         if (cmd === "trace") return null
+        if (cmd === "open_folder") return void (window.__opened = [...(window.__opened ?? []), args.path])
         throw new Error(`fake tauri: ${cmd}`)
       },
     },

@@ -193,7 +193,7 @@ async function checkpointPictures(scheme) {
   const view = await checkpointsView(scheme)
   // How it opens: Now at the bottom, the newest days above it, the timeline at the right.
   await picture(view, "restore-browse", scheme)
-  // One picked: close, with its notes and Go Back to This.
+  // One picked: close, with its notes and Restore.
   await view.locator('.checkpoint[data-name="office-installed"] .checkpoint__hit').click()
   await wait(1400)
   await picture(view, "restore-goBack", scheme)
