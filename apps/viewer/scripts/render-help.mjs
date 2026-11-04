@@ -1,6 +1,6 @@
 /**
- * Renders the pictures in the help popovers (the "What you can do with this
- * Windows machine" list on the overview), and, with --preview, screenshots of
+ * Renders the pictures in the help popovers (the "What you can do" list on the
+ * overview), and, with --preview, screenshots of
  * the list and every popover themselves, in WebKit (the engine Tauri uses on
  * macOS) against fixtures (tests/render/fake-tauri.js and fake-help.js).
  *
@@ -241,7 +241,8 @@ if (PREVIEW !== null) {
       await wait(500)
       await shot(page, `${scheme}-${label}-list`)
       for (const id of label === "wrapped" ? ["restore"] : topics) {
-        await page.locator(".ability").nth(topics.indexOf(id)).click()
+        // force: Playwright takes aria-disabled for disabled, but these rows are meant to be pressed.
+        await page.locator(".ability").nth(topics.indexOf(id)).click({ force: true })
         await page.waitForSelector(".help")
         await wait(400)
         await shot(page, `${scheme}-${label}-${id}`)
@@ -250,6 +251,16 @@ if (PREVIEW !== null) {
       }
       await page.close()
     }
+    // A suspended machine: the same list with what it can't do yet marked, and the help of one of those, open all the same. (A running machine shows its screen, not the list.)
+    const stowed = await open(scheme, "index.html?state=stowed", { width: 1280, height: 820 })
+    await stowed.waitForSelector(".abilities")
+    await wait(500)
+    await shot(stowed, `${scheme}-stowed-list`)
+    await stowed.locator(".ability").nth(topics.indexOf("agent")).click({ force: true })
+    await stowed.waitForSelector(".help")
+    await wait(400)
+    await shot(stowed, `${scheme}-stowed-agent`)
+    await stowed.close()
   }
 }
 

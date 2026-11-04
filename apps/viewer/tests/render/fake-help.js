@@ -106,7 +106,8 @@
 
   async function run(args) {
     const [verb, ...rest] = args
-    if (verb === "status") return out(query.get("state") === "stopped" ? { ...status, state: "stopped", vmStatus: "stopped", pid: null, guest: null } : status)
+    // ?state=stopped or ?state=stowed: Windows is off, or put away (the list of what you can do shows then).
+    if (verb === "status") return out(["stopped", "stowed"].includes(query.get("state")) ? { ...status, state: query.get("state"), vmStatus: "stopped", pid: null, guest: null } : status)
     if (verb === "saves" && !rest.includes("note") && !rest.includes("rm")) return out(saves)
     if (verb === "mcp" && rest[0] === "status") return out(claude)
     if (verb === "terminal" && rest.includes("--shells")) return out({ pwsh: true, powershell: true, cmd: true })
