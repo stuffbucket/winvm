@@ -1,4 +1,4 @@
-import { type KeyboardEvent, useEffect, useRef, useState } from "react"
+import { type KeyboardEvent, type ReactNode, useEffect, useRef, useState } from "react"
 
 import { t } from "../../i18n"
 import { createNoteSaver, type NoteSaver, readMachineNote, writeMachineNote } from "./machineNote"
@@ -9,8 +9,8 @@ const MAX_CHARS = 20_000
 interface MachineNotesProps {
   /** The machine whose note this is; null while it is not known. */
   readonly instance: string | null
-  /** The screen's heading, which the note's growth pushes up the window. */
-  readonly title: string
+  /** The screen's heading (an h1), which the note's growth pushes up the window. */
+  readonly heading: ReactNode
 }
 
 /**
@@ -29,7 +29,7 @@ interface MachineNotesProps {
  * Windows machine is not running here, so there is no keyboard capture either:
  * docs/design/keyboard.md).
  */
-export function MachineNotes({ instance, title }: MachineNotesProps): JSX.Element {
+export function MachineNotes({ instance, heading }: MachineNotesProps): JSX.Element {
   const [text, setText] = useState("")
   const [loaded, setLoaded] = useState(false)
   const [failed, setFailed] = useState(false)
@@ -69,7 +69,7 @@ export function MachineNotes({ instance, title }: MachineNotesProps): JSX.Elemen
 
   return (
     <div className="overview__upper">
-      <h1 className="overview__title">{title}</h1>
+      {heading}
       <div className="notes" data-value={text}>
         <textarea
           className="notes__field"
