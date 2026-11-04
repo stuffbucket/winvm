@@ -15,6 +15,7 @@ const { act } = await import("react")
 const { createRoot } = await import("react-dom/client")
 const { placeNear } = await import("../ui/src/components/HelpPopover")
 const { Abilities } = await import("../ui/src/features/help/Abilities")
+const { blockedBy } = await import("../ui/src/features/help/availability")
 const { IMAGES } = await import("../ui/src/features/help/images")
 const { TOPICS, pictureKey, topicKeys } = await import("../ui/src/features/help/topics")
 const { Overview } = await import("../ui/src/features/overview/Overview")
@@ -115,9 +116,10 @@ describe("the topics", () => {
     expect(text("ability.agent")).toBe("Use winvm from Claude Code and Claude Desktop")
   })
 
-  it("title the list by what it is about, not by a pronoun", () => {
-    expect(text("abilities.title")).toMatch(/Windows machine/)
-    expect(text("abilities.title")).not.toMatch(/\bit\b/i)
+  it("title the list in a few plain words", () => {
+    expect(text("abilities.title")).toBe("What you can do")
+    expect(text("abilities.title").split(" ").length).toBeLessThanOrEqual(5)
+    expect(text("abilities.title")).not.toMatch(/[:.]$/)
   })
 
   it("have every sentence they read, and a picture in light and dark for every figure", () => {
@@ -177,6 +179,91 @@ describe("the list", () => {
   it("is part of the overview of a machine that is off", () => {
     render(<Overview phase="stopped" status={null} steps={null} canStart onStart={() => undefined} />)
     expect(rows()).toHaveLength(TOPICS.length)
+  })
+})
+
+describe("what the machine's state allows", () => {
+  type Id = (typeof TOPICS)[number]["id"]
+  const unavailable = (phase: Parameters<typeof blockedBy>[1]): Id[] => TOPICS.filter((x) => blockedBy(x.id, phase) !== null).map((x) => x.id)
+
+  it("leaves all five open while Windows runs, and while the state is not known yet", () => {
+    expect(unavailable("running")).toEqual([])
+    expect(unavailable(null)).toEqual([])
+    expect(unavailable(undefined)).toEqual([])
+  })
+
+  it("keeps only going back to a checkpoint open while Windows is off or put away", () => {
+    for (const phase of ["stopped", "stowed"] as const) {
+      expect(unavailable(phase)).toEqual(["exec", "files", "save", "agent"])
+      for (const id of ["exec", "files", "save", "agent"] as const) expect(blockedBy(id, phase)).toBe("abilities.why.start")
+    }
+  })
+
+  it("keeps saving open while Windows is paused, as the Checkpoints view does, and asks to resume for the rest", () => {
+    expect(unavailable("paused")).toEqual(["exec", "files", "agent"])
+    expect(unavailable("asleep")).toEqual(["exec", "files", "save", "agent"])
+    expect(blockedBy("exec", "paused")).toBe("abilities.why.resume")
+    expect(blockedBy("exec", "starting")).toBe("abilities.why.starting")
+  })
+
+  it("has nothing to offer before Windows is set up", () => {
+    expect(unavailable("missing")).toEqual(TOPICS.map((x) => x.id))
+    expect(blockedBy("restore", "missing")).toBe("abilities.why.setUp")
+  })
+
+  it("has a sentence for every reason", () => {
+    for (const k of ["start", "setUp", "starting", "resume"]) expect(en[`abilities.why.${k}`]).toBeDefined()
+  })
+
+  it("marks the rows it can't do aria-disabled, with the reason under the label, and leaves the others plain", () => {
+    render(<Abilities phase="stowed" />)
+    const all = rows()
+    expect(all.map((r) => r.getAttribute("aria-disabled"))).toEqual(["true", "true", "true", null, "true"])
+    expect(all[0]?.querySelector(".ability__why")?.textContent).toBe(text("abilities.why.start"))
+    expect(all[3]?.querySelector(".ability__why")).toBeNull()
+    expect(all[3]?.className).not.toContain("ability--off")
+    expect(all[0]?.className).toContain("ability--off")
+    // Not `disabled`: it stays in the Tab order and can be pressed for its help.
+    expect(all[0]?.hasAttribute("disabled")).toBe(false)
+  })
+
+  it("marks nothing while Windows runs", () => {
+    render(<Abilities phase="running" />)
+    for (const r of rows()) {
+      expect(r.hasAttribute("aria-disabled")).toBe(false)
+      expect(r.querySelector(".ability__why")).toBeNull()
+    }
+  })
+
+  it("still opens the help of a row that is not available, and says why at the top of it", () => {
+    render(<Abilities phase="stopped" />)
+    const r = rows()[4] as HTMLButtonElement
+    act(() => r.click())
+    expect(title()).toBe(text("ability.agent"))
+    expect(r.getAttribute("aria-expanded")).toBe("true")
+    const p = popover() as HTMLElement
+    expect(p.querySelector(".help__unavailable")?.textContent).toBe(`Not available right now. ${text("abilities.why.start")}.`)
+    expect(p.querySelector(".help__lead")?.textContent).toBe(text("help.agent.lead"))
+    expect(p.querySelectorAll(".help__steps li")).toHaveLength(3)
+  })
+
+  it("says nothing of the sort in the help of a row that is available", () => {
+    render(<Abilities phase="stopped" />)
+    act(() => (rows()[3] as HTMLButtonElement).click())
+    expect(popover()?.querySelector(".help__unavailable")).toBeNull()
+  })
+
+  it("still moves between unavailable rows with the arrow keys", () => {
+    render(<Abilities phase="stowed" />)
+    const all = rows()
+    act(() => (all[0] as HTMLButtonElement).focus())
+    key(all[0] as HTMLElement, "ArrowDown")
+    expect(document.activeElement).toBe(all[1] as HTMLElement)
+  })
+
+  it("reaches the list from the overview of a suspended machine, with its reasons", () => {
+    render(<Overview phase="stowed" status={null} steps={null} canStart onStart={() => undefined} />)
+    expect(rows().filter((r) => r.getAttribute("aria-disabled") === "true")).toHaveLength(4)
   })
 })
 

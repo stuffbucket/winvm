@@ -92,7 +92,7 @@ export function Overview(p: OverviewProps): JSX.Element {
             {t("overview.missing.noImage")} <code className="mono">winvm build --iso &lt;Windows 11 ISO&gt;</code>
           </p>
         )}
-        <Abilities />
+        <Abilities phase={p.phase} />
       </div>
     </div>
   )

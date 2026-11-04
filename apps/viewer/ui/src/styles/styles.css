@@ -834,6 +834,21 @@ html[data-os="macos"] .toolbar {
   height: var(--size-md);
 }
 
+/* Not possible in the machine's state: still a row, and it still opens its help,
+   but quiet, with the reason under the label. Muted text, not faded, so it
+   keeps its contrast. */
+.ability--off,
+.ability--off .ability__icon {
+  color: var(--text-muted);
+}
+
+.ability__why {
+  display: block;
+  font-size: var(--text-sm);
+  line-height: var(--leading-lg);
+  color: var(--text-muted);
+}
+
 /* Only when the display has room for it. */
 @container (max-height: 36rem) {
   .abilities {
@@ -1004,6 +1019,14 @@ html[data-os="macos"] .toolbar {
 .help__lead {
   font-size: var(--text-base);
   color: var(--text-strong);
+}
+
+/* Why the thing explained can't be done now; the help is still all here. */
+.help__unavailable {
+  margin: 0;
+  font-size: var(--text-sm);
+  line-height: var(--leading-lg);
+  color: var(--text-muted);
 }
 
 .help__steps {

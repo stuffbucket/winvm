@@ -4,6 +4,8 @@ import { HelpPopover } from "../../components/HelpPopover"
 import { Icon } from "../../components/Icon"
 import { cx } from "../../components/cx"
 import { t } from "../../i18n"
+import type { Phase } from "../../model"
+import { blockedBy } from "./availability"
 import { HelpFigure, HelpText } from "./HelpTopic"
 import { TOPICS, type TopicId } from "./topics"
 
@@ -12,8 +14,12 @@ import { TOPICS, type TopicId } from "./topics"
  * each a button that opens its help beside it. The icons are the toolbar
  * buttons' own glyphs, in a column of their own, so a label that wraps stays
  * under its first line.
+ *
+ * A thing the machine can't do in its current `phase` stays in the list,
+ * marked `aria-disabled` and saying why under its label. Its row still opens
+ * the help: that is information, and only the action is unavailable.
  */
-export function Abilities(): JSX.Element {
+export function Abilities({ phase }: { readonly phase?: Phase | null }): JSX.Element {
   const [open, setOpen] = useState<TopicId | null>(null)
   const list = useRef<HTMLUListElement | null>(null)
   const rows = useRef(new Map<TopicId, HTMLButtonElement>())
@@ -43,13 +49,16 @@ export function Abilities(): JSX.Element {
         {t("abilities.title")}
       </h2>
       <ul className="abilities__list" ref={list} onKeyDown={arrows}>
-        {TOPICS.map((a) => (
+        {TOPICS.map((a) => {
+          const why = blockedBy(a.id, phase)
+          return (
           <li key={a.id}>
             <button
               type="button"
-              className={cx("ability", open === a.id && "ability--open")}
+              className={cx("ability", open === a.id && "ability--open", why !== null && "ability--off")}
               aria-haspopup="dialog"
               aria-expanded={open === a.id}
+              aria-disabled={why === null ? undefined : true}
               ref={(el) => {
                 if (el === null) rows.current.delete(a.id)
                 else rows.current.set(a.id, el)
@@ -59,13 +68,17 @@ export function Abilities(): JSX.Element {
               <span className="ability__icon" aria-hidden="true">
                 <Icon name={a.icon} />
               </span>
-              <span className="ability__label">{t(`ability.${a.id}`)}</span>
+              <span className="ability__label">
+                {t(`ability.${a.id}`)}
+                {why !== null && <span className="ability__why">{t(why)}</span>}
+              </span>
               <span className="ability__more" aria-hidden="true">
                 <Icon name="forward" />
               </span>
             </button>
           </li>
-        ))}
+          )
+        })}
       </ul>
       {topic !== undefined && (
         <HelpPopover
@@ -89,7 +102,7 @@ export function Abilities(): JSX.Element {
             </>
           }
         >
-          <HelpText topic={topic} />
+          <HelpText topic={topic} unavailable={blockedBy(topic.id, phase)} />
         </HelpPopover>
       )}
     </section>
