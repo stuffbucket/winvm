@@ -56,7 +56,7 @@ class FakeRFB extends EventTarget {
   private log(what: string): void {
     calls.push({ what, viewOnly: this._viewOnly })
   }
-  sendKey(keysym: number, code: string, down?: boolean): void {
+  sendKey(_keysym: number, code: string, down?: boolean): void {
     if (this._viewOnly) return
     this.log(`key:${code}:${String(down)}`)
   }
