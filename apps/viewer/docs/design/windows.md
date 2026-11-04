@@ -442,7 +442,7 @@ name: they are different facts and read differently. Absent data shows
 nothing. One that can't load here is dashed and grey, with a warning pill
 ("Can't load here") inset at its picture's bottom edge, which is the card's
 state, not a row of its caption (the reason is its tooltip and part of its
-accessible name; the panel says it in full). The accessible name is the
+accessible name; the panel says it in a few words, the whole reason on hover). The accessible name is the
 whole of it: name, kind, when, size, "Has notes" when it has, and the reason
 when it can't load.
 
@@ -493,12 +493,18 @@ scroll); two-finger scroll, dragging anywhere or the arrow keys pan. The
 camera never leaves the stack behind, and zooms between seeing everything
 and three times life size.
 
-**A selected card** comes up close, centred in the space the panel leaves,
-and the panel beside the timeline shows a larger screenshot (click it, or
-press Space, for Quick Look), its notes (title, markdown text and tags,
-written as they are typed to `$XDG_DATA_HOME/winvm/notes/<instance>/<save>.json`
-through `winvm saves note`), when it was taken, its kind, size, whether it
-loads here and its name in winvm; then Delete… and Go Back to This.
+**A selected card** comes up close, centred in the space the panel leaves.
+The panel beside the timeline is a properties panel (see [`components.md`](components.md)
+→ *Properties panel*): the checkpoint's title at its head, **once**, edited where
+it stands (click, Return or F2; Return keeps, Esc puts it back; a title that
+can't be kept says why under it); a larger screenshot (click it, or press Space,
+for Quick Look); its note, written as text (placeholder "Add a note"), saved by
+itself after a pause with no Save button (Esc puts it back), to
+`$XDG_DATA_HOME/winvm/notes/<instance>/<save>.json` through `winvm saves note`;
+then rows for its tags (editable, comma-separated), when it was taken, kind, size,
+whether it loads here and its name in winvm. "Loads here" says why not in a few
+words ("Different QEMU version", "Different display", …) and the whole reason on
+hover and in its accessible description. Last, Delete… and Go Back to This.
 
 - **Go Back to This** confirms: "Windows returns to exactly how it was at
   that moment. What it's doing now is replaced, unless you keep it as a
@@ -521,17 +527,23 @@ view pulls back to Now and today, Now says "Taking a checkpoint…", and the
 new card flies out of Now into its place, screenshot and all.
 
 **The control bar** floats at the bottom of the window, one compact bar
-(Settings' glass is opaque here: cards pass under it): search, New, back to
-the newest, Automatic, Reset layout and Done.
+(Settings' glass is opaque here: cards pass under it): search, New, Newest,
+Automatic, Reset layout and Done.
 Each is a button with an accessible name and a tooltip, the keys in the
 tooltip. **New** is a plus and a word; its tooltip says why when it can't
-(Windows isn't running).
+(Windows isn't running). **Newest** (flies to Now and the newest days) is a
+target glyph, "where it is now", not a download arrow.
 
 **Search** (⌘F, or the magnifier) matches every word against names, titles,
-notes, tags, kinds and dates, newest first. It is a magnifier until used,
-then the field eases out to its left (200 ms, instant with reduced motion)
-and folds back when it loses focus empty; the field is out of the Tab order
-while folded. Cards that don't match fade while it is open, and choosing one
+notes, tags, kinds and dates, newest first. It is a magnifier until used. Then
+the bar grows to the left, its right end staying put (200 ms, instant with
+reduced motion), and the magnifier becomes the leading icon of one rounded field
+inside the bar, with a clear x once it has words; its focus ring is the field's
+own outline, drawn inside it. In a window under 900 px wide the field opens over
+the whole bar instead, the other controls hidden until it folds. Esc clears and
+folds it; it folds when it loses focus empty, and is out of the Tab order while
+folded. How many match is said to a screen reader. Cards that don't match fade
+while it is open, and choosing one
 flies to it. **Automatic** is an icon filter, pressed when automatic
 checkpoints show: it shows or hides the checkpoints winvm takes by itself
 (autosaves and the stow).

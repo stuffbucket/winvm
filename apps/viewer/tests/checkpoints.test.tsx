@@ -13,7 +13,8 @@ const { act } = await import("react")
 const { createRoot } = await import("react-dom/client")
 const cp = await import("../ui/src/features/checkpoints/checkpoints")
 const { loadSettings, parseSettings, saveSettings } = await import("../ui/src/features/checkpoints/settings")
-const { draftOf, tagsOf } = await import("../ui/src/features/checkpoints/CheckpointDetails")
+const { CHECKPOINT_TITLE_MAX, CheckpointDetails, draftOf, shortReason, tagsOf } = await import("../ui/src/features/checkpoints/CheckpointDetails")
+const { t } = await import("../ui/src/i18n")
 const { ConfirmDialog } = await import("../ui/src/components/ConfirmDialog")
 const { ControlBar } = await import("../ui/src/features/checkpoints/ControlBar")
 const { ZoomControl, ZOOM_SHOWN_MS, pointerNear } = await import("../ui/src/features/checkpoints/ZoomControl")
@@ -451,6 +452,7 @@ describe("the control bar", () => {
           searchOpen={false}
           query=""
           inputRef={{ current: null }}
+          matchCount={0}
           onAutomaticHint={noop}
           onSearchFocus={noop}
           onSearchBlur={noop}
@@ -495,6 +497,45 @@ describe("the control bar", () => {
     expect(bar({ query: "office" }).host.querySelector(".checkpoints__search")?.getAttribute("data-open")).toBe("true")
   })
 
+  it("is one rounded field with the magnifier as its leading icon, and the field before the other controls", () => {
+    const { host } = bar({ searchOpen: true })
+    const box = host.querySelector(".checkpoints__search-box")
+    expect(box?.firstElementChild?.getAttribute("aria-label")).toBe("Search checkpoints")
+    expect(box?.firstElementChild?.getAttribute("aria-expanded")).toBe("true")
+    expect(box?.querySelector("input")).not.toBeNull()
+    // The other controls sit in their own group, after the search.
+    expect(host.querySelector(".checkpoints__search + .checkpoints__bar-rest")).not.toBeNull()
+    // Nothing to clear yet.
+    expect(named(host, "Clear search")).toBeNull()
+  })
+
+  it("clears with an x once it has words, keeping the cursor in the field, and says how many match", () => {
+    const onQuery = mock(noop)
+    const { host } = bar({ query: "office", matchCount: 2, onQuery })
+    act(() => named(host, "Clear search")?.click())
+    expect(onQuery).toHaveBeenCalledWith("")
+    expect(document.activeElement).toBe(host.querySelector("input"))
+    const status = host.querySelector(".checkpoints__search [role=status]")
+    expect(status?.textContent).toBe("2 checkpoints match")
+    act(() => root?.unmount())
+    document.body.replaceChildren()
+    const none = bar({ query: "zzz", matchCount: 0 })
+    expect(none.host.querySelector(".checkpoints__search [role=status]")?.textContent).toBe("No checkpoints match")
+    expect(none.host.querySelector(".checkpoints__search")?.getAttribute("data-empty")).toBe("true")
+    act(() => root?.unmount())
+    document.body.replaceChildren()
+    // Folded and empty: nothing is said.
+    expect(bar().host.querySelector(".checkpoints__search [role=status]")?.textContent).toBe("")
+  })
+
+  it("names the button for the newest plainly, with a target glyph rather than a download arrow", () => {
+    const { host } = bar()
+    const newest = named(host, "Newest")
+    expect(newest?.getAttribute("title")).toBe("Newest")
+    expect(newest?.querySelector("circle")).not.toBeNull()
+    expect(newest?.querySelector("path[d*='m6 11']")).toBeNull()
+  })
+
   it("makes Automatic a pressed icon button, and New says why it can't be used", () => {
     const { host, calls } = bar({ showAutomatic: false, live: false })
     const auto = named(host, "Automatic checkpoints")
@@ -510,7 +551,7 @@ describe("the control bar", () => {
 
   it("jumps to the newest, takes a checkpoint, finishes, and resets only once something is moved", () => {
     const { host, calls } = bar()
-    act(() => named(host, "Back to the newest")?.click())
+    act(() => named(host, "Newest")?.click())
     act(() => named(host, "New Checkpoint")?.click())
     act(() => [...host.querySelectorAll("button")].find((b) => b.textContent === "Done")?.click())
     expect(calls["onNewest"]).toHaveBeenCalledTimes(1)
@@ -530,6 +571,187 @@ describe("the control bar", () => {
     expect(host.querySelector(".checkpoints__zoom")).toBeNull()
     for (const gone of ["Zoom out (⌘−)", "Zoom in (⌘+)", "Show all checkpoints (⌘0)"]) expect(named(host, gone)).toBeNull()
     expect(named(host, "Reset layout")).not.toBeNull()
+  })
+})
+
+describe("the checkpoint's panel", () => {
+  let root: ReturnType<typeof createRoot> | null = null
+  afterEach(() => {
+    act(() => root?.unmount())
+    root = null
+    document.body.replaceChildren()
+  })
+  const noop = (): void => undefined
+  const notes = (over: Partial<NonNullable<Checkpoint["notes"]>> = {}): NonNullable<Checkpoint["notes"]> => ({ title: "Office installed", text: "Signed in.", tags: ["office"], ...over })
+  function panel(c: Checkpoint, over: Partial<import("react").ComponentProps<typeof CheckpointDetails>> = {}): { host: HTMLElement; onNote: ReturnType<typeof mock>; onClose: ReturnType<typeof mock> } {
+    const onNote = mock(noop)
+    const onClose = mock(noop)
+    const host = document.createElement("div")
+    document.body.append(host)
+    root = createRoot(host)
+    act(() =>
+      root?.render(<CheckpointDetails c={c} now={Date.parse("2026-10-22T20:00:00Z")} busy={false} saving="idle" onClose={onClose} onLook={noop} onNote={onNote} onGoBack={noop} onDelete={noop} {...over} />),
+    )
+    return { host, onNote, onClose }
+  }
+  const type = (el: HTMLInputElement | HTMLTextAreaElement, value: string): void => {
+    const proto = el instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype
+    act(() => {
+      Object.getOwnPropertyDescriptor(proto, "value")?.set?.call(el, value)
+      el.dispatchEvent(new Event("input", { bubbles: true }))
+    })
+  }
+  const press = (el: Element, key: string): void => {
+    act(() => {
+      el.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true }))
+    })
+  }
+  const titleButton = (host: HTMLElement): HTMLButtonElement | null => host.querySelector<HTMLButtonElement>("header button.checkpoint-details__title-field")
+  const titleInput = (host: HTMLElement): HTMLInputElement | null => host.querySelector<HTMLInputElement>("header input")
+  const withNotes = checkpoint("office", at(2026, 10, 22, 14), { notes: notes() })
+
+  it("names the checkpoint once, at the top, as text that is edited where it stands", () => {
+    const { host } = panel(withNotes)
+    expect(titleButton(host)?.textContent).toBe("Office installed")
+    expect(titleButton(host)?.getAttribute("title")).toBe("Rename (F2)")
+    // No separate Name or Title field, and no second copy of the title.
+    expect(host.querySelectorAll("label").length).toBe(0)
+    expect(host.textContent?.split("Office installed").length).toBe(2)
+    expect(host.querySelectorAll("header input").length).toBe(0)
+  })
+
+  it("keeps a new title on Return, and writes it at once", () => {
+    const { host, onNote } = panel(withNotes)
+    act(() => titleButton(host)?.click())
+    const field = titleInput(host)
+    expect(field?.value).toBe("Office installed")
+    expect(field?.getAttribute("aria-label")).toBe("Title")
+    type(field as HTMLInputElement, "Office and Teams")
+    press(field as HTMLInputElement, "Enter")
+    expect(onNote).toHaveBeenCalledTimes(1)
+    expect(onNote.mock.calls[0]?.[0]).toEqual({ title: "Office and Teams", text: "Signed in.", tags: "office" })
+    expect(titleButton(host)?.textContent).toBe("Office and Teams")
+  })
+
+  it("puts the title back on Escape, and Escape there does not close the panel", () => {
+    const { host, onNote, onClose } = panel(withNotes)
+    act(() => titleButton(host)?.click())
+    type(titleInput(host) as HTMLInputElement, "Something else")
+    press(titleInput(host) as HTMLInputElement, "Escape")
+    expect(onNote).not.toHaveBeenCalled()
+    expect(onClose).not.toHaveBeenCalled()
+    expect(titleButton(host)?.textContent).toBe("Office installed")
+  })
+
+  it("keeps the title when the field is left", () => {
+    const { host, onNote } = panel(withNotes)
+    act(() => titleButton(host)?.click())
+    const field = titleInput(host) as HTMLInputElement
+    field.focus()
+    type(field, "After a pause")
+    act(() => field.blur())
+    expect(onNote.mock.calls[0]?.[0].title).toBe("After a pause")
+  })
+
+  it("says why a title can't be kept, inline, and keeps the field", () => {
+    const { host, onNote } = panel(withNotes)
+    act(() => titleButton(host)?.click())
+    const field = titleInput(host) as HTMLInputElement
+    type(field, "x".repeat(CHECKPOINT_TITLE_MAX + 1))
+    press(field, "Enter")
+    expect(host.querySelector("[role=alert]")?.textContent).toBe("Keep it to 120 characters or fewer.")
+    expect(field.getAttribute("aria-invalid")).toBe("true")
+    expect(titleInput(host)).not.toBeNull()
+    expect(onNote).not.toHaveBeenCalled()
+    type(field, "A short one")
+    expect(host.querySelector("[role=alert]")).toBeNull()
+  })
+
+  it("empties a title back to the name, and says so while the field is empty", () => {
+    const { host, onNote } = panel(withNotes)
+    act(() => titleButton(host)?.click())
+    const field = titleInput(host) as HTMLInputElement
+    type(field, "")
+    expect(host.textContent).toContain("Leave it empty to use “office”.")
+    press(field, "Enter")
+    expect(onNote.mock.calls[0]?.[0].title).toBe("")
+    expect(titleButton(host)?.textContent).toBe("office")
+  })
+
+  it("shows the note as quiet text with a placeholder, and saves it after a pause, with no Save button", async () => {
+    const { host, onNote } = panel(checkpoint("plain", at(2026, 10, 22, 14)))
+    const note = host.querySelector("textarea") as HTMLTextAreaElement
+    expect(note.getAttribute("placeholder")).toBe("Add a note")
+    expect(note.getAttribute("aria-label")).toBe("Notes")
+    expect([...host.querySelectorAll("button")].some((b) => /save/i.test(b.textContent ?? ""))).toBe(false)
+    type(note, "Before the driver update")
+    expect(onNote).not.toHaveBeenCalled()
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 900))
+    })
+    expect(onNote).toHaveBeenCalledTimes(1)
+    expect(onNote.mock.calls[0]?.[0].text).toBe("Before the driver update")
+  })
+
+  it("puts the note back on Escape, and saves it as it was", async () => {
+    const { host, onNote, onClose } = panel(withNotes)
+    const note = host.querySelector("textarea") as HTMLTextAreaElement
+    note.focus()
+    type(note, "Typed, then thought better of")
+    press(note, "Escape")
+    expect(note.value).toBe("Signed in.")
+    expect(onClose).not.toHaveBeenCalled()
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 900))
+    })
+    expect(onNote).not.toHaveBeenCalled()
+  })
+
+  it("says a failed save quietly, under the actions", () => {
+    const { host } = panel(withNotes, { saving: "failed" })
+    const status = host.querySelector("footer [role=status]")
+    expect(status?.textContent).toBe("Notes weren't saved")
+    expect(status?.getAttribute("data-failed")).toBe("true")
+  })
+
+  it("lists its facts as rows, values selectable, with the tags as an editable value", () => {
+    const { host } = panel(withNotes)
+    const rows = [...host.querySelectorAll(".checkpoint-details__prop")].map((r) => r.querySelector("dt")?.textContent)
+    expect(rows).toEqual(["Tags", "Taken", "Kind", "Size", "Loads here", "Name in winvm"])
+    const tags = host.querySelector<HTMLInputElement>(".checkpoint-details__prop input")
+    expect(tags?.value).toBe("office")
+    expect(tags?.getAttribute("aria-label")).toBe("Tags")
+  })
+
+  it("says why it can't load in a few words, the whole reason on hover and in its description", () => {
+    const { host } = panel(checkpoint("q", at(2026, 10, 21, 12), { compatible: false, incompatible: ["qemu"] }))
+    const why = host.querySelector<HTMLElement>(".checkpoint-details__reason")
+    const full = "Made with a different version of QEMU, so it can't load here"
+    expect(why?.firstElementChild?.tagName.toLowerCase()).toBe("svg")
+    expect(why?.childNodes[1]?.textContent).toBe("Different QEMU version")
+    expect(why?.getAttribute("title")).toBe(full)
+    expect(host.querySelector(`[id="${why?.getAttribute("aria-describedby") ?? ""}"]`)?.textContent).toBe(full)
+    // The long sentence is not drawn as a paragraph.
+    expect(host.querySelector("p")).toBeNull()
+    const goBack = [...host.querySelectorAll("button")].find((b) => b.textContent === "Go Back to This")
+    expect(goBack?.disabled).toBe(true)
+  })
+
+  it("has a short label for every reason a checkpoint can't load", () => {
+    for (const part of ["display", "base", "hardware", "firmware", "qemu", "other"]) {
+      const reason = cp.incompatibleReason({ compatible: false, incompatible: part === "other" ? [] : [part] })
+      expect(reason).not.toBeNull()
+      const key = shortReason(reason as string)
+      expect(t(key)).not.toBe(key)
+      expect(t(key).length).toBeLessThan(26)
+    }
+  })
+
+  it("keeps Delete separate from Go Back, each with its icon and its word", () => {
+    const { host } = panel(withNotes)
+    const buttons = [...host.querySelectorAll("footer button")]
+    expect(buttons.map((b) => b.textContent)).toEqual(["Delete…", "Go Back to This"])
+    expect(buttons.every((b) => b.querySelector("svg") !== null)).toBe(true)
   })
 })
 

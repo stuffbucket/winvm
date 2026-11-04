@@ -7,7 +7,11 @@
  * the timeline, a selected checkpoint, search, the confirmations, New
  * Checkpoint, many checkpoints, in light and dark; and the zoom control (its
  * own pill in the lower left) at rest, eased in by the pointer and by a zoom,
- * at 720x520, 1000x800 and 1440x900, CHECKING that it never overlaps the bar. Test DOMs compute no layout; this is how layout and feel get looked at.
+ * at 720x520, 1000x800 and 1440x900, CHECKING that it never overlaps the bar. It
+ * also renders the details panel (title and note edited in place, a long note, one
+ * that can't load) and the search (folded, open, with words, no match, at 720 and
+ * 1000 wide), CHECKING what the design says; `RENDER_ONLY=panel` runs just those.
+ * Test DOMs compute no layout; this is how layout and feel get looked at.
  *
  * Playwright isn't one of the workspace's dependencies (it would pull a
  * browser into every install). Install it anywhere and point at it:
@@ -84,7 +88,9 @@ async function enter(page) {
   await page.waitForSelector(".checkpoints")
 }
 
-for (const scheme of ["dark", "light"]) {
+// RENDER_ONLY=panel: just the details panel and the search (the sections at the end), light and dark.
+const only = process.env.RENDER_ONLY
+for (const scheme of only === undefined ? ["dark", "light"] : []) {
   const page = await open(scheme)
   await shot(page, `${scheme}-00-window`)
   await enter(page)
@@ -222,7 +228,7 @@ for (const scheme of ["dark", "light"]) {
 
 // The zoom control: its own pill in the lower left, out of sight at rest, in by the pointer or a zoom.
 let collided = false
-for (const scheme of ["dark", "light"]) {
+for (const scheme of only === undefined ? ["dark", "light"] : []) {
   for (const [w, h] of [
     [720, 520],
     [1000, 800],
@@ -271,7 +277,7 @@ for (const scheme of ["dark", "light"]) {
 if (collided) process.exitCode = 1
 
 // Many checkpoints: a year of autosaves stays smooth (only what is in view is drawn).
-{
+if (only === undefined) {
   const page = await open("dark", "?many=400")
   await enter(page)
   await wait(1400)
@@ -304,6 +310,139 @@ if (collided) process.exitCode = 1
   console.log(`many: ${String(cards)} cards drawn of ${String(await page.evaluate(() => window.__fakeCount?.() ?? 414))}; ${String(frames)} frames in a second of panning; fit took ${String(Date.now() - started)} ms`)
   await page.close()
 }
+
+// The details panel (title and note edited where they stand, the reason short) and the search (one control that grows
+// to the left), CHECKING what the design says, light and dark.
+let broke = false
+const check = (ok, what) => {
+  if (!ok) {
+    broke = true
+    console.error(`CHECK FAILED: ${what}`)
+  }
+}
+for (const scheme of ["dark", "light"]) {
+  const page = await open(scheme)
+  await enter(page)
+  await wait(1600)
+  await page.keyboard.press("Meta+0")
+  await wait(900)
+  await page.locator('.checkpoint[data-name="office-installed"] .checkpoint__hit').click()
+  await wait(1200)
+  const panel = page.locator(".checkpoint-details")
+  const title = panel.locator("header .checkpoint-details__title-field")
+  await shot(page, `${scheme}-40-details`)
+  check((await panel.getByText("Office installed").count()) === 1, "the checkpoint's name appears once in its panel")
+  check((await panel.getByText("Name", { exact: true }).count()) === 0, "no separate Name field")
+
+  // The title: edited where it stands.
+  await title.hover()
+  await wait(250)
+  await shot(page, `${scheme}-41-title-hover`)
+  await title.click()
+  await wait(200)
+  await shot(page, `${scheme}-42-title-editing`)
+  await page.keyboard.type(" with a very long ending ".repeat(6))
+  await wait(150)
+  await shot(page, `${scheme}-43-title-invalid`)
+  check((await panel.getByRole("alert").count()) === 1, "a title that is too long says why, inline")
+  await page.keyboard.press("Escape")
+  await wait(200)
+  check((await title.textContent()) === "Office installed", "Esc puts the title back")
+  check((await page.locator(".checkpoint-details").count()) === 1, "Esc in the title does not close the panel")
+  await page.keyboard.press("F2")
+  await wait(150)
+  await page.keyboard.type("Office and Teams")
+  await page.keyboard.press("Enter")
+  await wait(300)
+  check((await title.textContent()) === "Office and Teams", "Return keeps the title")
+
+  // The note: text at rest, an editing surface when focused, growing then scrolling.
+  const note = panel.locator("textarea")
+  await note.click()
+  await note.fill(Array.from({ length: 30 }, (_, i) => `Line ${String(i + 1)} of a long note`).join("\n"))
+  await wait(900)
+  await shot(page, `${scheme}-44-long-note`)
+  const noteBox = await note.boundingBox()
+  const panelBox = await panel.boundingBox()
+  check(noteBox !== null && panelBox !== null && noteBox.height < panelBox.height * 0.6, "a long note stops growing and scrolls")
+  await page.keyboard.press("Escape")
+  await wait(300)
+  check((await note.inputValue()).startsWith("Signed in as"), "Esc puts the note back")
+  await page.keyboard.press("Escape")
+  await wait(900)
+
+  // One that can't load: a few words, the whole reason on hover.
+  await page.keyboard.press("Meta+0")
+  await wait(900)
+  await page.locator('.checkpoint[data-name="before-qemu-upgrade"] .checkpoint__hit').click()
+  await wait(1200)
+  await shot(page, `${scheme}-45-details-cant-load`)
+  const why = panel.locator(".checkpoint-details__reason")
+  check((await why.innerText()) ==="Different QEMU version", "the reason is a few words")
+  check(((await why.getAttribute("title")) ?? "").includes("can't load here"), "the whole reason is its tooltip")
+  await page.keyboard.press("Escape")
+  await wait(900)
+
+  // Search: the bar grows to the left, its right end stays put.
+  const bar = page.locator(".spatial-canvas__controls")
+  const rightEnd = async () => {
+    const b = await bar.boundingBox()
+    return b === null ? 0 : b.x + b.width
+  }
+  const before = await rightEnd()
+  await shot(page, `${scheme}-50-search-closed`)
+  await page.getByRole("button", { name: "Search checkpoints" }).click()
+  await wait(500)
+  await shot(page, `${scheme}-51-search-open`)
+  check(Math.abs((await rightEnd()) - before) < 1.5, `the bar's right end stays put when search opens (${String(before)} to ${String(await rightEnd())})`)
+  await page.keyboard.type("office")
+  await wait(400)
+  await shot(page, `${scheme}-52-search-text`)
+  check((await page.locator(".checkpoints__search [role=status]").textContent()) === "2 checkpoints match", "the count is said, quietly")
+  await page.keyboard.type(" zzz")
+  await wait(300)
+  await shot(page, `${scheme}-53-search-none`)
+  check((await page.locator(".checkpoints__search [role=status]").textContent()) === "No checkpoints match", "no match is said")
+  await page.getByRole("button", { name: "Clear search" }).click()
+  await wait(200)
+  check((await page.locator(".checkpoints__search input").inputValue()) === "", "the clear button empties the field")
+  await page.keyboard.press("Escape")
+  await wait(500)
+  check((await rightEnd()) === before, "and folds back where it was")
+  await shot(page, `${scheme}-54-search-folded`)
+  await page.close()
+
+  // The bar at 720 and 1000: folded, open, with words.
+  for (const [w, h] of [
+    [720, 520],
+    [1000, 800],
+  ]) {
+    const small = await open(scheme)
+    await small.setViewportSize({ width: w, height: h })
+    await enter(small)
+    await wait(3600)
+    const name = `${scheme}-60-bar-${String(w)}`
+    const b0 = await small.locator(".spatial-canvas__controls").boundingBox()
+    await shot(small, `${name}-closed`)
+    await small.keyboard.press("Meta+f")
+    await wait(450)
+    await shot(small, `${name}-open`)
+    await small.keyboard.type("office")
+    await wait(300)
+    await shot(small, `${name}-text`)
+    const b1 = await small.locator(".spatial-canvas__controls").boundingBox()
+    check(b0 !== null && b1 !== null && b1.x >= 0 && b1.x + b1.width <= w, `${name}: the bar stays inside the window`)
+    const field = await small.locator(".checkpoints__search-box").boundingBox()
+    check(field !== null && field.x >= 0 && field.width >= 200, `${name}: the field has room (${String(field?.width)} px)`)
+    await small.keyboard.press("Escape")
+    await wait(500)
+    const b2 = await small.locator(".spatial-canvas__controls").boundingBox()
+    check(b0 !== null && b2 !== null && Math.abs(b0.x - b2.x) < 1.5 && Math.abs(b0.width - b2.width) < 1.5, `${name}: the bar is back as it was`)
+    await shot(small, `${name}-folded`)
+    await small.close()
+  }
+}
+if (broke) process.exitCode = 1
 
 // Real screenshots, when given: what the cards look like with Windows in them.
 if (PICTURES !== undefined) {

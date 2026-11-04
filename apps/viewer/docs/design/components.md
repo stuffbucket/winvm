@@ -192,15 +192,34 @@ chrome the native title bar already supplies.
   `--border-width-hairline` `--border-subtle`, `--radius-card`,
   `--elevation-modal`; padding `--space-1`.
 - Items are `spatial-canvas__button`s (`--size-xl` high, icon buttons square),
-  grouped by hairline dividers: search, then actions (New, back to the newest,
+  grouped by hairline dividers: search, then actions (New, Newest,
   Automatic, Reset layout), then the one primary button (`btn--primary`,
   "Done"), last. The zoom is not in the bar (below).
 - Icon buttons carry an `aria-label` and a `title`; a filter or toggle is
   `aria-pressed` and its `title` says what pressing does. A control that can't
   be used is `disabled`, and its tooltip says why.
-- A control that is rarely needed folds to its icon and eases out when used
-  (search to the left, so the bar grows away from its centre). It is out of the
-  way, not removed: focus brings it back.
+- **Newest** (flies to Now and the newest days) is a *locate* glyph, a target
+  with a dot at its centre: "where it is now". Not an arrow to a bar (that reads
+  as Download) and not a clock (that is Automatic's). Its name and tooltip are
+  the one word, "Newest".
+- **Search** is a magnifier until it is used, then one rounded field inside the
+  bar, not a second control beside it (`ControlBar.tsx`):
+  - *Growing.* The bar grows to the **left**, its right end where it was (the bar
+    is centred, so it also moves left by half of the growth, on the same 200 ms
+    `ease-out`; none under reduced motion). The field is the
+    magnifier (now its leading icon, still the button that folds it), the input
+    and, once there are words, a clear x, on `--surface-control` with
+    `--radius-input`, inside the bar's `--space-1` padding. No border of its own.
+  - *Focus.* The ring (`--focus-ring`) is the field's whole outline, drawn
+    **inside** it (negative offset), so it never meets the bar's edge or clips.
+  - *Narrow windows* (under 900 px, where there is no room to grow into): the
+    bar does not move; the field opens over all of it, the other controls out of
+    sight and out of the Tab order until it folds.
+  - *Words.* Placeholder "Search names and notes" (no key hints in it). Esc clears
+    and folds it; the x clears and keeps the cursor in the field. How many cards
+    match is said to a screen reader (`role="status"`, never drawn: the results
+    list shows them, and "No checkpoints match" when none do). Cards that don't
+    match dim.
 
 ### Zoom control (Checkpoints)
 
@@ -224,6 +243,37 @@ bar), `--space-4` from the window's edges.
   carries the key.
 - **Narrow windows.** At 820 px wide and under (the window's minimum is 720),
   the centred bar would meet it, so it moves up and stands above the bar.
+
+## Properties panel (Checkpoints)
+
+The selected checkpoint's panel (`CheckpointDetails.tsx`, in the canvas's side
+panel) is a properties panel in the way of Figma's UI3: **the values are the
+fields**. Nothing is a form until it is touched.
+
+- **The title is the panel's heading, once.** At rest a button that reads as text
+  (`--text-md`, `--weight-lg`), a quiet `--surface-control` fill on hover and a
+  text cursor; a click, Return or F2 (the pattern of the machine's name above)
+  swaps in an input of the same face and size, selected, ringed. Return or leaving
+  keeps it, Esc puts it back (and is not also Esc to close the panel). A title
+  that can't be kept says why in a line under it and the field stays; emptied, it
+  says what the title falls back to. No separate "Title" or "Name" field, and the
+  name appears nowhere else in the panel as a heading.
+- **The note is text.** A borderless, transparent area under the picture,
+  `--text-base`, placeholder "Add a note" in `--text-muted`; hover fills it,
+  focus rings it. It grows with its text up to a sensible height
+  (`--size-2xl` x 6), then scrolls. It saves itself after a pause (700 ms) and on
+  leaving; there is no Save button. Esc puts back what it held when focused. A
+  failed save is said quietly in the footer, in `--status-error`.
+- **Facts are rows**: a `--text-muted` label column and a value, `--size-xl` high,
+  values selectable, no heading over them. A value that can be edited (Tags) looks
+  like the others until hovered or focused. A fact that needs a warning carries it
+  in its value: "Loads here" says **a few words** ("Different QEMU version",
+  with the warning glyph), and the whole reason is the value's tooltip and its
+  accessible description. Never a paragraph.
+- **Actions** are in the footer, icon and word: Delete… (ghost, `--status-error`,
+  at the left, apart from the primary and always confirmed), Go Back to This
+  (primary, at the right). A button that can't be used is disabled and its tooltip
+  says why.
 
 ## Help popover
 
