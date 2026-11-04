@@ -34,7 +34,7 @@
 }
 
 html[data-os="macos"] .term__bar {
-  padding-inline-start: calc(var(--space-8) + var(--space-6));
+  padding-inline-start: var(--lights-clearance);
 }
 
 .term__tabs {

@@ -15,7 +15,7 @@
         "title": "winvm",
         "width": 1024,
         "height": 816,
-        "minWidth": 640,
+        "minWidth": 720,
         "minHeight": 480,
         "visible": false,
         "titleBarStyle": "Overlay",

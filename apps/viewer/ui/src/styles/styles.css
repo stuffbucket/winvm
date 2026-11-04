@@ -70,7 +70,7 @@ a:hover {
 }
 
 html[data-os="macos"] .toolbar {
-  padding-inline-start: calc(var(--space-8) + var(--space-6));
+  padding-inline-start: var(--lights-clearance);
 }
 
 .toolbar__lead {

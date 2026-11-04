@@ -39,6 +39,8 @@ const quick = args.includes("--quick")
 const OUT = resolve(args.find((a, i) => !a.startsWith("--") && !["--sizes", "--dsf", "--screens"].includes(args[i - 1] ?? "")) ?? "/tmp/winvm-sizes-render")
 
 const ALL_SIZES = ["640x420", "820x520", "1000x800", "1440x900", "1920x1080"]
+/** The least window width the app allows (minWidth in src-tauri/tauri.conf.json). */
+const MAIN_MIN_WIDTH = 720
 const QUICK_SIZES = ["820x520", "1440x900", "1920x1080"]
 const sizes = (flagValue("--sizes")?.split(",") ?? (quick ? QUICK_SIZES : ALL_SIZES)).map((s) => {
   const [width, height] = s.split("x").map(Number)
@@ -113,6 +115,13 @@ async function checkOverview(page, label, size, { notes }) {
   const facts = await rect(page, ".facts")
   const sideways = await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth + 0.5 || document.querySelector(".overview")?.scrollWidth > document.querySelector(".overview").clientWidth + 0.5)
   check(!sideways, `${label}: the page scrolls sideways`)
+  // The toolbar's own parts need MAIN_MIN_WIDTH (src-tauri/src/windows.rs, minWidth in tauri.conf.json);
+  // narrower is not a size the app allows, so it is only looked at, not checked.
+  if (size.width >= MAIN_MIN_WIDTH) {
+    const bar = await page.evaluate(() => ({ over: document.querySelector(".toolbar").scrollWidth > document.querySelector(".toolbar").clientWidth + 0.5, picker: document.querySelector(".machine-picker")?.getBoundingClientRect().width ?? 0 }))
+    check(!bar.over, `${label}: the toolbar overflows`)
+    check(bar.picker >= 100, `${label}: the machine's name has no room in the toolbar (${bar.picker.toFixed(0)} px)`)
+  }
   if (title === null || column === null || toolbar === null) return check(false, `${label}: no heading, column or toolbar`)
   check(title.y - toolbar.bottom >= 24, `${label}: ${String((title.y - toolbar.bottom).toFixed(1))} px between the toolbar and the heading (want 24 or more)`)
   check(title.right <= column.right + 0.5 && title.x >= column.x - 0.5, `${label}: the heading is outside the column`)

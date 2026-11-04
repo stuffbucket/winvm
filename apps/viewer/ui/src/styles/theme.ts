@@ -115,6 +115,13 @@ export const layout = {
   contentMax: "640px",
   panelWidth: "320px",
   /**
+   * What a toolbar leaves empty at its left on macOS for the traffic lights, which the
+   * shell places (src-tauri/src/windows.rs TRAFFIC_LIGHTS, tauri.conf.json
+   * trafficLightPosition: 18 px in): the three lights end at about 78 px. One point
+   * of truth for the main toolbar and the Terminal's tab strip.
+   */
+  lightsClearance: "96px",
+  /**
    * The overview's one column (heading, note, facts, Start, list): as wide as the
    * window allows up to this, then centered. Rem, so it follows the type size.
    */

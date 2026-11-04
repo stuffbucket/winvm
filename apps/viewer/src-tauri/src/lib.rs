@@ -3,6 +3,7 @@ mod checkpoints;
 mod dragout;
 mod liveresize;
 mod usage;
+mod windows;
 
 use serde::{Deserialize, Serialize};
 use std::path::Path;
@@ -139,8 +140,8 @@ fn show_terminal(app: &tauri::AppHandle) -> Result<(), String> {
     }
     let mut builder = WebviewWindowBuilder::new(app, TERMINAL, WebviewUrl::App("terminal.html".into()))
         .title("Terminal")
-        .inner_size(820.0, 520.0)
-        .min_inner_size(420.0, 240.0)
+        .inner_size(windows::TERMINAL.width, windows::TERMINAL.height)
+        .min_inner_size(windows::TERMINAL.min_width, windows::TERMINAL.min_height)
         .visible(false);
     // Tabs in the title bar, beside traffic lights where the main window has them (tauri.conf.json).
     #[cfg(target_os = "macos")]
@@ -148,25 +149,33 @@ fn show_terminal(app: &tauri::AppHandle) -> Result<(), String> {
         builder = builder
             .title_bar_style(tauri::TitleBarStyle::Overlay)
             .hidden_title(true)
-            .traffic_light_position(tauri::LogicalPosition::new(18.0, 26.0));
+            .traffic_light_position(tauri::LogicalPosition::new(windows::TRAFFIC_LIGHTS.0, windows::TRAFFIC_LIGHTS.1));
     }
-    if let Some((x, y)) = beside_main(app, 820.0) {
+    if let Some((x, y)) = beside_main(app, windows::TERMINAL) {
         builder = builder.position(x, y);
     }
     builder.build().map(|_| ()).map_err(|e| e.to_string())
 }
 
-/// Just right of the main window, when the screen has room for `width` there.
-fn beside_main(app: &tauri::AppHandle, width: f64) -> Option<(f64, f64)> {
+/// Just right of the main window, level with its top, when the screen it is on has room for a
+/// window of `spec`'s size there (`windows::beside` decides). Every physical figure Tauri hands
+/// back is converted with the scale factor of the monitor it lies on, never a constant, so it is
+/// right on a 1x, 1.5x or 2x display and on a window whose display is not the primary one. The
+/// work area is used, not the whole screen: the Dock and the menu bar are not room.
+fn beside_main(app: &tauri::AppHandle, spec: windows::Spec) -> Option<(f64, f64)> {
     let main = app.get_webview_window("main")?;
-    let scale = main.scale_factor().ok()?;
+    let monitor = main.current_monitor().ok()??;
+    let scale = monitor.scale_factor();
     let at = main.outer_position().ok()?.to_logical::<f64>(scale);
     let size = main.outer_size().ok()?.to_logical::<f64>(scale);
-    let monitor = main.current_monitor().ok()??;
-    let screen_at = monitor.position().to_logical::<f64>(scale);
-    let screen = monitor.size().to_logical::<f64>(scale);
-    let x = at.x + size.width + 8.0;
-    (x + width <= screen_at.x + screen.width).then_some((x, at.y))
+    let area = monitor.work_area();
+    let screen_at = area.position.to_logical::<f64>(scale);
+    let screen = area.size.to_logical::<f64>(scale);
+    windows::beside(
+        windows::Rect { x: at.x, y: at.y, width: size.width, height: size.height },
+        windows::Rect { x: screen_at.x, y: screen_at.y, width: screen.width, height: screen.height },
+        spec,
+    )
 }
 
 #[tauri::command]
@@ -220,17 +229,17 @@ async fn files_open(app: tauri::AppHandle, instance: String, title: Option<Strin
     let url = format!("files.html?instance={}&title={}", query_value(&instance), query_value(title.as_deref().unwrap_or("")));
     let mut builder = WebviewWindowBuilder::new(&app, &label, WebviewUrl::App(url.into()))
         .title(format!("Files in Windows — {shown}"))
-        .inner_size(920.0, 560.0)
-        .min_inner_size(560.0, 340.0)
+        .inner_size(windows::FILES.width, windows::FILES.height)
+        .min_inner_size(windows::FILES.min_width, windows::FILES.min_height)
         .visible(false);
     #[cfg(target_os = "macos")]
     {
         builder = builder
             .title_bar_style(tauri::TitleBarStyle::Overlay)
             .hidden_title(true)
-            .traffic_light_position(tauri::LogicalPosition::new(18.0, 26.0));
+            .traffic_light_position(tauri::LogicalPosition::new(windows::TRAFFIC_LIGHTS.0, windows::TRAFFIC_LIGHTS.1));
     }
-    if let Some((x, y)) = beside_main(&app, 920.0) {
+    if let Some((x, y)) = beside_main(&app, windows::FILES) {
         builder = builder.position(x, y);
     } else {
         builder = builder.center();
