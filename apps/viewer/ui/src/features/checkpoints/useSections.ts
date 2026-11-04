@@ -190,6 +190,8 @@ export function useSections(host: RefObject<SectionsHost | null>, stored: readon
     // Its own controls (the name field, the remove button) act for themselves.
     if (target?.closest("button, input") != null) return true
     const kind = part.dataset["part"]
+    // The body of one that isn't selected is the canvas's (the stylesheet says the same).
+    if (kind === "body" && selected !== s.id) return false
     const handle = part.dataset["handle"] as Handle | undefined
     const was = selected
     choose(s.id)

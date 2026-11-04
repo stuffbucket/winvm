@@ -250,7 +250,7 @@ export function resizeSection(s: Section, handle: Handle, to: Point, keep: reado
 }
 
 export interface Drawn {
-  /** The rectangle so far, or null when it can't start here (the press is within a keepout's gap). */
+  /** The rectangle so far, or null when it can't start here (the press is on another section, or has no room beside it). */
   readonly box: Rect | null
   /** It is big enough to keep as a section. */
   readonly ok: boolean
