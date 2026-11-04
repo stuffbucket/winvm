@@ -516,8 +516,8 @@ Its layout mirrors the card's caption plate, each fact in one place: the
 close button floats over its top right); under it the **title**, edited where
 it stands (click, Return or F2; Return keeps, Esc puts it back; one that can't
 be kept says why under it); when it was taken, muted; how it came about as the
-card's chip, with its size at the row's end, and a sentence under it that says
-what made it; **only when Windows can't restore it here, one status line**
+card's chip, with its size at the row's end (what made it is the chip's hover, not
+a line of text); **only when Windows can't restore it here, one status line**
 ("Can't restore" and the few words why, such as "Wrong QEMU version", with the warning glyph; the whole
 reason on hover, in Go Back's tooltip and as its accessible description; nothing
 at all when it can); its **note**, written as text (placeholder "Add a note"),
@@ -534,7 +534,7 @@ The kinds, what makes each, and so what the words say:
 | Taken by you | `manual` | New Checkpoint, `winvm save` | You took this one yourself, with New Checkpoint. |
 | Saved while idle | `auto` | the idle watcher (`watch.ts`, `autosave.keep` of them) | Taken automatically while Windows sat idle. |
 | Fresh install | `baseline` | `start`, the first time an instance boots, once the guest is ready (`savecmds.ts`; `rewind` goes back to it) | Taken the first time this machine started, once Windows had finished setting up and before you changed anything. |
-| Saved on suspend | `stow` | `winvm stow`, which the watcher runs after a longer idle and which a later `start` recalls (`savecmds.ts`; the machine then reads Suspended) | Taken when Windows was suspended. Starting it again picks up from here. |
+| Saved on suspend | `stow` | `winvm stow`, which the watcher runs after a longer idle and which a later `start` recalls (`savecmds.ts`; the machine then reads Suspended) | Taken when Windows was suspended. |
 | Test starting point | `golden` | `winvm golden create` once Windows has gone quiet (`golden.ts`) | A quiet moment saved so automated tests can start from the same state every time. |
 
 "Saved while idle" and "Saved on suspend" are what the Automatic filter hides.

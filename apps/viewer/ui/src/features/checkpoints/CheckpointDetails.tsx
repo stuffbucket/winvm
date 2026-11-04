@@ -9,7 +9,7 @@ import { t } from "../../i18n"
 import { formatSize, type SaveNotes } from "../../model"
 import { titleEdit } from "../machines/machines"
 import { type Checkpoint, deleteBlocked, incompatibleReason, shownName } from "./checkpoints"
-import { KindChip, kindTip, Picture, takenAt } from "./CheckpointCard"
+import { KindChip, Picture, takenAt } from "./CheckpointCard"
 
 export interface NoteDraft {
   readonly title: string
@@ -344,7 +344,6 @@ export function CheckpointDetails({ c, now, busy, saving, state = "open", panelR
             <KindChip kind={c.kind} className="checkpoint-details__kind" />
             <span className="checkpoint-details__size">{formatSize(c.bytes)}</span>
           </div>
-          <p className="checkpoint-details__kind-note">{kindTip(c.kind)}</p>
           {reason !== null && (
             // A status, not a property: one calm line, the whole reason on hover and in the Go Back button's description.
             <p className="checkpoint-details__status" title={t(reason)}>

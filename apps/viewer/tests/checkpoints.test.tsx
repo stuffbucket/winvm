@@ -820,7 +820,7 @@ describe("the checkpoint's panel", () => {
       manual: ["Taken by you", "You took this one yourself, with New Checkpoint."],
       auto: ["Saved while idle", "Taken automatically while Windows sat idle."],
       baseline: ["Fresh install", "Taken the first time this machine started, once Windows had finished setting up and before you changed anything."],
-      stow: ["Saved on suspend", "Taken when Windows was suspended. Starting it again picks up from here."],
+      stow: ["Saved on suspend", "Taken when Windows was suspended."],
       golden: ["Test starting point", "A quiet moment saved so automated tests can start from the same state every time."],
     }
     for (const [kind, [label, sentence]] of Object.entries(words)) {
@@ -828,7 +828,8 @@ describe("the checkpoint's panel", () => {
       const chip = host.querySelector(".checkpoint-details__kind")
       expect(chip?.textContent).toBe(label)
       expect(chip?.getAttribute("title")).toBe(sentence)
-      expect(host.querySelector(".checkpoint-details__kind-note")?.textContent).toBe(sentence)
+      // The sentence is the chip's hover, not a line in the panel.
+      expect(host.querySelector(".checkpoint-details__kind-note")).toBeNull()
       act(() => root?.unmount())
       document.body.replaceChildren()
       expect(kindLabel(kind)).toBe(label)

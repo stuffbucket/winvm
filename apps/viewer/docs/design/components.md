@@ -267,7 +267,7 @@ caption and in no properties list.
 - **Order, top to bottom:** the picture (full width, a hairline under it; click
   or Space for Quick Look); the title; when it was taken (`--text-muted`,
   tabular); the kind chip (the card's, the same words and glyph) with the size
-  at the row's end, and under it the kind's sentence in `--text-muted`; the
+  at the row's end (the kind's sentence is the chip's hover only); the
   can't-go-back status when it applies; the note; the properties (Tags; Save
   name when it differs from the title); the actions footer. There is no title bar
   above the picture: the close button floats over its top right on an opaque
@@ -281,8 +281,7 @@ caption and in no properties list.
   says what the title falls back to. No separate "Title" or "Name" field.
 - **The kind says how it came about**, in plain words and never the CLI's:
   Taken by you, Saved while idle, Fresh install, Saved on suspend, Test starting
-  point. Each has one sentence (the chip's `title`, and the line under it in the
-  panel); no "stow", "pristine" or "golden" in what a person reads. The table is
+  point. Each has one sentence, the chip's `title` and nowhere else; no "stow", "pristine" or "golden" in what a person reads. The table is
   in `windows.md` → *Checkpoints*.
 - **Can't restore is a status, not a property.** When it can, nothing is
   said (compatible is the default and not worth a row). When it can't: one calm
