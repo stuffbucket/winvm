@@ -177,8 +177,8 @@ thing with a picture: a panel that opens **beside** the control it explains
 (`features/help/Abilities.tsx`). Reuse it for another explanation; give it
 `anchor`, `title`, `media`, `footer` and children. Help is information, so it
 opens for a row whose action is unavailable in the machine's state: that row
-is `aria-disabled` (not `disabled`), says why under its label, and the popover
-leads with the same reason. See [`windows.md`](windows.md) → *Disclosure*.
+is `aria-disabled` (not `disabled`) and says why under its label; the popover
+itself is documentation and never mentions the machine's state. See [`windows.md`](windows.md) → *Disclosure*.
 
 - **Shape.** Width `min(32rem, 100vw − --space-6)`, `--surface-card`,
   hairline `--border-subtle`, `--radius-card`, `--elevation-modal`. Top to
@@ -188,6 +188,10 @@ leads with the same reason. See [`windows.md`](windows.md) → *Disclosure*.
   steps in `--text-base`, one note in `--text-sm`, its title in `--weight-md`),
   and a foot (a hairline above, position in `--text-sm` muted, ghost icon
   buttons for previous and next topic). Never a second card inside it.
+  Room to breathe: the text block is padded `--space-5` above and `--space-6`
+  at the sides and below, `--space-4` between its parts, `--space-3` between
+  steps; the foot `--space-2` by `--space-4`, its text aligned with the body's
+  `--space-6` edge.
 - **Pictures.** Real screenshots of the real window, one for light and one
   for dark, chosen by `prefers-color-scheme` in a `<picture>`; the page
   follows the same media query, so they always agree. A topic with more than

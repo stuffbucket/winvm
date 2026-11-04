@@ -1109,8 +1109,8 @@ html[data-os="macos"] .toolbar {
   flex: 0 0 auto;
   display: flex;
   flex-direction: column;
-  gap: var(--space-3);
-  padding: var(--space-3) var(--space-4) var(--space-4);
+  gap: var(--space-4);
+  padding: var(--space-5) var(--space-6) var(--space-6);
 }
 
 .help__head {
@@ -1141,18 +1141,10 @@ html[data-os="macos"] .toolbar {
   color: var(--text-strong);
 }
 
-/* Why the thing explained can't be done now; the help is still all here. */
-.help__unavailable {
-  margin: 0;
-  font-size: var(--text-sm);
-  line-height: var(--leading-lg);
-  color: var(--text-muted);
-}
-
 .help__steps {
   display: flex;
   flex-direction: column;
-  gap: var(--space-2);
+  gap: var(--space-3);
   padding-inline-start: var(--space-5);
   font-size: var(--text-base);
 }
@@ -1165,8 +1157,8 @@ html[data-os="macos"] .toolbar {
 .help__note {
   display: flex;
   flex-direction: column;
-  gap: var(--space-1);
-  padding-block-start: var(--space-3);
+  gap: var(--space-2);
+  padding-block-start: var(--space-4);
   border-block-start: var(--border-width-hairline) solid var(--border-subtle);
 }
 
@@ -1191,7 +1183,7 @@ html[data-os="macos"] .toolbar {
   align-items: center;
   justify-content: space-between;
   gap: var(--space-3);
-  padding: var(--space-1) var(--space-3) var(--space-1) var(--space-4);
+  padding: var(--space-2) var(--space-4) var(--space-2) var(--space-6);
   border-block-start: var(--border-width-hairline) solid var(--border-subtle);
 }
 

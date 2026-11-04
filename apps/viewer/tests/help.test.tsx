@@ -235,14 +235,14 @@ describe("what the machine's state allows", () => {
     }
   })
 
-  it("still opens the help of a row that is not available, and says why at the top of it", () => {
+  it("still opens the help of a row that is not available, and says the same as for any other row", () => {
     render(<Abilities phase="stopped" />)
     const r = rows()[4] as HTMLButtonElement
     act(() => r.click())
     expect(title()).toBe(text("ability.agent"))
     expect(r.getAttribute("aria-expanded")).toBe("true")
     const p = popover() as HTMLElement
-    expect(p.querySelector(".help__unavailable")?.textContent).toBe(`Not available right now. ${text("abilities.why.start")}.`)
+    expect(p.querySelector(".help__unavailable")).toBeNull()
     expect(p.querySelector(".help__lead")?.textContent).toBe(text("help.agent.lead"))
     expect(p.querySelectorAll(".help__steps li")).toHaveLength(3)
   })

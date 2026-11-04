@@ -151,9 +151,10 @@ and while Windows is starting every row but Go back to a checkpoint waits
 ("Windows is still starting"). An unavailable row is `aria-disabled="true"`,
 not `disabled`: it stays in the Tab order and opens its help, because help is
 information and only the action is unavailable. It is quiet (`--text-muted` label and glyph, not faded, so it
-keeps its contrast) with the reason under the label in `--text-sm`, and its
-popover begins with "Not available right now. Start Windows first." A row
-that works looks as it always does.
+keeps its contrast) with the reason under the label in `--text-sm`. Its popover
+reads exactly like any other: help is documentation, never written to the state
+of the machine in front of it (a requirement such as "Windows has to be running"
+belongs in the text itself). A row that works looks as it always does.
 
 A row opens a **help popover** (`components/HelpPopover.tsx`, see
 [`components.md`](components.md)): a screenshot of the real window, the

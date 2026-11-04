@@ -102,7 +102,7 @@ export function Abilities({ phase }: { readonly phase?: Phase | null }): JSX.Ele
             </>
           }
         >
-          <HelpText topic={topic} unavailable={blockedBy(topic.id, phase)} />
+          <HelpText topic={topic} />
         </HelpPopover>
       )}
     </section>

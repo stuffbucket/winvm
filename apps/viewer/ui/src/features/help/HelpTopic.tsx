@@ -33,15 +33,10 @@ export function HelpFigure({ topic }: { readonly topic: Topic }): JSX.Element {
 }
 
 /** What a topic says: one sentence, the steps, and one thing worth knowing. */
-export function HelpText({ topic, unavailable }: { readonly topic: Topic; /** The i18n key of why the thing can't be done now, when it can't. */ readonly unavailable?: string | null }): JSX.Element {
+export function HelpText({ topic }: { readonly topic: Topic }): JSX.Element {
   const id = topic.id
   return (
     <>
-      {unavailable !== null && unavailable !== undefined && (
-        <p className="help__unavailable" role="note">
-          {t("help.unavailable", { reason: t(unavailable) })}
-        </p>
-      )}
       <p className="help__lead">{t(`help.${id}.lead`)}</p>
       <ol className="help__steps">
         {Array.from({ length: topic.steps }, (_, i) => (

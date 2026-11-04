@@ -74,7 +74,6 @@
   "help.previous": "Previous topic",
   "help.next": "Next topic",
   "help.position": "{n} of {total}",
-  "help.unavailable": "Not available right now. {reason}.",
   "help.exec.lead": "A shell running in Windows, in its own window beside the screen. Windows has to be running.",
   "help.exec.step1": "Click Terminal (>_) in the toolbar. A PowerShell tab opens in your Windows home folder.",
   "help.exec.step2": "Option-click or right-click Terminal to pick another shell, or another folder to start in.",
