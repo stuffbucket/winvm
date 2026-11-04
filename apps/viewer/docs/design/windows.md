@@ -471,7 +471,8 @@ Enter or Space on a card still selects and looks. With a card selected,
 carrying puts it back. Now can't be moved. A card keeps its place as an
 offset from its slot, so it moves with its day when days are added. Moves are
 kept per machine in the settings below; the Reset layout button at the end of
-the control bar (dimmed while nothing is moved) puts everything back.
+the control bar (dimmed while nothing is moved) puts every card that is in no
+section back where winvm placed it (sections stay: see *Sections* below).
 
 **A day's date belongs to its cards.** It is placed from where the day's cards
 are now, not from where the layout first put them: at the top left of their
@@ -483,6 +484,27 @@ when every card of a day is on its own the date follows the earliest one.
 Each day is centred over Now in the layout and drawn smaller the older it is,
 so the dates' left edges differ between days by design; each is aligned with
 the left edge of its own cards, which is the one rule.
+
+**Sections.** A person's own grouping, drawn with the Section tool in the bar
+(S; pattern and rules in [`components.md`](components.md) → *Section
+(Checkpoints)*). A section is a named container: its tab carries its name,
+edited in place; checkpoints are put in it by dropping them (the section their
+picture's centre is in), and carrying the section carries them, each keeping its
+place relative to the section's top left. Corners and edges are on a grid of 24
+world units, which is drawn only while a section is being drawn, moved or
+resized. Sections never touch one another, Now or the timeline (one cell
+between), and they sit under the cards. They do not replace the days: the
+automatic layout is unchanged and still places every checkpoint, new ones
+included, outside any section; the day's date follows the day's cards that are
+in no section (the cluster rule above, over those only), and a day with all its
+cards in sections has no date. A section is a person's, so *Reset layout* puts
+back only the loose cards: sections, their names and what is in them stay (a
+card's place in a section is the section's, not a move). Removing a section
+(Delete, or the x on its tab) never touches a checkpoint: they stay where they
+are, loose. Sections are kept per machine in the same settings as the moves
+(`checkpoints.sections`: `{ id, name, x, y, w, h }` and, per checkpoint, its
+section and offset), made sound when read: on the grid, not touching, a deleted
+checkpoint dropped, a section allowed to be empty.
 
 **The timeline**, down the right edge: a tick per day with checkpoints,
 evenly spaced (by turn, not by time, so a busy day and a quiet month take
