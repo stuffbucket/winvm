@@ -597,8 +597,6 @@ html[data-os="macos"] .toolbar {
   flex-direction: column;
   gap: var(--space-3);
   margin-block-start: var(--space-4);
-  padding-block-start: var(--space-4);
-  border-block-start: var(--border-width-hairline) solid var(--border-subtle);
   align-self: stretch;
 }
 
@@ -609,32 +607,75 @@ html[data-os="macos"] .toolbar {
   color: var(--text-muted);
 }
 
+/* One outlined list, not a card each: every row opens that topic's help. */
 .abilities__list {
   list-style: none;
   margin: 0;
   padding: 0;
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(min(100%, 18rem), 1fr));
-  gap: var(--space-3) var(--space-5);
+  width: min(100%, 32rem);
+  border: var(--border-width-hairline) solid var(--border-subtle);
+  border-radius: var(--radius-card);
+  overflow: hidden;
 }
 
+.abilities__list li + li {
+  border-block-start: var(--border-width-hairline) solid var(--border-subtle);
+}
+
+/* The icon has a column of its own, as tall as the label's first line, so a
+   label that wraps stays under that line and the glyphs stay in one column. */
 .ability {
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
-  font-size: var(--text-sm);
+  display: grid;
+  grid-template-columns: var(--size-md) minmax(0, 1fr) var(--size-sm);
+  align-items: start;
+  column-gap: var(--space-3);
+  width: 100%;
+  padding: var(--space-3) var(--space-4);
+  border: 0;
+  background: transparent;
   color: var(--text-strong);
+  font-family: var(--font-body);
+  font-size: var(--text-base);
+  line-height: var(--leading-lg);
+  text-align: start;
+  cursor: pointer;
+  transition: background-color 150ms ease-out;
+}
+
+.ability:hover,
+.ability--open {
+  background: var(--surface-control);
+}
+
+.ability:focus-visible {
+  outline: var(--focus-ring);
+  outline-offset: calc(var(--focus-ring-width) * -1);
+}
+
+.ability__icon,
+.ability__more {
+  display: inline-flex;
+  align-items: center;
+  height: calc(var(--text-base) * var(--leading-lg));
 }
 
 .ability__icon {
-  flex: 0 0 auto;
-  display: inline-flex;
   color: var(--link);
 }
 
-.ability__icon svg {
+.ability__more {
+  color: var(--text-muted);
+}
+
+.ability__icon svg,
+.ability__more svg {
   width: var(--size-sm);
   height: var(--size-sm);
+}
+
+.ability__icon svg {
+  width: var(--size-md);
+  height: var(--size-md);
 }
 
 /* Only when the display has room for it. */
@@ -684,6 +725,186 @@ html[data-os="macos"] .toolbar {
   border: var(--border-width-hairline) solid var(--border-subtle);
   border-radius: var(--radius-card);
   box-shadow: var(--elevation-modal);
+}
+
+/* ---- Help popover (components/HelpPopover.tsx): a picture, a title and a few lines, beside what it explains ---- */
+.help {
+  position: fixed;
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  width: min(32rem, calc(100vw - var(--space-6)));
+  /* Taller than the window allows, the whole panel scrolls: the picture, the text, then the footer, which stays. */
+  overflow-x: hidden;
+  overflow-y: auto;
+  background: var(--surface-card);
+  border: var(--border-width-hairline) solid var(--border-subtle);
+  border-radius: var(--radius-card);
+  box-shadow: var(--elevation-modal);
+  color: var(--text-base-color);
+  animation: help-in 150ms ease-out;
+}
+
+.help:focus {
+  outline: none;
+}
+
+@keyframes help-in {
+  from {
+    opacity: 0;
+  }
+}
+
+.help__media {
+  flex: 0 0 auto;
+  border-block-end: var(--border-width-hairline) solid var(--border-subtle);
+  background: var(--surface-control);
+}
+
+.help__figure {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+}
+
+.help__image {
+  display: block;
+  width: 100%;
+  height: auto;
+  aspect-ratio: 16 / 9;
+  object-fit: cover;
+}
+
+/* Which picture, when a topic has more than one. */
+.help__views {
+  display: flex;
+  gap: var(--space-1);
+  padding: var(--space-1) var(--space-3);
+  border-block-start: var(--border-width-hairline) solid var(--border-subtle);
+  background: var(--surface-card);
+}
+
+.help__view {
+  padding: var(--space-1) var(--space-3);
+  border: 0;
+  border-radius: var(--radius-input);
+  background: transparent;
+  color: var(--text-muted);
+  font-family: var(--font-body);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-md);
+  line-height: var(--leading-lg);
+  cursor: pointer;
+  transition:
+    color 150ms ease-out,
+    background-color 150ms ease-out;
+}
+
+.help__view:hover {
+  color: var(--text-strong);
+}
+
+.help__view--on {
+  background: var(--surface-control);
+  color: var(--text-strong);
+}
+
+.help__view:focus-visible {
+  outline: var(--focus-ring);
+  outline-offset: var(--focus-ring-offset);
+}
+
+.help__body {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4) var(--space-4);
+}
+
+.help__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.help__title {
+  margin: 0;
+  font-size: var(--text-md);
+  font-weight: var(--weight-lg);
+  line-height: var(--leading-lg);
+  color: var(--text-strong);
+}
+
+.help__lead,
+.help__steps,
+.help__note p {
+  margin: 0;
+  max-width: 65ch;
+  line-height: var(--leading-lg);
+}
+
+.help__lead {
+  font-size: var(--text-base);
+  color: var(--text-strong);
+}
+
+.help__steps {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding-inline-start: var(--space-5);
+  font-size: var(--text-base);
+}
+
+.help__steps li::marker {
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.help__note {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding-block-start: var(--space-3);
+  border-block-start: var(--border-width-hairline) solid var(--border-subtle);
+}
+
+.help__note-title {
+  margin: 0;
+  font-size: var(--text-sm);
+  font-weight: var(--weight-md);
+  color: var(--text-strong);
+}
+
+.help__note p {
+  font-size: var(--text-sm);
+  color: var(--text-muted);
+}
+
+.help__foot {
+  position: sticky;
+  inset-block-end: 0;
+  flex: 0 0 auto;
+  background: var(--surface-card);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-1) var(--space-3) var(--space-1) var(--space-4);
+  border-block-start: var(--border-width-hairline) solid var(--border-subtle);
+}
+
+.help__position {
+  font-size: var(--text-sm);
+  font-variant-numeric: tabular-nums;
+  color: var(--text-muted);
+}
+
+.help__nav {
+  display: flex;
+  gap: var(--space-1);
 }
 
 .action {

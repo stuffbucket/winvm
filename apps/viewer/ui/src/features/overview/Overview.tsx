@@ -1,9 +1,10 @@
 import { Button } from "../../components/Button"
-import { Icon, type IconName } from "../../components/Icon"
+import { Icon } from "../../components/Icon"
 import { cx } from "../../components/cx"
 import { t } from "../../i18n"
 import type { Phase, Status, Step } from "../../model"
 import { facts } from "../../model"
+import { Abilities } from "../help/Abilities"
 
 interface OverviewProps {
   readonly phase: Phase | null
@@ -12,14 +13,6 @@ interface OverviewProps {
   readonly canStart: boolean
   onStart(): void
 }
-
-// The same glyphs as their toolbar buttons, so each reads as "that button".
-const ABILITIES: readonly { icon: IconName; key: string }[] = [
-  { icon: "terminal", key: "ability.exec" },
-  { icon: "folder", key: "ability.files" },
-  { icon: "history", key: "ability.saves" },
-  { icon: "agent", key: "ability.agent" },
-]
 
 function Steps({ steps }: { readonly steps: readonly Step[] }): JSX.Element {
   return (
@@ -88,21 +81,7 @@ export function Overview(p: OverviewProps): JSX.Element {
             {t("overview.missing.noImage")} <code className="mono">winvm build --iso &lt;Windows 11 ISO&gt;</code>
           </p>
         )}
-        <section className="abilities" aria-labelledby="abilities-title">
-          <h2 className="abilities__title" id="abilities-title">
-            {t("abilities.title")}
-          </h2>
-          <ul className="abilities__list">
-            {ABILITIES.map((a) => (
-              <li key={a.key} className="ability">
-                <span className="ability__icon" aria-hidden="true">
-                  <Icon name={a.icon} />
-                </span>
-                {t(a.key)}
-              </li>
-            ))}
-          </ul>
-        </section>
+        <Abilities />
       </div>
     </div>
   )
