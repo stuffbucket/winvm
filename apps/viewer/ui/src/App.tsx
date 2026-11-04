@@ -24,6 +24,7 @@ import {
   shareStart,
   shareStop,
   showWindow,
+  trace,
   winvm,
 } from "./backend"
 import { Button } from "./components/Button"
@@ -129,6 +130,10 @@ export function App(): JSX.Element {
   // The native Input menu can't grey its items out here: a press while the guest takes none says why.
   const inputRef = useRef(input)
   inputRef.current = input
+  // A line for each change, so "the mouse stopped working" has a timeline (the app's stderr: run it from a terminal).
+  useEffect(() => {
+    trace(`input: ${input.forward ? "to the guest" : `held back (${input.why ?? "?"})`}; phase ${String(phase)}, verb ${String(w.busy)}`)
+  }, [input.forward, input.why, phase, w.busy])
   const guestReady = phase === "running" && w.busy === null
   const hostReady = w.checks === null || w.checks.ready
   const c = controls(phase ?? "missing", w.busy !== null || phase === null || !hostReady)
