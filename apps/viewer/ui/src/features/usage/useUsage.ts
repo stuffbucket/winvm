@@ -11,9 +11,11 @@ export interface UsageView {
   /** Recent CPU percentages and memory fractions, oldest first, for sparklines. */
   readonly cpuHistory: readonly number[]
   readonly memoryHistory: readonly number[]
+  /** What QEMU spends on the Mac, on the same 0-100 scale as `cpuHistory`: the CPU line's second series. */
+  readonly macCpuHistory: readonly number[]
 }
 
-const EMPTY: UsageView = { now: null, cpuHistory: [], memoryHistory: [] }
+const EMPTY: UsageView = { now: null, cpuHistory: [], memoryHistory: [], macCpuHistory: [] }
 
 const visible = (): boolean => document.visibilityState !== "hidden"
 
@@ -61,6 +63,7 @@ export function useUsage(
           setView((v) => ({
             now,
             cpuHistory: pushHistory(v.cpuHistory, now.cpu),
+            macCpuHistory: pushHistory(v.macCpuHistory, now.macCpu),
             memoryHistory: pushHistory(v.memoryHistory, now.memory === null ? null : fraction(now.memory)),
           }))
         }

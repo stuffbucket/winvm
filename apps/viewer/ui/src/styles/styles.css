@@ -1600,7 +1600,8 @@ html[data-os="macos"] .toolbar {
 }
 
 /* The panel's Resources: each a label and its value, then the last minute
-   and a half as a line (CPU, memory) or a hairline bar (disk), and a note. */
+   and a half as a line (CPU, memory) or a bar (disk). CPU's line has a dashed
+   second line (the Mac's), the disk's bar a strip on it (the Mac's changes). */
 .resources {
   display: flex;
   flex-direction: column;
@@ -1626,10 +1627,74 @@ html[data-os="macos"] .toolbar {
   white-space: nowrap;
 }
 
-.resource__note {
+/* A meter with two values to tell apart: ink is the Mac, accent is Windows.
+   Pointing at it or focusing it names each (the legend); at rest, only the
+   headline value shows. Escape hides the legend (data-dismissed). */
+.resource--legend {
+  position: relative;
+  border-radius: var(--radius-input);
+}
+
+.resource--legend:focus-visible {
+  outline: var(--focus-ring);
+  outline-offset: var(--focus-ring-offset);
+}
+
+.resource__legend {
+  position: absolute;
+  inset-inline: 0;
+  inset-block-start: 100%;
+  z-index: 20;
+  display: none;
+  flex-direction: column;
+  gap: var(--space-1);
   margin: var(--space-1) 0 0;
+  padding: var(--space-2) var(--space-3);
+  list-style: none;
   font-size: var(--text-sm);
-  color: var(--text-muted);
+  color: var(--text-strong);
+  background: var(--surface-control);
+  border: var(--border-width-hairline) solid var(--border-strong);
+  border-radius: var(--radius-input);
+  box-shadow: var(--elevation-tooltip);
+}
+
+.resource--legend:is(:hover, :focus-visible):not([data-dismissed]) .resource__legend {
+  display: flex;
+}
+
+.resource__legend-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Each key is the mark itself: the stroke or fill it has in the meter. */
+.resource__key {
+  flex: none;
+  display: block;
+  inline-size: var(--size-sm);
+}
+
+.resource__key--line {
+  border-block-start: var(--border-width-thick) solid var(--accent);
+}
+
+.resource__key--line-other {
+  border-block-start: var(--border-width-hairline) dashed var(--text-strong);
+}
+
+.resource__key--fill {
+  block-size: var(--space-2);
+  background: var(--accent);
+  border-radius: var(--radius-pill);
+}
+
+.resource__key--strip {
+  block-size: var(--border-width-heavy);
+  background: var(--text-strong);
+  border-radius: var(--radius-pill);
 }
 
 .sparkline {
@@ -1651,9 +1716,16 @@ html[data-os="macos"] .toolbar {
   stroke: none;
 }
 
+.sparkline__line--other {
+  stroke: var(--text-strong);
+  stroke-width: var(--border-width-hairline);
+  stroke-dasharray: 3 2;
+}
+
 .resource__bar {
+  position: relative;
   display: block;
-  height: var(--border-width-heavy);
+  height: var(--space-2);
   background: var(--border-subtle);
   border-radius: var(--radius-pill);
   overflow: hidden;
@@ -1663,6 +1735,19 @@ html[data-os="macos"] .toolbar {
   display: block;
   height: 100%;
   background: var(--accent);
+}
+
+/* The machine's changes on the Mac, on the same track and total as the fill:
+   a thinner strip of ink across the middle, readable over the fill and over
+   the bare track, and a different shape, not only a different color. */
+.resource__overlay {
+  position: absolute;
+  inset-block-start: 50%;
+  inset-inline-start: 0;
+  height: var(--border-width-heavy);
+  transform: translateY(-50%);
+  background: var(--text-strong);
+  border-radius: var(--radius-pill);
 }
 
 /* New Machine…: labelled fields, the advanced ones folded away. */
