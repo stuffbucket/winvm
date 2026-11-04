@@ -93,12 +93,14 @@ The plate's rows, each fact in one place (`windows.md` → *Checkpoints*):
   (Fresh install), archive (Saved on suspend), flask (Test starting point),
   notebook-pen (a note), triangle-alert (can't restore).
 - Status is not a row: a card Windows can't restore here is dashed and its
-  picture greyed, with a warning pill ("Can't restore") inset at the
-  picture's bottom edge (`--status-warning`), the whole reason in its `title`.
-  Narrower than the plate's
-  full width the pill is the icon alone in the picture's corner.
+  picture greyed, with a warning banner ("Can't restore", one line, 80%
+  opaque `--status-warning`; the panel's, see *Properties panel*) across the
+  picture's foot, the whole reason in its `title`. Narrower than the plate's
+  full width the banner is the icon alone in a small disc in the picture's corner.
+- The size's `title` says what it counts: "Disk space on your Mac, at most:
+  checkpoints share space".
 - Absent data is absent: no kind chip placeholder, no empty note row.
-- One `aria-label` states everything the card shows, plus whether it can be gone back to
+- One `aria-label` states everything the card shows, plus whether it can be restored
   here; the children are decoration for assistive technology.
 
 ## Callouts (banners)
@@ -265,11 +267,11 @@ caption and in no properties list.
   rather than stacking another. Another checkpoint is a change of content, in
   place.
 - **Order, top to bottom:** the picture (full width, a hairline under it; click
-  or Space for Quick Look); the title; when it was taken (`--text-muted`,
-  tabular); the kind chip (the card's, the same words and glyph) with the size
-  at the row's end (the kind's sentence is the chip's hover only); the
-  can't-go-back status when it applies; the note; the properties (Tags; Save
-  name when it differs from the title); the actions footer. There is no title bar
+  or Space for Quick Look; the can't-restore banner across its foot when it
+  applies); the title; when it was taken (`--text-muted`, tabular); the kind chip
+  (the card's, the same words and glyph) with the size at the row's end (the
+  kind's sentence is the chip's hover only); **the break**; the note; the
+  properties (Tags); the actions footer. There is no title bar
   above the picture: the close button floats over its top right on an opaque
   disc, a real button in the Tab order with its tooltip.
 - **The title is the heading, once.** At rest a button that reads as text
@@ -284,34 +286,53 @@ caption and in no properties list.
   point. Each has one sentence, the chip's `title` and nowhere else; no "stow", "pristine" or "golden" in what a person reads. The table is
   in `windows.md` → *Checkpoints*.
 - **Can't restore is a status, not a property.** When it can, nothing is
-  said (compatible is the default and not worth a row). When it can't: one calm
-  line under the kind, `--status-warning`, the warning glyph, "Can't restore"
-  in `--weight-lg` and under it the few words why ("Wrong QEMU version",
-  `--text-muted`); the whole sentence is its `title` and the
-  accessible description (`aria-describedby`) of Go Back, which is disabled with
-  the same sentence as its tooltip. The card's pill says the same three words.
-  One verb for the whole feature, the one the app already uses for the action:
-  *go back*.
-- **The note is text.** A borderless, transparent area under the status,
-  `--text-base`, placeholder "Add a note" in `--text-muted`; hover fills it,
-  focus rings it. It grows with its text up to a sensible height
+  said (compatible is the default and not worth a row). When it can't: a
+  **banner across the foot of the picture**, laid over it at its full width
+  (square, as the picture is), one line, ellipsis when it is too narrow: the
+  warning glyph, then "Can't restore · Wrong QEMU version". Its fill is
+  `--status-warning` at 80% opacity (20% see-through, so the screenshot shows
+  faintly through), deepened one step toward `--text-strong` and its ink is
+  `--surface-card`, so it is dark ink on the dark theme's amber and light ink on
+  the light theme's brown. Over the darkest and the lightest possible picture
+  that is at least 4.75:1 (light theme, over white) and 6.73:1 (dark theme, over
+  black), checked in `docs/design/color.md`'s way. The whole sentence is its
+  `title` and the accessible description (`aria-describedby`) of Restore, which
+  is disabled with the same sentence as its tooltip. The card has the same
+  banner at its full-caption zoom, "Can't restore" alone, the same tooltip; at
+  lower zooms it keeps its small circular warning glyph. One verb for the whole
+  feature: *restore*.
+- **One break.** A single hairline separates the caption (picture, title, date,
+  kind and size) from what can be changed. Nothing else in the panel draws a
+  rule except the one under the picture and the one over the actions.
+- **The note is text.** The first thing below the break: a borderless,
+  transparent area, `--text-base`, placeholder "Add a note" in `--text-muted`;
+  hover fills it, focus rings it. It grows with its text up to a sensible height
   (`--size-2xl` x 6), then scrolls. It saves itself after a pause (700 ms) and on
   leaving; there is no Save button. Esc puts back what it held when focused. A
   failed save is said quietly in the footer, in `--status-error`.
-- **Properties are rows**: a `--text-muted` label column and a value, `--size-xl`
-  high, values selectable, no heading over them. A value that can be edited (Tags)
-  looks like the others until hovered or focused. **Save name** is the technical
-  name `winvm load` takes: shown only when it differs from the title, in the
-  mono face, with a copy button (a tick says it was copied); never repeated when
-  the title is the name.
-- **Actions** are in the footer, icon and word: Delete… (ghost, `--status-error`,
-  at the left, apart from the primary and always confirmed), Go Back to This
-  (primary, at the right). A button that can't be used is disabled and its tooltip
-  says why.
+- **Properties are rows**: a `--text-muted` label column and a value, one grid
+  for every row (labels start with the note's text; values start together),
+  `--size-xl` high, values selectable, no heading over them. A value that can be
+  edited (Tags) looks like the others until hovered or focused. There is **no
+  save name** row: the technical name is not something a person reads. The way
+  to the checkpoint's files is the folder button in the actions.
+- **The size says what it counts**, on hover only: "Disk space on your Mac, at
+  most: checkpoints share space" (card and panel). It is the memory file plus the
+  disk copy's allocated blocks plus the firmware variables
+  (`saves.ts` `bytes`); the disk copies are APFS clones that share blocks, so it
+  overstates what deleting one would free.
+- **Actions** are in the footer: Delete… (ghost, `--status-error`, icon and
+  word, at the left, apart from the primary and always confirmed); then, at the
+  right, two icon buttons: the **folder** (ghost, "Show in Finder": opens the
+  checkpoint's folder on the Mac; `winvm saves path` names it, the shell's
+  `open_folder` command opens it) and the **rewind** `⏪` (primary, "Restore
+  this checkpoint", tooltip and `aria-label`). A button that can't be used is
+  disabled and its tooltip says why. Restore asks first; what it says is in
+  `windows.md` → *Checkpoints*.
 - **Keyboard.** Focus moves to the layer when it opens and back to the card when it
   closes from inside it; Esc closes it unless a field is being edited (then it
   puts that field back first); Tab moves through the close button, the picture,
-  the title, the note, Tags, the copy button and the actions.
+  the title, the note, Tags and the actions.
 
 ## Help popover
 

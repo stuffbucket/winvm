@@ -13,7 +13,7 @@ A person asked "instance of what?", so in every UI string:
 |---|---|
 | instance | Windows machine, or machine once it is clear ("Windows machines", "New Machine…", "this machine") |
 | image (the base disk an instance starts from) | Windows image |
-| save (`winvm save`: the whole machine, RAM and disk, at a moment) | checkpoint ("New Checkpoint", "Go Back to This", "Keep checkpoints"); never "save", which a person reads as saving a document |
+| save (`winvm save`: the whole machine, RAM and disk, at a moment) | checkpoint ("New Checkpoint", "Restore", "Keep checkpoints"); never "save", which a person reads as saving a document |
 
 Keep `-i`, `instance`, `image` and `save` in the CLI, its help and these
 docs' code references; they are the command line's words. Kinds of
@@ -157,7 +157,7 @@ missing.
 **What you can do** (`features/help/`), a `--text-sm` muted title over one
 outlined list (a hairline border and `--radius-card`, no fill, rows split by
 hairlines) of five rows: Open a Windows terminal, Copy files between your Mac
-and Windows, Save a checkpoint, Go back to a checkpoint, Use winvm from
+and Windows, Save a checkpoint, Restore a checkpoint, Use winvm from
 Claude Code and Claude Desktop. The title is the same whatever the state;
 the rows say what the state allows. A row is a button: the toolbar button's
 own glyph in a column of its own (`--size-md`, `--link`), the label in
@@ -177,12 +177,12 @@ put away or not set up, so most rows are unavailable there:
 | Open a Windows terminal | yes | Resume Windows first | Start Windows first | Set up Windows first |
 | Copy files between your Mac and Windows | yes | Resume Windows first | Start Windows first | Set up Windows first |
 | Save a checkpoint | yes | yes | Start Windows first | Set up Windows first |
-| Go back to a checkpoint | yes | yes | yes (it starts Windows from the checkpoint) | Set up Windows first |
+| Restore a checkpoint | yes | yes | yes (it starts Windows from the checkpoint) | Set up Windows first |
 | Use winvm from Claude Code and Claude Desktop | yes | Resume Windows first | Start Windows first | Set up Windows first |
 
 Asleep is the same as paused except that Save a checkpoint also asks to
 resume (the Checkpoints view takes one only while Windows runs or is paused),
-and while Windows is starting every row but Go back to a checkpoint waits
+and while Windows is starting every row but Restore a checkpoint waits
 ("Windows is still starting"). An unavailable row is `aria-disabled="true"`,
 not `disabled`: it stays in the Tab order and opens its help, because help is
 information and only the action is unavailable. It looks like every other row, with the reason under the label in
@@ -206,7 +206,7 @@ by `scripts/render-help.mjs` (below). Each claim is one the app, the CLI or
 `PLAYWRIGHT_DIR=… node scripts/render-help.mjs` from `apps/viewer` renders
 the Terminal window (against `tests/render/help-term-server.ts`, a fake guest
 that plays a short session), the Files window, the Checkpoints view (new
-checkpoint; browsing; one selected, with Go Back to This) and the Use with
+checkpoint; browsing; one selected, with Restore) and the Use with
 Claude panel, in WebKit against `tests/render/fake-tauri.js` and
 `fake-help.js`, on a fixed clock so Today and Yesterday read the same every
 time. It writes `<topic>-<figure>.light.jpg` and `.dark.jpg` (1200 × 675)
@@ -410,7 +410,7 @@ a vignette and sinking into the surface color toward the top, where the oldest
 checkpoints are: the view is the whole window, with no chrome at its top.
 Nothing of ours sits by the traffic lights (no title chip; the native title
 bar names the window); only a strip across the top still moves the window.
-Going back to a checkpoint leaves the same way, once Windows is back at that
+Restoring a checkpoint leaves the same way, once Windows is back at that
 moment. The camera still flies *within* the view (below).
 
 **Layout.** Time runs up the canvas, as Time Machine's windows recede into
@@ -443,12 +443,14 @@ by position and weight (`components.md` → *Checkpoint card*):
 
 The kind is never on the picture, and the note is never an icon beside the
 name: they are different facts and read differently. Absent data shows
-nothing. One that Windows can't restore here is dashed and grey, with a warning pill
-("Can't restore") inset at its picture's bottom edge, which is the card's
+nothing. One that Windows can't restore here is dashed and grey, with a warning
+banner ("Can't restore", one line, 80% opaque) across its picture's foot where
+the card is wide enough for words (a small circular warning glyph in the corner
+below that), which is the card's
 state, not a row of its caption (the reason is its tooltip and part of its
 accessible name; the panel says it in a few words, the whole reason on hover). The accessible name is the
 whole of it: name, kind, when, size, "Has notes" when it has, and the reason
-when it can't be gone back to.
+when it can't be restored.
 
 **Words read at any zoom.** Card words are drawn at least 12 px on screen
 (`--text-sm` at 86%), scaled up in the world as the camera pulls back rather than
@@ -513,19 +515,23 @@ from inside, back to the card. Reduced motion: it appears and goes.
 
 Its layout mirrors the card's caption plate, each fact in one place: the
 **larger screenshot** at the top (click it, or press Space, for Quick Look; the
-close button floats over its top right); under it the **title**, edited where
+close button floats over its top right); **only when Windows can't restore it
+here, a one-line banner across the screenshot's foot** ("Can't restore · Wrong
+QEMU version", the warning glyph first, 80% opaque warning tone; the whole
+reason on hover, in Restore's tooltip and as its accessible description; nothing
+at all when it can); under it the **title**, edited where
 it stands (click, Return or F2; Return keeps, Esc puts it back; one that can't
 be kept says why under it); when it was taken, muted; how it came about as the
 card's chip, with its size at the row's end (what made it is the chip's hover, not
-a line of text); **only when Windows can't restore it here, one status line**
-("Can't restore" and the few words why, such as "Wrong QEMU version", with the warning glyph; the whole
-reason on hover, in Go Back's tooltip and as its accessible description; nothing
-at all when it can); its **note**, written as text (placeholder "Add a note"),
+a line of text; the size's hover says it is the space on the Mac's disk, at
+most, since checkpoints share space); then **one break**; its **note**, written
+as text (placeholder "Add a note"),
 saved by itself after a pause with no Save button (Esc puts it back), to
 `$XDG_DATA_HOME/winvm/notes/<instance>/<save>.json` through `winvm saves note`;
-then the rows for what is more: its tags (editable, comma-separated) and its
-**Save name** (what `winvm load` takes, in the mono face with a copy button),
-shown only when it differs from the title. Last, Delete… and Go Back to This.
+then the rows for what is more: its tags (editable, comma-separated); there is
+no save-name row. Last, Delete…, a folder button (**Show in Finder**: opens the
+checkpoint's folder, `~/.local/state/winvm/saves/<instance>/<save>/`, which
+`winvm saves path` names) and the rewind button (**Restore this checkpoint**).
 
 The kinds, what makes each, and so what the words say:
 
@@ -539,11 +545,20 @@ The kinds, what makes each, and so what the words say:
 
 "Saved while idle" and "Saved on suspend" are what the Automatic filter hides.
 
-- **Go Back to This** confirms: "Windows returns to exactly how it was at
-  that moment. What it's doing now is replaced, unless you keep it as a
-  checkpoint first.", with Cancel, Save Current First (while Windows runs:
-  it takes "Before going back to …" first) and Go Back. It is disabled,
-  with the reason (the same one the status says, in full), for a checkpoint that can't be gone back to here.
+- **Restore** (the rewind button) confirms, in two short sentences about
+  *this* machine: while Windows runs or is paused, "This machine goes back to
+  how it was at that moment, and what it's doing now is replaced. Your
+  checkpoints are kept."; while it is off, "This machine starts from how it was
+  at that moment, replacing what is on its disk now. Your checkpoints are kept."
+  With Cancel, Take Checkpoint First (while Windows runs: it takes "Before
+  restoring …" first, then restores) and **Restore**. No machine is created and
+  no second one runs: `load` quits this machine's QEMU (running or paused, what
+  it held is discarded), puts the checkpoint's disk and memory back and starts
+  it again, running, at that moment (`saves.ts` `loadSave`); a stopped machine
+  is simply started from it. Nothing is kept of the present unless Take
+  Checkpoint First is chosen. A waiting "Saved on suspend" checkpoint is spent by
+  any restore. The button is disabled, with the reason (the same one the banner
+  says, in full), for a checkpoint that can't be restored here.
 - **Delete…** confirms, destructive: its picture and notes go with it.
   Fresh install (baseline) and Test starting point (golden) checkpoints can't be deleted
   here, as `rewind` and tests depend on them; the button's tooltip says so.
