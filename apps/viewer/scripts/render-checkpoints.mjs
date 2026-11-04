@@ -326,13 +326,30 @@ for (const scheme of ["dark", "light"]) {
   await wait(1600)
   await page.keyboard.press("Meta+0")
   await wait(900)
-  await page.locator('.checkpoint[data-name="office-installed"] .checkpoint__hit').click()
-  await wait(1200)
   const panel = page.locator(".checkpoint-details")
-  const title = panel.locator("header .checkpoint-details__title-field")
+  const title = panel.locator(".checkpoint-details__title-field")
+  const top = async (sel) => (await panel.locator(sel).first().boundingBox())?.y ?? -1
+  check((await panel.count()) === 0, "no panel while nothing is selected")
+  await page.locator('.checkpoint[data-name="office-installed"] .checkpoint__hit').click()
+  await wait(80)
+  const opening = await panel.boundingBox()
+  await shot(page, `${scheme}-39-details-opening`)
+  check(opening !== null && opening.x < 0 && opening.x > -400, `the panel is on its way in from the left (x ${String(opening?.x)})`)
+  await wait(1100)
   await shot(page, `${scheme}-40-details`)
+  const at = await panel.boundingBox()
+  check(at !== null && at.x === 0, "it has arrived at the window's left edge")
+  check((await page.evaluate(() => document.activeElement?.classList.contains("checkpoint-details"))) === true, "focus moved into the panel")
   check((await panel.getByText("Office installed").count()) === 1, "the checkpoint's name appears once in its panel")
   check((await panel.getByText("Name", { exact: true }).count()) === 0, "no separate Name field")
+  for (const gone of ["Taken", "Kind", "Size", "Loads here", "Name in winvm"]) check((await panel.getByText(gone, { exact: true }).count()) === 0, `no ${gone} row`)
+  const order = [await top(".checkpoint-details__picture"), await top(".checkpoint-details__title-field"), await top(".checkpoint-details__when"), await top(".checkpoint-details__facts"), await top("textarea"), await top(".checkpoint-details__props"), await top("footer")]
+  check(order.every((y, i) => i === 0 || y > order[i - 1]), `picture, title, when, kind and size, note, properties, actions in that order (${order.map((y) => Math.round(y)).join(", ")})`)
+  check((await panel.locator(".checkpoint-details__kind").innerText()) === "Taken by you", "the manual kind chip says Taken by you")
+  check((await panel.locator(".checkpoint-details__prop--name .mono").innerText()) === "office-installed", "the save name is a row, since it isn't the title")
+  const closeBox = await panel.locator(".checkpoint-details__close").boundingBox()
+  const pictureBox = await panel.locator(".checkpoint-details__picture").boundingBox()
+  check(closeBox !== null && pictureBox !== null && closeBox.y >= pictureBox.y && closeBox.x + closeBox.width <= pictureBox.x + pictureBox.width, "the close button floats over the picture's top right")
 
   // The title: edited where it stands.
   await title.hover()
@@ -368,20 +385,94 @@ for (const scheme of ["dark", "light"]) {
   await page.keyboard.press("Escape")
   await wait(300)
   check((await note.inputValue()).startsWith("Signed in as"), "Esc puts the note back")
+
+  // Esc with nothing being edited eases it out; it is gone after the ease, and focus is back on the card.
+  await page.keyboard.press("Escape")
+  await wait(90)
+  check((await panel.count()) === 1, "it stays in the page while it eases out")
+  await shot(page, `${scheme}-46-details-closing`)
+  await wait(400)
+  check((await panel.count()) === 0, "and is gone when it has")
+  check((await page.evaluate(() => document.activeElement?.closest(".checkpoint")?.getAttribute("data-name"))) === "office-installed", "focus is back on its card")
+
+  // Select, let go and select again quickly: one panel, no stacking.
+  const card = page.locator('.checkpoint[data-name="office-installed"] .checkpoint__hit')
+  await card.click()
+  await wait(60)
+  await page.keyboard.press("Escape")
+  await wait(60)
+  await card.click()
+  await wait(500)
+  check((await panel.count()) === 1 && ((await panel.getAttribute("data-state")) === "open"), "select, let go and select again leaves one open panel")
+  // Another checkpoint while it is open: the content changes in place, no new slide.
+  await page.evaluate(() => document.querySelector(".checkpoint-details")?.setAttribute("data-mark", "same"))
+  await page.locator('.checkpoint[data-name="auto-1"] .checkpoint__hit').click()
+  await wait(400)
+  check((await panel.getAttribute("data-mark")) === "same" && (await panel.getAttribute("data-state")) === "open", "another checkpoint changes the panel in place")
+  await shot(page, `${scheme}-47-details-switched`)
   await page.keyboard.press("Escape")
   await wait(900)
 
-  // One that can't load: a few words, the whole reason on hover.
+  // An automatic one: no save name row (its name is its title); the kind says when.
+  await page.keyboard.press("Meta+0")
+  await wait(900)
+  await page.locator('.checkpoint[data-name="auto-3"] .checkpoint__hit').click()
+  await wait(1200)
+  await shot(page, `${scheme}-48-details-automatic`)
+  check((await panel.locator(".checkpoint-details__kind").innerText()) === "Saved while idle", "the automatic kind chip says when")
+  check((await panel.locator(".checkpoint-details__prop--name").count()) === 0, "no save name row when it is the title")
+  await page.keyboard.press("Escape")
+  await wait(900)
+
+  // One that can't be gone back to: a calm line under the facts, Go Back off with the reason.
   await page.keyboard.press("Meta+0")
   await wait(900)
   await page.locator('.checkpoint[data-name="before-qemu-upgrade"] .checkpoint__hit').click()
   await wait(1200)
   await shot(page, `${scheme}-45-details-cant-load`)
-  const why = panel.locator(".checkpoint-details__reason")
-  check((await why.innerText()) ==="Different QEMU version", "the reason is a few words")
-  check(((await why.getAttribute("title")) ?? "").includes("can't load here"), "the whole reason is its tooltip")
+  const why = panel.locator(".checkpoint-details__status")
+  check(((await why.innerText()) ?? "").replace(/\s+/g, " ").trim() === "Can't go back here Made with a different QEMU version", "the reason is a few words")
+  check(((await why.getAttribute("title")) ?? "").includes("can't go back to it"), "the whole reason is its tooltip")
+  check(await panel.getByRole("button", { name: "Go Back to This" }).isDisabled(), "Go Back is off")
   await page.keyboard.press("Escape")
   await wait(900)
+
+  // Suspended machine: the checkpoint taken at suspend.
+  const stowed = await open(scheme, "?state=stowed")
+  await enter(stowed)
+  await wait(1600)
+  await stowed.keyboard.press("Meta+0")
+  await wait(900)
+  await stowed.locator('.checkpoint[data-name="stow"] .checkpoint__hit').click()
+  await wait(1200)
+  await shot(stowed, `${scheme}-49-details-suspend`)
+  check((await stowed.locator(".checkpoint-details__kind").innerText()) === "Saved on suspend", "the suspend kind chip")
+  await stowed.close()
+
+  // The zoom pill and the bar stay in view and clear of the panel at 720 and 1000 wide, with it open.
+  for (const [w, h] of [
+    [720, 520],
+    [1000, 800],
+  ]) {
+    const narrow = await open(scheme)
+    await narrow.setViewportSize({ width: w, height: h })
+    await enter(narrow)
+    await wait(1600)
+    await narrow.keyboard.press("Meta+0")
+    await wait(900)
+    await narrow.locator('.checkpoint[data-name="before-qemu-upgrade"] .checkpoint__hit').click()
+    await wait(1200)
+    await narrow.keyboard.press("Meta+=")
+    await wait(300)
+    await shot(narrow, `${scheme}-55-details-${String(w)}`)
+    const pb = await narrow.locator(".checkpoint-details").boundingBox()
+    const bb = await narrow.locator(".spatial-canvas__controls").boundingBox()
+    const zb = await narrow.locator(".checkpoints__zoom").boundingBox()
+    check(pb !== null && bb !== null && pb.y + pb.height <= bb.y, `${String(w)}: the panel ends above the bar`)
+    check(pb !== null && zb !== null && pb.y + pb.height <= zb.y, `${String(w)}: the panel ends above the zoom pill`)
+    check(pb !== null && pb.width <= w - 132 - 128 + 1, `${String(w)}: the panel leaves room (${String(pb?.width)} wide)`)
+    await narrow.close()
+  }
 
   // Search: the bar grows to the left, its right end stays put.
   const bar = page.locator(".spatial-canvas__controls")
