@@ -67,7 +67,7 @@ case "$1 $2" in
   "release delete-asset")
     rm "$d/release/$4"
     ;;
-  "release edit")
+  "release edit" | "release create")
     echo "$*" >> "$d/edits.log"
     ;;
   *)
