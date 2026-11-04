@@ -1071,7 +1071,7 @@ export async function diagnoseCmd(args: Args): Promise<number> {
       console.error("::error::--seconds is a number from 3 to 3600")
       return 1
     }
-    return await lagCommand(name, pathsFor(name), Math.round(n), args.flags.has("json"))
+    return await lagCommand(name, pathsFor(name), Math.round(n), args.flags.has("json"), args.flags.has("sample"))
   }
   // `--input`: a RUNNING machine's mouse and keyboard path, asked live and read-only (inputcheck.ts).
   if (args.flags.has("input")) {
@@ -1155,8 +1155,9 @@ export const USAGE =
   "  doctor  [--json]              check host prerequisites (the HOST, before anything runs)\n" +
   "  diagnose [-i name]            explain a guest that misbehaved, from its files\n" +
   "           [--input]            a running guest's mouse/keyboard path, live and read-only\n" +
-  "           [--lag [--seconds N]] time the monitor, the agent and QEMU once a second (default\n" +
-  "                                60 s): which layer stops answering in a stall; read-only\n" +
+  "           [--lag [--seconds N] [--sample]]  time the monitor, the agent and QEMU once a\n" +
+  "                                second (default 60 s): which layer stops answering in a\n" +
+  "                                stall; --sample also profiles QEMU's threads during one\n" +
   "  build --iso <win11.iso>       build a base image (once, ~20 min)\n" +
   "        [--payload <dir>] [--bun <version>] [--image <name>]\n" +
   "  adopt <disk.qcow2>            adopt an installed disk as a base image\n" +

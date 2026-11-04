@@ -170,7 +170,11 @@ second as it arrives, marks the ones slower than 250 ms, and then says which
 layer stopped: the machine was paused (a save), everything stopped together
 with the recorder's own timer (the Mac slept or stalled), QEMU stopped (monitor
 and agent both), or QEMU answered and only Windows did not. It sends nothing to
-the guest and changes nothing, and appends a summary to `watch.log`. The
+the guest and changes nothing, and appends a summary to `watch.log`. With
+`--sample`, a monitor that has been silent for half a second also gets macOS's
+`sample` run on QEMU for 2 s (once per 30 s at most; the file lands beside
+`watch.log` and its path is printed), which shows what each QEMU thread was
+blocked on during the stall. The
 watcher also logs `host: this tick came N s late` when the whole Mac stood
 still for more than a couple of seconds (a brief sleep freezes QEMU and the
 guest with it), and an autosave waits while you are using the Mac's keyboard or

@@ -24,8 +24,9 @@
  * `query-status` over the monitor, `GET /health` to the agent (a few bytes), and
  * `ps`.
  */
-import { spawnSync } from "node:child_process"
+import { spawn, spawnSync } from "node:child_process"
 import { appendFileSync, existsSync, readFileSync } from "node:fs"
+import { resolve } from "node:path"
 
 import * as agent from "./agent"
 import { qmpCommand } from "./monitor"
@@ -228,14 +229,42 @@ export interface LagProbe {
   process(): { readonly proc: string | null; readonly cpuSec: number | null; readonly minPri: number | null }
 }
 
-/** The real questions, for a running instance. */
-export function realProbe(p: Paths): LagProbe {
+/** A monitor still silent after this long starts the `--sample` capture: the stall is on, and 2 s of stacks catch the rest of it. */
+export const CAPTURE_AFTER_MS = 500
+
+/** Captures are at least this far apart: `sample` stops QEMU's threads for an instant each time it takes a reading. */
+export const CAPTURE_COOLDOWN_MS = 30_000
+
+export const captureFile = (dir: string, at: number): string => resolve(dir, `lag-sample-${new Date(at).toISOString().replace(/[:.]/g, "-")}.txt`)
+
+/**
+ * The real questions, for a running instance. With `capture`, a monitor that
+ * has not answered after CAPTURE_AFTER_MS gets `sample <pid> 2` (macOS's own
+ * profiler, which says what each QEMU thread is blocked on), its output kept
+ * beside the instance's logs and its path handed to `onCapture`.
+ */
+export function realProbe(p: Paths, capture?: { readonly onCapture: (file: string) => void }): LagProbe {
   const pid = qemu.pidOf(p)
+  let lastCapture = 0
+  const startCapture = (): void => {
+    if (pid === null || capture === undefined || Date.now() - lastCapture < CAPTURE_COOLDOWN_MS) return
+    lastCapture = Date.now()
+    const file = captureFile(p.dir, lastCapture)
+    try {
+      const child = spawn("sample", [String(pid), "2", "-file", file], { stdio: "ignore" })
+      child.on("error", () => undefined)
+      child.unref()
+      capture.onCapture(file)
+    } catch {
+      // no sample(1): the timeline is still useful
+    }
+  }
   const state = agent.readState(p)
   const client = state === null || state.hostPort === null ? null : agent.clientFor({ token: state.token, hostPort: state.hostPort })
   return {
     qmp: async () => {
-      const r = await timedMs(async () => await qmpCommand(p.qmp, "query-status", undefined, ANSWER_TIMEOUT_MS))
+      const slowTimer = capture === undefined ? undefined : setTimeout(startCapture, CAPTURE_AFTER_MS)
+      const r = await timedMs(async () => await qmpCommand(p.qmp, "query-status", undefined, ANSWER_TIMEOUT_MS)).finally(() => clearTimeout(slowTimer))
       const status = (r.value as { status?: unknown } | null)?.status
       return { ms: r.ms, state: typeof status === "string" ? status : null }
     },
@@ -259,8 +288,10 @@ export interface RecordOptions {
 
 /**
  * Sample once a second for `seconds`. Each second asks the monitor and the
- * agent at the same time, so one layer's long wait cannot hide the other's, and
- * the next second starts on schedule rather than after the slow one.
+ * agent at the same time, so one layer's long wait cannot hide the other's. A
+ * sample that overran its second starts the next one at once; `lateMs` counts
+ * only a start later than that (a timer that oversleeps), which is how a Mac
+ * that stood still shows, not the wait behind a slow answer.
  */
 export async function recordLag(probe: LagProbe, o: RecordOptions): Promise<LagSample[]> {
   const now = o.now ?? Date.now
@@ -271,7 +302,8 @@ export async function recordLag(probe: LagProbe, o: RecordOptions): Promise<LagS
   let prevAt = start
   for (let i = 0; i < o.seconds; i += 1) {
     const due = start + i * 1000
-    const wait = due - now()
+    const ready = Math.max(due, prevAt)
+    const wait = ready - now()
     if (wait > 0) await sleep(wait)
     const began = now()
     const [q, a] = await Promise.all([probe.qmp(), probe.agent === undefined ? Promise.resolve(undefined) : probe.agent()])
@@ -282,7 +314,7 @@ export async function recordLag(probe: LagProbe, o: RecordOptions): Promise<LagS
     const cpu = i > 0 && ps.cpuSec !== null && prevCpu !== null && dt > 0 ? Math.max(0, Math.round(((ps.cpuSec - prevCpu) / dt) * 100)) : null
     prevCpu = ps.cpuSec
     prevAt = at
-    const s: LagSample = { t: due, lateMs: Math.max(0, began - due), qmp: q.ms, agent: a, state: q.state, cpu, proc: ps.proc, minPri: ps.minPri }
+    const s: LagSample = { t: due, lateMs: Math.max(0, began - ready), qmp: q.ms, agent: a, state: q.state, cpu, proc: ps.proc, minPri: ps.minPri }
     out.push(s)
     o.onSample?.(s, i)
   }
@@ -384,18 +416,20 @@ export function appendToWatchLog(name: string, report: LagReport, at = new Date(
 }
 
 /** `winvm diagnose --lag`: record, print as it goes, then judge. Exit 1 when a stall was seen. */
-export async function lagCommand(name: string, p: Paths, seconds: number, json: boolean): Promise<number> {
+export async function lagCommand(name: string, p: Paths, seconds: number, json: boolean, sample = false): Promise<number> {
   if (qemu.pidOf(p) === null) {
     console.error(`::error::instance "${name}" is not running: there is nothing to time`)
     return 1
   }
-  const probe = realProbe(p)
+  const captures: string[] = []
+  const probe = realProbe(p, sample ? { onCapture: (f) => captures.push(f) } : undefined)
   const vcpus = vcpusOf(qemu.pidOf(p) ?? 0)
   if (!json) {
     console.log(
       `recording ${String(seconds)} s for "${name}" (${String(vcpus)} vCPUs): once a second, the monitor, the agent and QEMU's process are asked, nothing is sent to the guest.`,
     )
     if (probe.agent === undefined) console.log("(no agent installed: only QEMU's monitor can be timed)")
+    if (sample) console.log(`--sample: a monitor silent for ${String(CAPTURE_AFTER_MS)} ms gets \`sample\` run on QEMU for 2 s (files beside the instance's logs)`)
     console.log("run this while the stall happens; lines marked <-- are slower than 250 ms.\n")
   }
   const started = Date.now()
@@ -408,7 +442,17 @@ export async function lagCommand(name: string, p: Paths, seconds: number, json: 
   const report = analyzeLag(samples)
   const context = [...eventsBetween(p.events, started - 2000, Date.now()), ...watchLogBetween(watchPathsFor(name).log, started - 2000, Date.now())]
   appendToWatchLog(name, report)
-  if (json) console.log(JSON.stringify({ instance: name, report, samples, context }, null, 2))
-  else console.log(`\n${formatLagReport(name, report, context)}`)
+  if (captures.length > 0) {
+    try {
+      appendFileSync(watchPathsFor(name).log, `${new Date().toISOString()} [${name}] lag: QEMU stacks during a stall: ${captures.join(", ")}\n`)
+    } catch {
+      // no log to keep it in
+    }
+  }
+  if (json) console.log(JSON.stringify({ instance: name, report, samples, context, captures }, null, 2))
+  else {
+    const stacks = captures.length > 0 ? `\nQEMU's stacks during the stall (what each thread was waiting on):\n${captures.map((c) => `  ${c}`).join("\n")}` : ""
+    console.log(`\n${formatLagReport(name, report, context)}${stacks}`)
+  }
   return report.stalls.length === 0 ? 0 : 1
 }

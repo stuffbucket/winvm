@@ -9,9 +9,12 @@ import { join } from "node:path"
 
 import type { LagProbe, LagSample } from "../src/lag"
 import {
+  CAPTURE_AFTER_MS,
+  CAPTURE_COOLDOWN_MS,
   STALL_MS,
   analyzeLag,
   appendToWatchLog,
+  captureFile,
   eventsBetween,
   formatLagReport,
   formatSample,
@@ -175,22 +178,37 @@ describe("recordLag", () => {
 
   it("notes how late its own timer ran, which is how a stalled Mac shows", async () => {
     const w = world()
-    let calls = 0
+    let sleeps = 0
     const probe: LagProbe = {
-      qmp: async () => {
-        return { ms: 2, state: "running" }
-      },
+      qmp: async () => ({ ms: 2, state: "running" }),
       agent: undefined,
-      process: () => {
-        // the Mac stands still for 3 s after the first sample (call 1 is the baseline, call 2 follows sample 0)
-        calls += 1
-        if (calls === 2) w.advance(3000)
-        return { proc: "S", cpuSec: null, minPri: null }
-      },
+      process: () => ({ proc: "S", cpuSec: null, minPri: null }),
     }
-    const out = await recordLag(probe, { seconds: 3, now: w.now, sleep: w.sleep })
+    // The first wait oversleeps by 3 s: the Mac stood still while the timer ran.
+    const sleep = async (ms: number): Promise<void> => {
+      sleeps += 1
+      await w.sleep(sleeps === 1 ? ms + 3000 : ms)
+    }
+    const out = await recordLag(probe, { seconds: 3, now: w.now, sleep })
     expect(out[0]?.lateMs).toBe(0)
     expect(out[1]?.lateMs).toBeGreaterThan(STALL_MS)
+  })
+
+  it("does not call the wait behind a slow answer a late timer", async () => {
+    const w = world()
+    let asked = 0
+    const probe: LagProbe = {
+      qmp: async () => {
+        asked += 1
+        if (asked === 2) w.advance(2300) // QEMU took 2.3 s to answer the second question
+        return { ms: asked === 2 ? 2300 : 2, state: "running" }
+      },
+      agent: undefined,
+      process: () => ({ proc: "S", cpuSec: null, minPri: null }),
+    }
+    const out = await recordLag(probe, { seconds: 4, now: w.now, sleep: w.sleep })
+    expect(out.map((s) => s.lateMs)).toEqual([0, 0, 0, 0])
+    expect(analyzeLag(out).stalls.map((x) => x.kind)).toEqual(["monitor"])
   })
 })
 
@@ -255,5 +273,18 @@ describe("formatSample", () => {
     const bad = formatSample(sample(1, { agent: null }), 1)
     expect(bad).toContain("<-- windows")
     expect(bad).toContain("NONE")
+  })
+})
+
+describe("the --sample capture file", () => {
+  it("is named by the time, safe for a file name, and kept in the instance's folder", () => {
+    const f = captureFile("/state/instances/default", T0)
+    expect(f.startsWith("/state/instances/default/lag-sample-")).toBe(true)
+    expect(f.endsWith(".txt")).toBe(true)
+    expect(f).not.toContain(":")
+  })
+  it("waits long enough to skip an ordinary slow answer, and does not repeat at once", () => {
+    expect(CAPTURE_AFTER_MS).toBeGreaterThan(STALL_MS)
+    expect(CAPTURE_COOLDOWN_MS).toBeGreaterThanOrEqual(10_000)
   })
 })
