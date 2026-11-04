@@ -4,6 +4,7 @@ import { installCli, outputText, winvm } from "../../backend"
 import type { Checks, Connection, Phase, Status } from "../../model"
 import { isLivePhase, parseChecks, parseConnection, parseStatus, phase, titleAssignment } from "../../model"
 import { phaseAfter, shownPhase, StatusGuard, type Verb } from "./statusGuard"
+import { type AgentSeen, UNSEEN, agentSeen } from "./agentSeen"
 
 export type { Verb } from "./statusGuard"
 
@@ -22,6 +23,8 @@ export interface Winvm {
   readonly phases: Readonly<Record<string, Phase>>
   readonly status: Status | null
   readonly phase: Phase | null
+  /** Windows' agent has answered since this QEMU started: a later silence is a busy Windows, not a boot. */
+  readonly agentSeen: AgentSeen
   readonly statusError: string | null
   readonly checks: Checks | null
   readonly checksError: string | null
@@ -59,6 +62,8 @@ export function useWinvm(): Winvm {
   const [last, setLast] = useState<Ran | null>(null)
   const [cliPath, setCliPath] = useState<string | null>(null)
   const [polls, setPolls] = useState(0)
+  // Whether Windows has answered since this QEMU started (agentSeen.ts).
+  const [seen, setSeen] = useState<AgentSeen>(UNSEEN)
   // What the last verb left (paused, asleep, running), shown until a read started after it lands.
   const [held, setHeld] = useState<Phase | null>(null)
   const guard = useRef(new StatusGuard())
@@ -91,6 +96,7 @@ export function useWinvm(): Winvm {
     setHeld(null)
     setStatusError(null)
     setStatus(s)
+    setSeen((was) => agentSeen(was, s))
     setTitles((was) => (was[s.name] === s.title ? was : { ...was, [s.name]: s.title }))
     setPhases((was) => (was[s.name] === phase(s) ? was : { ...was, [s.name]: phase(s) }))
   }, [])
@@ -214,6 +220,7 @@ export function useWinvm(): Winvm {
     guard.current.settle(null)
     setHeld(null)
     setStatus(null)
+    setSeen(UNSEEN)
     setConnection(null)
     setName(next)
   }, [])
@@ -242,6 +249,7 @@ export function useWinvm(): Winvm {
     },
     status: current,
     phase: p,
+    agentSeen: seen,
     statusError,
     checks,
     checksError,

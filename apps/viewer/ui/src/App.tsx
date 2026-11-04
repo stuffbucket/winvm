@@ -35,6 +35,7 @@ import { t } from "./i18n"
 import type { Phase, Share } from "./model"
 import { controls, displaySize, isFrozen, isLivePhase, parseShare, shownTitle, startSteps, terminalBlocked } from "./model"
 import { inputRule } from "./features/screen/input"
+import { inputPhase } from "./features/winvm/agentSeen"
 import { SharePanel } from "./features/actions/SharePanel"
 import { CheckpointCanvas } from "./features/checkpoints/CheckpointCanvas"
 import { useCopies } from "./features/files/useCopies"
@@ -116,7 +117,7 @@ export function App(): JSX.Element {
   // none (paused, asleep, starting, a verb under way) leaves the Mac its own
   // shortcuts (Cmd-Tab): a capture is released, with a quiet note, and stays
   // released when the guest takes input again; it is asked for again.
-  const input = inputRule(phase, w.busy !== null)
+  const input = inputRule(inputPhase(phase, w.agentSeen), w.busy !== null)
   const [released, setReleased] = useState<string | null>(null)
   useEffect(() => {
     if (input.forward) setReleased(null)
