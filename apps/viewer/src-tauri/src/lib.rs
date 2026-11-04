@@ -25,7 +25,7 @@ struct Output {
 const VERBS: &[&str] = &[
     "status", "info", "doctor", "start", "stop", "reboot", "pause", "resume", "kill", "open", "setup", "exec", "put", "get",
     "dir", "mkdir", "mv", "cp", "rm", "save", "load", "saves", "help", "terminal", "config", "display", "create",
-    "destroy", "ls", "mcp", "sleep", "wake", "lock", "settings", "files", "share",
+    "destroy", "ls", "mcp", "sleep", "wake", "lock", "settings", "files", "share", "note",
 ];
 
 #[tauri::command]

@@ -39,6 +39,12 @@ lose to the OS outside capture.
 > not bind to anything else. Confirm against the codebase before adding
 > new listeners — see [`failure-modes.md`](failure-modes.md).
 
+**Text fields** keep their own keys. The suspended screen's note is a plain text
+area: it takes typing, Tab, Enter and the arrows as a text area does, never calls
+`preventDefault` or `stopPropagation` on them, and only Esc is its own (save and
+leave the field). The menu accelerators (⌘⇧T and the rest) are native and still
+work while it has focus.
+
 ## Implementation
 
 - **Tray-menu bindings** (`Cmd-,`, `Cmd-D`, `Cmd-Q`): accelerators on

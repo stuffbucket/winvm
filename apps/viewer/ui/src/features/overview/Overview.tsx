@@ -4,8 +4,13 @@ import { cx } from "../../components/cx"
 import { t } from "../../i18n"
 import type { Phase, Status, Step } from "../../model"
 import { facts } from "../../model"
+import { Backdrop } from "./Backdrop"
+import { useBackdropPicture } from "./backdropPicture"
+import { MachineNotes } from "./MachineNotes"
 
 interface OverviewProps {
+  /** The machine shown: whose note and picture a suspended one has. */
+  readonly instance?: string | null
   readonly phase: Phase | null
   readonly status: Status | null
   readonly steps: readonly Step[] | null
@@ -38,6 +43,8 @@ function Steps({ steps }: { readonly steps: readonly Step[] }): JSX.Element {
 
 /** What fills the display while there is no screen: the state, what the instance is, Start, and what it does once on. */
 export function Overview(p: OverviewProps): JSX.Element {
+  const suspended = p.steps === null && p.phase === "stowed"
+  const picture = useBackdropPicture(p.instance ?? null, suspended)
   if (p.steps !== null) {
     return (
       <div className="overview">
@@ -63,10 +70,14 @@ export function Overview(p: OverviewProps): JSX.Element {
   const which = p.phase === "missing" || p.phase === "stowed" ? p.phase : "stopped"
   const rows = p.status === null ? [] : facts(p.status)
   return (
-    <div className="overview">
+    <div className={cx("overview", which === "stowed" && "overview--notes")}>
+      {which === "stowed" && <Backdrop picture={picture} />}
       <div className="overview__content">
-        <h1 className="overview__title">{t(`overview.${which}.title`)}</h1>
-        {which === "stowed" && <p className="overview__note">{t("overview.stowed.body")}</p>}
+        {which === "stowed" ? (
+          <MachineNotes instance={p.instance ?? null} title={t("overview.stowed.title")} />
+        ) : (
+          <h1 className="overview__title">{t(`overview.${which}.title`)}</h1>
+        )}
         {rows.length > 0 && (
           <dl className="facts">
             {rows.map((r) => (
