@@ -9,6 +9,7 @@ import type { Args } from "./args"
 import { imageName, instanceName, isValidImageName, isValidInstanceName } from "./args"
 import { PWSH_SHA256, PWSH_URL, TOOLS_SHA256, TOOLS_URL, checksReport, download, du, hostChecks, printChecks, requireHost, run, sha256Of } from "./host"
 import { diagnose, formatFindings } from "./diagnose"
+import { formatInput, judgeInput, probeInput } from "./inputcheck"
 import { ensureInstance, makeVars, resetInstance, sealBase } from "./instance"
 import { ISO_SOURCE, buildSeed, checkIsoIsArm64, makeResultVolume, readResult, resolveWindowsIso } from "./media"
 import type { InstanceMeta } from "./paths"
@@ -1060,8 +1061,14 @@ export async function smoke(args: Args): Promise<number> {
  * Separate from `doctor`, which checks the HOST before anything runs. This reads
  * what a guest left behind afterwards, and works on one that is dead or wedged.
  */
-export function diagnoseCmd(args: Args): number {
+export async function diagnoseCmd(args: Args): Promise<number> {
   const name = instanceName(args)
+  // `--input`: a RUNNING machine's mouse and keyboard path, asked live and read-only (inputcheck.ts).
+  if (args.flags.has("input")) {
+    const findings = judgeInput(await probeInput(pathsFor(name)))
+    console.log(formatInput(name, findings))
+    return findings.some((f) => f.level === "problem") ? 1 : 0
+  }
   // What a guest that died left mounted on the Mac.
   for (const dir of finder.cleanStale(name)) console.log(`unmounted ${dir}, left behind by a guest that is no longer running`)
   const findings = diagnose(name)
@@ -1137,6 +1144,7 @@ export const USAGE =
   "  setup                         install missing host prerequisites, fetch pinned media\n" +
   "  doctor  [--json]              check host prerequisites (the HOST, before anything runs)\n" +
   "  diagnose [-i name]            explain a guest that misbehaved, from its files\n" +
+  "           [--input]            a running guest's mouse/keyboard path, live and read-only\n" +
   "  build --iso <win11.iso>       build a base image (once, ~20 min)\n" +
   "        [--payload <dir>] [--bun <version>] [--image <name>]\n" +
   "  adopt <disk.qcow2>            adopt an installed disk as a base image\n" +

@@ -46,6 +46,7 @@ import * as finder from "./finder"
 import type { Decision, SaveInfo, Settings, Timing } from "./idle"
 import { DEFAULT_TIMING, DRIFT_TOLERANCE_MS, IdleMachine, autosaveName, savesToRotate } from "./idle"
 import { isFrozenRunState } from "./frozen"
+import { LivenessLog, processState } from "./inputcheck"
 import type { Paths } from "./paths"
 import { cliArgv, instanceDir, pathsFor } from "./paths"
 import * as qemu from "./qemu"
@@ -297,13 +298,18 @@ export function vcpusOf(pid: number): number {
   return m?.[1] === undefined ? 4 : Number(m[1])
 }
 
-/** Whether the vCPUs are stopped (paused or asleep); false when the monitor does not answer. */
-async function isFrozen(p: Paths): Promise<boolean> {
+/**
+ * Whether the vCPUs are stopped (paused or asleep; false when the monitor does
+ * not answer), and how long the monitor took to (null when it did not): QEMU
+ * answers on the loop that reads VNC input, so a slow answer is a slow mouse.
+ */
+async function isFrozen(p: Paths): Promise<{ readonly frozen: boolean; readonly ms: number | null }> {
+  const t0 = performance.now()
   try {
     const r = (await qmp.execute(p.qmp, "query-status", undefined, 5000)) as { status?: unknown } | undefined
-    return isFrozenRunState(typeof r?.status === "string" ? r.status : null)
+    return { frozen: isFrozenRunState(typeof r?.status === "string" ? r.status : null), ms: Math.round(performance.now() - t0) }
   } catch {
-    return false
+    return { frozen: false, ms: null }
   }
 }
 
@@ -651,6 +657,7 @@ export async function watch(name: string, o: WatchOptions = {}): Promise<number>
   // Ticks are logged while the guest is active, on every change, and otherwise every 5 min.
   let lastSummary = ""
   let lastTickLogAt = 0
+  const liveness = new LivenessLog()
   for (;;) {
     await sleep(timing.tickMs)
     const livePid = qemu.pidOf(p)
@@ -685,8 +692,21 @@ export async function watch(name: string, o: WatchOptions = {}): Promise<number>
     prevCpu = { sec: nowCpu, at: now }
 
     const settings = settingsOf(cfg)
+    const clients = await vncClients(p)
+    const monitor = await isFrozen(p)
+    // A viewer coming or going, and a monitor that is slow or silent, are kept in
+    // the log (nothing else is while the guest is quiet): the timeline for "the
+    // mouse stopped working".
+    for (const line of liveness.observe({
+      at: now,
+      monitorMs: monitor.ms,
+      clients,
+      processState: monitor.ms === null || monitor.ms >= 1500 ? processState(qemuPid) : null,
+    })) {
+      log(line)
+    }
     const decisions = machine.tick(
-      { wallMs: now, cpu, activityAtMs: activityAt(w.activity), vncClients: await vncClients(p), frozen: await isFrozen(p) },
+      { wallMs: now, cpu, activityAtMs: activityAt(w.activity), vncClients: clients, frozen: monitor.frozen },
       ephemeral
         ? { ...settings, autosave: { ...settings.autosave, enabled: false }, stow: { ...settings.stow, enabled: false } }
         : settings,

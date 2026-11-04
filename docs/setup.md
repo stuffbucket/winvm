@@ -152,6 +152,16 @@ Start with `winvm diagnose -i <name>`. It reads the instance's files and
 explains what went wrong. The troubleshooting section of
 [How the VM is configured](windows-vm-qemu.md) covers more.
 
+If a running machine stops answering the mouse or keyboard, run
+`winvm diagnose -i <name> --input` while it is happening. It asks QEMU
+(read-only, nothing is sent to the guest) whether the monitor answers quickly
+(it runs on the same loop that reads input), whether the machine is paused,
+whether a viewer is connected and whether the pointer is the USB tablet. The
+watcher also writes a line to `watch.log` when a viewer connects or drops, and
+when QEMU's monitor goes slow or silent. If everything is fine, capture
+`sample <qemu pid> 3 -file /tmp/qemu-sample.txt` and `lsof -nP -p <qemu pid>`
+before restarting anything.
+
 If `setup` or `build` says the guest tools ISO doesn't match its pin, UTM has
 published a new build. Review it, then update `TOOLS_SHA256` in
 `packages/core/src/host.ts`.
