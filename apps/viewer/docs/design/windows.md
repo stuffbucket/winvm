@@ -185,13 +185,15 @@ help of an unavailable row open.
 
 **Resources**, while the machine runs: CPU and Memory, each a label, its
 value ("19%", "2.1 GB of 4 GB") and the last minute and a half as a line;
-Disk, Windows' C: drive as a hairline bar ("C: 12 GB of 63 GB") and what
-the machine's changes take on the Mac. Marks are `--accent`, values
-`--text-strong`, notes `--text-muted`; no dots. CPU is QEMU's share of the
-machine's processors; Memory is what Windows has in use (total less
-available, as Task Manager counts it), or, until Windows answers, what QEMU
-holds on the Mac, said so. Read every 2.5 s while the window shows, never
-while the machine is off, with one `ps` and one agent call, no CLI.
+Disk, Windows' C: drive as a bar ("C: 12 GB of 63 GB"). No captions. CPU is
+Windows' own figure, with what QEMU spends on the Mac as a second, dashed
+line on the same chart; the disk bar carries what the machine's changes take
+on the Mac as a strip on the same track; hovering or focusing either names
+each value (see Resource meters in `components.md`). Memory is what Windows has
+in use (total less available, as Task Manager counts it), or, until Windows
+answers, what QEMU holds on the Mac, said so in its value. Read every 2.5 s
+while the window shows, never while the machine is off, with one `ps` and
+one agent call, no CLI.
 
 **Shared folder** (`features/sharedfolder/`), closed unless Windows needs
 its setup, with "Off" or "Z: in Windows" beside the title: the Mac folder

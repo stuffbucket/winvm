@@ -61,10 +61,34 @@
     cpus: 4,
     memoryMiB: 8192,
     screen: "virtio-gpu 1920x1200",
-    overlayBytes: 9.1 * GiB,
+    overlayBytes: query.get("overlay") === "none" ? null : Number(query.get("overlay") ?? "9.1") * GiB,
     guest: { agent: "ok", agentVersion: "1.0", os: "Windows 11" },
     saves: { count: saves.length, bytes: 80 * GiB },
     notes: [],
+  }
+
+  // instance_usage: the app's sample (src-tauri guest.rs), one more per call. ?usage=windows (default):
+  // Windows' own CPU, memory and C:, and QEMU's CPU on the Mac above it; ?usage=mac: no agent, QEMU's
+  // figures only. ?overlay=GiB (default 9.1; "none") is what the machine's changes take on the Mac.
+  // scripts/render-resources.mjs shortens the 2.5 s between reads.
+  let reads = 0
+  let macSeconds = 0
+  const usageMode = query.get("usage") ?? "windows"
+  function usage() {
+    reads += 1
+    const t = reads
+    const windowsCpu = Math.min(0.95, Math.max(0, 0.12 + 0.1 * Math.sin(t / 3) + 0.05 * Math.sin(t * 1.7) + (t % 17 === 0 ? 0.3 : 0)))
+    const macCpu = Math.min(0.98, windowsCpu * 1.6 + 0.07 + 0.03 * Math.sin(t / 2))
+    macSeconds += macCpu * 4 * 2.5 // 4 processors, 2.5 s between reads
+    return {
+      atMs: t * 2500,
+      host: { cpuSeconds: macSeconds, rssBytes: 3 * GiB },
+      guest:
+        usageMode === "mac"
+          ? null
+          : { cpu: windowsCpu, memory: { total: 4 * GiB, available: (1.1 + 0.05 * Math.sin(t / 5)) * GiB }, disk: { path: "C:", total: 63 * GiB, free: 51 * GiB } },
+      guestError: usageMode === "mac" ? "no agent" : null,
+    }
   }
   const settings = {}
   const out = (stdout, code = 0) => ({ code, stdout: typeof stdout === "string" ? stdout : JSON.stringify(stdout), stderr: "" })
@@ -222,7 +246,7 @@
       async invoke(cmd, args = {}) {
         if (cmd === "winvm") return await run(args.args)
         if (cmd === "checkpoint_image") return await picture(args.path)
-        if (cmd === "instance_usage") return { cpuSeconds: 1, rssKiB: 1, windows: null }
+        if (cmd === "instance_usage") return usage()
         if (cmd === "agent_fetch") throw new Error("no agent in the fake")
         if (cmd === "trace") return null
         throw new Error(`fake tauri: ${cmd}`)

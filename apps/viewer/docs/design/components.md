@@ -263,6 +263,41 @@ choice with commands, as the Windows machines menu does:
 - **Typing a letter** goes to the item whose `label` starts with it: pass the
   machine's name as `label`, not the text with its state.
 
+## Resource meters (details panel)
+
+`features/usage/Resources.tsx`. A label and its headline value, then the last
+minute and a half as a line (CPU, Memory) or a bar (Disk). No caption under
+any of them. Where a second measure of the same thing exists it is drawn **on
+the same meter**, and named only on hover.
+
+- **Two-series sparkline (CPU).** Windows' own figure leads: a 2px `--accent`
+  line with its soft fill, and it is the value at rest. What QEMU spends on
+  the Mac (the screen and disk work too) is a **hairline dashed** `--text-strong`
+  line over it, no fill, on the same 0-100 scale. Weight and dash tell them
+  apart, so the pair never relies on color (a dashed ink line clears 3:1 on
+  the card in both themes). The Mac's line is left out when it would repeat
+  the headline (without the agent QEMU's figure leads, as "12% on the Mac")
+  or when there is no Mac figure yet. Ink means "on the Mac", teal "Windows",
+  on both meters.
+- **Overlaid bar (Disk).** An 8px track. The main fill is C: used out of C:'s
+  size, `--accent`, full height. The machine's changes on the Mac (the size of
+  its overlay image, status `overlayBytes`) are a 4px `--text-strong` strip
+  across the middle of the same track, at least 4px wide so 0.05 GB of 63 GB
+  still shows, capped at the track's end. Both are bytes against **C:'s
+  size**, so their lengths compare as sizes. They are not parts of one
+  whole: the strip is a file on the Mac, not a share of the fill, and may be
+  shorter or longer than it (it also holds blocks Windows has since freed).
+  Never stack or add them.
+- **Legend on hover.** With two values the meter is `role="img"`, takes
+  focus (`tabIndex=0`, the focus ring) and carries the whole sentence as its
+  `aria-label` ("CPU. Windows: 3%. On this Mac: 12%."). Pointing at it or
+  focusing it shows a layer-20 tooltip under it with one row per value: its mark
+  (the same stroke or fill) and "Windows: 3%", "On this Mac: 12%" /
+  "Windows: 12 GB of 63 GB", "Changes on this Mac: 3.2 GB", in text ink. Escape
+  hides it while it stays pointed at or focused. The tooltip is `aria-hidden`;
+  the label already says it. With one value it is a plain `role="meter"`.
+- `scripts/render-resources.mjs` renders every state and checks the above.
+
 ## A name edited in its heading
 
 `features/machines/MachineHeading.tsx`. For a name that sits inside a sentence

@@ -117,6 +117,7 @@ Then `Read` a PNG (e.g. `/tmp/winvm-render/light-02-overview.png`, `dark-...`): 
 | `render-checkpoints.mjs [outdir]` | the Checkpoints canvas: way in/out, bar, highlights, drag, zoom, search |
 | `render-overview.mjs` | the suspended/off overview: notes, backdrop with and without a picture |
 | `render-machines.mjs` | the machines menu and the editable machine name in the heading |
+| `render-resources.mjs [outdir]` | the details panel's Resources (CPU's two lines, the disk bar's overlay, hover/focus legends, tiny/large/no overlay, no agent), light and dark; CHECKS names, legend, 3 px minimum |
 | `render-sizes.mjs [outdir] [--quick] [--sizes 820x520,...] [--dsf 1,2] [--screens overview-stowed,menu]` | the overview (suspended and off), Checkpoints and the machines menu at 640x420, 820x520, 1000x800, 1440x900, 1920x1080, device scale 1, 1.5 and 2, light and dark (120 PNGs, ~2 min; `--quick` is 3 sizes at 1x/2x). Named `<scheme>-<screen>-<w>x<h>@<dsf>x.png`. It also CHECKS (exit 1): no sideways scroll, one shared column and left edge, no needless heading wrap, 24 px under the toolbar, the toolbar fits at and above the minimum window width. Run it after any layout CSS change and Read a few PNGs at the extremes |
 | `render-help.mjs [--preview <dir>] [--no-build]` | the help popovers; WITHOUT `--preview` it rewrites the committed pictures in `ui/src/features/help/img/`: run it after any change to Terminal, Files or Checkpoints, and commit the result |
 
