@@ -39,11 +39,21 @@
     saves.push({ name, kind: "auto", createdAt: new Date(now.getTime() - (i + 2) * DAY * 0.37).toISOString(), bytes: 8 * GiB, compatible: true, format: "zstd", ...pics(name), title: null, notes: null, incompatible: [] })
   }
 
+  // ?state=stowed: a suspended machine (scripts/render-overview.mjs). ?pictures=none: none of its
+  // checkpoints has a screenshot. ?note=TEXT: what its note already says.
+  const query = new URLSearchParams(location.search)
+  const state = query.get("state") ?? "running"
+  if (state === "stowed") {
+    saves.push({ name: "stow", kind: "stow", createdAt: at(0, 13, 40), bytes: 9.2 * GiB, compatible: true, format: "zstd", ...pics("stow"), title: null, notes: null, incompatible: [] })
+  }
+  if (query.get("pictures") === "none") saves = saves.map((s) => ({ ...s, screenshot: null, thumbnail: null }))
+  let machineNote = query.get("note")
+
   const status = {
     name: "canvas-test",
     title: "Work PC",
-    state: "running",
-    vmStatus: "running",
+    state,
+    vmStatus: state === "stowed" ? "stopped" : "running",
     image: "win11-arm64",
     pid: 4242,
     uptimeSeconds: 5400,
@@ -70,6 +80,14 @@
       const set = rest.find((a) => a.startsWith("--set="))
       if (set !== undefined) settings[rest[1]] = JSON.parse(set.slice("--set=".length))
       return out(settings[rest[1]] ?? null)
+    }
+    if (verb === "note") {
+      const text = flag(rest, "text")
+      if (text !== undefined) {
+        machineNote = text.trim() === "" ? null : text
+        window.__noteWrites = [...(window.__noteWrites ?? []), text]
+      }
+      return out(machineNote === null ? null : { text: machineNote, updatedAt: new Date().toISOString() })
     }
     if (verb === "doctor") return out({ ready: true, checks: [], timeMachine: "ok" })
     if (verb === "open") return out("no screen in the fake", 1)
