@@ -1,6 +1,6 @@
 /**
  * The Checkpoints view's rules: where cards sit, the timeline, search, names,
- * settings, and what Go Back and Delete ask and do. And the confirmation
+ * settings, and what Restore and Delete ask and do. And the confirmation
  * dialog's third button, rendered in happy-dom.
  */
 import { GlobalRegistrator } from "@happy-dom/global-registrator"
@@ -250,6 +250,19 @@ describe("going back", () => {
     expect(cp.goBackConfirm({ live: false })).toEqual({ body: "checkpoints.goBack.bodyStopped", offerSaveFirst: false })
     expect(cp.goBackConfirm({ live: true })).toEqual({ body: "checkpoints.goBack.bodyLive", offerSaveFirst: true })
   })
+  it("says plainly, in two short sentences, what happens to this machine, and that no new machine is made", () => {
+    expect(t("checkpoints.goBack.title", { name: "Office" })).toBe("Restore “Office”?")
+    expect(t("checkpoints.goBack.confirm")).toBe("Restore")
+    expect(t("checkpoints.goBack.saveFirst")).toBe("Take Checkpoint First")
+    for (const key of ["checkpoints.goBack.bodyLive", "checkpoints.goBack.bodyStopped"]) {
+      const body = t(key)
+      expect(body.split(/(?<=\.)\s+/).length).toBe(2)
+      expect(body).toContain("This machine")
+      expect(body).toContain("replac")
+      expect(body).toContain("Your checkpoints are kept.")
+      expect(body).not.toMatch(/new machine|Go [Bb]ack|save/)
+    }
+  })
 })
 
 describe("the confirmation's three choices", () => {
@@ -267,25 +280,25 @@ describe("the confirmation's three choices", () => {
     return host
   }
 
-  it("offers Cancel, Save Current First and Go Back, each doing its own thing", () => {
+  it("offers Cancel, Take Checkpoint First and Restore, each doing its own thing", () => {
     const cancel = mock(() => undefined)
     const second = mock(() => undefined)
     const confirm = mock(() => undefined)
     const host = render(
       <ConfirmDialog
         open
-        title="Go back to “Office installed”?"
+        title="Restore “Office installed”?"
         body={<p>Windows returns to exactly how it was.</p>}
-        confirmLabel="Go Back"
+        confirmLabel="Restore"
         cancelLabel="Cancel"
-        secondaryLabel="Save Current First"
+        secondaryLabel="Take Checkpoint First"
         onSecondary={second}
         onCancel={cancel}
         onConfirm={confirm}
       />,
     )
     const buttons = [...host.querySelectorAll<HTMLButtonElement>(".confirm-dialog__actions button")]
-    expect(buttons.map((b) => b.textContent)).toEqual(["Cancel", "Save Current First", "Go Back"])
+    expect(buttons.map((b) => b.textContent)).toEqual(["Cancel", "Take Checkpoint First", "Restore"])
     act(() => buttons[1]?.click())
     act(() => buttons[2]?.click())
     act(() => buttons[0]?.click())
@@ -590,7 +603,7 @@ describe("the checkpoint's panel", () => {
     document.body.append(host)
     root = createRoot(host)
     act(() =>
-      root?.render(<CheckpointDetails c={c} now={Date.parse("2026-10-22T20:00:00Z")} busy={false} saving="idle" onClose={onClose} onLook={noop} onNote={onNote} onGoBack={noop} onDelete={noop} {...over} />),
+      root?.render(<CheckpointDetails c={c} now={Date.parse("2026-10-22T20:00:00Z")} busy={false} saving="idle" onClose={onClose} onLook={noop} onNote={onNote} onGoBack={noop} onReveal={noop} onDelete={noop} {...over} />),
     )
     return { host, onNote, onClose }
   }
@@ -714,29 +727,35 @@ describe("the checkpoint's panel", () => {
     expect(status?.getAttribute("data-failed")).toBe("true")
   })
 
-  it("lists only what is more as rows: the tags, editable; nothing the caption already says", () => {
+  it("lists only what is more as rows: the tags, editable; no save name, nothing the caption already says", () => {
     const { host } = panel(withNotes)
     const rows = [...host.querySelectorAll(".checkpoint-details__prop")].map((r) => r.querySelector("dt")?.textContent)
-    // Title, date, kind and size are in the caption; the save name only because it differs from the title.
-    expect(rows).toEqual(["Tags", "Save name"])
+    // Title, date, kind and size are in the caption; the save name is nowhere (the folder button is the way to it).
+    expect(rows).toEqual(["Tags"])
     const tags = host.querySelector<HTMLInputElement>(".checkpoint-details__prop input")
     expect(tags?.value).toBe("office")
     expect(tags?.getAttribute("aria-label")).toBe("Tags")
-    for (const gone of ["Loads here", "Name in winvm"]) expect(host.textContent).not.toContain(gone)
+    for (const gone of ["Loads here", "Name in winvm", "Save name", "Copy save name"]) expect(host.textContent).not.toContain(gone)
+    expect(host.querySelector("[aria-label='Copy save name']")).toBeNull()
   })
 
-  it("mirrors the card's caption plate: the picture first, then title, when, kind and size, note, properties, actions", () => {
+  it("mirrors the card's caption plate: the picture first, then title, when, kind and size, one break, note, properties, actions", () => {
     const { host } = panel(withNotes)
     const aside = host.querySelector("aside") as HTMLElement
     expect(aside.querySelector("header")).toBeNull()
-    const order = [".checkpoint-details__picture", ".checkpoint-details__title", ".checkpoint-details__when", ".checkpoint-details__facts", "textarea", ".checkpoint-details__props", "footer"]
+    const order = [".checkpoint-details__picture", ".checkpoint-details__title", ".checkpoint-details__when", ".checkpoint-details__facts", "hr", "textarea", ".checkpoint-details__props", "footer"]
     const all = [...aside.querySelectorAll("*")]
     const positions = order.map((sel) => all.indexOf(aside.querySelector(sel) as Element))
     expect(positions.every((i) => i >= 0)).toBe(true)
     expect(positions).toEqual([...positions].sort((x, y) => x - y))
+    // Exactly one break, between the caption and the note.
+    expect(aside.querySelectorAll("hr").length).toBe(1)
+    expect(aside.querySelector("hr")?.previousElementSibling?.className).toBe("checkpoint-details__facts")
+    expect(aside.querySelector("hr")?.nextElementSibling?.tagName.toLowerCase()).toBe("textarea")
     // The picture is the first thing in the scrolling body; only the close button comes before it.
     expect(aside.firstElementChild?.getAttribute("aria-label")).toBe("Close")
-    expect(aside.querySelector(".checkpoint-details__scroll")?.firstElementChild?.className).toBe("checkpoint-details__picture")
+    expect(aside.querySelector(".checkpoint-details__scroll")?.firstElementChild?.className).toBe("checkpoint-details__figure")
+    expect(aside.querySelector(".checkpoint-details__figure")?.firstElementChild?.className).toBe("checkpoint-details__picture")
     // When, then the kind and size at the row's end.
     const when = host.querySelector(".checkpoint-details__when")?.textContent ?? ""
     expect(when).toMatch(/2:00 PM/)
@@ -746,60 +765,74 @@ describe("the checkpoint's panel", () => {
     expect(host.textContent?.split("7.8 GiB").length).toBe(2)
   })
 
-  it("shows the save name, with a copy button, only when it differs from the title", () => {
-    const differs = panel(withNotes).host
-    const row = differs.querySelector(".checkpoint-details__prop--name")
-    expect(row?.querySelector("dt")?.textContent).toBe("Save name")
-    expect(row?.querySelector(".mono")?.textContent).toBe("office")
-    expect(row?.querySelector("button")?.getAttribute("aria-label")).toBe("Copy save name")
-    act(() => root?.unmount())
-    document.body.replaceChildren()
-    // No title of its own: the name is the title, and is said once.
-    const same = panel(checkpoint("plain", at(2026, 10, 22, 14))).host
-    expect(same.querySelector(".checkpoint-details__prop--name")).toBeNull()
-    expect(same.textContent?.split("plain").length).toBe(2)
-    act(() => root?.unmount())
-    document.body.replaceChildren()
-    // A title typed that equals the name again: gone.
+  it("says what the size is on hover, in one line, in the panel and on the card", () => {
     const { host } = panel(withNotes)
-    act(() => titleButton(host)?.click())
-    type(titleInput(host) as HTMLInputElement, "office")
-    press(titleInput(host) as HTMLInputElement, "Enter")
-    expect(host.querySelector(".checkpoint-details__prop--name")).toBeNull()
+    const tip = host.querySelector(".checkpoint-details__size")?.getAttribute("title") ?? ""
+    expect(tip).toBe("Disk space on your Mac, at most: checkpoints share space")
+    expect(tip).not.toContain("\n")
   })
 
-  it("says nothing about restoring when a checkpoint can go back here", () => {
-    for (const compatible of [true, null]) {
-      const { host } = panel(checkpoint("ok", at(2026, 10, 22, 14), { compatible }))
-      expect(host.querySelector(".checkpoint-details__status")).toBeNull()
-      expect(host.textContent).not.toContain("Can't restore")
-      const goBack = [...host.querySelectorAll("button")].find((b) => b.textContent === "Go Back to This")
-      expect(goBack?.disabled).toBe(false)
-      expect(goBack?.getAttribute("title")).toBe("Put Windows back exactly as it was at this moment")
+  it("shows no save name whether or not there is a title of its own, and the title once", () => {
+    for (const c of [withNotes, checkpoint("stow", at(2026, 10, 22, 14), { title: "stow" }), checkpoint("plain", at(2026, 10, 22, 14))]) {
+      const { host } = panel(c)
+      expect(host.querySelector(".checkpoint-details__prop--name")).toBeNull()
+      expect(host.textContent).not.toContain("Save name")
+      expect(host.textContent?.split(titleButton(host)?.textContent ?? "?").length).toBe(2)
       act(() => root?.unmount())
       document.body.replaceChildren()
     }
   })
 
-  it("says it can't be restored as a status under the facts, in a few words, the whole reason on hover and in Go Back's description", () => {
+  it("shows the folder in Finder from a button in the actions, and restores from a rewind button", () => {
+    const onReveal = mock(noop)
+    const onGoBack = mock(noop)
+    const { host } = panel(withNotes, { onReveal, onGoBack })
+    const folder = host.querySelector<HTMLButtonElement>("footer button[aria-label='Show in Finder']")
+    expect(folder?.getAttribute("title")).toBe("Show in Finder")
+    expect(folder?.querySelector("svg")).not.toBeNull()
+    act(() => folder?.click())
+    expect(onReveal).toHaveBeenCalledTimes(1)
+    const restore = host.querySelector<HTMLButtonElement>("footer button[aria-label='Restore this checkpoint']")
+    expect(restore?.textContent).toBe("")
+    expect(restore?.getAttribute("title")).toBe("Restore this checkpoint")
+    expect(restore?.querySelector("svg")).not.toBeNull()
+    // The rewind glyph, two triangles, not the clock's.
+    expect(restore?.querySelectorAll("polygon").length).toBe(2)
+    act(() => restore?.click())
+    expect(onGoBack).toHaveBeenCalledTimes(1)
+  })
+
+  it("says nothing about restoring when a checkpoint can go back here", () => {
+    for (const compatible of [true, null]) {
+      const { host } = panel(checkpoint("ok", at(2026, 10, 22, 14), { compatible }))
+      expect(host.querySelector(".checkpoint-details__banner")).toBeNull()
+      expect(host.textContent).not.toContain("Can't restore")
+      const restore = host.querySelector<HTMLButtonElement>("button[aria-label='Restore this checkpoint']")
+      expect(restore?.disabled).toBe(false)
+      expect(restore?.getAttribute("title")).toBe("Restore this checkpoint")
+      act(() => root?.unmount())
+      document.body.replaceChildren()
+    }
+  })
+
+  it("says it can't be restored in one line across the picture's foot, the whole reason on hover and in the Restore button's description", () => {
     const { host } = panel(checkpoint("q", at(2026, 10, 21, 12), { compatible: false, incompatible: ["qemu"] }))
-    const status = host.querySelector<HTMLElement>(".checkpoint-details__status")
+    const banner = host.querySelector<HTMLElement>(".checkpoint-details__banner")
     const full = "It was made with a different version of QEMU, so it can't be restored on this machine."
-    expect(status?.firstElementChild?.tagName.toLowerCase()).toBe("svg")
-    expect(status?.querySelector("strong")?.textContent).toBe("Can't restore")
-    expect(status?.querySelector(".checkpoint-details__why")?.textContent).toBe("Wrong QEMU version")
-    expect(status?.getAttribute("title")).toBe(full)
-    // It sits after the facts and before the note, and is not a row of the properties.
-    const all = [...(host.querySelector("aside")?.querySelectorAll("*") ?? [])]
-    expect(all.indexOf(status as Element)).toBeGreaterThan(all.indexOf(host.querySelector(".checkpoint-details__facts") as Element))
-    expect(all.indexOf(status as Element)).toBeLessThan(all.indexOf(host.querySelector("textarea") as Element))
-    expect(host.querySelector(".checkpoint-details__props")?.textContent).not.toContain("Can't")
+    expect(banner?.firstElementChild?.tagName.toLowerCase()).toBe("svg")
+    expect(banner?.querySelector("span:not([hidden])")?.textContent).toBe("Can't restore · Wrong QEMU version")
+    expect(banner?.getAttribute("title")).toBe(full)
+    // It is laid over the picture (in its figure, after it), not a row of the caption or the properties.
+    expect(banner?.parentElement?.className).toBe("checkpoint-details__figure")
+    expect(banner?.previousElementSibling?.className).toBe("checkpoint-details__picture")
+    expect(host.querySelector(".checkpoint-details__plate")?.contains(banner ?? null)).toBe(false)
+    expect(host.querySelector(".checkpoint-details__status")).toBeNull()
     // The old wording is gone, and the long sentence is not drawn as a paragraph of its own.
     expect(host.textContent).not.toContain("Loads here")
-    const goBack = [...host.querySelectorAll("button")].find((b) => b.textContent === "Go Back to This")
-    expect(goBack?.disabled).toBe(true)
-    expect(goBack?.getAttribute("title")).toBe(full)
-    expect(host.querySelector(`[id="${goBack?.getAttribute("aria-describedby") ?? ""}"]`)?.textContent).toBe(full)
+    const restore = host.querySelector<HTMLButtonElement>("button[aria-label='Restore this checkpoint']")
+    expect(restore?.disabled).toBe(true)
+    expect(restore?.getAttribute("title")).toBe(full)
+    expect(host.querySelector(`[id="${restore?.getAttribute("aria-describedby") ?? ""}"]`)?.textContent).toBe(full)
   })
 
   it("has a short, plain phrase and a whole sentence for every reason a checkpoint can't be restored", () => {
@@ -839,10 +872,10 @@ describe("the checkpoint's panel", () => {
     }
   })
 
-  it("keeps Delete separate from Go Back, each with its icon and its word", () => {
+  it("keeps Delete separate from the folder and Restore buttons, each with its icon (Delete with its word)", () => {
     const { host } = panel(withNotes)
     const buttons = [...host.querySelectorAll("footer button")]
-    expect(buttons.map((b) => b.textContent)).toEqual(["Delete…", "Go Back to This"])
+    expect(buttons.map((b) => b.textContent)).toEqual(["Delete…", "", ""])
     expect(buttons.every((b) => b.querySelector("svg") !== null)).toBe(true)
   })
 })
@@ -862,7 +895,7 @@ describe("the details layer", () => {
     document.body.replaceChildren(host)
     root = createRoot(host)
     return (c, onNote = noop) =>
-      act(() => root?.render(<CheckpointDetailsLayer c={c} now={Date.parse("2026-10-22T20:00:00Z")} busy={false} saving="idle" onClose={noop} onLook={noop} onNote={onNote} onGoBack={noop} onDelete={noop} />))
+      act(() => root?.render(<CheckpointDetailsLayer c={c} now={Date.parse("2026-10-22T20:00:00Z")} busy={false} saving="idle" onClose={noop} onLook={noop} onNote={onNote} onGoBack={noop} onReveal={noop} onDelete={noop} />))
   }
   const aside = (): HTMLElement | null => host.querySelector<HTMLElement>("aside.checkpoint-details")
   const wait = (ms: number): Promise<void> => act(async () => void (await new Promise((r) => setTimeout(r, ms))))
@@ -1212,6 +1245,9 @@ describe("a card", () => {
     expect(badge?.closest(".checkpoint__caption")).toBeNull()
     expect(badge?.textContent).toBe("Can't restore")
     expect(badge?.getAttribute("title")).toBe("It was made with a different display setup, so it can't be restored on this machine.")
+    // At the full caption level it is a banner across the picture's foot, one line; the size's hover says what it counts.
+    expect(host.querySelector(".checkpoint__size")?.getAttribute("title")).toBe("Disk space on your Mac, at most: checkpoints share space")
+    expect(badge?.querySelectorAll("span").length).toBe(1)
   })
 
   it("names every fact in its one accessible name", () => {

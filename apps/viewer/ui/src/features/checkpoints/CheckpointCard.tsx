@@ -195,7 +195,9 @@ export const CheckpointCard = memo(function CheckpointCard({ c, box, selected, z
                 <span className="checkpoint__when">{when}</span>
                 <span className="checkpoint__facts">
                   <KindChip kind={c.kind} className="checkpoint__kind" />
-                  <span className="checkpoint__size">{formatSize(c.bytes)}</span>
+                  <span className="checkpoint__size" title={t("checkpoints.sizeTip")}>
+                    {formatSize(c.bytes)}
+                  </span>
                 </span>
                 {note !== null && (
                   <span className="checkpoint__note" title={note.full}>

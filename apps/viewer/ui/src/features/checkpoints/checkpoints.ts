@@ -251,7 +251,7 @@ export function dayGroup(day: Pick<DayBlock, "names" | "scale" | "label" | "x" |
 /** A day's block with room for its date above it (the label sits on the block, drawn upwards). */
 export const withLabel = (d: Pick<DayBlock, "x" | "y" | "width" | "height" | "scale">): Rect => ({ x: d.x, y: d.y - 44 * d.scale, width: d.width, height: d.height + 44 * d.scale })
 
-/** The picture part of a card: what flies to the screen on Go Back, and what the screen flies into on the way in. */
+/** The picture part of a card: what flies to the screen on Restore, and what the screen flies into on the way in. */
 export const frameOf = (box: Rect & { readonly frame: number }): Rect => ({ x: box.x, y: box.y, width: box.width, height: box.frame })
 
 /** A union of rectangles (for "Now and the newest day"). */
@@ -464,7 +464,7 @@ export interface GoBackContext {
 }
 
 /**
- * What Go Back does: load the checkpoint, after keeping the present as a
+ * What Restore does: load the checkpoint, after keeping the present as a
  * checkpoint of its own when asked (and only when there is a running
  * machine to keep).
  */
@@ -474,7 +474,7 @@ export function goBackSteps(target: string, saveFirst: boolean, ctx: GoBackConte
   return [{ verb: "save", name: saveNameFor(ctx.keepTitle, ctx.taken, ctx.now), title: ctx.keepTitle }, load]
 }
 
-/** The Go Back confirmation: what it says, and whether it offers Save Current First. */
+/** The Restore confirmation: what it says, and whether it offers Take Checkpoint First. */
 export function goBackConfirm(ctx: Pick<GoBackContext, "live">): { readonly body: string; readonly offerSaveFirst: boolean } {
   return ctx.live ? { body: "checkpoints.goBack.bodyLive", offerSaveFirst: true } : { body: "checkpoints.goBack.bodyStopped", offerSaveFirst: false }
 }

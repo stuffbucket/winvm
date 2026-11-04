@@ -2,7 +2,6 @@ import { type KeyboardEvent, type Ref, useEffect, useId, useLayoutEffect, useRef
 
 import { CanvasGlyph, CanvasIconButton, GLYPHS } from "@winvm/canvas"
 
-import { copyText } from "../../backend"
 import { Button } from "../../components/Button"
 import { Icon } from "../../components/Icon"
 import { t } from "../../i18n"
@@ -66,6 +65,8 @@ interface DetailsProps {
   onLook(): void
   onNote(draft: NoteDraft): void
   onGoBack(): void
+  /** Open the checkpoint's folder in Finder. */
+  onReveal(): void
   onDelete(): void
 }
 
@@ -215,48 +216,15 @@ function InlineTitle({ shown, hasTitle, name, onCommit }: { readonly shown: stri
 export const PANEL_EXIT_MS = 180
 const panelExitMs = (): number => (typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches ? 0 : PANEL_EXIT_MS)
 
-/** Puts the save's name on the Mac's clipboard; a quiet tick says it did. */
-function CopyName({ name }: { readonly name: string }): JSX.Element {
-  const [copied, setCopied] = useState(false)
-  const timer = useRef<ReturnType<typeof setTimeout> | null>(null)
-  useEffect(
-    () => () => {
-      if (timer.current !== null) clearTimeout(timer.current)
-    },
-    [],
-  )
-  const tip = copied ? t("checkpoints.copiedName") : t("checkpoints.copyName")
-  return (
-    <button
-      type="button"
-      className="checkpoint-details__copy"
-      aria-label={tip}
-      title={tip}
-      onClick={() => {
-        void Promise.resolve()
-          .then(() => copyText(name))
-          .then(() => {
-            setCopied(true)
-            if (timer.current !== null) clearTimeout(timer.current)
-            timer.current = setTimeout(() => setCopied(false), 1500)
-          })
-          .catch(() => undefined)
-      }}
-    >
-      <Icon name={copied ? "check" : "copy"} />
-    </button>
-  )
-}
-
 /**
  * The selected checkpoint, up close, laid out as its card's caption plate is:
- * the picture first, then, under it, the title (edited where it stands), when
- * it was taken, how it came to be and its size, whether Windows can go back
- * to it here (only when it can't), its note (written as it is typed), what
- * else there is to know (tags; the save name, when it isn't the title), and
- * the two things to do with it. Each fact is in one place.
+ * the picture first (with, across its foot, a banner when Windows can't
+ * restore it here), then the title (edited where it stands), when it was
+ * taken, how it came to be and its size; one break; then its note (written as
+ * it is typed), what else there is to know (tags), and the things to do with
+ * it. Each fact is in one place.
  */
-export function CheckpointDetails({ c, now, busy, saving, state = "open", panelRef, onClose, onLook, onNote, onGoBack, onDelete }: DetailsProps): JSX.Element {
+export function CheckpointDetails({ c, now, busy, saving, state = "open", panelRef, onClose, onLook, onNote, onGoBack, onReveal, onDelete }: DetailsProps): JSX.Element {
   const [draft, setDraft] = useState(() => draftOf(c.notes))
   const written = useRef(draftOf(c.notes))
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -334,28 +302,31 @@ export function CheckpointDetails({ c, now, busy, saving, state = "open", panelR
         <CanvasGlyph>{GLYPHS.close}</CanvasGlyph>
       </CanvasIconButton>
       <div className="checkpoint-details__scroll">
-        <button type="button" className="checkpoint-details__picture" title={t("checkpoints.lookTip")} onClick={onLook}>
-          <Picture c={c} sharp wanted />
-        </button>
-        <div className="checkpoint-details__plate">
-          <InlineTitle shown={shown} hasTitle={draft.title.trim() !== ""} name={c.name} onCommit={(title) => keep({ title })} />
-          <p className="checkpoint-details__when">{takenAt(c, now)}</p>
-          <div className="checkpoint-details__facts">
-            <KindChip kind={c.kind} className="checkpoint-details__kind" />
-            <span className="checkpoint-details__size">{formatSize(c.bytes)}</span>
-          </div>
+        <div className="checkpoint-details__figure">
+          <button type="button" className="checkpoint-details__picture" title={t("checkpoints.lookTip")} onClick={onLook}>
+            <Picture c={c} sharp wanted />
+          </button>
           {reason !== null && (
-            // A status, not a property: one calm line, the whole reason on hover and in the Go Back button's description.
-            <p className="checkpoint-details__status" title={t(reason)}>
+            // A status, not a property: one line across the picture's foot; the whole reason on hover and in the Restore button's description.
+            <p className="checkpoint-details__banner" title={t(reason)}>
               <Icon name="warning" />
-              <span>
-                <strong>{t("checkpoints.cantLoad")}</strong> <span className="checkpoint-details__why">{t(shortReason(reason))}</span>
-              </span>
+              <span>{t("checkpoints.cantLoadWhy", { why: t(shortReason(reason)) })}</span>
               <span id={reasonId} hidden>
                 {t(reason)}
               </span>
             </p>
           )}
+        </div>
+        <div className="checkpoint-details__plate">
+          <InlineTitle shown={shown} hasTitle={draft.title.trim() !== ""} name={c.name} onCommit={(title) => keep({ title })} />
+          <p className="checkpoint-details__when">{takenAt(c, now)}</p>
+          <div className="checkpoint-details__facts">
+            <KindChip kind={c.kind} className="checkpoint-details__kind" />
+            <span className="checkpoint-details__size" title={t("checkpoints.sizeTip")}>
+              {formatSize(c.bytes)}
+            </span>
+          </div>
+          <hr className="checkpoint-details__break" />
           <textarea
             ref={noteField}
             className="checkpoint-details__text"
@@ -392,16 +363,6 @@ export function CheckpointDetails({ c, now, busy, saving, state = "open", panelR
                 />
               </dd>
             </div>
-            {shown !== c.name && (
-              // What `winvm load` takes, when it is not what the title says.
-              <div className="checkpoint-details__prop checkpoint-details__prop--name">
-                <dt title={t("checkpoints.fact.nameTip")}>{t("checkpoints.fact.name")}</dt>
-                <dd className="checkpoint-details__copyable">
-                  <span className="mono">{c.name}</span>
-                  <CopyName name={c.name} />
-                </dd>
-              </div>
-            )}
           </dl>
         </div>
       </div>
@@ -413,17 +374,28 @@ export function CheckpointDetails({ c, now, busy, saving, state = "open", panelR
         <span className="checkpoint-details__saved" role="status" data-failed={saving === "failed"}>
           {saving === "saving" ? t("checkpoints.note.saving") : saving === "saved" ? t("checkpoints.note.saved") : saving === "failed" ? t("checkpoints.note.failed") : ""}
         </span>
+        <Button
+          size="sm"
+          variant="ghost"
+          className="btn--icon checkpoint-details__reveal"
+          aria-label={t("checkpoints.showInFinder")}
+          title={t("checkpoints.showInFinder")}
+          onClick={onReveal}
+        >
+          <Icon name="folder" />
+        </Button>
         <span title={reason === null ? undefined : t(reason)}>
           <Button
             size="sm"
             variant="primary"
+            className="btn--icon checkpoint-details__restore"
             disabled={busy || reason !== null}
-            title={reason === null ? t("checkpoints.goBackTip") : t(reason)}
+            aria-label={t("checkpoints.restore")}
+            title={reason === null ? t("checkpoints.restore") : t(reason)}
             aria-describedby={reason === null ? undefined : reasonId}
             onClick={onGoBack}
           >
-            <Icon name="history" />
-            {t("checkpoints.goBack")}
+            <Icon name="rewind" />
           </Button>
         </span>
       </footer>
@@ -439,11 +411,12 @@ const cardButtonOf = (name: string): HTMLElement | null => {
   return null
 }
 
-export interface LayerProps extends Omit<DetailsProps, "c" | "state" | "panelRef" | "onNote" | "onGoBack" | "onDelete"> {
+export interface LayerProps extends Omit<DetailsProps, "c" | "state" | "panelRef" | "onNote" | "onGoBack" | "onReveal" | "onDelete"> {
   /** The selected checkpoint; none lets the panel ease out. */
   readonly c: Checkpoint | undefined
   onNote(name: string, draft: NoteDraft): void
   onGoBack(name: string): void
+  onReveal(name: string): void
   onDelete(name: string): void
 }
 
@@ -456,7 +429,7 @@ export interface LayerProps extends Omit<DetailsProps, "c" | "state" | "panelRef
  * flicker, the slide simply turns round where it is. Focus goes into the panel
  * when it opens, and back to the checkpoint's card when it closes from there.
  */
-export function CheckpointDetailsLayer({ c, onNote, onGoBack, onDelete, ...rest }: LayerProps): JSX.Element | null {
+export function CheckpointDetailsLayer({ c, onNote, onGoBack, onReveal, onDelete, ...rest }: LayerProps): JSX.Element | null {
   const open = c !== undefined
   // What it says while it eases out, when there is no selection any more.
   const kept = useRef<Checkpoint | undefined>(c)
@@ -515,6 +488,7 @@ export function CheckpointDetailsLayer({ c, onNote, onGoBack, onDelete, ...rest 
       panelRef={panel}
       onNote={(d) => onNote(shownCheckpoint.name, d)}
       onGoBack={() => onGoBack(shownCheckpoint.name)}
+      onReveal={() => onReveal(shownCheckpoint.name)}
       onDelete={() => onDelete(shownCheckpoint.name)}
     />
   )

@@ -82,6 +82,17 @@ export const unusedPath = (dir: string, name: string, folder: boolean): Promise<
 /** Shows a Mac file or folder in Finder, selected. */
 export const revealInFinder = (path: string): Promise<void> => tauri().core.invoke<void>("reveal", { path })
 
+/** Opens a Mac folder in Finder (the app checks it is an existing folder). */
+export const openFolder = (path: string): Promise<void> => tauri().core.invoke<void>("open_folder", { path })
+
+/** Opens the folder a checkpoint is kept in on the Mac, in Finder: `winvm saves path` names it, the app opens it. */
+export async function showCheckpointInFinder(instance: string, name: string): Promise<void> {
+  const out = await winvm("saves", "-i", instance, "path", name, "--json")
+  if (out.code !== 0) throw new Error(outputText(out) || `winvm saves path exited ${String(out.code)}`)
+  const { path } = JSON.parse(out.stdout) as { path: string }
+  await openFolder(path)
+}
+
 /** What a machine's agent answered: its HTTP status and body (JSON, or the text when it isn't). */
 export interface AgentReply {
   readonly status: number

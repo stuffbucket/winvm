@@ -669,18 +669,27 @@
 }
 
 /*
- * Can't load here: the card's state, a warning pill inset at the picture's
- * bottom edge (the reason is its tooltip), not a row of the plate.
+ * Can't load here: the card's state. Where there is room for words, a banner
+ * across the picture's foot, one line, 20% see-through (the reason is its
+ * tooltip); where there is not, just the warning sign in a small disc in the
+ * picture's corner. Not a row of the plate.
  */
+.checkpoint,
+.checkpoint-details {
+  /* Warning tone, 80% opaque, and the ink on it: the card's colour in the theme (dark on the dark theme's amber, light on the light theme's brown). The brown is deepened a step so the light ink holds over a white picture too (color.md). */
+  --checkpoint-banner: color-mix(in srgb, color-mix(in srgb, var(--status-warning) 80%, var(--text-strong)) 80%, transparent);
+  --checkpoint-banner-ink: var(--surface-card);
+}
+
 .checkpoint__badge {
   position: absolute;
   pointer-events: auto;
-  bottom: var(--space-2);
-  left: var(--space-2);
+  top: var(--space-2);
+  right: var(--space-2);
   display: flex;
   align-items: center;
   gap: var(--space-2);
-  padding: var(--space-1) var(--space-3) var(--space-1) var(--space-2);
+  padding: var(--space-1);
   border: var(--border-width-hairline) solid color-mix(in srgb, var(--status-warning) 55%, transparent);
   border-radius: var(--radius-pill);
   background: color-mix(in srgb, var(--surface-card) 92%, transparent);
@@ -695,14 +704,23 @@
   height: var(--size-sm);
 }
 
-/* Too narrow for the words: just the warning sign, in the picture's corner, its words in the tooltip. */
-.checkpoint[data-level="name"] .checkpoint__badge,
-.checkpoint[data-level="picture"] .checkpoint__badge {
-  top: var(--space-2);
-  right: var(--space-2);
-  bottom: auto;
-  left: auto;
-  padding: var(--space-1);
+.checkpoint[data-level="full"] .checkpoint__badge {
+  top: auto;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  padding: var(--space-1) var(--space-3);
+  border: 0;
+  border-radius: 0;
+  background: var(--checkpoint-banner);
+  color: var(--checkpoint-banner-ink);
+  white-space: nowrap;
+}
+
+.checkpoint[data-level="full"] .checkpoint__badge > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 /* Can't load here: the picture steps back, the words say why. */
@@ -982,13 +1000,18 @@
   box-shadow: var(--elevation-tooltip);
 }
 
+/* The picture and, across its foot, the can't-restore banner. */
+.checkpoint-details__figure {
+  position: relative;
+  border-bottom: var(--border-width-hairline) solid var(--border-subtle);
+}
+
 .checkpoint-details__picture {
   display: block;
   width: 100%;
   margin: 0;
   padding: 0;
   border: 0;
-  border-bottom: var(--border-width-hairline) solid var(--border-subtle);
   background: transparent;
   cursor: zoom-in;
 }
@@ -1055,38 +1078,35 @@
   font-variant-numeric: tabular-nums;
 }
 
-/* Can't go back here: a status, one calm line with the warning glyph; the whole reason on hover and in the Go Back button's description. */
-.checkpoint-details__status {
+/* Can't restore here: a status, one line across the picture's foot, 20% see-through; the whole reason on hover and in the Restore button's description. */
+.checkpoint-details__banner {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   gap: var(--space-2);
-  margin: var(--space-1) 0;
-  padding: var(--space-2);
-  border-radius: var(--radius-input);
-  color: var(--status-warning);
+  margin: 0;
+  padding: var(--space-1) var(--space-3);
+  background: var(--checkpoint-banner);
+  color: var(--checkpoint-banner-ink);
   font-size: var(--text-sm);
+  line-height: var(--leading-lg);
+  white-space: nowrap;
   cursor: help;
 }
 
-.checkpoint-details__status svg {
+.checkpoint-details__banner svg {
   flex: none;
   width: var(--size-sm);
   height: var(--size-sm);
-  margin-top: 0.1em;
 }
 
-.checkpoint-details__status strong {
-  font-weight: var(--weight-lg);
-}
-
-.checkpoint-details__status > span:not([hidden]) {
+.checkpoint-details__banner > span:not([hidden]) {
   min-width: 0;
-}
-
-/* The few words that say why, under the headline. */
-.checkpoint-details__why {
-  display: block;
-  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 /* A short window leaves the picture less room, so the rest of the panel is in reach. */
@@ -1243,17 +1263,23 @@ button.checkpoint-details__title-field:hover {
   font-size: var(--text-sm);
 }
 
-/* Facts: a label and its value a row, values selectable; the label column is as wide for every row. */
+/* The one break: the caption above it (title, date, kind and size), what can be changed below. */
+.checkpoint-details__break {
+  height: 0;
+  margin: var(--space-2) calc(-1 * var(--space-3));
+  border: 0;
+  border-top: var(--border-width-hairline) solid var(--border-subtle);
+}
+
+/* Properties: a label and its value a row, on one grid for every row: the labels in one column, the values starting together under the note's text. */
 .checkpoint-details__props {
   display: grid;
-  margin: var(--space-2) 0 0;
-  padding-top: var(--space-2);
-  border-top: var(--border-width-hairline) solid var(--border-subtle);
+  margin: 0;
 }
 
 .checkpoint-details__prop {
   display: grid;
-  grid-template-columns: calc(var(--size-2xl) * 3) minmax(0, 1fr);
+  grid-template-columns: calc(var(--size-2xl) * 1.5) minmax(0, 1fr);
   align-items: center;
   min-height: var(--size-xl);
   padding-left: var(--space-2);
@@ -1286,47 +1312,6 @@ button.checkpoint-details__title-field:hover {
   font: inherit;
   font-size: var(--text-sm);
   text-overflow: ellipsis;
-}
-
-/* The save name, when it isn't the title: mono, with a copy button. */
-.checkpoint-details__copyable {
-  display: flex;
-  align-items: center;
-  gap: var(--space-1);
-}
-
-.checkpoint-details__copyable .mono {
-  min-width: 0;
-}
-
-.checkpoint-details__copy {
-  display: inline-flex;
-  flex: none;
-  align-items: center;
-  justify-content: center;
-  width: var(--size-lg);
-  height: var(--size-lg);
-  padding: 0;
-  border: 0;
-  border-radius: var(--radius-input);
-  background: transparent;
-  color: var(--text-muted);
-  cursor: default;
-}
-
-.checkpoint-details__copy:hover {
-  background: var(--surface-control);
-  color: var(--text-strong);
-}
-
-.checkpoint-details__copy:focus-visible {
-  outline: var(--focus-ring);
-  outline-offset: calc(-1 * var(--focus-ring-width));
-}
-
-.checkpoint-details__copy svg {
-  width: var(--size-sm);
-  height: var(--size-sm);
 }
 
 .checkpoint-details__actions {

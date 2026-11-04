@@ -112,7 +112,7 @@ describe("the topics", () => {
     expect(text("ability.exec")).toBe("Open a Windows terminal")
     expect(text("ability.files")).toBe("Copy files between your Mac and Windows")
     expect(text("ability.save")).toBe("Save a checkpoint")
-    expect(text("ability.restore")).toBe("Go back to a checkpoint")
+    expect(text("ability.restore")).toBe("Restore a checkpoint")
     expect(text("ability.agent")).toBe("Use winvm from Claude Code and Claude Desktop")
   })
 

@@ -6,9 +6,9 @@
  * ⌘+ / ⌘− zoom; dragging, two-finger scrolling or the arrow keys pan; every
  * camera move eases in and out (and jumps, with reduced motion).
  *
- * A card selected comes up close with its notes, Go Back to This and
+ * A card selected comes up close with its notes, Restore and
  * Delete…. New Checkpoint takes one and flies it out of Now into the stack.
- * Done (Esc) flies back into the live screen. Going back flies the chosen
+ * Done (Esc) flies back into the live screen. Restoring flies the chosen
  * checkpoint into the screen once Windows is back at that moment.
  *
  * The rules (layout, timeline, search, confirmations) are in checkpoints.ts;
@@ -47,7 +47,7 @@ import {
   zoomAround,
 } from "@winvm/canvas"
 
-import { outputText, winvm } from "../../backend"
+import { outputText, showCheckpointInFinder, winvm } from "../../backend"
 import { ConfirmDialog } from "../../components/ConfirmDialog"
 import { t } from "../../i18n"
 import { type Phase, parseNote, parseSaves } from "../../model"
@@ -996,6 +996,9 @@ export function CheckpointCanvas(p: CheckpointCanvasProps): JSX.Element {
           onLook={() => setLooking(true)}
           onNote={writeNote}
           onGoBack={(name) => setConfirm({ kind: "go-back", name })}
+          onReveal={(name) => {
+            showCheckpointInFinder(props.current.instance, name).catch((e: unknown) => setStatus({ tone: "error", text: String(e) }))
+          }}
           onDelete={(name) => setConfirm({ kind: "delete", name })}
         />
       </SpatialCanvas>
