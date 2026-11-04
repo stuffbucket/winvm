@@ -527,6 +527,162 @@ html[data-os="macos"] .toolbar {
   color: var(--text-strong);
 }
 
+/* ---- Overview: a suspended machine's note and backdrop ---- */
+
+/* The overview that has a note holds still itself; only the column inside it
+   scrolls (when the window is too short for the controls), so the backdrop
+   stays put behind it. */
+.overview--notes {
+  padding: 0;
+  overflow: hidden;
+}
+
+.overview--notes .overview__content {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+  align-self: stretch;
+  margin-block: 0;
+  padding: var(--space-6) var(--space-7) var(--space-8);
+  overflow-y: auto;
+}
+
+/* Everything above the controls: the heading and the note. It takes whatever
+   height the controls leave, so the controls never move, and it is aligned to
+   its bottom, so the note grows upward and carries the heading with it. The
+   top of the column (its padding) is where the heading stops. */
+.overview__upper {
+  --notes-lines: 3;
+  --notes-min: calc(var(--text-sm) * var(--leading-lg) * var(--notes-lines) + var(--space-3) * 2);
+  flex: 1 1 0;
+  min-height: calc(var(--text-2xl) * var(--leading-2xl) + var(--space-4) + var(--notes-min));
+  align-self: stretch;
+  max-width: var(--content-max);
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  gap: var(--space-4);
+}
+
+/* The heading never shrinks; the note does, and then scrolls. */
+.overview__upper > .overview__title {
+  flex: none;
+}
+
+/* A text area as tall as its text, with no measuring: the wrapper draws the
+   same text invisibly (data-value) in the grid cell the text area fills, so
+   the cell, and the wrapper, are as tall as the text. When the column makes
+   the wrapper shorter, the cell is shorter, and the text area scrolls. */
+.notes {
+  flex: 0 1 auto;
+  min-height: var(--notes-min);
+  display: grid;
+  grid-template: minmax(0, 1fr) / minmax(0, 1fr);
+  background: var(--surface-control);
+  border: var(--border-width-hairline) solid var(--border-subtle);
+  border-radius: var(--radius-card);
+  transition: border-color 150ms ease-out;
+}
+
+.notes:hover {
+  border-color: var(--border-strong);
+}
+
+.notes:has(.notes__field:focus-visible) {
+  outline: var(--focus-ring);
+  outline-offset: var(--focus-ring-offset);
+  border-color: var(--border-strong);
+}
+
+.notes::after,
+.notes__field {
+  grid-area: 1 / 1;
+  min-width: 0;
+  min-height: 0;
+  margin: 0;
+  padding: var(--space-3);
+  font-family: var(--font-body);
+  font-size: var(--text-sm);
+  line-height: var(--leading-lg);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.notes::after {
+  content: attr(data-value) " ";
+  visibility: hidden;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.notes__field {
+  appearance: none;
+  resize: none;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--text-strong);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.notes__field::placeholder {
+  color: var(--text-muted);
+  opacity: 1;
+}
+
+.notes__failed {
+  flex: none;
+  color: var(--status-error);
+}
+
+/* The backdrop: a picture (or a drawn wallpaper) behind the whole screen, faint,
+   blurred and toned down so it is atmosphere and never a rival to the text.
+   Over it, text is --text-strong, --text-base-color (the labels that are
+   --text-muted elsewhere), --link and --status-error, and each clears 4.5:1
+   against the worst picture there could be, a pure black or white one, at
+   this opacity and tone (tests/overview.test.tsx measures it from these
+   numbers). --text-muted would not, which is why the labels step up. */
+.backdrop {
+  --backdrop-opacity: 0.16;
+  --backdrop-filter: saturate(0.8) contrast(0.85) brightness(0.75);
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.overview--notes .fact dt,
+.overview--notes .abilities__title {
+  color: var(--text-base-color);
+}
+
+/* Bled past the edges, so the blur has picture to draw from at the sides. */
+.backdrop__layers {
+  position: absolute;
+  inset: calc(-1 * var(--space-7));
+  opacity: var(--backdrop-opacity);
+  filter: blur(var(--space-6)) var(--backdrop-filter);
+}
+
+.backdrop__wallpaper,
+.backdrop__picture {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.backdrop__picture {
+  opacity: 0;
+  transition: opacity 400ms ease-out;
+}
+
+.backdrop__picture--ready {
+  opacity: 1;
+}
+
 /* ---- Start progress ---- */
 .steps {
   list-style: none;

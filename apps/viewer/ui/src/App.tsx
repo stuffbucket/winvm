@@ -616,7 +616,7 @@ export function App(): JSX.Element {
                   overlay={pauseOverlay}
                 />
               ) : (
-                <Overview phase={phase} status={w.status} steps={steps} canStart={c.start} onStart={() => run("start")} />
+                <Overview instance={w.name} phase={phase} status={w.status} steps={steps} canStart={c.start} onStart={() => run("start")} />
               )}
               {dropping && (
                 <div className="display__drop" aria-hidden="true">

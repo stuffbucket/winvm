@@ -21,6 +21,7 @@
  *   winvm pause / resume / stow      freeze, unfreeze, save-and-quit
  *   winvm sleep / wake / lock        lock Windows and freeze it, wake it, lock it
  *   winvm settings [key=value]       the user's settings (XDG config dir)
+ *   winvm note [-i name] [--text T]   a note on a machine; see machinenote.ts
  *   winvm reboot [-i name]           restart Windows, back when logged on again
  *   winvm clock [-i name]            guest-vs-host clock offset, and fix it
  *   winvm reset [-i name]            discard all changes, back to the base
@@ -149,6 +150,7 @@ import * as finder from "@winvm/core/finder"
 import * as mcpcmds from "@winvm/core/mcpcmds"
 import * as goldens from "@winvm/core/golden"
 import * as machineinfo from "@winvm/core/machineinfo"
+import * as machinenote from "@winvm/core/machinenote"
 import * as ocr from "@winvm/core/ocr"
 import * as runcmds from "@winvm/core/runcmds"
 import * as savecmds from "@winvm/core/savecmds"
@@ -304,6 +306,9 @@ switch (sub) {
   // eslint-disable-next-line no-fallthrough
   case "settings":
     process.exit(settings.settingsCmd(args))
+  // eslint-disable-next-line no-fallthrough
+  case "note":
+    process.exit(machinenote.noteCmd(args))
   // eslint-disable-next-line no-fallthrough
   case "stow":
     process.exit(await savecmds.stow(args))

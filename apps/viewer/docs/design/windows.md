@@ -146,6 +146,45 @@ Mac's clipboard; the Mac's goes to Windows when the window comes forward and
 once on connecting, only when it changed, and never back to where it came
 from. QEMU's qemu-vdagent carries it, through noVNC's extended clipboard.
 
+## The suspended screen
+
+A machine that is suspended (stowed) shows its own overview with two things
+the others don't: a note, and a backdrop (`features/overview/`).
+
+**The note** is the person's, about this machine: a text area under the
+heading, with a quiet placeholder ("Add a note about this machine"). It
+saves as they type (after a pause, 800 ms), on Esc and on leaving the field,
+and when the screen goes away (Start) or another machine is shown: no Save
+button. If a save fails it says so under the note and tries again at the next
+chance. It is kept by `winvm note -i <name>` (`packages/core/src/machinenote.ts`)
+in `$XDG_DATA_HOME/winvm/machine-notes/<instance>.json`, apart from the notes
+on checkpoints, and goes with the machine when it is deleted. It takes no key
+the app uses: Esc finishes writing (saves, leaves the field), everything else
+is typing. Nothing is captured for Windows here; the machine isn't running.
+
+**It grows upward.** The heading and the note are one block, aligned to its
+bottom, between the top of the screen and the controls. As the note grows the
+heading rises with it; when the heading reaches the top of the screen (its
+`--space-6` padding, below the toolbar that carries the traffic lights) the
+note stops growing and scrolls inside. The facts, Start and the rest below it
+never move, because the block, not they, takes up the slack. This is layout
+only (flex, and the wrapper's `data-value` copy of the text drawn invisibly in
+the same grid cell, which gives the area the height of its text): no
+measuring in script. `scripts/render-overview.mjs` measures it in WebKit.
+
+**The backdrop** is behind the whole screen: the screenshot from when the
+machine was put away (else the newest checkpoint's picture), at 16% opacity,
+blurred (`--space-6`), saturation 0.8, contrast 0.85, brightness 0.75, out of
+the layout so nothing moves when it arrives; it fades in once loaded. A
+machine with no picture gets a drawn wallpaper under the same treatment: soft
+dunes and a low sun in `--link`, `--accent`, `--brand` and the backdrop
+tokens (so it follows light and dark), with no icons, no marks and no text.
+Over it, text is `--text-strong`, `--text-base-color` (the labels that are
+`--text-muted` elsewhere on this screen, which wouldn't clear 4.5:1 over a pure
+white or black picture at this opacity), `--status-error`, and `--link` for
+glyphs; `tests/overview.test.tsx` measures each against the worst picture, in
+both themes.
+
 ## The Files window
 
 A window of its own per instance, as Finder is, so files sit beside the
@@ -249,18 +288,20 @@ spatial canvas). The toolbar's clock opens it, as do ⌘⇧T and File →
 Checkpoints…; Option-click or right-click on the clock shows a native menu
 with Take a Checkpoint Now and Show Checkpoints….
 
-**In and out.** The view eases in: the window's own screen becomes the
-"Now" card where it stands (the camera starts with the card exactly over the
-display) and the camera pulls back to show Now and the newest checkpoints,
-while the window behind dims and blurs (the live screen, copied a couple of
-times a second and blurred; `backdrop-filter` where there is no screen),
-closed in by a vignette and sinking into the surface color toward the top, where
-the oldest checkpoints are: the view is the whole window, with no chrome at its
-top. Nothing of ours sits by the traffic lights (no title chip; the native
-title bar names the window); only a strip across the top still moves the
-window. Done, Esc or a click on Now flies back into the screen the same way. Going
-back to a checkpoint flies that checkpoint's picture into the screen once
-Windows is back at that moment.
+**In and out.** A change of mode in this window, so it happens where it
+is: the view fades in over the window's own screen, settling from 99% to full
+size in 200 ms, already showing Now and the newest checkpoints; Done, Esc or a
+click on Now fades it out in 180 ms (`checkpoints.css`, the surface's
+`data-phase`). Nothing flies in from the display and nothing slides, so it
+never reads as a separate window. Under reduced motion it is a cut. The
+window behind dims and blurs (the live screen, copied a couple of times a
+second and blurred; `backdrop-filter` where there is no screen), closed in by
+a vignette and sinking into the surface color toward the top, where the oldest
+checkpoints are: the view is the whole window, with no chrome at its top.
+Nothing of ours sits by the traffic lights (no title chip; the native title
+bar names the window); only a strip across the top still moves the window.
+Going back to a checkpoint leaves the same way, once Windows is back at that
+moment. The camera still flies *within* the view (below).
 
 **Layout.** Time runs up the canvas, as Time Machine's windows recede into
 the screen. Now, the running machine (its live screen, copied into the card

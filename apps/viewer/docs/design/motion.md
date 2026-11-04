@@ -17,6 +17,9 @@ spacing, and copy.
   *Checkpoints*): 420–900 ms, cubic ease-in-out, longer for a bigger
   change of view. A flight is how that view says where a checkpoint is in
   time, so it is utility there; it still jumps under reduced motion.
+- **Entering and leaving Checkpoints**: a 200 ms / 180 ms fade of the whole
+  view with a 1% settle. A mode change inside the window, not a flight into
+  another one. A cut under reduced motion.
 
 ## What's forbidden
 

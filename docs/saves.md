@@ -96,6 +96,23 @@ A note still belongs to its save:
   old moment.
 - A save copied to another instance (a test pool) brings its note with it.
 
+A machine has a note of its own, for whatever you want to remember about that
+Windows install. The app shows it on a suspended machine's screen and saves it
+as you type:
+
+```sh
+winvm note -i dev                       # show it
+winvm note -i dev --text="Office is not installed yet"
+echo "Licence key is in the drawer" | winvm note -i dev --text -
+winvm note -i dev --clear               # delete it
+winvm note -i dev --json                # {"text", "updatedAt"}, or null
+```
+
+It lives at `~/.local/share/winvm/machine-notes/<instance>.json` (or under
+`$XDG_DATA_HOME/winvm/`), not with the notes on saves, and goes with the machine:
+`destroy` deletes it, with or without `--keep-saves`. It holds at most 20,000
+characters.
+
 `saves --json` reports, for each save, `format`, `screenshot` and `thumbnail`
 (absolute paths, or `null`), `screenSize`, `title` and `notes` (the whole note,
 or `null`). For a save that won't load, `incompatible` lists what changed:

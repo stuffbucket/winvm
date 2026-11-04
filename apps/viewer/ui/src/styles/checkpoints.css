@@ -28,7 +28,6 @@
   background: color-mix(in srgb, var(--surface-base) 58%, transparent);
   -webkit-backdrop-filter: blur(var(--space-6)) saturate(1.25);
   backdrop-filter: blur(var(--space-6)) saturate(1.25);
-  transition: opacity 480ms var(--checkpoints-ease);
 }
 
 /* The live screen, blurred and dimmed behind everything (a copy, a couple of times a second). */
@@ -60,29 +59,24 @@
   height: 100%;
 }
 
-/* In and out: the backdrop and the chrome fade while the camera flies. */
-.checkpoints[data-phase="entering"] .checkpoints__backdrop,
-.checkpoints[data-phase="leaving"] .checkpoints__backdrop {
-  opacity: 0;
+/* In and out: a change of mode in this window. The whole view fades and settles
+   a hair in place (no flight, nothing that reads as another window); with
+   reduced motion the global rule makes it a cut (styles.css, Motion). */
+.checkpoints {
+  transition:
+    opacity 200ms ease-out,
+    transform 200ms ease-out;
 }
 
-.checkpoints .spatial-canvas__controls,
-.checkpoints .timeline,
-.checkpoints__status,
-.checkpoints .spatial-canvas__side-panel,
-.checkpoints .spatial-canvas__floating-panel,
-.checkpoints__day,
-.checkpoint:not(.checkpoint--now) {
-  transition: opacity 320ms var(--checkpoints-ease);
+.checkpoints[data-phase="entering"],
+.checkpoints[data-phase="leaving"] {
+  opacity: 0;
+  transform: scale(0.99);
 }
 
-.checkpoints[data-phase="entering"] :is(.spatial-canvas__controls, .timeline, .checkpoints__status, .checkpoints__day, .checkpoint:not(.checkpoint--now)),
-.checkpoints[data-phase="leaving"] :is(.spatial-canvas__controls, .timeline, .checkpoints__status, .spatial-canvas__side-panel, .spatial-canvas__floating-panel, .checkpoints__day, .checkpoint:not(.checkpoint--now)) {
-  opacity: 0;
-}
-
-.checkpoints[data-phase="leaving"] .checkpoint--now .checkpoint__caption {
-  opacity: 0;
+.checkpoints[data-phase="leaving"] {
+  transition-duration: 180ms;
+  transition-timing-function: ease-in;
 }
 
 /*

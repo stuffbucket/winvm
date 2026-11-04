@@ -32,6 +32,7 @@ import * as agent from "./agent"
 import * as agentcmds from "./agentcmds"
 import * as finder from "./finder"
 import * as input from "./input"
+import { forgetMachineNote } from "./machinenote"
 import * as qemu from "./qemu"
 import * as qmp from "./qmp"
 import * as qga from "./qga"
@@ -165,6 +166,7 @@ export function prune(args: Args): number {
     qemu.stopSidecars(p)
     stopService(p)
     rmSync(p.dir, { recursive: true, force: true })
+    forgetMachineNote(name)
     saves.removeAllSaves(name)
     console.log(`  removed scratch instance "${name}" (${size})`)
     freedAnything = true
@@ -942,6 +944,7 @@ export function destroy(args: Args): number {
   finder.cleanStale(name)
   const size = du(instanceDir(name))
   rmSync(instanceDir(name), { recursive: true, force: true })
+  forgetMachineNote(name)
   console.log(`destroyed instance "${name}" (${size}; image untouched)`)
   if (!existsSync(saves.savesDir(name))) return 0
   const kept = saves.listSaves(name)
@@ -1221,6 +1224,7 @@ export const USAGE =
   "          [--stop | --status]   end it / print its state\n" +
   "  config  [-i name] [key=value ...]  autosave/stow/watch settings and the app's title; bare prints them\n" +
   "          [-i name] cpus=N memory=8G  processors and memory, from the next time Windows starts\n" +
+  "  note    [-i name] [--text TEXT|-] [--clear] [--json]  what you have jotted about a machine; bare prints it\n" +
   "  settings [key=value ...] [--json]  your own settings, for every instance (viewer.pauseOverlay);\n" +
   "                                in $XDG_CONFIG_HOME/winvm/settings.json (default ~/.config/winvm)\n" +
   "          [--section NAME [--set JSON]]   one part the app keeps there (checkpoints), as JSON\n" +
