@@ -314,7 +314,8 @@ export async function launch(name: string, p: Paths, meta: InstanceMeta, o: Laun
   // One virtiofsd per QEMU: it exits when its QEMU disconnects, so a load or
   // a recall needs a fresh one as much as a boot does. Decided by the same
   // display and devices as the command line below (launchDevices).
-  if (launchDevices(p, o).devices !== "none") {
+  const { display, devices } = launchDevices(p, o)
+  if (devices !== "none") {
     try {
       await share.startVirtiofsd(p)
     } catch (error) {
@@ -335,7 +336,7 @@ export async function launch(name: string, p: Paths, meta: InstanceMeta, o: Laun
   const m = await ensureFreeDisplay(name, p, meta)
 
   const log = openSync(p.qemuLog, "w")
-  const proc = spawn(runtimeBin("qemu-system-aarch64"), [...qemuArgs(name, p, m, o)], {
+  const proc = spawn(runtimeBin("qemu-system-aarch64"), [...qemuArgs(name, p, m, { ...o, display, shareDevices: devices })], {
     detached: true,
     stdio: ["ignore", log, log],
   })

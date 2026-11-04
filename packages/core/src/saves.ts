@@ -110,7 +110,19 @@ import { resolve } from "node:path"
 import type { Size } from "./cua"
 import { encodePng, fitScale, parsePpm, resize, scaled } from "./cua"
 import type { DisplayConfig } from "./display"
-import { RAMFB, VIRTIO_GPU, displayArgs, parseDisplayConfig, readDisplay, runningDisplay, sameDevice } from "./display"
+import {
+  LEGACY_SIZE_BOUNDS,
+  RAMFB,
+  VIRTIO_GPU,
+  displayArgs,
+  displayFromCommandLine,
+  parseDisplayConfig,
+  readDisplay,
+  rejectedLegacySize,
+  runningCommand,
+  sameDevice,
+  sharesFolderFromCommandLine,
+} from "./display"
 import type { Hardware } from "./hardware"
 import { LEGACY, hardwareFrom, readHardware, runningHardware } from "./hardware"
 import { capture, requireFirmware } from "./host"
@@ -977,11 +989,28 @@ export async function createSave(instance: string, o: CreateOptions): Promise<Cr
   // nothing has been stopped or written: not after the guest is already frozen.
   const pid = qemu.pidOf(p)
   const hardware = (pid === null ? null : runningHardware(pid)) ?? readHardware(p)
-  const display = pid === null ? null : runningDisplay(pid)
-  if (display === null) {
+  const command = pid === null ? null : runningCommand(pid)
+  const display = command === null ? null : displayFromCommandLine(command)
+  if (command === null || display === null) {
+    const size = command === null ? null : rejectedLegacySize(command)
     throw new Error(
-      `cannot tell which display "${instance}" is running (its QEMU command line shows no single ramfb or virtio-gpu device), ` +
-        "so a save could not be restored on the same hardware; nothing was saved",
+      size === null
+        ? `cannot tell which display "${instance}" is running (its QEMU command line shows no single ramfb or virtio-gpu device), ` +
+            "so a save could not be restored on the same hardware; nothing was saved"
+        : `"${instance}" is running a virtio-gpu profile (${size}) that a save cannot record: a size must be ${LEGACY_SIZE_BOUNDS}. ` +
+            "Nothing was saved. Stop it, run `winvm display virtio-gpu` (or `winvm display ramfb`) to reset the display, and start it again",
+    )
+  }
+  // Restoring launches the shared folder's devices by the display alone
+  // (qemu.launchDevices), so a process running with a different set (the ramfb
+  // boot of `share install` has them) could not be loaded: QEMU would refuse the
+  // stream after the guest was stopped and its disks replaced. Refused here,
+  // like an unidentified display, while nothing has been stopped or written.
+  const replayShares = qemu.launchDevices(p, { installMedia: false, display }).devices !== "none"
+  if (sharesFolderFromCommandLine(command) !== replayShares) {
+    throw new Error(
+      `"${instance}" is running a temporary setup configuration (its shared folder devices differ from what restoring a ${display.device} guest launches, as during \`winvm share install\`), ` +
+        "so a save could not be restored; nothing was saved. Save after it finishes",
     )
   }
   const compat = currentCompat(instance, meta, display, hardware)

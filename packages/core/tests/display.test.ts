@@ -15,12 +15,15 @@ import {
   VIRTIO_GPU,
   describeDisplay,
   displayArgs,
+  LEGACY_SIZE_BOUNDS,
   displayFromCommandLine,
   parseDevice,
   parseDisplayConfig,
   readDisplay,
+  rejectedLegacySize,
   runningDisplay,
   sameDevice,
+  sharesFolderFromCommandLine,
   writeDisplay,
 } from "../src/display"
 import {
@@ -230,6 +233,37 @@ describe("display device", () => {
     // Only -device arguments count: a name or path that mentions one is not a display.
     expect(displayFromCommandLine("qemu -name virtio-gpu-pci,xres=1920,yres=1080 -device ramfb")).toEqual(RAMFB)
     expect(displayFromCommandLine("qemu -name ramfb -display none")).toBeNull()
+  })
+
+  it("names a legacy size the strict parser refuses, and nothing else", () => {
+    // Strict rejection is unchanged...
+    for (const size of ["xres=8000,yres=600", "xres=10,yres=10", "xres=1920.5,yres=1080", "xres=abc,yres=600", "xres=1920,yres=9999"]) {
+      expect(displayFromCommandLine(`qemu -device virtio-gpu-pci,${size} -display none`)).toBeNull()
+      // ...but the refusal can say which profile it was.
+      expect(rejectedLegacySize(`qemu -device virtio-gpu-pci,${size} -display none`)).toBe(size)
+    }
+    // Valid profiles, plain devices, partial or extra properties, two devices and no device are not "a rejected size".
+    expect(rejectedLegacySize("qemu -device virtio-gpu-pci,xres=1920,yres=1080")).toBeNull()
+    expect(rejectedLegacySize("qemu -device virtio-gpu-pci")).toBeNull()
+    expect(rejectedLegacySize("qemu -device ramfb")).toBeNull()
+    expect(rejectedLegacySize("qemu -device virtio-gpu-pci,xres=8000")).toBeNull()
+    expect(rejectedLegacySize("qemu -device virtio-gpu-pci,xres=8000,yres=600,extra=on")).toBeNull()
+    expect(rejectedLegacySize("qemu -device virtio-gpu-pci,xres=8000,yres=600 -device ramfb")).toBeNull()
+    expect(rejectedLegacySize("qemu -display none")).toBeNull()
+    expect(rejectedLegacySize("qemu -name virtio-gpu-pci,xres=8000,yres=600 -device ramfb")).toBeNull()
+    expect(LEGACY_SIZE_BOUNDS).toBe("640x480 to 7680x4320, whole numbers")
+  })
+
+  it("tells the shared folder's device from the -device argument, not from words", () => {
+    const share = "-object memory-backend-shm,id=mem,size=4096M,share=on -device vhost-user-fs-pci,chardev=vfs0,tag=winvm,queue-size=1024,addr=0x10"
+    expect(sharesFolderFromCommandLine(`qemu -device ramfb ${share}`)).toBe(true)
+    expect(sharesFolderFromCommandLine("qemu -device vhost-user-fs-pci")).toBe(true)
+    expect(sharesFolderFromCommandLine("qemu -device ramfb -display none")).toBe(false)
+    expect(sharesFolderFromCommandLine("qemu -device vhost-user-fs-pci-extra")).toBe(false)
+    // A path with spaces, or one that only mentions the device, changes nothing.
+    expect(sharesFolderFromCommandLine("qemu -drive file=/Users/a b/vhost-user-fs-pci/x.qcow2 -device ramfb")).toBe(false)
+    expect(sharesFolderFromCommandLine("qemu -name vhost-user-fs-pci -device ramfb")).toBe(false)
+    expect(sharesFolderFromCommandLine(`qemu -drive file=/Users/a b/c.qcow2 -device ramfb ${share}`)).toBe(true)
   })
 
   it("reads the running process's profile from its untruncated command line", async () => {

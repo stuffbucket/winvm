@@ -45,7 +45,12 @@ winvm clock                      # the guest's clock offset, and fix it
   restore records the restored device again. `saves`, stow recall, golden
   cloning, and saves kept by `destroy --keep-saves` all use the same
   display-aware check. The screen's size is not part of this: a restored guest
-  comes back at the size it had, and live resizing works as before.
+  comes back at the size it had, and live resizing works as before. A save is
+  refused, with nothing stopped or written, when the running QEMU's display or
+  shared-folder devices are not what restoring that display would launch: during
+  `share install` (a temporary ramfb boot with the shared-folder devices), or
+  with a hand-edited virtio-gpu size outside 640x480 to 7680x4320. Save after
+  the install finishes, or reset the display with `winvm display`.
 - **Older checkpoints.** File saves made before the display was recorded, and
   internal `snapshot`/`rewind` checkpoints, still load only while the instance's
   display is the device they were taken on. Switch the preference back with

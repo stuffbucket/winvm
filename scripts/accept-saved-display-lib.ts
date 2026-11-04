@@ -40,6 +40,26 @@ const SIGNAL_NUMBERS: Readonly<Record<TerminationSignal, number>> = { SIGINT: 2,
 /** The shell's convention for a process ended by a signal. */
 export const signalExitCode = (signal: TerminationSignal): number => 128 + SIGNAL_NUMBERS[signal]
 
+export interface RunState {
+  /** Every check passed. */
+  readonly passed: boolean
+  readonly interrupted: TerminationSignal | null
+  /** Every process the run started was confirmed stopped (see `cleanup` in the runner). */
+  readonly stopped: boolean
+}
+
+/**
+ * What to do once the checks and the cleanup are done. The root (an APFS clone
+ * of the image, sockets, saves) is removed only for a pass whose processes are
+ * all confirmed stopped: deleting state under a QEMU that may still be running
+ * would hide it, and a run that cannot show a clean stop is not a success.
+ */
+export function finish(s: RunState): { readonly removeRoot: boolean; readonly passed: boolean; readonly exitCode: number } {
+  if (s.interrupted !== null) return { removeRoot: false, passed: false, exitCode: signalExitCode(s.interrupted) }
+  if (!s.passed) return { removeRoot: false, passed: false, exitCode: 1 }
+  return s.stopped ? { removeRoot: true, passed: true, exitCode: 0 } : { removeRoot: false, passed: false, exitCode: 1 }
+}
+
 export interface SignalSource {
   on(signal: TerminationSignal, listener: () => void): unknown
 }

@@ -54,12 +54,16 @@ let previous: Record<string, string | undefined> = {}
 let previousProbe: share.Probe
 /** What the QEMU already running when a test starts was launched with. */
 let initialRunning: DisplayConfig | null = VIRTIO_GPU
+/** The shared folder devices that QEMU launched with; undefined: whatever winvm launches for its display. */
+let initialDevices: share.DeviceSet | undefined
+/** When set, the running command line spells the home with this (a path with a space) instead. */
+let spacedHome: string | null = null
 let runningPid: number | null = FAKE_PID
 let commands: string[] = []
 let virtiofsd = 0
 let statusCalls = 0
 let answered = 0
-const realRunningDisplay = display.runningDisplay
+const realRunningCommand = display.runningCommand
 
 const qemuLog = (): string => resolve(state, "qemu.log")
 /** Each QEMU launch's command line, in order. */
@@ -122,6 +126,8 @@ beforeEach(() => {
   script("qemu-system-aarch64", 'printf "%s\\n" "$*" >> "$WINVM_TEST_QEMU_LOG"; exec sleep 3')
   previousProbe = share.setProbe(() => ({ ok: true, reason: null }))
   initialRunning = VIRTIO_GPU
+  initialDevices = undefined
+  spacedHome = null
   runningPid = FAKE_PID
   commands = []
   virtiofsd = 0
@@ -179,10 +185,15 @@ beforeEach(() => {
     }
     return {}
   })
-  // What the running QEMU was launched with: the fixture's profile until something launches one.
-  spyOn(display, "runningDisplay").mockImplementation((pid) => {
-    if (pid !== FAKE_PID) return realRunningDisplay(pid)
-    return launches().length > 0 ? displayFromCommandLine(lastLaunch()) : initialRunning
+  // What the running QEMU was launched with: a real command line for the fixture's profile until something launches one.
+  spyOn(display, "runningCommand").mockImplementation((pid) => {
+    if (pid !== FAKE_PID) return realRunningCommand(pid)
+    if (launches().length > 0) return lastLaunch()
+    if (initialRunning === null) return "qemu-system-aarch64 -display none"
+    const options = { installMedia: false, ephemeral: false, virtioBoot: true, display: initialRunning } as const
+    const args = qemu.qemuArgs("source", pathsFor("source"), meta, initialDevices === undefined ? options : { ...options, shareDevices: initialDevices })
+    const command = ["qemu-system-aarch64", ...args].join(" ")
+    return spacedHome === null ? command : command.replaceAll(state, spacedHome)
   })
   spyOn(console, "log").mockImplementation(() => undefined)
   makeInstance("source")
@@ -221,6 +232,52 @@ describe("capturing the running display", () => {
   it("refuses an unidentified running display before any monitor command or save directory", async () => {
     initialRunning = null
     await expect(createSave("source", { name: "unknown", kind: "manual", format: "raw" })).rejects.toThrow(/display/)
+    expect(commands).toEqual([])
+    expect(statusCalls).toBe(0)
+    expect(existsSync(savesDir("source"))).toBe(false)
+  })
+
+  it("refuses the temporary ramfb-plus-share-devices boot of `share install`, before anything is stopped or written", async () => {
+    // What installGuest launches: display.json is ramfb and the devices are forced on.
+    writeDisplay(pathsFor("source"), RAMFB)
+    initialRunning = RAMFB
+    initialDevices = "all"
+    const command = display.runningCommand(FAKE_PID) ?? ""
+    expect(command).toContain("-device ramfb")
+    expect(command).toContain("memory-backend-shm")
+    expect(command).toContain("vhost-user-fs-pci")
+    // It parses as plain ramfb, which is why the display alone cannot be trusted.
+    expect(displayFromCommandLine(command)).toEqual(RAMFB)
+    await expect(createSave("source", { name: "during-install", kind: "manual", format: "raw" })).rejects.toThrow(/share install.*Save after it finishes/)
+    expect(commands).toEqual([])
+    expect(statusCalls).toBe(0)
+    expect(existsSync(savesDir("source"))).toBe(false)
+  })
+
+  it("refuses the opposite mismatch too: virtio-gpu running without the devices its restore would launch", async () => {
+    initialRunning = VIRTIO_GPU
+    initialDevices = "none"
+    await expect(createSave("source", { name: "bare", kind: "manual", format: "raw" })).rejects.toThrow(/temporary setup configuration/)
+    expect(commands).toEqual([])
+    expect(statusCalls).toBe(0)
+    expect(existsSync(savesDir("source"))).toBe(false)
+  })
+
+  it("is not fooled by a space in a path, and still saves each ordinary configuration", async () => {
+    // WINVM_HOME is in the arguments; a space there must not change what the devices say.
+    spacedHome = resolve(state, "with space")
+    for (const shown of [RAMFB, VIRTIO_GPU, SIZED]) {
+      initialRunning = shown
+      const result = await createSave("source", { name: "ok", kind: "manual", format: "raw" })
+      expect(result.manifest.display).toEqual(shown)
+    }
+  })
+
+  it("names an out-of-range legacy size instead of claiming there is no display device", async () => {
+    spyOn(display, "runningCommand").mockReturnValue("qemu-system-aarch64 -device virtio-gpu-pci,xres=8000,yres=600 -display none")
+    const refusal = createSave("source", { name: "huge", kind: "manual", format: "raw" })
+    await expect(refusal).rejects.toThrow(/virtio-gpu profile \(xres=8000,yres=600\) that a save cannot record.*640x480 to 7680x4320.*winvm display/)
+    await refusal.catch((error: Error) => expect(error.message).not.toContain("no single"))
     expect(commands).toEqual([])
     expect(statusCalls).toBe(0)
     expect(existsSync(savesDir("source"))).toBe(false)
@@ -430,6 +487,34 @@ describe("the display a launch resolves", () => {
       // And a save's capture reads the display straight back off a real command line, share devices and all.
       expect(displayFromCommandLine(args)).toEqual(display)
     }
+  })
+})
+
+describe("launch resolves the display once", () => {
+  it("passes one resolution to the sidecar decision and the command line, even if the preference changes between", async () => {
+    const p = pathsFor("source")
+    // display.json read twice would see virtio-gpu first, then (a concurrent `winvm display ramfb`) ramfb.
+    const reads = [VIRTIO_GPU, RAMFB, RAMFB]
+    spyOn(display, "readDisplay").mockImplementation(() => reads.shift() ?? RAMFB)
+    await qemu.launch("source", p, meta, { installMedia: false, ephemeral: false, virtioBoot: true })
+    expect(virtiofsd).toBe(1)
+    expect(lastLaunch()).toContain("-device virtio-gpu-pci ")
+    expect(lastLaunch()).not.toContain("-device ramfb")
+    expect(lastLaunch()).toContain("vhost-user-fs-pci")
+  })
+
+  it("keeps a build on ramfb with the filesystem device, and an explicit share set as given", async () => {
+    const p = pathsFor("source")
+    writeDisplay(p, VIRTIO_GPU)
+    await qemu.launch("source", p, meta, { installMedia: true, ephemeral: false, virtioBoot: true, display: SIZED })
+    expect(lastLaunch()).toContain("-device ramfb")
+    expect(lastLaunch()).toContain("vhost-user-fs-pci")
+    expect(lastLaunch()).not.toContain("qemu-vdagent")
+    await qemu.launch("source", p, meta, { installMedia: false, ephemeral: false, virtioBoot: true, display: RAMFB, shareDevices: "all" })
+    expect(lastLaunch()).toContain("-device ramfb")
+    expect(lastLaunch()).toContain("vhost-user-fs-pci")
+    expect(lastLaunch()).toContain("qemu-vdagent")
+    expect(virtiofsd).toBe(2)
   })
 })
 

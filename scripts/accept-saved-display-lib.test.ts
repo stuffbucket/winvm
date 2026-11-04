@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { EventEmitter } from "node:events"
 
-import { SOCKET_PATH_LIMIT, exitOnSignals, once, runtimePin, signalExitCode, socketPathProblem } from "./accept-saved-display-lib.ts"
+import { SOCKET_PATH_LIMIT, exitOnSignals, finish, once, runtimePin, signalExitCode, socketPathProblem } from "./accept-saved-display-lib.ts"
 
 describe("socketPathProblem", () => {
   test("accepts paths a macOS unix socket can hold", () => {
@@ -53,6 +53,27 @@ describe("once", () => {
     await expect(cleanup()).rejects.toThrow("boom")
     await expect(cleanup()).rejects.toThrow("boom")
     expect(runs).toBe(1)
+  })
+})
+
+describe("finish", () => {
+  test("removes the root and succeeds only for a pass whose processes are all confirmed stopped", () => {
+    expect(finish({ passed: true, interrupted: null, stopped: true })).toEqual({ removeRoot: true, passed: true, exitCode: 0 })
+  })
+
+  test("keeps the root and fails when a pass could not confirm everything stopped", () => {
+    expect(finish({ passed: true, interrupted: null, stopped: false })).toEqual({ removeRoot: false, passed: false, exitCode: 1 })
+  })
+
+  test("keeps the root and fails for a failed run, stopped or not", () => {
+    for (const stopped of [true, false]) {
+      expect(finish({ passed: false, interrupted: null, stopped })).toEqual({ removeRoot: false, passed: false, exitCode: 1 })
+    }
+  })
+
+  test("keeps the root and exits with the signal's code for an interrupted run, even one marked passed", () => {
+    expect(finish({ passed: false, interrupted: "SIGINT", stopped: true })).toEqual({ removeRoot: false, passed: false, exitCode: 130 })
+    expect(finish({ passed: true, interrupted: "SIGTERM", stopped: true })).toEqual({ removeRoot: false, passed: false, exitCode: 143 })
   })
 })
 
