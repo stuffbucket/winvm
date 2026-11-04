@@ -451,7 +451,7 @@ describe("the control bar", () => {
   })
   const noop = (): void => undefined
   function bar(over: Partial<import("react").ComponentProps<typeof ControlBar>> = {}): { host: HTMLElement; calls: Record<string, ReturnType<typeof mock>> } {
-    const calls = { onNew: mock(noop), onNewest: mock(noop), onToggleAutomatic: mock(noop), onDone: mock(noop), onSearchToggle: mock(noop), onReset: mock(noop) }
+    const calls = { onNew: mock(noop), onNewest: mock(noop), onToggleAutomatic: mock(noop), onDone: mock(noop), onSearchToggle: mock(noop), onReset: mock(noop), onSectionTool: mock(noop) }
     const host = document.createElement("div")
     document.body.append(host)
     root = createRoot(host)
@@ -472,6 +472,7 @@ describe("the control bar", () => {
           onQuery={noop}
           onSearchKey={noop}
           arranged={false}
+          sectionTool={false}
           {...calls}
           {...over}
         />,

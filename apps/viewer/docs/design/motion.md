@@ -32,6 +32,13 @@ spacing, and copy.
 - **Entering and leaving Checkpoints**: a 200 ms / 180 ms fade of the whole
   view with a 1% settle. A mode change inside the window, not a flight into
   another one. A cut under reduced motion.
+- **The section grid** (Checkpoints, [`components.md`](components.md) →
+  *Section*): the dot grid is not there at rest. While a section is drawn,
+  moved or resized it fades in over 200 ms ease-out and out over 150 ms
+  ease-out (opacity only, no scale or slide); a section's border and fill ease
+  between states at the default 150 ms. The section itself follows the pointer
+  with no easing, snapping from line to line. Under reduced motion the grid
+  appears and goes at once (the global duration rule).
 
 ## What's forbidden
 

@@ -196,7 +196,7 @@ chrome the native title bar already supplies.
   `--elevation-modal`; padding `--space-1`.
 - Items are `spatial-canvas__button`s (`--size-xl` high, icon buttons square),
   grouped by hairline dividers: search, then actions (New, Newest,
-  Automatic, Reset layout), then the one primary button (`btn--primary`,
+  Automatic, Section, Reset layout), then the one primary button (`btn--primary`,
   "Done"), last. The zoom is not in the bar (below).
 - Icon buttons carry an `aria-label` and a `title`; a filter or toggle is
   `aria-pressed` and its `title` says what pressing does. A control that can't
@@ -246,6 +246,85 @@ bar), `--space-4` from the window's edges.
   carries the key.
 - **Narrow windows.** At 820 px wide and under (the window's minimum is 720),
   the centred bar would meet it, so it moves up and stands above the bar.
+
+### Section (Checkpoints)
+
+A **section** is a named container drawn on the checkpoints canvas, after
+FigJam's (`Section.tsx`, `useSections.ts`; the rules are pure, in
+`sections.ts`). Checkpoints can be put in one; carrying the section carries
+them. It is for a person's own grouping ("before the update", "bug 4521"); it
+is not a day, and it never deletes a checkpoint.
+
+- **The tool.** An icon button in the bar, between Automatic and Reset layout:
+  a dashed region with a small tab at its top left. `aria-pressed` while it is
+  on; name "Section", tooltip "Section (S)". S turns it on and off, Esc leaves
+  it, and a section drawn turns it off again (FigJam's way). While it is on the
+  cursor over the canvas is a crosshair and a press anywhere draws, a card or
+  a section included. It is not a mode that stays.
+- **Look.** A soft body (`--accent` at 7% over what is behind it) with a
+  hairline border (`--accent` at 38% into `--border-subtle`), `--radius-card`,
+  its top left corner square. Its **tab** is attached above that corner,
+  outside the body: `--size-lg` high, `--text-sm` in `--weight-md`, `--accent`
+  at 16% over `--surface-card`, rounded on top. Strokes, the tab, the handles
+  and their hit areas are drawn the same size on screen at every zoom (the
+  zoom's reciprocal, `--inv`, scales them back); only the body is the
+  section's size in the world. Light and dark use the same tokens.
+- **The name is edited where it stands.** A click on the tab (without a drag),
+  Return or F2 on the focused section turns the name into an input of the same
+  face and size, selected, ringed. Return or leaving keeps it, Esc puts it
+  back, an emptied name keeps the old one. A name with control or invisible
+  characters, or over 80 characters (the rules of a machine's title), says why
+  in a small line under the tab and the field stays; leaving it anyway puts the
+  old name back. A section just drawn is "Section" ("Section 2" when that is
+  taken), already in the field.
+- **What a press does** (one rule, in `useSections.ts`):
+
+  | Press on | Not selected | Selected |
+  |---|---|---|
+  | Tab | drag moves; a click renames | same |
+  | Border (a 12 px strip on each edge) | drag moves | drag resizes (edge) |
+  | Corner | not there | drag resizes |
+  | Empty body | passes through: it pans the canvas, a click lets go of the selection | drag moves |
+  | A card inside | the card's own: select, or drag it | same |
+
+  So a big section filling the window never takes away panning, and a section
+  is always findable by its tab and its border.
+- **Selected** shows eight handles: a square at each corner and a pill at each
+  edge's middle, 8 px drawn (2 px `--accent` stroke on `--surface-card`) over a
+  hit area of at least 12 px (16 px at the corners) at every zoom, with the
+  resize cursors, and a ring in `--accent`. A small x on the tab removes the
+  section ("Remove section", tooltip says its checkpoints stay). The focus ring
+  is the body's outline.
+- **Grid.** The grid is 24 world units (`GRID`). Drawing, moving and resizing
+  snap what moves to it (a move snaps the top left, a resize the edges it
+  drags; the opposite edges stay). It is shown **only** while one of the three
+  is going on: a dot at each crossing, `--text-muted` at 45%, fading in 200 ms
+  and out 150 ms (`motion.md`), never permanently. Far out, where cells would
+  crowd, every second or fourth crossing.
+- **No touching.** Two sections are at least one cell (`GAP`, 24) apart; so is
+  a section from Now (with its caption) and it may not go under the timeline's
+  strip. A section being drawn, moved or resized stops at the edge instead of
+  overlapping and slides along it when the pointer goes on another way; a
+  drawn one beside another starts a cell from it. What is read from the file is
+  made not to touch, the same way every time.
+- **Cards.** A card is in the section its centre is in, decided when it is
+  dropped (the section whose body holds the picture's centre); while it is
+  carried the section it would join takes the accent. Cards keep their place
+  relative to the section's top left, stay inside the body (kept 12 px from the
+  edge, the caption plate included) and never make the section grow: a resize
+  stops at the members' box with that air, and a resize by the west or north
+  edge leaves them standing where they are. A section drawn or resized over
+  loose cards takes in those whose centre is inside, on release. Now cannot be
+  put in one.
+- **Keys.** Tab reaches each section (a `group` named "Section: Name, 2
+  checkpoints"), in reading order (top to bottom, left to right). Return or F2
+  renames; arrows move it a cell, Shift four, stopping at what is in the way;
+  Delete or Backspace removes it; Esc lets go of it. What was done is said
+  quietly in a `role="status"` line (created, renamed, moved, resized,
+  removed).
+- **Removing** is never destructive, so it asks nothing: only the section goes,
+  and its cards stay exactly where they are, as loose cards. There is no undo
+  (the canvas keeps no history).
 
 ## Properties panel (Checkpoints)
 

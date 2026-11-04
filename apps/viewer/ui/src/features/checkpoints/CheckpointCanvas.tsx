@@ -82,6 +82,20 @@ import {
 import { CheckpointCard, MONITOR, Picture, takenAt, textScale } from "./CheckpointCard"
 import { CheckpointDetailsLayer, type NoteDraft, tagsOf } from "./CheckpointDetails"
 import { ControlBar } from "./ControlBar"
+import { SectionDraft, SectionGrid, SectionView } from "./Section"
+import {
+  type Arrangement,
+  dropCard,
+  GRID,
+  looseNames,
+  placeMembers,
+  readingOrder,
+  sectionAt,
+  centreOfCard,
+  normalizeSections,
+  sectionRect,
+} from "./sections"
+import { useSections, type SectionsHost, withCaption } from "./useSections"
 import { ZoomControl } from "./ZoomControl"
 import { LiveFrame } from "./LiveFrame"
 import { NewCheckpointForm } from "./NewCheckpoint"
@@ -222,7 +236,19 @@ export function CheckpointCanvas(p: CheckpointCanvasProps): JSX.Element {
   const byName = useMemo(() => new Map((list ?? []).map((c) => [c.name, c])), [list])
   // Where the person has moved cards to, kept for this machine.
   const moves = useMemo<Moves>(() => settings.layouts[p.instance] ?? {}, [settings.layouts, p.instance])
-  const layout = useMemo(() => placeCards(layoutTimeline(shown, p.aspect), moves), [shown, p.aspect, moves])
+  const slots = useMemo(() => layoutTimeline(shown, p.aspect), [shown, p.aspect])
+  const base = useMemo(() => placeCards(slots, moves), [slots, moves])
+  // Sections: the stored ones, made to not touch each other or Now (whatever the file said), and who is in them.
+  const stored = settings.sections?.[p.instance]
+  const storedSections = useMemo(
+    () => normalizeSections(stored?.list ?? [], [{ rect: withCaption(slots.now), gap: GRID }], t("checkpoints.section.default")),
+    [stored, slots.now],
+  )
+  const members = useMemo(() => stored?.members ?? {}, [stored])
+  const sectionsHost = useRef<SectionsHost | null>(null)
+  const sec = useSections(sectionsHost, storedSections, members)
+  // The cards, each where it is: a member's from its section (the one in the pointer's hand where it is carried).
+  const layout = useMemo(() => ({ ...base, cards: placeMembers(base.cards, sec.sections, sec.members) }), [base, sec.sections, sec.members])
   // For work that finishes later (a load), to find a card where it is then, not where it was.
   const layoutNow = useRef(layout)
   layoutNow.current = layout
@@ -236,9 +262,9 @@ export function CheckpointCanvas(p: CheckpointCanvasProps): JSX.Element {
   // ---- Camera -----------------------------------------------------------
 
   const content = useMemo<Rect>(() => {
-    const b = layout.bounds
+    const b = storedSections.length === 0 ? layout.bounds : union([layout.bounds, ...storedSections.map((s) => ({ ...sectionRect(s), y: s.y - 48, height: s.h + 48 }))])
     return { x: b.x - 120, y: b.y - 120, width: b.width + 240, height: b.height + 240 }
-  }, [layout.bounds])
+  }, [layout.bounds, storedSections])
   const limits = useMemo(() => {
     const fit = fitRect(content, size, 48).zoom
     return { min: Math.max(0.04, Math.min(0.3, fit * 0.85)), max: 3 }
@@ -365,10 +391,11 @@ export function CheckpointCanvas(p: CheckpointCanvasProps): JSX.Element {
       setSelected(name)
       setNoteState("idle")
       if (name === null) return
+      sec.select(null)
       const box = layout.cards.get(name)
       if (box !== undefined) fly(focusOn(box), undefined, TIMELINE_SPACE, panelSpace())
     },
-    [layout.cards, fly, focusOn],
+    [layout.cards, fly, focusOn, sec.select],
   )
 
   const zoomBy = (factor: number, anchor?: { x: number; y: number }): void => {
@@ -385,27 +412,61 @@ export function CheckpointCanvas(p: CheckpointCanvasProps): JSX.Element {
   // The card being dragged, and the total it is moved by so far (this drag's and earlier ones).
   const [dragging, setDragging] = useState<{ readonly name: string; readonly x: number; readonly y: number } | null>(null)
 
-  /** Keep where cards have been moved to. One writer: the same settings the rest of the view uses. */
-  const keepMoves = useCallback((next: Moves): void => {
+  /** Keep the sections, who is in them and where cards have been moved to. One writer: the same settings the rest of the view uses. */
+  const commit = useCallback((next: Arrangement): void => {
     const known = new Set(listNow.current.map((c) => c.name))
-    const kept = Object.fromEntries(Object.entries(next).filter(([n, by]) => known.has(n) && (by.x !== 0 || by.y !== 0)))
+    const kept = Object.fromEntries(Object.entries(next.moves).filter(([n, by]) => known.has(n) && (by.x !== 0 || by.y !== 0)))
+    const inside = Object.fromEntries(Object.entries(next.members).filter(([n]) => known.has(n)))
     setSettings((s) => {
       const layouts = { ...s.layouts }
       if (Object.keys(kept).length === 0) delete layouts[props.current.instance]
       else layouts[props.current.instance] = kept
-      const out = { ...s, layouts }
+      const sections = { ...s.sections }
+      if (next.sections.length === 0) delete sections[props.current.instance]
+      else sections[props.current.instance] = { list: next.sections, members: inside }
+      const out = { ...s, layouts, sections: Object.keys(sections).length === 0 ? undefined : sections }
       void saveSettings(out)
       return out
     })
   }, [])
+  const arrangement: Arrangement = { sections: storedSections, members, moves }
+  sectionsHost.current = {
+    viewport,
+    camera: cameraNow,
+    placed: () => layout.cards,
+    slots: () => slots.cards,
+    names: () => new Set(shown.map((c) => c.name)),
+    now: () => withCaption(layout.now),
+    railX: () => viewSize().width - TIMELINE_SPACE,
+    arrangement: () => arrangement,
+    commit,
+    onChosen: () => {
+      setSelected(null)
+      setNoteState("idle")
+    },
+  }
+  const keepMoves = (next: Moves): void => commit({ ...arrangement, moves: next })
+  /** How far a card is from its slot: a loose card's move, or where its section holds it. */
+  const offsetOf = (name: string): { x: number; y: number } => {
+    const at = layout.cards.get(name)
+    const slot = slots.cards.get(name)
+    if (members[name] === undefined || at === undefined || slot === undefined) return moves[name] ?? { x: 0, y: 0 }
+    return { x: at.x - slot.x, y: at.y - slot.y }
+  }
+  /** A card put down `to` from its slot: into a section, or loose. */
+  const putCard = (name: string, to: { x: number; y: number }): void => {
+    const slot = slots.cards.get(name)
+    if (slot !== undefined) commit(dropCard(arrangement, name, slot, to))
+  }
 
   const pointerDown = (e: PointerEvent<HTMLDivElement>): void => {
-    if ((e.button !== 0 && e.button !== 1) || editableTarget(e.target)) return
+    if ((e.button !== 0 && e.button !== 1) || editableTarget(e.target) || sec.down(e)) return
     // Only a card of the stack can be moved: not Now, which is the screen, and not with the middle button, which pans.
     const card = e.button === 0 && e.target instanceof Element ? (e.target.closest<HTMLElement>(".checkpoint[data-name]")?.dataset["name"] ?? null) : null
-    press.current = { id: e.pointerId, x: e.clientX, y: e.clientY, from: cameraNow(), moved: false, card, was: card === null ? { x: 0, y: 0 } : (moves[card] ?? { x: 0, y: 0 }) }
+    press.current = { id: e.pointerId, x: e.clientX, y: e.clientY, from: cameraNow(), moved: false, card, was: card === null ? { x: 0, y: 0 } : offsetOf(card) }
   }
   const pointerMove = (e: PointerEvent<HTMLDivElement>): void => {
+    if (sec.move(e)) return
     const pr = press.current
     if (pr === null || pr.id !== e.pointerId) return
     const dx = e.clientX - pr.x
@@ -424,13 +485,14 @@ export function CheckpointCanvas(p: CheckpointCanvasProps): JSX.Element {
     setCamera(clamp({ ...pr.from, x: pr.from.x + dx, y: pr.from.y + dy }))
   }
   const pointerUp = (e: PointerEvent<HTMLDivElement>): void => {
+    if (sec.up(e)) return
     const pr = press.current
     if (pr === null || pr.id !== e.pointerId) return
     press.current = null
     if (pr.moved) {
       setPanning(false)
       if (pr.card !== null) {
-        keepMoves({ ...moves, [pr.card]: { x: pr.was.x + (e.clientX - pr.x) / pr.from.zoom, y: pr.was.y + (e.clientY - pr.y) / pr.from.zoom } })
+        putCard(pr.card, { x: pr.was.x + (e.clientX - pr.x) / pr.from.zoom, y: pr.was.y + (e.clientY - pr.y) / pr.from.zoom })
         setDragging(null)
       }
       suppressClick.current = true
@@ -440,6 +502,7 @@ export function CheckpointCanvas(p: CheckpointCanvasProps): JSX.Element {
     } else if (e.target === e.currentTarget) {
       // A click on empty canvas lets go of the selection.
       select(null)
+      sec.select(null)
     }
   }
 
@@ -708,7 +771,9 @@ export function CheckpointCanvas(p: CheckpointCanvasProps): JSX.Element {
         press.current = null
         setDragging(null)
       } else if (looking) setLooking(false)
-      else if (creating) setCreating(false)
+      else if (sec.escape()) {
+        // A drag of a section, the Section tool or a section's selection let go of.
+      } else if (creating) setCreating(false)
       else if (searchOpen) setSearchOpen(false)
       else if (selected !== null) select(null)
       else void leave()
@@ -722,7 +787,15 @@ export function CheckpointCanvas(p: CheckpointCanvasProps): JSX.Element {
       return
     }
     if (editableTarget(e.target)) return
-    if (cmd && (e.key === "=" || e.key === "+")) {
+    if (!cmd && !e.altKey && e.key.toLowerCase() === "s") {
+      // The Section tool, as FigJam's.
+      e.preventDefault()
+      sec.setTool(!sec.tool)
+    } else if (!cmd && (e.key === "Delete" || e.key === "Backspace") && sec.selected !== null) {
+      // Only the section goes: its checkpoints stay where they are.
+      e.preventDefault()
+      sec.remove(sec.selected)
+    } else if (cmd && (e.key === "=" || e.key === "+")) {
       e.preventDefault()
       zoomBy(ZOOM_STEP)
     } else if (cmd && e.key === "-") {
@@ -745,9 +818,9 @@ export function CheckpointCanvas(p: CheckpointCanvasProps): JSX.Element {
       // Option-arrows move the selected card, for those who can't drag.
       e.preventDefault()
       const d = (e.shiftKey ? 4 : 1) * NUDGE_STEP
-      const by = moves[selected] ?? { x: 0, y: 0 }
+      const by = offsetOf(selected)
       const next = { x: by.x + (e.key === "ArrowLeft" ? -d : e.key === "ArrowRight" ? d : 0), y: by.y + (e.key === "ArrowUp" ? -d : e.key === "ArrowDown" ? d : 0) }
-      keepMoves({ ...moves, [selected]: next })
+      putCard(selected, next)
     } else if (!cmd && e.key.startsWith("Arrow")) {
       e.preventDefault()
       const d = (e.shiftKey ? 4 : 1) * PAN_STEP
@@ -781,9 +854,18 @@ export function CheckpointCanvas(p: CheckpointCanvasProps): JSX.Element {
   const cardsNow = useMemo(() => {
     const carried = dragging === null ? undefined : layout.cards.get(dragging.name)
     if (dragging === null || carried === undefined) return layout.cards
-    const was = moves[dragging.name]
-    return new Map(layout.cards).set(dragging.name, { ...carried, x: carried.x + dragging.x - (was?.x ?? 0), y: carried.y + dragging.y - (was?.y ?? 0) })
-  }, [layout.cards, dragging, moves])
+    const slot = slots.cards.get(dragging.name)
+    const was = members[dragging.name] === undefined || slot === undefined ? (moves[dragging.name] ?? { x: 0, y: 0 }) : { x: carried.x - slot.x, y: carried.y - slot.y }
+    return new Map(layout.cards).set(dragging.name, { ...carried, x: carried.x + dragging.x - was.x, y: carried.y + dragging.y - was.y })
+  }, [layout.cards, slots.cards, dragging, moves, members])
+  // A card in the pointer's hand over a section: the section shows it would join.
+  const carriedBox = dragging === null ? undefined : cardsNow.get(dragging.name)
+  const overSection = carriedBox === undefined ? null : (sectionAt(sec.sections, centreOfCard(carriedBox))?.id ?? null)
+  const counts = useMemo(() => {
+    const out = new Map<string, number>()
+    for (const [name, m] of Object.entries(sec.members)) if (byName.has(name)) out.set(m.section, (out.get(m.section) ?? 0) + 1)
+    return out
+  }, [sec.members, byName])
   const far = camera.zoom < FAR_ZOOM
   const selectedCheckpoint = selected === null ? undefined : byName.get(selected)
   const busy = p.busy || working !== null
@@ -810,7 +892,7 @@ export function CheckpointCanvas(p: CheckpointCanvasProps): JSX.Element {
         <SpatialCanvasViewport
           ref={viewport}
           camera={camera}
-          tool="select"
+          tool={sec.tool ? "section" : "select"}
           plain
           data-panning={panning}
           data-far={far}
@@ -822,10 +904,13 @@ export function CheckpointCanvas(p: CheckpointCanvasProps): JSX.Element {
           onPointerUp={pointerUp}
           onPointerCancel={pointerUp}
         >
+          <SectionGrid camera={camera} grid={GRID} on={sec.working} />
           <SpatialCanvasScene {...camera}>
             {layout.days.map((d, i) => {
-              // The date belongs to its cards: wherever the day's biggest cluster of them is now, carried or put down.
-              const group = dayGroup(d, cardsNow)
+              // The date belongs to its cards that are in no section: wherever the day's biggest cluster of them is now, carried or put down. With all of them in sections, there is no date.
+              const loose = looseNames(d.names, sec.members)
+              if (d.names.length > 0 && loose.length === 0) return null
+              const group = dayGroup(loose.length === d.names.length ? d : { ...d, names: loose }, cardsNow)
               if (!rectsIntersect(withLabel({ ...group.rect, scale: d.scale }), seen)) return null
               const tick = ticks[i]
               // Too far away for a date over every day: the months, beside the stack, are enough.
@@ -844,13 +929,29 @@ export function CheckpointCanvas(p: CheckpointCanvasProps): JSX.Element {
                 </SpatialCanvasLabel>
               )
             })}
+            {readingOrder(sec.sections).map((s) => (
+              <SectionView
+                key={s.id}
+                s={s}
+                count={counts.get(s.id) ?? 0}
+                zoom={camera.zoom}
+                selected={sec.selected === s.id}
+                editing={sec.editing === s.id}
+                target={overSection === s.id}
+                moving={sec.moving === s.id}
+                onRename={sec.rename}
+                onRemove={sec.remove}
+                onKeyDown={sec.key}
+              />
+            ))}
+            {sec.draft?.box != null && <SectionDraft box={sec.draft.box} ok={sec.draft.ok} />}
             {shown.map((c) => {
               const placed: CardBox | undefined = layout.cards.get(c.name)
               if (placed === undefined) return null
               // The card in the pointer's hand is drawn where it is carried, not where it was put down.
               const carried = dragging?.name === c.name ? dragging : null
-              const was = moves[c.name]
-              const box = carried === null ? placed : { ...placed, x: placed.x + carried.x - (was?.x ?? 0), y: placed.y + carried.y - (was?.y ?? 0) }
+              const was = carried === null ? null : offsetOf(c.name)
+              const box = carried === null || was === null ? placed : { ...placed, x: placed.x + carried.x - was.x, y: placed.y + carried.y - was.y }
               if (!rectsIntersect({ ...box, height: box.height + CAPTION_ROOM }, seen)) return null
               return (
                 <CheckpointCard
@@ -969,10 +1070,16 @@ export function CheckpointCanvas(p: CheckpointCanvasProps): JSX.Element {
               if (c !== undefined) pickResult(c)
             }
           }}
+          sectionTool={sec.tool}
+          onSectionTool={() => sec.setTool(!sec.tool)}
           arranged={Object.keys(moves).length > 0}
           onReset={resetLayout}
           onDone={() => void leave()}
         />
+
+        <span className="checkpoints__sr" role="status" aria-live="polite">
+          {sec.said}
+        </span>
 
         <ZoomControl zoom={camera.zoom} onZoomOut={() => zoomBy(1 / ZOOM_STEP)} onZoomIn={() => zoomBy(ZOOM_STEP)} onFit={fitAll} />
 

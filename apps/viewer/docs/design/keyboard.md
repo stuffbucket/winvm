@@ -57,6 +57,25 @@ area: it takes typing, Tab, Enter and the arrows as a text area does, never call
 leave the field). The menu accelerators (⌘⇧T and the rest) are native and still
 work while it has focus.
 
+## Checkpoints canvas
+
+In the Checkpoints view (a window listener on the view while it is open; none
+of these is sent to Windows). A name field and the search field keep their own
+keys, so none of this acts while one has focus.
+
+| Key | Action | Notes |
+|---|---|---|
+| `S` | Section tool on or off | Tooltip "Section (S)"; the button is `aria-pressed`. Drawing a section turns it off. Not with ⌘, ⌃ or ⌥ held. |
+| `Esc` | Let go, one thing at a time | A carried card put back, Quick Look, a section being drawn, moved or resized, the Section tool, a section's selection, the New Checkpoint form, the search, a selected checkpoint, and last, leave the view. |
+| `Return`, `F2` | Rename the focused section | The name becomes a field, selected; Return keeps it, Esc puts it back. |
+| `←` `→` `↑` `↓` | Move the focused section one grid cell | `⇧` for four. Stops a cell short of another section, Now or the timeline. Without a focused section, the arrows pan. |
+| `Delete`, `Backspace` | Remove the selected or focused section | Only the section: its checkpoints stay where they are. No confirmation. `⌘⌫` still deletes the selected checkpoint (after a confirmation). |
+| `⌥` `←` `→` `↑` `↓` | Move the selected checkpoint | `⇧` for more (16 units, 64 with `⇧`). It lands in the section its centre is in, or loose. |
+| `Tab` | Next control | Sections are groups ("Section: Name, 3 checkpoints") in reading order, before the cards. |
+
+Sections announce what was done (created, renamed, moved, resized, removed) in
+a quiet `role="status"` line.
+
 ## Implementation
 
 - **Tray-menu bindings** (`Cmd-,`, `Cmd-D`, `Cmd-Q`): accelerators on
