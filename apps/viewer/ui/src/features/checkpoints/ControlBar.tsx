@@ -1,21 +1,21 @@
 /**
  * The controls over the canvas, in one bar floating at the bottom of the
  * window (monimal's canvas puts its controls there too): search, New
- * Checkpoint, back to the newest, the Automatic filter, zoom, and Done.
+ * Checkpoint, back to the newest, the Automatic filter, Reset layout, and Done.
  *
- * Search is a magnifier until it is used, then eases out to the left. The
- * zoom's figure only shows while the zoom is changing, or under the pointer
- * or focus. Everything is a button with a name and a tooltip; the keys are in
- * the tooltips, quietly.
+ * Search is a magnifier until it is used, then eases out to the left. The zoom
+ * is not here: it is its own control in the lower left (ZoomControl.tsx).
+ * Everything is a button with a name and a tooltip; the keys are in the
+ * tooltips, quietly.
  */
-import { type KeyboardEvent, type RefObject, useEffect, useRef, useState } from "react"
+import { type KeyboardEvent, type RefObject } from "react"
 
 import { CanvasGlyph, CanvasIconButton, GLYPHS, SpatialCanvasControlGroup } from "@winvm/canvas"
 
 import { Button } from "../../components/Button"
 import { t } from "../../i18n"
 
-// lucide: arrow-down-to-line, history, maximize
+// lucide: arrow-down-to-line, history
 const NEWEST = (
   <>
     <path d="M12 17V3" />
@@ -30,15 +30,6 @@ const AUTOMATIC = (
     <path d="M12 7v5l4 2" />
   </>
 )
-const FIT = (
-  <>
-    <path d="M8 3H5a2 2 0 0 0-2 2v3" />
-    <path d="M21 8V5a2 2 0 0 0-2-2h-3" />
-    <path d="M3 16v3a2 2 0 0 0 2 2h3" />
-    <path d="M16 21h3a2 2 0 0 0 2-2v-3" />
-  </>
-)
-
 // lucide: layout-grid
 const RESET = (
   <>
@@ -58,7 +49,6 @@ export interface ControlBarProps {
   readonly busy: boolean
   readonly creating: boolean
   readonly showAutomatic: boolean
-  readonly zoom: number
   readonly searchOpen: boolean
   readonly query: string
   readonly inputRef: RefObject<HTMLInputElement>
@@ -72,9 +62,6 @@ export interface ControlBarProps {
   onSearchBlur(): void
   onQuery(value: string): void
   onSearchKey(e: KeyboardEvent<HTMLInputElement>): void
-  onZoomOut(): void
-  onZoomIn(): void
-  onFit(): void
   /** Some cards have been moved from where winvm put them. */
   readonly arranged: boolean
   onReset(): void
@@ -83,20 +70,6 @@ export interface ControlBarProps {
 
 export function ControlBar(p: ControlBarProps): JSX.Element {
   const expanded = p.searchOpen || p.query !== ""
-  const percent = Math.round(p.zoom * 100)
-
-  // The zoom's figure: out while the zoom rests, back when it changes.
-  const [figure, setFigure] = useState(false)
-  const first = useRef(true)
-  useEffect(() => {
-    if (first.current) {
-      first.current = false
-      return
-    }
-    setFigure(true)
-    const timer = setTimeout(() => setFigure(false), ZOOM_FIGURE_MS)
-    return () => clearTimeout(timer)
-  }, [percent])
 
   return (
     <SpatialCanvasControlGroup label={t("checkpoints.bar")}>
@@ -148,24 +121,9 @@ export function ControlBar(p: ControlBarProps): JSX.Element {
           <CanvasGlyph>{AUTOMATIC}</CanvasGlyph>
         </CanvasIconButton>
       </span>
-      <span className="checkpoints__divider" aria-hidden="true" />
-      <div className="checkpoints__zoom" role="group" aria-label={t("checkpoints.zoom")} data-figure={figure}>
-        <CanvasIconButton label={t("checkpoints.zoomOut")} onClick={p.onZoomOut}>
-          <CanvasGlyph>{GLYPHS.minus}</CanvasGlyph>
-        </CanvasIconButton>
-        <span className="checkpoints__zoom-figure" aria-hidden="true">
-          <span>{percent}%</span>
-        </span>
-        <CanvasIconButton label={t("checkpoints.zoomIn")} onClick={p.onZoomIn}>
-          <CanvasGlyph>{GLYPHS.plus}</CanvasGlyph>
-        </CanvasIconButton>
-        <CanvasIconButton label={t("checkpoints.fitAll")} onClick={p.onFit}>
-          <CanvasGlyph>{FIT}</CanvasGlyph>
-        </CanvasIconButton>
-        <CanvasIconButton label={t("checkpoints.reset")} title={t(p.arranged ? "checkpoints.resetTip" : "checkpoints.resetNone")} disabled={!p.arranged} onClick={p.onReset}>
-          <CanvasGlyph>{RESET}</CanvasGlyph>
-        </CanvasIconButton>
-      </div>
+      <CanvasIconButton label={t("checkpoints.reset")} title={t(p.arranged ? "checkpoints.resetTip" : "checkpoints.resetNone")} disabled={!p.arranged} onClick={p.onReset}>
+        <CanvasGlyph>{RESET}</CanvasGlyph>
+      </CanvasIconButton>
       <span className="checkpoints__divider" aria-hidden="true" />
       <Button variant="primary" title={t("checkpoints.doneTip")} onClick={p.onDone}>
         {t("checkpoints.done")}

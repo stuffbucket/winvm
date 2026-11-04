@@ -182,37 +182,53 @@
   box-shadow: inset 0 0 0 var(--border-width-hairline) var(--accent);
 }
 
-/* Zoom: the figure takes room only while the zoom is changing, or when the pointer or focus is there. */
+/*
+ * Zoom: its own pill in the lower left, in the bar's own surface, border and
+ * elevation. Out of sight until the pointer comes near, the zoom changes, or
+ * focus is inside it (data-shown, set by ZoomControl); out, it takes no clicks
+ * but its buttons stay focusable, and focusing one brings it back. Under
+ * reduced motion the global rule cuts the ease to a plain show and hide.
+ */
 .checkpoints__zoom {
-  display: flex;
-  align-items: center;
+  position: absolute;
+  z-index: 3;
+  bottom: var(--space-4);
+  left: var(--space-4);
+  box-shadow: var(--elevation-modal);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 200ms ease-out;
+}
+
+.checkpoints__zoom[data-shown="true"],
+.checkpoints__zoom:focus-within {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+/* Easing out is a touch quicker than easing in, as the status line's is. */
+.checkpoints__zoom[data-shown="false"]:not(:focus-within) {
+  transition-duration: 150ms;
 }
 
 .checkpoints__zoom-figure {
-  display: block;
-  width: 0;
-  overflow: hidden;
-  opacity: 0;
+  min-width: calc(var(--size-2xl) + var(--space-3));
   color: var(--text-base-color);
   font-family: var(--font-mono);
   font-size: var(--text-sm);
   font-variant-numeric: tabular-nums;
   text-align: center;
-  transition:
-    width 200ms ease-out,
-    opacity 200ms ease-out;
 }
 
-.checkpoints__zoom-figure > span {
-  display: block;
-  min-width: calc(var(--size-2xl) + var(--space-3));
-}
-
-.checkpoints__zoom[data-figure="true"] .checkpoints__zoom-figure,
-.checkpoints__zoom:hover .checkpoints__zoom-figure,
-.checkpoints__zoom:focus-within .checkpoints__zoom-figure {
-  width: calc(var(--size-2xl) + var(--space-3));
-  opacity: 1;
+/*
+ * The bar is centred and the zoom is at the left: in a window too narrow for
+ * both side by side (the bar's width and twice the zoom's, with room to
+ * spare, about 820 px), the zoom stands above the bar instead.
+ */
+@media (max-width: 820px) {
+  .checkpoints__zoom {
+    bottom: calc(var(--space-4) + var(--checkpoints-bar) + var(--space-2));
+  }
 }
 
 .checkpoints__results,
