@@ -64,12 +64,15 @@ so cleanup cannot open Start.
 **The machine picker** is one trigger, a computer icon, the machine's name
 or title and a chevron, with the tooltip "Windows machine", so nothing next
 to the traffic lights goes unexplained. It opens the **Windows machines**
-menu (`components/Menu.tsx`, Base UI's Menu in the window's style): every
-machine by name or title with its state on the right (Running, Starting,
-Paused, Stopped, Saved) and a check on this one; under a separator, New
-Machine…, Rename… and Delete "<name>"…. It opens with one machine too, so
-New Machine… is always there. Rename… edits the title in place of the
-picker; Window → Rename Window… does the same.
+menu (`components/Menu.tsx`, Base UI's Menu in the window's style), in three
+runs: the machines (a check on this one, each with its state at the right,
+a dot and a word: Running, Starting, Paused, Asleep, Stopped, Saved, Not set
+up); then the commands, New Machine… and Rename… with their glyphs; then, apart
+and red, Delete "<name>"…. It opens with one machine too, so New Machine… is
+always there. See [`components.md`](components.md) → *Menus*. Rename… edits the
+title in place of the picker; Window → Rename Window… does the same. Both set
+the machine's *title* (`winvm config title=`, shown in place of its name); a
+machine's name, the folder everything is kept under, is not renamed.
 
 **New Machine…** is a small dialog: a name, checked as the CLI checks
 instance names (letters, digits, dots, dashes and underscores, starting with
@@ -186,6 +189,13 @@ from. QEMU's qemu-vdagent carries it, through noVNC's extended clipboard.
 
 A machine that is suspended (stowed) shows its own overview with two things
 the others don't: a note, and a backdrop (`features/overview/`).
+
+**The heading names the machine** ("Windows machine `Work PC` is suspended"; an
+off machine says "is off"), the name in the mono face, and the name is where it
+is renamed: click it, press Return on it or F2 and it becomes a field in place;
+see [`components.md`](components.md) → *A name edited in its heading*. It sets
+the same title as Rename… in the machine menu, which stays for the states with
+no such heading (running, paused).
 
 **The note** is the person's, about this machine: a text area under the
 heading, with a quiet placeholder ("Add a note about this machine"). It
