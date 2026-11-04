@@ -113,9 +113,45 @@ ended" on its stderr.
 
 The overview says the least it can: one display heading (Fraunces, the
 window's one display moment), one sentence, one fact line, one primary
-action. The commands for developers sit under it, and drop out when the
-display is too short for them. Everything else is in the panel: Resources
-and Status open by default, This Mac open only when something is missing.
+action. What you can do with the machine sits under it (below), and drops
+out when the display is too short for it. Everything else is in the panel:
+Resources and Status open by default, This Mac open only when something is
+missing.
+
+**What you can do with this Windows machine** (`features/help/`), a
+`--text-sm` muted title over one outlined list (a hairline border and
+`--radius-card`, no fill, rows split by hairlines) of five rows: Open a
+Windows terminal, Copy files between your Mac and Windows, Save a
+checkpoint, Go back to a checkpoint, Use winvm from Claude Code and Claude
+Desktop. A row is a button: the toolbar button's own glyph in a column of
+its own (`--size-md`, `--link`), the label in `--text-base`, and a
+muted chevron at the end. The columns are fixed and top-aligned, so a label
+that wraps stays under its first line. The list is `min(100%, 32rem)` wide.
+Hover and the open row step to `--surface-control`. Up and Down, Home and
+End move between rows; Tab still visits each.
+
+A row opens a **help popover** (`components/HelpPopover.tsx`, see
+[`components.md`](components.md)): a screenshot of the real window, the
+topic's title, one sentence, three numbered steps and one thing worth
+knowing, with previous and next topic at the foot. The words are
+`help.<topic>.*` in `en.json`; the pictures are `features/help/img/`, made
+by `scripts/render-help.mjs` (below). Each claim is one the app, the CLI or
+`docs/` makes: the Terminal and Files windows and the toolbar's buttons
+(above), Checkpoints and their automatic kinds (`docs/saves.md`,
+`docs/background.md`), and Use with Claude (`docs/cua.md`).
+
+**The help pictures.** `bun scripts/build-ui.ts`, then
+`PLAYWRIGHT_DIR=… node scripts/render-help.mjs` from `apps/viewer` renders
+the Terminal window (against `tests/render/help-term-server.ts`, a fake guest
+that plays a short session), the Files window, the Checkpoints view (new
+checkpoint; browsing; one selected, with Go Back to This) and the Use with
+Claude panel, in WebKit against `tests/render/fake-tauri.js` and
+`fake-help.js`, on a fixed clock so Today and Yesterday read the same every
+time. It writes `<topic>-<figure>.light.jpg` and `.dark.jpg` (1200 × 675)
+into `features/help/img/`; commit them. They are the real windows, so run it
+again, and commit, whenever the Terminal, Files, Checkpoints or Use with
+Claude panel changes shape. `--preview <dir>` also screenshots the list and
+every popover at three sizes.
 
 **Resources**, while the machine runs: CPU and Memory, each a label, its
 value ("19%", "2.1 GB of 4 GB") and the last minute and a half as a line;
@@ -428,6 +464,9 @@ picture, and ones that can't load here because of a different display or QEMU):
 the way in and out, the opening view and the bar at rest, the highlights, a card
 dragged and the layout reset, zooms, the timeline, a selection, Quick Look,
 search, the confirmations, New Checkpoint and 400 checkpoints, light and dark.
+`scripts/render-help.mjs` also photographs this view for two help popovers
+(*What you can do with this Windows machine* under *Disclosure*): when the
+canvas changes, run it again.
 
 ## Use with Claude
 

@@ -8,6 +8,7 @@ spacing, and copy.
 - **150ms ease-out** — default for hover/active state changes.
 - **200ms ease-out** — layout shifts (card collapse, accordion
   twirldown).
+- **150ms fade** — the help popover opening (opacity only, no slide).
 - **Instant** — under `prefers-reduced-motion: reduce`.
 - **A control that folds away** (Checkpoints' search field easing out of its
   magnifier, the zoom figure easing off after the zoom rests) — 200 ms

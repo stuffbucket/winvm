@@ -2,6 +2,7 @@ import { describe, expect, it } from "bun:test"
 import { readdirSync, readFileSync, statSync } from "node:fs"
 import { join, resolve } from "node:path"
 
+import { TOPICS, topicKeys } from "../ui/src/features/help/topics"
 import en from "../ui/src/i18n/en.json"
 
 const SRC = resolve(import.meta.dir, "..", "ui", "src")
@@ -28,7 +29,7 @@ const built = [
   ...["step.disk", "step.machine", "step.windows"],
   ...["fact.image", "fact.cpus", "fact.memory", "fact.changes", "fact.saves"],
   ...["detail.windows", "detail.uptime", "detail.hardware", "detail.image", "detail.screen", "detail.disk", "detail.saves"],
-  ...["ability.exec", "ability.files", "ability.saves", "ability.agent"],
+  ...TOPICS.flatMap(topicKeys),
   ...["desktop", "documents", "downloads"].map((p) => `files.place.${p}`),
   ...["notfound", "denied", "notdir", "notrunning", "other"].map((c) => `files.error.${c}`),
   ...["notfound", "denied", "exists", "busy", "into", "notdir", "notrunning", "unavailable", "other"].map((c) => `files.why.${c}`),
