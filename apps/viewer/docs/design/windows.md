@@ -459,7 +459,7 @@ new card flies out of Now into its place, screenshot and all.
 
 **The control bar** floats at the bottom of the window, one compact bar
 (Settings' glass is opaque here: cards pass under it): search, New, back to
-the newest, Automatic, zoom (out, in, show everything), Reset layout and Done.
+the newest, Automatic, Reset layout and Done.
 Each is a button with an accessible name and a tooltip, the keys in the
 tooltip. **New** is a plus and a word; its tooltip says why when it can't
 (Windows isn't running).
@@ -473,9 +473,13 @@ flies to it. **Automatic** is an icon filter, pressed when automatic
 checkpoints show: it shows or hides the checkpoints winvm takes by itself
 (autosaves and the stow).
 
-**The zoom's figure** (53%) is only there while the zoom is changing, and under
-the pointer or focus: it eases out 1.6 s after the zoom rests, and the buttons
-close up.
+**The zoom** (out, 53%, in, show everything) is its own small control in the
+lower left of the window, not in the bar. It is out of sight at rest: it eases
+in when the pointer comes near the lower left, while the zoom changes (pinch,
+wheel, ⌘+ ⌘−) and when a button in it has focus, and eases out 1.6 s after
+the pointer leaves and the zoom rests. In a window narrower than 820 px it
+stands above the bar instead of beside it. See [`components.md`](components.md)
+→ *Zoom control*.
 
 The view's settings (whether automatic checkpoints show, the zoom it was
 left at, and the cards moved, by machine and checkpoint) are in `$XDG_CONFIG_HOME/winvm/settings.json` under
