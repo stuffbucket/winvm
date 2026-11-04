@@ -8,6 +8,7 @@ spacing, and copy.
 - **150ms ease-out** — default for hover/active state changes.
 - **200ms ease-out** — layout shifts (card collapse, accordion
   twirldown).
+- **150ms fade** — the help popover opening (opacity only, no slide).
 - **Instant** — under `prefers-reduced-motion: reduce`.
 - **The Checkpoints camera** (winvm, [`windows.md`](windows.md) →
   *Checkpoints*): 420–900 ms, cubic ease-in-out, longer for a bigger

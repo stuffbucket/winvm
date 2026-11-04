@@ -148,6 +148,43 @@ naming the entity and a quiet `title` tooltip. A destructive one reads
 red (`btn--ghost-destructive`) and always confirms in a `ConfirmDialog`
 (`tone="danger"`) before acting.
 
+## Help popover
+
+`HelpPopover` (`components/HelpPopover.tsx`) is the one way to explain a
+thing with a picture: a panel that opens **beside** the control it explains
+(layer 2, not modal), used by the overview's list of things to do
+(`features/help/Abilities.tsx`). Reuse it for another explanation; give it
+`anchor`, `title`, `media`, `footer` and children.
+
+- **Shape.** Width `min(32rem, 100vw − --space-6)`, `--surface-card`,
+  hairline `--border-subtle`, `--radius-card`, `--elevation-modal`. Top to
+  bottom: the picture edge to edge (16:9, hairline under it, `--surface-control`
+  behind it while it loads), a head (title in `--text-md` at `--weight-lg`
+  with a ghost icon Close button), the content (a lead sentence and numbered
+  steps in `--text-base`, one note in `--text-sm`, its title in `--weight-md`),
+  and a foot (a hairline above, position in `--text-sm` muted, ghost icon
+  buttons for previous and next topic). Never a second card inside it.
+- **Pictures.** Real screenshots of the real window, one for light and one
+  for dark, chosen by `prefers-color-scheme` in a `<picture>`; the page
+  follows the same media query, so they always agree. A topic with more than
+  one picture shows buttons under it (`aria-pressed`, `--text-sm`), the
+  open one on `--surface-control`.
+- **Placement** (`placeNear`). To the right of the anchor, centred on it, so
+  the anchor stays in view; else to its left; else below or above if all of
+  it fits; else over the window's middle. Always `--space-3` inside the
+  window. Taller than the window allows, the whole panel scrolls, the foot
+  stays. It is drawn straight into the body, so a display or scroller around
+  the anchor can't clip or shift it.
+- **Keys and focus.** Focus moves to the panel on opening (so its title is
+  read first) and back to the anchor on closing, unless focus has already
+  gone elsewhere. Escape closes. Tab and Shift-Tab stay inside. Left and
+  Right step to the previous or next topic. A press outside closes it; a
+  press on the anchor's siblings (`scope`) doesn't, so choosing another row
+  switches topic instead of closing and reopening.
+- **Motion.** A 150 ms fade in, nothing else; the global reduced-motion
+  block makes it instant.
+- **Anchors** are buttons with `aria-haspopup="dialog"` and `aria-expanded`.
+
 ## Focus rings
 
 - **Always visible on keyboard navigation; hidden on mouse use** via
