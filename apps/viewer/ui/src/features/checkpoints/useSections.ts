@@ -260,7 +260,14 @@ export function useSections(host: RefObject<SectionsHost | null>, stored: readon
       h.commit(capture(resized, g.id, h.placed(), h.names()))
       say(t("checkpoints.section.resized", { name: g.cur.name }))
     }
+    // The keys go to the section (unless its name is about to be edited).
+    if (g.kind !== "draw" && !(g.kind === "move" && g.tab && !g.moved)) focusSection(g.id)
     return true
+  }
+
+  /** The keys go to the section chosen (the pointer's capture on the canvas would otherwise leave the focus there). */
+  const focusSection = (id: string): void => {
+    host.current?.viewport.current?.querySelector<HTMLElement>(`.section[data-section="${id}"]`)?.focus({ preventScroll: true })
   }
 
   const escape = (): boolean => {

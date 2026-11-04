@@ -21,6 +21,8 @@ const { GAP, GRID, intersecting } = await import("../ui/src/features/checkpoints
 const { parseSettings } = await import("../ui/src/features/checkpoints/settings")
 
 type Section = import("../ui/src/features/checkpoints/sections").Section
+/** A section on the canvas, with its element (not enumerable). */
+type Sec = Section & { readonly el: HTMLElement }
 
 afterAll(() => GlobalRegistrator.unregister())
 
@@ -118,12 +120,12 @@ const boxOf = (el: HTMLElement): { x: number; y: number; w: number; h: number } 
   const m = /translate3d\((-?[\d.e+-]+)px, (-?[\d.e+-]+)px/.exec(el.style.transform)
   return { x: Number(m?.[1]), y: Number(m?.[2]), w: parseFloat(el.style.width), h: parseFloat(el.style.height) }
 }
-const sections = (): (Section & { readonly el: HTMLElement })[] =>
+const sections = (): Sec[] =>
   [...document.querySelectorAll<HTMLElement>(".section")].map((el) => {
     const b = boxOf(el)
     const s = { id: el.dataset["section"] ?? "", name: el.querySelector(".section__name")?.textContent ?? "", ...b }
     // Not enumerable: a failed comparison would otherwise try to print a whole DOM node.
-    return Object.defineProperty(s, "el", { value: el, enumerable: false }) as Section & { readonly el: HTMLElement }
+    return Object.defineProperty(s, "el", { value: el, enumerable: false }) as Sec
   })
 const sectionBox = (s: Section): Section => ({ id: s.id, name: s.name, x: s.x, y: s.y, w: s.w, h: s.h })
 const cardBox = (name: string): { x: number; y: number; w: number; h: number } => boxOf(document.querySelector<HTMLElement>(`.checkpoint[data-name="${name}"]`) as HTMLElement)
@@ -233,7 +235,7 @@ describe("the Section tool", () => {
     const input = nameField()
     expect(input?.value).toBe("Section")
     expect(document.activeElement).toBe(input)
-    expect(said()).toContain("Section Section created")
+    expect(said()).toContain("Created section Section")
     expect(stored(w)?.list).toHaveLength(1)
   })
 
@@ -256,7 +258,7 @@ describe("the Section tool", () => {
     expect(grid()).toBe("false")
     await key(nameField() as HTMLInputElement, "Escape")
     const tab = document.querySelector<HTMLElement>(".section__tab") as HTMLElement
-    const s = sections()[0] as Section
+    const s = sections()[0] as Sec
     await drag(tab, toScreen({ x: s.x + 10, y: s.y - 10 }), toScreen({ x: s.x + 60, y: s.y + 40 }), { release: false })
     expect(grid()).toBe("true")
     await release(toScreen({ x: s.x + 60, y: s.y + 40 }))
@@ -302,7 +304,7 @@ describe("the tab", () => {
     const w = await made("Yesterday's runs")
     expect(sections()[0]?.name).toBe("Yesterday's runs")
     expect(nameField()).toBeNull()
-    expect(said()).toContain("renamed Yesterday's runs")
+    expect(said()).toContain("Renamed section to Yesterday's runs")
     expect(stored(w)?.list[0]?.name).toBe("Yesterday's runs")
     expect(document.querySelector('[role="group"]')?.getAttribute("aria-label")).toBe("Section: Yesterday's runs, no checkpoints")
   })
@@ -310,7 +312,7 @@ describe("the tab", () => {
   it("is edited by a click on the tab (without a drag), and by Return or F2 on the focused section", async () => {
     await made("One")
     const tab = document.querySelector<HTMLElement>(".section__tab") as HTMLElement
-    const s = sections()[0] as Section
+    const s = sections()[0] as Sec
     await act(async () => {
       fire(tab, "pointerdown", toScreen({ x: s.x + 10, y: s.y - 10 }))
       fire(viewport(), "pointerup", toScreen({ x: s.x + 10, y: s.y - 10 }))
@@ -394,7 +396,7 @@ describe("what is in a section", () => {
     expect(group.getAttribute("aria-label")).toBe("Section: Section, 3 checkpoints")
     // The one not round it is loose.
     expect(stored(w)?.members["a"]).toBeUndefined()
-    const s = sections()[0] as Section
+    const s = sections()[0] as Sec
     // Each keeps its place relative to the section.
     const c = cardBox("c")
     expect(stored(w)?.members["c"]).toEqual({ section: s.id, x: c.x - s.x, y: c.y - s.y })
@@ -405,12 +407,12 @@ describe("what is in a section", () => {
     const { a, b } = around("c", "d")
     await draw(a, b)
     await key(nameField() as HTMLInputElement, "Escape")
-    const before = sections()[0] as Section
+    const before = sections()[0] as Sec
     const cBefore = cardBox("c")
     const dBefore = cardBox("d")
     const tab = document.querySelector<HTMLElement>(".section__tab") as HTMLElement
     await drag(tab, toScreen({ x: before.x + 10, y: before.y - 10 }), toScreen({ x: before.x + 10 - 300.4, y: before.y - 10 - 410.7 }))
-    const after = sections()[0] as Section
+    const after = sections()[0] as Sec
     expect(onGrid(after.x) && onGrid(after.y)).toBe(true)
     const dx = after.x - before.x
     const dy = after.y - before.y
@@ -429,7 +431,7 @@ describe("what is in a section", () => {
     await key(nameField() as HTMLInputElement, "Escape")
     // Deselect, then press its body: nothing of the section takes it.
     await key(window, "Escape")
-    const s = sections()[0] as Section
+    const s = sections()[0] as Sec
     expect(s.el.dataset["selected"]).toBe("false")
     const body = s.el.querySelector<HTMLElement>(".section__body") as HTMLElement
     // The stylesheet is what lets a press through (pointer-events); the rule here is that a press on the body of one that isn't selected is not a move.
@@ -441,7 +443,7 @@ describe("what is in a section", () => {
     expect(sections()[0]?.x).toBe(s.x + 120)
     expect(sections()[0]?.el.dataset["selected"]).toBe("true")
     // Selected, its empty body carries it.
-    const moved = sections()[0] as Section
+    const moved = sections()[0] as Sec
     await drag(body, toScreen({ x: moved.x + 100, y: moved.y + 80 }), toScreen({ x: moved.x + 100, y: moved.y + 176 }))
     expect(sections()[0]?.y).toBe(moved.y + 96)
   })
@@ -451,7 +453,7 @@ describe("what is in a section", () => {
     // A section clear of the stack.
     await draw({ x: -1600, y: -900 }, { x: -1000, y: -400 })
     await key(nameField() as HTMLInputElement, "Escape")
-    const s = sections()[0] as Section
+    const s = sections()[0] as Sec
     const d0 = cardBox("d")
     const card = document.querySelector<HTMLElement>('.checkpoint[data-name="d"] .checkpoint__hit') as HTMLElement
     const from = toScreen({ x: d0.x + 20, y: d0.y + 20 })
@@ -476,7 +478,7 @@ describe("what is in a section", () => {
     const w = await mount()
     await draw({ x: -1600, y: -900 }, { x: -1000, y: -400 })
     await key(nameField() as HTMLInputElement, "Escape")
-    const s = sections()[0] as Section
+    const s = sections()[0] as Sec
     const d0 = cardBox("d")
     const card = document.querySelector<HTMLElement>('.checkpoint[data-name="d"] .checkpoint__hit') as HTMLElement
     await act(async () => {
@@ -542,11 +544,11 @@ describe("what is in a section", () => {
 })
 
 describe("selecting and resizing", () => {
-  async function one(): Promise<{ w: World; s: Section }> {
+  async function one(): Promise<{ w: World; s: Sec }> {
     const w = await mount()
     await draw({ x: -1300, y: -900 }, { x: -700, y: -500 })
     await key(nameField() as HTMLInputElement, "Escape")
-    return { w, s: sections()[0] as Section }
+    return { w, s: sections()[0] as Sec }
   }
   const handle = (h: string): HTMLElement => document.querySelector<HTMLElement>(`[data-handle="${h}"]`) as HTMLElement
 
@@ -562,7 +564,7 @@ describe("selecting and resizing", () => {
   it("is selected by its tab, and Esc lets go of it", async () => {
     await one()
     await key(window, "Escape")
-    const s = sections()[0] as Section
+    const s = sections()[0] as Sec
     await act(async () => {
       fire(s.el.querySelector(".section__tab") as HTMLElement, "pointerdown", toScreen({ x: s.x + 10, y: s.y - 10 }))
       fire(viewport(), "pointerup", toScreen({ x: s.x + 10, y: s.y - 10 }))
@@ -578,14 +580,14 @@ describe("selecting and resizing", () => {
     const right = s.x + s.w
     const bottom = s.y + s.h
     await drag(handle("nw"), toScreen({ x: s.x, y: s.y }), toScreen({ x: s.x - 101, y: s.y - 53 }))
-    const r = sections()[0] as Section
+    const r = sections()[0] as Sec
     expect([r.x, r.y, r.w, r.h].every(onGrid)).toBe(true)
     expect(r.x + r.w).toBe(right)
     expect(r.y + r.h).toBe(bottom)
     expect(r.x).toBe(s.x - 96)
     expect(r.y).toBe(s.y - 48)
     await drag(handle("se"), toScreen({ x: right, y: bottom }), toScreen({ x: right + 130, y: bottom + 10 }))
-    const r2 = sections()[0] as Section
+    const r2 = sections()[0] as Sec
     expect(r2.x).toBe(r.x)
     expect(r2.y).toBe(r.y)
     expect(r2.x + r2.w).toBe(right + 120)
@@ -595,11 +597,11 @@ describe("selecting and resizing", () => {
   it("resizes by an edge, one way only, and never below the least size", async () => {
     const { s } = await one()
     await drag(handle("e"), toScreen({ x: s.x + s.w, y: s.y + 50 }), toScreen({ x: s.x + s.w + 70, y: s.y + 400 }))
-    const r = sections()[0] as Section
+    const r = sections()[0] as Sec
     expect([r.x, r.y, r.h]).toEqual([s.x, s.y, s.h])
     expect(r.w).toBe(s.w + 72)
     await drag(handle("w"), toScreen({ x: r.x, y: r.y + 50 }), toScreen({ x: r.x + 5000, y: r.y + 50 }))
-    const small = sections()[0] as Section
+    const small = sections()[0] as Sec
     expect(small.w).toBe(5 * GRID)
     expect(small.x + small.w).toBe(r.x + r.w)
   })
@@ -609,15 +611,15 @@ describe("selecting and resizing", () => {
     const { a, b } = around("d")
     await draw(a, b)
     await key(nameField() as HTMLInputElement, "Escape")
-    const s = sections()[0] as Section
+    const s = sections()[0] as Sec
     const d = cardBox("d")
     await drag(handle("nw"), toScreen({ x: s.x, y: s.y }), toScreen({ x: s.x - 200, y: s.y - 150 }))
     expect(cardBox("d")).toMatchObject({ x: d.x, y: d.y })
     expect(stored(w)?.members["d"]?.section).toBe(s.id)
-    const grown = sections()[0] as Section
+    const grown = sections()[0] as Sec
     // Squeezing from the east, the section stops at its card (with its air) instead of leaving it outside.
     await drag(handle("e"), toScreen({ x: grown.x + grown.w, y: grown.y + 80 }), toScreen({ x: grown.x + 20, y: grown.y + 80 }))
-    const squeezed = sections()[0] as Section
+    const squeezed = sections()[0] as Sec
     expect(squeezed.x + squeezed.w).toBeGreaterThanOrEqual(d.x + d.w + 12)
     expect(cardBox("d")).toMatchObject({ x: d.x, y: d.y })
   })
@@ -627,7 +629,7 @@ describe("selecting and resizing", () => {
     const c = cardBox("c")
     await draw({ x: c.x - 600, y: c.y - 400 }, { x: c.x - 200, y: c.y - 200 })
     await key(nameField() as HTMLInputElement, "Escape")
-    const s = sections()[0] as Section
+    const s = sections()[0] as Sec
     expect(Object.keys(stored(w)?.members ?? {})).toEqual([])
     await drag(handle("se"), toScreen({ x: s.x + s.w, y: s.y + s.h }), toScreen({ x: c.x + c.w, y: c.y + c.h + 200 }))
     expect(stored(w)?.members["c"]?.section).toBe(s.id)
@@ -635,13 +637,13 @@ describe("selecting and resizing", () => {
 })
 
 describe("never touching", () => {
-  async function two(): Promise<{ w: World; a: Section; b: Section }> {
+  async function two(): Promise<{ w: World; a: Sec; b: Sec }> {
     const w = await mount()
     await draw({ x: -1300, y: -900 }, { x: -900, y: -600 })
     await key(nameField() as HTMLInputElement, "Escape")
     await draw({ x: -600, y: -900 }, { x: -300, y: -600 })
     await key(nameField() as HTMLInputElement, "Escape")
-    const [a, b] = sections().sort((p, q) => p.x - q.x) as [Section, Section]
+    const [a, b] = sections().sort((p, q) => p.x - q.x) as [Sec, Sec]
     return { w, a, b }
   }
   const gapsOk = (list: Section[]): boolean => !intersecting(list.map(sectionBox))
@@ -650,7 +652,7 @@ describe("never touching", () => {
     const { a, b } = await two()
     const tab = b.el.querySelector<HTMLElement>(".section__tab") as HTMLElement
     await drag(tab, toScreen({ x: b.x + 10, y: b.y - 10 }), toScreen({ x: b.x + 10 - 600, y: b.y - 10 + 100 }))
-    const [a2, b2] = sections().sort((p, q) => p.x - q.x) as [Section, Section]
+    const [a2, b2] = sections().sort((p, q) => p.x - q.x) as [Sec, Sec]
     expect(a2.id).toBe(a.id)
     expect(b2.x - (a2.x + a2.w)).toBe(GAP)
     expect(b2.y).toBe(b.y + 96)
@@ -665,7 +667,7 @@ describe("never touching", () => {
     })
     await key(nameField() as HTMLInputElement, "Escape")
     await drag(document.querySelector<HTMLElement>('[data-handle="e"]') as HTMLElement, toScreen({ x: a.x + a.w, y: a.y + 100 }), toScreen({ x: b.x + 200, y: a.y + 100 }))
-    const [a2, b2] = sections().sort((p, q) => p.x - q.x) as [Section, Section]
+    const [a2, b2] = sections().sort((p, q) => p.x - q.x) as [Sec, Sec]
     expect(a2.x + a2.w + GAP).toBe(b2.x)
     expect(gapsOk([a2, b2])).toBe(true)
   })
@@ -677,7 +679,7 @@ describe("never touching", () => {
     const all = sections().sort((p, q) => p.x - q.x)
     expect(all).toHaveLength(3)
     expect(gapsOk(all)).toBe(true)
-    const third = all.at(-1) as Section
+    const third = all.at(-1) as Sec
     expect(third.x).toBe(b.x + b.w + GAP)
   })
 
@@ -714,7 +716,7 @@ describe("removing a section", () => {
     expect(cardBox("c")).toMatchObject({ x: c.x, y: c.y })
     expect(cardBox("d")).toMatchObject({ x: d.x, y: d.y })
     expect(stored(w)).toBeUndefined()
-    expect(said()).toContain("removed. Its checkpoints stay where they are")
+    expect(said()).toContain("Removed section")
     // They are loose cards now, remembered where they stand.
     const moves = parseSettings(w.store.value).layouts[INSTANCE]
     for (const name of Object.keys(moves ?? {})) expect(["b", "c", "d"]).toContain(name)
@@ -741,11 +743,11 @@ describe("removing a section", () => {
 })
 
 describe("the keys", () => {
-  async function focused(): Promise<{ w: World; s: Section }> {
+  async function focused(): Promise<{ w: World; s: Sec }> {
     const w = await mount()
     await draw({ x: -1300, y: -900 }, { x: -900, y: -600 })
     await key(nameField() as HTMLInputElement, "Escape")
-    return { w, s: sections()[0] as Section }
+    return { w, s: sections()[0] as Sec }
   }
 
   it("makes a section a labelled group you can Tab to", async () => {
@@ -780,7 +782,7 @@ describe("the keys", () => {
     await key(s.el, "ArrowLeft")
     await key(s.el, "ArrowUp", { shiftKey: true })
     expect(sections()[0]).toMatchObject({ x: s.x, y: s.y })
-    expect(said()).toContain("moved")
+    expect(said()).toContain("Moved section")
     expect(stored(w)?.list[0]).toMatchObject({ x: s.x, y: s.y })
   })
 
@@ -791,12 +793,32 @@ describe("the keys", () => {
     await draw({ x: -840, y: -900 }, { x: -500, y: -600 })
     await key(nameField() as HTMLInputElement, "Escape")
     void w
-    const [a, b] = sections().sort((p, q) => p.x - q.x) as [Section, Section]
+    const [a, b] = sections().sort((p, q) => p.x - q.x) as [Sec, Sec]
     const gap = b.x - (a.x + a.w)
     expect(gap).toBeGreaterThanOrEqual(GAP)
     for (let i = 0; i < 6; i += 1) await key(a.el, "ArrowRight", { shiftKey: true })
-    const [a2, b2] = sections().sort((p, q) => p.x - q.x) as [Section, Section]
+    const [a2, b2] = sections().sort((p, q) => p.x - q.x) as [Sec, Sec]
     expect(b2.x - (a2.x + a2.w)).toBe(GAP)
+  })
+
+  it("takes the keys after a press on its border or a carry, whatever the canvas held on to", async () => {
+    const { s } = await focused()
+    await act(async () => {
+      ;(document.activeElement as HTMLElement | null)?.blur()
+    })
+    const edge = s.el.querySelector<HTMLElement>('.section__edge[data-handle="s"]') as HTMLElement
+    await act(async () => {
+      fire(edge, "pointerdown", toScreen({ x: s.x + 100, y: s.y + s.h }))
+      fire(viewport(), "pointerup", toScreen({ x: s.x + 100, y: s.y + s.h }))
+    })
+    expect(document.activeElement).toBe(s.el)
+    await act(async () => {
+      ;(document.activeElement as HTMLElement | null)?.blur()
+    })
+    // Selected now, so its border resizes.
+    await drag(edge, toScreen({ x: s.x + 100, y: s.y + s.h }), toScreen({ x: s.x + 100, y: s.y + s.h + 48 }))
+    expect(sections()[0]?.h).toBe(s.h + 48)
+    expect(document.activeElement).toBe(sections()[0]?.el ?? null)
   })
 
   it("leaves the arrows to the name field while it is edited", async () => {
@@ -811,7 +833,7 @@ describe("the keys", () => {
     await focused()
     const live = document.querySelector('.checkpoints__sr[role="status"][aria-live="polite"]')
     expect(live).not.toBeNull()
-    expect(live?.textContent).toContain("created")
+    expect(live?.textContent).toContain("Created section")
   })
 })
 
@@ -832,7 +854,7 @@ describe("kept", () => {
     await mount(filled)
     const all = sections()
     expect(all.map((s) => s.name).sort()).toEqual(["Notes", "Runs"])
-    const runs = all.find((s) => s.id === "s1") as Section
+    const runs = all.find((s) => s.id === "s1") as Sec
     expect(runs).toMatchObject({ x: -1200, y: -912, w: 480, h: 432 })
     // A member's place is the section's top left plus its offset; a deleted checkpoint is dropped, a section may be empty.
     expect(cardBox("c")).toMatchObject({ x: -1176, y: -888 })
@@ -843,7 +865,7 @@ describe("kept", () => {
 
   it("is written again, whole and sound, with the next change, and a later mount reads the same", async () => {
     const w = await mount(filled)
-    const runs = sections().find((s) => s.id === "s1") as Section
+    const runs = sections().find((s) => s.id === "s1") as Sec
     await key(runs.el, "ArrowDown")
     const after = stored(w)
     expect(after?.list.find((s) => s.id === "s1")).toMatchObject({ y: -888 })
