@@ -954,14 +954,10 @@ html[data-os="macos"] .toolbar {
   height: var(--size-md);
 }
 
-/* Not possible in the machine's state: still a row, and it still opens its help,
-   but quiet, with the reason under the label. Muted text, not faded, so it
-   keeps its contrast. */
-.ability--off,
-.ability--off .ability__icon {
-  color: var(--text-muted);
-}
-
+/* Not possible in the machine's state: still a row, and it still opens its help.
+   Only the reason under the label says so. The label and glyph keep the colors
+   of every other row: a muted row beside one bright row reads as that one being
+   selected. */
 .ability__why {
   display: block;
   font-size: var(--text-sm);
