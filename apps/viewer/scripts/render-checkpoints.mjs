@@ -5,7 +5,9 @@
  * (search folded and open, the zoom figure showing and away), the Automatic
  * filter's and the timeline's highlights, a card dragged and the layout reset,
  * the timeline, a selected checkpoint, search, the confirmations, New
- * Checkpoint, many checkpoints, in light and dark. Test DOMs compute no layout; this is how layout and feel get looked at.
+ * Checkpoint, many checkpoints, in light and dark; and the zoom control (its
+ * own pill in the lower left) at rest, eased in by the pointer and by a zoom,
+ * at 720x520, 1000x800 and 1440x900, CHECKING that it never overlaps the bar. Test DOMs compute no layout; this is how layout and feel get looked at.
  *
  * Playwright isn't one of the workspace's dependencies (it would pull a
  * browser into every install). Install it anywhere and point at it:
@@ -217,6 +219,56 @@ for (const scheme of ["dark", "light"]) {
   await shot(page, `${scheme}-17-left`)
   await page.close()
 }
+
+// The zoom control: its own pill in the lower left, out of sight at rest, in by the pointer or a zoom.
+let collided = false
+for (const scheme of ["dark", "light"]) {
+  for (const [w, h] of [
+    [720, 520],
+    [1000, 800],
+    [1440, 900],
+  ]) {
+    const page = await open(scheme)
+    await page.setViewportSize({ width: w, height: h })
+    await enter(page)
+    await wait(3600)
+    const name = `${scheme}-zoom-${String(w)}x${String(h)}`
+    const zoom = page.locator(".checkpoints__zoom")
+    const opacity = async () => Number(await zoom.evaluate((el) => getComputedStyle(el).opacity))
+    await page.mouse.move(w / 2, h / 3)
+    await wait(400)
+    await shot(page, `${name}-1-rest`)
+    if ((await opacity()) !== 0) console.error(`${name}: the zoom control is not hidden at rest`)
+    // The pointer comes near the lower left.
+    await page.mouse.move(70, h - 50, { steps: 5 })
+    await wait(400)
+    await shot(page, `${name}-2-pointer`)
+    if ((await opacity()) !== 1) console.error(`${name}: the zoom control did not ease in under the pointer`)
+    const z = await zoom.boundingBox()
+    const b = await page.locator(".spatial-canvas__controls").boundingBox()
+    const open_ = await page.locator(".checkpoints__search").first().boundingBox()
+    if (z !== null && b !== null && z.x < b.x + b.width && z.x + z.width > b.x && z.y < b.y + b.height && z.y + z.height > b.y) {
+      collided = true
+      console.error(`${name}: the zoom control overlaps the control bar`)
+    }
+    void open_
+    // Away again: it eases out after a moment.
+    await page.mouse.move(w / 2, h / 3, { steps: 5 })
+    await wait(2300)
+    if ((await opacity()) !== 0) console.error(`${name}: the zoom control did not ease out after the pointer left`)
+    // A zoom (the keys) shows it with its figure; the pointer is elsewhere.
+    await page.keyboard.press("Meta+=")
+    await wait(450)
+    await shot(page, `${name}-3-zooming`)
+    await wait(2300)
+    // Keyboard: Tab to it.
+    await page.locator(".checkpoints__zoom button").first().focus()
+    await wait(300)
+    await shot(page, `${name}-4-focus`)
+    await page.close()
+  }
+}
+if (collided) process.exitCode = 1
 
 // Many checkpoints: a year of autosaves stays smooth (only what is in view is drawn).
 {

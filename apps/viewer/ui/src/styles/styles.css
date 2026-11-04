@@ -325,6 +325,12 @@ html[data-os="macos"] .toolbar {
   text-overflow: ellipsis;
 }
 
+/* A capture released because the guest takes no input: a note, not a state. */
+.toolbar__capture-status--released {
+  color: var(--text-muted);
+  font-weight: var(--weight-base);
+}
+
 /* ---- Stage: the display on its backdrop; the panel over it ---- */
 .stage {
   position: relative;
@@ -420,6 +426,24 @@ html[data-os="macos"] .toolbar {
 .screen__canvas {
   position: absolute;
   inset: 0;
+}
+
+/* The guest takes no input (paused, asleep, starting, busy; Screen.tsx and
+   input.ts): the frame is a picture. The Mac's arrow shows over it, whatever
+   cursor noVNC set on the canvas (the guest's own, or none), and the canvas
+   takes no pointer events, so nothing is sent, nothing is swallowed and a
+   click doesn't move focus. */
+.screen--inert,
+.screen--inert canvas {
+  cursor: default !important;
+}
+
+.screen--inert .screen__canvas {
+  pointer-events: none;
+}
+
+.screen:focus {
+  outline: none;
 }
 
 /* One guest pixel per device pixel: Screen.tsx sizes this box to the

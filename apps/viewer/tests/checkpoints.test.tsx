@@ -16,6 +16,7 @@ const { loadSettings, parseSettings, saveSettings } = await import("../ui/src/fe
 const { draftOf, tagsOf } = await import("../ui/src/features/checkpoints/CheckpointDetails")
 const { ConfirmDialog } = await import("../ui/src/components/ConfirmDialog")
 const { ControlBar } = await import("../ui/src/features/checkpoints/ControlBar")
+const { ZoomControl, ZOOM_SHOWN_MS, pointerNear } = await import("../ui/src/features/checkpoints/ZoomControl")
 const { levelFor, textScale, FULL_WIDTH, NAME_WIDTH, MIN_TEXT } = await import("../ui/src/features/checkpoints/CheckpointCard")
 const { parseNote, parseSaves } = await import("../ui/src/model")
 const { centreOf, clampCamera, fitRect } = await import("@winvm/canvas")
@@ -433,7 +434,7 @@ describe("the control bar", () => {
   })
   const noop = (): void => undefined
   function bar(over: Partial<import("react").ComponentProps<typeof ControlBar>> = {}): { host: HTMLElement; calls: Record<string, ReturnType<typeof mock>> } {
-    const calls = { onNew: mock(noop), onNewest: mock(noop), onToggleAutomatic: mock(noop), onDone: mock(noop), onSearchToggle: mock(noop), onReset: mock(noop), onFit: mock(noop) }
+    const calls = { onNew: mock(noop), onNewest: mock(noop), onToggleAutomatic: mock(noop), onDone: mock(noop), onSearchToggle: mock(noop), onReset: mock(noop) }
     const host = document.createElement("div")
     document.body.append(host)
     root = createRoot(host)
@@ -444,7 +445,6 @@ describe("the control bar", () => {
           busy={false}
           creating={false}
           showAutomatic
-          zoom={0.53}
           searchOpen={false}
           query=""
           inputRef={{ current: null }}
@@ -453,8 +453,6 @@ describe("the control bar", () => {
           onSearchBlur={noop}
           onQuery={noop}
           onSearchKey={noop}
-          onZoomOut={noop}
-          onZoomIn={noop}
           arranged={false}
           {...calls}
           {...over}
@@ -469,7 +467,7 @@ describe("the control bar", () => {
     const { host } = bar()
     expect(host.querySelector("nav")?.getAttribute("aria-label")).toBe("Checkpoint controls")
     const buttons = [...host.querySelectorAll("button")]
-    expect(buttons.length).toBeGreaterThanOrEqual(8)
+    expect(buttons.length).toBeGreaterThanOrEqual(6)
     for (const b of buttons) {
       expect((b.getAttribute("aria-label") ?? b.textContent ?? "").length).toBeGreaterThan(0)
       expect(b.getAttribute("title") ?? b.textContent ?? "").not.toBe("")
@@ -524,48 +522,95 @@ describe("the control bar", () => {
     expect(moved.calls["onReset"]).toHaveBeenCalledTimes(1)
   })
 
-  it("shows the zoom's figure while the zoom changes, and folds it away once it rests", async () => {
-    const { ZOOM_FIGURE_MS } = await import("../ui/src/features/checkpoints/ControlBar")
-    const { host } = bar({ zoom: 0.5 })
-    const group = (): string | null => host.querySelector(".checkpoints__zoom")?.getAttribute("data-figure") ?? null
-    // Nothing has changed yet: the figure is folded.
-    expect(group()).toBe("false")
-    const rerender = (zoom: number): void => {
-      act(() =>
-        root?.render(
-          <ControlBar
-            live
-            busy={false}
-            creating={false}
-            showAutomatic
-            zoom={zoom}
-            searchOpen={false}
-            query=""
-            inputRef={{ current: null }}
-            onNew={noop}
-            onNewest={noop}
-            onToggleAutomatic={noop}
-            onAutomaticHint={noop}
-            onSearchToggle={noop}
-            onSearchFocus={noop}
-            onSearchBlur={noop}
-            onQuery={noop}
-            onSearchKey={noop}
-            onZoomOut={noop}
-            onZoomIn={noop}
-            onFit={noop}
-            arranged={false}
-            onReset={noop}
-            onDone={noop}
-          />,
-        ),
-      )
-    }
-    rerender(0.62)
-    expect(group()).toBe("true")
-    await act(async () => {
-      await new Promise((r) => setTimeout(r, ZOOM_FIGURE_MS + 150))
+  it("keeps the zoom out of the bar: Reset layout stays, the zoom is its own control", () => {
+    const { host } = bar()
+    expect(host.querySelector(".checkpoints__zoom")).toBeNull()
+    for (const gone of ["Zoom out (⌘−)", "Zoom in (⌘+)", "Show all checkpoints (⌘0)"]) expect(named(host, gone)).toBeNull()
+    expect(named(host, "Reset layout")).not.toBeNull()
+  })
+})
+
+describe("the zoom control", () => {
+  let root: ReturnType<typeof createRoot> | null = null
+  afterEach(() => {
+    act(() => root?.unmount())
+    root = null
+    document.body.replaceChildren()
+  })
+  const noop = (): void => undefined
+  // Test DOMs compute no layout: the window is 1000x700 and the control sits in its lower left.
+  const rect = (left: number, top: number, right: number, bottom: number): DOMRect => ({ left, top, right, bottom, x: left, y: top, width: right - left, height: bottom - top, toJSON: noop }) as DOMRect
+  function zoomControl(zoom = 0.5): { group: () => HTMLElement; render(zoom: number): void; calls: Record<"out" | "in" | "fit", ReturnType<typeof mock>> } {
+    const calls = { out: mock(noop), in: mock(noop), fit: mock(noop) }
+    const host = document.createElement("div")
+    document.body.append(host)
+    host.getBoundingClientRect = () => rect(0, 0, 1000, 700)
+    root = createRoot(host)
+    const render = (z: number): void => act(() => root?.render(<ZoomControl zoom={z} onZoomOut={calls.out} onZoomIn={calls.in} onFit={calls.fit} />))
+    render(zoom)
+    const group = (): HTMLElement => host.querySelector<HTMLElement>(".checkpoints__zoom") as HTMLElement
+    group().getBoundingClientRect = () => rect(16, 650, 210, 684)
+    // No layout here: the host stands in for the offset parent.
+    Object.defineProperty(group(), "offsetParent", { value: host })
+    return { group, render, calls }
+  }
+  const move = (x: number, y: number): void => {
+    act(() => {
+      window.dispatchEvent(new MouseEvent("pointermove", { clientX: x, clientY: y }))
     })
-    expect(group()).toBe("false")
+  }
+  const shown = (g: HTMLElement): string | null => g.getAttribute("data-shown")
+  const rest = async (): Promise<void> => {
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, ZOOM_SHOWN_MS + 150))
+    })
+  }
+
+  it("is a labelled group of three named buttons and the figure, out of sight at rest", () => {
+    const { group, calls } = zoomControl()
+    expect(group().getAttribute("role")).toBe("group")
+    expect(group().getAttribute("aria-label")).toBe("Zoom")
+    expect(shown(group())).toBe("false")
+    const buttons = [...group().querySelectorAll("button")]
+    expect(buttons.map((b) => b.getAttribute("aria-label"))).toEqual(["Zoom out (⌘−)", "Zoom in (⌘+)", "Show all checkpoints (⌘0)"])
+    for (const b of buttons) act(() => b.click())
+    expect(calls.out).toHaveBeenCalledTimes(1)
+    expect(calls.in).toHaveBeenCalledTimes(1)
+    expect(calls.fit).toHaveBeenCalledTimes(1)
+    expect(group().textContent).toBe("50%")
+  })
+
+  it("eases in when the pointer comes near the lower left, and out a moment after it leaves", async () => {
+    const { group } = zoomControl()
+    move(500, 300)
+    expect(shown(group())).toBe("false")
+    move(120, 600)
+    expect(shown(group())).toBe("true")
+    move(300, 300)
+    // The pointer has gone, but the control stays a moment.
+    expect(shown(group())).toBe("true")
+    await rest()
+    expect(shown(group())).toBe("false")
+  })
+
+  it("shows while the zoom changes, and folds away once it rests", async () => {
+    const { group, render } = zoomControl(0.5)
+    // Nothing has changed yet.
+    expect(shown(group())).toBe("false")
+    render(0.62)
+    expect(shown(group())).toBe("true")
+    expect(group().textContent).toBe("62%")
+    await rest()
+    expect(shown(group())).toBe("false")
+  })
+
+  it("decides the zone from the window's lower left corner, and around the control where it stands higher", () => {
+    const area = rect(0, 0, 720, 520)
+    const control = rect(16, 400, 210, 434)
+    expect(pointerNear({ x: 100, y: 500 }, control, area)).toBe(true)
+    expect(pointerNear({ x: 159, y: 401 }, control, area)).toBe(true)
+    expect(pointerNear({ x: 240, y: 420 }, control, area)).toBe(true)
+    expect(pointerNear({ x: 400, y: 300 }, control, area)).toBe(false)
+    expect(pointerNear({ x: 700, y: 500 }, control, area)).toBe(false)
   })
 })

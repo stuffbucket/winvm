@@ -81,6 +81,7 @@ import {
 import { CheckpointCard, MONITOR, Picture, takenAt, textScale } from "./CheckpointCard"
 import { CheckpointDetails, type NoteDraft, tagsOf } from "./CheckpointDetails"
 import { ControlBar } from "./ControlBar"
+import { ZoomControl } from "./ZoomControl"
 import { LiveFrame } from "./LiveFrame"
 import { forgetPictures } from "./pictures"
 import { type CheckpointSettings, DEFAULT_SETTINGS, loadSettings, saveSettings } from "./settings"
@@ -932,7 +933,6 @@ export function CheckpointCanvas(p: CheckpointCanvasProps): JSX.Element {
           busy={busy}
           creating={creating}
           showAutomatic={settings.showAutomatic}
-          zoom={camera.zoom}
           searchOpen={searchOpen}
           query={query}
           inputRef={searchInput}
@@ -962,13 +962,12 @@ export function CheckpointCanvas(p: CheckpointCanvasProps): JSX.Element {
               if (c !== undefined) pickResult(c)
             }
           }}
-          onZoomOut={() => zoomBy(1 / ZOOM_STEP)}
-          onZoomIn={() => zoomBy(ZOOM_STEP)}
-          onFit={fitAll}
           arranged={Object.keys(moves).length > 0}
           onReset={resetLayout}
           onDone={() => void leave()}
         />
+
+        <ZoomControl zoom={camera.zoom} onZoomOut={() => zoomBy(1 / ZOOM_STEP)} onZoomIn={() => zoomBy(ZOOM_STEP)} onFit={fitAll} />
 
         {(status !== null || listError !== null || (list !== null && list.length === 0)) && (
           <div className="checkpoints__status" role="status" data-tone={status?.tone ?? (listError !== null ? "error" : "info")}>

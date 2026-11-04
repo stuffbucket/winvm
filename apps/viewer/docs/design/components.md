@@ -159,15 +159,38 @@ chrome the native title bar already supplies.
   `--border-width-hairline` `--border-subtle`, `--radius-card`,
   `--elevation-modal`; padding `--space-1`.
 - Items are `spatial-canvas__button`s (`--size-xl` high, icon buttons square),
-  grouped by hairline dividers: search, then actions, then view, then the one
-  primary button (`btn--primary`, "Done"), last.
+  grouped by hairline dividers: search, then actions (New, back to the newest,
+  Automatic, Reset layout), then the one primary button (`btn--primary`,
+  "Done"), last. The zoom is not in the bar (below).
 - Icon buttons carry an `aria-label` and a `title`; a filter or toggle is
   `aria-pressed` and its `title` says what pressing does. A control that can't
   be used is `disabled`, and its tooltip says why.
 - A control that is rarely needed folds to its icon and eases out when used
-  (search to the left, so the bar grows away from its centre); a readout that
-  is only wanted while something changes (the zoom's figure) eases away when it
-  rests. Both are out of the way, not removed: hover or focus brings them back.
+  (search to the left, so the bar grows away from its centre). It is out of the
+  way, not removed: focus brings it back.
+
+### Zoom control (Checkpoints)
+
+The zoom is its **own** floating pill in the lower left (`ZoomControl.tsx`),
+apart from the bar: minus, the figure (53%), plus, show everything. Same
+surface, hairline border, `--radius-card` and `--elevation-modal` as the bar
+(it is the canvas package's `spatial-canvas__zoom` pill, made opaque like the
+bar), `--space-4` from the window's edges.
+
+- **At rest it is out of sight** (`opacity: 0`, no clicks). It eases in when the
+  pointer comes near (a zone of at least 160 x 120 logical px at the lower left,
+  and 40 px around the control wherever it stands), when the zoom changes (wheel,
+  pinch, keys, its own buttons), and when focus is inside it; it eases out
+  1.6 s (`ZOOM_SHOWN_MS`) after the pointer has gone and the zoom has rested.
+  The pointer is read from `window`, so no invisible zone sits over the canvas
+  taking its clicks and drags.
+- **Reachable without a pointer.** Its buttons stay in the Tab order while it
+  is out; focusing one shows it (`:focus-within`). Tab order is the bar first,
+  then the zoom: the zoom is the secondary control (⌘+ ⌘− ⌘0 do the same), and
+  Done is where Tab should leave the bar. Each button has an `aria-label` that
+  carries the key.
+- **Narrow windows.** At 820 px wide and under (the window's minimum is 720),
+  the centred bar would meet it, so it moves up and stands above the bar.
 
 ## Help popover
 

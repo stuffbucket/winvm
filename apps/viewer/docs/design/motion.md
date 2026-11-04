@@ -11,9 +11,12 @@ spacing, and copy.
 - **150ms fade** — the help popover opening (opacity only, no slide).
 - **Instant** — under `prefers-reduced-motion: reduce`.
 - **A control that folds away** (Checkpoints' search field easing out of its
-  magnifier, the zoom figure easing off after the zoom rests) — 200 ms
-  ease-out on width and opacity; the figure waits 1.6 s first, and comes back
-  at once on a change, hover or focus.
+  magnifier) — 200 ms ease-out on width and opacity.
+- **A control that comes with the pointer** (Checkpoints' zoom control, lower
+  left) — hidden at rest; 200 ms ease-out opacity in when the pointer nears it,
+  the zoom changes or focus enters; 150 ms out, after waiting 1.6 s from the
+  pointer leaving or the zoom resting (one timer, `ZOOM_SHOWN_MS`). Opacity
+  only, no slide. Under reduced motion it just shows and hides.
 - **The Checkpoints camera** (winvm, [`windows.md`](windows.md) →
   *Checkpoints*): 420–900 ms, cubic ease-in-out, longer for a bigger
   change of view. A flight is how that view says where a checkpoint is in

@@ -29,9 +29,13 @@ interface ScreenProps {
   readonly resizable: boolean
   readonly onGuestSize?: (size: Size, scale: number) => Promise<void>
   /**
-   * The machine is held (paused or asleep): the screen takes no input (it would
-   * queue in QEMU and land on resume), and sizes wait until it runs (held.ts).
+   * The guest takes input (input.ts: Windows runs, answers, no verb under way).
+   * Otherwise the frame is a picture: no mouse, wheel or key reaches the guest
+   * (it would queue in QEMU and land on resume), the Mac's arrow shows over it,
+   * capture is released and nothing is swallowed. Held input is let go first.
    */
+  readonly forwardInput: boolean
+  /** The machine is held (paused or asleep): sizes wait until it runs (held.ts), and the overlay shows. */
   readonly frozen?: boolean
   /**
    * Windows can take a size now (the app's guestReady: it runs, its agent
@@ -80,7 +84,7 @@ const dpr = pixelRatio
  * the window comes forward, and once on connecting.
  */
 export const Screen = forwardRef<ScreenHandle, ScreenProps>(function Screen(
-  { connection, keyboardCaptured, onKeyboardCaptured, resizable, onGuestSize, frozen = false, ready = true, asleep = false, waking = false, onWake, overlay = true },
+  { connection, keyboardCaptured, onKeyboardCaptured, forwardInput, resizable, onGuestSize, frozen = false, ready = true, asleep = false, waking = false, onWake, overlay = true },
   ref,
 ): JSX.Element {
   const area = useRef<HTMLDivElement | null>(null)
@@ -114,7 +118,8 @@ export const Screen = forwardRef<ScreenHandle, ScreenProps>(function Screen(
   askAgainRef.current = askAgain
   const heldSizes = useRef<HeldSizes | null>(null)
   heldSizes.current ??= new HeldSizes(frozen || !ready, { onRetry: () => askAgainRef.current() })
-  const keys = useRef({ frozen, asleep, waking, onWake })
+  const keys = useRef({ frozen, asleep, waking, onWake, forward: forwardInput })
+  keys.current.forward = forwardInput
   keys.current.frozen = frozen
   keys.current.asleep = asleep
   keys.current.waking = waking
@@ -123,17 +128,18 @@ export const Screen = forwardRef<ScreenHandle, ScreenProps>(function Screen(
   captured.current = keyboardCaptured
   const captureChanged = useRef(onKeyboardCaptured)
   captureChanged.current = onKeyboardCaptured
+  const clipboardSync = useRef<ClipboardSync | null>(null)
 
   useImperativeHandle(
     ref,
     () => ({
       sendWindowsKey: () => {
         const conn = rfb.current
-        if (conn !== null) sendWindowsKey((keysym, code, down) => conn.sendKey(keysym, code, down))
+        if (conn !== null && keys.current.forward) sendWindowsKey((keysym, code, down) => conn.sendKey(keysym, code, down))
       },
       sendCtrlAltDelete: () => {
         const conn = rfb.current
-        if (conn !== null) sendCtrlAltDelete((keysym, code, down) => conn.sendKey(keysym, code, down))
+        if (conn !== null && keys.current.forward) sendCtrlAltDelete((keysym, code, down) => conn.sendKey(keysym, code, down))
       },
     }),
     [],
@@ -162,6 +168,7 @@ export const Screen = forwardRef<ScreenHandle, ScreenProps>(function Screen(
       onCaptured: (next) => captureChanged.current(next),
     })
     router.setCaptured(captured.current)
+    router.setEnabled(keys.current.forward)
     const onKeyDown = (event: KeyboardEvent): void => router.keyDown(event)
     const onKeyUp = (event: KeyboardEvent): void => router.keyUp(event)
     const onBlur = (): void => router.lostFocus()
@@ -184,8 +191,8 @@ export const Screen = forwardRef<ScreenHandle, ScreenProps>(function Screen(
     // We send SetDesktopSize ourselves: noVNC asks in CSS pixels, and treats
     // QEMU's immediate "forwarded" reply as done, dropping later sizes.
     conn.resizeSession = false
-    conn.focusOnClick = true
-    conn.viewOnly = keys.current.frozen
+    conn.focusOnClick = keys.current.forward || keys.current.asleep
+    conn.viewOnly = !keys.current.forward
 
     const measure = (): Size => {
       const r = outer.getBoundingClientRect()
@@ -305,7 +312,9 @@ export const Screen = forwardRef<ScreenHandle, ScreenProps>(function Screen(
       writeMac: copyText,
       toGuest: (text) => conn.clipboardPasteFrom(text),
       focused: () => document.hasFocus(),
+      canSend: () => keys.current.forward,
     })
+    clipboardSync.current = clipboard
     let clipboardReady = false
     let clipboardWait: ReturnType<typeof setTimeout> | undefined
     conn.addEventListener("clipboard", (e) => {
@@ -354,6 +363,7 @@ export const Screen = forwardRef<ScreenHandle, ScreenProps>(function Screen(
     return () => {
       closing = true
       live.current = null
+      clipboardSync.current = null
       outer.removeEventListener("keydown", onKey, true)
       stopWake?.()
       resize?.cancel()
@@ -378,12 +388,20 @@ export const Screen = forwardRef<ScreenHandle, ScreenProps>(function Screen(
     }
   }, [websocketPort, password, attempt, resizable])
 
-  // Held: no input reaches QEMU. Running again: ask for the size the window
-  // wanted meanwhile, if it wanted one.
+  // No input to the guest (input.ts): what is held is let go of first, while
+  // noVNC can still send (a key-up queued in QEMU lands harmlessly on resume; a
+  // key left down would not), then noVNC goes view-only. The Mac's clipboard,
+  // kept back meanwhile, goes once the guest takes input again. Capture does not
+  // come back by itself: it was released, and is asked for again.
   useEffect(() => {
+    keyboard.current?.setEnabled(forwardInput)
     const conn = rfb.current
-    if (conn !== null) conn.viewOnly = frozen
-  }, [frozen])
+    if (conn === null) return
+    if (!forwardInput && conn._mouseButtonMask !== 0) conn._handleMouseButton(conn._mousePos.x ?? 0, conn._mousePos.y ?? 0, 0)
+    conn.viewOnly = !forwardInput
+    conn.focusOnClick = forwardInput || asleep
+    if (forwardInput) void clipboardSync.current?.fromMac()
+  }, [forwardInput, asleep])
   // Held or not ready: sizes wait. Able to take one again: ask for the size the
   // window wants now, both steps, if one was kept.
   useEffect(() => {
@@ -411,8 +429,16 @@ export const Screen = forwardRef<ScreenHandle, ScreenProps>(function Screen(
   }, [exact?.width, exact?.height])
 
   const message = view === "connected" ? null : t(`screen.${view}`)
+  const inert = !forwardInput || view !== "connected"
+  // Asleep, a click on the frame focuses it, so a key can wake the machine (the
+  // canvas takes no clicks while the guest takes no input).
   return (
-    <div ref={area} className="screen">
+    <div
+      ref={area}
+      className={cx("screen", inert && "screen--inert")}
+      tabIndex={asleep ? -1 : undefined}
+      onPointerDown={asleep ? (e) => e.currentTarget.focus({ preventScroll: true }) : undefined}
+    >
       <div
         ref={target}
         className={exact === undefined ? "screen__canvas" : scaled ? "screen__canvas screen__canvas--exact screen__canvas--scaled" : "screen__canvas screen__canvas--exact"}
