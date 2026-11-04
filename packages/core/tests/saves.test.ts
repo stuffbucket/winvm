@@ -67,6 +67,30 @@ describe("manifest", () => {
     expect(() => parseManifest(JSON.stringify({ ...good, note: 3 }))).toThrow(/note/)
     expect(() => parseManifest(JSON.stringify({ ...good, format: "lz4" }))).toThrow(/format/)
   })
+  it("rejects a malformed display profile rather than launching different hardware", () => {
+    for (const display of [
+      null,
+      "ramfb",
+      [],
+      {},
+      { device: "other" },
+      { device: "ramfb", legacySize: { width: 1920, height: 1080 } },
+      { device: "virtio-gpu", legacySize: { width: 0, height: 900 } },
+      { device: "virtio-gpu", legacySize: { width: 1600.5, height: 900 } },
+      { device: "virtio-gpu", legacySize: { width: 1600 } },
+      { device: "virtio-gpu", legacySize: { width: 1600, height: 900 }, extra: 1 },
+    ]) {
+      expect(() => parseManifest(JSON.stringify({ ...good, display }))).toThrow(/manifest\.display/)
+    }
+  })
+  it("retains a display profile, and a manifest without one stays valid", () => {
+    const profiles = [{ device: "ramfb" }, { device: "virtio-gpu" }, { device: "virtio-gpu", legacySize: { width: 1600, height: 900 } }]
+    for (const display of profiles) {
+      expect(parseManifest(JSON.stringify({ ...good, display })).display as unknown).toEqual(display)
+    }
+    expect(parseManifest(JSON.stringify(good)).display).toBeUndefined()
+    expect(parseManifest(JSON.stringify(good))).not.toHaveProperty("display")
+  })
   it("accepts golden saves and a RAM format", () => {
     const m = parseManifest(JSON.stringify({ ...good, name: "golden", kind: "golden", format: "mapped" }))
     expect(m.kind).toBe("golden")
@@ -278,6 +302,26 @@ describe("savesReport", () => {
     // The save's hardware is what this instance would be with the other display device.
     expect(why({ ...parts, hardware: "ramfb-h" }, ["ramfb-h"])).toEqual(["display"])
     expect(why({ ...parts, hardware: "ramfb-h", firmware: "old" }, ["ramfb-h"])).toEqual(["display", "firmware"])
+  })
+
+  it("judges each save with its own display, and with the preference for one that has none", () => {
+    const asked: string[] = []
+    const at = (_hw: unknown, display?: { device: string }, image?: string): { compat: { hash: string; parts: typeof parts } } => {
+      asked.push(`${display?.device ?? "preference"}@${image ?? "?"}`)
+      return { compat: { hash: display?.device === "ramfb" ? "ramfb-hash" : "preference-hash", parts } }
+    }
+    const rows = [
+      { name: "profiled", manifest: { ...m, name: "profiled", compat: "ramfb-hash", display: { device: "ramfb" as const } } },
+      { name: "legacy", manifest: { ...m, name: "legacy", compat: "preference-hash" } },
+      { name: "stale", manifest: { ...m, name: "stale", compat: "other", display: { device: "ramfb" as const } } },
+    ]
+    const got = savesReport(rows, { compat: { hash: "now", parts }, at })
+    expect(got.map((e) => [e.name, e.compatible])).toEqual([
+      ["profiled", true],
+      ["legacy", true],
+      ["stale", false],
+    ])
+    expect(asked).toEqual(["ramfb@win11-arm64", "preference@win11-arm64", "ramfb@win11-arm64"])
   })
 
   it("leaves out `incompatible` unless the save is known not to load and says why", () => {
