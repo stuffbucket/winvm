@@ -20,7 +20,7 @@ import { connect } from "node:net"
 import { resolve } from "node:path"
 
 import { effectiveConfig } from "./config"
-import { describeDisplay, readDisplay } from "./display"
+import { describeDisplay, readDisplay, runningDisplay } from "./display"
 import { frozenFrom, markedAsleep, savingRunning } from "./frozen"
 import { qmpCommand } from "./monitor"
 import { home, instanceDir, listInstances, pathsFor, readImageMeta, readMeta } from "./paths"
@@ -77,7 +77,11 @@ export interface InstanceStatus {
   readonly cpus: number | null
   readonly memoryMiB: number | null
   readonly display: number | null
-  /** The display device and its size, as configured for this instance (display.ts). */
+  /**
+   * The display device: the one a running QEMU was launched with (a restored
+   * save brings its own), the cold-boot preference of a stopped instance
+   * (display.ts); null when a running one's cannot be read.
+   */
   readonly screen: string | null
   readonly vncPort: number | null
   readonly websocketPort: number | null
@@ -202,22 +206,32 @@ export function parseHardware(argv: readonly string[]): { cpus: number | null; m
   return { cpus, memoryMiB }
 }
 
+// -ww: never cut to the terminal's width, or the arguments read below could be cut off.
 const psField = (pid: number, field: string): string =>
-  (spawnSync("ps", ["-o", `${field}=`, "-p", String(pid)], { encoding: "utf8" }).stdout ?? "").trim()
+  (spawnSync("ps", ["-ww", "-o", `${field}=`, "-p", String(pid)], { encoding: "utf8" }).stdout ?? "").trim()
 
-function hardwareFor(name: string, p: Paths, pid: number | null): { cpus: number | null; memoryMiB: number | null } {
-  // A running guest: what it was actually started with.
+/**
+ * Processors, memory and display. A running guest reports what its QEMU was
+ * actually launched with, off its own command line. For the display that can
+ * differ from display.json (a restored save brings its own), so a process whose
+ * display cannot be read is reported unknown, never as the preference. A
+ * stopped one reports what its next start would use.
+ */
+function hardwareFor(name: string, p: Paths, pid: number | null): Pick<InstanceStatus, "cpus" | "memoryMiB" | "screen"> {
   if (pid !== null) {
     const cmd = psField(pid, "command")
-    if (cmd !== "") return parseHardware(cmd.split(/\s+/))
+    if (cmd !== "") {
+      const live = runningDisplay(pid)
+      return { ...parseHardware(cmd.split(/\s+/)), screen: live === null ? null : describeDisplay(live) }
+    }
   }
-  // A stopped one: what the next start would use.
+  const screen = describeDisplay(readDisplay(p))
   const meta = readMeta(name)
-  if (meta === null) return { cpus: null, memoryMiB: null }
+  if (meta === null) return { cpus: null, memoryMiB: null, screen }
   try {
-    return parseHardware(qemu.qemuArgs(name, p, meta, { installMedia: false, ephemeral: false, virtioBoot: false }))
+    return { ...parseHardware(qemu.qemuArgs(name, p, meta, { installMedia: false, ephemeral: false, virtioBoot: false })), screen }
   } catch {
-    return { cpus: null, memoryMiB: null }
+    return { cpus: null, memoryMiB: null, screen }
   }
 }
 
@@ -407,7 +421,6 @@ export async function gather(name: string, deep = true): Promise<InstanceStatus>
     uptimeSeconds: pid === null ? null : parseEtime(psField(pid, "etime")),
     ...hardwareFor(name, p, pid),
     display: meta.vnc,
-    screen: describeDisplay(readDisplay(p)),
     vncPort: vncPort(meta.vnc),
     websocketPort: websocketPort(meta.vnc),
     overlayBytes: allocatedBytes(p.overlay),

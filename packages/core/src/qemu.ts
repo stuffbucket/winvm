@@ -46,13 +46,33 @@ export interface LaunchOptions {
    */
   readonly shareDevices?: share.DeviceSet
   /**
-   * The display device to use instead of the instance's display.json. Only for
-   * working out a command line (saves.currentCompat asking "what if this had
-   * the other device?"), so nothing is written to find out.
+   * The display device to use instead of the instance's display.json: a save's
+   * recorded display, which a load launches with (saves.loadSave), and what
+   * saves.currentCompat asks "what if this had that device?" with. Nothing is
+   * written to display.json either way.
    */
   readonly display?: DisplayConfig
   /** Processors and memory instead of the instance's hardware.json: a save loads at its own size. */
   readonly hardware?: Hardware
+}
+
+/**
+ * The display and the shared folder devices a launch gets, resolved ONCE so
+ * the command line and the sidecars cannot disagree: the devices on the command
+ * line (memory backend, virtio-fs, clipboard) are exactly what decides whether
+ * virtiofsd is started. A build is always ramfb; otherwise `o.display` (a save's
+ * recorded display, or a what-if from saves.currentCompat), else display.json.
+ */
+export function launchDevices(p: Paths, o: Pick<LaunchOptions, "installMedia" | "display" | "shareDevices">): {
+  readonly display: DisplayConfig
+  readonly devices: share.DeviceSet
+} {
+  const display = o.installMedia ? RAMFB : (o.display ?? readDisplay(p))
+  // The shared folder and the clipboard on virtio-gpu instances; the shared
+  // folder's device alone on a build, so provisioning binds its driver on
+  // ramfb. Nothing on ramfb instances or a runtime without them. Guest RAM
+  // then comes from a shared memory backend so virtiofsd can reach it. See share.ts.
+  return { display, devices: o.shareDevices ?? share.devicesFor(display, o.installMedia) }
 }
 
 export function qemuArgs(name: string, p: Paths, meta: InstanceMeta, o: LaunchOptions): readonly string[] {
@@ -63,12 +83,7 @@ export function qemuArgs(name: string, p: Paths, meta: InstanceMeta, o: LaunchOp
   // even found, let alone run. Once installed, the disk is the boot device and
   // the CDs are gone.
   const diskBootIndex = o.installMedia ? 1 : 0
-  const display = o.installMedia ? RAMFB : (o.display ?? readDisplay(p))
-  // The shared folder and the clipboard on virtio-gpu instances; the shared
-  // folder's device alone on a build, so provisioning binds its driver on
-  // ramfb. Nothing on ramfb instances or a runtime without them. Guest RAM
-  // then comes from a shared memory backend so virtiofsd can reach it. See share.ts.
-  const devices = o.shareDevices ?? share.devicesFor(display, o.installMedia)
+  const { display, devices } = launchDevices(p, o)
   const hw = o.hardware ?? readHardware(p)
   const a: string[] = [
     "-name", `winvm-${name}`,
@@ -297,8 +312,9 @@ async function startSwtpm(p: Paths): Promise<void> {
 export async function launch(name: string, p: Paths, meta: InstanceMeta, o: LaunchOptions): Promise<void> {
   await startSwtpm(p)
   // One virtiofsd per QEMU: it exits when its QEMU disconnects, so a load or
-  // a recall needs a fresh one as much as a boot does.
-  if ((o.shareDevices ?? share.devicesFor(o.installMedia ? RAMFB : readDisplay(p), o.installMedia)) !== "none") {
+  // a recall needs a fresh one as much as a boot does. Decided by the same
+  // display and devices as the command line below (launchDevices).
+  if (launchDevices(p, o).devices !== "none") {
     try {
       await share.startVirtiofsd(p)
     } catch (error) {

@@ -215,16 +215,13 @@ export function list(args: Args): number {
   }
   if (args.positional[0] === "note") return note(args)
   const rows = saves.listSaves(name)
+  // One decision for the JSON and the table: each save judged at its own size
+  // and with its own display (saves.savesReport), even when the instance is gone.
+  const report = saves.savesReport(rows, rows.length > 0 ? saves.reportContext(name) : { compat: null })
   if (args.flags.has("json")) {
-    const ctx = rows.length > 0 ? saves.reportContext(name) : { compat: null }
-    console.log(JSON.stringify(saves.savesReport(rows, ctx), null, 2))
+    console.log(JSON.stringify(report, null, 2))
     return 0
   }
-  const meta = readMeta(name)
-  const ctx = meta !== null && rows.length > 0 ? saves.reportContext(name) : null
-  const before = ctx?.beforeDevices ?? null
-  /** The instance's hash at the size `m` was taken at; null when it cannot be worked out. */
-  const compatOf = (m: saves.Manifest): string | null => (ctx?.at?.(saves.saveHardware(m)).compat ?? ctx?.compat ?? null)?.hash ?? null
   if (rows.length === 0) {
     console.log(`instance "${name}" has no saves (${saves.savesDir(name)})`)
     return 0
@@ -238,8 +235,8 @@ export function list(args: Args): number {
     }
     const d = new Date(m.createdAt)
     const created = `${saves.defaultName(d).slice(0, 10)} ${saves.defaultName(d).slice(11).replaceAll("-", ":")}`
-    const compat = compatOf(m)
-    const ok = compat === null ? "?" : m.compat === compat ? "yes" : saves.takenBeforeDevices(m, before) ? "no (before the shared folder)" : "no"
+    const entry = report.find((e) => e.name === m.name)
+    const ok = entry?.compatible == null ? "?" : entry.compatible ? "yes" : entry.why === undefined ? "no" : "no (before the shared folder)"
     console.log(
       `  ${m.name.padEnd(22)} ${m.kind.padEnd(9)} ${saves.ramFormatOf(m).padEnd(7)} ${created.padEnd(19)} ${saves.formatBytes(m.bytes).padStart(8)}  ${ok}` +
         (m.note === undefined ? "" : `  ${m.note}`),
