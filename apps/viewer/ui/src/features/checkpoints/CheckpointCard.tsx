@@ -2,11 +2,12 @@ import { memo, type CSSProperties, type ReactNode } from "react"
 
 import { SpatialCanvasNode } from "@winvm/canvas"
 
+import { Icon, type IconName } from "../../components/Icon"
 import { usePixelRatio } from "../../dpr"
 import { t } from "../../i18n"
 import { formatSize } from "../../model"
 import { finderDate } from "../files/files"
-import { type CardBox, type Checkpoint, hasNotes, incompatibleReason, shownName } from "./checkpoints"
+import { type CardBox, type Checkpoint, incompatibleReason, noteOf, shownName } from "./checkpoints"
 import { usePicture } from "./pictures"
 
 /** Above this many device pixels wide, a card shows the full screenshot rather than the 480 px thumbnail. */
@@ -22,32 +23,23 @@ export const takenAt = (c: Pick<Checkpoint, "createdAt">, now: number): string =
 
 export const kindLabel = (kind: string): string => t(`checkpoints.kind.${kind}`)
 
-// lucide: monitor, notebook-pen
+/** "Nov 3, 2026 at 3:30 PM": the date spelled out, in the words a card's time uses for any day but today and yesterday. What an unnamed checkpoint is called. */
+export const absoluteTime = (ms: number, locale?: string): string =>
+  label("files.date.other", {
+    date: new Intl.DateTimeFormat(locale, { dateStyle: "medium" }).format(new Date(ms)),
+    time: new Intl.DateTimeFormat(locale, { timeStyle: "short" }).format(new Date(ms)),
+  })
+
+/** How a checkpoint came to be, as a glyph: somebody took it, it was taken on its own, first start, put away, for tests. */
+const KIND_ICON: Record<string, IconName> = { manual: "camera", auto: "timer", baseline: "flag", stow: "archive", golden: "flask" }
+export const kindIcon = (kind: string): IconName => KIND_ICON[kind] ?? "camera"
+
+// lucide: monitor
 export const MONITOR = (
   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
     <rect width="20" height="14" x="2" y="3" rx="2" />
     <line x1="8" x2="16" y1="21" y2="21" />
     <line x1="12" x2="12" y1="17" y2="21" />
-  </svg>
-)
-
-export const NOTE = (
-  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-    <path d="M13.4 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-7.4" />
-    <path d="M2 6h4" />
-    <path d="M2 10h4" />
-    <path d="M2 14h4" />
-    <path d="M2 18h4" />
-    <path d="M21.378 5.626a1 1 0 1 0-3.004-3.004l-5.01 5.012a2 2 0 0 0-.506.854l-.837 2.87a.5.5 0 0 0 .62.62l2.87-.837a2 2 0 0 0 .854-.506z" />
-  </svg>
-)
-
-// lucide: triangle-alert
-export const WARNING = (
-  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-    <path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3" />
-    <path d="M12 9v4" />
-    <path d="M12 17h.01" />
   </svg>
 )
 
@@ -74,14 +66,14 @@ export function Picture({ c, sharp, wanted, children }: { readonly c: Checkpoint
 /**
  * How much of a card to draw, from how wide it is on screen. Words are drawn
  * at a size that reads at any zoom, so a card that is small has room for fewer
- * of them: first the time and size go, then the kind, then only the picture.
+ * of them: first the time, kind, size and note go, then the name, leaving only
+ * the picture (and no caption plate).
  */
 export type CardLevel = "full" | "name" | "picture"
 
-export const FULL_WIDTH = 168
+/** Wide enough, on screen, for the longest date at its least size beside the plate's padding. */
+export const FULL_WIDTH = 180
 export const NAME_WIDTH = 84
-/** Wide enough, on screen, for the kind's tag on the picture. */
-export const KIND_WIDTH = 110
 
 export const levelFor = (screenWidth: number): CardLevel => (screenWidth >= FULL_WIDTH ? "full" : screenWidth >= NAME_WIDTH ? "name" : "picture")
 
@@ -114,12 +106,27 @@ export interface CardProps {
   onSelect(name: string): void
 }
 
-/** One checkpoint on the canvas: its picture, and below it what it's called, when it was taken and how big it is. */
+/** What a card's accessible name says: every fact it shows, and whether it can load here. */
+export function cardLabel(c: Checkpoint, now: number): string {
+  const reason = incompatibleReason(c)
+  const base = t("checkpoints.card.label", { name: shownName(c), kind: kindLabel(c.kind), when: takenAt(c, now), size: formatSize(c.bytes) })
+  return `${base}${noteOf(c) === null ? "" : `, ${t("checkpoints.hasNotes")}`}${reason === null ? "" : `. ${t(reason)}`}`
+}
+
+/**
+ * One checkpoint on the canvas: one surface, the picture on top and its
+ * caption plate attached below, so selecting, hovering, carrying and the
+ * highlight ring all take the whole of it. The plate holds, by position and
+ * weight: its name (strong); when it was taken (muted); how it came to be
+ * (the kind's chip, with its glyph) and its size, right-aligned; and, only if
+ * there is one, its note, marked with the notebook. Absent data is absent.
+ */
 export const CheckpointCard = memo(function CheckpointCard({ c, box, selected, zoom, now, dimmed, lit, carried, arriving, leaving, working, onSelect }: CardProps): JSX.Element {
   const reason = incompatibleReason(c)
   const name = shownName(c)
   const when = takenAt(c, now)
   const kind = kindLabel(c.kind)
+  const note = noteOf(c)
   const screenWidth = box.width * zoom
   // Read through the hook: the window may be moved to a display of another ratio, which resizes nothing.
   const ratio = usePixelRatio()
@@ -127,6 +134,7 @@ export const CheckpointCard = memo(function CheckpointCard({ c, box, selected, z
   const style = {
     "--card-scale": String(box.scale),
     "--m": String(textScale(box.scale, zoom)),
+    "--frame-h": `${String(box.height)}px`,
     ...(arriving === null ? {} : { "--arrive-x": `${String(arriving.dx)}px`, "--arrive-y": `${String(arriving.dy)}px`, "--arrive-scale": String(arriving.scale) }),
   } as CSSProperties
   return (
@@ -152,16 +160,15 @@ export const CheckpointCard = memo(function CheckpointCard({ c, box, selected, z
         className="checkpoint__hit"
         style={style}
         aria-pressed={selected}
-        aria-label={reason === null ? t("checkpoints.card.label", { name, kind, when }) : `${t("checkpoints.card.label", { name, kind, when })}. ${t(reason)}`}
+        aria-label={cardLabel(c, now)}
         title={level === "picture" ? `${name}, ${when}` : undefined}
         onClick={() => onSelect(c.name)}
       >
         <Picture c={c} sharp={sharpAt(screenWidth, ratio)} wanted>
           <span className="checkpoint__fit checkpoint__fit--frame">
-            {c.kind !== "manual" && screenWidth >= KIND_WIDTH && <span className="checkpoint__kind">{kind}</span>}
             {reason !== null && (
               <span className="checkpoint__badge" title={t(reason)}>
-                {WARNING}
+                <Icon name="warning" />
                 {level === "full" && <span>{t("checkpoints.cantLoad")}</span>}
               </span>
             )}
@@ -169,21 +176,25 @@ export const CheckpointCard = memo(function CheckpointCard({ c, box, selected, z
           </span>
         </Picture>
         {level !== "picture" && (
-          <span className="checkpoint__caption checkpoint__fit">
-            <span className="checkpoint__title">
-              <span className="checkpoint__name">{name}</span>
-              {hasNotes(c) && (
-                <span className="checkpoint__notes" title={t("checkpoints.hasNotes")}>
-                  {NOTE}
-                </span>
-              )}
-            </span>
+          <span className="checkpoint__caption">
+            <span className="checkpoint__name">{name}</span>
             {level === "full" && (
-              <span className="checkpoint__when">
-                {when}
-                <span aria-hidden="true"> · </span>
-                <span className="checkpoint__size">{formatSize(c.bytes)}</span>
-              </span>
+              <>
+                <span className="checkpoint__when">{when}</span>
+                <span className="checkpoint__facts">
+                  <span className="checkpoint__kind" data-kind={c.kind}>
+                    <Icon name={kindIcon(c.kind)} />
+                    {kind}
+                  </span>
+                  <span className="checkpoint__size">{formatSize(c.bytes)}</span>
+                </span>
+                {note !== null && (
+                  <span className="checkpoint__note" title={note.full}>
+                    <Icon name="notes" />
+                    <span>{note.line}</span>
+                  </span>
+                )}
+              </>
             )}
           </span>
         )}

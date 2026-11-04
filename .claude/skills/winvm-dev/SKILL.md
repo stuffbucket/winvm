@@ -116,6 +116,7 @@ Then `Read` a PNG (e.g. `/tmp/winvm-render/light-02-overview.png`, `dark-...`): 
 |---|---|
 | `render-checkpoints.mjs [outdir]` | the Checkpoints canvas: way in/out, bar, highlights, drag, zoom, search |
 | `render-screen-input.mjs [outdir]` | the main window's screen paused, asleep, starting and running (fake desktop; `?screen=1`); CHECKS the Mac's arrow over an inert frame, no pointer events on the canvas, Capture Keyboard off with its reason |
+| `render-checkpoint-cards.mjs [outdir]` | the card's caption plate (opening view and zoomed in), a day's date following dragged cards, the New Checkpoint placeholder; CHECKS (exit 1) the plate is inside the card's button, the date follows, the placeholder is a date and time |
 | `render-overview.mjs` | the suspended/off overview: notes, backdrop with and without a picture |
 | `render-machines.mjs` | the machines menu and the editable machine name in the heading |
 | `render-resources.mjs [outdir]` | the details panel's Resources (CPU's two lines, the disk bar's overlay, hover/focus legends, tiny/large/no overlay, no agent), light and dark; CHECKS names, legend, 3 px minimum |

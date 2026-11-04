@@ -423,21 +423,37 @@ The view opens on everything when it fits with cards at least 40% of life
 size (a short history), else on Now and the newest two days, and at the zoom
 it was left at once it has been left anywhere else.
 
-**A card** is its picture (a 16:10 frame, the screenshot fitted inside it;
-"No picture" for checkpoints taken before screenshots) and nothing else: its
-words hang below it, so the picture is the hero. Those are its title (its
-notes' title, else its name, with a notes mark when it has notes), then when it
-was taken as Finder says it and its size. A kind that isn't Manual is a small
-tag on the picture's corner. One that can't load here is dashed and grey, with
-"Can't load here" on its picture (the reason is its tooltip and part of its
-accessible name; the panel says it in full).
+**A card** is one object: its picture (a 16:10 frame, the screenshot fitted
+inside it; "No picture" for checkpoints taken before screenshots) with its
+caption plate attached below, the same material, border, radius and shadow
+and no gap. It is one focusable button, so selecting, hovering, carrying and
+the highlight ring take all of it. The plate gives each fact its own place,
+by position and weight (`components.md` → *Checkpoint card*):
+
+1. its name (its notes' title, else its name), strong;
+2. when it was taken, as Finder says it, muted;
+3. how it came to be, a small chip with a glyph (Manual, Automatic, First
+   start, Put away, For tests), and its size at the end of the same row;
+4. its note, only when it has one: the notebook, then the first line of the
+   note, muted and cut with an ellipsis (the whole note is its tooltip).
+
+The kind is never on the picture, and the note is never an icon beside the
+name: they are different facts and read differently. Absent data shows
+nothing. One that can't load here is dashed and grey, with a warning pill
+("Can't load here") inset at its picture's bottom edge, which is the card's
+state, not a row of its caption (the reason is its tooltip and part of its
+accessible name; the panel says it in full). The accessible name is the
+whole of it: name, kind, when, size, "Has notes" when it has, and the reason
+when it can't load.
 
 **Words read at any zoom.** Card words are drawn at least 12 px on screen
 (`--text-sm` at 86%), scaled up in the world as the camera pulls back rather than
 shrinking with the card, so the gaps between lines and days leave room for
-them. As a card gets small the words thin out by its width on screen: 168 px
-and up, the name, time and size; 110 px, the kind's tag; 84 px, the name only;
-under that, the picture alone (its name and time are its tooltip). Strokes
+them. As a card gets small the words thin out by its width on screen: 180 px
+and up, the whole plate (name, time, kind, size, note); 84 px, the name only;
+under that, the picture alone (no plate; its name and time are its tooltip).
+The plate is part of the card, so its height is included in the gaps between
+lines and days. Strokes
 (outline, selection ring) are scaled the same way, so they stay lines.
 
 **Picking out.** Pointing at a day on the timeline, or at the Automatic
@@ -452,6 +468,17 @@ carrying puts it back. Now can't be moved. A card keeps its place as an
 offset from its slot, so it moves with its day when days are added. Moves are
 kept per machine in the settings below; the Reset layout button at the end of
 the control bar (dimmed while nothing is moved) puts everything back.
+
+**A day's date belongs to its cards.** It is placed from where the day's cards
+are now, not from where the layout first put them: at the top left of their
+bounds, a little above, so it follows them while they are carried and after.
+When a day's cards are no longer together (a card is dragged further than a
+line's gap from the rest), the date goes with the day's biggest cluster of
+cards, and with the cluster holding the day's earliest card when they tie, so
+when every card of a day is on its own the date follows the earliest one.
+Each day is centred over Now in the layout and drawn smaller the older it is,
+so the dates' left edges differ between days by design; each is aligned with
+the left edge of its own cards, which is the one rule.
 
 **The timeline**, down the right edge: a tick per day with checkpoints,
 evenly spaced (by turn, not by time, so a busy day and a quiet month take
@@ -482,8 +509,14 @@ loads here and its name in winvm; then Delete… and Go Back to This.
   First start (baseline) and For tests (golden) checkpoints can't be deleted
   here, as `rewind` and tests depend on them; the button's tooltip says so.
 
-**New Checkpoint** asks for a name (empty: named by the time). The name
-becomes its title, and a directory-safe form of it the save's name. The
+**New Checkpoint** asks for a name. The field's placeholder is the name it
+gets when left empty: the current date and time spelled out as the cards say
+them ("Nov 3, 2026 at 3:30 PM", never "Today"), kept current while the dialog
+is open (it changes on the minute). There is no helper line. An empty field
+is stored as that text, as the checkpoint's title; its save name (the folder,
+and what `winvm` calls it) is the timestamp `winvm save` uses by default,
+`2026-11-03_15-30-12`. A typed name becomes its title, and a directory-safe
+form of it the save's name. The
 view pulls back to Now and today, Now says "Taking a checkpoint…", and the
 new card flies out of Now into its place, screenshot and all.
 

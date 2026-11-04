@@ -48,7 +48,6 @@ import {
 } from "@winvm/canvas"
 
 import { outputText, winvm } from "../../backend"
-import { Button } from "../../components/Button"
 import { ConfirmDialog } from "../../components/ConfirmDialog"
 import { t } from "../../i18n"
 import { type Phase, parseNote, parseSaves } from "../../model"
@@ -56,7 +55,9 @@ import type { Ran } from "../winvm/useWinvm"
 import {
   type Checkpoint,
   type CardBox,
+  CAPTION_ROOM,
   DAY_GAP,
+  dayGroup,
   dayKey,
   dayNearest,
   deleteBlocked,
@@ -83,6 +84,7 @@ import { CheckpointDetails, type NoteDraft, tagsOf } from "./CheckpointDetails"
 import { ControlBar } from "./ControlBar"
 import { ZoomControl } from "./ZoomControl"
 import { LiveFrame } from "./LiveFrame"
+import { NewCheckpointForm } from "./NewCheckpoint"
 import { forgetPictures } from "./pictures"
 import { type CheckpointSettings, DEFAULT_SETTINGS, loadSettings, saveSettings } from "./settings"
 import { Timeline } from "./Timeline"
@@ -153,7 +155,6 @@ export function CheckpointCanvas(p: CheckpointCanvasProps): JSX.Element {
   const [hoverDay, setHoverDay] = useState<string | null>(null)
   const [activeResult, setActiveResult] = useState(0)
   const [creating, setCreating] = useState(false)
-  const [newTitle, setNewTitle] = useState("")
   const [working, setWorking] = useState<{ readonly on: string; readonly label: string } | null>(null)
   const [status, setStatus] = useState<{ readonly tone: "info" | "error"; readonly text: string } | null>(null)
   const [confirm, setConfirm] = useState<Confirm | null>(null)
@@ -534,7 +535,7 @@ export function CheckpointCanvas(p: CheckpointCanvasProps): JSX.Element {
   }
 
   /** Take a checkpoint of now; resolves with its name, or null when it failed (and says why). */
-  const takeCheckpoint = async (title: string, label: string): Promise<string | null> => {
+  const takeCheckpoint = async (title: string, label: string, storedTitle: string = title): Promise<string | null> => {
     const name = saveNameFor(title, taken, new Date())
     setWorking({ on: "now", label })
     // Watch it happen: Now, and today's checkpoints above it, where the new one will land.
@@ -549,7 +550,7 @@ export function CheckpointCanvas(p: CheckpointCanvasProps): JSX.Element {
         setStatus({ tone: "error", text: ran?.output || t("checkpoints.saveFailed") })
         return null
       }
-      await writeTitle(name, title)
+      await writeTitle(name, storedTitle)
       const before = new Set(taken)
       // The new card flies out of Now into its place: set up in the same frame it first appears.
       let landed: TimelineLayout | null = null
@@ -574,11 +575,10 @@ export function CheckpointCanvas(p: CheckpointCanvasProps): JSX.Element {
     }
   }
 
-  const submitNew = (): void => {
-    const title = newTitle.trim()
+  // Left empty, the checkpoint is named by the time: the title is the name the field showed, the save's own name a timestamp.
+  const submitNew = (title: string, unnamed: string): void => {
     setCreating(false)
-    setNewTitle("")
-    void takeCheckpoint(title, t("checkpoints.taking"))
+    void takeCheckpoint(title, t("checkpoints.taking"), title === "" ? unnamed : title)
   }
 
   const goBack = async (name: string, saveFirst: boolean): Promise<void> => {
@@ -757,6 +757,13 @@ export function CheckpointCanvas(p: CheckpointCanvasProps): JSX.Element {
   // ---- Drawing ----------------------------------------------------------
 
   const seen = visibleWorld(camera, size, 360)
+  // Where every card is drawn: the one in the pointer's hand where it is carried, which its day's date follows.
+  const cardsNow = useMemo(() => {
+    const carried = dragging === null ? undefined : layout.cards.get(dragging.name)
+    if (dragging === null || carried === undefined) return layout.cards
+    const was = moves[dragging.name]
+    return new Map(layout.cards).set(dragging.name, { ...carried, x: carried.x + dragging.x - (was?.x ?? 0), y: carried.y + dragging.y - (was?.y ?? 0) })
+  }, [layout.cards, dragging, moves])
   const far = camera.zoom < FAR_ZOOM
   const selectedCheckpoint = selected === null ? undefined : byName.get(selected)
   const busy = p.busy || working !== null
@@ -797,13 +804,22 @@ export function CheckpointCanvas(p: CheckpointCanvasProps): JSX.Element {
         >
           <SpatialCanvasScene {...camera}>
             {layout.days.map((d, i) => {
-              if (!rectsIntersect(withLabel(d), seen)) return null
+              // The date belongs to its cards: wherever the day's biggest cluster of them is now, carried or put down.
+              const group = dayGroup(d, cardsNow)
+              if (!rectsIntersect(withLabel({ ...group.rect, scale: d.scale }), seen)) return null
               const tick = ticks[i]
               // Too far away for a date over every day: the months, beside the stack, are enough.
               const near = DAY_GAP * d.scale * camera.zoom >= DAY_LABEL_ROOM
               if (!near && tick?.month == null) return null
               return (
-                <SpatialCanvasLabel key={d.key} x={near ? d.label.x : d.x - 24 * d.scale} y={near ? d.label.y : d.y + d.height / 2} className="checkpoints__day" data-far={!near}>
+                <SpatialCanvasLabel
+                  key={d.key}
+                  x={near ? group.label.x : group.rect.x - 24 * d.scale}
+                  y={near ? group.label.y : group.rect.y + group.rect.height / 2}
+                  className="checkpoints__day"
+                  data-far={!near}
+                  data-day={d.key}
+                >
                   <span style={{ fontSize: `${String(Math.max(near ? DAY_LABEL * d.scale : 0, DAY_LABEL_MIN / camera.zoom))}px` }}>{near ? (tick?.label ?? d.key) : tick?.month}</span>
                 </SpatialCanvasLabel>
               )
@@ -815,7 +831,7 @@ export function CheckpointCanvas(p: CheckpointCanvasProps): JSX.Element {
               const carried = dragging?.name === c.name ? dragging : null
               const was = moves[c.name]
               const box = carried === null ? placed : { ...placed, x: placed.x + carried.x - (was?.x ?? 0), y: placed.y + carried.y - (was?.y ?? 0) }
-              if (!rectsIntersect(box, seen)) return null
+              if (!rectsIntersect({ ...box, height: box.height + CAPTION_ROOM }, seen)) return null
               return (
                 <CheckpointCard
                   key={`${c.name}#${c.createdAt}`}
@@ -838,11 +854,11 @@ export function CheckpointCanvas(p: CheckpointCanvasProps): JSX.Element {
               <button
                 type="button"
                 className="checkpoint__hit"
-                style={{ "--card-scale": NOW_TEXT, "--m": textScale(NOW_TEXT, camera.zoom) } as CSSProperties}
+                style={{ "--card-scale": NOW_TEXT, "--m": textScale(NOW_TEXT, camera.zoom), "--frame-h": `${String(layout.now.frame)}px` } as CSSProperties}
                 aria-label={t("checkpoints.nowLabel", { machine: p.machine })}
                 onClick={() => !suppressClick.current && void leave()}
               >
-                <span className="checkpoint__frame" style={{ height: layout.now.frame }}>
+                <span className="checkpoint__frame">
                   <span className="checkpoint__placeholder">
                     {MONITOR}
                     <span>{t(live ? "checkpoints.nowLive" : `checkpoints.nowState.${p.phase ?? "missing"}`)}</span>
@@ -854,10 +870,8 @@ export function CheckpointCanvas(p: CheckpointCanvasProps): JSX.Element {
                     </span>
                   )}
                 </span>
-                <span className="checkpoint__caption checkpoint__fit">
-                  <span className="checkpoint__title">
-                    <span className="checkpoint__name">{t("checkpoints.now")}</span>
-                  </span>
+                <span className="checkpoint__caption">
+                  <span className="checkpoint__name">{t("checkpoints.now")}</span>
                   <span className="checkpoint__when">{p.machine}</span>
                 </span>
               </button>
@@ -884,35 +898,7 @@ export function CheckpointCanvas(p: CheckpointCanvasProps): JSX.Element {
 
         {creating && (
           <SpatialCanvasFloatingPanel label={t("checkpoints.new")} className="checkpoints__new">
-            <form
-              onSubmit={(e) => {
-                e.preventDefault()
-                submitNew()
-              }}
-            >
-              <label className="checkpoint-details__label" htmlFor="checkpoint-new-title">
-                {t("checkpoints.newName")}
-              </label>
-              <input
-                id="checkpoint-new-title"
-                className="input"
-                autoFocus
-                value={newTitle}
-                placeholder={t("checkpoints.newPlaceholder")}
-                autoComplete="off"
-                maxLength={120}
-                onChange={(e) => setNewTitle(e.target.value)}
-              />
-              <p className="checkpoints__hint">{t("checkpoints.newHint")}</p>
-              <div className="checkpoints__new-actions">
-                <Button size="sm" variant="ghost" onClick={() => setCreating(false)}>
-                  {t("confirm.cancel")}
-                </Button>
-                <Button size="sm" variant="primary" type="submit" disabled={!live || busy}>
-                  {t("checkpoints.take")}
-                </Button>
-              </div>
-            </form>
+            <NewCheckpointForm live={live} busy={busy} onCancel={() => setCreating(false)} onSubmit={submitNew} />
           </SpatialCanvasFloatingPanel>
         )}
 

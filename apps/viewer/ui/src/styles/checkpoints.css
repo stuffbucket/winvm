@@ -246,12 +246,6 @@
   gap: var(--space-2);
 }
 
-.checkpoints__hint {
-  margin: 0;
-  color: var(--text-muted);
-  font-size: var(--text-sm);
-}
-
 .checkpoints__new-actions {
   display: flex;
   justify-content: flex-end;
@@ -312,10 +306,13 @@
 /* ---- A checkpoint card ---- */
 
 /*
- * A card is its picture. Its words hang below it, drawn in a box scaled by
- * --m (set on the button): the card's own scale, but never so small that
- * the words stop reading on screen. Frame chrome (kind, warning, progress)
- * is scaled the same way. Strokes use --m too, so an outline stays a line
+ * A card is one surface (the button): the picture on top, and its caption
+ * plate attached below it, sharing one border, radius, background and
+ * shadow, so selecting, hovering, carrying and the highlight ring take all of
+ * it. The plate's words are sized by --m (set on the button): the card's own
+ * scale, but never so small that the words stop reading on screen; every
+ * length in it is in em of that size. Marks on the picture (warning, progress)
+ * are scaled the same way. Strokes use --m too, so an outline stays a line
  * at every zoom.
  */
 .checkpoint {
@@ -329,11 +326,12 @@
 .checkpoint__hit {
   --stroke: calc(var(--border-width-hairline) * var(--m, 1));
   position: relative;
-  display: block;
+  display: flex;
+  flex-direction: column;
   width: 100%;
-  height: 100%;
   margin: 0;
   padding: 0;
+  overflow: hidden;
   border: var(--stroke) solid var(--border-subtle);
   border-radius: calc(var(--card-radius) * var(--card-scale, 1));
   background: var(--surface-card);
@@ -415,10 +413,10 @@
   background: var(--surface-base);
 }
 
+/* The picture is the card's box (--frame-h, set on the button); the plate hangs below it. */
 .checkpoint__hit > .checkpoint__frame {
-  height: 100%;
+  height: calc(var(--frame-h) - var(--stroke));
   aspect-ratio: auto;
-  border-radius: inherit;
 }
 
 .checkpoint__frame img,
@@ -447,7 +445,7 @@
   height: calc(var(--size-2xl) * var(--card-scale, 1));
 }
 
-/* The box the words and marks on a card are laid out in: scaled by --m about its top left, so it is --m times narrower. */
+/* The box the marks on the picture are laid out in: scaled by --m about its top left, so it is --m times narrower. */
 .checkpoint__fit {
   position: absolute;
   left: 0;
@@ -476,76 +474,104 @@
   white-space: nowrap;
 }
 
+/*
+ * The caption plate: what the card is, by position and weight. Name (strong),
+ * when (muted), then a row with how it came to be (the kind's chip) and its
+ * size at the end, then its note when it has one. Everything is in em of the
+ * plate's size, so it scales as one.
+ */
 .checkpoint__caption {
-  top: 100%;
   display: grid;
-  gap: 0;
-  padding: var(--space-2) var(--space-1) 0;
-  color: var(--text-base-color);
-  font-size: var(--text-sm);
+  flex: none;
+  gap: 0.1em;
+  min-width: 0;
+  padding: 0.65em 0.85em 0.75em;
+  border-top: var(--stroke) solid var(--border-subtle);
+  background: var(--surface-card);
+  color: var(--text-muted);
+  font-size: calc(var(--text-sm) * var(--m, 1));
   line-height: var(--leading-lg);
-  transition: opacity 200ms ease-out;
 }
 
-.checkpoint__title {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
+.checkpoint__caption > span {
   min-width: 0;
 }
 
 .checkpoint__name {
   overflow: hidden;
   color: var(--text-strong);
-  font-size: var(--text-base);
+  font-size: 1.15em;
   font-weight: var(--weight-lg);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.checkpoint__notes {
-  display: inline-flex;
-  flex: none;
-  color: var(--link);
-}
-
-.checkpoint__notes svg {
-  width: var(--size-sm);
-  height: var(--size-sm);
-}
-
-.checkpoint__when {
+.checkpoint__when,
+.checkpoint__size {
   overflow: hidden;
-  color: var(--text-base-color);
   font-variant-numeric: tabular-nums;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-/* What kind, when it isn't one somebody took: a small tag on the picture's corner. */
-.checkpoint__kind {
-  position: absolute;
-  top: var(--space-2);
-  left: var(--space-2);
-  padding: 0 var(--space-2);
-  border: var(--border-width-hairline) solid var(--border-subtle);
-  border-radius: var(--radius-pill);
-  background: color-mix(in srgb, var(--surface-card) 88%, transparent);
-  color: var(--text-base-color);
-  font-size: var(--text-sm);
-  line-height: var(--leading-lg);
+/* How it came to be, with its glyph, and how big it is at the end of the same row. */
+.checkpoint__facts {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.6em;
+  margin-top: 0.3em;
 }
 
+.checkpoint__kind {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 0.35em;
+  padding: 0 0.6em 0 0.45em;
+  border: var(--stroke) solid var(--border-subtle);
+  border-radius: var(--radius-pill);
+  background: var(--surface-control);
+  color: var(--text-base-color);
+  white-space: nowrap;
+}
+
+.checkpoint__kind svg,
+.checkpoint__note svg {
+  flex: none;
+  width: 1em;
+  height: 1em;
+}
+
+/* Its note, only when it has one: the notebook, then the note's first line. */
+.checkpoint__note {
+  display: flex;
+  align-items: center;
+  gap: 0.45em;
+  margin-top: 0.3em;
+}
+
+.checkpoint__note > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/*
+ * Can't load here: the card's state, a warning pill inset at the picture's
+ * bottom edge (the reason is its tooltip), not a row of the plate.
+ */
 .checkpoint__badge {
   position: absolute;
   pointer-events: auto;
-  right: 0;
-  bottom: 0;
-  left: 0;
+  bottom: var(--space-2);
+  left: var(--space-2);
   display: flex;
   align-items: center;
   gap: var(--space-2);
-  padding: var(--space-2) var(--space-3);
+  padding: var(--space-1) var(--space-3) var(--space-1) var(--space-2);
+  border: var(--border-width-hairline) solid color-mix(in srgb, var(--status-warning) 55%, transparent);
+  border-radius: var(--radius-pill);
   background: color-mix(in srgb, var(--surface-card) 92%, transparent);
   color: var(--status-warning);
   font-size: var(--text-sm);
@@ -558,14 +584,14 @@
   height: var(--size-sm);
 }
 
-/* Too narrow for the sentence: a warning sign in the corner, its words in the tooltip. */
-.checkpoint[data-level="name"] .checkpoint__badge {
+/* Too narrow for the words: just the warning sign, in the picture's corner, its words in the tooltip. */
+.checkpoint[data-level="name"] .checkpoint__badge,
+.checkpoint[data-level="picture"] .checkpoint__badge {
   top: var(--space-2);
   right: var(--space-2);
   bottom: auto;
   left: auto;
   padding: var(--space-1);
-  border-radius: var(--radius-pill);
 }
 
 /* Can't load here: the picture steps back, the words say why. */
@@ -628,10 +654,6 @@
   align-items: baseline;
   justify-content: space-between;
   gap: var(--space-4);
-}
-
-.checkpoint--now .checkpoint__when {
-  color: var(--text-muted);
 }
 
 /* ---- Timeline, down the right edge ---- */
