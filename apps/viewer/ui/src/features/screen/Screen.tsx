@@ -8,6 +8,7 @@ import { copyText, onLiveResize, readText, trace } from "../../backend"
 import { Icon } from "../../components/Icon"
 import { cx } from "../../components/cx"
 import { t } from "../../i18n"
+import { pixelRatio, watchPixelRatio } from "../../dpr"
 import type { Connection } from "../../model"
 import { ClipboardSync } from "./clipboard"
 import { HeldSizes, keyVerdict } from "./held"
@@ -62,7 +63,7 @@ const CLIPBOARD_CAPS_MS = 2000
 /** noVNC's extended-clipboard text format. */
 const CLIPBOARD_TEXT = 1
 
-const dpr = (): number => window.devicePixelRatio || 1
+const dpr = pixelRatio
 
 /**
  * The guest's screen through QEMU's VNC websocket, interactive.
@@ -297,17 +298,7 @@ export const Screen = forwardRef<ScreenHandle, ScreenProps>(function Screen(
     const unlisten = onLiveResize((live) => (live ? resize?.liveStart() : resize?.liveEnd()))
 
     // Moving the window to a display with another pixel ratio.
-    let media: MediaQueryList | null = null
-    const onRatio = (): void => {
-      watchRatio()
-      onArea()
-    }
-    const watchRatio = (): void => {
-      media?.removeEventListener("change", onRatio)
-      media = window.matchMedia(`(resolution: ${String(dpr())}dppx)`)
-      media.addEventListener("change", onRatio)
-    }
-    watchRatio()
+    const stopRatio = watchPixelRatio(onArea)
 
     const clipboard = new ClipboardSync({
       readMac: readText,
@@ -372,7 +363,7 @@ export const Screen = forwardRef<ScreenHandle, ScreenProps>(function Screen(
       window.removeEventListener("focus", onFocus)
       observer.disconnect()
       unlisten()
-      media?.removeEventListener("change", onRatio)
+      stopRatio()
       if (retry !== undefined) clearTimeout(retry)
       el.removeEventListener("keydown", onKeyDown, true)
       el.removeEventListener("keyup", onKeyUp, true)
