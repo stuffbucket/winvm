@@ -125,61 +125,163 @@
   padding-inline: var(--space-3);
 }
 
-/* Search: a magnifier until it's used, then a field that eases out to the left of it. */
+/*
+ * Search: a magnifier until it's used. Opened, the bar grows to the left with
+ * its right end where it was (the bar is centred, so it also moves left by half
+ * of what it grew, on the same ease), and the magnifier becomes the leading icon
+ * of one rounded field, on the control fill, inside the bar's own padding. The
+ * focus ring is that field's whole outline, drawn inside it. Under reduced
+ * motion the global rule cuts the ease to a plain open.
+ */
+.checkpoints {
+  --search-open: calc(var(--size-2xl) * 6);
+  --search-grow: calc(var(--search-open) - var(--size-xl));
+}
+
 .checkpoints__search {
   position: relative;
-  display: flex;
+  flex: none;
+  width: var(--size-xl);
+  transition: width 200ms ease-out;
 }
 
-.checkpoints__search-field {
-  position: absolute;
-  top: calc(-1 * (var(--space-1) + var(--border-width-hairline)));
-  right: 100%;
-  bottom: calc(-1 * (var(--space-1) + var(--border-width-hairline)));
+.checkpoints__search[data-open="true"] {
+  width: var(--search-open);
+}
+
+.checkpoints .spatial-canvas__controls {
+  transition: transform 200ms ease-out;
+}
+
+.checkpoints .spatial-canvas__controls:has(.checkpoints__search[data-open="true"]) {
+  transform: translateX(calc(-50% - var(--search-grow) / 2));
+}
+
+.checkpoints__bar-rest {
   display: flex;
   align-items: center;
-  width: 0;
+  gap: var(--space-1);
+}
+
+.checkpoints__search-box {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  height: var(--size-xl);
   overflow: hidden;
-  border-radius: var(--radius-card) 0 0 var(--radius-card);
-  background: var(--surface-card);
-  opacity: 0;
-  pointer-events: none;
-  transition:
-    width 200ms ease-out,
-    opacity 160ms ease-out;
+  border-radius: var(--radius-input);
+  background: transparent;
+  transition: background-color 160ms ease-out;
 }
 
-.checkpoints__search[data-open="true"] .checkpoints__search-field {
-  width: calc(var(--size-2xl) * 6);
-  border: var(--border-width-hairline) solid var(--border-subtle);
-  border-right: 0;
-  opacity: 1;
-  pointer-events: auto;
+.checkpoints__search[data-open="true"] .checkpoints__search-box {
+  background: var(--surface-control);
 }
 
-.checkpoints__search-field input {
-  flex: 1;
+.checkpoints__search-box:has(input:focus-visible) {
+  outline: var(--focus-ring);
+  outline-offset: calc(-1 * var(--focus-ring-width));
+}
+
+/* The magnifier is the field's leading icon once it is open: quiet, and the field's, not a button's, to hover. */
+.checkpoints__search[data-open="true"] .checkpoints__search-toggle {
+  background: transparent;
+  color: var(--text-muted);
+}
+
+.checkpoints__search-box input {
+  flex: 1 1 0;
   min-width: 0;
   height: 100%;
-  padding: 0 var(--space-3) 0 var(--space-4);
+  padding: 0 var(--space-1) 0 0;
   border: 0;
   background: transparent;
   color: var(--text-strong);
   font: inherit;
   font-size: var(--text-sm);
+  text-overflow: ellipsis;
   outline: none;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 160ms ease-out;
 }
 
-.checkpoints__search-field input::placeholder {
+.checkpoints__search[data-open="true"] input {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.checkpoints__search-box input::placeholder {
   color: var(--text-muted);
 }
 
-.checkpoints__search-field input::-webkit-search-cancel-button {
+.checkpoints__search-box input::-webkit-search-cancel-button {
   display: none;
 }
 
-.checkpoints__search:focus-within .checkpoints__search-field {
-  box-shadow: inset 0 0 0 var(--border-width-hairline) var(--accent);
+.checkpoints__search-clear {
+  flex: none;
+  color: var(--text-muted);
+}
+
+/* Said to a screen reader (how many match), never drawn. */
+.checkpoints__sr {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+/*
+ * A narrow window has no room to grow into: the field opens over the whole
+ * bar instead (the bar itself doesn't move), the other controls out of sight
+ * and out of the Tab order until it folds.
+ */
+@media (max-width: 899px) {
+  /* Static, so the field is placed against the bar and can cover it. */
+  .checkpoints__search {
+    position: static;
+    transition: none;
+  }
+
+  .checkpoints__search[data-open="true"] {
+    width: var(--size-xl);
+  }
+
+  .checkpoints .spatial-canvas__controls:has(.checkpoints__search[data-open="true"]) {
+    transform: translateX(-50%);
+  }
+
+  .checkpoints__search-box {
+    position: absolute;
+    z-index: 1;
+    top: var(--space-1);
+    left: var(--space-1);
+    width: var(--size-xl);
+    transition:
+      width 200ms ease-out,
+      background-color 160ms ease-out;
+  }
+
+  .checkpoints__search[data-open="true"] .checkpoints__search-box {
+    width: calc(100% - var(--space-2));
+    background: var(--surface-control);
+  }
+
+  .checkpoints__bar-rest {
+    transition:
+      opacity 160ms ease-out,
+      visibility 0s linear 200ms;
+  }
+
+  .checkpoints__search[data-open="true"] ~ .checkpoints__bar-rest {
+    opacity: 0;
+    visibility: hidden;
+  }
 }
 
 /*
@@ -779,7 +881,7 @@
 .checkpoint-details .spatial-canvas__side-panel-body {
   display: grid;
   align-content: start;
-  gap: var(--space-2);
+  gap: var(--space-1);
 }
 
 .checkpoint-details__picture .checkpoint__frame {
@@ -834,12 +936,7 @@
   margin-right: var(--space-2);
 }
 
-.checkpoint-details__reason {
-  margin: 0;
-  color: var(--status-warning);
-  font-size: var(--text-sm);
-}
-
+/* Also the New Checkpoint field's label. */
 .checkpoint-details__label {
   margin-top: var(--space-2);
   color: var(--text-muted);
@@ -847,36 +944,196 @@
   font-weight: var(--weight-md);
 }
 
-.input.checkpoint-details__text {
-  height: auto;
-  min-height: calc(var(--size-2xl) * 3);
-  resize: vertical;
+/* ---- Properties-panel rows: values are the fields; a quiet fill on hover, a ring on focus only ---- */
+
+/* The title can grow a line under it (why it can't be kept), so the close button stays at the top. */
+.checkpoint-details > header {
+  align-items: flex-start;
+}
+
+.checkpoint-details__title {
+  display: grid;
+  flex: 1;
+  min-width: 0;
+}
+
+/* The title, at rest a button that reads as text; editing, a field in the same face and size. */
+.checkpoint-details__title-field {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  height: var(--size-xl);
+  margin: 0;
+  padding: 0 var(--space-2);
+  overflow: hidden;
+  border: 0;
+  border-radius: var(--radius-input);
+  background: transparent;
+  color: var(--text-strong);
+  font: inherit;
+  font-size: var(--text-md);
+  font-weight: var(--weight-lg);
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: text;
+}
+
+button.checkpoint-details__title-field:hover {
+  background: var(--surface-control);
+}
+
+.checkpoint-details__title-field:focus-visible,
+.checkpoint-details__title-field--editing {
+  outline: var(--focus-ring);
+  outline-offset: calc(-1 * var(--focus-ring-width));
+}
+
+.checkpoint-details__title-field--editing {
+  background: var(--surface-control);
+}
+
+.checkpoint-details__title-field--editing::placeholder {
+  color: var(--text-muted);
+}
+
+.checkpoint-details__title-field--editing[aria-invalid="true"] {
+  outline-color: var(--status-error);
+}
+
+.checkpoint-details__problem {
+  margin: 0;
+  padding: var(--space-1) var(--space-2) 0;
+  color: var(--status-error);
+  font-size: var(--text-sm);
+}
+
+.checkpoint-details__problem[data-tone="quiet"] {
+  color: var(--text-muted);
+}
+
+/* The note: text at rest, an editing surface when hovered or focused; it grows with what is in it, then scrolls. */
+.checkpoint-details__text {
+  box-sizing: border-box;
+  display: block;
+  width: 100%;
+  min-height: calc(var(--size-xl) * 1.5);
+  max-height: calc(var(--size-2xl) * 6);
+  margin: 0;
+  padding: var(--space-2);
+  border: 0;
+  border-radius: var(--radius-input);
+  background: transparent;
+  color: var(--text-strong);
   font-family: var(--font-body);
+  font-size: var(--text-base);
   line-height: var(--leading-lg);
+  overflow-y: auto;
+  resize: none;
+}
+
+.checkpoint-details__text:hover,
+.checkpoint-details__value-field:hover {
+  background: var(--surface-control);
+}
+
+.checkpoint-details__text:focus-visible,
+.checkpoint-details__value-field:focus-visible {
+  background: var(--surface-control);
+  outline: var(--focus-ring);
+  outline-offset: calc(-1 * var(--focus-ring-width));
+}
+
+.checkpoint-details__text::placeholder,
+.checkpoint-details__value-field::placeholder {
+  color: var(--text-muted);
 }
 
 .checkpoint-details__manifest-note {
   margin: 0;
+  padding: 0 var(--space-2);
   color: var(--text-muted);
   font-size: var(--text-sm);
 }
 
-.checkpoint-details__facts {
-  margin-top: var(--space-3);
+/* Facts: a label and its value a row, values selectable; the label column is as wide for every row. */
+.checkpoint-details__props {
+  display: grid;
+  margin: var(--space-2) 0 0;
+  padding-top: var(--space-2);
+  border-top: var(--border-width-hairline) solid var(--border-subtle);
+}
+
+.checkpoint-details__prop {
+  display: grid;
+  grid-template-columns: calc(var(--size-2xl) * 3) minmax(0, 1fr);
+  align-items: center;
+  min-height: var(--size-xl);
+  padding-left: var(--space-2);
+  font-size: var(--text-sm);
+}
+
+.checkpoint-details__prop dt {
+  color: var(--text-muted);
+}
+
+.checkpoint-details__prop dd {
+  min-width: 0;
+  margin: 0;
+  color: var(--text-strong);
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+
+.checkpoint-details__value-field {
+  box-sizing: border-box;
+  /* Its text lines up with the other values; its fill reaches past them. */
+  width: calc(100% + var(--space-2));
+  margin-left: calc(-1 * var(--space-2));
+  height: var(--size-xl);
+  padding: 0 var(--space-2);
+  border: 0;
+  border-radius: var(--radius-input);
+  background: transparent;
+  color: var(--text-strong);
+  font: inherit;
+  font-size: var(--text-sm);
+  text-overflow: ellipsis;
+}
+
+/* Why it can't load: a few words, the whole reason on hover and in the accessible description. */
+.checkpoint-details__reason {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  color: var(--status-warning);
+  cursor: help;
+}
+
+.checkpoint-details__reason svg {
+  flex: none;
+  width: var(--size-sm);
+  height: var(--size-sm);
 }
 
 .checkpoint-details__actions {
   display: flex;
   align-items: center;
   gap: var(--space-2);
-  padding: var(--space-3) var(--space-4);
+  padding: var(--space-2) var(--space-3);
   border-top: var(--border-width-hairline) solid var(--border-subtle);
 }
 
 .checkpoint-details__saved {
   flex: 1;
+  min-width: 0;
   color: var(--text-muted);
   font-size: var(--text-sm);
+  text-align: right;
+}
+
+.checkpoint-details__saved[data-failed="true"] {
+  color: var(--status-error);
 }
 
 .checkpoint-details__delete:enabled {

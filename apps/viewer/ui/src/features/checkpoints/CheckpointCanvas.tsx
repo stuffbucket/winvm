@@ -678,8 +678,9 @@ export function CheckpointCanvas(p: CheckpointCanvasProps): JSX.Element {
     if (e.key === "Escape") {
       e.preventDefault()
       if (editableTarget(e.target)) {
+        // Esc in the search clears it and folds it; in any other field it leaves the field.
         if (target === searchInput.current && query !== "") setQuery("")
-        else (e.target as HTMLElement).blur()
+        if (e.target instanceof HTMLElement) e.target.blur()
         setSearchOpen(false)
         return
       }
@@ -936,6 +937,7 @@ export function CheckpointCanvas(p: CheckpointCanvasProps): JSX.Element {
           searchOpen={searchOpen}
           query={query}
           inputRef={searchInput}
+          matchCount={results.length}
           onNew={() => setCreating((o) => !o)}
           onNewest={() => fly(newest())}
           onToggleAutomatic={toggleAutomatic}
