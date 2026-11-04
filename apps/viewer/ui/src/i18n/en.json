@@ -433,6 +433,7 @@
   "checkpoints.kind.baseline": "First start",
   "checkpoints.kind.stow": "Put away",
   "checkpoints.kind.golden": "For tests",
+  "checkpoints.cantLoad": "Can't load here",
   "checkpoints.incompatible.display": "Made with a different display, so it can't load here",
   "checkpoints.incompatible.base": "Made from a different Windows image, so it can't load here",
   "checkpoints.incompatible.hardware": "Made with different virtual hardware, so it can't load here",

@@ -29,6 +29,7 @@
     { name: "after-update", kind: "manual", createdAt: at(4, 13, 12), bytes: 8.6 * GiB, compatible: true, format: "zstd", ...pics("after-update"), title: "After Windows Update", notes: null },
     { name: "auto-2", kind: "auto", createdAt: at(1, 17, 44), bytes: 8.7 * GiB, compatible: true, format: "zstd", ...pics("auto-2"), title: null, notes: null },
     { name: "repro-bug-4521", kind: "manual", createdAt: at(1, 19, 2), bytes: 8.8 * GiB, compatible: true, format: "zstd", ...pics("repro-bug-4521"), title: "Repro for bug 4521", notes: notes("Repro for bug 4521", "Open Excel, then paste twice.", ["bug"]) },
+    { name: "before-qemu-upgrade", kind: "manual", createdAt: at(1, 12, 5), bytes: 8.7 * GiB, compatible: false, incompatible: ["qemu"], format: "zstd", ...pics("before-qemu-upgrade"), title: "Before the QEMU upgrade", notes: null },
     { name: "vs-code-setup", kind: "manual", createdAt: at(0, 9, 12), bytes: 9.0 * GiB, compatible: true, format: "zstd", ...pics("vs-code-setup"), title: "VS Code set up", notes: null },
     { name: "auto-3", kind: "auto", createdAt: at(0, 11, 40), bytes: 9.1 * GiB, compatible: true, format: "zstd", ...pics("auto-3"), title: null, notes: null },
     { name: "clean-desktop", kind: "manual", createdAt: at(0, 13, 33), bytes: 9.1 * GiB, compatible: true, format: "zstd", ...pics("clean-desktop"), title: "Clean desktop", notes: notes("Clean desktop", "Before trying the new installer.") },
@@ -200,6 +201,7 @@
   }
   // The harness rings menu items the way the app's menu would.
   window.__fakeMenu = (id) => listeners.get("menu")?.({ payload: id })
+  window.__fakeCount = () => saves.length
 
   // A made-up live screen in the display, for the view to shrink and copy.
   window.__fakeScreen = () => {

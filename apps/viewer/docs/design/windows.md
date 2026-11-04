@@ -253,8 +253,12 @@ with Take a Checkpoint Now and Show Checkpoints….
 "Now" card where it stands (the camera starts with the card exactly over the
 display) and the camera pulls back to show Now and the newest checkpoints,
 while the window behind dims and blurs (the live screen, copied a couple of
-times a second and blurred; `backdrop-filter` where there is no screen).
-Done, Esc or a click on Now flies back into the screen the same way. Going
+times a second and blurred; `backdrop-filter` where there is no screen),
+closed in by a vignette and sinking into the surface color toward the top, where
+the oldest checkpoints are: the view is the whole window, with no chrome at its
+top. Nothing of ours sits by the traffic lights (no title chip; the native
+title bar names the window); only a strip across the top still moves the
+window. Done, Esc or a click on Now flies back into the screen the same way. Going
 back to a checkpoint flies that checkpoint's picture into the screen once
 Windows is back at that moment.
 
@@ -264,17 +268,42 @@ a few times a second; its state when it is off), is the large card at the
 front, at the bottom. Above it, one block per day with checkpoints, the
 newest day nearest, its date above it (Today, Yesterday, a weekday this
 week, else the date): the day's checkpoints left to right as taken, six to
-a line. Each older day is drawn a little smaller (7% a day, down to 62%),
-so the stack reads as going back in time and in depth. Far out, where the
-dates no longer fit, only the months are named, beside the stack.
+a line. Each older day is drawn a little smaller and fainter (7% a day, down
+to 62%), so the stack reads as going back in time and in depth. Far out,
+where the dates no longer fit, only the months are named, beside the stack.
+The view opens on everything when it fits with cards at least 40% of life
+size (a short history), else on Now and the newest two days, and at the zoom
+it was left at once it has been left anywhere else.
 
-**A card** is the checkpoint's screenshot (a 16:10 frame, the picture
-fitted inside it; "No picture" for checkpoints taken before screenshots),
-then its title (its notes' title, else its name), when it was taken as
-Finder says it, its kind and size, and a notes mark when it has notes. One
-that can't load here is dashed and grey, and says why over its picture
-("Made with a different display, so it can't load here"). Far out, cards
-are their pictures only.
+**A card** is its picture (a 16:10 frame, the screenshot fitted inside it;
+"No picture" for checkpoints taken before screenshots) and nothing else: its
+words hang below it, so the picture is the hero. Those are its title (its
+notes' title, else its name, with a notes mark when it has notes), then when it
+was taken as Finder says it and its size. A kind that isn't Manual is a small
+tag on the picture's corner. One that can't load here is dashed and grey, with
+"Can't load here" on its picture (the reason is its tooltip and part of its
+accessible name; the panel says it in full).
+
+**Words read at any zoom.** Card words are drawn at least 12 px on screen
+(`--text-sm` at 86%), scaled up in the world as the camera pulls back rather than
+shrinking with the card, so the gaps between lines and days leave room for
+them. As a card gets small the words thin out by its width on screen: 168 px
+and up, the name, time and size; 110 px, the kind's tag; 84 px, the name only;
+under that, the picture alone (its name and time are its tooltip). Strokes
+(outline, selection ring) are scaled the same way, so they stay lines.
+
+**Picking out.** Pointing at a day on the timeline, or at the Automatic
+filter, gives the matching cards a soft accent ring and glow, and the rest
+step back a little. Search dims what doesn't match, as before.
+
+**Moving cards.** Dragging a card moves it, wherever it is put: cards can be
+grouped however a person likes. Dragging empty canvas still pans, and a click,
+Enter or Space on a card still selects and looks. With a card selected,
+⌥ and the arrows move it (⇧ for more), for anyone who can't drag. Esc while
+carrying puts it back. Now can't be moved. A card keeps its place as an
+offset from its slot, so it moves with its day when days are added. Moves are
+kept per machine in the settings below; the Reset layout button at the end of
+the control bar (dimmed while nothing is moved) puts everything back.
 
 **The timeline**, down the right edge: a tick per day with checkpoints,
 evenly spaced (by turn, not by time, so a busy day and a quiet month take
@@ -310,13 +339,28 @@ becomes its title, and a directory-safe form of it the save's name. The
 view pulls back to Now and today, Now says "Taking a checkpoint…", and the
 new card flies out of Now into its place, screenshot and all.
 
-**Search** (⌘F) matches every word against names, titles, notes, tags,
-kinds and dates, newest first; cards that don't match fade while the
-results are open, and choosing one flies to it. **Automatic** shows or
-hides the checkpoints winvm takes by itself (autosaves and the stow).
+**The control bar** floats at the bottom of the window, one compact bar
+(Settings' glass is opaque here: cards pass under it): search, New, back to
+the newest, Automatic, zoom (out, in, show everything), Reset layout and Done.
+Each is a button with an accessible name and a tooltip, the keys in the
+tooltip. **New** is a plus and a word; its tooltip says why when it can't
+(Windows isn't running).
+
+**Search** (⌘F, or the magnifier) matches every word against names, titles,
+notes, tags, kinds and dates, newest first. It is a magnifier until used,
+then the field eases out to its left (200 ms, instant with reduced motion)
+and folds back when it loses focus empty; the field is out of the Tab order
+while folded. Cards that don't match fade while it is open, and choosing one
+flies to it. **Automatic** is an icon filter, pressed when automatic
+checkpoints show: it shows or hides the checkpoints winvm takes by itself
+(autosaves and the stow).
+
+**The zoom's figure** (53%) is only there while the zoom is changing, and under
+the pointer or focus: it eases out 1.6 s after the zoom rests, and the buttons
+close up.
 
 The view's settings (whether automatic checkpoints show, the zoom it was
-left at) are in `$XDG_CONFIG_HOME/winvm/settings.json` under
+left at, and the cards moved, by machine and checkpoint) are in `$XDG_CONFIG_HOME/winvm/settings.json` under
 `"checkpoints"`, read and written by the app (`src-tauri/src/checkpoints.rs`).
 Screenshots come through `checkpoint_image`, which serves only
 `saves/<instance>/<save>/{thumb,screen}.png`, as bytes shown as `blob:`
@@ -330,6 +374,7 @@ large on screen, so hundreds of checkpoints pan smoothly.
 | ⌘+ ⌘− | zoom in, out |
 | ⌘0 | show every checkpoint |
 | arrows (⇧ for more) | pan |
+| ⌥ arrows (⇧ for more) | move the selected checkpoint |
 | ⌘↑ ⌘↓ | the checkpoint older, newer |
 | Space | Quick Look the selected checkpoint |
 | ⌘F | search |
@@ -337,9 +382,11 @@ large on screen, so hundreds of checkpoints pan smoothly.
 
 `bun scripts/build-ui.ts`, then `PLAYWRIGHT_DIR=… node
 scripts/render-checkpoints.mjs` renders it in WebKit against a fake app
-(`tests/render/fake-tauri.js`): the way in and out, zooms, the timeline, a
-selection, Quick Look, search, the confirmations, New Checkpoint and 400
-checkpoints, light and dark.
+(`tests/render/fake-tauri.js`, 14 checkpoints: manual, automatic, one with no
+picture, and ones that can't load here because of a different display or QEMU):
+the way in and out, the opening view and the bar at rest, the highlights, a card
+dragged and the layout reset, zooms, the timeline, a selection, Quick Look,
+search, the confirmations, New Checkpoint and 400 checkpoints, light and dark.
 
 ## Use with Claude
 

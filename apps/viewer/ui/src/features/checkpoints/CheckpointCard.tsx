@@ -78,6 +78,8 @@ export type CardLevel = "full" | "name" | "picture"
 
 export const FULL_WIDTH = 168
 export const NAME_WIDTH = 84
+/** Wide enough, on screen, for the kind's tag on the picture. */
+export const KIND_WIDTH = 110
 
 export const levelFor = (screenWidth: number): CardLevel => (screenWidth >= FULL_WIDTH ? "full" : screenWidth >= NAME_WIDTH ? "name" : "picture")
 
@@ -116,7 +118,8 @@ export const CheckpointCard = memo(function CheckpointCard({ c, box, selected, z
   const name = shownName(c)
   const when = takenAt(c, now)
   const kind = kindLabel(c.kind)
-  const level = levelFor(box.width * zoom)
+  const screenWidth = box.width * zoom
+  const level = levelFor(screenWidth)
   const style = {
     "--card-scale": String(box.scale),
     "--m": String(textScale(box.scale, zoom)),
@@ -145,17 +148,17 @@ export const CheckpointCard = memo(function CheckpointCard({ c, box, selected, z
         className="checkpoint__hit"
         style={style}
         aria-pressed={selected}
-        aria-label={t("checkpoints.card.label", { name, kind, when })}
+        aria-label={reason === null ? t("checkpoints.card.label", { name, kind, when }) : `${t("checkpoints.card.label", { name, kind, when })}. ${t(reason)}`}
         title={level === "picture" ? `${name}, ${when}` : undefined}
         onClick={() => onSelect(c.name)}
       >
-        <Picture c={c} sharp={sharpAt(box.width * zoom)} wanted>
+        <Picture c={c} sharp={sharpAt(screenWidth)} wanted>
           <span className="checkpoint__fit checkpoint__fit--frame">
-            {c.kind !== "manual" && level === "full" &&<span className="checkpoint__kind">{kind}</span>}
+            {c.kind !== "manual" && screenWidth >= KIND_WIDTH && <span className="checkpoint__kind">{kind}</span>}
             {reason !== null && (
               <span className="checkpoint__badge" title={t(reason)}>
                 {WARNING}
-                {level === "full" && <span>{t(reason)}</span>}
+                {level === "full" && <span>{t("checkpoints.cantLoad")}</span>}
               </span>
             )}
             {working !== null && <span className="checkpoint__working">{working}</span>}
