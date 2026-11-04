@@ -595,6 +595,7 @@ export function App(): JSX.Element {
                 "display",
                 actualSize && !resizable && "display--actual",
                 resizable && showScreen && "display--live",
+                !showScreen && "display--fill",
                 showScreen && "display--on",
                 dropping && "display--drop",
               )}

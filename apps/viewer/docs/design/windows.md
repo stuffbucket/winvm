@@ -129,9 +129,11 @@ Claude Code and Claude Desktop. The title is the same whatever the state;
 the rows say what the state allows. A row is a button: the toolbar button's
 own glyph in a column of its own (`--size-md`, `--link`), the label in
 `--text-base`, and a muted chevron at the end. The columns are fixed and
-top-aligned, so a label that wraps stays under its first line. The list is
-`min(100%, 32rem)` wide. Hover and the open row step to `--surface-control`.
-Up and Down, Home and End move between rows; Tab still visits each.
+top-aligned, so a label that wraps stays under its first line. Hover and the open row step to `--surface-control`.
+Up and Down, Home and End move between rows; Tab still visits each. The list is the
+overview column's full width (the column is in [`layout.md`](layout.md) → *The
+overview*), so it is as wide as the note above it. It drops out when the display is
+under 46rem tall, the height the whole screen needs.
 
 **What the state allows** (`features/help/availability.ts`, which names the
 code each rule follows). The list is on the overview of a machine that is off,
@@ -235,9 +237,11 @@ is typing. Nothing is captured for Windows here; the machine isn't running.
 
 **It grows upward.** The heading and the note are one block, aligned to its
 bottom, between the top of the screen and the controls. As the note grows the
-heading rises with it; when the heading reaches the top of the screen (its
-`--space-6` padding, below the toolbar that carries the traffic lights) the
-note stops growing and scrolls inside. The facts, Start and the rest below it
+heading rises with it; when the heading reaches the top of the column (its
+`--space-7` padding, so 48 points below the toolbar that carries the traffic
+lights; on a window taller than the column's cap, below the column's top) the
+note stops growing and scrolls inside. At rest the note has three lines, five
+on a taller display and seven on a tall one, so extra height is room to write. The facts, Start and the rest below it
 never move, because the block, not they, takes up the slack. This is layout
 only (flex, and the wrapper's `data-value` copy of the text drawn invisibly in
 the same grid cell, which gives the area the height of its text): no

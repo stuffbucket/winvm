@@ -2,6 +2,7 @@ import { memo, type CSSProperties, type ReactNode } from "react"
 
 import { SpatialCanvasNode } from "@winvm/canvas"
 
+import { usePixelRatio } from "../../dpr"
 import { t } from "../../i18n"
 import { formatSize } from "../../model"
 import { finderDate } from "../files/files"
@@ -11,7 +12,8 @@ import { usePicture } from "./pictures"
 /** Above this many device pixels wide, a card shows the full screenshot rather than the 480 px thumbnail. */
 const SHARP_WIDTH = 560
 
-const sharpAt = (cssWidth: number): boolean => cssWidth * (typeof devicePixelRatio === "number" ? devicePixelRatio : 1) > SHARP_WIDTH
+/** Whether a card `cssWidth` CSS pixels wide is big enough on a display of this pixel ratio to want the full screenshot. */
+export const sharpAt = (cssWidth: number, ratio: number): boolean => cssWidth * ratio > SHARP_WIDTH
 
 const label = (key: string, values?: Record<string, string>): string => t(key, values)
 
@@ -119,6 +121,8 @@ export const CheckpointCard = memo(function CheckpointCard({ c, box, selected, z
   const when = takenAt(c, now)
   const kind = kindLabel(c.kind)
   const screenWidth = box.width * zoom
+  // Read through the hook: the window may be moved to a display of another ratio, which resizes nothing.
+  const ratio = usePixelRatio()
   const level = levelFor(screenWidth)
   const style = {
     "--card-scale": String(box.scale),
@@ -152,7 +156,7 @@ export const CheckpointCard = memo(function CheckpointCard({ c, box, selected, z
         title={level === "picture" ? `${name}, ${when}` : undefined}
         onClick={() => onSelect(c.name)}
       >
-        <Picture c={c} sharp={sharpAt(screenWidth)} wanted>
+        <Picture c={c} sharp={sharpAt(screenWidth, ratio)} wanted>
           <span className="checkpoint__fit checkpoint__fit--frame">
             {c.kind !== "manual" && screenWidth >= KIND_WIDTH && <span className="checkpoint__kind">{kind}</span>}
             {reason !== null && (
