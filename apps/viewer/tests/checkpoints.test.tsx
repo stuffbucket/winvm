@@ -250,16 +250,16 @@ describe("going back", () => {
     expect(cp.goBackConfirm({ live: false })).toEqual({ body: "checkpoints.goBack.bodyStopped", offerSaveFirst: false })
     expect(cp.goBackConfirm({ live: true })).toEqual({ body: "checkpoints.goBack.bodyLive", offerSaveFirst: true })
   })
-  it("says plainly, in two short sentences, what happens to this machine, and that no new machine is made", () => {
+  it("says plainly, in one short sentence, what happens to this machine, and that no new machine is made", () => {
     expect(t("checkpoints.goBack.title", { name: "Office" })).toBe("Restore “Office”?")
     expect(t("checkpoints.goBack.confirm")).toBe("Restore")
     expect(t("checkpoints.goBack.saveFirst")).toBe("Take Checkpoint First")
     for (const key of ["checkpoints.goBack.bodyLive", "checkpoints.goBack.bodyStopped"]) {
       const body = t(key)
-      expect(body.split(/(?<=\.)\s+/).length).toBe(2)
+      expect(body.split(/(?<=\.)\s+/).length).toBe(1)
       expect(body).toContain("This machine")
       expect(body).toContain("replac")
-      expect(body).toContain("Your checkpoints are kept.")
+      expect(body).not.toContain("kept")
       expect(body).not.toMatch(/new machine|Go [Bb]ack|save/)
     }
   })

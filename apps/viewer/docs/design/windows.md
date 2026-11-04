@@ -549,7 +549,7 @@ The kinds, what makes each, and so what the words say:
   *this* machine: while Windows runs or is paused, "This machine goes back to
   how it was at that moment, and what it's doing now is replaced. Your
   checkpoints are kept."; while it is off, "This machine starts from how it was
-  at that moment, replacing what is on its disk now. Your checkpoints are kept."
+  at that moment, replacing what is on its disk now."
   With Cancel, Take Checkpoint First (while Windows runs: it takes "Before
   restoring …" first, then restores) and **Restore**. No machine is created and
   no second one runs: `load` quits this machine's QEMU (running or paused, what
