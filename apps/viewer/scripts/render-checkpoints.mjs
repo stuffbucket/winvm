@@ -10,7 +10,8 @@
  * at 720x520, 1000x800 and 1440x900, CHECKING that it never overlaps the bar. It
  * also renders the details panel (title and note edited in place, a long note, one
  * that can't load) and the search (folded, open, with words, no match, at 720 and
- * 1000 wide), CHECKING what the design says; `RENDER_ONLY=panel` runs just those.
+ * 1000 wide), CHECKING what the design says; `RENDER_ONLY=panel` runs just those. It also draws sections (the tool, the grid, the tab edited, carried with its cards,
+ * resized, side by side, a blocked overlap, removed), CHECKING the rules; `RENDER_ONLY=sections` runs just that.
  * Test DOMs compute no layout; this is how layout and feel get looked at.
  *
  * Playwright isn't one of the workspace's dependencies (it would pull a
@@ -320,7 +321,7 @@ const check = (ok, what) => {
     console.error(`CHECK FAILED: ${what}`)
   }
 }
-for (const scheme of ["dark", "light"]) {
+for (const scheme of only === undefined || only === "panel" ? ["dark", "light"] : []) {
   const page = await open(scheme)
   await enter(page)
   await wait(1600)
@@ -534,6 +535,179 @@ for (const scheme of ["dark", "light"]) {
   }
 }
 if (broke) process.exitCode = 1
+
+// Sections: the tool, drawing with the grid showing, naming the tab, cards put in and carried with it, handles, two side by side
+// with their gap, a blocked overlap, Delete keeping the cards, and it all coming back. CHECKING the rules as it goes.
+// RENDER_ONLY=sections runs just this.
+let sectionsBroke = false
+const sectionCheck = (ok, what) => {
+  if (!ok) {
+    sectionsBroke = true
+    console.error(`SECTIONS CHECK FAILED: ${what}`)
+  }
+}
+const cameraOf = (page) =>
+  page.evaluate(() => {
+    const m = /translate3d\((-?[\d.e+-]+)px, (-?[\d.e+-]+)px[^)]*\) scale\((-?[\d.e+-]+)\)/.exec(document.querySelector(".spatial-canvas__scene").style.transform)
+    return { x: Number(m[1]), y: Number(m[2]), zoom: Number(m[3]) }
+  })
+const sectionsOf = (page) =>
+  page.evaluate(() =>
+    [...document.querySelectorAll(".section")].map((el) => {
+      const m = /translate3d\((-?[\d.e+-]+)px, (-?[\d.e+-]+)px/.exec(el.style.transform)
+      return { id: el.dataset.section, x: Number(m[1]), y: Number(m[2]), w: parseFloat(el.style.width), h: parseFloat(el.style.height), label: el.getAttribute("aria-label"), selected: el.dataset.selected === "true" }
+    }),
+  )
+const worldBox = async (page, name) => {
+  const c = await cameraOf(page)
+  const b = await page.locator(`.checkpoint[data-name="${name}"]`).boundingBox()
+  return b === null ? null : { x: (b.x - c.x) / c.zoom, y: (b.y - c.y) / c.zoom, w: b.width / c.zoom, h: b.height / c.zoom }
+}
+const screenOf = async (page, p) => {
+  const c = await cameraOf(page)
+  return { x: p.x * c.zoom + c.x, y: p.y * c.zoom + c.y }
+}
+async function drag(page, from, to, { hold = false, steps = 12 } = {}) {
+  await page.mouse.move(from.x, from.y)
+  await page.mouse.down()
+  await page.mouse.move(to.x, to.y, { steps })
+  if (!hold) await page.mouse.up()
+}
+for (const scheme of only === undefined || only === "sections" ? ["dark", "light"] : []) {
+  const page = await open(scheme)
+  await enter(page)
+  await wait(3600)
+  const GRID = 24
+  const onGrid = (v) => Math.abs(v / GRID - Math.round(v / GRID)) < 1e-6
+  const tool = page.getByRole("button", { name: "Section", exact: true })
+  sectionCheck((await tool.getAttribute("aria-pressed")) === "false" && (await tool.getAttribute("title")) === "Section (S)", "the tool is a button with its tip")
+  await shot(page, `${scheme}-80-sections-bar`)
+  await page.keyboard.press("s")
+  await wait(200)
+  sectionCheck((await tool.getAttribute("aria-pressed")) === "true", "S turns the tool on")
+  sectionCheck((await page.locator(".spatial-canvas__viewport").getAttribute("data-tool")) === "section", "the viewport says the tool is on (a crosshair)")
+  await page.mouse.move(400, 300)
+  await shot(page, `${scheme}-81-tool-on`)
+
+  // Yesterday's three cards: draw a section round them.
+  const names = ["auto-2", "repro-bug-4521", "before-qemu-upgrade"]
+  const boxes = await Promise.all(names.map((n) => worldBox(page, n)))
+  const x0 = Math.min(...boxes.map((b) => b.x)) - 50
+  const y0 = Math.min(...boxes.map((b) => b.y)) - 50
+  const x1 = Math.max(...boxes.map((b) => b.x + b.w)) + 50
+  const y1 = Math.max(...boxes.map((b) => b.y + b.h)) + 160
+  const a = await screenOf(page, { x: x0, y: y0 })
+  const z = await screenOf(page, { x: x1, y: y1 })
+  await drag(page, a, z, { hold: true })
+  await wait(350)
+  sectionCheck((await page.locator(".checkpoints__grid").evaluate((el) => getComputedStyle(el).opacity)) === "1", "the grid shows while one is drawn")
+  sectionCheck((await page.locator(".section-draft").count()) === 1, "the rectangle is drawn")
+  await shot(page, `${scheme}-82-drawing-grid`)
+  await page.mouse.up()
+  await wait(400)
+  let secs = await sectionsOf(page)
+  sectionCheck(secs.length === 1, "releasing makes one section")
+  sectionCheck(secs.every((s) => onGrid(s.x) && onGrid(s.y) && onGrid(s.w) && onGrid(s.h)), "its corners are on the grid")
+  sectionCheck((await tool.getAttribute("aria-pressed")) === "false", "the tool goes back to select")
+  sectionCheck((await page.locator(".checkpoints__grid").evaluate((el) => getComputedStyle(el).opacity)) === "0", "the grid fades away")
+  sectionCheck((await page.locator(".section__input").inputValue()) === "Section", "the tab is a field, named Section")
+  sectionCheck((await page.evaluate(() => { const i = document.querySelector(".section__input"); return i.selectionStart === 0 && i.selectionEnd === i.value.length })) === true, "the name is selected")
+  sectionCheck((secs[0]?.label ?? "").includes("3 checkpoints"), `it holds the three cards it was drawn round (${secs[0]?.label})`)
+  await shot(page, `${scheme}-83-created-editing`)
+  await page.keyboard.type("Yesterday's runs")
+  await wait(100)
+  await shot(page, `${scheme}-84-typing`)
+  await page.keyboard.press("Enter")
+  await wait(300)
+  sectionCheck((await page.locator(".section__name").textContent()) === "Yesterday's runs", "Return keeps the name")
+  sectionCheck((await page.getByRole("group", { name: "Section: Yesterday's runs, 3 checkpoints" }).count()) === 1, "the section is a group with a name and a count")
+  // "Yesterday" no longer has a date: all its cards are in a section.
+  sectionCheck((await page.locator('.checkpoints__day[data-day]').count()) >= 0, "(days)")
+  await shot(page, `${scheme}-85-renamed-selected`)
+
+  // Carry it by its tab: the cards go with it, still where they were inside it.
+  const card0 = await worldBox(page, "repro-bug-4521")
+  const tab = await page.locator(".section__tab").boundingBox()
+  await drag(page, { x: tab.x + 20, y: tab.y + tab.height / 2 }, { x: tab.x + 20 - 110, y: tab.y + tab.height / 2 - 40 }, { hold: true })
+  await wait(350)
+  sectionCheck((await page.locator(".checkpoints__grid").evaluate((el) => getComputedStyle(el).opacity)) === "1", "the grid shows while it is carried")
+  const carried = await worldBox(page, "repro-bug-4521")
+  sectionCheck(carried !== null && Math.abs(carried.x - card0.x) > 20, "the cards are carried along while it moves")
+  await shot(page, `${scheme}-86-moving`)
+  await page.mouse.up()
+  await wait(300)
+  const moved = (await sectionsOf(page))[0]
+  const card1 = await worldBox(page, "repro-bug-4521")
+  sectionCheck(onGrid(moved.x) && onGrid(moved.y), "moved, it is on the grid")
+  sectionCheck(Math.abs(card1.x - card0.x - (moved.x - secs[0].x)) < 0.6 && Math.abs(card1.y - card0.y - (moved.y - secs[0].y)) < 0.6, "the cards went with it")
+
+  // Handles, and a resize by the east edge (the west edge stays).
+  const sec = (await sectionsOf(page))[0]
+  const handles = await page.locator(".section__corner, .section__edge").count()
+  sectionCheck(handles === 8, `eight handles (${String(handles)})`)
+  const east = await page.locator('.section__edge[data-handle="e"]').boundingBox()
+  await drag(page, { x: east.x + east.width / 2, y: east.y + east.height / 2 }, { x: east.x + east.width / 2 + 77, y: east.y + east.height / 2 }, { hold: true })
+  await wait(300)
+  await shot(page, `${scheme}-87-resizing`)
+  await page.mouse.up()
+  await wait(300)
+  const grown = (await sectionsOf(page))[0]
+  sectionCheck(grown.x === sec.x && grown.y === sec.y && grown.h === sec.h && grown.w > sec.w && onGrid(grown.w), "east edge: the others stay, the width snaps")
+  await shot(page, `${scheme}-88-selected-handles`)
+
+  // A second section beside it, drawn from the right towards it: it stops one cell short, though the pointer goes on.
+  await page.keyboard.press("s")
+  const edge = await page.locator(`.section[data-section="${sec.id}"] .section__body`).boundingBox()
+  const p0 = { x: edge.x + edge.width + 220, y: edge.y + 40 }
+  const p1 = { x: edge.x + edge.width - 120, y: edge.y + 190 }
+  await drag(page, p0, p1, { hold: true })
+  await wait(350)
+  const draft = await page.locator(".section-draft").boundingBox()
+  const first = await page.locator(`.section[data-section="${sec.id}"] .section__body`).boundingBox()
+  sectionCheck(draft !== null && first !== null && Math.abs(draft.x - (first.x + first.width) - GRID * (await cameraOf(page)).zoom) < 1.5, "drawn towards the first, it stops one cell short of it")
+  await shot(page, `${scheme}-89-draw-beside-blocked`)
+  await page.mouse.up()
+  await wait(300)
+  await page.keyboard.press("Enter")
+  await wait(200)
+  secs = await sectionsOf(page)
+  sectionCheck(secs.length === 2, `two sections (${String(secs.length)})`)
+  sectionCheck((await page.locator(".section__name").allTextContents()).sort().join("|") === "Section|Yesterday's runs", "the second is named Section")
+  const second = secs.find((s) => s.id !== sec.id)
+  const t2 = await page.locator(`.section[data-section="${second.id}"] .section__tab`).boundingBox()
+  // Pull it left over the first one, and down: it stays a cell away and slides.
+  await drag(page, { x: t2.x + 20, y: t2.y + t2.height / 2 }, { x: t2.x + 20 - 900, y: t2.y + t2.height / 2 + 70 }, { hold: true })
+  await wait(300)
+  await shot(page, `${scheme}-90-blocked-overlap`)
+  await page.mouse.up()
+  await wait(300)
+  secs = await sectionsOf(page)
+  const [s1, s2] = secs.sort((p, q) => p.x - q.x)
+  sectionCheck(s2.x - (s1.x + s1.w) === GRID, `the second stops exactly one cell from the first (${String(s2.x - (s1.x + s1.w))})`)
+  sectionCheck(s2.y > second.y, "and slides along it")
+  await shot(page, `${scheme}-91-two-sections`)
+
+  // Delete takes only the section; the cards stay where they are.
+  await page.locator(`.section[data-section="${s1.id}"]`).focus()
+  const before = await worldBox(page, "auto-2")
+  await page.keyboard.press("Delete")
+  await wait(300)
+  const after = await worldBox(page, "auto-2")
+  sectionCheck((await sectionsOf(page)).length === 1, "Delete removes the section")
+  sectionCheck(after !== null && Math.abs(after.x - before.x) < 0.6 && Math.abs(after.y - before.y) < 0.6, "its cards stay exactly where they were")
+  await shot(page, `${scheme}-92-removed`)
+
+  // Leaving and coming back: it is kept.
+  await page.keyboard.press("Escape")
+  await page.keyboard.press("Escape")
+  await wait(900)
+  await enter(page)
+  await wait(1200)
+  sectionCheck((await sectionsOf(page)).length === 1, "the section is still there when the view is opened again")
+  await shot(page, `${scheme}-93-again`)
+  await page.close()
+}
+if (sectionsBroke) process.exitCode = 1
 
 // Real screenshots, when given: what the cards look like with Windows in them.
 if (PICTURES !== undefined) {
