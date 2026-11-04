@@ -112,6 +112,9 @@ const TIMELINE_SPACE = 132
 const PAN_STEP = 80
 const ZOOM_STEP = 1.25
 const ENTER_WAIT_MS = 450
+/** The view's fade out (the surface's transition in checkpoints.css); none when motion is reduced. */
+const SURFACE_FADE_MS = 180
+const surfaceFadeMs = (): number => (typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches ? 0 : SURFACE_FADE_MS)
 /** Below this zoom, captions are too small to read: cards draw pictures only. */
 const FAR_ZOOM = 0.42
 
@@ -255,18 +258,16 @@ export function CheckpointCanvas(p: CheckpointCanvasProps): JSX.Element {
     [limits],
   )
 
-  // In: the screen becomes the Now card, the view pulls back to show the newest checkpoints.
+  // In: drawn in place, already at the newest checkpoints, and faded in over the window's own
+  // screen. A change of mode in this window, not a flight into another one (windows.md, Checkpoints).
   const entered = useRef(false)
-  useEffect(() => {
-    const frame = requestAnimationFrame(() => setPhase("open"))
-    return () => cancelAnimationFrame(frame)
-  }, [])
   useEffect(() => {
     if (entered.current) return
     const go = (): void => {
       if (entered.current) return
       entered.current = true
-      void flyCamera(overview(), { duration: 760 })
+      setCamera(overview())
+      requestAnimationFrame(() => setPhase("open"))
     }
     if (list !== null) {
       go()
@@ -274,25 +275,20 @@ export function CheckpointCanvas(p: CheckpointCanvasProps): JSX.Element {
     }
     const timer = setTimeout(go, ENTER_WAIT_MS)
     return () => clearTimeout(timer)
-  }, [list, overview, flyCamera])
+  }, [list, overview, setCamera])
 
-  // Out: back into the live screen, or the chosen checkpoint into it.
+  // Out: fades away where it is, over the screen it was drawn on.
   const leavingNow = useRef(false)
-  const leave = useCallback(
-    async (into?: Rect): Promise<void> => {
-      if (leavingNow.current) return
-      leavingNow.current = true
-      setSelected(null)
-      setSearchOpen(false)
-      if (selected === null) void saveSettings({ ...settings, zoom: cameraNow().zoom })
-      setPhase("leaving")
-      const rect = props.current.displayRect()
-      const target = into !== undefined && rect !== null ? cameraForScreenRect(into, rect) : nowCamera()
-      await flyCamera(target, { duration: 620 })
-      props.current.onClosed()
-    },
-    [flyCamera, cameraNow, nowCamera, selected, settings],
-  )
+  const leave = useCallback(async (): Promise<void> => {
+    if (leavingNow.current) return
+    leavingNow.current = true
+    setSelected(null)
+    setSearchOpen(false)
+    if (selected === null) void saveSettings({ ...settings, zoom: cameraNow().zoom })
+    setPhase("leaving")
+    await new Promise((done) => setTimeout(done, surfaceFadeMs()))
+    props.current.onClosed()
+  }, [cameraNow, selected, settings])
 
   const closeRequest = useRef(p.closeRequest)
   useEffect(() => {
@@ -533,8 +529,7 @@ export function CheckpointCanvas(p: CheckpointCanvasProps): JSX.Element {
         await reload()
         return
       }
-      const box = layoutNow.current.cards.get(name)
-      void leave(box === undefined ? undefined : frameOf(box))
+      void leave()
     }
   }
 

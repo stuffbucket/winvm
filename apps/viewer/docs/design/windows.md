@@ -249,14 +249,16 @@ spatial canvas). The toolbar's clock opens it, as do ⌘⇧T and File →
 Checkpoints…; Option-click or right-click on the clock shows a native menu
 with Take a Checkpoint Now and Show Checkpoints….
 
-**In and out.** The view eases in: the window's own screen becomes the
-"Now" card where it stands (the camera starts with the card exactly over the
-display) and the camera pulls back to show Now and the newest checkpoints,
-while the window behind dims and blurs (the live screen, copied a couple of
-times a second and blurred; `backdrop-filter` where there is no screen).
-Done, Esc or a click on Now flies back into the screen the same way. Going
-back to a checkpoint flies that checkpoint's picture into the screen once
-Windows is back at that moment.
+**In and out.** A change of mode in this window, so it happens where it
+is: the view fades in over the window's own screen, settling from 99% to full
+size in 200 ms, already showing Now and the newest checkpoints; Done, Esc or a
+click on Now fades it out in 180 ms (`checkpoints.css`, the surface's
+`data-phase`). Nothing flies in from the display and nothing slides, so it
+never reads as a separate window. Under reduced motion it is a cut. The
+window behind is dimmed and blurred (the live screen, copied a couple of times
+a second and blurred; `backdrop-filter` where there is no screen). Going back
+to a checkpoint leaves the same way, once Windows is back at that moment. The
+camera still flies *within* the view (below).
 
 **Layout.** Time runs up the canvas, as Time Machine's windows recede into
 the screen. Now, the running machine (its live screen, copied into the card
