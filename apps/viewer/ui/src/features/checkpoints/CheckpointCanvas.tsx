@@ -80,7 +80,7 @@ import {
   withLabel,
 } from "./checkpoints"
 import { CheckpointCard, MONITOR, Picture, takenAt, textScale } from "./CheckpointCard"
-import { CheckpointDetails, type NoteDraft, tagsOf } from "./CheckpointDetails"
+import { CheckpointDetailsLayer, type NoteDraft, tagsOf } from "./CheckpointDetails"
 import { ControlBar } from "./ControlBar"
 import { ZoomControl } from "./ZoomControl"
 import { LiveFrame } from "./LiveFrame"
@@ -109,9 +109,12 @@ export interface CheckpointCanvasProps {
   onClosed(): void
 }
 
-/** Room the details panel and the timeline take at the right, so a selected card centres in what is left. */
-const PANEL_SPACE = 400
+/** How much of the window's left the details layer covers (its width in the stylesheet), so a selected card centres in what is left. */
+const PANEL_WIDTH = 368
+/** Room the timeline takes at the right. */
 const TIMELINE_SPACE = 132
+/** Of the window, at least this much is left for the canvas beside the layer and the timeline. */
+const CANVAS_LEAST = 128
 const BAR_SPACE = 88
 /** Everything fits at the first look when it can at this zoom or more: below it, cards are too small to name. */
 const READABLE_FIT = 0.4
@@ -137,8 +140,8 @@ const DAY_LABEL_MIN = 12
 const DAY_LABEL_ROOM = 30
 
 const viewSize = (): Size => ({ width: window.innerWidth, height: window.innerHeight })
-/** What the timeline at the right and the control bar at the bottom leave of the window. */
-const freeView = (): Size => ({ width: viewSize().width - TIMELINE_SPACE, height: viewSize().height - BAR_SPACE })
+/** What the details layer covers at the left: its width, less in a window too narrow for all of it (the stylesheet says the same). */
+const panelSpace = (): number => Math.max(240, Math.min(PANEL_WIDTH, viewSize().width - TIMELINE_SPACE - CANVAS_LEAST))
 
 export function CheckpointCanvas(p: CheckpointCanvasProps): JSX.Element {
   const live = p.phase === "running" || p.phase === "paused"
@@ -146,7 +149,13 @@ export function CheckpointCanvas(p: CheckpointCanvasProps): JSX.Element {
   const [listError, setListError] = useState<string | null>(null)
   const [settings, setSettings] = useState<CheckpointSettings>(DEFAULT_SETTINGS)
   const [phase, setPhase] = useState<SpatialCanvasSurfacePhase>("entering")
-  const [selected, setSelected] = useState<string | null>(null)
+  const [selected, setSelectedState] = useState<string | null>(null)
+  // What the details layer covers at the left: set with the selection, so a flight started with it already knows.
+  const leftSpace = useRef(0)
+  const setSelected = useCallback((name: string | null) => {
+    leftSpace.current = name === null ? 0 : panelSpace()
+    setSelectedState(name)
+  }, [])
   const [query, setQuery] = useState("")
   const [searchOpen, setSearchOpen] = useState(false)
   // The pointer is on the Automatic filter: those checkpoints are picked out.
@@ -247,46 +256,56 @@ export function CheckpointCanvas(p: CheckpointCanvasProps): JSX.Element {
   const cam = useCanvasCamera(nowCamera(), viewSize)
   const { fly: flyCamera, set: setCamera, current: cameraNow } = cam
   const camera = cam.camera
-  // What the timeline (and, with a card selected, the details panel) cover on the right: the stack is kept in reach of the rest.
-  const reserve = useRef(TIMELINE_SPACE)
-  reserve.current = selected === null ? TIMELINE_SPACE : PANEL_SPACE + TIMELINE_SPACE
+  // What the timeline (at the right) and, with a card selected, the details layer (at the left) cover: the stack is kept in reach of the rest.
+  leftSpace.current = selected === null ? 0 : panelSpace()
   const clamp = useCallback(
-    (c: Camera, right: number = reserve.current): Camera =>
-      clampCamera(c, content, { width: Math.max(320, viewSize().width - right), height: viewSize().height }, 96, limits),
+    (c: Camera, right: number = TIMELINE_SPACE, left: number = leftSpace.current): Camera => {
+      // The part of the window that is left, as a viewport of its own: shifted to its origin and back.
+      const free = clampCamera({ ...c, x: c.x - left }, content, { width: Math.max(320, viewSize().width - right - left), height: viewSize().height }, 96, limits)
+      return { ...free, x: free.x + left }
+    },
     [content, limits],
   )
+  /** What the timeline and the details layer leave of the window. */
+  const freeView = (): Size => ({ width: viewSize().width - TIMELINE_SPACE - leftSpace.current, height: viewSize().height - BAR_SPACE })
 
-  /** Centred in the part of the window the panel and timeline leave free. */
-  const centreIn = (world: { x: number; y: number }, zoom: number, reserve: number): Camera => {
+  /** `rect` fitted into what they leave, the layer's share of it shifted in from the left. */
+  const fitIn = (rect: Rect, padding: number): Camera => {
+    const f = fitRect(rect, freeView(), padding, limits)
+    return { ...f, x: f.x + leftSpace.current / 2 }
+  }
+
+  /** Centred in the part of the window the layer and the timeline leave free. */
+  const centreIn = (world: { x: number; y: number }, zoom: number, right: number = TIMELINE_SPACE, left: number = leftSpace.current): Camera => {
     const c = centreOn(world, zoom, viewSize())
-    return { ...c, x: c.x - reserve / 2, y: c.y - BAR_SPACE / 2 }
+    return { ...c, x: c.x + (left - right) / 2, y: c.y - BAR_SPACE / 2 }
   }
 
   /** Now and the newest day or two, as close as they fit. */
   const newest = useCallback((): Camera => {
     const view = openingView(layout)
-    const fit = fitRect(view, freeView(), 72, limits)
+    const fit = fitIn(view, 72)
     const zoom = clampZoom(Math.min(1.1, fit.zoom), limits)
-    return clamp(centreIn({ x: view.x + view.width / 2, y: view.y + view.height / 2 }, zoom, TIMELINE_SPACE), TIMELINE_SPACE)
+    return clamp(centreIn({ x: view.x + view.width / 2, y: view.y + view.height / 2 }, zoom))
   }, [layout, limits, clamp])
 
   /** What the view opens on: everything, when it fits readably; else the newest, at the zoom it was left at. */
   const overview = useCallback((): Camera => {
-    const all = fitRect(layout.bounds, freeView(), 56, limits)
-    if (settings.zoom === null && all.zoom >= READABLE_FIT) return clamp(all, TIMELINE_SPACE)
+    const all = fitIn(layout.bounds, 56)
+    if (settings.zoom === null && all.zoom >= READABLE_FIT) return clamp(all)
     const view = openingView(layout)
-    const fit = fitRect(view, freeView(), 72, limits)
+    const fit = fitIn(view, 72)
     const zoom = clampZoom(Math.min(1.1, settings.zoom ?? fit.zoom), limits)
-    return clamp(centreIn({ x: view.x + view.width / 2, y: view.y + view.height / 2 }, zoom, TIMELINE_SPACE), TIMELINE_SPACE)
+    return clamp(centreIn({ x: view.x + view.width / 2, y: view.y + view.height / 2 }, zoom))
   }, [layout, limits, settings.zoom, clamp])
 
   const focusOn = useCallback(
     (box: Rect): Camera => {
       const v = viewSize()
-      const free = Math.max(320, v.width - PANEL_SPACE - TIMELINE_SPACE)
+      const free = Math.max(320, v.width - panelSpace() - TIMELINE_SPACE)
       // Up close, but with its neighbours still in sight: about 320 px wide on screen, whatever its day's depth.
       const zoom = clampZoom(Math.min(Math.min(free * 0.5, 320) / box.width, (v.height * 0.45) / box.height), limits)
-      return centreIn({ x: box.x + box.width / 2, y: box.y + box.height / 2 }, zoom, PANEL_SPACE + TIMELINE_SPACE)
+      return centreIn({ x: box.x + box.width / 2, y: box.y + box.height / 2 }, zoom, TIMELINE_SPACE, panelSpace())
     },
     [limits],
   )
@@ -337,7 +356,7 @@ export function CheckpointCanvas(p: CheckpointCanvasProps): JSX.Element {
   }, [p.closeRequest, leave])
 
   const fly = useCallback(
-    (to: Camera, duration?: number, right?: number) => void flyCamera(clamp(to, right), duration === undefined ? {} : { duration }),
+    (to: Camera, duration?: number, right?: number, left?: number) => void flyCamera(clamp(to, right, left), duration === undefined ? {} : { duration }),
     [flyCamera, clamp],
   )
 
@@ -347,7 +366,7 @@ export function CheckpointCanvas(p: CheckpointCanvasProps): JSX.Element {
       setNoteState("idle")
       if (name === null) return
       const box = layout.cards.get(name)
-      if (box !== undefined) fly(focusOn(box), undefined, PANEL_SPACE + TIMELINE_SPACE)
+      if (box !== undefined) fly(focusOn(box), undefined, TIMELINE_SPACE, panelSpace())
     },
     [layout.cards, fly, focusOn],
   )
@@ -356,7 +375,7 @@ export function CheckpointCanvas(p: CheckpointCanvasProps): JSX.Element {
     const v = viewSize()
     fly(zoomAround(cameraNow(), factor, anchor ?? { x: v.width / 2, y: v.height / 2 }, limits), 260)
   }
-  const fitAll = (): void => fly(fitRect(layout.bounds, freeView(), 72, limits))
+  const fitAll = (): void => fly(fitIn(layout.bounds, 72))
 
   // ---- Pointer, wheel and pinch -----------------------------------------
 
@@ -513,9 +532,9 @@ export function CheckpointCanvas(p: CheckpointCanvasProps): JSX.Element {
     const d = layout.days[tick.day]
     if (d === undefined) return overview()
     const block = withLabel(d)
-    const fit = fitRect(block, freeView(), 96, limits)
+    const fit = fitIn(block, 96)
     const zoom = clampZoom(Math.min(fit.zoom, Math.max(cameraNow().zoom, 0.55)), limits)
-    return centreIn({ x: block.x + block.width / 2, y: block.y + block.height / 2 }, zoom, TIMELINE_SPACE)
+    return centreIn({ x: block.x + block.width / 2, y: block.y + block.height / 2 }, zoom)
   }
   const step = (direction: -1 | 1): void => {
     const next = stepThrough(layout.order, selected, direction)
@@ -542,7 +561,7 @@ export function CheckpointCanvas(p: CheckpointCanvasProps): JSX.Element {
     setSelected(null)
     const today = layout.days.at(-1)
     const isToday = today !== undefined && today.key === dayKey(new Date())
-    void flyCamera(clamp(fitRect(union([layout.now, ...(isToday ? [withLabel(today)] : [])]), freeView(), 96, limits), TIMELINE_SPACE))
+    void flyCamera(clamp(fitIn(union([layout.now, ...(isToday ? [withLabel(today)] : [])]), 96)))
     setStatus(null)
     try {
       const ran = await props.current.run("save", name)
@@ -568,7 +587,7 @@ export function CheckpointCanvas(p: CheckpointCanvasProps): JSX.Element {
       })
       const after = landed as TimelineLayout | null
       const today = after?.days.at(-1)
-      if (after !== null) void flyCamera(clamp(fitRect(union([after.now, ...(today === undefined ? [] : [withLabel(today)])]), freeView(), 96, limits), TIMELINE_SPACE))
+      if (after !== null) void flyCamera(clamp(fitIn(union([after.now, ...(today === undefined ? [] : [withLabel(today)])]), 96)))
       return name
     } finally {
       setWorking(null)
@@ -968,19 +987,17 @@ export function CheckpointCanvas(p: CheckpointCanvasProps): JSX.Element {
           </div>
         )}
 
-        {selectedCheckpoint !== undefined && (
-          <CheckpointDetails
-            c={selectedCheckpoint}
-            now={nowMs}
-            busy={busy}
-            saving={noteState}
-            onClose={() => select(null)}
-            onLook={() => setLooking(true)}
-            onNote={(d) => writeNote(selectedCheckpoint.name, d)}
-            onGoBack={() => setConfirm({ kind: "go-back", name: selectedCheckpoint.name })}
-            onDelete={() => setConfirm({ kind: "delete", name: selectedCheckpoint.name })}
-          />
-        )}
+        <CheckpointDetailsLayer
+          c={selectedCheckpoint}
+          now={nowMs}
+          busy={busy}
+          saving={noteState}
+          onClose={() => select(null)}
+          onLook={() => setLooking(true)}
+          onNote={writeNote}
+          onGoBack={(name) => setConfirm({ kind: "go-back", name })}
+          onDelete={(name) => setConfirm({ kind: "delete", name })}
+        />
       </SpatialCanvas>
 
       {looking && selectedCheckpoint !== undefined && (

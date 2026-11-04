@@ -1,14 +1,15 @@
-import { type KeyboardEvent, useEffect, useId, useLayoutEffect, useRef, useState } from "react"
+import { type KeyboardEvent, type Ref, useEffect, useId, useLayoutEffect, useRef, useState } from "react"
 
-import { SpatialCanvasSidePanel } from "@winvm/canvas"
+import { CanvasGlyph, CanvasIconButton, GLYPHS } from "@winvm/canvas"
 
+import { copyText } from "../../backend"
 import { Button } from "../../components/Button"
 import { Icon } from "../../components/Icon"
 import { t } from "../../i18n"
 import { formatSize, type SaveNotes } from "../../model"
 import { titleEdit } from "../machines/machines"
 import { type Checkpoint, deleteBlocked, incompatibleReason, shownName } from "./checkpoints"
-import { kindLabel, Picture, takenAt } from "./CheckpointCard"
+import { KindChip, kindTip, Picture, takenAt } from "./CheckpointCard"
 
 export interface NoteDraft {
   readonly title: string
@@ -57,6 +58,9 @@ interface DetailsProps {
   /** Something is running (a save, a load, a start…): the actions wait. */
   readonly busy: boolean
   readonly saving: "idle" | "saving" | "saved" | "failed"
+  /** Open, or easing out (the layer's `data-state`); the layer sets it. */
+  readonly state?: "open" | "closed"
+  readonly panelRef?: Ref<HTMLElement>
   onClose(): void
   /** Show the screenshot as big as the window allows. */
   onLook(): void
@@ -206,12 +210,53 @@ function InlineTitle({ shown, hasTitle, name, onCommit }: { readonly shown: stri
   )
 }
 
+
+/** How long the panel takes to ease out (the stylesheet's `data-state="closed"` duration); a cut under reduced motion. */
+export const PANEL_EXIT_MS = 180
+const panelExitMs = (): number => (typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches ? 0 : PANEL_EXIT_MS)
+
+/** Puts the save's name on the Mac's clipboard; a quiet tick says it did. */
+function CopyName({ name }: { readonly name: string }): JSX.Element {
+  const [copied, setCopied] = useState(false)
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  useEffect(
+    () => () => {
+      if (timer.current !== null) clearTimeout(timer.current)
+    },
+    [],
+  )
+  const tip = copied ? t("checkpoints.copiedName") : t("checkpoints.copyName")
+  return (
+    <button
+      type="button"
+      className="checkpoint-details__copy"
+      aria-label={tip}
+      title={tip}
+      onClick={() => {
+        void Promise.resolve()
+          .then(() => copyText(name))
+          .then(() => {
+            setCopied(true)
+            if (timer.current !== null) clearTimeout(timer.current)
+            timer.current = setTimeout(() => setCopied(false), 1500)
+          })
+          .catch(() => undefined)
+      }}
+    >
+      <Icon name={copied ? "check" : "copy"} />
+    </button>
+  )
+}
+
 /**
- * The selected checkpoint, up close: its title (edited where it stands), a
- * larger screenshot, its note (written as it is typed), what it is, and the
- * two things to do with it.
+ * The selected checkpoint, up close, laid out as its card's caption plate is:
+ * the picture first, then, under it, the title (edited where it stands), when
+ * it was taken, how it came to be and its size, whether Windows can go back
+ * to it here (only when it can't), its note (written as it is typed), what
+ * else there is to know (tags; the save name, when it isn't the title), and
+ * the two things to do with it. Each fact is in one place.
  */
-export function CheckpointDetails({ c, now, busy, saving, onClose, onLook, onNote, onGoBack, onDelete }: DetailsProps): JSX.Element {
+export function CheckpointDetails({ c, now, busy, saving, state = "open", panelRef, onClose, onLook, onNote, onGoBack, onDelete }: DetailsProps): JSX.Element {
   const [draft, setDraft] = useState(() => draftOf(c.notes))
   const written = useRef(draftOf(c.notes))
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -284,104 +329,194 @@ export function CheckpointDetails({ c, now, busy, saving, onClose, onLook, onNot
   // The title typed here, else the one the save came with, else its name.
   const shown = draft.title.trim() !== "" ? draft.title.trim() : (c.title ?? c.name)
   return (
-    <SpatialCanvasSidePanel
-      className="checkpoint-details"
-      label={t("checkpoints.details", { name })}
-      title={name}
-      closeLabel={t("checkpoints.closeDetails")}
-      onClose={onClose}
-      header={<InlineTitle shown={shown} hasTitle={draft.title.trim() !== ""} name={c.name} onCommit={(title) => keep({ title })} />}
-      footer={
-        <footer className="checkpoint-details__actions">
-          <Button size="sm" variant="ghost" className="checkpoint-details__delete" disabled={busy || blocked !== null} title={blocked === null ? undefined : t(blocked)} onClick={onDelete}>
-            <Icon name="trash" />
-            {t("checkpoints.delete")}
-          </Button>
-          <span className="checkpoint-details__saved" role="status" data-failed={saving === "failed"}>
-            {saving === "saving" ? t("checkpoints.note.saving") : saving === "saved" ? t("checkpoints.note.saved") : saving === "failed" ? t("checkpoints.note.failed") : ""}
-          </span>
-          <Button size="sm" variant="primary" disabled={busy || reason !== null} title={reason === null ? t("checkpoints.goBackTip") : t(reason)} onClick={onGoBack}>
+    <aside ref={panelRef} className="checkpoint-details" aria-label={t("checkpoints.details", { name })} tabIndex={-1} data-state={state}>
+      <CanvasIconButton className="checkpoint-details__close" label={t("checkpoints.closeDetails")} onClick={onClose}>
+        <CanvasGlyph>{GLYPHS.close}</CanvasGlyph>
+      </CanvasIconButton>
+      <div className="checkpoint-details__scroll">
+        <button type="button" className="checkpoint-details__picture" title={t("checkpoints.lookTip")} onClick={onLook}>
+          <Picture c={c} sharp wanted />
+        </button>
+        <div className="checkpoint-details__plate">
+          <InlineTitle shown={shown} hasTitle={draft.title.trim() !== ""} name={c.name} onCommit={(title) => keep({ title })} />
+          <p className="checkpoint-details__when">{takenAt(c, now)}</p>
+          <div className="checkpoint-details__facts">
+            <KindChip kind={c.kind} className="checkpoint-details__kind" />
+            <span className="checkpoint-details__size">{formatSize(c.bytes)}</span>
+          </div>
+          <p className="checkpoint-details__kind-note">{kindTip(c.kind)}</p>
+          {reason !== null && (
+            // A status, not a property: one calm line, the whole reason on hover and in the Go Back button's description.
+            <p className="checkpoint-details__status" title={t(reason)}>
+              <Icon name="warning" />
+              <span>
+                <strong>{t("checkpoints.cantLoad")}</strong> <span className="checkpoint-details__why">{t(shortReason(reason))}</span>
+              </span>
+              <span id={reasonId} hidden>
+                {t(reason)}
+              </span>
+            </p>
+          )}
+          <textarea
+            ref={noteField}
+            className="checkpoint-details__text"
+            value={draft.text}
+            aria-label={t("checkpoints.note.text")}
+            placeholder={t("checkpoints.note.textPlaceholder")}
+            rows={2}
+            onFocus={() => {
+              startedWith.current = latest.current.draft.text
+            }}
+            onChange={(e) => edit({ text: e.target.value })}
+            onBlur={flush}
+            onKeyDown={escapeTo("text")}
+          />
+          {c.note !== undefined && c.note !== "" && <p className="checkpoint-details__manifest-note">{t("checkpoints.note.taken", { note: c.note })}</p>}
+          <dl className="checkpoint-details__props">
+            <div className="checkpoint-details__prop">
+              <dt>{t("checkpoints.note.tags")}</dt>
+              <dd>
+                <input
+                  className="checkpoint-details__value-field"
+                  value={draft.tags}
+                  aria-label={t("checkpoints.note.tags")}
+                  title={t("checkpoints.note.tagsTip")}
+                  placeholder={t("checkpoints.note.tagsPlaceholder")}
+                  autoComplete="off"
+                  spellCheck={false}
+                  onFocus={() => {
+                    startedWith.current = latest.current.draft.tags
+                  }}
+                  onChange={(e) => edit({ tags: e.target.value })}
+                  onBlur={flush}
+                  onKeyDown={escapeTo("tags")}
+                />
+              </dd>
+            </div>
+            {shown !== c.name && (
+              // What `winvm load` takes, when it is not what the title says.
+              <div className="checkpoint-details__prop checkpoint-details__prop--name">
+                <dt title={t("checkpoints.fact.nameTip")}>{t("checkpoints.fact.name")}</dt>
+                <dd className="checkpoint-details__copyable">
+                  <span className="mono">{c.name}</span>
+                  <CopyName name={c.name} />
+                </dd>
+              </div>
+            )}
+          </dl>
+        </div>
+      </div>
+      <footer className="checkpoint-details__actions">
+        <Button size="sm" variant="ghost" className="checkpoint-details__delete" disabled={busy || blocked !== null} title={blocked === null ? undefined : t(blocked)} onClick={onDelete}>
+          <Icon name="trash" />
+          {t("checkpoints.delete")}
+        </Button>
+        <span className="checkpoint-details__saved" role="status" data-failed={saving === "failed"}>
+          {saving === "saving" ? t("checkpoints.note.saving") : saving === "saved" ? t("checkpoints.note.saved") : saving === "failed" ? t("checkpoints.note.failed") : ""}
+        </span>
+        <span title={reason === null ? undefined : t(reason)}>
+          <Button
+            size="sm"
+            variant="primary"
+            disabled={busy || reason !== null}
+            title={reason === null ? t("checkpoints.goBackTip") : t(reason)}
+            aria-describedby={reason === null ? undefined : reasonId}
+            onClick={onGoBack}
+          >
             <Icon name="history" />
             {t("checkpoints.goBack")}
           </Button>
-        </footer>
+        </span>
+      </footer>
+    </aside>
+  )
+}
+
+/** The card, in the canvas, that a checkpoint is. */
+const cardButtonOf = (name: string): HTMLElement | null => {
+  for (const card of document.querySelectorAll<HTMLElement>(".checkpoint[data-name]")) {
+    if (card.dataset["name"] === name) return card.querySelector<HTMLElement>(".checkpoint__hit")
+  }
+  return null
+}
+
+export interface LayerProps extends Omit<DetailsProps, "c" | "state" | "panelRef" | "onNote" | "onGoBack" | "onDelete"> {
+  /** The selected checkpoint; none lets the panel ease out. */
+  readonly c: Checkpoint | undefined
+  onNote(name: string, draft: NoteDraft): void
+  onGoBack(name: string): void
+  onDelete(name: string): void
+}
+
+/**
+ * The checkpoint's panel as a layer above the canvas: it eases in from the
+ * left edge of the window and, when nothing is selected, eases out again,
+ * staying in the page until it has (so the way out is seen). Selecting
+ * another checkpoint while it is there changes what it says, in place, with
+ * no new slide; selecting, letting go and selecting again does not stack or
+ * flicker, the slide simply turns round where it is. Focus goes into the panel
+ * when it opens, and back to the checkpoint's card when it closes from there.
+ */
+export function CheckpointDetailsLayer({ c, onNote, onGoBack, onDelete, ...rest }: LayerProps): JSX.Element | null {
+  const open = c !== undefined
+  // What it says while it eases out, when there is no selection any more.
+  const kept = useRef<Checkpoint | undefined>(c)
+  if (c !== undefined) kept.current = c
+  const [shown, setShown] = useState(false)
+  const [lingering, setLingering] = useState(false)
+  const panel = useRef<HTMLElement>(null)
+  const was = useRef(false)
+  const exit = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  useLayoutEffect(() => {
+    const el = panel.current
+    if (open) {
+      if (exit.current !== null) clearTimeout(exit.current)
+      exit.current = null
+      setLingering(false)
+      if (el !== null) {
+        el.inert = false
+        if (!was.current) {
+          // Drawn once where it starts, then moved: the transition needs both.
+          void el.offsetWidth
+          setShown(true)
+          el.focus({ preventScroll: true })
+        } else setShown(true)
       }
-    >
-      <button type="button" className="checkpoint-details__picture" title={t("checkpoints.lookTip")} onClick={onLook}>
-        <Picture c={c} sharp wanted />
-      </button>
-      <textarea
-        ref={noteField}
-        className="checkpoint-details__text"
-        value={draft.text}
-        aria-label={t("checkpoints.note.text")}
-        placeholder={t("checkpoints.note.textPlaceholder")}
-        rows={2}
-        onFocus={() => {
-          startedWith.current = latest.current.draft.text
-        }}
-        onChange={(e) => edit({ text: e.target.value })}
-        onBlur={flush}
-        onKeyDown={escapeTo("text")}
-      />
-      {c.note !== undefined && c.note !== "" && <p className="checkpoint-details__manifest-note">{t("checkpoints.note.taken", { note: c.note })}</p>}
-      <dl className="checkpoint-details__props">
-        <div className="checkpoint-details__prop">
-          <dt>{t("checkpoints.note.tags")}</dt>
-          <dd>
-            <input
-              className="checkpoint-details__value-field"
-              value={draft.tags}
-              aria-label={t("checkpoints.note.tags")}
-              title={t("checkpoints.note.tagsTip")}
-              placeholder={t("checkpoints.note.tagsPlaceholder")}
-              autoComplete="off"
-              spellCheck={false}
-              onFocus={() => {
-                startedWith.current = latest.current.draft.tags
-              }}
-              onChange={(e) => edit({ tags: e.target.value })}
-              onBlur={flush}
-              onKeyDown={escapeTo("tags")}
-            />
-          </dd>
-        </div>
-        <div className="checkpoint-details__prop">
-          <dt>{t("checkpoints.fact.taken")}</dt>
-          <dd>{takenAt(c, now)}</dd>
-        </div>
-        <div className="checkpoint-details__prop">
-          <dt>{t("checkpoints.fact.kind")}</dt>
-          <dd>{kindLabel(c.kind)}</dd>
-        </div>
-        <div className="checkpoint-details__prop">
-          <dt>{t("checkpoints.fact.size")}</dt>
-          <dd>{formatSize(c.bytes)}</dd>
-        </div>
-        <div className="checkpoint-details__prop">
-          <dt>{t("checkpoints.fact.loads")}</dt>
-          <dd>
-            {reason !== null ? (
-              // A few words; the whole reason is the tooltip and the accessible description.
-              <span className="checkpoint-details__reason" title={t(reason)} aria-describedby={reasonId}>
-                <Icon name="warning" />
-                {t(shortReason(reason))}
-                <span id={reasonId} hidden>
-                  {t(reason)}
-                </span>
-              </span>
-            ) : c.compatible === null ? (
-              t("checkpoints.loads.unknown")
-            ) : (
-              t("checkpoints.loads.yes")
-            )}
-          </dd>
-        </div>
-        <div className="checkpoint-details__prop">
-          <dt>{t("checkpoints.fact.name")}</dt>
-          <dd className="mono">{c.name}</dd>
-        </div>
-      </dl>
-    </SpatialCanvasSidePanel>
+      was.current = true
+    } else if (was.current) {
+      was.current = false
+      // Focus that was in the panel (or nowhere: a field was left) goes back to the card it showed, before the panel stops taking focus.
+      const focus = document.activeElement
+      if (el !== null && (focus === null || focus === document.body || el.contains(focus)) && kept.current !== undefined) cardButtonOf(kept.current.name)?.focus({ preventScroll: true })
+      if (el !== null) el.inert = true
+      setShown(false)
+      setLingering(true)
+      exit.current = setTimeout(() => {
+        exit.current = null
+        setLingering(false)
+      }, panelExitMs())
+    }
+  }, [open])
+  useEffect(
+    () => () => {
+      if (exit.current !== null) clearTimeout(exit.current)
+    },
+    [],
+  )
+
+  const shownCheckpoint = c ?? kept.current
+  // `was` is still set in the render that follows a deselection, before the effect has started the ease out: the panel stays put through it.
+  if (shownCheckpoint === undefined || (!open && !lingering && !was.current)) return null
+  return (
+    <CheckpointDetails
+      {...rest}
+      c={shownCheckpoint}
+      state={open && shown ? "open" : "closed"}
+      panelRef={panel}
+      onNote={(d) => onNote(shownCheckpoint.name, d)}
+      onGoBack={() => onGoBack(shownCheckpoint.name)}
+      onDelete={() => onDelete(shownCheckpoint.name)}
+    />
   )
 }

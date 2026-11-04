@@ -21,7 +21,10 @@ const label = (key: string, values?: Record<string, string>): string => t(key, v
 /** "Today at 1:33 PM", as Finder says it. */
 export const takenAt = (c: Pick<Checkpoint, "createdAt">, now: number): string => finderDate(Date.parse(c.createdAt), now, label).long
 
+/** How a checkpoint came to be, in words ("Saved on suspend"), the same on the card and in the panel. */
 export const kindLabel = (kind: string): string => t(`checkpoints.kind.${kind}`)
+/** The same in a sentence: what made it. Its tooltip, and the panel's line under the chip. */
+export const kindTip = (kind: string): string => t(`checkpoints.kindTip.${kind}`)
 
 /** "Nov 3, 2026 at 3:30 PM": the date spelled out, in the words a card's time uses for any day but today and yesterday. What an unnamed checkpoint is called. */
 export const absoluteTime = (ms: number, locale?: string): string =>
@@ -33,6 +36,16 @@ export const absoluteTime = (ms: number, locale?: string): string =>
 /** How a checkpoint came to be, as a glyph: somebody took it, it was taken on its own, first start, put away, for tests. */
 const KIND_ICON: Record<string, IconName> = { manual: "camera", auto: "timer", baseline: "flag", stow: "archive", golden: "flask" }
 export const kindIcon = (kind: string): IconName => KIND_ICON[kind] ?? "camera"
+
+/** The kind's chip: its glyph and words, the sentence that says what made it as the tooltip. The card's and the panel's. */
+export function KindChip({ kind, className }: { readonly kind: string; readonly className: string }): JSX.Element {
+  return (
+    <span className={className} data-kind={kind} title={kindTip(kind)}>
+      <Icon name={kindIcon(kind)} />
+      <span>{kindLabel(kind)}</span>
+    </span>
+  )
+}
 
 // lucide: monitor
 export const MONITOR = (
@@ -125,7 +138,6 @@ export const CheckpointCard = memo(function CheckpointCard({ c, box, selected, z
   const reason = incompatibleReason(c)
   const name = shownName(c)
   const when = takenAt(c, now)
-  const kind = kindLabel(c.kind)
   const note = noteOf(c)
   const screenWidth = box.width * zoom
   // Read through the hook: the window may be moved to a display of another ratio, which resizes nothing.
@@ -182,10 +194,7 @@ export const CheckpointCard = memo(function CheckpointCard({ c, box, selected, z
               <>
                 <span className="checkpoint__when">{when}</span>
                 <span className="checkpoint__facts">
-                  <span className="checkpoint__kind" data-kind={c.kind}>
-                    <Icon name={kindIcon(c.kind)} />
-                    {kind}
-                  </span>
+                  <KindChip kind={c.kind} className="checkpoint__kind" />
                   <span className="checkpoint__size">{formatSize(c.bytes)}</span>
                 </span>
                 {note !== null && (
