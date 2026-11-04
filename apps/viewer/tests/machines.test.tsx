@@ -294,7 +294,7 @@ describe("Delete…", () => {
 
 describe("the machine rules", () => {
   it("take a title as the CLI does (one line, at most 80 characters), and read emptying it as clearing it", () => {
-    for (const title of ["Build box", "", "  spaced  ", "x".repeat(80), "x".repeat(81), "a\nb", "a\u0007b", "tab\there", "a b", "ünï😀"]) {
+    for (const title of ["Build box", "", "  spaced  ", "x".repeat(80), "x".repeat(81), "a\nb", "a\u0007b", "tab\there", "a b", "ünï😀", "a\u202eb", "a\u200bb", "a\u200e", "\ufeffa", "👨\u200d👩\u200d👧", "a\u200cb"]) {
       let ok = true
       try {
         checkTitle(title)

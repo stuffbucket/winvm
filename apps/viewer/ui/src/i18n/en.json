@@ -397,7 +397,7 @@
   "machine.nameLabel": "Name",
   "machine.namePlaceholder": "work",
   "machine.nameHint": "Letters, digits, dots, dashes and underscores.",
-  "machine.name.invalid": "Use letters, digits, dots, dashes and underscores, starting with a letter or digit.",
+  "machine.name.invalid": "Use letters, digits, dots, dashes and underscores, with no spaces, starting with a letter or digit.",
   "machine.name.taken": "There's already a machine with that name.",
   "machine.advanced": "Advanced",
   "machine.imageLabel": "Windows image",

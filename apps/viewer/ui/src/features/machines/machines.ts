@@ -34,7 +34,7 @@ export function titleProblem(title: string): TitleProblem | null {
   const typed = title.trim()
   if ([...typed].length > TITLE_MAX) return "long"
   // eslint-disable-next-line no-control-regex
-  if (/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/.test(typed)) return "control"
+  if (/[\u0000-\u001f\u007f-\u009f\u200b\u200e\u200f\u2028-\u202e\u2060\u2066-\u2069\ufeff]/.test(typed)) return "control"
   return null
 }
 

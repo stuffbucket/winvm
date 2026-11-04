@@ -55,15 +55,18 @@ export const DEFAULTS: InstanceConfig = {
 export const TITLE_MAX = 80
 
 /**
- * A title as stored: trimmed, at most TITLE_MAX characters, and no control
- * characters (it is shown on one line, in a window title and a menu). Throws
+ * A title as stored: trimmed, at most TITLE_MAX characters, and no control or
+ * invisible characters (line breaks, zero-width spaces, and the marks that flip
+ * the direction of text: it is shown on one line, in a window title and a menu,
+ * where they would hide or reorder what is there). Joiners stay: emoji and
+ * several scripts need them. Throws
  * with a message fit for the user.
  */
 export function checkTitle(raw: string): string {
   const title = raw.trim()
   if ([...title].length > TITLE_MAX) throw new Error(`title is at most ${String(TITLE_MAX)} characters`)
   // eslint-disable-next-line no-control-regex
-  if (/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/.test(title)) throw new Error("title is one line of text, without control characters")
+  if (/[\u0000-\u001f\u007f-\u009f\u200b\u200e\u200f\u2028-\u202e\u2060\u2066-\u2069\ufeff]/.test(title)) throw new Error("title is one line of text, without control characters")
   return title
 }
 
