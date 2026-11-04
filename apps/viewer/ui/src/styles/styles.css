@@ -1058,12 +1058,34 @@ html[data-os="macos"] .toolbar {
   margin: 0;
 }
 
+/* The stage: a picture is a picture of the app, set down on a surface of its own, never run to the popover's edges.
+   A fixed height, so the panel doesn't change size when the topic does. */
+.help__stage {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  block-size: 18rem;
+  padding: var(--space-4);
+  user-select: none;
+  -webkit-user-select: none;
+  pointer-events: none;
+}
+
+.help__stage picture {
+  display: contents;
+}
+
+/* Framed like a window lying on the stage: a hairline, rounded corners and a shadow. Its own edge is what tells it from the popover. */
 .help__image {
   display: block;
-  width: 100%;
+  max-width: 100%;
+  max-height: 100%;
+  width: auto;
   height: auto;
-  aspect-ratio: 16 / 9;
-  object-fit: cover;
+  border: var(--border-width-hairline) solid var(--border-strong);
+  border-radius: var(--radius-card);
+  box-shadow: var(--elevation-modal);
+  -webkit-user-drag: none;
 }
 
 /* Which picture, when a topic has more than one. */
