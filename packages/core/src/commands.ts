@@ -1201,7 +1201,8 @@ export const USAGE =
   "          [-i name] set PATH [--letter Z] [--readonly] | clear   takes effect at the next start\n" +
   "          [-i name] install [--restart]   set up Windows' side once (restarts Windows)\n" +
   "  display [-i name] [WxH] [--scale PCT]   resize the running screen live (virtio-gpu)\n" +
-  "          [-i name] virtio-gpu|ramfb       switch a stopped instance's display device\n" +
+  "          [-i name] virtio-gpu|ramfb       set a stopped instance's cold-boot display device\n" +
+  "                                (new file saves restore on the display they were taken on)\n" +
   "  webview [-i name] enable <exe> | targets | eval <js> | click|wait|text <selector>\n" +
   "                                drive WebView2 windows over DevTools (winvm webview for more)\n" +
   "  ui      [-i name] <verb> [selector]   find and click windows, controls, the tray (winvm ui help)\n" +

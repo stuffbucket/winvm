@@ -33,6 +33,25 @@ winvm clock                      # the guest's clock offset, and fix it
 - **Compatibility.** A save loads only into the same virtual hardware, image,
   firmware and QEMU version. `saves` shows which ones still load, and `load`
   says what changed when it refuses.
+- **Display.** New file saves record the display device the running VM was
+  launched with (`ramfb`, or `virtio-gpu`), not the preference waiting for the
+  next cold boot. Loading a save, or recalling a stow, restarts QEMU with that
+  captured device: a ramfb save restores on ramfb even after you switch the
+  instance to virtio-gpu, and a virtio-gpu save restores on virtio-gpu even
+  after you switch to ramfb. Loading never rewrites your configured preference
+  (`winvm display`); it still decides what an ordinary cold boot launches
+  (`start --boot` skips a stow). `winvm display` shows the configured and the
+  running device, and `status` reports the running one. A save made after a
+  restore records the restored device again. `saves`, stow recall, golden
+  cloning, and saves kept by `destroy --keep-saves` all use the same
+  display-aware check. The screen's size is not part of this: a restored guest
+  comes back at the size it had, and live resizing works as before.
+- **Older checkpoints.** File saves made before the display was recorded, and
+  internal `snapshot`/`rewind` checkpoints, still load only while the instance's
+  display is the device they were taken on. Switch the preference back with
+  `winvm display` (while stopped) before loading one; an old compatibility hash
+  cannot reveal which device it came from. Other hardware, image, firmware and
+  QEMU checks stay strict for every save.
 - **Clock.** Loading, resuming or recalling a stow sets the guest's clock to
   the host's.
 - **Paused stays paused.** Only `resume` (or `wake`) starts a paused or asleep
@@ -99,8 +118,8 @@ A note still belongs to its save:
 `saves --json` reports, for each save, `format`, `screenshot` and `thumbnail`
 (absolute paths, or `null`), `screenSize`, `title` and `notes` (the whole note,
 or `null`). For a save that won't load, `incompatible` lists what changed:
-`base`, `hardware`, `display` (only the display device differs), `firmware` or
-`qemu`.
+`base`, `hardware`, `display` (only the display device differs: a save without
+a recorded display), `firmware` or `qemu`.
 
 ## Goldens
 
