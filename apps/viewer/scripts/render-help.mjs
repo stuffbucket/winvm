@@ -23,6 +23,11 @@
  *   --no-build        use the dist/ that is there
  *   --only <which>   just terminal, files, checkpoints or claude; --scheme light|dark just one appearance
  *
+ * Each picture shows only the window or panel its topic explains (see
+ * docs/design/components.md → Help popover → Pictures), clipped here, so the
+ * popover can frame it as an inset figure on its own stage. A picture of the whole
+ * app window, toolbar and all, would read as the popover's own controls.
+ *
  * The Checkpoints pictures name the canvas's parts (`.checkpoints`,
  * `.checkpoint[data-name]`, the New Checkpoint button): if the canvas changes
  * shape, adjust the selectors in `checkpointPictures` below.
@@ -51,6 +56,7 @@ const HEIGHT = 450
 const SCALE = 1.5
 const WIDE = { width: 960, height: 540, scale: 1.25 }
 const QUALITY = 86
+const PICTURE_WIDTH = 1200
 /** The fixed "now" the fixtures are relative to: a Tuesday, so the checkpoint days read as Today, Yesterday and weekdays. */
 const NOW = new Date(2026, 10, 3, 15, 30)
 
@@ -194,17 +200,37 @@ async function checkpointPictures(scheme) {
   await view.close()
 }
 
-async function claudePicture(scheme) {
-  // A window tall enough that the display fills its width; the picture is the corner with the toolbar's right end and the panel under it.
-  const size = { width: 1000, height: 680 }
-  const clip = { x: size.width - 640, y: 0, width: 640, height: 360 }
-  const page = await open(scheme, "index.html", size, 1200 / clip.width)
+/** The Use with Claude panel open over a running machine, in a window `size` big at `scale`. */
+async function claudePanel(scheme, size, scale) {
+  const page = await open(scheme, "index.html", size, scale)
   await page.waitForSelector(".display")
   await page.evaluate(() => window.__fakeScreen())
   await wait(300)
   await page.getByRole("button", { name: "Use with Claude" }).click()
   await page.waitForSelector(".popover .clients")
   await wait(400)
+  // Lower, clear of the toolbar, so that nothing of it shares the picture.
+  await page.evaluate(() => {
+    const panel = document.querySelector(".popover")
+    panel.style.top = `${String(panel.getBoundingClientRect().top + 48)}px`
+  })
+  await wait(100)
+  return page
+}
+
+async function claudePicture(scheme) {
+  // The picture is the panel and the guest's screen around it, clipped to the panel's own box plus a margin:
+  // not the toolbar's buttons, which in a row above it would read as the help popover's own controls.
+  const size = { width: 1000, height: 680 }
+  const MARGIN = 24
+  const probe = await claudePanel(scheme, size, 1)
+  const box = await probe.locator(".popover").boundingBox()
+  await probe.close()
+  const width = Math.round(box.width + 2 * MARGIN)
+  const height = Math.round((width * 9) / 16)
+  // The panel centred, so the guest's screen shows evenly all round it.
+  const clip = { x: Math.round(box.x - MARGIN), y: Math.round(box.y + box.height / 2 - height / 2), width, height }
+  const page = await claudePanel(scheme, size, PICTURE_WIDTH / width)
   await picture(page, "agent-claude", scheme, clip)
   await page.close()
 }
