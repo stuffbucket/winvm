@@ -250,7 +250,9 @@ jobs:
       # skip straight to the check.
       - name: Is the release still a draft
         id: state
-        run: echo "draft=$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json isDraft --jq .isDraft)" >> "$GITHUB_OUTPUT"
+        run: |
+          draft=$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json isDraft --jq .isDraft)
+          echo "draft=${draft}" >> "$GITHUB_OUTPUT"
 
       - name: Add latest.json and the SBOM, and assert the asset list
         if: steps.state.outputs.draft == 'true'
