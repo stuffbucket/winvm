@@ -14,10 +14,12 @@ export function HelpFigure({ topic }: { readonly topic: Topic }): JSX.Element {
   return (
     <figure className="help__figure">
       {image !== undefined && (
-        <picture>
-          <source media="(prefers-color-scheme: dark)" srcSet={image.dark} />
-          <img className="help__image" src={image.light} alt={t(`help.${topic.id}.fig.${name}.alt`)} width={image.width} height={image.height} />
-        </picture>
+        <div className="help__stage">
+          <picture>
+            <source media="(prefers-color-scheme: dark)" srcSet={image.dark} />
+            <img className="help__image" src={image.light} alt={t(`help.${topic.id}.fig.${name}.alt`)} width={image.width} height={image.height} draggable={false} />
+          </picture>
+        </div>
       )}
       {several && (
         <div className="help__views" role="group" aria-label={t(`ability.${topic.id}`)}>

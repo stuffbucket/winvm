@@ -182,8 +182,7 @@ itself is documentation and never mentions the machine's state. See [`windows.md
 
 - **Shape.** Width `min(32rem, 100vw − --space-6)`, `--surface-card`,
   hairline `--border-subtle`, `--radius-card`, `--elevation-modal`. Top to
-  bottom: the picture edge to edge (16:9, hairline under it, `--surface-control`
-  behind it while it loads), a head (title in `--text-md` at `--weight-lg`
+  bottom: the picture on its stage (below), a head (title in `--text-md` at `--weight-lg`
   with a ghost icon Close button), the content (a lead sentence and numbered
   steps in `--text-base`, one note in `--text-sm`, its title in `--weight-md`),
   and a foot (a hairline above, position in `--text-sm` muted, ghost icon
@@ -197,6 +196,27 @@ itself is documentation and never mentions the machine's state. See [`windows.md
   follows the same media query, so they always agree. A topic with more than
   one picture shows buttons under it (`aria-pressed`, `--text-sm`), the
   open one on `--surface-control`.
+  - *Framing.* The app is dark when the popover is, so a picture must never
+    run to the popover's edges: its toolbar, or a panel's buttons, would read
+    as the popover's own controls. The picture sits on a **stage**
+    (`.help__stage`: `--surface-control`, `--space-4` all round, a fixed
+    `18rem` high so the popover doesn't change size from topic to topic,
+    hairline under it) and is framed as a window lying on it:
+    `--border-strong` hairline (the one border that shows on both a dark
+    screenshot and the dark stage), `--radius-card`, `--elevation-modal`. It
+    is fitted inside the stage (`max-width`/`max-height` 100%, aspect kept),
+    never cropped by it. It is inert: `user-select: none`,
+    `pointer-events: none`, `draggable=false`, never focusable; its `alt`
+    says what it shows. It is one image, not a card inside the card.
+  - *Cropping.* Show only what the topic explains, as a window: the
+    Terminal, the Files window, the Checkpoints canvas (each with its traffic
+    lights, which say "window" at a glance). When the subject is a panel (Use
+    with Claude), clip to the panel's box plus a margin so it sits on the
+    guest's screen, and move it clear of the toolbar first; never include the
+    toolbar's row of icons. `scripts/render-help.mjs` does the clipping
+    (`page.screenshot({ clip })`), so a picture is regenerated, not
+    hand-cropped. Keep them 16:9 (1200 × 675), so every picture fits the
+    stage the same way.
 - **Placement** (`placeNear`). To the right of the anchor, centred on it, so
   the anchor stays in view; else to its left; else below or above if all of
   it fits; else over the window's middle. Always `--space-3` inside the
