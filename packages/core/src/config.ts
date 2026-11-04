@@ -34,6 +34,15 @@ export interface InstanceConfig {
    * minute does.
    */
   readonly "watch.idleCpuPercent": number
+  /**
+   * Keep the Mac from going to sleep on its own while this machine runs
+   * (`caffeinate -i` for QEMU's lifetime; the display may still turn off). OFF by
+   * default: it costs battery on a laptop. A Mac that idles to sleep freezes QEMU
+   * and the guest with it for as long as it sleeps, and nothing in winvm holds it
+   * awake, so a long job in the guest stops while you are away from the keyboard
+   * and the guest's clock is behind until it is resynced on wake.
+   */
+  readonly "power.keepAwake": boolean
   /** What the Mac app calls this instance (its window, Terminal and Files); "" is the instance's name. */
   readonly title: string
 }
@@ -48,6 +57,7 @@ export const DEFAULTS: InstanceConfig = {
   "stow.idleMinutes": 60,
   "watch.enabled": true,
   "watch.idleCpuPercent": 10,
+  "power.keepAwake": false,
   title: "",
 }
 

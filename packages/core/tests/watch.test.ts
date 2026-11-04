@@ -13,7 +13,7 @@ import { DEFAULTS, configPath, effectiveConfig, parseAssignment, readOverrides, 
 import { instanceDir } from "../src/paths"
 import type { Decision, Sample, Settings, Timing } from "../src/idle"
 import { IdleMachine, autosaveName, savesToRotate } from "../src/idle"
-import { ensureWatcher, parseCpuTime, watchAfterRestore } from "../src/watch"
+import { KeepAwake, caffeinateArgs, ensureWatcher, parseCpuTime, watchAfterRestore } from "../src/watch"
 
 const MIN = 60_000
 const TIMING: Timing = { tickMs: 15_000, wakeGapMs: 45_000, cpuWindowMs: 60_000, settleMs: 60_000, driftCheckMs: 30 * MIN }
@@ -368,5 +368,57 @@ describe("watcher after a load or rewind", () => {
   it("never starts one with watch.enabled=false", () => {
     writeAssignments("off", [parseAssignment("watch.enabled=false")])
     expect(ensureWatcher("off")).toBeNull()
+  })
+})
+
+describe("power.keepAwake", () => {
+  type Child = NonNullable<ReturnType<typeof import("node:child_process").spawn>>
+  const fake = (): { started: (readonly string[])[]; killed: number; start: (a: readonly string[]) => Child } => {
+    const o = {
+      started: [] as (readonly string[])[],
+      killed: 0,
+      start: (a: readonly string[]): Child => {
+        o.started.push(a)
+        return { kill: () => (o.killed += 1) } as unknown as Child
+      },
+    }
+    return o
+  }
+
+  it("is off by default, so nothing changes for anyone who has not asked", () => {
+    expect(DEFAULTS["power.keepAwake"]).toBe(false)
+    const f = fake()
+    expect(new KeepAwake(f.start).update(DEFAULTS["power.keepAwake"], 4242)).toBeNull()
+    expect(f.started).toEqual([])
+  })
+
+  it("holds the Mac awake for QEMU's lifetime, once, and says so", () => {
+    const f = fake()
+    const k = new KeepAwake(f.start)
+    expect(k.update(true, 4242)).toContain("4242")
+    expect(k.update(true, 4242)).toBeNull()
+    expect(f.started).toEqual([caffeinateArgs(4242)])
+    expect(caffeinateArgs(4242)).toEqual(["-i", "-w", "4242"])
+  })
+
+  it("follows QEMU being replaced and lets go when switched off", () => {
+    const f = fake()
+    const k = new KeepAwake(f.start)
+    k.update(true, 1)
+    k.update(true, 2)
+    expect(f.started.map((a) => a[2])).toEqual(["1", "2"])
+    expect(f.killed).toBe(1)
+    expect(k.update(false, 2)).toContain("no longer")
+    expect(f.killed).toBe(2)
+    expect(k.update(false, 2)).toBeNull()
+  })
+
+  it("reports a Mac that will not run caffeinate instead of pretending", () => {
+    expect(new KeepAwake(() => null).update(true, 7)).toContain("could not start")
+  })
+
+  it("is a setting that takes true or false", () => {
+    expect(parseAssignment("power.keepAwake=on")).toEqual(["power.keepAwake", true])
+    expect(() => parseAssignment("power.keepAwake=maybe")).toThrow()
   })
 })

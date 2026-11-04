@@ -486,6 +486,53 @@ export async function stopWatcher(name: string): Promise<boolean> {
   return true
 }
 
+/** `caffeinate` holding the Mac awake for as long as QEMU `pid` lives (-i: no idle system sleep; the display may still turn off). */
+export const caffeinateArgs = (pid: number): readonly string[] => ["-i", "-w", String(pid)]
+
+/**
+ * `power.keepAwake`: one `caffeinate` per QEMU process, ended by it exiting
+ * (-w) or by the setting going off again. Never throws: a Mac without it just
+ * sleeps as before.
+ */
+export class KeepAwake {
+  private child: ReturnType<typeof spawn> | null = null
+  private pid: number | null = null
+
+  private readonly start: (args: readonly string[]) => ReturnType<typeof spawn> | null
+
+  constructor(start: (args: readonly string[]) => ReturnType<typeof spawn> | null = realCaffeinate) {
+    this.start = start
+  }
+
+  /** Returns a line to log when something changed, else null. */
+  update(want: boolean, qemuPid: number): string | null {
+    if (!want) {
+      if (this.child === null) return null
+      this.child.kill()
+      this.child = null
+      this.pid = null
+      return "power: no longer keeping the Mac awake"
+    }
+    if (this.child !== null && this.pid === qemuPid) return null
+    this.child?.kill()
+    this.child = this.start(caffeinateArgs(qemuPid))
+    this.pid = qemuPid
+    return this.child === null ? "power: could not start caffeinate; the Mac may sleep" : `power: keeping the Mac awake while QEMU ${String(qemuPid)} runs (caffeinate -i)`
+  }
+}
+
+function realCaffeinate(args: readonly string[]): ReturnType<typeof spawn> | null {
+  if (process.platform !== "darwin") return null
+  try {
+    const c = spawn("caffeinate", [...args], { stdio: "ignore" })
+    c.on("error", () => undefined)
+    c.unref()
+    return c
+  } catch {
+    return null
+  }
+}
+
 // ---------------------------------------------------------------------------
 // The loop
 
@@ -670,6 +717,7 @@ export async function watch(name: string, o: WatchOptions = {}): Promise<number>
   let lastSummary = ""
   let lastTickLogAt = 0
   const liveness = new LivenessLog(timing.tickMs)
+  const awake = new KeepAwake()
   for (;;) {
     await sleep(timing.tickMs)
     const livePid = qemu.pidOf(p)
@@ -700,6 +748,8 @@ export async function watch(name: string, o: WatchOptions = {}): Promise<number>
       finish("watch.enabled is false")
       return 0
     }
+    const power = awake.update(cfg["power.keepAwake"], qemuPid)
+    if (power !== null) log(power)
 
     const nowCpu = cpuSeconds(qemuPid)
     const now = Date.now()
