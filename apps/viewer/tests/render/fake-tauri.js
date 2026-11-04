@@ -62,7 +62,7 @@
     memoryMiB: 8192,
     screen: "virtio-gpu 1920x1200",
     overlayBytes: query.get("overlay") === "none" ? null : Number(query.get("overlay") ?? "9.1") * GiB,
-    guest: { agent: "ok", agentVersion: "1.0", os: "Windows 11" },
+    guest: { agent: query.get("agent") ?? "ok", agentVersion: "1.0", os: "Windows 11" },
     saves: { count: saves.length, bytes: 80 * GiB },
     notes: [],
   }
@@ -137,7 +137,8 @@
       return out(machineNote === null ? null : { text: machineNote, updatedAt: new Date().toISOString() })
     }
     if (verb === "doctor") return out({ ready: true, checks: [], timeMachine: "ok" })
-    if (verb === "open") return out("no screen in the fake", 1)
+    // ?screen=1: a connection to nothing, so the app mounts its Screen (scripts/render-screen-input.mjs paints the desktop).
+    if (verb === "open") return query.get("screen") === "1" ? out({ display: 0, vncPort: 5900, websocketPort: 1, password: "x" }) : out("no screen in the fake", 1)
     if (verb === "saves" && rest.includes("note")) {
       const name = rest[rest.indexOf("note") + 1] === "-i" ? rest[rest.indexOf("note") + 3] : rest[rest.indexOf("note") + 1]
       const s = saves.find((x) => x.name === name)
@@ -268,6 +269,7 @@
   window.__fakeCount = () => saves.length
 
   // A made-up live screen in the display, for the view to shrink and copy.
+  window.__paintDesktop = paintDesktop
   window.__fakeScreen = () => {
     const display = document.querySelector(".display")
     if (display === null) return false

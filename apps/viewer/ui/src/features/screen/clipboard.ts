@@ -17,6 +17,8 @@ export interface ClipboardPorts {
   toGuest(text: string): void
   /** The window is in front. */
   focused(): boolean
+  /** The guest takes input (input.ts). A paused guest drops what is handed it, so it waits: see `fromMac`. */
+  canSend?(): boolean
 }
 
 export class ClipboardSync {
@@ -55,9 +57,14 @@ export class ClipboardSync {
     this.ports.writeMac(text).catch((error: unknown) => console.warn("putting Windows' clipboard on the Mac failed", error))
   }
 
-  /** The window came forward: send the Mac's clipboard to Windows if it changed. */
+  /**
+   * The window came forward (or the guest takes input again): send the Mac's
+   * clipboard to Windows if it changed. While the guest takes none (paused,
+   * asleep, starting) nothing is sent and nothing is marked shared, so it goes
+   * once the guest does: the caller asks again then.
+   */
   fromMac(): Promise<void> {
-    if (!this.ports.focused()) return Promise.resolve()
+    if (!this.ports.focused() || this.ports.canSend?.() === false) return Promise.resolve()
     if (this.reading !== null) {
       this.again = true
       return this.reading
@@ -81,7 +88,7 @@ export class ClipboardSync {
       console.warn("reading the Mac's clipboard failed", error)
       return
     }
-    if (text === "" || text === this.shared || before !== this.generation || !this.ports.focused()) return
+    if (text === "" || text === this.shared || before !== this.generation || !this.ports.focused() || this.ports.canSend?.() === false) return
     this.shared = text
     this.ports.toGuest(text)
   }
