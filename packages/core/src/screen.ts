@@ -354,7 +354,8 @@ function switchDevice(name: string, meta: InstanceMeta, p: Paths, from: DisplayC
     )
     return 1
   }
-  // Each save judged at its own size (saves.compatFor), before and after the switch.
+  // Each save judged at its own size and display (saves.compatFor), before and after the switch: a save
+  // that recorded its display loads on it whatever the preference, so only a legacy save can be stranded.
   const listed = saves.listSaves(name).flatMap((s) => (s.manifest === null ? [] : [s.manifest]))
   const loads = (): ReadonlySet<string> => new Set(listed.filter((m) => m.compat === saves.compatFor(name, meta, m).hash).map((m) => m.name))
   const before = loads()
@@ -366,9 +367,12 @@ function switchDevice(name: string, meta: InstanceMeta, p: Paths, from: DisplayC
   if (stranded.length > 0) {
     console.log(
       `${String(stranded.length)} save${stranded.length === 1 ? "" : "s"} of "${name}" (${stranded.join(", ")}) ` +
-        `${stranded.length === 1 ? "was" : "were"} taken on ${from.device} and will not load on ${to.device}. ` +
+        `${stranded.length === 1 ? "was" : "were"} taken on ${from.device} without a recorded display and will not load on ${to.device}. ` +
         `They are kept; \`winvm display${flag} ${from.device}\` makes them loadable again.`,
     )
+  }
+  if (listed.some((m) => m.display !== undefined)) {
+    console.log("saves that recorded their display still load on it; internal snapshots still need the device they were taken on.")
   }
   if (regained.length > 0) console.log(`${String(regained.length)} save(s) taken on ${to.device} load again: ${regained.join(", ")}`)
   if (from.device === "ramfb" && regained.length === 0) {

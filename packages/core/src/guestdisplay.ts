@@ -15,10 +15,9 @@
  * WHY NOT qemu-ga. qemu-ga runs in session 0: ChangeDisplaySettingsEx there
  * returns success and changes nothing on the user's desktop.
  */
-import { spawnSync } from "node:child_process"
-
 import * as agent from "./agent"
 import { requestDesktopSize, RESIZE_STATUS } from "./desktopsize"
+import { displayFromCommandLine, runningDisplay } from "./display"
 import type { Size } from "./displayfit"
 import { withQmp } from "./monitor"
 import type { InstanceMeta, Paths } from "./paths"
@@ -26,18 +25,15 @@ import * as qemu from "./qemu"
 import { screenSize } from "./input"
 import { passwordFor, vncPort } from "./vnc"
 
-/** The device the RUNNING QEMU was started with, read off its command line. */
+/** The device the RUNNING QEMU was started with, read off its command line (display.ts runningDisplay). */
 export function liveDevice(p: Paths): string | null {
   const pid = qemu.pidOf(p)
-  if (pid === null) return null
-  const cmd = (spawnSync("ps", ["-o", "command=", "-p", String(pid)], { encoding: "utf8" }).stdout ?? "").trim()
-  return deviceFromCommandLine(cmd)
+  return pid === null ? null : (runningDisplay(pid)?.device ?? null)
 }
 
+/** The same parser a save's recorded display uses, so a command line is judged one way everywhere. */
 export function deviceFromCommandLine(cmd: string): string | null {
-  if (/(^|\s)virtio-gpu-pci(,|\s|$)/.test(cmd)) return "virtio-gpu"
-  if (/(^|\s)ramfb(\s|$)/.test(cmd)) return "ramfb"
-  return null
+  return displayFromCommandLine(cmd)?.device ?? null
 }
 
 /** The framebuffer's current size, or null if the monitor didn't answer. */
