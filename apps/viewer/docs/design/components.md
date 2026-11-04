@@ -82,7 +82,7 @@ The plate's rows, each fact in one place (`windows.md` → *Checkpoints*):
 |---|---|---|
 | 1 | name | `--text-strong`, 1.15 em, `--weight-lg`, one line, ellipsis |
 | 2 | when taken | `--text-muted`, tabular figures, one line |
-| 3 | kind, and size | kind: a pill chip (`--surface-control`, hairline, glyph + word, `--text-base-color`); size: `--text-muted`, tabular, at the row's end |
+| 3 | kind, and size | kind: a pill chip (`--surface-control`, hairline, glyph + the words that say how it came about: Taken by you, Saved while idle, Fresh install, Saved on suspend, Test starting point; a sentence saying what made it as its `title`; `--text-base-color`; an ellipsis before it crowds the size); size: `--text-muted`, tabular, at the row's end |
 | 4 | note, if any | notebook glyph + first line, `--text-muted`, ellipsis; whole note as `title` |
 
 - Every length in the plate is in `em` of one size, `--text-sm` times `--m`
@@ -90,14 +90,15 @@ The plate's rows, each fact in one place (`windows.md` → *Checkpoints*):
   screen), so it scales as one; its words are real text sizes, not a
   transform.
 - Glyphs are the shared `Icon` set: camera (Manual), timer (Automatic), flag
-  (First start), archive (Put away), flask (For tests), notebook-pen (a
-  note), triangle-alert (can't load here).
-- Status is not a row: a card that can't load is dashed and its picture
-  greyed, with a warning pill inset at the picture's bottom edge
-  (`--status-warning`), the reason in its `title`. Narrower than the plate's
+  (Fresh install), archive (Saved on suspend), flask (Test starting point),
+  notebook-pen (a note), triangle-alert (can't go back here).
+- Status is not a row: a card Windows can't go back to is dashed and its
+  picture greyed, with a warning pill ("Can't go back here") inset at the
+  picture's bottom edge (`--status-warning`), the whole reason in its `title`.
+  Narrower than the plate's
   full width the pill is the icon alone in the picture's corner.
 - Absent data is absent: no kind chip placeholder, no empty note row.
-- One `aria-label` states everything the card shows, plus whether it can load
+- One `aria-label` states everything the card shows, plus whether it can be gone back to
   here; the children are decoration for assistive technology.
 
 ## Callouts (banners)
@@ -246,34 +247,72 @@ bar), `--space-4` from the window's edges.
 
 ## Properties panel (Checkpoints)
 
-The selected checkpoint's panel (`CheckpointDetails.tsx`, in the canvas's side
-panel) is a properties panel in the way of Figma's UI3: **the values are the
-fields**. Nothing is a form until it is touched.
+The selected checkpoint's panel (`CheckpointDetails.tsx`) is a properties panel in
+the way of Figma's UI3: **the values are the fields**. Nothing is a form until it
+is touched. It is a **layer**, not a card (`CheckpointDetailsLayer`; the camera
+and the layer's geometry are in `windows.md` → *Checkpoints*), and its content
+mirrors the card's caption plate, so a person who knows the card knows the panel.
+**One fact, one place:** the title, the date, the kind and the size are in the
+caption and in no properties list.
 
-- **The title is the panel's heading, once.** At rest a button that reads as text
+- **The layer.** Flush with the window's left edge, under the traffic lights and
+  above the control bar's row, `--surface-card` opaque, a hairline and
+  `--elevation-modal` (square at the window's edge, `--radius-card` at the
+  others), above the canvas and below Quick Look, the confirmations and the
+  floating panels. It eases in from the left (`motion.md`) and, when nothing is
+  selected, out the same way; it stays in the page until it has gone, is `inert`
+  while it goes, and a rapid select, deselect, select turns the slide round
+  rather than stacking another. Another checkpoint is a change of content, in
+  place.
+- **Order, top to bottom:** the picture (full width, a hairline under it; click
+  or Space for Quick Look); the title; when it was taken (`--text-muted`,
+  tabular); the kind chip (the card's, the same words and glyph) with the size
+  at the row's end, and under it the kind's sentence in `--text-muted`; the
+  can't-go-back status when it applies; the note; the properties (Tags; Save
+  name when it differs from the title); the actions footer. There is no title bar
+  above the picture: the close button floats over its top right on an opaque
+  disc, a real button in the Tab order with its tooltip.
+- **The title is the heading, once.** At rest a button that reads as text
   (`--text-md`, `--weight-lg`), a quiet `--surface-control` fill on hover and a
   text cursor; a click, Return or F2 (the pattern of the machine's name above)
   swaps in an input of the same face and size, selected, ringed. Return or leaving
   keeps it, Esc puts it back (and is not also Esc to close the panel). A title
   that can't be kept says why in a line under it and the field stays; emptied, it
-  says what the title falls back to. No separate "Title" or "Name" field, and the
-  name appears nowhere else in the panel as a heading.
-- **The note is text.** A borderless, transparent area under the picture,
+  says what the title falls back to. No separate "Title" or "Name" field.
+- **The kind says how it came about**, in plain words and never the CLI's:
+  Taken by you, Saved while idle, Fresh install, Saved on suspend, Test starting
+  point. Each has one sentence (the chip's `title`, and the line under it in the
+  panel); no "stow", "pristine" or "golden" in what a person reads. The table is
+  in `windows.md` → *Checkpoints*.
+- **Can't go back here is a status, not a property.** When it can, nothing is
+  said (compatible is the default and not worth a row). When it can't: one calm
+  line under the kind, `--status-warning`, the warning glyph, "Can't go back
+  here" in `--weight-lg` and under it the few words why ("Made with a different
+  QEMU version", `--text-muted`); the whole sentence is its `title` and the
+  accessible description (`aria-describedby`) of Go Back, which is disabled with
+  the same sentence as its tooltip. The card's pill says the same three words.
+  One verb for the whole feature, the one the app already uses for the action:
+  *go back*.
+- **The note is text.** A borderless, transparent area under the status,
   `--text-base`, placeholder "Add a note" in `--text-muted`; hover fills it,
   focus rings it. It grows with its text up to a sensible height
   (`--size-2xl` x 6), then scrolls. It saves itself after a pause (700 ms) and on
   leaving; there is no Save button. Esc puts back what it held when focused. A
   failed save is said quietly in the footer, in `--status-error`.
-- **Facts are rows**: a `--text-muted` label column and a value, `--size-xl` high,
-  values selectable, no heading over them. A value that can be edited (Tags) looks
-  like the others until hovered or focused. A fact that needs a warning carries it
-  in its value: "Loads here" says **a few words** ("Different QEMU version",
-  with the warning glyph), and the whole reason is the value's tooltip and its
-  accessible description. Never a paragraph.
+- **Properties are rows**: a `--text-muted` label column and a value, `--size-xl`
+  high, values selectable, no heading over them. A value that can be edited (Tags)
+  looks like the others until hovered or focused. **Save name** is the technical
+  name `winvm load` takes: shown only when it differs from the title, in the
+  mono face, with a copy button (a tick says it was copied); never repeated when
+  the title is the name.
 - **Actions** are in the footer, icon and word: Delete… (ghost, `--status-error`,
   at the left, apart from the primary and always confirmed), Go Back to This
   (primary, at the right). A button that can't be used is disabled and its tooltip
   says why.
+- **Keyboard.** Focus moves to the layer when it opens and back to the card when it
+  closes from inside it; Esc closes it unless a field is being edited (then it
+  puts that field back first); Tab moves through the close button, the picture,
+  the title, the note, Tags, the copy button and the actions.
 
 ## Help popover
 

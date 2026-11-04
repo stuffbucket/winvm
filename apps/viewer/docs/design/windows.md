@@ -17,8 +17,11 @@ A person asked "instance of what?", so in every UI string:
 
 Keep `-i`, `instance`, `image` and `save` in the CLI, its help and these
 docs' code references; they are the command line's words. Kinds of
-checkpoint read as Manual, Automatic (auto), First start (baseline), Put away
-(stow) and For tests (golden).
+checkpoint say how each came about, never the CLI's word for it: Taken by you
+(manual), Saved while idle (auto), Fresh install (baseline), Saved on suspend
+(stow) and Test starting point (golden); see *Checkpoints* for what makes
+each. A checkpoint Windows can't go back to on this machine "can't go back
+here", not "can't load".
 
 ## Layers
 
@@ -432,19 +435,20 @@ by position and weight (`components.md` → *Checkpoint card*):
 
 1. its name (its notes' title, else its name), strong;
 2. when it was taken, as Finder says it, muted;
-3. how it came to be, a small chip with a glyph (Manual, Automatic, First
-   start, Put away, For tests), and its size at the end of the same row;
+3. how it came to be, a small chip with a glyph (Taken by you, Saved while
+   idle, Fresh install, Saved on suspend, Test starting point), and its size
+   at the end of the same row;
 4. its note, only when it has one: the notebook, then the first line of the
    note, muted and cut with an ellipsis (the whole note is its tooltip).
 
 The kind is never on the picture, and the note is never an icon beside the
 name: they are different facts and read differently. Absent data shows
-nothing. One that can't load here is dashed and grey, with a warning pill
-("Can't load here") inset at its picture's bottom edge, which is the card's
+nothing. One that Windows can't go back to here is dashed and grey, with a warning pill
+("Can't go back here") inset at its picture's bottom edge, which is the card's
 state, not a row of its caption (the reason is its tooltip and part of its
 accessible name; the panel says it in a few words, the whole reason on hover). The accessible name is the
 whole of it: name, kind, when, size, "Has notes" when it has, and the reason
-when it can't load.
+when it can't be gone back to.
 
 **Words read at any zoom.** Card words are drawn at least 12 px on screen
 (`--text-sm` at 86%), scaled up in the world as the camera pulls back rather than
@@ -493,26 +497,55 @@ scroll); two-finger scroll, dragging anywhere or the arrow keys pan. The
 camera never leaves the stack behind, and zooms between seeing everything
 and three times life size.
 
-**A selected card** comes up close, centred in the space the panel leaves.
-The panel beside the timeline is a properties panel (see [`components.md`](components.md)
-→ *Properties panel*): the checkpoint's title at its head, **once**, edited where
-it stands (click, Return or F2; Return keeps, Esc puts it back; a title that
-can't be kept says why under it); a larger screenshot (click it, or press Space,
-for Quick Look); its note, written as text (placeholder "Add a note"), saved by
-itself after a pause with no Save button (Esc puts it back), to
+**A selected card** comes up close, centred in the part of the window the layer
+and the timeline leave free. Its details are a **layer over the canvas** (see
+[`components.md`](components.md) → *Properties panel*): flush with the window's
+left edge, from under the traffic lights down to the control bar's row, so the
+bar and the zoom pill, which sit below it, stay in view and clickable (at 820 px
+and narrower the zoom stands above the bar, and the layer ends above that too).
+It is not a card beside the canvas and it does not resize it: it eases in from
+the left (a 220 ms slide with a short fade, decelerating) and eases out the
+same way on Esc (when nothing is being edited), the close button, a click on
+empty canvas or Now (180 ms, accelerating), staying in the page until it has,
+so the way out is seen. Picking another checkpoint changes what it says in
+place, with no new slide. Focus goes into it when it opens and, when it closes
+from inside, back to the card. Reduced motion: it appears and goes.
+
+Its layout mirrors the card's caption plate, each fact in one place: the
+**larger screenshot** at the top (click it, or press Space, for Quick Look; the
+close button floats over its top right); under it the **title**, edited where
+it stands (click, Return or F2; Return keeps, Esc puts it back; one that can't
+be kept says why under it); when it was taken, muted; how it came about as the
+card's chip, with its size at the row's end, and a sentence under it that says
+what made it; **only when Windows can't go back to it here, one status line**
+("Can't go back here" and the few words why, with the warning glyph; the whole
+reason on hover, in Go Back's tooltip and as its accessible description; nothing
+at all when it can); its **note**, written as text (placeholder "Add a note"),
+saved by itself after a pause with no Save button (Esc puts it back), to
 `$XDG_DATA_HOME/winvm/notes/<instance>/<save>.json` through `winvm saves note`;
-then rows for its tags (editable, comma-separated), when it was taken, kind, size,
-whether it loads here and its name in winvm. "Loads here" says why not in a few
-words ("Different QEMU version", "Different display", …) and the whole reason on
-hover and in its accessible description. Last, Delete… and Go Back to This.
+then the rows for what is more: its tags (editable, comma-separated) and its
+**Save name** (what `winvm load` takes, in the mono face with a copy button),
+shown only when it differs from the title. Last, Delete… and Go Back to This.
+
+The kinds, what makes each, and so what the words say:
+
+| Chip | Kind (CLI) | Made by | Sentence |
+|---|---|---|---|
+| Taken by you | `manual` | New Checkpoint, `winvm save` | You took this one yourself, with New Checkpoint. |
+| Saved while idle | `auto` | the idle watcher (`watch.ts`, `autosave.keep` of them) | Taken automatically while Windows sat idle. |
+| Fresh install | `baseline` | `start`, the first time an instance boots, once the guest is ready (`savecmds.ts`; `rewind` goes back to it) | Taken the first time this machine started, once Windows had finished setting up and before you changed anything. |
+| Saved on suspend | `stow` | `winvm stow`, which the watcher runs after a longer idle and which a later `start` recalls (`savecmds.ts`; the machine then reads Suspended) | Taken when Windows was suspended. Starting it again picks up from here. |
+| Test starting point | `golden` | `winvm golden create` once Windows has gone quiet (`golden.ts`) | A quiet moment saved so automated tests can start from the same state every time. |
+
+"Saved while idle" and "Saved on suspend" are what the Automatic filter hides.
 
 - **Go Back to This** confirms: "Windows returns to exactly how it was at
   that moment. What it's doing now is replaced, unless you keep it as a
   checkpoint first.", with Cancel, Save Current First (while Windows runs:
   it takes "Before going back to …" first) and Go Back. It is disabled,
-  with the reason, for a checkpoint that can't load here.
+  with the reason (the same one the status says, in full), for a checkpoint that can't be gone back to here.
 - **Delete…** confirms, destructive: its picture and notes go with it.
-  First start (baseline) and For tests (golden) checkpoints can't be deleted
+  Fresh install (baseline) and Test starting point (golden) checkpoints can't be deleted
   here, as `rewind` and tests depend on them; the button's tooltip says so.
 
 **New Checkpoint** asks for a name. The field's placeholder is the name it
@@ -580,7 +613,7 @@ large on screen, so hundreds of checkpoints pan smoothly.
 `bun scripts/build-ui.ts`, then `PLAYWRIGHT_DIR=… node
 scripts/render-checkpoints.mjs` renders it in WebKit against a fake app
 (`tests/render/fake-tauri.js`, 14 checkpoints: manual, automatic, one with no
-picture, and ones that can't load here because of a different display or QEMU):
+picture, and ones that can't be gone back to here because of a different display or QEMU):
 the way in and out, the opening view and the bar at rest, the highlights, a card
 dragged and the layout reset, zooms, the timeline, a selection, Quick Look,
 search, the confirmations, New Checkpoint and 400 checkpoints, light and dark.

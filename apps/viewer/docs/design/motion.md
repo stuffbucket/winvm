@@ -21,6 +21,14 @@ spacing, and copy.
   *Checkpoints*): 420–900 ms, cubic ease-in-out, longer for a bigger
   change of view. A flight is how that view says where a checkpoint is in
   time, so it is utility there; it still jumps under reduced motion.
+- **The checkpoint's details layer** (Checkpoints, [`components.md`](components.md)
+  → *Properties panel*): eases in from the window's left edge, a 220 ms slide
+  (`cubic-bezier(0.16, 1, 0.3, 1)`, decelerating) with a 160 ms fade; out the
+  same way, 180 ms accelerating (`cubic-bezier(0.5, 0, 0.75, 0)`), staying in the
+  page until it has gone. It is a layer entering and leaving a view, so it is
+  utility; no overshoot. Choosing another checkpoint replays nothing, and select,
+  deselect, select turns the slide round where it is. Reduced motion: it appears
+  and goes at once.
 - **Entering and leaving Checkpoints**: a 200 ms / 180 ms fade of the whole
   view with a 1% settle. A mode change inside the window, not a flight into
   another one. A cut under reduced motion.
