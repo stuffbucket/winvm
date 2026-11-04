@@ -39,7 +39,11 @@ has been idle long enough, the watcher:
 
 - **autosaves**: one save named `auto-<time>`, then another only after the
   guest has been used and gone idle again. It keeps the newest three
-  (`autosave.keep`) and never touches other saves.
+  (`autosave.keep`) and never touches other saves. A save stops the guest
+  for about 1.5 s (`events.jsonl` shows it as paused, then running), so the
+  watcher only saves when no viewer has been connected for the whole idle
+  period and the Mac's keyboard and mouse have been untouched for 20 s;
+  otherwise it waits for a quiet moment.
 - **stows**: after a longer idle time, runs `winvm stow`, which saves the
   guest and shuts QEMU down. `winvm start` brings it back.
 - **fixes the clock**: after the Mac sleeps, or when the guest's clock has
