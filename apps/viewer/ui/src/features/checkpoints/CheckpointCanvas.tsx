@@ -65,6 +65,8 @@ import {
   goBackSteps,
   isAutomatic,
   layoutTimeline,
+  type Moves,
+  placeCards,
   openingView,
   saveNameFor,
   searchCheckpoints,
@@ -111,6 +113,8 @@ const BAR_SPACE = 88
 /** Everything fits at the first look when it can at this zoom or more: below it, cards are too small to name. */
 const READABLE_FIT = 0.4
 const PAN_STEP = 80
+/** Option-arrows move the selected card this far (world units). */
+const NUDGE_STEP = 16
 const ZOOM_STEP = 1.25
 const ENTER_WAIT_MS = 450
 /** Below this zoom, captions are too small to read: cards draw pictures only. */
@@ -202,10 +206,14 @@ export function CheckpointCanvas(p: CheckpointCanvasProps): JSX.Element {
 
   const shown = useMemo(() => (list ?? []).filter((c) => settings.showAutomatic || !isAutomatic(c) || c.name === selected), [list, settings.showAutomatic, selected])
   const byName = useMemo(() => new Map((list ?? []).map((c) => [c.name, c])), [list])
-  const layout = useMemo(() => layoutTimeline(shown, p.aspect), [shown, p.aspect])
+  // Where the person has moved cards to, kept for this machine.
+  const moves = useMemo<Moves>(() => settings.layouts[p.instance] ?? {}, [settings.layouts, p.instance])
+  const layout = useMemo(() => placeCards(layoutTimeline(shown, p.aspect), moves), [shown, p.aspect, moves])
   // For work that finishes later (a load), to find a card where it is then, not where it was.
   const layoutNow = useRef(layout)
   layoutNow.current = layout
+  const listNow = useRef<Checkpoint[]>([])
+  listNow.current = list ?? []
   const ticks = useMemo(
     () => timelineTicks(layout.days, new Date(nowMs), { now: t("checkpoints.now"), today: t("checkpoints.today"), yesterday: t("checkpoints.yesterday") }),
     [layout.days, nowMs],
@@ -271,8 +279,8 @@ export function CheckpointCanvas(p: CheckpointCanvasProps): JSX.Element {
     (box: Rect): Camera => {
       const v = viewSize()
       const free = Math.max(320, v.width - PANEL_SPACE - TIMELINE_SPACE)
-      // Up close, but with its neighbours still in sight: about 380 px wide on screen.
-      const zoom = clampZoom(Math.min(Math.min(free * 0.55, 380) / box.width, (v.height * 0.55) / box.height), limits)
+      // Up close, but with its neighbours still in sight: about 320 px wide on screen, whatever its day's depth.
+      const zoom = clampZoom(Math.min(Math.min(free * 0.5, 320) / box.width, (v.height * 0.45) / box.height), limits)
       return centreIn({ x: box.x + box.width / 2, y: box.y + box.height / 2 }, zoom, PANEL_SPACE + TIMELINE_SPACE)
     },
     [limits],
@@ -354,12 +362,31 @@ export function CheckpointCanvas(p: CheckpointCanvasProps): JSX.Element {
 
   // ---- Pointer, wheel and pinch -----------------------------------------
 
-  const press = useRef<{ id: number; x: number; y: number; from: Camera; moved: boolean } | null>(null)
+  // A press on empty canvas pans; a press on a card, moved, drags that card.
+  const press = useRef<{ id: number; x: number; y: number; from: Camera; moved: boolean; card: string | null; was: { x: number; y: number } } | null>(null)
   const suppressClick = useRef(false)
+  // The card being dragged, and the total it is moved by so far (this drag's and earlier ones).
+  const [dragging, setDragging] = useState<{ readonly name: string; readonly x: number; readonly y: number } | null>(null)
+
+  /** Keep where cards have been moved to. One writer: the same settings the rest of the view uses. */
+  const keepMoves = useCallback((next: Moves): void => {
+    const known = new Set(listNow.current.map((c) => c.name))
+    const kept = Object.fromEntries(Object.entries(next).filter(([n, by]) => known.has(n) && (by.x !== 0 || by.y !== 0)))
+    setSettings((s) => {
+      const layouts = { ...s.layouts }
+      if (Object.keys(kept).length === 0) delete layouts[props.current.instance]
+      else layouts[props.current.instance] = kept
+      const out = { ...s, layouts }
+      void saveSettings(out)
+      return out
+    })
+  }, [])
 
   const pointerDown = (e: PointerEvent<HTMLDivElement>): void => {
     if ((e.button !== 0 && e.button !== 1) || editableTarget(e.target)) return
-    press.current = { id: e.pointerId, x: e.clientX, y: e.clientY, from: cameraNow(), moved: false }
+    // Only a card of the stack can be moved: not Now, which is the screen, and not with the middle button, which pans.
+    const card = e.button === 0 && e.target instanceof Element ? (e.target.closest<HTMLElement>(".checkpoint[data-name]")?.dataset["name"] ?? null) : null
+    press.current = { id: e.pointerId, x: e.clientX, y: e.clientY, from: cameraNow(), moved: false, card, was: card === null ? { x: 0, y: 0 } : (moves[card] ?? { x: 0, y: 0 }) }
   }
   const pointerMove = (e: PointerEvent<HTMLDivElement>): void => {
     const pr = press.current
@@ -369,8 +396,13 @@ export function CheckpointCanvas(p: CheckpointCanvasProps): JSX.Element {
     if (!pr.moved) {
       if (Math.hypot(dx, dy) < 4) return
       pr.moved = true
-      setPanning(true)
+      if (pr.card === null) setPanning(true)
       e.currentTarget.setPointerCapture(e.pointerId)
+    }
+    if (pr.card !== null) {
+      // The card follows the pointer: what it moved on screen, over the zoom.
+      setDragging({ name: pr.card, x: pr.was.x + dx / pr.from.zoom, y: pr.was.y + dy / pr.from.zoom })
+      return
     }
     setCamera(clamp({ ...pr.from, x: pr.from.x + dx, y: pr.from.y + dy }))
   }
@@ -380,6 +412,10 @@ export function CheckpointCanvas(p: CheckpointCanvasProps): JSX.Element {
     press.current = null
     if (pr.moved) {
       setPanning(false)
+      if (pr.card !== null) {
+        keepMoves({ ...moves, [pr.card]: { x: pr.was.x + (e.clientX - pr.x) / pr.from.zoom, y: pr.was.y + (e.clientY - pr.y) / pr.from.zoom } })
+        setDragging(null)
+      }
       suppressClick.current = true
       setTimeout(() => {
         suppressClick.current = false
@@ -623,6 +659,11 @@ export function CheckpointCanvas(p: CheckpointCanvasProps): JSX.Element {
     })
   }
 
+  const resetLayout = (): void => {
+    setSelected(null)
+    keepMoves({})
+  }
+
   const toggleAutomatic = (): void => {
     setSettings((s) => {
       const next = { ...s, showAutomatic: !s.showAutomatic }
@@ -646,7 +687,11 @@ export function CheckpointCanvas(p: CheckpointCanvasProps): JSX.Element {
         setSearchOpen(false)
         return
       }
-      if (looking) setLooking(false)
+      if (press.current?.card != null && press.current.moved) {
+        // Esc puts a card being carried back where it was.
+        press.current = null
+        setDragging(null)
+      } else if (looking) setLooking(false)
       else if (creating) setCreating(false)
       else if (searchOpen) setSearchOpen(false)
       else if (selected !== null) select(null)
@@ -680,6 +725,13 @@ export function CheckpointCanvas(p: CheckpointCanvasProps): JSX.Element {
       e.preventDefault()
       const c = byName.get(selected)
       if (c !== undefined && deleteBlocked(c) === null) setConfirm({ kind: "delete", name: selected })
+    } else if (e.altKey && !cmd && e.key.startsWith("Arrow") && selected !== null && layout.cards.has(selected)) {
+      // Option-arrows move the selected card, for those who can't drag.
+      e.preventDefault()
+      const d = (e.shiftKey ? 4 : 1) * NUDGE_STEP
+      const by = moves[selected] ?? { x: 0, y: 0 }
+      const next = { x: by.x + (e.key === "ArrowLeft" ? -d : e.key === "ArrowRight" ? d : 0), y: by.y + (e.key === "ArrowUp" ? -d : e.key === "ArrowDown" ? d : 0) }
+      keepMoves({ ...moves, [selected]: next })
     } else if (!cmd && e.key.startsWith("Arrow")) {
       e.preventDefault()
       const d = (e.shiftKey ? 4 : 1) * PAN_STEP
@@ -761,8 +813,13 @@ export function CheckpointCanvas(p: CheckpointCanvasProps): JSX.Element {
               )
             })}
             {shown.map((c) => {
-              const box: CardBox | undefined = layout.cards.get(c.name)
-              if (box === undefined || !rectsIntersect(box, seen)) return null
+              const placed: CardBox | undefined = layout.cards.get(c.name)
+              if (placed === undefined) return null
+              // The card in the pointer's hand is drawn where it is carried, not where it was put down.
+              const carried = dragging?.name === c.name ? dragging : null
+              const was = moves[c.name]
+              const box = carried === null ? placed : { ...placed, x: placed.x + carried.x - (was?.x ?? 0), y: placed.y + carried.y - (was?.y ?? 0) }
+              if (!rectsIntersect(box, seen)) return null
               return (
                 <CheckpointCard
                   key={`${c.name}#${c.createdAt}`}
@@ -773,6 +830,7 @@ export function CheckpointCanvas(p: CheckpointCanvasProps): JSX.Element {
                   now={nowMs}
                   dimmed={searchOpen && matches !== null && !matches.has(c.name)}
                   lit={isLit(c)}
+                  carried={carried !== null}
                   arriving={arriving?.name === c.name ? arriving : null}
                   leaving={leaving === c.name}
                   working={working?.on === c.name ? working.label : null}
@@ -912,6 +970,8 @@ export function CheckpointCanvas(p: CheckpointCanvasProps): JSX.Element {
           onZoomOut={() => zoomBy(1 / ZOOM_STEP)}
           onZoomIn={() => zoomBy(ZOOM_STEP)}
           onFit={fitAll}
+          arranged={Object.keys(moves).length > 0}
+          onReset={resetLayout}
           onDone={() => void leave()}
         />
 

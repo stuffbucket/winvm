@@ -39,6 +39,16 @@ const FIT = (
   </>
 )
 
+// lucide: layout-grid
+const RESET = (
+  <>
+    <rect width="7" height="7" x="3" y="3" rx="1" />
+    <rect width="7" height="7" x="14" y="3" rx="1" />
+    <rect width="7" height="7" x="14" y="14" rx="1" />
+    <rect width="7" height="7" x="3" y="14" rx="1" />
+  </>
+)
+
 /** How long the zoom's figure stays after the zoom stops changing. */
 export const ZOOM_FIGURE_MS = 1600
 
@@ -65,6 +75,9 @@ export interface ControlBarProps {
   onZoomOut(): void
   onZoomIn(): void
   onFit(): void
+  /** Some cards have been moved from where winvm put them. */
+  readonly arranged: boolean
+  onReset(): void
   onDone(): void
 }
 
@@ -148,6 +161,9 @@ export function ControlBar(p: ControlBarProps): JSX.Element {
         </CanvasIconButton>
         <CanvasIconButton label={t("checkpoints.fitAll")} onClick={p.onFit}>
           <CanvasGlyph>{FIT}</CanvasGlyph>
+        </CanvasIconButton>
+        <CanvasIconButton label={t("checkpoints.reset")} title={t(p.arranged ? "checkpoints.resetTip" : "checkpoints.resetNone")} disabled={!p.arranged} onClick={p.onReset}>
+          <CanvasGlyph>{RESET}</CanvasGlyph>
         </CanvasIconButton>
       </div>
       <span className="checkpoints__divider" aria-hidden="true" />

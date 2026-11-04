@@ -101,6 +101,8 @@ export interface CardProps {
   readonly dimmed: boolean
   /** Picked out: under the pointer on the timeline, or of the kind a filter is about. */
   readonly lit: boolean
+  /** Being carried by the pointer. */
+  readonly carried: boolean
   /** Just taken: flies in from the Now card, by this much (world units). */
   readonly arriving: { readonly dx: number; readonly dy: number; readonly scale: number } | null
   readonly leaving: boolean
@@ -109,7 +111,7 @@ export interface CardProps {
 }
 
 /** One checkpoint on the canvas: its picture, and below it what it's called, when it was taken and how big it is. */
-export const CheckpointCard = memo(function CheckpointCard({ c, box, selected, zoom, now, dimmed, lit, arriving, leaving, working, onSelect }: CardProps): JSX.Element {
+export const CheckpointCard = memo(function CheckpointCard({ c, box, selected, zoom, now, dimmed, lit, carried, arriving, leaving, working, onSelect }: CardProps): JSX.Element {
   const reason = incompatibleReason(c)
   const name = shownName(c)
   const when = takenAt(c, now)
@@ -133,6 +135,7 @@ export const CheckpointCard = memo(function CheckpointCard({ c, box, selected, z
       data-incompatible={reason !== null}
       data-dimmed={dimmed}
       data-lit={lit}
+      data-carried={carried}
       data-arriving={arriving !== null}
       data-leaving={leaving}
       data-name={c.name}

@@ -175,6 +175,29 @@ export function layoutTimeline(checkpoints: readonly Checkpoint[], nowAspect: nu
   return { now, days, cards, order, bounds: { x: x0, y: y0, width: x1 - x0, height: y1 - y0 } }
 }
 
+/** How far each moved card is from where the layout put it: by name, in world units. */
+export type Moves = Readonly<Record<string, { readonly x: number; readonly y: number }>>
+
+/**
+ * The layout with the cards a person has moved moved: each by its own offset
+ * from its slot, so a card keeps its place relative to its day when days are
+ * added. Names the layout doesn't have (a checkpoint since deleted, or hidden)
+ * are left alone. Days, dates and Now stay where they are.
+ */
+export function placeCards(layout: TimelineLayout, moves: Moves): TimelineLayout {
+  const cards = new Map(layout.cards)
+  const moved: Rect[] = []
+  for (const [name, by] of Object.entries(moves)) {
+    const box = cards.get(name)
+    if (box === undefined || (by.x === 0 && by.y === 0)) continue
+    const placed = { ...box, x: box.x + by.x, y: box.y + by.y }
+    cards.set(name, placed)
+    moved.push({ ...placed, height: placed.height + CAPTION_ROOM })
+  }
+  if (moved.length === 0) return layout
+  return { ...layout, cards, bounds: union([layout.bounds, ...moved]) }
+}
+
 /** A day's block with room for its date above it (the label sits on the block, drawn upwards). */
 export const withLabel = (d: Pick<DayBlock, "x" | "y" | "width" | "height" | "scale">): Rect => ({ x: d.x, y: d.y - 44 * d.scale, width: d.width, height: d.height + 44 * d.scale })
 

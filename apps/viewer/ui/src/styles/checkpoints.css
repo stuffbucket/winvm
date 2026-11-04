@@ -331,7 +331,7 @@
   color: inherit;
   font: inherit;
   text-align: left;
-  cursor: default;
+  cursor: grab;
   transition:
     border-color 150ms ease-out,
     box-shadow 200ms ease-out,
@@ -342,6 +342,21 @@
 .checkpoint__hit:hover {
   border-color: var(--border-strong);
   opacity: 1;
+}
+
+/* Carried: above its neighbours, with a deeper shadow, and following the pointer without easing. */
+.checkpoint[data-carried="true"] {
+  z-index: 5;
+}
+
+.checkpoint[data-carried="true"] .checkpoint__hit {
+  box-shadow:
+    0 0 0 calc(var(--border-width-thick) * var(--m, 1)) var(--accent),
+    var(--elevation-modal),
+    var(--elevation-modal);
+  cursor: grabbing;
+  opacity: 1;
+  transition: none;
 }
 
 /* Older days recede: a little fainter with each step back, the way Time Machine's windows sink. */
@@ -459,7 +474,6 @@
   color: var(--text-base-color);
   font-size: var(--text-sm);
   line-height: var(--leading-lg);
-  pointer-events: none;
   transition: opacity 200ms ease-out;
 }
 
@@ -514,6 +528,7 @@
 
 .checkpoint__badge {
   position: absolute;
+  pointer-events: auto;
   right: 0;
   bottom: 0;
   left: 0;
