@@ -67,6 +67,39 @@ Every `.btn`: min-height `--size-xl`, padding `--space-2` ×
 - Shadow: `--elevation-card` (barely visible on dark, where the
   surface step does the work).
 
+## Checkpoint card
+
+One object, not a picture with text under it: a button that is the card's
+surface (`--surface-card`, hairline `--border-subtle`, `--radius-card`,
+`--elevation-modal`, clipped to the radius), holding the picture on top and a
+caption plate attached below it (a hairline between them, no gap). Selection,
+hover, the carried shadow and the highlight ring are drawn on the button, so
+they wrap both.
+
+The plate's rows, each fact in one place (`windows.md` → *Checkpoints*):
+
+| Row | Fact | Treatment |
+|---|---|---|
+| 1 | name | `--text-strong`, 1.15 em, `--weight-lg`, one line, ellipsis |
+| 2 | when taken | `--text-muted`, tabular figures, one line |
+| 3 | kind, and size | kind: a pill chip (`--surface-control`, hairline, glyph + word, `--text-base-color`); size: `--text-muted`, tabular, at the row's end |
+| 4 | note, if any | notebook glyph + first line, `--text-muted`, ellipsis; whole note as `title` |
+
+- Every length in the plate is in `em` of one size, `--text-sm` times `--m`
+  (the card's scale, never so small that the words are under 12 px on
+  screen), so it scales as one; its words are real text sizes, not a
+  transform.
+- Glyphs are the shared `Icon` set: camera (Manual), timer (Automatic), flag
+  (First start), archive (Put away), flask (For tests), notebook-pen (a
+  note), triangle-alert (can't load here).
+- Status is not a row: a card that can't load is dashed and its picture
+  greyed, with a warning pill inset at the picture's bottom edge
+  (`--status-warning`), the reason in its `title`. Narrower than the plate's
+  full width the pill is the icon alone in the picture's corner.
+- Absent data is absent: no kind chip placeholder, no empty note row.
+- One `aria-label` states everything the card shows, plus whether it can load
+  here; the children are decoration for assistive technology.
+
 ## Callouts (banners)
 
 A failure or notice is never a bare line of colored text. It's a
