@@ -637,10 +637,11 @@ alone. The devices themselves changed it **once**: saves of virtio-gpu
 instances taken before them do not load. `start`, `saves` ("no (before the
 shared folder)"), `load` and the stow recall name those saves
 (`saves.strandedByDevices`), as `display` names the saves a device switch
-strands (now only saves without a recorded display). A stowed machine whose stow predates the devices boots instead,
-from its disk. ramfb instances get none of the devices and keep their saves.
-The new runtime's patch set changes the hash's `qemu` part too, so in
-practice every save made on the old runtime stops loading with it.
+strands (now only saves without a recorded display). A stowed machine whose
+stow predates the devices boots instead, from its disk. ramfb instances get
+none of the devices and keep their saves. The new runtime's patch set changes
+the hash's `qemu` part too, so in practice every save made on the old runtime
+stops loading with it.
 
 **One virtiofsd per QEMU, started before it.** virtiofsd exits when its QEMU
 disconnects, so `qemu.launch` starts a fresh one before every boot, load and
