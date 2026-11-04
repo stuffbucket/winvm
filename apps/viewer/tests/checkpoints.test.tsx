@@ -4,7 +4,7 @@
  * dialog's third button, rendered in happy-dom.
  */
 import { GlobalRegistrator } from "@happy-dom/global-registrator"
-import { afterAll, afterEach, describe, expect, it, mock } from "bun:test"
+import { afterAll, afterEach, describe, expect, it, mock, setSystemTime } from "bun:test"
 
 GlobalRegistrator.register()
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true })
@@ -16,11 +16,14 @@ const { loadSettings, parseSettings, saveSettings } = await import("../ui/src/fe
 const { draftOf, tagsOf } = await import("../ui/src/features/checkpoints/CheckpointDetails")
 const { ConfirmDialog } = await import("../ui/src/components/ConfirmDialog")
 const { ControlBar } = await import("../ui/src/features/checkpoints/ControlBar")
-const { levelFor, textScale, FULL_WIDTH, NAME_WIDTH, MIN_TEXT } = await import("../ui/src/features/checkpoints/CheckpointCard")
+const { levelFor, textScale, FULL_WIDTH, NAME_WIDTH, MIN_TEXT, CheckpointCard, cardLabel, absoluteTime, kindIcon } = await import("../ui/src/features/checkpoints/CheckpointCard")
+const { NewCheckpointForm } = await import("../ui/src/features/checkpoints/NewCheckpoint")
 const { parseNote, parseSaves } = await import("../ui/src/model")
 const { centreOf, clampCamera, fitRect } = await import("@winvm/canvas")
 
 type Checkpoint = import("../ui/src/features/checkpoints/checkpoints").Checkpoint
+type CardBox = import("../ui/src/features/checkpoints/checkpoints").CardBox
+type Moves = import("../ui/src/features/checkpoints/checkpoints").Moves
 
 afterAll(() => GlobalRegistrator.unregister())
 
@@ -407,7 +410,7 @@ describe("moved cards", () => {
 })
 
 describe("a card's words", () => {
-  it("thin out as the card gets small on screen: time and size, then the kind, then nothing but the picture", () => {
+  it("thin out as the card gets small on screen: time, kind, size and note, then the name, then nothing but the picture", () => {
     expect(levelFor(FULL_WIDTH)).toBe("full")
     expect(levelFor(FULL_WIDTH - 1)).toBe("name")
     expect(levelFor(NAME_WIDTH)).toBe("name")
@@ -567,5 +570,235 @@ describe("the control bar", () => {
       await new Promise((r) => setTimeout(r, ZOOM_FIGURE_MS + 150))
     })
     expect(group()).toBe("false")
+  })
+})
+
+describe("a day's date", () => {
+  const base = cp.layoutTimeline(list, 16 / 10)
+  // The day of "b" and "c" (two cards, one line), and its date's place when nothing is moved.
+  const day = base.days.find((d) => d.names.includes("b"))
+  const cardsOf = (moves: Moves): ReadonlyMap<string, CardBox> => cp.placeCards(base, moves).cards
+  const three = [checkpoint("p", at(2026, 10, 25, 8)), checkpoint("q", at(2026, 10, 25, 9)), checkpoint("r", at(2026, 10, 25, 10))]
+
+  it("sits where the layout puts it while the day's cards are where the layout put them", () => {
+    for (const d of base.days) {
+      const g = cp.dayGroup(d, base.cards)
+      expect(g.label).toEqual(d.label)
+      expect(g.rect).toEqual({ x: d.x, y: d.y, width: d.width, height: d.height })
+    }
+  })
+
+  it("follows its cards: moved together it moves with them, at their top left, a little above", () => {
+    if (day === undefined) throw new Error("no day")
+    const by = { x: 300, y: -220 }
+    const g = cp.dayGroup(day, cardsOf({ b: by, c: by }))
+    expect(g.label.x).toBeCloseTo(day.label.x + by.x, 6)
+    expect(g.label.y).toBeCloseTo(day.label.y + by.y, 6)
+    // Only the leftmost, topmost of them decides: moving the one that is neither changes nothing.
+    expect(cp.dayGroup(day, cardsOf({ c: { x: 40, y: 0 } })).label).toEqual(day.label)
+  })
+
+  it("stays with the rest of the day when one card is dragged out of it", () => {
+    const layout = cp.layoutTimeline(three, 16 / 10)
+    const d = layout.days[0]
+    if (d === undefined) throw new Error("no day")
+    // The first card, taken out: the date goes to the two that are left, at the left of them.
+    const out = cp.placeCards(layout, { p: { x: -900, y: -700 } })
+    const g = cp.dayGroup(d, out.cards)
+    const q = out.cards.get("q")
+    expect(g.label.x).toBeCloseTo(q?.x ?? 0, 6)
+    expect(g.label.y).toBeCloseTo((q?.y ?? 0) - cp.LABEL_LIFT * d.scale, 6)
+  })
+
+  it("follows the day's earliest card when they are all apart", () => {
+    const layout = cp.layoutTimeline(three, 16 / 10)
+    const d = layout.days[0]
+    if (d === undefined) throw new Error("no day")
+    const apart = cp.placeCards(layout, { p: { x: 0, y: -900 }, q: { x: 0, y: 0 }, r: { x: 0, y: 900 } })
+    const p = apart.cards.get("p")
+    const g = cp.dayGroup(d, apart.cards)
+    expect(g.label).toEqual({ x: p?.x ?? 0, y: (p?.y ?? 0) - cp.LABEL_LIFT * d.scale })
+    expect(g.rect.width).toBe(p?.width ?? 0)
+  })
+
+  it("keeps the layout's place for a day none of whose cards are shown", () => {
+    if (day === undefined) throw new Error("no day")
+    expect(cp.dayGroup(day, new Map()).label).toEqual(day.label)
+  })
+})
+
+describe("a card's note", () => {
+  const cardNote = (text: string, tags: string[] = []): ReturnType<typeof cp.noteOf> => cp.noteOf({ notes: { title: null, text, tags, updatedAt: "" } })
+
+  it("is its text's first line, without markdown marks, and the whole text for the tooltip", () => {
+    const n = cardNote("\n## Signed in as **test@contoso.com**.\n\n- Excel activated", ["office"])
+    expect(n?.line).toBe("Signed in as test@contoso.com.")
+    expect(n?.full).toBe("## Signed in as **test@contoso.com**.\n\n- Excel activated\noffice")
+  })
+
+  it("falls back to the manifest's note, then to the tags, and is nothing without any", () => {
+    expect(cp.noteOf({ notes: null, note: "from the CLI" })?.line).toBe("from the CLI")
+    expect(cardNote("", ["ci", "office"])?.line).toBe("ci, office")
+    expect(cp.noteOf({ notes: null })).toBeNull()
+    expect(cardNote("  ")).toBeNull()
+    // A title alone is the name, not a note.
+    expect(cp.noteOf({ notes: { title: "Only a title", text: "", tags: [], updatedAt: "" } })).toBeNull()
+  })
+})
+
+describe("a card", () => {
+  let root: ReturnType<typeof createRoot> | null = null
+  afterEach(() => {
+    act(() => root?.unmount())
+    root = null
+    document.body.replaceChildren()
+  })
+  const NOW = new Date(2026, 10, 3, 15, 30).getTime()
+  const box = { name: "x", x: 0, y: 0, width: 240, height: 150, frame: 150, scale: 1, day: 0, index: 0 }
+  function card(c: Checkpoint, zoom = 1): HTMLElement {
+    act(() => root?.unmount())
+    document.body.replaceChildren()
+    const host = document.createElement("div")
+    document.body.append(host)
+    root = createRoot(host)
+    act(() =>
+      root?.render(
+        <CheckpointCard c={c} box={box} selected={false} zoom={zoom} now={NOW} dimmed={false} lit={false} carried={false} arriving={null} leaving={false} working={null} onSelect={() => undefined} />,
+      ),
+    )
+    return host
+  }
+  const text = (host: HTMLElement, cls: string): string | undefined => host.querySelector(`.${cls}`)?.textContent ?? undefined
+  const taken = at(2026, 10, 21, 17, 38)
+  const note = { title: null, text: "Signed in.\nMore.", tags: [], updatedAt: "" }
+  const GIB = 1024 ** 3
+
+  it("is one button holding the picture and its caption, so they are selected and carried as one", () => {
+    const host = card(checkpoint("x", taken, { bytes: 7.8 * GIB }))
+    const buttons = host.querySelectorAll("button")
+    expect(buttons.length).toBe(1)
+    expect(buttons[0]?.querySelector(".checkpoint__frame")).not.toBeNull()
+    expect(buttons[0]?.querySelector(".checkpoint__caption")).not.toBeNull()
+  })
+
+  it("gives each fact its place: the name, the time, the kind with its glyph, the size, and no note when there is none", () => {
+    const c = checkpoint("auto-1", taken, { kind: "auto", bytes: 7.8 * GIB })
+    const host = card(c)
+    expect(text(host, "checkpoint__name")).toBe("auto-1")
+    expect(text(host, "checkpoint__when")).toMatch(/^Oct 21, 2026 at /)
+    expect(text(host, "checkpoint__kind")).toBe("Automatic")
+    expect(host.querySelector(".checkpoint__kind svg")).not.toBeNull()
+    expect(text(host, "checkpoint__size")).toBe("7.8 GiB")
+    expect(host.querySelector(".checkpoint__note")).toBeNull()
+    expect(host.querySelector(".checkpoint__badge")).toBeNull()
+    // Nothing floats on the picture's corner any more.
+    expect(host.querySelector(".checkpoint__frame .checkpoint__kind")).toBeNull()
+  })
+
+  it("shows a note as its own line: its notebook mark, its first line, the whole of it on hover", () => {
+    const host = card(checkpoint("x", taken, { notes: note }))
+    const line = host.querySelector(".checkpoint__note")
+    expect(line?.textContent).toBe("Signed in.")
+    expect(line?.getAttribute("title")).toBe("Signed in.\nMore.")
+    expect(line?.querySelector("svg")).not.toBeNull()
+    // The note is its own line, apart from the kind.
+    expect(host.querySelector(".checkpoint__facts")?.contains(line ?? null)).toBe(false)
+  })
+
+  it("states Can't load here on the picture, with the reason in its tooltip, not as a caption row", () => {
+    const host = card(checkpoint("x", taken, { compatible: false, incompatible: ["display"] }))
+    const badge = host.querySelector(".checkpoint__badge")
+    expect(badge?.closest(".checkpoint__frame")).not.toBeNull()
+    expect(badge?.closest(".checkpoint__caption")).toBeNull()
+    expect(badge?.textContent).toBe("Can't load here")
+    expect(badge?.getAttribute("title")).toBe("Made with a different display, so it can't load here")
+  })
+
+  it("names every fact in its one accessible name", () => {
+    const c = checkpoint("x", taken, { kind: "stow", bytes: 7.8 * GIB, notes: note, compatible: false, incompatible: ["qemu"], title: "stow away" })
+    const label = card(c).querySelector("button")?.getAttribute("aria-label")
+    expect(label).toBe(cardLabel(c, NOW))
+    expect(label).toContain("stow away")
+    expect(label).toContain("Put away")
+    expect(label).toContain("Oct 21, 2026 at")
+    expect(label).toContain("7.8 GiB")
+    expect(label).toContain("Has notes")
+    expect(label).toContain("can't load here")
+    // Without a note or a problem, it says neither.
+    const plain = cardLabel(checkpoint("y", taken), NOW)
+    expect(plain).not.toContain("Has notes")
+    expect(plain).not.toContain("can't load")
+  })
+
+  it("thins its caption out with its width on screen: all, then the name alone, then the picture", () => {
+    const c = checkpoint("x", taken, { notes: note })
+    const parts = (zoom: number): string[] => Array.from(card(c, zoom).querySelectorAll(".checkpoint__caption > span")).map((e) => e.className)
+    expect(parts(FULL_WIDTH / 240)).toEqual(["checkpoint__name", "checkpoint__when", "checkpoint__facts", "checkpoint__note"])
+    expect(parts(NAME_WIDTH / 240)).toEqual(["checkpoint__name"])
+    const picture = card(c, (NAME_WIDTH - 1) / 240)
+    expect(picture.querySelector(".checkpoint__caption")).toBeNull()
+    expect(picture.querySelector("button")?.getAttribute("title")).toContain("x")
+  })
+
+  it("has a glyph for each kind", () => {
+    expect(new Set(["manual", "auto", "baseline", "stow", "golden"].map(kindIcon)).size).toBe(5)
+  })
+})
+
+describe("New Checkpoint's name field", () => {
+  let root: ReturnType<typeof createRoot> | null = null
+  afterEach(() => {
+    setSystemTime()
+    act(() => root?.unmount())
+    root = null
+    document.body.replaceChildren()
+  })
+  const input = (): HTMLInputElement => {
+    const field = document.querySelector<HTMLInputElement>("#checkpoint-new-title")
+    if (field === null) throw new Error("no field")
+    return field
+  }
+  const mount = (): ReturnType<typeof mock> => {
+    const onSubmit = mock((..._: unknown[]) => undefined)
+    const host = document.createElement("div")
+    document.body.append(host)
+    root = createRoot(host)
+    act(() => root?.render(<NewCheckpointForm live busy={false} onCancel={() => undefined} onSubmit={onSubmit} />))
+    return onSubmit
+  }
+
+  it("shows the date and time as its placeholder, with no explaining line", () => {
+    const stamp = new Date(2026, 10, 3, 15, 30, 12)
+    setSystemTime(stamp)
+    mount()
+    expect(input().placeholder).toBe(absoluteTime(stamp.getTime()))
+    expect(input().placeholder).toMatch(/2026/)
+    expect(document.body.textContent).not.toContain("Leave it empty")
+    expect(document.querySelector(".checkpoints__hint")).toBeNull()
+  })
+
+  it("spells the date out for today as for any day: what is stored never says Today", () => {
+    expect(absoluteTime(new Date(2026, 10, 3, 15, 30).getTime(), "en-US")).toBe("Nov 3, 2026 at 3:30 PM")
+  })
+
+  it("keeps the placeholder current: it changes when the minute does", async () => {
+    setSystemTime(new Date(2026, 10, 3, 15, 30, 59, 940))
+    mount()
+    const first = input().placeholder
+    // The clock is frozen under test: move it across the minute while the form waits for it.
+    setSystemTime(new Date(2026, 10, 3, 15, 31, 0, 5))
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 400))
+    })
+    expect(input().placeholder).not.toBe(first)
+    expect(input().placeholder).toBe(absoluteTime(new Date(2026, 10, 3, 15, 31).getTime()))
+  })
+
+  it("hands over what was typed, and the placeholder's name for an empty field to be stored as", () => {
+    const stamp = new Date(2026, 10, 3, 15, 30, 12)
+    setSystemTime(stamp)
+    const onSubmit = mount()
+    act(() => document.querySelector("form")?.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })))
+    expect(onSubmit).toHaveBeenCalledWith("", absoluteTime(stamp.getTime()))
   })
 })
