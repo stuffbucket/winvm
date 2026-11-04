@@ -293,7 +293,7 @@ the same meter**, and named only on hover.
   `aria-label` ("CPU. Windows: 3%. macOS: 12%."). Pointing at it or
   focusing it shows a layer-20 tooltip under it with one row per value: its mark
   (the same stroke or fill) and "Windows: 3%", "macOS: 12%" /
-  "Windows: 12 GB of 63 GB", "Changes on macOS: 3.2 GB", in text ink. Escape
+  "Windows: 12 GB of 63 GB", "macOS: 3.2 GB", in text ink. Escape
   hides it while it stays pointed at or focused. The tooltip is `aria-hidden`;
   the label already says it. With one value it is a plain `role="meter"`.
 - `scripts/render-resources.mjs` renders every state and checks the above.

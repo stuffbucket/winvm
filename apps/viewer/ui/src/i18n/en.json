@@ -429,7 +429,7 @@
   "usage.memoryMacValue": "{used} on macOS",
   "usage.diskValue": "C: {used} of {total}",
   "usage.diskOf": "{used} of {total}",
-  "usage.legendDiskMac": "Changes on macOS: {size}",
+  "usage.legendDiskMac": "macOS: {size}",
   "panel.hardware": "Hardware",
   "panel.network": "Network",
   "hardware.hint": "{cpus, plural, one {# processor} other {# processors}}, {memory}",

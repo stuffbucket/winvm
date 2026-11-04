@@ -300,7 +300,7 @@ describe("the meters' two values", () => {
   it("name both disk values in full and lay the Mac's changes over the same bar", () => {
     const host = render(<Resources usage={view(now())} context={{ cpus: 4, overlayBytes: 3.2 * GB }} />)
     const disk = meter(host, "Disk")
-    expect(disk?.getAttribute("aria-label")).toBe("Disk. Windows: 12 GB of 63 GB. Changes on macOS: 3.2 GB.")
+    expect(disk?.getAttribute("aria-label")).toBe("Disk. Windows: 12 GB of 63 GB. macOS: 3.2 GB.")
     expect(disk?.querySelector(".resource__value")?.textContent).toBe("C: 12 GB of 63 GB")
     // The same total: 12/63 and 3.2/63 of one track.
     expect((disk?.querySelector(".resource__fill") as HTMLElement).style.inlineSize).toBe("19.05%")
@@ -314,7 +314,7 @@ describe("the meters' two values", () => {
     act(() => root?.unmount())
     const big = render(<Resources usage={view(now())} context={{ cpus: 4, overlayBytes: 90 * GB }} />)
     expect((big.querySelector(".resource__overlay") as HTMLElement).style.inlineSize).toContain("100%")
-    expect(meter(big, "Disk")?.getAttribute("aria-label")).toContain("Changes on macOS: 90 GB")
+    expect(meter(big, "Disk")?.getAttribute("aria-label")).toContain("macOS: 90 GB")
   })
 
   it("have no second value without the Mac's figures", () => {
