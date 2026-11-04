@@ -41,6 +41,10 @@ declare module "novnc/core/rfb.js" {
     readonly _keyboard: {
       _allKeysUp(): void
     }
+    /** Private in noVNC: the buttons it believes are down, and where the pointer last was; read to let go of them (see Screen.tsx). */
+    readonly _mouseButtonMask: number
+    readonly _mousePos: { readonly x?: number; readonly y?: number }
+    _handleMouseButton(x: number, y: number, mask: number): void
     static readonly messages: {
       setDesktopSize(sock: unknown, width: number, height: number, id: number, flags: number): void
     }

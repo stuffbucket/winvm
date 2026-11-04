@@ -34,6 +34,7 @@ import { cx } from "./components/cx"
 import { t } from "./i18n"
 import type { Phase, Share } from "./model"
 import { controls, displaySize, isFrozen, isLivePhase, parseShare, shownTitle, startSteps, terminalBlocked } from "./model"
+import { inputRule } from "./features/screen/input"
 import { SharePanel } from "./features/actions/SharePanel"
 import { CheckpointCanvas } from "./features/checkpoints/CheckpointCanvas"
 import { useCopies } from "./features/files/useCopies"
@@ -111,10 +112,22 @@ export function App(): JSX.Element {
   // Paused or asleep: no input, no resize, no agent calls until it runs again.
   const frozen = isFrozen(phase)
   const held = phase === "paused" || phase === "asleep" ? phase : null
-  // A held machine takes no keys: the Mac gets its own shortcuts (Cmd-Tab) back.
+  // Who has the pointer and keys over the screen (input.ts). A guest that takes
+  // none (paused, asleep, starting, a verb under way) leaves the Mac its own
+  // shortcuts (Cmd-Tab): a capture is released, with a quiet note, and stays
+  // released when the guest takes input again; it is asked for again.
+  const input = inputRule(phase, w.busy !== null)
+  const [released, setReleased] = useState<string | null>(null)
   useEffect(() => {
-    if (frozen) setKeyboardCaptured(false)
-  }, [frozen])
+    if (input.forward) setReleased(null)
+    else if (keyboardCaptured) {
+      setKeyboardCaptured(false)
+      setReleased(input.released)
+    }
+  }, [input.forward, input.released, keyboardCaptured])
+  // The native Input menu can't grey its items out here: a press while the guest takes none says why.
+  const inputRef = useRef(input)
+  inputRef.current = input
   const guestReady = phase === "running" && w.busy === null
   const hostReady = w.checks === null || w.checks.ready
   const c = controls(phase ?? "missing", w.busy !== null || phase === null || !hostReady)
@@ -354,10 +367,15 @@ export function App(): JSX.Element {
     () =>
       onMenu((id) => {
         if (id === "new-terminal") terminal(null)
-        if (id === "capture-keyboard" && showScreen && !frozen) setKeyboardCaptured(true)
         if (id === "release-keyboard") setKeyboardCaptured(false)
-        if (id === "send-windows-key") screen.current?.sendWindowsKey()
-        if (id === "send-ctrl-alt-delete") screen.current?.sendCtrlAltDelete()
+        if (id === "capture-keyboard" || id === "send-windows-key" || id === "send-ctrl-alt-delete") {
+          const rule = inputRef.current
+          if (!showScreen || !rule.forward) {
+            if (rule.why !== null) setNotice({ tone: "notice", title: t(rule.why) })
+          } else if (id === "capture-keyboard") setKeyboardCaptured(true)
+          else if (id === "send-windows-key") screen.current?.sendWindowsKey()
+          else screen.current?.sendCtrlAltDelete()
+        }
         if (id === "rename-window") setRenaming(true)
         if (id === "checkpoints") toggleCheckpoints()
         if (id === "install-cli") void install()
@@ -368,7 +386,7 @@ export function App(): JSX.Element {
             .catch((e: unknown) => setReference({ text: String(e) }))
         }
       }),
-    [install, terminal, toggleCheckpoints, showScreen, frozen],
+    [install, terminal, toggleCheckpoints, showScreen],
   )
 
   useEffect(() => {
@@ -481,6 +499,8 @@ export function App(): JSX.Element {
         open={open?.id ?? null}
         detailsOpen={detailsOpen}
         keyboardCaptured={keyboardCaptured}
+        input={input}
+        keyboardReleased={released}
         onStart={() => run("start")}
         onShutDown={() => setConfirm({ kind: "stop" })}
         onRestart={() => setConfirm({ kind: "reboot" })}
@@ -607,6 +627,7 @@ export function App(): JSX.Element {
                   connection={w.connection}
                   keyboardCaptured={keyboardCaptured}
                   onKeyboardCaptured={setKeyboardCaptured}
+                  forwardInput={input.forward}
                   resizable={resizable}
                   onGuestSize={resizeGuest}
                   frozen={frozen}
