@@ -110,10 +110,18 @@ cd apps/viewer
 mise exec -- bun scripts/build-ui.ts                           # needs dist/ (verified ~170 ms)
 PLAYWRIGHT_DIR=/tmp/pw node scripts/render-checkpoints.mjs /tmp/winvm-render   # verified; prints PNG paths
 ```
-Then `Read` a PNG (e.g. `/tmp/winvm-render/light-02-overview.png`, `dark-...`): output is 2560x1640, light and dark. Only `render-checkpoints.mjs` exists. It serves `dist/` locally, injects `tests/render/fake-tauri.js` (a fake Tauri API with fake machine + checkpoints), drives WebKit, and exits 2 with a message if `PLAYWRIGHT_DIR` is unset or `dist/index.html` is missing.
+Then `Read` a PNG (e.g. `/tmp/winvm-render/light-02-overview.png`, `dark-...`): output is 2560x1640, light and dark. Every script serves `dist/` locally, injects `tests/render/fake-tauri.js` (a fake Tauri API with fake machines + checkpoints), drives WebKit, and exits 2 with a message if `PLAYWRIGHT_DIR` is unset or `dist/index.html` is missing.
+
+| Script (in `apps/viewer/scripts/`) | Shows |
+|---|---|
+| `render-checkpoints.mjs [outdir]` | the Checkpoints canvas: way in/out, bar, highlights, drag, zoom, search |
+| `render-overview.mjs` | the suspended/off overview: notes, backdrop with and without a picture |
+| `render-machines.mjs` | the machines menu and the editable machine name in the heading |
+| `render-help.mjs [--preview <dir>] [--no-build]` | the help popovers; WITHOUT `--preview` it rewrites the committed pictures in `ui/src/features/help/img/`: run it after any change to Terminal, Files or Checkpoints, and commit the result |
+
 - Another screen: copy that script; keep `open(scheme)` (colorScheme `light`/`dark`, `addInitScript` fake-tauri, `__fakeScreen()`), then `window.__fakeMenu("<menu id>")` or click, then `page.screenshot`. Extend `tests/render/fake-tauri.js` for new `invoke` calls.
 - If `/tmp/pw` is missing (from the script header, setup not re-run here): `npm i --prefix /tmp/pw playwright && npx --prefix /tmp/pw playwright install webkit`. Present on this Mac: `/tmp/pw` with playwright and `~/Library/Caches/ms-playwright/webkit-2370`.
-- Run Node, not Bun, for the render script (`node scripts/render-checkpoints.mjs`).
+- Run Node, not Bun, for the render script (`node scripts/render-*.mjs`).
 
 ## 8. Scenario tests on a real machine
 ```sh
