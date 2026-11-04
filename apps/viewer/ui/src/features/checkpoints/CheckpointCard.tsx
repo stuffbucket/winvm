@@ -40,6 +40,15 @@ export const NOTE = (
   </svg>
 )
 
+// lucide: triangle-alert
+export const WARNING = (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3" />
+    <path d="M12 9v4" />
+    <path d="M12 17h.01" />
+  </svg>
+)
+
 /** A checkpoint's picture: the screenshot when the card is big on screen, the thumbnail otherwise, a placeholder before either. */
 export function Picture({ c, sharp, wanted, children }: { readonly c: Checkpoint; readonly sharp: boolean; readonly wanted: boolean; readonly children?: ReactNode }): JSX.Element {
   const thumb = usePicture(c.thumbnail, c.createdAt, wanted)
@@ -60,15 +69,42 @@ export function Picture({ c, sharp, wanted, children }: { readonly c: Checkpoint
   )
 }
 
+/**
+ * How much of a card to draw, from how wide it is on screen. Words are drawn
+ * at a size that reads at any zoom, so a card that is small has room for fewer
+ * of them: first the time and size go, then the kind, then only the picture.
+ */
+export type CardLevel = "full" | "name" | "picture"
+
+export const FULL_WIDTH = 168
+export const NAME_WIDTH = 84
+/** Wide enough, on screen, for the kind's tag on the picture. */
+export const KIND_WIDTH = 110
+
+export const levelFor = (screenWidth: number): CardLevel => (screenWidth >= FULL_WIDTH ? "full" : screenWidth >= NAME_WIDTH ? "name" : "picture")
+
+/** The least a card's words are drawn at, as a share of their size (--text-sm), on screen. */
+export const MIN_TEXT = 0.86
+
+/**
+ * What a card's words are scaled by in the world: with the card (older days
+ * a little smaller), but never so small they stop reading on screen.
+ */
+export const textScale = (cardScale: number, zoom: number): number => Math.max(cardScale, MIN_TEXT / zoom)
+
 export interface CardProps {
   readonly c: Checkpoint
   readonly box: CardBox
   readonly selected: boolean
-  /** Its width on screen, in CSS pixels: decides thumbnail or screenshot. */
-  readonly screenWidth: number
+  /** The camera's zoom: decides thumbnail or screenshot, how big the words are and how many. */
+  readonly zoom: number
   readonly now: number
   /** Not among the search's matches. */
   readonly dimmed: boolean
+  /** Picked out: under the pointer on the timeline, or of the kind a filter is about. */
+  readonly lit: boolean
+  /** Being carried by the pointer. */
+  readonly carried: boolean
   /** Just taken: flies in from the Now card, by this much (world units). */
   readonly arriving: { readonly dx: number; readonly dy: number; readonly scale: number } | null
   readonly leaving: boolean
@@ -76,13 +112,17 @@ export interface CardProps {
   onSelect(name: string): void
 }
 
-/** One checkpoint on the canvas: its picture, what it's called, when, what kind, its size, and whether it loads here. */
-export const CheckpointCard = memo(function CheckpointCard({ c, box, selected, screenWidth, now, dimmed, arriving, leaving, working, onSelect }: CardProps): JSX.Element {
+/** One checkpoint on the canvas: its picture, and below it what it's called, when it was taken and how big it is. */
+export const CheckpointCard = memo(function CheckpointCard({ c, box, selected, zoom, now, dimmed, lit, carried, arriving, leaving, working, onSelect }: CardProps): JSX.Element {
   const reason = incompatibleReason(c)
   const name = shownName(c)
   const when = takenAt(c, now)
+  const kind = kindLabel(c.kind)
+  const screenWidth = box.width * zoom
+  const level = levelFor(screenWidth)
   const style = {
     "--card-scale": String(box.scale),
+    "--m": String(textScale(box.scale, zoom)),
     ...(arriving === null ? {} : { "--arrive-x": `${String(arriving.dx)}px`, "--arrive-y": `${String(arriving.dy)}px`, "--arrive-scale": String(arriving.scale) }),
   } as CSSProperties
   return (
@@ -94,8 +134,11 @@ export const CheckpointCard = memo(function CheckpointCard({ c, box, selected, s
       selected={selected}
       className="checkpoint"
       data-kind={c.kind}
+      data-level={level}
       data-incompatible={reason !== null}
       data-dimmed={dimmed}
+      data-lit={lit}
+      data-carried={carried}
       data-arriving={arriving !== null}
       data-leaving={leaving}
       data-name={c.name}
@@ -105,28 +148,41 @@ export const CheckpointCard = memo(function CheckpointCard({ c, box, selected, s
         className="checkpoint__hit"
         style={style}
         aria-pressed={selected}
-        aria-label={t("checkpoints.card.label", { name, when })}
+        aria-label={reason === null ? t("checkpoints.card.label", { name, kind, when }) : `${t("checkpoints.card.label", { name, kind, when })}. ${t(reason)}`}
+        title={level === "picture" ? `${name}, ${when}` : undefined}
         onClick={() => onSelect(c.name)}
       >
         <Picture c={c} sharp={sharpAt(screenWidth)} wanted>
-          {reason !== null && <span className="checkpoint__badge">{t(reason)}</span>}
-          {working !== null && <span className="checkpoint__working">{working}</span>}
+          <span className="checkpoint__fit checkpoint__fit--frame">
+            {c.kind !== "manual" && screenWidth >= KIND_WIDTH && <span className="checkpoint__kind">{kind}</span>}
+            {reason !== null && (
+              <span className="checkpoint__badge" title={t(reason)}>
+                {WARNING}
+                {level === "full" && <span>{t("checkpoints.cantLoad")}</span>}
+              </span>
+            )}
+            {working !== null && <span className="checkpoint__working">{working}</span>}
+          </span>
         </Picture>
-        <span className="checkpoint__caption">
-          <span className="checkpoint__title">
-            <span className="checkpoint__name">{name}</span>
-            {hasNotes(c) && (
-              <span className="checkpoint__notes" title={t("checkpoints.hasNotes")}>
-                {NOTE}
+        {level !== "picture" && (
+          <span className="checkpoint__caption checkpoint__fit">
+            <span className="checkpoint__title">
+              <span className="checkpoint__name">{name}</span>
+              {hasNotes(c) && (
+                <span className="checkpoint__notes" title={t("checkpoints.hasNotes")}>
+                  {NOTE}
+                </span>
+              )}
+            </span>
+            {level === "full" && (
+              <span className="checkpoint__when">
+                {when}
+                <span aria-hidden="true"> · </span>
+                <span className="checkpoint__size">{formatSize(c.bytes)}</span>
               </span>
             )}
           </span>
-          <span className="checkpoint__when">{when}</span>
-          <span className="checkpoint__meta">
-            <span className="checkpoint__kind">{kindLabel(c.kind)}</span>
-            <span>{formatSize(c.bytes)}</span>
-          </span>
-        </span>
+        )}
       </button>
     </SpatialCanvasNode>
   )

@@ -20,18 +20,23 @@ import type { SaveEntry } from "../../model"
 
 export type Checkpoint = SaveEntry
 
-/** World units (CSS pixels at 100%). A card is a 16:10 picture over a caption. */
-export const CARD_WIDTH = 320
-export const CARD_FRAME = 200
-export const CARD_CAPTION = 92
-export const NOW_WIDTH = 560
-export const NOW_CAPTION = 64
-export const COLUMN_GAP = 36
-export const LINE_GAP = 36
-/** Room above a day's block, for its date. */
-export const DAY_GAP = 112
+/**
+ * World units (CSS pixels at 100%). A card is a 16:10 picture and nothing
+ * else: its words hang below it, drawn at a size that reads at any zoom (see
+ * CheckpointCard), so the gaps between lines and days leave them room.
+ */
+export const CARD_WIDTH = 240
+export const CARD_FRAME = 150
+export const NOW_WIDTH = 440
+export const COLUMN_GAP = 32
+/** Between one line of a day's cards and the next: room for the first line's captions. */
+export const LINE_GAP = 76
+/** Room above a day's block: its date, and the captions of the block above. */
+export const DAY_GAP = 108
 /** Between Now and the newest day. */
-export const NOW_GAP = 150
+export const NOW_GAP = 112
+/** Under the last card: its caption, and Now's. */
+export const CAPTION_ROOM = 64
 /** Each older day is this much smaller than the one in front of it... */
 export const DEPTH_STEP = 0.93
 /** ...down to this. */
@@ -40,7 +45,7 @@ export const COLUMNS = 6
 
 export interface CardBox extends Rect {
   readonly name: string
-  /** The picture's height; the caption is the rest. */
+  /** The picture's height: the whole box. */
   readonly frame: number
   /** How much smaller than a card of the newest day (1). */
   readonly scale: number
@@ -107,7 +112,7 @@ export function layoutTimeline(checkpoints: readonly Checkpoint[], nowAspect: nu
   }
 
   const nowFrame = Math.round(NOW_WIDTH / (Number.isFinite(nowAspect) && nowAspect > 0 ? nowAspect : 16 / 10))
-  const now = { x: -NOW_WIDTH / 2, y: 0, width: NOW_WIDTH, height: nowFrame + NOW_CAPTION, frame: nowFrame }
+  const now = { x: -NOW_WIDTH / 2, y: 0, width: NOW_WIDTH, height: nowFrame, frame: nowFrame }
 
   // Newest day first, building upwards from Now; reversed at the end.
   const keys = [...groups.keys()].reverse()
@@ -118,7 +123,7 @@ export function layoutTimeline(checkpoints: readonly Checkpoint[], nowAspect: nu
     const list = groups.get(key) ?? []
     const scale = depthScale(back)
     const w = CARD_WIDTH * scale
-    const h = (CARD_FRAME + CARD_CAPTION) * scale
+    const h = CARD_FRAME * scale
     const cols = Math.min(columns, list.length)
     const lines = Math.ceil(list.length / columns)
     const width = cols * w + (cols - 1) * COLUMN_GAP * scale
@@ -166,8 +171,31 @@ export function layoutTimeline(checkpoints: readonly Checkpoint[], nowAspect: nu
   const x0 = Math.min(...all.map((r) => r.x))
   const y0 = Math.min(...all.map((r) => r.y))
   const x1 = Math.max(...all.map((r) => r.x + r.width))
-  const y1 = Math.max(...all.map((r) => r.y + r.height))
+  const y1 = Math.max(...all.map((r) => r.y + r.height)) + CAPTION_ROOM
   return { now, days, cards, order, bounds: { x: x0, y: y0, width: x1 - x0, height: y1 - y0 } }
+}
+
+/** How far each moved card is from where the layout put it: by name, in world units. */
+export type Moves = Readonly<Record<string, { readonly x: number; readonly y: number }>>
+
+/**
+ * The layout with the cards a person has moved moved: each by its own offset
+ * from its slot, so a card keeps its place relative to its day when days are
+ * added. Names the layout doesn't have (a checkpoint since deleted, or hidden)
+ * are left alone. Days, dates and Now stay where they are.
+ */
+export function placeCards(layout: TimelineLayout, moves: Moves): TimelineLayout {
+  const cards = new Map(layout.cards)
+  const moved: Rect[] = []
+  for (const [name, by] of Object.entries(moves)) {
+    const box = cards.get(name)
+    if (box === undefined || (by.x === 0 && by.y === 0)) continue
+    const placed = { ...box, x: box.x + by.x, y: box.y + by.y }
+    cards.set(name, placed)
+    moved.push({ ...placed, height: placed.height + CAPTION_ROOM })
+  }
+  if (moved.length === 0) return layout
+  return { ...layout, cards, bounds: union([layout.bounds, ...moved]) }
 }
 
 /** A day's block with room for its date above it (the label sits on the block, drawn upwards). */

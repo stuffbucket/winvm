@@ -148,6 +148,27 @@ naming the entity and a quiet `title` tooltip. A destructive one reads
 red (`btn--ghost-destructive`) and always confirms in a `ConfirmDialog`
 (`tone="danger"`) before acting.
 
+## Canvas control bar (Checkpoints)
+
+A full-window canvas keeps its controls in one bar floating at the bottom
+centre (`SpatialCanvasControlGroup`, as monimal's canvas does), never in a
+top bar: the traffic lights live at the top left, and a title there is
+chrome the native title bar already supplies.
+
+- Surface `--surface-card` (opaque: content pans under it),
+  `--border-width-hairline` `--border-subtle`, `--radius-card`,
+  `--elevation-modal`; padding `--space-1`.
+- Items are `spatial-canvas__button`s (`--size-xl` high, icon buttons square),
+  grouped by hairline dividers: search, then actions, then view, then the one
+  primary button (`btn--primary`, "Done"), last.
+- Icon buttons carry an `aria-label` and a `title`; a filter or toggle is
+  `aria-pressed` and its `title` says what pressing does. A control that can't
+  be used is `disabled`, and its tooltip says why.
+- A control that is rarely needed folds to its icon and eases out when used
+  (search to the left, so the bar grows away from its centre); a readout that
+  is only wanted while something changes (the zoom's figure) eases away when it
+  rests. Both are out of the way, not removed: hover or focus brings them back.
+
 ## Focus rings
 
 - **Always visible on keyboard navigation; hidden on mouse use** via

@@ -1,9 +1,11 @@
 /**
  * Renders the Checkpoints view in WebKit (the engine Tauri uses on macOS)
  * against a fake app (tests/render/fake-tauri.js) and writes screenshots: the
- * way in, the canvas at several zooms, the timeline, a selected checkpoint,
- * search, the confirmations, New Checkpoint, many checkpoints, in light and
- * dark. Test DOMs compute no layout; this is how layout and feel get looked at.
+ * way in, the canvas at its opening view and several zooms, the control bar
+ * (search folded and open, the zoom figure showing and away), the Automatic
+ * filter's and the timeline's highlights, a card dragged and the layout reset,
+ * the timeline, a selected checkpoint, search, the confirmations, New
+ * Checkpoint, many checkpoints, in light and dark. Test DOMs compute no layout; this is how layout and feel get looked at.
  *
  * Playwright isn't one of the workspace's dependencies (it would pull a
  * browser into every install). Install it anywhere and point at it:
@@ -88,6 +90,40 @@ for (const scheme of ["dark", "light"]) {
   await shot(page, `${scheme}-01-entering`)
   await wait(1300)
   await shot(page, `${scheme}-02-overview`)
+
+  // The bar at rest: the zoom's figure has folded away; search is a magnifier.
+  await wait(2000)
+  await shot(page, `${scheme}-02a-bar-at-rest`)
+
+  // The Automatic filter, under the pointer, picks out the automatic checkpoints.
+  await page.getByRole("button", { name: "Automatic checkpoints" }).hover()
+  await wait(350)
+  await shot(page, `${scheme}-02b-automatic-hint`)
+
+  // A day on the timeline, under the pointer, picks out that day's.
+  const rail = await page.locator(".timeline__track").boundingBox()
+  if (rail !== null) {
+    await page.mouse.move(rail.x + rail.width / 2, rail.y + rail.height * 0.9)
+    await wait(350)
+    await shot(page, `${scheme}-02c-timeline-hint`)
+  }
+
+  // Drag a card somewhere else (the layout is kept), then reset the layout.
+  const card = await page.locator('.checkpoint[data-name="clean-desktop"] .checkpoint__hit').boundingBox()
+  if (card !== null) {
+    const x = card.x + card.width / 2
+    const y = card.y + card.height / 2
+    await page.mouse.move(x, y)
+    await page.mouse.down()
+    await page.mouse.move(x + 150, y - 120, { steps: 6 })
+    await page.mouse.move(x + 300, y - 240, { steps: 6 })
+    await shot(page, `${scheme}-02d-dragging`)
+    await page.mouse.up()
+    await wait(300)
+    await shot(page, `${scheme}-02e-moved`)
+    await page.getByRole("button", { name: "Reset layout" }).click()
+    await wait(300)
+  }
 
   // Zoomed all the way out: every checkpoint, the timeline beside them.
   await page.keyboard.press("Meta+0")
@@ -213,7 +249,7 @@ for (const scheme of ["dark", "light"]) {
       }),
   )
   await shot(page, "dark-21-many-panned")
-  console.log(`many: ${String(cards)} cards drawn of 413; ${String(frames)} frames in a second of panning; fit took ${String(Date.now() - started)} ms`)
+  console.log(`many: ${String(cards)} cards drawn of ${String(await page.evaluate(() => window.__fakeCount?.() ?? 414))}; ${String(frames)} frames in a second of panning; fit took ${String(Date.now() - started)} ms`)
   await page.close()
 }
 

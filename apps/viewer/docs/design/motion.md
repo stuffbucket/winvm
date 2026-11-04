@@ -9,6 +9,10 @@ spacing, and copy.
 - **200ms ease-out** — layout shifts (card collapse, accordion
   twirldown).
 - **Instant** — under `prefers-reduced-motion: reduce`.
+- **A control that folds away** (Checkpoints' search field easing out of its
+  magnifier, the zoom figure easing off after the zoom rests) — 200 ms
+  ease-out on width and opacity; the figure waits 1.6 s first, and comes back
+  at once on a change, hover or focus.
 - **The Checkpoints camera** (winvm, [`windows.md`](windows.md) →
   *Checkpoints*): 420–900 ms, cubic ease-in-out, longer for a bigger
   change of view. A flight is how that view says where a checkpoint is in

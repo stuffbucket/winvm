@@ -15,6 +15,8 @@ const cp = await import("../ui/src/features/checkpoints/checkpoints")
 const { loadSettings, parseSettings, saveSettings } = await import("../ui/src/features/checkpoints/settings")
 const { draftOf, tagsOf } = await import("../ui/src/features/checkpoints/CheckpointDetails")
 const { ConfirmDialog } = await import("../ui/src/components/ConfirmDialog")
+const { ControlBar } = await import("../ui/src/features/checkpoints/ControlBar")
+const { levelFor, textScale, FULL_WIDTH, NAME_WIDTH, MIN_TEXT } = await import("../ui/src/features/checkpoints/CheckpointCard")
 const { parseNote, parseSaves } = await import("../ui/src/model")
 const { centreOf, clampCamera, fitRect } = await import("@winvm/canvas")
 
@@ -334,10 +336,19 @@ describe("what winvm says", () => {
 
 describe("settings", () => {
   it("falls back to the defaults for anything missing or broken", () => {
-    expect(parseSettings(null)).toEqual({ showAutomatic: true, zoom: null })
-    expect(parseSettings({ showAutomatic: false, zoom: 0.5 })).toEqual({ showAutomatic: false, zoom: 0.5 })
-    expect(parseSettings({ showAutomatic: "yes", zoom: -1 })).toEqual({ showAutomatic: true, zoom: null })
-    expect(parseSettings("nonsense")).toEqual({ showAutomatic: true, zoom: null })
+    expect(parseSettings(null)).toEqual({ showAutomatic: true, zoom: null, layouts: {} })
+    expect(parseSettings({ showAutomatic: false, zoom: 0.5 })).toEqual({ showAutomatic: false, zoom: 0.5, layouts: {} })
+    expect(parseSettings({ showAutomatic: "yes", zoom: -1 })).toEqual({ showAutomatic: true, zoom: null, layouts: {} })
+    expect(parseSettings("nonsense")).toEqual({ showAutomatic: true, zoom: null, layouts: {} })
+  })
+
+  it("keeps where cards were moved, per machine, and drops what isn't sound", () => {
+    const layouts = { "work-pc": { b: { x: 40, y: -12.5 } }, other: { c: { x: 1, y: 2 } } }
+    expect(parseSettings({ layouts }).layouts).toEqual(layouts)
+    expect(parseSettings({ layouts: "no" }).layouts).toEqual({})
+    expect(parseSettings({ layouts: { "work-pc": { b: { x: "far", y: 0 } } } }).layouts).toEqual({})
+    // An older file, from before cards could be moved, has none.
+    expect(parseSettings({ showAutomatic: false, zoom: 2 }).layouts).toEqual({})
   })
 
   it("go through `winvm settings --section checkpoints`, the file's one writer", async () => {
@@ -352,13 +363,209 @@ describe("settings", () => {
     }
     Object.assign(window, { __TAURI__: { core: { invoke } } })
     try {
-      expect(await loadSettings()).toEqual({ showAutomatic: true, zoom: null })
-      await saveSettings({ showAutomatic: false, zoom: 2 })
-      expect(await loadSettings()).toEqual({ showAutomatic: false, zoom: 2 })
+      expect(await loadSettings()).toEqual({ showAutomatic: true, zoom: null, layouts: {} })
+      await saveSettings({ showAutomatic: false, zoom: 2, layouts: { m: { b: { x: 3, y: 4 } } } })
+      expect(await loadSettings()).toEqual({ showAutomatic: false, zoom: 2, layouts: { m: { b: { x: 3, y: 4 } } } })
       expect(calls[0]).toEqual(["settings", "--section", "checkpoints"])
-      expect(calls[1]).toEqual(["settings", "--section", "checkpoints", '--set={"showAutomatic":false,"zoom":2}'])
+      expect(calls[1]).toEqual(["settings", "--section", "checkpoints", '--set={"showAutomatic":false,"zoom":2,"layouts":{"m":{"b":{"x":3,"y":4}}}}'])
     } finally {
       delete (window as { __TAURI__?: unknown }).__TAURI__
     }
+  })
+})
+
+describe("moved cards", () => {
+  const base = cp.layoutTimeline(list, 16 / 10)
+
+  it("leaves the layout as it was when nothing is moved, or what moved isn't there", () => {
+    expect(cp.placeCards(base, {})).toBe(base)
+    expect(cp.placeCards(base, { gone: { x: 10, y: 10 } })).toBe(base)
+    expect(cp.placeCards(base, { b: { x: 0, y: 0 } })).toBe(base)
+  })
+
+  it("moves a card by its offset from its slot, and nothing else", () => {
+    const placed = cp.placeCards(base, { b: { x: 500, y: -90 } })
+    const was = base.cards.get("b")
+    const now = placed.cards.get("b")
+    expect(now?.x).toBe((was?.x ?? 0) + 500)
+    expect(now?.y).toBe((was?.y ?? 0) - 90)
+    expect(now?.width).toBe(was?.width)
+    expect(placed.cards.get("c")).toEqual(base.cards.get("c"))
+    expect(placed.days).toBe(base.days)
+    expect(placed.now).toBe(base.now)
+    expect(placed.order).toBe(base.order)
+  })
+
+  it("grows the bounds to hold a card moved out of them, and its caption", () => {
+    const placed = cp.placeCards(base, { b: { x: 9000, y: 4000 } })
+    const b = placed.cards.get("b")
+    expect(placed.bounds.x + placed.bounds.width).toBeGreaterThanOrEqual((b?.x ?? 0) + (b?.width ?? 0))
+    expect(placed.bounds.y + placed.bounds.height).toBeGreaterThanOrEqual((b?.y ?? 0) + (b?.height ?? 0) + cp.CAPTION_ROOM)
+    // Moved within them, nothing grows.
+    expect(cp.placeCards(base, { b: { x: 1, y: 1 } }).bounds).toEqual(base.bounds)
+  })
+})
+
+describe("a card's words", () => {
+  it("thin out as the card gets small on screen: time and size, then the kind, then nothing but the picture", () => {
+    expect(levelFor(FULL_WIDTH)).toBe("full")
+    expect(levelFor(FULL_WIDTH - 1)).toBe("name")
+    expect(levelFor(NAME_WIDTH)).toBe("name")
+    expect(levelFor(NAME_WIDTH - 1)).toBe("picture")
+  })
+
+  it("never draw smaller than they read: a card's scale up close, the least that reads when far out", () => {
+    // Close up an older day's words are a little smaller, like its card.
+    expect(textScale(0.8, 2)).toBeCloseTo(0.8, 6)
+    // Far out they are scaled up in the world, so on screen they stay at MIN_TEXT of their size.
+    for (const zoom of [0.5, 0.3, 0.1]) {
+      expect(textScale(0.7, zoom) * zoom).toBeGreaterThanOrEqual(MIN_TEXT - 1e-9)
+    }
+  })
+})
+
+describe("the control bar", () => {
+  let root: ReturnType<typeof createRoot> | null = null
+  afterEach(() => {
+    act(() => root?.unmount())
+    root = null
+    document.body.replaceChildren()
+  })
+  const noop = (): void => undefined
+  function bar(over: Partial<import("react").ComponentProps<typeof ControlBar>> = {}): { host: HTMLElement; calls: Record<string, ReturnType<typeof mock>> } {
+    const calls = { onNew: mock(noop), onNewest: mock(noop), onToggleAutomatic: mock(noop), onDone: mock(noop), onSearchToggle: mock(noop), onReset: mock(noop), onFit: mock(noop) }
+    const host = document.createElement("div")
+    document.body.append(host)
+    root = createRoot(host)
+    act(() =>
+      root?.render(
+        <ControlBar
+          live
+          busy={false}
+          creating={false}
+          showAutomatic
+          zoom={0.53}
+          searchOpen={false}
+          query=""
+          inputRef={{ current: null }}
+          onAutomaticHint={noop}
+          onSearchFocus={noop}
+          onSearchBlur={noop}
+          onQuery={noop}
+          onSearchKey={noop}
+          onZoomOut={noop}
+          onZoomIn={noop}
+          arranged={false}
+          {...calls}
+          {...over}
+        />,
+      ),
+    )
+    return { host, calls }
+  }
+  const named = (host: HTMLElement, name: string): HTMLButtonElement | null => host.querySelector<HTMLButtonElement>(`button[aria-label="${name}"]`)
+
+  it("is one labelled group of buttons that each have a name and a tooltip", () => {
+    const { host } = bar()
+    expect(host.querySelector("nav")?.getAttribute("aria-label")).toBe("Checkpoint controls")
+    const buttons = [...host.querySelectorAll("button")]
+    expect(buttons.length).toBeGreaterThanOrEqual(8)
+    for (const b of buttons) {
+      expect((b.getAttribute("aria-label") ?? b.textContent ?? "").length).toBeGreaterThan(0)
+      expect(b.getAttribute("title") ?? b.textContent ?? "").not.toBe("")
+    }
+    // The wordy title chip and "(⌘F)" in the placeholder are gone.
+    expect(host.textContent).not.toContain("⌘F)")
+    expect(host.querySelector("input")?.getAttribute("placeholder")).toBe("Search names and notes")
+  })
+
+  it("keeps search to a magnifier until it is used, and takes no Tab stop while folded", () => {
+    const folded = bar()
+    expect(folded.host.querySelector(".checkpoints__search")?.getAttribute("data-open")).toBe("false")
+    expect(folded.host.querySelector("input")?.getAttribute("tabindex")).toBe("-1")
+    act(() => root?.unmount())
+    document.body.replaceChildren()
+    const open = bar({ searchOpen: true })
+    expect(open.host.querySelector(".checkpoints__search")?.getAttribute("data-open")).toBe("true")
+    expect(open.host.querySelector("input")?.getAttribute("tabindex")).toBe("0")
+    // A search with words in it stays open even when focus has left it.
+    act(() => root?.unmount())
+    document.body.replaceChildren()
+    expect(bar({ query: "office" }).host.querySelector(".checkpoints__search")?.getAttribute("data-open")).toBe("true")
+  })
+
+  it("makes Automatic a pressed icon button, and New says why it can't be used", () => {
+    const { host, calls } = bar({ showAutomatic: false, live: false })
+    const auto = named(host, "Automatic checkpoints")
+    expect(auto?.getAttribute("aria-pressed")).toBe("false")
+    expect(auto?.textContent).toBe("")
+    act(() => auto?.click())
+    expect(calls["onToggleAutomatic"]).toHaveBeenCalledTimes(1)
+    const fresh = named(host, "New Checkpoint")
+    expect(fresh?.disabled).toBe(true)
+    expect(fresh?.getAttribute("title")).toBe("Start Windows to take a checkpoint")
+    expect(fresh?.textContent).toBe("New")
+  })
+
+  it("jumps to the newest, takes a checkpoint, finishes, and resets only once something is moved", () => {
+    const { host, calls } = bar()
+    act(() => named(host, "Back to the newest")?.click())
+    act(() => named(host, "New Checkpoint")?.click())
+    act(() => [...host.querySelectorAll("button")].find((b) => b.textContent === "Done")?.click())
+    expect(calls["onNewest"]).toHaveBeenCalledTimes(1)
+    expect(calls["onNew"]).toHaveBeenCalledTimes(1)
+    expect(calls["onDone"]).toHaveBeenCalledTimes(1)
+    expect(named(host, "Reset layout")?.disabled).toBe(true)
+    act(() => root?.unmount())
+    document.body.replaceChildren()
+    const moved = bar({ arranged: true })
+    expect(named(moved.host, "Reset layout")?.disabled).toBe(false)
+    act(() => named(moved.host, "Reset layout")?.click())
+    expect(moved.calls["onReset"]).toHaveBeenCalledTimes(1)
+  })
+
+  it("shows the zoom's figure while the zoom changes, and folds it away once it rests", async () => {
+    const { ZOOM_FIGURE_MS } = await import("../ui/src/features/checkpoints/ControlBar")
+    const { host } = bar({ zoom: 0.5 })
+    const group = (): string | null => host.querySelector(".checkpoints__zoom")?.getAttribute("data-figure") ?? null
+    // Nothing has changed yet: the figure is folded.
+    expect(group()).toBe("false")
+    const rerender = (zoom: number): void => {
+      act(() =>
+        root?.render(
+          <ControlBar
+            live
+            busy={false}
+            creating={false}
+            showAutomatic
+            zoom={zoom}
+            searchOpen={false}
+            query=""
+            inputRef={{ current: null }}
+            onNew={noop}
+            onNewest={noop}
+            onToggleAutomatic={noop}
+            onAutomaticHint={noop}
+            onSearchToggle={noop}
+            onSearchFocus={noop}
+            onSearchBlur={noop}
+            onQuery={noop}
+            onSearchKey={noop}
+            onZoomOut={noop}
+            onZoomIn={noop}
+            onFit={noop}
+            arranged={false}
+            onReset={noop}
+            onDone={noop}
+          />,
+        ),
+      )
+    }
+    rerender(0.62)
+    expect(group()).toBe("true")
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, ZOOM_FIGURE_MS + 150))
+    })
+    expect(group()).toBe("false")
   })
 })
