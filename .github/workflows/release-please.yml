@@ -84,9 +84,9 @@ jobs:
             --config-file release-please-config.json \
             --manifest-file .release-please-manifest.json
 
-      # The PR API can lag a just-pushed release branch, so retry until its
-      # head agrees with the git ref, then run the required check against that
-      # immutable SHA.
+      # The PR API can lag a just-pushed release branch, so retry until the PR
+      # appears and its head agrees with the git ref, then run the required
+      # check against that immutable SHA.
       - name: Dispatch CI for the release PR head
         env:
           GH_TOKEN: ${{ github.token }}
@@ -96,8 +96,12 @@ jobs:
               --json number,headRefName,headRefOid,url)
             count=$(jq length <<< "$prs")
             if [ "$count" -eq 0 ]; then
-              echo "no open release PR"
-              exit 0
+              if [ "$attempt" -eq 6 ]; then
+                echo "::error::No open release PR found after 6 attempts."
+                exit 1
+              fi
+              sleep 10
+              continue
             fi
             if [ "$count" -ne 1 ]; then
               echo "::error::Expected one open release PR, found $count."
