@@ -778,21 +778,6 @@ export function assertRemovable(instance: string, name: string, force = false): 
 }
 
 /**
- * Why an instance's saves can't all be swept away (a protected save, or one
- * whose manifest can't be read, so its protection is unknown), or null.
- */
-export function removalBlocker(instance: string): string | null {
-  for (const s of listSaves(instance)) {
-    try {
-      assertRemovable(instance, s.name)
-    } catch (error) {
-      return error instanceof ProtectedSave ? error.message : `save "${s.name}" has an unreadable manifest`
-    }
-  }
-  return null
-}
-
-/**
  * Change only retention metadata, under the same lock as creation and rotation.
  * Works with a stopped or running machine: no QEMU or guest call is needed.
  * A stow is a one-shot resume slot, not a checkpoint to retain.
