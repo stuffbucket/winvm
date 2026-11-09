@@ -1,5 +1,7 @@
 import RFB from "novnc/core/rfb.js"
 import * as KeyboardUtil from "novnc/core/input/util.js"
+import { clientToElement } from "novnc/core/util/element.js"
+import { releaseCapture } from "novnc/core/util/events.js"
 import { forwardRef, useEffect, useImperativeHandle, useLayoutEffect, useRef, useState } from "react"
 
 import { type Size, drawSize, guestSizeFor, sameSize, scaleFor } from "@winvm/displayfit"
@@ -12,6 +14,7 @@ import { pixelRatio, watchPixelRatio } from "../../dpr"
 import type { Connection } from "../../model"
 import { ClipboardSync } from "./clipboard"
 import { HeldSizes, keyVerdict } from "./held"
+import { GuestPointerRouter, releaseNoVncPointer } from "./input"
 import { GuestKeyboardRouter, sendCtrlAltDelete, sendWindowsKey } from "./keyboard"
 import { LiveResize, type ResizePhase } from "./resize"
 import { type WakeSock, keepRefreshing } from "./wake"
@@ -92,6 +95,7 @@ export const Screen = forwardRef<ScreenHandle, ScreenProps>(function Screen(
   const still = useRef<HTMLCanvasElement | null>(null)
   const rfb = useRef<RFB | null>(null)
   const keyboard = useRef<GuestKeyboardRouter | null>(null)
+  const pointerInput = useRef<GuestPointerRouter | null>(null)
   const [view, setView] = useState<View>("connecting")
   const [attempt, setAttempt] = useState(0)
   // The framebuffer drawn, and the view's size in CSS pixels, for the 1:1 box.
@@ -157,6 +161,27 @@ export const Screen = forwardRef<ScreenHandle, ScreenProps>(function Screen(
     let retry: ReturnType<typeof setTimeout> | undefined
     let stopWake: (() => void) | null = null
     setView("connecting")
+    const pointer = new GuestPointerRouter((point) => {
+      if (conn === null) return
+      const canvas = el.querySelector("canvas")
+      const pos = point !== null && canvas !== null ? clientToElement(point.x, point.y, canvas) : { x: 0, y: 0 }
+      releaseNoVncPointer(conn, pos, releaseCapture)
+    })
+    pointer.setEnabled(keys.current.forward)
+    pointer.setFocused(document.hasFocus())
+    const onPointer = (event: MouseEvent): void => {
+      // A modal makes the viewer inert. Also reject noVNC's synthetic captured
+      // events, which can still be dispatched into an inert subtree.
+      pointer.setEnabled(keys.current.forward && el.closest("[inert]") === null)
+      pointer.handle(event)
+    }
+    const onScreenBlur = (event: FocusEvent): void => {
+      if (!(event.relatedTarget instanceof Node) || !el.contains(event.relatedTarget)) pointer.releaseAll()
+    }
+    const pointerEvents = ["mousedown", "mouseup", "mousemove", "wheel"] as const
+    for (const name of pointerEvents) el.addEventListener(name, onPointer, true)
+    el.addEventListener("focusout", onScreenBlur)
+    pointerInput.current = pointer
     const router = new GuestKeyboardRouter({
       send: (keysym, code, down) => conn?.sendKey(keysym, code, down),
       translate: (event) => {
@@ -171,8 +196,14 @@ export const Screen = forwardRef<ScreenHandle, ScreenProps>(function Screen(
     router.setEnabled(keys.current.forward)
     const onKeyDown = (event: KeyboardEvent): void => router.keyDown(event)
     const onKeyUp = (event: KeyboardEvent): void => router.keyUp(event)
-    const onBlur = (): void => router.lostFocus()
+    const onBlur = (event: FocusEvent): void => {
+      // This capture listener also sees a canvas blur to an app control; that
+      // releases its drag via focusout, but the host window is still active.
+      if (event.target === window) pointer.setFocused(false)
+      router.lostFocus()
+    }
     const onVisibility = (): void => {
+      pointer.setFocused(document.visibilityState !== "hidden" && document.hasFocus())
       if (document.visibilityState === "hidden") router.lostFocus()
     }
     el.addEventListener("keydown", onKeyDown, true)
@@ -306,7 +337,13 @@ export const Screen = forwardRef<ScreenHandle, ScreenProps>(function Screen(
     }
     const observer = new ResizeObserver(onArea)
     observer.observe(outer)
-    const unlisten = onLiveResize((live) => (live ? resize?.liveStart() : resize?.liveEnd()))
+    const unlisten = onLiveResize((live) => {
+      // AppKit owns this drag, even if its edge passes across the guest view.
+      // Do not wait for the guest's framebuffer/resize-settle phase to finish.
+      pointer.setResizing(live)
+      if (live) resize?.liveStart()
+      else resize?.liveEnd()
+    })
 
     // Moving the window to a display with another pixel ratio.
     const stopRatio = watchPixelRatio(onArea)
@@ -326,6 +363,7 @@ export const Screen = forwardRef<ScreenHandle, ScreenProps>(function Screen(
       if (typeof text === "string") clipboard.fromGuest(text)
     })
     const onFocus = (): void => {
+      pointer.setFocused(document.visibilityState !== "hidden")
       if (clipboardReady && connected && !closing) void clipboard.fromMac()
     }
     window.addEventListener("focus", onFocus)
@@ -357,6 +395,7 @@ export const Screen = forwardRef<ScreenHandle, ScreenProps>(function Screen(
     conn.addEventListener("credentialsrequired", () => conn.sendCredentials({ password: password ?? "" }))
     conn.addEventListener("securityfailure", () => setView("refused"))
     conn.addEventListener("disconnect", () => {
+      pointer.releaseAll()
       connected = false
       stopWake?.()
       stopWake = null
@@ -384,7 +423,11 @@ export const Screen = forwardRef<ScreenHandle, ScreenProps>(function Screen(
       window.removeEventListener("blur", onBlur, true)
       document.removeEventListener("visibilitychange", onVisibility)
       router.lostFocus()
+      pointer.releaseAll()
+      for (const name of pointerEvents) el.removeEventListener(name, onPointer, true)
+      el.removeEventListener("focusout", onScreenBlur)
       conn.disconnect()
+      pointerInput.current = null
       keyboard.current = null
       rfb.current = null
       setHeld(false)
@@ -399,9 +442,10 @@ export const Screen = forwardRef<ScreenHandle, ScreenProps>(function Screen(
   // come back by itself: it was released, and is asked for again.
   useEffect(() => {
     keyboard.current?.setEnabled(forwardInput)
+    // Buttons too, while noVNC can still send: viewOnly would swallow the up.
+    pointerInput.current?.setEnabled(forwardInput)
     const conn = rfb.current
     if (conn === null) return
-    if (!forwardInput && conn._mouseButtonMask !== 0) conn._handleMouseButton(conn._mousePos.x ?? 0, conn._mousePos.y ?? 0, 0)
     conn.viewOnly = !forwardInput
     conn.focusOnClick = forwardInput || asleep
     if (forwardInput) void clipboardSync.current?.fromMac()

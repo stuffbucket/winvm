@@ -43,15 +43,25 @@ declare module "novnc/core/rfb.js" {
     readonly _keyboard: {
       _allKeysUp(): void
     }
-    /** Private in noVNC: the buttons it believes are down, and where the pointer last was; read to let go of them (see Screen.tsx). */
+    /** Private in noVNC: the buttons it believes are down, where the pointer last was, and a queued drag; read to let go of them (input.ts). */
     readonly _mouseButtonMask: number
-    readonly _mousePos: { readonly x?: number; readonly y?: number }
-    _handleMouseButton(x: number, y: number, mask: number): void
+    _mouseMoveTimer: ReturnType<typeof setTimeout> | null
+    _handleMouseButton(x: number, y: number, buttons: number): void
     static readonly messages: {
       setDesktopSize(sock: unknown, width: number, height: number, id: number, flags: number): void
     }
   }
 
+}
+
+declare module "novnc/core/util/element.js" {
+  /** noVNC's normal CSS coordinate conversion, including clipping guest drags to the canvas. */
+  export function clientToElement(x: number, y: number, element: HTMLElement): { x: number; y: number }
+}
+
+declare module "novnc/core/util/events.js" {
+  /** Removes noVNC's document-wide drag proxy; not OS relative pointer capture. */
+  export function releaseCapture(): void
 }
 
 declare module "novnc/core/input/util.js" {
