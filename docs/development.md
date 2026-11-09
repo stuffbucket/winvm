@@ -142,7 +142,18 @@ Scripts serve local `dist`, inject `tests/render/fake-tauri.js`, drive WebKit, a
 
 | Script under `apps/viewer/scripts/` | Coverage |
 |---|---|
-| `render-checkpoints.mjs [outdir]` | Canvas entry/exit, selection, dragging, zoom, search |
+| `render-checkpoints.mjs [outdir]` | Canvas entry/exit, selection, dragging, zoom, search, input shielding |
+| `render-snapshot-design.mjs [outdir]` | Card design, crop anchoring, wallpaper fallback, focus and settled sharpness |
+| `render-screen-input.mjs [outdir]` | Input forwarding and held-screen fixture states |
+| `render-checkpoint-cards.mjs [outdir]` | Caption structure, date placement, placeholder text |
+| `render-overview.mjs` | Off/suspended overview and backdrop |
+| `render-machines.mjs` | Machine menu and editable heading |
+| `render-resources.mjs [outdir]` | CPU/disk layout and legends across data variants |
+| `render-settings.mjs [outdir]` | Settings fixture states and policy controls |
+| `render-sizes.mjs [outdir] [--quick]` | Responsive overview, Checkpoints, and menus; use `--sizes`, `--dsf`, `--screens` to narrow |
+| `render-help.mjs [--out <dir>] [--preview <dir>] [--no-build]` | Help pictures and popovers; default output rewrites tracked JPEGs |
+
+For check-only help rendering, supply a separate `--out` directory. For intentional image regeneration, inspect old targets first, regenerate, rebuild the UI, inspect results, and report tracked changes. `--preview` also rebuilds shared `dist`; serialize it with other jobs.
 
 ## Authorized real-guest operations
 
