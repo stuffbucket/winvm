@@ -335,6 +335,13 @@ describe("autosave rotation", () => {
     expect(victims).toHaveLength(5)
   })
 
+  it("keeps protected autosaves outside the unprotected retention budget", () => {
+    const locked = saves.map((s) => ({ ...s, protected: s.name === "auto-7" || s.name === "auto-1" }))
+    expect(savesToRotate(locked, 2)).toEqual(["auto-2"])
+    expect(savesToRotate(locked, 0)).toEqual(["auto-6", "auto-4", "auto-2"])
+    expect(savesToRotate(locked.map((s) => ({ ...s, protected: true })), 0)).toEqual([])
+  })
+
   it("names autosaves sortably", () => {
     expect(autosaveName(Date.UTC(2026, 9, 21, 16, 43, 7, 250))).toBe("auto-20261021T164307Z")
   })
