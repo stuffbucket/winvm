@@ -226,7 +226,12 @@ export function realActions(instance: string, p: Paths, log: (s: string) => void
       if (names.length === 0) return true
       try {
         await saves.withLock(instance, async () => {
-          for (const n of names) saves.removeSave(instance, n)
+          // The list was sampled before the lock: a person may have protected
+          // or replaced a victim meanwhile. Re-read it under the mutation lock.
+          for (const n of names) {
+            const m = saves.readSave(instance, n)
+            if (m?.kind === "auto" && m.protected !== true) saves.removeSave(instance, n)
+          }
         })
         return true
       } catch (error) {
@@ -251,7 +256,7 @@ export function realActions(instance: string, p: Paths, log: (s: string) => void
 function currentSaves(instance: string): readonly SaveInfo[] {
   return saves
     .listSaves(instance)
-    .flatMap((l) => (l.manifest === null ? [] : [{ name: l.name, kind: l.manifest.kind, createdAt: l.manifest.createdAt }]))
+    .flatMap((l) => (l.manifest === null ? [] : [{ name: l.name, kind: l.manifest.kind, createdAt: l.manifest.createdAt, protected: l.manifest.protected === true }]))
 }
 
 const newestOfKind = (list: readonly SaveInfo[], kind: string): string | undefined =>

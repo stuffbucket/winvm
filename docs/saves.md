@@ -12,6 +12,7 @@ winvm load before-install        # running or stopped
 winvm save --fast clean          # larger, but faster to load
 winvm saves                      # name, kind, format, created, size, compatible
 winvm saves rm before-install    # deletes its note too
+winvm saves protect before-install    # never rotated, swept or replaced; unprotect to undo
 winvm saves note before-install --title "Clean install" --tags win11,clean
 winvm pause / resume             # freeze the guest / carry on
 winvm sleep / wake               # lock Windows and freeze it / carry on at the lock screen
@@ -26,7 +27,12 @@ winvm clock                      # the guest's clock offset, and fix it
 - **Where.** `~/.local/state/winvm/saves/<instance>/<name>/`. The disk copies
   are APFS clones, so they take little space until the instance changes the
   blocks they share. `destroy` removes an instance's saves, unless you pass
-  `--keep-saves`. `load` can recreate a destroyed instance from a kept save.
+  `--keep-saves` or one of them is protected. `load` can recreate a destroyed
+  instance from a kept save.
+- **Protected.** `saves protect <name>` keeps a save from autosave rotation,
+  `destroy`, `prune` and being replaced by a save of the same name.
+  `saves rm` refuses it until you `unprotect` it, or pass `--force`. The
+  `stow` save is a one-shot resume slot and can't be protected.
 - **Formats.** The default is compressed with zstd. `--fast` uses QEMU's
   mapped-ram format: larger, but much faster to load. Use it
   for a save you load over and over. `load` reads either.

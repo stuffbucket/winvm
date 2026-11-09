@@ -175,7 +175,7 @@ directory under `$WINVM_HOME/saves/<instance>/<name>/`:
 
 | file | what |
 |---|---|
-| `manifest.json` | `{name, instance, kind: manual\|auto\|baseline\|stow\|golden, createdAt, bytes, compat, image, note?}` plus `compatParts`, `ramFile`, `ramBytes`, `saveMs`, `format` |
+| `manifest.json` | `{name, instance, kind: manual\|auto\|baseline\|stow\|golden, createdAt, bytes, compat, image, note?, protected?}` plus `compatParts`, `ramFile`, `ramBytes`, `saveMs`, `format` |
 | `vmstate.zst` | RAM and device state: a QEMU **migration stream**, `zstd -T0 -3` (`vmstate.mapped` or `vmstate.bin` for the other RAM formats in `saves.ts`) |
 | `overlay.qcow2`, `efi-vars.qcow2` | the instance's disk and NVRAM at that moment, as APFS clones (`cp -c`) |
 
@@ -202,6 +202,21 @@ explicitly.
 QEMU arguments with paths, ports, `-snapshot` and `-rtc` removed; the firmware
 code image; and the runtime's QEMU version and patch set. `load` refuses a
 mismatch and names the part that changed.
+
+**Protection.** `protected: true` is additive retention metadata, not part of
+`compat`. Old manifests without it remain unprotected. `saves protect` and
+`unprotect` atomically update only the manifest, under the same per-instance
+lock as migration and rotation, with no guest calls. Reclamation excludes
+protected saves and never counts them against `autosave.keep`. Rotation
+rechecks sampled victims after acquiring the lock, so a save protected in the
+meantime is retained. Deletion requires unprotecting first or the explicit
+`saves rm --force`; replacement by save or clone always refuses a protected
+target. An unreadable manifest fails closed. Bulk destroy keeps all saves when
+any is protected or unreadable; prune skips such scratch instances. Stow cannot
+be protected because its one-shot consumption/supersession is part of start,
+load and reset. The app offers protection in checkpoint properties, and shows
+the existing zstd/mapped/raw memory format. New checkpoints choose zstd or
+mapped-ram at creation; no relabelling or offline conversion is attempted.
 
 **Baseline.** The first `start` of an instance saves `baseline`, but only after
 `qga.waitReady`, never during boot or OOBE, because of the livelock described
@@ -314,8 +329,9 @@ rules, and why:
 - **Autosave is an in-process `saves.createSave`** (kind `auto`) under
   `saves.withLock`, followed by a clock sync, because the guest was stopped
   while it was saved. If another save or load holds the lock, the round is
-  skipped. Rotation deletes only kind `auto`, oldest first, down to
-  `autosave.keep`.
+  skipped. Rotation deletes only unprotected kind `auto`, keeping the newest
+  `autosave.keep` unprotected saves plus every protected save. It rechecks each
+  victim under the lock before deletion.
 - **Stow runs `winvm stow`** as a child process. `stow` and `stop` end the
   watcher first, except when the watcher is the caller.
 - **A `load` replaces QEMU.** The watcher follows the new process and restarts

@@ -161,6 +161,12 @@ export function prune(args: Args): number {
       console.log(`  keeping "${name}" — still running (pid ${String(qemu.pidOf(p))})`)
       continue
     }
+    // A scratch instance someone chose to keep a checkpoint of is not scratch.
+    const blocked = saves.removalBlocker(name)
+    if (blocked !== null) {
+      console.log(`  keeping "${name}" — ${blocked}`)
+      continue
+    }
     const size = du(p.dir)
     qemu.stopSidecars(p)
     stopService(p)
@@ -953,6 +959,13 @@ export function destroy(args: Args): number {
   // du counts the APFS-cloned disks in full, so this can be more than the
   // space actually returned while the clones still share blocks.
   const savesSize = du(saves.savesDir(name))
+  // A protected or unreadable save keeps all of them, as --keep-saves would:
+  // `load` can recreate the instance, and nothing protected is swept away.
+  const blocked = saves.removalBlocker(name)
+  if (blocked !== null) {
+    console.log(`  kept its ${plural(kept.length, "save")} in ${saves.savesDir(name)} — ${blocked}`)
+    return 0
+  }
   saves.removeAllSaves(name)
   console.log(`  and its ${plural(kept.length, "save")} (${savesSize})`)
   return 0
@@ -1169,7 +1182,8 @@ export const USAGE =
   "  save    [-i name] [name] [--fast]  save the running guest to files (default name: a timestamp)\n" +
   "  load    [-i name] [name] [--no-watch]  load a save, running or stopped (default: the newest)\n" +
   "                                into a stopped instance it starts the watcher, like start\n" +
-  "  saves   [-i name] [rm <name>] [--json]  list saves (kind, size, compatible) or delete one (and its note)\n" +
+  "  saves   [-i name] [rm <name> [--force]] [--json]  list saves (kind, size, protected, compatible) or delete one (and its note)\n" +
+  "  saves protect|unprotect [-i name] <save>  keep a save from rotation, destroy, prune and replacement\n" +
   "  saves note [-i name] <save> [--title T] [--text TEXT|-] [--tags a,b,c] [--clear] [--json]\n" +
   "                                show a save's note, or set it (--text - reads stdin;\n" +
   "                                --text=<markdown> is the safe form when it may start with -)\n" +
