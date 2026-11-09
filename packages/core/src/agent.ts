@@ -16,8 +16,9 @@
  */
 import { randomBytes } from "node:crypto"
 import { createWriteStream, readFileSync } from "node:fs"
-import { once } from "node:events"
-import { resolve } from "node:path"
+import { mkdir, rename, rm } from "node:fs/promises"
+import { dirname, join, resolve } from "node:path"
+import { pipeline } from "node:stream/promises"
 
 import type { AgentState } from "./agentfwd"
 import { ensureForward, ensureState, readState, restoreForward } from "./agentfwd"
@@ -164,23 +165,47 @@ export class AgentClient {
     return new Uint8Array(await r.arrayBuffer())
   }
 
-  /** Stream a guest file to a host file; returns the byte count. */
+  /** Stream a guest file to a host file; replace the destination only after a complete copy. */
   async getFile(guestPath: string, hostPath: string, timeoutMs = 600_000): Promise<number> {
     const r = await this.req("GET", `/file?path=${encodeURIComponent(guestPath)}`, undefined, timeoutMs)
-    // Chunk by chunk, not `Bun.write(hostPath, r)`: that spins at 100% CPU and
-    // never finishes on a response arriving through slirp (Bun 1.3.14).
-    const out = createWriteStream(hostPath)
+    // A sibling keeps the final rename on the same filesystem. A broken HTTP
+    // stream or a disk error must not truncate an existing destination, nor
+    // leave a partial file looking like a successful download.
+    const parent = dirname(hostPath)
+    const temp = join(parent, `.winvm-${randomBytes(12).toString("hex")}.part`)
     let n = 0
+    let out: ReturnType<typeof createWriteStream> | undefined
     try {
-      for await (const chunk of r.body ?? new ReadableStream<Uint8Array>()) {
-        n += chunk.length
-        if (!out.write(chunk)) await once(out, "drain")
-      }
+      await mkdir(parent, { recursive: true })
+      // Chunk by chunk, not `Bun.write(hostPath, r)`: that spins at 100% CPU and
+      // never finishes on a response arriving through slirp (Bun 1.3.14).
+      // pipeline owns stream errors and backpressure, including an output
+      // failure before the response's first chunk arrives.
+      out = createWriteStream(temp, { flags: "wx" })
+      await pipeline(
+        async function* () {
+          for await (const chunk of r.body ?? []) {
+            n += chunk.length
+            yield chunk
+          }
+        },
+        out,
+      )
+      if (!out.closed) await new Promise<void>((done) => out?.once("close", done))
+      await rename(temp, hostPath)
+      return n
     } finally {
-      out.end()
-      await once(out, "close")
+      // On an early source error Bun's pipeline can reject before the file's
+      // asynchronous open finishes. Wait for close before unlinking, otherwise
+      // the late open recreates a .part file after cleanup.
+      if (out !== undefined && !out.closed) {
+        out.destroy()
+        await new Promise<void>((done) => out?.once("close", done))
+      }
+      // Also releases the connection when preparing the destination failed.
+      await r.body?.cancel().catch(() => undefined)
+      await rm(temp, { force: true })
     }
-    return n
   }
 
   /** Start a program detached in the logged-on user's session — GUI programs show on the desktop. */

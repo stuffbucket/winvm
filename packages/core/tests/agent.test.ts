@@ -5,12 +5,12 @@
  */
 import { chmodSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
-import { resolve } from "node:path"
+import { resolve, win32 } from "node:path"
 
 import { afterAll, beforeAll, describe, expect, it, spyOn } from "bun:test"
 
 import { AgentClient, AgentError } from "../src/agent"
-import { TIMED_OUT, destination, execResult, execTimeoutMs, formatListing } from "../src/agentcmds"
+import { TIMED_OUT, destination, execResult, execTimeoutMs, formatListing, getTree, putTree } from "../src/agentcmds"
 import { ensureState, forwardedPorts, hostfwdRule, readState } from "../src/agentfwd"
 import { parseArgs } from "../src/args"
 import type { Paths } from "../src/paths"
@@ -29,6 +29,9 @@ import {
   recycleFailure,
   recycleScript,
   startAgent,
+  writeUpload,
+  type DirEntry,
+  type DirListing,
 } from "../src/guestagent"
 
 let dir: string
@@ -166,6 +169,175 @@ describe("agent over HTTP", () => {
   })
 })
 
+describe("reliable file copies", () => {
+  const brokenBody = (): ReadableStream<Uint8Array> => {
+    let chunks = 0
+    return new ReadableStream({
+      pull(c) {
+        if (chunks++ === 0) c.enqueue(new TextEncoder().encode("partial"))
+        else c.error(new Error("connection lost"))
+      },
+    })
+  }
+
+  it("preserves a guest destination and removes the partial upload after a body error", async () => {
+    const root = resolve(dir, "broken-upload")
+    mkdirSync(root)
+    const target = resolve(root, "file.bin")
+    writeFileSync(target, "keep me")
+    const request = new Request("http://test.invalid/file", { method: "PUT", body: brokenBody() })
+    await expect(writeUpload(target, request)).rejects.toThrow("connection lost")
+    expect(readFileSync(target, "utf8")).toBe("keep me")
+    expect(readdirSync(root)).toEqual(["file.bin"])
+  })
+
+  it("preserves a host destination and removes the partial download after a body error", async () => {
+    const root = resolve(dir, "broken-download")
+    mkdirSync(root)
+    const target = resolve(root, "file.bin")
+    writeFileSync(target, "keep me")
+    const spy = spyOn(globalThis, "fetch").mockResolvedValue(new Response(brokenBody()))
+    try {
+      await expect(client.getFile("C:\\file.bin", target)).rejects.toThrow("connection lost")
+      expect(readFileSync(target, "utf8")).toBe("keep me")
+      expect(readdirSync(root)).toEqual(["file.bin"])
+    } finally {
+      spy.mockRestore()
+    }
+  })
+
+  it("copies zero bytes without hanging, creates host parents, and replaces only on success", async () => {
+    const source = resolve(dir, "empty-source")
+    await client.put(source, "")
+    const target = resolve(dir, "new-host-parent", "empty.bin")
+    expect(await client.getFile(source, target)).toBe(0)
+    expect(statSync(target).size).toBe(0)
+    await client.put(source, "complete")
+    expect(await client.getFile(source, target)).toBe(8)
+    expect(readFileSync(target, "utf8")).toBe("complete")
+    expect(readdirSync(resolve(dir, "new-host-parent"))).toEqual(["empty.bin"])
+  })
+
+  it("reports an output error without hanging or leaving a sibling partial file", async () => {
+    const root = resolve(dir, "output-error")
+    mkdirSync(root)
+    const target = resolve(root, "taken-folder")
+    mkdirSync(target)
+    const spy = spyOn(globalThis, "fetch").mockResolvedValue(new Response("complete"))
+    try {
+      await expect(client.getFile("C:\\file.bin", target)).rejects.toThrow()
+      expect(statSync(target).isDirectory()).toBe(true)
+      expect(readdirSync(root)).toEqual(["taken-folder"])
+    } finally {
+      spy.mockRestore()
+    }
+  })
+})
+
+const treeListing = (path: string, entries: readonly DirEntry[] = []): DirListing => ({ path, entries, total: entries.length, parent: null, places: [] })
+const treeEntry = (name: string, dir = false): DirEntry => ({ name, dir, size: dir ? null : 1, modified: null, hidden: false })
+
+function treeWriter() {
+  const folders = new Set(["C:\\"])
+  const puts: string[] = []
+  return {
+    folders,
+    puts,
+    async mkdir(path: string) {
+      if (folders.has(path)) throw new AgentError("already exists", 409, "exists")
+      if (!folders.has(win32.dirname(path))) throw new AgentError("missing parent", 404, "notfound")
+      folders.add(path)
+      return { path }
+    },
+    async list(path = "") {
+      if (!folders.has(path)) throw new AgentError("not a folder", 400, "notdir")
+      return treeListing(path)
+    },
+    async putFile(src: string, dest: string) {
+      puts.push(dest)
+      return { bytes: statSync(src).size, ms: 0 }
+    },
+  }
+}
+
+describe("recursive file copies", () => {
+  it("uploads empty roots and nested empty folders, including into missing parents or an existing folder", async () => {
+    const root = resolve(dir, "upload-tree")
+    mkdirSync(resolve(root, "empty"), { recursive: true })
+    writeFileSync(resolve(root, ".hidden.txt"), "data")
+    const c = treeWriter()
+    expect(await putTree(c, root, "C:\\parent\\copy")).toEqual({ files: 1, bytes: 4 })
+    expect([...c.folders]).toContain("C:\\parent\\copy\\empty")
+    expect(c.puts).toEqual(["C:\\parent\\copy\\.hidden.txt"])
+    expect(await putTree(c, resolve(root, "empty"), "C:\\parent\\copy")).toEqual({ files: 0, bytes: 0 })
+  })
+
+  it("refuses host symlinks instead of reading outside the selected tree", async () => {
+    const root = resolve(dir, "upload-links")
+    mkdirSync(root)
+    symlinkSync(resolve(dir, "upload-tree"), resolve(root, "outside"))
+    await expect(putTree(treeWriter(), root, "C:\\copy")).rejects.toThrow("symbolic link or junction")
+  })
+
+  it("rejects Mac names which would become Windows paths or reserved names", async () => {
+    for (const [i, name] of ["sub\\escape.txt", "NUL.txt", "file:stream", "trailing."].entries()) {
+      const root = resolve(dir, `bad-upload-name-${String(i)}`)
+      mkdirSync(root)
+      writeFileSync(resolve(root, name), "x")
+      const c = treeWriter()
+      await expect(putTree(c, root, "C:\\copy")).rejects.toThrow("not a name Windows takes")
+      expect(c.puts).toEqual([])
+    }
+  })
+
+  it("downloads empty folders as well as file contents", async () => {
+    const root = resolve(dir, "download-tree")
+    const got = await getTree(
+      {
+        list: async (path = "") => treeListing(path),
+        getFile: async (_from, to) => { writeFileSync(to, "x"); return 1 },
+      },
+      treeListing("C:\\copy", [treeEntry("empty", true), treeEntry("file.txt")]),
+      root,
+    )
+    expect(got).toEqual({ files: 1, bytes: 1 })
+    expect(statSync(resolve(root, "empty")).isDirectory()).toBe(true)
+    expect(readFileSync(resolve(root, "file.txt"), "utf8")).toBe("x")
+  })
+
+  it("rejects traversal names, links, and truncated listings before downloading", async () => {
+    const c = {
+      list: async (path = "") => treeListing(path),
+      getFile: async () => { throw new Error("must not download") },
+    }
+    for (const name of ["..", "../outside", "nested\\outside"]) {
+      await expect(getTree(c, treeListing("C:\\copy", [treeEntry(name)]), resolve(dir, "unsafe-tree"))).rejects.toThrow("unsafe file name")
+    }
+    await expect(getTree(c, treeListing("C:\\copy", [{ ...treeEntry("junction", true), link: true }]), resolve(dir, "unsafe-tree"))).rejects.toThrow("symbolic link or junction")
+    await expect(getTree(c, { ...treeListing("C:\\copy"), total: 100_001 }, resolve(dir, "unsafe-tree"))).rejects.toThrow("more than")
+  })
+
+  it("refuses an existing host directory symlink instead of exporting outside the destination", async () => {
+    const outside = resolve(dir, "outside-export")
+    mkdirSync(outside)
+    const target = resolve(dir, "linked-export")
+    symlinkSync(outside, target)
+    await expect(getTree({ list: async () => treeListing("C:\\copy"), getFile: async () => 0 }, treeListing("C:\\copy"), target)).rejects.toThrow("cannot copy into a symbolic link")
+    expect(readdirSync(outside)).toEqual([])
+  })
+
+  it("bounds recursion when an older agent does not mark a junction", async () => {
+    let asks = 0
+    const loop = treeListing("C:\\copy", [treeEntry("loop", true)])
+    const c = {
+      list: async () => { asks++; return loop },
+      getFile: async () => 0,
+    }
+    await expect(getTree(c, loop, resolve(dir, "bounded-tree"))).rejects.toThrow("deeper than 64")
+    expect(asks).toBeLessThan(100)
+  })
+})
+
 describe("the display helper, kept running", () => {
   // A stand-in for `winvm-display.exe serve`: echoes each request's words; "hang" never answers; "die" exits.
   const fake = (): string => {
@@ -242,6 +414,7 @@ describe("folder listings", () => {
     const two = l.entries.find((e) => e.name === "file2.txt")
     expect(two).toEqual({ name: "file2.txt", dir: false, size: 4, modified: 1_700_000_000_000, hidden: false })
     expect(l.entries[0]?.size).toBeNull()
+    expect(l.entries.find((e) => e.name === "link to folder")?.link).toBe(true)
     expect(l.total).toBe(5)
   })
 

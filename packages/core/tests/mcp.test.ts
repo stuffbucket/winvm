@@ -61,6 +61,9 @@ class FakeGuestAgent implements AgentLike {
       places: [{ kind: "desktop", path: "C:\\Users\\Administrator\\Desktop" }],
     } as unknown as DirListing)
   }
+  async mkdir(path: string): Promise<{ path: string }> {
+    return { path }
+  }
   async putFile(host: string, guest: string): Promise<{ bytes: number; ms: number }> {
     this.puts.push([host, guest])
     return await Promise.resolve({ bytes: readFileSync(host).length, ms: 1 })

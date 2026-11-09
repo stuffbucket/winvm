@@ -3,7 +3,7 @@
  * text only, while the window is in front, and nothing sent back to the side
  * it came from.
  */
-import { describe, expect, it } from "bun:test"
+import { describe, expect, it, spyOn } from "bun:test"
 
 import { ClipboardSync } from "../ui/src/features/screen/clipboard"
 
@@ -120,5 +120,93 @@ describe("the clipboard", () => {
     await new Promise((r) => setTimeout(r, 0))
     expect(t.state.reads).toBe(3)
     expect(t.state.toGuest).toEqual(["a", "b"])
+  })
+
+  it("invalidates an in-flight Mac read when the screen closes", async () => {
+    const t = setup("one")
+    await t.sync.start()
+    t.state.mac = "for the old machine"
+    t.holdReads()
+    const reading = t.sync.fromMac()
+    t.sync.stop()
+    t.releaseRead()
+    await reading
+    t.sync.fromGuest("old connection")
+    await t.sync.fromMac()
+    expect(t.state.toGuest).toEqual(["one"])
+    expect(t.state.toMac).toEqual([])
+  })
+
+  it("serializes native writes, coalesces queued copies, and never reads the old Mac value back", async () => {
+    let release!: () => void
+    const writes: string[] = []
+    const sent: string[] = []
+    let mac = ""
+    const sync = new ClipboardSync({
+      readMac: async () => mac,
+      writeMac: async (text) => {
+        writes.push(text)
+        if (text === "first") await new Promise<void>((resolve) => (release = resolve))
+        mac = text
+      },
+      toGuest: (text) => sent.push(text),
+      focused: () => true,
+    })
+    await sync.start()
+    sync.fromGuest("first")
+    sync.fromGuest("middle")
+    sync.fromGuest("last")
+    const reading = sync.fromMac()
+    expect(writes).toEqual(["first"])
+    release()
+    await reading
+    expect(writes).toEqual(["first", "last"])
+    expect(mac).toBe("last")
+    expect(sent).toEqual([])
+  })
+
+  it("retries the same Windows text after a native write fails", async () => {
+    let attempts = 0
+    const warning = spyOn(console, "warn").mockImplementation(() => undefined)
+    const sync = new ClipboardSync({
+      readMac: async () => "",
+      writeMac: async () => {
+        attempts++
+        if (attempts === 1) throw new Error("pasteboard busy")
+      },
+      toGuest: () => undefined,
+      focused: () => true,
+    })
+    try {
+      await sync.start()
+      sync.fromGuest("same")
+      await sync.fromMac()
+      sync.fromGuest("same")
+      await sync.fromMac()
+      expect(attempts).toBe(2)
+    } finally {
+      warning.mockRestore()
+    }
+  })
+
+  it("does not remember a failed transport send as shared", async () => {
+    let attempts = 0
+    const warning = spyOn(console, "warn").mockImplementation(() => undefined)
+    const sync = new ClipboardSync({
+      readMac: async () => "retry me",
+      writeMac: async () => undefined,
+      toGuest: () => {
+        attempts++
+        if (attempts === 1) throw new Error("disconnected")
+      },
+      focused: () => true,
+    })
+    try {
+      await sync.start()
+      await sync.fromMac()
+      expect(attempts).toBe(2)
+    } finally {
+      warning.mockRestore()
+    }
   })
 })

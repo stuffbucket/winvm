@@ -27,6 +27,9 @@ export class ClipboardSync {
   private reading: Promise<void> | null = null
   private again = false
   private started = false
+  private stopped = false
+  private writing: Promise<void> | null = null
+  private pendingGuest: string | null = null
 
   constructor(ports: ClipboardPorts) {
     this.ports = ports
@@ -39,7 +42,7 @@ export class ClipboardSync {
    * Windows' older one.
    */
   async start(): Promise<void> {
-    if (this.started) return
+    if (this.started || this.stopped) return
     try {
       await this.fromMac()
     } finally {
@@ -47,17 +50,53 @@ export class ClipboardSync {
     }
   }
 
+  /** Cancel late reads and queued writes when the screen disconnects or changes machine. */
+  stop(): void {
+    this.stopped = true
+    this.generation++
+    this.again = false
+    this.pendingGuest = null
+  }
+
   /** Windows' clipboard changed. */
   fromGuest(text: string): void {
-    if (!this.started || !this.ports.focused() || text === this.shared) return
-    this.shared = text
+    if (this.stopped || !this.started || !this.ports.focused() || (text === this.shared && this.writing === null)) return
     this.generation++
-    this.ports.writeMac(text).catch((error: unknown) => console.warn("putting Windows' clipboard on the Mac failed", error))
+    this.pendingGuest = text
+    // Native writes are asynchronous. Starting each immediately can let an
+    // older write finish last and leave the Mac holding stale Windows text.
+    this.flushGuest()
+  }
+
+  private flushGuest(): void {
+    this.writing ??= this.writeGuest().finally(() => {
+      this.writing = null
+      if (this.pendingGuest !== null) this.flushGuest()
+    })
+  }
+
+  private async writeGuest(): Promise<void> {
+    while (this.pendingGuest !== null) {
+      const text = this.pendingGuest
+      this.pendingGuest = null
+      if (this.stopped || !this.ports.focused()) return
+      try {
+        await this.ports.writeMac(text)
+        this.shared = text
+      } catch (error) {
+        // Do not remember a failed native write as shared: the same Windows
+        // text must be allowed to retry rather than suppressed forever.
+        this.shared = null
+        console.warn("putting Windows' clipboard on the Mac failed", error)
+      }
+    }
   }
 
   /** The window came forward: send the Mac's clipboard to Windows if it changed. */
   fromMac(): Promise<void> {
-    if (!this.ports.focused()) return Promise.resolve()
+    if (this.stopped || !this.ports.focused()) return Promise.resolve()
+    // Do not read the previous Mac value while a Windows copy is landing.
+    if (this.writing !== null) return this.writing.then(() => this.fromMac())
     if (this.reading !== null) {
       this.again = true
       return this.reading
@@ -81,8 +120,13 @@ export class ClipboardSync {
       console.warn("reading the Mac's clipboard failed", error)
       return
     }
-    if (text === "" || text === this.shared || before !== this.generation || !this.ports.focused()) return
-    this.shared = text
-    this.ports.toGuest(text)
+    if (this.stopped || text === "" || text === this.shared || before !== this.generation || !this.ports.focused()) return
+    try {
+      this.ports.toGuest(text)
+      this.shared = text
+    } catch (error) {
+      // A disconnected transport must not suppress the next attempt.
+      console.warn("putting the Mac's clipboard in Windows failed", error)
+    }
   }
 }

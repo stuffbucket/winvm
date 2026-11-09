@@ -56,7 +56,7 @@ export interface ExtrasLike {
 }
 
 /** The agent client calls the tools make. */
-export type AgentLike = Pick<agent.AgentClient, "exec" | "list" | "putFile" | "getFile" | "pwsh">
+export type AgentLike = Pick<agent.AgentClient, "exec" | "list" | "mkdir" | "putFile" | "getFile" | "pwsh">
 
 export interface Guest {
   readonly name: string
