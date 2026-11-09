@@ -8,7 +8,7 @@
  * runtime, a scripted qmp), so `launch` itself runs and its real command line
  * and virtiofsd decision are what the assertions see.
  */
-import { afterEach, beforeEach, describe, expect, it, mock, spyOn } from "bun:test"
+import { afterEach, beforeEach, describe, expect, it, mock, setDefaultTimeout, spyOn } from "bun:test"
 import { spawn } from "node:child_process"
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
@@ -44,6 +44,10 @@ import {
   savesDir,
   type Manifest,
 } from "../src/saves"
+
+// Launching runs the fake QEMU for real and waits out launch's two-second
+// check, so these tests need more than bun's default five seconds on a busy machine.
+setDefaultTimeout(20_000)
 
 const SIZED: DisplayConfig = { device: "virtio-gpu", legacySize: { width: 1920, height: 1080 } }
 const FAKE_PID = 1_234_567
@@ -123,7 +127,9 @@ beforeEach(() => {
   mkdirSync(resolve(state, "runtime", "bin"), { recursive: true })
   // `launch` runs for real against these: swtpm binds its socket, QEMU records its arguments and stays up.
   script("swtpm", 'while [ $# -gt 0 ]; do case "$1" in --ctrl) s="${2#*path=}"; s="${s%%,*}"; shift;; esac; shift; done; : > "$s"')
-  script("qemu-system-aarch64", 'printf "%s\\n" "$*" >> "$WINVM_TEST_QEMU_LOG"; exec sleep 3')
+  // It stays up well past launch's two-second "still alive?" check, however busy
+  // the machine, and records its pid so afterEach can stop it.
+  script("qemu-system-aarch64", 'printf "%s\\n" "$*" >> "$WINVM_TEST_QEMU_LOG"; printf "%s\\n" "$$" >> "$WINVM_HOME/qemu.pids"; exec sleep 60')
   previousProbe = share.setProbe(() => ({ ok: true, reason: null }))
   initialRunning = VIRTIO_GPU
   initialDevices = undefined
@@ -205,6 +211,14 @@ afterEach(() => {
   for (const [k, v] of Object.entries(previous)) {
     if (v === undefined) delete process.env[k]
     else process.env[k] = v
+  }
+  const pids = resolve(state, "qemu.pids")
+  for (const pid of existsSync(pids) ? readFileSync(pids, "utf8").split("\n").filter((l) => l !== "") : []) {
+    try {
+      process.kill(Number(pid))
+    } catch {
+      // Already gone.
+    }
   }
   rmSync(state, { recursive: true, force: true })
 })
