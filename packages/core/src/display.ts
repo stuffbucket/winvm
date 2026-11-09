@@ -30,15 +30,21 @@
  *
  * ## Switching
  *
- * The device is part of the machine, and a save only loads into the same
- * machine, so switching an instance's device makes the saves taken before
- * unloadable (QEMU refuses them; nothing is corrupted). That is why existing
- * instances keep their device until switched with `winvm display virtio-gpu`
+ * display.json is the COLD-BOOT PREFERENCE: what the next `start` launches. The
+ * device is part of the machine, and a save only loads into the same machine,
+ * so a file save (saves.ts) records the display its QEMU was actually running
+ * (Manifest.display, read off the process by `runningDisplay`) and `load`
+ * launches with exactly that, whatever the preference is now, without touching
+ * display.json. Switching an instance's device therefore strands only what has
+ * no such record: internal snapshots, and file saves from before the record
+ * (QEMU refuses them on another device; nothing is corrupted). That is why
+ * existing instances keep their device until switched with `winvm display virtio-gpu`
  * or `winvm display ramfb`, and only while stopped. An instance switched to
  * virtio-gpu by an earlier winvm has a size in its display.json; it keeps
  * that size on its command line (so its saves still load) until switched
  * again.
  */
+import { spawnSync } from "node:child_process"
 import { readFileSync, writeFileSync } from "node:fs"
 import { resolve } from "node:path"
 
@@ -89,6 +95,96 @@ export function displayArgs(cfg: DisplayConfig): readonly string[] {
     return ["-device", `virtio-gpu-pci,xres=${String(cfg.legacySize.width)},yres=${String(cfg.legacySize.height)}`]
   }
   return ["-device", "virtio-gpu-pci"]
+}
+
+/** The bounds `winvm display WxH` once put on a virtio-gpu size, which is all a legacy size can be. */
+const LEGACY_WIDTH = { min: 640, max: 7680 }
+const LEGACY_HEIGHT = { min: 480, max: 4320 }
+
+const inRange = (v: unknown, r: { readonly min: number; readonly max: number }): v is number =>
+  typeof v === "number" && Number.isInteger(v) && v >= r.min && v <= r.max
+
+/**
+ * A launch profile recorded in a save's manifest (Manifest.display): exactly
+ * what `displayArgs` can express, or null. Strict where `readDisplay` is
+ * tolerant, because a profile is replayed onto QEMU's command line: an unknown
+ * device or key, or a partial or out-of-range `legacySize`, is refused rather
+ * than guessed at.
+ */
+export function parseDisplayConfig(value: unknown): DisplayConfig | null {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return null
+  const r = value as Record<string, unknown>
+  const keys = Object.keys(r)
+  if (r["device"] === "ramfb") return keys.length === 1 ? RAMFB : null
+  if (r["device"] !== "virtio-gpu" || keys.some((k) => k !== "device" && k !== "legacySize")) return null
+  const size = r["legacySize"]
+  if (size === undefined) return keys.length === 1 ? VIRTIO_GPU : null
+  if (typeof size !== "object" || size === null || Array.isArray(size)) return null
+  const s = size as Record<string, unknown>
+  const width = s["width"]
+  const height = s["height"]
+  if (Object.keys(s).length !== 2 || !inRange(width, LEGACY_WIDTH) || !inRange(height, LEGACY_HEIGHT)) return null
+  return { device: "virtio-gpu", legacySize: { width, height } }
+}
+
+/** The `-device` arguments of a command line that name a display: `ramfb` or `virtio-gpu-pci`, with or without properties. */
+const displayDevices = (command: string): string[] =>
+  [...command.matchAll(/(?:^|\s)-device\s+(\S+)/g)].map((m) => m[1] ?? "").filter((d) => /^(ramfb|virtio-gpu-pci)(,|$)/.test(d))
+
+/**
+ * The display a QEMU command line launches: exactly one `-device ramfb`,
+ * `-device virtio-gpu-pci` or `-device virtio-gpu-pci,xres=W,yres=H`. Anything
+ * else (none, two, extra properties, another GPU model) is null, so a caller
+ * refuses rather than record hardware it cannot identify. Only `-device`
+ * arguments count: a `-name` or a path that mentions a device is ignored.
+ */
+export function displayFromCommandLine(command: string): DisplayConfig | null {
+  const found = displayDevices(command)
+  if (found.length !== 1) return null
+  const device = found[0] ?? ""
+  if (device === "ramfb") return RAMFB
+  if (device === "virtio-gpu-pci") return VIRTIO_GPU
+  const size = /^virtio-gpu-pci,xres=(\d+),yres=(\d+)$/.exec(device)
+  return size === null ? null : parseDisplayConfig({ device: "virtio-gpu", legacySize: { width: Number(size[1]), height: Number(size[2]) } })
+}
+
+/**
+ * The size of a legacy `virtio-gpu-pci,xres=..,yres=..` device that
+ * `displayFromCommandLine` refuses (out of bounds or not whole numbers), as the
+ * command line spells it; null when there is no such device. For a refusal
+ * that names the size instead of claiming there is no display device.
+ */
+export function rejectedLegacySize(command: string): string | null {
+  const found = displayDevices(command)
+  if (found.length !== 1 || displayFromCommandLine(command) !== null) return null
+  const size = /^virtio-gpu-pci,xres=([^,\s]*),yres=([^,\s]*)$/.exec(found[0] ?? "")
+  return size === null ? null : `xres=${size[1] ?? ""},yres=${size[2] ?? ""}`
+}
+
+/** The sizes a legacy profile may have, in words, for a refusal. */
+export const LEGACY_SIZE_BOUNDS = `${String(LEGACY_WIDTH.min)}x${String(LEGACY_HEIGHT.min)} to ${String(LEGACY_WIDTH.max)}x${String(LEGACY_HEIGHT.max)}, whole numbers`
+
+/**
+ * Whether a QEMU command line has the shared folder's device; the memory
+ * backend, virtio-fs and the clipboard port come and go with it (share.ts).
+ * Read off the `-device` argument, not by splitting the line into words, so a
+ * path with a space in it cannot change the answer.
+ */
+export const sharesFolderFromCommandLine = (command: string): boolean => /(?:^|\s)-device\s+vhost-user-fs-pci(?:,|\s|$)/.test(command)
+
+/** The full command line of the running process `pid`; null when it cannot be read. */
+export function runningCommand(pid: number): string | null {
+  // -ww: never cut to the terminal's width, or a device could be cut off.
+  const r = spawnSync("ps", ["-ww", "-o", "command=", "-p", String(pid)], { encoding: "utf8" })
+  if (r.status !== 0) return null
+  const cmd = (r.stdout ?? "").trim()
+  return cmd === "" ? null : cmd
+}
+
+/** The display the RUNNING QEMU `pid` was launched with, off its full command line; null when that cannot be told. */
+export function runningDisplay(pid: number): DisplayConfig | null {
+  const cmd = runningCommand(pid)
+  return cmd === null ? null : displayFromCommandLine(cmd)
 }
 
 /** "virtio-gpu" (or "virtio") and "ramfb"; null for anything else. */

@@ -117,9 +117,12 @@ winvm display -i test virtio-gpu         # or: winvm display -i test ramfb
 winvm start -i test
 ```
 
-Saves taken on the other display won't load after a switch. winvm says which,
-keeps them, and loads them again if you switch back. A stowed instance must be
-started and shut down cleanly before it can switch. The first start on
+New file saves remember the display they were taken on and restore on it, even
+after a switch; loading one leaves the display you configured alone for the next
+cold boot. Internal snapshots and file saves from before the display was
+recorded still need their original display: winvm says which, keeps them, and
+loads them again if you switch back. See [saves](saves.md). A stowed instance
+must be started and shut down cleanly before it can switch. The first start on
 virtio-gpu comes up at 1024x768 until the app (or `winvm display WxH`) sizes
 it.
 

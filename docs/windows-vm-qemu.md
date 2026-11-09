@@ -523,6 +523,23 @@ resize it) until switched with `winvm display virtio-gpu` while stopped. An
 instance switched by an earlier winvm has `xres`/`yres` in its `display.json`;
 it keeps them on the command line, so its saves still load.
 
+**`display.json` is the cold-boot preference; a file save carries its own
+device.** The device is part of the machine and of the compatibility hash, so
+`createSave` records the display the running QEMU was launched with
+(`Manifest.display`, read off the process command line by `runningDisplay`;
+a guest whose display cannot be identified is refused before anything is
+stopped). `compatFor` resolves `m.display ?? readDisplay(...)` once, hashes it,
+and `load`, clone, the stow recall and `launch` use that same value, so a
+ramfb save restores on ramfb while the preference says virtio-gpu (no shared
+folder devices, no virtiofsd) and the reverse restores with them. Loading never
+writes `display.json`, and a save made after a restore records the restored
+device. Saves without `display` (made before it was recorded) and internal
+`savevm` snapshots are judged against the preference, so a device switch
+strands only those. QEMU argument building and the virtiofsd sidecar resolve
+the display together. Live sizing is unaffected: the size is not in a modern
+profile. `scripts/accept-saved-display.ts` exercises this end to end against a
+disposable machine.
+
 **A resize takes two steps, in this order** (`guestdisplay.ts`):
 
 1. **VNC SetDesktopSize.** QEMU 11.1 (`ui/vnc.c`) passes the width and height
@@ -628,10 +645,11 @@ alone. The devices themselves changed it **once**: saves of virtio-gpu
 instances taken before them do not load. `start`, `saves` ("no (before the
 shared folder)"), `load` and the stow recall name those saves
 (`saves.strandedByDevices`), as `display` names the saves a device switch
-strands. A stowed machine whose stow predates the devices boots instead,
-from its disk. ramfb instances get none of the devices and keep their saves.
-The new runtime's patch set changes the hash's `qemu` part too, so in
-practice every save made on the old runtime stops loading with it.
+strands (now only saves without a recorded display). A stowed machine whose
+stow predates the devices boots instead, from its disk. ramfb instances get
+none of the devices and keep their saves. The new runtime's patch set changes
+the hash's `qemu` part too, so in practice every save made on the old runtime
+stops loading with it.
 
 **One virtiofsd per QEMU, started before it.** virtiofsd exits when its QEMU
 disconnects, so `qemu.launch` starts a fresh one before every boot, load and

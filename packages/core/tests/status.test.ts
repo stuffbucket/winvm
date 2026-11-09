@@ -62,7 +62,7 @@ describe("status host probes", () => {
     try {
       await qmp.listen()
       expect(await gather("running-sized", false)).toMatchObject({ state: "running", cpus: 6, memoryMiB: 8192, uptimeSeconds: 176523 })
-      expect(readFileSync(calls, "utf8").trim().split("\n")).toEqual([`-o etime=,command= -p ${String(process.pid)}`])
+      expect(readFileSync(calls, "utf8").trim().split("\n")).toEqual([`-ww -o etime=,command= -p ${String(process.pid)}`])
     } finally {
       if (oldPath === undefined) delete process.env["PATH"]
       else process.env["PATH"] = oldPath

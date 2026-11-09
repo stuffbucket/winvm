@@ -4,12 +4,28 @@
  * the VNC resize request and the agent's /display route. No VM needed.
  */
 import { afterAll, beforeAll, describe, expect, it } from "bun:test"
+import { spawn } from "node:child_process"
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { resolve } from "node:path"
 
 import { setDesktopSizeMessage, vncAuthResponse } from "../src/desktopsize"
-import { RAMFB, VIRTIO_GPU, describeDisplay, displayArgs, parseDevice, readDisplay, sameDevice, writeDisplay } from "../src/display"
+import {
+  RAMFB,
+  VIRTIO_GPU,
+  describeDisplay,
+  displayArgs,
+  LEGACY_SIZE_BOUNDS,
+  displayFromCommandLine,
+  parseDevice,
+  parseDisplayConfig,
+  readDisplay,
+  rejectedLegacySize,
+  runningDisplay,
+  sameDevice,
+  sharesFolderFromCommandLine,
+  writeDisplay,
+} from "../src/display"
 import {
   MAX_FRAMEBUFFER_BYTES,
   MAX_HEIGHT,
@@ -192,6 +208,125 @@ describe("display device", () => {
     expect(deviceFromCommandLine("qemu -device virtio-gpu-pci,xres=1920,yres=1080 -display none")).toBe("virtio-gpu")
     expect(deviceFromCommandLine("qemu -device ramfb -display none")).toBe("ramfb")
     expect(deviceFromCommandLine("qemu -display none")).toBeNull()
+    // The same strict parser as a save's profile: ambiguous or unrelated matches are not a device.
+    expect(deviceFromCommandLine("qemu -name virtio-gpu-pci -device ramfb")).toBe("ramfb")
+    expect(deviceFromCommandLine("qemu -device ramfb -device virtio-gpu-pci")).toBeNull()
+    expect(deviceFromCommandLine("qemu -device virtio-gpu-pci,xres=1920,yres=1080,extra=on")).toBeNull()
+  })
+
+  it("reads the display profile strictly off a command line", () => {
+    expect(displayFromCommandLine("qemu -device ramfb -display none")).toEqual(RAMFB)
+    expect(displayFromCommandLine("qemu -device virtio-gpu-pci -display none")).toEqual(VIRTIO_GPU)
+    expect(displayFromCommandLine("qemu -device virtio-gpu-pci,xres=1920,yres=1080")).toEqual({
+      device: "virtio-gpu",
+      legacySize: { width: 1920, height: 1080 },
+    })
+    // Exactly one display device: none, two, or extra properties are not a profile.
+    expect(displayFromCommandLine("qemu -display none")).toBeNull()
+    expect(displayFromCommandLine("qemu -device ramfb -device virtio-gpu-pci")).toBeNull()
+    expect(displayFromCommandLine("qemu -device virtio-gpu-pci -device virtio-gpu-pci")).toBeNull()
+    expect(displayFromCommandLine("qemu -device virtio-gpu-pci,xres=1920,yres=1080,extra=on")).toBeNull()
+    expect(displayFromCommandLine("qemu -device virtio-gpu-pci,xres=1920")).toBeNull()
+    expect(displayFromCommandLine("qemu -device virtio-gpu-pci,xres=10,yres=10")).toBeNull()
+    expect(displayFromCommandLine("qemu -device virtio-gpu-gl-pci")).toBeNull()
+    expect(displayFromCommandLine("qemu -device ramfb-extra")).toBeNull()
+    // Only -device arguments count: a name or path that mentions one is not a display.
+    expect(displayFromCommandLine("qemu -name virtio-gpu-pci,xres=1920,yres=1080 -device ramfb")).toEqual(RAMFB)
+    expect(displayFromCommandLine("qemu -name ramfb -display none")).toBeNull()
+  })
+
+  it("names a legacy size the strict parser refuses, and nothing else", () => {
+    // Strict rejection is unchanged...
+    for (const size of ["xres=8000,yres=600", "xres=10,yres=10", "xres=1920.5,yres=1080", "xres=abc,yres=600", "xres=1920,yres=9999"]) {
+      expect(displayFromCommandLine(`qemu -device virtio-gpu-pci,${size} -display none`)).toBeNull()
+      // ...but the refusal can say which profile it was.
+      expect(rejectedLegacySize(`qemu -device virtio-gpu-pci,${size} -display none`)).toBe(size)
+    }
+    // Valid profiles, plain devices, partial or extra properties, two devices and no device are not "a rejected size".
+    expect(rejectedLegacySize("qemu -device virtio-gpu-pci,xres=1920,yres=1080")).toBeNull()
+    expect(rejectedLegacySize("qemu -device virtio-gpu-pci")).toBeNull()
+    expect(rejectedLegacySize("qemu -device ramfb")).toBeNull()
+    expect(rejectedLegacySize("qemu -device virtio-gpu-pci,xres=8000")).toBeNull()
+    expect(rejectedLegacySize("qemu -device virtio-gpu-pci,xres=8000,yres=600,extra=on")).toBeNull()
+    expect(rejectedLegacySize("qemu -device virtio-gpu-pci,xres=8000,yres=600 -device ramfb")).toBeNull()
+    expect(rejectedLegacySize("qemu -display none")).toBeNull()
+    expect(rejectedLegacySize("qemu -name virtio-gpu-pci,xres=8000,yres=600 -device ramfb")).toBeNull()
+    expect(LEGACY_SIZE_BOUNDS).toBe("640x480 to 7680x4320, whole numbers")
+  })
+
+  it("tells the shared folder's device from the -device argument, not from words", () => {
+    const share = "-object memory-backend-shm,id=mem,size=4096M,share=on -device vhost-user-fs-pci,chardev=vfs0,tag=winvm,queue-size=1024,addr=0x10"
+    expect(sharesFolderFromCommandLine(`qemu -device ramfb ${share}`)).toBe(true)
+    expect(sharesFolderFromCommandLine("qemu -device vhost-user-fs-pci")).toBe(true)
+    expect(sharesFolderFromCommandLine("qemu -device ramfb -display none")).toBe(false)
+    expect(sharesFolderFromCommandLine("qemu -device vhost-user-fs-pci-extra")).toBe(false)
+    // A path with spaces, or one that only mentions the device, changes nothing.
+    expect(sharesFolderFromCommandLine("qemu -drive file=/Users/a b/vhost-user-fs-pci/x.qcow2 -device ramfb")).toBe(false)
+    expect(sharesFolderFromCommandLine("qemu -name vhost-user-fs-pci -device ramfb")).toBe(false)
+    expect(sharesFolderFromCommandLine(`qemu -drive file=/Users/a b/c.qcow2 -device ramfb ${share}`)).toBe(true)
+  })
+
+  it("reads the running process's profile from its untruncated command line", async () => {
+    for (const [argv, expected] of [
+      [["-device", "ramfb"], RAMFB],
+      [["-device", "virtio-gpu-pci"], VIRTIO_GPU],
+      [["-device", "virtio-gpu-pci,xres=1600,yres=900"], { device: "virtio-gpu", legacySize: { width: 1600, height: 900 } }],
+      [["-display", "none"], null],
+    ] as const) {
+      // Padded far past a terminal's width: the device must survive `ps` truncation.
+      const pad = ["-name", "x".repeat(400)]
+      const child = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)", "--", ...pad, ...argv], { stdio: "ignore" })
+      try {
+        expect(child.pid).toBeDefined()
+        expect(runningDisplay(child.pid ?? 0)).toEqual(expected)
+      } finally {
+        const exited = new Promise((done) => child.once("exit", done))
+        child.kill()
+        await exited
+      }
+    }
+    expect(runningDisplay(2 ** 22 + 12345)).toBeNull()
+  })
+
+  describe("parseDisplayConfig", () => {
+    it("accepts each launch profile and round-trips it", () => {
+      const sized = { device: "virtio-gpu", legacySize: { width: 1920, height: 1080 } } as const
+      for (const cfg of [RAMFB, VIRTIO_GPU, sized]) {
+        expect(parseDisplayConfig(cfg)).toEqual(cfg)
+        expect(parseDisplayConfig(JSON.parse(JSON.stringify(cfg)))).toEqual(cfg)
+        expect(displayFromCommandLine(`qemu ${displayArgs(cfg).join(" ")} -display none`)).toEqual(cfg)
+      }
+    })
+
+    it("refuses anything that is not exactly a profile", () => {
+      const bad: unknown[] = [
+        null,
+        undefined,
+        "ramfb",
+        42,
+        [],
+        [RAMFB],
+        {},
+        { device: "other" },
+        { device: "ramfb", legacySize: { width: 1920, height: 1080 } },
+        { device: "ramfb", extra: true },
+        { device: "virtio-gpu", extra: true },
+        { device: "virtio-gpu", legacySize: null },
+        { device: "virtio-gpu", legacySize: [] },
+        { device: "virtio-gpu", legacySize: {} },
+        { device: "virtio-gpu", legacySize: { width: 1920 } },
+        { device: "virtio-gpu", legacySize: { height: 1080 } },
+        { device: "virtio-gpu", legacySize: { width: "1920", height: 1080 } },
+        { device: "virtio-gpu", legacySize: { width: 1920.5, height: 1080 } },
+        { device: "virtio-gpu", legacySize: { width: 639, height: 1080 } },
+        { device: "virtio-gpu", legacySize: { width: 1920, height: 479 } },
+        { device: "virtio-gpu", legacySize: { width: 7681, height: 1080 } },
+        { device: "virtio-gpu", legacySize: { width: 1920, height: 4321 } },
+        { device: "virtio-gpu", legacySize: { width: 1920, height: 1080, depth: 32 } },
+        { device: "virtio-gpu", width: 1920, height: 1080 },
+      ]
+      for (const v of bad) expect(parseDisplayConfig(v)).toBeNull()
+    })
   })
 
   describe("display.json", () => {
