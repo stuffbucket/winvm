@@ -224,6 +224,17 @@ describe("names and rules", () => {
     expect(cp.deleteBlocked({ kind: "manual" })).toBeNull()
     expect(cp.deleteBlocked({ kind: "auto" })).toBeNull()
     expect(cp.deleteBlocked({ kind: "stow" })).toBeNull()
+    expect(cp.deleteBlocked({ kind: "auto", protected: true })).toBe("checkpoints.keep.protected")
+    expect(cp.deleteBlocked({ kind: "manual", protected: true })).toBe("checkpoints.keep.protected")
+  })
+  it("protects only named checkpoints, and names the memory formats that exist without converting any", () => {
+    expect(cp.canProtect({ kind: "stow", name: "stow" })).toBe(false)
+    expect(cp.canProtect({ kind: "manual", name: "stow" })).toBe(false)
+    expect(cp.canProtect({ kind: "auto", name: "auto-1" })).toBe(true)
+    expect(cp.formatLabelKey("zstd")).toBe("checkpoints.format.zstd")
+    expect(cp.formatLabelKey("mapped")).toBe("checkpoints.format.mapped")
+    expect(cp.formatLabelKey("raw")).toBe("checkpoints.format.raw")
+    expect(cp.formatLabelKey(undefined)).toBe("checkpoints.format.unknown")
   })
   it("says the most specific reason a checkpoint can't load", () => {
     expect(cp.incompatibleReason({ compatible: true, incompatible: [] })).toBeNull()
@@ -604,7 +615,7 @@ describe("the checkpoint's panel", () => {
     document.body.append(host)
     root = createRoot(host)
     act(() =>
-      root?.render(<CheckpointDetails c={c} now={Date.parse("2026-10-22T20:00:00Z")} busy={false} saving="idle" onClose={onClose} onLook={noop} onNote={onNote} onGoBack={noop} onReveal={noop} onDelete={noop} {...over} />),
+      root?.render(<CheckpointDetails c={c} now={Date.parse("2026-10-22T20:00:00Z")} busy={false} saving="idle" onClose={onClose} onLook={noop} onNote={onNote} onGoBack={noop} onReveal={noop} onDelete={noop} onProtect={noop} {...over} />),
     )
     return { host, onNote, onClose }
   }
@@ -732,7 +743,8 @@ describe("the checkpoint's panel", () => {
     const { host } = panel(withNotes)
     const rows = [...host.querySelectorAll(".checkpoint-details__prop")].map((r) => r.querySelector("dt")?.textContent)
     // Title, date, kind and size are in the caption; the save name is nowhere (the folder button is the way to it).
-    expect(rows).toEqual(["Tags"])
+    // How its memory is stored is not in the caption, so it is a row.
+    expect(rows).toEqual(["Tags", t("checkpoints.fact.format")])
     const tags = host.querySelector<HTMLInputElement>(".checkpoint-details__prop input")
     expect(tags?.value).toBe("office")
     expect(tags?.getAttribute("aria-label")).toBe("Tags")
@@ -873,6 +885,52 @@ describe("the checkpoint's panel", () => {
     }
   })
 
+  const protectButton = (host: HTMLElement): HTMLButtonElement | null => host.querySelector<HTMLButtonElement>(".checkpoint-details__protection button")
+
+  it("offers to protect an ordinary checkpoint, and shows how its memory is stored", () => {
+    const onProtect = mock((_: boolean) => undefined)
+    const { host } = panel(checkpoint("a", at(2026, 10, 21), { format: "zstd" }), { onProtect })
+    const control = protectButton(host)
+    expect(control?.textContent).toBe(t("checkpoints.protect"))
+    expect(control?.disabled).toBe(false)
+    expect(control?.getAttribute("aria-pressed")).toBe("false")
+    act(() => control?.click())
+    expect(onProtect).toHaveBeenCalledWith(true)
+    expect(host.querySelector(".checkpoint-details__props")?.textContent).toContain(t("checkpoints.format.zstd"))
+  })
+
+  it("unprotects on request, refuses Delete while protected, and still restores", () => {
+    const onProtect = mock((_: boolean) => undefined)
+    const { host } = panel(checkpoint("locked", at(2026, 10, 21), { kind: "auto", protected: true, format: "mapped" }), { onProtect })
+    const del = host.querySelector<HTMLButtonElement>(".checkpoint-details__delete")
+    expect(del?.disabled).toBe(true)
+    expect(del?.title).toBe(t("checkpoints.keep.protected"))
+    expect(host.querySelector<HTMLButtonElement>(".checkpoint-details__restore")?.disabled).toBe(false)
+    const control = protectButton(host)
+    expect(control?.textContent).toBe(t("checkpoints.unprotect"))
+    expect(control?.getAttribute("aria-pressed")).toBe("true")
+    act(() => control?.click())
+    expect(onProtect).toHaveBeenCalledWith(false)
+    expect(host.querySelector(".checkpoint-details__props")?.textContent).toContain(t("checkpoints.format.mapped"))
+  })
+
+  it("can't protect the suspended session, and says why without another line of copy", () => {
+    const onProtect = mock((_: boolean) => undefined)
+    const { host } = panel(checkpoint("stow", at(2026, 10, 21), { kind: "stow" }), { onProtect })
+    const control = protectButton(host)
+    expect(control?.disabled).toBe(true)
+    expect(host.querySelector(".checkpoint-details__protection")?.getAttribute("title")).toBe(t("checkpoints.protectStow"))
+    expect(document.getElementById(control?.getAttribute("aria-describedby") ?? "")?.textContent).toBe(t("checkpoints.protectStow"))
+    act(() => control?.click())
+    expect(onProtect).not.toHaveBeenCalled()
+  })
+
+  it("waits for other work before changing protection", () => {
+    const onProtect = mock((_: boolean) => undefined)
+    const { host } = panel(checkpoint("a", at(2026, 10, 21)), { onProtect, busy: true })
+    expect(protectButton(host)?.disabled).toBe(true)
+  })
+
   it("keeps Delete separate from the folder and Restore buttons, each with its icon (Delete with its word)", () => {
     const { host } = panel(withNotes)
     const buttons = [...host.querySelectorAll("footer button")]
@@ -896,7 +954,7 @@ describe("the details layer", () => {
     document.body.replaceChildren(host)
     root = createRoot(host)
     return (c, onNote = noop) =>
-      act(() => root?.render(<CheckpointDetailsLayer c={c} now={Date.parse("2026-10-22T20:00:00Z")} busy={false} saving="idle" onClose={noop} onLook={noop} onNote={onNote} onGoBack={noop} onReveal={noop} onDelete={noop} />))
+      act(() => root?.render(<CheckpointDetailsLayer c={c} now={Date.parse("2026-10-22T20:00:00Z")} busy={false} saving="idle" onClose={noop} onLook={noop} onNote={onNote} onGoBack={noop} onReveal={noop} onDelete={noop} onProtect={noop} />))
   }
   const aside = (): HTMLElement | null => host.querySelector<HTMLElement>("aside.checkpoint-details")
   const wait = (ms: number): Promise<void> => act(async () => void (await new Promise((r) => setTimeout(r, ms))))
@@ -1292,6 +1350,13 @@ describe("a card", () => {
     expect(host.querySelector(".checkpoint__caption .checkpoint__name")?.textContent).toBe("no-picture")
   })
 
+  it("marks a protected checkpoint with a lock, and says so to a screen reader", () => {
+    const host = card(checkpoint("kept", taken, { protected: true }))
+    expect(host.querySelector(".checkpoint__protected svg")).not.toBeNull()
+    expect(host.querySelector(".checkpoint__hit")?.getAttribute("aria-label")).toContain(t("checkpoints.protected"))
+    expect(card(checkpoint("plain", taken)).querySelector(".checkpoint__protected")).toBeNull()
+  })
+
   it("has a glyph for each kind", () => {
     expect(new Set(["manual", "auto", "baseline", "stow", "golden"].map(kindIcon)).size).toBe(5)
   })
@@ -1329,6 +1394,23 @@ describe("New Checkpoint's name field", () => {
     expect(document.querySelector(".checkpoints__hint")).toBeNull()
   })
 
+  it("compresses a new checkpoint's memory unless asked not to, and explains the trade in its tooltip only", () => {
+    const onSubmit = mock()
+    const host = document.createElement("div")
+    document.body.append(host)
+    root = createRoot(host)
+    act(() => root?.render(<NewCheckpointForm live busy={false} onCancel={() => undefined} onSubmit={onSubmit} />))
+    const box = document.querySelector<HTMLInputElement>(".checkpoints__compression input")
+    expect(box?.checked).toBe(true)
+    expect(document.querySelector(".checkpoints__compression")?.getAttribute("title")).toBe(t("checkpoints.compressionHint"))
+    const form = document.querySelector("form")
+    act(() => form?.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })))
+    expect(onSubmit.mock.calls[0]?.[2]).toBe("zstd")
+    act(() => box?.click())
+    act(() => form?.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })))
+    expect(onSubmit.mock.calls[1]?.[2]).toBe("mapped")
+  })
+
   it("spells the date out for today as for any day: what is stored never says Today", () => {
     expect(absoluteTime(new Date(2026, 10, 3, 15, 30).getTime(), "en-US")).toBe("Nov 3, 2026 at 3:30 PM")
   })
@@ -1351,6 +1433,6 @@ describe("New Checkpoint's name field", () => {
     setSystemTime(stamp)
     const onSubmit = mount()
     act(() => document.querySelector("form")?.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })))
-    expect(onSubmit).toHaveBeenCalledWith("", absoluteTime(stamp.getTime()))
+    expect(onSubmit).toHaveBeenCalledWith("", absoluteTime(stamp.getTime()), "zstd")
   })
 })

@@ -53,6 +53,7 @@ import { type Phase, parseNote, parseSaves } from "../../model"
 import type { Ran, RunOptions } from "../winvm/useWinvm"
 import {
   type Checkpoint,
+  type CheckpointFormat,
   type CardBox,
   CAPTION_ROOM,
   DAY_GAP,
@@ -250,7 +251,7 @@ export function CheckpointCanvas(p: CheckpointCanvasProps): JSX.Element {
     return () => window.removeEventListener("resize", resize)
   }, [])
 
-  const shown = useMemo(() => (list ?? []).filter((c) => settings.showAutomatic || !isAutomatic(c) || c.name === selected), [list, settings.showAutomatic, selected])
+  const shown = useMemo(() => (list ?? []).filter((c) => settings.showAutomatic || !isAutomatic(c) || c.protected === true || c.name === selected), [list, settings.showAutomatic, selected])
   const byName = useMemo(() => new Map((list ?? []).map((c) => [c.name, c])), [list])
   // Where the person has moved cards to, kept for this machine.
   const moves = useMemo<Moves>(() => settings.layouts[p.instance] ?? {}, [settings.layouts, p.instance])
@@ -664,7 +665,7 @@ export function CheckpointCanvas(p: CheckpointCanvasProps): JSX.Element {
   }
 
   /** Take a checkpoint of now; resolves with its name, or null when it failed (and says why). */
-  const takeCheckpoint = async (title: string, label: string, storedTitle: string = title): Promise<string | null> => {
+  const takeCheckpoint = async (title: string, label: string, storedTitle: string = title, format?: CheckpointFormat): Promise<string | null> => {
     const name = saveNameFor(title, taken, new Date())
     setWorking({ on: "now", label })
     // Watch it happen: Now, and today's checkpoints above it, where the new one will land.
@@ -674,7 +675,7 @@ export function CheckpointCanvas(p: CheckpointCanvasProps): JSX.Element {
     void flyCamera(clamp(fitIn(union([layout.now, ...(isToday ? [withLabel(today)] : [])]), 96)))
     setStatus(null)
     try {
-      const ran = await props.current.run("save", name)
+      const ran = await props.current.run("save", name, format === undefined ? undefined : { format })
       if (ran === null || ran.code !== 0) {
         setStatus({ tone: "error", text: ran?.output || t("checkpoints.saveFailed") })
         return null
@@ -686,7 +687,7 @@ export function CheckpointCanvas(p: CheckpointCanvasProps): JSX.Element {
       await reload((got) => {
         if (!got.some((c) => c.name === name) || before.has(name)) return
         const after = layoutTimeline(
-          got.filter((c) => settings.showAutomatic || !isAutomatic(c)),
+          got.filter((c) => settings.showAutomatic || !isAutomatic(c) || c.protected === true),
           props.current.aspect,
         )
         const box = after.cards.get(name)
@@ -705,9 +706,9 @@ export function CheckpointCanvas(p: CheckpointCanvasProps): JSX.Element {
   }
 
   // Left empty, the checkpoint is named by the time: the title is the name the field showed, the save's own name a timestamp.
-  const submitNew = (title: string, unnamed: string): void => {
+  const submitNew = (title: string, unnamed: string, format: CheckpointFormat): void => {
     setCreating(false)
-    void takeCheckpoint(title, t("checkpoints.taking"), title === "" ? unnamed : title)
+    void takeCheckpoint(title, t("checkpoints.taking"), title === "" ? unnamed : title, format)
   }
 
   const goBack = async (name: string, saveFirst: boolean): Promise<void> => {
@@ -741,6 +742,8 @@ export function CheckpointCanvas(p: CheckpointCanvasProps): JSX.Element {
   const remove = async (name: string): Promise<void> => {
     setConfirm(null)
     const c = byName.get(name)
+    // The confirmation may have outlived what allowed it (a protection set meanwhile).
+    if (p.busy || working !== null || (c !== undefined && deleteBlocked(c) !== null)) return
     setWorking({ on: name, label: t("checkpoints.deleting") })
     try {
       const out = await winvm("saves", "-i", props.current.instance, "rm", name)
@@ -758,6 +761,26 @@ export function CheckpointCanvas(p: CheckpointCanvasProps): JSX.Element {
       setStatus({ tone: "error", text: String(e) })
     } finally {
       setLeaving(null)
+      setWorking(null)
+    }
+  }
+
+  const protect = async (name: string, value: boolean): Promise<void> => {
+    if (p.busy || working !== null) return
+    setWorking({ on: name, label: t(value ? "checkpoints.protect" : "checkpoints.unprotect") })
+    setStatus(null)
+    try {
+      const out = await winvm("saves", value ? "protect" : "unprotect", "-i", props.current.instance, name)
+      if (out.code !== 0) {
+        setStatus({ tone: "error", text: outputText(out) || t("checkpoints.protectFailed") })
+        return
+      }
+      // Never claim protection optimistically: the list on disk is the
+      // authority, and retention may have removed the save before the lock.
+      await reload()
+    } catch (e) {
+      setStatus({ tone: "error", text: String(e) })
+    } finally {
       setWorking(null)
     }
   }
@@ -1154,6 +1177,7 @@ export function CheckpointCanvas(p: CheckpointCanvasProps): JSX.Element {
             showCheckpointInFinder(props.current.instance, name).catch((e: unknown) => setStatus({ tone: "error", text: String(e) }))
           }}
           onDelete={(name) => setConfirm({ kind: "delete", name })}
+          onProtect={(name, value) => void protect(name, value)}
         />
       </SpatialCanvas>
 

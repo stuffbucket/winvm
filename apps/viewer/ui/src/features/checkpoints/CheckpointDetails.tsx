@@ -7,7 +7,7 @@ import { Icon } from "../../components/Icon"
 import { t } from "../../i18n"
 import { formatSize, type SaveNotes } from "../../model"
 import { titleEdit } from "../machines/machines"
-import { type Checkpoint, deleteBlocked, incompatibleReason, shownName } from "./checkpoints"
+import { type Checkpoint, canProtect, deleteBlocked, formatLabelKey, incompatibleReason, shownName } from "./checkpoints"
 import { KindChip, Picture, takenAt } from "./CheckpointCard"
 
 export interface NoteDraft {
@@ -68,6 +68,8 @@ interface DetailsProps {
   /** Open the checkpoint's folder in Finder. */
   onReveal(): void
   onDelete(): void
+  /** Protect it (true) or let it go back to the retention rules (false). */
+  onProtect(protect: boolean): void
 }
 
 /** How long typing has to pause before a note is written. */
@@ -224,7 +226,7 @@ const panelExitMs = (): number => (typeof matchMedia === "function" && matchMedi
  * it is typed), what else there is to know (tags), and the things to do with
  * it. Each fact is in one place.
  */
-export function CheckpointDetails({ c, now, busy, saving, state = "open", panelRef, onClose, onLook, onNote, onGoBack, onReveal, onDelete }: DetailsProps): JSX.Element {
+export function CheckpointDetails({ c, now, busy, saving, state = "open", panelRef, onClose, onLook, onNote, onGoBack, onReveal, onDelete, onProtect }: DetailsProps): JSX.Element {
   const [draft, setDraft] = useState(() => draftOf(c.notes))
   const written = useRef(draftOf(c.notes))
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -234,6 +236,8 @@ export function CheckpointDetails({ c, now, busy, saving, state = "open", panelR
   // What a field held when it took focus: Esc puts it back.
   const startedWith = useRef("")
   const reasonId = useId()
+  const protectHintId = useId()
+  const protectHint = c.protected === true ? "checkpoints.protectHint" : canProtect(c) ? "checkpoints.unprotectedHint" : "checkpoints.protectStow"
 
   // Another checkpoint: start from its notes.
   useEffect(() => {
@@ -363,7 +367,28 @@ export function CheckpointDetails({ c, now, busy, saving, state = "open", panelR
                 />
               </dd>
             </div>
+            <div className="checkpoint-details__prop">
+              <dt>{t("checkpoints.fact.format")}</dt>
+              <dd>{t(formatLabelKey(c.format))}</dd>
+            </div>
           </dl>
+          {/* What protection means here is the button's tooltip and description; a disabled button shows none, so its wrapper carries it. */}
+          <span className="checkpoint-details__protection" title={t(protectHint)}>
+            <Button
+              size="sm"
+              variant="secondary"
+              disabled={busy || (!canProtect(c) && c.protected !== true)}
+              aria-pressed={c.protected === true}
+              aria-describedby={protectHintId}
+              onClick={() => onProtect(c.protected !== true)}
+            >
+              <Icon name="lock" />
+              {t(c.protected === true ? "checkpoints.unprotect" : "checkpoints.protect")}
+            </Button>
+            <span id={protectHintId} hidden>
+              {t(protectHint)}
+            </span>
+          </span>
         </div>
       </div>
       <footer className="checkpoint-details__actions">
@@ -411,13 +436,14 @@ const cardButtonOf = (name: string): HTMLElement | null => {
   return null
 }
 
-export interface LayerProps extends Omit<DetailsProps, "c" | "state" | "panelRef" | "onNote" | "onGoBack" | "onReveal" | "onDelete"> {
+export interface LayerProps extends Omit<DetailsProps, "c" | "state" | "panelRef" | "onNote" | "onGoBack" | "onReveal" | "onDelete" | "onProtect"> {
   /** The selected checkpoint; none lets the panel ease out. */
   readonly c: Checkpoint | undefined
   onNote(name: string, draft: NoteDraft): void
   onGoBack(name: string): void
   onReveal(name: string): void
   onDelete(name: string): void
+  onProtect(name: string, protect: boolean): void
 }
 
 /**
@@ -429,7 +455,7 @@ export interface LayerProps extends Omit<DetailsProps, "c" | "state" | "panelRef
  * flicker, the slide simply turns round where it is. Focus goes into the panel
  * when it opens, and back to the checkpoint's card when it closes from there.
  */
-export function CheckpointDetailsLayer({ c, onNote, onGoBack, onReveal, onDelete, ...rest }: LayerProps): JSX.Element | null {
+export function CheckpointDetailsLayer({ c, onNote, onGoBack, onReveal, onDelete, onProtect, ...rest }: LayerProps): JSX.Element | null {
   const open = c !== undefined
   // What it says while it eases out, when there is no selection any more.
   const kept = useRef<Checkpoint | undefined>(c)
@@ -490,6 +516,7 @@ export function CheckpointDetailsLayer({ c, onNote, onGoBack, onReveal, onDelete
       onGoBack={() => onGoBack(shownCheckpoint.name)}
       onReveal={() => onReveal(shownCheckpoint.name)}
       onDelete={() => onDelete(shownCheckpoint.name)}
+      onProtect={(protect) => onProtect(shownCheckpoint.name, protect)}
     />
   )
 }

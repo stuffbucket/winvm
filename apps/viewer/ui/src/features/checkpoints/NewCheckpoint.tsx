@@ -3,6 +3,7 @@ import { useEffect, useState } from "react"
 import { Button } from "../../components/Button"
 import { t } from "../../i18n"
 import { absoluteTime } from "./CheckpointCard"
+import type { CheckpointFormat } from "./checkpoints"
 
 /** The date and time, to the minute, kept current while `active`: it changes on the minute, not each second. */
 export function useMinute(active: boolean): number {
@@ -28,8 +29,12 @@ export interface NewCheckpointFormProps {
   readonly live: boolean
   readonly busy: boolean
   onCancel(): void
-  /** `title` is what was typed (may be empty); `unnamed` is the name shown in the empty field, which an empty title is stored as. */
-  onSubmit(title: string, unnamed: string): void
+  /**
+   * `title` is what was typed (may be empty); `unnamed` is the name shown in
+   * the empty field, which an empty title is stored as. `format` is how its
+   * memory is written: compressed (zstd) by default, else mapped-ram.
+   */
+  onSubmit(title: string, unnamed: string, format: CheckpointFormat): void
 }
 
 /**
@@ -39,12 +44,13 @@ export interface NewCheckpointFormProps {
  */
 export function NewCheckpointForm({ live, busy, onCancel, onSubmit }: NewCheckpointFormProps): JSX.Element {
   const [title, setTitle] = useState("")
+  const [compressed, setCompressed] = useState(true)
   const unnamed = absoluteTime(useMinute(true))
   return (
     <form
       onSubmit={(e) => {
         e.preventDefault()
-        onSubmit(title.trim(), unnamed)
+        onSubmit(title.trim(), unnamed, compressed ? "zstd" : "mapped")
       }}
     >
       <label className="checkpoint-details__label" htmlFor="checkpoint-new-title">
@@ -60,6 +66,14 @@ export function NewCheckpointForm({ live, busy, onCancel, onSubmit }: NewCheckpo
         maxLength={120}
         onChange={(e) => setTitle(e.target.value)}
       />
+      {/* What it trades is its tooltip and accessible description, not another line in the form. */}
+      <label className="checkpoints__compression" title={t("checkpoints.compressionHint")}>
+        <input type="checkbox" checked={compressed} disabled={busy} aria-describedby="checkpoint-compression-hint" onChange={(e) => setCompressed(e.target.checked)} />
+        {t("checkpoints.compression")}
+        <span id="checkpoint-compression-hint" hidden>
+          {t("checkpoints.compressionHint")}
+        </span>
+      </label>
       <div className="checkpoints__new-actions">
         <Button size="sm" variant="ghost" onClick={onCancel}>
           {t("confirm.cancel")}

@@ -122,7 +122,7 @@ export interface CardProps {
 export function cardLabel(c: Checkpoint, now: number): string {
   const reason = incompatibleReason(c)
   const base = t("checkpoints.card.label", { name: shownName(c), kind: kindLabel(c.kind), when: takenAt(c, now), size: formatSize(c.bytes) })
-  return `${base}${noteOf(c) === null ? "" : `, ${t("checkpoints.hasNotes")}`}${reason === null ? "" : `. ${t(reason)}`}`
+  return `${base}${c.protected === true ? `, ${t("checkpoints.protected")}` : ""}${noteOf(c) === null ? "" : `, ${t("checkpoints.hasNotes")}`}${reason === null ? "" : `. ${t(reason)}`}`
 }
 
 /**
@@ -194,6 +194,11 @@ export const CheckpointCard = memo(function CheckpointCard({ c, box, selected, z
                 <span className="checkpoint__when">{when}</span>
                 <span className="checkpoint__facts">
                   <KindChip kind={c.kind} className="checkpoint__kind" />
+                  {c.protected === true && (
+                    <span className="checkpoint__protected" title={t("checkpoints.protected")}>
+                      <Icon name="lock" />
+                    </span>
+                  )}
                   <span className="checkpoint__size" title={t("checkpoints.sizeTip")}>
                     {formatSize(c.bytes)}
                   </span>

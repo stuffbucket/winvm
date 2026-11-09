@@ -398,8 +398,11 @@ caption and in no properties list.
 - **Properties are rows**: a `--text-muted` label column and a value, one grid
   for every row (labels start with the note's text; values start together),
   `--size-xl` high, values selectable, no heading over them. A value that can be
-  edited (Tags) looks like the others until hovered or focused. There is **no
-  save name** row: the technical name is not something a person reads. The way
+  edited (Tags) looks like the others until hovered or focused. Memory storage
+  is a row too. Under the rows, Protect Checkpoint is a secondary button with
+  the lock glyph and `aria-pressed`; what protection means is its tooltip and
+  accessible description (on its wrapper, so a disabled one still says why).
+  There is **no save name** row: the technical name is not something a person reads. The way
   to the checkpoint's files is the folder button in the actions.
 - **The size says what it counts**, on hover only: "Disk space on your Mac, at
   most: checkpoints share space" (card and panel). It is the memory file plus the

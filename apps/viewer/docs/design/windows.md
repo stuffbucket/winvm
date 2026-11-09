@@ -557,8 +557,15 @@ most, since checkpoints share space); then **one break**; its **note**, written
 as text (placeholder "Add a note"),
 saved by itself after a pause with no Save button (Esc puts it back), to
 `$XDG_DATA_HOME/winvm/notes/<instance>/<save>.json` through `winvm saves note`;
-then the rows for what is more: its tags (editable, comma-separated); there is
-no save-name row. Last, Delete…, a folder button (**Show in Finder**: opens the
+then the rows for what is more: its tags (editable, comma-separated) and how
+its memory is stored (Compressed (zstd), Fast restore (uncompressed), or
+Uncompressed (legacy)); there is no save-name row. Under them, **Protect
+Checkpoint** / **Unprotect Checkpoint** (a pressed toggle, `winvm saves
+protect`): what it means is its tooltip, not a line of text. Saved on suspend
+can't be protected (the tooltip says to take a named checkpoint instead). A
+protected checkpoint shows a lock at the end of its card's name row, stays in
+view when Automatic ones are hidden, and can't be deleted until it is
+unprotected. Last, Delete…, a folder button (**Show in Finder**: opens the
 checkpoint's folder, `~/.local/state/winvm/saves/<instance>/<save>/`, which
 `winvm saves path` names) and the rewind button (**Restore this checkpoint**).
 
@@ -590,12 +597,16 @@ The kinds, what makes each, and so what the words say:
   says, in full), for a checkpoint that can't be restored here.
 - **Delete…** confirms, destructive: its picture and notes go with it.
   Fresh install (baseline) and Test starting point (golden) checkpoints can't be deleted
-  here, as `rewind` and tests depend on them; the button's tooltip says so.
+  here, as `rewind` and tests depend on them, nor can a protected one; the
+  button's tooltip says so.
 
 **New Checkpoint** asks for a name. The field's placeholder is the name it
 gets when left empty: the current date and time spelled out as the cards say
 them ("Nov 3, 2026 at 3:30 PM", never "Today"), kept current while the dialog
-is open (it changes on the minute). There is no helper line. An empty field
+is open (it changes on the minute). There is no helper line. Under it,
+**Compress memory (zstd)**, checked: unchecked takes it as mapped-ram, larger
+but faster to restore (its tooltip says so). It applies only to the new
+checkpoint; none is converted. An empty field
 is stored as that text, as the checkpoint's title; its save name (the folder,
 and what `winvm` calls it) is the timestamp `winvm save` uses by default,
 `2026-11-03_15-30-12`. A typed name becomes its title, and a directory-safe

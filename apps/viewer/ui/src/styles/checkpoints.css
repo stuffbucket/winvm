@@ -391,6 +391,24 @@
   gap: var(--space-2);
 }
 
+/* New Checkpoint: how its memory is written, and what that trades. */
+.checkpoints__compression {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+  color: var(--text-strong);
+  font-size: var(--text-sm);
+}
+
+/* The panel's Protect button. */
+.checkpoint-details__protection {
+  display: inline-flex;
+  align-self: start;
+  margin-top: var(--space-3);
+  margin-left: var(--space-2);
+}
+
 .checkpoints__new-actions {
   display: flex;
   justify-content: flex-end;
@@ -1080,6 +1098,24 @@
 .checkpoint__kind svg,
 .checkpoint__note svg {
   flex: none;
+  width: 1em;
+  height: 1em;
+}
+
+/* Protected: a quiet lock at the end of the name's row. */
+.checkpoint__caption .checkpoint__protected {
+  grid-column: 3;
+  grid-row: 1;
+  align-self: center;
+  display: inline-flex;
+  color: var(--text-muted);
+}
+
+.checkpoint__caption:has(.checkpoint__protected) .checkpoint__name {
+  grid-column: 2;
+}
+
+.checkpoint__protected svg {
   width: 1em;
   height: 1em;
 }

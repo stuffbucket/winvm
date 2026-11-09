@@ -38,6 +38,7 @@ export type IconName =
   | "flag"
   | "archive"
   | "flask"
+  | "lock"
   | "notes"
   | "warning"
   | "rewind"
@@ -48,6 +49,12 @@ export type IconName =
 // moon (asleep); keyboard; pencil, trash-2; camera, timer, flag, archive, flask-conical (a checkpoint's kind),
 // notebook-pen (it has a note), triangle-alert (it can't load here), rewind (restore a checkpoint).
 const PATHS: Record<IconName, ReactNode> = {
+  lock: (
+    <>
+      <rect x="3" y="11" width="18" height="11" rx="2" />
+      <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+    </>
+  ),
   rewind: (
     <>
       <polygon points="11 19 2 12 11 5 11 19" />
