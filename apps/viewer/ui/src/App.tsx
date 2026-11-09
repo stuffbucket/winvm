@@ -741,7 +741,7 @@ export function App(): JSX.Element {
           busy={w.busy !== null}
           aspect={display.width / display.height}
           liveSource={liveSource}
-          run={(verb, arg) => w.act(verb, arg)}
+          run={(verb, arg, options) => w.act(verb, arg, options)}
           closeRequest={closeCheckpoints}
           onClosed={() => setCheckpoints(false)}
         />

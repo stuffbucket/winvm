@@ -50,7 +50,7 @@ import { outputText, showCheckpointInFinder, winvm } from "../../backend"
 import { ConfirmDialog } from "../../components/ConfirmDialog"
 import { t } from "../../i18n"
 import { type Phase, parseNote, parseSaves } from "../../model"
-import type { Ran } from "../winvm/useWinvm"
+import type { Ran, RunOptions } from "../winvm/useWinvm"
 import {
   type Checkpoint,
   type CardBox,
@@ -116,7 +116,7 @@ export interface CheckpointCanvasProps {
   /** noVNC's canvas, to show live in the Now card. */
   liveSource(): HTMLCanvasElement | null
   /** Runs `save` or `load` the way the main window does (its busy state, its failure callout). */
-  run(verb: "save" | "load", arg: string): Promise<Ran | null>
+  run(verb: "save" | "load", arg: string, options?: RunOptions): Promise<Ran | null>
   /** Bumped by the main window (⌘⇧T, the menu) to leave. */
   readonly closeRequest: number
   onClosed(): void

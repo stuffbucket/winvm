@@ -8,6 +8,8 @@ import { type AgentSeen, UNSEEN, agentSeen } from "./agentSeen"
 
 export type { Verb } from "./statusGuard"
 
+export interface RunOptions { readonly format?: "zstd" | "mapped" }
+
 export interface Ran {
   readonly verb: Verb | "open" | "put"
   readonly code: number
@@ -35,7 +37,7 @@ export interface Winvm {
   readonly cliPath: string | null
   select(name: string): void
   /** Runs a verb on this instance; `arg` names the save for save and load. Resolves with what it did (null: nothing to run). */
-  act(verb: Verb, arg?: string): Promise<Ran | null>
+  act(verb: Verb, arg?: string, options?: RunOptions): Promise<Ran | null>
   openScreenSharing(): Promise<void>
   installCommand(): Promise<void>
   dismissFailure(): void
@@ -170,13 +172,13 @@ export function useWinvm(): Winvm {
   }, [live, pid, name, connection, polls])
 
   const act = useCallback(
-    async (verb: Verb, arg?: string): Promise<Ran | null> => {
+    async (verb: Verb, arg?: string, options?: RunOptions): Promise<Ran | null> => {
       if (name === null && verb !== "setup") return null
       setBusy(verb)
       setFailure(null)
       let result: Ran
       try {
-        const extra = arg === undefined || arg === "" ? [] : [arg]
+        const extra = [...(arg === undefined || arg === "" ? [] : [arg]), ...(verb === "save" && options?.format !== undefined ? ["--format", options.format] : [])]
         const out = verb === "setup" ? await winvm("setup") : await winvm(verb, "-i", name ?? "default", ...extra)
         const ran: Ran = { verb, code: out.code, output: outputText(out) }
         result = ran

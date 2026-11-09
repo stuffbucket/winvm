@@ -18,7 +18,16 @@ import type { Point, Rect } from "@winvm/canvas"
 
 import type { SaveEntry } from "../../model"
 
-export type Checkpoint = SaveEntry
+export type Checkpoint = SaveEntry & { readonly protected?: boolean }
+
+/** Existing save formats, not a conversion of an already saved migration stream. */
+export type CheckpointFormat = "zstd" | "mapped"
+
+export const formatLabelKey = (format: string | undefined): string =>
+  format === "zstd" || format === "mapped" || format === "raw" ? `checkpoints.format.${format}` : "checkpoints.format.unknown"
+
+/** The one-shot stow is consumed/superseded by start/load/reset; keep a named checkpoint instead. */
+export const canProtect = (c: Pick<Checkpoint, "kind" | "name">): boolean => c.kind !== "stow" && c.name !== "stow"
 
 /**
  * World units (CSS pixels at 100%). A card is a 16:10 picture with its
@@ -431,7 +440,8 @@ export function saveNameFor(title: string, taken: ReadonlySet<string>, now: Date
 }
 
 /** Kinds the viewer won't delete, and why (an i18n key): tests start from goldens, and `rewind` goes back to the baseline. */
-export function deleteBlocked(c: Pick<Checkpoint, "kind">): string | null {
+export function deleteBlocked(c: Pick<Checkpoint, "kind" | "protected">): string | null {
+  if (c.protected === true) return "checkpoints.keep.protected"
   if (c.kind === "golden") return "checkpoints.keep.golden"
   if (c.kind === "baseline") return "checkpoints.keep.baseline"
   return null

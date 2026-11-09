@@ -239,6 +239,7 @@ const SaveEntry = z.object({
   // The manifest's own note (`winvm save --note`), set when it was taken.
   note: z.string().optional(),
   format: z.string().optional(),
+  protected: z.boolean().optional(),
   // Absolute paths of its screenshot and thumbnail (`screen.png`, `thumb.png`); null for saves taken before them.
   screenshot: z.string().nullable().default(null),
   thumbnail: z.string().nullable().default(null),
