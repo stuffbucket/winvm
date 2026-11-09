@@ -49,6 +49,9 @@ export const winvm = (...args: string[]): Promise<Output> => tauri().core.invoke
 
 export const installCli = (): Promise<string> => tauri().core.invoke<string>("install_cli")
 
+/** Enable native controls using the same state rules as the main window. */
+export const setMainMenuState = (enabled: Record<string, boolean>): Promise<void> => tauri().core.invoke<void>("set_main_menu_state", { enabled })
+
 export const downloadsDir = (): Promise<string> => tauri().core.invoke<string>("downloads_dir")
 
 /** Starts sharing the screen with an agent (`winvm cua serve`); resolves with what it printed when ready. */

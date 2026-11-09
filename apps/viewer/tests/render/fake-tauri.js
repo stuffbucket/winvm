@@ -91,6 +91,8 @@
     }
   }
   const settings = {}
+  const policy = { "autosave.enabled": true, "autosave.idleMinutes": 10, "autosave.keep": 3, "stow.enabled": true, "stow.idleMinutes": 60, "watch.enabled": true, "power.keepAwake": false }
+  const hardware = { cpus: 4, memoryMiB: 8192 }
   const out = (stdout, code = 0) => ({ code, stdout: typeof stdout === "string" ? stdout : JSON.stringify(stdout), stderr: "" })
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
   const flag = (args, key) => {
@@ -113,7 +115,15 @@
       if (rest.includes("-i")) return out([status, ...more].find((s) => s.name === target) ?? status)
       return out(more.length === 0 ? status : { instances: [status, ...more] })
     }
+    if (verb === "info") return out({ name: status.name, running: state === "running", hardware: { running: state === "running" ? { cpus: 4, memoryMiB: 8192 } : null, next: hardware, limits: { cpus: { min: 2, max: 12 }, memoryMiB: { min: 4096, max: 32768, step: 1024 } }, diskBytes: 64 * GiB }, network: { mode: "user", label: "Shared NAT", guest: "10.0.2.15", gateway: "10.0.2.2", dns: "10.0.2.3", windows: null, forwards: [], listeners: [] } })
     if (verb === "config") {
+      for (const arg of rest) {
+        const [key, value] = arg.split("=")
+        if (Object.hasOwn(policy, key)) policy[key] = value === "true" ? true : value === "false" ? false : Number(value)
+        if (key === "cpus") hardware.cpus = Number(value)
+        if (key === "memory") hardware.memoryMiB = Number(value)
+      }
+      window.__policyWrites = [...(window.__policyWrites ?? []), rest.filter((v) => v.includes("="))].filter((v) => v.length > 0)
       // `winvm config -i NAME title=…`: ?renamefail=1 refuses, with a reason.
       const set = rest.find((a) => a.startsWith("title="))
       if (query.get("renamefail") === "1") return out("config.json is read-only", 1)
@@ -121,7 +131,7 @@
         status.title = set.slice("title=".length) || null
         window.__titleWrites = [...(window.__titleWrites ?? []), set]
       }
-      return out("")
+      return out(rest.includes("--json") ? policy : "")
     }
     if (verb === "settings" && rest[0] === "--section") {
       const set = rest.find((a) => a.startsWith("--set="))
@@ -253,7 +263,8 @@
         if (cmd === "checkpoint_image") return await picture(args.path)
         if (cmd === "instance_usage") return usage()
         if (cmd === "agent_fetch") throw new Error("no agent in the fake")
-        if (cmd === "trace") return null
+        if (cmd === "trace" || cmd === "set_system_keyboard_capture") return null
+        if (cmd === "set_main_menu_state") { window.__menuEnabled = args.enabled; return null }
         if (cmd === "open_folder") return void (window.__opened = [...(window.__opened ?? []), args.path])
         throw new Error(`fake tauri: ${cmd}`)
       },

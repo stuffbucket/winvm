@@ -20,6 +20,7 @@ import {
   popupMenu,
   revealInFinder,
   setSystemKeyboardCapture,
+  setMainMenuState,
   setWindowTitle,
   shareStart,
   shareStop,
@@ -57,6 +58,8 @@ import { DEFAULT_SETTINGS, loadSettings, savePauseOverlay } from "./features/set
 import { pauseMenu } from "./features/winvm/pauseMenu"
 import { useSharedFolder } from "./features/sharedfolder/useSharedFolder"
 import { useMachineInfo } from "./features/hardware/useMachineInfo"
+import { SettingsDialog } from "./features/settings/SettingsDialog"
+import { nativeMenuState } from "./features/toolbar/nativeMenu"
 
 type Confirm = { kind: "stop" | "reboot" | "kill" }
 
@@ -81,6 +84,7 @@ export function App(): JSX.Element {
   const w = useWinvm()
   const [actualSize, setActualSize] = useState(false)
   const [detailsOpen, setDetailsOpen] = useState(false)
+  const [settingsOpen, setSettingsOpen] = useState(false)
   const [confirm, setConfirm] = useState<Confirm | null>(null)
   const [startedFrom, setStartedFrom] = useState<Phase | null>(null)
   const [open, setOpen] = useState<{ id: PanelId; anchor: HTMLElement } | null>(null)
@@ -174,7 +178,7 @@ export function App(): JSX.Element {
   const usage = useUsage(metered, guestReady ? w.name : null, w.status?.cpus ?? null, w.status?.memoryMiB ?? null)
   const usageContext: UsageContext = { cpus: w.status?.cpus ?? null, overlayBytes: w.status?.overlayBytes ?? null }
   const sharedFolder = useSharedFolder(w.name, phase, guestReady, detailsOpen)
-  const machineInfo = useMachineInfo(w.name, phase, guestReady, detailsOpen)
+  const machineInfo = useMachineInfo(w.name, phase, guestReady, detailsOpen || settingsOpen)
 
   const run = (verb: Verb, arg?: string): void => {
     if (verb === "start") setStartedFrom(phase)
@@ -353,8 +357,8 @@ export function App(): JSX.Element {
   const canCheckpoints = w.name !== null && phase !== null && phase !== "missing"
   const openCheckpoints = useCallback(() => {
     setOpen(null)
-    if (canCheckpoints) setCheckpoints(true)
-  }, [canCheckpoints])
+    if (canCheckpoints && !settingsOpen) setCheckpoints(true)
+  }, [canCheckpoints, settingsOpen])
   const toggleCheckpoints = useCallback(() => {
     if (checkpoints) setCloseCheckpoints((n) => n + 1)
     else openCheckpoints()
@@ -368,10 +372,39 @@ export function App(): JSX.Element {
     ]).catch((e: unknown) => setNotice({ tone: "error", title: t("checkpoints.menuFailed"), detail: String(e) }))
   }
 
+  const menuEnabled = nativeMenuState({ phase, busy: w.busy !== null, hostReady, instance: w.name !== null, forwardInput: input.forward, resizable, modal: checkpoints || settingsOpen || confirm !== null || deleting !== null || newOpen || reference !== null })
+  const menuStateKey = JSON.stringify(menuEnabled)
+  useEffect(() => {
+    void setMainMenuState(JSON.parse(menuStateKey) as Record<string, boolean>).catch((e: unknown) => console.warn("updating native menu failed", e))
+  }, [menuStateKey])
   const install = w.installCommand
-  useEffect(
-    () =>
-      onMenu((id) => {
+  const menuHandler = useRef<(id: string) => void>(() => undefined)
+  menuHandler.current = (id) => {
+        if (menuEnabled[id] === false) return
+        if (id === "vm-new") openNew()
+        if (id === "vm-choose") document.querySelector<HTMLButtonElement>(".machine-picker")?.click()
+        if (id === "vm-delete" && w.name !== null && title !== null) { setKeepSaves(false); setDeleting({ name: w.name, title, live: machineLive(phase) }) }
+        if (id === "vm-start") run("start")
+        if (id === "vm-stop") setConfirm({ kind: "stop" })
+        if (id === "vm-reboot") setConfirm({ kind: "reboot" })
+        if (id === "vm-kill") setConfirm({ kind: "kill" })
+        if (id === "vm-pause") run("pause")
+        if (id === "vm-resume") run(phase === "asleep" ? "wake" : "resume")
+        if (id === "vm-sleep") run("sleep")
+        if (id === "vm-lock") run("lock")
+        if (id === "vm-save") run("save")
+        if (id === "vm-files") filesWindow()
+        if (id === "vm-files-menu") filesMenu()
+        if (id === "vm-shells") terminalMenu()
+        if (id === "vm-share") {
+          const anchor = [...document.querySelectorAll<HTMLButtonElement>(".toolbar button")].find((b) => b.getAttribute("aria-label") === t("action.share"))
+          if (anchor !== undefined) togglePanel("share", anchor)
+        }
+        if (id === "view-actual-size") setActualSize((v) => !v)
+        if (id === "view-screen-sharing") void w.openScreenSharing()
+        if (id === "view-details") setDetailsOpen((v) => !v)
+        if (id === "view-pause-overlay") changePauseOverlay(!pauseOverlay)
+        if (id === "settings") { setKeyboardCaptured(false); setOpen(null); setSettingsOpen(true) }
         if (id === "new-terminal") terminal(null)
         if (id === "release-keyboard") setKeyboardCaptured(false)
         if (id === "capture-keyboard" || id === "send-windows-key" || id === "send-ctrl-alt-delete") {
@@ -391,9 +424,8 @@ export function App(): JSX.Element {
             .then((out) => setReference({ text: outputText(out) }))
             .catch((e: unknown) => setReference({ text: String(e) }))
         }
-      }),
-    [install, terminal, toggleCheckpoints, showScreen],
-  )
+  }
+  useEffect(() => onMenu((id) => menuHandler.current(id)), [])
 
   useEffect(() => {
     if (w.cliPath !== null) setNotice({ tone: "notice", title: t("cli.done", { path: w.cliPath }) })
@@ -633,7 +665,7 @@ export function App(): JSX.Element {
                   connection={w.connection}
                   keyboardCaptured={keyboardCaptured}
                   onKeyboardCaptured={setKeyboardCaptured}
-                  forwardInput={input.forward}
+                  forwardInput={input.forward && !settingsOpen}
                   resizable={resizable}
                   onGuestSize={resizeGuest}
                   frozen={frozen}
@@ -690,6 +722,7 @@ export function App(): JSX.Element {
       )}
 
       {reference !== null && <ReferenceDialog text={reference.text} onClose={() => setReference(null)} />}
+      {settingsOpen && <SettingsDialog key={w.name} instance={w.name} title={title ?? t("app.name")} machineInfo={machineInfo} pauseOverlay={pauseOverlay} onPauseOverlay={changePauseOverlay} onClose={() => setSettingsOpen(false)} />}
 
       {checkpoints && w.name !== null && (
         <CheckpointCanvas

@@ -404,6 +404,46 @@ fn check_for_update(app: tauri::AppHandle, asked: bool) {
     });
 }
 
+const MACHINE_ACTIONS: &[(&str, &str)] = &[
+    ("vm-choose", "Choose Machine…"),
+    ("vm-new", "New Machine…"),
+    ("vm-delete", "Delete Machine…"),
+    ("vm-start", "Start / Recall"),
+    ("vm-stop", "Shut Down…"),
+    ("vm-reboot", "Restart…"),
+    ("vm-pause", "Pause"),
+    ("vm-resume", "Resume / Wake"),
+    ("vm-sleep", "Sleep"),
+    ("vm-lock", "Lock Windows"),
+    ("vm-save", "Take a Checkpoint Now"),
+    ("vm-files", "Files in Windows…"),
+    ("vm-files-menu", "Windows Folders in Finder…"),
+    ("vm-shells", "Terminal Shells and Folders…"),
+    ("vm-share", "Use with Claude…"),
+    ("vm-kill", "Force Stop…"),
+];
+const VIEW_ACTIONS: &[(&str, &str)] = &[
+    ("view-actual-size", "Actual Size / Fit"),
+    ("view-screen-sharing", "Open in Screen Sharing"),
+    ("view-details", "Show / Hide Details"),
+    ("view-pause-overlay", "Show / Hide Pause Overlay"),
+];
+
+/// The viewer sends only enablement, never replacement labels or arbitrary native commands.
+#[tauri::command]
+fn set_main_menu_state(app: tauri::AppHandle, enabled: std::collections::HashMap<String, bool>) -> tauri::Result<()> {
+    if let Some(menu) = app.menu() {
+        for (id, on) in enabled {
+            let known = MACHINE_ACTIONS.iter().chain(VIEW_ACTIONS).any(|(key, _)| *key == id)
+                || matches!(id.as_str(), "settings" | "capture-keyboard" | "release-keyboard" | "send-windows-key" | "send-ctrl-alt-delete");
+            if known {
+                if let Some(item) = menu.get(&id).and_then(|i| i.as_menuitem().cloned()) { item.set_enabled(on)?; }
+            }
+        }
+    }
+    Ok(())
+}
+
 /// The default menu, plus updates and the command line (app menu), terminal tabs and Checkpoints… (File) and the
 /// command reference (Help). File's New Terminal Tab and Close act on the Terminal window's tabs when
 /// it is in front, so Cmd-T and Cmd-W are tab keys there and window keys elsewhere.
@@ -454,6 +494,14 @@ fn menu(app: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
             &release,
         ],
     )?;
+    for (title, actions) in [("Machine", MACHINE_ACTIONS), ("View", VIEW_ACTIONS)] {
+        let submenu = Submenu::new(app, title, true)?;
+        for (id, label) in actions {
+            if matches!(*id, "vm-start" | "vm-save" | "vm-kill") { submenu.append(&PredefinedMenuItem::separator(app)?)?; }
+            submenu.append(&MenuItem::with_id(app, *id, *label, false, None::<&str>)?)?;
+        }
+        menu.insert(&submenu, menu.items()?.len().saturating_sub(2))?;
+    }
     let input_index = menu.items()?.len().saturating_sub(2);
     menu.insert(&input, input_index)?;
     if let Some(app_menu) = menu.items()?.first().and_then(|i| i.as_submenu().cloned()) {
@@ -461,6 +509,9 @@ fn menu(app: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
         // with that section's icons; a separate iconless section shifts left.
         app_menu.insert(&install, 1)?;
         app_menu.insert(&updates, 1)?;
+        let settings = MenuItem::with_id(app, "settings", "Settings…", true, Some("CmdOrCtrl+,"))?;
+        app_menu.insert(&settings, 4)?;
+        app_menu.insert(&PredefinedMenuItem::separator(app)?, 5)?;
     }
     if let Some(help) = menu.get(HELP_SUBMENU_ID).and_then(|i| i.as_submenu().cloned()) {
         help.append(&reference)?;
@@ -554,13 +605,13 @@ pub fn run() {
                         let _ = app.emit_to("main", "menu", "rename-window");
                     }
                 }
-            } else if id == "checkpoints" {
+            } else if id == "checkpoints" || id == "settings" || id.starts_with("vm-") || id.starts_with("view-") {
                 if let Some(main) = app.get_webview_window("main") {
                     let _ = main.unminimize();
                     let _ = main.show();
                     let _ = main.set_focus();
                 }
-                let _ = app.emit_to("main", "menu", "checkpoints");
+                let _ = app.emit_to("main", "menu", id);
             } else if id == "check-updates" {
                 check_for_update(app.clone(), true);
             }
@@ -594,7 +645,8 @@ pub fn run() {
             home_dir,
             dragout::files_drag_out,
             trace,
-            set_system_keyboard_capture
+            set_system_keyboard_capture,
+            set_main_menu_state
         ])
         .build(tauri::generate_context!())
         .expect("winvm could not start")
