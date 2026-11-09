@@ -265,6 +265,7 @@
         if (cmd === "agent_fetch") throw new Error("no agent in the fake")
         if (cmd === "trace" || cmd === "set_system_keyboard_capture") return null
         if (cmd === "set_main_menu_state") { window.__menuEnabled = args.enabled; return null }
+        if (cmd === "set_checkpoint_presentation") { window.__presentation = args.enabled; window.__presentationCalls = [...(window.__presentationCalls ?? []), args.enabled]; return null }
         if (cmd === "open_folder") return void (window.__opened = [...(window.__opened ?? []), args.path])
         throw new Error(`fake tauri: ${cmd}`)
       },

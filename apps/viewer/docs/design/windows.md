@@ -38,9 +38,10 @@ Back to front:
    when open. They take space and push the display, never cover it.
 2. **Floating.** The toolbar's popovers and the confirmation dialog
    (`<dialog>`, top layer). Files and terminals are windows of their own.
-3. **Full window.** Checkpoints (below), over everything in the window,
-   the window's own screen blurred behind it. Its confirmations are the
-   same `<dialog>`, above it. Nothing else covers the window.
+3. **Full display.** Checkpoints (below), expanding the existing window
+   through macOS same-Space fullscreen. An opaque surface shields the guest;
+   the live screen appears only in Now. Its confirmations are the same
+   `<dialog>`, above it. Dismissal restores the original window.
 
 ## Toolbar
 
@@ -398,20 +399,23 @@ spatial canvas). The toolbar's clock opens it, as do ⌘⇧T and File →
 Checkpoints…; Option-click or right-click on the clock shows a native menu
 with Take a Checkpoint Now and Show Checkpoints….
 
-**In and out.** A change of mode in this window, so it happens where it
-is: the view fades in over the window's own screen, settling from 99% to full
-size in 200 ms, already showing Now and the newest checkpoints; Done, Esc or a
-click on Now fades it out in 180 ms (`checkpoints.css`, the surface's
-`data-phase`). Nothing flies in from the display and nothing slides, so it
-never reads as a separate window. Under reduced motion it is a cut. The
-window behind dims and blurs (the live screen, copied a couple of times a
-second and blurred; `backdrop-filter` where there is no screen), closed in by
-a vignette and sinking into the surface color toward the top, where the oldest
-checkpoints are: the view is the whole window, with no chrome at its top.
-Nothing of ours sits by the traffic lights (no title chip; the native title
-bar names the window); only a strip across the top still moves the window.
-Restoring a checkpoint leaves the same way, once Windows is back at that
-moment. The camera still flies *within* the view (below).
+**In and out.** The existing window expands to the full display through
+Tauri's macOS same-Space fullscreen, without creating a new Space. Native
+geometry changes immediately; the canvas eases in from 80% to 100%, opacity
+0 to 1 and 4 px blur to clear over 200 ms, already showing Now and the newest
+checkpoints. Done, Esc or a click on Now reverses that treatment in place,
+then restores the original frame, chrome and Dock/menu presentation. An
+already-native-fullscreen window stays fullscreen. Under reduced motion the
+canvas appears and goes at once.
+
+The full-display surface is opaque throughout: the live guest never shows
+behind a shrinking canvas or receives its input. A token-derived vignette
+closes in the edges and sinks into the surface color toward the oldest
+checkpoints. There is no enlarged copy of the framebuffer behind it. The
+real screen and noVNC connection remain mounted, with guest input and size
+requests held until the original window returns. Restoring a checkpoint
+leaves the same way, once Windows is back at that moment. The camera stays
+still on entry and exit, and flies only *within* the view (below).
 
 **Layout.** Time runs up the canvas, as Time Machine's windows recede into
 the screen. Now, the running machine (its live screen, copied into the card
@@ -426,20 +430,23 @@ The view opens on everything when it fits with cards at least 40% of life
 size (a short history), else on Now and the newest two days, and at the zoom
 it was left at once it has been left anywhere else.
 
-**A card** is one object: its picture (a 16:10 frame, the screenshot fitted
-inside it; "No picture" for checkpoints taken before screenshots) with its
-caption plate attached below, the same material, border, radius and shadow
-and no gap. It is one focusable button, so selecting, hovering, carrying and
-the highlight ring take all of it. The plate gives each fact its own place,
-by position and weight (`components.md` → *Checkpoint card*):
+**A card** is one clean surface: a 16:10 picture above a compact caption,
+using the existing `--radius-card` and `--elevation-card`, with no gap or
+nested card. Screenshots fill the frame (`object-fit: cover`), cropped at
+the top before the bottom so the taskbar stays visible. Missing or unreadable
+pictures use a generated, decorative flowing wallpaper in token-derived
+sand/clay and sage colors, with no taskbar, desktop chrome or invented text.
+"No picture" remains its tooltip, not copy drawn in the image.
 
-1. its name (its notes' title, else its name), strong;
-2. when it was taken, as Finder says it, muted;
-3. how it came to be, a small chip with a glyph (Taken by you, Saved while
-   idle, Fresh install, Saved on suspend, Test starting point), and its size
-   at the end of the same row;
-4. its note, only when it has one: the notebook, then the first line of the
-   note, muted and cut with an ellipsis (the whole note is its tooltip).
+It is one focusable button, so selection, hover, carrying and the highlight
+ring take all of it. Below the picture (`components.md` → *Checkpoint card*):
+
+1. a modest leading glyph says how it came to be (the full kind remains in
+   its tooltip and accessible name, rather than a visible pill);
+2. its name (its notes' title, else its name), strong, on the first row;
+3. when taken, as Finder says it, muted, with its size at that row's end;
+4. its note, only when it has one: a notebook and the first line, muted and
+   cut with an ellipsis (the whole note is its tooltip).
 
 The kind is never on the picture, and the note is never an icon beside the
 name: they are different facts and read differently. Absent data shows

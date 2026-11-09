@@ -1277,6 +1277,21 @@ describe("a card", () => {
     expect(picture.querySelector("button")?.getAttribute("title")).toContain("x")
   })
 
+  it("uses an abstract wallpaper, not desktop chrome or placeholder copy, without a screenshot", () => {
+    const host = card(checkpoint("no-picture", taken))
+    const frame = host.querySelector(".checkpoint__frame")
+    expect(frame?.getAttribute("data-empty")).toBe("true")
+    expect(frame?.getAttribute("title")).toBe("No picture")
+    expect(frame?.querySelector(".checkpoint__wallpaper")?.getAttribute("aria-hidden")).toBe("true")
+    expect(frame?.querySelectorAll("linearGradient").length).toBe(3)
+    expect(frame?.querySelector("text")).toBeNull()
+    expect(frame?.querySelector("img")).toBeNull()
+    expect(frame?.textContent).toBe("")
+    const gradients = [...(frame?.querySelectorAll("linearGradient") ?? [])].map((el) => el.id)
+    expect(new Set(gradients).size).toBe(3)
+    expect(host.querySelector(".checkpoint__caption .checkpoint__name")?.textContent).toBe("no-picture")
+  })
+
   it("has a glyph for each kind", () => {
     expect(new Set(["manual", "auto", "baseline", "stow", "golden"].map(kindIcon)).size).toBe(5)
   })

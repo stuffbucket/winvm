@@ -1,4 +1,4 @@
-import { memo, type CSSProperties, type ReactNode } from "react"
+import { memo, useState, type CSSProperties, type ReactNode } from "react"
 
 import { SpatialCanvasNode } from "@winvm/canvas"
 
@@ -9,6 +9,7 @@ import { formatSize } from "../../model"
 import { finderDate } from "../files/files"
 import { type CardBox, type Checkpoint, incompatibleReason, noteOf, shownName } from "./checkpoints"
 import { usePicture } from "./pictures"
+import { Wallpaper } from "./Wallpaper"
 
 /** Above this many device pixels wide, a card shows the full screenshot rather than the 480 px thumbnail. */
 const SHARP_WIDTH = 560
@@ -60,16 +61,14 @@ export const MONITOR = (
 export function Picture({ c, sharp, wanted, children }: { readonly c: Checkpoint; readonly sharp: boolean; readonly wanted: boolean; readonly children?: ReactNode }): JSX.Element {
   const thumb = usePicture(c.thumbnail, c.createdAt, wanted)
   const full = usePicture(c.screenshot, c.createdAt, wanted && sharp)
-  const src = full ?? thumb
+  const [broken, setBroken] = useState<readonly string[]>([])
+  const src = [full, thumb].find((url) => url !== null && !broken.includes(url)) ?? null
   return (
-    <span className="checkpoint__frame" data-empty={src === null}>
+    <span className="checkpoint__frame" data-empty={src === null} title={src === null ? t("checkpoints.noPicture") : undefined}>
       {src !== null ? (
-        <img src={src} alt="" draggable={false} decoding="async" />
+        <img src={src} alt="" draggable={false} decoding="async" onError={() => setBroken((urls) => [...urls, src])} />
       ) : (
-        <span className="checkpoint__placeholder">
-          {MONITOR}
-          {c.thumbnail === null && c.screenshot === null && <span>{t("checkpoints.noPicture")}</span>}
-        </span>
+        <Wallpaper />
       )}
       {children}
     </span>
@@ -130,9 +129,9 @@ export function cardLabel(c: Checkpoint, now: number): string {
  * One checkpoint on the canvas: one surface, the picture on top and its
  * caption plate attached below, so selecting, hovering, carrying and the
  * highlight ring all take the whole of it. The plate holds, by position and
- * weight: its name (strong); when it was taken (muted); how it came to be
- * (the kind's chip, with its glyph) and its size, right-aligned; and, only if
- * there is one, its note, marked with the notebook. Absent data is absent.
+ * weight: a modest leading kind glyph; its name (strong); when it was taken
+ * (muted) with its size at the row's end; and, only if there is one, its note,
+ * marked with the notebook. Absent data is absent.
  */
 export const CheckpointCard = memo(function CheckpointCard({ c, box, selected, zoom, now, dimmed, lit, carried, arriving, leaving, working, onSelect }: CardProps): JSX.Element {
   const reason = incompatibleReason(c)

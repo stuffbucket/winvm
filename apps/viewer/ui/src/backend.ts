@@ -52,6 +52,9 @@ export const installCli = (): Promise<string> => tauri().core.invoke<string>("in
 /** Enable native controls using the same state rules as the main window. */
 export const setMainMenuState = (enabled: Record<string, boolean>): Promise<void> => tauri().core.invoke<void>("set_main_menu_state", { enabled })
 
+/** Checkpoints uses the display, then restores the native window's prior presentation. */
+export const setCheckpointPresentation = (enabled: boolean): Promise<void> => tauri().core.invoke<void>("set_checkpoint_presentation", { enabled })
+
 export const downloadsDir = (): Promise<string> => tauri().core.invoke<string>("downloads_dir")
 
 /** Starts sharing the screen with an agent (`winvm cua serve`); resolves with what it printed when ready. */

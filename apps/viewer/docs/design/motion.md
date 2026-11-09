@@ -29,9 +29,13 @@ spacing, and copy.
   utility; no overshoot. Choosing another checkpoint replays nothing, and select,
   deselect, select turns the slide round where it is. Reduced motion: it appears
   and goes at once.
-- **Entering and leaving Checkpoints**: a 200 ms / 180 ms fade of the whole
-  view with a 1% settle. A mode change inside the window, not a flight into
-  another one. A cut under reduced motion.
+- **Entering and leaving Checkpoints**: expand the existing window to the
+  display using macOS same-Space fullscreen, then ease the canvas from 80% to
+  100%, opacity 0 to 1 and 4 px blur to clear (200 ms ease-out). Leaving
+  reverses that treatment (200 ms ease-in), then restores the original window
+  frame and chrome. The native geometry change is immediate; the canvas is
+  what eases. The opaque modal surface never scales or reveals the guest
+  behind it, and the camera stays still. A cut under reduced motion.
 - **The section grid** (Checkpoints, [`components.md`](components.md) →
   *Section*): the dot grid is not there at rest. While a section is drawn,
   moved or resized it fades in over 200 ms ease-out and out over 150 ms

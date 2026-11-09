@@ -17,6 +17,7 @@ Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true })
 const { act } = await import("react")
 const { createRoot } = await import("react-dom/client")
 const { CheckpointCanvas } = await import("../ui/src/features/checkpoints/CheckpointCanvas")
+const { checkpointPresentation } = await import("../ui/src/features/checkpoints/presentation")
 const { GAP, GRID, intersecting } = await import("../ui/src/features/checkpoints/sections")
 const { parseSettings } = await import("../ui/src/features/checkpoints/settings")
 
@@ -84,7 +85,6 @@ async function mount(initial: unknown = null, saves: Record<string, unknown>[] =
         phase="running"
         busy={false}
         aspect={1.6}
-        displayRect={() => null}
         liveSource={() => null}
         run={async () => null}
         closeRequest={0}
@@ -93,14 +93,19 @@ async function mount(initial: unknown = null, saves: Record<string, unknown>[] =
     )
     await sleep(40)
   })
+  // happy-dom has no CSS animation engine: finish the native-ready entrance explicitly.
+  await act(async () => {
+    document.querySelector(".checkpoints__canvas")?.dispatchEvent(new Event("animationend", { bubbles: true }))
+  })
   const w: World = { host, store, unmount: () => act(() => root.unmount()) }
   mounted = w
   return w
 }
 
-afterEach(() => {
+afterEach(async () => {
   mounted?.unmount()
   mounted = null
+  await checkpointPresentation.set(false)
   document.body.replaceChildren()
   delete (window as { __TAURI__?: unknown }).__TAURI__
 })

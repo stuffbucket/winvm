@@ -98,6 +98,13 @@ export function App(): JSX.Element {
   // Checkpoints, the full-window view: open, and a count the menu bumps to ask it to leave.
   const [checkpoints, setCheckpoints] = useState(false)
   const [closeCheckpoints, setCloseCheckpoints] = useState(0)
+  const checkpointOpener = useRef<Element | null>(null)
+  useEffect(() => {
+    if (checkpoints) return
+    const opener = checkpointOpener.current
+    checkpointOpener.current = null
+    if (opener instanceof HTMLElement) opener.focus({ preventScroll: true })
+  }, [checkpoints])
   const [keyboardCaptured, setKeyboardCaptured] = useState(false)
   const screen = useRef<ScreenHandle | null>(null)
 
@@ -145,11 +152,7 @@ export function App(): JSX.Element {
   const missing = w.checks?.checks.filter((x) => !x.ok) ?? []
   const runtimeMissing = missing.some((x) => x.hint === "winvm setup")
   const display = displaySize(w.status?.screen ?? null)
-  // Where Windows' screen is, and its picture, for Checkpoints to fly into and show live.
-  const displayRect = useCallback(() => {
-    const r = document.querySelector(".display")?.getBoundingClientRect()
-    return r === undefined ? null : { x: r.left, y: r.top, width: r.width, height: r.height }
-  }, [])
+  // The original screen stays mounted and supplies the Now card in Checkpoints.
   const liveSource = useCallback(() => document.querySelector<HTMLCanvasElement>(".screen__canvas canvas"), [])
   const showScreen = live && w.connection !== null
   // virtio-gpu: the guest's screen follows the window, one guest pixel per
@@ -221,12 +224,13 @@ export function App(): JSX.Element {
     () =>
       onFileDrop(
         (paths) => {
+          if (checkpoints) return
           if (guestReady) copyIn(paths, null)
           else if (paths.length > 0) setNotice({ tone: "error", title: t("files.notRunning") })
         },
-        (over) => setDropping(over && guestReady),
+        (over) => setDropping(over && guestReady && !checkpoints),
       ),
-    [guestReady, copyIn],
+    [guestReady, copyIn, checkpoints],
   )
 
   // The instance's title: the toolbar shows it, the window is named by it, and
@@ -357,8 +361,13 @@ export function App(): JSX.Element {
   const canCheckpoints = w.name !== null && phase !== null && phase !== "missing"
   const openCheckpoints = useCallback(() => {
     setOpen(null)
-    if (canCheckpoints && !settingsOpen) setCheckpoints(true)
-  }, [canCheckpoints, settingsOpen])
+    if (canCheckpoints && !checkpoints && !settingsOpen) {
+      checkpointOpener.current = document.activeElement
+      setKeyboardCaptured(false)
+      setDropping(false)
+      setCheckpoints(true)
+    }
+  }, [canCheckpoints, checkpoints, settingsOpen])
   const toggleCheckpoints = useCallback(() => {
     if (checkpoints) setCloseCheckpoints((n) => n + 1)
     else openCheckpoints()
@@ -503,7 +512,7 @@ export function App(): JSX.Element {
   } as CSSProperties
 
   return (
-    <div className="viewer" data-busy={w.busy !== null}>
+    <div className="viewer" data-busy={w.busy !== null} {...(checkpoints ? { inert: "" } : {})}>
       <div className="busybar" aria-hidden="true" />
       <Toolbar
         picker={{
@@ -665,11 +674,11 @@ export function App(): JSX.Element {
                   connection={w.connection}
                   keyboardCaptured={keyboardCaptured}
                   onKeyboardCaptured={setKeyboardCaptured}
-                  forwardInput={input.forward && !settingsOpen}
+                  forwardInput={input.forward && !settingsOpen && !checkpoints}
                   resizable={resizable}
                   onGuestSize={resizeGuest}
                   frozen={frozen}
-                  ready={guestReady}
+                  ready={guestReady && !checkpoints}
                   asleep={phase === "asleep"}
                   waking={w.busy === "wake"}
                   onWake={wake}
@@ -731,7 +740,6 @@ export function App(): JSX.Element {
           phase={phase}
           busy={w.busy !== null}
           aspect={display.width / display.height}
-          displayRect={displayRect}
           liveSource={liveSource}
           run={(verb, arg) => w.act(verb, arg)}
           closeRequest={closeCheckpoints}

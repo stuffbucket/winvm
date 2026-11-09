@@ -19,8 +19,13 @@
  *
  *   npm i --prefix /tmp/pw playwright && npx --prefix /tmp/pw playwright install webkit
  *   bun scripts/build-ui.ts
- *   PLAYWRIGHT_DIR=/tmp/pw node scripts/render-checkpoints.mjs [out-dir]
+ *   PLAYWRIGHT_DIR=/tmp/pw node scripts/render-checkpoints.mjs [out-dir] [--transitions-only]
+ *
+ * Transition checks freeze CSS animations at exact times: no timing-dependent
+ * screenshots. They assert centred scale/fade/blur, an unchanged live screen
+ * and camera, modal input shielding, dismissal, and reduced motion.
  */
+import assert from "node:assert/strict"
 import { createReadStream, existsSync, mkdirSync, readdirSync } from "node:fs"
 import { createServer } from "node:http"
 import { createRequire } from "node:module"
@@ -30,6 +35,7 @@ const VIEWER = resolve(import.meta.dirname, "..")
 const DIST = resolve(VIEWER, "dist")
 const OUT = resolve(process.argv[2] ?? "/tmp/winvm-checkpoints-render")
 const FAKE = resolve(VIEWER, "tests", "render", "fake-tauri.js")
+const TRANSITIONS_ONLY = process.argv.includes("--transitions-only")
 
 const dir = process.env.PLAYWRIGHT_DIR
 if (dir === undefined) {
@@ -64,8 +70,8 @@ const browser = await webkit.launch()
 const shots = []
 const wait = (ms) => new Promise((r) => setTimeout(r, ms))
 
-async function open(scheme, query = "") {
-  const page = await browser.newPage({ viewport: { width: 1280, height: 820 }, deviceScaleFactor: 2, colorScheme: scheme })
+async function open(scheme, query = "", options = {}) {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 820 }, deviceScaleFactor: 2, colorScheme: scheme, ...options })
   page.on("pageerror", (e) => console.error(`[${scheme}] page error: ${e.message}`))
   page.on("console", (m) => {
     if (m.type() === "error") console.error(`[${scheme}] console: ${m.text()}`)
@@ -86,12 +92,149 @@ async function shot(page, name) {
 
 async function enter(page) {
   await page.evaluate(() => window.__fakeMenu("checkpoints"))
-  await page.waitForSelector(".checkpoints")
+  await page.waitForSelector('.checkpoints[data-ready="true"]')
+}
+
+// Freeze only the surface animation, not camera flights or card animations.
+async function sampleTransition(page, time) {
+  return await page.evaluate((time) => {
+    const canvas = document.querySelector(".checkpoints__canvas")
+    const backdrop = document.querySelector(".checkpoints__backdrop")
+    for (const el of [canvas, backdrop]) {
+      for (const animation of el.getAnimations()) animation.currentTime = time
+    }
+    const style = getComputedStyle(canvas)
+    const rect = canvas.getBoundingClientRect()
+    return {
+      opacity: Number(style.opacity),
+      backdropOpacity: Number(getComputedStyle(backdrop).opacity),
+      scale: new DOMMatrix(style.transform).a,
+      blur: Number(style.filter.match(/blur\(([\d.]+)px\)/)?.[1] ?? 0),
+      centre: [rect.x + rect.width / 2, rect.y + rect.height / 2],
+      camera: document.querySelector(".spatial-canvas__scene").style.transform,
+      inert: canvas.inert && document.querySelector(".viewer").inert,
+    }
+  }, time)
+}
+
+async function finishTransition(page) {
+  await page.evaluate(() => {
+    for (const animation of document.querySelector(".checkpoints__canvas").getAnimations()) animation.finish()
+  })
 }
 
 // RENDER_ONLY=panel: just the details panel and the search (the sections at the end), light and dark.
 const only = process.env.RENDER_ONLY
 for (const scheme of only === undefined ? ["dark", "light"] : []) {
+  const page = await open(scheme)
+  await page.addStyleTag({ content: ".checkpoints__canvas, .checkpoints__backdrop { animation-play-state: paused !important; }" })
+  // Freeze JS fallback timers too, so screenshot work cannot dismiss/reopen
+  // the surface while its CSS animation is deliberately held for inspection.
+  await page.clock.pauseAt(await page.evaluate(() => Date.now()))
+  await page.evaluate(() => {
+    window.__transitionScreen = document.querySelector(".screen__canvas canvas")
+    window.__transitionPixels = window.__transitionScreen.toDataURL()
+    window.__guestEvents = 0
+    const display = document.querySelector(".display")
+    for (const name of ["pointerdown", "keydown"]) display.addEventListener(name, () => window.__guestEvents++)
+  })
+  const trigger = page.getByRole("button", { name: "Checkpoints", exact: true })
+  await trigger.focus()
+  await page.keyboard.press("Enter")
+  await page.waitForSelector('.checkpoints')
+  await page.clock.runFor(32) // let the RAF-coalesced overview camera land
+  await page.waitForSelector('.checkpoints[data-ready="true"]')
+  const start = await sampleTransition(page, 0)
+  assert.equal(start.inert, true, "entry shields both live window and checkpoint controls")
+  assert.equal(start.scale, 0.8)
+  assert.equal(start.opacity, 0)
+  assert.equal(start.blur, 4)
+  await shot(page, `${scheme}-transition-00-enter-start`)
+  const middle = await sampleTransition(page, 100)
+  assert(middle.scale > 0.8 && middle.scale < 1)
+  assert(middle.opacity > 0 && middle.opacity < 1)
+  assert.equal(middle.backdropOpacity, middle.opacity, "entry backdrop and content use the same timing")
+  assert(middle.blur > 0 && middle.blur < 4)
+  assert(Math.abs(middle.centre[0] - 640) < 0.01 && Math.abs(middle.centre[1] - 410) < 0.01, "entry scales around the window centre")
+  assert.equal(middle.camera, start.camera, "entry is not a camera flight from Now")
+  await shot(page, `${scheme}-transition-01-enter-middle`)
+  await page.mouse.click(640, 410)
+  await page.keyboard.press("x")
+  await finishTransition(page)
+  await page.waitForSelector('.checkpoints[data-phase="open"]')
+  assert.equal(await page.locator(".checkpoints__canvas").evaluate((el) => el.inert), false)
+  assert.equal(await page.locator(".checkpoints__backdrop canvas").count(), 0, "no enlarged duplicate live screen")
+  await shot(page, `${scheme}-transition-02-open`)
+
+  // Dismiss directly from a selected card: its panel and camera stay in place.
+  await page.clock.resume()
+  await page.locator('.checkpoint[data-name="clean-desktop"] .checkpoint__hit').click()
+  await wait(1000)
+  const camera = await page.locator(".spatial-canvas__scene").evaluate((el) => el.style.transform)
+  await page.clock.pauseAt(await page.evaluate(() => Date.now()))
+  await page.getByRole("button", { name: "Done", exact: true }).click()
+  await page.waitForSelector('.checkpoints[data-phase="leaving"]')
+  const leaving = await sampleTransition(page, 0)
+  assert.equal(leaving.camera, camera)
+  assert.equal(leaving.scale, 1)
+  assert.equal(leaving.opacity, 1)
+  assert.equal(leaving.blur, 0)
+  assert.equal(leaving.inert, true)
+  const halfLeft = await sampleTransition(page, 100)
+  assert(Math.abs(halfLeft.centre[0] - 640) < 0.01 && Math.abs(halfLeft.centre[1] - 410) < 0.01, "exit never moves down towards Now")
+  assert.equal(halfLeft.camera, camera)
+  assert(halfLeft.scale > 0.8 && halfLeft.scale < 1)
+  assert(halfLeft.opacity > 0 && halfLeft.opacity < 1)
+  assert.equal(halfLeft.backdropOpacity, halfLeft.opacity, "exit backdrop and content use the same timing")
+  assert(halfLeft.blur > 0 && halfLeft.blur < 4)
+  await shot(page, `${scheme}-transition-03-leave-middle`)
+  await page.mouse.click(640, 410)
+  await page.keyboard.press("x")
+  await page.keyboard.press("Tab")
+  await page.keyboard.press("Escape")
+  await page.evaluate(() => window.__fakeMenu("checkpoints"))
+  const end = await sampleTransition(page, 199.99)
+  assert(Math.abs(end.scale - 0.8) < 0.001, `exit endpoint: ${JSON.stringify(end)}`)
+  assert(end.opacity < 0.001)
+  assert(Math.abs(end.blur - 4) < 0.001)
+  await shot(page, `${scheme}-transition-04-leave-end`)
+  await finishTransition(page)
+  await page.waitForSelector(".checkpoints", { state: "detached" })
+  assert.equal(await page.locator(".viewer").evaluate((el) => el.inert), false)
+  assert.equal(await trigger.evaluate((el) => el === document.activeElement), true, "focus returns to the opener")
+  assert.equal(await page.evaluate(() => window.__guestEvents), 0, "no pointer/keyboard events leak to the VM")
+  assert.equal(await page.evaluate(() => document.querySelector(".screen__canvas canvas") === window.__transitionScreen && window.__transitionScreen.toDataURL() === window.__transitionPixels), true, "same live canvas and visible state after dismissal")
+  await shot(page, `${scheme}-transition-05-closed`)
+  await page.close()
+
+  const reduced = await open(scheme, "", { reducedMotion: "reduce" })
+  await enter(reduced)
+  await reduced.waitForSelector('.checkpoints[data-phase="open"]')
+  const still = await reduced.locator(".checkpoints__canvas").evaluate((el) => {
+    const style = getComputedStyle(el)
+    return [style.animationName, style.transform, style.filter]
+  })
+  assert.deepEqual(still, ["none", "none", "none"], "reduced motion is instant, without scale or blur")
+  await shot(reduced, `${scheme}-transition-06-reduced`)
+  await reduced.getByRole("button", { name: "Done", exact: true }).click()
+  await reduced.waitForSelector(".checkpoints", { state: "detached" })
+  assert.equal(await reduced.locator(".viewer").evaluate((el) => el.inert), false)
+  // Reopening, and a preference change during a paused dismissal, cannot strand the modal.
+  await reduced.emulateMedia({ reducedMotion: "no-preference" })
+  await reduced.addStyleTag({ content: ".checkpoints__canvas, .checkpoints__backdrop { animation-play-state: paused !important; }" })
+  await enter(reduced)
+  await finishTransition(reduced)
+  await reduced.waitForSelector('.checkpoints[data-phase="open"]')
+  await reduced.getByRole("button", { name: "Done", exact: true }).click()
+  await reduced.waitForSelector('.checkpoints[data-phase="leaving"]')
+  await reduced.emulateMedia({ reducedMotion: "reduce" })
+  await reduced.waitForSelector(".checkpoints", { state: "detached" })
+  await reduced.close()
+  console.log(`${scheme}: transition, input shielding, live-state preservation and reduced motion passed`)
+}
+
+if (!TRANSITIONS_ONLY) {
+for (const scheme of ["dark", "light"]) {
   const page = await open(scheme)
   await shot(page, `${scheme}-00-window`)
   await enter(page)
@@ -216,11 +359,11 @@ for (const scheme of only === undefined ? ["dark", "light"] : []) {
   await wait(1400)
   await shot(page, `${scheme}-15-arrived`)
 
-  // Out: Escape flies back into the live screen.
+  // Out: the whole view fades/scales away together, without a camera flight.
   await page.keyboard.press("Escape")
   await wait(100)
   await page.keyboard.press("Escape")
-  await wait(260)
+  await wait(80)
   await shot(page, `${scheme}-16-leaving`)
   await wait(900)
   await shot(page, `${scheme}-17-left`)
@@ -724,6 +867,8 @@ if (PICTURES !== undefined) {
     await shot(page, `${scheme}-31-real-selected`)
     await page.close()
   }
+}
+
 }
 
 await browser.close()

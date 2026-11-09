@@ -71,7 +71,7 @@ Every `.btn`: min-height `--size-xl`, padding `--space-2` ×
 
 One object, not a picture with text under it: a button that is the card's
 surface (`--surface-card`, hairline `--border-subtle`, `--radius-card`,
-`--elevation-modal`, clipped to the radius), holding the picture on top and a
+`--elevation-card`, clipped to the radius), holding the picture on top and a
 caption plate attached below it (a hairline between them, no gap). Selection,
 hover, the carried shadow and the highlight ring are drawn on the button, so
 they wrap both.
@@ -82,8 +82,14 @@ The plate's rows, each fact in one place (`windows.md` → *Checkpoints*):
 |---|---|---|
 | 1 | name | `--text-strong`, 1.15 em, `--weight-lg`, one line, ellipsis |
 | 2 | when taken | `--text-muted`, tabular figures, one line |
-| 3 | kind, and size | kind: a pill chip (`--surface-control`, hairline, glyph + the words that say how it came about: Taken by you, Saved while idle, Fresh install, Saved on suspend, Test starting point; a sentence saying what made it as its `title`; `--text-base-color`; an ellipsis before it crowds the size); size: `--text-muted`, tabular, at the row's end |
-| 4 | note, if any | notebook glyph + first line, `--text-muted`, ellipsis; whole note as `title` |
+| 2, trailing | size | `--text-muted`, tabular figures, at the row's end |
+| 1–2, leading | kind | modest glyph, no pill; the full kind and explanation remain in its tooltip and accessible name |
+| 3 | note, if any | notebook glyph + first line, `--text-muted`, ellipsis; whole note as `title` |
+
+The screenshot fills its 16:10 frame with bottom-anchored cover cropping, so
+the taskbar survives a mismatched aspect ratio. Missing or broken images get
+a decorative flowing wallpaper (token-derived sand/clay and sage), never
+invented guest controls or visible "No picture" copy.
 
 - Every length in the plate is in `em` of one size, `--text-sm` times `--m`
   (the card's scale, never so small that the words are under 12 px on
@@ -453,8 +459,8 @@ itself is documentation and never mentions the machine's state. See [`windows.md
     `pointer-events: none`, `draggable=false`, never focusable; its `alt`
     says what it shows. It is one image, not a card inside the card.
   - *Cropping.* Show only what the topic explains, as a window: the
-    Terminal, the Files window, the Checkpoints canvas (each with its traffic
-    lights, which say "window" at a glance). When the subject is a panel (Use
+    Terminal and Files with their traffic lights, or the full-display
+    Checkpoints canvas without window chrome. When the subject is a panel (Use
     with Claude), clip to the panel's box plus a margin so it sits on the
     guest's screen, and move it clear of the toolbar first; never include the
     toolbar's row of icons. `scripts/render-help.mjs` does the clipping

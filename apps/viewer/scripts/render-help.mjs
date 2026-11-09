@@ -147,16 +147,15 @@ async function picture(page, name, scheme, clip) {
   written.push(file)
 }
 
-/** The main window with a running machine, and the Checkpoints view open over it. */
+/** Full-display Checkpoints with a running machine; no window chrome in this mode. */
 async function checkpointsView(scheme) {
   const page = await open(scheme, "index.html", WIDE, WIDE.scale)
   await page.waitForSelector(".display")
   await page.evaluate(() => window.__fakeScreen())
   await wait(300)
   await page.evaluate(() => window.__fakeMenu("checkpoints"))
-  await page.waitForSelector(".checkpoints")
+  await page.waitForSelector('.checkpoints[data-phase="open"]')
   await wait(1500)
-  await chrome(page, null)
   return page
 }
 
@@ -236,6 +235,7 @@ async function claudePicture(scheme) {
 }
 
 const only = option("--only")
+try {
 for (const scheme of option("--scheme") === undefined ? ["light", "dark"] : [option("--scheme")]) {
   if (only === undefined || only === "terminal") await terminalPicture(scheme)
   if (only === undefined || only === "files") await filesPicture(scheme)
@@ -262,7 +262,14 @@ if (PREVIEW !== null) {
       ["wrapped", { width: 1280, height: 820 }, ".abilities__list { width: 15rem }"],
     ]) {
       const page = await open(scheme, "index.html?state=stopped", size)
-      await page.waitForSelector(".abilities")
+      await page.waitForSelector(".abilities", { state: "attached" })
+      if (!await page.locator(".abilities").isVisible()) {
+        // The overview deliberately hides this list in a short display.
+        if (label !== "small") throw new Error(`${scheme}-${label}: help list unexpectedly hidden`)
+        await shot(page, `${scheme}-${label}-list-hidden`)
+        await page.close()
+        continue
+      }
       if (css !== "") await page.addStyleTag({ content: css })
       await wait(500)
       await shot(page, `${scheme}-${label}-list`)
@@ -290,7 +297,9 @@ if (PREVIEW !== null) {
   }
 }
 
-await browser.close()
-server.close()
-term.kill()
+} finally {
+  await browser.close()
+  server.close()
+  term.kill()
+}
 for (const f of written) console.log(f)

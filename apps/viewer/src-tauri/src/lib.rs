@@ -429,6 +429,35 @@ const VIEW_ACTIONS: &[(&str, &str)] = &[
     ("view-pause-overlay", "Show / Hide Pause Overlay"),
 ];
 
+/// Only the fullscreen mode Checkpoints itself entered is undone on dismissal.
+#[derive(Default)]
+struct CheckpointPresentation(Mutex<bool>);
+
+#[tauri::command]
+async fn set_checkpoint_presentation(
+    window: tauri::WebviewWindow,
+    state: tauri::State<'_, CheckpointPresentation>,
+    enabled: bool,
+) -> Result<(), String> {
+    if window.label() != "main" {
+        return Err("checkpoint presentation belongs to the main window".into());
+    }
+    let mut entered = state.0.lock().map_err(|e| e.to_string())?;
+    if enabled {
+        // Preserve a native fullscreen window, rather than making it leave its Space.
+        if !*entered && !window.is_fullscreen().map_err(|e| e.to_string())? {
+            // macOS same-Space fullscreen: Tao saves/restores the frame, style and
+            // Dock/menu presentation options. No hand-built borderless overlay.
+            window.set_simple_fullscreen(true).map_err(|e| e.to_string())?;
+            *entered = true;
+        }
+    } else if *entered {
+        window.set_simple_fullscreen(false).map_err(|e| e.to_string())?;
+        *entered = false;
+    }
+    Ok(())
+}
+
 /// The viewer sends only enablement, never replacement labels or arbitrary native commands.
 #[tauri::command]
 fn set_main_menu_state(app: tauri::AppHandle, enabled: std::collections::HashMap<String, bool>) -> tauri::Result<()> {
@@ -556,6 +585,7 @@ pub fn run() {
         .manage(Sharing::default())
         .manage(Updating::default())
         .manage(TerminalRequests::default())
+        .manage(CheckpointPresentation::default())
         .manage(agent::Agents::default())
         .menu(menu)
         .on_window_event(|window, event| {
@@ -646,7 +676,8 @@ pub fn run() {
             dragout::files_drag_out,
             trace,
             set_system_keyboard_capture,
-            set_main_menu_state
+            set_main_menu_state,
+            set_checkpoint_presentation
         ])
         .build(tauri::generate_context!())
         .expect("winvm could not start")

@@ -1,10 +1,10 @@
 /* =========================================================
-   Checkpoints: the full-window view of a Windows machine's checkpoints
+   Checkpoints: the full-display view of a Windows machine's checkpoints
    (features/checkpoints/), on @winvm/canvas (packages/canvas/src/canvas.css).
    Every color, size and space comes from a token.
    ========================================================= */
 
-/* ---- The surface: the whole window, receding behind a transparent canvas ---- */
+/* ---- The surface: an opaque shield behind the easing canvas ---- */
 
 .checkpoints {
   --checkpoints-timeline: calc(var(--size-2xl) * 3);
@@ -13,13 +13,13 @@
   --checkpoints-bar: calc(var(--size-xl) + var(--space-2) + var(--border-width-hairline) * 2);
   color: var(--text-base-color);
   font-family: var(--font-body);
+  background: var(--surface-base);
 }
 
 /*
  * Time Machine's way of showing time as depth, on the window's own tokens:
- * the live screen, blurred and dimmed, is the room; a vignette closes it in
- * at the edges, and the far end (the top, where the oldest checkpoints are)
- * sinks into the surface color.
+ * a vignette closes in the edges; the top, where the oldest checkpoints are,
+ * sinks into the surface color. The live screen appears only in Now.
  */
 .checkpoints__backdrop {
   position: absolute;
@@ -28,16 +28,6 @@
   background: color-mix(in srgb, var(--surface-base) 58%, transparent);
   -webkit-backdrop-filter: blur(var(--space-6)) saturate(1.25);
   backdrop-filter: blur(var(--space-6)) saturate(1.25);
-}
-
-/* The live screen, blurred and dimmed behind everything (a copy, a couple of times a second). */
-.checkpoints__backdrop-screen {
-  position: absolute;
-  inset: calc(-1 * var(--space-8));
-  width: calc(100% + var(--space-8) * 2);
-  height: calc(100% + var(--space-8) * 2);
-  object-fit: cover;
-  filter: blur(var(--space-7)) saturate(1.3);
 }
 
 .checkpoints__backdrop::after {
@@ -54,29 +44,82 @@
   background: transparent;
 }
 
+/* Full-display presentation: the opaque surface shields Windows throughout.
+   Only the canvas eases in/out; scaling the modal itself would expose the guest. */
 .checkpoints__canvas {
   width: 100%;
   height: 100%;
+  transform-origin: center;
+  opacity: 1;
+  /* No resting filter/transform layer: keep text and SVG crisp at canvas zoom. */
+  transform: none;
+  filter: none;
 }
 
-/* In and out: a change of mode in this window. The whole view fades and settles
-   a hair in place (no flight, nothing that reads as another window); with
-   reduced motion the global rule makes it a cut (styles.css, Motion). */
-.checkpoints {
-  transition:
-    opacity 200ms ease-out,
-    transform 200ms ease-out;
+.checkpoints__backdrop {
+  opacity: 1;
 }
 
-.checkpoints[data-phase="entering"],
-.checkpoints[data-phase="leaving"] {
+.checkpoints[data-phase="entering"] .checkpoints__canvas,
+.checkpoints[data-phase="leaving"] .checkpoints__canvas {
   opacity: 0;
-  transform: scale(0.99);
+  transform: scale(0.8);
+  filter: blur(var(--space-1));
 }
 
-.checkpoints[data-phase="leaving"] {
-  transition-duration: 180ms;
-  transition-timing-function: ease-in;
+.checkpoints[data-phase="entering"] .checkpoints__backdrop,
+.checkpoints[data-phase="leaving"] .checkpoints__backdrop {
+  opacity: 0;
+}
+
+.checkpoints[data-phase="entering"][data-ready="true"] .checkpoints__canvas {
+  animation: checkpoint-enter 200ms ease-out both;
+}
+
+.checkpoints[data-phase="leaving"] .checkpoints__canvas {
+  animation: checkpoint-leave 200ms ease-in both;
+}
+
+.checkpoints[data-phase="entering"][data-ready="true"] .checkpoints__backdrop {
+  animation: checkpoint-backdrop-enter 200ms ease-out both;
+}
+
+.checkpoints[data-phase="leaving"] .checkpoints__backdrop {
+  animation: checkpoint-backdrop-leave 200ms ease-in both;
+}
+
+@keyframes checkpoint-enter {
+  from { opacity: 0; transform: scale(0.8); filter: blur(var(--space-1)); }
+  to { opacity: 1; transform: scale(1); filter: blur(0); }
+}
+
+@keyframes checkpoint-leave {
+  from { opacity: 1; transform: scale(1); filter: blur(0); }
+  to { opacity: 0; transform: scale(0.8); filter: blur(var(--space-1)); }
+}
+
+@keyframes checkpoint-backdrop-enter {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes checkpoint-backdrop-leave {
+  from { opacity: 1; }
+  to { opacity: 0; }
+}
+
+.checkpoints:not([data-phase="open"]) .checkpoints__canvas {
+  pointer-events: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .checkpoints .checkpoints__canvas,
+  .checkpoints .checkpoints__backdrop {
+    animation: none !important;
+    transition: none;
+    transform: none;
+    filter: none;
+  }
 }
 
 /*
@@ -764,7 +807,7 @@
   border: var(--stroke) solid var(--border-subtle);
   border-radius: calc(var(--card-radius) * var(--card-scale, 1));
   background: var(--surface-card);
-  box-shadow: var(--elevation-modal);
+  box-shadow: var(--elevation-card);
   color: inherit;
   font: inherit;
   text-align: left;
@@ -854,7 +897,20 @@
   inset: 0;
   width: 100%;
   height: 100%;
-  object-fit: contain;
+  object-fit: cover;
+  object-position: center bottom;
+}
+
+/* Abstract sand/clay and sage folds; colours derive from the existing theme tokens. */
+.checkpoint__wallpaper {
+  --wallpaper-ink: color-mix(in srgb, var(--accent) 35%, var(--text-strong));
+  --wallpaper-sage: color-mix(in srgb, var(--accent) 70%, var(--surface-card));
+  --wallpaper-sand: color-mix(in srgb, var(--status-warning) 25%, var(--surface-card));
+  --wallpaper-clay: color-mix(in srgb, var(--status-error) 40%, var(--status-warning));
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
 }
 
 .checkpoint__live:not([data-live="true"]) {
@@ -911,10 +967,12 @@
  */
 .checkpoint__caption {
   display: grid;
+  grid-template-columns: 1.6em minmax(0, 1fr) auto;
+  column-gap: 0.85em;
+  row-gap: 0.2em;
   flex: none;
-  gap: 0.1em;
   min-width: 0;
-  padding: 0.65em 0.85em 0.75em;
+  padding: 1em 1.1em;
   border-top: var(--stroke) solid var(--border-subtle);
   background: var(--surface-card);
   color: var(--text-muted);
@@ -927,6 +985,8 @@
 }
 
 .checkpoint__name {
+  grid-column: 2 / -1;
+  grid-row: 1;
   overflow: hidden;
   color: var(--text-strong);
   font-size: 1.15em;
@@ -946,11 +1006,54 @@
 
 /* How it came to be, with its glyph, and how big it is at the end of the same row. */
 .checkpoint__facts {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 0.6em;
-  margin-top: 0.3em;
+  display: contents;
+}
+
+.checkpoint__caption .checkpoint__when {
+  grid-column: 2;
+  grid-row: 2;
+}
+
+.checkpoint__caption .checkpoint__size {
+  grid-column: 3;
+  grid-row: 2;
+  font-size: 0.9em;
+  align-self: center;
+}
+
+/* The kind is a quiet leading glyph, not another row or pill of microcopy. */
+.checkpoint__caption .checkpoint__kind {
+  grid-column: 1;
+  grid-row: 1 / 3;
+  align-self: center;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: none;
+  color: var(--link);
+}
+
+.checkpoint__caption .checkpoint__kind svg {
+  width: 1.6em;
+  height: 1.6em;
+}
+
+.checkpoint__caption .checkpoint__kind > span {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+}
+
+.checkpoint[data-level="name"] .checkpoint__caption,
+.checkpoint--now .checkpoint__caption {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.checkpoint[data-level="name"] .checkpoint__name,
+.checkpoint--now :is(.checkpoint__name, .checkpoint__when) {
+  grid-column: 1;
 }
 
 .checkpoint__kind {
@@ -983,6 +1086,8 @@
 
 /* Its note, only when it has one: the notebook, then the note's first line. */
 .checkpoint__note {
+  grid-column: 2 / -1;
+  grid-row: 3;
   display: flex;
   align-items: center;
   gap: 0.45em;

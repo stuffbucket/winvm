@@ -1,15 +1,15 @@
 /**
  * Checkpoints: every checkpoint of a Windows machine on an infinite canvas,
- * as Time Machine shows backups. The window's own screen shrinks into the
- * "Now" card at the front, the checkpoints recede up the canvas a day at a
- * time, and the timeline on the right flies through them. Pinch, ⌘-scroll or
+ * as Time Machine shows backups. The window expands to the display and the
+ * canvas eases in, with the live screen in its "Now" card. Checkpoints recede
+ * up the canvas a day at a time; the timeline flies through them. Pinch, ⌘-scroll or
  * ⌘+ / ⌘− zoom; dragging, two-finger scrolling or the arrow keys pan; every
  * camera move eases in and out (and jumps, with reduced motion).
  *
  * A card selected comes up close with its notes, Restore and
  * Delete…. New Checkpoint takes one and flies it out of Now into the stack.
- * Done (Esc) flies back into the live screen. Restoring flies the chosen
- * checkpoint into the screen once Windows is back at that moment.
+ * Done (Esc) eases the canvas out, then restores the original window.
+ * Restoring returns to the screen once Windows is back at that moment.
  *
  * The rules (layout, timeline, search, confirmations) are in checkpoints.ts;
  * the canvas and its camera are @winvm/canvas.
@@ -20,7 +20,6 @@ import {
   type Camera,
   CanvasGlyph,
   CanvasIconButton,
-  cameraForScreenRect,
   centreOf,
   centreOn,
   clampCamera,
@@ -79,7 +78,9 @@ import {
   union,
   withLabel,
 } from "./checkpoints"
-import { CheckpointCard, MONITOR, Picture, takenAt, textScale } from "./CheckpointCard"
+import { CheckpointCard, Picture, takenAt, textScale } from "./CheckpointCard"
+import { Wallpaper } from "./Wallpaper"
+import { checkpointPresentation } from "./presentation"
 import { CheckpointDetailsLayer, type NoteDraft, tagsOf } from "./CheckpointDetails"
 import { ControlBar } from "./ControlBar"
 import { SectionDraft, SectionGrid, SectionView } from "./Section"
@@ -112,8 +113,6 @@ export interface CheckpointCanvasProps {
   readonly busy: boolean
   /** The live screen's width over its height. */
   readonly aspect: number
-  /** Where the live screen is in the window, to fly into and out of. */
-  displayRect(): Rect | null
   /** noVNC's canvas, to show live in the Now card. */
   liveSource(): HTMLCanvasElement | null
   /** Runs `save` or `load` the way the main window does (its busy state, its failure callout). */
@@ -138,7 +137,7 @@ const NUDGE_STEP = 16
 const ZOOM_STEP = 1.25
 const ENTER_WAIT_MS = 450
 /** The view's fade out (the surface's transition in checkpoints.css); none when motion is reduced. */
-const SURFACE_FADE_MS = 180
+const SURFACE_FADE_MS = 200
 const surfaceFadeMs = (): number => (typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches ? 0 : SURFACE_FADE_MS)
 /** Below this zoom, captions are too small to read: cards draw pictures only. */
 const FAR_ZOOM = 0.3
@@ -163,6 +162,25 @@ export function CheckpointCanvas(p: CheckpointCanvasProps): JSX.Element {
   const [listError, setListError] = useState<string | null>(null)
   const [settings, setSettings] = useState<CheckpointSettings>(DEFAULT_SETTINGS)
   const [phase, setPhase] = useState<SpatialCanvasSurfacePhase>("entering")
+  const [presented, setPresented] = useState(false)
+  const [surfaceReady, setSurfaceReady] = useState(false)
+  const finishLeaving = useRef<(() => void) | null>(null)
+  useEffect(() => {
+    let mounted = true
+    void checkpointPresentation.set(true).catch((error: unknown) => {
+      console.warn("opening checkpoint fullscreen failed", error)
+    }).then(() => {
+      if (mounted) {
+        setSize(viewSize())
+        setPresented(true)
+      }
+    })
+    return () => {
+      mounted = false
+      finishLeaving.current?.()
+      void checkpointPresentation.set(false).catch((error: unknown) => console.warn("restoring the checkpoint window failed", error))
+    }
+  }, [])
   const [selected, setSelectedState] = useState<string | null>(null)
   // What the details layer covers at the left: set with the selection, so a flight started with it already knows.
   const leftSpace = useRef(0)
@@ -273,13 +291,7 @@ export function CheckpointCanvas(p: CheckpointCanvasProps): JSX.Element {
   const limitsNow = useRef(limits)
   limitsNow.current = limits
 
-  const nowCamera = useCallback((): Camera => {
-    const rect = props.current.displayRect()
-    const frame = frameOf(layout.now)
-    return rect === null || rect.width < 8 ? fitRect(frame, viewSize(), 0) : cameraForScreenRect(frame, rect)
-  }, [layout.now])
-
-  const cam = useCanvasCamera(nowCamera(), viewSize)
+  const cam = useCanvasCamera(fitRect(frameOf(layout.now), viewSize(), 0), viewSize)
   const { fly: flyCamera, set: setCamera, current: cameraNow } = cam
   const camera = cam.camera
   // What the timeline (at the right) and, with a card selected, the details layer (at the left) cover: the stack is kept in reach of the rest.
@@ -336,16 +348,15 @@ export function CheckpointCanvas(p: CheckpointCanvasProps): JSX.Element {
     [limits],
   )
 
-  // In: drawn in place, already at the newest checkpoints, and faded in over the window's own
-  // screen. A change of mode in this window, not a flight into another one (windows.md, Checkpoints).
+  // In: wait for native full-display presentation, then ease in at the newest
+  // checkpoints. The opaque surface shields the live screen throughout.
   const entered = useRef(false)
   useEffect(() => {
-    if (entered.current) return
+    if (entered.current || !presented) return
     const go = (): void => {
       if (entered.current) return
       entered.current = true
       setCamera(overview())
-      requestAnimationFrame(() => setPhase("open"))
     }
     if (list !== null) {
       go()
@@ -353,25 +364,61 @@ export function CheckpointCanvas(p: CheckpointCanvasProps): JSX.Element {
     }
     const timer = setTimeout(go, ENTER_WAIT_MS)
     return () => clearTimeout(timer)
-  }, [list, overview, setCamera])
+  }, [list, overview, setCamera, presented])
 
-  // Out: fades away where it is, over the screen it was drawn on.
+  // Camera updates coalesce to the next frame. Start the surface animation
+  // only once that overview is drawn, not with one frame of an enlarged Now.
+  useEffect(() => {
+    if (entered.current && presented && camera === cameraNow()) setSurfaceReady(true)
+  }, [camera, cameraNow, presented])
+
+  // AnimationEnd normally opens the controls; a hidden window or suppressed
+  // animation must not strand the surface. Reduced motion is an immediate cut.
+  useEffect(() => {
+    if (!surfaceReady || phase !== "entering") return
+    if (surfaceFadeMs() === 0) { setPhase("open"); return }
+    const timer = setTimeout(() => setPhase("open"), ENTER_WAIT_MS)
+    return () => clearTimeout(timer)
+  }, [surfaceReady, phase])
+
+  // Out: fades away where it is, then restores the native window.
   const leavingNow = useRef(false)
   const leave = useCallback(async (): Promise<void> => {
     if (leavingNow.current) return
     leavingNow.current = true
-    setSelected(null)
-    setSearchOpen(false)
+    setCamera(cameraNow())
     if (selected === null) {
       // Left at the zoom that shows everything: that's the default, so there is nothing to keep.
       const zoom = cameraNow().zoom
       const all = fitRect(layoutNow.current.bounds, freeView(), 56, limitsNow.current).zoom
       void saveSettings({ ...settings, zoom: Math.abs(zoom / all - 1) < 0.04 ? null : zoom })
     }
-    setPhase("leaving")
-    await new Promise((done) => setTimeout(done, surfaceFadeMs()))
-    props.current.onClosed()
-  }, [cameraNow, selected, settings])
+    await new Promise<void>((done) => {
+      const motion = typeof matchMedia === "function" ? matchMedia("(prefers-reduced-motion: reduce)") : null
+      const finish = (): void => {
+        clearTimeout(timer)
+        motion?.removeEventListener("change", preferenceChanged)
+        finishLeaving.current = null
+        done()
+      }
+      const preferenceChanged = (): void => { if (motion?.matches) finish() }
+      // AnimationEnd is the normal completion. Suppressed/hidden animations
+      // still restore the window; switching to reduced motion completes at once.
+      const timer = setTimeout(finish, surfaceFadeMs() === 0 ? 0 : ENTER_WAIT_MS)
+      finishLeaving.current = finish
+      motion?.addEventListener("change", preferenceChanged)
+      setPhase("leaving")
+    })
+    try {
+      await checkpointPresentation.set(false)
+      props.current.onClosed()
+    } catch (error) {
+      // Keep Done available for a retry rather than strand the person in fullscreen.
+      console.warn("restoring the checkpoint window failed", error)
+      leavingNow.current = false
+      setPhase("open")
+    }
+  }, [cameraNow, setCamera, selected, settings])
 
   const closeRequest = useRef(p.closeRequest)
   useEffect(() => {
@@ -883,11 +930,14 @@ export function CheckpointCanvas(p: CheckpointCanvasProps): JSX.Element {
       description={t("checkpoints.description")}
       phase={phase}
       className="checkpoints"
+      data-ready={surfaceReady}
     >
-      <div className="checkpoints__backdrop" aria-hidden="true">
-        {live && <LiveFrame source={p.liveSource} className="checkpoints__backdrop-screen" interval={400} maxWidth={640} />}
-      </div>
-      <SpatialCanvas className="checkpoints__canvas">
+      <div className="checkpoints__backdrop" aria-hidden="true" />
+      <SpatialCanvas className="checkpoints__canvas" {...(phase !== "open" ? { inert: "" } : {})} onAnimationEnd={(event) => {
+        if (event.target !== event.currentTarget) return
+        if (phase === "entering") setPhase("open")
+        else if (phase === "leaving") finishLeaving.current?.()
+      }}>
         <div className="checkpoints__drag" data-tauri-drag-region aria-hidden="true" />
         <SpatialCanvasViewport
           ref={viewport}
@@ -980,10 +1030,7 @@ export function CheckpointCanvas(p: CheckpointCanvasProps): JSX.Element {
                 onClick={() => !suppressClick.current && void leave()}
               >
                 <span className="checkpoint__frame">
-                  <span className="checkpoint__placeholder">
-                    {MONITOR}
-                    <span>{t(live ? "checkpoints.nowLive" : `checkpoints.nowState.${p.phase ?? "missing"}`)}</span>
-                  </span>
+                  <Wallpaper />
                   {live && <LiveFrame source={p.liveSource} className="checkpoint__live" />}
                   {nowWorking !== null && (
                     <span className="checkpoint__fit checkpoint__fit--frame">
