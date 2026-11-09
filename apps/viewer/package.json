@@ -10,7 +10,7 @@
     "dev:ui": "bun scripts/build-ui.ts --watch",
     "tokens": "bun scripts/generate-css-tokens.ts",
     "typecheck": "tsc --noEmit -p tsconfig.json && bun scripts/generate-css-tokens.ts --check && bun scripts/check-design-tokens.ts",
-    "test": "bun test tests"
+    "test": "bun test --parallel tests"
   },
   "devDependencies": {
     "@happy-dom/global-registrator": "20.8.4",
