@@ -53,7 +53,7 @@ import { randomBytes, timingSafeEqual } from "node:crypto"
 import type { Server, ServerWebSocket, Socket, TCPSocketListener, WebSocketHandler } from "bun"
 
 /** Bumped whenever the protocol or behaviour changes; the host reinstalls on mismatch. */
-export const AGENT_VERSION = 11
+export const AGENT_VERSION = 12
 /** The port the agent listens on INSIDE the guest. The host side is per instance. */
 export const GUEST_PORT = 7801
 export const WINDOWS_DIR = "C:\\ProgramData\\winvm\\agent"
@@ -116,6 +116,21 @@ export interface AgentOptions {
 
 const isWin = process.platform === "win32"
 const POWERSHELL = "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe"
+
+/** A streamed upload replaces its destination only after all of the body has arrived. */
+export async function writeUpload(path: string, body: Request): Promise<number> {
+  ensureDir(dirname(path))
+  const temp = join(dirname(path), `.winvm-${randomBytes(12).toString("hex")}.part`)
+  try {
+    // Do not truncate a good guest file if the host disconnects or Windows
+    // runs out of space partway through the request.
+    const bytes = await Bun.write(temp, body as unknown as Response) // a Request streams like a Response; the types lag
+    await rename(temp, path)
+    return bytes
+  } finally {
+    await rm(temp, { force: true })
+  }
+}
 
 /** The token, re-read only when the file changes. Missing or empty: refuse everything. */
 function tokenReader(file: string): () => string | null {
@@ -367,6 +382,8 @@ export interface DirEntry {
   readonly modified: number | null
   /** Hidden or system, which Explorer hides by default (a dot name where there is no such attribute). */
   readonly hidden: boolean
+  /** A symbolic link or junction: browsing may follow it, recursive transfers must not. */
+  readonly link?: true
 }
 
 /** A folder people go to: Desktop, Documents, Downloads, the profile, C:\work, and the drives. */
@@ -586,6 +603,7 @@ export async function listDir(
       size: e.dir || st === null ? null : Number(st.size),
       modified: st === null ? null : Math.round(Number(st.mtimeMs)),
       hidden: isHidden(e.name),
+      ...(linkDir.has(e.name) ? { link: true as const } : {}),
     }
   })
   const up = dirname(path)
@@ -1812,8 +1830,7 @@ export function startAgent(o: AgentOptions, onFatal: () => void = () => {}): Run
               const path = u.searchParams.get("path")
               if (path === null || path === "") return fail(400, "path required")
               const t0 = performance.now()
-              ensureDir(dirname(path))
-              const bytes = await Bun.write(path, req as unknown as Response) // a Request streams like a Response; the types lag
+              const bytes = await writeUpload(path, req)
               return json({ bytes, ms: performance.now() - t0 })
             }
             case "GET /file": {

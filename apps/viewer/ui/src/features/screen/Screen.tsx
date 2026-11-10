@@ -362,6 +362,8 @@ export const Screen = forwardRef<ScreenHandle, ScreenProps>(function Screen(
     })
     return () => {
       closing = true
+      // A late clipboard read or a queued write must not land after the screen goes.
+      clipboard.stop()
       live.current = null
       outer.removeEventListener("keydown", onKey, true)
       stopWake?.()
