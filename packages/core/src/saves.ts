@@ -175,6 +175,8 @@ export interface Manifest {
   readonly name: string
   readonly instance: string
   readonly kind: SaveKind
+  /** Explicitly kept by the user: never reclaim or replace it. Absent in older saves: false. */
+  readonly protected?: boolean
   /** ISO 8601. */
   readonly createdAt: string
   /** Total bytes allocated by the save's files. Clones share blocks, so this overstates new space used. */
@@ -291,6 +293,8 @@ export function parseManifest(text: string): Manifest {
   if (typeof bytes !== "number" || !Number.isFinite(bytes) || bytes < 0) {
     throw new Error("manifest.bytes must be a non-negative number")
   }
+  const protection = r["protected"]
+  if (protection !== undefined && typeof protection !== "boolean") throw new Error("manifest.protected must be a boolean")
   const note = r["note"]
   if (note !== undefined && typeof note !== "string") throw new Error("manifest.note must be a string")
   const format = r["format"]
@@ -579,6 +583,7 @@ export type IncompatibleReason = "base" | "hardware" | "display" | "firmware" | 
 export interface SaveEntry {
   readonly name: string
   readonly kind: SaveKind
+  readonly protected: boolean
   readonly createdAt: string
   readonly bytes: number
   /** How the RAM was written. */
@@ -653,6 +658,7 @@ export function savesReport(rows: readonly Listed[], ctx: ReportContext): SaveEn
       {
         name: m.name,
         kind: m.kind,
+        protected: m.protected === true,
         createdAt: m.createdAt,
         bytes: m.bytes,
         format: ramFormatOf(m),
@@ -753,8 +759,54 @@ export function listSaves(instance: string): readonly Listed[] {
 
 export const hasSave = (instance: string, name: string): boolean => readSave(instance, name) !== null
 
-/** The save, and the note on it: a note on a save that is gone describes nothing. */
-export function removeSave(instance: string, name: string): void {
+/** A protected save needs an explicit destructive override, never an automatic caller's permission. */
+export class ProtectedSave extends Error {}
+
+/**
+ * Check before replacing/deleting any files. Unreadable manifests fail closed:
+ * protection cannot be inferred safely; an explicit `saves rm --force` can
+ * still remove a damaged save. The caller holds the instance's save lock.
+ */
+export function assertRemovable(instance: string, name: string, force = false): void {
+  const err = nameError(name)
+  if (err !== null) throw new Error(err)
+  if (force || !existsSync(saveDir(instance, name))) return
+  const m = parseManifest(readFileSync(resolve(saveDir(instance, name), FILES.manifest), "utf8"))
+  if (m.protected === true) {
+    throw new ProtectedSave(`save "${name}" is protected — unprotect it first, or explicitly delete it with \`winvm saves -i ${instance} rm ${name} --force\``)
+  }
+}
+
+/**
+ * Change only retention metadata, under the same lock as creation and rotation.
+ * Works with a stopped or running machine: no QEMU or guest call is needed.
+ * A stow is a one-shot resume slot, not a checkpoint to retain.
+ */
+export function setSaveProtection(instance: string, name: string, protect: boolean): Manifest {
+  const err = nameError(name)
+  if (err !== null) throw new Error(err)
+  return withLockSync(instance, () => {
+    const m = readSave(instance, name)
+    if (m === null) throw new Error(`instance "${instance}" has no readable save "${name}"`)
+    if (protect && (m.kind === "stow" || name === STOW)) {
+      throw new Error("the stow save is a one-shot resume slot and cannot be protected — take a named checkpoint instead")
+    }
+    const next = { ...m, protected: protect }
+    const file = resolve(saveDir(instance, name), FILES.manifest)
+    const tmp = `${file}.tmp-${String(process.pid)}`
+    try {
+      writeFileSync(tmp, `${JSON.stringify(next, null, 2)}\n`)
+      renameSync(tmp, file)
+    } finally {
+      rmSync(tmp, { force: true })
+    }
+    return next
+  })
+}
+
+/** The save, and the note on it. Caller holds the lock; protection is rechecked at deletion time. */
+export function removeSave(instance: string, name: string, o: { readonly force?: boolean } = {}): void {
+  assertRemovable(instance, name, o.force)
   rmSync(saveDir(instance, name), { recursive: true, force: true })
   forgetNote(instance, name)
 }
@@ -766,12 +818,21 @@ export function removeSave(instance: string, name: string): void {
  * old baseline.
  */
 export function removeAllSaves(instance: string): void {
-  rmSync(savesDir(instance), { recursive: true, force: true })
-  try {
-    removeNotes(instance)
-  } catch {
-    // An instance name notes.ts refuses has no notes to remove.
-  }
+  withLockSync(instance, () => {
+    // Preflight everything before deleting anything: a protected (or damaged)
+    // save is never swept away with its instance. `destroy --keep-saves` keeps it.
+    for (const s of listSaves(instance)) assertRemovable(instance, s.name)
+    // Keep the lock itself in place until the operation ends, including note
+    // removal. Removing the directory would let a second writer in early.
+    for (const entry of readdirSync(savesDir(instance))) {
+      if (entry !== ".lock") rmSync(resolve(savesDir(instance), entry), { recursive: true, force: true })
+    }
+    try {
+      removeNotes(instance)
+    } catch {
+      // An instance name notes.ts refuses has no notes to remove.
+    }
+  })
 }
 
 /** Notes are a nicety: a name notes.ts refuses, or a file it cannot delete, never fails a save operation. */
@@ -807,7 +868,7 @@ export const clearPristine = (instance: string): void => rmSync(pendingMarker(in
  * watcher's automatic save — would quit QEMU under a migration, or clone a disk
  * mid-swap. A lock file holding the owner's pid; a dead owner's lock is stale.
  */
-export async function withLock<T>(instance: string, fn: () => Promise<T>): Promise<T> {
+function acquireSaveLock(instance: string): string {
   mkdirSync(savesDir(instance), { recursive: true })
   const lock = resolve(savesDir(instance), ".lock")
   for (let attempt = 0; ; attempt += 1) {
@@ -831,8 +892,23 @@ export async function withLock<T>(instance: string, fn: () => Promise<T>): Promi
       rmSync(lock, { force: true })
     }
   }
+  return lock
+}
+
+export async function withLock<T>(instance: string, fn: () => Promise<T>): Promise<T> {
+  const lock = acquireSaveLock(instance)
   try {
     return await fn()
+  } finally {
+    rmSync(lock, { force: true })
+  }
+}
+
+/** Synchronous metadata changes and manual deletion share the migration lock. */
+export function withLockSync<T>(instance: string, fn: () => T): T {
+  const lock = acquireSaveLock(instance)
+  try {
+    return fn()
   } finally {
     rmSync(lock, { force: true })
   }
@@ -976,6 +1052,8 @@ export interface CreateResult {
  * job (clock.ts), because it needs the agent.
  */
 export async function createSave(instance: string, o: CreateOptions): Promise<CreateResult> {
+  // Refuse replacement before touching QEMU, disk files or the old note.
+  assertRemovable(instance, o.name)
   const p = pathsFor(instance)
   const meta = readMeta(instance)
   if (meta === null) throw new Error(`no such instance "${instance}"`)
@@ -1134,6 +1212,7 @@ export async function cloneSave(from: string, to: string, name: string): Promise
   }
   const src = saveDir(from, name)
   return await withLock(to, async () => {
+    assertRemovable(to, name)
     const tmp = resolve(savesDir(to), `.${name}.partial-${String(process.pid)}`)
     rmSync(tmp, { recursive: true, force: true })
     mkdirSync(tmp, { recursive: true })

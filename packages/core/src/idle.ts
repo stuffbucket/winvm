@@ -259,15 +259,19 @@ export interface SaveInfo {
   readonly name: string
   readonly kind: string
   readonly createdAt: string
+  /** Explicitly kept by the user; absent in older manifests: false. */
+  readonly protected?: boolean
 }
 
 /**
- * The auto saves to delete so that only the newest `keep` remain. Never names a
- * save of any other kind — manual, baseline and stow saves are the user's.
+ * Keep the newest `keep` unprotected autosaves, plus ALL protected ones.
+ * Protection removes a save from the retention budget as well as the victims:
+ * locking a new save must not cause an older unlocked one to be reclaimed.
+ * Never names a save of another kind.
  */
 export function savesToRotate(saves: readonly SaveInfo[], keep: number): readonly string[] {
   const autos = saves
-    .filter((s) => s.kind === "auto")
+    .filter((s) => s.kind === "auto" && s.protected !== true)
     .toSorted((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt) || b.name.localeCompare(a.name))
   return autos.slice(Math.max(0, keep)).map((s) => s.name)
 }

@@ -66,6 +66,7 @@ describe("manifest", () => {
     expect(() => parseManifest(JSON.stringify({ ...good, compat: "" }))).toThrow(/compat/)
     expect(() => parseManifest(JSON.stringify({ ...good, note: 3 }))).toThrow(/note/)
     expect(() => parseManifest(JSON.stringify({ ...good, format: "lz4" }))).toThrow(/format/)
+    expect(() => parseManifest(JSON.stringify({ ...good, protected: "true" }))).toThrow(/protected/)
   })
   it("rejects a malformed display profile rather than launching different hardware", () => {
     for (const display of [
@@ -243,7 +244,7 @@ describe("savesReport", () => {
     compat: "abc",
     image: "win11-arm64",
   }
-  const plain = { format: "zstd" as const, screenshot: null, thumbnail: null, title: null, notes: null }
+  const plain = { format: "zstd" as const, protected: false, screenshot: null, thumbnail: null, title: null, notes: null }
 
   it("lists each save with whether it loads here, and its format", () => {
     const rows = [
@@ -266,6 +267,11 @@ describe("savesReport", () => {
       note: "clean install",
       ...plain,
     })
+  })
+
+  it("reports explicit protection without changing the saved format or compatibility", () => {
+    const [entry] = savesReport([{ name: m.name, manifest: { ...m, protected: true, format: "mapped" } }], { compat: { hash: "abc", parts } })
+    expect(entry).toMatchObject({ protected: true, format: "mapped", compatible: true })
   })
 
   it("leaves out a save whose manifest cannot be read", () => {

@@ -7,7 +7,9 @@
  *                      --fast (= --format mapped) for a save loaded over and over
  *   load [name]        back to a save, running or stopped (default: the newest);
  *                      the save's manifest says which RAM format to read
- *   saves [rm <name>]  list them, with compatibility; or delete one (and its note)
+ *   saves [rm <name>]  list them, with compatibility; or delete one (and its note);
+ *                      a protected save needs --force
+ *   saves protect <name> / unprotect <name>  retention metadata only (saves.ts)
  *   saves note <name>  a person's note on a save — title, text, tags (notes.ts);
  *                      shown with none of --title/--text/--tags/--clear, else written
  *   pause / resume     freeze / unfreeze the vCPUs (resume fixes the clock)
@@ -23,7 +25,7 @@
  * instance, where no one has taken "fresh", `rewind` goes back to the baseline
  * taken at its first boot — the state you most often want back.
  */
-import { readFileSync } from "node:fs"
+import { existsSync, readFileSync } from "node:fs"
 
 import type { Args } from "./args"
 import { instanceName } from "./args"
@@ -202,16 +204,39 @@ export function list(args: Args): number {
   if (args.positional[0] === "rm") {
     const target = args.positional[1]
     if (target === undefined) return fail("usage: winvm saves rm <name>")
-    if (!saves.hasSave(name, target)) return fail(`instance "${name}" has no save "${target}"`)
-    let hadNote = false
+    const err = saves.nameError(target)
+    if (err !== null) return fail(err)
+    // --force is an explicit destructive intent, not the readiness override
+    // used by `save`. It also permits removing a damaged manifest.
+    if (!existsSync(saves.saveDir(name, target))) return fail(`instance "${name}" has no save "${target}"`)
     try {
-      hadNote = notes.readNote(name, target) !== null
-    } catch {
-      hadNote = false
+      return saves.withLockSync(name, () => {
+        let hadNote = false
+        try {
+          hadNote = notes.readNote(name, target) !== null
+        } catch {
+          hadNote = false
+        }
+        saves.removeSave(name, target, { force: args.flags.has("force") })
+        console.log(`deleted save "${target}"${hadNote ? " and its note" : ""}`)
+        return 0
+      })
+    } catch (error) {
+      return fail(msg(error))
     }
-    saves.removeSave(name, target)
-    console.log(`deleted save "${target}"${hadNote ? " and its note" : ""}`)
-    return 0
+  }
+  if (args.positional[0] === "protect" || args.positional[0] === "unprotect") {
+    const protect = args.positional[0] === "protect"
+    const target = args.positional[1]
+    if (target === undefined) return fail(`usage: winvm saves ${protect ? "protect" : "unprotect"} <name>`)
+    try {
+      const m = saves.setSaveProtection(name, target, protect)
+      if (args.flags.has("json")) console.log(JSON.stringify(m, null, 2))
+      else console.log(`${protect ? "protected" : "unprotected"} save "${target}"`)
+      return 0
+    } catch (error) {
+      return fail(msg(error))
+    }
   }
   if (args.positional[0] === "note") return note(args)
   const rows = saves.listSaves(name)
@@ -226,7 +251,7 @@ export function list(args: Args): number {
     console.log(`instance "${name}" has no saves (${saves.savesDir(name)})`)
     return 0
   }
-  console.log(`  ${"NAME".padEnd(22)} ${"KIND".padEnd(9)} ${"FORMAT".padEnd(7)} ${"CREATED".padEnd(19)} ${"SIZE".padStart(8)}  COMPATIBLE`)
+  console.log(`  ${"NAME".padEnd(22)} ${"KIND".padEnd(9)} ${"FORMAT".padEnd(7)} ${"PROTECTED".padEnd(9)} ${"CREATED".padEnd(19)} ${"SIZE".padStart(8)}  COMPATIBLE`)
   for (const r of rows) {
     const m = r.manifest
     if (m === null) {
@@ -238,7 +263,7 @@ export function list(args: Args): number {
     const entry = report.find((e) => e.name === m.name)
     const ok = entry?.compatible == null ? "?" : entry.compatible ? "yes" : entry.why === undefined ? "no" : "no (before the shared folder)"
     console.log(
-      `  ${m.name.padEnd(22)} ${m.kind.padEnd(9)} ${saves.ramFormatOf(m).padEnd(7)} ${created.padEnd(19)} ${saves.formatBytes(m.bytes).padStart(8)}  ${ok}` +
+      `  ${m.name.padEnd(22)} ${m.kind.padEnd(9)} ${saves.ramFormatOf(m).padEnd(7)} ${(m.protected === true ? "yes" : "no").padEnd(9)} ${created.padEnd(19)} ${saves.formatBytes(m.bytes).padStart(8)}  ${ok}` +
         (m.note === undefined ? "" : `  ${m.note}`),
     )
   }

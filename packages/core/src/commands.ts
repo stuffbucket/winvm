@@ -162,10 +162,18 @@ export function prune(args: Args): number {
       continue
     }
     const size = du(p.dir)
+    // Reclamation must never discard protected checkpoints, including saves
+    // whose manifest cannot be read safely. Check/delete under the save lock
+    // before touching the instance, so an active save/load is left alone too.
+    try {
+      saves.removeAllSaves(name)
+    } catch (error) {
+      console.log(`  keeping "${name}" — ${error instanceof Error ? error.message : String(error)}`)
+      continue
+    }
     qemu.stopSidecars(p)
     stopService(p)
     rmSync(p.dir, { recursive: true, force: true })
-    saves.removeAllSaves(name)
     console.log(`  removed scratch instance "${name}" (${size})`)
     freedAnything = true
   }
@@ -936,6 +944,26 @@ export function destroy(args: Args): number {
     console.error(`::error::no such instance "${name}"`)
     return 1
   }
+  const hadSaves = existsSync(saves.savesDir(name))
+  const kept = saves.listSaves(name)
+  const protectedOrUnreadable = kept.some((s) => s.manifest === null || s.manifest.protected === true)
+  let keepSaves = args.flags.has("keep-saves") || protectedOrUnreadable
+  // du counts the APFS-cloned disks in full, so this can be more than the
+  // space actually returned while the clones still share blocks.
+  const savesSize = hadSaves ? du(saves.savesDir(name)) : ""
+  if (!keepSaves) {
+    try {
+      // Do this before destroying the instance. The lock rechecks protection
+      // and refuses a concurrent save/load before any machine files are lost.
+      saves.removeAllSaves(name)
+    } catch (error) {
+      if (error instanceof saves.ProtectedSave) keepSaves = true
+      else {
+        console.error(`::error::${error instanceof Error ? error.message : String(error)}`)
+        return 1
+      }
+    }
+  }
   stopService(p)
   qemu.stopSidecars(p)
   // Before smb.json goes with the instance: it holds the port that tells our mounts from anything else.
@@ -943,18 +971,12 @@ export function destroy(args: Args): number {
   const size = du(instanceDir(name))
   rmSync(instanceDir(name), { recursive: true, force: true })
   console.log(`destroyed instance "${name}" (${size}; image untouched)`)
-  if (!existsSync(saves.savesDir(name))) return 0
-  const kept = saves.listSaves(name)
-  if (args.flags.has("keep-saves")) {
-    // `load` recreates the instance from one of them.
-    console.log(`  kept its ${plural(kept.length, "save")} in ${saves.savesDir(name)}`)
-    return 0
-  }
-  // du counts the APFS-cloned disks in full, so this can be more than the
-  // space actually returned while the clones still share blocks.
-  const savesSize = du(saves.savesDir(name))
-  saves.removeAllSaves(name)
-  console.log(`  and its ${plural(kept.length, "save")} (${savesSize})`)
+  if (!hadSaves) return 0
+  if (keepSaves) {
+    // `load` recreates the instance from one of them. A bulk deletion is never
+    // permission to destroy protected checkpoints; only `saves rm --force` is.
+    console.log(`  kept its ${plural(kept.length, "save")} in ${saves.savesDir(name)}${args.flags.has("keep-saves") ? "" : " (protected or unreadable checkpoints)"}`)
+  } else console.log(`  and its ${plural(kept.length, "save")} (${savesSize})`)
   return 0
 }
 
@@ -1166,10 +1188,11 @@ export const USAGE =
   "           [--delete]           remove that snapshot instead\n" +
   "  rewind  [-i name] [tag] [--no-watch]  put the guest back: snapshot <tag> (default fresh),\n" +
   "                                else the save of that name (default: the automatic baseline)\n" +
-  "  save    [-i name] [name] [--fast]  save the running guest to files (default name: a timestamp)\n" +
+  "  save    [-i name] [name] [--fast | --format zstd|mapped|raw]  save the running guest to files (default: compressed zstd)\n" +
   "  load    [-i name] [name] [--no-watch]  load a save, running or stopped (default: the newest)\n" +
   "                                into a stopped instance it starts the watcher, like start\n" +
-  "  saves   [-i name] [rm <name>] [--json]  list saves (kind, size, compatible) or delete one (and its note)\n" +
+  "  saves   [-i name] [rm <name> [--force]] [--json]  list saves (kind, format, protection, size, compatible), or delete one\n" +
+  "  saves protect|unprotect [-i name] <save> [--json]  prevent reclamation/replacement; protected deletion needs rm --force\n" +
   "  saves note [-i name] <save> [--title T] [--text TEXT|-] [--tags a,b,c] [--clear] [--json]\n" +
   "                                show a save's note, or set it (--text - reads stdin;\n" +
   "                                --text=<markdown> is the safe form when it may start with -)\n" +
