@@ -21,3 +21,57 @@ _.path = ["{{config_root}}/node_modules/.bin"]
 # built in stuffbucket/winvm-runtime); `mise install` fetches and verifies it.
 [hooks]
 postinstall = "bun scripts/check-host.ts || true"
+
+# Repository-local command contract. Skills supply judgment and verification;
+# package scripts supply the implementation. No task implicitly publishes.
+[tasks.setup]
+description = "Install workspace dependencies (tool install may also fetch the runtime)"
+run = "pnpm install"
+
+[tasks.dev]
+description = "Launch the existing local native app; build first after source changes"
+run = '''
+app=apps/viewer/src-tauri/target/release/bundle/macos/winvm.app
+if [ ! -d "$app" ]; then
+  printf '%s\n' 'No local app bundle. Run mise run build first.' >&2
+  exit 1
+fi
+open -n "$app"
+'''
+
+[tasks.build]
+alias = "app:build"
+description = "Build the native app, replacing the previous local bundle; no launch or install"
+run = "mise -C apps/viewer exec -- pnpm run app"
+
+[tasks.test]
+description = "Run workspace tests without a Windows VM"
+run = "pnpm run test"
+
+[tasks.check]
+description = "Run CI typechecks and tests; no automatic source fixes"
+run = "pnpm run check"
+
+[tasks.doctor]
+description = "Diagnose host prerequisites using this checkout's source CLI"
+run = "pnpm run winvm doctor"
+
+[tasks.typecheck]
+description = "Typecheck workspaces and validate viewer design tokens"
+run = "pnpm run typecheck"
+
+[tasks."check:force"]
+description = "Run the full quality gate without Turbo cache, including root script tests"
+run = ["pnpm exec turbo run typecheck test --force", "bun test scripts"]
+
+[tasks."ui:build"]
+description = "Bundle only the viewer UI; does not update an existing native app"
+run = "pnpm --filter @winvm/viewer run build:ui"
+
+[tasks."ui:watch"]
+description = "Watch and rebuild viewer UI files; does not launch the app"
+run = "pnpm --filter @winvm/viewer run dev:ui"
+
+[tasks."tokens:generate"]
+description = "Regenerate viewer CSS tokens (writes generated source)"
+run = "pnpm --filter @winvm/viewer run tokens"

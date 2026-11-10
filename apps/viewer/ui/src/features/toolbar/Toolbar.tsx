@@ -1,6 +1,7 @@
 import { Icon, type IconName } from "../../components/Icon"
 import { t } from "../../i18n"
 import { type Controls, isFrozen, isLivePhase, type Phase } from "../../model"
+import type { InputRule } from "../screen/input"
 import { MachinePicker, type MachinePickerProps } from "../machines/MachinePicker"
 
 export type PanelId = "files" | "share"
@@ -27,6 +28,10 @@ interface ToolbarProps {
   readonly open: PanelId | null
   readonly detailsOpen: boolean
   readonly keyboardCaptured: boolean
+  /** Who has the pointer and keys over the screen (screen/input.ts). */
+  readonly input: InputRule
+  /** An i18n key: the keyboard capture was just released because the guest takes no input; null otherwise. */
+  readonly keyboardReleased: string | null
   onStart(): void
   onShutDown(): void
   onRestart(): void
@@ -53,16 +58,18 @@ interface ToolButtonProps {
   readonly enabled: boolean
   readonly pressed?: boolean
   readonly expanded?: boolean
+  /** The tooltip when it differs from the label (a disabled button says why). */
+  readonly title?: string
   onClick(button: HTMLElement): void
 }
 
-function ToolButton({ icon, label, enabled, pressed, expanded, onClick }: ToolButtonProps): JSX.Element {
+function ToolButton({ icon, label, enabled, pressed, expanded, title, onClick }: ToolButtonProps): JSX.Element {
   return (
     <button
       type="button"
       className="btn btn--ghost btn--icon"
       aria-label={label}
-      title={label}
+      title={title ?? label}
       aria-pressed={pressed}
       aria-expanded={expanded}
       disabled={!enabled}
@@ -223,11 +230,20 @@ export function Toolbar(p: ToolbarProps): JSX.Element {
         <ToolButton
           icon="keyboard"
           label={t(p.keyboardCaptured ? "input.release" : "input.capture")}
-          enabled={c.screen && !isFrozen(p.phase)}
+          enabled={c.screen && p.input.capture === "allowed"}
+          title={p.input.why !== null && c.screen ? t(p.input.why) : undefined}
           pressed={p.keyboardCaptured}
           onClick={p.onKeyboardCapture}
         />
-        {p.keyboardCaptured && <span className="toolbar__capture-status">{t("input.captured")}</span>}
+        {p.keyboardCaptured ? (
+          <span className="toolbar__capture-status">{t("input.captured")}</span>
+        ) : (
+          p.keyboardReleased !== null && (
+            <span className="toolbar__capture-status toolbar__capture-status--released" role="status" title={t(p.keyboardReleased)}>
+              {t(p.keyboardReleased)}
+            </span>
+          )
+        )}
         <ToolButton
           icon="fit"
           label={t("action.actualSize")}

@@ -20,8 +20,9 @@ import { connect } from "node:net"
 import { resolve } from "node:path"
 
 import { effectiveConfig } from "./config"
-import { describeDisplay, readDisplay, runningDisplay } from "./display"
+import { describeDisplay, displayFromCommandLine, readDisplay } from "./display"
 import { frozenFrom, markedAsleep, savingRunning } from "./frozen"
+import { readHardware } from "./hardware"
 import { qmpCommand } from "./monitor"
 import { home, instanceDir, listInstances, pathsFor, readImageMeta, readMeta } from "./paths"
 import type { Paths } from "./paths"
@@ -206,33 +207,33 @@ export function parseHardware(argv: readonly string[]): { cpus: number | null; m
   return { cpus, memoryMiB }
 }
 
-// -ww: never cut to the terminal's width, or the arguments read below could be cut off.
-const psField = (pid: number, field: string): string =>
-  (spawnSync("ps", ["-ww", "-o", `${field}=`, "-p", String(pid)], { encoding: "utf8" }).stdout ?? "").trim()
-
 /**
- * Processors, memory and display. A running guest reports what its QEMU was
- * actually launched with, off its own command line. For the display that can
- * differ from display.json (a restored save brings its own), so a process whose
- * display cannot be read is reported unknown, never as the preference. A
- * stopped one reports what its next start would use.
+ * Uptime, processors, memory and display. A running guest reports what its
+ * QEMU was actually launched with, off its own command line, in one process
+ * query rather than two on every UI poll. For the display that can differ from
+ * display.json (a restored save brings its own), so a process whose display
+ * cannot be read is reported unknown, never as the preference. A stopped one
+ * reports what its next start would use.
  */
-function hardwareFor(name: string, p: Paths, pid: number | null): Pick<InstanceStatus, "cpus" | "memoryMiB" | "screen"> {
+function hostProcess(p: Paths, pid: number | null): Pick<InstanceStatus, "uptimeSeconds" | "cpus" | "memoryMiB" | "screen"> {
   if (pid !== null) {
-    const cmd = psField(pid, "command")
-    if (cmd !== "") {
-      const live = runningDisplay(pid)
-      return { ...parseHardware(cmd.split(/\s+/)), screen: live === null ? null : describeDisplay(live) }
+    // -ww: never cut to the terminal's width, or the arguments read below could be cut off.
+    const r = spawnSync("ps", ["-ww", "-o", "etime=,command=", "-p", String(pid)], { encoding: "utf8" })
+    const fields = /^\s*(\S+)\s+(.+?)\s*$/.exec(r.stdout ?? "")
+    if (r.status === 0 && fields !== null) {
+      const command = fields[2] ?? ""
+      const live = displayFromCommandLine(command)
+      return {
+        uptimeSeconds: parseEtime(fields[1] ?? ""),
+        ...parseHardware(command.split(/\s+/)),
+        screen: live === null ? null : describeDisplay(live),
+      }
     }
   }
-  const screen = describeDisplay(readDisplay(p))
-  const meta = readMeta(name)
-  if (meta === null) return { cpus: null, memoryMiB: null, screen }
-  try {
-    return { ...parseHardware(qemu.qemuArgs(name, p, meta, { installMedia: false, ephemeral: false, virtioBoot: false })), screen }
-  } catch {
-    return { cpus: null, memoryMiB: null, screen }
-  }
+  // A stopped machine needs only its settings. Constructing qemuArgs here used
+  // to discover firmware and spawn QEMU capability probes just to read -smp/-m.
+  const hw = readHardware(p)
+  return { uptimeSeconds: null, cpus: hw.cpus, memoryMiB: hw.memoryMiB, screen: describeDisplay(readDisplay(p)) }
 }
 
 function allocatedBytes(path: string): number | null {
@@ -418,8 +419,7 @@ export async function gather(name: string, deep = true): Promise<InstanceStatus>
     image: meta.image,
     snapshotsCapable: readImageMeta(meta.image)?.virtioBoot ?? null,
     pid,
-    uptimeSeconds: pid === null ? null : parseEtime(psField(pid, "etime")),
-    ...hardwareFor(name, p, pid),
+    ...hostProcess(p, pid),
     display: meta.vnc,
     vncPort: vncPort(meta.vnc),
     websocketPort: websocketPort(meta.vnc),

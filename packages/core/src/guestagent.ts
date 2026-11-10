@@ -53,7 +53,7 @@ import { randomBytes, timingSafeEqual } from "node:crypto"
 import type { Server, ServerWebSocket, Socket, TCPSocketListener, WebSocketHandler } from "bun"
 
 /** Bumped whenever the protocol or behaviour changes; the host reinstalls on mismatch. */
-export const AGENT_VERSION = 11
+export const AGENT_VERSION = 12
 /** The port the agent listens on INSIDE the guest. The host side is per instance. */
 export const GUEST_PORT = 7801
 export const WINDOWS_DIR = "C:\\ProgramData\\winvm\\agent"
@@ -1972,21 +1972,117 @@ function flag(argv: readonly string[], name: string): string | undefined {
   return i >= 0 ? argv[i + 1] : undefined
 }
 
+/** What `startAgent` failing (the port, usually) exits with: the supervisor's cue to look, not to retry blindly. */
+const EXIT_COULD_NOT_START = 2
+/** How long a supervisor keeps retrying a port that is held but answers nothing, before it gives up. */
+const STALE_LIMIT_MS = 10 * 60_000
+const BACKOFF_MAX_MS = 30_000
+
+function appendLog(file: string | undefined, line: string): void {
+  if (file === undefined) return
+  try {
+    appendFileSync(file, `${new Date().toISOString()} ${line}\n`)
+  } catch {
+    // logging is best effort
+  }
+}
+
+/**
+ * Is one of our agents serving `port`? Asked of 127.0.0.1 only, and the token
+ * goes nowhere else. A 200 from /health is an agent; so is its 401/403 (an
+ * agent baked in with no token yet, or another install's token: still an agent,
+ * and still the one holding the port). A listener that is silent, or another
+ * web server, is not.
+ */
+export async function agentServes(port: number, token: string | null, timeoutMs = 2000): Promise<boolean> {
+  try {
+    const r = await fetch(`http://127.0.0.1:${String(port)}/health`, {
+      headers: token === null ? {} : { authorization: `Bearer ${token}` },
+      signal: AbortSignal.timeout(timeoutMs),
+    })
+    const body = (await r.json()) as { readonly ok?: unknown; readonly error?: unknown }
+    if (r.status === 200) return body.ok === true && typeof (body as { version?: unknown }).version === "number"
+    return (r.status === 401 && body.error === "unauthorized") || (r.status === 403 && body.error === "forbidden")
+  } catch {
+    return false
+  }
+}
+
+export interface SuperviseHooks {
+  /** Run one agent to its end; its exit code. */
+  run(): Promise<number>
+  /** Does another agent already serve the port? */
+  serves(): Promise<boolean>
+  sleep(ms: number): Promise<void>
+  now(): number
+  log(line: string): void
+}
+
+/**
+ * The supervisor's loop; returns the exit code for the process.
+ *
+ *   - clean exit (/exit): stop.
+ *   - a crash (any other code): start again, backoff 1 s doubling to 30 s,
+ *     back to 1 s after a child that lived a minute.
+ *   - "could not start" (the port is taken): do not retry blindly. A supervisor
+ *     is single-instance per port, and the one whose agent binds wins; if the
+ *     port answers as an agent, this is the loser (a logon's Run key racing an
+ *     install's own start): say so once and exit 0. If it is held but silent (a
+ *     stale listener), retry with the same backoff for `staleLimitMs`, then
+ *     say so once and give up.
+ */
+export async function superviseLoop(h: SuperviseHooks, port: number, o: { readonly staleLimitMs?: number } = {}): Promise<number> {
+  const staleLimit = o.staleLimitMs ?? STALE_LIMIT_MS
+  let backoff = 1000
+  let staleSince: number | null = null
+  for (;;) {
+    const t0 = h.now()
+    const code = await h.run()
+    if (code === 0) return 0
+    if (code === EXIT_COULD_NOT_START) {
+      // The winner has bound the port but may still be wiring up: ask a few times.
+      for (let i = 0; i < 3; i++) {
+        if (await h.serves()) {
+          h.log(`another agent already serves port ${String(port)}; exiting`)
+          return 0
+        }
+        if (i < 2) await h.sleep(500)
+      }
+      staleSince ??= t0
+      if (h.now() - staleSince >= staleLimit) {
+        h.log(`port ${String(port)} is held but nothing answers; giving up (reinstall the agent, or end the process holding it)`)
+        return 1
+      }
+    } else {
+      staleSince = null
+    }
+    backoff = h.now() - t0 > 60_000 ? 1000 : Math.min(backoff * 2, BACKOFF_MAX_MS)
+    await h.sleep(backoff)
+  }
+}
+
 /**
  * `--supervise`: run the agent as a child and start it again if it dies (not
  * after a clean exit, which is what /exit asks for). Holds no socket itself.
  * Killing the supervisor takes the agent with it (libuv's kill-on-close job).
+ * See `superviseLoop` for the single-instance rule.
  */
 async function supervise(argv: readonly string[]): Promise<never> {
-  let backoff = 1000
-  for (;;) {
-    const t0 = Date.now()
-    const p = Bun.spawn([process.execPath, import.meta.path, ...argv], { stdio: ["ignore", "inherit", "inherit"] })
-    const code = await p.exited
-    if (code === 0) process.exit(0)
-    backoff = Date.now() - t0 > 60_000 ? 1000 : Math.min(backoff * 2, 30_000)
-    await Bun.sleep(backoff)
-  }
+  const port = Number(flag(argv, "port") ?? GUEST_PORT)
+  const logFile = flag(argv, "log")
+  const readToken = tokenReader(flag(argv, "token-file") ?? `${WINDOWS_DIR}\\token`)
+  process.exit(
+    await superviseLoop(
+      {
+        run: async () => await Bun.spawn([process.execPath, import.meta.path, ...argv], { stdio: ["ignore", "inherit", "inherit"] }).exited,
+        serves: async () => await agentServes(port, readToken()),
+        sleep: async (ms) => await Bun.sleep(ms),
+        now: () => Date.now(),
+        log: (line) => appendLog(logFile, line),
+      },
+      port,
+    ),
+  )
 }
 
 if (import.meta.main) {
@@ -2012,7 +2108,7 @@ if (import.meta.main) {
     } catch (error) {
       // Usually the port: something still holds it. Say so where install looks.
       if (logFile !== undefined) appendFileSync(logFile, `${new Date().toISOString()} could not start: ${String(error)}\n`)
-      process.exit(2)
+      process.exit(EXIT_COULD_NOT_START)
     }
     if (argv.includes("--close-sysprep")) closeSysprep()
   }

@@ -219,6 +219,74 @@ export async function send(q: QmpSend, events: readonly Event[]): Promise<void> 
   await q("input-send-event", { events: [...events] })
 }
 
+/**
+ * The keys and buttons a session has pressed and not yet released.
+ *
+ * WHY. QEMU's keyboard and tablet are shared by every input source (the app's
+ * VNC session, `winvm key`, an agent over MCP), and a key or button that went
+ * down through QMP can only come up through QMP: the VNC client's own "all keys
+ * up" does not know about it. So a session that dies between a press and its
+ * release (the monitor stopped answering for 10 s, the connection dropped, a
+ * later step threw) would leave Ctrl, Shift, Windows or the left button held in
+ * the guest, and from then on typing turns into shortcuts, or the pointer
+ * stops clicking: Windows still draws, and the guest looks unresponsive.
+ */
+export class HeldInput {
+  private readonly down = new Map<string, Event>()
+
+  /** Note what `events` do to what is held. */
+  track(events: readonly Event[]): void {
+    for (const ev of events) {
+      if (ev["type"] !== "key" && ev["type"] !== "btn") continue
+      const data = ev["data"] as { down?: unknown; key?: { data?: unknown }; button?: unknown } | undefined
+      const id = ev["type"] === "key" ? `key:${String(data?.key?.data)}` : `btn:${String(data?.button)}`
+      if (data?.down === true) this.down.set(id, ev)
+      else this.down.delete(id)
+    }
+  }
+
+  /** The events that let go of everything still held, last pressed first. */
+  releases(): Event[] {
+    return [...this.down.values()].reverse().map((ev) => ({ ...ev, data: { ...(ev["data"] as object), down: false } }))
+  }
+}
+
+/**
+ * `withQmp` for sending input: whatever the session left pressed when it ended
+ * early (an error, a timeout) is released on a fresh connection before the
+ * error goes on. A session that finishes normally has released its own.
+ */
+export async function withInput<T>(sockPath: string, fn: (send: QmpSend) => Promise<T>, timeoutMs = 3000): Promise<T> {
+  const held = new HeldInput()
+  try {
+    return await withQmp(
+      sockPath,
+      async (q) =>
+        await fn(async (execute, args) => {
+          if (execute !== "input-send-event" || !Array.isArray(args?.["events"])) return await q(execute, args)
+          const events = args["events"] as Event[]
+          // A press is noted before it is sent (one that timed out may still have
+          // landed); a release only once it has been, so a failed one is retried.
+          held.track(events.filter((ev) => (ev["data"] as { down?: unknown } | undefined)?.down === true))
+          const reply = await q(execute, args)
+          held.track(events.filter((ev) => (ev["data"] as { down?: unknown } | undefined)?.down !== true))
+          return reply
+        }),
+      timeoutMs,
+    )
+  } catch (error) {
+    const letGo = held.releases()
+    if (letGo.length > 0) {
+      try {
+        await withQmp(sockPath, async (q) => await send(q, letGo), 3000)
+      } catch {
+        // The monitor is gone or stuck: nothing more can be done from here.
+      }
+    }
+    throw error
+  }
+}
+
 /** The framebuffer's current size, via a throwaway raw screendump. */
 export async function screenSize(q: QmpSend): Promise<{ width: number; height: number }> {
   const tmp = resolve(tmpdir(), `winvm-size-${String(process.pid)}-${String(Date.now())}.ppm`)
@@ -241,7 +309,7 @@ export async function screenshot(p: Paths, file: string): Promise<{ width: numbe
 }
 
 export async function typeText(p: Paths, strokes: readonly Stroke[]): Promise<void> {
-  await withQmp(p.qmp, async (q) => {
+  await withInput(p.qmp, async (q) => {
     for (const s of strokes) {
       await send(q, s.shift ? [keyEv("shift", true), keyEv(s.qcode, true)] : [keyEv(s.qcode, true)])
       await sleep(GAP_MS)
@@ -252,7 +320,7 @@ export async function typeText(p: Paths, strokes: readonly Stroke[]): Promise<vo
 }
 
 export async function pressCombo(p: Paths, qcodes: readonly string[]): Promise<void> {
-  await withQmp(p.qmp, async (q) => {
+  await withInput(p.qmp, async (q) => {
     for (const k of qcodes) {
       await send(q, [keyEv(k, true)])
       await sleep(GAP_MS)
@@ -269,7 +337,7 @@ export type Button = "left" | "right" | "middle"
 
 /** Move to a pixel, and optionally click there (`clicks` 2 = double click). */
 export async function pointer(p: Paths, x: number, y: number, button: Button | null, clicks = 1): Promise<{ width: number; height: number }> {
-  return await withQmp(p.qmp, async (q) => {
+  return await withInput(p.qmp, async (q) => {
     const size = await screenSize(q)
     await send(q, [absEv("x", scaleAxis(x, size.width)), absEv("y", scaleAxis(y, size.height))])
     if (button !== null) {
@@ -288,7 +356,7 @@ export async function pointer(p: Paths, x: number, y: number, button: Button | n
 /** Positive scrolls down (content moves up), negative scrolls up — one wheel notch each. */
 export async function scroll(p: Paths, notches: number): Promise<void> {
   const button = notches > 0 ? "wheel-down" : "wheel-up"
-  await withQmp(p.qmp, async (q) => {
+  await withInput(p.qmp, async (q) => {
     for (let i = 0; i < Math.abs(notches); i += 1) {
       await send(q, [btnEv(button, true)])
       await sleep(GAP_MS)

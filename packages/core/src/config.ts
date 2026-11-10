@@ -34,6 +34,15 @@ export interface InstanceConfig {
    * minute does.
    */
   readonly "watch.idleCpuPercent": number
+  /**
+   * Keep the Mac from going to sleep on its own while this machine runs
+   * (`caffeinate -i` for QEMU's lifetime; the display may still turn off). OFF by
+   * default: it costs battery on a laptop. A Mac that idles to sleep freezes QEMU
+   * and the guest with it for as long as it sleeps, and nothing in winvm holds it
+   * awake, so a long job in the guest stops while you are away from the keyboard
+   * and the guest's clock is behind until it is resynced on wake.
+   */
+  readonly "power.keepAwake": boolean
   /** What the Mac app calls this instance (its window, Terminal and Files); "" is the instance's name. */
   readonly title: string
 }
@@ -48,6 +57,7 @@ export const DEFAULTS: InstanceConfig = {
   "stow.idleMinutes": 60,
   "watch.enabled": true,
   "watch.idleCpuPercent": 10,
+  "power.keepAwake": false,
   title: "",
 }
 
@@ -55,15 +65,18 @@ export const DEFAULTS: InstanceConfig = {
 export const TITLE_MAX = 80
 
 /**
- * A title as stored: trimmed, at most TITLE_MAX characters, and no control
- * characters (it is shown on one line, in a window title and a menu). Throws
+ * A title as stored: trimmed, at most TITLE_MAX characters, and no control or
+ * invisible characters (line breaks, zero-width spaces, and the marks that flip
+ * the direction of text: it is shown on one line, in a window title and a menu,
+ * where they would hide or reorder what is there). Joiners stay: emoji and
+ * several scripts need them. Throws
  * with a message fit for the user.
  */
 export function checkTitle(raw: string): string {
   const title = raw.trim()
   if ([...title].length > TITLE_MAX) throw new Error(`title is at most ${String(TITLE_MAX)} characters`)
   // eslint-disable-next-line no-control-regex
-  if (/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/.test(title)) throw new Error("title is one line of text, without control characters")
+  if (/[\u0000-\u001f\u007f-\u009f\u200b\u200e\u200f\u2028-\u202e\u2060\u2066-\u2069\ufeff]/.test(title)) throw new Error("title is one line of text, without control characters")
   return title
 }
 

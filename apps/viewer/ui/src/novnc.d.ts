@@ -8,6 +8,8 @@ declare module "novnc/core/rfb.js" {
     scaleViewport: boolean
     clipViewport: boolean
     resizeSession: boolean
+    /** JPEG quality QEMU may use for Tight rectangles, 0 (smallest) to 9 (best); noVNC's default is 6. */
+    qualityLevel: number
     background: string
     focusOnClick: boolean
     /** No keys or pointer sent to the server (the screen still updates). */
@@ -41,11 +43,25 @@ declare module "novnc/core/rfb.js" {
     readonly _keyboard: {
       _allKeysUp(): void
     }
+    /** Private in noVNC: the buttons it believes are down, where the pointer last was, and a queued drag; read to let go of them (input.ts). */
+    readonly _mouseButtonMask: number
+    _mouseMoveTimer: ReturnType<typeof setTimeout> | null
+    _handleMouseButton(x: number, y: number, buttons: number): void
     static readonly messages: {
       setDesktopSize(sock: unknown, width: number, height: number, id: number, flags: number): void
     }
   }
 
+}
+
+declare module "novnc/core/util/element.js" {
+  /** noVNC's normal CSS coordinate conversion, including clipping guest drags to the canvas. */
+  export function clientToElement(x: number, y: number, element: HTMLElement): { x: number; y: number }
+}
+
+declare module "novnc/core/util/events.js" {
+  /** Removes noVNC's document-wide drag proxy; not OS relative pointer capture. */
+  export function releaseCapture(): void
 }
 
 declare module "novnc/core/input/util.js" {

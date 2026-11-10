@@ -27,11 +27,35 @@ curl -N --unix-socket ~/.local/state/winvm/instances/NAME/control.sock http://lo
 The same events are appended to `events.jsonl` in the instance folder.
 `winvm status` shows the service. `winvm kill` and `winvm destroy` stop it.
 
+### Status polling
+
+A stopped or stowed machine's status reads its CPU and memory settings directly
+from `hardware.json` (or the legacy defaults). It does not construct a QEMU
+command line, discover firmware, or run capability probes. A running machine's
+uptime and actual CPU/memory allocation come from one `ps` invocation rather
+than two; changing the next-boot settings does not change those live values.
+
+`mise exec -- bun scripts/bench-status.ts` measures stopped-status gathering in
+fresh Bun processes against a temporary instance, without starting a guest.
+It reports gathering time separately from process startup and module loading.
+On the development Mac, nine samples before/after this change measured median
+gathering time of **52.6 ms → 0.48 ms**. This is host-side status overhead, not
+a measurement of guest throughput or input latency.
+
 ## The idle watcher
 
 `start` also starts an idle watcher, unless you pass `--no-watch`. `load` and
 `rewind` into a stopped instance start one too. It logs to
 `instances/<name>/watch.log` and exits when QEMU does.
+
+Its run-state and VNC checks start together and use the short-deadline QMP
+client: a five-second timeout applies while waiting for broker admission and
+to each negotiation/command phase. They do not use the boot client's long
+connection retries or its extra 20-second capability wait. A failed or
+incomplete sample is unknown, not idle: no autosave, stow or drift check is
+scheduled until the monitor is available again, and the quiet period restarts.
+The failure alone does not re-arm an autosave already taken; known command or
+viewer activity still does.
 
 The guest counts as idle when QEMU's CPU use stays below a threshold, no
 `winvm` command is using the guest, and no VNC client is connected. When it
@@ -39,7 +63,11 @@ has been idle long enough, the watcher:
 
 - **autosaves**: one save named `auto-<time>`, then another only after the
   guest has been used and gone idle again. It keeps the newest three
-  (`autosave.keep`) and never touches other saves.
+  (`autosave.keep`) and never touches other saves. A save stops the guest
+  for about 1.5 s (`events.jsonl` shows it as paused, then running), so the
+  watcher only saves when no viewer has been connected for the whole idle
+  period and the Mac's keyboard and mouse have been untouched for 20 s;
+  otherwise it waits for a quiet moment.
 - **stows**: after a longer idle time, runs `winvm stow`, which saves the
   guest and shuts QEMU down. `winvm start` brings it back.
 - **fixes the clock**: after the Mac sleeps, or when the guest's clock has
@@ -55,6 +83,17 @@ winvm watch  -i default --status               # or --stop
 
 Settings are stored in `instances/<name>/config.json`. A running watcher picks
 up changes within a minute.
+
+**A Mac that sleeps freezes the guest.** QEMU stops with the rest of the Mac,
+and Windows' clock is behind by the length of the sleep until the watcher
+resyncs it on wake. Nothing in winvm holds the Mac awake, so a long job in the
+guest stops while you are away from the keyboard. `power.keepAwake=true` makes
+the watcher run `caffeinate -i` for as long as QEMU runs (the display may still
+turn off; it is off by default because it costs battery on a laptop):
+
+```sh
+winvm config -i default power.keepAwake=true
+```
 
 The same file holds the instance's `title`, which the Mac app shows for it (its
 window, Terminal and Files) in place of the instance's name. It is one line of

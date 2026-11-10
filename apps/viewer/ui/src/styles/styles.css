@@ -70,7 +70,7 @@ a:hover {
 }
 
 html[data-os="macos"] .toolbar {
-  padding-inline-start: calc(var(--space-8) + var(--space-6));
+  padding-inline-start: var(--lights-clearance);
 }
 
 .toolbar__lead {
@@ -239,6 +239,54 @@ html[data-os="macos"] .toolbar {
   color: inherit;
 }
 
+/* Icons in the leading column, the check's own column, so a command lines up
+   under the machines' names. */
+.menu-item__leading svg {
+  width: var(--size-sm);
+  height: var(--size-sm);
+}
+
+/* A machine's state: a dot, then its word. The words sit in a column of one
+   width, so the dots line up whatever the word. The dot's shape says it too:
+   filled (running), half (paused, asleep), ring with a centre (saved), empty
+   ring (stopped, not set up). */
+.state {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: calc(var(--size-2xl) * 2.5);
+}
+
+.state__dot {
+  --dot: var(--text-muted);
+  flex: none;
+  box-sizing: border-box;
+  width: calc(var(--size-xs) * 0.75);
+  height: calc(var(--size-xs) * 0.75);
+  border: var(--border-width-thick) solid var(--dot);
+  border-radius: var(--radius-pill);
+}
+
+.state__dot--on {
+  --dot: var(--status-success);
+  background: var(--dot);
+}
+
+.state__dot--idle {
+  --dot: var(--status-warning);
+  background: linear-gradient(90deg, var(--dot) 50%, transparent 50%);
+}
+
+.state__dot--saved {
+  --dot: var(--status-info);
+  background: radial-gradient(circle, var(--dot) 28%, transparent 32%);
+}
+
+/* On the highlighted row everything is the row's own colour, as the words are. */
+.menu-item[data-highlighted] .state__dot {
+  --dot: currentColor;
+}
+
 /* A name edited in place (components/InlineRename): the title, a tab. */
 .rename {
   font-family: var(--font-body);
@@ -275,6 +323,12 @@ html[data-os="macos"] .toolbar {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+/* A capture released because the guest takes no input: a note, not a state. */
+.toolbar__capture-status--released {
+  color: var(--text-muted);
+  font-weight: var(--weight-base);
 }
 
 /* ---- Stage: the display on its backdrop; the panel over it ---- */
@@ -335,7 +389,8 @@ html[data-os="macos"] .toolbar {
 
 /* A resizable (virtio-gpu) guest: its screen is the window's size, so the
    frame fills the area edge to edge and there is no shape to keep. */
-.display--live {
+.display--live,
+.display--fill {
   width: 100cqw;
   height: 100cqh;
   aspect-ratio: auto;
@@ -371,6 +426,24 @@ html[data-os="macos"] .toolbar {
 .screen__canvas {
   position: absolute;
   inset: 0;
+}
+
+/* The guest takes no input (paused, asleep, starting, busy; Screen.tsx and
+   input.ts): the frame is a picture. The Mac's arrow shows over it, whatever
+   cursor noVNC set on the canvas (the guest's own, or none), and the canvas
+   takes no pointer events, so nothing is sent, nothing is swallowed and a
+   click doesn't move focus. */
+.screen--inert,
+.screen--inert canvas {
+  cursor: default !important;
+}
+
+.screen--inert .screen__canvas {
+  pointer-events: none;
+}
+
+.screen:focus {
+  outline: none;
 }
 
 /* One guest pixel per device pixel: Screen.tsx sizes this box to the
@@ -469,12 +542,18 @@ html[data-os="macos"] .toolbar {
   overflow-y: auto;
 }
 
-/* Centered while it fits, scrolling from the top when it doesn't. */
+/* THE COLUMN: the heading, note, facts, Start and list all stand in this one
+   column, as wide as the window allows up to --overview-measure and centered in
+   it (blocks inside start at its left edge). It is centered up and down too,
+   when the window is taller than it needs; when the window is shorter it
+   scrolls from the top. docs/design/layout.md, "The overview". */
 .overview__content {
   display: flex;
   flex-direction: column;
   align-items: flex-start;
   gap: var(--space-5);
+  width: min(100%, var(--overview-measure));
+  margin-inline: auto;
   margin-block: auto;
 }
 
@@ -490,6 +569,78 @@ html[data-os="macos"] .toolbar {
   line-height: var(--leading-2xl);
   letter-spacing: var(--tracking-2xl);
   color: var(--text-strong);
+}
+
+/* The heading and, only when there is one, a line saying why the name was not kept. */
+.overview__heading {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.overview__problem {
+  margin: 0;
+  font-size: var(--text-sm);
+  line-height: var(--leading-lg);
+  color: var(--status-error);
+}
+
+/* The machine's name inside a heading (features/machines/MachineHeading): text
+   at rest, a field in place when edited. One box for all three (plain, button,
+   field): same face, same size, same 1px border (clear until it is a field), same
+   padding, so turning into a field moves nothing. At rest only the text cursor
+   and a soft background on hover say it can be edited, as a tab's name does in
+   VS Code; the focus ring says it for the keyboard. */
+.name-field {
+  display: inline-block;
+  box-sizing: content-box;
+  padding: 0 var(--space-1);
+  border: var(--border-width-hairline) solid transparent;
+  border-radius: var(--radius-chip);
+  background: transparent;
+  color: inherit;
+  font-family: var(--font-mono);
+  font-size: 0.8em;
+  font-weight: var(--weight-md);
+  line-height: inherit;
+  letter-spacing: 0;
+  vertical-align: baseline;
+}
+
+.name-field--button {
+  cursor: text;
+}
+
+.name-field--button:hover {
+  /* Over the display's own backdrop, so a step of the surface tokens would not show in light. */
+  background: color-mix(in srgb, var(--text-strong) 10%, transparent);
+}
+
+.name-field--button:focus-visible {
+  outline: var(--focus-ring);
+  outline-offset: var(--focus-ring-offset);
+}
+
+.name-field--editing {
+  background: var(--surface-base);
+  border-color: var(--border-strong);
+  outline: var(--focus-ring);
+  outline-offset: 0;
+  max-width: min(100%, 48ch);
+}
+
+.name-field--editing[aria-invalid="true"] {
+  border-color: var(--status-error);
+}
+
+.name-field--editing[readonly] {
+  color: var(--text-muted);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .name-field--button {
+    transition: background-color 150ms ease-out;
+  }
 }
 
 .overview__note {
@@ -525,6 +676,181 @@ html[data-os="macos"] .toolbar {
   font-weight: var(--weight-md);
   font-variant-numeric: tabular-nums;
   color: var(--text-strong);
+}
+
+/* ---- Overview: a suspended machine's note and backdrop ---- */
+
+/* The overview that has a note holds still itself; only the column inside it
+   scrolls (when the window is too short for the controls), so the backdrop
+   stays put behind it. */
+.overview--notes {
+  padding: 0;
+  overflow: hidden;
+}
+
+.overview--notes .overview__content {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+  max-height: var(--overview-height);
+  align-self: stretch;
+  width: auto;
+  margin-inline: 0;
+  margin-block: auto;
+  /* The scroll box spans the window (so its scrollbar is at the window's edge);
+     the padding makes the column inside it. Percentages are of that box's width. */
+  padding-block: var(--space-7) var(--space-5);
+  padding-inline: max(var(--space-7), calc((100% - var(--overview-measure)) / 2));
+  overflow-y: auto;
+}
+
+/* Everything above the controls: the heading and the note. It takes whatever
+   height the controls leave, so the controls never move, and it is aligned to
+   its bottom, so the note grows upward and carries the heading with it. The
+   top of the column (its padding) is where the heading stops. */
+.overview__upper {
+  --notes-lines: 3;
+  --notes-min: calc(var(--text-sm) * var(--leading-lg) * var(--notes-lines) + var(--space-3) * 2);
+  flex: 1 1 0;
+  min-height: calc(var(--text-2xl) * var(--leading-2xl) + var(--space-4) + var(--notes-min));
+  align-self: stretch;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  gap: var(--space-4);
+}
+
+/* A taller display gives the note more room at rest, so the extra height is a
+   place to write rather than empty air above the heading. */
+@container ((min-height: 28rem) and (max-height: 46rem)) or (min-height: 52rem) {
+  .overview__upper {
+    --notes-lines: 5;
+  }
+}
+
+@container (min-height: 62rem) {
+  .overview__upper {
+    --notes-lines: 7;
+  }
+}
+
+/* The heading never shrinks; the note does, and then scrolls. */
+.overview__upper > .overview__heading {
+  flex: none;
+}
+
+/* A text area as tall as its text, with no measuring: the wrapper draws the
+   same text invisibly (data-value) in the grid cell the text area fills, so
+   the cell, and the wrapper, are as tall as the text. When the column makes
+   the wrapper shorter, the cell is shorter, and the text area scrolls. */
+.notes {
+  flex: 0 1 auto;
+  min-height: var(--notes-min);
+  display: grid;
+  grid-template: minmax(0, 1fr) / minmax(0, 1fr);
+  background: var(--surface-control);
+  border: var(--border-width-hairline) solid var(--border-subtle);
+  border-radius: var(--radius-card);
+  transition: border-color 150ms ease-out;
+}
+
+.notes:hover {
+  border-color: var(--border-strong);
+}
+
+.notes:has(.notes__field:focus-visible) {
+  outline: var(--focus-ring);
+  outline-offset: var(--focus-ring-offset);
+  border-color: var(--border-strong);
+}
+
+.notes::after,
+.notes__field {
+  grid-area: 1 / 1;
+  min-width: 0;
+  min-height: 0;
+  margin: 0;
+  padding: var(--space-3);
+  font-family: var(--font-body);
+  font-size: var(--text-sm);
+  line-height: var(--leading-lg);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.notes::after {
+  content: attr(data-value) " ";
+  visibility: hidden;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.notes__field {
+  appearance: none;
+  resize: none;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--text-strong);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.notes__field::placeholder {
+  color: var(--text-muted);
+  opacity: 1;
+}
+
+.notes__failed {
+  flex: none;
+  color: var(--status-error);
+}
+
+/* The backdrop: a picture (or a drawn wallpaper) behind the whole screen, faint,
+   blurred and toned down so it is atmosphere and never a rival to the text.
+   Over it, text is --text-strong, --text-base-color (the labels that are
+   --text-muted elsewhere), --link and --status-error, and each clears 4.5:1
+   against the worst picture there could be, a pure black or white one, at
+   this opacity and tone (tests/overview.test.tsx measures it from these
+   numbers). --text-muted would not, which is why the labels step up. */
+.backdrop {
+  --backdrop-opacity: 0.16;
+  --backdrop-filter: saturate(0.8) contrast(0.85) brightness(0.75);
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.overview--notes .fact dt,
+.overview--notes .abilities__title {
+  color: var(--text-base-color);
+}
+
+/* Bled past the edges, so the blur has picture to draw from at the sides. */
+.backdrop__layers {
+  position: absolute;
+  inset: calc(-1 * var(--space-7));
+  opacity: var(--backdrop-opacity);
+  filter: blur(var(--space-6)) var(--backdrop-filter);
+}
+
+.backdrop__wallpaper,
+.backdrop__picture {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.backdrop__picture {
+  opacity: 0;
+  transition: opacity 400ms ease-out;
+}
+
+.backdrop__picture--ready {
+  opacity: 1;
 }
 
 /* ---- Start progress ---- */
@@ -597,8 +923,6 @@ html[data-os="macos"] .toolbar {
   flex-direction: column;
   gap: var(--space-3);
   margin-block-start: var(--space-4);
-  padding-block-start: var(--space-4);
-  border-block-start: var(--border-width-hairline) solid var(--border-subtle);
   align-self: stretch;
 }
 
@@ -609,38 +933,102 @@ html[data-os="macos"] .toolbar {
   color: var(--text-muted);
 }
 
+/* One outlined list, not a card each: every row opens that topic's help. */
 .abilities__list {
   list-style: none;
   margin: 0;
   padding: 0;
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(min(100%, 18rem), 1fr));
-  gap: var(--space-3) var(--space-5);
+  width: 100%;
+  border: var(--border-width-hairline) solid var(--border-subtle);
+  border-radius: var(--radius-card);
+  overflow: hidden;
 }
 
+.abilities__list li + li {
+  border-block-start: var(--border-width-hairline) solid var(--border-subtle);
+}
+
+/* The icon has a column of its own, as tall as the label's first line, so a
+   label that wraps stays under that line and the glyphs stay in one column. */
 .ability {
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
-  font-size: var(--text-sm);
+  display: grid;
+  grid-template-columns: var(--size-md) minmax(0, 1fr) var(--size-sm);
+  align-items: start;
+  column-gap: var(--space-3);
+  width: 100%;
+  padding: var(--space-3) var(--space-4);
+  border: 0;
+  background: transparent;
   color: var(--text-strong);
+  font-family: var(--font-body);
+  font-size: var(--text-base);
+  line-height: var(--leading-lg);
+  text-align: start;
+  cursor: pointer;
+  transition: background-color 150ms ease-out;
+}
+
+.ability:hover,
+.ability--open {
+  background: var(--surface-control);
+}
+
+.ability:focus-visible {
+  outline: var(--focus-ring);
+  outline-offset: calc(var(--focus-ring-width) * -1);
+}
+
+.ability__icon,
+.ability__more {
+  display: inline-flex;
+  align-items: center;
+  height: calc(var(--text-base) * var(--leading-lg));
 }
 
 .ability__icon {
-  flex: 0 0 auto;
-  display: inline-flex;
   color: var(--link);
 }
 
-.ability__icon svg {
+.ability__more {
+  color: var(--text-muted);
+}
+
+.ability__icon svg,
+.ability__more svg {
   width: var(--size-sm);
   height: var(--size-sm);
 }
 
-/* Only when the display has room for it. */
-@container (max-height: 36rem) {
+.ability__icon svg {
+  width: var(--size-md);
+  height: var(--size-md);
+}
+
+/* Not possible in the machine's state: still a row, and it still opens its help.
+   Only the reason under the label says so. The label and glyph keep the colors
+   of every other row: a muted row beside one bright row reads as that one being
+   selected. */
+.ability__why {
+  display: block;
+  font-size: var(--text-sm);
+  line-height: var(--leading-lg);
+  color: var(--text-muted);
+}
+
+/* Only when the display has room for the whole screen: the column with the list is
+   about 46rem tall at the default type size (heading, a three-line note, facts,
+   Start, five rows, and the column's padding), so a shorter display drops the
+   list rather than scrolling Start's neighbours out of sight. */
+@container (max-height: 46rem) {
   .abilities {
     display: none;
+  }
+
+  /* Without the list the column is about 26rem tall; give the note room to grow
+     above that, and no more, so a display between 30 and 46rem tall does not
+     leave the heading adrift in the middle of a tall column. */
+  .overview--notes .overview__content {
+    max-height: 32rem;
   }
 }
 
@@ -684,6 +1072,208 @@ html[data-os="macos"] .toolbar {
   border: var(--border-width-hairline) solid var(--border-subtle);
   border-radius: var(--radius-card);
   box-shadow: var(--elevation-modal);
+}
+
+/* ---- Help popover (components/HelpPopover.tsx): a picture, a title and a few lines, beside what it explains ---- */
+.help {
+  position: fixed;
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  width: min(32rem, calc(100vw - var(--space-6)));
+  /* Taller than the window allows, the whole panel scrolls: the picture, the text, then the footer, which stays. */
+  overflow-x: hidden;
+  overflow-y: auto;
+  background: var(--surface-card);
+  border: var(--border-width-hairline) solid var(--border-subtle);
+  border-radius: var(--radius-card);
+  box-shadow: var(--elevation-modal);
+  color: var(--text-base-color);
+  animation: help-in 150ms ease-out;
+}
+
+.help:focus {
+  outline: none;
+}
+
+@keyframes help-in {
+  from {
+    opacity: 0;
+  }
+}
+
+.help__media {
+  flex: 0 0 auto;
+  border-block-end: var(--border-width-hairline) solid var(--border-subtle);
+  background: var(--surface-control);
+}
+
+.help__figure {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+}
+
+/* The stage: a picture is a picture of the app, set down on a surface of its own, never run to the popover's edges.
+   A fixed height, so the panel doesn't change size when the topic does. */
+.help__stage {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  block-size: 18rem;
+  padding: var(--space-4);
+  user-select: none;
+  -webkit-user-select: none;
+  pointer-events: none;
+}
+
+.help__stage picture {
+  display: contents;
+}
+
+/* Framed like a window lying on the stage: a hairline, rounded corners and a shadow. Its own edge is what tells it from the popover. */
+.help__image {
+  display: block;
+  max-width: 100%;
+  max-height: 100%;
+  width: auto;
+  height: auto;
+  border: var(--border-width-hairline) solid var(--border-strong);
+  border-radius: var(--radius-card);
+  box-shadow: var(--elevation-modal);
+  -webkit-user-drag: none;
+}
+
+/* Which picture, when a topic has more than one. */
+.help__views {
+  display: flex;
+  gap: var(--space-1);
+  padding: var(--space-1) var(--space-3);
+  border-block-start: var(--border-width-hairline) solid var(--border-subtle);
+  background: var(--surface-card);
+}
+
+.help__view {
+  padding: var(--space-1) var(--space-3);
+  border: 0;
+  border-radius: var(--radius-input);
+  background: transparent;
+  color: var(--text-muted);
+  font-family: var(--font-body);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-md);
+  line-height: var(--leading-lg);
+  cursor: pointer;
+  transition:
+    color 150ms ease-out,
+    background-color 150ms ease-out;
+}
+
+.help__view:hover {
+  color: var(--text-strong);
+}
+
+.help__view--on {
+  background: var(--surface-control);
+  color: var(--text-strong);
+}
+
+.help__view:focus-visible {
+  outline: var(--focus-ring);
+  outline-offset: var(--focus-ring-offset);
+}
+
+.help__body {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  padding: var(--space-5) var(--space-6) var(--space-6);
+}
+
+.help__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.help__title {
+  margin: 0;
+  font-size: var(--text-md);
+  font-weight: var(--weight-lg);
+  line-height: var(--leading-lg);
+  color: var(--text-strong);
+}
+
+.help__lead,
+.help__steps,
+.help__note p {
+  margin: 0;
+  max-width: 65ch;
+  line-height: var(--leading-lg);
+}
+
+.help__lead {
+  font-size: var(--text-base);
+  color: var(--text-strong);
+}
+
+.help__steps {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding-inline-start: var(--space-5);
+  font-size: var(--text-base);
+}
+
+.help__steps li::marker {
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.help__note {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding-block-start: var(--space-4);
+  border-block-start: var(--border-width-hairline) solid var(--border-subtle);
+}
+
+.help__note-title {
+  margin: 0;
+  font-size: var(--text-sm);
+  font-weight: var(--weight-md);
+  color: var(--text-strong);
+}
+
+.help__note p {
+  font-size: var(--text-sm);
+  color: var(--text-muted);
+}
+
+.help__foot {
+  position: sticky;
+  inset-block-end: 0;
+  flex: 0 0 auto;
+  background: var(--surface-card);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-4) var(--space-2) var(--space-6);
+  border-block-start: var(--border-width-hairline) solid var(--border-subtle);
+}
+
+.help__position {
+  font-size: var(--text-sm);
+  font-variant-numeric: tabular-nums;
+  color: var(--text-muted);
+}
+
+.help__nav {
+  display: flex;
+  gap: var(--space-1);
 }
 
 .action {
@@ -1034,7 +1624,8 @@ html[data-os="macos"] .toolbar {
 }
 
 /* The panel's Resources: each a label and its value, then the last minute
-   and a half as a line (CPU, memory) or a hairline bar (disk), and a note. */
+   and a half as a line (CPU, memory) or a bar (disk). CPU's line has a dashed
+   second line (the Mac's), the disk's bar a strip on it (the Mac's changes). */
 .resources {
   display: flex;
   flex-direction: column;
@@ -1060,10 +1651,74 @@ html[data-os="macos"] .toolbar {
   white-space: nowrap;
 }
 
-.resource__note {
+/* A meter with two values to tell apart: ink is the Mac, accent is Windows.
+   Pointing at it or focusing it names each (the legend); at rest, only the
+   headline value shows. Escape hides the legend (data-dismissed). */
+.resource--legend {
+  position: relative;
+  border-radius: var(--radius-input);
+}
+
+.resource--legend:focus-visible {
+  outline: var(--focus-ring);
+  outline-offset: var(--focus-ring-offset);
+}
+
+.resource__legend {
+  position: absolute;
+  inset-inline: 0;
+  inset-block-start: 100%;
+  z-index: 20;
+  display: none;
+  flex-direction: column;
+  gap: var(--space-1);
   margin: var(--space-1) 0 0;
+  padding: var(--space-2) var(--space-3);
+  list-style: none;
   font-size: var(--text-sm);
-  color: var(--text-muted);
+  color: var(--text-strong);
+  background: var(--surface-control);
+  border: var(--border-width-hairline) solid var(--border-strong);
+  border-radius: var(--radius-input);
+  box-shadow: var(--elevation-tooltip);
+}
+
+.resource--legend:is(:hover, :focus-visible):not([data-dismissed]) .resource__legend {
+  display: flex;
+}
+
+.resource__legend-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Each key is the mark itself: the stroke or fill it has in the meter. */
+.resource__key {
+  flex: none;
+  display: block;
+  inline-size: var(--size-sm);
+}
+
+.resource__key--line {
+  border-block-start: var(--border-width-thick) solid var(--accent);
+}
+
+.resource__key--line-other {
+  border-block-start: var(--border-width-hairline) dashed var(--text-strong);
+}
+
+.resource__key--fill {
+  block-size: var(--space-2);
+  background: var(--accent);
+  border-radius: var(--radius-pill);
+}
+
+.resource__key--strip {
+  block-size: var(--border-width-heavy);
+  background: var(--text-strong);
+  border-radius: var(--radius-pill);
 }
 
 .sparkline {
@@ -1085,9 +1740,16 @@ html[data-os="macos"] .toolbar {
   stroke: none;
 }
 
+.sparkline__line--other {
+  stroke: var(--text-strong);
+  stroke-width: var(--border-width-hairline);
+  stroke-dasharray: 3 2;
+}
+
 .resource__bar {
+  position: relative;
   display: block;
-  height: var(--border-width-heavy);
+  height: var(--space-2);
   background: var(--border-subtle);
   border-radius: var(--radius-pill);
   overflow: hidden;
@@ -1097,6 +1759,19 @@ html[data-os="macos"] .toolbar {
   display: block;
   height: 100%;
   background: var(--accent);
+}
+
+/* The machine's changes on the Mac, on the same track and total as the fill:
+   a thinner strip of ink across the middle, readable over the fill and over
+   the bare track, and a different shape, not only a different color. */
+.resource__overlay {
+  position: absolute;
+  inset-block-start: 50%;
+  inset-inline-start: 0;
+  height: var(--border-width-heavy);
+  transform: translateY(-50%);
+  background: var(--text-strong);
+  border-radius: var(--radius-pill);
 }
 
 /* New Machine…: labelled fields, the advanced ones folded away. */
@@ -1499,6 +2174,18 @@ html[data-os="macos"] .toolbar {
     }
   }
 }
+
+/* Settings uses the same modal and existing hardware/network controls. */
+.settings-dialog { max-width: 640px; max-height: 85vh; }
+.settings-dialog__body { display: flex; flex-direction: column; gap: var(--space-4); overflow-y: auto; }
+.settings-dialog__section { display: flex; flex-direction: column; gap: var(--space-3); }
+.settings-dialog__section h3 { margin: 0; font-size: var(--text-sm); color: var(--text-strong); }
+.settings-dialog__section summary { cursor: pointer; font-weight: var(--weight-lg); }
+.settings-dialog__section fieldset { display: flex; flex-direction: column; gap: var(--space-3); margin: 0; padding: 0; border: 0; min-width: 0; }
+.settings-dialog__number { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); }
+.settings-dialog__number .input { width: 7em; }
+.settings-dialog .confirm-dialog__panel { max-height: 85vh; box-sizing: border-box; }
+.settings-dialog .confirm-dialog__actions { flex-shrink: 0; }
 
 /* ---- Busy bar: a command is running ---- */
 .busybar {

@@ -3,6 +3,7 @@ mod checkpoints;
 mod dragout;
 mod liveresize;
 mod usage;
+mod windows;
 
 use serde::{Deserialize, Serialize};
 use std::path::Path;
@@ -25,7 +26,7 @@ struct Output {
 const VERBS: &[&str] = &[
     "status", "info", "doctor", "start", "stop", "reboot", "pause", "resume", "kill", "open", "setup", "exec", "put", "get",
     "dir", "mkdir", "mv", "cp", "rm", "save", "load", "saves", "help", "terminal", "config", "display", "create",
-    "destroy", "ls", "mcp", "sleep", "wake", "lock", "settings", "files", "share",
+    "destroy", "ls", "mcp", "sleep", "wake", "lock", "settings", "files", "share", "note",
 ];
 
 #[tauri::command]
@@ -139,8 +140,8 @@ fn show_terminal(app: &tauri::AppHandle) -> Result<(), String> {
     }
     let mut builder = WebviewWindowBuilder::new(app, TERMINAL, WebviewUrl::App("terminal.html".into()))
         .title("Terminal")
-        .inner_size(820.0, 520.0)
-        .min_inner_size(420.0, 240.0)
+        .inner_size(windows::TERMINAL.width, windows::TERMINAL.height)
+        .min_inner_size(windows::TERMINAL.min_width, windows::TERMINAL.min_height)
         .visible(false);
     // Tabs in the title bar, beside traffic lights where the main window has them (tauri.conf.json).
     #[cfg(target_os = "macos")]
@@ -148,25 +149,33 @@ fn show_terminal(app: &tauri::AppHandle) -> Result<(), String> {
         builder = builder
             .title_bar_style(tauri::TitleBarStyle::Overlay)
             .hidden_title(true)
-            .traffic_light_position(tauri::LogicalPosition::new(18.0, 26.0));
+            .traffic_light_position(tauri::LogicalPosition::new(windows::TRAFFIC_LIGHTS.0, windows::TRAFFIC_LIGHTS.1));
     }
-    if let Some((x, y)) = beside_main(app, 820.0) {
+    if let Some((x, y)) = beside_main(app, windows::TERMINAL) {
         builder = builder.position(x, y);
     }
     builder.build().map(|_| ()).map_err(|e| e.to_string())
 }
 
-/// Just right of the main window, when the screen has room for `width` there.
-fn beside_main(app: &tauri::AppHandle, width: f64) -> Option<(f64, f64)> {
+/// Just right of the main window, level with its top, when the screen it is on has room for a
+/// window of `spec`'s size there (`windows::beside` decides). Every physical figure Tauri hands
+/// back is converted with the scale factor of the monitor it lies on, never a constant, so it is
+/// right on a 1x, 1.5x or 2x display and on a window whose display is not the primary one. The
+/// work area is used, not the whole screen: the Dock and the menu bar are not room.
+fn beside_main(app: &tauri::AppHandle, spec: windows::Spec) -> Option<(f64, f64)> {
     let main = app.get_webview_window("main")?;
-    let scale = main.scale_factor().ok()?;
+    let monitor = main.current_monitor().ok()??;
+    let scale = monitor.scale_factor();
     let at = main.outer_position().ok()?.to_logical::<f64>(scale);
     let size = main.outer_size().ok()?.to_logical::<f64>(scale);
-    let monitor = main.current_monitor().ok()??;
-    let screen_at = monitor.position().to_logical::<f64>(scale);
-    let screen = monitor.size().to_logical::<f64>(scale);
-    let x = at.x + size.width + 8.0;
-    (x + width <= screen_at.x + screen.width).then_some((x, at.y))
+    let area = monitor.work_area();
+    let screen_at = area.position.to_logical::<f64>(scale);
+    let screen = area.size.to_logical::<f64>(scale);
+    windows::beside(
+        windows::Rect { x: at.x, y: at.y, width: size.width, height: size.height },
+        windows::Rect { x: screen_at.x, y: screen_at.y, width: screen.width, height: screen.height },
+        spec,
+    )
 }
 
 #[tauri::command]
@@ -219,18 +228,18 @@ async fn files_open(app: tauri::AppHandle, instance: String, title: Option<Strin
     let shown = title.clone().unwrap_or_else(|| instance.clone());
     let url = format!("files.html?instance={}&title={}", query_value(&instance), query_value(title.as_deref().unwrap_or("")));
     let mut builder = WebviewWindowBuilder::new(&app, &label, WebviewUrl::App(url.into()))
-        .title(format!("Files in Windows â {shown}"))
-        .inner_size(920.0, 560.0)
-        .min_inner_size(560.0, 340.0)
+        .title(format!("Files in Windows — {shown}"))
+        .inner_size(windows::FILES.width, windows::FILES.height)
+        .min_inner_size(windows::FILES.min_width, windows::FILES.min_height)
         .visible(false);
     #[cfg(target_os = "macos")]
     {
         builder = builder
             .title_bar_style(tauri::TitleBarStyle::Overlay)
             .hidden_title(true)
-            .traffic_light_position(tauri::LogicalPosition::new(18.0, 26.0));
+            .traffic_light_position(tauri::LogicalPosition::new(windows::TRAFFIC_LIGHTS.0, windows::TRAFFIC_LIGHTS.1));
     }
-    if let Some((x, y)) = beside_main(&app, 920.0) {
+    if let Some((x, y)) = beside_main(&app, windows::FILES) {
         builder = builder.position(x, y);
     } else {
         builder = builder.center();
@@ -305,6 +314,17 @@ fn unused_path(dir: String, name: String, folder: bool) -> String {
 #[tauri::command]
 fn reveal(path: String) -> Result<(), String> {
     std::process::Command::new("/usr/bin/open").arg("-R").arg(&path).status().map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// Opens a folder in Finder (its contents, not the folder selected in its parent). Only an existing absolute folder: never a file, never a program.
+#[tauri::command]
+fn open_folder(path: String) -> Result<(), String> {
+    let dir = Path::new(&path);
+    if !dir.is_absolute() || !dir.is_dir() {
+        return Err(format!("not a folder: {path}"));
+    }
+    std::process::Command::new("/usr/bin/open").arg("--").arg(dir).status().map_err(|e| e.to_string())?;
     Ok(())
 }
 
@@ -384,6 +404,75 @@ fn check_for_update(app: tauri::AppHandle, asked: bool) {
     });
 }
 
+const MACHINE_ACTIONS: &[(&str, &str)] = &[
+    ("vm-choose", "Choose Machine…"),
+    ("vm-new", "New Machine…"),
+    ("vm-delete", "Delete Machine…"),
+    ("vm-start", "Start / Recall"),
+    ("vm-stop", "Shut Down…"),
+    ("vm-reboot", "Restart…"),
+    ("vm-pause", "Pause"),
+    ("vm-resume", "Resume / Wake"),
+    ("vm-sleep", "Sleep"),
+    ("vm-lock", "Lock Windows"),
+    ("vm-save", "Take a Checkpoint Now"),
+    ("vm-files", "Files in Windows…"),
+    ("vm-files-menu", "Windows Folders in Finder…"),
+    ("vm-shells", "Terminal Shells and Folders…"),
+    ("vm-share", "Use with Claude…"),
+    ("vm-kill", "Force Stop…"),
+];
+const VIEW_ACTIONS: &[(&str, &str)] = &[
+    ("view-actual-size", "Actual Size / Fit"),
+    ("view-screen-sharing", "Open in Screen Sharing"),
+    ("view-details", "Show / Hide Details"),
+    ("view-pause-overlay", "Show / Hide Pause Overlay"),
+];
+
+/// Only the fullscreen mode Checkpoints itself entered is undone on dismissal.
+#[derive(Default)]
+struct CheckpointPresentation(Mutex<bool>);
+
+#[tauri::command]
+async fn set_checkpoint_presentation(
+    window: tauri::WebviewWindow,
+    state: tauri::State<'_, CheckpointPresentation>,
+    enabled: bool,
+) -> Result<(), String> {
+    if window.label() != "main" {
+        return Err("checkpoint presentation belongs to the main window".into());
+    }
+    let mut entered = state.0.lock().map_err(|e| e.to_string())?;
+    if enabled {
+        // Preserve a native fullscreen window, rather than making it leave its Space.
+        if !*entered && !window.is_fullscreen().map_err(|e| e.to_string())? {
+            // macOS same-Space fullscreen: Tao saves/restores the frame, style and
+            // Dock/menu presentation options. No hand-built borderless overlay.
+            window.set_simple_fullscreen(true).map_err(|e| e.to_string())?;
+            *entered = true;
+        }
+    } else if *entered {
+        window.set_simple_fullscreen(false).map_err(|e| e.to_string())?;
+        *entered = false;
+    }
+    Ok(())
+}
+
+/// The viewer sends only enablement, never replacement labels or arbitrary native commands.
+#[tauri::command]
+fn set_main_menu_state(app: tauri::AppHandle, enabled: std::collections::HashMap<String, bool>) -> tauri::Result<()> {
+    if let Some(menu) = app.menu() {
+        for (id, on) in enabled {
+            let known = MACHINE_ACTIONS.iter().chain(VIEW_ACTIONS).any(|(key, _)| *key == id)
+                || matches!(id.as_str(), "settings" | "capture-keyboard" | "release-keyboard" | "send-windows-key" | "send-ctrl-alt-delete");
+            if known {
+                if let Some(item) = menu.get(&id).and_then(|i| i.as_menuitem().cloned()) { item.set_enabled(on)?; }
+            }
+        }
+    }
+    Ok(())
+}
+
 /// The default menu, plus updates and the command line (app menu), terminal tabs and Checkpoints… (File) and the
 /// command reference (Help). File's New Terminal Tab and Close act on the Terminal window's tabs when
 /// it is in front, so Cmd-T and Cmd-W are tab keys there and window keys elsewhere.
@@ -405,8 +494,8 @@ fn menu(app: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
         file.append_items(&[&new_tab, &checkpoints, &PredefinedMenuItem::separator(app)?, &close])?;
     }
     // The Window menu's own Close Window (after a separator) would take Cmd-W back from File's Close.
-    // Rename Windowâ¦ names the instance (main window) or the active tab (Terminal).
-    let rename = MenuItem::with_id(app, "rename-window", "Rename Windowâ¦", true, None::<&str>)?;
+    // Rename Window… names the instance (main window) or the active tab (Terminal).
+    let rename = MenuItem::with_id(app, "rename-window", "Rename Window…", true, None::<&str>)?;
     if let Some(window) = menu.get(WINDOW_SUBMENU_ID).and_then(|i| i.as_submenu().cloned()) {
         if window.items()?.len() == 4 {
             window.remove_at(3)?;
@@ -414,8 +503,8 @@ fn menu(app: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
         }
         window.append_items(&[&PredefinedMenuItem::separator(app)?, &rename])?;
     }
-    let updates = MenuItem::with_id(app, "check-updates", "Check for Updatesâ¦", true, None::<&str>)?;
-    let install = MenuItem::with_id(app, "install-cli", "Install Command Line Toolâ¦", true, None::<&str>)?;
+    let updates = MenuItem::with_id(app, "check-updates", "Check for Updates…", true, None::<&str>)?;
+    let install = MenuItem::with_id(app, "install-cli", "Install Command Line Tool…", true, None::<&str>)?;
     let reference = MenuItem::with_id(app, "reference", "winvm Command Reference", true, Some("CmdOrCtrl+Shift+/"))?;
     let capture = MenuItem::with_id(app, "capture-keyboard", "Capture Keyboard", true, None::<&str>)?;
     let windows_key = MenuItem::with_id(app, "send-windows-key", "Send Windows Key", true, None::<&str>)?;
@@ -434,11 +523,24 @@ fn menu(app: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
             &release,
         ],
     )?;
+    for (title, actions) in [("Machine", MACHINE_ACTIONS), ("View", VIEW_ACTIONS)] {
+        let submenu = Submenu::new(app, title, true)?;
+        for (id, label) in actions {
+            if matches!(*id, "vm-start" | "vm-save" | "vm-kill") { submenu.append(&PredefinedMenuItem::separator(app)?)?; }
+            submenu.append(&MenuItem::with_id(app, *id, *label, false, None::<&str>)?)?;
+        }
+        menu.insert(&submenu, menu.items()?.len().saturating_sub(2))?;
+    }
     let input_index = menu.items()?.len().saturating_sub(2);
     menu.insert(&input, input_index)?;
     if let Some(app_menu) = menu.items()?.first().and_then(|i| i.as_submenu().cloned()) {
-        app_menu.insert_items(&[&install, &PredefinedMenuItem::separator(app)?], 2)?;
+        // Keep app-management commands in About's section: AppKit aligns text
+        // with that section's icons; a separate iconless section shifts left.
+        app_menu.insert(&install, 1)?;
         app_menu.insert(&updates, 1)?;
+        let settings = MenuItem::with_id(app, "settings", "Settings…", true, Some("CmdOrCtrl+,"))?;
+        app_menu.insert(&settings, 4)?;
+        app_menu.insert(&PredefinedMenuItem::separator(app)?, 5)?;
     }
     if let Some(help) = menu.get(HELP_SUBMENU_ID).and_then(|i| i.as_submenu().cloned()) {
         help.append(&reference)?;
@@ -483,6 +585,7 @@ pub fn run() {
         .manage(Sharing::default())
         .manage(Updating::default())
         .manage(TerminalRequests::default())
+        .manage(CheckpointPresentation::default())
         .manage(agent::Agents::default())
         .menu(menu)
         .on_window_event(|window, event| {
@@ -532,13 +635,13 @@ pub fn run() {
                         let _ = app.emit_to("main", "menu", "rename-window");
                     }
                 }
-            } else if id == "checkpoints" {
+            } else if id == "checkpoints" || id == "settings" || id.starts_with("vm-") || id.starts_with("view-") {
                 if let Some(main) = app.get_webview_window("main") {
                     let _ = main.unminimize();
                     let _ = main.show();
                     let _ = main.set_focus();
                 }
-                let _ = app.emit_to("main", "menu", "checkpoints");
+                let _ = app.emit_to("main", "menu", id);
             } else if id == "check-updates" {
                 check_for_update(app.clone(), true);
             }
@@ -560,6 +663,7 @@ pub fn run() {
             downloads_dir,
             unused_path,
             reveal,
+            open_folder,
             terminal_open,
             terminal_take,
             agent::agent_fetch,
@@ -571,7 +675,9 @@ pub fn run() {
             home_dir,
             dragout::files_drag_out,
             trace,
-            set_system_keyboard_capture
+            set_system_keyboard_capture,
+            set_main_menu_state,
+            set_checkpoint_presentation
         ])
         .build(tauri::generate_context!())
         .expect("winvm could not start")

@@ -1,25 +1,30 @@
 import { Button } from "../../components/Button"
-import { Icon, type IconName } from "../../components/Icon"
+import { Icon } from "../../components/Icon"
 import { cx } from "../../components/cx"
 import { t } from "../../i18n"
 import type { Phase, Status, Step } from "../../model"
 import { facts } from "../../model"
+import { Abilities } from "../help/Abilities"
+import { MachineHeading, TITLE_MARK } from "../machines/MachineHeading"
+import { Backdrop } from "./Backdrop"
+import { useBackdropPicture } from "./backdropPicture"
+import { MachineNotes } from "./MachineNotes"
 
 interface OverviewProps {
+  /** The machine shown: whose note and picture a suspended one has. */
+  readonly instance?: string | null
+  /** What the machine is called: its title, else its name (instance). */
+  readonly title?: string
+  /** It has a title of its own, so clearing the field in its heading gives the name back. */
+  readonly hasTitle?: boolean
+  /** Sets the machine's title (empty clears it); resolves with why it couldn't, or null. Absent: the heading's name can't be edited. */
+  onRename?(title: string): Promise<string | null>
   readonly phase: Phase | null
   readonly status: Status | null
   readonly steps: readonly Step[] | null
   readonly canStart: boolean
   onStart(): void
 }
-
-// The same glyphs as their toolbar buttons, so each reads as "that button".
-const ABILITIES: readonly { icon: IconName; key: string }[] = [
-  { icon: "terminal", key: "ability.exec" },
-  { icon: "folder", key: "ability.files" },
-  { icon: "history", key: "ability.saves" },
-  { icon: "agent", key: "ability.agent" },
-]
 
 function Steps({ steps }: { readonly steps: readonly Step[] }): JSX.Element {
   return (
@@ -38,6 +43,8 @@ function Steps({ steps }: { readonly steps: readonly Step[] }): JSX.Element {
 
 /** What fills the display while there is no screen: the state, what the instance is, Start, and what it does once on. */
 export function Overview(p: OverviewProps): JSX.Element {
+  const suspended = p.steps === null && p.phase === "stowed"
+  const picture = useBackdropPicture(p.instance ?? null, suspended)
   if (p.steps !== null) {
     return (
       <div className="overview">
@@ -62,11 +69,24 @@ export function Overview(p: OverviewProps): JSX.Element {
 
   const which = p.phase === "missing" || p.phase === "stowed" ? p.phase : "stopped"
   const rows = p.status === null ? [] : facts(p.status)
+  // Off and suspended machines say which machine, and the name can be changed where it stands.
+  const heading =
+    which === "missing" ? (
+      <h1 className="overview__title">{t("overview.missing.title")}</h1>
+    ) : (
+      <MachineHeading
+        key={p.instance ?? ""}
+        text={t(`overview.${which}.title`, { title: TITLE_MARK })}
+        shown={p.title ?? p.instance ?? ""}
+        hasTitle={p.hasTitle === true}
+        onRename={p.onRename}
+      />
+    )
   return (
-    <div className="overview">
+    <div className={cx("overview", which === "stowed" && "overview--notes")}>
+      {which === "stowed" && <Backdrop picture={picture} />}
       <div className="overview__content">
-        <h1 className="overview__title">{t(`overview.${which}.title`)}</h1>
-        {which === "stowed" && <p className="overview__note">{t("overview.stowed.body")}</p>}
+        {which === "stowed" ? <MachineNotes instance={p.instance ?? null} heading={heading} /> : heading}
         {rows.length > 0 && (
           <dl className="facts">
             {rows.map((r) => (
@@ -88,21 +108,7 @@ export function Overview(p: OverviewProps): JSX.Element {
             {t("overview.missing.noImage")} <code className="mono">winvm build --iso &lt;Windows 11 ISO&gt;</code>
           </p>
         )}
-        <section className="abilities" aria-labelledby="abilities-title">
-          <h2 className="abilities__title" id="abilities-title">
-            {t("abilities.title")}
-          </h2>
-          <ul className="abilities__list">
-            {ABILITIES.map((a) => (
-              <li key={a.key} className="ability">
-                <span className="ability__icon" aria-hidden="true">
-                  <Icon name={a.icon} />
-                </span>
-                {t(a.key)}
-              </li>
-            ))}
-          </ul>
-        </section>
+        <Abilities phase={p.phase} />
       </div>
     </div>
   )

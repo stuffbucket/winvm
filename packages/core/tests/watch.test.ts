@@ -13,7 +13,7 @@ import { DEFAULTS, configPath, effectiveConfig, parseAssignment, readOverrides, 
 import { instanceDir } from "../src/paths"
 import type { Decision, Sample, Settings, Timing } from "../src/idle"
 import { IdleMachine, autosaveName, savesToRotate } from "../src/idle"
-import { ensureWatcher, parseCpuTime, watchAfterRestore } from "../src/watch"
+import { KeepAwake, caffeinateArgs, ensureWatcher, parseCpuTime, watchAfterRestore } from "../src/watch"
 
 const MIN = 60_000
 const TIMING: Timing = { tickMs: 15_000, wakeGapMs: 45_000, cpuWindowMs: 60_000, settleMs: 60_000, driftCheckMs: 30 * MIN }
@@ -28,9 +28,9 @@ class Harness {
   now = 1_700_000_000_000
   readonly machine = new IdleMachine(this.now, TIMING)
   activityAt: number | null = null
-  vnc = 0
-  /** The guest is paused or asleep. */
-  frozen = false
+  vnc: number | null = 0
+  /** The guest is paused or asleep; null when the monitor did not answer. */
+  frozen: boolean | null = false
   readonly log: { readonly at: number; readonly d: Decision }[] = []
 
   private readonly settings: Settings
@@ -134,6 +134,61 @@ describe("idle state machine", () => {
     h.vnc = 0
     h.run(10.25, IDLE)
     expect(h.kinds("autosave")).toHaveLength(1)
+  })
+
+  it("does not turn an unknown monitor or viewer count into an idle guest", () => {
+    for (const sample of [{ frozen: null, vnc: 0 }, { frozen: false, vnc: null }, { frozen: null, vnc: null }]) {
+      const h = new Harness()
+      h.run(9.75, IDLE)
+      h.frozen = sample.frozen
+      h.vnc = sample.vnc
+      h.run(90, IDLE)
+      expect(h.kinds("autosave")).toHaveLength(0)
+      expect(h.kinds("stow")).toHaveLength(0)
+      expect(h.kinds("checkDrift")).toHaveLength(0)
+      expect(h.machine.lastVerdict.quiet).toBe(false)
+      expect(h.machine.idleMs(h.now)).toBe(0)
+      h.frozen = false
+      h.vnc = 0
+      h.run(9.5, IDLE)
+      expect(h.kinds("autosave")).toHaveLength(0)
+      h.run(1, IDLE)
+      expect(h.kinds("autosave")).toHaveLength(1)
+    }
+  })
+
+  it("a missing monitor sample does not re-arm an autosave already taken", () => {
+    const h = new Harness()
+    h.run(10.25, IDLE)
+    expect(h.kinds("autosave")).toHaveLength(1)
+    h.vnc = null
+    h.run(20, IDLE)
+    expect(h.machine.autosaveArmed).toBe(false)
+    h.vnc = 0
+    h.run(10.25, IDLE)
+    expect(h.kinds("autosave")).toHaveLength(1)
+  })
+
+  it("still records known command or viewer activity when another monitor field is unknown", () => {
+    for (const kind of ["command", "viewer"]) {
+      const h = new Harness()
+      h.run(10.25, IDLE)
+      expect(h.machine.autosaveArmed).toBe(false)
+      if (kind === "command") {
+        h.vnc = null
+        h.activityAt = h.now + 1000
+      } else {
+        h.vnc = 1
+        h.frozen = null
+      }
+      h.run(1, IDLE)
+      expect(h.machine.autosaveArmed).toBe(true)
+      expect(h.kinds("autosave")).toHaveLength(1)
+      h.vnc = 0
+      h.frozen = false
+      h.run(10.25, IDLE)
+      expect(h.kinds("autosave")).toHaveLength(2)
+    }
   })
 
   it("stows after the longer threshold, once, and stops deciding", () => {
@@ -280,6 +335,13 @@ describe("autosave rotation", () => {
     expect(victims).toHaveLength(5)
   })
 
+  it("keeps protected autosaves outside the unprotected retention budget", () => {
+    const locked = saves.map((s) => ({ ...s, protected: s.name === "auto-7" || s.name === "auto-1" }))
+    expect(savesToRotate(locked, 2)).toEqual(["auto-2"])
+    expect(savesToRotate(locked, 0)).toEqual(["auto-6", "auto-4", "auto-2"])
+    expect(savesToRotate(locked.map((s) => ({ ...s, protected: true })), 0)).toEqual([])
+  })
+
   it("names autosaves sortably", () => {
     expect(autosaveName(Date.UTC(2026, 9, 21, 16, 43, 7, 250))).toBe("auto-20261021T164307Z")
   })
@@ -368,5 +430,57 @@ describe("watcher after a load or rewind", () => {
   it("never starts one with watch.enabled=false", () => {
     writeAssignments("off", [parseAssignment("watch.enabled=false")])
     expect(ensureWatcher("off")).toBeNull()
+  })
+})
+
+describe("power.keepAwake", () => {
+  type Child = NonNullable<ReturnType<typeof import("node:child_process").spawn>>
+  const fake = (): { started: (readonly string[])[]; killed: number; start: (a: readonly string[]) => Child } => {
+    const o = {
+      started: [] as (readonly string[])[],
+      killed: 0,
+      start: (a: readonly string[]): Child => {
+        o.started.push(a)
+        return { kill: () => (o.killed += 1) } as unknown as Child
+      },
+    }
+    return o
+  }
+
+  it("is off by default, so nothing changes for anyone who has not asked", () => {
+    expect(DEFAULTS["power.keepAwake"]).toBe(false)
+    const f = fake()
+    expect(new KeepAwake(f.start).update(DEFAULTS["power.keepAwake"], 4242)).toBeNull()
+    expect(f.started).toEqual([])
+  })
+
+  it("holds the Mac awake for QEMU's lifetime, once, and says so", () => {
+    const f = fake()
+    const k = new KeepAwake(f.start)
+    expect(k.update(true, 4242)).toContain("4242")
+    expect(k.update(true, 4242)).toBeNull()
+    expect(f.started).toEqual([caffeinateArgs(4242)])
+    expect(caffeinateArgs(4242)).toEqual(["-i", "-w", "4242"])
+  })
+
+  it("follows QEMU being replaced and lets go when switched off", () => {
+    const f = fake()
+    const k = new KeepAwake(f.start)
+    k.update(true, 1)
+    k.update(true, 2)
+    expect(f.started.map((a) => a[2])).toEqual(["1", "2"])
+    expect(f.killed).toBe(1)
+    expect(k.update(false, 2)).toContain("no longer")
+    expect(f.killed).toBe(2)
+    expect(k.update(false, 2)).toBeNull()
+  })
+
+  it("reports a Mac that will not run caffeinate instead of pretending", () => {
+    expect(new KeepAwake(() => null).update(true, 7)).toContain("could not start")
+  })
+
+  it("is a setting that takes true or false", () => {
+    expect(parseAssignment("power.keepAwake=on")).toEqual(["power.keepAwake", true])
+    expect(() => parseAssignment("power.keepAwake=maybe")).toThrow()
   })
 })

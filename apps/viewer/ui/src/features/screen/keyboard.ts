@@ -46,6 +46,7 @@ const isCaptureModifier = (code: string): boolean => code.startsWith("Control") 
  */
 export class GuestKeyboardRouter {
   private captured = false
+  private enabled = true
   private captureChord = false
   private rightCommand = false
   private rightWindowsDown = false
@@ -54,7 +55,7 @@ export class GuestKeyboardRouter {
   constructor(private readonly options: RouterOptions) {}
 
   setCaptured(captured: boolean): void {
-    if (this.captured === captured) return
+    if (this.captured === captured || (captured && !this.enabled)) return
     this.releaseAll()
     this.captured = captured
   }
@@ -63,7 +64,20 @@ export class GuestKeyboardRouter {
     return this.captured
   }
 
+  /**
+   * The guest takes input (input.ts). Off: everything held is released (the
+   * caller keeps the link to the guest open until this returns), capture is
+   * released and reported, and no key is touched, so the Mac keeps all of them.
+   * On again: capture stays released until it is asked for again.
+   */
+  setEnabled(enabled: boolean): void {
+    if (this.enabled === enabled) return
+    if (!enabled) this.lostFocus()
+    this.enabled = enabled
+  }
+
   keyDown(event: RoutedKeyEvent): void {
+    if (!this.enabled) return
     if (!event.repeat && isCaptureModifier(event.code) && event.ctrlKey && event.altKey) {
       stopAll(event)
       if (!this.captureChord) {
@@ -115,6 +129,7 @@ export class GuestKeyboardRouter {
   }
 
   keyUp(event: RoutedKeyEvent): void {
+    if (!this.enabled) return
     if (isCaptureModifier(event.code) && !(event.ctrlKey && event.altKey)) this.captureChord = false
     if (this.captured) {
       if (isMeta(event.code)) {

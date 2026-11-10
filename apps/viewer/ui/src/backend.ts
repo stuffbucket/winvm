@@ -5,6 +5,7 @@
  * `cua serve`, the Terminal window).
  */
 import { type Installed, type MenuNode, type OpenRequest, parseInstalled, type Shell, shellsArgs } from "./features/terminal/shells"
+import { type OsKind, osKind } from "./platform"
 
 export interface Output {
   readonly code: number
@@ -48,6 +49,12 @@ export const winvm = (...args: string[]): Promise<Output> => tauri().core.invoke
 
 export const installCli = (): Promise<string> => tauri().core.invoke<string>("install_cli")
 
+/** Enable native controls using the same state rules as the main window. */
+export const setMainMenuState = (enabled: Record<string, boolean>): Promise<void> => tauri().core.invoke<void>("set_main_menu_state", { enabled })
+
+/** Checkpoints uses the display, then restores the native window's prior presentation. */
+export const setCheckpointPresentation = (enabled: boolean): Promise<void> => tauri().core.invoke<void>("set_checkpoint_presentation", { enabled })
+
 export const downloadsDir = (): Promise<string> => tauri().core.invoke<string>("downloads_dir")
 
 /** Starts sharing the screen with an agent (`winvm cua serve`); resolves with what it printed when ready. */
@@ -80,6 +87,17 @@ export const unusedPath = (dir: string, name: string, folder: boolean): Promise<
 
 /** Shows a Mac file or folder in Finder, selected. */
 export const revealInFinder = (path: string): Promise<void> => tauri().core.invoke<void>("reveal", { path })
+
+/** Opens a Mac folder in Finder (the app checks it is an existing folder). */
+export const openFolder = (path: string): Promise<void> => tauri().core.invoke<void>("open_folder", { path })
+
+/** Opens the folder a checkpoint is kept in on the Mac, in Finder: `winvm saves path` names it, the app opens it. */
+export async function showCheckpointInFinder(instance: string, name: string): Promise<void> {
+  const out = await winvm("saves", "-i", instance, "path", name, "--json")
+  if (out.code !== 0) throw new Error(outputText(out) || `winvm saves path exited ${String(out.code)}`)
+  const { path } = JSON.parse(out.stdout) as { path: string }
+  await openFolder(path)
+}
 
 /** What a machine's agent answered: its HTTP status and body (JSON, or the text when it isn't). */
 export interface AgentReply {
@@ -316,6 +334,19 @@ export const onPromise = (cb: (e: PromiseEvent) => void): Unlisten => listen<Pro
 export const onDragOutEnd = (cb: (e: { readonly operation: "copy" | "none" }) => void): Unlisten =>
   listen<{ operation: "copy" | "none" }>("files-drag-end", cb)
 
+/**
+ * Where a drag is, in CSS pixels, from the position Tauri reports. Tauri types it
+ * `PhysicalPosition`, but on macOS wry fills it with AppKit's `draggingLocation` in the
+ * webview's own coordinates (wry `wkwebview/drag_drop.rs`, no scale factor applied), which
+ * are points: already CSS pixels. Dividing by the ratio there lands the pointer at half
+ * its place on a 2x display (and is right only on a 1x one, by accident). Elsewhere the
+ * position is device pixels.
+ */
+export function dragPointToCss(p: { readonly x: number; readonly y: number }, ratio: number, os: OsKind): { x: number; y: number } {
+  if (os === "macos" || !(ratio > 0)) return { x: p.x, y: p.y }
+  return { x: p.x / ratio, y: p.y / ratio }
+}
+
 /** Files dragged over the window from the Mac, with where the pointer is in CSS pixels. */
 export type HostDrag =
   | { readonly type: "enter"; readonly paths: readonly string[]; readonly at: { x: number; y: number } | null }
@@ -326,8 +357,7 @@ export type HostDrag =
 export function onHostDrag(cb: (e: HostDrag) => void): Unlisten {
   let unlisten: Unlisten | null = null
   let gone = false
-  const css = (p: { x: number; y: number } | undefined): { x: number; y: number } | null =>
-    p === undefined ? null : { x: p.x / window.devicePixelRatio, y: p.y / window.devicePixelRatio }
+  const css = (p: { x: number; y: number } | undefined): { x: number; y: number } | null => (p === undefined ? null : dragPointToCss(p, window.devicePixelRatio, osKind()))
   try {
     void tauri()
       .webview.getCurrentWebview()

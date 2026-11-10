@@ -1,5 +1,7 @@
 import RFB from "novnc/core/rfb.js"
 import * as KeyboardUtil from "novnc/core/input/util.js"
+import { clientToElement } from "novnc/core/util/element.js"
+import { releaseCapture } from "novnc/core/util/events.js"
 import { forwardRef, useEffect, useImperativeHandle, useLayoutEffect, useRef, useState } from "react"
 
 import { type Size, drawSize, guestSizeFor, sameSize, scaleFor } from "@winvm/displayfit"
@@ -8,9 +10,11 @@ import { copyText, onLiveResize, readText, trace } from "../../backend"
 import { Icon } from "../../components/Icon"
 import { cx } from "../../components/cx"
 import { t } from "../../i18n"
+import { pixelRatio, watchPixelRatio } from "../../dpr"
 import type { Connection } from "../../model"
 import { ClipboardSync } from "./clipboard"
 import { HeldSizes, keyVerdict } from "./held"
+import { GuestPointerRouter, releaseNoVncPointer } from "./input"
 import { GuestKeyboardRouter, sendCtrlAltDelete, sendWindowsKey } from "./keyboard"
 import { LiveResize, type ResizePhase } from "./resize"
 import { type WakeSock, keepRefreshing } from "./wake"
@@ -28,9 +32,13 @@ interface ScreenProps {
   readonly resizable: boolean
   readonly onGuestSize?: (size: Size, scale: number) => Promise<void>
   /**
-   * The machine is held (paused or asleep): the screen takes no input (it would
-   * queue in QEMU and land on resume), and sizes wait until it runs (held.ts).
+   * The guest takes input (input.ts: Windows runs, answers, no verb under way).
+   * Otherwise the frame is a picture: no mouse, wheel or key reaches the guest
+   * (it would queue in QEMU and land on resume), the Mac's arrow shows over it,
+   * capture is released and nothing is swallowed. Held input is let go first.
    */
+  readonly forwardInput: boolean
+  /** The machine is held (paused or asleep): sizes wait until it runs (held.ts), and the overlay shows. */
   readonly frozen?: boolean
   /**
    * Windows can take a size now (the app's guestReady: it runs, its agent
@@ -62,7 +70,7 @@ const CLIPBOARD_CAPS_MS = 2000
 /** noVNC's extended-clipboard text format. */
 const CLIPBOARD_TEXT = 1
 
-const dpr = (): number => window.devicePixelRatio || 1
+const dpr = pixelRatio
 
 /**
  * The guest's screen through QEMU's VNC websocket, interactive.
@@ -79,7 +87,7 @@ const dpr = (): number => window.devicePixelRatio || 1
  * the window comes forward, and once on connecting.
  */
 export const Screen = forwardRef<ScreenHandle, ScreenProps>(function Screen(
-  { connection, keyboardCaptured, onKeyboardCaptured, resizable, onGuestSize, frozen = false, ready = true, asleep = false, waking = false, onWake, overlay = true },
+  { connection, keyboardCaptured, onKeyboardCaptured, forwardInput, resizable, onGuestSize, frozen = false, ready = true, asleep = false, waking = false, onWake, overlay = true },
   ref,
 ): JSX.Element {
   const area = useRef<HTMLDivElement | null>(null)
@@ -87,6 +95,7 @@ export const Screen = forwardRef<ScreenHandle, ScreenProps>(function Screen(
   const still = useRef<HTMLCanvasElement | null>(null)
   const rfb = useRef<RFB | null>(null)
   const keyboard = useRef<GuestKeyboardRouter | null>(null)
+  const pointerInput = useRef<GuestPointerRouter | null>(null)
   const [view, setView] = useState<View>("connecting")
   const [attempt, setAttempt] = useState(0)
   // The framebuffer drawn, and the view's size in CSS pixels, for the 1:1 box.
@@ -113,7 +122,8 @@ export const Screen = forwardRef<ScreenHandle, ScreenProps>(function Screen(
   askAgainRef.current = askAgain
   const heldSizes = useRef<HeldSizes | null>(null)
   heldSizes.current ??= new HeldSizes(frozen || !ready, { onRetry: () => askAgainRef.current() })
-  const keys = useRef({ frozen, asleep, waking, onWake })
+  const keys = useRef({ frozen, asleep, waking, onWake, forward: forwardInput })
+  keys.current.forward = forwardInput
   keys.current.frozen = frozen
   keys.current.asleep = asleep
   keys.current.waking = waking
@@ -122,17 +132,18 @@ export const Screen = forwardRef<ScreenHandle, ScreenProps>(function Screen(
   captured.current = keyboardCaptured
   const captureChanged = useRef(onKeyboardCaptured)
   captureChanged.current = onKeyboardCaptured
+  const clipboardSync = useRef<ClipboardSync | null>(null)
 
   useImperativeHandle(
     ref,
     () => ({
       sendWindowsKey: () => {
         const conn = rfb.current
-        if (conn !== null) sendWindowsKey((keysym, code, down) => conn.sendKey(keysym, code, down))
+        if (conn !== null && keys.current.forward) sendWindowsKey((keysym, code, down) => conn.sendKey(keysym, code, down))
       },
       sendCtrlAltDelete: () => {
         const conn = rfb.current
-        if (conn !== null) sendCtrlAltDelete((keysym, code, down) => conn.sendKey(keysym, code, down))
+        if (conn !== null && keys.current.forward) sendCtrlAltDelete((keysym, code, down) => conn.sendKey(keysym, code, down))
       },
     }),
     [],
@@ -150,6 +161,27 @@ export const Screen = forwardRef<ScreenHandle, ScreenProps>(function Screen(
     let retry: ReturnType<typeof setTimeout> | undefined
     let stopWake: (() => void) | null = null
     setView("connecting")
+    const pointer = new GuestPointerRouter((point) => {
+      if (conn === null) return
+      const canvas = el.querySelector("canvas")
+      const pos = point !== null && canvas !== null ? clientToElement(point.x, point.y, canvas) : { x: 0, y: 0 }
+      releaseNoVncPointer(conn, pos, releaseCapture)
+    })
+    pointer.setEnabled(keys.current.forward)
+    pointer.setFocused(document.hasFocus())
+    const onPointer = (event: MouseEvent): void => {
+      // A modal makes the viewer inert. Also reject noVNC's synthetic captured
+      // events, which can still be dispatched into an inert subtree.
+      pointer.setEnabled(keys.current.forward && el.closest("[inert]") === null)
+      pointer.handle(event)
+    }
+    const onScreenBlur = (event: FocusEvent): void => {
+      if (!(event.relatedTarget instanceof Node) || !el.contains(event.relatedTarget)) pointer.releaseAll()
+    }
+    const pointerEvents = ["mousedown", "mouseup", "mousemove", "wheel"] as const
+    for (const name of pointerEvents) el.addEventListener(name, onPointer, true)
+    el.addEventListener("focusout", onScreenBlur)
+    pointerInput.current = pointer
     const router = new GuestKeyboardRouter({
       send: (keysym, code, down) => conn?.sendKey(keysym, code, down),
       translate: (event) => {
@@ -161,10 +193,17 @@ export const Screen = forwardRef<ScreenHandle, ScreenProps>(function Screen(
       onCaptured: (next) => captureChanged.current(next),
     })
     router.setCaptured(captured.current)
+    router.setEnabled(keys.current.forward)
     const onKeyDown = (event: KeyboardEvent): void => router.keyDown(event)
     const onKeyUp = (event: KeyboardEvent): void => router.keyUp(event)
-    const onBlur = (): void => router.lostFocus()
+    const onBlur = (event: FocusEvent): void => {
+      // This capture listener also sees a canvas blur to an app control; that
+      // releases its drag via focusout, but the host window is still active.
+      if (event.target === window) pointer.setFocused(false)
+      router.lostFocus()
+    }
     const onVisibility = (): void => {
+      pointer.setFocused(document.visibilityState !== "hidden" && document.hasFocus())
       if (document.visibilityState === "hidden") router.lostFocus()
     }
     el.addEventListener("keydown", onKeyDown, true)
@@ -183,8 +222,12 @@ export const Screen = forwardRef<ScreenHandle, ScreenProps>(function Screen(
     // We send SetDesktopSize ourselves: noVNC asks in CSS pixels, and treats
     // QEMU's immediate "forwarded" reply as done, dropping later sizes.
     conn.resizeSession = false
-    conn.focusOnClick = true
-    conn.viewOnly = keys.current.frozen
+    // New QEMU processes forbid JPEG (vnc.ts). For one already running with
+    // lossy=on, request its best quality until the next restart. Still lossy:
+    // quality 9 cannot replace the server's lossless policy.
+    conn.qualityLevel = 9
+    conn.focusOnClick = keys.current.forward || keys.current.asleep
+    conn.viewOnly = !keys.current.forward
 
     const measure = (): Size => {
       const r = outer.getBoundingClientRect()
@@ -294,27 +337,25 @@ export const Screen = forwardRef<ScreenHandle, ScreenProps>(function Screen(
     }
     const observer = new ResizeObserver(onArea)
     observer.observe(outer)
-    const unlisten = onLiveResize((live) => (live ? resize?.liveStart() : resize?.liveEnd()))
+    const unlisten = onLiveResize((live) => {
+      // AppKit owns this drag, even if its edge passes across the guest view.
+      // Do not wait for the guest's framebuffer/resize-settle phase to finish.
+      pointer.setResizing(live)
+      if (live) resize?.liveStart()
+      else resize?.liveEnd()
+    })
 
     // Moving the window to a display with another pixel ratio.
-    let media: MediaQueryList | null = null
-    const onRatio = (): void => {
-      watchRatio()
-      onArea()
-    }
-    const watchRatio = (): void => {
-      media?.removeEventListener("change", onRatio)
-      media = window.matchMedia(`(resolution: ${String(dpr())}dppx)`)
-      media.addEventListener("change", onRatio)
-    }
-    watchRatio()
+    const stopRatio = watchPixelRatio(onArea)
 
     const clipboard = new ClipboardSync({
       readMac: readText,
       writeMac: copyText,
       toGuest: (text) => conn.clipboardPasteFrom(text),
       focused: () => document.hasFocus(),
+      canSend: () => keys.current.forward,
     })
+    clipboardSync.current = clipboard
     let clipboardReady = false
     let clipboardWait: ReturnType<typeof setTimeout> | undefined
     conn.addEventListener("clipboard", (e) => {
@@ -322,6 +363,7 @@ export const Screen = forwardRef<ScreenHandle, ScreenProps>(function Screen(
       if (typeof text === "string") clipboard.fromGuest(text)
     })
     const onFocus = (): void => {
+      pointer.setFocused(document.visibilityState !== "hidden")
       if (clipboardReady && connected && !closing) void clipboard.fromMac()
     }
     window.addEventListener("focus", onFocus)
@@ -353,6 +395,7 @@ export const Screen = forwardRef<ScreenHandle, ScreenProps>(function Screen(
     conn.addEventListener("credentialsrequired", () => conn.sendCredentials({ password: password ?? "" }))
     conn.addEventListener("securityfailure", () => setView("refused"))
     conn.addEventListener("disconnect", () => {
+      pointer.releaseAll()
       connected = false
       stopWake?.()
       stopWake = null
@@ -363,6 +406,7 @@ export const Screen = forwardRef<ScreenHandle, ScreenProps>(function Screen(
     return () => {
       closing = true
       live.current = null
+      clipboardSync.current = null
       outer.removeEventListener("keydown", onKey, true)
       stopWake?.()
       resize?.cancel()
@@ -372,14 +416,18 @@ export const Screen = forwardRef<ScreenHandle, ScreenProps>(function Screen(
       window.removeEventListener("focus", onFocus)
       observer.disconnect()
       unlisten()
-      media?.removeEventListener("change", onRatio)
+      stopRatio()
       if (retry !== undefined) clearTimeout(retry)
       el.removeEventListener("keydown", onKeyDown, true)
       el.removeEventListener("keyup", onKeyUp, true)
       window.removeEventListener("blur", onBlur, true)
       document.removeEventListener("visibilitychange", onVisibility)
       router.lostFocus()
+      pointer.releaseAll()
+      for (const name of pointerEvents) el.removeEventListener(name, onPointer, true)
+      el.removeEventListener("focusout", onScreenBlur)
       conn.disconnect()
+      pointerInput.current = null
       keyboard.current = null
       rfb.current = null
       setHeld(false)
@@ -387,12 +435,21 @@ export const Screen = forwardRef<ScreenHandle, ScreenProps>(function Screen(
     }
   }, [websocketPort, password, attempt, resizable])
 
-  // Held: no input reaches QEMU. Running again: ask for the size the window
-  // wanted meanwhile, if it wanted one.
+  // No input to the guest (input.ts): what is held is let go of first, while
+  // noVNC can still send (a key-up queued in QEMU lands harmlessly on resume; a
+  // key left down would not), then noVNC goes view-only. The Mac's clipboard,
+  // kept back meanwhile, goes once the guest takes input again. Capture does not
+  // come back by itself: it was released, and is asked for again.
   useEffect(() => {
+    keyboard.current?.setEnabled(forwardInput)
+    // Buttons too, while noVNC can still send: viewOnly would swallow the up.
+    pointerInput.current?.setEnabled(forwardInput)
     const conn = rfb.current
-    if (conn !== null) conn.viewOnly = frozen
-  }, [frozen])
+    if (conn === null) return
+    conn.viewOnly = !forwardInput
+    conn.focusOnClick = forwardInput || asleep
+    if (forwardInput) void clipboardSync.current?.fromMac()
+  }, [forwardInput, asleep])
   // Held or not ready: sizes wait. Able to take one again: ask for the size the
   // window wants now, both steps, if one was kept.
   useEffect(() => {
@@ -420,8 +477,16 @@ export const Screen = forwardRef<ScreenHandle, ScreenProps>(function Screen(
   }, [exact?.width, exact?.height])
 
   const message = view === "connected" ? null : t(`screen.${view}`)
+  const inert = !forwardInput || view !== "connected"
+  // Asleep, a click on the frame focuses it, so a key can wake the machine (the
+  // canvas takes no clicks while the guest takes no input).
   return (
-    <div ref={area} className="screen">
+    <div
+      ref={area}
+      className={cx("screen", inert && "screen--inert")}
+      tabIndex={asleep ? -1 : undefined}
+      onPointerDown={asleep ? (e) => e.currentTarget.focus({ preventScroll: true }) : undefined}
+    >
       <div
         ref={target}
         className={exact === undefined ? "screen__canvas" : scaled ? "screen__canvas screen__canvas--exact screen__canvas--scaled" : "screen__canvas screen__canvas--exact"}

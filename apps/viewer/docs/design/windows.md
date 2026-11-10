@@ -13,12 +13,15 @@ A person asked "instance of what?", so in every UI string:
 |---|---|
 | instance | Windows machine, or machine once it is clear ("Windows machines", "New Machine…", "this machine") |
 | image (the base disk an instance starts from) | Windows image |
-| save (`winvm save`: the whole machine, RAM and disk, at a moment) | checkpoint ("New Checkpoint", "Go Back to This", "Keep checkpoints"); never "save", which a person reads as saving a document |
+| save (`winvm save`: the whole machine, RAM and disk, at a moment) | checkpoint ("New Checkpoint", "Restore", "Keep checkpoints"); never "save", which a person reads as saving a document |
 
 Keep `-i`, `instance`, `image` and `save` in the CLI, its help and these
 docs' code references; they are the command line's words. Kinds of
-checkpoint read as Manual, Automatic (auto), First start (baseline), Put away
-(stow) and For tests (golden).
+checkpoint say how each came about, never the CLI's word for it: Taken by you
+(manual), Saved while idle (auto), Fresh install (baseline), Saved on suspend
+(stow) and Test starting point (golden); see *Checkpoints* for what makes
+each. A checkpoint Windows can't restore on this machine "can't restore
+here", not "can't load".
 
 ## Layers
 
@@ -35,9 +38,10 @@ Back to front:
    when open. They take space and push the display, never cover it.
 2. **Floating.** The toolbar's popovers and the confirmation dialog
    (`<dialog>`, top layer). Files and terminals are windows of their own.
-3. **Full window.** Checkpoints (below), over everything in the window,
-   the window's own screen blurred behind it. Its confirmations are the
-   same `<dialog>`, above it. Nothing else covers the window.
+3. **Full display.** Checkpoints (below), expanding the existing window
+   through macOS same-Space fullscreen. An opaque surface shields the guest;
+   the live screen appears only in Now. Its confirmations are the same
+   `<dialog>`, above it. Dismissal restores the original window.
 
 ## Toolbar
 
@@ -64,12 +68,15 @@ so cleanup cannot open Start.
 **The machine picker** is one trigger, a computer icon, the machine's name
 or title and a chevron, with the tooltip "Windows machine", so nothing next
 to the traffic lights goes unexplained. It opens the **Windows machines**
-menu (`components/Menu.tsx`, Base UI's Menu in the window's style): every
-machine by name or title with its state on the right (Running, Starting,
-Paused, Stopped, Saved) and a check on this one; under a separator, New
-Machine…, Rename… and Delete "<name>"…. It opens with one machine too, so
-New Machine… is always there. Rename… edits the title in place of the
-picker; Window → Rename Window… does the same.
+menu (`components/Menu.tsx`, Base UI's Menu in the window's style), in three
+runs: the machines (a check on this one, each with its state at the right,
+a dot and a word: Running, Starting, Paused, Asleep, Stopped, Saved, Not set
+up); then the commands, New Machine… and Rename… with their glyphs; then, apart
+and red, Delete "<name>"…. It opens with one machine too, so New Machine… is
+always there. See [`components.md`](components.md) → *Menus*. Rename… edits the
+title in place of the picker; Window → Rename Window… does the same. Both set
+the machine's *title* (`winvm config title=`, shown in place of its name); a
+machine's name, the folder everything is kept under, is not renamed.
 
 **New Machine…** is a small dialog: a name, checked as the CLI checks
 instance names (letters, digits, dots, dashes and underscores, starting with
@@ -98,6 +105,36 @@ is a moon, and the first key pressed in the screen wakes it and isn't typed)
 and **Lock (Ctrl+Alt+Del)** (back to Windows' sign-in screen). Asleep, the
 button reads Wake.
 
+**Input over the screen** follows one rule (`features/screen/input.ts`, tested
+in `tests/input.test.ts` and `tests/screen-input.test.tsx`): the guest gets
+the pointer, wheel, keys and clipboard only while Windows runs with no verb
+under way. Paused, asleep, starting, stopped, put away, or busy (saving,
+loading, pausing, restarting, waking), the frame is a picture:
+
+| Phase | Input to the guest | Cursor over the frame | Keyboard capture |
+|---|---|---|---|
+| Running, idle | yes | the guest's own | allowed |
+| Running, a verb under way | no | the Mac's arrow | released |
+| Starting (agent silent) | no | the Mac's arrow | released |
+| Paused | no | the Mac's arrow | released |
+| Asleep | no (the first key wakes) | the Mac's arrow | released |
+| Stopped, put away, none | no | the Mac's arrow | released |
+
+Not forwarded means not sent and not swallowed: noVNC is view-only, the
+canvas takes no pointer events (so the Mac's arrow shows, whatever cursor noVNC
+set, even none), a click doesn't move focus, no key is stopped or prevented, and
+the Mac's own shortcuts (Cmd-Tab, the menu accelerators) work. The pause overlay
+has no controls and takes no pointer events either; Resume is on the toolbar.
+Asleep alone takes focus on a click, so a key can wake the machine. A button
+or key held when input ends is let go of on the guest first, while noVNC can
+still send (the verb starts the moment Pause is clicked, before QEMU stops), so
+no modifier is left down across a resume. Capture Keyboard is disabled with a
+tooltip that says why, and the native Input menu items (Capture Keyboard, Send
+Windows Key, Send Ctrl-Alt-Delete) answer with a notice that says why. The Mac's
+clipboard is not sent to a guest that takes no input and is not marked as sent:
+it goes when input resumes. Dropping files needs Windows running and idle too
+(`guestReady`).
+
 ## Resizing the window
 
 On virtio-gpu the guest's screen follows the window, one guest pixel per
@@ -113,19 +150,84 @@ ended" on its stderr.
 
 The overview says the least it can: one display heading (Fraunces, the
 window's one display moment), one sentence, one fact line, one primary
-action. The commands for developers sit under it, and drop out when the
-display is too short for them. Everything else is in the panel: Resources
-and Status open by default, This Mac open only when something is missing.
+action. What you can do with the machine sits under it (below), and drops
+out when the display is too short for it. Everything else is in the panel:
+Resources and Status open by default, This Mac open only when something is
+missing.
+
+**What you can do** (`features/help/`), a `--text-sm` muted title over one
+outlined list (a hairline border and `--radius-card`, no fill, rows split by
+hairlines) of five rows: Open a Windows terminal, Copy files between your Mac
+and Windows, Save a checkpoint, Restore a checkpoint, Use winvm from
+Claude Code and Claude Desktop. The title is the same whatever the state;
+the rows say what the state allows. A row is a button: the toolbar button's
+own glyph in a column of its own (`--size-md`, `--link`), the label in
+`--text-base`, and a muted chevron at the end. The columns are fixed and
+top-aligned, so a label that wraps stays under its first line. Hover and the open row step to `--surface-control`.
+Up and Down, Home and End move between rows; Tab still visits each. The list is the
+overview column's full width (the column is in [`layout.md`](layout.md) → *The
+overview*), so it is as wide as the note above it. It drops out when the display is
+under 46rem tall, the height the whole screen needs.
+
+**What the state allows** (`features/help/availability.ts`, which names the
+code each rule follows). The list is on the overview of a machine that is off,
+put away or not set up, so most rows are unavailable there:
+
+| Topic | Running | Paused | Stopped, suspended | No machine |
+|---|---|---|---|---|
+| Open a Windows terminal | yes | Resume Windows first | Start Windows first | Set up Windows first |
+| Copy files between your Mac and Windows | yes | Resume Windows first | Start Windows first | Set up Windows first |
+| Save a checkpoint | yes | yes | Start Windows first | Set up Windows first |
+| Restore a checkpoint | yes | yes | yes (it starts Windows from the checkpoint) | Set up Windows first |
+| Use winvm from Claude Code and Claude Desktop | yes | Resume Windows first | Start Windows first | Set up Windows first |
+
+Asleep is the same as paused except that Save a checkpoint also asks to
+resume (the Checkpoints view takes one only while Windows runs or is paused),
+and while Windows is starting every row but Restore a checkpoint waits
+("Windows is still starting"). An unavailable row is `aria-disabled="true"`,
+not `disabled`: it stays in the Tab order and opens its help, because help is
+information and only the action is unavailable. It looks like every other row, with the reason under the label in
+`--text-sm` muted (a muted row beside one bright row reads as that one being
+selected). Its popover
+reads exactly like any other: help is documentation, never written to the state
+of the machine in front of it (a requirement such as "Windows has to be running"
+belongs in the text itself). A row that works looks as it always does.
+
+A row opens a **help popover** (`components/HelpPopover.tsx`, see
+[`components.md`](components.md)): a screenshot of the real window, the
+topic's title, one sentence, three numbered steps and one thing worth
+knowing, with previous and next topic at the foot. The words are
+`help.<topic>.*` in `en.json`; the pictures are `features/help/img/`, made
+by `scripts/render-help.mjs` (below). Each claim is one the app, the CLI or
+`docs/` makes: the Terminal and Files windows and the toolbar's buttons
+(above), Checkpoints and their automatic kinds (`docs/saves.md`,
+`docs/background.md`), and Use with Claude (`docs/cua.md`).
+
+**The help pictures.** `bun scripts/build-ui.ts`, then
+`PLAYWRIGHT_DIR=… node scripts/render-help.mjs` from `apps/viewer` renders
+the Terminal window (against `tests/render/help-term-server.ts`, a fake guest
+that plays a short session), the Files window, the Checkpoints view (new
+checkpoint; browsing; one selected, with Restore) and the Use with
+Claude panel, in WebKit against `tests/render/fake-tauri.js` and
+`fake-help.js`, on a fixed clock so Today and Yesterday read the same every
+time. It writes `<topic>-<figure>.light.jpg` and `.dark.jpg` (1200 × 675)
+into `features/help/img/`; commit them. They are the real windows, so run it
+again, and commit, whenever the Terminal, Files, Checkpoints or Use with
+Claude panel changes shape. `--preview <dir>` also screenshots the list and
+every popover at three sizes, and the list of a suspended machine with the
+help of an unavailable row open.
 
 **Resources**, while the machine runs: CPU and Memory, each a label, its
 value ("19%", "2.1 GB of 4 GB") and the last minute and a half as a line;
-Disk, Windows' C: drive as a hairline bar ("C: 12 GB of 63 GB") and what
-the machine's changes take on the Mac. Marks are `--accent`, values
-`--text-strong`, notes `--text-muted`; no dots. CPU is QEMU's share of the
-machine's processors; Memory is what Windows has in use (total less
-available, as Task Manager counts it), or, until Windows answers, what QEMU
-holds on the Mac, said so. Read every 2.5 s while the window shows, never
-while the machine is off, with one `ps` and one agent call, no CLI.
+Disk, Windows' C: drive as a bar ("C: 12 GB of 63 GB"). No captions. CPU is
+Windows' own figure, with what QEMU spends on the Mac as a second, dashed
+line on the same chart; the disk bar carries what the machine's changes take
+on the Mac as a strip on the same track; hovering or focusing either names
+each value (see Resource meters in `components.md`). Memory is what Windows has
+in use (total less available, as Task Manager counts it), or, until Windows
+answers, what QEMU holds on the Mac, said so in its value. Read every 2.5 s
+while the window shows, never while the machine is off, with one `ps` and
+one agent call, no CLI.
 
 **Shared folder** (`features/sharedfolder/`), closed unless Windows needs
 its setup, with "Off" or "Z: in Windows" beside the title: the Mac folder
@@ -145,6 +247,54 @@ in front (`features/screen/clipboard.ts`). What Windows copies goes on the
 Mac's clipboard; the Mac's goes to Windows when the window comes forward and
 once on connecting, only when it changed, and never back to where it came
 from. QEMU's qemu-vdagent carries it, through noVNC's extended clipboard.
+
+## The suspended screen
+
+A machine that is suspended (stowed) shows its own overview with two things
+the others don't: a note, and a backdrop (`features/overview/`).
+
+**The heading names the machine** ("Windows machine `Work PC` is suspended"; an
+off machine says "is off"), the name in the mono face, and the name is where it
+is renamed: click it, press Return on it or F2 and it becomes a field in place;
+see [`components.md`](components.md) → *A name edited in its heading*. It sets
+the same title as Rename… in the machine menu, which stays for the states with
+no such heading (running, paused).
+
+**The note** is the person's, about this machine: a text area under the
+heading, with a quiet placeholder ("Add a note about this machine"). It
+saves as they type (after a pause, 800 ms), on Esc and on leaving the field,
+and when the screen goes away (Start) or another machine is shown: no Save
+button. If a save fails it says so under the note and tries again at the next
+chance. It is kept by `winvm note -i <name>` (`packages/core/src/machinenote.ts`)
+in `$XDG_DATA_HOME/winvm/machine-notes/<instance>.json`, apart from the notes
+on checkpoints, and goes with the machine when it is deleted. It takes no key
+the app uses: Esc finishes writing (saves, leaves the field), everything else
+is typing. Nothing is captured for Windows here; the machine isn't running.
+
+**It grows upward.** The heading and the note are one block, aligned to its
+bottom, between the top of the screen and the controls. As the note grows the
+heading rises with it; when the heading reaches the top of the column (its
+`--space-7` padding, so 48 points below the toolbar that carries the traffic
+lights; on a window taller than the column's cap, below the column's top) the
+note stops growing and scrolls inside. At rest the note has three lines, five
+on a taller display and seven on a tall one, so extra height is room to write. The facts, Start and the rest below it
+never move, because the block, not they, takes up the slack. This is layout
+only (flex, and the wrapper's `data-value` copy of the text drawn invisibly in
+the same grid cell, which gives the area the height of its text): no
+measuring in script. `scripts/render-overview.mjs` measures it in WebKit.
+
+**The backdrop** is behind the whole screen: the screenshot from when the
+machine was put away (else the newest checkpoint's picture), at 16% opacity,
+blurred (`--space-6`), saturation 0.8, contrast 0.85, brightness 0.75, out of
+the layout so nothing moves when it arrives; it fades in once loaded. A
+machine with no picture gets a drawn wallpaper under the same treatment: soft
+dunes and a low sun in `--link`, `--accent`, `--brand` and the backdrop
+tokens (so it follows light and dark), with no icons, no marks and no text.
+Over it, text is `--text-strong`, `--text-base-color` (the labels that are
+`--text-muted` elsewhere on this screen, which wouldn't clear 4.5:1 over a pure
+white or black picture at this opacity), `--status-error`, and `--link` for
+glyphs; `tests/overview.test.tsx` measures each against the worst picture, in
+both themes.
 
 ## The Files window
 
@@ -249,14 +399,23 @@ spatial canvas). The toolbar's clock opens it, as do ⌘⇧T and File →
 Checkpoints…; Option-click or right-click on the clock shows a native menu
 with Take a Checkpoint Now and Show Checkpoints….
 
-**In and out.** The view eases in: the window's own screen becomes the
-"Now" card where it stands (the camera starts with the card exactly over the
-display) and the camera pulls back to show Now and the newest checkpoints,
-while the window behind dims and blurs (the live screen, copied a couple of
-times a second and blurred; `backdrop-filter` where there is no screen).
-Done, Esc or a click on Now flies back into the screen the same way. Going
-back to a checkpoint flies that checkpoint's picture into the screen once
-Windows is back at that moment.
+**In and out.** The existing window expands to the full display through
+Tauri's macOS same-Space fullscreen, without creating a new Space. Native
+geometry changes immediately; the canvas eases in from 80% to 100%, opacity
+0 to 1 and 4 px blur to clear over 200 ms, already showing Now and the newest
+checkpoints. Done, Esc or a click on Now reverses that treatment in place,
+then restores the original frame, chrome and Dock/menu presentation. An
+already-native-fullscreen window stays fullscreen. Under reduced motion the
+canvas appears and goes at once.
+
+The full-display surface is opaque throughout: the live guest never shows
+behind a shrinking canvas or receives its input. A token-derived vignette
+closes in the edges and sinks into the surface color toward the oldest
+checkpoints. There is no enlarged copy of the framebuffer behind it. The
+real screen and noVNC connection remain mounted, with guest input and size
+requests held until the original window returns. Restoring a checkpoint
+leaves the same way, once Windows is back at that moment. The camera stays
+still on entry and exit, and flies only *within* the view (below).
 
 **Layout.** Time runs up the canvas, as Time Machine's windows recede into
 the screen. Now, the running machine (its live screen, copied into the card
@@ -264,17 +423,97 @@ a few times a second; its state when it is off), is the large card at the
 front, at the bottom. Above it, one block per day with checkpoints, the
 newest day nearest, its date above it (Today, Yesterday, a weekday this
 week, else the date): the day's checkpoints left to right as taken, six to
-a line. Each older day is drawn a little smaller (7% a day, down to 62%),
-so the stack reads as going back in time and in depth. Far out, where the
-dates no longer fit, only the months are named, beside the stack.
+a line. Each older day is drawn a little smaller and fainter (7% a day, down
+to 62%), so the stack reads as going back in time and in depth. Far out,
+where the dates no longer fit, only the months are named, beside the stack.
+The view opens on everything when it fits with cards at least 40% of life
+size (a short history), else on Now and the newest two days, and at the zoom
+it was left at once it has been left anywhere else.
 
-**A card** is the checkpoint's screenshot (a 16:10 frame, the picture
-fitted inside it; "No picture" for checkpoints taken before screenshots),
-then its title (its notes' title, else its name), when it was taken as
-Finder says it, its kind and size, and a notes mark when it has notes. One
-that can't load here is dashed and grey, and says why over its picture
-("Made with a different display, so it can't load here"). Far out, cards
-are their pictures only.
+**A card** is one clean surface: a 16:10 picture above a compact caption,
+using the existing `--radius-card` and `--elevation-card`, with no gap or
+nested card. Screenshots fill the frame (`object-fit: cover`), cropped at
+the top before the bottom so the taskbar stays visible. Missing or unreadable
+pictures use a generated, decorative flowing wallpaper in token-derived
+sand/clay and sage colors, with no taskbar, desktop chrome or invented text.
+"No picture" remains its tooltip, not copy drawn in the image.
+
+It is one focusable button, so selection, hover, carrying and the highlight
+ring take all of it. Below the picture (`components.md` → *Checkpoint card*):
+
+1. a modest leading glyph says how it came to be (the full kind remains in
+   its tooltip and accessible name, rather than a visible pill);
+2. its name (its notes' title, else its name), strong, on the first row;
+3. when taken, as Finder says it, muted, with its size at that row's end;
+4. its note, only when it has one: a notebook and the first line, muted and
+   cut with an ellipsis (the whole note is its tooltip).
+
+The kind is never on the picture, and the note is never an icon beside the
+name: they are different facts and read differently. Absent data shows
+nothing. One that Windows can't restore here is dashed and grey, with a warning
+banner ("Can't restore", one line, 80% opaque) across its picture's foot where
+the card is wide enough for words (a small circular warning glyph in the corner
+below that), which is the card's
+state, not a row of its caption (the reason is its tooltip and part of its
+accessible name; the panel says it in a few words, the whole reason on hover). The accessible name is the
+whole of it: name, kind, when, size, "Has notes" when it has, and the reason
+when it can't be restored.
+
+**Words read at any zoom.** Card words are drawn at least 12 px on screen
+(`--text-sm` at 86%), scaled up in the world as the camera pulls back rather than
+shrinking with the card, so the gaps between lines and days leave room for
+them. As a card gets small the words thin out by its width on screen: 180 px
+and up, the whole plate (name, time, kind, size, note); 84 px, the name only;
+under that, the picture alone (no plate; its name and time are its tooltip).
+The plate is part of the card, so its height is included in the gaps between
+lines and days. Strokes
+(outline, selection ring) are scaled the same way, so they stay lines.
+
+**Picking out.** Pointing at a day on the timeline, or at the Automatic
+filter, gives the matching cards a soft accent ring and glow, and the rest
+step back a little. Search dims what doesn't match, as before.
+
+**Moving cards.** Dragging a card moves it, wherever it is put: cards can be
+grouped however a person likes. Dragging empty canvas still pans, and a click,
+Enter or Space on a card still selects and looks. With a card selected,
+⌥ and the arrows move it (⇧ for more), for anyone who can't drag. Esc while
+carrying puts it back. Now can't be moved. A card keeps its place as an
+offset from its slot, so it moves with its day when days are added. Moves are
+kept per machine in the settings below; the Reset layout button at the end of
+the control bar (dimmed while nothing is moved) puts every card that is in no
+section back where winvm placed it (sections stay: see *Sections* below).
+
+**A day's date belongs to its cards.** It is placed from where the day's cards
+are now, not from where the layout first put them: at the top left of their
+bounds, a little above, so it follows them while they are carried and after.
+When a day's cards are no longer together (a card is dragged further than a
+line's gap from the rest), the date goes with the day's biggest cluster of
+cards, and with the cluster holding the day's earliest card when they tie, so
+when every card of a day is on its own the date follows the earliest one.
+Each day is centred over Now in the layout and drawn smaller the older it is,
+so the dates' left edges differ between days by design; each is aligned with
+the left edge of its own cards, which is the one rule.
+
+**Sections.** A person's own grouping, drawn with the Section tool in the bar
+(S; pattern and rules in [`components.md`](components.md) → *Section
+(Checkpoints)*). A section is a named container: its tab carries its name,
+edited in place; checkpoints are put in it by dropping them (the section their
+picture's centre is in), and carrying the section carries them, each keeping its
+place relative to the section's top left. Corners and edges are on a grid of 24
+world units, which is drawn only while a section is being drawn, moved or
+resized. Sections never touch one another, Now or the timeline (one cell
+between), and they sit under the cards. They do not replace the days: the
+automatic layout is unchanged and still places every checkpoint, new ones
+included, outside any section; the day's date follows the day's cards that are
+in no section (the cluster rule above, over those only), and a day with all its
+cards in sections has no date. A section is a person's, so *Reset layout* puts
+back only the loose cards: sections, their names and what is in them stay (a
+card's place in a section is the section's, not a move). Removing a section
+(Delete, or the x on its tab) never touches a checkpoint: they stay where they
+are, loose. Sections are kept per machine in the same settings as the moves
+(`checkpoints.sections`: `{ id, name, x, y, w, h }` and, per checkpoint, its
+section and offset), made sound when read: on the grid, not touching, a deleted
+checkpoint dropped, a section allowed to be empty.
 
 **The timeline**, down the right edge: a tick per day with checkpoints,
 evenly spaced (by turn, not by time, so a busy day and a quiet month take
@@ -289,34 +528,124 @@ scroll); two-finger scroll, dragging anywhere or the arrow keys pan. The
 camera never leaves the stack behind, and zooms between seeing everything
 and three times life size.
 
-**A selected card** comes up close, centred in the space the panel leaves,
-and the panel beside the timeline shows a larger screenshot (click it, or
-press Space, for Quick Look), its notes (title, markdown text and tags,
-written as they are typed to `$XDG_DATA_HOME/winvm/notes/<instance>/<save>.json`
-through `winvm saves note`), when it was taken, its kind, size, whether it
-loads here and its name in winvm; then Delete… and Go Back to This.
+**A selected card** comes up close, centred in the part of the window the layer
+and the timeline leave free. Its details are a **layer over the canvas** (see
+[`components.md`](components.md) → *Properties panel*): flush with the window's
+left edge, from under the traffic lights down to the control bar's row, so the
+bar and the zoom pill, which sit below it, stay in view and clickable (at 820 px
+and narrower the zoom stands above the bar, and the layer ends above that too).
+It is not a card beside the canvas and it does not resize it: it eases in from
+the left (a 220 ms slide with a short fade, decelerating) and eases out the
+same way on Esc (when nothing is being edited), the close button, a click on
+empty canvas or Now (180 ms, accelerating), staying in the page until it has,
+so the way out is seen. Picking another checkpoint changes what it says in
+place, with no new slide. Focus goes into it when it opens and, when it closes
+from inside, back to the card. Reduced motion: it appears and goes.
 
-- **Go Back to This** confirms: "Windows returns to exactly how it was at
-  that moment. What it's doing now is replaced, unless you keep it as a
-  checkpoint first.", with Cancel, Save Current First (while Windows runs:
-  it takes "Before going back to …" first) and Go Back. It is disabled,
-  with the reason, for a checkpoint that can't load here.
+Its layout mirrors the card's caption plate, each fact in one place: the
+**larger screenshot** at the top (click it, or press Space, for Quick Look; the
+close button floats over its top right); **only when Windows can't restore it
+here, a one-line banner across the screenshot's foot** ("Can't restore · Wrong
+QEMU version", the warning glyph first, 80% opaque warning tone; the whole
+reason on hover, in Restore's tooltip and as its accessible description; nothing
+at all when it can); under it the **title**, edited where
+it stands (click, Return or F2; Return keeps, Esc puts it back; one that can't
+be kept says why under it); when it was taken, muted; how it came about as the
+card's chip, with its size at the row's end (what made it is the chip's hover, not
+a line of text; the size's hover says it is the space on the Mac's disk, at
+most, since checkpoints share space); then **one break**; its **note**, written
+as text (placeholder "Add a note"),
+saved by itself after a pause with no Save button (Esc puts it back), to
+`$XDG_DATA_HOME/winvm/notes/<instance>/<save>.json` through `winvm saves note`;
+then the rows for what is more: its tags (editable, comma-separated) and how
+its memory is stored (Compressed (zstd), Fast restore (uncompressed), or
+Uncompressed (legacy)); there is no save-name row. Under them, **Protect
+Checkpoint** / **Unprotect Checkpoint** (a pressed toggle, `winvm saves
+protect`): what it means is its tooltip, not a line of text. Saved on suspend
+can't be protected (the tooltip says to take a named checkpoint instead). A
+protected checkpoint shows a lock at the end of its card's name row, stays in
+view when Automatic ones are hidden, and can't be deleted until it is
+unprotected. Last, Delete…, a folder button (**Show in Finder**: opens the
+checkpoint's folder, `~/.local/state/winvm/saves/<instance>/<save>/`, which
+`winvm saves path` names) and the rewind button (**Restore this checkpoint**).
+
+The kinds, what makes each, and so what the words say:
+
+| Chip | Kind (CLI) | Made by | Sentence |
+|---|---|---|---|
+| Taken by you | `manual` | New Checkpoint, `winvm save` | You took this one yourself, with New Checkpoint. |
+| Saved while idle | `auto` | the idle watcher (`watch.ts`, `autosave.keep` of them) | Taken automatically while Windows sat idle. |
+| Fresh install | `baseline` | `start`, the first time an instance boots, once the guest is ready (`savecmds.ts`; `rewind` goes back to it) | Taken the first time this machine started, once Windows had finished setting up and before you changed anything. |
+| Saved on suspend | `stow` | `winvm stow`, which the watcher runs after a longer idle and which a later `start` recalls (`savecmds.ts`; the machine then reads Suspended) | Taken when Windows was suspended. |
+| Test starting point | `golden` | `winvm golden create` once Windows has gone quiet (`golden.ts`) | A quiet moment saved so automated tests can start from the same state every time. |
+
+"Saved while idle" and "Saved on suspend" are what the Automatic filter hides.
+
+- **Restore** (the rewind button) confirms, in two short sentences about
+  *this* machine: while Windows runs or is paused, "This machine goes back to
+  how it was at that moment, and what it's doing now is replaced. Your
+  checkpoints are kept."; while it is off, "This machine starts from how it was
+  at that moment, replacing what is on its disk now."
+  With Cancel, Take Checkpoint First (while Windows runs: it takes "Before
+  restoring …" first, then restores) and **Restore**. No machine is created and
+  no second one runs: `load` quits this machine's QEMU (running or paused, what
+  it held is discarded), puts the checkpoint's disk and memory back and starts
+  it again, running, at that moment (`saves.ts` `loadSave`); a stopped machine
+  is simply started from it. Nothing is kept of the present unless Take
+  Checkpoint First is chosen. A waiting "Saved on suspend" checkpoint is spent by
+  any restore. The button is disabled, with the reason (the same one the banner
+  says, in full), for a checkpoint that can't be restored here.
 - **Delete…** confirms, destructive: its picture and notes go with it.
-  First start (baseline) and For tests (golden) checkpoints can't be deleted
-  here, as `rewind` and tests depend on them; the button's tooltip says so.
+  Fresh install (baseline) and Test starting point (golden) checkpoints can't be deleted
+  here, as `rewind` and tests depend on them, nor can a protected one; the
+  button's tooltip says so.
 
-**New Checkpoint** asks for a name (empty: named by the time). The name
-becomes its title, and a directory-safe form of it the save's name. The
+**New Checkpoint** asks for a name. The field's placeholder is the name it
+gets when left empty: the current date and time spelled out as the cards say
+them ("Nov 3, 2026 at 3:30 PM", never "Today"), kept current while the dialog
+is open (it changes on the minute). There is no helper line. Under it,
+**Compress memory (zstd)**, checked: unchecked takes it as mapped-ram, larger
+but faster to restore (its tooltip says so). It applies only to the new
+checkpoint; none is converted. An empty field
+is stored as that text, as the checkpoint's title; its save name (the folder,
+and what `winvm` calls it) is the timestamp `winvm save` uses by default,
+`2026-11-03_15-30-12`. A typed name becomes its title, and a directory-safe
+form of it the save's name. The
 view pulls back to Now and today, Now says "Taking a checkpoint…", and the
 new card flies out of Now into its place, screenshot and all.
 
-**Search** (⌘F) matches every word against names, titles, notes, tags,
-kinds and dates, newest first; cards that don't match fade while the
-results are open, and choosing one flies to it. **Automatic** shows or
-hides the checkpoints winvm takes by itself (autosaves and the stow).
+**The control bar** floats at the bottom of the window, one compact bar
+(Settings' glass is opaque here: cards pass under it): search, New, Newest,
+Automatic, Reset layout and Done.
+Each is a button with an accessible name and a tooltip, the keys in the
+tooltip. **New** is a plus and a word; its tooltip says why when it can't
+(Windows isn't running). **Newest** (flies to Now and the newest days) is a
+target glyph, "where it is now", not a download arrow.
+
+**Search** (⌘F, or the magnifier) matches every word against names, titles,
+notes, tags, kinds and dates, newest first. It is a magnifier until used. Then
+the bar grows to the left, its right end staying put (200 ms, instant with
+reduced motion), and the magnifier becomes the leading icon of one rounded field
+inside the bar, with a clear x once it has words; its focus ring is the field's
+own outline, drawn inside it. In a window under 900 px wide the field opens over
+the whole bar instead, the other controls hidden until it folds. Esc clears and
+folds it; it folds when it loses focus empty, and is out of the Tab order while
+folded. How many match is said to a screen reader. Cards that don't match fade
+while it is open, and choosing one
+flies to it. **Automatic** is an icon filter, pressed when automatic
+checkpoints show: it shows or hides the checkpoints winvm takes by itself
+(autosaves and the stow).
+
+**The zoom** (out, 53%, in, show everything) is its own small control in the
+lower left of the window, not in the bar. It is out of sight at rest: it eases
+in when the pointer comes near the lower left, while the zoom changes (pinch,
+wheel, ⌘+ ⌘−) and when a button in it has focus, and eases out 1.6 s after
+the pointer leaves and the zoom rests. In a window narrower than 820 px it
+stands above the bar instead of beside it. See [`components.md`](components.md)
+→ *Zoom control*.
 
 The view's settings (whether automatic checkpoints show, the zoom it was
-left at) are in `$XDG_CONFIG_HOME/winvm/settings.json` under
+left at, and the cards moved, by machine and checkpoint) are in `$XDG_CONFIG_HOME/winvm/settings.json` under
 `"checkpoints"`, read and written by the app (`src-tauri/src/checkpoints.rs`).
 Screenshots come through `checkpoint_image`, which serves only
 `saves/<instance>/<save>/{thumb,screen}.png`, as bytes shown as `blob:`
@@ -330,6 +659,7 @@ large on screen, so hundreds of checkpoints pan smoothly.
 | ⌘+ ⌘− | zoom in, out |
 | ⌘0 | show every checkpoint |
 | arrows (⇧ for more) | pan |
+| ⌥ arrows (⇧ for more) | move the selected checkpoint |
 | ⌘↑ ⌘↓ | the checkpoint older, newer |
 | Space | Quick Look the selected checkpoint |
 | ⌘F | search |
@@ -337,9 +667,14 @@ large on screen, so hundreds of checkpoints pan smoothly.
 
 `bun scripts/build-ui.ts`, then `PLAYWRIGHT_DIR=… node
 scripts/render-checkpoints.mjs` renders it in WebKit against a fake app
-(`tests/render/fake-tauri.js`): the way in and out, zooms, the timeline, a
-selection, Quick Look, search, the confirmations, New Checkpoint and 400
-checkpoints, light and dark.
+(`tests/render/fake-tauri.js`, 14 checkpoints: manual, automatic, one with no
+picture, and ones that can't be gone back to here because of a different display or QEMU):
+the way in and out, the opening view and the bar at rest, the highlights, a card
+dragged and the layout reset, zooms, the timeline, a selection, Quick Look,
+search, the confirmations, New Checkpoint and 400 checkpoints, light and dark.
+`scripts/render-help.mjs` also photographs this view for two help popovers
+(*What you can do with this Windows machine* under *Disclosure*): when the
+canvas changes, run it again.
 
 ## Use with Claude
 

@@ -4,7 +4,7 @@
  */
 import { z } from "zod"
 
-import { isLivePhase, type Phase } from "../../model"
+import { isLivePhase, type Phase, TITLE_MAX } from "../../model"
 
 /** A new machine's name: the CLI's rule (packages/core/src/args.ts isValidInstanceName). */
 const NAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/
@@ -22,6 +22,46 @@ export function nameProblem(name: string, existing: readonly string[]): NameProb
 
 /** The picker's word for a machine's state: Running, Starting, Paused, Asleep, Stopped, Saved (a stowed machine), Not set up. */
 export const stateKey = (p: Phase): string => `machine.state.${p}`
+
+export type TitleProblem = "long" | "control"
+
+/**
+ * Why `title` can't be a machine's title (an i18n key's last word), or null when
+ * it can: core's checkTitle (packages/core/src/config.ts), which `winvm config`
+ * enforces too. Empty is no problem here; it clears the title.
+ */
+export function titleProblem(title: string): TitleProblem | null {
+  const typed = title.trim()
+  if ([...typed].length > TITLE_MAX) return "long"
+  // eslint-disable-next-line no-control-regex
+  if (/[\u0000-\u001f\u007f-\u009f\u200b\u200e\u200f\u2028-\u202e\u2060\u2066-\u2069\ufeff]/.test(typed)) return "control"
+  return null
+}
+
+/** What committing a typed title does: set it, clear it (back to the machine's name), or nothing. */
+export function titleEdit(typed: string, shown: string, hasTitle: boolean): "set" | "clear" | "none" {
+  const next = typed.trim()
+  if (next === "") return hasTitle ? "clear" : "none"
+  return next === shown ? "none" : "set"
+}
+
+/** A state's dot differs in shape as well as colour: filled (on), half (idle), ring with a centre (saved), empty ring (off). */
+export type StateShape = "on" | "idle" | "saved" | "off"
+
+export function stateShape(p: Phase): StateShape {
+  switch (p) {
+    case "running":
+    case "starting":
+      return "on"
+    case "paused":
+    case "asleep":
+      return "idle"
+    case "stowed":
+      return "saved"
+    default:
+      return "off"
+  }
+}
 
 /** Live machines must be off before they can go. */
 export const isLive = (p: Phase | null | undefined): boolean => isLivePhase(p)

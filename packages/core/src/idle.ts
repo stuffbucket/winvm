@@ -50,9 +50,10 @@ export interface Sample {
   /**
    * The vCPUs are stopped — paused or asleep (frozen.ts). Such a guest is held
    * as the user left it: no autosave, no stow, and the time frozen is not idle
-   * time (the idle clock starts again when it resumes). Absent: not frozen.
+   * time (the idle clock starts again when it resumes). Null: unknown, so no
+   * automatic action is safe. Absent: not frozen (legacy callers).
    */
-  readonly frozen?: boolean
+  readonly frozen?: boolean | null
 }
 
 export interface Settings {
@@ -173,6 +174,18 @@ export class IdleMachine {
       return decisions
     }
 
+    // Unknown is not idle: a busy monitor may hide a paused guest or a viewer.
+    // The failure is not activity, but a known command or viewer still is.
+    if (s.frozen === null || s.vncClients === null) {
+      if ((s.activityAtMs !== null && s.activityAtMs > this.idleSinceMs) || (s.vncClients !== null && s.vncClients > 0)) {
+        this.autosaveArmed = true
+      }
+      this.restartIdle(s.wallMs)
+      this.lastDriftCheckMs = s.wallMs
+      this.lastVerdict = { quiet: false, cpuAvg: null, reasons: ["monitor unavailable"], woke }
+      return decisions
+    }
+
     // ---- CPU, averaged over a window, ignoring our own actions' wake.
     if (s.cpu !== null && s.wallMs >= this.ignoreCpuUntilMs) {
       this.cpuWindow.push({ at: s.wallMs, cpu: s.cpu })
@@ -259,15 +272,19 @@ export interface SaveInfo {
   readonly name: string
   readonly kind: string
   readonly createdAt: string
+  /** Explicitly kept by the user; absent in older manifests: false. */
+  readonly protected?: boolean
 }
 
 /**
- * The auto saves to delete so that only the newest `keep` remain. Never names a
- * save of any other kind — manual, baseline and stow saves are the user's.
+ * Keep the newest `keep` unprotected autosaves, plus ALL protected ones.
+ * Protection removes a save from the retention budget as well as the victims:
+ * locking a new save must not cause an older unlocked one to be reclaimed.
+ * Never names a save of another kind.
  */
 export function savesToRotate(saves: readonly SaveInfo[], keep: number): readonly string[] {
   const autos = saves
-    .filter((s) => s.kind === "auto")
+    .filter((s) => s.kind === "auto" && s.protected !== true)
     .toSorted((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt) || b.name.localeCompare(a.name))
   return autos.slice(Math.max(0, keep)).map((s) => s.name)
 }

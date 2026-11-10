@@ -4,8 +4,11 @@ import { installCli, outputText, winvm } from "../../backend"
 import type { Checks, Connection, Phase, Status } from "../../model"
 import { isLivePhase, parseChecks, parseConnection, parseStatus, phase, titleAssignment } from "../../model"
 import { phaseAfter, shownPhase, StatusGuard, type Verb } from "./statusGuard"
+import { type AgentSeen, UNSEEN, agentSeen } from "./agentSeen"
 
 export type { Verb } from "./statusGuard"
+
+export interface RunOptions { readonly format?: "zstd" | "mapped" }
 
 export interface Ran {
   readonly verb: Verb | "open" | "put"
@@ -22,6 +25,8 @@ export interface Winvm {
   readonly phases: Readonly<Record<string, Phase>>
   readonly status: Status | null
   readonly phase: Phase | null
+  /** Windows' agent has answered since this QEMU started: a later silence is a busy Windows, not a boot. */
+  readonly agentSeen: AgentSeen
   readonly statusError: string | null
   readonly checks: Checks | null
   readonly checksError: string | null
@@ -32,7 +37,7 @@ export interface Winvm {
   readonly cliPath: string | null
   select(name: string): void
   /** Runs a verb on this instance; `arg` names the save for save and load. Resolves with what it did (null: nothing to run). */
-  act(verb: Verb, arg?: string): Promise<Ran | null>
+  act(verb: Verb, arg?: string, options?: RunOptions): Promise<Ran | null>
   openScreenSharing(): Promise<void>
   installCommand(): Promise<void>
   dismissFailure(): void
@@ -59,6 +64,8 @@ export function useWinvm(): Winvm {
   const [last, setLast] = useState<Ran | null>(null)
   const [cliPath, setCliPath] = useState<string | null>(null)
   const [polls, setPolls] = useState(0)
+  // Whether Windows has answered since this QEMU started (agentSeen.ts).
+  const [seen, setSeen] = useState<AgentSeen>(UNSEEN)
   // What the last verb left (paused, asleep, running), shown until a read started after it lands.
   const [held, setHeld] = useState<Phase | null>(null)
   const guard = useRef(new StatusGuard())
@@ -91,6 +98,7 @@ export function useWinvm(): Winvm {
     setHeld(null)
     setStatusError(null)
     setStatus(s)
+    setSeen((was) => agentSeen(was, s))
     setTitles((was) => (was[s.name] === s.title ? was : { ...was, [s.name]: s.title }))
     setPhases((was) => (was[s.name] === phase(s) ? was : { ...was, [s.name]: phase(s) }))
   }, [])
@@ -164,13 +172,13 @@ export function useWinvm(): Winvm {
   }, [live, pid, name, connection, polls])
 
   const act = useCallback(
-    async (verb: Verb, arg?: string): Promise<Ran | null> => {
+    async (verb: Verb, arg?: string, options?: RunOptions): Promise<Ran | null> => {
       if (name === null && verb !== "setup") return null
       setBusy(verb)
       setFailure(null)
       let result: Ran
       try {
-        const extra = arg === undefined || arg === "" ? [] : [arg]
+        const extra = [...(arg === undefined || arg === "" ? [] : [arg]), ...(verb === "save" && options?.format !== undefined ? ["--format", options.format] : [])]
         const out = verb === "setup" ? await winvm("setup") : await winvm(verb, "-i", name ?? "default", ...extra)
         const ran: Ran = { verb, code: out.code, output: outputText(out) }
         result = ran
@@ -214,6 +222,7 @@ export function useWinvm(): Winvm {
     guard.current.settle(null)
     setHeld(null)
     setStatus(null)
+    setSeen(UNSEEN)
     setConnection(null)
     setName(next)
   }, [])
@@ -242,6 +251,7 @@ export function useWinvm(): Winvm {
     },
     status: current,
     phase: p,
+    agentSeen: seen,
     statusError,
     checks,
     checksError,

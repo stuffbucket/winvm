@@ -9,6 +9,8 @@ import type { Args } from "./args"
 import { imageName, instanceName, isValidImageName, isValidInstanceName } from "./args"
 import { PWSH_SHA256, PWSH_URL, TOOLS_SHA256, TOOLS_URL, checksReport, download, du, hostChecks, printChecks, requireHost, run, sha256Of } from "./host"
 import { diagnose, formatFindings } from "./diagnose"
+import { formatInput, judgeInput, probeInput } from "./inputcheck"
+import { lagCommand } from "./lag"
 import { ensureInstance, makeVars, resetInstance, sealBase } from "./instance"
 import { ISO_SOURCE, buildSeed, checkIsoIsArm64, makeResultVolume, readResult, resolveWindowsIso } from "./media"
 import type { InstanceMeta } from "./paths"
@@ -32,6 +34,7 @@ import * as agent from "./agent"
 import * as agentcmds from "./agentcmds"
 import * as finder from "./finder"
 import * as input from "./input"
+import { forgetMachineNote } from "./machinenote"
 import * as qemu from "./qemu"
 import * as qmp from "./qmp"
 import * as qga from "./qga"
@@ -162,10 +165,19 @@ export function prune(args: Args): number {
       continue
     }
     const size = du(p.dir)
+    // Reclamation must never discard protected checkpoints, including saves
+    // whose manifest cannot be read safely. Check/delete under the save lock
+    // before touching the instance, so an active save/load is left alone too.
+    try {
+      saves.removeAllSaves(name)
+    } catch (error) {
+      console.log(`  keeping "${name}" — ${error instanceof Error ? error.message : String(error)}`)
+      continue
+    }
     qemu.stopSidecars(p)
     stopService(p)
     rmSync(p.dir, { recursive: true, force: true })
-    saves.removeAllSaves(name)
+    forgetMachineNote(name)
     console.log(`  removed scratch instance "${name}" (${size})`)
     freedAnything = true
   }
@@ -936,25 +948,40 @@ export function destroy(args: Args): number {
     console.error(`::error::no such instance "${name}"`)
     return 1
   }
+  const hadSaves = existsSync(saves.savesDir(name))
+  const kept = saves.listSaves(name)
+  const protectedOrUnreadable = kept.some((s) => s.manifest === null || s.manifest.protected === true)
+  let keepSaves = args.flags.has("keep-saves") || protectedOrUnreadable
+  // du counts the APFS-cloned disks in full, so this can be more than the
+  // space actually returned while the clones still share blocks.
+  const savesSize = hadSaves ? du(saves.savesDir(name)) : ""
+  if (!keepSaves) {
+    try {
+      // Do this before destroying the instance. The lock rechecks protection
+      // and refuses a concurrent save/load before any machine files are lost.
+      saves.removeAllSaves(name)
+    } catch (error) {
+      if (error instanceof saves.ProtectedSave) keepSaves = true
+      else {
+        console.error(`::error::${error instanceof Error ? error.message : String(error)}`)
+        return 1
+      }
+    }
+  }
   stopService(p)
   qemu.stopSidecars(p)
   // Before smb.json goes with the instance: it holds the port that tells our mounts from anything else.
   finder.cleanStale(name)
   const size = du(instanceDir(name))
   rmSync(instanceDir(name), { recursive: true, force: true })
+  forgetMachineNote(name)
   console.log(`destroyed instance "${name}" (${size}; image untouched)`)
-  if (!existsSync(saves.savesDir(name))) return 0
-  const kept = saves.listSaves(name)
-  if (args.flags.has("keep-saves")) {
-    // `load` recreates the instance from one of them.
-    console.log(`  kept its ${plural(kept.length, "save")} in ${saves.savesDir(name)}`)
-    return 0
-  }
-  // du counts the APFS-cloned disks in full, so this can be more than the
-  // space actually returned while the clones still share blocks.
-  const savesSize = du(saves.savesDir(name))
-  saves.removeAllSaves(name)
-  console.log(`  and its ${plural(kept.length, "save")} (${savesSize})`)
+  if (!hadSaves) return 0
+  if (keepSaves) {
+    // `load` recreates the instance from one of them. A bulk deletion is never
+    // permission to destroy protected checkpoints; only `saves rm --force` is.
+    console.log(`  kept its ${plural(kept.length, "save")} in ${saves.savesDir(name)}${args.flags.has("keep-saves") ? "" : " (protected or unreadable checkpoints)"}`)
+  } else console.log(`  and its ${plural(kept.length, "save")} (${savesSize})`)
   return 0
 }
 
@@ -1057,8 +1084,23 @@ export async function smoke(args: Args): Promise<number> {
  * Separate from `doctor`, which checks the HOST before anything runs. This reads
  * what a guest left behind afterwards, and works on one that is dead or wedged.
  */
-export function diagnoseCmd(args: Args): number {
+export async function diagnoseCmd(args: Args): Promise<number> {
   const name = instanceName(args)
+  // `--lag [--seconds N]`: time every layer once a second while a stall happens (lag.ts).
+  if (args.flags.has("lag")) {
+    const n = Number(args.flags.get("seconds") ?? 60)
+    if (!(n >= 3 && n <= 3600)) {
+      console.error("::error::--seconds is a number from 3 to 3600")
+      return 1
+    }
+    return await lagCommand(name, pathsFor(name), Math.round(n), args.flags.has("json"), args.flags.has("sample"))
+  }
+  // `--input`: a RUNNING machine's mouse and keyboard path, asked live and read-only (inputcheck.ts).
+  if (args.flags.has("input")) {
+    const findings = judgeInput(await probeInput(pathsFor(name)))
+    console.log(formatInput(name, findings))
+    return findings.some((f) => f.level === "problem") ? 1 : 0
+  }
   // What a guest that died left mounted on the Mac.
   for (const dir of finder.cleanStale(name)) console.log(`unmounted ${dir}, left behind by a guest that is no longer running`)
   const findings = diagnose(name)
@@ -1134,6 +1176,10 @@ export const USAGE =
   "  setup                         install missing host prerequisites, fetch pinned media\n" +
   "  doctor  [--json]              check host prerequisites (the HOST, before anything runs)\n" +
   "  diagnose [-i name]            explain a guest that misbehaved, from its files\n" +
+  "           [--input]            a running guest's mouse/keyboard path, live and read-only\n" +
+  "           [--lag [--seconds N] [--sample]]  time the monitor, the agent and QEMU once a\n" +
+  "                                second (default 60 s): which layer stops answering in a\n" +
+  "                                stall; --sample also profiles QEMU's threads during one\n" +
   "  build --iso <win11.iso>       build a base image (once, ~20 min)\n" +
   "        [--payload <dir>] [--bun <version>] [--image <name>]\n" +
   "  adopt <disk.qcow2>            adopt an installed disk as a base image\n" +
@@ -1166,10 +1212,12 @@ export const USAGE =
   "           [--delete]           remove that snapshot instead\n" +
   "  rewind  [-i name] [tag] [--no-watch]  put the guest back: snapshot <tag> (default fresh),\n" +
   "                                else the save of that name (default: the automatic baseline)\n" +
-  "  save    [-i name] [name] [--fast]  save the running guest to files (default name: a timestamp)\n" +
+  "  save    [-i name] [name] [--fast | --format zstd|mapped|raw]  save the running guest to files (default: compressed zstd)\n" +
   "  load    [-i name] [name] [--no-watch]  load a save, running or stopped (default: the newest)\n" +
   "                                into a stopped instance it starts the watcher, like start\n" +
-  "  saves   [-i name] [rm <name>] [--json]  list saves (kind, size, compatible) or delete one (and its note)\n" +
+  "  saves   [-i name] [rm <name> [--force]] [--json]  list saves (kind, format, protection, size, compatible), or delete one\n" +
+  "  saves path [-i name] <save> [--json]  the save's folder, as an absolute path\n" +
+  "  saves protect|unprotect [-i name] <save> [--json]  prevent reclamation/replacement; protected deletion needs rm --force\n" +
   "  saves note [-i name] <save> [--title T] [--text TEXT|-] [--tags a,b,c] [--clear] [--json]\n" +
   "                                show a save's note, or set it (--text - reads stdin;\n" +
   "                                --text=<markdown> is the safe form when it may start with -)\n" +
@@ -1222,6 +1270,7 @@ export const USAGE =
   "          [--stop | --status]   end it / print its state\n" +
   "  config  [-i name] [key=value ...]  autosave/stow/watch settings and the app's title; bare prints them\n" +
   "          [-i name] cpus=N memory=8G  processors and memory, from the next time Windows starts\n" +
+  "  note    [-i name] [--text TEXT|-] [--clear] [--json]  what you have jotted about a machine; bare prints it\n" +
   "  settings [key=value ...] [--json]  your own settings, for every instance (viewer.pauseOverlay);\n" +
   "                                in $XDG_CONFIG_HOME/winvm/settings.json (default ~/.config/winvm)\n" +
   "          [--section NAME [--set JSON]]   one part the app keeps there (checkpoints), as JSON\n" +

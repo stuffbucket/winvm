@@ -18,29 +18,47 @@ import type { Point, Rect } from "@winvm/canvas"
 
 import type { SaveEntry } from "../../model"
 
-export type Checkpoint = SaveEntry
+export type Checkpoint = SaveEntry & { readonly protected?: boolean }
 
-/** World units (CSS pixels at 100%). A card is a 16:10 picture over a caption. */
-export const CARD_WIDTH = 320
-export const CARD_FRAME = 200
-export const CARD_CAPTION = 92
-export const NOW_WIDTH = 560
-export const NOW_CAPTION = 64
-export const COLUMN_GAP = 36
-export const LINE_GAP = 36
-/** Room above a day's block, for its date. */
-export const DAY_GAP = 112
+/** Existing save formats, not a conversion of an already saved migration stream. */
+export type CheckpointFormat = "zstd" | "mapped"
+
+export const formatLabelKey = (format: string | undefined): string =>
+  format === "zstd" || format === "mapped" || format === "raw" ? `checkpoints.format.${format}` : "checkpoints.format.unknown"
+
+/** The one-shot stow is consumed/superseded by start/load/reset; keep a named checkpoint instead. */
+export const canProtect = (c: Pick<Checkpoint, "kind" | "name">): boolean => c.kind !== "stow" && c.name !== "stow"
+
+/**
+ * World units (CSS pixels at 100%). A card is a 16:10 picture with its
+ * caption plate attached below it (one surface, see CheckpointCard). The
+ * layout positions the picture; the plate hangs below it, drawn at a size
+ * that reads at any zoom, so the gaps between lines and days leave it room.
+ */
+export const CARD_WIDTH = 240
+export const CARD_FRAME = 150
+export const NOW_WIDTH = 440
+export const COLUMN_GAP = 32
+/** Between one line of a day's cards and the next: room for the first line's caption plates (name, time, kind and size, a note). */
+export const LINE_GAP = 128
+/** Room above a day's block: its date, and the caption plates of the block above. */
+export const DAY_GAP = 176
 /** Between Now and the newest day. */
-export const NOW_GAP = 150
+export const NOW_GAP = 144
+/** Under the last card: its caption plate, and Now's. */
+export const CAPTION_ROOM = 120
 /** Each older day is this much smaller than the one in front of it... */
 export const DEPTH_STEP = 0.93
 /** ...down to this. */
 export const DEPTH_MIN = 0.62
 export const COLUMNS = 6
 
+/** How far above its group a day's date sits (its bottom edge), before the day's scale. */
+export const LABEL_LIFT = 14
+
 export interface CardBox extends Rect {
   readonly name: string
-  /** The picture's height; the caption is the rest. */
+  /** The picture's height: the whole box. */
   readonly frame: number
   /** How much smaller than a card of the newest day (1). */
   readonly scale: number
@@ -56,7 +74,7 @@ export interface DayBlock extends Rect {
   /** Local midnight of that day. */
   readonly date: Date
   readonly scale: number
-  /** Where its date label sits (top left, world). */
+  /** Where its date label sits (top left, world) while the day's cards are where the layout put them; see `dayGroup` for after they are moved. */
   readonly label: Point
   /** Names of its checkpoints, oldest first. */
   readonly names: readonly string[]
@@ -107,7 +125,7 @@ export function layoutTimeline(checkpoints: readonly Checkpoint[], nowAspect: nu
   }
 
   const nowFrame = Math.round(NOW_WIDTH / (Number.isFinite(nowAspect) && nowAspect > 0 ? nowAspect : 16 / 10))
-  const now = { x: -NOW_WIDTH / 2, y: 0, width: NOW_WIDTH, height: nowFrame + NOW_CAPTION, frame: nowFrame }
+  const now = { x: -NOW_WIDTH / 2, y: 0, width: NOW_WIDTH, height: nowFrame, frame: nowFrame }
 
   // Newest day first, building upwards from Now; reversed at the end.
   const keys = [...groups.keys()].reverse()
@@ -118,7 +136,7 @@ export function layoutTimeline(checkpoints: readonly Checkpoint[], nowAspect: nu
     const list = groups.get(key) ?? []
     const scale = depthScale(back)
     const w = CARD_WIDTH * scale
-    const h = (CARD_FRAME + CARD_CAPTION) * scale
+    const h = CARD_FRAME * scale
     const cols = Math.min(columns, list.length)
     const lines = Math.ceil(list.length / columns)
     const width = cols * w + (cols - 1) * COLUMN_GAP * scale
@@ -152,7 +170,7 @@ export function layoutTimeline(checkpoints: readonly Checkpoint[], nowAspect: nu
       width,
       height,
       scale,
-      label: { x: left, y: top - 14 * scale },
+      label: { x: left, y: top - LABEL_LIFT * scale },
       names: list.map((c) => c.name),
     })
     bottom = top - DAY_GAP * scale
@@ -166,14 +184,83 @@ export function layoutTimeline(checkpoints: readonly Checkpoint[], nowAspect: nu
   const x0 = Math.min(...all.map((r) => r.x))
   const y0 = Math.min(...all.map((r) => r.y))
   const x1 = Math.max(...all.map((r) => r.x + r.width))
-  const y1 = Math.max(...all.map((r) => r.y + r.height))
+  const y1 = Math.max(...all.map((r) => r.y + r.height)) + CAPTION_ROOM
   return { now, days, cards, order, bounds: { x: x0, y: y0, width: x1 - x0, height: y1 - y0 } }
+}
+
+/** How far each moved card is from where the layout put it: by name, in world units. */
+export type Moves = Readonly<Record<string, { readonly x: number; readonly y: number }>>
+
+/**
+ * The layout with the cards a person has moved moved: each by its own offset
+ * from its slot, so a card keeps its place relative to its day when days are
+ * added. Names the layout doesn't have (a checkpoint since deleted, or hidden)
+ * are left alone. Days, dates and Now stay where they are.
+ */
+export function placeCards(layout: TimelineLayout, moves: Moves): TimelineLayout {
+  const cards = new Map(layout.cards)
+  const moved: Rect[] = []
+  for (const [name, by] of Object.entries(moves)) {
+    const box = cards.get(name)
+    if (box === undefined || (by.x === 0 && by.y === 0)) continue
+    const placed = { ...box, x: box.x + by.x, y: box.y + by.y }
+    cards.set(name, placed)
+    moved.push({ ...placed, height: placed.height + CAPTION_ROOM })
+  }
+  if (moved.length === 0) return layout
+  return { ...layout, cards, bounds: union([layout.bounds, ...moved]) }
+}
+
+/**
+ * Where a day's date belongs: with its cards, wherever they have been put.
+ *
+ * The group is the day's biggest cluster of cards: cards are in one cluster
+ * while each is within one line gap of another (the gap the layout leaves
+ * between them), so dragging a card out of a day leaves the date with the rest.
+ * Ties (every card on its own, or two clusters of the same size) go to the
+ * cluster holding the day's earliest card. The date sits at the top left of
+ * the cluster's bounds, a little above; `rect` is those bounds (the caption
+ * plates hang below it and are not counted). A day with none of its cards
+ * shown keeps the place the layout gave it.
+ */
+export function dayGroup(day: Pick<DayBlock, "names" | "scale" | "label" | "x" | "y" | "width" | "height">, cards: ReadonlyMap<string, Rect>): { readonly rect: Rect; readonly label: Point } {
+  const boxes = day.names.flatMap((n) => {
+    const b = cards.get(n)
+    return b === undefined ? [] : [b]
+  })
+  if (boxes.length === 0) return { rect: { x: day.x, y: day.y, width: day.width, height: day.height }, label: day.label }
+  const link = LINE_GAP * day.scale + 0.5
+  const gap = (a: Rect, b: Rect): { readonly x: number; readonly y: number } => ({
+    x: Math.max(0, a.x - (b.x + b.width), b.x - (a.x + a.width)),
+    y: Math.max(0, a.y - (b.y + b.height), b.y - (a.y + a.height)),
+  })
+  // Each card joins the cluster of the first card it is near; clusters it bridges merge.
+  const cluster = boxes.map((_, i) => i)
+  const find = (i: number): number => {
+    let r = i
+    while (cluster[r] !== r) r = cluster[r] ?? r
+    return r
+  }
+  boxes.forEach((a, i) =>
+    boxes.slice(0, i).forEach((b, j) => {
+      const g = gap(a, b)
+      if (g.x <= link && g.y <= link) cluster[Math.max(find(i), find(j))] = Math.min(find(i), find(j))
+    }),
+  )
+  const sizes = new Map<number, number>()
+  boxes.forEach((_, i) => sizes.set(find(i), (sizes.get(find(i)) ?? 0) + 1))
+  // The first (earliest) root with the most cards.
+  let best = find(0)
+  for (const [root, n] of sizes) if (n > (sizes.get(best) ?? 0)) best = root
+  const mine = boxes.filter((_, i) => find(i) === best)
+  const rect = union(mine)
+  return { rect, label: { x: rect.x, y: rect.y - LABEL_LIFT * day.scale } }
 }
 
 /** A day's block with room for its date above it (the label sits on the block, drawn upwards). */
 export const withLabel = (d: Pick<DayBlock, "x" | "y" | "width" | "height" | "scale">): Rect => ({ x: d.x, y: d.y - 44 * d.scale, width: d.width, height: d.height + 44 * d.scale })
 
-/** The picture part of a card: what flies to the screen on Go Back, and what the screen flies into on the way in. */
+/** The picture part of a card: what flies to the screen on Restore, and what the screen flies into on the way in. */
 export const frameOf = (box: Rect & { readonly frame: number }): Rect => ({ x: box.x, y: box.y, width: box.width, height: box.frame })
 
 /** A union of rectangles (for "Now and the newest day"). */
@@ -299,6 +386,28 @@ export const shownName = (c: Pick<Checkpoint, "name" | "title" | "notes">): stri
 export const hasNotes = (c: Pick<Checkpoint, "notes" | "note">): boolean =>
   (c.notes !== null && (c.notes.text.trim() !== "" || c.notes.tags.length > 0)) || (c.note !== undefined && c.note !== "")
 
+const NOTE_MARK = /^(?:#{1,6}\s+|[-*+]\s+|>\s+)/
+const NOTE_EMPHASIS = /\*\*|__|`/g
+
+/**
+ * What a card says of a checkpoint's note, or null when it has none: the
+ * first line of its text (the note's markdown marks stripped), else the older
+ * manifest `note`, else its tags; and the whole of it for a tooltip.
+ */
+export function noteOf(c: Pick<Checkpoint, "notes" | "note">): { readonly line: string; readonly full: string } | null {
+  if (!hasNotes(c)) return null
+  const text = c.notes?.text.trim() ?? ""
+  const tags = c.notes?.tags.join(", ") ?? ""
+  const body = text !== "" ? text : (c.note ?? "").trim()
+  const first = body
+    .split("\n")
+    .map((l) => l.trim().replace(NOTE_MARK, "").replace(NOTE_EMPHASIS, "").trim())
+    .find((l) => l !== "")
+  const line = first ?? tags
+  if (line === "") return null
+  return { line, full: [body, tags].filter((x) => x !== "").join("\n") }
+}
+
 const SAVE_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]*$/
 
 /** saves.ts nameError's rule: a save name is a directory name. */
@@ -331,7 +440,8 @@ export function saveNameFor(title: string, taken: ReadonlySet<string>, now: Date
 }
 
 /** Kinds the viewer won't delete, and why (an i18n key): tests start from goldens, and `rewind` goes back to the baseline. */
-export function deleteBlocked(c: Pick<Checkpoint, "kind">): string | null {
+export function deleteBlocked(c: Pick<Checkpoint, "kind" | "protected">): string | null {
+  if (c.protected === true) return "checkpoints.keep.protected"
   if (c.kind === "golden") return "checkpoints.keep.golden"
   if (c.kind === "baseline") return "checkpoints.keep.baseline"
   return null
@@ -364,7 +474,7 @@ export interface GoBackContext {
 }
 
 /**
- * What Go Back does: load the checkpoint, after keeping the present as a
+ * What Restore does: load the checkpoint, after keeping the present as a
  * checkpoint of its own when asked (and only when there is a running
  * machine to keep).
  */
@@ -374,7 +484,7 @@ export function goBackSteps(target: string, saveFirst: boolean, ctx: GoBackConte
   return [{ verb: "save", name: saveNameFor(ctx.keepTitle, ctx.taken, ctx.now), title: ctx.keepTitle }, load]
 }
 
-/** The Go Back confirmation: what it says, and whether it offers Save Current First. */
+/** The Restore confirmation: what it says, and whether it offers Take Checkpoint First. */
 export function goBackConfirm(ctx: Pick<GoBackContext, "live">): { readonly body: string; readonly offerSaveFirst: boolean } {
   return ctx.live ? { body: "checkpoints.goBack.bodyLive", offerSaveFirst: true } : { body: "checkpoints.goBack.bodyStopped", offerSaveFirst: false }
 }

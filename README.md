@@ -95,7 +95,16 @@ you set it.
 
 The repository is a pnpm and Turborepo workspace. The library is
 `packages/core`, the command is `apps/cli`, and the Mac app is `apps/viewer`.
-`pnpm check` typechecks and tests everything without a VM.
+From the repository root, use `mise run setup`, `dev`, `build`, `test`,
+`check`, or `doctor`; list all tasks with `mise tasks ls`. `build` produces
+the complete native app; `dev` launches the existing local bundle without
+rebuilding. `check` delegates to `pnpm check`, which typechecks and tests
+everything without a VM.
+
+See [Development](docs/development.md) for prerequisites, side effects,
+advanced commands, and verification. [AGENTS.md](AGENTS.md) points agents
+to `winvm-mise` for development tasks and `winvm-release` for release
+operations.
 
 ## License
 
