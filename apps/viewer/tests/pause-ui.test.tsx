@@ -284,6 +284,58 @@ describe("when the sidecar fails", () => {
     expect(w!.phase).toBe("running")
   })
 
+  it("retries a startup status that timed out, one at a time, until it answers; then polls the instance", async () => {
+    jest.useFakeTimers()
+    const tauri = fakeTauri()
+    let w: ReturnType<typeof useWinvm> | null = null
+    function Probe(): JSX.Element {
+      w = useWinvm()
+      return <p role="alert">{w.statusError}</p>
+    }
+    const host = render(<Probe />)
+    await flush()
+    const bare = (): Call[] => tauri.calls.filter((c) => c.args[0] === "status" && !c.args.includes("-i"))
+    expect(bare()).toHaveLength(1)
+    bare()[0]?.reject(sidecarFailure("timeout", "status"))
+    await flush()
+    // The callout says why, and no machine is chosen yet.
+    expect(host.textContent).toBe(copy("sidecar.timeout", { operation: "status", seconds: 45 }))
+    expect(w!.name).toBeNull()
+    // No tight loop: nothing more until the polling interval.
+    expect(bare()).toHaveLength(1)
+
+    act(() => {
+      jest.advanceTimersByTime(4000)
+    })
+    await flush()
+    expect(bare()).toHaveLength(2)
+    // Never two at once: while the retry is out, time passing asks nothing more.
+    act(() => {
+      jest.advanceTimersByTime(12_000)
+    })
+    await flush()
+    expect(bare()).toHaveLength(2)
+    expect(host.textContent).toBe(copy("sidecar.timeout", { operation: "status", seconds: 45 }))
+
+    bare()[1]?.resolve({ ...status("running"), stdout: JSON.stringify({ instances: [JSON.parse(status("running").stdout)] }) })
+    await flush()
+    expect(w!.name).toBe("demo")
+    expect(w!.statusError).toBeNull()
+    expect(host.textContent).toBe("")
+
+    // Normal polling of the instance carries on.
+    expect(tauri.reads()).toHaveLength(1)
+    tauri.reads()[0]?.resolve(status("running"))
+    await flush()
+    expect(w!.phase).toBe("running")
+    act(() => {
+      jest.advanceTimersByTime(4000)
+    })
+    await flush()
+    expect(tauri.reads()).toHaveLength(2)
+    expect(bare()).toHaveLength(2)
+  })
+
   it("shows a verb whose helper is missing as that verb's failure, with the same copy", async () => {
     const tauri = fakeTauri()
     let w: ReturnType<typeof useWinvm> | null = null

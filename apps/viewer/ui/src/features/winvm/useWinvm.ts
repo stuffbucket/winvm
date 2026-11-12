@@ -113,12 +113,36 @@ export function useWinvm(): Winvm {
 
   useEffect(() => {
     void loadChecks()
-    loadNames()
-      .then((first) => {
-        if (first !== null) setName((cur) => cur ?? first)
-      })
-      .catch((e: unknown) => setStatusError(errorText(e)))
-  }, [loadChecks, loadNames])
+  }, [loadChecks])
+
+  // Until a machine is known, the list is asked for again at the polling interval, one ask at a
+  // time: a status that timed out (busy finishing a save or repair) or failed is tried again,
+  // its error shown meanwhile, and the first answer chooses the machine.
+  useEffect(() => {
+    if (name !== null) return
+    let stopped = false
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const ask = async (): Promise<void> => {
+      let first: string | null = null
+      try {
+        first = await loadNames()
+      } catch (e) {
+        setStatusError(errorText(e))
+      }
+      if (stopped) return
+      if (first === null) {
+        timer = setTimeout(() => void ask(), 4000)
+        return
+      }
+      setStatusError(null)
+      setName((cur) => cur ?? first)
+    }
+    void ask()
+    return () => {
+      stopped = true
+      if (timer !== undefined) clearTimeout(timer)
+    }
+  }, [name, loadNames])
 
   const current = status !== null && status.name === name ? status : null
   const p = shownPhase(held, current, phase)
