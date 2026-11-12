@@ -853,8 +853,6 @@ export async function stopWith(args: Args, seams: StopCommandSeams = {}): Promis
     console.log(`instance "${name}" is not running`)
     return 0
   }
-  // One deadline for everything below: reaching the agent and powering off.
-  const deadline = now() + STOP_DEADLINE_MS
   // What it was, before anything below changes it.
   const pid = pidOf(p)
   const original = await frozenState(p)
@@ -885,6 +883,9 @@ export async function stopWith(args: Args, seams: StopCommandSeams = {}): Promis
     await stopWatcher(name)
     // Then the guest's drives in Finder, while their server still answers.
     beforeDown(name)
+    // Draining a busy watcher is preparation, not part of Windows' shutdown budget.
+    // Readiness and power-off still share one deadline from this point onward.
+    const deadline = now() + STOP_DEADLINE_MS
     // A paused or asleep guest cannot answer: it runs again, for the shutdown only.
     if (original !== null) {
       await resume(p)

@@ -18,10 +18,34 @@ use tauri_plugin_shell::process::CommandChild;
 use tauri_plugin_updater::UpdaterExt;
 
 const VERBS: &[&str] = &[
-    "status", "info", "doctor", "start", "stop", "reboot", "pause", "resume", "kill", "open", "setup", "exec", "put", "get",
+    "status", "info", "doctor", "start", "stop", "stow", "reboot", "pause", "resume", "kill", "open", "setup", "exec", "put", "get",
     "dir", "mkdir", "mv", "cp", "rm", "save", "load", "saves", "help", "terminal", "config", "display", "create",
     "destroy", "ls", "mcp", "sleep", "wake", "lock", "settings", "files", "share",
 ];
+
+#[cfg(test)]
+mod command_allowlist_tests {
+    use super::{sidecar, VERBS};
+
+    #[test]
+    fn permits_every_close_policy_command_without_timing_out_vm_mutations() {
+        for verb in ["stow", "stop"] {
+            assert!(
+                VERBS.contains(&verb),
+                "{verb} must be available to the close flow"
+            );
+            assert_eq!(
+                sidecar::timeout_for(&[verb.to_owned()]),
+                None,
+                "{verb} must not be killed mid-mutation"
+            );
+        }
+        assert!(
+            VERBS.contains(&"config"),
+            "remembering a close policy needs config"
+        );
+    }
+}
 
 /// Runs `winvm ARGS` (within the deadline its verb has: sidecar.rs). A nonzero exit is a
 /// SidecarFailure of kind `exit`, which the UI turns back into its output (backend.ts).

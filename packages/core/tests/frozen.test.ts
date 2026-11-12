@@ -427,6 +427,21 @@ describe("graceful stop", () => {
     expect(r.waitForMs).toEqual([DEADLINE])
   })
 
+  it("starts the shutdown deadline only after a busy watcher has drained", async () => {
+    const r = rig({ frozen: null, watcher: true, exitsAfterMs: 0 })
+    const seams: StopCommandSeams = {
+      ...r.seams,
+      stopWatcher: () => {
+        r.events.push("stopWatcher")
+        r.clock.t += DEADLINE + 20_000
+        return Promise.resolve(true)
+      },
+    }
+    expect(await stopped(seams)).toBe(0)
+    expect(r.waitForMs).toEqual([DEADLINE])
+    expect(r.events).toEqual(["stopWatcher", "beforeDown", "waitFor", "shutdown", "stopSidecars"])
+  })
+
   it("fails a guest that never becomes agent-ready without sending shutdown", async () => {
     const r = rig({ frozen: null, readyAfterMs: "never" })
     expect(await stopped(r.seams)).toBe(1)
