@@ -1513,6 +1513,64 @@ html[data-os="macos"] .toolbar {
   gap: var(--space-2);
 }
 
+/* ---- Close dialog: what closing WinVM does to one machine ---- */
+.close-dialog__machine {
+  font-weight: var(--weight-md);
+  color: var(--text-strong);
+}
+
+.close-dialog__progress {
+  color: var(--text-muted);
+}
+
+.close-dialog__operation {
+  font-weight: var(--weight-md);
+  color: var(--text-strong);
+}
+
+.close-dialog__choices {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+/* Each choice is its label and what it does, so color is never the only difference. */
+.close-dialog__choice {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-1);
+  text-align: left;
+  font-family: var(--font-body);
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-input);
+  border: var(--border-width-hairline) solid var(--border-strong);
+  background: var(--surface-control);
+  color: var(--text-strong);
+  cursor: pointer;
+}
+
+.close-dialog__choice:hover {
+  border-color: var(--accent);
+}
+
+.close-dialog__choice:focus-visible {
+  outline: var(--focus-ring);
+  outline-offset: var(--focus-ring-offset);
+}
+
+.close-dialog__choice-label {
+  font-size: var(--text-sm);
+  font-weight: var(--weight-md);
+  line-height: var(--leading-lg);
+}
+
+.close-dialog__choice-body {
+  font-size: var(--text-sm);
+  line-height: var(--leading-base);
+  color: var(--text-muted);
+}
+
 @media (prefers-reduced-motion: no-preference) {
   .confirm-dialog[open] {
     animation: confirm-dialog-in 120ms ease-out;

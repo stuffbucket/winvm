@@ -222,16 +222,21 @@ export const agentFetch = (
   timeoutMs?: number,
 ): Promise<AgentReply> => tauri().core.invoke<AgentReply>("agent_fetch", { instance, method, path, body: body ?? null, timeoutMs: timeoutMs ?? null })
 
-function listen<T>(name: string, cb: (payload: T) => void): Unlisten {
+/** Listens for app event `name`; `ready` is called once the listener is in place (or could not be). */
+function listen<T>(name: string, cb: (payload: T) => void, ready?: () => void): Unlisten {
   let unlisten: Unlisten | null = null
   let gone = false
   try {
     void tauri()
       .event.listen<T>(name, (e) => cb(e.payload))
-      .then((u) => {
-        if (gone) u()
-        else unlisten = u
-      })
+      .then(
+        (u) => {
+          if (gone) u()
+          else unlisten = u
+          ready?.()
+        },
+        () => ready?.(),
+      )
   } catch {
     // not in the app
   }
@@ -243,6 +248,26 @@ function listen<T>(name: string, cb: (payload: T) => void): Unlisten {
 
 /** App menu items the main window acts on: "install-cli", "reference", "new-terminal", "rename-window" and "checkpoints". */
 export const onMenu = (cb: (id: string) => void): Unlisten => listen<string>("menu", cb)
+
+/**
+ * The viewer is asked to close (its close button, Cmd-W, Quit): told once per close transaction,
+ * which the app holds open until the main window answers it (close.rs). `listening` is called once
+ * the listener is in place, the moment to ask `closePending` for a request told before it was.
+ */
+export const onViewerCloseRequested = (cb: () => void, listening?: () => void): Unlisten =>
+  listen<unknown>("viewer-close-requested", () => cb(), listening)
+
+/** Whether a close request waits for the main window (one told before it listened); changes nothing. */
+export const closePending = (): Promise<boolean> => tauri().core.invoke<boolean>("close_pending")
+
+/** The main window takes the close request on: the one claim that starts its close flow; rejects when no request waits. */
+export const closeStart = (): Promise<void> => tauri().core.invoke<void>("close_start")
+
+/** The close is called off: the app stays open, and the next close request starts afresh. */
+export const closeCancel = (): Promise<void> => tauri().core.invoke<void>("close_cancel")
+
+/** Every live machine is resolved: the app may exit, and does (all of its windows). */
+export const closeComplete = (): Promise<void> => tauri().core.invoke<void>("close_complete")
 
 /** Disables macOS global hotkeys while the guest keyboard is explicitly captured. */
 export const setSystemKeyboardCapture = (captured: boolean): Promise<void> => tauri().core.invoke<void>("set_system_keyboard_capture", { captured })

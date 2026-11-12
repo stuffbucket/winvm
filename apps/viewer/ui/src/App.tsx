@@ -42,6 +42,8 @@ import { Overview } from "./features/overview/Overview"
 import { OperationOverlay } from "./features/operation/OperationOverlay"
 import { Panel } from "./features/panel/Panel"
 import { ReferenceDialog } from "./features/reference/ReferenceDialog"
+import { ClosePolicyDialog } from "./features/close/ClosePolicyDialog"
+import { useCloseFlow } from "./features/close/useCloseFlow"
 import { Screen, type ScreenHandle } from "./features/screen/Screen"
 import { defaultShell, installedList, type Launch, runnable, shellCache, shellMenu } from "./features/terminal/shells"
 import { type PanelId, Toolbar } from "./features/toolbar/Toolbar"
@@ -78,6 +80,9 @@ const PANEL_LABEL: Record<PanelId, string> = {
 
 export function App(): JSX.Element {
   const w = useWinvm()
+  // The viewer's close: every live machine resolved before the app exits (one flow, one dialog).
+  const close = useCloseFlow(w)
+  const closeFailed = close.state.kind === "failed" ? close.state : null
   const [actualSize, setActualSize] = useState(false)
   const [detailsOpen, setDetailsOpen] = useState(false)
   const [confirm, setConfirm] = useState<Confirm | null>(null)
@@ -507,7 +512,7 @@ export function App(): JSX.Element {
 
       <div className="stage">
         <div className="display-area">
-          {(w.failure !== null || notice !== null || copyNotice || (w.checks !== null && !w.checks.ready) || w.statusError !== null) && (
+          {(w.failure !== null || closeFailed !== null || notice !== null || copyNotice || (w.checks !== null && !w.checks.ready) || w.statusError !== null) && (
             <div className="notices">
               {w.failure !== null && (
                 <Callout
@@ -520,6 +525,20 @@ export function App(): JSX.Element {
                   }
                 >
                   <pre className="output">{w.failure.output}</pre>
+                </Callout>
+              )}
+              {closeFailed !== null && (
+                <Callout
+                  tone="error"
+                  title={t("close.failed")}
+                  action={
+                    <Button size="sm" variant="ghost" onClick={close.cancel}>
+                      {t("action.dismiss")}
+                    </Button>
+                  }
+                >
+                  {/* A stow or shutdown that failed already shows what it said, just above. */}
+                  {closeFailed.message !== w.failure?.output && <pre className="output">{closeFailed.message}</pre>}
                 </Callout>
               )}
               {finding !== null && (
@@ -727,6 +746,8 @@ export function App(): JSX.Element {
         onCreate={createMachine}
         onCancel={() => setNewOpen(false)}
       />
+
+      <ClosePolicyDialog state={close.state} onChoose={close.choose} onRemember={close.setRemember} onCancel={close.cancel} />
     </div>
   )
 }
