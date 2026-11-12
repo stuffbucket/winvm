@@ -14,6 +14,8 @@ import { existsSync, readFileSync, readdirSync } from "node:fs"
 import { homedir } from "node:os"
 import { dirname, resolve } from "node:path"
 
+import { buildIdentity } from "./identity"
+
 /**
  * All state, deliberately outside any project directory: a base image is tens
  * of GB, and some repositories force-track build output, so an accidental
@@ -70,6 +72,9 @@ export function cliEntry(): string {
  */
 export function recordCliEntry(path: string): void {
   process.env["WINVM_CLI"] = isCompiled(path) ? process.execPath : path
+  // The generation travels with the path: a detached service or watcher
+  // inherits exactly the identity of the CLI that started it.
+  process.env["WINVM_BUILD_ID"] = buildIdentity()
 }
 
 /**
