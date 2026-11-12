@@ -10,7 +10,17 @@ import { PACKAGE_DIR, pathsFor, type Paths } from "../src/paths"
 import * as qga from "../src/qga"
 import { qemuArgs } from "../src/qemu"
 import * as qmp from "../src/qmp"
-import { ensureService, keepService, readService, runService, stopService, type ServiceHandle } from "../src/service"
+import { buildIdentity } from "../src/identity"
+import {
+  ensureService,
+  keepService,
+  readService,
+  runService,
+  serviceFreshness,
+  stopService,
+  type ServiceHandle,
+  type ServiceInfo,
+} from "../src/service"
 import { FakeAgent } from "./fakes/agent"
 import { FakeQmp } from "./fakes/qmp"
 
@@ -58,6 +68,7 @@ describe("the service", () => {
     const info = readService(p)
     expect(info?.pid).toBe(process.pid)
     expect(statSync(p.service).mode & 0o777).toBe(0o600)
+    expect(info?.build).toBe(buildIdentity())
     expect(lastEvent()).toMatchObject({ instance: "t", kind: "service", what: "started" })
   })
 
@@ -236,6 +247,7 @@ describe("starting the service", () => {
     expect((await fetch("http://localhost/status", { unix: p.control })).status).toBe(200)
     const again = await ensureService("t", p)
     expect(again.pid).toBe(first.pid)
+    expect(first.build).toBe(buildIdentity())
   }, 30_000)
 
   it("stops it, and waits until it has gone", async () => {
@@ -244,6 +256,145 @@ describe("starting the service", () => {
     expect(readService(p)).toBeNull()
     expect(spawnSync("ps", ["-o", "stat=", "-p", String(info.pid)], { encoding: "utf8" }).stdout.trim()).toMatch(/^(Z.*)?$/)
   }, 30_000)
+})
+
+/**
+ * A stand-in service: a process of ours whose command line passes the service
+ * check (` serve -i <name>`) without being one. Two commands keep bash from
+ * exec'ing the sleep and replacing the command line.
+ */
+const fakeService = (name: string): ReturnType<typeof Bun.spawn> =>
+  Bun.spawn(["bash", "-c", `sleep 20; true # serve -i ${name}`], { stdout: "ignore", stderr: "ignore" })
+
+const alive = (pid: number): boolean => {
+  try {
+    process.kill(pid, 0)
+    return spawnSync("ps", ["-o", "stat=", "-p", String(pid)], { encoding: "utf8" }).stdout.trim().startsWith("Z") === false
+  } catch {
+    return false
+  }
+}
+
+describe("service generations", () => {
+  const CLI = "/test/apps/cli/src/winvm.ts"
+  const CURRENT = "sha256:current"
+  let savedCli: string | undefined
+  let control: ReturnType<typeof Bun.serve> | null = null
+  const spawned: ReturnType<typeof Bun.spawn>[] = []
+
+  const holder = (): ReturnType<typeof Bun.spawn> => {
+    const h = fakeService("t")
+    spawned.push(h)
+    return h
+  }
+  const record = (pid: number, build: string | undefined): void => {
+    const info: ServiceInfo = { pid, cli: CLI, version: "0", startedAt: "", ...(build === undefined ? {} : { build }) }
+    writeFileSync(p.service, JSON.stringify(info))
+  }
+
+  beforeEach(() => {
+    savedCli = process.env["WINVM_CLI"]
+    process.env["WINVM_CLI"] = CLI
+    control = Bun.serve({ unix: p.control, fetch: () => new Response("ok") })
+  })
+
+  afterEach(async () => {
+    await control?.stop(true)
+    control = null
+    for (const s of spawned.splice(0)) s.kill()
+    if (savedCli === undefined) delete process.env["WINVM_CLI"]
+    else process.env["WINVM_CLI"] = savedCli
+  })
+
+  it("classifies a record by its build: current, stale, or legacy when it has none", () => {
+    const base = { pid: 1, cli: CLI, version: "0", startedAt: "" }
+    expect(serviceFreshness({ ...base, build: CURRENT }, CURRENT)).toBe("current")
+    expect(serviceFreshness({ ...base, build: "sha256:old" }, CURRENT)).toBe("stale")
+    expect(serviceFreshness(base, CURRENT)).toBe("legacy")
+    expect(serviceFreshness({ ...base, build: buildIdentity() })).toBe("current")
+  })
+
+  it("still reads a live legacy record: freshness is the caller's decision", () => {
+    const h = holder()
+    record(h.pid, undefined)
+    expect(readService(p)?.pid).toBe(h.pid)
+    expect(readService(p)?.build).toBeUndefined()
+  })
+
+  it("reuses a service of the current generation", async () => {
+    const h = holder()
+    record(h.pid, CURRENT)
+    const info = await ensureService("t", p, {
+      current: CURRENT,
+      start: () => {
+        throw new Error("must not start a second service")
+      },
+    })
+    expect(info.pid).toBe(h.pid)
+    expect(alive(h.pid)).toBe(true)
+  })
+
+  for (const [label, build] of [["another generation", "sha256:old"], ["no recorded generation", undefined]] as const) {
+    it(`replaces a service with ${label}`, async () => {
+      const old = holder()
+      record(old.pid, build)
+      let next: ReturnType<typeof Bun.spawn> | null = null
+      const info = await ensureService("t", p, {
+        current: CURRENT,
+        start: () => {
+          next = holder()
+          record(next.pid, CURRENT)
+        },
+      })
+      expect(next).not.toBeNull()
+      expect(info.pid).toBe((next as unknown as { pid: number }).pid)
+      expect(info.build).toBe(CURRENT)
+      await sleep(50)
+      expect(alive(old.pid)).toBe(false)
+    })
+  }
+
+  it("does not call the replacement ready until its record carries the current build", async () => {
+    const old = holder()
+    record(old.pid, "sha256:old")
+    await expect(
+      ensureService("t", p, {
+        current: CURRENT,
+        timeoutMs: 400,
+        // A replacement that answers, but that is still the old generation.
+        start: () => record(holder().pid, "sha256:old"),
+      }),
+    ).rejects.toThrow("did not start")
+  })
+
+  it("never signals a pid that is not this instance's service, and drops the record", async () => {
+    const stranger = Bun.spawn(["sleep", "20"])
+    spawned.push(stranger)
+    record(stranger.pid, "sha256:old")
+    let started = 0
+    await expect(ensureService("t", p, { current: CURRENT, timeoutMs: 300, start: () => void (started += 1) })).rejects.toThrow(
+      "did not start",
+    )
+    expect(started).toBe(1)
+    expect(alive(stranger.pid)).toBe(true)
+    expect(existsSync(p.service)).toBe(false)
+  })
+
+  it("can be called again after a start that failed", async () => {
+    await expect(ensureService("t", p, { current: CURRENT, timeoutMs: 200, start: () => undefined })).rejects.toThrow("did not start")
+    const info = await ensureService("t", p, {
+      current: CURRENT,
+      start: () => record(holder().pid, CURRENT),
+    })
+    expect(info.build).toBe(CURRENT)
+    const again = await ensureService("t", p, {
+      current: CURRENT,
+      start: () => {
+        throw new Error("already running")
+      },
+    })
+    expect(again.pid).toBe(info.pid)
+  })
 })
 
 describe("QEMU's command line", () => {

@@ -46,6 +46,7 @@ import * as finder from "./finder"
 import type { Decision, SaveInfo, Settings, Timing } from "./idle"
 import { DEFAULT_TIMING, DRIFT_TOLERANCE_MS, IdleMachine, autosaveName, savesToRotate } from "./idle"
 import { isFrozenRunState } from "./frozen"
+import { buildIdentity } from "./identity"
 import type { Paths } from "./paths"
 import { cliArgv, instanceDir, pathsFor } from "./paths"
 import * as qemu from "./qemu"
@@ -101,6 +102,8 @@ export async function whileActive<T>(name: string, work: Promise<T>): Promise<T>
 /** What `watch.json` holds. Consumed by `status` and the web UI; keep the shape stable. */
 export interface WatchState {
   readonly pid: number
+  /** The build running this watcher (identity.ts). Absent in a file written before generations were recorded. */
+  readonly build?: string
   readonly startedAt: string
   readonly lastActivityAt: string
   readonly idleSeconds: number
@@ -339,7 +342,7 @@ function isWatcherProcess(pid: number): boolean {
 }
 
 /** The live watcher's pid, or null. Removes a stale pidfile. */
-export function watcherPid(name: string): number | null {
+export function watcherPid(name: string, isWatcher: (pid: number) => boolean = isWatcherProcess): number | null {
   const f = watchPathsFor(name).pid
   let pid: number
   try {
@@ -347,7 +350,7 @@ export function watcherPid(name: string): number | null {
   } catch {
     return null
   }
-  if (Number.isFinite(pid) && isWatcherProcess(pid)) return pid
+  if (Number.isFinite(pid) && isWatcher(pid)) return pid
   rmSync(f, { force: true })
   return null
 }
@@ -438,29 +441,65 @@ export function rewatchAfterRestore(name: string, args: Args): () => void {
   }
 }
 
+export interface WatcherRecord {
+  readonly pid: number
+  readonly build?: string
+}
+
+/**
+ * The live watcher and the build it reports, or null when none is running. The
+ * pid comes from `watch.pid`, validated as a watcher's (see watcherPid);
+ * `watch.json` is believed only when it names that same pid, so a state file
+ * left by an earlier watcher cannot vouch for this one. Without a trusted
+ * build the record is just `{ pid }`: a live watcher of unknown generation.
+ */
+export function watcherRecord(name: string, isWatcher: (pid: number) => boolean = isWatcherProcess): WatcherRecord | null {
+  const pid = watcherPid(name, isWatcher)
+  if (pid === null) return null
+  const st = readWatchState(name)
+  return st?.pid === pid && typeof st.build === "string" && st.build !== "" ? { pid, build: st.build } : { pid }
+}
+
+/** Whether a watcher was started by the build running now; an absent build is "legacy". */
+export const watcherFreshness = (record: WatcherRecord, current: string = buildIdentity()): "current" | "stale" | "legacy" =>
+  record.build === undefined || record.build === "" ? "legacy" : record.build === current ? "current" : "stale"
+
+/** Process and clock access for stopWatcher, so tests need neither real signals nor real waiting. */
+export interface StopSeams {
+  readonly kill?: (pid: number, signal: NodeJS.Signals) => void
+  readonly now?: () => number
+  readonly sleep?: (ms: number) => Promise<void>
+  readonly isWatcher?: (pid: number) => boolean
+}
+
 /**
  * End an instance's watcher, if any. A no-op when called from the watcher's own
  * child — that is the watcher running `winvm stow`, which must not kill the
  * process waiting on it.
  */
-export async function stopWatcher(name: string): Promise<boolean> {
-  const pid = watcherPid(name)
+export async function stopWatcher(name: string, seams: StopSeams = {}): Promise<boolean> {
+  const kill = seams.kill ?? ((pid: number, signal: NodeJS.Signals): void => void process.kill(pid, signal))
+  const now = seams.now ?? Date.now
+  const wait = seams.sleep ?? sleep
+  const isWatcher = seams.isWatcher ?? isWatcherProcess
+  // Only a pid that is still a watcher's is ever signalled; a reused one is dropped by watcherPid.
+  const pid = watcherPid(name, isWatcher)
   if (pid === null || pid === process.ppid || pid === process.pid) return false
   try {
-    process.kill(pid, "SIGTERM")
+    kill(pid, "SIGTERM")
   } catch {
     return false
   }
   // A watcher mid-save finishes the save before it exits (see watch()); give it
   // the time a save takes rather than killing it halfway through one.
   const st = readWatchState(name)?.state
-  const deadline = Date.now() + (st === "autosaving" || st === "stowing" ? 10 * 60_000 : 10_000)
-  while (Date.now() < deadline) {
-    if (!isWatcherProcess(pid)) return true
-    await new Promise((r) => setTimeout(r, 200))
+  const deadline = now() + (st === "autosaving" || st === "stowing" ? 10 * 60_000 : 10_000)
+  while (now() < deadline) {
+    if (!isWatcher(pid)) return true
+    await wait(200)
   }
   try {
-    process.kill(pid, "SIGKILL")
+    kill(pid, "SIGKILL")
   } catch {
     // gone
   }
@@ -518,7 +557,6 @@ export async function watch(name: string, o: WatchOptions = {}): Promise<number>
   const ephemeral = saves.isEphemeral(p)
   const startedAt = new Date().toISOString()
   const machine = new IdleMachine(Date.now(), timing)
-  let vcpus = vcpusOf(qemuPid)
   let state: WatchState["state"] = "watching"
   let cfg = effectiveConfig(name)
   const lastAt = { autosave: newestOfKind(currentSaves(name), "auto"), stow: newestOfKind(currentSaves(name), "stow") }
@@ -526,6 +564,7 @@ export async function watch(name: string, o: WatchOptions = {}): Promise<number>
   const publish = (): void => {
     const s: WatchState = {
       pid: process.pid,
+      build: buildIdentity(),
       startedAt,
       lastActivityAt: new Date(machine.idleSinceMs).toISOString(),
       idleSeconds: Math.round(machine.idleMs(Date.now()) / 1000),
@@ -548,6 +587,10 @@ export async function watch(name: string, o: WatchOptions = {}): Promise<number>
       // The instance dir went away (destroy); the loop will notice QEMU is gone.
     }
   }
+
+  // Say which build this is before anything slow: whoever replaces a stale watcher reads it.
+  publish()
+  let vcpus = vcpusOf(qemuPid)
 
   /** The action in flight, if any. A signal waits for it rather than abandon a save halfway. */
   let busy: Promise<unknown> | null = null

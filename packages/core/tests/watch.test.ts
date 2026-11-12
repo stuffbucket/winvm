@@ -3,17 +3,27 @@
  *
  *   pnpm test   (or: bun test)
  */
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { resolve } from "node:path"
 
-import { afterAll, beforeAll, describe, expect, it } from "bun:test"
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "bun:test"
 
 import { DEFAULTS, configPath, effectiveConfig, parseAssignment, readOverrides, writeAssignments } from "../src/config"
-import { instanceDir } from "../src/paths"
+import { buildIdentity } from "../src/identity"
+import { PACKAGE_DIR, instanceDir, pathsFor } from "../src/paths"
 import type { Decision, Sample, Settings, Timing } from "../src/idle"
 import { IdleMachine, autosaveName, savesToRotate } from "../src/idle"
-import { ensureWatcher, parseCpuTime, watchAfterRestore } from "../src/watch"
+import {
+  ensureWatcher,
+  parseCpuTime,
+  readWatchState,
+  stopWatcher,
+  watchAfterRestore,
+  watcherFreshness,
+  watcherRecord,
+  watchPathsFor,
+} from "../src/watch"
 
 const MIN = 60_000
 const TIMING: Timing = { tickMs: 15_000, wakeGapMs: 45_000, cpuWindowMs: 60_000, settleMs: 60_000, driftCheckMs: 30 * MIN }
@@ -369,4 +379,178 @@ describe("watcher after a load or rewind", () => {
     writeAssignments("off", [parseAssignment("watch.enabled=false")])
     expect(ensureWatcher("off")).toBeNull()
   })
+})
+
+describe("watcher generations", () => {
+  const CURRENT = "sha256:current"
+  let home = ""
+  let savedHome: string | undefined
+  const spawned: ReturnType<typeof Bun.spawn>[] = []
+
+  beforeEach(() => {
+    savedHome = process.env["WINVM_HOME"]
+    home = mkdtempSync(resolve(tmpdir(), "winvm-watchgen-"))
+    process.env["WINVM_HOME"] = home
+    mkdirSync(instanceDir("w"), { recursive: true })
+  })
+  afterEach(() => {
+    for (const s of spawned.splice(0)) s.kill()
+    if (savedHome === undefined) delete process.env["WINVM_HOME"]
+    else process.env["WINVM_HOME"] = savedHome
+    rmSync(home, { recursive: true, force: true })
+  })
+
+  /** A process of ours whose command line passes the watcher check without being one. */
+  const fakeWatcher = (): ReturnType<typeof Bun.spawn> => {
+    const h = Bun.spawn(["bash", "-c", "sleep 20; true # winvm watch -i w"], { stdout: "ignore", stderr: "ignore" })
+    spawned.push(h)
+    return h
+  }
+  const alive = (pid: number): boolean => {
+    try {
+      process.kill(pid, 0)
+      return true
+    } catch {
+      return false
+    }
+  }
+  const lock = (pid: number): void => writeFileSync(watchPathsFor("w").pid, `${String(pid)}\n`)
+  const state = (o: Record<string, unknown>): void => writeFileSync(watchPathsFor("w").state, JSON.stringify(o))
+
+  it("classifies a record by its build: current, stale, or legacy when it has none", () => {
+    expect(watcherFreshness({ pid: 1, build: CURRENT }, CURRENT)).toBe("current")
+    expect(watcherFreshness({ pid: 1, build: "sha256:old" }, CURRENT)).toBe("stale")
+    expect(watcherFreshness({ pid: 1 }, CURRENT)).toBe("legacy")
+    expect(watcherFreshness({ pid: 1, build: buildIdentity() })).toBe("current")
+  })
+
+  it("reads the pid and build of a live watcher", () => {
+    const h = fakeWatcher()
+    lock(h.pid)
+    state({ pid: h.pid, build: CURRENT, state: "watching" })
+    expect(watcherRecord("w")).toEqual({ pid: h.pid, build: CURRENT })
+  })
+
+  it("has no record without a live watcher, and drops the pidfile of a reused pid without signalling it", () => {
+    expect(watcherRecord("w")).toBeNull()
+    const stranger = Bun.spawn(["sleep", "20"])
+    spawned.push(stranger)
+    lock(stranger.pid)
+    state({ pid: stranger.pid, build: CURRENT })
+    expect(watcherRecord("w")).toBeNull()
+    expect(existsSync(watchPathsFor("w").pid)).toBe(false)
+    expect(alive(stranger.pid)).toBe(true)
+  })
+
+  it("does not trust a watch.json written by a different pid than watch.pid's", () => {
+    const h = fakeWatcher()
+    lock(h.pid)
+    state({ pid: h.pid + 1, build: CURRENT })
+    const rec = watcherRecord("w")
+    expect(rec).toEqual({ pid: h.pid })
+    expect(watcherFreshness(rec ?? { pid: 0 }, CURRENT)).toBe("legacy")
+  })
+
+  it("treats a live watcher whose watch.json has no build as legacy", () => {
+    const h = fakeWatcher()
+    lock(h.pid)
+    state({ pid: h.pid, state: "watching" })
+    const rec = watcherRecord("w")
+    expect(rec).toEqual({ pid: h.pid })
+    expect(watcherFreshness(rec ?? { pid: 0 }, CURRENT)).toBe("legacy")
+  })
+
+  it("keeps a running watcher rather than starting a second, whatever its generation", () => {
+    const h = fakeWatcher()
+    lock(h.pid)
+    state({ pid: h.pid, build: "sha256:old" })
+    expect(ensureWatcher("w")).toBe(h.pid)
+  })
+
+  /** A fake clock and process table: no real wait, no real signal. */
+  const seams = (o: { readonly dies: "never" | "on-term" }) => {
+    const calls: { sig: string; at: number }[] = []
+    let t = 1_000
+    let gone = false
+    return {
+      calls,
+      elapsed: (): number => t - 1_000,
+      seams: {
+        kill: (_pid: number, sig: NodeJS.Signals): void => {
+          calls.push({ sig, at: t })
+          if (sig === "SIGKILL" || o.dies === "on-term") gone = true
+        },
+        now: (): number => t,
+        sleep: async (ms: number): Promise<void> => {
+          t += ms
+        },
+        isWatcher: (): boolean => !gone,
+      },
+    }
+  }
+
+  it("gives a watcher that is only watching 10 seconds to finish, then kills it", async () => {
+    lock(424_242)
+    state({ pid: 424_242, build: CURRENT, state: "watching" })
+    const s = seams({ dies: "never" })
+    expect(await stopWatcher("w", s.seams)).toBe(true)
+    expect(s.calls.map((c) => c.sig)).toEqual(["SIGTERM", "SIGKILL"])
+    expect(s.elapsed()).toBeGreaterThanOrEqual(10_000)
+    expect(s.elapsed()).toBeLessThan(11_000)
+    expect(existsSync(watchPathsFor("w").pid)).toBe(false)
+  })
+
+  for (const st of ["autosaving", "stowing"] as const) {
+    it(`gives a watcher that is ${st} 10 minutes to finish`, async () => {
+      lock(424_242)
+      state({ pid: 424_242, build: CURRENT, state: st })
+      const s = seams({ dies: "never" })
+      expect(await stopWatcher("w", s.seams)).toBe(true)
+      expect(s.calls.map((c) => c.sig)).toEqual(["SIGTERM", "SIGKILL"])
+      expect(s.elapsed()).toBeGreaterThanOrEqual(600_000)
+      expect(s.elapsed()).toBeLessThan(601_000)
+    })
+  }
+
+  it("does not kill a watcher that exits after SIGTERM", async () => {
+    lock(424_242)
+    state({ pid: 424_242, state: "autosaving" })
+    const s = seams({ dies: "on-term" })
+    expect(await stopWatcher("w", s.seams)).toBe(true)
+    expect(s.calls.map((c) => c.sig)).toEqual(["SIGTERM"])
+  })
+
+  it("signals nobody when watch.pid names a process that is not a watcher", async () => {
+    const stranger = Bun.spawn(["sleep", "20"])
+    spawned.push(stranger)
+    lock(stranger.pid)
+    const kills: string[] = []
+    // Real command validation, and a kill that records instead of signalling.
+    expect(await stopWatcher("w", { kill: (_p, sig) => void kills.push(sig) })).toBe(false)
+    expect(kills).toEqual([])
+    expect(alive(stranger.pid)).toBe(true)
+  })
+
+  it("publishes its build as soon as it holds the lock, and in every later state", async () => {
+    const cli = resolve(PACKAGE_DIR, "..", "..", "apps", "cli", "src", "winvm.ts")
+    const p = pathsFor("w")
+    writeFileSync(p.meta, JSON.stringify({ image: "x", vnc: 9, created: "" }))
+    // QEMU stand-in: the pidfile names this test process, which is alive.
+    writeFileSync(p.pid, `${String(process.pid)}\n`)
+    const env: Record<string, string | undefined> = { ...process.env, WINVM_HOME: home }
+    delete env["WINVM_BUILD_ID"]
+    const child = Bun.spawn([process.execPath, cli, "watch", "-i", "w"], { env, stdout: "ignore", stderr: "ignore" })
+    spawned.push(child)
+    try {
+      const deadline = Date.now() + 15_000
+      while (Date.now() < deadline && readWatchState("w")?.build === undefined) await new Promise((r) => setTimeout(r, 50))
+      expect(readWatchState("w")).toMatchObject({ pid: child.pid, build: buildIdentity() })
+      expect(watcherRecord("w")).toEqual({ pid: child.pid, build: buildIdentity() })
+      child.kill("SIGTERM")
+      await child.exited
+      expect(JSON.parse(readFileSync(watchPathsFor("w").state, "utf8"))).toMatchObject({ state: "stopped", build: buildIdentity() })
+    } finally {
+      child.kill("SIGKILL")
+    }
+  }, 30_000)
 })

@@ -3,6 +3,7 @@ import { appendFileSync, chmodSync, closeSync, linkSync, openSync, readFileSync,
 import { basename, resolve } from "node:path"
 
 import { QgaChannel, QmpChannel } from "./broker"
+import { buildIdentity } from "./identity"
 import { PACKAGE_DIR, cliArgv, cliEntry, home, pathsFor, type Paths } from "./paths"
 import * as qga from "./qga"
 import * as share from "./share"
@@ -13,7 +14,19 @@ export interface ServiceInfo {
   readonly cli: string
   readonly version: string
   readonly startedAt: string
+  /** The build that started it (identity.ts). Absent in a record written before generations were recorded. */
+  readonly build?: string
 }
+
+export type Freshness = "current" | "stale" | "legacy"
+
+/**
+ * Whether a record was written by the build running now. A record with no
+ * build predates generations and is "legacy": it may be live, but nothing says
+ * which code it runs. Callers decide what to do with each; readService does not.
+ */
+export const serviceFreshness = (info: ServiceInfo, current: string = buildIdentity()): Freshness =>
+  info.build === undefined || info.build === "" ? "legacy" : info.build === current ? "current" : "stale"
 
 export interface WinvmEvent {
   readonly t: string
@@ -141,23 +154,42 @@ function exited(pid: number): boolean {
   return stat === "" || stat.startsWith("Z")
 }
 
-export async function ensureService(name: string, p: Paths): Promise<ServiceInfo> {
+export interface EnsureServiceOptions {
+  /** Launches the service. Defaults to a detached `winvm serve`. */
+  readonly start?: () => void
+  /** How long to wait for the replacement to be current and answering. */
+  readonly timeoutMs?: number
+  /** The generation that counts as current. Defaults to this process's build. */
+  readonly current?: string
+}
+
+export async function ensureService(name: string, p: Paths, o: EnsureServiceOptions = {}): Promise<ServiceInfo> {
   const cli = cliEntry()
+  const current = o.current ?? buildIdentity()
   const running = readService(p)
-  if (running !== null && running.cli === cli) {
+  if (running !== null && running.cli === cli && serviceFreshness(running, current) === "current") {
     keepService(p)
     return running
   }
+  // readService vouches for the pid (alive, and a service for this instance), so a
+  // stop signals only a real service. A record it rejects names a gone process or a
+  // reused pid: drop the file and signal nobody.
   if (running !== null) stopService(p)
+  else rmSync(p.service, { force: true })
   keepService(p)
-  const log = openSync(resolve(p.dir, "service.log"), "a")
-  const child = spawn(process.execPath, [...cliArgv("serve", "-i", name)], { detached: true, stdio: ["ignore", log, log] })
-  closeSync(log)
-  child.unref()
-  const deadline = Date.now() + 10_000
+  const start =
+    o.start ??
+    ((): void => {
+      const log = openSync(resolve(p.dir, "service.log"), "a")
+      const child = spawn(process.execPath, [...cliArgv("serve", "-i", name)], { detached: true, stdio: ["ignore", log, log] })
+      closeSync(log)
+      child.unref()
+    })
+  start()
+  const deadline = Date.now() + (o.timeoutMs ?? 10_000)
   while (Date.now() < deadline) {
     const info = readService(p)
-    if (info !== null && info.cli === cli && (await answers(p.control))) return info
+    if (info !== null && info.cli === cli && serviceFreshness(info, current) === "current" && (await answers(p.control))) return info
     await new Promise((r) => setTimeout(r, 50))
   }
   throw new Error(`the control service for "${name}" did not start; see ${resolve(p.dir, "service.log")}`)
@@ -197,6 +229,7 @@ export async function runService(name: string, o: ServiceOptions = {}): Promise<
     cli: process.env["WINVM_CLI"] ?? "",
     version: coreVersion(),
     startedAt: new Date().toISOString(),
+    build: buildIdentity(),
   })
   const exitAfterMs = o.exitAfterMs ?? 10_000
   const checkMs = o.checkMs ?? 1000
