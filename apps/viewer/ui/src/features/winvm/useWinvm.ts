@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react"
 
 import { errorMessage, installCli, outputText, winvm } from "../../backend"
-import type { Checks, Connection, Phase, Status, VmOperation } from "../../model"
-import { isLivePhase, parseChecks, parseConnection, parseStatus, phase, titleAssignment } from "../../model"
+import type { Checks, ClosePolicy, Connection, Phase, Status, VmOperation } from "../../model"
+import { closePolicyAssignment, isLivePhase, parseChecks, parseConnection, parseStatus, phase, titleAssignment } from "../../model"
 import { operationFor, phaseAfter, shownPhase, StatusGuard, type Verb } from "./statusGuard"
 
 export type { Verb } from "./statusGuard"
@@ -56,6 +56,8 @@ export interface Winvm {
   dismissFailure(): void
   /** Sets this instance's title (empty clears it); resolves with why it couldn't, or null. */
   rename(title: string): Promise<string | null>
+  /** Sets the selected machine's close policy by its stable name; resolves with why it couldn't, or null. */
+  setClosePolicy(policy: ClosePolicy): Promise<string | null>
   /** Reads the list of machines again (after one is made or deleted). */
   refresh(): Promise<void>
   /** Reads every machine's status afresh; null when it can't be read. The selected machine's shown status follows. */
@@ -372,6 +374,28 @@ export function useWinvm(): Winvm {
     [name],
   )
 
+  /**
+   * Sets what closing the window does to the machine selected now, by its stable name (never its
+   * title, never `default`). The CLI validates and stores it; the machine is read again so what is
+   * shown is the effective value it reports.
+   */
+  const setClosePolicy = useCallback(
+    async (policy: ClosePolicy): Promise<string | null> => {
+      const target = nameRef.current
+      if (target === null) return null
+      try {
+        const out = await winvm("config", "-i", target, closePolicyAssignment(policy))
+        if (out.code !== 0) return outputText(out) || `winvm config exited ${String(out.code)}`
+      } catch (e) {
+        return errorText(e)
+      }
+      // Lands in the shown status only while `target` is still the selected machine.
+      await refreshOne(target)
+      return null
+    },
+    [refreshOne],
+  )
+
   return {
     names,
     name,
@@ -379,6 +403,7 @@ export function useWinvm(): Winvm {
     // This machine's state as shown here, so the picker agrees with the toolbar.
     phases: name !== null && p !== null && phases[name] !== p ? { ...phases, [name]: p } : phases,
     rename,
+    setClosePolicy,
     refresh: async () => {
       await loadNames()
     },

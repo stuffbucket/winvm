@@ -3,7 +3,7 @@ import { readdirSync, readFileSync, statSync } from "node:fs"
 import { join, resolve } from "node:path"
 
 import en from "../ui/src/i18n/en.json"
-import { VM_OPERATIONS } from "../ui/src/model"
+import { CLOSE_POLICIES, VM_OPERATIONS } from "../ui/src/model"
 
 const SRC = resolve(import.meta.dir, "..", "ui", "src")
 
@@ -23,6 +23,7 @@ const built = [
   ...["start", "stop", "reboot", "pause", "resume", "sleep", "wake", "lock", "kill", "setup", "save", "load", "stow"].map((v) => `busy.${v}`),
   ...["start", "stop", "reboot", "pause", "resume", "sleep", "wake", "lock", "kill", "setup", "save", "load", "stow", "open", "put"].map((v) => `error.${v}`),
   ...VM_OPERATIONS.map((o) => `operation.${o}`),
+  ...CLOSE_POLICIES.map((p) => `closePolicy.${p}`),
   ...["stop", "reboot", "kill"].flatMap((v) => [`confirm.${v}.title`, `confirm.${v}.body`]),
   ...["stopped", "stowed", "missing"].map((p) => `overview.${p}.title`),
   ...["action.files", "action.checkpoints", "action.share", "action.shutDown", "action.restart", "action.forceStop"],

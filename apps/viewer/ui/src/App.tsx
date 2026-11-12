@@ -33,7 +33,7 @@ import { ConfirmDialog } from "./components/ConfirmDialog"
 import { Popover } from "./components/Popover"
 import { cx } from "./components/cx"
 import { t } from "./i18n"
-import type { Phase, Share } from "./model"
+import type { ClosePolicy, Phase, Share } from "./model"
 import { controls, displaySize, isFrozen, isLivePhase, parseShare, shownTitle, startSteps, terminalBlocked } from "./model"
 import { SharePanel } from "./features/actions/SharePanel"
 import { CheckpointCanvas } from "./features/checkpoints/CheckpointCanvas"
@@ -99,6 +99,9 @@ export function App(): JSX.Element {
   const [checkpoints, setCheckpoints] = useState(false)
   const [closeCheckpoints, setCloseCheckpoints] = useState(0)
   const [keyboardCaptured, setKeyboardCaptured] = useState(false)
+  // The close-policy setting's own write, and why the last one failed (for the machine it was for).
+  const [settingClosePolicy, setSettingClosePolicy] = useState(false)
+  const [closePolicyError, setClosePolicyError] = useState<{ name: string; text: string } | null>(null)
   const screen = useRef<ScreenHandle | null>(null)
 
   // A hidden window gets no animation frames, so show it straight after the first commit.
@@ -451,6 +454,17 @@ export function App(): JSX.Element {
   }
   const closePanel = useCallback(() => setOpen(null), [])
 
+  const changeClosePolicy = (policy: ClosePolicy): void => {
+    const target = w.name
+    if (target === null || settingClosePolicy) return
+    setClosePolicyError(null)
+    setSettingClosePolicy(true)
+    void w.setClosePolicy(policy).then((why) => {
+      setSettingClosePolicy(false)
+      setClosePolicyError(why === null ? null : { name: target, text: why })
+    })
+  }
+
   const frame = {
     "--display-ratio": String(display.width / display.height),
     "--display-width": `${String(display.width)}px`,
@@ -668,6 +682,10 @@ export function App(): JSX.Element {
             sharedFolder={sharedFolder}
             machineInfo={machineInfo}
             guestReady={guestReady}
+            closePolicy={w.status?.closePolicy ?? "ask"}
+            closePolicyBusy={operating || settingClosePolicy}
+            closePolicyError={closePolicyError !== null && closePolicyError.name === w.name ? closePolicyError.text : null}
+            onClosePolicy={changeClosePolicy}
             onForceStop={() => setConfirm({ kind: "kill" })}
           />
         )}
