@@ -33,6 +33,11 @@ interface ScreenProps {
    */
   readonly frozen?: boolean
   /**
+   * A command is running on the machine (this window's or another process's): the screen takes no
+   * input, as while frozen, but is not dimmed as a held screen is.
+   */
+  readonly inputBlocked?: boolean
+  /**
    * Windows can take a size now (the app's guestReady: it runs, its agent
    * answers, no verb under way). Until then sizes wait, as while frozen, and
    * the window's size is asked for, both steps, once it can.
@@ -79,7 +84,7 @@ const dpr = (): number => window.devicePixelRatio || 1
  * the window comes forward, and once on connecting.
  */
 export const Screen = forwardRef<ScreenHandle, ScreenProps>(function Screen(
-  { connection, keyboardCaptured, onKeyboardCaptured, resizable, onGuestSize, frozen = false, ready = true, asleep = false, waking = false, onWake, overlay = true },
+  { connection, keyboardCaptured, onKeyboardCaptured, resizable, onGuestSize, frozen = false, inputBlocked = false, ready = true, asleep = false, waking = false, onWake, overlay = true },
   ref,
 ): JSX.Element {
   const area = useRef<HTMLDivElement | null>(null)
@@ -113,8 +118,9 @@ export const Screen = forwardRef<ScreenHandle, ScreenProps>(function Screen(
   askAgainRef.current = askAgain
   const heldSizes = useRef<HeldSizes | null>(null)
   heldSizes.current ??= new HeldSizes(frozen || !ready, { onRetry: () => askAgainRef.current() })
-  const keys = useRef({ frozen, asleep, waking, onWake })
+  const keys = useRef({ frozen, blocked: inputBlocked, asleep, waking, onWake })
   keys.current.frozen = frozen
+  keys.current.blocked = inputBlocked
   keys.current.asleep = asleep
   keys.current.waking = waking
   keys.current.onWake = onWake
@@ -184,7 +190,7 @@ export const Screen = forwardRef<ScreenHandle, ScreenProps>(function Screen(
     // QEMU's immediate "forwarded" reply as done, dropping later sizes.
     conn.resizeSession = false
     conn.focusOnClick = true
-    conn.viewOnly = keys.current.frozen
+    conn.viewOnly = keys.current.frozen || keys.current.blocked
 
     const measure = (): Size => {
       const r = outer.getBoundingClientRect()
@@ -391,8 +397,8 @@ export const Screen = forwardRef<ScreenHandle, ScreenProps>(function Screen(
   // wanted meanwhile, if it wanted one.
   useEffect(() => {
     const conn = rfb.current
-    if (conn !== null) conn.viewOnly = frozen
-  }, [frozen])
+    if (conn !== null) conn.viewOnly = frozen || inputBlocked
+  }, [frozen, inputBlocked])
   // Held or not ready: sizes wait. Able to take one again: ask for the size the
   // window wants now, both steps, if one was kept.
   useEffect(() => {

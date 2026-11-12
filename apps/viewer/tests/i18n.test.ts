@@ -3,6 +3,7 @@ import { readdirSync, readFileSync, statSync } from "node:fs"
 import { join, resolve } from "node:path"
 
 import en from "../ui/src/i18n/en.json"
+import { VM_OPERATIONS } from "../ui/src/model"
 
 const SRC = resolve(import.meta.dir, "..", "ui", "src")
 
@@ -19,8 +20,9 @@ const catalog = new Set(Object.keys(en))
 // Keys built at run time, from the values they are built from.
 const built = [
   ...["loading", "starting", "running", "paused", "asleep", "stopped", "stowed", "missing"].map((s) => `state.${s}`),
-  ...["start", "stop", "reboot", "pause", "resume", "sleep", "wake", "lock", "kill", "setup", "save", "load"].map((v) => `busy.${v}`),
-  ...["start", "stop", "reboot", "pause", "resume", "sleep", "wake", "lock", "kill", "setup", "save", "load", "open", "put"].map((v) => `error.${v}`),
+  ...["start", "stop", "reboot", "pause", "resume", "sleep", "wake", "lock", "kill", "setup", "save", "load", "stow"].map((v) => `busy.${v}`),
+  ...["start", "stop", "reboot", "pause", "resume", "sleep", "wake", "lock", "kill", "setup", "save", "load", "stow", "open", "put"].map((v) => `error.${v}`),
+  ...VM_OPERATIONS.map((o) => `operation.${o}`),
   ...["stop", "reboot", "kill"].flatMap((v) => [`confirm.${v}.title`, `confirm.${v}.body`]),
   ...["stopped", "stowed", "missing"].map((p) => `overview.${p}.title`),
   ...["action.files", "action.checkpoints", "action.share", "action.shutDown", "action.restart", "action.forceStop"],

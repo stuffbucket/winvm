@@ -27,6 +27,8 @@ interface ToolbarProps {
   readonly open: PanelId | null
   readonly detailsOpen: boolean
   readonly keyboardCaptured: boolean
+  /** A command is running on the machine: keyboard capture is off until it ends. */
+  readonly inputBlocked: boolean
   onStart(): void
   onShutDown(): void
   onRestart(): void
@@ -223,7 +225,7 @@ export function Toolbar(p: ToolbarProps): JSX.Element {
         <ToolButton
           icon="keyboard"
           label={t(p.keyboardCaptured ? "input.release" : "input.capture")}
-          enabled={c.screen && !isFrozen(p.phase)}
+          enabled={c.screen && !isFrozen(p.phase) && !p.inputBlocked}
           pressed={p.keyboardCaptured}
           onClick={p.onKeyboardCapture}
         />

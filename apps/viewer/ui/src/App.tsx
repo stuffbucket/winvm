@@ -39,6 +39,7 @@ import { SharePanel } from "./features/actions/SharePanel"
 import { CheckpointCanvas } from "./features/checkpoints/CheckpointCanvas"
 import { useCopies } from "./features/files/useCopies"
 import { Overview } from "./features/overview/Overview"
+import { OperationOverlay } from "./features/operation/OperationOverlay"
 import { Panel } from "./features/panel/Panel"
 import { ReferenceDialog } from "./features/reference/ReferenceDialog"
 import { Screen, type ScreenHandle } from "./features/screen/Screen"
@@ -112,14 +113,17 @@ export function App(): JSX.Element {
   // Paused or asleep: no input, no resize, no agent calls until it runs again.
   const frozen = isFrozen(phase)
   const held = phase === "paused" || phase === "asleep" ? phase : null
-  // A held machine takes no keys: the Mac gets its own shortcuts (Cmd-Tab) back.
+  // A machine busy with a command, this window's or another process's (a close in another viewer,
+  // `winvm` in a terminal): no controls, no readiness, no input, no keyboard capture, no drop.
+  const operating = w.operation !== null
+  // A held machine takes no keys: the Mac gets its own shortcuts (Cmd-Tab) back. So does one changing state.
   useEffect(() => {
-    if (frozen) setKeyboardCaptured(false)
-  }, [frozen])
-  const guestReady = phase === "running" && w.busy === null
+    if (frozen || operating) setKeyboardCaptured(false)
+  }, [frozen, operating])
+  const guestReady = phase === "running" && !operating
   const hostReady = w.checks === null || w.checks.ready
-  const c = controls(phase ?? "missing", w.busy !== null || phase === null || !hostReady)
-  const blocked = terminalBlocked(phase ?? "missing", w.busy !== null || phase === null || !hostReady)
+  const c = controls(phase ?? "missing", operating || phase === null || !hostReady)
+  const blocked = terminalBlocked(phase ?? "missing", operating || phase === null || !hostReady)
   const missing = w.checks?.checks.filter((x) => !x.ok) ?? []
   const runtimeMissing = missing.some((x) => x.hint === "winvm setup")
   const display = displaySize(w.status?.screen ?? null)
@@ -187,7 +191,7 @@ export function App(): JSX.Element {
   }
   // A key in an asleep machine's screen wakes it, once.
   const wake = (): void => {
-    if (w.busy === null && phase === "asleep") run("wake")
+    if (!operating && phase === "asleep") run("wake")
   }
 
   // Files dropped on the main window go to the Desktop in Windows; the Files window takes them anywhere.
@@ -261,12 +265,12 @@ export function App(): JSX.Element {
   }
   // Start it once this window has read its (stopped) state.
   useEffect(() => {
-    if (startNext !== null && w.name === startNext && phase === "stopped" && w.busy === null) {
+    if (startNext !== null && w.name === startNext && phase === "stopped" && !operating) {
       setStartNext(null)
       setStartedFrom("missing")
       void w.act("start")
     }
-  }, [startNext, w.name, phase, w.busy, w.act])
+  }, [startNext, w.name, phase, operating, w.act])
 
   // Delete "<name>"…: what goes, Keep checkpoints, and a running machine turned off first.
   const [deleting, setDeleting] = useState<Deleting | null>(null)
@@ -341,7 +345,7 @@ export function App(): JSX.Element {
     if (checkpoints) setCloseCheckpoints((n) => n + 1)
     else openCheckpoints()
   }, [checkpoints, openCheckpoints])
-  const canSave = (phase === "running" || phase === "paused") && w.busy === null
+  const canSave = (phase === "running" || phase === "paused") && !operating
   const checkpointsMenu = (): void => {
     popupActions([
       { kind: "action", label: t("checkpoints.saveNow"), enabled: canSave, run: () => run("save") },
@@ -355,10 +359,10 @@ export function App(): JSX.Element {
     () =>
       onMenu((id) => {
         if (id === "new-terminal") terminal(null)
-        if (id === "capture-keyboard" && showScreen && !frozen) setKeyboardCaptured(true)
+        if (id === "capture-keyboard" && showScreen && !frozen && !operating) setKeyboardCaptured(true)
         if (id === "release-keyboard") setKeyboardCaptured(false)
-        if (id === "send-windows-key") screen.current?.sendWindowsKey()
-        if (id === "send-ctrl-alt-delete") screen.current?.sendCtrlAltDelete()
+        if (id === "send-windows-key" && !operating) screen.current?.sendWindowsKey()
+        if (id === "send-ctrl-alt-delete" && !operating) screen.current?.sendCtrlAltDelete()
         if (id === "rename-window") setRenaming(true)
         if (id === "checkpoints") toggleCheckpoints()
         if (id === "install-cli") void install()
@@ -369,7 +373,7 @@ export function App(): JSX.Element {
             .catch((e: unknown) => setReference({ text: errorMessage(e) }))
         }
       }),
-    [install, terminal, toggleCheckpoints, showScreen, frozen],
+    [install, terminal, toggleCheckpoints, showScreen, frozen, operating],
   )
 
   useEffect(() => {
@@ -448,7 +452,7 @@ export function App(): JSX.Element {
   } as CSSProperties
 
   return (
-    <div className="viewer" data-busy={w.busy !== null}>
+    <div className="viewer" data-busy={operating}>
       <div className="busybar" aria-hidden="true" />
       <Toolbar
         picker={{
@@ -482,6 +486,7 @@ export function App(): JSX.Element {
         open={open?.id ?? null}
         detailsOpen={detailsOpen}
         keyboardCaptured={keyboardCaptured}
+        inputBlocked={operating}
         onStart={() => run("start")}
         onShutDown={() => setConfirm({ kind: "stop" })}
         onRestart={() => setConfirm({ kind: "reboot" })}
@@ -565,7 +570,7 @@ export function App(): JSX.Element {
                   title={t("host.notReady")}
                   action={
                     runtimeMissing ? (
-                      <Button size="sm" variant="primary" disabled={w.busy !== null} onClick={() => run("setup")}>
+                      <Button size="sm" variant="primary" disabled={operating} onClick={() => run("setup")}>
                         {t("action.setup")}
                       </Button>
                     ) : undefined
@@ -610,6 +615,7 @@ export function App(): JSX.Element {
                   resizable={resizable}
                   onGuestSize={resizeGuest}
                   frozen={frozen}
+                  inputBlocked={operating}
                   ready={guestReady}
                   asleep={phase === "asleep"}
                   waking={w.busy === "wake"}
@@ -624,6 +630,8 @@ export function App(): JSX.Element {
                   <p>{t("files.dropOn", { folder: t("files.place.desktop") })}</p>
                 </div>
               )}
+              {/* Last, over the screen or the Overview: while a command runs nothing under it is reachable. */}
+              <OperationOverlay operation={w.operation} />
             </div>
           </div>
         </div>
@@ -637,7 +645,7 @@ export function App(): JSX.Element {
             usage={usage}
             usageContext={usageContext}
             held={held}
-            canForceStop={live && w.busy === null}
+            canForceStop={live && !operating}
             sharedFolder={sharedFolder}
             machineInfo={machineInfo}
             guestReady={guestReady}
@@ -669,7 +677,7 @@ export function App(): JSX.Element {
           instance={w.name}
           machine={title ?? w.name}
           phase={phase}
-          busy={w.busy !== null}
+          busy={operating}
           aspect={display.width / display.height}
           displayRect={displayRect}
           liveSource={liveSource}

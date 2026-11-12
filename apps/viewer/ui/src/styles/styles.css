@@ -363,6 +363,46 @@ html[data-os="macos"] .toolbar {
   color: var(--text-strong);
 }
 
+/* A command is running on the machine, from this window or another process:
+   the last thing in the display, over the screen or the Overview. Unlike the
+   held dimming (.screen__held), it takes the pointer, so nothing under it can
+   be clicked while the machine changes state. */
+.display__operation {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  background: var(--scrim-paused);
+  pointer-events: auto;
+  cursor: progress;
+}
+
+.display__operation-text {
+  margin: 0;
+  padding: var(--space-1) var(--space-4);
+  border-radius: var(--radius-pill);
+  background: var(--surface-card);
+  border: var(--border-width-hairline) solid var(--border-subtle);
+  box-shadow: var(--elevation-modal);
+  font-size: var(--text-md);
+  font-weight: var(--weight-md);
+  color: var(--text-strong);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .display__operation {
+    animation: display-operation-in 150ms ease-out;
+  }
+  @keyframes display-operation-in {
+    from {
+      opacity: 0;
+    }
+    to {
+      opacity: 1;
+    }
+  }
+}
+
 .screen {
   position: absolute;
   inset: 0;

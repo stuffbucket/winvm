@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from "react"
 
 import { errorMessage, installCli, outputText, winvm } from "../../backend"
-import type { Checks, Connection, Phase, Status } from "../../model"
+import type { Checks, Connection, Phase, Status, VmOperation } from "../../model"
 import { isLivePhase, parseChecks, parseConnection, parseStatus, phase, titleAssignment } from "../../model"
-import { phaseAfter, shownPhase, StatusGuard, type Verb } from "./statusGuard"
+import { operationFor, phaseAfter, shownPhase, StatusGuard, type Verb } from "./statusGuard"
 
 export type { Verb } from "./statusGuard"
 
@@ -11,6 +11,12 @@ export interface Ran {
   readonly verb: Verb | "open" | "put"
   readonly code: number
   readonly output: string
+}
+
+/** What a machine is busy with: this viewer's own command, or one another process published (a close elsewhere, `winvm` in a terminal). */
+export interface ActiveOperation {
+  readonly operation: VmOperation
+  readonly source: "local" | "external"
 }
 
 export interface Winvm {
@@ -26,13 +32,18 @@ export interface Winvm {
   readonly checks: Checks | null
   readonly checksError: string | null
   readonly connection: Connection | null
+  /** The command this viewer is running on the selected machine, if any. */
   readonly busy: Verb | null
+  /** Whatever the selected machine is busy with, from either source; null when idle. */
+  readonly operation: ActiveOperation | null
   readonly failure: Ran | null
   readonly last: Ran | null
   readonly cliPath: string | null
   select(name: string): void
   /** Runs a verb on this instance; `arg` names the save for save and load. Resolves with what it did (null: nothing to run). */
   act(verb: Verb, arg?: string): Promise<Ran | null>
+  /** Runs a verb on `name`, the machine given and not the selected one; the selection may move before it ends. */
+  runOn(name: string, verb: Verb, arg?: string): Promise<Ran | null>
   openScreenSharing(): Promise<void>
   installCommand(): Promise<void>
   dismissFailure(): void
@@ -40,6 +51,16 @@ export interface Winvm {
   rename(title: string): Promise<string | null>
   /** Reads the list of machines again (after one is made or deleted). */
   refresh(): Promise<void>
+  /** Reads every machine's status afresh; null when it can't be read. The selected machine's shown status follows. */
+  refreshAll(): Promise<readonly Status[] | null>
+  /** Reads one machine's status afresh, selected or not; null when it can't be read. */
+  refreshOne(name: string): Promise<Status | null>
+}
+
+/** A command this viewer is running: against `target`, or (setup) against the host, which every machine waits for. */
+interface Local {
+  readonly target: string | null
+  readonly verb: Verb
 }
 
 /**
@@ -59,7 +80,7 @@ export function useWinvm(): Winvm {
   const [checks, setChecks] = useState<Checks | null>(null)
   const [checksError, setChecksError] = useState<string | null>(null)
   const [connection, setConnection] = useState<{ pid: number; conn: Connection } | null>(null)
-  const [busy, setBusy] = useState<Verb | null>(null)
+  const [locals, setLocals] = useState<readonly Local[]>([])
   const [failure, setFailure] = useState<Ran | null>(null)
   const [last, setLast] = useState<Ran | null>(null)
   const [cliPath, setCliPath] = useState<string | null>(null)
@@ -68,6 +89,15 @@ export function useWinvm(): Winvm {
   const [held, setHeld] = useState<Phase | null>(null)
   const guard = useRef(new StatusGuard())
   const tick = useRef(0)
+  const nameRef = useRef<string | null>(null)
+  nameRef.current = name
+
+  /** The picker's view of every machine, from a list read. */
+  const showList = useCallback((list: readonly Status[]): void => {
+    setNames(list.map((s) => s.name))
+    setTitles(Object.fromEntries(list.map((s) => [s.name, s.title])))
+    setPhases(Object.fromEntries(list.map((s) => [s.name, phase(s)])))
+  }, [])
 
   const loadNames = useCallback(async (): Promise<string | null> => {
     const out = await winvm("status", "--json")
@@ -76,29 +106,63 @@ export function useWinvm(): Winvm {
       setStatusError(outputText(out) || `winvm status exited ${String(out.code)}`)
       return null
     }
-    const found = list.map((s) => s.name)
-    setNames(found)
-    setTitles(Object.fromEntries(list.map((s) => [s.name, s.title])))
-    setPhases(Object.fromEntries(list.map((s) => [s.name, phase(s)])))
-    return found[0] ?? "default"
-  }, [])
+    showList(list)
+    return list[0]?.name ?? "default"
+  }, [showList])
 
-  const loadStatus = useCallback(async (target: string): Promise<void> => {
+  /**
+   * Reads `target`'s status. The selected machine's answer lands through the guard (and is shown
+   * only if no later read has landed); another's only updates the picker. Resolves with the answer
+   * either way, null when there was none to read; a read that cannot run rejects.
+   */
+  const loadStatus = useCallback(async (target: string): Promise<Status | null> => {
     const ticket = guard.current.begin()
     const out = await winvm("status", "--json", "-i", target)
     const s = parseStatus(out.stdout)?.[0]
     if (s === undefined) {
-      setStatusError(outputText(out) || `winvm status exited ${String(out.code)}`)
-      return
+      if (target === nameRef.current) setStatusError(outputText(out) || `winvm status exited ${String(out.code)}`)
+      return null
     }
-    // Overtaken by a read started later, or started before the last verb ended: stale.
-    if (!guard.current.land(ticket)) return
-    setHeld(null)
-    setStatusError(null)
-    setStatus(s)
+    if (target === nameRef.current) {
+      // Overtaken by a read started later, or started before the last verb ended: stale.
+      if (!guard.current.land(ticket)) return s
+      setHeld(null)
+      setStatusError(null)
+      setStatus(s)
+    }
     setTitles((was) => (was[s.name] === s.title ? was : { ...was, [s.name]: s.title }))
     setPhases((was) => (was[s.name] === phase(s) ? was : { ...was, [s.name]: phase(s) }))
+    return s
   }, [])
+
+  const refreshOne = useCallback(
+    async (target: string): Promise<Status | null> => {
+      try {
+        return await loadStatus(target)
+      } catch {
+        return null
+      }
+    },
+    [loadStatus],
+  )
+
+  const refreshAll = useCallback(async (): Promise<readonly Status[] | null> => {
+    const ticket = guard.current.begin()
+    try {
+      const list = parseStatus((await winvm("status", "--json")).stdout)
+      if (list === null) return null
+      showList(list)
+      const selected = list.find((s) => s.name === nameRef.current)
+      if (selected !== undefined && guard.current.land(ticket)) {
+        setHeld(null)
+        setStatusError(null)
+        setStatus(selected)
+      }
+      return list
+    } catch {
+      return null
+    }
+  }, [showList])
 
   const loadChecks = useCallback(async (): Promise<void> => {
     try {
@@ -146,7 +210,15 @@ export function useWinvm(): Winvm {
 
   const current = status !== null && status.name === name ? status : null
   const p = shownPhase(held, current, phase)
-  const fast = busy !== null || p === "starting"
+  // This viewer's own command on the selected machine comes first; else one another process published.
+  const busy = locals.find((l) => l.target === null || l.target === name)?.verb ?? null
+  const operation: ActiveOperation | null =
+    busy !== null
+      ? { operation: operationFor(busy), source: "local" }
+      : current?.operation == null
+        ? null
+        : { operation: current.operation.operation, source: "external" }
+  const fast = operation !== null || p === "starting"
 
   useEffect(() => {
     if (name === null) return
@@ -192,36 +264,55 @@ export function useWinvm(): Winvm {
       })
   }, [live, pid, name, connection, polls])
 
-  const act = useCallback(
-    async (verb: Verb, arg?: string): Promise<Ran | null> => {
-      if (name === null && verb !== "setup") return null
-      setBusy(verb)
+  /**
+   * Runs `verb` against `target` (null: the host, for setup). The machine is named, not read from
+   * the selection, so a close flow can stow one machine while the person looks at another.
+   */
+  const execute = useCallback(
+    async (machine: string | null, verb: Verb, arg?: string): Promise<Ran> => {
+      // Setup installs the runtime for the host, whichever machine asked: it names none, and every machine waits for it.
+      const target = verb === "setup" ? null : machine
+      const local: Local = { target, verb }
+      setLocals((was) => [...was, local])
       setFailure(null)
       let result: Ran
       try {
         const extra = arg === undefined || arg === "" ? [] : [arg]
-        const out = verb === "setup" ? await winvm("setup") : await winvm(verb, "-i", name ?? "default", ...extra)
+        const out = target === null ? await winvm("setup") : await winvm(verb, "-i", target, ...extra)
         const ran: Ran = { verb, code: out.code, output: outputText(out) }
         result = ran
         setLast(ran)
         if (out.code !== 0) setFailure(ran)
         // Show what the verb did at once; reads already out describe the machine before it.
-        guard.current.settle(out.code === 0 ? phaseAfter(verb) : null)
+        if (target === null || target === nameRef.current) guard.current.settle(out.code === 0 ? phaseAfter(verb) : null)
       } catch (e) {
         const ran: Ran = { verb, code: -1, output: errorText(e) }
         result = ran
         setLast(ran)
         setFailure(ran)
-        guard.current.settle(null)
+        if (target === null || target === nameRef.current) guard.current.settle(null)
       } finally {
         setHeld(guard.current.held)
-        setBusy(null)
+        setLocals((was) => was.filter((l) => l !== local))
       }
       if (verb === "setup") await loadChecks()
-      if (name !== null) await loadStatus(name).catch(() => undefined)
+      // Read the machine it ran on once more (the selected one, for setup): what is left is what the person and the close flow see.
+      const after = target ?? nameRef.current
+      if (after !== null) await loadStatus(after).catch(() => undefined)
       return result
     },
-    [name, loadChecks, loadStatus],
+    [loadChecks, loadStatus],
+  )
+
+  const runOn = useCallback((target: string, verb: Verb, arg?: string): Promise<Ran | null> => execute(target, verb, arg), [execute])
+
+  const act = useCallback(
+    async (verb: Verb, arg?: string): Promise<Ran | null> => {
+      const target = nameRef.current
+      if (verb === "setup") return execute(null, verb, arg)
+      return target === null ? null : execute(target, verb, arg)
+    },
+    [execute],
   )
 
   const openScreenSharing = useCallback(async (): Promise<void> => {
@@ -269,6 +360,8 @@ export function useWinvm(): Winvm {
     refresh: async () => {
       await loadNames()
     },
+    refreshAll,
+    refreshOne,
     status: current,
     phase: p,
     statusError,
@@ -276,11 +369,13 @@ export function useWinvm(): Winvm {
     checksError,
     connection: connection !== null && connection.pid === pid ? connection.conn : null,
     busy,
+    operation,
     failure,
     last,
     cliPath,
     select,
     act,
+    runOn,
     openScreenSharing,
     installCommand,
     dismissFailure: () => setFailure(null),
