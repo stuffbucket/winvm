@@ -176,6 +176,15 @@ function fakeWinvm(machines: Machine[], selected: string | null) {
       settled.add(run)
       run.done.resolve({ verb: run.verb, code, output })
     },
+    /** This window's own command on `name` (not the close flow's) ends: its outcome is recorded for that machine. */
+    finishLocal(name: string, code: number, output = ""): void {
+      const verb = world.busy
+      if (verb === null) throw new Error("no command of this window is running")
+      seq += 1
+      outcomes.set(name, { verb, code, output, seq })
+      world.busy = null
+      world.rerender()
+    },
     snapshot(): Winvm {
       const current = world.name === null ? undefined : world.find(world.name)
       return {
@@ -206,6 +215,7 @@ function fakeWinvm(machines: Machine[], selected: string | null) {
           runs.push({ name, verb, done })
           return done.promise
         },
+        lastOn: (name: string) => outcomes.get(name) ?? null,
         openScreenSharing: () => Promise.resolve(),
         installCommand: () => Promise.resolve(),
         dismissFailure: () => undefined,
@@ -224,6 +234,8 @@ function fakeWinvm(machines: Machine[], selected: string | null) {
     },
   }
   const settled = new Set<(typeof runs)[number]>()
+  const outcomes = new Map<string, Ran & { readonly seq: number }>()
+  let seq = 0
   return world
 }
 
@@ -838,6 +850,116 @@ describe("useCloseFlow", () => {
     expect(asking.kind === "asking" ? phaseOf(asking.machine) : null).toBe("paused")
   })
 
+  it("calls the close off when this window's own command it waited for fails, leaving that command's error to read", async () => {
+    const bridge = fakeBridge()
+    // Remembered Leave Running: were the failure missed, the close would go straight on to exit.
+    const world = fakeWinvm([{ name: "a", state: "running", closePolicy: "leave" }, { name: "b", state: "running", closePolicy: "stow" }], "a")
+    world.busy = "stop"
+    await mount(world)
+    act(() => bridge.fire())
+    await flush()
+    expect(current().state.kind).toBe("waiting")
+
+    // The person's Shut Down, started before the close, fails; Windows is still running.
+    act(() => world.finishLocal("a", 1, "winvm stop: Windows didn't shut down in 180 seconds"))
+    await tick(1500)
+    const failed = current().state
+    expect(failed.kind).toBe("failed")
+    if (failed.kind !== "failed") return
+    expect(failed.machine?.name).toBe("a")
+    expect(failed.message).toBe("winvm stop: Windows didn't shut down in 180 seconds")
+    expect(world.name).toBe("a")
+    expect(bridge.count("close_cancel")).toBe(1)
+    expect(bridge.count("close_complete")).toBe(0)
+    // Nothing more is run: not `b`'s remembered stow either.
+    expect(world.runs).toHaveLength(0)
+    expect(world.log.filter((l) => l.endsWith(" b"))).toEqual([])
+  })
+
+  it("calls the close off when another process's command it waited for ends without doing what it does", async () => {
+    // A stow elsewhere ends, and the machine is still running: it failed.
+    const bridge = fakeBridge()
+    const world = fakeWinvm(
+      [
+        { name: "a", state: "running", closePolicy: "stow", operation: "stow", title: "Work PC" },
+        { name: "b", state: "running", closePolicy: "leave" },
+      ],
+      "a",
+    )
+    await mount(world)
+    act(() => bridge.fire())
+    await flush()
+    expect(current().state.kind).toBe("waiting")
+    world.set("a", { operation: null })
+    await tick(1500)
+    const failed = current().state
+    expect(failed.kind).toBe("failed")
+    if (failed.kind !== "failed") return
+    expect(failed.machine?.name).toBe("a")
+    expect(failed.message).toBe(copy("close.externalFailed", { operation: "stow", title: "Work PC" }))
+    expect(bridge.count("close_cancel")).toBe(1)
+    expect(bridge.count("close_complete")).toBe(0)
+    // Not stowed again here, and `b` is never reached.
+    expect(world.runs).toHaveLength(0)
+    expect(world.log.filter((l) => l.endsWith(" b"))).toEqual([])
+    act(() => root?.unmount())
+
+    // A resume elsewhere ends, and the machine is still paused: it failed too.
+    const again = fakeBridge()
+    const held = fakeWinvm([{ name: "c", state: "paused", closePolicy: "leave", operation: "resume" }], "c")
+    await mount(held)
+    act(() => again.fire())
+    await flush()
+    expect(current().state.kind).toBe("waiting")
+    held.set("c", { operation: null })
+    await tick(1500)
+    const stillHeld = current().state
+    expect(stillHeld.kind === "failed" ? stillHeld.message : null).toBe(copy("close.externalFailed", { operation: "resume", title: "c" }))
+    expect(again.count("close_cancel")).toBe(1)
+    expect(again.count("close_complete")).toBe(0)
+  })
+
+  it("asks, instead of applying a remembered choice, after another process's command whose outcome its state can't show", async () => {
+    // A save elsewhere leaves the machine running whether or not it worked: the person decides.
+    const bridge = fakeBridge()
+    const world = fakeWinvm([{ name: "a", state: "running", closePolicy: "leave", operation: "save" }], "a")
+    await mount(world)
+    act(() => bridge.fire())
+    await flush()
+    world.set("a", { operation: null })
+    await tick(1500)
+    const asked = current().state
+    expect(asked.kind === "asking" ? [asked.machine.name, asked.remember] : null).toEqual(["a", false])
+    expect(bridge.count("close_complete")).toBe(0)
+    act(() => current().choose("leave"))
+    await flush()
+    expect(bridge.count("close_complete")).toBe(1)
+    act(() => root?.unmount())
+
+    // A pause elsewhere that left it paused did what it does: the remembered choice applies.
+    const again = fakeBridge()
+    const paused = fakeWinvm([{ name: "b", state: "running", closePolicy: "leave", operation: "pause" }], "b")
+    await mount(paused)
+    act(() => again.fire())
+    await flush()
+    paused.set("b", { operation: null, state: "paused" })
+    await tick(1500)
+    expect(again.count("close_complete")).toBe(1)
+  })
+
+  it("does not take a failure from before the close as this close's", async () => {
+    const bridge = fakeBridge()
+    const world = fakeWinvm([{ name: "a", state: "running", closePolicy: "leave" }], "a")
+    // `a`'s Save failed before the close began, and its error is still on screen: not this close's failure.
+    world.busy = "save"
+    world.finishLocal("a", 1, "an old failure")
+    await mount(world)
+    act(() => bridge.fire())
+    await flush()
+    expect(bridge.count("close_complete")).toBe(1)
+    expect(bridge.count("close_cancel")).toBe(0)
+  })
+
   it("lets the person cancel the close while it waits, without touching the operation it waited for", async () => {
     const bridge = fakeBridge()
     const world = fakeWinvm([{ name: "a", state: "running", operation: "stop" }], "a")
@@ -931,5 +1053,67 @@ describe("useCloseFlow", () => {
     await flush()
     expect(bridge.count("close_start")).toBe(2)
     expect(bridge.count("close_complete")).toBe(1)
+  })
+})
+
+describe("useWinvm's lastOn", () => {
+  it("tells how this window's last command on each machine ended, read now and kept per machine", async () => {
+    jest.useFakeTimers()
+    const answers: Record<string, { code: number; stdout: string; stderr: string }> = {
+      "stow -i b": { code: 1, stdout: "", stderr: "winvm stow: the disk is full" },
+      "stop -i a": { code: 0, stdout: "", stderr: "" },
+      setup: { code: 3, stdout: "", stderr: "winvm setup: no network" },
+    }
+    const list = JSON.stringify({ instances: [statusOf({ name: "a", state: "running" }), statusOf({ name: "b", state: "running" })] })
+    const invoke = (cmd: string, a?: { args?: string[] }): Promise<unknown> => {
+      const args = a?.args ?? []
+      if (cmd !== "winvm") return Promise.resolve(null)
+      if (args[0] === "status") {
+        const one = args.indexOf("-i")
+        return Promise.resolve({ code: 0, stdout: one < 0 ? list : JSON.stringify(statusOf({ name: args[one + 1] ?? "a", state: "running" })), stderr: "" })
+      }
+      return Promise.resolve(answers[args.join(" ")] ?? { code: 1, stdout: "", stderr: "" })
+    }
+    Object.assign(window, { __TAURI__: { core: { invoke } } })
+    const { useWinvm } = await import("../ui/src/features/winvm/useWinvm")
+    let latest: Winvm | null = null
+    function Host(): null {
+      latest = useWinvm()
+      return null
+    }
+    const host = document.createElement("div")
+    document.body.append(host)
+    const r = createRoot(host)
+    root = r
+    act(() => r.render(<Host />))
+    await flush()
+    const first = latest as Winvm | null
+    if (first === null) throw new Error("not mounted")
+    expect(first.name).toBe("a")
+    expect(first.lastOn("a")).toBeNull()
+    expect(first.lastOn("b")).toBeNull()
+
+    await act(async () => {
+      await first.runOn("b", "stow")
+    })
+    // Read now: even the first render's Winvm answers with what has happened since.
+    const b = first.lastOn("b")
+    expect(b === null ? null : { verb: b.verb, code: b.code, output: b.output }).toEqual({ verb: "stow", code: 1, output: "winvm stow: the disk is full" })
+    expect(first.lastOn("a")).toBeNull()
+
+    await act(async () => {
+      await first.runOn("a", "stop")
+    })
+    const a = first.lastOn("a")
+    expect(a?.code).toBe(0)
+    expect((a?.seq ?? 0) > (b?.seq ?? 0)).toBe(true)
+    // `b`'s failure stays `b`'s.
+    expect(first.lastOn("b")?.code).toBe(1)
+
+    // Setup names no machine: it is kept against the machine shown, whose commands wait for it.
+    await act(async () => {
+      await first.act("setup")
+    })
+    expect(first.lastOn("a")?.output).toBe("winvm setup: no network")
   })
 })

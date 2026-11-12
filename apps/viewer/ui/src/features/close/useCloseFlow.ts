@@ -11,7 +11,7 @@ import {
   winvm,
 } from "../../backend"
 import { t } from "../../i18n"
-import type { Status } from "../../model"
+import type { Phase, Status, VmOperation } from "../../model"
 import { closePolicyAssignment, isLivePhase, phase, shownTitle } from "../../model"
 import type { ActiveOperation, Verb, Winvm } from "../winvm/useWinvm"
 import { operationFor } from "../winvm/statusGuard"
@@ -63,6 +63,32 @@ function busyWith(w: Winvm, s: Status): ActiveOperation | null {
 
 /** How one machine came out: resolved (left, stowed, shut down), skipped (no longer live), or the flow stopped. */
 type Outcome = "resolved" | "skipped" | "stopped"
+
+/**
+ * Whether a machine is where `operation` leaves it when it works, judged from its state alone;
+ * null when its state can't tell (a save leaves it as it was, failed or not). Another process's
+ * command reports its failure only where it ran, so this is all the close has to go on.
+ */
+function settled(operation: VmOperation, p: Phase): boolean | null {
+  switch (operation) {
+    case "start":
+    case "reboot":
+    case "resume":
+    case "wake":
+      return p === "running" || p === "starting"
+    case "stop":
+    case "kill":
+      return p === "stopped"
+    case "stow":
+      return p === "stowed"
+    case "pause":
+      return p === "paused"
+    case "sleep":
+      return p === "asleep"
+    default:
+      return null
+  }
+}
 
 /** Writes `name`'s close policy; resolves with why it couldn't, or null. Its result is read, never swallowed. */
 async function rememberChoice(name: string, choice: CloseChoice): Promise<string | null> {
@@ -117,6 +143,10 @@ export function useCloseFlow(w: Winvm): CloseFlow {
 
     const resolveOne = async (tx: Transaction, name: string, known: Status | null, index: number, total: number): Promise<Outcome> => {
       if (wRef.current.name !== name) wRef.current.select(name)
+      // This window's commands on this machine so far: one that ends after this and fails is a failure of the close.
+      const before = wRef.current.lastOn(name)?.seq ?? 0
+      // Another process's command the close waited on, the last seen; its end is judged by where it left the machine.
+      let external: VmOperation | null = null
       let s: Status | null
       for (;;) {
         // Decided from this fresh read, not the selected machine's shown status, which lags a selection.
@@ -129,6 +159,7 @@ export function useCloseFlow(w: Winvm): CloseFlow {
         // Busy with a command this flow did not start: wait for it, never interrupt it.
         const operation = busyWith(wRef.current, s)
         if (operation === null) break
+        if (operation.source === "external") external = operation.operation
         show({ kind: "waiting", machine: s, operation, index, total })
         await new Promise<void>((wake) => {
           const timer = setTimeout(wake, WAIT_MS)
@@ -140,10 +171,25 @@ export function useCloseFlow(w: Winvm): CloseFlow {
         tx.wake = null
         if (tx.cancelled) return "stopped"
       }
+      // A command of this window's on this machine failed while the close waited: its error stays
+      // on screen, and the close stops here rather than go on past it.
+      const own = wRef.current.lastOn(name)
+      if (own !== null && own.seq > before && own.code !== 0) {
+        fail(tx, s, own.output || t("close.actionFailed", { title: shownTitle(s.name, s.title) }))
+        return "stopped"
+      }
+      // Another process's command ended without leaving the machine where it would have: it failed.
+      if (external !== null && settled(external, phase(s)) === false) {
+        fail(tx, s, t("close.externalFailed", { operation: external, title: shownTitle(s.name, s.title) }))
+        return "stopped"
+      }
       if (!isLivePhase(phase(s))) return "skipped"
       let choice: CloseChoice
       let remember = false
-      if (s.closePolicy === "ask") {
+      // After another process's command whose outcome its state can't show, nothing is applied
+      // unasked: the person sees the machine as it is and decides.
+      const unsure = external !== null && settled(external, phase(s)) === null
+      if (s.closePolicy === "ask" || unsure) {
         // Remember starts unchecked on every ask.
         show({ kind: "asking", machine: s, index, total, remember: false })
         const chosen = await new Promise<Answer | null>((settle) => {

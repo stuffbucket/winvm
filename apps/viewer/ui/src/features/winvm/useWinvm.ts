@@ -13,6 +13,11 @@ export interface Ran {
   readonly output: string
 }
 
+/** How this window's last command on one machine ended; `seq` grows with each command, so a later one is told from an earlier. */
+export interface RanOn extends Ran {
+  readonly seq: number
+}
+
 /** What a machine is busy with: this viewer's own command, or one another process published (a close elsewhere, `winvm` in a terminal). */
 export interface ActiveOperation {
   readonly operation: VmOperation
@@ -44,6 +49,8 @@ export interface Winvm {
   act(verb: Verb, arg?: string): Promise<Ran | null>
   /** Runs a verb on `name`, the machine given and not the selected one; the selection may move before it ends. */
   runOn(name: string, verb: Verb, arg?: string): Promise<Ran | null>
+  /** How this window's last command on `name` ended (read now, not as of the last render); null when it has run none there. */
+  lastOn(name: string): RanOn | null
   openScreenSharing(): Promise<void>
   installCommand(): Promise<void>
   dismissFailure(): void
@@ -88,6 +95,9 @@ export function useWinvm(): Winvm {
   // What the last verb left (paused, asleep, running), shown until a read started after it lands.
   const [held, setHeld] = useState<Phase | null>(null)
   const guard = useRef(new StatusGuard())
+  // How this window's last command on each machine ended, kept as it happens (not per render).
+  const outcomes = useRef(new Map<string, RanOn>())
+  const ranCount = useRef(0)
   const tick = useRef(0)
   const nameRef = useRef<string | null>(null)
   nameRef.current = name
@@ -272,7 +282,15 @@ export function useWinvm(): Winvm {
     async (machine: string | null, verb: Verb, arg?: string): Promise<Ran> => {
       // Setup installs the runtime for the host, whichever machine asked: it names none, and every machine waits for it.
       const target = verb === "setup" ? null : machine
+      // Whose outcome this is: the machine named, or for setup the one shown, whose commands wait for it.
+      const owner = target ?? nameRef.current
       const local: Local = { target, verb }
+      // Kept before the command stops counting as busy, so whoever waited on it finds how it ended.
+      const record = (ran: Ran): void => {
+        if (owner === null) return
+        ranCount.current += 1
+        outcomes.current.set(owner, { ...ran, seq: ranCount.current })
+      }
       setLocals((was) => [...was, local])
       setFailure(null)
       let result: Ran
@@ -281,6 +299,7 @@ export function useWinvm(): Winvm {
         const out = target === null ? await winvm("setup") : await winvm(verb, "-i", target, ...extra)
         const ran: Ran = { verb, code: out.code, output: outputText(out) }
         result = ran
+        record(ran)
         setLast(ran)
         if (out.code !== 0) setFailure(ran)
         // Show what the verb did at once; reads already out describe the machine before it.
@@ -288,6 +307,7 @@ export function useWinvm(): Winvm {
       } catch (e) {
         const ran: Ran = { verb, code: -1, output: errorText(e) }
         result = ran
+        record(ran)
         setLast(ran)
         setFailure(ran)
         if (target === null || target === nameRef.current) guard.current.settle(null)
@@ -305,6 +325,8 @@ export function useWinvm(): Winvm {
   )
 
   const runOn = useCallback((target: string, verb: Verb, arg?: string): Promise<Ran | null> => execute(target, verb, arg), [execute])
+
+  const lastOn = useCallback((target: string): RanOn | null => outcomes.current.get(target) ?? null, [])
 
   const act = useCallback(
     async (verb: Verb, arg?: string): Promise<Ran | null> => {
@@ -376,6 +398,7 @@ export function useWinvm(): Winvm {
     select,
     act,
     runOn,
+    lastOn,
     openScreenSharing,
     installCommand,
     dismissFailure: () => setFailure(null),

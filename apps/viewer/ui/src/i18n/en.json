@@ -355,6 +355,7 @@
   "close.failed": "WinVM stayed open",
   "close.statusFailed": "WinVM couldn't read which Windows machines are running, so it stayed open. Try closing it again.",
   "close.actionFailed": "WinVM couldn't finish with {title}, so it stayed open.",
+  "close.externalFailed": "winvm {operation} on {title}, run elsewhere, ended without finishing, so WinVM stayed open. What it said is where it was run.",
   "app.name": "winvm",
   "rename.windowLabel": "Window title",
   "rename.failed": "Couldn't rename this window.",
