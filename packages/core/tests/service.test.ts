@@ -260,11 +260,11 @@ describe("starting the service", () => {
 
 /**
  * A stand-in service: a process of ours whose command line passes the service
- * check (` serve -i <name>`) without being one. Two commands keep bash from
- * exec'ing the sleep and replacing the command line.
+ * check (` serve -i <name>`) without being one. A single process (fakes/holder.ts),
+ * so killing it leaves no orphan behind.
  */
 const fakeService = (name: string): ReturnType<typeof Bun.spawn> =>
-  Bun.spawn(["bash", "-c", `sleep 20; true # serve -i ${name}`], { stdout: "ignore", stderr: "ignore" })
+  Bun.spawn([process.execPath, resolve(import.meta.dir, "fakes", "holder.ts"), "serve", "-i", name], { stdout: "ignore", stderr: "ignore" })
 
 const alive = (pid: number): boolean => {
   try {
@@ -394,6 +394,42 @@ describe("service generations", () => {
       },
     })
     expect(again.pid).toBe(info.pid)
+  })
+})
+
+describe("stopping a service", () => {
+  /** A fake clock and process table: no real wait, no real signal. */
+  const run = (o: { readonly isService: (t: number) => boolean }): { kills: string[]; elapsed: number } => {
+    writeFileSync(p.service, JSON.stringify({ pid: 424_242, cli: "", version: "", startedAt: "" }))
+    let t = 0
+    const kills: string[] = []
+    stopService(p, {
+      kill: (_pid, sig) => void kills.push(sig),
+      now: () => t,
+      sleep: (ms) => {
+        t += ms
+      },
+      running: () => true,
+      isService: () => o.isService(t),
+    })
+    return { kills, elapsed: t }
+  }
+
+  it("kills a service that is still running 5 s after SIGTERM", () => {
+    const r = run({ isService: () => true })
+    expect(r.kills).toEqual(["SIGTERM", "SIGKILL"])
+    expect(r.elapsed).toBeGreaterThanOrEqual(5000)
+    expect(existsSync(p.service)).toBe(false)
+  })
+
+  it("re-checks the pid is still this instance's service just before SIGKILL", () => {
+    // It ignores SIGTERM for its 5 s, and by then the pid belongs to something else.
+    const r = run({ isService: (t) => t < 5000 })
+    expect(r.kills).toEqual(["SIGTERM"])
+  })
+
+  it("signals nothing when the record names a process that is not its service", () => {
+    expect(run({ isService: () => false }).kills).toEqual([])
   })
 })
 

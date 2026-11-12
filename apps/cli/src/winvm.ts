@@ -139,7 +139,8 @@
  * Exit code: the guest command's, so `winvm exec` is transparent in a `&&` chain.
  */
 import { instanceName, parseArgs } from "@winvm/core/args"
-import { bunVersionWarning, pinnedBunVersion, recordCliEntry } from "@winvm/core/paths"
+import { bunVersionWarning, listInstances, pinnedBunVersion, recordCliEntry } from "@winvm/core/paths"
+import { ManagementError, reconcileManagement, shouldReconcileVerb } from "@winvm/core/lifecycle"
 import * as agentcmds from "@winvm/core/agentcmds"
 import * as termcmds from "@winvm/core/termcmds"
 import * as uicmds from "@winvm/core/uicmds"
@@ -182,6 +183,25 @@ const LOOK_ONLY = ["status", "info", "saves", "snapshots", "config", "screenshot
 if (sub !== undefined && !NO_SWEEP.includes(sub) && !(sub === "files" && args.positional[0]?.startsWith("_") === true)) {
   if (LOOK_ONLY.includes(sub) || (sub === "files" && args.positional[0] === "status")) finder.cleanStaleLater(instanceName(args))
   else finder.cleanStale(instanceName(args))
+}
+
+// The instance's control service and watcher, brought up to this build if an
+// update left them running older code (lifecycle.ts). Never QEMU, never inside
+// the service or watcher themselves (WINVM_NO_RECONCILE), never for verbs that
+// tear the instance down. `status` with no instance named looks at them all:
+// it is how the app starts.
+if (sub !== undefined && shouldReconcileVerb(sub) && !(sub === "files" && args.positional[0]?.startsWith("_") === true)) {
+  const named = args.flags.get("instance") ?? process.env["WINVM_INSTANCE"]
+  for (const name of sub === "status" && named === undefined ? listInstances() : [instanceName(args)]) {
+    try {
+      const r = await reconcileManagement(name)
+      if (r.changed && r.deferred === undefined) console.error(`note: "${name}"'s control service and watcher now run this build; Windows kept running`)
+    } catch (error) {
+      if (!(error instanceof ManagementError)) throw error
+      console.error(`::error::${error.message}`)
+      process.exit(1)
+    }
+  }
 }
 
 switch (sub) {

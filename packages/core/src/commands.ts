@@ -39,7 +39,8 @@ import * as saves from "./saves"
 import * as savecmds from "./savecmds"
 import * as snapshot from "./snapshot"
 import * as timemachine from "./timemachine"
-import { ensureService, readService, stopService } from "./service"
+import { ManagementError, reconcileManagement } from "./lifecycle"
+import { stopService } from "./service"
 import { ensureRuntime, findRuntime, runtimeBin } from "./runtime"
 import * as share from "./share"
 import { ensureShareMedia } from "./sharemedia"
@@ -583,7 +584,15 @@ export async function start(args: Args): Promise<number> {
   const p = pathsFor(name)
   if (qemu.isRunning(p)) {
     console.log(`instance "${name}" already running`)
-    if (existsSync(p.qmpQemu) && readService(p) === null) await ensureService(name, p)
+    // The check every command makes (lifecycle.ts), always: a service or watcher
+    // of another build, or a service gone missing, is replaced while Windows runs.
+    try {
+      await reconcileManagement(name, p)
+    } catch (error) {
+      if (!(error instanceof ManagementError)) throw error
+      console.error(`::error::${error.message}`)
+      return 1
+    }
     watcher.startWatcherFor(name, args)
     return 0
   }

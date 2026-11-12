@@ -400,9 +400,10 @@ describe("watcher generations", () => {
     rmSync(home, { recursive: true, force: true })
   })
 
-  /** A process of ours whose command line passes the watcher check without being one. */
+  /** A process of ours whose command line passes the watcher check without being one; a single process, so no orphan. */
   const fakeWatcher = (): ReturnType<typeof Bun.spawn> => {
-    const h = Bun.spawn(["bash", "-c", "sleep 20; true # winvm watch -i w"], { stdout: "ignore", stderr: "ignore" })
+    const holder = resolve(import.meta.dir, "fakes", "holder.ts")
+    const h = Bun.spawn([process.execPath, holder, "winvm", "watch", "-i", "w"], { stdout: "ignore", stderr: "ignore" })
     spawned.push(h)
     return h
   }
@@ -518,6 +519,34 @@ describe("watcher generations", () => {
     const s = seams({ dies: "on-term" })
     expect(await stopWatcher("w", s.seams)).toBe(true)
     expect(s.calls.map((c) => c.sig)).toEqual(["SIGTERM"])
+  })
+
+  it("believes watch.json's autosaving only when it names the watcher being stopped", async () => {
+    lock(424_242)
+    // Left by an earlier watcher: it says nothing about this one.
+    state({ pid: 424_243, build: CURRENT, state: "autosaving" })
+    const s = seams({ dies: "never" })
+    expect(await stopWatcher("w", s.seams)).toBe(true)
+    expect(s.elapsed()).toBeGreaterThanOrEqual(10_000)
+    expect(s.elapsed()).toBeLessThan(11_000)
+  })
+
+  it("re-checks the pid is still a watcher's just before SIGKILL", async () => {
+    lock(424_242)
+    state({ pid: 424_242, build: CURRENT, state: "watching" })
+    let t = 1_000
+    const kills: string[] = []
+    // A watcher through its whole 10 s, and then the pid is someone else's.
+    const result = await stopWatcher("w", {
+      kill: (_pid, sig) => void kills.push(sig),
+      now: () => t,
+      sleep: async (ms) => {
+        t += ms
+      },
+      isWatcher: () => t < 11_000,
+    })
+    expect(result).toBe(true)
+    expect(kills).toEqual(["SIGTERM"])
   })
 
   it("signals nobody when watch.pid names a process that is not a watcher", async () => {

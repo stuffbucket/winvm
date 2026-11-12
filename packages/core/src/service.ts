@@ -4,7 +4,7 @@ import { basename, resolve } from "node:path"
 
 import { QgaChannel, QmpChannel } from "./broker"
 import { buildIdentity } from "./identity"
-import { PACKAGE_DIR, cliArgv, cliEntry, home, pathsFor, type Paths } from "./paths"
+import { PACKAGE_DIR, cliArgv, cliEntry, home, managedEnv, pathsFor, type Paths } from "./paths"
 import * as qga from "./qga"
 import * as share from "./share"
 import type { ChangeNotices } from "./sharewatch"
@@ -133,18 +133,43 @@ async function answers(control: string): Promise<boolean> {
   }
 }
 
-export function stopService(p: Paths): void {
-  const info = readService(p)
-  if (info === null) return
+/** Process and clock access for stopService, so tests need neither real signals nor real waiting. */
+export interface StopServiceSeams {
+  readonly kill?: (pid: number, signal: NodeJS.Signals) => void
+  readonly now?: () => number
+  readonly sleep?: (ms: number) => void
+  /** Whether the pid is still running at all (a zombie is not). */
+  readonly running?: (pid: number) => boolean
+  /** Whether the pid is still this instance's service (alive, and ` serve -i <name>`). */
+  readonly isService?: (pid: number) => boolean
+}
+
+export function stopService(p: Paths, seams: StopServiceSeams = {}): void {
+  const name = basename(p.dir)
+  const kill = seams.kill ?? ((pid: number, signal: NodeJS.Signals): void => void process.kill(pid, signal))
+  const now = seams.now ?? Date.now
+  const sleep = seams.sleep ?? ((ms: number): void => Bun.sleepSync(ms))
+  const running = seams.running ?? ((pid: number): boolean => alive(pid) && !exited(pid))
+  const isService = seams.isService ?? ((pid: number): boolean => alive(pid) && isServiceFor(pid, name))
+  // Only a pid the record names AND that is still this instance's service is ever signalled.
+  const pid = recordedPid(p)
+  if (pid === null || !isService(pid)) return
   try {
-    process.kill(info.pid, "SIGTERM")
+    kill(pid, "SIGTERM")
   } catch {
     return
   }
-  const running = (): boolean => alive(info.pid) && !exited(info.pid)
-  const deadline = Date.now() + 5000
-  while (running() && Date.now() < deadline) Bun.sleepSync(50)
-  if (running()) process.kill(info.pid, "SIGKILL")
+  const deadline = now() + 5000
+  while (running(pid) && now() < deadline) sleep(50)
+  // Checked again at the last moment: five seconds is long enough for the
+  // service to have exited and its pid to belong to something else.
+  if (running(pid) && isService(pid)) {
+    try {
+      kill(pid, "SIGKILL")
+    } catch {
+      // gone
+    }
+  }
   rmSync(p.service, { force: true })
 }
 
@@ -181,7 +206,11 @@ export async function ensureService(name: string, p: Paths, o: EnsureServiceOpti
     o.start ??
     ((): void => {
       const log = openSync(resolve(p.dir, "service.log"), "a")
-      const child = spawn(process.execPath, [...cliArgv("serve", "-i", name)], { detached: true, stdio: ["ignore", log, log] })
+      const child = spawn(process.execPath, [...cliArgv("serve", "-i", name)], {
+        detached: true,
+        stdio: ["ignore", log, log],
+        env: managedEnv(),
+      })
       closeSync(log)
       child.unref()
     })

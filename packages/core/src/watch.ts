@@ -48,7 +48,7 @@ import { DEFAULT_TIMING, DRIFT_TOLERANCE_MS, IdleMachine, autosaveName, savesToR
 import { isFrozenRunState } from "./frozen"
 import { buildIdentity } from "./identity"
 import type { Paths } from "./paths"
-import { cliArgv, instanceDir, pathsFor } from "./paths"
+import { cliArgv, instanceDir, managedEnv, pathsFor } from "./paths"
 import * as qemu from "./qemu"
 import * as qga from "./qga"
 import * as qmp from "./qmp"
@@ -157,7 +157,8 @@ async function runWinvm(argv: readonly string[], log: (s: string) => void): Prom
   log(`run: winvm ${argv.join(" ")}`)
   const started = Date.now()
   const code = await new Promise<number>((res) => {
-    const child = spawn(process.execPath, [...cliArgv(...argv)], { stdio: ["ignore", "pipe", "pipe"], env: process.env })
+    // Marked so the stow it runs never turns round and reconciles this watcher (lifecycle.ts).
+    const child = spawn(process.execPath, [...cliArgv(...argv)], { stdio: ["ignore", "pipe", "pipe"], env: managedEnv() })
     // Bounded, so a command that prints its usage (or worse) every time cannot grow the log without limit.
     let lines = 0
     const relay = (chunk: Buffer): void => {
@@ -403,7 +404,7 @@ export function ensureWatcher(name: string): number | null {
   const child = spawn(process.execPath, [...cliArgv("watch", "-i", name)], {
     detached: true,
     stdio: ["ignore", log, log],
-    env: process.env,
+    env: managedEnv(),
   })
   closeSync(log)
   child.unref()
@@ -491,19 +492,31 @@ export async function stopWatcher(name: string, seams: StopSeams = {}): Promise<
     return false
   }
   // A watcher mid-save finishes the save before it exits (see watch()); give it
-  // the time a save takes rather than killing it halfway through one.
-  const st = readWatchState(name)?.state
-  const deadline = now() + (st === "autosaving" || st === "stowing" ? 10 * 60_000 : 10_000)
+  // the time a save takes rather than killing it halfway through one. Only
+  // watch.json written by THIS watcher says so: one left by an earlier watcher
+  // describes a process that is gone.
+  const st = readWatchState(name)
+  const saving = st?.pid === pid && (st.state === "autosaving" || st.state === "stowing")
+  const deadline = now() + (saving ? 10 * 60_000 : 10_000)
   while (now() < deadline) {
     if (!isWatcher(pid)) return true
     await wait(200)
   }
-  try {
-    kill(pid, "SIGKILL")
-  } catch {
-    // gone
+  // Checked again at the last moment: by now the pid may belong to something else.
+  if (isWatcher(pid)) {
+    try {
+      kill(pid, "SIGKILL")
+    } catch {
+      // gone
+    }
   }
-  rmSync(watchPathsFor(name).pid, { force: true })
+  // Its pidfile, unless a watcher started since has already taken it.
+  const f = watchPathsFor(name).pid
+  try {
+    if (readFileSync(f, "utf8").trim() === String(pid)) rmSync(f, { force: true })
+  } catch {
+    // already gone
+  }
   return true
 }
 
@@ -538,27 +551,22 @@ export async function watch(name: string, o: WatchOptions = {}): Promise<number>
     console.error(`::error::instance "${name}" is not running — nothing to watch`)
     return 1
   }
-  if (!effectiveConfig(name)["watch.enabled"]) {
+  let cfg = effectiveConfig(name)
+  if (!cfg["watch.enabled"]) {
     console.error(`::error::watching is off for "${name}" — \`winvm config -i ${name} watch.enabled=true\``)
     return 1
   }
-  const other = acquireLock(name)
-  if (other !== null) {
-    console.error(
-      other > 0 ? `::error::instance "${name}" already has a watcher (pid ${String(other)})` : "::error::could not take watch.pid",
-    )
-    return 1
-  }
-
-  let qemuPid = firstPid
-  const actions = o.actions ?? realActions(name, p, log)
+  // Everything the first watch.json needs is read BEFORE taking the lock, so
+  // the build is published the moment watch.pid names this process: between
+  // the two, a reconciler (lifecycle.ts) would see a watcher with no build and
+  // take a current one for a legacy one.
+  //
   // An --ephemeral guest's disk writes go nowhere durable, so it cannot be saved:
   // watch it for the clock only.
   const ephemeral = saves.isEphemeral(p)
   const startedAt = new Date().toISOString()
   const machine = new IdleMachine(Date.now(), timing)
   let state: WatchState["state"] = "watching"
-  let cfg = effectiveConfig(name)
   const lastAt = { autosave: newestOfKind(currentSaves(name), "auto"), stow: newestOfKind(currentSaves(name), "stow") }
 
   const publish = (): void => {
@@ -588,8 +596,18 @@ export async function watch(name: string, o: WatchOptions = {}): Promise<number>
     }
   }
 
-  // Say which build this is before anything slow: whoever replaces a stale watcher reads it.
+  const other = acquireLock(name)
+  if (other !== null) {
+    console.error(
+      other > 0 ? `::error::instance "${name}" already has a watcher (pid ${String(other)})` : "::error::could not take watch.pid",
+    )
+    return 1
+  }
+  // Say which build this is before anything else: whoever replaces a stale watcher reads it.
   publish()
+
+  let qemuPid = firstPid
+  const actions = o.actions ?? realActions(name, p, log)
   let vcpus = vcpusOf(qemuPid)
 
   /** The action in flight, if any. A signal waits for it rather than abandon a save halfway. */

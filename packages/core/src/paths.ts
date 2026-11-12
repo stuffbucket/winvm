@@ -78,6 +78,16 @@ export function recordCliEntry(path: string): void {
 }
 
 /**
+ * Set in the environment of every process winvm starts to manage an instance
+ * — the control service, the watcher, and what the watcher runs (`stow`). They
+ * are what reconciliation (lifecycle.ts) replaces, so they never reconcile.
+ */
+export const NO_RECONCILE = "WINVM_NO_RECONCILE"
+
+/** The environment for such a process: this one's, marked NO_RECONCILE. */
+export const managedEnv = (env: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv => ({ ...env, [NO_RECONCILE]: "1" })
+
+/**
  * The Bun this checkout of winvm is pinned to: its own `.bun-version`, at the
  * workspace root. null when there is none (a copy of the package elsewhere).
  * This is winvm's own pin, not a file of whatever project hosts it.
@@ -142,6 +152,8 @@ export interface Paths {
   readonly service: string
   readonly control: string
   readonly events: string
+  /** Held while one winvm brings the service and watcher up to its build (lifecycle.ts). */
+  readonly reconcile: string
   readonly pid: string
   readonly serial: string
   /**
@@ -179,6 +191,7 @@ export function pathsFor(name: string): Paths {
     service: resolve(dir, "service.json"),
     control: resolve(dir, "control.sock"),
     events: resolve(dir, "events.jsonl"),
+    reconcile: resolve(dir, "reconcile.lock"),
     pid: resolve(dir, "qemu.pid"),
     serial: resolve(dir, "serial.log"),
     serialPrev: resolve(dir, "serial.prev.log"),
