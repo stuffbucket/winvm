@@ -201,6 +201,24 @@ describe("one service per instance", () => {
     other.kill()
   })
 
+  for (const [label, argv] of [
+    ["an instance whose name starts with this one's", ["serve", "-i", "tt"]],
+    ["another instance named with --instance=", ["serve", "--instance=other"]],
+  ] as const) {
+    it(`never takes the service of ${label} for this one's, nor signals it`, () => {
+      const h = Bun.spawn([process.execPath, resolve(import.meta.dir, "fakes", "holder.ts"), ...argv], { stdout: "ignore", stderr: "ignore" })
+      try {
+        writeFileSync(p.service, JSON.stringify({ pid: h.pid, cli: "", version: "", startedAt: "" }))
+        expect(readService(p)).toBeNull()
+        const kills: string[] = []
+        stopService(p, { kill: (_pid, sig) => void kills.push(sig) })
+        expect(kills).toEqual([])
+      } finally {
+        h.kill()
+      }
+    })
+  }
+
   it("asks for the guest's port without waiting behind a QMP caller", async () => {
     svc = await runService("t", { exitAfterMs: 5000, checkMs: 50 })
     const held = monitor.withQmp(p.qmp, async () => await sleep(1500), 3000)

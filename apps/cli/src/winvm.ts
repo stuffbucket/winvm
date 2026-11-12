@@ -140,7 +140,7 @@
  */
 import { instanceName, parseArgs } from "@winvm/core/args"
 import { bunVersionWarning, listInstances, pinnedBunVersion, recordCliEntry } from "@winvm/core/paths"
-import { ManagementError, reconcileManagement, shouldReconcileVerb } from "@winvm/core/lifecycle"
+import { ManagementError, reconcileManagement, reconcileNote, shouldReconcileVerb } from "@winvm/core/lifecycle"
 import * as agentcmds from "@winvm/core/agentcmds"
 import * as termcmds from "@winvm/core/termcmds"
 import * as uicmds from "@winvm/core/uicmds"
@@ -189,17 +189,22 @@ if (sub !== undefined && !NO_SWEEP.includes(sub) && !(sub === "files" && args.po
 // update left them running older code (lifecycle.ts). Never QEMU, never inside
 // the service or watcher themselves (WINVM_NO_RECONCILE), never for verbs that
 // tear the instance down. `status` with no instance named looks at them all:
-// it is how the app starts.
+// it is how the app starts, so one instance that cannot be repaired is
+// reported and the rest are still repaired and listed. A command for one
+// instance stops at its failure instead.
 if (sub !== undefined && shouldReconcileVerb(sub) && !(sub === "files" && args.positional[0]?.startsWith("_") === true)) {
   const named = args.flags.get("instance") ?? process.env["WINVM_INSTANCE"]
-  for (const name of sub === "status" && named === undefined ? listInstances() : [instanceName(args)]) {
+  const every = sub === "status" && named === undefined
+  for (const name of every ? listInstances() : [instanceName(args)]) {
     try {
-      const r = await reconcileManagement(name)
-      if (r.changed && r.deferred === undefined) console.error(`note: "${name}"'s control service and watcher now run this build; Windows kept running`)
+      const note = reconcileNote(name, await reconcileManagement(name))
+      if (note !== null) console.error(note)
     } catch (error) {
-      if (!(error instanceof ManagementError)) throw error
-      console.error(`::error::${error.message}`)
-      process.exit(1)
+      // Anything else from one instance is reported like a failed repair when
+      // listing them all: the list is what the app needs to show anything.
+      if (!(error instanceof ManagementError) && !every) throw error
+      console.error(`::error::${error instanceof Error ? error.message : String(error)}`)
+      if (!every) process.exit(1)
     }
   }
 }

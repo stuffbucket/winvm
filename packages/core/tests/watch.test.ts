@@ -560,6 +560,46 @@ describe("watcher generations", () => {
     expect(alive(stranger.pid)).toBe(true)
   })
 
+  /** A watcher of another instance, as a pid reused into this one's watch.pid would look. */
+  for (const [label, argv] of [
+    ["another instance's watcher", ["winvm", "watch", "-i", "other"]],
+    ["the watcher of an instance whose name starts with this one's", ["winvm", "watch", "-i", "wx"]],
+    ["a watcher named with --instance=", ["winvm", "watch", "--instance=other"]],
+    ["a `watch --stop` for this instance", ["winvm", "watch", "-i", "w", "--stop"]],
+  ] as const) {
+    it(`never takes ${label} for this instance's watcher, before SIGTERM or SIGKILL`, async () => {
+      const holder = resolve(import.meta.dir, "fakes", "holder.ts")
+      const h = Bun.spawn([process.execPath, holder, ...argv], { stdout: "ignore", stderr: "ignore" })
+      spawned.push(h)
+      lock(h.pid)
+      state({ pid: h.pid, build: CURRENT, state: "watching" })
+      const kills: string[] = []
+      let t = 0
+      // Real command validation; a kill that records, and a clock that does not wait.
+      const stopped = await stopWatcher("w", {
+        kill: (_p, sig) => void kills.push(sig),
+        now: () => t,
+        sleep: async (ms) => {
+          t += ms
+        },
+      })
+      expect(kills).toEqual([])
+      expect(stopped).toBe(false)
+      expect(watcherRecord("w")).toBeNull()
+      expect(alive(h.pid)).toBe(true)
+    })
+  }
+
+  it("still recognises this instance's own watcher, however it was named", () => {
+    const holder = resolve(import.meta.dir, "fakes", "holder.ts")
+    for (const argv of [["winvm", "watch", "-i", "w"], ["winvm.ts", "watch", "--instance", "w"], ["winvm", "watch", "--instance=w"]]) {
+      const h = Bun.spawn([process.execPath, holder, ...argv], { stdout: "ignore", stderr: "ignore" })
+      spawned.push(h)
+      lock(h.pid)
+      expect(watcherRecord("w")?.pid).toBe(h.pid)
+    }
+  })
+
   it("publishes its build as soon as it holds the lock, and in every later state", async () => {
     const cli = resolve(PACKAGE_DIR, "..", "..", "apps", "cli", "src", "winvm.ts")
     const p = pathsFor("w")

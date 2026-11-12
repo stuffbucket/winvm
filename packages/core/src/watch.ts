@@ -39,6 +39,7 @@ import { closeSync, existsSync, openSync, readFileSync, renameSync, rmSync, stat
 import { resolve } from "node:path"
 
 import type { Args } from "./args"
+import { commandInstance } from "./args"
 import { formatOffset, measureOffset, syncGuestClock } from "./clock"
 import type { InstanceConfig } from "./config"
 import { effectiveConfig } from "./config"
@@ -331,19 +332,28 @@ function activityAt(path: string): number | null {
 // ---------------------------------------------------------------------------
 // The single-instance lock
 
-function isWatcherProcess(pid: number): boolean {
+/**
+ * Whether the pid is `name`'s watcher. Guards against pid reuse after a crash:
+ * the pid must still be OUR kind of process — a `winvm watch` for exactly this
+ * instance (one naming no instance is "default"'s), and not a `watch --stop`
+ * or `--status` that only asks about one.
+ */
+function isWatcherProcess(pid: number, name: string): boolean {
   try {
     process.kill(pid, 0)
   } catch {
     return false
   }
-  // Guard against pid reuse after a crash: the pid must still be OUR kind of process.
   const r = spawnSync("ps", ["-o", "command=", "-p", String(pid)], { encoding: "utf8" })
-  return /winvm(\.ts)?\s+watch\b/.test(r.stdout)
+  const m = /winvm(?:\.ts)?\s+watch(\s.*)?$/.exec((r.stdout ?? "").trim())
+  if (m === null) return false
+  const rest = m[1] ?? ""
+  if (/(?:^|\s)--(?:stop|status)(?:\s|$)/.test(rest)) return false
+  return (commandInstance(rest) ?? "default") === name
 }
 
 /** The live watcher's pid, or null. Removes a stale pidfile. */
-export function watcherPid(name: string, isWatcher: (pid: number) => boolean = isWatcherProcess): number | null {
+export function watcherPid(name: string, isWatcher: (pid: number) => boolean = (pid) => isWatcherProcess(pid, name)): number | null {
   const f = watchPathsFor(name).pid
   let pid: number
   try {
@@ -454,7 +464,10 @@ export interface WatcherRecord {
  * left by an earlier watcher cannot vouch for this one. Without a trusted
  * build the record is just `{ pid }`: a live watcher of unknown generation.
  */
-export function watcherRecord(name: string, isWatcher: (pid: number) => boolean = isWatcherProcess): WatcherRecord | null {
+export function watcherRecord(
+  name: string,
+  isWatcher: (pid: number) => boolean = (pid) => isWatcherProcess(pid, name),
+): WatcherRecord | null {
   const pid = watcherPid(name, isWatcher)
   if (pid === null) return null
   const st = readWatchState(name)
@@ -482,7 +495,7 @@ export async function stopWatcher(name: string, seams: StopSeams = {}): Promise<
   const kill = seams.kill ?? ((pid: number, signal: NodeJS.Signals): void => void process.kill(pid, signal))
   const now = seams.now ?? Date.now
   const wait = seams.sleep ?? sleep
-  const isWatcher = seams.isWatcher ?? isWatcherProcess
+  const isWatcher = seams.isWatcher ?? ((p: number): boolean => isWatcherProcess(p, name))
   // Only a pid that is still a watcher's is ever signalled; a reused one is dropped by watcherPid.
   const pid = watcherPid(name, isWatcher)
   if (pid === null || pid === process.ppid || pid === process.pid) return false

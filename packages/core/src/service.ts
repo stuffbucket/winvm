@@ -2,6 +2,7 @@ import { spawn, spawnSync } from "node:child_process"
 import { appendFileSync, chmodSync, closeSync, linkSync, openSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs"
 import { basename, resolve } from "node:path"
 
+import { commandInstance } from "./args"
 import { QgaChannel, QmpChannel } from "./broker"
 import { buildIdentity } from "./identity"
 import { PACKAGE_DIR, cliArgv, cliEntry, home, managedEnv, pathsFor, type Paths } from "./paths"
@@ -74,10 +75,16 @@ function recordedPid(p: Paths): number | null {
   }
 }
 
+/**
+ * Whether the pid is `name`'s service: its command line is a `serve` for exactly
+ * that instance. A `serve` naming no instance is "default"'s (WINVM_INSTANCE
+ * cannot be seen from here; winvm always spawns it with `-i`).
+ */
 function isServiceFor(pid: number, name: string): boolean {
   if (pid === process.pid) return true
   const r = spawnSync("ps", ["-o", "command=", "-p", String(pid)], { encoding: "utf8" })
-  return (r.stdout ?? "").includes(` serve -i ${name}`)
+  const m = /(?:^|\s)serve(\s.*)?$/.exec((r.stdout ?? "").trim())
+  return m !== null && (commandInstance(m[1] ?? "") ?? "default") === name
 }
 
 export function readService(p: Paths): ServiceInfo | null {
