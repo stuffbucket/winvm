@@ -225,6 +225,13 @@ function fakeWinvm(machines: Machine[], selected: string | null) {
         installCommand: () => Promise.resolve(),
         dismissFailure: () => undefined,
         rename: () => Promise.resolve(null),
+        // The Details setting (Task 7): the selected machine's policy, by its stable name.
+        setClosePolicy: (policy) => {
+          if (world.name === null) return Promise.resolve(null)
+          log.push(`setClosePolicy ${world.name} ${policy}`)
+          world.set(world.name, { closePolicy: policy })
+          return Promise.resolve(null)
+        },
         refresh: () => Promise.resolve(),
         refreshAll: () => {
           log.push("refreshAll")
