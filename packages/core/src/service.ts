@@ -76,15 +76,17 @@ function recordedPid(p: Paths): number | null {
 }
 
 /**
- * Whether the pid is `name`'s service: its command line is a `serve` for exactly
- * that instance. A `serve` naming no instance is "default"'s (WINVM_INSTANCE
- * cannot be seen from here; winvm always spawns it with `-i`).
+ * Whether the pid is `name`'s service: a `serve` run by the winvm CLI — its
+ * entry, `winvm.ts` from source or the compiled `winvm`, right before the verb
+ * — naming exactly this instance with `-i`/`--instance`. winvm always spawns it
+ * so. A bare `… serve` (ollama's, hugo's, or a `serve` with no instance) is
+ * never taken for one: a reused pid must not be signalled.
  */
 function isServiceFor(pid: number, name: string): boolean {
   if (pid === process.pid) return true
   const r = spawnSync("ps", ["-o", "command=", "-p", String(pid)], { encoding: "utf8" })
-  const m = /(?:^|\s)serve(\s.*)?$/.exec((r.stdout ?? "").trim())
-  return m !== null && (commandInstance(m[1] ?? "") ?? "default") === name
+  const m = /(?:^|[\s/])winvm(?:\.ts)?\s+serve(\s.*)?$/.exec((r.stdout ?? "").trim())
+  return m !== null && commandInstance(m[1] ?? "") === name
 }
 
 export function readService(p: Paths): ServiceInfo | null {

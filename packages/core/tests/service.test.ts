@@ -202,8 +202,8 @@ describe("one service per instance", () => {
   })
 
   for (const [label, argv] of [
-    ["an instance whose name starts with this one's", ["serve", "-i", "tt"]],
-    ["another instance named with --instance=", ["serve", "--instance=other"]],
+    ["an instance whose name starts with this one's", ["winvm", "serve", "-i", "tt"]],
+    ["another instance named with --instance=", ["winvm", "serve", "--instance=other"]],
   ] as const) {
     it(`never takes the service of ${label} for this one's, nor signals it`, () => {
       const h = Bun.spawn([process.execPath, resolve(import.meta.dir, "fakes", "holder.ts"), ...argv], { stdout: "ignore", stderr: "ignore" })
@@ -218,6 +218,49 @@ describe("one service per instance", () => {
       }
     })
   }
+})
+
+describe("which process is the default instance's service", () => {
+  const holder = resolve(import.meta.dir, "fakes", "holder.ts")
+  const d = (): Paths => {
+    const dp = pathsFor("default")
+    mkdirSync(dp.dir, { recursive: true })
+    return dp
+  }
+
+  // A pid reused by any of these must never be signalled as a winvm service.
+  for (const argv of [["ollama", "serve"], ["hugo", "serve"], ["node", "server.js", "serve"], ["winvm", "serve"], ["ollama", "serve", "-i", "default"]]) {
+    it(`is never \`${argv.join(" ")}\``, () => {
+      const dp = d()
+      const h = Bun.spawn([process.execPath, holder, ...argv], { stdout: "ignore", stderr: "ignore" })
+      try {
+        writeFileSync(dp.service, JSON.stringify({ pid: h.pid, cli: "", version: "", startedAt: "" }))
+        expect(readService(dp)).toBeNull()
+        const kills: string[] = []
+        stopService(dp, { kill: (_pid, sig) => void kills.push(sig) })
+        expect(kills).toEqual([])
+      } finally {
+        h.kill()
+      }
+    })
+  }
+
+  // What winvm spawns: from source (`bun …/winvm.ts serve -i NAME`) and compiled (`…/winvm serve -i NAME`).
+  for (const argv of [["/repo/apps/cli/src/winvm.ts", "serve", "-i", "default"], ["/Applications/winvm.app/Contents/MacOS/winvm", "serve", "--instance=default"]]) {
+    it(`is \`${argv.join(" ")}\``, () => {
+      const dp = d()
+      const h = Bun.spawn([process.execPath, holder, ...argv], { stdout: "ignore", stderr: "ignore" })
+      try {
+        writeFileSync(dp.service, JSON.stringify({ pid: h.pid, cli: "", version: "", startedAt: "" }))
+        expect(readService(dp)?.pid).toBe(h.pid)
+      } finally {
+        h.kill()
+      }
+    })
+  }
+})
+
+describe("one service per instance, continued", () => {
 
   it("asks for the guest's port without waiting behind a QMP caller", async () => {
     svc = await runService("t", { exitAfterMs: 5000, checkMs: 50 })
@@ -282,7 +325,7 @@ describe("starting the service", () => {
  * so killing it leaves no orphan behind.
  */
 const fakeService = (name: string): ReturnType<typeof Bun.spawn> =>
-  Bun.spawn([process.execPath, resolve(import.meta.dir, "fakes", "holder.ts"), "serve", "-i", name], { stdout: "ignore", stderr: "ignore" })
+  Bun.spawn([process.execPath, resolve(import.meta.dir, "fakes", "holder.ts"), "winvm", "serve", "-i", name], { stdout: "ignore", stderr: "ignore" })
 
 const alive = (pid: number): boolean => {
   try {

@@ -1,6 +1,6 @@
 /**
  * A stand-in process for tests: it only waits. Its command line carries
- * whatever arguments it was given, so `holder.ts serve -i t` passes the
+ * whatever arguments it was given, so `holder.ts winvm serve -i t` passes the
  * service check and `holder.ts winvm watch -i t` the watcher check without
  * being either. One process and no children, so killing it leaves nothing
  * behind (a `bash -c "sleep …"` stand-in leaves its sleep orphaned).

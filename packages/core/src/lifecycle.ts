@@ -498,6 +498,10 @@ async function reconcileHeld(name: string, p: Paths, o: ReconcileOptions, curren
     return { changed: false, servicePid: null, watcherPid: null }
   }
   const s = survey(name, p, current)
+  // An owed watcher that is running, of this build, has been paid for (a
+  // `start` or `watch` brought it up): forget the debt, or a later deliberate
+  // `watch --stop` would be undone by the next command.
+  if (lock.restoreWatcher && s.watcher !== null && !s.watcherWork) lock.note({ restoreWatcher: false })
   const owedWatcher = lock.restoreWatcher && s.watcher === null
   if (!s.serviceWork && !s.watcherWork && !owedWatcher) return { changed: false, ...pids(name, p) }
 

@@ -76,7 +76,7 @@ const recordWatcher = (pid: number, build: string | undefined, state = "watching
 }
 
 async function service(build: string | undefined): Promise<Proc> {
-  const h = await hold("serve", "-i", "t")
+  const h = await hold("winvm", "serve", "-i", "t")
   recordService(h.pid, build)
   return h
 }
@@ -98,7 +98,7 @@ function seams(o: Partial<ReconcileOptions> = {}): { starts: { service: number; 
       watcherTimeoutMs: 3000,
       startService: () => {
         starts.service += 1
-        recordService(holdNow("serve", "-i", "t").pid, CURRENT)
+        recordService(holdNow("winvm", "serve", "-i", "t").pid, CURRENT)
       },
       startWatcher: () => {
         starts.watcher += 1
@@ -625,6 +625,30 @@ describe("a watcher owed after a failure", () => {
     expectQemuUntouched()
   })
 
+  it("is settled by a watcher that is already current, so a later `watch --stop` stays stopped", async () => {
+    await service(CURRENT)
+    await watcher(OLD)
+    // 1. The replacement fails: a watcher is owed.
+    await expect(reconcileManagement("t", p, seams({ watcherTimeoutMs: 200, startWatcher: () => null }).options)).rejects.toMatchObject({
+      kind: "watcher-replace",
+    })
+    // 2. Meanwhile a current watcher came up anyway (`winvm start`, or `winvm watch`).
+    const w = await watcher(CURRENT)
+    // 3. The next run finds the debt paid, and forgets it.
+    const s = seams()
+    expect(await reconcileManagement("t", p, s.options)).toMatchObject({ changed: false, watcherPid: w.pid })
+    expect(existsSync(p.reconcile)).toBe(false)
+    // 4. The user stops watching.
+    w.kill("SIGTERM")
+    await w.exited
+    rmSync(watchPathsFor("t").pid, { force: true })
+    // 5. And it stays stopped: no watcher is started where none runs.
+    const r = await reconcileManagement("t", p, s.options)
+    expect(s.starts).toEqual({ service: 0, watcher: 0 })
+    expect(r.watcherPid).toBeNull()
+    expectQemuUntouched()
+  })
+
   it("is dropped once the QEMU it was owed to has gone", async () => {
     await service(CURRENT)
     await watcher(OLD)
@@ -714,7 +738,7 @@ describe("the CLI", () => {
 
   /** A stale service started by this same CLI path: only its build differs. */
   async function staleFromSameCli(): Promise<Proc> {
-    const h = await hold("serve", "-i", "t")
+    const h = await hold("winvm", "serve", "-i", "t")
     const info: ServiceInfo = { pid: h.pid, cli, version: "0", startedAt: "", build: OLD }
     writeFileSync(p.service, JSON.stringify(info))
     return h
