@@ -9,12 +9,23 @@
  * reconcileManagement; `status --json` is how the app gets here as it starts),
  * and replaces what is not of this build:
  *
- *   1. a running watcher is stopped first, through its own save-aware shutdown:
- *      one mid-autosave or mid-stow finishes that before it exits;
- *   2. a stale (or missing) service is stopped and a current one started and
- *      confirmed answering;
+ *   1. a running watcher is stopped first, through its own save-aware shutdown,
+ *      when the service under it is to be replaced or it is stale itself;
+ *   2. a stale service is stopped and a current one started and confirmed
+ *      answering — or, when the service is merely missing, one is started with
+ *      the watcher left running;
  *   3. the watcher is started again, of this build — only if one was running
  *      before, and watching is still enabled.
+ *
+ * ## Which generations are replaced
+ *
+ * A record of this build is reused, whichever path started it. One with no
+ * build (from before builds were recorded) is replaced. One of another build
+ * started from this same CLI path is an update in place, and is replaced. One
+ * of another build started from ANOTHER path is another install's live
+ * generation — the app's bundled CLI and a source checkout, say — and is left
+ * alone, service and watcher both: replacing it would only have the other
+ * install replace it back, cutting off whatever each was doing.
  *
  * ## What it never does
  *
@@ -23,10 +34,15 @@
  * only read. The only processes signalled are the ones service.ts and watch.ts
  * vouch for, by their command lines, as this instance's service and watcher.
  *
- * It never interrupts a save someone else is making: while a manual save holds
- * the instance, it returns `deferred: "saving"` and touches nothing, and the
- * next command retries once the save is done. The service is replaced under
- * the save lock itself, so no save can start beneath the replacement either.
+ * It never interrupts a save: while a manual save holds the instance it
+ * returns `deferred: "saving"` and touches nothing, and the next command
+ * retries once the save is done. A watcher's own autosave or stow is either
+ * waited out through the watcher's graceful shutdown (`start`), or — for the
+ * automatic repair before any other command, which must answer promptly —
+ * deferred without a signal (`waitForBusyWatcher: false`). Everything from
+ * stopping a watcher to starting it again happens under the save lock, so no
+ * save or load can start in between and leave the restored machine without
+ * the watcher it had.
  *
  * It never runs inside the processes it manages: they are started with
  * WINVM_NO_RECONCILE=1 (paths.managedEnv), and `serve` and `watch` are not
@@ -45,18 +61,23 @@
  * queue behind it. Waiting is bounded: a lock that cannot be read, created or
  * taken over is a "reconcile-lock" ManagementError, never a spin.
  *
- * A watcher stopped and not yet started again is a debt written in the lock
- * (`restoreWatcher`, with the QEMU it was watching). A holder killed part-way
- * (the app's status call has a deadline) leaves it there; one that failed to
- * restart the watcher marks the lock released but keeps it. Either way the
- * next command takes the lock over and restarts the watcher — unless that QEMU
- * has gone, when the debt is dropped and the next start decides for itself.
+ * ## A watcher owed
+ *
+ * Before a watcher is stopped, `watch.owed` records that one is owed to this
+ * QEMU. It is a file of its own, not part of the lock, so it outlives a holder
+ * killed part-way (the app's status call has a deadline) or one whose restart
+ * failed, and no change of lock holder can lose it. Whoever next holds the lock
+ * pays it — starts the watcher — or forgives it: once a current watcher is
+ * running anyway (so a later `watch --stop` stays stopped), or once that QEMU
+ * has gone (the next `start` decides about watching for itself).
  *
  * ## When it fails
  *
  * A service or watcher that cannot be replaced is a ManagementError, typed by
  * which, and always retryable: QEMU is still running, the stale record is gone
- * (not reported as a healthy service), and the next command tries again.
+ * (not reported as a healthy service), and the next command tries again. A
+ * service that keeps failing to start leaves a current watcher running
+ * untouched rather than cycling it on every attempt.
  */
 import { spawnSync } from "node:child_process"
 import { randomUUID } from "node:crypto"
@@ -68,13 +89,13 @@ import { savingPath } from "./frozen"
 import { buildIdentity } from "./identity"
 import { NO_RECONCILE, cliEntry, pathsFor, type Paths } from "./paths"
 import * as saves from "./saves"
-import { ensureService, readService, serviceFreshness, type ServiceInfo } from "./service"
+import { ensureService, readService, type ServiceInfo } from "./service"
 import { ensureWatcher, readWatchState, stopWatcher, watchPathsFor, watcherFreshness, watcherRecord, type WatcherRecord } from "./watch"
 
 /**
  * Which management process could not be replaced, or "reconcile-lock" when
  * reconciliation could not even serialize itself (its lock file unreadable,
- * uncreatable, or stuck): nothing was stopped then.
+ * uncreatable, or stuck; or the save lock unusable): nothing was stopped then.
  */
 export type ManagementFailureKind = "service-replace" | "watcher-replace" | "reconcile-lock"
 
@@ -111,6 +132,13 @@ export interface ReconcileOptions {
   readonly watcherTimeoutMs?: number
   /** How long to wait behind another reconciliation before leaving it to that one. */
   readonly lockWaitMs?: number
+  /**
+   * Whether to wait out a watcher's autosave or stow (its graceful shutdown,
+   * up to ten minutes) when it must be replaced. Default true, for `start`.
+   * The automatic repair before every other command passes false: it returns
+   * `deferred` at once, without signalling the watcher.
+   */
+  readonly waitForBusyWatcher?: boolean
 }
 
 // ---------------------------------------------------------------------------
@@ -124,9 +152,8 @@ export interface ReconcileOptions {
  * `stop`, `kill`, `destroy`, `reset` and `stow` (they end what would be
  * replaced); `build`, `setup`, `adopt`, `create`, `run` and `test` (they make
  * their own instances); `start` (it reconciles itself, once it knows QEMU is
- * already running); `mcp` and `cua` (servers other apps launch, often from a
- * different install, which would replace this one's service back and forth);
- * and host-wide verbs.
+ * already running); `mcp` and `cua` (servers other apps launch); and host-wide
+ * verbs.
  */
 const RECONCILING_VERBS: ReadonlySet<string> = new Set([
   // reading
@@ -217,6 +244,10 @@ function saverPid(name: string, p: Paths): number | null {
   return null
 }
 
+const errText = (e: unknown): string => (e instanceof Error ? e.message : String(e))
+
+const sleep = async (ms: number): Promise<void> => await new Promise((r) => setTimeout(r, ms))
+
 // ---------------------------------------------------------------------------
 // The lock
 
@@ -224,12 +255,6 @@ interface LockBody {
   readonly pid: number
   readonly start: string | null
   readonly token: string
-  /** A watcher this holder stopped and has not yet started again: whoever takes over owes it. */
-  readonly restoreWatcher?: boolean
-  /** The QEMU that watcher was watching. Owed only while that QEMU runs: a later start decides for itself. */
-  readonly qemu?: number
-  /** Let go of by a holder that still owed a watcher (it failed): held by nobody, kept for the debt. */
-  readonly released?: true
   /** The watcher save or stow the holder is waiting out: others need not wait too. */
   readonly waiting?: "autosaving" | "stowing"
 }
@@ -243,9 +268,7 @@ function parseLock(text: string): LockBody | null {
   }
 }
 
-const holds = (b: LockBody): boolean => b.released !== true && alive(b.pid) && (b.start === null || startOf(b.pid) === b.start)
-
-const sleep = async (ms: number): Promise<void> => await new Promise((r) => setTimeout(r, ms))
+const holds = (b: LockBody): boolean => alive(b.pid) && (b.start === null || startOf(b.pid) === b.start)
 
 const lockError = (file: string, why: string, cause?: unknown): ManagementError =>
   new ManagementError(
@@ -254,18 +277,6 @@ const lockError = (file: string, why: string, cause?: unknown): ManagementError 
       "or remove that file if no other winvm is running",
     cause === undefined ? undefined : { cause },
   )
-
-/** A lock is there and nobody holds it: its holder died, perhaps owing a watcher. */
-function abandoned(file: string): boolean {
-  let text: string
-  try {
-    text = readFileSync(file, "utf8")
-  } catch {
-    return false
-  }
-  const b = parseLock(text)
-  return b === null || !holds(b)
-}
 
 /** Put a complete file in place only if none is there: never a moment with a partial one. */
 function linkNew(file: string, text: string): boolean {
@@ -322,10 +333,6 @@ class ReconcileLock {
     this.body = body
   }
 
-  get restoreWatcher(): boolean {
-    return this.body.restoreWatcher === true
-  }
-
   private owned(): boolean {
     try {
       return parseLock(readFileSync(this.file, "utf8"))?.token === this.body.token
@@ -334,48 +341,22 @@ class ReconcileLock {
     }
   }
 
-  /** Record what a successor would need to know, if this holder dies now. */
-  note(fields: {
-    readonly restoreWatcher?: boolean
-    readonly qemu?: number
-    readonly waiting?: "autosaving" | "stowing" | undefined
-  }): void {
-    const next: LockBody = { ...this.body, ...fields }
-    if (next.waiting === undefined) delete (next as { waiting?: unknown }).waiting
-    if (next.restoreWatcher !== true) {
-      delete (next as { restoreWatcher?: unknown }).restoreWatcher
-      delete (next as { qemu?: unknown }).qemu
-    }
+  /** Say what this holder is waiting out, so other callers return at once. */
+  waiting(on: "autosaving" | "stowing" | null): void {
+    const next: LockBody = { pid: this.body.pid, start: this.body.start, token: this.body.token, ...(on === null ? {} : { waiting: on }) }
     this.body = next
     if (!this.owned()) return
     try {
-      this.write(next)
+      const tmp = `${this.file}.${String(process.pid)}.${randomUUID()}.tmp`
+      writeFileSync(tmp, JSON.stringify(next), { mode: 0o600 })
+      renameSync(tmp, this.file)
     } catch (error) {
       throw lockError(this.file, `it could not be updated: ${errText(error)}`, error)
     }
   }
 
-  private write(body: LockBody): void {
-    const tmp = `${this.file}.${String(process.pid)}.${randomUUID()}.tmp`
-    writeFileSync(tmp, JSON.stringify(body), { mode: 0o600 })
-    renameSync(tmp, this.file)
-  }
-
-  /**
-   * Let go. A watcher still owed (its restart failed, or was never reached)
-   * stays written down, in a lock nobody holds, for the next command to pay.
-   */
   release(): void {
-    if (!this.owned()) return
-    if (this.body.restoreWatcher !== true) {
-      rmSync(this.file, { force: true })
-      return
-    }
-    try {
-      this.write({ ...this.body, released: true })
-    } catch {
-      // Best effort: the next command then just finds no watcher to restart.
-    }
+    if (this.owned()) rmSync(this.file, { force: true })
   }
 }
 
@@ -387,10 +368,9 @@ type Acquired = { readonly lock: ReconcileLock } | { readonly busy: LockBody }
  * to finish ("busy"), and a lock that could be neither read nor taken over is
  * a "reconcile-lock" ManagementError rather than a spin.
  */
-async function acquire(file: string, qemu: number, waitMs: number): Promise<Acquired> {
+async function acquire(file: string, waitMs: number): Promise<Acquired> {
   ownStart ??= startOf(process.pid)
-  const token = randomUUID()
-  let owed = false
+  const body: LockBody = { pid: process.pid, start: ownStart, token: randomUUID() }
   const deadline = Date.now() + waitMs
   let live: LockBody | null = null
   let problem = "it kept changing under this command"
@@ -402,7 +382,6 @@ async function acquire(file: string, qemu: number, waitMs: number): Promise<Acqu
       }
       await sleep(Math.min(25 * attempt, 200))
     }
-    const body: LockBody = { pid: process.pid, start: ownStart, token, ...(owed ? { restoreWatcher: true, qemu } : {}) }
     let linked: boolean
     try {
       linked = linkNew(file, JSON.stringify(body))
@@ -425,60 +404,109 @@ async function acquire(file: string, qemu: number, waitMs: number): Promise<Acqu
       live = holder
       continue
     }
-    // Its holder is gone (or the pid is another process's now): take it over,
-    // and the watcher it owed, if that is still this QEMU's.
-    if (takeOver(file, seen)) {
-      if (holder?.restoreWatcher === true && holder.qemu === qemu) owed = true
-    } else {
-      problem = "it was left by a winvm that has gone, and could not be taken over"
-    }
+    // Its holder is gone (or the pid is another process's now): take it over.
+    if (!takeOver(file, seen)) problem = "it was left by a winvm that has gone, and could not be taken over"
   }
 }
 
 // ---------------------------------------------------------------------------
-// Reconciling
+// A watcher owed (see the module comment). Written and removed only by the
+// holder of the lock.
 
-interface Survey {
-  readonly service: ServiceInfo | null
-  /** The service is missing or not of this build, and this QEMU is one that has a service. */
-  readonly serviceWork: boolean
-  readonly watcher: WatcherRecord | null
-  readonly watcherWork: boolean
+const owedPath = (p: Paths): string => resolve(p.dir, "watch.owed")
+
+/** The QEMU a watcher is owed to, or null when none is owed. */
+function owedTo(p: Paths): number | null {
+  try {
+    const q = (JSON.parse(readFileSync(owedPath(p), "utf8")) as { qemu?: unknown }).qemu
+    return typeof q === "number" ? q : -1
+  } catch (error) {
+    // A file that is there but unreadable is owed to nobody we can name: drop it.
+    return (error as NodeJS.ErrnoException).code === "ENOENT" ? null : -1
+  }
 }
 
-function survey(name: string, p: Paths, current: string): Survey {
+function owe(p: Paths, qemu: number): void {
+  const tmp = `${owedPath(p)}.${String(process.pid)}.tmp`
+  writeFileSync(tmp, `${JSON.stringify({ qemu })}\n`)
+  renameSync(tmp, owedPath(p))
+}
+
+const forgive = (p: Paths): void => rmSync(owedPath(p), { force: true })
+
+// ---------------------------------------------------------------------------
+// What is out of date
+
+/**
+ * A record's standing against this build: reuse it ("current"), replace it
+ * ("rotate": no build at all, or another build from this same CLI path), or
+ * leave it to the install it belongs to ("foreign": another build from another
+ * path). A record whose path is unknown is taken for this one's.
+ */
+type Standing = "current" | "rotate" | "foreign"
+
+function standing(build: string | undefined, cli: string | undefined, current: string, mine: string): Standing {
+  if (build === undefined || build === "") return "rotate"
+  if (build === current) return "current"
+  return cli !== undefined && cli !== "" && cli !== mine ? "foreign" : "rotate"
+}
+
+interface Plan {
+  readonly service: ServiceInfo | null
+  /** "start" a missing service, "replace" a stale one, or leave it. */
+  readonly serviceAction: "none" | "start" | "replace"
+  readonly watcher: WatcherRecord | null
+  /** The running watcher must be replaced. */
+  readonly rotateWatcher: boolean
+  /** No service of ours to manage at all: another install's generation runs here. */
+  readonly foreign: boolean
+}
+
+function plan(name: string, p: Paths, current: string): Plan {
+  const mine = cliEntry()
   const service = readService(p)
+  const watcher = watcherRecord(name)
   // A QEMU started before the control service existed has no broker socket,
   // and a service would take its monitor socket from it: leave it be.
-  const serviceWork =
-    existsSync(p.qmpQemu) && (service === null || service.cli !== cliEntry() || serviceFreshness(service, current) !== "current")
-  const watcher = watcherRecord(name)
-  const watcherWork = watcher !== null && watcherFreshness(watcher, current) !== "current"
-  return { service, serviceWork, watcher, watcherWork }
+  const broker = existsSync(p.qmpQemu)
+  const serviceStanding = service === null ? null : standing(service.build, service.cli, current, mine)
+  if (broker && serviceStanding === "foreign") return { service, serviceAction: "none", watcher, rotateWatcher: false, foreign: true }
+  const serviceAction = !broker ? "none" : service === null ? "start" : serviceStanding === "rotate" ? "replace" : "none"
+  const rotateWatcher = watcher !== null && standing(watcher.build, watcher.cli, current, mine) === "rotate"
+  return { service, serviceAction, watcher, rotateWatcher, foreign: false }
 }
+
+const hasWork = (pl: Plan): boolean => pl.serviceAction !== "none" || pl.rotateWatcher
 
 const pids = (name: string, p: Paths): { servicePid: number | null; watcherPid: number | null } => ({
   servicePid: readService(p)?.pid ?? null,
   watcherPid: watcherRecord(name)?.pid ?? null,
 })
 
-const errText = (e: unknown): string => (e instanceof Error ? e.message : String(e))
+/** The watcher's own save or stow in progress, by its watch.json — believed only when it names that watcher. */
+function busyWith(name: string, w: WatcherRecord | null): "autosaving" | "stowing" | null {
+  if (w === null) return null
+  const st = readWatchState(name)
+  return st !== null && st.pid === w.pid && (st.state === "autosaving" || st.state === "stowing") ? st.state : null
+}
+
+// ---------------------------------------------------------------------------
+// Reconciling
 
 /**
  * Bring `name`'s service and watcher up to this build, leaving QEMU running.
- * A no-op (and lock-free) when QEMU is not running or both are current.
+ * A no-op (and lock-free) when QEMU is not running, or nothing is out of date
+ * and no watcher is owed.
  */
 export async function reconcileManagement(name: string, p: Paths = pathsFor(name), o: ReconcileOptions = {}): Promise<ReconcileResult> {
-  const qemu = qemuPid(p)
-  if (qemu === null) return { changed: false, servicePid: null, watcherPid: null }
+  if (qemuPid(p) === null) return { changed: false, servicePid: null, watcherPid: null }
   const current = o.current ?? buildIdentity()
-  // The common case — everything current — takes no lock and writes nothing,
-  // unless a reconciliation died holding the lock: that one may owe a watcher.
-  const first = survey(name, p, current)
-  if (!first.serviceWork && !first.watcherWork && !abandoned(p.reconcile)) {
+  // The common case — everything current — takes no lock and writes nothing.
+  const first = plan(name, p, current)
+  if (!hasWork(first) && !existsSync(owedPath(p))) {
     return { changed: false, servicePid: first.service?.pid ?? null, watcherPid: first.watcher?.pid ?? null }
   }
-  const got = await acquire(p.reconcile, qemu, o.lockWaitMs ?? 60_000)
+  const got = await acquire(p.reconcile, o.lockWaitMs ?? 60_000)
   if ("busy" in got) {
     return { changed: false, ...pids(name, p), ...(got.busy.waiting === undefined ? {} : { deferred: got.busy.waiting }) }
   }
@@ -489,37 +517,49 @@ export async function reconcileManagement(name: string, p: Paths = pathsFor(name
   }
 }
 
+/** A failure inside the save lock, carried out of it unchanged. */
+class Failed {
+  readonly error: ManagementError
+  constructor(error: ManagementError) {
+    this.error = error
+  }
+}
+
 async function reconcileHeld(name: string, p: Paths, o: ReconcileOptions, current: string, lock: ReconcileLock): Promise<ReconcileResult> {
   // Again, now that it is ours alone: whoever held the lock before may have done it all.
   const qemu = qemuPid(p)
+  const owed = owedTo(p)
   if (qemu === null) {
     // A watcher owed to a QEMU that has gone is owed no longer.
-    lock.note({ restoreWatcher: false })
+    forgive(p)
     return { changed: false, servicePid: null, watcherPid: null }
   }
-  const s = survey(name, p, current)
-  // An owed watcher that is running, of this build, has been paid for (a
-  // `start` or `watch` brought it up): forget the debt, or a later deliberate
-  // `watch --stop` would be undone by the next command.
-  if (lock.restoreWatcher && s.watcher !== null && !s.watcherWork) lock.note({ restoreWatcher: false })
-  const owedWatcher = lock.restoreWatcher && s.watcher === null
-  if (!s.serviceWork && !s.watcherWork && !owedWatcher) return { changed: false, ...pids(name, p) }
+  if (owed !== null && owed !== qemu) forgive(p)
+  const pl = plan(name, p, current)
+  if (pl.foreign) return { changed: false, ...pids(name, p) }
+  // An owed watcher that runs, current, has been paid (a `start` or `watch`
+  // brought it up): forget it, or a later deliberate `watch --stop` would be
+  // undone by the next command.
+  if (owed === qemu && pl.watcher !== null && !pl.rotateWatcher) forgive(p)
+  const owesWatcher = owed === qemu && pl.watcher === null
+  if (!hasWork(pl) && !owesWatcher) return { changed: false, ...pids(name, p) }
 
-  // The watcher's own save or stow is waited out through its shutdown; anyone
-  // else's save is not interrupted at all.
-  const st = s.watcher === null ? null : readWatchState(name)
-  const watcherBusy = st !== null && st.pid === s.watcher?.pid && (st.state === "autosaving" || st.state === "stowing") ? st.state : null
+  // Will the running watcher have to stop? Before a service is replaced under
+  // it, or when it is stale itself (after a missing service is started).
+  const stopsWatcher = pl.watcher !== null && (pl.serviceAction === "replace" || pl.rotateWatcher)
+  const busy = stopsWatcher ? busyWith(name, pl.watcher) : null
+  // Anyone else's save is not interrupted at all.
   const saver = saverPid(name, p)
-  if (watcherBusy === null && saver !== null && saver !== s.watcher?.pid) {
-    return { changed: false, ...pids(name, p), deferred: "saving" }
-  }
+  if (busy === null && saver !== null && saver !== pl.watcher?.pid) return { changed: false, ...pids(name, p), deferred: "saving" }
+  // The watcher's own: deferred without a word to it, unless this caller may wait.
+  if (busy !== null && o.waitForBusyWatcher === false) return { changed: false, ...pids(name, p), deferred: busy }
 
-  const hadWatcher = s.watcher !== null || lock.restoreWatcher
   let changed = false
-  if (s.watcher !== null && (s.serviceWork || s.watcherWork)) {
-    lock.note({ restoreWatcher: true, qemu, waiting: watcherBusy ?? undefined })
+  let stopped = false
+  const stop = async (): Promise<void> => {
+    owe(p, qemu)
     await stopWatcher(name)
-    lock.note({ waiting: undefined })
+    stopped = true
     changed = true
     if (watcherRecord(name) !== null) {
       throw new ManagementError(
@@ -527,65 +567,90 @@ async function reconcileHeld(name: string, p: Paths, o: ReconcileOptions, curren
         `could not stop the watcher of "${name}" to replace it. Windows is still running; run the command again to retry`,
       )
     }
+  }
+
+  if (busy !== null) {
+    // Its autosave or stow holds the save lock: let it finish through the
+    // watcher's own shutdown (up to ten minutes), saying so in our lock.
+    lock.waiting(busy)
+    await stop()
+    lock.waiting(null)
     // A stow it was finishing has quit QEMU: there is nothing left to manage.
     if (qemuPid(p) === null) {
-      lock.note({ restoreWatcher: false })
-      return { changed, ...pids(name, p), watcherPid: null, ...(watcherBusy === "stowing" ? { deferred: "stowing" as const } : {}) }
+      forgive(p)
+      return { changed, ...pids(name, p), watcherPid: null, ...(busy === "stowing" ? { deferred: "stowing" as const } : {}) }
     }
-    // A save started while the watcher was finishing: leave the service to the next command.
-    if (saverPid(name, p) !== null) {
-      await restoreWatcher(name, current, o, lock).catch(() => undefined)
+  }
+
+  // The rest under the save lock, as a save or load is: from stopping the
+  // watcher to starting it again nothing can start a save or a load — not even
+  // an older winvm that knows nothing of reconcile.lock.
+  let outcome: ReconcileResult | Failed
+  try {
+    outcome = await saves.withLock(name, async (): Promise<ReconcileResult | Failed> => {
+      try {
+        if (qemuPid(p) !== qemu) {
+          forgive(p)
+          return { changed, ...pids(name, p) }
+        }
+        if (stopsWatcher && !stopped && pl.serviceAction === "replace") await stop()
+        if (pl.serviceAction !== "none") {
+          try {
+            await ensureService(name, p, {
+              current,
+              ...(o.startService === undefined ? {} : { start: o.startService }),
+              ...(o.serviceTimeoutMs === undefined ? {} : { timeoutMs: o.serviceTimeoutMs }),
+            })
+            changed = true
+          } catch (error) {
+            // A watcher stopped for this comes back; one left running stays untouched.
+            if (stopped) await restoreWatcher(name, p, current, o).catch(() => undefined)
+            return new Failed(
+              new ManagementError(
+                "service-replace",
+                `could not start a current control service for "${name}": ${errText(error)}. ` +
+                  `Windows is still running; run the command again to retry (see ${resolve(p.dir, "service.log")})`,
+                { cause: error },
+              ),
+            )
+          }
+        }
+        if (pl.rotateWatcher && !stopped) await stop()
+        if ((await restoreWatcher(name, p, current, o)) === "started") changed = true
+        return { changed, ...pids(name, p) }
+      } catch (error) {
+        if (error instanceof ManagementError) return new Failed(error)
+        throw error
+      }
+    })
+  } catch (error) {
+    if (/is busy: another winvm/.test(errText(error))) {
+      // A save or load got there first. A watcher already stopped (above,
+      // after its own save) comes back; nothing else was touched.
+      if (stopped) await restoreWatcher(name, p, current, o).catch(() => undefined)
       return { changed, ...pids(name, p), deferred: "saving" }
     }
+    throw new ManagementError(
+      "reconcile-lock",
+      `could not reconcile the control service and watcher of "${name}": ${errText(error)}. ` +
+        "Windows is still running; run the command again to retry",
+      { cause: error },
+    )
   }
-
-  if (s.serviceWork) {
-    // Under the save lock, as a save or load is: a save that starts now (from
-    // an older winvm that knows nothing of reconcile.lock) is refused as busy
-    // rather than having its broker stopped under it. One that already holds
-    // it is not interrupted: the service is left for the next command.
-    let failure: unknown = null
-    try {
-      await saves.withLock(name, async () => {
-        try {
-          await ensureService(name, p, {
-            current,
-            ...(o.startService === undefined ? {} : { start: o.startService }),
-            ...(o.serviceTimeoutMs === undefined ? {} : { timeoutMs: o.serviceTimeoutMs }),
-          })
-        } catch (error) {
-          failure = error
-        }
-      })
-    } catch (error) {
-      if (!/is busy: another winvm/.test(errText(error))) failure = error
-      else {
-        if (hadWatcher) await restoreWatcher(name, current, o, lock).catch(() => undefined)
-        return { changed, ...pids(name, p), deferred: "saving" }
-      }
-    }
-    if (failure !== null) {
-      // The user's watcher comes back regardless; it does what it can without a service.
-      if (hadWatcher) await restoreWatcher(name, current, o, lock).catch(() => undefined)
-      throw new ManagementError(
-        "service-replace",
-        `could not start a current control service for "${name}": ${errText(failure)}. ` +
-          `Windows is still running; run the command again to retry (see ${resolve(p.dir, "service.log")})`,
-        { cause: failure },
-      )
-    }
-    changed = true
-  }
-
-  if (hadWatcher && (await restoreWatcher(name, current, o, lock))) changed = true
-  return { changed, ...pids(name, p) }
+  if (outcome instanceof Failed) throw outcome.error
+  return outcome
 }
 
-/** Start the watcher again, of this build, unless one runs or watching was turned off. Whether one was started. */
-async function restoreWatcher(name: string, current: string, o: ReconcileOptions, lock: ReconcileLock): Promise<boolean> {
+/**
+ * Pay a watcher owed to this QEMU: start one, of this build, unless one runs
+ * already or watching was turned off (either way the debt is settled).
+ */
+async function restoreWatcher(name: string, p: Paths, current: string, o: ReconcileOptions): Promise<"started" | "settled" | "none"> {
+  const q = qemuPid(p)
+  if (q === null || owedTo(p) !== q) return "none"
   if (watcherRecord(name) !== null || !effectiveConfig(name)["watch.enabled"]) {
-    lock.note({ restoreWatcher: false })
-    return false
+    forgive(p)
+    return "settled"
   }
   const failed = (why: string, cause?: unknown): ManagementError =>
     new ManagementError(
@@ -604,10 +669,10 @@ async function restoreWatcher(name: string, current: string, o: ReconcileOptions
   while (Date.now() < deadline) {
     const w = watcherRecord(name)
     if (w !== null && watcherFreshness(w, current) === "current") {
-      lock.note({ restoreWatcher: false })
-      return true
+      forgive(p)
+      return "started"
     }
-    await new Promise((r) => setTimeout(r, 100))
+    await sleep(100)
   }
   throw failed("it did not report this build in time")
 }

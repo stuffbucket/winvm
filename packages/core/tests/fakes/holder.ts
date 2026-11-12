@@ -10,10 +10,13 @@
  *   --then-kill PID on SIGTERM, before exiting, SIGTERM this pid too (a stow
  *                   quitting QEMU); only ever a pid the test spawned
  *   --then-rm FILE  and remove this file (QEMU's pidfile going with it)
+ *   --log-signals FILE  append the name of every SIGTERM/SIGHUP/SIGINT it
+ *                   receives to FILE, so a test can see signals sent by
+ *                   another process (a CLI it ran)
  *
  * Prints "ready" once its SIGTERM handler is in place.
  */
-import { rmSync } from "node:fs"
+import { appendFileSync, rmSync } from "node:fs"
 
 const opt = (name: string): string | undefined => {
   const i = process.argv.indexOf(name)
@@ -22,8 +25,13 @@ const opt = (name: string): string | undefined => {
 const linger = Number(opt("--linger") ?? 0)
 const thenKill = opt("--then-kill")
 const thenRm = opt("--then-rm")
+const logSignals = opt("--log-signals")
 
+for (const sig of ["SIGHUP", "SIGINT"] as const) {
+  if (logSignals !== undefined) process.on(sig, () => appendFileSync(logSignals, `${sig}\n`))
+}
 process.on("SIGTERM", () => {
+  if (logSignals !== undefined) appendFileSync(logSignals, "SIGTERM\n")
   setTimeout(() => {
     if (thenKill !== undefined) {
       try {

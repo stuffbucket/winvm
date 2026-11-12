@@ -614,7 +614,7 @@ describe("watcher generations", () => {
       const deadline = Date.now() + 15_000
       while (Date.now() < deadline && readWatchState("w")?.build === undefined) await new Promise((r) => setTimeout(r, 50))
       expect(readWatchState("w")).toMatchObject({ pid: child.pid, build: buildIdentity() })
-      expect(watcherRecord("w")).toEqual({ pid: child.pid, build: buildIdentity() })
+      expect(watcherRecord("w")).toEqual({ pid: child.pid, build: buildIdentity(), cli })
       child.kill("SIGTERM")
       await child.exited
       expect(JSON.parse(readFileSync(watchPathsFor("w").state, "utf8"))).toMatchObject({ state: "stopped", build: buildIdentity() })

@@ -12,6 +12,7 @@ import { qemuArgs } from "../src/qemu"
 import * as qmp from "../src/qmp"
 import { buildIdentity } from "../src/identity"
 import {
+  dropServiceRecord,
   ensureService,
   keepService,
   readService,
@@ -61,11 +62,24 @@ const lastEvent = (): Record<string, unknown> => {
   return JSON.parse(lines[lines.length - 1] ?? "{}") as Record<string, unknown>
 }
 
+/**
+ * The record as written. These tests run the service in this very process,
+ * which readService rightly never takes for a service (its command line is
+ * `bun test`), so they read what it claimed directly.
+ */
+const recorded = (): ServiceInfo | null => {
+  try {
+    return JSON.parse(readFileSync(p.service, "utf8")) as ServiceInfo
+  } catch {
+    return null
+  }
+}
+
 describe("the service", () => {
   it("serves the instance's sockets and records itself", async () => {
     svc = await runService("t", { exitAfterMs: 200, checkMs: 50 })
     expect(await qmp.status(p.qmp)).toBe("running")
-    const info = readService(p)
+    const info = recorded()
     expect(info?.pid).toBe(process.pid)
     expect(statSync(p.service).mode & 0o777).toBe(0o600)
     expect(info?.build).toBe(buildIdentity())
@@ -121,8 +135,8 @@ describe("the service", () => {
     expect(statSync(p.control).mode & 0o777).toBe(0o600)
     const res = await fetch("http://localhost/status", { unix: p.control })
     expect(((await res.json()) as { qemuPid: number }).qemuPid).toBe(process.pid)
-    expect(readService(p)).not.toHaveProperty("port")
-    expect(readService(p)).not.toHaveProperty("token")
+    expect(recorded()).not.toHaveProperty("port")
+    expect(recorded()).not.toHaveProperty("token")
   })
 
   it("survives QEMU being replaced, and stops once QEMU is gone for good", async () => {
@@ -150,7 +164,7 @@ describe("the service", () => {
     writeFileSync(resolve(lockDir, ".lock"), String(process.pid))
     rmSync(p.pid)
     await sleep(600)
-    expect(readService(p)?.pid).toBe(process.pid)
+    expect(recorded()?.pid).toBe(process.pid)
     expect(existsSync(p.qmp)).toBe(true)
   })
 })
@@ -159,7 +173,7 @@ describe("one service per instance", () => {
   it("refuses to start while another service holds the instance, and leaves it working", async () => {
     svc = await runService("t", { exitAfterMs: 5000, checkMs: 50 })
     await expect(runService("t", { exitAfterMs: 5000, checkMs: 50 })).rejects.toThrow(`holds instance "t"`)
-    expect(readService(p)?.pid).toBe(process.pid)
+    expect(recorded()?.pid).toBe(process.pid)
     expect(await qmp.status(p.qmp)).toBe("running")
     expect((await fetch("http://localhost/status", { unix: p.control })).status).toBe(200)
   })
@@ -169,7 +183,7 @@ describe("one service per instance", () => {
     await gone.exited
     writeFileSync(p.service, JSON.stringify({ pid: gone.pid, cli: "", version: "", startedAt: "" }))
     svc = await runService("t", { exitAfterMs: 5000, checkMs: 50 })
-    expect(readService(p)?.pid).toBe(process.pid)
+    expect(recorded()?.pid).toBe(process.pid)
   })
 
   it("stops when its record names another service, and leaves that service's sockets", async () => {
@@ -189,7 +203,7 @@ describe("one service per instance", () => {
     await sleep(200)
     keepService(p)
     await sleep(250)
-    expect(readService(p)?.pid).toBe(process.pid)
+    expect(recorded()?.pid).toBe(process.pid)
     await svc.done
     svc = null
   })
@@ -199,6 +213,32 @@ describe("one service per instance", () => {
     writeFileSync(p.service, JSON.stringify({ pid: other.pid, cli: "", version: "", startedAt: "" }))
     expect(readService(p)).toBeNull()
     other.kill()
+  })
+
+  it("never takes this very process for a service, so a stale record naming it cannot make it signal itself", () => {
+    writeFileSync(p.service, JSON.stringify({ pid: process.pid, cli: "", version: "", startedAt: "" }))
+    expect(readService(p)).toBeNull()
+    let t = 0
+    const kills: string[] = []
+    stopService(p, {
+      kill: (_pid, sig) => void kills.push(sig),
+      now: () => t,
+      sleep: (ms) => {
+        t += ms
+      },
+    })
+    expect(kills).toEqual([])
+  })
+
+  it("drops a rejected record only while it is still that record, never a service's fresh claim", () => {
+    const rejected = JSON.stringify({ pid: 424_242, cli: "", version: "", startedAt: "" })
+    const fresh = JSON.stringify({ pid: 424_243, cli: "", version: "", startedAt: "", build: "sha256:new" })
+    writeFileSync(p.service, fresh)
+    expect(dropServiceRecord(p, rejected)).toBe(false)
+    expect(readFileSync(p.service, "utf8")).toBe(fresh)
+    writeFileSync(p.service, rejected)
+    expect(dropServiceRecord(p, rejected)).toBe(true)
+    expect(existsSync(p.service)).toBe(false)
   })
 
   for (const [label, argv] of [

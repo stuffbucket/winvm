@@ -105,6 +105,8 @@ export interface WatchState {
   readonly pid: number
   /** The build running this watcher (identity.ts). Absent in a file written before generations were recorded. */
   readonly build?: string
+  /** The CLI that started it (WINVM_CLI). Absent in a file written before it was recorded. */
+  readonly cli?: string
   readonly startedAt: string
   readonly lastActivityAt: string
   readonly idleSeconds: number
@@ -455,6 +457,8 @@ export function rewatchAfterRestore(name: string, args: Args): () => void {
 export interface WatcherRecord {
   readonly pid: number
   readonly build?: string
+  /** The CLI that started it, as its watch.json says; absent when unknown. */
+  readonly cli?: string
 }
 
 /**
@@ -471,7 +475,12 @@ export function watcherRecord(
   const pid = watcherPid(name, isWatcher)
   if (pid === null) return null
   const st = readWatchState(name)
-  return st?.pid === pid && typeof st.build === "string" && st.build !== "" ? { pid, build: st.build } : { pid }
+  if (st?.pid !== pid) return { pid }
+  return {
+    pid,
+    ...(typeof st.build === "string" && st.build !== "" ? { build: st.build } : {}),
+    ...(typeof st.cli === "string" && st.cli !== "" ? { cli: st.cli } : {}),
+  }
 }
 
 /** Whether a watcher was started by the build running now; an absent build is "legacy". */
@@ -586,6 +595,7 @@ export async function watch(name: string, o: WatchOptions = {}): Promise<number>
     const s: WatchState = {
       pid: process.pid,
       build: buildIdentity(),
+      ...(process.env["WINVM_CLI"] === undefined || process.env["WINVM_CLI"] === "" ? {} : { cli: process.env["WINVM_CLI"] }),
       startedAt,
       lastActivityAt: new Date(machine.idleSinceMs).toISOString(),
       idleSeconds: Math.round(machine.idleMs(Date.now()) / 1000),

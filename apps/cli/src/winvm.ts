@@ -197,7 +197,9 @@ if (sub !== undefined && shouldReconcileVerb(sub) && !(sub === "files" && args.p
   const every = sub === "status" && named === undefined
   for (const name of every ? listInstances() : [instanceName(args)]) {
     try {
-      const note = reconcileNote(name, await reconcileManagement(name))
+      // Never waits out a watcher's autosave or stow: this runs before every
+      // command, and the app's status call has a deadline. It defers instead.
+      const note = reconcileNote(name, await reconcileManagement(name, undefined, { waitForBusyWatcher: false }))
       if (note !== null) console.error(note)
     } catch (error) {
       // Anything else from one instance is reported like a failed repair when

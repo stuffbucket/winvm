@@ -1,5 +1,5 @@
 import { spawn, spawnSync } from "node:child_process"
-import { appendFileSync, chmodSync, closeSync, linkSync, openSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs"
+import { appendFileSync, chmodSync, closeSync, linkSync, openSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs"
 import { basename, resolve } from "node:path"
 
 import { commandInstance } from "./args"
@@ -67,8 +67,22 @@ function livePidIn(file: string): number | null {
 }
 
 function recordedPid(p: Paths): number | null {
+  return pidIn(readRecord(p))
+}
+
+/** The record's text exactly as it is on disk, or null. */
+function readRecord(p: Paths): string | null {
   try {
-    const pid = (JSON.parse(readFileSync(p.service, "utf8")) as { pid?: unknown }).pid
+    return readFileSync(p.service, "utf8")
+  } catch {
+    return null
+  }
+}
+
+function pidIn(text: string | null): number | null {
+  if (text === null) return null
+  try {
+    const pid = (JSON.parse(text) as { pid?: unknown }).pid
     return typeof pid === "number" ? pid : null
   } catch {
     return null
@@ -80,10 +94,11 @@ function recordedPid(p: Paths): number | null {
  * entry, `winvm.ts` from source or the compiled `winvm`, right before the verb
  * — naming exactly this instance with `-i`/`--instance`. winvm always spawns it
  * so. A bare `… serve` (ollama's, hugo's, or a `serve` with no instance) is
- * never taken for one: a reused pid must not be signalled.
+ * never taken for one: a reused pid must not be signalled. Nor is this very
+ * process, whatever a stale record says (only claim() may recognise itself).
  */
 function isServiceFor(pid: number, name: string): boolean {
-  if (pid === process.pid) return true
+  if (pid === process.pid) return false
   const r = spawnSync("ps", ["-o", "command=", "-p", String(pid)], { encoding: "utf8" })
   const m = /(?:^|[\s/])winvm(?:\.ts)?\s+serve(\s.*)?$/.exec((r.stdout ?? "").trim())
   return m !== null && commandInstance(m[1] ?? "") === name
@@ -96,6 +111,38 @@ export function readService(p: Paths): ServiceInfo | null {
   } catch {
     return null
   }
+}
+
+/**
+ * Remove a record judged rejected (or a service's, once stopped) — only while it
+ * is still that same record. A service starting meanwhile may have claimed the
+ * file with its own; that claim is put back, not lost. The record is moved
+ * aside, compared, and linked back if it is not the one judged.
+ */
+export function dropServiceRecord(p: Paths, judged: string): boolean {
+  const aside = `${p.service}.${String(process.pid)}.${String(Date.now())}.drop`
+  try {
+    renameSync(p.service, aside)
+  } catch {
+    return false
+  }
+  let moved: string | null = null
+  try {
+    moved = readFileSync(aside, "utf8")
+  } catch {
+    // vanished
+  }
+  if (moved !== judged) {
+    try {
+      linkSync(aside, p.service)
+    } catch {
+      // A newer claim is in place already.
+    }
+    rmSync(aside, { force: true })
+    return false
+  }
+  rmSync(aside, { force: true })
+  return true
 }
 
 const keepPath = (p: Paths): string => resolve(p.dir, "service.keep")
@@ -124,9 +171,14 @@ function claim(p: Paths, name: string, info: ServiceInfo): void {
       } catch (e) {
         if ((e as NodeJS.ErrnoException).code !== "EEXIST") throw e
       }
+      const seen = readRecord(p)
+      // Another service of this very process (tests run several in one) holds
+      // it: that is the one place this process is recognised as a service.
+      const holderPid = pidIn(seen)
+      if (holderPid === process.pid) throw new Error(`another winvm service (pid ${String(holderPid)}) holds instance "${name}"`)
       const holder = readService(p)
       if (holder !== null) throw new Error(`another winvm service (pid ${String(holder.pid)}) holds instance "${name}"`)
-      rmSync(p.service, { force: true })
+      if (seen !== null) dropServiceRecord(p, seen)
     }
     throw new Error(`could not claim instance "${name}": ${p.service} keeps reappearing`)
   } finally {
@@ -161,8 +213,9 @@ export function stopService(p: Paths, seams: StopServiceSeams = {}): void {
   const running = seams.running ?? ((pid: number): boolean => alive(pid) && !exited(pid))
   const isService = seams.isService ?? ((pid: number): boolean => alive(pid) && isServiceFor(pid, name))
   // Only a pid the record names AND that is still this instance's service is ever signalled.
-  const pid = recordedPid(p)
-  if (pid === null || !isService(pid)) return
+  const seen = readRecord(p)
+  const pid = pidIn(seen)
+  if (seen === null || pid === null || !isService(pid)) return
   try {
     kill(pid, "SIGTERM")
   } catch {
@@ -179,7 +232,8 @@ export function stopService(p: Paths, seams: StopServiceSeams = {}): void {
       // gone
     }
   }
-  rmSync(p.service, { force: true })
+  // Its record, unless a service started since has claimed the file with its own.
+  dropServiceRecord(p, seen)
 }
 
 function exited(pid: number): boolean {
@@ -200,6 +254,7 @@ export interface EnsureServiceOptions {
 export async function ensureService(name: string, p: Paths, o: EnsureServiceOptions = {}): Promise<ServiceInfo> {
   const cli = cliEntry()
   const current = o.current ?? buildIdentity()
+  const seen = readRecord(p)
   const running = readService(p)
   if (running !== null && running.cli === cli && serviceFreshness(running, current) === "current") {
     keepService(p)
@@ -207,9 +262,9 @@ export async function ensureService(name: string, p: Paths, o: EnsureServiceOpti
   }
   // readService vouches for the pid (alive, and a service for this instance), so a
   // stop signals only a real service. A record it rejects names a gone process or a
-  // reused pid: drop the file and signal nobody.
+  // reused pid: drop that very record (not a newer claim) and signal nobody.
   if (running !== null) stopService(p)
-  else rmSync(p.service, { force: true })
+  else if (seen !== null) dropServiceRecord(p, seen)
   keepService(p)
   const start =
     o.start ??
