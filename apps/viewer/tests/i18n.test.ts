@@ -3,6 +3,7 @@ import { readdirSync, readFileSync, statSync } from "node:fs"
 import { join, resolve } from "node:path"
 
 import en from "../ui/src/i18n/en.json"
+import { CLOSE_POLICIES, VM_OPERATIONS } from "../ui/src/model"
 
 const SRC = resolve(import.meta.dir, "..", "ui", "src")
 
@@ -19,8 +20,10 @@ const catalog = new Set(Object.keys(en))
 // Keys built at run time, from the values they are built from.
 const built = [
   ...["loading", "starting", "running", "paused", "asleep", "stopped", "stowed", "missing"].map((s) => `state.${s}`),
-  ...["start", "stop", "reboot", "pause", "resume", "sleep", "wake", "lock", "kill", "setup", "save", "load"].map((v) => `busy.${v}`),
-  ...["start", "stop", "reboot", "pause", "resume", "sleep", "wake", "lock", "kill", "setup", "save", "load", "open", "put"].map((v) => `error.${v}`),
+  ...["start", "stop", "reboot", "pause", "resume", "sleep", "wake", "lock", "kill", "setup", "save", "load", "stow"].map((v) => `busy.${v}`),
+  ...["start", "stop", "reboot", "pause", "resume", "sleep", "wake", "lock", "kill", "setup", "save", "load", "stow", "open", "put"].map((v) => `error.${v}`),
+  ...VM_OPERATIONS.map((o) => `operation.${o}`),
+  ...CLOSE_POLICIES.map((p) => `closePolicy.${p}`),
   ...["stop", "reboot", "kill"].flatMap((v) => [`confirm.${v}.title`, `confirm.${v}.body`]),
   ...["stopped", "stowed", "missing"].map((p) => `overview.${p}.title`),
   ...["action.files", "action.checkpoints", "action.share", "action.shutDown", "action.restart", "action.forceStop"],
@@ -86,6 +89,21 @@ describe("the en catalog", () => {
     const used = sources(SRC).flatMap((f) => [...readFileSync(f, "utf8").matchAll(/\bt\("([^"]+)"/g)].map((m) => m[1] ?? ""))
     expect(used.length).toBeGreaterThan(20)
     expect(used.filter((k) => !catalog.has(k))).toEqual([])
+  })
+
+  it("keeps the hardware-incompatible checkpoint message compact", () => {
+    expect(en["checkpoints.incompatible.hardware"]).toBe("Can't load on this VM. Virtual hardware is different.")
+  })
+
+  it("explains each way the winvm helper can fail, with what to do about it", () => {
+    const catalogOf = en as Record<string, string>
+    expect(catalogOf["sidecar.missing"]).toContain("Reinstall winvm")
+    expect(catalogOf["sidecar.launch"]).toContain("{operation}")
+    expect(catalogOf["sidecar.launch"]).toContain("{detail}")
+    expect(catalogOf["sidecar.timeout"]).toContain("{seconds}")
+    expect(catalogOf["sidecar.timeout"]).toContain("{operation")
+    // Stopping the helper never stops Windows: the copy says so.
+    expect(catalogOf["sidecar.timeout"]).toContain("Windows wasn't touched")
   })
 
   it("has every key the UI builds", () => {

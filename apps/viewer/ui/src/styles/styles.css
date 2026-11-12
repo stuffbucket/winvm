@@ -363,6 +363,46 @@ html[data-os="macos"] .toolbar {
   color: var(--text-strong);
 }
 
+/* A command is running on the machine, from this window or another process:
+   the last thing in the display, over the screen or the Overview. Unlike the
+   held dimming (.screen__held), it takes the pointer, so nothing under it can
+   be clicked while the machine changes state. */
+.display__operation {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  background: var(--scrim-paused);
+  pointer-events: auto;
+  cursor: progress;
+}
+
+.display__operation-text {
+  margin: 0;
+  padding: var(--space-1) var(--space-4);
+  border-radius: var(--radius-pill);
+  background: var(--surface-card);
+  border: var(--border-width-hairline) solid var(--border-subtle);
+  box-shadow: var(--elevation-modal);
+  font-size: var(--text-md);
+  font-weight: var(--weight-md);
+  color: var(--text-strong);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .display__operation {
+    animation: display-operation-in 150ms ease-out;
+  }
+  @keyframes display-operation-in {
+    from {
+      opacity: 0;
+    }
+    to {
+      opacity: 1;
+    }
+  }
+}
+
 .screen {
   position: absolute;
   inset: 0;
@@ -1471,6 +1511,64 @@ html[data-os="macos"] .toolbar {
   display: flex;
   justify-content: flex-end;
   gap: var(--space-2);
+}
+
+/* ---- Close dialog: what closing WinVM does to one machine ---- */
+.close-dialog__machine {
+  font-weight: var(--weight-md);
+  color: var(--text-strong);
+}
+
+.close-dialog__progress {
+  color: var(--text-muted);
+}
+
+.close-dialog__operation {
+  font-weight: var(--weight-md);
+  color: var(--text-strong);
+}
+
+.close-dialog__choices {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+/* Each choice is its label and what it does, so color is never the only difference. */
+.close-dialog__choice {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-1);
+  text-align: left;
+  font-family: var(--font-body);
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-input);
+  border: var(--border-width-hairline) solid var(--border-strong);
+  background: var(--surface-control);
+  color: var(--text-strong);
+  cursor: pointer;
+}
+
+.close-dialog__choice:hover {
+  border-color: var(--accent);
+}
+
+.close-dialog__choice:focus-visible {
+  outline: var(--focus-ring);
+  outline-offset: var(--focus-ring-offset);
+}
+
+.close-dialog__choice-label {
+  font-size: var(--text-sm);
+  font-weight: var(--weight-md);
+  line-height: var(--leading-lg);
+}
+
+.close-dialog__choice-body {
+  font-size: var(--text-sm);
+  line-height: var(--leading-base);
+  color: var(--text-muted);
 }
 
 @media (prefers-reduced-motion: no-preference) {

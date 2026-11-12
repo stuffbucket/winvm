@@ -96,6 +96,7 @@ describe("status formatting", () => {
   const sample: InstanceStatus = {
     name: "ui",
     title: null,
+    closePolicy: "ask",
     state: "running",
     vmStatus: "running",
     image: "win11-arm64",
@@ -119,6 +120,7 @@ describe("status formatting", () => {
     watcher: null,
     service: { pid: 77 },
     serviceExpected: false,
+    operation: null,
     notes: [],
   }
 

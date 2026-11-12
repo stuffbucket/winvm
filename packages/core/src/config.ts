@@ -14,12 +14,19 @@ import { resolve } from "node:path"
 
 import { instanceDir } from "./paths"
 
+/** What closing the viewer window does to a running machine. `ask` prompts; the rest act without asking. */
+export const CLOSE_POLICIES = ["ask", "leave", "stow", "shutdown"] as const
+
+export type ClosePolicy = (typeof CLOSE_POLICIES)[number]
+
 export interface InstanceConfig {
   readonly "autosave.enabled": boolean
   readonly "autosave.idleMinutes": number
   readonly "autosave.keep": number
   readonly "stow.enabled": boolean
   readonly "stow.idleMinutes": number
+  /** What closing the viewer window does to a running machine; `ask` (the default) prompts. */
+  readonly "viewer.closePolicy": ClosePolicy
   readonly "watch.enabled": boolean
   /**
    * The guest counts as busy above this share of its vCPU capacity (QEMU's
@@ -46,6 +53,7 @@ export const DEFAULTS: InstanceConfig = {
   "autosave.keep": 3,
   "stow.enabled": true,
   "stow.idleMinutes": 60,
+  "viewer.closePolicy": "ask",
   "watch.enabled": true,
   "watch.idleCpuPercent": 10,
   title: "",
@@ -69,9 +77,12 @@ export function checkTitle(raw: string): string {
 
 type Value = InstanceConfig[ConfigKey]
 
+const isClosePolicy = (v: string): v is ClosePolicy => (CLOSE_POLICIES as readonly string[]).includes(v)
+
 const valid = (k: ConfigKey, v: unknown): v is Value => {
   if (typeof v !== typeof DEFAULTS[k]) return false
   if (typeof v !== "string") return true
+  if (k === "viewer.closePolicy") return isClosePolicy(v)
   try {
     return checkTitle(v) === v
   } catch {
@@ -116,6 +127,10 @@ export function parseAssignment(assignment: string): [ConfigKey, Value] {
   const key = assignment.slice(0, eq).trim()
   const value = assignment.slice(eq + 1).trim()
   if (!isKey(key)) throw new Error(`unknown setting "${key}" — one of: ${CONFIG_KEYS.join(", ")}`)
+  if (key === "viewer.closePolicy") {
+    if (isClosePolicy(value)) return [key, value]
+    throw new Error(`${key} is one of: ${CLOSE_POLICIES.join(", ")}, got "${value}"`)
+  }
   // An empty title clears it, back to the instance's name.
   if (typeof DEFAULTS[key] === "string") return [key, checkTitle(value)]
   if (typeof DEFAULTS[key] === "boolean") {

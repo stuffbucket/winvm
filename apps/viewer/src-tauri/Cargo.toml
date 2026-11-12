@@ -19,6 +19,8 @@ tauri-plugin-dialog = "=2.7.1"
 tauri-plugin-updater = { version = "=2.14.0", default-features = false, features = ["rustls-tls", "system-proxy"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+# Deadlines on the CLI sidecar (src/sidecar.rs); the same tokio Tauri runs on, at the lockfile's version.
+tokio = { version = "=1.52.3", features = ["time"] }
 reqwest = { version = "=0.13.3", default-features = false, features = ["json"] }
 # reqwest comes with rustls but no crypto provider (the updater's features); agent.rs installs this one, as the updater does.
 rustls = { version = "=0.23.46", default-features = false, features = ["ring"] }

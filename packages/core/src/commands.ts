@@ -11,7 +11,7 @@ import { PWSH_SHA256, PWSH_URL, TOOLS_SHA256, TOOLS_URL, checksReport, download,
 import { diagnose, formatFindings } from "./diagnose"
 import { ensureInstance, makeVars, resetInstance, sealBase } from "./instance"
 import { ISO_SOURCE, buildSeed, checkIsoIsArm64, makeResultVolume, readResult, resolveWindowsIso } from "./media"
-import type { InstanceMeta } from "./paths"
+import type { InstanceMeta, Paths } from "./paths"
 import {
   allocateVnc,
   basePath,
@@ -31,6 +31,7 @@ import {
 import * as agent from "./agent"
 import * as agentcmds from "./agentcmds"
 import * as finder from "./finder"
+import * as frozen from "./frozen"
 import * as input from "./input"
 import * as qemu from "./qemu"
 import * as qmp from "./qmp"
@@ -39,7 +40,8 @@ import * as saves from "./saves"
 import * as savecmds from "./savecmds"
 import * as snapshot from "./snapshot"
 import * as timemachine from "./timemachine"
-import { ensureService, readService, stopService } from "./service"
+import { ManagementError, reconcileManagement } from "./lifecycle"
+import { stopService } from "./service"
 import { ensureRuntime, findRuntime, runtimeBin } from "./runtime"
 import * as share from "./share"
 import { ensureShareMedia } from "./sharemedia"
@@ -583,7 +585,15 @@ export async function start(args: Args): Promise<number> {
   const p = pathsFor(name)
   if (qemu.isRunning(p)) {
     console.log(`instance "${name}" already running`)
-    if (existsSync(p.qmpQemu) && readService(p) === null) await ensureService(name, p)
+    // The check every command makes (lifecycle.ts), always: a service or watcher
+    // of another build, or a service gone missing, is replaced while Windows runs.
+    try {
+      await reconcileManagement(name, p)
+    } catch (error) {
+      if (!(error instanceof ManagementError)) throw error
+      console.error(`::error::${error.message}`)
+      return 1
+    }
     watcher.startWatcherFor(name, args)
     return 0
   }
@@ -794,28 +804,114 @@ export async function snapshots(args: Args): Promise<number> {
   return 0
 }
 
-export async function stop(args: Args): Promise<number> {
+/** How long a guest gets, in all, to become reachable and then power off. */
+const STOP_DEADLINE_MS = 180_000
+const STOP_POLL_MS = 3000
+
+/** Every outside call `stop` makes, so its state machine can be run against a fake clock. */
+export interface StopCommandSeams {
+  readonly now?: () => number
+  readonly sleep?: (ms: number) => Promise<void>
+  readonly pidOf?: (p: Paths) => number | null
+  readonly isRunning?: (p: Paths) => boolean
+  readonly frozenState?: (p: Paths) => Promise<frozen.Frozen | null>
+  /** QMP `cont`. */
+  readonly resume?: (p: Paths) => Promise<void>
+  /** QMP `stop`. */
+  readonly hold?: (p: Paths) => Promise<void>
+  readonly waitFor?: (sockPath: string, timeoutMs: number) => Promise<boolean>
+  readonly shutdown?: (sockPath: string) => Promise<void>
+  readonly watcherPid?: (name: string) => number | null
+  readonly stopWatcher?: (name: string) => Promise<boolean>
+  readonly ensureWatcher?: (name: string) => number | null
+  readonly beforeDown?: (name: string) => void
+  readonly afterUp?: (name: string) => Promise<void>
+  readonly stopSidecars?: (p: Paths) => void
+}
+
+export const stop = (args: Args): Promise<number> => stopWith(args)
+
+export async function stopWith(args: Args, seams: StopCommandSeams = {}): Promise<number> {
+  const now = seams.now ?? Date.now
+  const sleep = seams.sleep ?? ((ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms)))
+  const isRunning = seams.isRunning ?? qemu.isRunning
+  const pidOf = seams.pidOf ?? qemu.pidOf
+  const waitFor = seams.waitFor ?? qga.waitFor
+  const shutdown = seams.shutdown ?? qga.shutdown
+  const stopWatcher = seams.stopWatcher ?? ((n: string) => watcher.stopWatcher(n))
+  const beforeDown = seams.beforeDown ?? ((n: string) => finder.beforeDown(n))
+  const stopSidecars = seams.stopSidecars ?? qemu.stopSidecars
+  const frozenState = seams.frozenState ?? ((p: Paths) => frozen.frozenState(p))
+  const resume = seams.resume ?? (async (p: Paths): Promise<void> => void (await qmp.execute(p.qmp, "cont")))
+  const hold = seams.hold ?? (async (p: Paths): Promise<void> => void (await qmp.execute(p.qmp, "stop")))
+  const afterUp = seams.afterUp ?? ((n: string) => finder.afterUp(n))
+  const ensureWatcher = seams.ensureWatcher ?? watcher.ensureWatcher
+  const watcherPid = seams.watcherPid ?? ((n: string) => watcher.watcherPid(n))
   const name = instanceName(args)
   const p = pathsFor(name)
-  if (!qemu.isRunning(p)) {
+  if (!isRunning(p)) {
     console.log(`instance "${name}" is not running`)
     return 0
   }
-  // First, so it cannot decide to autosave a guest that is shutting down.
-  await watcher.stopWatcher(name)
-  // Then the guest's drives in Finder, while their server still answers.
-  finder.beforeDown(name)
-  await qga.shutdown(p.qga)
-  const deadline = Date.now() + 180_000
-  while (Date.now() < deadline) {
-    if (!qemu.isRunning(p)) {
-      qemu.stopSidecars(p)
-      console.log(`instance "${name}" stopped`)
-      return 0
+  // What it was, before anything below changes it.
+  const pid = pidOf(p)
+  const original = await frozenState(p)
+  // Asked before it is stopped: only a watcher that was running comes back.
+  const hadWatcher = watcherPid(name) !== null
+  let resumed = false
+  const attempt = async (what: string, f: () => unknown): Promise<void> => {
+    try {
+      await f()
+    } catch (error) {
+      console.warn(`warning: could not ${what}: ${error instanceof Error ? error.message : String(error)}`)
     }
-    await new Promise((r) => setTimeout(r, 3000))
   }
-  console.error("::error::guest did not shut down — `winvm kill` if it is wedged")
+  // Leaves the guest as it was: its drives, its pause, its watcher. Never a kill.
+  const rollback = async (): Promise<void> => {
+    // Drives first, while the guest runs and its file server answers the mounts.
+    if (original === null || resumed) await attempt("remount the guest's drives", () => afterUp(name))
+    // Then the pause, for the QEMU that was resumed: a replacement is not ours to pause.
+    if (original !== null && pid !== null && pidOf(p) === pid) {
+      await attempt("pause the guest again", () => hold(p))
+      if (original === "asleep" && resumed) frozen.markAsleep(p, pid)
+    }
+    if (hadWatcher) await attempt("restart the watcher", () => ensureWatcher(name))
+  }
+  let why: string
+  try {
+    // First, so it cannot decide to autosave a guest that is shutting down.
+    await stopWatcher(name)
+    // Then the guest's drives in Finder, while their server still answers.
+    beforeDown(name)
+    // Draining a busy watcher is preparation, not part of Windows' shutdown budget.
+    // Readiness and power-off still share one deadline from this point onward.
+    const deadline = now() + STOP_DEADLINE_MS
+    // A paused or asleep guest cannot answer: it runs again, for the shutdown only.
+    if (original !== null) {
+      await resume(p)
+      resumed = true
+      frozen.clearAsleep(p)
+    }
+    // The agent, not a full logon: a guest still starting has one before it has the other.
+    if (await waitFor(p.qga, deadline - now())) {
+      await shutdown(p.qga)
+      while (now() < deadline) {
+        if (!isRunning(p)) {
+          stopSidecars(p)
+          console.log(`instance "${name}" stopped`)
+          return 0
+        }
+        await sleep(Math.min(STOP_POLL_MS, deadline - now()))
+      }
+      why = "guest did not shut down — `winvm kill` if it is wedged"
+    } else {
+      why = "the guest agent did not answer, so shutdown cannot be asked for — `winvm kill` if it is wedged"
+    }
+  } catch (error) {
+    why = error instanceof Error ? error.message : String(error)
+  }
+  await rollback()
+  console.error(`::error::${why}`)
   return 1
 }
 

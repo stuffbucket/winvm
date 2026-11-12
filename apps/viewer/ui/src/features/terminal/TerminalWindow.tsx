@@ -12,6 +12,7 @@ import { TerminalView, terminalProcessTitle } from "@winvm/terminal"
 
 import {
   closeWindow,
+  errorMessage,
   installedShells,
   onInstanceTitle,
   onTerminalMenu,
@@ -21,7 +22,7 @@ import {
   setWindowTitle,
   showWindow,
   takeTerminalRequests,
-  winvm,
+  terminalEndpoint,
 } from "../../backend"
 import { Button } from "../../components/Button"
 import { Icon } from "../../components/Icon"
@@ -30,18 +31,7 @@ import { cx } from "../../components/cx"
 import { t } from "../../i18n"
 import { TITLE_MAX } from "../../model"
 import { terminalTheme, terminalTypography, useDark } from "./appearance"
-import {
-  connectArgs,
-  defaultShell,
-  failureText,
-  fromList,
-  type Launch,
-  parseEndpoint,
-  runnable,
-  shellCache,
-  shellMenu,
-  shellTitle,
-} from "./shells"
+import { defaultShell, fromList, type Launch, runnable, shellCache, shellMenu, shellTitle } from "./shells"
 import { createSocketTransport, type SessionStatus } from "./socket"
 import { activeTab, noTabs, type Tab, tabName, type TabState, tabsReducer } from "./tabs"
 
@@ -90,10 +80,8 @@ export function TerminalWindow(): JSX.Element {
         async connect({ id }) {
           const tab = current.current.tabs.find((x) => x.id === id)
           if (tab === undefined) throw new Error("that tab has closed")
-          const out = await winvm(...connectArgs(tab))
-          const endpoint = out.code === 0 ? parseEndpoint(out.stdout) : null
-          if (endpoint === null) throw new Error(failureText(out.stdout, out.stderr) || "winvm terminal didn't say where to connect")
-          return endpoint
+          // Bounded in the app: a CLI that never answers is stopped, and the tab shows why with Try again.
+          return await terminalEndpoint(tab)
         },
         onStatus(id, status) {
           const state = stateOf(status)
@@ -318,9 +306,7 @@ export function TerminalWindow(): JSX.Element {
               testId={`terminal-${tab.id}`}
               labels={{ startFailed: t("terminal.failed"), retry: t("terminal.retry") }}
               onTitleChange={(raw) => dispatch({ type: "title", id: tab.id, title: shellTitle(terminalProcessTitle(raw)) })}
-              onError={(error) =>
-                dispatch({ type: "state", id: tab.id, state: { kind: "failed", message: error instanceof Error ? error.message : String(error) } })
-              }
+              onError={(error) => dispatch({ type: "state", id: tab.id, state: { kind: "failed", message: errorMessage(error) } })}
             />
           </div>
         ))}

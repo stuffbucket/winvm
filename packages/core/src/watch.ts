@@ -39,6 +39,7 @@ import { closeSync, existsSync, openSync, readFileSync, renameSync, rmSync, stat
 import { resolve } from "node:path"
 
 import type { Args } from "./args"
+import { commandInstance, winvmCommandAfter } from "./args"
 import { formatOffset, measureOffset, syncGuestClock } from "./clock"
 import type { InstanceConfig } from "./config"
 import { effectiveConfig } from "./config"
@@ -46,8 +47,9 @@ import * as finder from "./finder"
 import type { Decision, SaveInfo, Settings, Timing } from "./idle"
 import { DEFAULT_TIMING, DRIFT_TOLERANCE_MS, IdleMachine, autosaveName, savesToRotate } from "./idle"
 import { isFrozenRunState } from "./frozen"
+import { buildIdentity } from "./identity"
 import type { Paths } from "./paths"
-import { cliArgv, instanceDir, pathsFor } from "./paths"
+import { cliArgv, instanceDir, managedEnv, pathsFor } from "./paths"
 import * as qemu from "./qemu"
 import * as qga from "./qga"
 import * as qmp from "./qmp"
@@ -101,6 +103,10 @@ export async function whileActive<T>(name: string, work: Promise<T>): Promise<T>
 /** What `watch.json` holds. Consumed by `status` and the web UI; keep the shape stable. */
 export interface WatchState {
   readonly pid: number
+  /** The build running this watcher (identity.ts). Absent in a file written before generations were recorded. */
+  readonly build?: string
+  /** The CLI that started it (WINVM_CLI). Absent in a file written before it was recorded. */
+  readonly cli?: string
   readonly startedAt: string
   readonly lastActivityAt: string
   readonly idleSeconds: number
@@ -154,7 +160,8 @@ async function runWinvm(argv: readonly string[], log: (s: string) => void): Prom
   log(`run: winvm ${argv.join(" ")}`)
   const started = Date.now()
   const code = await new Promise<number>((res) => {
-    const child = spawn(process.execPath, [...cliArgv(...argv)], { stdio: ["ignore", "pipe", "pipe"], env: process.env })
+    // Marked so the stow it runs never turns round and reconciles this watcher (lifecycle.ts).
+    const child = spawn(process.execPath, [...cliArgv(...argv)], { stdio: ["ignore", "pipe", "pipe"], env: managedEnv() })
     // Bounded, so a command that prints its usage (or worse) every time cannot grow the log without limit.
     let lines = 0
     const relay = (chunk: Buffer): void => {
@@ -327,19 +334,27 @@ function activityAt(path: string): number | null {
 // ---------------------------------------------------------------------------
 // The single-instance lock
 
-function isWatcherProcess(pid: number): boolean {
+/**
+ * Whether the pid is `name`'s watcher. Guards against pid reuse after a crash:
+ * the pid must still be OUR kind of process — a `winvm watch` for exactly this
+ * instance (one naming no instance is "default"'s), and not a `watch --stop`
+ * or `--status` that only asks about one.
+ */
+function isWatcherProcess(pid: number, name: string): boolean {
   try {
     process.kill(pid, 0)
   } catch {
     return false
   }
-  // Guard against pid reuse after a crash: the pid must still be OUR kind of process.
   const r = spawnSync("ps", ["-o", "command=", "-p", String(pid)], { encoding: "utf8" })
-  return /winvm(\.ts)?\s+watch\b/.test(r.stdout)
+  const rest = winvmCommandAfter(r.stdout ?? "", "watch")
+  if (rest === null) return false
+  if (/(?:^|\s)--(?:stop|status)(?:\s|$)/.test(rest)) return false
+  return (commandInstance(rest) ?? "default") === name
 }
 
 /** The live watcher's pid, or null. Removes a stale pidfile. */
-export function watcherPid(name: string): number | null {
+export function watcherPid(name: string, isWatcher: (pid: number) => boolean = (pid) => isWatcherProcess(pid, name)): number | null {
   const f = watchPathsFor(name).pid
   let pid: number
   try {
@@ -347,7 +362,7 @@ export function watcherPid(name: string): number | null {
   } catch {
     return null
   }
-  if (Number.isFinite(pid) && isWatcherProcess(pid)) return pid
+  if (Number.isFinite(pid) && isWatcher(pid)) return pid
   rmSync(f, { force: true })
   return null
 }
@@ -400,7 +415,7 @@ export function ensureWatcher(name: string): number | null {
   const child = spawn(process.execPath, [...cliArgv("watch", "-i", name)], {
     detached: true,
     stdio: ["ignore", log, log],
-    env: process.env,
+    env: managedEnv(),
   })
   closeSync(log)
   child.unref()
@@ -438,33 +453,91 @@ export function rewatchAfterRestore(name: string, args: Args): () => void {
   }
 }
 
+export interface WatcherRecord {
+  readonly pid: number
+  readonly build?: string
+  /** The CLI that started it, as its watch.json says; absent when unknown. */
+  readonly cli?: string
+}
+
+/**
+ * The live watcher and the build it reports, or null when none is running. The
+ * pid comes from `watch.pid`, validated as a watcher's (see watcherPid);
+ * `watch.json` is believed only when it names that same pid, so a state file
+ * left by an earlier watcher cannot vouch for this one. Without a trusted
+ * build the record is just `{ pid }`: a live watcher of unknown generation.
+ */
+export function watcherRecord(
+  name: string,
+  isWatcher: (pid: number) => boolean = (pid) => isWatcherProcess(pid, name),
+): WatcherRecord | null {
+  const pid = watcherPid(name, isWatcher)
+  if (pid === null) return null
+  const st = readWatchState(name)
+  if (st?.pid !== pid) return { pid }
+  return {
+    pid,
+    ...(typeof st.build === "string" && st.build !== "" ? { build: st.build } : {}),
+    ...(typeof st.cli === "string" && st.cli !== "" ? { cli: st.cli } : {}),
+  }
+}
+
+/** Whether a watcher was started by the build running now; an absent build is "legacy". */
+export const watcherFreshness = (record: WatcherRecord, current: string = buildIdentity()): "current" | "stale" | "legacy" =>
+  record.build === undefined || record.build === "" ? "legacy" : record.build === current ? "current" : "stale"
+
+/** Process and clock access for stopWatcher, so tests need neither real signals nor real waiting. */
+export interface StopSeams {
+  readonly kill?: (pid: number, signal: NodeJS.Signals) => void
+  readonly now?: () => number
+  readonly sleep?: (ms: number) => Promise<void>
+  readonly isWatcher?: (pid: number) => boolean
+}
+
 /**
  * End an instance's watcher, if any. A no-op when called from the watcher's own
  * child — that is the watcher running `winvm stow`, which must not kill the
  * process waiting on it.
  */
-export async function stopWatcher(name: string): Promise<boolean> {
-  const pid = watcherPid(name)
+export async function stopWatcher(name: string, seams: StopSeams = {}): Promise<boolean> {
+  const kill = seams.kill ?? ((pid: number, signal: NodeJS.Signals): void => void process.kill(pid, signal))
+  const now = seams.now ?? Date.now
+  const wait = seams.sleep ?? sleep
+  const isWatcher = seams.isWatcher ?? ((p: number): boolean => isWatcherProcess(p, name))
+  // Only a pid that is still a watcher's is ever signalled; a reused one is dropped by watcherPid.
+  const pid = watcherPid(name, isWatcher)
   if (pid === null || pid === process.ppid || pid === process.pid) return false
   try {
-    process.kill(pid, "SIGTERM")
+    kill(pid, "SIGTERM")
   } catch {
     return false
   }
   // A watcher mid-save finishes the save before it exits (see watch()); give it
-  // the time a save takes rather than killing it halfway through one.
-  const st = readWatchState(name)?.state
-  const deadline = Date.now() + (st === "autosaving" || st === "stowing" ? 10 * 60_000 : 10_000)
-  while (Date.now() < deadline) {
-    if (!isWatcherProcess(pid)) return true
-    await new Promise((r) => setTimeout(r, 200))
+  // the time a save takes rather than killing it halfway through one. Only
+  // watch.json written by THIS watcher says so: one left by an earlier watcher
+  // describes a process that is gone.
+  const st = readWatchState(name)
+  const saving = st?.pid === pid && (st.state === "autosaving" || st.state === "stowing")
+  const deadline = now() + (saving ? 10 * 60_000 : 10_000)
+  while (now() < deadline) {
+    if (!isWatcher(pid)) return true
+    await wait(200)
   }
+  // Checked again at the last moment: by now the pid may belong to something else.
+  if (isWatcher(pid)) {
+    try {
+      kill(pid, "SIGKILL")
+    } catch {
+      // gone
+    }
+  }
+  // Its pidfile, unless a watcher started since has already taken it.
+  const f = watchPathsFor(name).pid
   try {
-    process.kill(pid, "SIGKILL")
+    if (readFileSync(f, "utf8").trim() === String(pid)) rmSync(f, { force: true })
   } catch {
-    // gone
+    // already gone
   }
-  rmSync(watchPathsFor(name).pid, { force: true })
   return true
 }
 
@@ -499,33 +572,29 @@ export async function watch(name: string, o: WatchOptions = {}): Promise<number>
     console.error(`::error::instance "${name}" is not running — nothing to watch`)
     return 1
   }
-  if (!effectiveConfig(name)["watch.enabled"]) {
+  let cfg = effectiveConfig(name)
+  if (!cfg["watch.enabled"]) {
     console.error(`::error::watching is off for "${name}" — \`winvm config -i ${name} watch.enabled=true\``)
     return 1
   }
-  const other = acquireLock(name)
-  if (other !== null) {
-    console.error(
-      other > 0 ? `::error::instance "${name}" already has a watcher (pid ${String(other)})` : "::error::could not take watch.pid",
-    )
-    return 1
-  }
-
-  let qemuPid = firstPid
-  const actions = o.actions ?? realActions(name, p, log)
+  // Everything the first watch.json needs is read BEFORE taking the lock, so
+  // the build is published the moment watch.pid names this process: between
+  // the two, a reconciler (lifecycle.ts) would see a watcher with no build and
+  // take a current one for a legacy one.
+  //
   // An --ephemeral guest's disk writes go nowhere durable, so it cannot be saved:
   // watch it for the clock only.
   const ephemeral = saves.isEphemeral(p)
   const startedAt = new Date().toISOString()
   const machine = new IdleMachine(Date.now(), timing)
-  let vcpus = vcpusOf(qemuPid)
   let state: WatchState["state"] = "watching"
-  let cfg = effectiveConfig(name)
   const lastAt = { autosave: newestOfKind(currentSaves(name), "auto"), stow: newestOfKind(currentSaves(name), "stow") }
 
   const publish = (): void => {
     const s: WatchState = {
       pid: process.pid,
+      build: buildIdentity(),
+      ...(process.env["WINVM_CLI"] === undefined || process.env["WINVM_CLI"] === "" ? {} : { cli: process.env["WINVM_CLI"] }),
       startedAt,
       lastActivityAt: new Date(machine.idleSinceMs).toISOString(),
       idleSeconds: Math.round(machine.idleMs(Date.now()) / 1000),
@@ -548,6 +617,20 @@ export async function watch(name: string, o: WatchOptions = {}): Promise<number>
       // The instance dir went away (destroy); the loop will notice QEMU is gone.
     }
   }
+
+  const other = acquireLock(name)
+  if (other !== null) {
+    console.error(
+      other > 0 ? `::error::instance "${name}" already has a watcher (pid ${String(other)})` : "::error::could not take watch.pid",
+    )
+    return 1
+  }
+  // Say which build this is before anything else: whoever replaces a stale watcher reads it.
+  publish()
+
+  let qemuPid = firstPid
+  const actions = o.actions ?? realActions(name, p, log)
+  let vcpus = vcpusOf(qemuPid)
 
   /** The action in flight, if any. A signal waits for it rather than abandon a save halfway. */
   let busy: Promise<unknown> | null = null

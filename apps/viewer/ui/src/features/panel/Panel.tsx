@@ -4,8 +4,8 @@ import { Button } from "../../components/Button"
 import { Icon } from "../../components/Icon"
 import { cx } from "../../components/cx"
 import { t } from "../../i18n"
-import type { Checks, Status } from "../../model"
-import { detailRows, phase } from "../../model"
+import type { Checks, ClosePolicy, Status } from "../../model"
+import { CLOSE_POLICIES, detailRows, phase } from "../../model"
 import { Hardware } from "../hardware/Hardware"
 import { formatMemory } from "../hardware/info"
 import { Network } from "../hardware/Network"
@@ -32,6 +32,13 @@ interface PanelProps {
   readonly machineInfo: MachineInfoView
   /** Windows is up and its agent answers. */
   readonly guestReady: boolean
+  /** What closing the window does to this machine: the CLI's effective policy, as last read. */
+  readonly closePolicy: ClosePolicy
+  /** Any operation on the machine, or the setting's own write, is under way: the select waits. */
+  readonly closePolicyBusy: boolean
+  /** Why the last write failed (the CLI's words); the select keeps the value it had. */
+  readonly closePolicyError: string | null
+  onClosePolicy(policy: ClosePolicy): void
   onForceStop(): void
 }
 
@@ -88,6 +95,28 @@ export function Panel(p: PanelProps): JSX.Element {
               </li>
             ))}
           </ul>
+        )}
+        <label className="field">
+          <span className="field__label">{t("panel.closePolicy")}</span>
+          <select
+            className="input"
+            name="closePolicy"
+            value={p.closePolicy}
+            disabled={p.closePolicyBusy || p.status === null}
+            aria-describedby={p.closePolicyError === null ? undefined : "close-policy-error"}
+            onChange={(e) => p.onClosePolicy(e.target.value as ClosePolicy)}
+          >
+            {CLOSE_POLICIES.map((policy) => (
+              <option key={policy} value={policy}>
+                {t(`closePolicy.${policy}`)}
+              </option>
+            ))}
+          </select>
+        </label>
+        {p.closePolicyError !== null && (
+          <p id="close-policy-error" className="action__error" role="alert">
+            {p.closePolicyError}
+          </p>
         )}
       </Section>
 

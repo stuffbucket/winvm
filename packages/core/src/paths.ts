@@ -14,6 +14,8 @@ import { existsSync, readFileSync, readdirSync } from "node:fs"
 import { homedir } from "node:os"
 import { dirname, resolve } from "node:path"
 
+import { buildIdentity } from "./identity"
+
 /**
  * All state, deliberately outside any project directory: a base image is tens
  * of GB, and some repositories force-track build output, so an accidental
@@ -70,7 +72,20 @@ export function cliEntry(): string {
  */
 export function recordCliEntry(path: string): void {
   process.env["WINVM_CLI"] = isCompiled(path) ? process.execPath : path
+  // The generation travels with the path: a detached service or watcher
+  // inherits exactly the identity of the CLI that started it.
+  process.env["WINVM_BUILD_ID"] = buildIdentity()
 }
+
+/**
+ * Set in the environment of every process winvm starts to manage an instance
+ * — the control service, the watcher, and what the watcher runs (`stow`). They
+ * are what reconciliation (lifecycle.ts) replaces, so they never reconcile.
+ */
+export const NO_RECONCILE = "WINVM_NO_RECONCILE"
+
+/** The environment for such a process: this one's, marked NO_RECONCILE. */
+export const managedEnv = (env: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv => ({ ...env, [NO_RECONCILE]: "1" })
 
 /**
  * The Bun this checkout of winvm is pinned to: its own `.bun-version`, at the
@@ -137,6 +152,10 @@ export interface Paths {
   readonly service: string
   readonly control: string
   readonly events: string
+  /** Held while one winvm brings the service and watcher up to its build (lifecycle.ts). */
+  readonly reconcile: string
+  /** One `<pid>.json` per active machine-impacting command (operation.ts). */
+  readonly operations: string
   readonly pid: string
   readonly serial: string
   /**
@@ -174,6 +193,8 @@ export function pathsFor(name: string): Paths {
     service: resolve(dir, "service.json"),
     control: resolve(dir, "control.sock"),
     events: resolve(dir, "events.jsonl"),
+    reconcile: resolve(dir, "reconcile.lock"),
+    operations: resolve(dir, "operations"),
     pid: resolve(dir, "qemu.pid"),
     serial: resolve(dir, "serial.log"),
     serialPrev: resolve(dir, "serial.prev.log"),

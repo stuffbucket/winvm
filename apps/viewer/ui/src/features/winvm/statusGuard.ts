@@ -14,9 +14,13 @@
  * - Pause, Sleep, Resume and Wake know what they did, so the window shows that
  *   at once (`held`) and keeps it until a read started after the verb lands.
  */
-import type { Phase, Status } from "../../model"
+import type { Phase, Status, VmOperation } from "../../model"
 
-export type Verb = "start" | "stop" | "reboot" | "pause" | "resume" | "sleep" | "wake" | "lock" | "kill" | "setup" | "save" | "load"
+/** The commands the window runs. `stow` is the close flow's own: nothing in the toolbar starts it. */
+export type Verb = "start" | "stop" | "reboot" | "pause" | "resume" | "sleep" | "wake" | "lock" | "kill" | "setup" | "save" | "load" | "stow"
+
+/** The shared operation a viewer verb is: the same names core publishes while a command runs. */
+export const operationFor = (verb: Verb): VmOperation => verb
 
 /** What the machine is, once `verb` has succeeded; null when that is for a status read to say. */
 export function phaseAfter(verb: Verb): Phase | null {

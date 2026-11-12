@@ -10,7 +10,18 @@ import { PACKAGE_DIR, pathsFor, type Paths } from "../src/paths"
 import * as qga from "../src/qga"
 import { qemuArgs } from "../src/qemu"
 import * as qmp from "../src/qmp"
-import { ensureService, keepService, readService, runService, stopService, type ServiceHandle } from "../src/service"
+import { buildIdentity } from "../src/identity"
+import {
+  dropServiceRecord,
+  ensureService,
+  keepService,
+  readService,
+  runService,
+  serviceFreshness,
+  stopService,
+  type ServiceHandle,
+  type ServiceInfo,
+} from "../src/service"
 import { FakeAgent } from "./fakes/agent"
 import { FakeQmp } from "./fakes/qmp"
 
@@ -51,13 +62,27 @@ const lastEvent = (): Record<string, unknown> => {
   return JSON.parse(lines[lines.length - 1] ?? "{}") as Record<string, unknown>
 }
 
+/**
+ * The record as written. These tests run the service in this very process,
+ * which readService rightly never takes for a service (its command line is
+ * `bun test`), so they read what it claimed directly.
+ */
+const recorded = (): ServiceInfo | null => {
+  try {
+    return JSON.parse(readFileSync(p.service, "utf8")) as ServiceInfo
+  } catch {
+    return null
+  }
+}
+
 describe("the service", () => {
   it("serves the instance's sockets and records itself", async () => {
     svc = await runService("t", { exitAfterMs: 200, checkMs: 50 })
     expect(await qmp.status(p.qmp)).toBe("running")
-    const info = readService(p)
+    const info = recorded()
     expect(info?.pid).toBe(process.pid)
     expect(statSync(p.service).mode & 0o777).toBe(0o600)
+    expect(info?.build).toBe(buildIdentity())
     expect(lastEvent()).toMatchObject({ instance: "t", kind: "service", what: "started" })
   })
 
@@ -110,8 +135,8 @@ describe("the service", () => {
     expect(statSync(p.control).mode & 0o777).toBe(0o600)
     const res = await fetch("http://localhost/status", { unix: p.control })
     expect(((await res.json()) as { qemuPid: number }).qemuPid).toBe(process.pid)
-    expect(readService(p)).not.toHaveProperty("port")
-    expect(readService(p)).not.toHaveProperty("token")
+    expect(recorded()).not.toHaveProperty("port")
+    expect(recorded()).not.toHaveProperty("token")
   })
 
   it("survives QEMU being replaced, and stops once QEMU is gone for good", async () => {
@@ -139,7 +164,7 @@ describe("the service", () => {
     writeFileSync(resolve(lockDir, ".lock"), String(process.pid))
     rmSync(p.pid)
     await sleep(600)
-    expect(readService(p)?.pid).toBe(process.pid)
+    expect(recorded()?.pid).toBe(process.pid)
     expect(existsSync(p.qmp)).toBe(true)
   })
 })
@@ -148,7 +173,7 @@ describe("one service per instance", () => {
   it("refuses to start while another service holds the instance, and leaves it working", async () => {
     svc = await runService("t", { exitAfterMs: 5000, checkMs: 50 })
     await expect(runService("t", { exitAfterMs: 5000, checkMs: 50 })).rejects.toThrow(`holds instance "t"`)
-    expect(readService(p)?.pid).toBe(process.pid)
+    expect(recorded()?.pid).toBe(process.pid)
     expect(await qmp.status(p.qmp)).toBe("running")
     expect((await fetch("http://localhost/status", { unix: p.control })).status).toBe(200)
   })
@@ -158,7 +183,7 @@ describe("one service per instance", () => {
     await gone.exited
     writeFileSync(p.service, JSON.stringify({ pid: gone.pid, cli: "", version: "", startedAt: "" }))
     svc = await runService("t", { exitAfterMs: 5000, checkMs: 50 })
-    expect(readService(p)?.pid).toBe(process.pid)
+    expect(recorded()?.pid).toBe(process.pid)
   })
 
   it("stops when its record names another service, and leaves that service's sockets", async () => {
@@ -178,7 +203,7 @@ describe("one service per instance", () => {
     await sleep(200)
     keepService(p)
     await sleep(250)
-    expect(readService(p)?.pid).toBe(process.pid)
+    expect(recorded()?.pid).toBe(process.pid)
     await svc.done
     svc = null
   })
@@ -189,6 +214,97 @@ describe("one service per instance", () => {
     expect(readService(p)).toBeNull()
     other.kill()
   })
+
+  it("never takes this very process for a service, so a stale record naming it cannot make it signal itself", () => {
+    writeFileSync(p.service, JSON.stringify({ pid: process.pid, cli: "", version: "", startedAt: "" }))
+    expect(readService(p)).toBeNull()
+    let t = 0
+    const kills: string[] = []
+    stopService(p, {
+      kill: (_pid, sig) => void kills.push(sig),
+      now: () => t,
+      sleep: (ms) => {
+        t += ms
+      },
+    })
+    expect(kills).toEqual([])
+  })
+
+  it("drops a rejected record only while it is still that record, never a service's fresh claim", () => {
+    const rejected = JSON.stringify({ pid: 424_242, cli: "", version: "", startedAt: "" })
+    const fresh = JSON.stringify({ pid: 424_243, cli: "", version: "", startedAt: "", build: "sha256:new" })
+    writeFileSync(p.service, fresh)
+    expect(dropServiceRecord(p, rejected)).toBe(false)
+    expect(readFileSync(p.service, "utf8")).toBe(fresh)
+    writeFileSync(p.service, rejected)
+    expect(dropServiceRecord(p, rejected)).toBe(true)
+    expect(existsSync(p.service)).toBe(false)
+  })
+
+  for (const [label, argv] of [
+    ["an instance whose name starts with this one's", ["winvm", "serve", "-i", "tt"]],
+    ["another instance named with --instance=", ["winvm", "serve", "--instance=other"]],
+  ] as const) {
+    it(`never takes the service of ${label} for this one's, nor signals it`, () => {
+      const h = Bun.spawn([process.execPath, resolve(import.meta.dir, "fakes", "holder.ts"), ...argv], { stdout: "ignore", stderr: "ignore" })
+      try {
+        writeFileSync(p.service, JSON.stringify({ pid: h.pid, cli: "", version: "", startedAt: "" }))
+        expect(readService(p)).toBeNull()
+        const kills: string[] = []
+        stopService(p, { kill: (_pid, sig) => void kills.push(sig) })
+        expect(kills).toEqual([])
+      } finally {
+        h.kill()
+      }
+    })
+  }
+})
+
+describe("which process is the default instance's service", () => {
+  const holder = resolve(import.meta.dir, "fakes", "holder.ts")
+  const d = (): Paths => {
+    const dp = pathsFor("default")
+    mkdirSync(dp.dir, { recursive: true })
+    return dp
+  }
+
+  // A pid reused by any of these must never be signalled as a winvm service.
+  for (const argv of [["ollama", "serve"], ["hugo", "serve"], ["node", "server.js", "serve"], ["winvm", "serve"], ["evilwinvm", "serve", "-i", "default"], ["ollama", "serve", "-i", "default"]]) {
+    it(`is never \`${argv.join(" ")}\``, () => {
+      const dp = d()
+      const h = Bun.spawn([process.execPath, holder, ...argv], { stdout: "ignore", stderr: "ignore" })
+      try {
+        writeFileSync(dp.service, JSON.stringify({ pid: h.pid, cli: "", version: "", startedAt: "" }))
+        expect(readService(dp)).toBeNull()
+        const kills: string[] = []
+        stopService(dp, { kill: (_pid, sig) => void kills.push(sig) })
+        expect(kills).toEqual([])
+      } finally {
+        h.kill()
+      }
+    })
+  }
+
+  // What winvm spawns: from source, an installed CLI, and Tauri's target-suffixed sidecar.
+  for (const argv of [
+    ["/repo/apps/cli/src/winvm.ts", "serve", "-i", "default"],
+    ["/Applications/winvm.app/Contents/MacOS/winvm", "serve", "--instance=default"],
+    ["/Applications/winvm.app/Contents/MacOS/winvm-aarch64-apple-darwin", "serve", "-i", "default"],
+  ]) {
+    it(`is \`${argv.join(" ")}\``, () => {
+      const dp = d()
+      const h = Bun.spawn([process.execPath, holder, ...argv], { stdout: "ignore", stderr: "ignore" })
+      try {
+        writeFileSync(dp.service, JSON.stringify({ pid: h.pid, cli: "", version: "", startedAt: "" }))
+        expect(readService(dp)?.pid).toBe(h.pid)
+      } finally {
+        h.kill()
+      }
+    })
+  }
+})
+
+describe("one service per instance, continued", () => {
 
   it("asks for the guest's port without waiting behind a QMP caller", async () => {
     svc = await runService("t", { exitAfterMs: 5000, checkMs: 50 })
@@ -236,6 +352,7 @@ describe("starting the service", () => {
     expect((await fetch("http://localhost/status", { unix: p.control })).status).toBe(200)
     const again = await ensureService("t", p)
     expect(again.pid).toBe(first.pid)
+    expect(first.build).toBe(buildIdentity())
   }, 30_000)
 
   it("stops it, and waits until it has gone", async () => {
@@ -244,6 +361,183 @@ describe("starting the service", () => {
     expect(readService(p)).toBeNull()
     expect(spawnSync("ps", ["-o", "stat=", "-p", String(info.pid)], { encoding: "utf8" }).stdout.trim()).toMatch(/^(Z.*)?$/)
   }, 30_000)
+})
+
+/**
+ * A stand-in service: a process of ours whose command line passes the service
+ * check (` serve -i <name>`) without being one. A single process (fakes/holder.ts),
+ * so killing it leaves no orphan behind.
+ */
+const fakeService = (name: string): ReturnType<typeof Bun.spawn> =>
+  Bun.spawn([process.execPath, resolve(import.meta.dir, "fakes", "holder.ts"), "winvm", "serve", "-i", name], { stdout: "ignore", stderr: "ignore" })
+
+const alive = (pid: number): boolean => {
+  try {
+    process.kill(pid, 0)
+    return spawnSync("ps", ["-o", "stat=", "-p", String(pid)], { encoding: "utf8" }).stdout.trim().startsWith("Z") === false
+  } catch {
+    return false
+  }
+}
+
+describe("service generations", () => {
+  const CLI = "/test/apps/cli/src/winvm.ts"
+  const CURRENT = "sha256:current"
+  let savedCli: string | undefined
+  let control: ReturnType<typeof Bun.serve> | null = null
+  const spawned: ReturnType<typeof Bun.spawn>[] = []
+
+  const holder = (): ReturnType<typeof Bun.spawn> => {
+    const h = fakeService("t")
+    spawned.push(h)
+    return h
+  }
+  const record = (pid: number, build: string | undefined, cli = CLI): void => {
+    const info: ServiceInfo = { pid, cli, version: "0", startedAt: "", ...(build === undefined ? {} : { build }) }
+    writeFileSync(p.service, JSON.stringify(info))
+  }
+
+  beforeEach(() => {
+    savedCli = process.env["WINVM_CLI"]
+    process.env["WINVM_CLI"] = CLI
+    control = Bun.serve({ unix: p.control, fetch: () => new Response("ok") })
+  })
+
+  afterEach(async () => {
+    await control?.stop(true)
+    control = null
+    for (const s of spawned.splice(0)) s.kill()
+    if (savedCli === undefined) delete process.env["WINVM_CLI"]
+    else process.env["WINVM_CLI"] = savedCli
+  })
+
+  it("classifies a record by its build: current, stale, or legacy when it has none", () => {
+    const base = { pid: 1, cli: CLI, version: "0", startedAt: "" }
+    expect(serviceFreshness({ ...base, build: CURRENT }, CURRENT)).toBe("current")
+    expect(serviceFreshness({ ...base, build: "sha256:old" }, CURRENT)).toBe("stale")
+    expect(serviceFreshness(base, CURRENT)).toBe("legacy")
+    expect(serviceFreshness({ ...base, build: buildIdentity() })).toBe("current")
+  })
+
+  it("still reads a live legacy record: freshness is the caller's decision", () => {
+    const h = holder()
+    record(h.pid, undefined)
+    expect(readService(p)?.pid).toBe(h.pid)
+    expect(readService(p)?.build).toBeUndefined()
+  })
+
+  for (const [label, cli] of [["this CLI path", CLI], ["another CLI path", "/Applications/winvm.app/Contents/MacOS/winvm"]] as const) {
+    it(`reuses a service of the current generation from ${label}`, async () => {
+      const h = holder()
+      record(h.pid, CURRENT, cli)
+      const info = await ensureService("t", p, {
+        current: CURRENT,
+        start: () => {
+          throw new Error("must not start a second service")
+        },
+      })
+      expect(info.pid).toBe(h.pid)
+      expect(alive(h.pid)).toBe(true)
+    })
+  }
+
+  for (const [label, build] of [["another generation", "sha256:old"], ["no recorded generation", undefined]] as const) {
+    it(`replaces a service with ${label}`, async () => {
+      const old = holder()
+      record(old.pid, build)
+      let next: ReturnType<typeof Bun.spawn> | null = null
+      const info = await ensureService("t", p, {
+        current: CURRENT,
+        start: () => {
+          next = holder()
+          record(next.pid, CURRENT)
+        },
+      })
+      expect(next).not.toBeNull()
+      expect(info.pid).toBe((next as unknown as { pid: number }).pid)
+      expect(info.build).toBe(CURRENT)
+      await sleep(50)
+      expect(alive(old.pid)).toBe(false)
+    })
+  }
+
+  it("does not call the replacement ready until its record carries the current build", async () => {
+    const old = holder()
+    record(old.pid, "sha256:old")
+    await expect(
+      ensureService("t", p, {
+        current: CURRENT,
+        timeoutMs: 400,
+        // A replacement that answers, but that is still the old generation.
+        start: () => record(holder().pid, "sha256:old"),
+      }),
+    ).rejects.toThrow("did not start")
+  })
+
+  it("never signals a pid that is not this instance's service, and drops the record", async () => {
+    const stranger = Bun.spawn(["sleep", "20"])
+    spawned.push(stranger)
+    record(stranger.pid, "sha256:old")
+    let started = 0
+    await expect(ensureService("t", p, { current: CURRENT, timeoutMs: 300, start: () => void (started += 1) })).rejects.toThrow(
+      "did not start",
+    )
+    expect(started).toBe(1)
+    expect(alive(stranger.pid)).toBe(true)
+    expect(existsSync(p.service)).toBe(false)
+  })
+
+  it("can be called again after a start that failed", async () => {
+    await expect(ensureService("t", p, { current: CURRENT, timeoutMs: 200, start: () => undefined })).rejects.toThrow("did not start")
+    const info = await ensureService("t", p, {
+      current: CURRENT,
+      start: () => record(holder().pid, CURRENT),
+    })
+    expect(info.build).toBe(CURRENT)
+    const again = await ensureService("t", p, {
+      current: CURRENT,
+      start: () => {
+        throw new Error("already running")
+      },
+    })
+    expect(again.pid).toBe(info.pid)
+  })
+})
+
+describe("stopping a service", () => {
+  /** A fake clock and process table: no real wait, no real signal. */
+  const run = (o: { readonly isService: (t: number) => boolean }): { kills: string[]; elapsed: number } => {
+    writeFileSync(p.service, JSON.stringify({ pid: 424_242, cli: "", version: "", startedAt: "" }))
+    let t = 0
+    const kills: string[] = []
+    stopService(p, {
+      kill: (_pid, sig) => void kills.push(sig),
+      now: () => t,
+      sleep: (ms) => {
+        t += ms
+      },
+      running: () => true,
+      isService: () => o.isService(t),
+    })
+    return { kills, elapsed: t }
+  }
+
+  it("kills a service that is still running 5 s after SIGTERM", () => {
+    const r = run({ isService: () => true })
+    expect(r.kills).toEqual(["SIGTERM", "SIGKILL"])
+    expect(r.elapsed).toBeGreaterThanOrEqual(5000)
+    expect(existsSync(p.service)).toBe(false)
+  })
+
+  it("re-checks the pid is still this instance's service just before SIGKILL", () => {
+    // It ignores SIGTERM for its 5 s, and by then the pid belongs to something else.
+    const r = run({ isService: (t) => t < 5000 })
+    expect(r.kills).toEqual(["SIGTERM"])
+  })
+
+  it("signals nothing when the record names a process that is not its service", () => {
+    expect(run({ isService: () => false }).kills).toEqual([])
+  })
 })
 
 describe("QEMU's command line", () => {
