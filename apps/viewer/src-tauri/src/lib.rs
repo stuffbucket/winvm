@@ -1,5 +1,6 @@
 mod agent;
 mod checkpoints;
+mod close;
 mod dragout;
 mod liveresize;
 mod sidecar;
@@ -310,6 +311,8 @@ fn check_for_update(app: tauri::AppHandle, asked: bool) {
                     match done {
                         Ok(()) => {
                             stop_sharing(&app.state::<Sharing>());
+                            // Updating never opens the close flow or changes a VM: let the restart through.
+                            app.state::<close::CloseCoordinator>().authorize_bypass();
                             app.restart();
                         }
                         Err(e) => {
@@ -394,6 +397,16 @@ fn menu(app: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
     let input_index = menu.items()?.len().saturating_sub(2);
     menu.insert(&input, input_index)?;
     if let Some(app_menu) = menu.items()?.first().and_then(|i| i.as_submenu().cloned()) {
+        // The predefined Quit terminates the app without asking; ours joins the main window's close.
+        let items = app_menu.items()?;
+        let predefined_quit = items
+            .last()
+            .filter(|i| i.as_predefined_menuitem().is_some_and(|q| q.text().is_ok_and(|t| t.starts_with("Quit"))));
+        if let Some(quit) = predefined_quit {
+            app_menu.remove(quit)?;
+            let name = app.package_info().name.clone();
+            app_menu.append(&MenuItem::with_id(app, close::QUIT_ID, format!("Quit {name}"), true, Some("CmdOrCtrl+Q"))?)?;
+        }
         app_menu.insert_items(&[&install, &PredefinedMenuItem::separator(app)?], 2)?;
         app_menu.insert(&updates, 1)?;
     }
@@ -439,10 +452,18 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(Sharing::default())
         .manage(Updating::default())
+        .manage(close::CloseCoordinator::default())
         .manage(TerminalRequests::default())
         .manage(agent::Agents::default())
         .menu(menu)
         .on_window_event(|window, event| {
+            // The main window's close is the viewer's close: it asks the window to run its flow, and
+            // the window closes only once that is done. Other windows close themselves.
+            if let WindowEvent::CloseRequested { api, .. } = event {
+                if close::closes_viewer(window.label()) && close::request(window.app_handle()) {
+                    api.prevent_close();
+                }
+            }
             // Tabs asked for and never taken die with the window, rather than open in the next one.
             if let (WindowEvent::Destroyed, TERMINAL) = (event, window.label()) {
                 if let Ok(mut queue) = window.state::<TerminalRequests>().0.lock() {
@@ -462,15 +483,23 @@ pub fn run() {
                     | "send-ctrl-alt-delete"
             ) {
                 let _ = app.emit("menu", id);
+            } else if close::is_quit(id) {
+                close::request(app);
             } else if id == "new-tab" || id == "close" {
-                match focused_window(app) {
-                    Some(w) if w.label() == TERMINAL => {
+                let focused = focused_window(app);
+                match (id, close::route_close(focused.as_ref().map(|w| w.label()), TERMINAL)) {
+                    (_, close::CloseRoute::TerminalTab) => {
                         let _ = app.emit_to(TERMINAL, "terminal-menu", if id == "new-tab" { "new-tab" } else { "close-tab" });
                     }
-                    Some(w) if id == "close" => {
-                        let _ = w.close();
+                    ("close", close::CloseRoute::Viewer) => {
+                        close::request(app);
                     }
-                    _ if id == "new-tab" => {
+                    ("close", close::CloseRoute::Window) => {
+                        if let Some(w) = focused {
+                            let _ = w.close();
+                        }
+                    }
+                    ("new-tab", _) => {
                         let _ = app.emit_to("main", "menu", "new-terminal");
                     }
                     _ => {}
@@ -528,14 +557,24 @@ pub fn run() {
             home_dir,
             dragout::files_drag_out,
             trace,
-            set_system_keyboard_capture
+            set_system_keyboard_capture,
+            close::close_start,
+            close::close_cancel,
+            close::close_complete
         ])
         .build(tauri::generate_context!())
         .expect("winvm could not start")
-        .run(|app, event| {
-            if let RunEvent::Exit = event {
+        .run(|app, event| match event {
+            // A backstop: an exit nobody approved asks the main window instead of leaving.
+            RunEvent::ExitRequested { api, .. } => {
+                if close::request(app) {
+                    api.prevent_exit();
+                }
+            }
+            RunEvent::Exit => {
                 let _ = system_keyboard_capture(false);
                 stop_sharing(&app.state::<Sharing>());
             }
+            _ => {}
         });
 }
