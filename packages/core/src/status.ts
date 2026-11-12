@@ -20,6 +20,7 @@ import { connect } from "node:net"
 import { resolve } from "node:path"
 
 import { effectiveConfig } from "./config"
+import type { ClosePolicy } from "./config"
 import { describeDisplay, readDisplay, runningDisplay } from "./display"
 import { frozenFrom, markedAsleep, savingRunning } from "./frozen"
 import { qmpCommand } from "./monitor"
@@ -69,6 +70,8 @@ export interface InstanceStatus {
   readonly name: string
   /** What the Mac app calls it (`winvm config title=…`); null: its name. */
   readonly title: string | null
+  /** What closing the viewer window does here (`winvm config viewer.closePolicy=…`); `ask` unless chosen. */
+  readonly closePolicy: ClosePolicy
   readonly state: State
   /** QEMU's own run state (`query-status`), when the monitor answered. */
   readonly vmStatus: string | null
@@ -378,7 +381,9 @@ export async function gather(name: string, deep = true): Promise<InstanceStatus>
   const latest = saves[0] ?? null
   const latestBaseline = saves.find((s) => s.kind === "baseline") ?? null
   const savesSummary = { count: saves.length, bytes: saves.reduce((n, s) => n + (s.bytes ?? 0), 0), latest, latestBaseline }
-  const title = effectiveConfig(name).title || null
+  const config = effectiveConfig(name)
+  const title = config.title || null
+  const closePolicy = config["viewer.closePolicy"]
   // Read once, before anything awaits, so every shape below reports the same one.
   const operation = readOperation(name)
 
@@ -386,6 +391,7 @@ export async function gather(name: string, deep = true): Promise<InstanceStatus>
     return {
       name,
       title,
+      closePolicy,
       state: "missing",
       vmStatus: null,
       image: null,
@@ -424,6 +430,7 @@ export async function gather(name: string, deep = true): Promise<InstanceStatus>
   return {
     name,
     title,
+    closePolicy,
     state,
     vmStatus,
     image: meta.image,

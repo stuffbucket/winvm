@@ -96,6 +96,7 @@ describe("status formatting", () => {
   const sample: InstanceStatus = {
     name: "ui",
     title: null,
+    closePolicy: "ask",
     state: "running",
     vmStatus: "running",
     image: "win11-arm64",

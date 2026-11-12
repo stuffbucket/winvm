@@ -10,6 +10,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from "bun:test"
 
 import * as agent from "../src/agent"
 import { parseArgs } from "../src/args"
+import { configPath, parseAssignment, writeAssignments } from "../src/config"
 import { filesCmd } from "../src/finder"
 import { GuestFrozen, clearSavingRunning, frozenFrom, frozenState, isFrozenRunState, markAsleep, clearAsleep, markSavingRunning, markedAsleep, refuseFrozen, savingRunning } from "../src/frozen"
 import { pathsFor } from "../src/paths"
@@ -270,5 +271,29 @@ describe("status exposes the operation in flight", () => {
     expect(s.state).toBe("missing")
     expect(s.operation?.operation).toBe("start")
     c.kill()
+  })
+})
+
+describe("status reports the effective close policy", () => {
+  afterAll(() => {
+    rmSync(configPath(NAME), { force: true })
+    rmSync(pathsFor("frozen-nopolicy").dir, { recursive: true, force: true })
+  })
+
+  it("is ask until the instance chooses otherwise", async () => {
+    expect((await gather(NAME, false)).closePolicy).toBe("ask")
+  })
+
+  it("follows the instance's override", async () => {
+    writeAssignments(NAME, [parseAssignment("viewer.closePolicy=stow")])
+    expect((await gather(NAME, false)).closePolicy).toBe("stow")
+    writeAssignments(NAME, [parseAssignment("viewer.closePolicy=ask")])
+    expect((await gather(NAME, false)).closePolicy).toBe("ask")
+  })
+
+  it("reaches an instance that does not exist, so the viewer always has a policy", async () => {
+    const s = await gather("frozen-nopolicy", false)
+    expect(s.state).toBe("missing")
+    expect(s.closePolicy).toBe("ask")
   })
 })

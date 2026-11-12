@@ -6,10 +6,58 @@ const Guest = z.object({
   os: z.string().nullable(),
 })
 
+/** Mirrors core's operation.ts: the machine-impacting commands that publish a lease. An unknown name is unreadable, not guessed at. */
+export const VM_OPERATIONS = [
+  "start",
+  "stop",
+  "reboot",
+  "kill",
+  "reset",
+  "snapshot",
+  "rewind",
+  "save",
+  "load",
+  "pause",
+  "resume",
+  "sleep",
+  "wake",
+  "lock",
+  "stow",
+  "setup",
+  "golden-create",
+  "golden-reset",
+] as const
+
+const VmOperationSchema = z.enum(VM_OPERATIONS)
+
+export type VmOperation = z.infer<typeof VmOperationSchema>
+
+const OperationInfoSchema = z.object({
+  operation: VmOperationSchema,
+  pid: z.number(),
+  startedAt: z.string(),
+})
+
+export type OperationInfo = z.infer<typeof OperationInfoSchema>
+
+/** Mirrors core's config.ts: what closing the viewer window does to a running machine. */
+export const CLOSE_POLICIES = ["ask", "leave", "stow", "shutdown"] as const
+
+const ClosePolicySchema = z.enum(CLOSE_POLICIES)
+
+export type ClosePolicy = z.infer<typeof ClosePolicySchema>
+
+/** The `winvm config` assignment that sets an instance's close policy; `ask` removes the override. */
+export const closePolicyAssignment = (policy: ClosePolicy): string => `viewer.closePolicy=${policy}`
+
 const Status = z.object({
   name: z.string(),
   // What the user calls it (`winvm config title=…`); null, or absent from an older winvm: its name.
   title: z.string().nullable().default(null),
+  // What closing the window does (`winvm config viewer.closePolicy=…`); absent from an older winvm: ask.
+  closePolicy: ClosePolicySchema.default("ask"),
+  // The command running against it right now; null, or absent from an older winvm: none known.
+  operation: OperationInfoSchema.nullable().default(null),
   // "asleep": paused by `winvm sleep` (Windows locked first); a key in the screen wakes it.
   state: z.enum(["running", "paused", "asleep", "stopped", "stowed", "missing"]),
   vmStatus: z.string().nullable(),

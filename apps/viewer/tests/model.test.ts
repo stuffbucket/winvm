@@ -1,6 +1,11 @@
 import { describe, expect, it } from "bun:test"
 
+import { CLOSE_POLICIES as CORE_CLOSE_POLICIES } from "../../../packages/core/src/config"
+import { VM_OPERATIONS as CORE_VM_OPERATIONS } from "../../../packages/core/src/operation"
 import {
+  CLOSE_POLICIES,
+  VM_OPERATIONS,
+  closePolicyAssignment,
   controls,
   detailRows,
   displaySize,
@@ -333,5 +338,44 @@ describe("an instance's title", () => {
   it("sets it with winvm config, trimmed; empty clears it", () => {
     expect(titleAssignment("  Build box ")).toBe("title=Build box")
     expect(titleAssignment("   ")).toBe("title=")
+  })
+})
+
+describe("an instance's operation and close policy", () => {
+  it("reads both from a current winvm", () => {
+    const s = one({ operation: { operation: "stow", pid: 77, startedAt: "2026-03-03T00:00:00.000Z" }, closePolicy: "shutdown" })
+    expect(s.operation).toEqual({ operation: "stow", pid: 77, startedAt: "2026-03-03T00:00:00.000Z" })
+    expect(s.closePolicy).toBe("shutdown")
+  })
+
+  it("reads an older winvm's status, which has neither, as no operation and ask", () => {
+    const s = one()
+    expect(s.operation).toBeNull()
+    expect(s.closePolicy).toBe("ask")
+    expect(one({ operation: null }).operation).toBeNull()
+  })
+
+  it("accepts every close policy core can report", () => {
+    for (const closePolicy of CORE_CLOSE_POLICIES) expect(one({ closePolicy }).closePolicy).toBe(closePolicy)
+  })
+
+  it("rejects what would mislead: an unknown operation or policy makes the status unreadable", () => {
+    expect(parseStatus(JSON.stringify({ ...base, operation: { operation: "teleport", pid: 1, startedAt: "x" } }))).toBeNull()
+    expect(parseStatus(JSON.stringify({ ...base, closePolicy: "Leave" }))).toBeNull()
+    expect(parseStatus(JSON.stringify({ ...base, closePolicy: null }))).toBeNull()
+  })
+
+  it("accepts every operation core can record", () => {
+    expect([...VM_OPERATIONS]).toEqual([...CORE_VM_OPERATIONS])
+    for (const operation of VM_OPERATIONS) expect(one({ operation: { operation, pid: 1, startedAt: "t" } }).operation?.operation).toBe(operation)
+  })
+
+  it("mirrors core's close policies", () => {
+    expect([...CLOSE_POLICIES]).toEqual([...CORE_CLOSE_POLICIES])
+  })
+
+  it("sets the policy with winvm config", () => {
+    expect(closePolicyAssignment("stow")).toBe("viewer.closePolicy=stow")
+    expect(closePolicyAssignment("ask")).toBe("viewer.closePolicy=ask")
   })
 })

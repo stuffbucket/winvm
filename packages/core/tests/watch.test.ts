@@ -9,7 +9,7 @@ import { resolve } from "node:path"
 
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "bun:test"
 
-import { DEFAULTS, configPath, effectiveConfig, parseAssignment, readOverrides, writeAssignments } from "../src/config"
+import { CLOSE_POLICIES, DEFAULTS, configPath, effectiveConfig, parseAssignment, readOverrides, writeAssignments } from "../src/config"
 import { buildIdentity } from "../src/identity"
 import { PACKAGE_DIR, instanceDir, pathsFor } from "../src/paths"
 import type { Decision, Sample, Settings, Timing } from "../src/idle"
@@ -353,6 +353,61 @@ describe("instance config", () => {
     expect(readOverrides("edited")).toEqual({ "stow.enabled": false })
     writeFileSync(configPath("edited"), JSON.stringify({ title: 42 }))
     expect(effectiveConfig("edited").title).toBe("")
+  })
+})
+
+describe("instance settings: close policy", () => {
+  const home = mkdtempSync(resolve(tmpdir(), "winvm-closepolicy-"))
+  const before = process.env["WINVM_HOME"]
+  beforeAll(() => {
+    process.env["WINVM_HOME"] = home
+  })
+  afterAll(() => {
+    if (before === undefined) delete process.env["WINVM_HOME"]
+    else process.env["WINVM_HOME"] = before
+    rmSync(home, { recursive: true, force: true })
+  })
+
+  it("lists exactly four policies, and ask is the default", () => {
+    expect(CLOSE_POLICIES).toEqual(["ask", "leave", "stow", "shutdown"])
+    expect(DEFAULTS["viewer.closePolicy"]).toBe("ask")
+  })
+
+  it("accepts each policy exactly", () => {
+    for (const policy of CLOSE_POLICIES) expect(parseAssignment(`viewer.closePolicy=${policy}`)).toEqual(["viewer.closePolicy", policy])
+  })
+
+  it("rejects case variants and unknown values, listing what is allowed", () => {
+    for (const bad of ["Ask", "LEAVE", "Stow", "shutDown", "pause", "", "leave now"]) {
+      expect(() => parseAssignment(`viewer.closePolicy=${bad}`)).toThrow("ask, leave, stow, shutdown")
+    }
+  })
+
+  it("does not apply title validation to it", () => {
+    expect(() => parseAssignment(`viewer.closePolicy=${"x".repeat(81)}`)).not.toThrow("80")
+  })
+
+  it("falls back to ask for an invalid value on disk, keeping valid neighbours", () => {
+    mkdirSync(instanceDir("badpolicy"), { recursive: true })
+    for (const bad of ["Ask", "pause", "", 3, null, true]) {
+      writeFileSync(configPath("badpolicy"), JSON.stringify({ "viewer.closePolicy": bad, "stow.enabled": false }))
+      expect(readOverrides("badpolicy")).toEqual({ "stow.enabled": false })
+      expect(effectiveConfig("badpolicy")["viewer.closePolicy"]).toBe("ask")
+    }
+  })
+
+  it("persists a non-default policy and reads it back", () => {
+    writeAssignments("chosen", [parseAssignment("viewer.closePolicy=shutdown")])
+    expect(readOverrides("chosen")).toEqual({ "viewer.closePolicy": "shutdown" })
+    expect(effectiveConfig("chosen")["viewer.closePolicy"]).toBe("shutdown")
+  })
+
+  it("writing ask removes the override and keeps unrelated settings", () => {
+    writeAssignments("reset", [parseAssignment("viewer.closePolicy=stow"), parseAssignment("title=Build box"), parseAssignment("stow.enabled=off")])
+    writeAssignments("reset", [parseAssignment("viewer.closePolicy=ask")])
+    expect(readOverrides("reset")).toEqual({ title: "Build box", "stow.enabled": false })
+    expect(JSON.parse(readFileSync(configPath("reset"), "utf8"))).not.toHaveProperty("viewer.closePolicy")
+    expect(effectiveConfig("reset")["viewer.closePolicy"]).toBe("ask")
   })
 })
 
