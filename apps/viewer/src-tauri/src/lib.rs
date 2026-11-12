@@ -2,6 +2,7 @@ mod agent;
 mod checkpoints;
 mod dragout;
 mod liveresize;
+mod sidecar;
 mod usage;
 
 use serde::{Deserialize, Serialize};
@@ -11,16 +12,9 @@ use std::sync::Mutex;
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem, Submenu, HELP_SUBMENU_ID, WINDOW_SUBMENU_ID};
 use tauri::{Emitter, Manager, RunEvent, WebviewUrl, WebviewWindowBuilder, WindowEvent};
 use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
-use tauri_plugin_shell::process::{CommandChild, CommandEvent};
-use tauri_plugin_shell::ShellExt;
+use sidecar::{Finished, Output, SidecarFailure};
+use tauri_plugin_shell::process::CommandChild;
 use tauri_plugin_updater::UpdaterExt;
-
-#[derive(Serialize)]
-struct Output {
-    code: i32,
-    stdout: String,
-    stderr: String,
-}
 
 const VERBS: &[&str] = &[
     "status", "info", "doctor", "start", "stop", "reboot", "pause", "resume", "kill", "open", "setup", "exec", "put", "get",
@@ -28,25 +22,15 @@ const VERBS: &[&str] = &[
     "destroy", "ls", "mcp", "sleep", "wake", "lock", "settings", "files", "share",
 ];
 
+/// Runs `winvm ARGS` (within the deadline its verb has: sidecar.rs). A nonzero exit is a
+/// SidecarFailure of kind `exit`, which the UI turns back into its output (backend.ts).
 #[tauri::command]
-async fn winvm(app: tauri::AppHandle, args: Vec<String>) -> Result<Output, String> {
+async fn winvm(app: tauri::AppHandle, args: Vec<String>) -> Result<Output, SidecarFailure> {
     match args.first() {
         Some(verb) if VERBS.contains(&verb.as_str()) => {}
-        _ => return Err(format!("not a winvm command this app runs: {:?}", args.first())),
+        _ => return Err(SidecarFailure::rejected(&sidecar::operation_of(&args), format!("not a winvm command this app runs: {:?}", args.first()))),
     }
-    let out = app
-        .shell()
-        .sidecar("winvm")
-        .map_err(|e| e.to_string())?
-        .args(args)
-        .output()
-        .await
-        .map_err(|e| e.to_string())?;
-    Ok(Output {
-        code: out.status.code().unwrap_or(-1),
-        stdout: String::from_utf8_lossy(&out.stdout).into_owned(),
-        stderr: String::from_utf8_lossy(&out.stderr).into_owned(),
-    })
+    sidecar::run_sidecar(&app, &args, sidecar::timeout_for(&args)).await
 }
 
 /// The `winvm cua serve` this app started, while the screen is shared with an agent.
@@ -55,51 +39,24 @@ struct Sharing(Mutex<Option<CommandChild>>);
 
 fn stop_sharing(sharing: &Sharing) {
     if let Some(child) = sharing.0.lock().map(|mut c| c.take()).unwrap_or(None) {
-        // SIGTERM, so the server removes its cua.json; CommandChild::kill is SIGKILL.
-        let _ = std::process::Command::new("/bin/kill").arg(child.pid().to_string()).status();
+        // SIGTERM, so the server removes its cua.json; CommandChild::kill is SIGKILL. Only while it is still ours.
+        let _ = sidecar::terminate_child(child.pid());
     }
 }
 
-/// Starts `winvm cua serve` and returns what it printed once it is listening (or what it said before exiting).
+/// Starts `winvm cua serve` and returns what it printed once it is listening (or what it said before
+/// exiting), within SHARE_HANDSHAKE_TIMEOUT: a server that never prints its token is stopped.
 #[tauri::command]
-async fn share_start(app: tauri::AppHandle, instance: String) -> Result<Output, String> {
+async fn share_start(app: tauri::AppHandle, instance: String) -> Result<Output, SidecarFailure> {
     let sharing = app.state::<Sharing>();
     stop_sharing(&sharing);
-    let (mut rx, child) = app
-        .shell()
-        .sidecar("winvm")
-        .map_err(|e| e.to_string())?
-        .args(["cua", "serve", "-i", instance.as_str()])
-        .spawn()
-        .map_err(|e| e.to_string())?;
-    let mut stdout = String::new();
-    let mut stderr = String::new();
-    let mut code = None;
-    while let Some(event) = rx.recv().await {
-        match event {
-            CommandEvent::Stdout(line) => {
-                stdout.push_str(&String::from_utf8_lossy(&line));
-                stdout.push('\n');
-                if stdout.contains("  token ") {
-                    break;
-                }
-            }
-            CommandEvent::Stderr(line) => {
-                stderr.push_str(&String::from_utf8_lossy(&line));
-                stderr.push('\n');
-            }
-            CommandEvent::Terminated(t) => {
-                code = Some(t.code.unwrap_or(-1));
-                break;
-            }
-            _ => {}
-        }
-    }
-    match code {
-        Some(code) => Ok(Output { code, stdout, stderr }),
-        None => {
-            *sharing.0.lock().map_err(|e| e.to_string())? = Some(child);
-            Ok(Output { code: 0, stdout, stderr })
+    let args = ["cua", "serve", "-i", instance.as_str()].map(String::from);
+    let ready = |stdout: &str| stdout.contains("  token ");
+    match sidecar::start_sidecar(&app, &args, sidecar::SHARE_HANDSHAKE_TIMEOUT, &ready).await? {
+        Finished::Exited(out) => Ok(out),
+        Finished::Ready { output, child } => {
+            *sharing.0.lock().map_err(|e| SidecarFailure::rejected("cua serve", e.to_string()))? = Some(child);
+            Ok(output)
         }
     }
 }

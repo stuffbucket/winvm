@@ -14,6 +14,10 @@
 //! once (exit 3) rather than wait for the agent or reinstall it; that answer
 //! comes back as an error starting "paused:", and is not kept, so the first
 //! call after it runs again connects straight away.
+//!
+//! The connect itself runs within a deadline (sidecar.rs): a CLI that never
+//! answers is stopped and its failure kept like any other, so the one connect
+//! at a time never holds every other call indefinitely.
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -21,7 +25,8 @@ use std::collections::HashMap;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 use tauri::async_runtime::Mutex as AsyncMutex;
-use tauri_plugin_shell::ShellExt;
+
+use crate::sidecar::{self, FailureKind, SidecarFailure};
 
 /// After a failed connect, calls fail at once for this long.
 const RETRY_AFTER: Duration = Duration::from_secs(10);
@@ -215,19 +220,19 @@ fn connect_failure(code: Option<i32>, stderr: &str) -> ConnectFailure {
     ConnectFailure::Other(if said.is_empty() { format!("winvm agent connect exited {code:?}") } else { said })
 }
 
-async fn connect(app: &tauri::AppHandle, instance: &str) -> Result<Link, ConnectFailure> {
-    let out = app
-        .shell()
-        .sidecar("winvm")
-        .map_err(|e| ConnectFailure::Other(e.to_string()))?
-        .args(["agent", "-i", instance, "connect", "--json"])
-        .output()
-        .await
-        .map_err(|e| ConnectFailure::Other(e.to_string()))?;
-    if !out.status.success() {
-        return Err(connect_failure(out.status.code(), &String::from_utf8_lossy(&out.stderr)));
+/// Why a bounded `winvm agent connect` failed: an exit keeps its code (3: paused); a
+/// missing helper, one that would not start, or one past its deadline says so.
+fn connect_failed(f: SidecarFailure) -> ConnectFailure {
+    match f.kind {
+        FailureKind::Exit => connect_failure(f.code, &f.stderr),
+        FailureKind::Missing | FailureKind::Launch | FailureKind::Timeout => ConnectFailure::Other(f.message),
     }
-    parse_link(&String::from_utf8_lossy(&out.stdout)).map_err(ConnectFailure::Other)
+}
+
+async fn connect(app: &tauri::AppHandle, instance: &str) -> Result<Link, ConnectFailure> {
+    let args = ["agent", "-i", instance, "connect", "--json"].map(String::from);
+    let out = sidecar::run_sidecar(app, &args, Some(sidecar::AGENT_CONNECT_TIMEOUT)).await.map_err(connect_failed)?;
+    parse_link(&out.stdout).map_err(ConnectFailure::Other)
 }
 
 /// A request to a machine's agent (`GET /stats`, `POST /display`, …): its status and body.
@@ -269,6 +274,19 @@ mod tests {
         assert_eq!(connect_failure(Some(3), ""), ConnectFailure::Paused("paused: the machine is paused".into()));
         assert_eq!(connect_failure(Some(1), "::error::instance \"demo\" is not running\n"), ConnectFailure::Other("instance \"demo\" is not running".into()));
         assert_eq!(connect_failure(None, ""), ConnectFailure::Other("winvm agent connect exited None".into()));
+    }
+
+    #[test]
+    fn a_bounded_connect_keeps_paused_apart_from_timeouts_and_missing_helpers() {
+        let paused = SidecarFailure::exit("agent connect", Some(3), None, String::new(), "::error::instance \"demo\" is paused\n".into());
+        assert_eq!(connect_failed(paused), ConnectFailure::Paused("paused: instance \"demo\" is paused".into()));
+        let broken = SidecarFailure::exit("agent connect", Some(1), None, String::new(), "::error::not running\n".into());
+        assert_eq!(connect_failed(broken), ConnectFailure::Other("not running".into()));
+        let late = SidecarFailure::timeout("agent connect", sidecar::AGENT_CONNECT_TIMEOUT, String::new(), String::new());
+        let message = late.message.clone();
+        assert_eq!(connect_failed(late), ConnectFailure::Other(message));
+        let missing = SidecarFailure::missing("agent connect", "No such file or directory (os error 2)".into());
+        assert!(matches!(connect_failed(missing), ConnectFailure::Other(m) if m.contains("Reinstall")));
     }
 
     #[test]

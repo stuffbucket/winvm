@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react"
 
-import { installCli, outputText, winvm } from "../../backend"
+import { errorMessage, installCli, outputText, winvm } from "../../backend"
 import type { Checks, Connection, Phase, Status } from "../../model"
 import { isLivePhase, parseChecks, parseConnection, parseStatus, phase, titleAssignment } from "../../model"
 import { phaseAfter, shownPhase, StatusGuard, type Verb } from "./statusGuard"
@@ -42,7 +42,12 @@ export interface Winvm {
   refresh(): Promise<void>
 }
 
-const errorText = (e: unknown): string => (e instanceof Error ? e.message : String(e))
+/**
+ * A failure's words: a SidecarError (the helper missing, not starting, or
+ * stopped at its deadline) carries the copy for it; never "[object Object]".
+ * Polling carries on after any of them: the next read may well answer.
+ */
+const errorText = (e: unknown): string => errorMessage(e)
 
 export function useWinvm(): Winvm {
   const [names, setNames] = useState<readonly string[]>([])

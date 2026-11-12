@@ -2,6 +2,7 @@ import { afterAll, beforeAll, describe, expect, it } from "bun:test"
 
 import type { TerminalEvent } from "@winvm/terminal"
 
+import { errorMessage, terminalEndpoint } from "../ui/src/backend"
 import en from "../ui/src/i18n/en.json"
 import {
   connectArgs,
@@ -22,6 +23,7 @@ import {
 } from "../ui/src/features/terminal/shells"
 import { createSocketTransport, type SessionStatus, sizedUrl } from "../ui/src/features/terminal/socket"
 import { noTabs, tabName, type Tabs, tabsReducer } from "../ui/src/features/terminal/tabs"
+import { copy } from "./copy"
 import { type FakeTermServer, startFakeTermServer } from "./fake-term-server"
 
 const until = async (ok: () => boolean, what: string): Promise<void> => {
@@ -129,6 +131,62 @@ describe("the socket transport, against a fake guest", () => {
     await until(() => t.output().includes("é✓\r\n"), "the split characters")
     expect(t.output()).not.toContain("\uFFFD")
     await t.transport.terminate("g")
+  })
+})
+
+describe("a tab whose connect fails", () => {
+  let fake: FakeTermServer
+  let reply: () => Promise<unknown> = async () => null
+  const hadWindow = "window" in globalThis
+  beforeAll(() => {
+    fake = startFakeTermServer()
+    if (!hadWindow) Object.assign(globalThis, { window: {} })
+    Object.assign(globalThis.window, { __TAURI__: { core: { invoke: () => reply() } } })
+  })
+  afterAll(() => {
+    fake.stop()
+    delete (globalThis.window as { __TAURI__?: unknown }).__TAURI__
+    if (!hadWindow) delete (globalThis as { window?: unknown }).window
+  })
+
+  const req = { instance: "demo", shell: "pwsh" as const, cwd: null }
+  const timedOut = {
+    kind: "timeout",
+    operation: "terminal",
+    message: "raw timeout text from Rust",
+    stdout: "",
+    stderr: "",
+    code: null,
+    signal: null,
+    timeoutMs: 120_000,
+    detail: null,
+  }
+
+  it("fails the tab with the timeout copy, and its Try again connects once the CLI answers", async () => {
+    const transport = createSocketTransport({ connect: () => terminalEndpoint(req) })
+    reply = () => Promise.reject(timedOut)
+    // TerminalView's spawn: a rejection is its failed state, whose message the window shows.
+    const error: unknown = await transport.spawn({ id: "x1", cols: 80, rows: 24 }).catch((e: unknown) => e)
+    const failed = tabsReducer(tabsReducer(noTabs, { type: "open", id: "x1", request: req }), {
+      type: "state",
+      id: "x1",
+      state: { kind: "failed", message: errorMessage(error) },
+    })
+    expect(failed.tabs[0]?.state).toEqual({ kind: "failed", message: copy("sidecar.timeout", { operation: "terminal", seconds: 120 }) })
+
+    // Try again: TerminalView spawns again; now the CLI says where to connect.
+    reply = async () => ({ code: 0, stdout: `${JSON.stringify(fake.endpoint())}\n`, stderr: "" })
+    const statuses: SessionStatus[] = []
+    const again = createSocketTransport({ connect: () => terminalEndpoint(req), onStatus: (_, s) => statuses.push(s) })
+    await again.spawn({ id: "x2", cols: 80, rows: 24 })
+    expect(statuses).toEqual([{ kind: "open" }])
+    await again.terminate("x2")
+  })
+
+  it("keeps the CLI's own words for a terminal that exits nonzero", async () => {
+    reply = () => Promise.reject({ ...timedOut, kind: "exit", code: 1, stderr: "::error::the agent isn't answering\n", timeoutMs: null })
+    const error: unknown = await terminalEndpoint(req).catch((e: unknown) => e)
+    expect(errorMessage(error)).toBe("the agent isn't answering")
   })
 })
 

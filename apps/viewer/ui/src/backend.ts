@@ -4,12 +4,133 @@
  * only the app can do (menus, file picking and dropping, a long-running
  * `cua serve`, the Terminal window).
  */
-import { type Installed, type MenuNode, type OpenRequest, parseInstalled, type Shell, shellsArgs } from "./features/terminal/shells"
+import {
+  connectArgs,
+  type Endpoint,
+  failureText,
+  type Installed,
+  type MenuNode,
+  type OpenRequest,
+  parseEndpoint,
+  parseInstalled,
+  type Shell,
+  shellsArgs,
+} from "./features/terminal/shells"
+import { t } from "./i18n"
+
+/**
+ * How a run of the CLI sidecar failed, as the app reports it (sidecar.rs):
+ * the helper is `missing`, it would not `launch`, it ran past its deadline and
+ * was stopped (`timeout`), or it ended with a nonzero code or on a signal (`exit`).
+ */
+export type SidecarFailureKind = "missing" | "launch" | "timeout" | "exit"
+
+export interface SidecarFailure {
+  readonly kind: SidecarFailureKind
+  /** The verb, with its subcommand where it has one: "status", "share status", "cua serve". */
+  readonly operation: string
+  /** The app's own (English) explanation; the UI shows its catalog copy instead (sidecarCopy). */
+  readonly message: string
+  readonly stdout: string
+  readonly stderr: string
+  readonly code: number | null
+  readonly signal: number | null
+  readonly timeoutMs: number | null
+  /** The host's own words (an OS error), for details. */
+  readonly detail: string | null
+}
 
 export interface Output {
   readonly code: number
   readonly stdout: string
   readonly stderr: string
+  /** Set when the app reported the run as a nonzero exit: its code and signal. */
+  readonly failure?: SidecarFailure
+}
+
+const KINDS: readonly string[] = ["missing", "launch", "timeout", "exit"] satisfies readonly SidecarFailureKind[]
+const isKind = (k: unknown): k is SidecarFailureKind => typeof k === "string" && KINDS.includes(k)
+const text = (v: unknown): string => (typeof v === "string" ? v : "")
+const count = (v: unknown): number | null => (typeof v === "number" && Number.isFinite(v) ? v : null)
+/** An older app rejected with the OS error's text: this is what a helper that isn't there says. */
+const NOT_FOUND = /No such file or directory|os error 2\b|ENOENT/i
+
+function described(raw: unknown): string {
+  try {
+    return JSON.stringify(raw) ?? String(raw)
+  } catch {
+    return String(raw)
+  }
+}
+
+/** Any rejection from a sidecar command, as a SidecarFailure: a structured one as it came, an older plain string by what it says. */
+export function normalizeSidecarFailure(raw: unknown, operation = "winvm"): SidecarFailure {
+  const none = { operation, stdout: "", stderr: "", code: null, signal: null, timeoutMs: null } as const
+  if (typeof raw === "string") return { ...none, kind: NOT_FOUND.test(raw) ? "missing" : "launch", message: raw, detail: raw }
+  if (raw instanceof Error) return { ...none, kind: "launch", message: raw.message, detail: raw.message }
+  if (typeof raw === "object" && raw !== null) {
+    const o = raw as Record<string, unknown>
+    return {
+      kind: isKind(o["kind"]) ? o["kind"] : "launch",
+      operation: text(o["operation"]) || operation,
+      message: text(o["message"]) || described(raw),
+      stdout: text(o["stdout"]),
+      stderr: text(o["stderr"]),
+      code: count(o["code"]),
+      signal: count(o["signal"]),
+      timeoutMs: count(o["timeoutMs"]),
+      detail: typeof o["detail"] === "string" ? o["detail"] : null,
+    }
+  }
+  return { ...none, kind: "launch", message: String(raw), detail: null }
+}
+
+/** What to tell the person about a failure: what happened, and what to do. */
+export function sidecarCopy(f: SidecarFailure): string {
+  switch (f.kind) {
+    case "missing":
+      return t("sidecar.missing")
+    case "launch":
+      return t("sidecar.launch", { operation: f.operation, detail: f.detail ?? f.message })
+    case "timeout":
+      return t("sidecar.timeout", { operation: f.operation, seconds: (f.timeoutMs ?? 0) / 1000 })
+    case "exit":
+      return failureText(f.stdout, f.stderr) || f.message
+  }
+}
+
+/** A sidecar run that never got as far as an exit code: missing, not launched, or stopped at its deadline. */
+export class SidecarError extends Error {
+  readonly failure: SidecarFailure
+  constructor(failure: SidecarFailure) {
+    super(sidecarCopy(failure))
+    this.failure = failure
+  }
+}
+
+export const isSidecarError = (e: unknown): e is SidecarError => e instanceof SidecarError
+
+/** The words for anything a call rejected with; never "[object Object]". */
+export function errorMessage(e: unknown): string {
+  if (e instanceof Error) return e.message
+  if (typeof e === "string") return e
+  return sidecarCopy(normalizeSidecarFailure(e))
+}
+
+/**
+ * The one funnel for sidecar commands. A nonzero exit comes back as Output,
+ * as every caller expects, with the failure attached; anything else (missing,
+ * launch, timeout) is thrown as a SidecarError.
+ */
+async function sidecar(cmd: string, payload: Record<string, unknown>, operation: string): Promise<Output> {
+  const core = tauri().core
+  try {
+    return await core.invoke<Output>(cmd, payload)
+  } catch (raw) {
+    const failure = normalizeSidecarFailure(raw, operation)
+    if (failure.kind === "exit") return { code: failure.code ?? -1, stdout: failure.stdout, stderr: failure.stderr, failure }
+    throw new SidecarError(failure)
+  }
 }
 
 type Unlisten = () => void
@@ -44,14 +165,14 @@ function tauri(): TauriGlobal {
   return g
 }
 
-export const winvm = (...args: string[]): Promise<Output> => tauri().core.invoke<Output>("winvm", { args })
+export const winvm = (...args: string[]): Promise<Output> => sidecar("winvm", { args }, args[0] ?? "winvm")
 
 export const installCli = (): Promise<string> => tauri().core.invoke<string>("install_cli")
 
 export const downloadsDir = (): Promise<string> => tauri().core.invoke<string>("downloads_dir")
 
-/** Starts sharing the screen with an agent (`winvm cua serve`); resolves with what it printed when ready. */
-export const shareStart = (instance: string): Promise<Output> => tauri().core.invoke<Output>("share_start", { instance })
+/** Starts sharing the screen with an agent (`winvm cua serve`); resolves with what it printed when ready, within the app's handshake deadline. */
+export const shareStart = (instance: string): Promise<Output> => sidecar("share_start", { instance }, "cua serve")
 
 export const shareStop = (): Promise<void> => tauri().core.invoke<void>("share_stop")
 
@@ -146,6 +267,14 @@ export function trace(line: string): void {
 export async function installedShells(instance: string): Promise<Installed | null> {
   const out = await winvm(...shellsArgs(instance))
   return out.code === 0 ? parseInstalled(out.stdout) : null
+}
+
+/** Where a terminal tab's shell is (`winvm terminal --connect --json`); throws why not. */
+export async function terminalEndpoint(request: OpenRequest): Promise<Endpoint> {
+  const out = await winvm(...connectArgs(request))
+  const endpoint = out.code === 0 ? parseEndpoint(out.stdout) : null
+  if (endpoint === null) throw new Error(failureText(out.stdout, out.stderr) || "winvm terminal didn't say where to connect")
+  return endpoint
 }
 
 /**

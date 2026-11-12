@@ -15,6 +15,7 @@ const { useWinvm } = await import("../ui/src/features/winvm/useWinvm")
 const { useUsage } = await import("../ui/src/features/usage/useUsage")
 const { Resources } = await import("../ui/src/features/usage/Resources")
 const en = (await import("../ui/src/i18n/en.json")).default as Record<string, string>
+const { copy } = await import("./copy")
 
 type Root = ReturnType<typeof createRoot>
 let root: Root | null = null
@@ -51,6 +52,8 @@ interface Output {
 interface Call {
   readonly args: readonly string[]
   readonly resolve: (o: Output) => void
+  /** Rejects as the app does when the sidecar is missing, won't start, or ran past its deadline. */
+  readonly reject: (failure: unknown) => void
   done: boolean
 }
 
@@ -62,13 +65,17 @@ function fakeTauri(): { calls: Call[]; reads(): Call[]; verb(v: string): Call } 
     const args = a?.args ?? []
     if (cmd !== "winvm") return Promise.resolve(null)
     if (!held.has(args[0] ?? "")) return Promise.resolve({ code: 1, stdout: "", stderr: "" })
-    return new Promise<Output>((resolve) => {
+    return new Promise<Output>((resolve, reject) => {
       const call: Call = {
         args,
         done: false,
         resolve: (o) => {
           call.done = true
           resolve(o)
+        },
+        reject: (failure) => {
+          call.done = true
+          reject(failure)
         },
       }
       calls.push(call)
@@ -215,6 +222,93 @@ describe("pausing in the window", () => {
     await flush()
     expect(w!.phase).toBe("running")
     expect(w!.failure?.verb).toBe("pause")
+  })
+})
+
+const sidecarFailure = (kind: "missing" | "timeout", operation: string): Record<string, unknown> => ({
+  kind,
+  operation,
+  message: `raw ${kind} text from Rust`,
+  stdout: "",
+  stderr: "",
+  code: null,
+  signal: null,
+  timeoutMs: kind === "timeout" ? 45_000 : null,
+  detail: kind === "missing" ? "No such file or directory (os error 2)" : null,
+})
+
+describe("when the sidecar fails", () => {
+  it("says the helper is missing when the first status can't run", async () => {
+    const tauri = fakeTauri()
+    let w: ReturnType<typeof useWinvm> | null = null
+    function Probe(): null {
+      w = useWinvm()
+      return null
+    }
+    render(<Probe />)
+    await flush()
+    tauri.calls.find((c) => c.args[0] === "status" && !c.args.includes("-i"))?.reject(sidecarFailure("missing", "status"))
+    await flush()
+    expect(w!.statusError).toBe(copy("sidecar.missing"))
+  })
+
+  it("explains a status timeout, keeps polling, and clears it when status answers again", async () => {
+    jest.useFakeTimers()
+    const tauri = fakeTauri()
+    let w: ReturnType<typeof useWinvm> | null = null
+    function Probe(): null {
+      w = useWinvm()
+      return null
+    }
+    render(<Probe />)
+    await flush()
+    tauri.calls.find((c) => c.args[0] === "status" && !c.args.includes("-i"))?.resolve({
+      ...status("running"),
+      stdout: JSON.stringify({ instances: [JSON.parse(status("running").stdout)] }),
+    })
+    await flush()
+    tauri.reads()[0]?.reject(sidecarFailure("timeout", "status"))
+    await flush()
+    expect(w!.statusError).toBe(copy("sidecar.timeout", { operation: "status", seconds: 45 }))
+
+    // The poll is rescheduled after the failure: the next read goes out.
+    const before = tauri.reads().length
+    act(() => {
+      jest.advanceTimersByTime(4000)
+    })
+    await flush()
+    expect(tauri.reads().length).toBe(before + 1)
+    tauri.reads().at(-1)?.resolve(status("running"))
+    await flush()
+    expect(w!.statusError).toBeNull()
+    expect(w!.phase).toBe("running")
+  })
+
+  it("shows a verb whose helper is missing as that verb's failure, with the same copy", async () => {
+    const tauri = fakeTauri()
+    let w: ReturnType<typeof useWinvm> | null = null
+    function Probe(): null {
+      w = useWinvm()
+      return null
+    }
+    render(<Probe />)
+    await flush()
+    tauri.calls.find((c) => c.args[0] === "status" && !c.args.includes("-i"))?.resolve({
+      ...status("running"),
+      stdout: JSON.stringify({ instances: [JSON.parse(status("running").stdout)] }),
+    })
+    await flush()
+    tauri.reads()[0]?.resolve(status("running"))
+    await flush()
+    act(() => {
+      void w!.act("pause")
+    })
+    await flush()
+    tauri.verb("pause").reject(sidecarFailure("missing", "pause"))
+    await flush()
+    expect(w!.failure?.verb).toBe("pause")
+    expect(w!.failure?.output).toBe(copy("sidecar.missing"))
+    expect(w!.phase).toBe("running")
   })
 })
 
