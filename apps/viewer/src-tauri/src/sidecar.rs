@@ -181,7 +181,8 @@ pub fn operation_of(args: &[String]) -> String {
 /// The deadline for a `winvm` run from the app, by what it does. None: no automatic deadline.
 pub fn timeout_for(args: &[String]) -> Option<Duration> {
     match args.first().map(String::as_str).unwrap_or("") {
-        "status" | "info" | "doctor" | "ls" | "saves" | "settings" | "config" | "help" => Some(READ_TIMEOUT),
+        "status" | "info" | "doctor" | "ls" | "settings" | "config" | "help" => Some(READ_TIMEOUT),
+        "saves" if !matches!(subcommand(args), Some("rm" | "note")) => Some(READ_TIMEOUT),
         "terminal" | "open" => Some(CONNECT_TIMEOUT),
         "share" | "mcp" if subcommand(args) == Some("status") => Some(READ_TIMEOUT),
         _ => None,
@@ -280,10 +281,20 @@ impl Collected {
     }
 
     fn finish(self, operation: &str, t: TerminatedPayload) -> Result<Output, SidecarFailure> {
-        if t.code == Some(0) {
+        if t.code == Some(0) && self.errors.is_empty() {
             return Ok(Output { code: 0, stdout: self.stdout, stderr: self.stderr });
         }
         let detail = (!self.errors.is_empty()).then(|| self.errors.join("\n"));
+        if t.code == Some(0) {
+            let why = detail.clone().unwrap_or_else(|| "the output stream failed".into());
+            let message = format!("winvm couldn't read all of its helper's output for `{operation}` ({why}). Try again.");
+            return Err(SidecarFailure {
+                stdout: self.stdout,
+                stderr: self.stderr,
+                detail,
+                ..SidecarFailure::new(FailureKind::Launch, operation, message)
+            });
+        }
         Err(SidecarFailure { detail, ..SidecarFailure::exit(operation, t.code, t.signal, self.stdout, self.stderr) })
     }
 
@@ -299,7 +310,7 @@ impl Collected {
 pub async fn collect<C: SidecarChild>(mut rx: Receiver<CommandEvent>, child: C, operation: &str, plan: Plan<'_>) -> Result<Finished<C>, SidecarFailure> {
     let mut got = Collected::default();
     let deadline = plan.timeout.map(|t| Instant::now() + t);
-    let ready = |got: &Collected| plan.ready.is_some_and(|r| r(&got.stdout));
+    let ready = |got: &Collected| got.errors.is_empty() && plan.ready.is_some_and(|r| r(&got.stdout));
     loop {
         let event = match deadline {
             None => rx.recv().await,
@@ -489,6 +500,8 @@ mod tests {
             &["share", "-i", "demo", "install", "--restart", "--json"],
             &["pause", "-i", "demo"],
             &["kill", "-i", "demo"],
+            &["saves", "-i", "demo", "rm", "before"],
+            &["saves", "-i", "demo", "note", "before", "--text", "kept"],
         ] {
             assert_eq!(timeout_for(&args(long)), None, "{long:?}");
         }
@@ -550,8 +563,10 @@ mod tests {
         assert!(f.detail.as_deref().unwrap_or("").contains("pipe broke"), "{:?}", f.detail);
 
         let (got, _) = run(vec![CommandEvent::Stdout(line("ok")), CommandEvent::Error("stderr read failed".into()), ended(Some(0), None)], true, None, None, None);
-        let out = exited(got).expect("the command still finished");
-        assert_eq!(out.stdout, "ok\n");
+        let f = exited(got).expect_err("truncated output is not a successful command");
+        assert_eq!(f.kind, FailureKind::Launch);
+        assert_eq!(f.stdout, "ok\n");
+        assert!(f.detail.as_deref().unwrap_or("").contains("stderr read failed"), "{:?}", f.detail);
     }
 
     #[test]

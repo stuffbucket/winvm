@@ -195,7 +195,7 @@ if (sub !== undefined && !NO_SWEEP.includes(sub) && !(sub === "files" && args.po
 if (sub !== undefined && shouldReconcileVerb(sub) && !(sub === "files" && args.positional[0]?.startsWith("_") === true)) {
   const named = args.flags.get("instance") ?? process.env["WINVM_INSTANCE"]
   const every = sub === "status" && named === undefined
-  for (const name of every ? listInstances() : [instanceName(args)]) {
+  const reconcileOne = async (name: string): Promise<void> => {
     try {
       // Never waits out a watcher's autosave or stow: this runs before every
       // command, and the app's status call has a deadline. It defers instead.
@@ -209,6 +209,10 @@ if (sub !== undefined && shouldReconcileVerb(sub) && !(sub === "files" && args.p
       if (!every) process.exit(1)
     }
   }
+  // Each instance has its own lifecycle and save locks. Repair them together so
+  // several independent 10–15 second replacements still fit the app's status deadline.
+  if (every) await Promise.all(listInstances().map(reconcileOne))
+  else await reconcileOne(instanceName(args))
 }
 
 switch (sub) {

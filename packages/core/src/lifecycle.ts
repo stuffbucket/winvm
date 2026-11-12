@@ -88,6 +88,7 @@ import { effectiveConfig } from "./config"
 import { savingPath } from "./frozen"
 import { buildIdentity } from "./identity"
 import { NO_RECONCILE, cliEntry, pathsFor, type Paths } from "./paths"
+import { pidOf as qemuPid } from "./qemu"
 import * as saves from "./saves"
 import { ensureService, readService, type ServiceInfo } from "./service"
 import { ensureWatcher, readWatchState, stopWatcher, watchPathsFor, watcherFreshness, watcherRecord, type WatcherRecord } from "./watch"
@@ -176,7 +177,14 @@ export function shouldReconcileVerb(verb: string, env: NodeJS.ProcessEnv = proce
  */
 export function reconcileNote(name: string, r: ReconcileResult, p: Paths = pathsFor(name)): string | null {
   if (!r.changed || r.deferred !== undefined || qemuPid(p) === null) return null
-  return `note: "${name}"'s control service and watcher now run this build; Windows kept running`
+  const managed = [r.servicePid === null ? null : "control service", r.watcherPid === null ? null : "watcher"].filter(
+    (part): part is string => part !== null,
+  )
+  const update =
+    managed.length === 0
+      ? "obsolete management processes were stopped"
+      : `${managed.join(" and ")} ${managed.length === 1 ? "now runs" : "now run"} this build`
+  return `note: "${name}"'s ${update}; Windows kept running`
 }
 
 // ---------------------------------------------------------------------------
@@ -210,18 +218,6 @@ function startOf(pid: number): string | null {
 }
 
 let ownStart: string | null | undefined
-
-/** QEMU's pid, from its pidfile, if it is running. Only reads: never removes the file, never signals. */
-function qemuPid(p: Paths): number | null {
-  try {
-    const pid = Number.parseInt(readFileSync(p.pid, "utf8").trim(), 10)
-    if (!Number.isFinite(pid)) return null
-    process.kill(pid, 0)
-    return pid
-  } catch {
-    return null
-  }
-}
 
 /** The live pid a save mark names, if any: the save lock (saves.withLock) or saving.json (frozen.ts). */
 function saverPid(name: string, p: Paths): number | null {

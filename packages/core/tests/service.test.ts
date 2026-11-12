@@ -269,7 +269,7 @@ describe("which process is the default instance's service", () => {
   }
 
   // A pid reused by any of these must never be signalled as a winvm service.
-  for (const argv of [["ollama", "serve"], ["hugo", "serve"], ["node", "server.js", "serve"], ["winvm", "serve"], ["ollama", "serve", "-i", "default"]]) {
+  for (const argv of [["ollama", "serve"], ["hugo", "serve"], ["node", "server.js", "serve"], ["winvm", "serve"], ["evilwinvm", "serve", "-i", "default"], ["ollama", "serve", "-i", "default"]]) {
     it(`is never \`${argv.join(" ")}\``, () => {
       const dp = d()
       const h = Bun.spawn([process.execPath, holder, ...argv], { stdout: "ignore", stderr: "ignore" })
@@ -285,8 +285,12 @@ describe("which process is the default instance's service", () => {
     })
   }
 
-  // What winvm spawns: from source (`bun …/winvm.ts serve -i NAME`) and compiled (`…/winvm serve -i NAME`).
-  for (const argv of [["/repo/apps/cli/src/winvm.ts", "serve", "-i", "default"], ["/Applications/winvm.app/Contents/MacOS/winvm", "serve", "--instance=default"]]) {
+  // What winvm spawns: from source, an installed CLI, and Tauri's target-suffixed sidecar.
+  for (const argv of [
+    ["/repo/apps/cli/src/winvm.ts", "serve", "-i", "default"],
+    ["/Applications/winvm.app/Contents/MacOS/winvm", "serve", "--instance=default"],
+    ["/Applications/winvm.app/Contents/MacOS/winvm-aarch64-apple-darwin", "serve", "-i", "default"],
+  ]) {
     it(`is \`${argv.join(" ")}\``, () => {
       const dp = d()
       const h = Bun.spawn([process.execPath, holder, ...argv], { stdout: "ignore", stderr: "ignore" })
@@ -388,8 +392,8 @@ describe("service generations", () => {
     spawned.push(h)
     return h
   }
-  const record = (pid: number, build: string | undefined): void => {
-    const info: ServiceInfo = { pid, cli: CLI, version: "0", startedAt: "", ...(build === undefined ? {} : { build }) }
+  const record = (pid: number, build: string | undefined, cli = CLI): void => {
+    const info: ServiceInfo = { pid, cli, version: "0", startedAt: "", ...(build === undefined ? {} : { build }) }
     writeFileSync(p.service, JSON.stringify(info))
   }
 
@@ -422,18 +426,20 @@ describe("service generations", () => {
     expect(readService(p)?.build).toBeUndefined()
   })
 
-  it("reuses a service of the current generation", async () => {
-    const h = holder()
-    record(h.pid, CURRENT)
-    const info = await ensureService("t", p, {
-      current: CURRENT,
-      start: () => {
-        throw new Error("must not start a second service")
-      },
+  for (const [label, cli] of [["this CLI path", CLI], ["another CLI path", "/Applications/winvm.app/Contents/MacOS/winvm"]] as const) {
+    it(`reuses a service of the current generation from ${label}`, async () => {
+      const h = holder()
+      record(h.pid, CURRENT, cli)
+      const info = await ensureService("t", p, {
+        current: CURRENT,
+        start: () => {
+          throw new Error("must not start a second service")
+        },
+      })
+      expect(info.pid).toBe(h.pid)
+      expect(alive(h.pid)).toBe(true)
     })
-    expect(info.pid).toBe(h.pid)
-    expect(alive(h.pid)).toBe(true)
-  })
+  }
 
   for (const [label, build] of [["another generation", "sha256:old"], ["no recorded generation", undefined]] as const) {
     it(`replaces a service with ${label}`, async () => {

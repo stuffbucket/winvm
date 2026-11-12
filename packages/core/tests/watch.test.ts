@@ -566,6 +566,7 @@ describe("watcher generations", () => {
     ["the watcher of an instance whose name starts with this one's", ["winvm", "watch", "-i", "wx"]],
     ["a watcher named with --instance=", ["winvm", "watch", "--instance=other"]],
     ["a `watch --stop` for this instance", ["winvm", "watch", "-i", "w", "--stop"]],
+    ["an unrelated executable whose name ends in winvm", ["evilwinvm", "watch", "-i", "w"]],
   ] as const) {
     it(`never takes ${label} for this instance's watcher, before SIGTERM or SIGKILL`, async () => {
       const holder = resolve(import.meta.dir, "fakes", "holder.ts")
@@ -592,7 +593,12 @@ describe("watcher generations", () => {
 
   it("still recognises this instance's own watcher, however it was named", () => {
     const holder = resolve(import.meta.dir, "fakes", "holder.ts")
-    for (const argv of [["winvm", "watch", "-i", "w"], ["winvm.ts", "watch", "--instance", "w"], ["winvm", "watch", "--instance=w"]]) {
+    for (const argv of [
+      ["winvm", "watch", "-i", "w"],
+      ["winvm.ts", "watch", "--instance", "w"],
+      ["winvm", "watch", "--instance=w"],
+      ["winvm-aarch64-apple-darwin", "watch", "-i", "w"],
+    ]) {
       const h = Bun.spawn([process.execPath, holder, ...argv], { stdout: "ignore", stderr: "ignore" })
       spawned.push(h)
       lock(h.pid)

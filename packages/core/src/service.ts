@@ -2,10 +2,10 @@ import { spawn, spawnSync } from "node:child_process"
 import { appendFileSync, chmodSync, closeSync, linkSync, openSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs"
 import { basename, resolve } from "node:path"
 
-import { commandInstance } from "./args"
+import { commandInstance, winvmCommandAfter } from "./args"
 import { QgaChannel, QmpChannel } from "./broker"
 import { buildIdentity } from "./identity"
-import { PACKAGE_DIR, cliArgv, cliEntry, home, managedEnv, pathsFor, type Paths } from "./paths"
+import { PACKAGE_DIR, cliArgv, home, managedEnv, pathsFor, type Paths } from "./paths"
 import * as qga from "./qga"
 import * as share from "./share"
 import type { ChangeNotices } from "./sharewatch"
@@ -100,8 +100,8 @@ function pidIn(text: string | null): number | null {
 function isServiceFor(pid: number, name: string): boolean {
   if (pid === process.pid) return false
   const r = spawnSync("ps", ["-o", "command=", "-p", String(pid)], { encoding: "utf8" })
-  const m = /(?:^|[\s/])winvm(?:\.ts)?\s+serve(\s.*)?$/.exec((r.stdout ?? "").trim())
-  return m !== null && commandInstance(m[1] ?? "") === name
+  const after = winvmCommandAfter(r.stdout ?? "", "serve")
+  return after !== null && commandInstance(after) === name
 }
 
 export function readService(p: Paths): ServiceInfo | null {
@@ -252,11 +252,10 @@ export interface EnsureServiceOptions {
 }
 
 export async function ensureService(name: string, p: Paths, o: EnsureServiceOptions = {}): Promise<ServiceInfo> {
-  const cli = cliEntry()
   const current = o.current ?? buildIdentity()
   const seen = readRecord(p)
   const running = readService(p)
-  if (running !== null && running.cli === cli && serviceFreshness(running, current) === "current") {
+  if (running !== null && serviceFreshness(running, current) === "current") {
     keepService(p)
     return running
   }
@@ -282,7 +281,7 @@ export async function ensureService(name: string, p: Paths, o: EnsureServiceOpti
   const deadline = Date.now() + (o.timeoutMs ?? 10_000)
   while (Date.now() < deadline) {
     const info = readService(p)
-    if (info !== null && info.cli === cli && serviceFreshness(info, current) === "current" && (await answers(p.control))) return info
+    if (info !== null && serviceFreshness(info, current) === "current" && (await answers(p.control))) return info
     await new Promise((r) => setTimeout(r, 50))
   }
   throw new Error(`the control service for "${name}" did not start; see ${resolve(p.dir, "service.log")}`)

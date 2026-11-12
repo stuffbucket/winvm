@@ -87,6 +87,20 @@ export function commandInstance(afterVerb: string): string | null {
   return null
 }
 
+/**
+ * What follows `verb` when a process command line is a WinVM CLI invocation.
+ * Recognises source (`winvm.ts`), installed (`winvm`) and Tauri's
+ * target-suffixed sidecar (`winvm-aarch64-apple-darwin`) names. The boundary
+ * before the basename is deliberate: an unrelated `evilwinvm` must never be
+ * mistaken for a management process and signalled.
+ */
+export function winvmCommandAfter(command: string, verb: string): string | null {
+  const target = "[A-Za-z0-9_]+-[A-Za-z0-9_]+-[A-Za-z0-9_.]+(?:-[A-Za-z0-9_.]+)?"
+  const escapedVerb = verb.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+  const match = new RegExp(`(?:^|[\\s/])winvm(?:\\.ts|-${target})?\\s+${escapedVerb}(\\s.*)?$`).exec(command.trim())
+  return match === null ? null : (match[1] ?? "")
+}
+
 /** Image selection: `--image`, else WINVM_IMAGE, else the conventional name. */
 export function imageName(args: Args): string {
   return args.flags.get("image") ?? process.env["WINVM_IMAGE"] ?? "win11-arm64"

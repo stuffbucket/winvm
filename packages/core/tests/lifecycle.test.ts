@@ -1016,8 +1016,14 @@ describe("the CLI", () => {
 describe("what the CLI says after a repair", () => {
   const changed = { changed: true, servicePid: 1, watcherPid: null } as const
 
-  it("says Windows kept running while it is", () => {
-    expect(reconcileNote("t", changed, p)).toContain("Windows kept running")
+  it("names only the management processes that now run this build", () => {
+    expect(reconcileNote("t", changed, p)).toBe(`note: "t"'s control service now runs this build; Windows kept running`)
+    expect(reconcileNote("t", { ...changed, servicePid: null, watcherPid: 2 }, p)).toBe(
+      `note: "t"'s watcher now runs this build; Windows kept running`,
+    )
+    expect(reconcileNote("t", { ...changed, watcherPid: 2 }, p)).toBe(
+      `note: "t"'s control service and watcher now run this build; Windows kept running`,
+    )
   })
 
   it("says nothing of the kind once QEMU has gone", () => {

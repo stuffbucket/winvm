@@ -6,6 +6,7 @@ import type { Size } from "@winvm/displayfit"
 import {
   type Action,
   agentFetch,
+  errorMessage,
   announceTitle,
   GUEST_FOLDERS_IN_FINDER,
   type GuestShare,
@@ -223,7 +224,7 @@ export function App(): JSX.Element {
       .then((why) => {
         if (why !== null) setNotice({ tone: "error", title: t("rename.failed"), detail: why })
       })
-      .catch((e: unknown) => setNotice({ tone: "error", title: t("rename.failed"), detail: String(e) }))
+      .catch((e: unknown) => setNotice({ tone: "error", title: t("rename.failed"), detail: errorMessage(e) }))
   }
 
   // New Machine…: a name (and, under Advanced, the image and whether to start
@@ -255,7 +256,7 @@ export function App(): JSX.Element {
         if (m.start) setStartNext(m.name)
         setNewOpen(false)
       })
-      .catch((e: unknown) => setCreateError(String(e)))
+      .catch((e: unknown) => setCreateError(errorMessage(e)))
       .finally(() => setCreating(false))
   }
   // Start it once this window has read its (stopped) state.
@@ -285,7 +286,7 @@ export function App(): JSX.Element {
       w.select(next ?? "default")
       setNotice({ tone: "notice", title: t(keepSaves ? "machine.deletedKept" : "machine.deleted", { title: d.title }) })
     } catch (e) {
-      setNotice({ tone: "error", title: t("machine.deleteFailed", { title: d.title }), detail: String(e) })
+      setNotice({ tone: "error", title: t("machine.deleteFailed", { title: d.title }), detail: errorMessage(e) })
     } finally {
       setDeleteBusy(false)
       setDeleting(null)
@@ -316,7 +317,7 @@ export function App(): JSX.Element {
             title: titles[instance] ?? null,
           }),
         )
-        .catch((e: unknown) => setNotice({ tone: "error", title: t("terminal.failed"), detail: String(e) }))
+        .catch((e: unknown) => setNotice({ tone: "error", title: t("terminal.failed"), detail: errorMessage(e) }))
     },
     [shells, w.name, c.terminal, titles],
   )
@@ -327,7 +328,7 @@ export function App(): JSX.Element {
     shells
       .get(instance)
       .then((installed) => popupMenu(shellMenu(t, installed), (item) => terminal(item.launch)))
-      .catch((e: unknown) => setNotice({ tone: "error", title: t("terminal.failed"), detail: String(e) }))
+      .catch((e: unknown) => setNotice({ tone: "error", title: t("terminal.failed"), detail: errorMessage(e) }))
   }
 
   // Checkpoints: the clock, ⌘⇧T and File → Checkpoints… open it; the same keys close it.
@@ -346,7 +347,7 @@ export function App(): JSX.Element {
       { kind: "action", label: t("checkpoints.saveNow"), enabled: canSave, run: () => run("save") },
       { kind: "separator" },
       { kind: "action", label: t("checkpoints.showAll"), accelerator: "CmdOrCtrl+Shift+T", run: openCheckpoints },
-    ]).catch((e: unknown) => setNotice({ tone: "error", title: t("checkpoints.menuFailed"), detail: String(e) }))
+    ]).catch((e: unknown) => setNotice({ tone: "error", title: t("checkpoints.menuFailed"), detail: errorMessage(e) }))
   }
 
   const install = w.installCommand
@@ -365,7 +366,7 @@ export function App(): JSX.Element {
           setReference({ text: null })
           winvm("help")
             .then((out) => setReference({ text: outputText(out) }))
-            .catch((e: unknown) => setReference({ text: String(e) }))
+            .catch((e: unknown) => setReference({ text: errorMessage(e) }))
         }
       }),
     [install, terminal, toggleCheckpoints, showScreen, frozen],
@@ -398,7 +399,7 @@ export function App(): JSX.Element {
         setShare(got)
         setSharing({ starting: false, error: got === null ? outputText(out) : null })
       })
-      .catch((e: unknown) => setSharing({ starting: false, error: String(e) }))
+      .catch((e: unknown) => setSharing({ starting: false, error: errorMessage(e) }))
   }
 
   const stopSharing = (): void => {
@@ -408,7 +409,7 @@ export function App(): JSX.Element {
 
   const filesWindow = (): void => {
     setOpen(null)
-    if (w.name !== null) openFiles(w.name, titles[w.name] ?? null).catch((e: unknown) => setNotice({ tone: "error", title: t("files.openFailed"), detail: String(e) }))
+    if (w.name !== null) openFiles(w.name, titles[w.name] ?? null).catch((e: unknown) => setNotice({ tone: "error", title: t("files.openFailed"), detail: errorMessage(e) }))
   }
 
   // The guest's home folder and C:\ in Finder (`winvm files open`). The first
@@ -423,7 +424,7 @@ export function App(): JSX.Element {
       run: () => {
         setFinding(place)
         openShareInFinder(instance, share)
-          .catch((e: unknown) => setNotice({ tone: "error", title: t("files.finder.failed"), detail: e instanceof Error ? e.message : String(e) }))
+          .catch((e: unknown) => setNotice({ tone: "error", title: t("files.finder.failed"), detail: errorMessage(e) }))
           .finally(() => setFinding(null))
       },
     })
@@ -432,7 +433,7 @@ export function App(): JSX.Element {
       { kind: "separator" },
       finder(t("files.finder.home"), t("files.finder.homePlace"), "home"),
       finder(t("files.finder.drive", { drive: "C:\\" }), "C:\\", "c"),
-    ]).catch((e: unknown) => setNotice({ tone: "error", title: t("files.openFailed"), detail: String(e) }))
+    ]).catch((e: unknown) => setNotice({ tone: "error", title: t("files.openFailed"), detail: errorMessage(e) }))
   }
 
   const togglePanel = (id: PanelId, anchor: HTMLElement): void => {

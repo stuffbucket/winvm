@@ -39,7 +39,7 @@ import { closeSync, existsSync, openSync, readFileSync, renameSync, rmSync, stat
 import { resolve } from "node:path"
 
 import type { Args } from "./args"
-import { commandInstance } from "./args"
+import { commandInstance, winvmCommandAfter } from "./args"
 import { formatOffset, measureOffset, syncGuestClock } from "./clock"
 import type { InstanceConfig } from "./config"
 import { effectiveConfig } from "./config"
@@ -347,9 +347,8 @@ function isWatcherProcess(pid: number, name: string): boolean {
     return false
   }
   const r = spawnSync("ps", ["-o", "command=", "-p", String(pid)], { encoding: "utf8" })
-  const m = /winvm(?:\.ts)?\s+watch(\s.*)?$/.exec((r.stdout ?? "").trim())
-  if (m === null) return false
-  const rest = m[1] ?? ""
+  const rest = winvmCommandAfter(r.stdout ?? "", "watch")
+  if (rest === null) return false
   if (/(?:^|\s)--(?:stop|status)(?:\s|$)/.test(rest)) return false
   return (commandInstance(rest) ?? "default") === name
 }
