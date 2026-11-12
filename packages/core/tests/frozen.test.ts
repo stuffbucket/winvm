@@ -216,3 +216,59 @@ describe("status of a frozen guest", () => {
     expect(probes).toBeGreaterThan(0)
   }, 15_000)
 })
+
+describe("status exposes the operation in flight", () => {
+  let dir: string
+  const children: Array<{ kill: () => void }> = []
+
+  beforeAll(() => {
+    dir = mkdtempSync("/tmp/wvfzop-")
+    // `ps` shows `bun <dir>/winvm.ts start -i frozen-test`: a WinVM CLI process.
+    writeFileSync(resolve(dir, "winvm.ts"), "setInterval(() => undefined, 1000)\n")
+  })
+  afterAll(() => {
+    for (const c of children) c.kill()
+    rmSync(dir, { recursive: true, force: true })
+    rmSync(pathsFor(NAME).operations, { recursive: true, force: true })
+    rmSync(pathsFor("frozen-gone").dir, { recursive: true, force: true })
+  })
+
+  const publish = (instance: string, pid: number, operation: string): void => {
+    const ops = pathsFor(instance).operations
+    mkdirSync(ops, { recursive: true })
+    writeFileSync(resolve(ops, `${String(pid)}.json`), JSON.stringify({ operation, pid, startedAt: "2026-03-03T00:00:00.000Z", instance, token: "t" }))
+  }
+  const launch = (...argv: string[]): { pid: number; exited: Promise<number>; kill: () => void } => {
+    const c = Bun.spawn(["bun", resolve(dir, "winvm.ts"), ...argv], { stdio: ["ignore", "ignore", "ignore"] })
+    children.push(c)
+    return c
+  }
+
+  it("is null when nothing is running, and the live operation while one is", async () => {
+    expect((await gather(NAME, false)).operation).toBeNull()
+    const c = launch("start", "-i", NAME)
+    publish(NAME, c.pid, "start")
+    const s = await gather(NAME, false)
+    expect(s.state).toBe("running")
+    expect(s.operation).toEqual({ operation: "start", pid: c.pid, startedAt: "2026-03-03T00:00:00.000Z" })
+    c.kill()
+    await c.exited
+  })
+
+  it("is null for the record of a crashed owner, rather than a permanent busy state", async () => {
+    const c = launch("start", "-i", NAME)
+    publish(NAME, c.pid, "start")
+    c.kill()
+    await c.exited
+    expect((await gather(NAME, false)).operation).toBeNull()
+  })
+
+  it("reaches an instance that does not exist yet, which `start` is about to create", async () => {
+    const c = launch("start", "-i", "frozen-gone")
+    publish("frozen-gone", c.pid, "start")
+    const s = await gather("frozen-gone", false)
+    expect(s.state).toBe("missing")
+    expect(s.operation?.operation).toBe("start")
+    c.kill()
+  })
+})

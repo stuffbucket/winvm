@@ -141,6 +141,7 @@
 import { instanceName, parseArgs } from "@winvm/core/args"
 import { bunVersionWarning, listInstances, pinnedBunVersion, recordCliEntry } from "@winvm/core/paths"
 import { ManagementError, reconcileManagement, reconcileNote, shouldReconcileVerb } from "@winvm/core/lifecycle"
+import { operationFor, withOperation } from "@winvm/core/operation"
 import * as agentcmds from "@winvm/core/agentcmds"
 import * as termcmds from "@winvm/core/termcmds"
 import * as uicmds from "@winvm/core/uicmds"
@@ -174,6 +175,12 @@ if (bunWarning !== null) console.warn(bunWarning)
 const [, , sub, ...rawArgs] = process.argv
 const args = parseArgs(rawArgs)
 
+// Machine-impacting commands publish what they are doing for the app and for
+// `status` (operation.ts). The lease callback only returns the exit code; the
+// process exits after it has cleared, never inside it.
+const operation = operationFor(sub, args)
+const leased = async (run: () => number | Promise<number>): Promise<number> =>
+  operation === null ? await run() : await withOperation(instanceName(args), operation, run)
 // The guest's drives in Finder, left mounted by a QEMU that died: unmounted
 // before anything else runs (finder.ts). Free unless the instance shares its
 // drives and is not running. Unmounting from a dead server takes a minute, so
@@ -237,19 +244,19 @@ switch (sub) {
     process.exit(await commands.build(args))
   // eslint-disable-next-line no-fallthrough
   case "start":
-    process.exit(await commands.start(args))
+    process.exit(await leased(() => commands.start(args)))
   // eslint-disable-next-line no-fallthrough
   case "stop":
-    process.exit(await commands.stop(args))
+    process.exit(await leased(() => commands.stop(args)))
   // eslint-disable-next-line no-fallthrough
   case "reboot":
-    process.exit(await commands.reboot(args))
+    process.exit(await leased(() => commands.reboot(args)))
   // eslint-disable-next-line no-fallthrough
   case "kill":
-    process.exit(commands.kill(args))
+    process.exit(await leased(() => commands.kill(args)))
   // eslint-disable-next-line no-fallthrough
   case "reset":
-    process.exit(commands.reset(args))
+    process.exit(await leased(() => commands.reset(args)))
   // eslint-disable-next-line no-fallthrough
   case "destroy":
     process.exit(commands.destroy(args))
@@ -297,47 +304,47 @@ switch (sub) {
     process.exit(await commands.smoke(args))
   // eslint-disable-next-line no-fallthrough
   case "snapshot":
-    process.exit(await commands.snap(args))
+    process.exit(await leased(() => commands.snap(args)))
   // eslint-disable-next-line no-fallthrough
   case "rewind":
-    process.exit(await commands.rewind(args))
+    process.exit(await leased(() => commands.rewind(args)))
   // eslint-disable-next-line no-fallthrough
   case "snapshots":
     process.exit(await commands.snapshots(args))
   // eslint-disable-next-line no-fallthrough
   case "save":
-    process.exit(await savecmds.save(args))
+    process.exit(await leased(() => savecmds.save(args)))
   // eslint-disable-next-line no-fallthrough
   case "load":
-    process.exit(await savecmds.load(args))
+    process.exit(await leased(() => savecmds.load(args)))
   // eslint-disable-next-line no-fallthrough
   case "share":
     process.exit(await sharecmds.shareCmd(args))
   // eslint-disable-next-line no-fallthrough
   case "golden":
-    process.exit(await goldens.golden(args))
+    process.exit(await leased(() => goldens.golden(args)))
   // eslint-disable-next-line no-fallthrough
   case "saves":
     process.exit(savecmds.list(args))
   // eslint-disable-next-line no-fallthrough
   case "pause":
-    process.exit(await savecmds.pause(args))
+    process.exit(await leased(() => savecmds.pause(args)))
   // eslint-disable-next-line no-fallthrough
   case "resume":
   case "wake":
-    process.exit(await savecmds.resume(args))
+    process.exit(await leased(() => savecmds.resume(args)))
   // eslint-disable-next-line no-fallthrough
   case "sleep":
-    process.exit(await savecmds.sleep(args))
+    process.exit(await leased(() => savecmds.sleep(args)))
   // eslint-disable-next-line no-fallthrough
   case "lock":
-    process.exit(await savecmds.lock(args))
+    process.exit(await leased(() => savecmds.lock(args)))
   // eslint-disable-next-line no-fallthrough
   case "settings":
     process.exit(settings.settingsCmd(args))
   // eslint-disable-next-line no-fallthrough
   case "stow":
-    process.exit(await savecmds.stow(args))
+    process.exit(await leased(() => savecmds.stow(args)))
   // eslint-disable-next-line no-fallthrough
   case "clock":
     process.exit(await savecmds.clock(args))
@@ -364,7 +371,7 @@ switch (sub) {
     process.exit(commands.diagnoseCmd(args))
   // eslint-disable-next-line no-fallthrough
   case "setup":
-    process.exit(await commands.setup(args))
+    process.exit(await leased(() => commands.setup(args)))
   // eslint-disable-next-line no-fallthrough
   case "rmi":
     process.exit(commands.rmi(args))
