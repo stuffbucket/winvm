@@ -81,6 +81,11 @@ impl CloseCoordinator {
         }
     }
 
+    /// Whether a close was requested and the window has not acknowledged it. Reads only.
+    pub fn pending(&self) -> bool {
+        *self.lock() == CloseState::Requested
+    }
+
     /// The person backed out, or the flow could not begin: the app stays open and may be asked again.
     pub fn cancel(&self) -> Result<(), String> {
         let mut state = self.lock();
@@ -178,6 +183,18 @@ pub fn request<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> bool {
         }
     }
     request.keeps_app_open()
+}
+
+/// Whether a close request still waits for the main window. The event can be emitted before its
+/// listener exists, so the window asks right after registering one, and answers with `close_start`
+/// when this says true. It changes nothing.
+#[tauri::command]
+pub fn close_pending(
+    window: tauri::WebviewWindow,
+    close: tauri::State<CloseCoordinator>,
+) -> Result<bool, String> {
+    caller_may_answer(window.label())?;
+    Ok(close.pending())
 }
 
 /// The main window heard the request and is running its close flow.
@@ -351,5 +368,35 @@ mod tests {
         assert_eq!(caller_may_answer("main"), Ok(()));
         assert!(caller_may_answer("terminal").is_err());
         assert!(caller_may_answer("files-win11").is_err());
+    }
+
+    #[test]
+    fn pending_reports_only_a_requested_close_and_changes_nothing() {
+        let close = CloseCoordinator::default();
+        assert!(!close.pending(), "idle");
+        close.request();
+        // A listener that mounts late asks as often as it likes: still pending, still Requested.
+        assert!(close.pending());
+        assert!(close.pending());
+        assert_eq!(close.state(), CloseState::Requested);
+        // Later requests coalesce, and a close nobody answered stays pending.
+        assert_eq!(close.request(), Request::Coalesced);
+        assert!(close.pending());
+        close.start().unwrap();
+        assert!(!close.pending(), "running: already acknowledged");
+        assert_eq!(close.state(), CloseState::Running);
+        close.cancel().unwrap();
+        assert!(!close.pending(), "cancelled");
+        close.request();
+        close.start().unwrap();
+        close.complete().unwrap();
+        assert!(!close.pending(), "authorized");
+        assert_eq!(close.state(), CloseState::Authorized);
+    }
+
+    #[test]
+    fn only_the_main_window_may_ask_whether_a_close_is_pending() {
+        assert_eq!(caller_may_answer("main"), Ok(()));
+        assert!(caller_may_answer("terminal").is_err());
     }
 }

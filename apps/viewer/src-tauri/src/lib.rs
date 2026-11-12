@@ -558,6 +558,7 @@ pub fn run() {
             dragout::files_drag_out,
             trace,
             set_system_keyboard_capture,
+            close::close_pending,
             close::close_start,
             close::close_cancel,
             close::close_complete
