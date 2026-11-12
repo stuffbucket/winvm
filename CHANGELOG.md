@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.1.4](https://github.com/stuffbucket/winvm/compare/v0.1.3...v0.1.4) (2026-11-12)
+
+
+### Bug Fixes
+
+* **ci:** dispatch release PR checks from ref changes ([e481d03](https://github.com/stuffbucket/winvm/commit/e481d03420fcfe67fbcec1d36a421b64f366848a))
+* **lifecycle:** resolve every VM before viewer exit ([#37](https://github.com/stuffbucket/winvm/issues/37)) ([1cbf8aa](https://github.com/stuffbucket/winvm/commit/1cbf8aae38b3faf3d2bd8060ea05f8fd13f2ec0b))
+* **saves:** refuse saves a restore could not replay, and keep launch and runner cleanup honest ([2cfa706](https://github.com/stuffbucket/winvm/commit/2cfa7064db1ba3c311d78374bf2504db834dcc61))
+* **saves:** restore the captured display configuration ([f32cb4c](https://github.com/stuffbucket/winvm/commit/f32cb4cc5d9a1ed71c9d0bbd4d4bafd782dcb10b))
+* **scripts:** make the saved-display acceptance runner startable and interruptible ([b76567e](https://github.com/stuffbucket/winvm/commit/b76567ed72987a3af4f7eb6fd68d294bd4d17c0a))
+
 ## [0.1.3](https://github.com/stuffbucket/winvm/compare/v0.1.2...v0.1.3) (2026-11-03)
 
 
