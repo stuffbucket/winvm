@@ -25,6 +25,7 @@ const REPO_ROOT = resolve(import.meta.dir, "..", "..", "..")
 
 /** Hashed whole, in addition to every `.ts` under the source directories below. */
 const INPUT_FILES = [
+  "package.json",
   "apps/cli/package.json",
   "packages/core/package.json",
   ".bun-version",

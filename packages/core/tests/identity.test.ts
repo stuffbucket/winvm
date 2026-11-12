@@ -46,6 +46,7 @@ describe("identityFromEntries", () => {
 describe("sourceBuildIdentity", () => {
   const roots: string[] = []
   const FILES: Readonly<Record<string, string>> = {
+    "package.json": '{"version":"0.1.0"}\n',
     "apps/cli/src/winvm.ts": "cli\n",
     "apps/cli/package.json": '{"version":"0.1.0"}\n',
     "packages/core/src/paths.ts": "paths\n",
