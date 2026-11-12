@@ -10,10 +10,10 @@
  */
 import { spawnSync } from "node:child_process"
 import { randomUUID } from "node:crypto"
-import { linkSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from "node:fs"
+import { existsSync, linkSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from "node:fs"
 import { resolve } from "node:path"
 
-import { commandInstance, winvmCommandAfter } from "./args"
+import { commandInstance, isValidInstanceName, winvmCommandAfter } from "./args"
 import type { Args } from "./args"
 import { pathsFor } from "./paths"
 
@@ -111,14 +111,38 @@ export function operationFor(sub: string | undefined, args: Args): VmOperation |
   return isOperation(sub) && GOLDEN_ACTION[sub] === undefined ? sub : null
 }
 
+/** Commands that bring an instance into being, so may lease one that does not exist yet. */
+const CREATES: readonly VmOperation[] = ["start", "setup", "golden-create"]
+
+/** A single directory name under instances/: nothing that resolves outside it. */
+const isPlainName = (name: string): boolean => name !== "" && name !== "." && name !== ".." && !name.includes("/") && !name.includes("\0")
+
+/**
+ * Whether `name` may have operation records. Never a name that leaves
+ * instances/. An existing instance always (it may predate today's naming
+ * rule); otherwise only a name `create` would take, and only for a command that
+ * creates the instance — so a mistyped `-i` leaves no directory behind.
+ */
+function leaseable(name: string, operation: VmOperation): boolean {
+  if (!isPlainName(name)) return false
+  return existsSync(pathsFor(name).meta) || (CREATES.includes(operation) && isValidInstanceName(name))
+}
+
 export async function withOperation<T>(name: string, operation: VmOperation, run: () => T | Promise<T>): Promise<T> {
+  if (!leaseable(name, operation)) return await run()
   const file = recordFile(name, process.pid)
   const token = randomUUID()
   mkdirSync(pathsFor(name).operations, { recursive: true })
   publish(file, { operation, pid: process.pid, startedAt: new Date().toISOString(), instance: name, token })
+  // A command may call process.exit inside its lease (ensureInstance, requireHost),
+  // which skips `finally`. The exit event still runs, synchronously, and release
+  // is token-checked, so it clears this lease's record and no other.
+  const onExit = (): void => release(file, token)
+  process.on("exit", onExit)
   try {
     return await run()
   } finally {
+    process.off("exit", onExit)
     release(file, token)
   }
 }
@@ -182,6 +206,7 @@ function dropStale(file: string, judged: string): void {
 }
 
 export function readOperation(name: string, seams: OperationReadSeams = {}): OperationInfo | null {
+  if (!isPlainName(name)) return null
   const alive = seams.alive ?? isAlive
   const command = seams.command ?? commandOf
   const dir = pathsFor(name).operations

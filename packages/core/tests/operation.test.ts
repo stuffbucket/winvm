@@ -30,7 +30,10 @@ afterAll(() => {
 })
 
 beforeEach(() => {
+  // An existing instance: the common case, and the one any command may lease.
   rmSync(pathsFor(NAME).dir, { recursive: true, force: true })
+  mkdirSync(pathsFor(NAME).dir, { recursive: true })
+  writeFileSync(pathsFor(NAME).meta, JSON.stringify({ image: "win11-arm64", vnc: 1, created: "2026-01-01T00:00:00.000Z" }))
 })
 
 const opsDir = (): string => pathsFor(NAME).operations
@@ -228,5 +231,101 @@ describe("operation records", () => {
     expect(readOperation(NAME, racing)).toBeNull()
     expect(JSON.parse(readFileSync(recordPath(601), "utf8")).token).toBe("new")
     expect(readOperation(NAME, seams("stop"))).toEqual({ operation: "stop", pid: 601, startedAt: "2026-02-02T00:00:00.000Z" })
+  })
+})
+
+describe("which instances get a lease", () => {
+  const instance = (name: string): void => {
+    mkdirSync(pathsFor(name).dir, { recursive: true })
+    writeFileSync(pathsFor(name).meta, JSON.stringify({ image: "win11-arm64", vnc: 1, created: "2026-01-01T00:00:00.000Z" }))
+  }
+  const leased = async (name: string, operation: VmOperation): Promise<boolean> =>
+    await withOperation(name, operation, () => existsSync(resolve(pathsFor(name).operations, `${String(process.pid)}.json`)))
+
+  it("creates no path for a name that could leave the instances directory, and still runs the command", async () => {
+    mkdirSync(resolve(home, "instances"), { recursive: true })
+    const outside = ["../escape", "../../wvop-escape", "a/b", "..", ".", ""]
+    for (const name of outside) {
+      expect(await withOperation(name, "stop", () => "ran")).toBe("ran")
+      expect(readOperation(name, seams("stop"))).toBeNull()
+    }
+    expect(existsSync(resolve(home, "escape"))).toBe(false)
+    expect(existsSync(resolve(home, "..", "wvop-escape"))).toBe(false)
+    expect(readdirSync(resolve(home, "instances"))).toEqual([NAME])
+    expect(readdirSync(home).sort()).toEqual(["instances"])
+  })
+
+  it("leases an existing instance, and a valid new name only for the commands that create one", async () => {
+    instance("op-existing")
+    expect(await leased("op-existing", "stop")).toBe(true)
+    // Not a name `create` would take today, but an instance that already exists keeps working.
+    instance("My VM")
+    expect(await leased("My VM", "stop")).toBe(true)
+
+    for (const operation of ["start", "setup", "golden-create"] as const) expect(await leased(`op-new-${operation}`, operation)).toBe(true)
+    // A typo'd name is not turned into an instance directory by a command that cannot create it.
+    expect(await leased("op-typo", "stop")).toBe(false)
+    expect(existsSync(pathsFor("op-typo").dir)).toBe(false)
+    // Nor is an invalid new name, even for a creating command.
+    expect(await leased("-bad name", "start")).toBe(false)
+    expect(existsSync(pathsFor("-bad name").dir)).toBe(false)
+    for (const n of ["op-existing", "My VM", "op-new-start", "op-new-setup", "op-new-golden-create"]) rmSync(pathsFor(n).dir, { recursive: true, force: true })
+  })
+})
+
+describe("a command that exits inside its lease", () => {
+  const SRC = resolve(import.meta.dir, "../src/operation.ts")
+  /** Run `body` in a fresh process against this test's home; it sees `withOperation`, `recordFile` and `fs`. */
+  const child = (body: string): { code: number; out: string } => {
+    const script = resolve(home, `child-${String(Math.random()).slice(2)}.ts`)
+    writeFileSync(
+      script,
+      [
+        `import { withOperation } from ${JSON.stringify(SRC)}`,
+        `import { writeFileSync } from "node:fs"`,
+        `const recordFile = \`${opsDir()}/\${process.pid}.json\``,
+        body,
+      ].join("\n"),
+    )
+    const r = Bun.spawnSync(["bun", script], { env: { ...process.env, WINVM_HOME: home }, stdout: "pipe", stderr: "pipe" })
+    rmSync(script, { force: true })
+    return { code: r.exitCode, out: r.stdout.toString().trim() }
+  }
+
+  it("clears its own record when the command calls process.exit", () => {
+    const r = child(`await withOperation(${JSON.stringify(NAME)}, "stop", () => { console.log(recordFile); process.exit(3) })`)
+    expect(r.code).toBe(3)
+    // The record existed while the command ran (the child printed its path) and is gone now.
+    expect(r.out).toStartWith(opsDir())
+    expect(files()).toEqual([])
+  })
+
+  it("clears the record when exit comes from a lease nested inside another of the same pid", () => {
+    const r = child(
+      `await withOperation(${JSON.stringify(NAME)}, "start", async () => {
+         await withOperation(${JSON.stringify(NAME)}, "stop", () => { process.exit(4) })
+       })`,
+    )
+    expect(r.code).toBe(4)
+    expect(files()).toEqual([])
+  })
+
+  it("leaves a record that carries someone else's lease", () => {
+    const foreign = JSON.stringify({ operation: "save", pid: 0, startedAt: "2026-01-01T00:00:00.000Z", instance: NAME, token: "newer-owner" })
+    const r = child(`await withOperation(${JSON.stringify(NAME)}, "start", () => { writeFileSync(recordFile, ${JSON.stringify(foreign)}); process.exit(5) })`)
+    expect(r.code).toBe(5)
+    expect(files()).toHaveLength(1)
+    expect(JSON.parse(readFileSync(resolve(opsDir(), files()[0] ?? ""), "utf8")).token).toBe("newer-owner")
+  })
+
+  it("does not leave an exit handler behind once the command settles", async () => {
+    const before = process.listenerCount("exit")
+    await withOperation(NAME, "start", () => undefined)
+    await expect(
+      withOperation(NAME, "stop", () => {
+        throw new Error("boom")
+      }),
+    ).rejects.toThrow("boom")
+    expect(process.listenerCount("exit")).toBe(before)
   })
 })
