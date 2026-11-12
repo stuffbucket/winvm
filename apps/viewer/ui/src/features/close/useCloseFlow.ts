@@ -47,6 +47,19 @@ interface Transaction {
   cancelled: boolean
   /** Ends a wait for another command early, when the person cancels. */
   wake: (() => void) | null
+  /** The `seq` of this window's last command on a machine as the close began: a later failure there is the close's. */
+  ranBefore: (name: string) => number
+}
+
+/**
+ * This window's commands on every machine it knew of as the close began. A machine not in its
+ * list then (made since) is measured against the latest command on any machine: `seq` only grows,
+ * so nothing it ran before the close is later than that.
+ */
+function ranBefore(w: Winvm): (name: string) => number {
+  const known = new Map(w.names.map((n) => [n, w.lastOn(n)?.seq ?? 0]))
+  const latest = Math.max(0, ...known.values())
+  return (name) => known.get(name) ?? latest
 }
 
 /** How often a machine busy with another command is read again: the window's own fast poll. */
@@ -143,8 +156,8 @@ export function useCloseFlow(w: Winvm): CloseFlow {
 
     const resolveOne = async (tx: Transaction, name: string, known: Status | null, index: number, total: number): Promise<Outcome> => {
       if (wRef.current.name !== name) wRef.current.select(name)
-      // This window's commands on this machine so far: one that ends after this and fails is a failure of the close.
-      const before = wRef.current.lastOn(name)?.seq ?? 0
+      // This window's commands on this machine as the close began: one that ends after that and fails is a failure of the close.
+      const before = tx.ranBefore(name)
       // Another process's command the close waited on, the last seen; its end is judged by where it left the machine.
       let external: VmOperation | null = null
       let s: Status | null
@@ -253,14 +266,17 @@ export function useCloseFlow(w: Winvm): CloseFlow {
     const begin = (): void => {
       if (active.current) return
       active.current = true
-      const tx: Transaction = { cancelled: false, wake: null }
+      const tx: Transaction = { cancelled: false, wake: null, ranBefore: () => 0 }
       transaction.current = tx
       closeStart().then(
-        () =>
+        () => {
+          // Taken the moment the close is claimed, for every machine, before any is reached.
+          tx.ranBefore = ranBefore(wRef.current)
           // Anything unforeseen calls the close off rather than leave Rust holding the app open with no one answering.
-          run(tx).catch((e: unknown) => {
+          return run(tx).catch((e: unknown) => {
             if (!tx.cancelled) fail(tx, wRef.current.status, errorMessage(e))
-          }),
+          })
+        },
         () => {
           // Rust refused the claim (no request waits any more): another path has it, or it went. Drop this one quietly.
           active.current = false

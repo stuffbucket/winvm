@@ -176,6 +176,11 @@ function fakeWinvm(machines: Machine[], selected: string | null) {
       settled.add(run)
       run.done.resolve({ verb: run.verb, code, output })
     },
+    /** This window's own command on `name` ends while another machine is shown: only its outcome is recorded. */
+    ranLocal(name: string, verb: Verb, code: number, output = ""): void {
+      seq += 1
+      outcomes.set(name, { verb, code, output, seq })
+    },
     /** This window's own command on `name` (not the close flow's) ends: its outcome is recorded for that machine. */
     finishLocal(name: string, code: number, output = ""): void {
       const verb = world.busy
@@ -947,10 +952,47 @@ describe("useCloseFlow", () => {
     expect(again.count("close_complete")).toBe(1)
   })
 
+  it("calls the close off when this window's command on a machine not yet reached fails while another is asked about", async () => {
+    const bridge = fakeBridge()
+    // B's remembered stow: were the failure missed, the close would stow it and exit.
+    const world = fakeWinvm(
+      [
+        { name: "a", state: "running" },
+        { name: "b", state: "running", closePolicy: "stow" },
+      ],
+      "a",
+    )
+    await mount(world)
+    // A Shut Down of B's, started from this window before the close, is still running.
+    act(() => bridge.fire())
+    await flush()
+    expect(current().state.kind).toBe("asking")
+    // …and fails while A's dialog is open.
+    world.ranLocal("b", "stop", 1, "winvm stop: Windows didn't shut down in 180 seconds")
+    act(() => current().choose("leave"))
+    await flush()
+    const failed = current().state
+    expect(failed.kind).toBe("failed")
+    if (failed.kind !== "failed") return
+    expect(failed.machine?.name).toBe("b")
+    expect(failed.message).toBe("winvm stop: Windows didn't shut down in 180 seconds")
+    expect(world.name).toBe("b")
+    expect(bridge.count("close_cancel")).toBe(1)
+    expect(bridge.count("close_complete")).toBe(0)
+    expect(world.runs).toHaveLength(0)
+  })
+
   it("does not take a failure from before the close as this close's", async () => {
     const bridge = fakeBridge()
-    const world = fakeWinvm([{ name: "a", state: "running", closePolicy: "leave" }], "a")
-    // `a`'s Save failed before the close began, and its error is still on screen: not this close's failure.
+    const world = fakeWinvm(
+      [
+        { name: "a", state: "running", closePolicy: "leave" },
+        { name: "b", state: "running", closePolicy: "leave" },
+      ],
+      "a",
+    )
+    // `b`'s Stop and then `a`'s Save failed before the close began; their errors may still be on screen.
+    world.ranLocal("b", "stop", 1, "an old failure on b")
     world.busy = "save"
     world.finishLocal("a", 1, "an old failure")
     await mount(world)
