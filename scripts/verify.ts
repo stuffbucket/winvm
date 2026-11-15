@@ -12,7 +12,7 @@ interface Step {
   lane?: "tests" | "rust"
   commands: Command[]
   findings: (output: string) => number
-  prepare?: () => void
+  prepare?: () => string | undefined
 }
 
 interface Result {
@@ -80,23 +80,24 @@ function netWarnings(output: string): number {
   )
 }
 
-let rustInputsReady = false
+let rustInputsFailure: string | undefined | null = null
 
-function ensureRustInputs(): void {
-  if (rustInputsReady) return
-  rustInputsReady = true
-  if (!existsSync(SIDECAR)) {
-    Bun.spawnSync(["bun", join(VIEWER, "scripts", "build-sidecar.ts")], {
-      cwd: ROOT,
-      env: ENV,
-    })
+function ensureRustInputs(): string | undefined {
+  if (rustInputsFailure !== null) return rustInputsFailure
+  rustInputsFailure = undefined
+  const builds: [string, string, string][] = [
+    [SIDECAR, join(VIEWER, "scripts", "build-sidecar.ts"), ROOT],
+    [DIST_INDEX, join(VIEWER, "scripts", "build-ui.ts"), VIEWER],
+  ]
+  for (const [output, script, cwd] of builds) {
+    if (existsSync(output)) continue
+    const built = Bun.spawnSync(["bun", script], { cwd, env: ENV })
+    if (built.exitCode !== 0 || !existsSync(output)) {
+      rustInputsFailure = `setup failed: bun ${script} did not produce ${output}\n${built.stderr.toString()}${built.stdout.toString()}`
+      return rustInputsFailure
+    }
   }
-  if (!existsSync(DIST_INDEX)) {
-    Bun.spawnSync(["bun", join(VIEWER, "scripts", "build-ui.ts")], {
-      cwd: VIEWER,
-      env: ENV,
-    })
-  }
+  return rustInputsFailure
 }
 
 const STEPS: Step[] = [
@@ -269,10 +270,10 @@ function parseArgs(argv: string[]): {
 
 async function runStep(step: Step, logs: string): Promise<Result> {
   const started = performance.now()
-  step.prepare?.()
-  let output = ""
-  let ok = true
-  for (const command of step.commands) {
+  const setupFailure = step.prepare?.()
+  let output = setupFailure ?? ""
+  let ok = setupFailure === undefined
+  for (const command of setupFailure === undefined ? step.commands : []) {
     const proc = Bun.spawn(command.argv, {
       cwd: command.cwd ?? ROOT,
       env: ENV,
@@ -287,7 +288,7 @@ async function runStep(step: Step, logs: string): Promise<Result> {
     output += `$ ${command.argv.join(" ")}\n${out.replace(ANSI, "")}${err.replace(ANSI, "")}\n`
     if (code !== 0) ok = false
   }
-  const findings = step.findings(output)
+  const findings = setupFailure === undefined ? step.findings(output) : 1
   const log = join(logs, `${step.name}.log`)
   writeFileSync(log, output)
   const ms = Math.round(performance.now() - started)
