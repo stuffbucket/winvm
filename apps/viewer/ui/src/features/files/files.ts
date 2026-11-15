@@ -195,7 +195,6 @@ export function sortEntries(entries: readonly Entry[], sort: Sort, kind: (e: Ent
 /** Why Windows would refuse `name` for a file or folder, or null when it is fine. */
 export function nameProblem(name: string): "empty" | "chars" | "reserved" | "ends" | null {
   if (name.trim() === "" || name === "." || name === "..") return "empty"
-  // eslint-disable-next-line no-control-regex
   if (/[<>:"/\\|?*\u0000-\u001f]/.test(name)) return "chars"
   if (/^(con|prn|aux|nul|com[1-9]|lpt[1-9])(\..*)?$/i.test(name)) return "reserved"
   if (/[. ]$/.test(name)) return "ends"

@@ -37,6 +37,8 @@ const BIOME_IGNORE_END = /^biome-ignore-end\s+\S+/
 const BIOME_IGNORE_ANY = /^biome-ignore/
 const TS_EXPECT_ERROR = /^@ts-expect-error\s+\S/
 const TS_EXPECT_ERROR_NO_REASON = /^@ts-expect-error\s*$/
+const OXLINT_DISABLE = /^oxlint-disable-next-line\s+typescript\/[a-z-]+\s+--\s+\S/
+const OXLINT_ANY = /^oxlint-/
 const TS_DIRECTIVE = /^@ts-check$/
 const PURE_ANNOTATION = /^[@#]__(?:PURE|NO_SIDE_EFFECTS)__$/
 const REFERENCE_DIRECTIVE = /^\/\/\/\s*<reference\s/
@@ -214,6 +216,10 @@ function problem(
   }
   if (TS_EXPECT_ERROR.test(content)) return undefined
   if (language === "ts") {
+    if (!block && OXLINT_DISABLE.test(content)) return undefined
+    if (OXLINT_ANY.test(content)) {
+      return "oxlint directive other than `oxlint-disable-next-line typescript/<rule> -- <reason>`"
+    }
     if (TS_DIRECTIVE.test(content)) return undefined
     if (block && PURE_ANNOTATION.test(content)) return undefined
     if (!block && REFERENCE_DIRECTIVE.test(raw)) return undefined

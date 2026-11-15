@@ -55,7 +55,6 @@ export function CheckpointDetails({ c, now, busy, saving, onClose, onLook, onNot
     const d = draftOf(c.notes)
     setDraft(d)
     written.current = d
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [c.name, c.createdAt])
 
   const flush = (): void => {

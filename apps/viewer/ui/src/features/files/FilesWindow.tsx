@@ -625,7 +625,6 @@ export function FilesWindow({ instance, initialTitle }: { readonly instance: str
         setHostTarget((cur) => (e.type === "over" && cur === null ? null : into))
       }),
     // targetAt reads live values only.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
     [copyInto],
   )
 
