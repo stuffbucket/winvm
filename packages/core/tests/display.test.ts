@@ -453,10 +453,10 @@ describe("a size Windows refuses at its lock screen (LockedDisplay)", () => {
   const make = (answers: { locked: boolean[]; set: DisplayOutcome[] }): { d: LockedDisplay; sets: string[] } => {
     const sets: string[] = []
     const d = new LockedDisplay({
-      locked: async () => answers.locked.shift() ?? false,
-      set: async (args) => {
+      locked: () => Promise.resolve(answers.locked.shift() ?? false),
+      set: (args) => {
         sets.push(args.join(" "))
-        return answers.set.shift() ?? "ok"
+        return Promise.resolve(answers.set.shift() ?? "ok")
       },
       everyMs: 60_000,
     })

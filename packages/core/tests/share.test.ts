@@ -424,12 +424,12 @@ describe.skipIf(process.platform !== "darwin")("reading an ISO by ranges", () =>
   })
   afterAll(() => { rmSync(dir, { recursive: true, force: true }) })
 
-  const fileRanges = (path: string) => async (offset: number, length: number): Promise<Uint8Array> => {
+  const fileRanges = (path: string) => (offset: number, length: number): Promise<Uint8Array> => {
     const fd = openSync(path, "r")
     try {
       const b = Buffer.alloc(length)
       readSync(fd, b, 0, length, offset)
-      return b
+      return Promise.resolve(b)
     } finally {
       closeSync(fd)
     }
@@ -444,7 +444,7 @@ describe.skipIf(process.platform !== "darwin")("reading an ISO by ranges", () =>
   it("names what is missing", async () => {
     await expect(readIsoFiles(fileRanges(iso), ["viofs", "w10"], ["viofs.inf"])).rejects.toThrow(/viofs\/w10/)
     await expect(readIsoFiles(fileRanges(iso), ["viofs", "w11", "ARM64"], ["viofs.sys"])).rejects.toThrow(/viofs.sys/)
-    await expect(readIsoFiles(async (_o, n) => new Uint8Array(n), ["viofs"], [])).rejects.toThrow(/ISO 9660/)
+    await expect(readIsoFiles((_o, n) => Promise.resolve(new Uint8Array(n)), ["viofs"], [])).rejects.toThrow(/ISO 9660/)
   })
 
   it("skips the . and .. records and sector padding", () => {

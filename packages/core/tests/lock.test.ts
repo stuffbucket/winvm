@@ -23,23 +23,23 @@ class FakeAgent implements LockAgent {
   appearsAfter: number | null = 1
   private sinceLaunch = 0
 
-  async pwsh(script: string): Promise<PwshResponse> {
+  pwsh(script: string): Promise<PwshResponse> {
     this.scripts.push(script)
-    return { code: this.pwshCode, output: this.pwshOutput, ms: 1, timedOut: false }
+    return Promise.resolve({ code: this.pwshCode, output: this.pwshOutput, ms: 1, timedOut: false })
   }
 
-  async launch(argv: readonly string[]): Promise<{ readonly pid: number }> {
+  launch(argv: readonly string[]): Promise<{ readonly pid: number }> {
     this.launched.push(argv)
     this.sinceLaunch = 0
-    return { pid: 100 }
+    return Promise.resolve({ pid: 100 })
   }
 
-  async procs(): Promise<readonly Proc[]> {
+  procs(): Promise<readonly Proc[]> {
     if (this.launched.length > 0) {
       this.sinceLaunch += 1
-      if (this.appearsAfter !== null && this.sinceLaunch >= this.appearsAfter) return [...this.procList, { pid: 900, name: "LogonUI.exe", session: 1 }]
+      if (this.appearsAfter !== null && this.sinceLaunch >= this.appearsAfter) return Promise.resolve([...this.procList, { pid: 900, name: "LogonUI.exe", session: 1 }])
     }
-    return this.procList
+    return Promise.resolve(this.procList)
   }
 }
 

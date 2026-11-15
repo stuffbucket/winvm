@@ -174,10 +174,10 @@ beforeEach(async () => {
   writeFileSync(p.pid, `${String(qemu.pid)}\n`)
   control = Bun.serve({ unix: p.control, fetch: () => new Response("ok") })
   signals.length = 0
-  process.kill = ((pid: number, sig?: string | number): true => {
+  process.kill = (pid: number, sig?: string | number): true => {
     if (sig !== 0) signals.push({ pid, sig: String(sig ?? "SIGTERM") })
     return realKill(pid, sig)
-  }) as typeof process.kill
+  }
 })
 
 afterEach(async () => {
@@ -218,7 +218,7 @@ describe("reconciling management processes", () => {
     const w = await watcher(OLD)
     const order: string[] = []
     const watcherAliveAtServiceStop: boolean[] = []
-    process.kill = ((pid: number, sig?: string | number): true => {
+    process.kill = (pid: number, sig?: string | number): true => {
       if (sig !== 0) {
         signals.push({ pid, sig: String(sig ?? "SIGTERM") })
         if (pid === w.pid) order.push("stop watcher")
@@ -228,7 +228,7 @@ describe("reconciling management processes", () => {
         }
       }
       return realKill(pid, sig)
-    }) as typeof process.kill
+    }
     const s = seams()
     const base = s.options
     const r = await reconcileManagement("t", p, {
@@ -513,7 +513,7 @@ describe("one reconciliation at a time", () => {
     chmodSync(p.reconcile, 0o600)
     expect(r.signal).toBeNull()
     expect(JSON.parse(r.stdout) as unknown).toMatchObject({ kind: "reconcile-lock", retryable: true })
-    expect(String((JSON.parse(r.stdout) as { message: string }).message)).toContain(p.reconcile)
+    expect((JSON.parse(r.stdout) as { message: string }).message).toContain(p.reconcile)
     expect(live(old.pid)).toBe(true)
     expectQemuUntouched()
   }, 30_000)
@@ -793,13 +793,13 @@ describe("a service that keeps failing to start", () => {
   it("starts a missing service first, then rotates a stale watcher", async () => {
     const w = await watcher(OLD)
     const order: string[] = []
-    process.kill = ((pid: number, sig?: string | number): true => {
+    process.kill = (pid: number, sig?: string | number): true => {
       if (sig !== 0) {
         signals.push({ pid, sig: String(sig ?? "SIGTERM") })
         if (pid === w.pid) order.push("stop watcher")
       }
       return realKill(pid, sig)
-    }) as typeof process.kill
+    }
     const s = seams()
     const base = s.options
     await reconcileManagement("t", p, {
@@ -847,14 +847,14 @@ describe("races", () => {
     await service(OLD)
     const w = await watcher(OLD)
     const loads: Promise<string>[] = []
-    process.kill = ((pid: number, sig?: string | number): true => {
+    process.kill = (pid: number, sig?: string | number): true => {
       if (sig !== 0) {
         signals.push({ pid, sig: String(sig ?? "SIGTERM") })
         // A load, arriving the moment the watcher is told to stop.
         if (pid === w.pid) loads.push(loadFromAnotherProcess())
       }
       return realKill(pid, sig)
-    }) as typeof process.kill
+    }
     const s = seams()
     const r = await reconcileManagement("t", p, s.options)
     expect(await Promise.all(loads)).toEqual([CURRENT])

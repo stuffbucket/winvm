@@ -85,10 +85,10 @@ describe("qga.waitFor", () => {
     const before = agent.connections
     let asked = 0
     // QEMU reports the port closed three times, then open.
-    const portOpen = async (): Promise<boolean> => {
+    const portOpen = (): Promise<boolean> => {
       asked += 1
       if (asked <= 3) expect(agent.connections).toBe(before)
-      return asked > 3
+      return Promise.resolve(asked > 3)
     }
     expect(await waitFor(agent.path, 5000, { portOpen })).toBe(true)
     expect(asked).toBe(4)
@@ -97,28 +97,28 @@ describe("qga.waitFor", () => {
 
   it("still tries the agent when QEMU's view is unknown", async () => {
     const before = agent.connections
-    expect(await waitFor(agent.path, 5000, { portOpen: async () => null })).toBe(true)
+    expect(await waitFor(agent.path, 5000, { portOpen: () => Promise.resolve(null) })).toBe(true)
     expect(agent.connections).toBe(before + 1)
   })
 
   it("gives up at the deadline if the port never opens, without connecting", async () => {
     const before = agent.connections
-    expect(await waitFor(agent.path, 600, { portOpen: async () => false })).toBe(false)
+    expect(await waitFor(agent.path, 600, { portOpen: () => Promise.resolve(false) })).toBe(false)
     expect(agent.connections).toBe(before)
   })
 })
 
 describe("qga.untilReady", () => {
-  const fast = { waitFor: async (): Promise<boolean> => true, pollMs: 5, repairAfterMs: 30 }
+  const fast = { waitFor: (): Promise<boolean> => Promise.resolve(true), pollMs: 5, repairAfterMs: 30 }
 
   it("repairs an interrupted audit-mode logon once, then waits for the logon", async () => {
     let repaired = 0
     const logs: string[] = []
     // No one logged on until the repair's restart; then Administrator.
-    const loggedOnUser = async (): Promise<string | null> => (repaired === 0 ? "" : "WINVM\\Administrator")
-    const repairAudit = async (): Promise<boolean> => {
+    const loggedOnUser = (): Promise<string | null> => Promise.resolve(repaired === 0 ? "" : "WINVM\\Administrator")
+    const repairAudit = (): Promise<boolean> => {
       repaired += 1
-      return true
+      return Promise.resolve(true)
     }
     expect(await untilReady("unused", 5000, { ...fast, loggedOnUser, repairAudit, noLogonMs: 2000, log: (l) => logs.push(l) })).toBe("ready")
     expect(repaired).toBe(1)
@@ -127,12 +127,12 @@ describe("qga.untilReady", () => {
 
   it("gives up with no-logon, not at the timeout, when nothing is there to repair", async () => {
     let checks = 0
-    const repairAudit = async (): Promise<boolean> => {
+    const repairAudit = (): Promise<boolean> => {
       checks += 1
-      return false
+      return Promise.resolve(false)
     }
     const t0 = Date.now()
-    expect(await untilReady("unused", 5000, { ...fast, loggedOnUser: async () => "", repairAudit, noLogonMs: 120 })).toBe("no-logon")
+    expect(await untilReady("unused", 5000, { ...fast, loggedOnUser: () => Promise.resolve(""), repairAudit, noLogonMs: 120 })).toBe("no-logon")
     expect(Date.now() - t0).toBeLessThan(2000)
     // Asked once per spell of no one logged on, not on every poll.
     expect(checks).toBe(1)
@@ -140,19 +140,19 @@ describe("qga.untilReady", () => {
 
   it("does not count OOBE's own account, or an unreachable guest, as no one logged on", async () => {
     let n = 0
-    const loggedOnUser = async (): Promise<string | null> => {
+    const loggedOnUser = (): Promise<string | null> => {
       n += 1
-      return n < 20 ? (n % 2 === 0 ? null : "WINVM\\defaultuser0") : "WINVM\\Administrator"
+      return Promise.resolve(n < 20 ? (n % 2 === 0 ? null : "WINVM\\defaultuser0") : "WINVM\\Administrator")
     }
-    const repairAudit = async (): Promise<boolean> => {
-      throw new Error("must not be asked")
+    const repairAudit = (): Promise<boolean> => {
+      return Promise.reject(new Error("must not be asked"))
     }
     expect(await untilReady("unused", 5000, { ...fast, loggedOnUser, repairAudit, noLogonMs: 20 })).toBe("ready")
   })
 })
 
 describe("qga.loggedOnUser", () => {
-  const noRepair = async (): Promise<boolean> => false
+  const noRepair = (): Promise<boolean> => Promise.resolve(false)
 
   it("asks the agent who is logged on, without starting a command in the guest", async () => {
     const asked: unknown[] = []
@@ -170,7 +170,7 @@ describe("qga.loggedOnUser", () => {
     agent.handler = () => ({ return: [] })
     expect(await loggedOnUser(agent.path)).toBe("")
     agent.handler = () => ({ return: [{ user: "defaultuser0", domain: "WINVM" }] })
-    expect(await untilReady(agent.path, 300, { waitFor: async () => true, pollMs: 20, repairAudit: noRepair })).toBe("timeout")
+    expect(await untilReady(agent.path, 300, { waitFor: () => Promise.resolve(true), pollMs: 20, repairAudit: noRepair })).toBe("timeout")
   })
 
   it("does not let a guest command that never ends use up the wait", async () => {
@@ -189,7 +189,7 @@ describe("qga.loggedOnUser", () => {
       }
     }
     const t0 = Date.now()
-    expect(await untilReady(agent.path, 1500, { waitFor: async () => true, pollMs: 20, probeMs: 200, repairAudit: noRepair })).toBe("timeout")
+    expect(await untilReady(agent.path, 1500, { waitFor: () => Promise.resolve(true), pollMs: 20, probeMs: 200, repairAudit: noRepair })).toBe("timeout")
     expect(Date.now() - t0).toBeLessThan(3000)
   })
 })
@@ -197,29 +197,29 @@ describe("qga.loggedOnUser", () => {
 describe("qga.untilNewBoot", () => {
   const BEFORE = "2026-10-27T10:00:00.0000000-07:00"
   const AFTER = "2026-10-27T10:01:30.0000000-07:00"
-  const ready = async (): Promise<"ready"> => "ready"
+  const ready = (): Promise<"ready"> => Promise.resolve("ready")
 
   it("waits out the old boot, which stays ready for a while, until a new one is ready", async () => {
     // Old boot, old boot, unreachable on the way down, then the new boot.
     const seen = [BEFORE, BEFORE, null, AFTER]
     let asked = 0
-    const bootTime = async (): Promise<string | null> => seen[Math.min(asked++, seen.length - 1)] ?? null
+    const bootTime = (): Promise<string | null> => Promise.resolve(seen[Math.min(asked++, seen.length - 1)] ?? null)
     expect(await untilNewBoot("unused", BEFORE, 5000, { untilReady: ready, bootTime, settleMs: 1 })).toBe("ready")
     expect(asked).toBe(4)
   })
 
   it("times out when the boot never changes", async () => {
-    const bootTime = async (): Promise<string | null> => BEFORE
+    const bootTime = (): Promise<string | null> => Promise.resolve(BEFORE)
     expect(await untilNewBoot("unused", BEFORE, 50, { untilReady: ready, bootTime, settleMs: 5 })).toBe("timeout")
   })
 
   it("passes on no-logon from the new boot rather than waiting for a change it cannot see", async () => {
     let asked = 0
-    const bootTime = async (): Promise<string | null> => {
+    const bootTime = (): Promise<string | null> => {
       asked += 1
-      return AFTER
+      return Promise.resolve(AFTER)
     }
-    expect(await untilNewBoot("unused", BEFORE, 5000, { untilReady: async () => "no-logon", bootTime })).toBe("no-logon")
+    expect(await untilNewBoot("unused", BEFORE, 5000, { untilReady: () => Promise.resolve("no-logon"), bootTime })).toBe("no-logon")
     expect(asked).toBe(0)
   })
 })

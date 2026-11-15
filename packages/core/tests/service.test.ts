@@ -375,7 +375,7 @@ const fakeService = (name: string): ReturnType<typeof Bun.spawn> =>
 const alive = (pid: number): boolean => {
   try {
     process.kill(pid, 0)
-    return spawnSync("ps", ["-o", "stat=", "-p", String(pid)], { encoding: "utf8" }).stdout.trim().startsWith("Z") === false
+    return !spawnSync("ps", ["-o", "stat=", "-p", String(pid)], { encoding: "utf8" }).stdout.trim().startsWith("Z")
   } catch {
     return false
   }

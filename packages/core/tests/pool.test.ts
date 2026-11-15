@@ -171,6 +171,6 @@ describe("pool timing", () => {
     ])
     const summary = { jobs, wallMs: 20_000, setupMs: 5000, pool: s }
     expect(formatSummary(summary)).toContain("exposed reset")
-    expect(JSON.parse(toJson(summary)).pool.exposedResetShare).toBeCloseTo(1 / 15)
+    expect((JSON.parse(toJson(summary)) as { pool: { exposedResetShare: number } }).pool.exposedResetShare).toBeCloseTo(1 / 15)
   })
 })

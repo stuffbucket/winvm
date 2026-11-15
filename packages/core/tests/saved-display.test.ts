@@ -152,21 +152,21 @@ beforeEach(() => {
     writeFileSync(path, "result")
   })
   // The control service is what answers on p.qmp; a new instance has no socket until it starts.
-  spyOn(servicectl, "ensureService").mockImplementation(async (_name, p) => {
+  spyOn(servicectl, "ensureService").mockImplementation((_name, p) => {
     writeFileSync(p.qmp, "")
-    return {} as never
+    return Promise.resolve({} as never)
   })
-  spyOn(vnc, "ensureFreeDisplay").mockImplementation(async (_name, _p, m) => m)
+  spyOn(vnc, "ensureFreeDisplay").mockImplementation((_name, _p, m) => Promise.resolve(m))
   spyOn(vnc, "applyPassword").mockResolvedValue(null)
-  spyOn(share, "startVirtiofsd").mockImplementation(async () => {
+  spyOn(share, "startVirtiofsd").mockImplementation(() => {
     virtiofsd += 1
-    return { dir: state, readonly: false, folder: null }
+    return Promise.resolve({ dir: state, readonly: false, folder: null })
   })
   spyOn(qemu, "pidOf").mockImplementation(() => runningPid)
   spyOn(qemu, "isRunning").mockImplementation(() => runningPid !== null)
-  spyOn(qmp, "status").mockImplementation(async () => {
+  spyOn(qmp, "status").mockImplementation(() => {
     statusCalls += 1
-    return "running"
+    return Promise.resolve("running")
   })
   spyOn(qmp, "execute").mockImplementation(async (_socket, cmd, args) => {
     commands.push(cmd)
@@ -278,7 +278,7 @@ describe("capturing the running display", () => {
     spyOn(display, "runningCommand").mockReturnValue("qemu-system-aarch64 -device virtio-gpu-pci,xres=8000,yres=600 -display none")
     const refusal = createSave("source", { name: "huge", kind: "manual", format: "raw" })
     await expect(refusal).rejects.toThrow(/virtio-gpu profile \(xres=8000,yres=600\) that a save cannot record.*640x480 to 7680x4320.*winvm display/)
-    await refusal.catch((error: Error) => { expect(error.message).not.toContain("no single") })
+    await refusal.catch((error: unknown) => { expect(error instanceof Error ? error.message : "").not.toContain("no single") })
     expect(commands).toEqual([])
     expect(statusCalls).toBe(0)
     expect(existsSync(savesDir("source"))).toBe(false)
@@ -429,7 +429,7 @@ describe("recalling and reusing", () => {
     fixture(RAMFB, true, "stow", "stow")
     writeDisplay(pathsFor("source"), VIRTIO_GPU)
     spyOn(qga, "waitResponsive").mockResolvedValue(true)
-    spyOn(clock, "syncGuestClock").mockResolvedValue({ beforeOffsetMs: 0, afterOffsetMs: 0 } as never)
+    spyOn(clock, "syncGuestClock").mockResolvedValue({ beforeOffsetMs: 0, afterOffsetMs: 0 })
     expect(await recall()).toBe(0)
     expect(lastLaunch()).toContain("-device ramfb")
     expect(readSave("source", "stow")).toBeNull()
@@ -450,8 +450,8 @@ describe("recalling and reusing", () => {
     fixture(RAMFB, true, "baseline", "baseline")
     writeDisplay(pathsFor("source"), VIRTIO_GPU)
     markPristine("source")
-    spyOn(clock, "alignGuestTimeZone").mockResolvedValue({ from: "UTC", to: "UTC", changed: false } as never)
-    spyOn(clock, "syncGuestClock").mockResolvedValue({ beforeOffsetMs: 0, afterOffsetMs: 0 } as never)
+    spyOn(clock, "alignGuestTimeZone").mockResolvedValue({ from: "UTC", to: "UTC", changed: false })
+    spyOn(clock, "syncGuestClock").mockResolvedValue({ beforeOffsetMs: 0, afterOffsetMs: 0 })
     await savecmds.afterBoot("source", parseArgs([]))
     expect(isPristine("source")).toBe(false)
     expect(commands).toEqual([])

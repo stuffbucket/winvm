@@ -159,7 +159,7 @@ describe("the qemu-ga channel", () => {
     await agent.listen()
     qgaListen = resolve(dir, "qga.sock")
     open = true
-    qgaChannel = new QgaChannel({ listen: qgaListen, upstream: agent.path, portOpen: async () => open })
+    qgaChannel = new QgaChannel({ listen: qgaListen, upstream: agent.path, portOpen: () => Promise.resolve(open) })
     await qgaChannel.start()
   })
 
