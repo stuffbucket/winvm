@@ -20,7 +20,7 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, rmdirSync, statSync, writeFileSync } from "node:fs"
 import { resolve } from "node:path"
 
-import { nameError } from "./saves"
+import { nameError } from "./savename"
 import { dataDir } from "./xdg"
 
 export interface Note {

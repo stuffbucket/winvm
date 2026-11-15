@@ -301,7 +301,7 @@ export const hasNotes = (c: Pick<Checkpoint, "notes" | "note">): boolean =>
 
 const SAVE_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]*$/
 
-/** saves.ts nameError's rule: a save name is a directory name. */
+/** savename.ts nameError's rule: a save name is a directory name. */
 export const validSaveName = (name: string): boolean => name.length > 0 && name.length <= 64 && SAVE_NAME.test(name)
 
 /** winvm's default save name, the local time: "2026-10-21_16-43-05". */

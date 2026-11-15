@@ -134,6 +134,7 @@ import type { InstanceMeta, Paths } from "./paths"
 import { basePath, home, imageMetaPath, instanceDir, pathsFor, readImageMeta, readMeta } from "./paths"
 import * as qemu from "./qemu"
 import * as qmp from "./qmp"
+import { nameError } from "./savename"
 import * as finder from "./finder"
 import { clearSavingRunning, markSavingRunning, withOperation } from "./operation"
 import { instanceOf } from "./smbstate"
@@ -238,21 +239,6 @@ export const saveDir = (instance: string, name: string): string => resolve(saves
 
 // ---------------------------------------------------------------------------
 // Pure logic (unit-tested)
-
-/**
- * A save name is a directory name, shown in tables and typed on command lines:
- * letters, digits, `.`, `_`, `-`, starting with a letter or digit, at most 64.
- * Leading dots are reserved for in-progress and lock entries.
- * Returns why a name is unacceptable, or null.
- */
-export function nameError(name: string): string | null {
-  if (name.length === 0) return "a save name cannot be empty"
-  if (name.length > 64) return "a save name is at most 64 characters"
-  if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(name)) {
-    return `"${name}" is not a valid save name — use letters, digits, ".", "_" and "-", starting with a letter or digit`
-  }
-  return null
-}
 
 /** Default save name: the local time, sortable and shell-safe — `2026-10-21_16-43-05`. */
 export function defaultName(d: Date): string {

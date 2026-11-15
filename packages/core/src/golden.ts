@@ -38,6 +38,7 @@ import type { Paths } from "./paths"
 import { pathsFor, readImageMeta, readMeta } from "./paths"
 import * as qemu from "./qemu"
 import * as qga from "./qga"
+import { nameError } from "./savename"
 import * as saves from "./saves"
 import * as watcher from "./watch"
 
@@ -209,7 +210,7 @@ export const createGolden = async (instance: string, o: CreateGoldenOptions = {}
 async function createGoldenHeld(instance: string, o: CreateGoldenOptions): Promise<CreateGoldenResult> {
   const log = o.log ?? (() => undefined)
   const name = o.name ?? saves.GOLDEN
-  const nameErr = saves.nameError(name)
+  const nameErr = nameError(name)
   if (nameErr !== null) throw new Error(nameErr)
   if (name === saves.STOW) throw new Error(`"${saves.STOW}" is reserved for \`winvm stow\``)
   const started = Date.now()
