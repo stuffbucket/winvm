@@ -31,7 +31,6 @@
 import type { Args } from "./args"
 import { imageName, instanceName } from "./args"
 import { alignGuestTimeZone, formatOffset, syncGuestClock } from "./clock"
-import { capture } from "./shell"
 import { ensureInstance } from "./instance"
 import { withOperation } from "./operation"
 import type { Paths } from "./paths"
@@ -40,6 +39,7 @@ import * as qemu from "./qemu"
 import * as qga from "./qga"
 import { nameError } from "./savename"
 import * as saves from "./saves"
+import { capture } from "./shell"
 import * as watcher from "./watch"
 
 // ---------------------------------------------------------------------------
