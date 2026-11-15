@@ -10,11 +10,23 @@
     "typecheck": "turbo run typecheck",
     "test": "turbo run test",
     "check": "turbo run typecheck test && bun test scripts",
-    "winvm": "bun apps/cli/src/winvm.ts"
+    "winvm": "bun apps/cli/src/winvm.ts",
+    "verify": "bun scripts/verify.ts",
+    "verify:fast": "bun scripts/verify.ts --fast",
+    "lint": "biome ci --error-on-warnings .",
+    "comments": "bun scripts/check-comments.ts",
+    "boundaries": "turbo boundaries",
+    "knip": "knip",
+    "deps": "depcruise --config .dependency-cruiser.cjs apps packages scripts"
   },
   "devDependencies": {
+    "@biomejs/biome": "2.6.6",
+    "@types/bun": "1.4.0",
     "@winvm/cli": "workspace:*",
-    "turbo": "^2.11.4"
+    "dependency-cruiser": "18.7.2",
+    "knip": "6.44.2",
+    "turbo": "2.11.9",
+    "typescript": "6.0.3"
   },
   "packageManager": "pnpm@12.3.4",
   "pnpmTarballUrlPolicy": {

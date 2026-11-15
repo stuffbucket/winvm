@@ -1,3 +1,6 @@
 # The viewer app needs Rust; only work in this directory installs it.
+# cargo-deny and cargo-machete are the Rust dependency gates (`bun run verify`).
 [tools]
 rust = "1.99.0"
+cargo-deny = "0.20.2"
+"cargo:cargo-machete" = "0.9.2"

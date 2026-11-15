@@ -4,6 +4,7 @@ version = "0.1.0"
 description = "winvm: Windows 11 ARM64 virtual machines on Apple Silicon"
 authors = ["stuffbucket"]
 edition = "2021"
+license = "MIT"
 
 [lib]
 name = "winvm_viewer_lib"
@@ -63,6 +64,21 @@ objc2-app-kit = { version = "=0.3.2", default-features = false, features = [
     "NSWorkspace",
 ] }
 objc2-uniform-type-identifiers = { version = "=0.3.2", default-features = false, features = ["std", "UTType"] }
+
+[lints.rust]
+unsafe_op_in_unsafe_fn = "deny"
+unused_must_use = "deny"
+
+[lints.clippy]
+pedantic = { level = "warn", priority = -1 }
+dbg_macro = "warn"
+todo = "warn"
+unimplemented = "warn"
+undocumented_unsafe_blocks = "warn"
+allow_attributes_without_reason = "warn"
+
+[package.metadata.cargo-machete]
+ignored = ["tauri-build"]
 
 [profile.release]
 codegen-units = 1
