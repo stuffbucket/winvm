@@ -184,7 +184,7 @@ describe("the close-policy setting in Details", () => {
     const host = await mount(world)
     await openDetails(host)
     const select = policySelect(host)
-    expect(select.labels?.[0]?.textContent).toContain("When closing WinVM")
+    expect(select.labels[0]?.textContent).toContain("When closing WinVM")
     expect([...select.options].map((o) => [o.value, o.textContent])).toEqual([
       ["ask", "Ask every time"],
       ["leave", "Leave running"],

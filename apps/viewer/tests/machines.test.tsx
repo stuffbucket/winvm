@@ -205,7 +205,7 @@ describe("Delete…", () => {
   it("says what goes, that a running machine is turned off first, and keeps saves when asked", () => {
     const kept: boolean[] = []
     render(<DeleteMachineBody deleting={{ name: "polish-a", title: "Build box", live: true }} keepSaves={false} busy={false} onKeepSaves={(k) => kept.push(k)} />)
-    const text = document.body.textContent ?? ""
+    const text = document.body.textContent
     expect(text).toContain("deletes Build box's disk")
     expect(text).toContain("Its checkpoints go too, unless you keep them")
     expect(text).toContain("turned off first")

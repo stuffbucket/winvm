@@ -149,7 +149,7 @@ describe("the Hardware part", () => {
 describe("the Network part", () => {
   it("shows the mode, the addresses and every port, each copyable", () => {
     const host = render(<Network view={view(parsed())} />)
-    const text = host.textContent ?? ""
+    const text = host.textContent
     for (const s of ["NAT (QEMU user networking)", "10.0.2.15", "Ethernet", "10.0.2.2", "10.0.2.3", "Finder drives", "winvm agent", "Screen sharing (VNC)"]) {
       expect(text).toContain(s)
     }

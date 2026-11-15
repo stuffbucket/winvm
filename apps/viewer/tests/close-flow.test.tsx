@@ -104,7 +104,7 @@ function fakeBridge() {
     /** What `close_start` does: resolve, or reject as Rust does when the close is not Requested. */
     start: "ok" as "ok" | "out-of-order",
     /** What `winvm config` answers. */
-    config: { code: 0, stdout: "", stderr: "" } as { code: number; stdout: string; stderr: string },
+    config: { code: 0, stdout: "", stderr: "" },
     fire(name = "viewer-close-requested"): void {
       for (const cb of listeners.get(name) ?? []) cb({ payload: null })
     },
@@ -123,6 +123,7 @@ function fakeBridge() {
     }
     log.push(cmd)
     if (cmd === "close_pending") return typeof bridge.pending === "boolean" ? Promise.resolve(bridge.pending) : bridge.pending.promise
+    // oxlint-disable-next-line typescript/prefer-promise-reject-errors -- Tauri rejects invoke with a bare string, not an Error; the test fake must do the same
     if (cmd === "close_start") return bridge.start === "ok" ? Promise.resolve(null) : Promise.reject("close start arrived while the close was Idle")
     return Promise.resolve(null)
   }
@@ -1089,6 +1090,7 @@ describe("useCloseFlow", () => {
     await mount(world)
     const invoke = (window as unknown as { __TAURI__: { core: { invoke: (cmd: string, a?: unknown) => Promise<unknown> } } }).__TAURI__.core
     const answer = invoke.invoke
+    // oxlint-disable-next-line typescript/prefer-promise-reject-errors -- Tauri rejects invoke with a bare string, not an Error; the test fake must do the same
     invoke.invoke = (cmd, a) => (cmd === "close_complete" ? Promise.reject("close complete arrived while the close was Idle") : answer(cmd, a))
     act(() => { bridge.fire() })
     await flush()

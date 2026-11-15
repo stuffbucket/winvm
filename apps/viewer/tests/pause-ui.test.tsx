@@ -76,6 +76,7 @@ function fakeTauri(): { calls: Call[]; reads(): Call[]; verb(v: string): Call } 
         },
         reject: (failure) => {
           call.done = true
+          // oxlint-disable-next-line typescript/prefer-promise-reject-errors -- Tauri rejects invoke with whatever the command returned, not an Error; the test fake forwards it unchanged
           reject(failure)
         },
       }
@@ -370,9 +371,9 @@ describe("the meters while held", () => {
   it("read only ps while the machine is paused, and Windows' figures again once it runs", async () => {
     jest.useFakeTimers()
     const asked: (string | null)[] = []
-    const read = async (_pid: number, instance: string | null): Promise<unknown> => {
+    const read = (_pid: number, instance: string | null): Promise<unknown> => {
       asked.push(instance)
-      return { atMs: Date.now(), host: { cpuSeconds: 1, rssBytes: 1024 }, guest: null, guestError: null }
+      return Promise.resolve({ atMs: Date.now(), host: { cpuSeconds: 1, rssBytes: 1024 }, guest: null, guestError: null })
     }
     function Probe({ instance }: { readonly instance: string | null }): null {
       useUsage(4242, instance, 4, 4096, read)
@@ -429,7 +430,7 @@ async function boot(tauri: ReturnType<typeof fakeTauri>, state = "running", name
   render(<Probe />)
   await flush()
   const list = tauri.calls.find((c) => c.args[0] === "status" && !c.args.includes("-i"))
-  list?.resolve({ code: 0, stderr: "", stdout: JSON.stringify({ instances: names.map((n) => JSON.parse(status(state, "ok", null, n).stdout)) }) })
+  list?.resolve({ code: 0, stderr: "", stdout: JSON.stringify({ instances: names.map((n) => JSON.parse(status(state, "ok", null, n).stdout) as unknown) }) })
   await flush()
   tauri.reads()[0]?.resolve(status(state))
   await flush()
@@ -580,7 +581,7 @@ describe("operations in the window", () => {
     const { w } = await boot(tauri, "running", ["demo", "other"])
 
     // One machine other than the selected one: its answer is returned and the picker's state updated, not the toolbar's.
-    let one: Promise<unknown> | null = null
+    let one = null as Promise<unknown> | null
     act(() => {
       one = w().refreshOne("other")
     })
@@ -605,7 +606,7 @@ describe("operations in the window", () => {
     expect(w().operation).toEqual({ operation: "pause", source: "external" })
 
     // All of them, in one read.
-    let all: Promise<unknown> | null = null
+    let all = null as Promise<unknown> | null
     act(() => {
       all = w().refreshAll()
     })

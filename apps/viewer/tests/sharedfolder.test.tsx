@@ -65,7 +65,7 @@ function view(over: Partial<View> = {}): View & { calls: string[] } {
   }
 }
 
-const buttons = (host: HTMLElement): string[] => [...host.querySelectorAll("button")].map((b) => b.getAttribute("aria-label") ?? b.textContent ?? "")
+const buttons = (host: HTMLElement): string[] => [...host.querySelectorAll("button")].map((b) => b.getAttribute("aria-label") ?? b.textContent)
 const button = (label: string): HTMLButtonElement => {
   const b = [...document.querySelectorAll("button")].find((x) => (x.getAttribute("aria-label") ?? x.textContent) === label)
   if (b === undefined) throw new Error(`no button "${label}"`)
@@ -194,7 +194,7 @@ describe("the Shared folder section", () => {
     ]
     for (const s of states) {
       const host = render(<SharedFolder view={view({ status: s })} guestReady={false} />)
-      expect(host.textContent?.toLowerCase()).not.toContain("instance")
+      expect(host.textContent.toLowerCase()).not.toContain("instance")
       act(() => root?.unmount())
       root = null
     }

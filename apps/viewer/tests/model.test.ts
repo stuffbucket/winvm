@@ -325,9 +325,9 @@ describe("parseConnection", () => {
 
 describe("an instance's title", () => {
   it("reads it from status, absent (an older winvm) or null meaning its name", () => {
-    expect(one()?.title).toBeNull()
-    expect(one({ title: null })?.title).toBeNull()
-    expect(one({ title: "Build box" })?.title).toBe("Build box")
+    expect(one().title).toBeNull()
+    expect(one({ title: null }).title).toBeNull()
+    expect(one({ title: "Build box" }).title).toBe("Build box")
   })
 
   it("shows the title the user gave, else the name", () => {
