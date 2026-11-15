@@ -639,7 +639,7 @@ export function App(): JSX.Element {
               )}
               style={frame}
             >
-              {showScreen && w.connection !== null ? (
+              {showScreen ? (
                 <Screen
                   ref={screen}
                   connection={w.connection}

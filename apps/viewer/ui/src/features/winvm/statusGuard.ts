@@ -32,7 +32,15 @@ export function phaseAfter(verb: Verb): Phase | null {
     case "resume":
     case "wake":
       return "running"
-    default:
+    case "start":
+    case "stop":
+    case "reboot":
+    case "lock":
+    case "kill":
+    case "setup":
+    case "save":
+    case "load":
+    case "stow":
       return null
   }
 }

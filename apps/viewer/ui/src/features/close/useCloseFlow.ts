@@ -51,6 +51,8 @@ interface Transaction {
   ranBefore: (name: string) => number
 }
 
+const isCancelled = (tx: Transaction): boolean => tx.cancelled
+
 /**
  * This window's commands on every machine it knew of as the close began. A machine not in its
  * list then (made since) is measured against the latest command on any machine: `seq` only grows,
@@ -98,7 +100,15 @@ function settled(operation: VmOperation, p: Phase): boolean | null {
       return p === "paused"
     case "sleep":
       return p === "asleep"
-    default:
+    case "golden-create":
+    case "golden-reset":
+    case "load":
+    case "lock":
+    case "reset":
+    case "rewind":
+    case "save":
+    case "setup":
+    case "snapshot":
       return null
   }
 }
@@ -164,7 +174,7 @@ export function useCloseFlow(w: Winvm): CloseFlow {
       for (;;) {
         // Decided from this fresh read, not the selected machine's shown status, which lags a selection.
         s = await wRef.current.refreshOne(name)
-        if (tx.cancelled) return "stopped"
+        if (isCancelled(tx)) return "stopped"
         if (s === null) {
           fail(tx, known, t("close.statusFailed"))
           return "stopped"
@@ -182,7 +192,7 @@ export function useCloseFlow(w: Winvm): CloseFlow {
           }
         })
         tx.wake = null
-        if (tx.cancelled) return "stopped"
+        if (isCancelled(tx)) return "stopped"
       }
       // A command of this window's on this machine failed while the close waited: its error stays
       // on screen, and the close stops here rather than go on past it.
@@ -210,7 +220,7 @@ export function useCloseFlow(w: Winvm): CloseFlow {
         })
         answer.current = null
         // Cancelled: cancel() has already called the close off.
-        if (chosen === null || tx.cancelled) return "stopped"
+        if (chosen === null || isCancelled(tx)) return "stopped"
         choice = chosen.policy
         remember = chosen.remember
       } else {

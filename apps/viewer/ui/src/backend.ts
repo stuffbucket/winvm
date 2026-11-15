@@ -57,7 +57,8 @@ const NOT_FOUND = /No such file or directory|os error 2\b|ENOENT/i
 
 function described(raw: unknown): string {
   try {
-    return JSON.stringify(raw) ?? String(raw)
+    const json: unknown = JSON.stringify(raw)
+    return typeof json === "string" ? json : String(raw)
   } catch {
     return String(raw)
   }
@@ -153,7 +154,7 @@ interface TauriGlobal {
   readonly window: { getCurrentWindow(): { show(): Promise<void>; setTitle(title: string): Promise<void>; close(): Promise<void> } }
   readonly menu: { readonly Menu: { "new"(options: { items: unknown[] }): Promise<NativeMenu> } }
   readonly event: {
-    listen<T>(name: string, cb: (e: { payload: T }) => void): Promise<Unlisten>
+    listen(name: string, cb: (e: { payload: unknown }) => void): Promise<Unlisten>
     emit(name: string, payload?: unknown): Promise<void>
   }
   readonly webview: { getCurrentWebview(): { onDragDropEvent(cb: (e: DragDrop) => void): Promise<Unlisten> } }
@@ -223,12 +224,12 @@ export const agentFetch = (
 ): Promise<AgentReply> => tauri().core.invoke<AgentReply>("agent_fetch", { instance, method, path, body: body ?? null, timeoutMs: timeoutMs ?? null })
 
 /** Listens for app event `name`; `ready` is called once the listener is in place (or could not be). */
-function listen<T>(name: string, cb: (payload: T) => void, ready?: () => void): Unlisten {
+function listen(name: string, cb: (payload: unknown) => void, ready?: () => void): Unlisten {
   let unlisten: Unlisten | null = null
   let gone = false
   try {
     void tauri()
-      .event.listen<T>(name, (e) => { cb(e.payload) })
+      .event.listen(name, (e) => { cb(e.payload) })
       .then(
         (u) => {
           if (gone) u()
@@ -247,7 +248,7 @@ function listen<T>(name: string, cb: (payload: T) => void, ready?: () => void): 
 }
 
 /** App menu items the main window acts on: "install-cli", "reference", "new-terminal", "rename-window" and "checkpoints". */
-export const onMenu = (cb: (id: string) => void): Unlisten => listen<string>("menu", cb)
+export const onMenu = (cb: (id: string) => void): Unlisten => listen("menu", (id) => { cb(id as string) })
 
 /**
  * The viewer is asked to close (its close button, Cmd-W, Quit): told once per close transaction,
@@ -255,7 +256,7 @@ export const onMenu = (cb: (id: string) => void): Unlisten => listen<string>("me
  * the listener is in place, the moment to ask `closePending` for a request told before it was.
  */
 export const onViewerCloseRequested = (cb: () => void, listening?: () => void): Unlisten =>
-  listen<unknown>("viewer-close-requested", () => { cb() }, listening)
+  listen("viewer-close-requested", () => { cb() }, listening)
 
 /** Whether a close request waits for the main window (one told before it listened); changes nothing. */
 export const closePending = (): Promise<boolean> => tauri().core.invoke<boolean>("close_pending")
@@ -273,7 +274,7 @@ export const closeComplete = (): Promise<void> => tauri().core.invoke<void>("clo
 export const setSystemKeyboardCapture = (captured: boolean): Promise<void> => tauri().core.invoke<void>("set_system_keyboard_capture", { captured })
 
 /** The window's edge is being dragged (true), or was let go (false). */
-export const onLiveResize = (cb: (live: boolean) => void): Unlisten => listen<boolean>("live-resize", cb)
+export const onLiveResize = (cb: (live: boolean) => void): Unlisten => listen("live-resize", (live) => { cb(live as boolean) })
 
 /** One sample for the meters: QEMU's CPU time and memory (`ps`), and Windows' own figures from `instance`'s agent when given. */
 export const instanceUsage = (pid: number, instance: string | null): Promise<unknown> =>
@@ -318,12 +319,12 @@ export const openTerminal = (request: TerminalRequest): Promise<void> => tauri()
 export const takeTerminalRequests = (): Promise<TerminalRequest[]> => tauri().core.invoke<TerminalRequest[]>("terminal_take")
 
 /** Rung when tabs have been asked for. */
-export const onTerminalOpen = (cb: () => void): Unlisten => listen<unknown>("terminal-open", () => { cb() })
+export const onTerminalOpen = (cb: () => void): Unlisten => listen("terminal-open", () => { cb() })
 
 export type TerminalMenuId = "new-tab" | "close-tab" | "rename-tab"
 
 /** Menu items the Terminal window acts on: File's New Tab and Close, and Window's Rename Window… (its active tab). */
-export const onTerminalMenu = (cb: (id: TerminalMenuId) => void): Unlisten => listen<TerminalMenuId>("terminal-menu", cb)
+export const onTerminalMenu = (cb: (id: TerminalMenuId) => void): Unlisten => listen("terminal-menu", (id) => { cb(id as TerminalMenuId) })
 
 /** An instance's title, as every window shows it: null is its name. */
 export interface InstanceTitle {
@@ -340,7 +341,7 @@ export function announceTitle(t: InstanceTitle): void {
   }
 }
 
-export const onInstanceTitle = (cb: (t: InstanceTitle) => void): Unlisten => listen<InstanceTitle>("instance-title", cb)
+export const onInstanceTitle = (cb: (t: InstanceTitle) => void): Unlisten => listen("instance-title", (t) => { cb(t as InstanceTitle) })
 
 /** A plain native menu: actions, separators, and a check mark where `checked` is given. */
 export type Action =
@@ -380,7 +381,7 @@ export const openFiles = (instance: string, title: string | null): Promise<void>
  * are mounted on the Mac (Windows' own file sharing, through a forwarded port;
  * `winvm files`).
  */
-export const GUEST_FOLDERS_IN_FINDER = true
+export const GUEST_FOLDERS_IN_FINDER: boolean = true
 
 /** The shares `winvm files` mounts: the home folder, and the whole of C:\. */
 export type GuestShare = "home" | "c"
@@ -461,11 +462,11 @@ export interface PromiseEvent {
   readonly error?: string | null
 }
 
-export const onPromise = (cb: (e: PromiseEvent) => void): Unlisten => listen<PromiseEvent>("files-promise", cb)
+export const onPromise = (cb: (e: PromiseEvent) => void): Unlisten => listen("files-promise", (e) => { cb(e as PromiseEvent) })
 
 /** A drag handed to macOS has ended: dropped somewhere that took it ("copy"), or not. */
 export const onDragOutEnd = (cb: (e: { readonly operation: "copy" | "none" }) => void): Unlisten =>
-  listen<{ operation: "copy" | "none" }>("files-drag-end", cb)
+  listen("files-drag-end", (e) => { cb(e as { operation: "copy" | "none" }) })
 
 /** Files dragged over the window from the Mac, with where the pointer is in CSS pixels. */
 export type HostDrag =
