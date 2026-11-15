@@ -39,10 +39,10 @@ describe("the socket transport, against a fake guest", () => {
   beforeAll(() => {
     fake = startFakeTermServer()
   })
-  afterAll(() => fake.stop())
+  afterAll(() => { fake.stop() })
 
   const open = (id: string, statuses: SessionStatus[] = [], endpoint = fake.endpoint()) => {
-    const transport = createSocketTransport({ connect: async () => endpoint, onStatus: (_, s) => statuses.push(s) })
+    const transport = createSocketTransport({ connect: () => Promise.resolve(endpoint), onStatus: (_, s) => statuses.push(s) })
     const events: TerminalEvent[] = []
     transport.subscribe(id, (e) => events.push(e))
     const output = (): string => events.flatMap((e) => (e.type === "data" ? [e.data] : [])).join("")
@@ -113,7 +113,7 @@ describe("the socket transport, against a fake guest", () => {
     const transport = createSocketTransport({
       connect: () =>
         new Promise((resolve) => {
-          release = () => resolve(fake.endpoint())
+          release = () => { resolve(fake.endpoint()) }
         }),
     })
     const spawned = transport.spawn({ id: "f", cols: 80, rows: 24 })
@@ -136,7 +136,7 @@ describe("the socket transport, against a fake guest", () => {
 
 describe("a tab whose connect fails", () => {
   let fake: FakeTermServer
-  let reply: () => Promise<unknown> = async () => null
+  let reply: () => Promise<unknown> = () => Promise.resolve(null)
   const hadWindow = "window" in globalThis
   beforeAll(() => {
     fake = startFakeTermServer()
@@ -164,6 +164,7 @@ describe("a tab whose connect fails", () => {
 
   it("fails the tab with the timeout copy, and its Try again connects once the CLI answers", async () => {
     const transport = createSocketTransport({ connect: () => terminalEndpoint(req) })
+    // oxlint-disable-next-line typescript/prefer-promise-reject-errors -- the sidecar rejects with a plain failure object, not an Error; the test fake must do the same
     reply = () => Promise.reject(timedOut)
     // TerminalView's spawn: a rejection is its failed state, whose message the window shows.
     const error: unknown = await transport.spawn({ id: "x1", cols: 80, rows: 24 }).catch((e: unknown) => e)
@@ -175,7 +176,7 @@ describe("a tab whose connect fails", () => {
     expect(failed.tabs[0]?.state).toEqual({ kind: "failed", message: copy("sidecar.timeout", { operation: "terminal", seconds: 120 }) })
 
     // Try again: TerminalView spawns again; now the CLI says where to connect.
-    reply = async () => ({ code: 0, stdout: `${JSON.stringify(fake.endpoint())}\n`, stderr: "" })
+    reply = () => Promise.resolve({ code: 0, stdout: `${JSON.stringify(fake.endpoint())}\n`, stderr: "" })
     const statuses: SessionStatus[] = []
     const again = createSocketTransport({ connect: () => terminalEndpoint(req), onStatus: (_, s) => statuses.push(s) })
     await again.spawn({ id: "x2", cols: 80, rows: 24 })
@@ -184,6 +185,7 @@ describe("a tab whose connect fails", () => {
   })
 
   it("keeps the CLI's own words for a terminal that exits nonzero", async () => {
+    // oxlint-disable-next-line typescript/prefer-promise-reject-errors -- the sidecar rejects with a plain failure object, not an Error; the test fake must do the same
     reply = () => Promise.reject({ ...timedOut, kind: "exit", code: 1, stderr: "::error::the agent isn't answering\n", timeoutMs: null })
     const error: unknown = await terminalEndpoint(req).catch((e: unknown) => e)
     expect(errorMessage(error)).toBe("the agent isn't answering")
@@ -253,7 +255,7 @@ describe("shells", () => {
     const items = (nodes: readonly MenuNode[]): { label: string; enabled: boolean }[] =>
       nodes.flatMap((n) => (n.kind === "item" ? [{ label: n.label, enabled: n.enabled }] : n.kind === "submenu" ? items(n.items) : []))
     const all = items(menu)
-    expect(all.filter((i) => !i.enabled).map((i) => i.label)).toEqual(Array(3).fill("PowerShell 7 (not installed)"))
+    expect(all.filter((i) => !i.enabled).map((i) => i.label)).toEqual(Array<string>(3).fill("PowerShell 7 (not installed)"))
     expect(all.filter((i) => i.enabled)).toHaveLength(6)
   })
 
@@ -276,9 +278,9 @@ describe("shells", () => {
   it("asks once per instance until told to forget, and retries a failed ask", async () => {
     const asked: string[] = []
     let answer: Installed | null = null
-    const cache = shellCache(async (instance) => {
+    const cache = shellCache((instance) => {
       asked.push(instance)
-      return answer
+      return Promise.resolve(answer)
     })
     expect(await cache.get("demo")).toBeNull()
     answer = noPwsh

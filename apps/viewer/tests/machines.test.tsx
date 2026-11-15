@@ -3,6 +3,7 @@
  * wrapper over Base UI, the picker's states, New Machine…'s checks and
  * Delete…'s text and Keep checkpoints. And the pure rules under them.
  */
+import type { JSX } from "react"
 import { GlobalRegistrator } from "@happy-dom/global-registrator"
 import { afterAll, afterEach, describe, expect, it } from "bun:test"
 
@@ -44,7 +45,7 @@ const flush = async (): Promise<void> => {
 
 /** Open a Base UI menu from its trigger, as the keyboard does. */
 async function open(trigger: HTMLElement): Promise<HTMLElement> {
-  act(() => trigger.focus())
+  act(() => { trigger.focus() })
   act(() => {
     trigger.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true }))
   })
@@ -56,9 +57,9 @@ async function open(trigger: HTMLElement): Promise<HTMLElement> {
 
 const items = (): HTMLElement[] => [...document.querySelectorAll<HTMLElement>('[role="menuitem"], [role="menuitemradio"]')]
 const click = (el: HTMLElement): void =>
-  act(() => {
+  { act(() => {
     el.click()
-  })
+  }) }
 
 describe("Menu (the Base UI wrapper)", () => {
   it("opens from its trigger with a heading, a check on the chosen item, and items that act", async () => {
@@ -157,8 +158,8 @@ describe("the machine picker", () => {
 
 function type(input: HTMLInputElement, value: string): void {
   act(() => {
-    const set = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")?.set
-    set?.call(input, value)
+    const descriptor = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")
+    descriptor?.set?.call(input, value)
     input.dispatchEvent(new Event("input", { bubbles: true }))
   })
 }
@@ -204,7 +205,7 @@ describe("Delete…", () => {
   it("says what goes, that a running machine is turned off first, and keeps saves when asked", () => {
     const kept: boolean[] = []
     render(<DeleteMachineBody deleting={{ name: "polish-a", title: "Build box", live: true }} keepSaves={false} busy={false} onKeepSaves={(k) => kept.push(k)} />)
-    const text = document.body.textContent ?? ""
+    const text = document.body.textContent
     expect(text).toContain("deletes Build box's disk")
     expect(text).toContain("Its checkpoints go too, unless you keep them")
     expect(text).toContain("turned off first")

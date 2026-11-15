@@ -40,7 +40,7 @@
  * and a dead server would hang it. The mount table is read without touching
  * any mount.
  */
-import { spawn, spawnSync } from "node:child_process"
+import { spawn } from "node:child_process"
 import { existsSync, mkdirSync, readdirSync, rmdirSync } from "node:fs"
 import { resolve } from "node:path"
 
@@ -67,6 +67,7 @@ import {
   withMounted,
   writeSmb,
 } from "./smbstate"
+import { spawnText } from "./shell"
 
 const errMsg = (e: unknown): string => (e instanceof Error ? e.message : String(e))
 
@@ -89,12 +90,12 @@ export interface Sys {
   forward(instance: string): Promise<number>
   running(instance: string): boolean
   sleep(ms: number): Promise<void>
-  log(line: string): void
+  log: (line: string) => void
 }
 
 function runSync(cmd: string, args: readonly string[], timeoutMs: number): { code: number | null; out: string } {
-  const r = spawnSync(cmd, [...args], { encoding: "utf8", timeout: timeoutMs, killSignal: "SIGKILL" })
-  return { code: r.status, out: `${r.stdout ?? ""}${r.stderr ?? ""}${r.error === undefined ? "" : String(r.error)}` }
+  const r = spawnText(cmd, args, { timeout: timeoutMs, killSignal: "SIGKILL" })
+  return { code: r.status, out: `${r.stdout}${r.stderr}${r.error === undefined ? "" : String(r.error)}` }
 }
 
 /**
@@ -106,11 +107,11 @@ function runSync(cmd: string, args: readonly string[], timeoutMs: number): { cod
 async function mountInChild(req: { url: string; dir: string; user: string; password: string }, timeoutMs: number): Promise<number> {
   const limit = Math.min(timeoutMs, 25_000)
   const child = Bun.spawn([process.execPath, ...cliArgv("files", "_netfs")], { stdin: "pipe", stdout: "pipe", stderr: "inherit" })
-  child.stdin.write(JSON.stringify(req))
+  await child.stdin.write(JSON.stringify(req))
   await child.stdin.end()
   let timer: ReturnType<typeof setTimeout> | undefined
   const timedOut = new Promise<"timeout">((res) => {
-    timer = setTimeout(() => res("timeout"), limit)
+    timer = setTimeout(() => { res("timeout") }, limit)
   })
   const done = await Promise.race([child.exited, timedOut])
   clearTimeout(timer)
@@ -124,7 +125,7 @@ async function mountInChild(req: { url: string; dir: string; user: string; passw
 }
 
 async function guestSetup(instance: string, s: SmbState, log: (line: string) => void): Promise<void> {
-  const c = await agent.ensure(instance, { log: (l) => log(`  ${l}`) })
+  const c = await agent.ensure(instance, { log: (l) => { log(`  ${l}`) } })
   const r = await c.smbSetup({ user: s.user, password: s.password })
   for (const line of r.output.split(/\r?\n/)) if (line.trim() !== "") log(`  guest: ${line.trimEnd()}`)
   if (r.code !== 0 || r.timedOut) throw new Error(`setting up file sharing in the guest failed (exit ${String(r.code)})`)
@@ -137,8 +138,8 @@ export const realSys: Sys = {
   setup: guestSetup,
   forward: async (instance) => await ensureSmbForward(pathsFor(instance)),
   running: (instance) => qemu.isRunning(pathsFor(instance)),
-  sleep: async (ms) => await Bun.sleep(ms),
-  log: (line) => console.log(line),
+  sleep: async (ms) => { await Bun.sleep(ms) },
+  log: (line) => { console.log(line) },
 }
 
 // --- unmounting ----------------------------------------------------------------
@@ -256,7 +257,7 @@ export async function mountShares(instance: string, keys: readonly ShareKey[], o
   const { state: first, created } = ensureSmb(p)
   const port = await sys.forward(instance)
   let state: SmbState = { ...(readSmb(p) ?? first), hostPort: port }
-  let setUp = false
+  let setUp = false as boolean
   const setup = async (why: string): Promise<void> => {
     sys.log(`setting up file sharing in the guest (${why})`)
     await sys.setup(instance, state, sys.log)
@@ -472,7 +473,7 @@ export async function filesCmd(args: Args): Promise<number> {
   }
   const json = args.flags.has("json")
   // With --json, stdout is the JSON alone; what happens on the way goes to stderr.
-  const sys: Sys = json ? { ...realSys, log: (line) => console.error(line) } : realSys
+  const sys: Sys = json ? { ...realSys, log: (line) => { console.error(line) } } : realSys
   if (sub === undefined || !["open", "mount", "unmount", "status"].includes(sub)) {
     console.error(USAGE)
     return 2

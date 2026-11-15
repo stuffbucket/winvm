@@ -1,3 +1,4 @@
+import type { JSX } from "react"
 import { Icon } from "../../components/Icon"
 import { InlineRename } from "../../components/InlineRename"
 import { MenuGroup, MenuItem, MenuRadioGroup, MenuRadioItem, MenuRoot, MenuSeparator } from "../../components/Menu"
@@ -16,11 +17,11 @@ export interface MachinePickerProps {
   readonly phase: Phase | null
   /** The title is being edited, in place of the picker. */
   readonly renaming: boolean
-  onRenamed(next: string | null): void
+  onRenamed: (next: string | null) => void
   onSelect(name: string): void
-  onNew(): void
-  onRename(): void
-  onDelete(): void
+  onNew: () => void
+  onRename: () => void
+  onDelete: () => void
 }
 
 /**
@@ -51,7 +52,7 @@ export function MachinePicker(p: MachinePickerProps): JSX.Element {
   return (
     <MenuRoot trigger={trigger} label={t("machine.menu")}>
       <MenuGroup label={t("machine.menu")}>
-        <MenuRadioGroup value={p.name ?? ""} onValueChange={(v: unknown) => p.onSelect(String(v))}>
+        <MenuRadioGroup value={p.name ?? ""} onValueChange={(v: unknown) => { p.onSelect(String(v)) }}>
           {p.names.map((n) => (
             <MenuRadioItem key={n} value={n} closeOnClick trailing={state(n) ?? undefined}>
               {shownTitle(n, p.titles[n])}

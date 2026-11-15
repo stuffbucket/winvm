@@ -55,7 +55,7 @@ export function identityFromEntries(entries: readonly IdentityEntry[], version: 
     h.update(len)
     h.update(b)
   }
-  const text = (s: string): void => field(new TextEncoder().encode(s))
+  const text = (s: string): void => { field(new TextEncoder().encode(s)) }
   text(version)
   text(bunVersion)
   const sorted = [...entries].sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0))

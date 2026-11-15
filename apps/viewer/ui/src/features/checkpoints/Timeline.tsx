@@ -1,4 +1,4 @@
-import { type KeyboardEvent, type PointerEvent, useRef, useState } from "react"
+import { type KeyboardEvent, type PointerEvent, useRef, useState, type JSX } from "react"
 
 import { CanvasGlyph } from "@winvm/canvas"
 
@@ -10,11 +10,11 @@ interface TimelineProps {
   /** The tick the view is on. */
   readonly active: string
   /** Fly there (a click, a key, the end of a drag). */
-  onPick(tick: Tick): void
+  onPick: (tick: Tick) => void
   /** Follow the pointer while it drags. */
-  onScrub(tick: Tick): void
-  onOlder(): void
-  onNewer(): void
+  onScrub: (tick: Tick) => void
+  onOlder: () => void
+  onNewer: () => void
   readonly canOlder: boolean
   readonly canNewer: boolean
 }
@@ -98,7 +98,7 @@ export function Timeline({ ticks, active, onPick, onScrub, onOlder, onNewer, can
         onPointerCancel={() => {
           dragging.current = false
         }}
-        onPointerLeave={() => setHover(null)}
+        onPointerLeave={() => { setHover(null) }}
         onKeyDown={key}
       >
         <span className="timeline__rail" aria-hidden="true" />

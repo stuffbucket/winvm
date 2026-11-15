@@ -130,7 +130,7 @@ describe("LiveResize", () => {
     expect(phases[1]?.settled).toEqual({ size: S(2400, 1500), ms: 90, timedOut: false })
   })
 
-  it("settles as soon as the frame is drawn, before the guest's answer arrives", async () => {
+  it("settles as soon as the frame is drawn, before the guest's answer arrives", () => {
     const { r, last } = setup()
     r.want(S(1600, 1000))
     r.flush()

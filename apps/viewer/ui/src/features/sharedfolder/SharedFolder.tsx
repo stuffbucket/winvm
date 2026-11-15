@@ -1,4 +1,4 @@
-import { useState } from "react"
+import { type JSX, useState } from "react"
 
 import { revealInFinder } from "../../backend"
 import { Button } from "../../components/Button"
@@ -48,7 +48,7 @@ export function SharedFolder({ view, guestReady }: SharedFolderProps): JSX.Eleme
           </div>
           <p className="action__text">{t("folder.drive", { letter: s.letter })}</p>
           <label className="check-field">
-            <input type="checkbox" checked={s.readonly} disabled={busy} onChange={(e) => view.setReadonly(e.currentTarget.checked)} />
+            <input type="checkbox" checked={s.readonly} disabled={busy} onChange={(e) => { view.setReadonly(e.currentTarget.checked) }} />
             {t("folder.readonly")}
           </label>
         </>
@@ -83,7 +83,7 @@ export function SharedFolder({ view, guestReady }: SharedFolderProps): JSX.Eleme
           <div className="action__section">
             <p className="action__hint">{t("folder.setupNeeded")}</p>
             <div className="action__row">
-              <Button size="sm" variant="primary" disabled={busy || !guestReady} onClick={() => setConfirming(true)}>
+              <Button size="sm" variant="primary" disabled={busy || !guestReady} onClick={() => { setConfirming(true) }}>
                 {t("folder.setup")}
               </Button>
               {!guestReady && <span className="action__hint">{t("folder.setupNeedsRunning")}</span>}
@@ -100,7 +100,7 @@ export function SharedFolder({ view, guestReady }: SharedFolderProps): JSX.Eleme
         body={<p>{t("folder.setupBody")}</p>}
         confirmLabel={t("folder.setupConfirm")}
         cancelLabel={t("confirm.cancel")}
-        onCancel={() => setConfirming(false)}
+        onCancel={() => { setConfirming(false) }}
         onConfirm={() => {
           setConfirming(false)
           view.install()

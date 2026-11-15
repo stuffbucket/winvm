@@ -19,7 +19,7 @@ import {
 } from "../src/camera"
 
 const view = { width: 1000, height: 800 }
-const close = (a: number, b: number, digits = 6): void => expect(a).toBeCloseTo(b, digits)
+const close = (a: number, b: number, digits = 6): void => { expect(a).toBeCloseTo(b, digits) }
 
 describe("camera maths", () => {
   it("round-trips screen and world points", () => {

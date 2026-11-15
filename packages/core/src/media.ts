@@ -136,9 +136,10 @@ export function resolveWindowsIso(explicit: string | undefined): string | null {
   if (existsSync(media.iso())) return media.iso()
 
   const found = discoverIsos()
-  if (found.length === 1) {
-    console.log(`using ${found[0]}`)
-    return found[0] ?? null
+  const [only] = found
+  if (found.length === 1 && only !== undefined) {
+    console.log(`using ${only}`)
+    return only
   }
   if (found.length > 1) {
     console.log("found more than one candidate; pass --iso to choose:")
@@ -193,7 +194,7 @@ function listDir(dir: string): readonly Dirent[] {
 }
 
 function promptForIso(): string | null {
-  if (process.stdin.isTTY !== true) return null
+  if (!process.stdin.isTTY) return null
   console.log(`No Windows 11 ARM64 ISO found. Get one from:\n  ${ISO_SOURCE}`)
   const answer = prompt("Path to the ISO (blank to cancel):")?.trim() ?? ""
   if (answer === "") return null

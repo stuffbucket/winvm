@@ -3,6 +3,7 @@
  * for it, the copy for each operation, and what the rest of the window stops
  * doing meanwhile. Rendered in happy-dom with the app's Tauri bridge faked.
  */
+import type { JSX } from "react"
 import { GlobalRegistrator } from "@happy-dom/global-registrator"
 import { afterAll, afterEach, describe, expect, it, jest } from "bun:test"
 import { readFileSync } from "node:fs"
@@ -158,7 +159,7 @@ function fakeApp(world: World): { capture: boolean[]; pending: { args: readonly 
     const args = a?.args ?? []
     if (args[0] === "status") return Promise.resolve(ok(args.includes("-i") ? statusOf(world) : { instances: [statusOf(world)] }))
     if (args[0] === "open") return Promise.resolve(ok({ display: 1, vncPort: 5901, websocketPort: 5701, password: null }))
-    if (args[0] === "pause") return new Promise((resolve) => pending.push({ args, finish: () => resolve({ code: 0, stdout: "", stderr: "" }) }))
+    if (args[0] === "pause") return new Promise((resolve) => pending.push({ args, finish: () => { resolve({ code: 0, stdout: "", stderr: "" }) } }))
     return Promise.resolve({ code: 1, stdout: "", stderr: "" })
   }
   Object.assign(window, { __TAURI__: { core: { invoke } } })
@@ -221,7 +222,7 @@ describe("the display while an operation runs", () => {
     expect(button(host, "Terminal").disabled).toBe(false)
 
     // The person captures the keyboard for the guest.
-    act(() => button(host, "Capture Keyboard (Control-Option)").click())
+    act(() => { button(host, "Capture Keyboard (Control-Option)").click() })
     await flush()
     expect(app.capture.at(-1)).toBe(true)
 
@@ -249,7 +250,7 @@ describe("the display while an operation runs", () => {
   it("covers it for a command this viewer runs, named by that command", async () => {
     const world: World = { state: "running", operation: null }
     const { host, app } = await mount(world)
-    act(() => button(host, "Pause").click())
+    act(() => { button(host, "Pause").click() })
     await flush()
     expect(overlay(host)?.textContent).toBe("Pausing Windows")
     expect(display(host).lastElementChild).toBe(overlay(host))

@@ -44,7 +44,7 @@ if (process.argv.includes("--watch")) {
   watch(UI, { recursive: true }, () => {
     if (timer !== null) clearTimeout(timer)
     timer = setTimeout(() => {
-      build().catch((error: unknown) => console.error(error))
+      build().catch((error: unknown) => { console.error(error) })
     }, 80)
   })
   await new Promise(() => undefined)

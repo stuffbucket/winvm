@@ -18,9 +18,10 @@ function setup(mac = "") {
       if (hold) await new Promise<void>((r) => (release = r))
       return text
     },
-    writeMac: async (text) => {
+    writeMac: (text) => {
       state.toMac.push(text)
       state.mac = text
+      return Promise.resolve()
     },
     toGuest: (text) => state.toGuest.push(text),
     focused: () => state.focused,

@@ -186,7 +186,7 @@ function fileSpec(v: unknown, where: string, baseDir: string): FileSpec {
   if (repo === null || !/^[\w.-]+\/[\w.-]+$/.test(repo)) throw new JobError(`${where}: release must be owner/repo`)
   const pat = v["pattern"]
   const patterns =
-    typeof pat === "string" ? [pat] : Array.isArray(pat) && pat.every((p) => typeof p === "string") ? (pat as string[]) : null
+    typeof pat === "string" ? [pat] : Array.isArray(pat) && pat.every((p) => typeof p === "string") ? pat : null
   if (patterns === null || patterns.length === 0) throw new JobError(`${where}: a release file needs "pattern" (one or a list)`)
   return { kind: "release", repo, tag: str(v, "tag", where) ?? "latest", patterns, dest }
 }

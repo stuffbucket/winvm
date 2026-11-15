@@ -1,3 +1,4 @@
+import type { JSX } from "react"
 /**
  * A long value on one line: when it doesn't fit, the middle gives way and both
  * ends stay. `keep` is how much of the end stays whole (a token's last 8

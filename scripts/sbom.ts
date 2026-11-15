@@ -62,9 +62,9 @@ interface ScanRow {
   allowed: boolean
 }
 
-function readJson<T>(filePath: string): T | undefined {
+function readJson(filePath: string): unknown {
   try {
-    return JSON.parse(fs.readFileSync(filePath, "utf8")) as T
+    return JSON.parse(fs.readFileSync(filePath, "utf8"))
   } catch {
     return undefined
   }
@@ -116,7 +116,7 @@ function resolveDependencyPackageJson(
   fromDirectory: string,
 ): string | undefined {
   let directory = fromDirectory
-  while (true) {
+  for (;;) {
     const candidate = path.join(directory, "node_modules", name, "package.json")
     try {
       return fs.realpathSync(candidate)
@@ -145,7 +145,7 @@ function collectDependencies(rootDirectories: Array<string>): Array<ScanRow> {
 
   for (const rootDirectory of rootDirectories) {
     const absoluteRoot = path.resolve(rootDirectory)
-    const root = readJson<PackageJson>(path.join(absoluteRoot, "package.json"))
+    const root = readJson(path.join(absoluteRoot, "package.json")) as PackageJson | undefined
     if (!root) throw new Error(`package.json not found under ${rootDirectory}`)
     enqueueDependencies(root, absoluteRoot)
   }
@@ -153,7 +153,7 @@ function collectDependencies(rootDirectories: Array<string>): Array<ScanRow> {
   const rows = new Map<string, ScanRow>()
   while (queue.length > 0) {
     const packageJsonPath = queue.shift()!
-    const pkg = readJson<PackageJson>(packageJsonPath)
+    const pkg = readJson(packageJsonPath) as PackageJson | undefined
     if (!pkg) continue
     const name = pkg.name ?? path.basename(path.dirname(packageJsonPath))
     const version = pkg.version ?? "unknown"
@@ -220,7 +220,7 @@ function buildBom(rows: Array<ScanRow>, rootName: string, rootVersion: string) {
 
 function optionValue(argv: Array<string>, index: number): string {
   const value = argv[index]
-  if (value === undefined) throw new Error(`${argv[index - 1]} requires a value`)
+  if (value === undefined) throw new Error(`${String(argv[index - 1])} requires a value`)
   return value
 }
 
@@ -251,9 +251,7 @@ function parseArgs(argv: Array<string>): {
 
 function main(): number {
   const args = parseArgs(process.argv.slice(2))
-  const root = readJson<PackageJson>(
-    path.join(path.resolve(args.roots[0]), "package.json"),
-  )
+  const root = readJson(path.join(path.resolve(args.roots[0]), "package.json")) as PackageJson | undefined
   if (!root) {
     console.error(`package.json not found under ${args.roots[0]}`)
     return 1
@@ -268,8 +266,8 @@ function main(): number {
 
   const denied = rows.filter((row) => !row.allowed)
   console.log(`SBOM written: ${args.output}`)
-  console.log(`Production dependencies scanned: ${rows.length}`)
-  console.log(`Disallowed licenses: ${denied.length}`)
+  console.log(`Production dependencies scanned: ${String(rows.length)}`)
+  console.log(`Disallowed licenses: ${String(denied.length)}`)
   if (denied.length > 0) {
     console.log("")
     console.log("Disallowed:")

@@ -115,11 +115,11 @@ async function createMissingGolden(instance: string, goldenName: string, log: (s
     // ensure, not install: an image with the agent baked in, or an instance
     // that already has one, only needs the token written (~100 ms instead of
     // a ~7 s reinstall).
-    await agent.ensure(instance, { log: (l) => log(`  agent: ${l}`) })
+    await agent.ensure(instance, { log: (l) => { log(`  agent: ${l}`) } })
   } catch (error) {
     log(`  (no agent — jobs will run over qemu-ga as SYSTEM: ${errMsg(error)})`)
   }
-  const r = await golden.createGolden(instance, { name: goldenName, log: (l) => log(`  ${l}`) })
+  const r = await golden.createGolden(instance, { name: goldenName, log: (l) => { log(`  ${l}`) } })
   log(`golden "${goldenName}" created in ${secs(Date.now() - t0)}${r.settled ? "" : " (guest never settled)"}`)
   return Date.now() - t0
 }

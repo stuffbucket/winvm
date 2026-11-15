@@ -1,3 +1,4 @@
+import type { JSX } from "react"
 import { Button } from "../../components/Button"
 import { Icon, type IconName } from "../../components/Icon"
 import { cx } from "../../components/cx"
@@ -10,7 +11,7 @@ interface OverviewProps {
   readonly status: Status | null
   readonly steps: readonly Step[] | null
   readonly canStart: boolean
-  onStart(): void
+  onStart: () => void
 }
 
 // The same glyphs as their toolbar buttons, so each reads as "that button".

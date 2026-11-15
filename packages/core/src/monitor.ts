@@ -70,7 +70,7 @@ export async function withQmp<T>(sockPath: string, fn: (send: QmpSend) => Promis
     let timer: ReturnType<typeof setTimeout> | undefined
     const reply = new Promise<Record<string, unknown>>((res) => waiting.push(res))
     const expiry = new Promise<Record<string, unknown>>((res) => {
-      timer = setTimeout(() => res({ error: { desc: `no answer in ${String(timeoutMs)} ms`, timeout: true } }), timeoutMs)
+      timer = setTimeout(() => { res({ error: { desc: `no answer in ${String(timeoutMs)} ms`, timeout: true } }) }, timeoutMs)
     })
     sock.write(`${JSON.stringify(o)}\n`)
     const msg = await Promise.race([reply, expiry])
@@ -90,9 +90,9 @@ export async function withQmp<T>(sockPath: string, fn: (send: QmpSend) => Promis
     await Promise.race([
       greeting,
       new Promise<never>((_, rej) => {
-        timer = setTimeout(() => rej(new QmpError(`qmp: no greeting in ${String(timeoutMs)} ms (monitor busy?)`)), timeoutMs)
+        timer = setTimeout(() => { rej(new QmpError(`qmp: no greeting in ${String(timeoutMs)} ms (monitor busy?)`)) }, timeoutMs)
       }),
-    ]).finally(() => clearTimeout(timer))
+    ]).finally(() => { clearTimeout(timer) })
     await raw({ execute: "qmp_capabilities" }, "qmp_capabilities")
     return await fn(async (execute, args) => await raw(args === undefined ? { execute } : { execute, arguments: args }, execute))
   } finally {

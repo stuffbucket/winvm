@@ -23,7 +23,7 @@ const availableLocales = (): string[] => Object.keys(CATALOGS)
 
 function readOverride(): string | null {
   try {
-    return globalThis.localStorage?.getItem(LOCALE_OVERRIDE_KEY) ?? null
+    return globalThis.localStorage.getItem(LOCALE_OVERRIDE_KEY) ?? null
   } catch {
     return null
   }
@@ -35,7 +35,7 @@ function bestFitFromNavigator(available: string[]): string | null {
   const exact = new Set(available)
   const byLanguage = new Map<string, string>()
   for (const tag of available) if (!byLanguage.has(languageOf(tag))) byLanguage.set(languageOf(tag), tag)
-  const preferred = typeof navigator === "undefined" ? [] : (navigator.languages ?? [])
+  const preferred = typeof navigator === "undefined" ? [] : ((navigator as { languages?: readonly string[] }).languages ?? [])
   for (const raw of preferred) {
     if (exact.has(raw)) return raw
     const match = byLanguage.get(languageOf(raw))

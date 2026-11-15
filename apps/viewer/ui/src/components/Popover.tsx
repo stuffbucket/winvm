@@ -1,4 +1,4 @@
-import { type ReactNode, useEffect, useLayoutEffect, useRef, useState } from "react"
+import { type JSX, type ReactNode, useEffect, useLayoutEffect, useRef, useState } from "react"
 
 interface PopoverProps {
   readonly anchor: HTMLElement | null
@@ -23,7 +23,7 @@ export function Popover({ anchor, label, onClose, children }: PopoverProps): JSX
     }
     measure()
     window.addEventListener("resize", measure)
-    return () => window.removeEventListener("resize", measure)
+    return () => { window.removeEventListener("resize", measure) }
   }, [anchor])
 
   useEffect(() => {

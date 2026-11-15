@@ -70,8 +70,10 @@ function control(text: string): Control | null {
   return null
 }
 
+const hasEnded = (s: Session): boolean => s.ended
+
 export function createSocketTransport(options: SocketTransportOptions): TerminalTransport {
-  const Socket = options.WebSocket ?? (globalThis.WebSocket as SocketConstructor)
+  const Socket = options.WebSocket ?? globalThis.WebSocket
   const sessions = new Map<string, Session>()
   const encoder = new TextEncoder()
 
@@ -116,7 +118,7 @@ export function createSocketTransport(options: SocketTransportOptions): Terminal
       s.lastError = null
       s.size = { cols, rows }
       const endpoint = await options.connect(descriptor)
-      if (s.ended) return
+      if (hasEnded(s)) return
 
       const socket = new Socket(sizedUrl(endpoint.url, cols, rows), endpoint.protocols)
       socket.binaryType = "arraybuffer"
@@ -161,26 +163,29 @@ export function createSocketTransport(options: SocketTransportOptions): Terminal
       })
     },
 
-    async write(id, data) {
+    write(id, data) {
       const socket = sessions.get(id)?.socket
       if (socket?.readyState === OPEN) socket.send(encoder.encode(data))
+      return Promise.resolve()
     },
 
-    async resize(id, cols, rows) {
+    resize(id, cols, rows) {
       const s = sessions.get(id)
-      if (s === undefined) return
+      if (s === undefined) return Promise.resolve()
       s.size = { cols, rows }
       sendSize(s)
+      return Promise.resolve()
     },
 
-    async terminate(id) {
+    terminate(id) {
       const s = sessions.get(id)
-      if (s === undefined) return
+      if (s === undefined) return Promise.resolve()
       s.ended = true
       sessions.delete(id)
       const socket = s.socket
       s.socket = null
       socket?.close(1000)
+      return Promise.resolve()
     },
 
     subscribe(id, listener) {

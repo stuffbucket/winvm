@@ -369,7 +369,7 @@ export async function agentCmd(args: Args): Promise<number> {
     const notUp = running(name)
     if (notUp !== null) return fail(notUp)
     try {
-      await watcher.whileActive(name, agent.install(name, { log: (l) => console.log(l) }))
+      await watcher.whileActive(name, agent.install(name, { log: (l) => { console.log(l) } }))
       return 0
     } catch (error) {
       return fail(msg(error))
@@ -423,7 +423,7 @@ async function connectCmd(name: string, args: Args): Promise<number> {
     return EXIT_FROZEN
   }
   try {
-    const c = await agent.ensure(name, { log: (l) => console.error(l) })
+    const c = await agent.ensure(name, { log: (l) => { console.error(l) } })
     const health = await c.health()
     const s = agent.readState(pathsFor(name))
     if (s === null || s.hostPort === null) throw new Error("the agent has no host port")

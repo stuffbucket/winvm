@@ -4,6 +4,7 @@
  * and keeps the old value when the write fails. Rendered in happy-dom with the app's
  * Tauri bridge faked; no real machine is touched.
  */
+import type { JSX } from "react"
 import { GlobalRegistrator } from "@happy-dom/global-registrator"
 import { afterAll, afterEach, describe, expect, it, jest } from "bun:test"
 
@@ -137,7 +138,7 @@ function fakeApp(world: World): void {
         return answer
       }
       if (!world.hold) return Promise.resolve(apply())
-      return new Promise((resolve) => world.pending.push(() => resolve(apply())))
+      return new Promise((resolve) => world.pending.push(() => { resolve(apply()) }))
     }
     return Promise.resolve({ code: 1, stdout: "", stderr: "" })
   }
@@ -156,7 +157,7 @@ async function mount(world: World): Promise<HTMLElement> {
 async function openDetails(host: HTMLElement): Promise<void> {
   const details = host.querySelector<HTMLButtonElement>('button[aria-label="Details"]')
   if (details === null) throw new Error("no Details button")
-  act(() => details.click())
+  act(() => { details.click() })
   await flush()
 }
 
@@ -168,9 +169,9 @@ const policySelect = (host: HTMLElement): HTMLSelectElement => {
 
 async function choose(select: HTMLSelectElement, value: string): Promise<void> {
   // React tracks the value: set it through the native setter, then fire the change it listens for.
-  const set = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value")?.set
+  const descriptor = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value")
   act(() => {
-    set?.call(select, value)
+    descriptor?.set?.call(select, value)
     select.dispatchEvent(new Event("change", { bubbles: true }))
   })
   await flush()
@@ -183,7 +184,7 @@ describe("the close-policy setting in Details", () => {
     const host = await mount(world)
     await openDetails(host)
     const select = policySelect(host)
-    expect(select.labels?.[0]?.textContent).toContain("When closing WinVM")
+    expect(select.labels[0]?.textContent).toContain("When closing WinVM")
     expect([...select.options].map((o) => [o.value, o.textContent])).toEqual([
       ["ask", "Ask every time"],
       ["leave", "Leave running"],
@@ -285,7 +286,7 @@ describe("useWinvm.setClosePolicy", () => {
         if (args.includes("-i") && target !== undefined) {
           reads.push(target)
           const answer = ok(machine(target, policies[target] ?? "ask"))
-          if (holdReadsOf.name === target) return new Promise((resolve) => held.push(() => resolve(answer)))
+          if (holdReadsOf.name === target) return new Promise((resolve) => held.push(() => { resolve(answer) }))
           return Promise.resolve(answer)
         }
         return Promise.resolve(ok({ instances: [machine("a", policies.a ?? "ask"), machine("b", policies.b ?? "ask")] }))
@@ -336,7 +337,7 @@ describe("useWinvm.setClosePolicy", () => {
     expect(world.configs).toEqual([["config", "-i", "a", "viewer.closePolicy=leave"]])
 
     // The person moves to machine b while a's write is out; a's refresh read is held too.
-    act(() => app.latest().select("b"))
+    act(() => { app.latest().select("b") })
     await flush()
     await tick(0)
     expect(app.latest().status?.name).toBe("b")

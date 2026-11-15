@@ -56,9 +56,9 @@ export function useDark(): boolean {
   useEffect(() => {
     if (typeof matchMedia !== "function") return
     const query = matchMedia(LIGHT)
-    const change = (): void => setDark(!query.matches)
+    const change = (): void => { setDark(!query.matches) }
     query.addEventListener("change", change)
-    return () => query.removeEventListener("change", change)
+    return () => { query.removeEventListener("change", change) }
   }, [])
   return dark
 }

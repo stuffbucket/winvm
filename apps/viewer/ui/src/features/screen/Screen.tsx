@@ -1,6 +1,6 @@
 import RFB from "@winvm/novnc/core/rfb.js"
 import * as KeyboardUtil from "@winvm/novnc/core/input/util.js"
-import { forwardRef, useEffect, useImperativeHandle, useLayoutEffect, useRef, useState } from "react"
+import { forwardRef, useEffect, useImperativeHandle, useLayoutEffect, useRef, useState, type JSX } from "react"
 
 import { type Size, drawSize, guestSizeFor, sameSize, scaleFor } from "@winvm/displayfit"
 
@@ -18,7 +18,7 @@ import { type WakeSock, keepRefreshing } from "./wake"
 interface ScreenProps {
   readonly connection: Connection
   readonly keyboardCaptured: boolean
-  onKeyboardCaptured(captured: boolean): void
+  onKeyboardCaptured: (captured: boolean) => void
   /**
    * The guest's screen can follow the view (virtio-gpu). Then the viewer asks
    * QEMU for the view's size in device pixels and `onGuestSize` has the guest
@@ -47,7 +47,7 @@ interface ScreenProps {
   readonly asleep?: boolean
   /** A wake is under way: keys are dropped until the machine runs. */
   readonly waking?: boolean
-  onWake?(): void
+  onWake?: () => void
   /** Dim the held screen and mark it with a glyph (the "Show Pause Overlay" setting). */
   readonly overlay?: boolean
 }
@@ -117,7 +117,7 @@ export const Screen = forwardRef<ScreenHandle, ScreenProps>(function Screen(
   const askAgainRef = useRef(askAgain)
   askAgainRef.current = askAgain
   const heldSizes = useRef<HeldSizes | null>(null)
-  heldSizes.current ??= new HeldSizes(frozen || !ready, { onRetry: () => askAgainRef.current() })
+  heldSizes.current ??= new HeldSizes(frozen || !ready, { onRetry: () => { askAgainRef.current() } })
   const keys = useRef({ frozen, blocked: inputBlocked, asleep, waking, onWake })
   keys.current.frozen = frozen
   keys.current.blocked = inputBlocked
@@ -134,11 +134,11 @@ export const Screen = forwardRef<ScreenHandle, ScreenProps>(function Screen(
     () => ({
       sendWindowsKey: () => {
         const conn = rfb.current
-        if (conn !== null) sendWindowsKey((keysym, code, down) => conn.sendKey(keysym, code, down))
+        if (conn !== null) sendWindowsKey((keysym, code, down) => { conn.sendKey(keysym, code, down) })
       },
       sendCtrlAltDelete: () => {
         const conn = rfb.current
-        if (conn !== null) sendCtrlAltDelete((keysym, code, down) => conn.sendKey(keysym, code, down))
+        if (conn !== null) sendCtrlAltDelete((keysym, code, down) => { conn.sendKey(keysym, code, down) })
       },
     }),
     [],
@@ -164,12 +164,12 @@ export const Screen = forwardRef<ScreenHandle, ScreenProps>(function Screen(
         return keysym === null ? null : { keysym, code: KeyboardUtil.getKeycode(keyboardEvent) }
       },
       releaseNoVnc: () => conn?._keyboard._allKeysUp(),
-      onCaptured: (next) => captureChanged.current(next),
+      onCaptured: (next) => { captureChanged.current(next) },
     })
     router.setCaptured(captured.current)
-    const onKeyDown = (event: KeyboardEvent): void => router.keyDown(event)
-    const onKeyUp = (event: KeyboardEvent): void => router.keyUp(event)
-    const onBlur = (): void => router.lostFocus()
+    const onKeyDown = (event: KeyboardEvent): void => { router.keyDown(event) }
+    const onKeyUp = (event: KeyboardEvent): void => { router.keyUp(event) }
+    const onBlur = (): void => { router.lostFocus() }
     const onVisibility = (): void => {
       if (document.visibilityState === "hidden") router.lostFocus()
     }
@@ -281,7 +281,7 @@ export const Screen = forwardRef<ScreenHandle, ScreenProps>(function Screen(
         flipped = size
         flips = 1
         clearTimeout(frameWait)
-        frameWait = setTimeout(() => drawnAt(size), FRAME_WAIT_MS)
+        frameWait = setTimeout(() => { drawnAt(size) }, FRAME_WAIT_MS)
       } else if (++flips === 2) drawnAt(size)
     }
 
@@ -318,7 +318,7 @@ export const Screen = forwardRef<ScreenHandle, ScreenProps>(function Screen(
     const clipboard = new ClipboardSync({
       readMac: readText,
       writeMac: copyText,
-      toGuest: (text) => conn.clipboardPasteFrom(text),
+      toGuest: (text) => { conn.clipboardPasteFrom(text) },
       focused: () => document.hasFocus(),
     })
     let clipboardReady = false
@@ -336,7 +336,7 @@ export const Screen = forwardRef<ScreenHandle, ScreenProps>(function Screen(
     const startClipboard = (since: number): void => {
       if (closing || !connected) return
       if (conn._clipboardServerCapabilitiesFormats?.[CLIPBOARD_TEXT] !== true && performance.now() - since < CLIPBOARD_CAPS_MS) {
-        clipboardWait = setTimeout(() => startClipboard(since), 100)
+        clipboardWait = setTimeout(() => { startClipboard(since) }, 100)
         return
       }
       clipboardReady = true
@@ -356,15 +356,15 @@ export const Screen = forwardRef<ScreenHandle, ScreenProps>(function Screen(
         resize.flush()
       }
     })
-    conn.addEventListener("credentialsrequired", () => conn.sendCredentials({ password: password ?? "" }))
-    conn.addEventListener("securityfailure", () => setView("refused"))
+    conn.addEventListener("credentialsrequired", () => { conn.sendCredentials({ password: password ?? "" }) })
+    conn.addEventListener("securityfailure", () => { setView("refused") })
     conn.addEventListener("disconnect", () => {
       connected = false
       stopWake?.()
       stopWake = null
       if (closing) return
       setView((v) => (v === "refused" ? v : "lost"))
-      retry = setTimeout(() => setAttempt((a) => a + 1), 2000)
+      retry = setTimeout(() => { setAttempt((a) => a + 1) }, 2000)
     })
     return () => {
       closing = true

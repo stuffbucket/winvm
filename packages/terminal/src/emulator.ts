@@ -140,7 +140,8 @@ function createXtermEmulator(theme?: TerminalTheme, typography?: TerminalTypogra
       host = element;
       if (theme?.foreground) element.style.color = theme.foreground;
       if (theme?.background) element.style.backgroundColor = theme.background;
-      return Promise.resolve(terminal.open(element));
+      terminal.open(element);
+      return Promise.resolve();
     },
     fit: () => {
       const proposed = fitAddon.proposeDimensions();
@@ -153,19 +154,19 @@ function createXtermEmulator(theme?: TerminalTheme, typography?: TerminalTypogra
       const clamped = clampTerminalGrid(cols, rows);
       terminal.resize(clamped.cols, clamped.rows);
     },
-    focus: () => terminal.focus(),
-    blur: () => terminal.blur(),
+    focus: () => { terminal.focus() },
+    blur: () => { terminal.blur() },
     onData: (listener) => terminal.onData(listener),
     onResize: (listener) => terminal.onResize(listener),
     onKeyEvent: (listener) => {
       terminal.attachCustomKeyEventHandler((event) => !listener(event));
     },
     onTitleChange: (listener) => terminal.onTitleChange(listener),
-    write: (data, callback) => terminal.write(data, callback),
-    clear: () => terminal.clear(),
-    selectAll: () => terminal.selectAll(),
-    scrollToTop: () => terminal.scrollToTop(),
-    scrollToBottom: () => terminal.scrollToBottom(),
+    write: (data, callback) => { terminal.write(data, callback) },
+    clear: () => { terminal.clear() },
+    selectAll: () => { terminal.selectAll() },
+    scrollToTop: () => { terminal.scrollToTop() },
+    scrollToBottom: () => { terminal.scrollToBottom() },
     setTypography: (next) => {
       Object.assign(terminal.options, xtermTypography(next));
     },
@@ -175,7 +176,7 @@ function createXtermEmulator(theme?: TerminalTheme, typography?: TerminalTypogra
       if (host && nextTheme.foreground) host.style.color = nextTheme.foreground;
       if (host && nextTheme.background) host.style.backgroundColor = nextTheme.background;
     },
-    dispose: () => terminal.dispose(),
+    dispose: () => { terminal.dispose() },
   };
 }
 
@@ -190,11 +191,11 @@ function clampTerminalGrid(cols: number, rows: number): { cols: number; rows: nu
  * @wterm/ghostty WebAssembly adapter) is left out, so asking for it gets the
  * xterm adapter; `ghosttyWindow` is accepted and ignored for the same reason.
  */
-export async function createTerminalEmulator(
+export function createTerminalEmulator(
   _kind: TerminalEmulatorKind = 'xterm',
   theme?: TerminalTheme,
   _ghosttyWindow?: GhosttyWindowAdjustment,
   typography?: TerminalTypography,
 ): Promise<TerminalEmulator> {
-  return createXtermEmulator(theme, typography);
+  return Promise.resolve(createXtermEmulator(theme, typography));
 }

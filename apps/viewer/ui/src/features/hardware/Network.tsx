@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react"
+import { type JSX, useEffect, useRef, useState } from "react"
 
 import { copyText } from "../../backend"
 import { Icon } from "../../components/Icon"
@@ -11,7 +11,7 @@ import type { MachineInfoView } from "./useMachineInfo"
 function CopyRow({ label, value, copy }: { readonly label: string; readonly value: string; readonly copy?: string | undefined }): JSX.Element {
   const [copied, setCopied] = useState(false)
   const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
-  useEffect(() => () => clearTimeout(timer.current), [])
+  useEffect(() => () => { clearTimeout(timer.current) }, [])
   const text = copy ?? value
   const tip = copied ? t("network.copied") : t("network.copy", { value: text })
   const onCopy = (): void => {
@@ -19,7 +19,7 @@ function CopyRow({ label, value, copy }: { readonly label: string; readonly valu
       .then(() => {
         setCopied(true)
         clearTimeout(timer.current)
-        timer.current = setTimeout(() => setCopied(false), 1500)
+        timer.current = setTimeout(() => { setCopied(false) }, 1500)
       })
       .catch(() => undefined)
   }

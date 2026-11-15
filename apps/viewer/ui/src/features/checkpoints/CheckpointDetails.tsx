@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react"
+import { useEffect, useRef, useState, type JSX } from "react"
 
 import { SpatialCanvasSidePanel } from "@winvm/canvas"
 
@@ -27,12 +27,12 @@ interface DetailsProps {
   /** Something is running (a save, a load, a start…): the actions wait. */
   readonly busy: boolean
   readonly saving: "idle" | "saving" | "saved" | "failed"
-  onClose(): void
+  onClose: () => void
   /** Show the screenshot as big as the window allows. */
-  onLook(): void
-  onNote(draft: NoteDraft): void
-  onGoBack(): void
-  onDelete(): void
+  onLook: () => void
+  onNote: (draft: NoteDraft) => void
+  onGoBack: () => void
+  onDelete: () => void
 }
 
 /** How long typing has to pause before a note is written. */
@@ -55,7 +55,6 @@ export function CheckpointDetails({ c, now, busy, saving, onClose, onLook, onNot
     const d = draftOf(c.notes)
     setDraft(d)
     written.current = d
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [c.name, c.createdAt])
 
   const flush = (): void => {
@@ -114,7 +113,7 @@ export function CheckpointDetails({ c, now, busy, saving, onClose, onLook, onNot
         autoComplete="off"
         spellCheck={false}
         maxLength={120}
-        onChange={(e) => edit({ title: e.target.value })}
+        onChange={(e) => { edit({ title: e.target.value }) }}
         onBlur={flush}
       />
       <label className="checkpoint-details__label" htmlFor="checkpoint-text">
@@ -126,7 +125,7 @@ export function CheckpointDetails({ c, now, busy, saving, onClose, onLook, onNot
         value={draft.text}
         placeholder={t("checkpoints.note.textPlaceholder")}
         rows={6}
-        onChange={(e) => edit({ text: e.target.value })}
+        onChange={(e) => { edit({ text: e.target.value }) }}
         onBlur={flush}
         onKeyDown={(e) => {
           if (e.key === "s" && (e.metaKey || e.ctrlKey)) {
@@ -145,7 +144,7 @@ export function CheckpointDetails({ c, now, busy, saving, onClose, onLook, onNot
         placeholder={t("checkpoints.note.tagsPlaceholder")}
         autoComplete="off"
         spellCheck={false}
-        onChange={(e) => edit({ tags: e.target.value })}
+        onChange={(e) => { edit({ tags: e.target.value }) }}
         onBlur={flush}
       />
       {c.note !== undefined && c.note !== "" && <p className="checkpoint-details__manifest-note">{t("checkpoints.note.taken", { note: c.note })}</p>}

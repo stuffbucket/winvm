@@ -55,7 +55,7 @@ import * as saves from "./saves"
 import * as watcher from "./watch"
 
 const errMsg = (e: unknown): string => (e instanceof Error ? e.message : String(e))
-const sleep = async (ms: number): Promise<void> => await new Promise((r) => setTimeout(r, ms))
+const sleep = async (ms: number): Promise<void> => { await new Promise((r) => setTimeout(r, ms)) }
 
 /** Per instance, as a new machine is made (hardware.ts NEW_DEFAULT). */
 export const VCPUS = NEW_DEFAULT.cpus
@@ -222,7 +222,7 @@ async function ensurePoolGoldens(
     await ensureGolden(first, g, log, image)
     const independent: string[] = []
     for (const m of rest) if (!(await cloneGolden(first, m, g, log))) independent.push(m)
-    await Promise.all(independent.map(async (m) => await ensureGolden(m, g, (s) => log(`[${m}] ${s}`), image)))
+    await Promise.all(independent.map(async (m) => await ensureGolden(m, g, (s) => { log(`[${m}] ${s}`) }, image)))
   }
 }
 
@@ -309,7 +309,7 @@ export async function runPool(jobs: readonly Job[], o: PoolOptions): Promise<Poo
 
   const image = o.image ?? readMeta(members[0] ?? "")?.image ?? null
   const goldens = [...new Set(jobs.map((j) => o.golden ?? j.golden ?? DEFAULT_GOLDEN))]
-  await ensurePoolGoldens(members, goldens, image, (s) => console.log(s))
+  await ensurePoolGoldens(members, goldens, image, (s) => { console.log(s) })
   const setupMs = Date.now() - t0
 
   const run = async (job: Job, instance: string): Promise<JobResult> => {
@@ -319,7 +319,7 @@ export async function runPool(jobs: readonly Job[], o: PoolOptions): Promise<Poo
     const watchdogMs = job.timeoutMs + watchdogGraceMs()
     let timer: ReturnType<typeof setTimeout> | undefined
     const wedged = new Promise<"wedged">((res) => {
-      timer = setTimeout(() => res("wedged"), watchdogMs)
+      timer = setTimeout(() => { res("wedged") }, watchdogMs)
     })
     const ran = runJob(job, {
       instance,
@@ -352,7 +352,7 @@ export async function runPool(jobs: readonly Job[], o: PoolOptions): Promise<Poo
     {
       run,
       recover: hardStop,
-      log: (i, l) => tagged(i)(l),
+      log: (i, l) => { tagged(i)(l) },
       abandoned: (job, why) => stub(job, "", "error", why, Date.now()),
     },
   )
@@ -367,9 +367,9 @@ export async function runPool(jobs: readonly Job[], o: PoolOptions): Promise<Poo
   } else {
     await Promise.all(
       members.map(async (m) =>
-        await withOperation(m, "stop", async () => await saves.quitQemu(pathsFor(m))).catch((error: unknown) => {
+        { await withOperation(m, "stop", async () => { await saves.quitQemu(pathsFor(m)) }).catch((error: unknown) => {
           console.warn(`warning: left "${m}" running: ${errMsg(error)}`)
-        }),
+        }) },
       ),
     )
   }

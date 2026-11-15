@@ -48,14 +48,14 @@ export function terminalDirectoryTitle(cwd: string): string {
 
 /** Removes controls and bounds a process-supplied terminal title. */
 export function terminalProcessTitle(title: string): string {
-  const printable = [...title]
+  const printable = Array.from(title)
     .filter((character) => {
       const codePoint = character.codePointAt(0) ?? 0;
       return codePoint >= 32 && codePoint !== 127 && !(codePoint >= 128 && codePoint <= 159);
     })
     .join('')
     .trim();
-  return [...printable].slice(0, 160).join('');
+  return Array.from(printable).slice(0, 160).join('');
 }
 
 /** Creates the next numbered reference tab without reusing closed identities. */

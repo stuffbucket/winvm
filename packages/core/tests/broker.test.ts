@@ -11,7 +11,7 @@ import * as qmp from "../src/qmp"
 import { FakeAgent } from "./fakes/agent"
 import { FakeQmp } from "./fakes/qmp"
 
-const sleep = async (ms: number): Promise<void> => await new Promise((r) => setTimeout(r, ms))
+const sleep = async (ms: number): Promise<void> => { await new Promise((r) => setTimeout(r, ms)) }
 
 let dir = ""
 let fake: FakeQmp
@@ -92,7 +92,7 @@ describe("the QMP channel", () => {
   })
 
   it("asks QEMU itself, ahead of a caller holding the queue", async () => {
-    const held = monitor.withQmp(listen, async () => await sleep(1000), 3000)
+    const held = monitor.withQmp(listen, async () => { await sleep(1000) }, 3000)
     await sleep(100)
     const t0 = Date.now()
     expect(await channel.request("query-chardev")).toEqual({ return: [{ label: "qga0", "frontend-open": true }] })
@@ -159,7 +159,7 @@ describe("the qemu-ga channel", () => {
     await agent.listen()
     qgaListen = resolve(dir, "qga.sock")
     open = true
-    qgaChannel = new QgaChannel({ listen: qgaListen, upstream: agent.path, portOpen: async () => open })
+    qgaChannel = new QgaChannel({ listen: qgaListen, upstream: agent.path, portOpen: () => Promise.resolve(open) })
     await qgaChannel.start()
   })
 
@@ -211,7 +211,7 @@ describe("the qemu-ga channel", () => {
     const sock = connect(qgaListen)
     sock.on("error", () => undefined)
     sock.write(Buffer.from([0xff]))
-    await new Promise<void>((r) => sock.on("close", () => r()))
+    await new Promise<void>((r) => sock.on("close", () => { r() }))
     expect(Date.now() - t0).toBeLessThan(1500)
     agent = new FakeAgent(resolve(dir, "qga-up.sock"))
     await agent.listen()

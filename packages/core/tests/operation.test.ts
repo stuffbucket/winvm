@@ -236,7 +236,7 @@ describe("the lease record", () => {
 describe("exclusion", () => {
   it("refuses a second command while the first holds the instance, naming what holds it", async () => {
     const g = gate()
-    const first = withOperation(NAME, "start", async () => await g.opened)
+    const first = withOperation(NAME, "start", async () => { await g.opened })
     await Bun.sleep(20)
     const second = withOperation(NAME, "start", () => "ran")
     await expect(second).rejects.toBeInstanceOf(InstanceBusy)
@@ -295,7 +295,7 @@ describe("waiting", () => {
   it("waits out winvm's own work for a person's command, and refuses another person's at once", async () => {
     const g = gate()
     const waited: number[] = []
-    const auto = withOperation(NAME, "save", async () => await g.opened, { automatic: true })
+    const auto = withOperation(NAME, "save", async () => { await g.opened }, { automatic: true })
     await Bun.sleep(20)
     expect(leaseHolder(NAME)).toEqual({ operation: "save", pid: process.pid, startedAt: expect.any(String) as string, automatic: true })
     expect(readOperation(NAME)?.operation).toBe("save")
@@ -307,7 +307,7 @@ describe("waiting", () => {
     expect(waited).toEqual([process.pid])
 
     const user = gate()
-    const held = withOperation(NAME, "pause", async () => await user.opened)
+    const held = withOperation(NAME, "pause", async () => { await user.opened })
     await Bun.sleep(20)
     const t0 = Date.now()
     await expect(withOperation(NAME, "stop", () => "ran", { pollMs: 10, ...quietly })).rejects.toBeInstanceOf(InstanceBusy)
@@ -318,7 +318,7 @@ describe("waiting", () => {
 
   it("gives up after its bound, naming the automatic holder", async () => {
     const g = gate()
-    const auto = withOperation(NAME, "save", async () => await g.opened, { automatic: true })
+    const auto = withOperation(NAME, "save", async () => { await g.opened }, { automatic: true })
     await Bun.sleep(20)
     await expect(withOperation(NAME, "pause", () => "ran", { waitMs: 100, pollMs: 10, ...quietly })).rejects.toThrow(/busy: save \(pid \d+, started by winvm itself\)/)
     g.open()
@@ -327,7 +327,7 @@ describe("waiting", () => {
 
   it("never waits when winvm's own work finds the instance busy: it skips instead", async () => {
     const g = gate()
-    const auto = withOperation(NAME, "reconcile", async () => await g.opened, { automatic: true })
+    const auto = withOperation(NAME, "reconcile", async () => { await g.opened }, { automatic: true })
     await Bun.sleep(20)
     await expect(withOperation(NAME, "save", () => "ran", { automatic: true, pollMs: 10, ...quietly })).rejects.toBeInstanceOf(InstanceBusy)
     g.open()
@@ -349,7 +349,7 @@ describe("waiting", () => {
 describe("kill", () => {
   it("never waits on a lease: it runs beside a wedged holder, and holds the lease itself when it is free", async () => {
     const g = gate()
-    const wedged = withOperation(NAME, "stop", async () => await g.opened)
+    const wedged = withOperation(NAME, "stop", async () => { await g.opened })
     await Bun.sleep(20)
     const t0 = Date.now()
     expect(await withOperation(NAME, "kill", () => onDisk()?.["operation"])).toBe("stop")

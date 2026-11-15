@@ -15,7 +15,7 @@ export interface ViewerSettings {
 
 export const DEFAULT_SETTINGS: ViewerSettings = { pauseOverlay: true }
 
-const Stored = z.object({ "viewer.pauseOverlay": z.boolean().optional() }).passthrough()
+const Stored = z.object({ "viewer.pauseOverlay": z.boolean().optional() }).loose()
 
 /** `winvm settings --json`; anything missing or unreadable is the default. */
 export function parseSettings(stdout: string): ViewerSettings {

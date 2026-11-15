@@ -3,7 +3,9 @@
  * keys, clamping, the increment and decrement buttons) in the window's style.
  * The same wrapper shape as Menu.tsx. Styles: `.number-field*` in styles.css.
  */
+
 import { NumberField as BaseNumberField } from "@base-ui/react/number-field"
+import type { JSX } from "react"
 
 import { Icon } from "./Icon"
 
@@ -19,9 +21,9 @@ export interface NumberFieldProps {
   readonly incrementLabel: string
   /** A unit after the number ("GB"), outside the input so typing stays plain digits. */
   readonly unit?: string
-  onValueChange(value: number): void
+  onValueChange: (value: number) => void
   /** Blur after typing, a stepper released, an arrow key: the value to keep. */
-  onValueCommitted(value: number): void
+  onValueCommitted: (value: number) => void
 }
 
 export function NumberField({

@@ -231,7 +231,7 @@ if (sub !== undefined && shouldReconcileVerb(sub) && !(sub === "files" && args.p
 }
 
 let exitCode: number
-switch (sub) {
+switch (sub ?? "") {
   case "doctor":
     exitCode = commands.doctor(args.flags.has("json"))
     break

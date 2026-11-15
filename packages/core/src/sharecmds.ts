@@ -302,7 +302,7 @@ async function quietly(toStderr: boolean, f: () => Promise<number>): Promise<num
   console.log = (...a: unknown[]): void => {
     console.error(...a)
   }
-  process.stdout.write = ((chunk: string | Uint8Array): boolean => process.stderr.write(chunk)) as typeof process.stdout.write
+  process.stdout.write = (chunk: string | Uint8Array): boolean => process.stderr.write(chunk)
   try {
     return await f()
   } finally {

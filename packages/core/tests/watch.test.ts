@@ -470,8 +470,8 @@ describe("watcher generations", () => {
       return false
     }
   }
-  const lock = (pid: number): void => writeFileSync(watchPathsFor("w").pid, `${String(pid)}\n`)
-  const state = (o: Record<string, unknown>): void => writeFileSync(watchPathsFor("w").state, JSON.stringify(o))
+  const lock = (pid: number): void => { writeFileSync(watchPathsFor("w").pid, `${String(pid)}\n`) }
+  const state = (o: Record<string, unknown>): void => { writeFileSync(watchPathsFor("w").state, JSON.stringify(o)) }
 
   it("classifies a record by its build: current, stale, or legacy when it has none", () => {
     expect(watcherFreshness({ pid: 1, build: CURRENT }, CURRENT)).toBe("current")
@@ -537,8 +537,9 @@ describe("watcher generations", () => {
           if (sig === "SIGKILL" || o.dies === "on-term") gone = true
         },
         now: (): number => t,
-        sleep: async (ms: number): Promise<void> => {
+        sleep: (ms: number): Promise<void> => {
           t += ms
+          return Promise.resolve()
         },
         isWatcher: (): boolean => !gone,
       },
@@ -595,8 +596,9 @@ describe("watcher generations", () => {
     const result = await stopWatcher("w", {
       kill: (_pid, sig) => void kills.push(sig),
       now: () => t,
-      sleep: async (ms) => {
+      sleep: (ms) => {
         t += ms
+        return Promise.resolve()
       },
       isWatcher: () => t < 11_000,
     })
@@ -635,8 +637,9 @@ describe("watcher generations", () => {
       const stopped = await stopWatcher("w", {
         kill: (_p, sig) => void kills.push(sig),
         now: () => t,
-        sleep: async (ms) => {
+        sleep: (ms) => {
           t += ms
+          return Promise.resolve()
         },
       })
       expect(kills).toEqual([])

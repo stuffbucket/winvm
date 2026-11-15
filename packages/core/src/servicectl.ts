@@ -1,10 +1,11 @@
-import { spawn, spawnSync } from "node:child_process"
+import { spawn } from "node:child_process"
 import { chmodSync, closeSync, linkSync, openSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs"
 import { basename, resolve } from "node:path"
 
 import { commandInstance, winvmCommandAfter } from "./args"
 import { buildIdentity } from "./identity"
 import { cliArgv, managedEnv, type Paths } from "./paths"
+import { spawnText } from "./shell"
 
 export interface ServiceInfo {
   readonly pid: number
@@ -76,8 +77,8 @@ function pidIn(text: string | null): number | null {
  */
 function isServiceFor(pid: number, name: string): boolean {
   if (pid === process.pid) return false
-  const r = spawnSync("ps", ["-o", "command=", "-p", String(pid)], { encoding: "utf8" })
-  const after = winvmCommandAfter(r.stdout ?? "", "serve")
+  const r = spawnText("ps", ["-o", "command=", "-p", String(pid)])
+  const after = winvmCommandAfter(r.stdout, "serve")
   return after !== null && commandInstance(after) === name
 }
 
@@ -186,7 +187,7 @@ export function stopService(p: Paths, seams: StopServiceSeams = {}): void {
   const name = basename(p.dir)
   const kill = seams.kill ?? ((pid: number, signal: NodeJS.Signals): void => void process.kill(pid, signal))
   const now = seams.now ?? Date.now
-  const sleep = seams.sleep ?? ((ms: number): void => Bun.sleepSync(ms))
+  const sleep = seams.sleep ?? ((ms: number): void => { Bun.sleepSync(ms) })
   const running = seams.running ?? ((pid: number): boolean => alive(pid) && !exited(pid))
   const isService = seams.isService ?? ((pid: number): boolean => alive(pid) && isServiceFor(pid, name))
   // Only a pid the record names AND that is still this instance's service is ever signalled.
@@ -214,8 +215,8 @@ export function stopService(p: Paths, seams: StopServiceSeams = {}): void {
 }
 
 function exited(pid: number): boolean {
-  const r = spawnSync("ps", ["-o", "stat=", "-p", String(pid)], { encoding: "utf8" })
-  const stat = (r.stdout ?? "").trim()
+  const r = spawnText("ps", ["-o", "stat=", "-p", String(pid)])
+  const stat = r.stdout.trim()
   return stat === "" || stat.startsWith("Z")
 }
 

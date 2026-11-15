@@ -237,7 +237,7 @@ class PwshHost {
     if (proc === null || reader === null) throw new Error("powershell did not start")
     const nonce = `__winvm_end_${crypto.randomUUID().replaceAll("-", "")}__`
     const b64 = Buffer.from(script, "utf8").toString("base64")
-    proc.stdin.write(
+    await proc.stdin.write(
       `$global:LASTEXITCODE = 0; $__ok = $true; try { & ([scriptblock]::Create([Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${b64}')))) 2>&1 | Out-String -Width 4096 | Write-Output } catch { $__ok = $false; "ERROR: $_" }; "${nonce} $(if ($__ok) { $global:LASTEXITCODE } else { 1 })"\n`,
     )
     await proc.stdin.flush()
@@ -320,7 +320,7 @@ async function launch(r: LaunchRequest): Promise<{ readonly pid: number }> {
   }
   const child = nodeSpawn(exe, rest, { detached: true, stdio: "ignore", ...cwd, env })
   await new Promise<void>((res, rej) => {
-    child.once("spawn", () => res())
+    child.once("spawn", () => { res() })
     child.once("error", rej)
   })
   child.unref()
@@ -531,7 +531,7 @@ async function hiddenNames(dir: string): Promise<string[]> {
 }
 
 function listError(error: unknown, path: string): Error {
-  switch ((error as { code?: string }).code) {
+  switch ((error as { code?: string }).code ?? "") {
     case "ENOENT":
       return new FsError("notfound", `no such folder: ${path}`)
     case "EACCES":
@@ -596,7 +596,7 @@ export async function listDir(
 
 /** An fs call's failure as an FsError, naming `path`. */
 function fsFailure(error: unknown, path: string): Error {
-  switch ((error as { code?: string }).code) {
+  switch ((error as { code?: string }).code ?? "") {
     case "ENOENT":
       return new FsError("notfound", `no such file or folder: ${path}`)
     case "EACCES":
@@ -874,7 +874,7 @@ export class LockedDisplay {
   private readonly set: (args: readonly string[]) => Promise<DisplayOutcome>
   private readonly everyMs: number
 
-  constructor(o: { locked(): Promise<boolean>; set(args: readonly string[]): Promise<DisplayOutcome>; everyMs?: number }) {
+  constructor(o: { locked: () => Promise<boolean>; set: (args: readonly string[]) => Promise<DisplayOutcome>; everyMs?: number }) {
     this.locked = o.locked
     this.set = o.set
     this.everyMs = o.everyMs ?? 1000
@@ -990,7 +990,7 @@ export async function guestStats(): Promise<GuestStats> {
   let disk: GuestStats["disk"] = null
   try {
     const s = await statfs(path)
-    disk = { path, total: Number(s.blocks) * Number(s.bsize), free: Number(s.bavail) * Number(s.bsize) }
+    disk = { path, total: s.blocks * s.bsize, free: s.bavail * s.bsize }
   } catch {
     // reported as unknown
   }
@@ -1143,7 +1143,7 @@ class UiHost {
     const proc = this.proc ?? this.start()
     const id = this.next++
     const reply = new Promise<UiReply>((res) => this.waiting.set(id, res))
-    proc.stdin.write(`${JSON.stringify({ ...req, id })}\n`)
+    await proc.stdin.write(`${JSON.stringify({ ...req, id })}\n`)
     await proc.stdin.flush()
     return await reply
   }
@@ -1210,9 +1210,9 @@ export class DisplayHost {
     const proc = this.proc ?? this.start()
     const line = new Promise<string | null>((res) => (this.answer = res))
     let timer: ReturnType<typeof setTimeout> | undefined
-    const late = new Promise<typeof LATE>((res) => (timer = setTimeout(() => res(LATE), timeoutMs)))
+    const late = new Promise<typeof LATE>((res) => (timer = setTimeout(() => { res(LATE) }, timeoutMs)))
     try {
-      proc.stdin.write(`${args.join(" ")}\n`)
+      await proc.stdin.write(`${args.join(" ")}\n`)
       await proc.stdin.flush()
       const got = await Promise.race([line, late])
       if (got === LATE) {
@@ -1363,7 +1363,7 @@ class Spawner {
     if (this.dead) throw new Error("the spawner exited")
     const id = this.next++
     const p = new Promise<unknown>((res, rej) => this.waiting.set(id, { res, rej }))
-    this.proc.stdin.write(`${JSON.stringify({ id, ...o })}\n`)
+    await this.proc.stdin.write(`${JSON.stringify({ id, ...o })}\n`)
     await this.proc.stdin.flush()
     return (await p) as T
   }

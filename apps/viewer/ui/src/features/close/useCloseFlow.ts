@@ -29,9 +29,9 @@ export type CloseChoice = "leave" | "stow" | "shutdown"
 
 export interface CloseFlow {
   readonly state: CloseFlowState
-  setRemember(value: boolean): void
-  choose(policy: CloseChoice): void
-  cancel(): void
+  setRemember: (value: boolean) => void
+  choose: (policy: CloseChoice) => void
+  cancel: () => void
 }
 
 const IDLE: CloseFlowState = { kind: "idle" }
@@ -50,6 +50,8 @@ interface Transaction {
   /** The `seq` of this window's last command on a machine as the close began: a later failure there is the close's. */
   ranBefore: (name: string) => number
 }
+
+const isCancelled = (tx: Transaction): boolean => tx.cancelled
 
 /**
  * This window's commands on every machine it knew of as the close began. A machine not in its
@@ -98,7 +100,15 @@ function settled(operation: VmOperation, p: Phase): boolean | null {
       return p === "paused"
     case "sleep":
       return p === "asleep"
-    default:
+    case "golden-create":
+    case "golden-reset":
+    case "load":
+    case "lock":
+    case "reset":
+    case "rewind":
+    case "save":
+    case "setup":
+    case "snapshot":
       return null
   }
 }
@@ -164,7 +174,7 @@ export function useCloseFlow(w: Winvm): CloseFlow {
       for (;;) {
         // Decided from this fresh read, not the selected machine's shown status, which lags a selection.
         s = await wRef.current.refreshOne(name)
-        if (tx.cancelled) return "stopped"
+        if (isCancelled(tx)) return "stopped"
         if (s === null) {
           fail(tx, known, t("close.statusFailed"))
           return "stopped"
@@ -182,7 +192,7 @@ export function useCloseFlow(w: Winvm): CloseFlow {
           }
         })
         tx.wake = null
-        if (tx.cancelled) return "stopped"
+        if (isCancelled(tx)) return "stopped"
       }
       // A command of this window's on this machine failed while the close waited: its error stays
       // on screen, and the close stops here rather than go on past it.
@@ -210,7 +220,7 @@ export function useCloseFlow(w: Winvm): CloseFlow {
         })
         answer.current = null
         // Cancelled: cancel() has already called the close off.
-        if (chosen === null || tx.cancelled) return "stopped"
+        if (chosen === null || isCancelled(tx)) return "stopped"
         choice = chosen.policy
         remember = chosen.remember
       } else {
@@ -244,7 +254,10 @@ export function useCloseFlow(w: Winvm): CloseFlow {
       // The machine to stay on if the list can't be read: the one shown, else the last one resolved.
       let last: Status | null = wRef.current.status
       let list = await wRef.current.refreshAll()
-      if (list === null) return fail(tx, last, t("close.statusFailed"))
+      if (list === null) {
+        fail(tx, last, t("close.statusFailed"))
+        return
+      }
       let queue = orderCloseQueue(list, wRef.current.name, resolved)
       while (queue.length > 0) {
         for (let next = queue.shift(); next !== undefined; next = queue.shift()) {
@@ -256,7 +269,10 @@ export function useCloseFlow(w: Winvm): CloseFlow {
         // Every machine asked about is resolved: one started meanwhile is not silently left out.
         list = await wRef.current.refreshAll()
         // Never read as "none left": that would let the app exit past a machine it never asked about.
-        if (list === null) return fail(tx, last, t("close.statusFailed"))
+        if (list === null) {
+          fail(tx, last, t("close.statusFailed"))
+          return
+        }
         queue = orderCloseQueue(list, null, resolved)
       }
       // The app exits from here: nothing more to show.

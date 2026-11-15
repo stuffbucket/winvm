@@ -4,14 +4,13 @@
  * The prerequisite list is the one thing a new user hits first, so it is kept
  * where it can be read without following any other code path.
  */
-import { spawnSync } from "node:child_process"
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs"
 import { resolve } from "node:path"
 import { gunzipSync } from "node:zlib"
 
 import { PACKAGE_DIR, home } from "./paths"
 import { findRuntime, runtimeBin, verifyRuntime, type Runtime } from "./runtime"
-import { capture, have } from "./shell"
+import { capture, have, spawnText } from "./shell"
 
 /**
  * Where to look for UEFI firmware: `WINVM_QEMU_DATA`, else the vendored copy,
@@ -31,8 +30,8 @@ export function qemuDataDirs(): readonly string[] {
     // firmware is 1.6 MB in the repository. See THIRD-PARTY-LICENSE.md.
     const vendored = expandVendoredFirmware()
     if (vendored !== null) return [vendored]
-    const asked = spawnSync(runtimeBin("qemu-system-aarch64"), ["-L", "help"], { encoding: "utf8" })
-    return `${asked.stdout ?? ""}${asked.stderr ?? ""}`
+    const asked = spawnText(runtimeBin("qemu-system-aarch64"), ["-L", "help"])
+    return `${asked.stdout}${asked.stderr}`
       .split("\n")
       .map((l) => l.trim())
       .filter((l) => l.startsWith("/"))
@@ -56,10 +55,8 @@ export function tpmTisHasPpi(): boolean {
   if (tpmPpi !== null) return tpmPpi
   const rt = findRuntime()
   if (rt === null) return false
-  const r = spawnSync(resolve(rt.dir, "bin", "qemu-system-aarch64"), ["-M", "virt", "-device", "tpm-tis-device,help"], {
-    encoding: "utf8",
-  })
-  tpmPpi = parseHasPpi(`${r.stdout ?? ""}${r.stderr ?? ""}`)
+  const r = spawnText(resolve(rt.dir, "bin", "qemu-system-aarch64"), ["-M", "virt", "-device", "tpm-tis-device,help"])
+  tpmPpi = parseHasPpi(`${r.stdout}${r.stderr}`)
   return tpmPpi
 }
 

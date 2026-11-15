@@ -5,7 +5,7 @@
  * means (step back out of a selection or a search before leaving), and so the
  * surface can ease in and out: `phase` drives the CSS.
  */
-import { type ComponentPropsWithoutRef, type KeyboardEvent, type ReactNode, useEffect, useId, useRef } from "react"
+import { type ComponentPropsWithoutRef, type JSX, type KeyboardEvent, type ReactNode, useEffect, useId, useRef } from "react"
 import { createPortal } from "react-dom"
 
 export type SpatialCanvasSurfacePhase = "entering" | "open" | "leaving"

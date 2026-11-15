@@ -121,12 +121,11 @@ async function doSave(
 }
 
 /** `--fast` is `--format mapped`; otherwise `--format zstd|mapped|raw`, default zstd. */
-export function formatFlag(args: Args): saves.RamFormat | string {
+export function formatFlag(args: Args): { readonly format: saves.RamFormat } | { readonly error: string } {
   const f = args.flags.get("format") ?? (args.flags.has("fast") ? "mapped" : "zstd")
-  if (!(saves.RAM_FORMATS as readonly string[]).includes(f)) {
-    return `--format must be one of ${saves.RAM_FORMATS.join(", ")}, got "${f}"`
-  }
-  return f as saves.RamFormat
+  const format = saves.RAM_FORMATS.find((known) => known === f)
+  if (format === undefined) return { error: `--format must be one of ${saves.RAM_FORMATS.join(", ")}, got "${f}"` }
+  return { format }
 }
 
 export async function save(args: Args): Promise<number> {
@@ -135,13 +134,13 @@ export async function save(args: Args): Promise<number> {
   const err = nameError(saveName)
   if (err !== null) return fail(err)
   if (saveName === saves.STOW) return fail(`"${saves.STOW}" is reserved for \`winvm stow\``)
-  const format = formatFlag(args)
-  if (!(saves.RAM_FORMATS as readonly string[]).includes(format)) return fail(format)
+  const parsed = formatFlag(args)
+  if ("error" in parsed) return fail(parsed.error)
   const note = args.flags.get("note")
   return await doSave(name, {
     name: saveName,
     kind: saveName === saves.BASELINE ? "baseline" : "manual",
-    format: format as saves.RamFormat,
+    format: parsed.format,
     ...(note === undefined ? {} : { note }),
     checkReady: !args.flags.has("force"),
   })

@@ -1,4 +1,4 @@
-import { memo, type CSSProperties, type ReactNode } from "react"
+import { memo, type CSSProperties, type ReactNode, type JSX } from "react"
 
 import { SpatialCanvasNode } from "@winvm/canvas"
 
@@ -73,7 +73,7 @@ export interface CardProps {
   readonly arriving: { readonly dx: number; readonly dy: number; readonly scale: number } | null
   readonly leaving: boolean
   readonly working: string | null
-  onSelect(name: string): void
+  onSelect: (name: string) => void
 }
 
 /** One checkpoint on the canvas: its picture, what it's called, when, what kind, its size, and whether it loads here. */
@@ -106,7 +106,7 @@ export const CheckpointCard = memo(function CheckpointCard({ c, box, selected, s
         style={style}
         aria-pressed={selected}
         aria-label={t("checkpoints.card.label", { name, when })}
-        onClick={() => onSelect(c.name)}
+        onClick={() => { onSelect(c.name) }}
       >
         <Picture c={c} sharp={sharpAt(screenWidth)} wanted>
           {reason !== null && <span className="checkpoint__badge">{t(reason)}</span>}

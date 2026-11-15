@@ -1,4 +1,4 @@
-import { spawnSync } from "node:child_process"
+import { type SpawnSyncOptionsWithStringEncoding, type SpawnSyncReturns, spawnSync } from "node:child_process"
 import { existsSync, mkdirSync, rmSync } from "node:fs"
 import { basename, resolve } from "node:path"
 
@@ -8,8 +8,16 @@ export function run(cmd: string, args: readonly string[]): number {
   return spawnSync(cmd, [...args], { stdio: "inherit" }).status ?? 1
 }
 
+export type TextResult = Omit<SpawnSyncReturns<string>, "stdout" | "stderr"> & { readonly stdout: string; readonly stderr: string }
+
+export function spawnText(cmd: string, args: readonly string[], o: Omit<SpawnSyncOptionsWithStringEncoding, "encoding"> = {}): TextResult {
+  const r = spawnSync(cmd, [...args], { ...o, encoding: "utf8" })
+  const streams: { readonly stdout: string | null; readonly stderr: string | null } = r
+  return { ...r, stdout: streams.stdout ?? "", stderr: streams.stderr ?? "" }
+}
+
 export function capture(cmd: string, args: readonly string[]): string {
-  return (spawnSync(cmd, [...args], { encoding: "utf8" }).stdout ?? "").trim()
+  return spawnText(cmd, args).stdout.trim()
 }
 
 /** Like `run`, but silent — for probes whose failure is expected and handled by the caller. */

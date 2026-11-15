@@ -3,6 +3,7 @@
  * `winvm config` it runs to change the size, and what each part shows
  * (rendered in happy-dom).
  */
+import type { JSX } from "react"
 import { GlobalRegistrator } from "@happy-dom/global-registrator"
 import { afterAll, afterEach, describe, expect, it } from "bun:test"
 
@@ -135,7 +136,7 @@ describe("the Hardware part", () => {
       more?.dispatchEvent(new PointerEvent("pointerup", { bubbles: true, button: 0 }))
       more?.dispatchEvent(new MouseEvent("click", { bubbles: true, button: 0 }))
     })
-    await act(async () => await new Promise((r) => setTimeout(r, 700)))
+    await act(async () => { await new Promise((r) => setTimeout(r, 700)) })
     expect(v.sizes).toEqual([{ cpus: 7, memoryMiB: 8192 }])
   })
 
@@ -148,7 +149,7 @@ describe("the Hardware part", () => {
 describe("the Network part", () => {
   it("shows the mode, the addresses and every port, each copyable", () => {
     const host = render(<Network view={view(parsed())} />)
-    const text = host.textContent ?? ""
+    const text = host.textContent
     for (const s of ["NAT (QEMU user networking)", "10.0.2.15", "Ethernet", "10.0.2.2", "10.0.2.3", "Finder drives", "winvm agent", "Screen sharing (VNC)"]) {
       expect(text).toContain(s)
     }

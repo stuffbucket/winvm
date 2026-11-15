@@ -23,23 +23,23 @@ class FakeAgent implements LockAgent {
   appearsAfter: number | null = 1
   private sinceLaunch = 0
 
-  async pwsh(script: string): Promise<PwshResponse> {
+  pwsh(script: string): Promise<PwshResponse> {
     this.scripts.push(script)
-    return { code: this.pwshCode, output: this.pwshOutput, ms: 1, timedOut: false }
+    return Promise.resolve({ code: this.pwshCode, output: this.pwshOutput, ms: 1, timedOut: false })
   }
 
-  async launch(argv: readonly string[]): Promise<{ readonly pid: number }> {
+  launch(argv: readonly string[]): Promise<{ readonly pid: number }> {
     this.launched.push(argv)
     this.sinceLaunch = 0
-    return { pid: 100 }
+    return Promise.resolve({ pid: 100 })
   }
 
-  async procs(): Promise<readonly Proc[]> {
+  procs(): Promise<readonly Proc[]> {
     if (this.launched.length > 0) {
       this.sinceLaunch += 1
-      if (this.appearsAfter !== null && this.sinceLaunch >= this.appearsAfter) return [...this.procList, { pid: 900, name: "LogonUI.exe", session: 1 }]
+      if (this.appearsAfter !== null && this.sinceLaunch >= this.appearsAfter) return Promise.resolve([...this.procList, { pid: 900, name: "LogonUI.exe", session: 1 }])
     }
-    return this.procList
+    return Promise.resolve(this.procList)
   }
 }
 
@@ -96,7 +96,7 @@ describe("XDG directories", () => {
 describe("the user's settings", () => {
   const dir = mkdtempSync(resolve(tmpdir(), "wvset-"))
   const env = { HOME: "/nonexistent", XDG_CONFIG_HOME: dir }
-  afterAll(() => rmSync(dir, { recursive: true, force: true }))
+  afterAll(() => { rmSync(dir, { recursive: true, force: true }) })
 
   it("are the defaults with no file, the pause overlay on", () => {
     expect(readSettings(env)).toEqual(SETTING_DEFAULTS)
@@ -144,7 +144,7 @@ describe("the user's settings", () => {
     expect(sectionError("viewer.pauseOverlay")).not.toBeNull()
     expect(sectionError("")).not.toBeNull()
     expect(sectionError("../x")).not.toBeNull()
-    expect(() => writeSection("a.b", 1, env)).toThrow()
+    expect(() => { writeSection("a.b", 1, env) }).toThrow()
   })
 
   it("parse key=value against the key's type", () => {

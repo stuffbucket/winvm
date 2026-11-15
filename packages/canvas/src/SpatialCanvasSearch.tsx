@@ -4,7 +4,7 @@
  * line are the caller's (monimal draws a repository folder), and the active
  * result is marked for arrow-key travel.
  */
-import { Children, type ReactNode } from "react"
+import { Children, type JSX, type ReactNode } from "react"
 
 /** A list of matches, or what to say when there are none. */
 export function SpatialCanvasSearchResults({
@@ -39,7 +39,7 @@ export function SpatialCanvasSearchResult({
   readonly icon?: ReactNode
   readonly active?: boolean
   readonly disabled?: boolean
-  onSelect(): void
+  onSelect: () => void
 }): JSX.Element {
   return (
     <button

@@ -208,7 +208,6 @@ export function formatPool(p: PoolStats): string[] {
 const xmlEscape = (s: string): string =>
   s
     // XML 1.0 forbids most control characters outright, even escaped.
-    // eslint-disable-next-line no-control-regex
     .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g, "")
     .replaceAll("&", "&amp;")
     .replaceAll("<", "&lt;")

@@ -59,7 +59,7 @@ class Listener {
     }
     if (ours) rmSync(this.path, { force: true })
     const server = this.server
-    if (server !== null) await new Promise<void>((r) => server.close(() => r()))
+    if (server !== null) await new Promise<void>((r) => server.close(() => { r() }))
     rmSync(this.own, { force: true })
   }
 }
@@ -102,7 +102,7 @@ export class QmpChannel {
   }
 
   async start(): Promise<void> {
-    await this.listener.start((c) => this.accept(c))
+    await this.listener.start((c) => { this.accept(c) })
     this.connectUpstream()
   }
 
@@ -129,7 +129,7 @@ export class QmpChannel {
           const { id: _id, ...rest } = reply
           res(rest)
         })
-        timer = setTimeout(() => rej(new Error(`${execute}: no answer in ${String(timeoutMs)} ms`)), timeoutMs)
+        timer = setTimeout(() => { rej(new Error(`${execute}: no answer in ${String(timeoutMs)} ms`)) }, timeoutMs)
         up.write(`${JSON.stringify(args === undefined ? { execute, id } : { execute, arguments: args, id })}\n`)
       })
     } finally {
@@ -149,7 +149,7 @@ export class QmpChannel {
       clearTimeout(negotiation)
       if (this.connecting === s) this.connecting = null
       if (this.upstream === s) this.upstreamLost()
-      if (!this.stopped) setTimeout(() => this.connectUpstream(), 200)
+      if (!this.stopped) setTimeout(() => { this.connectUpstream() }, 200)
     })
     s.on(
       "data",
@@ -295,7 +295,7 @@ export class QgaChannel {
   }
 
   async start(): Promise<void> {
-    await this.listener.start((c) => this.accept(c))
+    await this.listener.start((c) => { this.accept(c) })
   }
 
   async stop(): Promise<void> {
@@ -331,6 +331,14 @@ export class QgaChannel {
     void this.pump()
   }
 
+  private ended(next: Socket): boolean {
+    return next.destroyed || this.stopped
+  }
+
+  private superseded(next: Socket): boolean {
+    return this.active !== next
+  }
+
   private async pump(): Promise<void> {
     if (this.active !== null || this.stopped) return
     const next = this.queue.shift()
@@ -340,10 +348,10 @@ export class QgaChannel {
       return
     }
     this.active = next
-    while (!next.destroyed && !this.stopped && (await this.o.portOpen().catch(() => null)) !== true) {
+    while (!this.ended(next) && (await this.o.portOpen().catch(() => null)) !== true) {
       await new Promise((r) => setTimeout(r, this.o.pollMs ?? 250))
     }
-    if (next.destroyed || this.stopped || this.active !== next) return
+    if (this.ended(next) || this.superseded(next)) return
     const up = connect(this.o.upstream)
     this.upstream = up
     up.on("error", () => undefined)

@@ -1,3 +1,4 @@
+import type { JSX } from "react"
 import { Icon, type IconName } from "../../components/Icon"
 import { t } from "../../i18n"
 import { type Controls, isFrozen, isLivePhase, type Phase } from "../../model"
@@ -29,24 +30,24 @@ interface ToolbarProps {
   readonly keyboardCaptured: boolean
   /** A command is running on the machine: keyboard capture is off until it ends. */
   readonly inputBlocked: boolean
-  onStart(): void
-  onShutDown(): void
-  onRestart(): void
-  onPause(): void
+  onStart: () => void
+  onShutDown: () => void
+  onRestart: () => void
+  onPause: () => void
   /** Resume a paused machine, or wake one asleep. */
-  onResume(): void
+  onResume: () => void
   /** Option-click or right-click on Pause / Resume: Show Pause Overlay, Sleep, Lock. */
-  onPauseMenu(): void
+  onPauseMenu: () => void
   onOpen(id: PanelId, button: HTMLElement): void
-  onTerminal(): void
-  onTerminalMenu(): void
-  onFilesMenu(): void
-  onCheckpoints(): void
-  onCheckpointsMenu(): void
-  onActualSize(): void
-  onScreenSharing(): void
-  onDetails(): void
-  onKeyboardCapture(): void
+  onTerminal: () => void
+  onTerminalMenu: () => void
+  onFilesMenu: () => void
+  onCheckpoints: () => void
+  onCheckpointsMenu: () => void
+  onActualSize: () => void
+  onScreenSharing: () => void
+  onDetails: () => void
+  onKeyboardCapture: () => void
 }
 
 interface ToolButtonProps {
@@ -55,7 +56,7 @@ interface ToolButtonProps {
   readonly enabled: boolean
   readonly pressed?: boolean | undefined
   readonly expanded?: boolean
-  onClick(button: HTMLElement): void
+  onClick: (button: HTMLElement) => void
 }
 
 function ToolButton({ icon, label, enabled, pressed, expanded, onClick }: ToolButtonProps): JSX.Element {
@@ -68,7 +69,7 @@ function ToolButton({ icon, label, enabled, pressed, expanded, onClick }: ToolBu
       aria-pressed={pressed}
       aria-expanded={expanded}
       disabled={!enabled}
-      onClick={(e) => onClick(e.currentTarget)}
+      onClick={(e) => { onClick(e.currentTarget) }}
     >
       <Icon name={icon} />
     </button>
@@ -80,7 +81,7 @@ function ToolButton({ icon, label, enabled, pressed, expanded, onClick }: ToolBu
  * right-click offers the other shells and places in a native menu. Disabled,
  * its tooltip says why.
  */
-function TerminalButton({ blocked, onOpen, onMenu }: { readonly blocked: string | null; onOpen(): void; onMenu(): void }): JSX.Element {
+function TerminalButton({ blocked, onOpen, onMenu }: { readonly blocked: string | null; onOpen: () => void; onMenu: () => void }): JSX.Element {
   const label = t("action.terminal")
   return (
     <button
@@ -90,7 +91,10 @@ function TerminalButton({ blocked, onOpen, onMenu }: { readonly blocked: string 
       aria-haspopup="menu"
       title={blocked === null ? t("terminal.tip") : t(blocked)}
       disabled={blocked !== null}
-      onClick={(e) => (e.altKey ? onMenu() : onOpen())}
+      onClick={(e) => {
+        if (e.altKey) onMenu()
+        else onOpen()
+      }}
       onContextMenu={(e) => {
         e.preventDefault()
         if (blocked === null) onMenu()
@@ -107,7 +111,7 @@ function TerminalButton({ blocked, onOpen, onMenu }: { readonly blocked: string 
  * are different buttons to React (their parent keys them), so the one focused
  * when Pause is clicked never turns into Resume under a key press.
  */
-function PauseButton({ phase, c, onPause, onResume, onMenu }: { readonly phase: Phase | null; readonly c: Controls; onPause(): void; onResume(): void; onMenu(): void }): JSX.Element {
+function PauseButton({ phase, c, onPause, onResume, onMenu }: { readonly phase: Phase | null; readonly c: Controls; onPause: () => void; onResume: () => void; onMenu: () => void }): JSX.Element {
   const frozen = isFrozen(phase)
   const label = t(phase === "asleep" ? "action.wake" : frozen ? "action.resume" : "action.pause")
   const enabled = frozen ? c.resume : c.pause
@@ -119,7 +123,11 @@ function PauseButton({ phase, c, onPause, onResume, onMenu }: { readonly phase: 
       aria-haspopup="menu"
       title={t("power.tip", { action: label })}
       disabled={!enabled}
-      onClick={(e) => (e.altKey ? onMenu() : frozen ? onResume() : onPause())}
+      onClick={(e) => {
+        if (e.altKey) onMenu()
+        else if (frozen) onResume()
+        else onPause()
+      }}
       onContextMenu={(e) => {
         e.preventDefault()
         onMenu()
@@ -131,7 +139,7 @@ function PauseButton({ phase, c, onPause, onResume, onMenu }: { readonly phase: 
 }
 
 /** The folder opens the Files window; Option-click or right-click offers a menu of places, as >_ does. */
-function FilesButton({ enabled, onOpen, onMenu }: { readonly enabled: boolean; onOpen(): void; onMenu(): void }): JSX.Element {
+function FilesButton({ enabled, onOpen, onMenu }: { readonly enabled: boolean; onOpen: () => void; onMenu: () => void }): JSX.Element {
   const label = t("action.files")
   return (
     <button
@@ -141,7 +149,10 @@ function FilesButton({ enabled, onOpen, onMenu }: { readonly enabled: boolean; o
       aria-haspopup="menu"
       title={t("files.tip")}
       disabled={!enabled}
-      onClick={(e) => (e.altKey ? onMenu() : onOpen())}
+      onClick={(e) => {
+        if (e.altKey) onMenu()
+        else onOpen()
+      }}
       onContextMenu={(e) => {
         e.preventDefault()
         if (enabled) onMenu()
@@ -157,7 +168,7 @@ function FilesButton({ enabled, onOpen, onMenu }: { readonly enabled: boolean; o
  * (⌘⇧T, File → Checkpoints…, too); Option-click or right-click offers a
  * native menu with Take a Checkpoint Now, as >_ and the folder do.
  */
-function CheckpointsButton({ enabled, open, onOpen, onMenu }: { readonly enabled: boolean; readonly open: boolean; onOpen(): void; onMenu(): void }): JSX.Element {
+function CheckpointsButton({ enabled, open, onOpen, onMenu }: { readonly enabled: boolean; readonly open: boolean; onOpen: () => void; onMenu: () => void }): JSX.Element {
   const label = t("action.checkpoints")
   return (
     <button
@@ -168,7 +179,10 @@ function CheckpointsButton({ enabled, open, onOpen, onMenu }: { readonly enabled
       aria-pressed={open}
       title={t("checkpoints.tip")}
       disabled={!enabled}
-      onClick={(e) => (e.altKey ? onMenu() : onOpen())}
+      onClick={(e) => {
+        if (e.altKey) onMenu()
+        else onOpen()
+      }}
       onContextMenu={(e) => {
         e.preventDefault()
         if (enabled) onMenu()
@@ -187,7 +201,7 @@ export function Toolbar(p: ToolbarProps): JSX.Element {
   const c = p.controls
   const live = isLivePhase(p.phase)
   const panel = (id: PanelId, icon: IconName, label: string, enabled: boolean, pressed?: boolean): JSX.Element => (
-    <ToolButton icon={icon} label={label} enabled={enabled} pressed={pressed} expanded={p.open === id} onClick={(b) => p.onOpen(id, b)} />
+    <ToolButton icon={icon} label={label} enabled={enabled} pressed={pressed} expanded={p.open === id} onClick={(b) => { p.onOpen(id, b) }} />
   )
   return (
     <header className="toolbar" data-tauri-drag-region>
@@ -214,7 +228,7 @@ export function Toolbar(p: ToolbarProps): JSX.Element {
 
       <div className="toolbar__group">
         <TerminalButton blocked={p.terminalBlocked} onOpen={p.onTerminal} onMenu={p.onTerminalMenu} />
-        <FilesButton enabled={p.guestReady} onOpen={() => p.onOpen("files", document.body)} onMenu={p.onFilesMenu} />
+        <FilesButton enabled={p.guestReady} onOpen={() => { p.onOpen("files", document.body) }} onMenu={p.onFilesMenu} />
         <CheckpointsButton enabled={p.canCheckpoints} open={p.checkpointsOpen} onOpen={p.onCheckpoints} onMenu={p.onCheckpointsMenu} />
         {panel("share", "agent", t("action.share"), p.canShare || p.sharing, p.sharing)}
       </div>

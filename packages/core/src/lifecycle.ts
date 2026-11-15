@@ -192,7 +192,7 @@ export function reconcileNote(name: string, r: ReconcileResult, p: Paths = paths
 
 const errText = (e: unknown): string => (e instanceof Error ? e.message : String(e))
 
-const sleep = async (ms: number): Promise<void> => await new Promise((r) => setTimeout(r, ms))
+const sleep = async (ms: number): Promise<void> => { await new Promise((r) => setTimeout(r, ms)) }
 
 // ---------------------------------------------------------------------------
 // The lock
@@ -331,7 +331,7 @@ function owe(p: Paths, qemu: number): void {
   renameSync(tmp, owedPath(p))
 }
 
-const forgive = (p: Paths): void => rmSync(owedPath(p), { force: true })
+const forgive = (p: Paths): void => { rmSync(owedPath(p), { force: true }) }
 
 // ---------------------------------------------------------------------------
 // What is out of date
@@ -454,7 +454,7 @@ async function reconcileHeld(name: string, p: Paths, o: ReconcileOptions, curren
   if (busy !== null && o.waitForBusyWatcher === false) return { changed: false, ...pids(name, p), deferred: busy }
 
   let changed = false
-  let stopped = false
+  let stopped = false as boolean
   const stop = async (): Promise<void> => {
     owe(p, qemu)
     await stopWatcher(name)

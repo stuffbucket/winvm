@@ -59,14 +59,14 @@ interface Heard {
   cancels: number
 }
 
-function render(state: CloseFlowState, heard: Heard = { chose: [], remember: [], cancels: 0 }): { host: HTMLElement; heard: Heard; show(next: CloseFlowState): void } {
+function render(state: CloseFlowState, heard: Heard = { chose: [], remember: [], cancels: 0 }): { host: HTMLElement; heard: Heard; show: (next: CloseFlowState) => void } {
   const host = document.createElement("div")
   document.body.append(host)
   const r = createRoot(host)
   root = r
   const show = (next: CloseFlowState): void =>
-    act(() =>
-      r.render(
+    { act(() =>
+      { r.render(
         <ClosePolicyDialog
           state={next}
           onChoose={(p) => heard.chose.push(p)}
@@ -75,8 +75,8 @@ function render(state: CloseFlowState, heard: Heard = { chose: [], remember: [],
             heard.cancels += 1
           }}
         />,
-      ),
-    )
+      ) },
+    ) }
   show(state)
   return { host, heard, show }
 }
@@ -105,12 +105,12 @@ describe("ClosePolicyDialog", () => {
     ] as const) {
       const b = buttonNamed(host, copy(key))
       expect(b.textContent).toContain(copy(`${key}.body`))
-      act(() => b.click())
+      act(() => { b.click() })
       expect(heard.chose.at(-1)).toBe(policy)
     }
     expect([copy("close.leave"), copy("close.stow"), copy("close.shutdown")]).toEqual(["Leave Running", "Stow Windows", "Shut Down"])
 
-    act(() => buttonNamed(host, copy("confirm.cancel")).click())
+    act(() => { buttonNamed(host, copy("confirm.cancel")).click() })
     expect(heard.cancels).toBe(1)
   })
 
@@ -131,7 +131,7 @@ describe("ClosePolicyDialog", () => {
     expect(box().closest("label")?.textContent).toBe(copy("close.remember"))
     expect(copy("close.remember")).toBe("Remember for this Windows machine")
     expect(box().checked).toBe(false)
-    act(() => box().click())
+    act(() => { box().click() })
     expect(heard.remember).toEqual([true])
     show({ ...first, remember: true })
     expect(box().checked).toBe(true)
@@ -143,7 +143,7 @@ describe("ClosePolicyDialog", () => {
   it("puts focus on Cancel when it asks, and again when it asks about the next machine", () => {
     const { host, show } = render({ kind: "asking", machine: machine("a"), index: 1, total: 2, remember: false })
     expect(document.activeElement).toBe(buttonNamed(host, copy("confirm.cancel")))
-    act(() => buttonNamed(host, copy("close.stow")).focus())
+    act(() => { buttonNamed(host, copy("close.stow")).focus() })
     expect(document.activeElement).toBe(buttonNamed(host, copy("close.stow")))
     show({ kind: "asking", machine: machine("b"), index: 2, total: 2, remember: false })
     expect(document.activeElement).toBe(buttonNamed(host, copy("confirm.cancel")))
@@ -161,7 +161,7 @@ describe("ClosePolicyDialog", () => {
     expect(escape.defaultPrevented).toBe(true)
     expect(heard.cancels).toBe(1)
     expect(el.open).toBe(true)
-    act(() => el.click())
+    act(() => { el.click() })
     expect(heard.cancels).toBe(2)
     // A click inside the panel is not the backdrop.
     act(() => el.querySelector<HTMLElement>(".close-dialog__machine")?.click())
@@ -189,7 +189,7 @@ describe("ClosePolicyDialog", () => {
     const cancel = buttonNamed(host, copy("confirm.cancel"))
     expect(cancel.disabled).toBe(false)
     expect(document.activeElement).toBe(cancel)
-    act(() => cancel.click())
+    act(() => { cancel.click() })
     expect(heard.cancels).toBe(1)
     const escape = new Event("cancel", { cancelable: true })
     act(() => {
@@ -304,7 +304,7 @@ describe("closing the window", () => {
     document.body.append(host)
     const r = createRoot(host)
     root = r
-    act(() => r.render(<App />))
+    act(() => { r.render(<App />) })
     await flush()
     await flush()
     return { host, app }
@@ -315,12 +315,12 @@ describe("closing the window", () => {
     const { host, app } = await mountApp(world)
     expect(dialog(host)).toBeNull()
 
-    act(() => app.requestClose())
+    act(() => { app.requestClose() })
     await flush()
     expect(app.log.filter((l) => l === "close_start")).toHaveLength(1)
     expect(dialog(host)?.textContent).toContain("Demo PC")
 
-    act(() => buttonNamed(host, copy("close.stow")).click())
+    act(() => { buttonNamed(host, copy("close.stow")).click() })
     await flush()
     expect(app.log).toContain("winvm stow -i demo")
     // The dialog has gone; the display's own overlay, the only one, says what is happening.
@@ -341,9 +341,9 @@ describe("closing the window", () => {
   it("stays open with what the stow said when it fails, and calls the close off", async () => {
     const world: World = { state: "running" }
     const { host, app } = await mountApp(world)
-    act(() => app.requestClose())
+    act(() => { app.requestClose() })
     await flush()
-    act(() => buttonNamed(host, copy("close.stow")).click())
+    act(() => { buttonNamed(host, copy("close.stow")).click() })
     await flush()
     act(() => app.stows[0]?.({ code: 1, stdout: "", stderr: "winvm stow: the disk is full" }))
     await flush()

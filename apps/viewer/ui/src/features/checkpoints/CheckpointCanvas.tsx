@@ -14,7 +14,7 @@
  * The rules (layout, timeline, search, confirmations) are in checkpoints.ts;
  * the canvas and its camera are @winvm/canvas.
  */
-import { type PointerEvent, useCallback, useEffect, useMemo, useRef, useState } from "react"
+import { type PointerEvent, useCallback, useEffect, useMemo, useRef, useState, type JSX } from "react"
 
 import {
   type Camera,
@@ -98,7 +98,7 @@ export interface CheckpointCanvasProps {
   /** Where the live screen is in the window, to fly into and out of. */
   displayRect(): Rect | null
   /** noVNC's canvas, to show live in the Now card. */
-  liveSource(): HTMLCanvasElement | null
+  liveSource: () => HTMLCanvasElement | null
   /** Runs `save` or `load` the way the main window does (its busy state, its failure callout). */
   run(verb: "save" | "load", arg: string): Promise<Ran | null>
   /** Bumped by the main window (⌘⇧T, the menu) to leave. */
@@ -186,9 +186,9 @@ export function CheckpointCanvas(p: CheckpointCanvasProps): JSX.Element {
   }, [reload])
 
   useEffect(() => {
-    const resize = (): void => setSize(viewSize())
+    const resize = (): void => { setSize(viewSize()) }
     window.addEventListener("resize", resize)
-    return () => window.removeEventListener("resize", resize)
+    return () => { window.removeEventListener("resize", resize) }
   }, [])
 
   const shown = useMemo(() => (list ?? []).filter((c) => settings.showAutomatic || !isAutomatic(c) || c.name === selected), [list, settings.showAutomatic, selected])
@@ -258,8 +258,8 @@ export function CheckpointCanvas(p: CheckpointCanvasProps): JSX.Element {
   // In: the screen becomes the Now card, the view pulls back to show the newest checkpoints.
   const entered = useRef(false)
   useEffect(() => {
-    const frame = requestAnimationFrame(() => setPhase("open"))
-    return () => cancelAnimationFrame(frame)
+    const frame = requestAnimationFrame(() => { setPhase("open") })
+    return () => { cancelAnimationFrame(frame) }
   }, [])
   useEffect(() => {
     if (entered.current) return
@@ -273,7 +273,7 @@ export function CheckpointCanvas(p: CheckpointCanvasProps): JSX.Element {
       return
     }
     const timer = setTimeout(go, ENTER_WAIT_MS)
-    return () => clearTimeout(timer)
+    return () => { clearTimeout(timer) }
   }, [list, overview, flyCamera])
 
   // Out: back into the live screen, or the chosen checkpoint into it.
@@ -322,7 +322,7 @@ export function CheckpointCanvas(p: CheckpointCanvasProps): JSX.Element {
     const v = viewSize()
     fly(zoomAround(cameraNow(), factor, anchor ?? { x: v.width / 2, y: v.height / 2 }, limits), 260)
   }
-  const fitAll = (): void => fly(fitRect(layout.bounds, { width: viewSize().width - TIMELINE_SPACE, height: viewSize().height }, 72, limits))
+  const fitAll = (): void => { fly(fitRect(layout.bounds, { width: viewSize().width - TIMELINE_SPACE, height: viewSize().height }, 72, limits)) }
 
   // ---- Pointer, wheel and pinch -----------------------------------------
 
@@ -427,7 +427,7 @@ export function CheckpointCanvas(p: CheckpointCanvasProps): JSX.Element {
     }
     setSearchOpen(false)
     // The layout may change with the setting; select once it has.
-    setTimeout(() => select(c.name), 0)
+    setTimeout(() => { select(c.name) }, 0)
   }
 
   // ---- Timeline ---------------------------------------------------------
@@ -491,7 +491,7 @@ export function CheckpointCanvas(p: CheckpointCanvasProps): JSX.Element {
         if (box === undefined) return
         landed = after
         setArriving({ name, dx: after.now.x - box.x, dy: after.now.y - box.y, scale: after.now.width / box.width })
-        setTimeout(() => setArriving((a) => (a?.name === name ? null : a)), 1100)
+        setTimeout(() => { setArriving((a) => (a?.name === name ? null : a)) }, 1100)
       })
       const after = landed as TimelineLayout | null
       const today = after?.days.at(-1)
@@ -662,9 +662,9 @@ export function CheckpointCanvas(p: CheckpointCanvasProps): JSX.Element {
   const keys = useRef(onKeyDown)
   keys.current = onKeyDown
   useEffect(() => {
-    const handle = (e: KeyboardEvent): void => keys.current(e)
+    const handle = (e: KeyboardEvent): void => { keys.current(e) }
     window.addEventListener("keydown", handle)
-    return () => window.removeEventListener("keydown", handle)
+    return () => { window.removeEventListener("keydown", handle) }
   }, [])
 
   // ---- Drawing ----------------------------------------------------------
@@ -773,7 +773,7 @@ export function CheckpointCanvas(p: CheckpointCanvasProps): JSX.Element {
                 aria-controls="checkpoint-results"
                 autoComplete="off"
                 spellCheck={false}
-                onFocus={() => setSearchOpen(true)}
+                onFocus={() => { setSearchOpen(true) }}
                 onChange={(e) => {
                   setQuery(e.target.value)
                   setActiveResult(0)
@@ -800,7 +800,7 @@ export function CheckpointCanvas(p: CheckpointCanvasProps): JSX.Element {
               disabled={!live || busy}
               title={live ? t("checkpoints.newTip") : t("checkpoints.needsRunning")}
               aria-expanded={creating}
-              onClick={() => setCreating((o) => !o)}
+              onClick={() => { setCreating((o) => !o) }}
             >
               {t("checkpoints.new")}
             </Button>
@@ -820,7 +820,7 @@ export function CheckpointCanvas(p: CheckpointCanvasProps): JSX.Element {
                   title={shownName(c)}
                   description={takenAt(c, nowMs)}
                   active={i === activeResult}
-                  onSelect={() => pickResult(c)}
+                  onSelect={() => { pickResult(c) }}
                 />
               ))}
             </SpatialCanvasSearchResults>
@@ -846,11 +846,11 @@ export function CheckpointCanvas(p: CheckpointCanvasProps): JSX.Element {
                 placeholder={t("checkpoints.newPlaceholder")}
                 autoComplete="off"
                 maxLength={120}
-                onChange={(e) => setNewTitle(e.target.value)}
+                onChange={(e) => { setNewTitle(e.target.value) }}
               />
               <p className="checkpoints__hint">{t("checkpoints.newHint")}</p>
               <div className="checkpoints__new-actions">
-                <Button size="sm" variant="ghost" onClick={() => setCreating(false)}>
+                <Button size="sm" variant="ghost" onClick={() => { setCreating(false) }}>
                   {t("confirm.cancel")}
                 </Button>
                 <Button size="sm" variant="primary" type="submit" disabled={!live || busy}>
@@ -864,10 +864,10 @@ export function CheckpointCanvas(p: CheckpointCanvasProps): JSX.Element {
         <Timeline
           ticks={ticks}
           active={activeTick}
-          onPick={(tick) => fly(dayCamera(tick))}
-          onScrub={(tick) => fly(dayCamera(tick), 200)}
-          onOlder={() => step(-1)}
-          onNewer={() => step(1)}
+          onPick={(tick) => { fly(dayCamera(tick)) }}
+          onScrub={(tick) => { fly(dayCamera(tick), 200) }}
+          onOlder={() => { step(-1) }}
+          onNewer={() => { step(1) }}
           canOlder={layout.order.length > 0 && (selected === null || layout.order[0] !== selected)}
           canNewer={selected !== null}
         />
@@ -876,11 +876,11 @@ export function CheckpointCanvas(p: CheckpointCanvasProps): JSX.Element {
           <SpatialCanvasZoomControls
             zoom={camera.zoom}
             labels={{ group: t("checkpoints.zoom"), zoomOut: t("checkpoints.zoomOut"), zoomIn: t("checkpoints.zoomIn"), reset: t("checkpoints.fitAll") }}
-            onZoomOut={() => zoomBy(1 / ZOOM_STEP)}
+            onZoomOut={() => { zoomBy(1 / ZOOM_STEP) }}
             onReset={fitAll}
-            onZoomIn={() => zoomBy(ZOOM_STEP)}
+            onZoomIn={() => { zoomBy(ZOOM_STEP) }}
           />
-          <CanvasIconButton label={t("checkpoints.toNow")} onClick={() => fly(overview())}>
+          <CanvasIconButton label={t("checkpoints.toNow")} onClick={() => { fly(overview()) }}>
             <CanvasGlyph>
               <path d="M12 7v5l4 2" />
               <circle cx="12" cy="12" r="10" />
@@ -892,7 +892,7 @@ export function CheckpointCanvas(p: CheckpointCanvasProps): JSX.Element {
           <div className="checkpoints__status" role="status" data-tone={status?.tone ?? (listError !== null ? "error" : "info")}>
             <span>{status?.text ?? listError ?? t(live ? "checkpoints.emptyLive" : "checkpoints.empty")}</span>
             {status !== null && (
-              <CanvasIconButton label={t("action.dismiss")} onClick={() => setStatus(null)}>
+              <CanvasIconButton label={t("action.dismiss")} onClick={() => { setStatus(null) }}>
                 <CanvasGlyph>{GLYPHS.close}</CanvasGlyph>
               </CanvasIconButton>
             )}
@@ -905,17 +905,17 @@ export function CheckpointCanvas(p: CheckpointCanvasProps): JSX.Element {
             now={nowMs}
             busy={busy}
             saving={noteState}
-            onClose={() => select(null)}
-            onLook={() => setLooking(true)}
-            onNote={(d) => writeNote(selectedCheckpoint.name, d)}
-            onGoBack={() => setConfirm({ kind: "go-back", name: selectedCheckpoint.name })}
-            onDelete={() => setConfirm({ kind: "delete", name: selectedCheckpoint.name })}
+            onClose={() => { select(null) }}
+            onLook={() => { setLooking(true) }}
+            onNote={(d) => { writeNote(selectedCheckpoint.name, d) }}
+            onGoBack={() => { setConfirm({ kind: "go-back", name: selectedCheckpoint.name }) }}
+            onDelete={() => { setConfirm({ kind: "delete", name: selectedCheckpoint.name }) }}
           />
         )}
       </SpatialCanvas>
 
       {looking && selectedCheckpoint !== undefined && (
-        <div className="checkpoints__look" role="dialog" aria-label={t("checkpoints.look", { name: shownName(selectedCheckpoint) })} onClick={() => setLooking(false)}>
+        <div className="checkpoints__look" role="dialog" aria-label={t("checkpoints.look", { name: shownName(selectedCheckpoint) })} onClick={() => { setLooking(false) }}>
           <Picture c={selectedCheckpoint} sharp wanted />
           <p>
             <strong>{shownName(selectedCheckpoint)}</strong> {takenAt(selectedCheckpoint, nowMs)}
@@ -945,7 +945,7 @@ export function CheckpointCanvas(p: CheckpointCanvasProps): JSX.Element {
         {...(confirm?.kind === "go-back" && goBackCopy.offerSaveFirst
           ? { secondaryLabel: t("checkpoints.goBack.saveFirst"), onSecondary: () => void goBack(confirm.name, true) }
           : {})}
-        onCancel={() => setConfirm(null)}
+        onCancel={() => { setConfirm(null) }}
         onConfirm={() => {
           if (confirm === null) return
           if (confirm.kind === "delete") void remove(confirm.name)

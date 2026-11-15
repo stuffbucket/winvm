@@ -95,7 +95,7 @@ if (socketProblem !== null) {
 }
 
 let passed = false
-let interrupted: TerminationSignal | null = null
+let interrupted = null as TerminationSignal | null
 let child: ChildProcess | null = null
 /** True once QEMU, the sidecars and the service were stopped without error. */
 let stopped = false
@@ -122,8 +122,8 @@ async function w(verb: string, ...args: string[]): Promise<string> {
     child = proc
     let stdout = ""
     let stderr = ""
-    proc.stdout?.setEncoding("utf8").on("data", (d: string) => (stdout += d))
-    proc.stderr?.setEncoding("utf8").on("data", (d: string) => (stderr += d))
+    proc.stdout.setEncoding("utf8").on("data", (d: string) => (stdout += d))
+    proc.stderr.setEncoding("utf8").on("data", (d: string) => (stderr += d))
     const timer = setTimeout(() => proc.kill("SIGKILL"), 900_000)
     proc.once("error", (error) => {
       clearTimeout(timer)
@@ -290,7 +290,7 @@ exitOnSignals(process, {
     passed = false
   },
   cleanup,
-  report: (signal) => console.error(`interrupted by ${signal}; ${retained()}`),
+  report: (signal) => { console.error(`interrupted by ${signal}; ${retained()}`) },
   exit: (code) => process.exit(code),
 })
 

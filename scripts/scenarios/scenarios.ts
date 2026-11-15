@@ -33,7 +33,7 @@ export interface Context {
   readonly out: string
 }
 
-const status = async (name: string): Promise<Status> => json<Status>(await must(["status", "--json", "-i", name], { timeoutMs: 30_000 }))
+const status = async (name: string): Promise<Status> => json(await must(["status", "--json", "-i", name], { timeoutMs: 30_000 })) as Status
 
 const settle = async (name: string, want: string, timeoutMs: number): Promise<{ ok: boolean; value: Status; ms: number }> =>
   await waitFor(() => status(name), (s) => s.state === want, timeoutMs)
@@ -81,7 +81,7 @@ async function polled(sc: Scenario, name: string, body: (poller: AppPoller) => P
   poller.start()
   try {
     // A few reads first, so the app has a state and the agent an address, as an open window would.
-    await waitFor(async () => poller.state, (s) => s !== null, 30_000, 250)
+    await waitFor(() => Promise.resolve(poller.state), (s) => s !== null, 30_000, 250)
     await sleep(6000)
     await body(poller)
   } catch (error) {
@@ -246,7 +246,7 @@ const ALLOWED_DOWN = new Set(["running", "stopped", "stowed"])
 
 async function stopStart(ctx: Context): Promise<Scenario> {
   const sc = new Scenario("3. Stop/start and stow/recall", resolve(ctx.out, "3-stop-start"))
-  const share = json<{ available: boolean; reason?: string }>(await must(["share", "-i", ctx.name, "status", "--json"]))
+  const share = json(await must(["share", "-i", ctx.name, "status", "--json"])) as { available: boolean; reason?: string }
   sc.note(share.available ? "the runtime has virtiofsd: it must come and go with QEMU" : `no virtiofsd in this runtime (${share.reason ?? "?"}): none may run`)
   await polled(sc, ctx.name, async (poller) => {
     const mounted = await smbMounts(ctx.name)
@@ -325,7 +325,7 @@ async function saveLoad(ctx: Context): Promise<Scenario> {
     sc.check("a save of a running machine never shows it paused (no Resume, no overlay mid-save)", during.ok, path(poller.samples, from, Date.now()))
 
     const entry = (list: SaveEntry[], n: string): SaveEntry | undefined => list.find((e) => e.name === n)
-    const saves = async (): Promise<SaveEntry[]> => json<SaveEntry[]>(await must(["saves", "-i", ctx.name, "--json"]))
+    const saves = async (): Promise<SaveEntry[]> => json(await must(["saves", "-i", ctx.name, "--json"])) as SaveEntry[]
     const e = entry(await saves(), live)
     const shot = e?.screenshot === null || e?.screenshot === undefined ? null : pngSize(e.screenshot)
     const thumb = e?.thumbnail === null || e?.thumbnail === undefined ? null : pngSize(e.thumbnail)
@@ -335,7 +335,7 @@ async function saveLoad(ctx: Context): Promise<Scenario> {
     // A note, as the Checkpoints view writes and reads it.
     const text = "- first line\nsecond line with “quotes”"
     const w = await must(["saves", "note", "-i", ctx.name, live, "--title=Before the scenario", `--text=${text}`, "--tags=scenario,a b", "--json"])
-    const back = json<{ title: string; text: string; tags: string[] } | null>(await must(["saves", "note", "-i", ctx.name, live, "--json"]))
+    const back = json(await must(["saves", "note", "-i", ctx.name, live, "--json"])) as { title: string; text: string; tags: string[] } | null
     sc.check(
       "a note round-trips",
       back !== null && back.title === "Before the scenario" && back.text === text && back.tags.join("|") === "scenario|a b" && JSON.stringify(json(w)) === JSON.stringify(back),
@@ -394,7 +394,7 @@ async function resizeHeld(ctx: Context): Promise<Scenario> {
     poller.autoResize = false
     const get = async (): Promise<{ width?: number; height?: number }> => {
       const r = await poller.agent("POST", "/display", { op: "get" }, 20_000)
-      return (r?.body ?? {}) as { width?: number; height?: number }
+      return r?.body ?? {}
     }
     const before = await get()
     sc.note(`display before: ${JSON.stringify(before)}`)
@@ -415,7 +415,7 @@ async function resizeHeld(ctx: Context): Promise<Scenario> {
     const r = await poller.act("resume")
     sc.check("winvm resume", r.code === 0, r.stdout.trim().split("\n").slice(-1).join(""))
     const applied = await waitFor(
-      async () => poller.between(resumedAt, Date.now()).calls.filter((c) => c.what === "resize"),
+      () => Promise.resolve(poller.between(resumedAt, Date.now()).calls.filter((c) => c.what === "resize")),
       (c) => c.length > 0,
       30_000,
       500,
@@ -433,10 +433,10 @@ async function resizeHeld(ctx: Context): Promise<Scenario> {
 async function terminalFiles(ctx: Context): Promise<Scenario> {
   const sc = new Scenario("6. Terminal, files and /stats", resolve(ctx.out, "6-terminal-files"))
   await polled(sc, ctx.name, async (poller) => {
-    const shells = json<Record<string, boolean>>(await must(["terminal", "-i", ctx.name, "--shells", "--json"]))
+    const shells = json(await must(["terminal", "-i", ctx.name, "--shells", "--json"])) as Record<string, boolean>
     sc.check("terminal --shells", shells["powershell"] === true && shells["cmd"] === true, JSON.stringify(shells))
     const shell = shells["pwsh"] === true ? "pwsh" : "powershell"
-    const ep = json<{ url: string; protocols: string[] }>(await must(["terminal", "-i", ctx.name, "--shell", shell, "--connect", "--json"]))
+    const ep = json(await must(["terminal", "-i", ctx.name, "--shell", shell, "--connect", "--json"])) as { url: string; protocols: string[] }
     const marker = `scen${String(Date.now() % 1e6)}`
     const term = await new Promise<{ ok: boolean; detail: string }>((done) => {
       const u = new URL(ep.url)
@@ -450,7 +450,7 @@ async function terminalFiles(ctx: Context): Promise<Scenario> {
         ws.close()
         done({ ok: false, detail: `timed out; saw ${JSON.stringify(seen.slice(-200))}` })
       }, 60_000)
-      ws.onopen = () => ws.send(new TextEncoder().encode(`echo ${marker}-$((6*7))\r`))
+      ws.onopen = () => { ws.send(new TextEncoder().encode(`echo ${marker}-$((6*7))\r`)) }
       ws.onmessage = (ev) => {
         if (typeof ev.data === "string") {
           const m = JSON.parse(ev.data) as { type: string; code?: number }
@@ -483,7 +483,7 @@ async function terminalFiles(ctx: Context): Promise<Scenario> {
     sc.check("put a file", pu.code === 0, (pu.stdout || pu.stderr).trim().split("\n").slice(-1).join(""))
     const mv = await winvm(["mv", "-i", ctx.name, `${base}\\hello.txt`, `${base}\\renamed.txt`, "--json"])
     sc.check("mv through the agent", mv.code === 0, mv.stdout.trim())
-    const ls = json<{ entries?: { name: string }[] }>(await must(["dir", "-i", ctx.name, base, "--json"]))
+    const ls = json(await must(["dir", "-i", ctx.name, base, "--json"])) as { entries?: { name: string }[] }
     sc.check("dir sees the rename", (ls.entries ?? []).map((x) => x.name).join(",") === "renamed.txt", JSON.stringify((ls.entries ?? []).map((x) => x.name)))
     const rm = await winvm(["rm", "-i", ctx.name, base, "--permanently", "--json"])
     sc.check("rm through the agent", rm.code === 0, rm.stdout.trim())
@@ -504,7 +504,7 @@ async function terminalFiles(ctx: Context): Promise<Scenario> {
 
 async function sharedFolder(ctx: Context): Promise<Scenario> {
   const sc = new Scenario("7. Shared folder", resolve(ctx.out, "7-share"))
-  const st = json<{ available: boolean; reason?: string; guest?: { installed: boolean | null } }>(await must(["share", "-i", ctx.name, "status", "--json"]))
+  const st = json(await must(["share", "-i", ctx.name, "status", "--json"])) as { available: boolean; reason?: string; guest?: { installed: boolean | null } }
   if (!st.available) {
     sc.check("share says why it is unavailable", typeof st.reason === "string" && st.reason.length > 0, st.reason ?? "no reason")
     sc.check("and no virtiofsd runs", (await virtiofsds(ctx.name)).length === 0, "none running")
@@ -541,7 +541,7 @@ async function sharedFolder(ctx: Context): Promise<Scenario> {
     // The other way: a file Windows writes to Z: lands in the Mac folder.
     const wrote = await winvm(["exec", "-i", ctx.name, "--", "powershell", "-NoProfile", "-Command", "[IO.File]::WriteAllText('Z:\\from-windows.txt', 'three')"], { timeoutMs: 60_000 })
     const back = await waitFor(
-      async () => (existsSync(resolve(dir, "from-windows.txt")) ? readFileSync(resolve(dir, "from-windows.txt"), "utf8") : ""),
+      () => Promise.resolve(existsSync(resolve(dir, "from-windows.txt")) ? readFileSync(resolve(dir, "from-windows.txt"), "utf8") : ""),
       (s) => s === "three",
       30_000,
       1000,
@@ -581,9 +581,9 @@ async function startMenu(ctx: Context): Promise<Scenario> {
       // whatever it lets through goes to noVNC, which holds it until a key-up or
       // its blur cleanup.
       const novnc = new Map<string, number>()
-      let captured = false
+      let captured = false as boolean
       const router = new GuestKeyboardRouter({
-        send: (keysym, code, down) => keys.send(keysym, code, down),
+        send: (keysym, code, down) => { keys.send(keysym, code, down) },
         translate: (e) => ({ keysym: KEYSYM[e.code] ?? 0, code: e.code }),
         releaseNoVnc: () => {
           for (const [code, keysym] of novnc) keys.send(keysym, code, false)
@@ -594,7 +594,7 @@ async function startMenu(ctx: Context): Promise<Scenario> {
         },
       })
       const key = (code: string, down: boolean, mods: { meta?: boolean } = {}): void => {
-        let stopped = false
+        let stopped = false as boolean
         const ev: RoutedKeyEvent = {
           code,
           ctrlKey: false,

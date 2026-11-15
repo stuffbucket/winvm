@@ -55,6 +55,7 @@ import * as qemu from "./qemu"
 import * as qga from "./qga"
 import * as qmp from "./qmp"
 import * as saves from "./saves"
+import { spawnText } from "./shell"
 
 // ---------------------------------------------------------------------------
 // Files
@@ -92,7 +93,7 @@ export function touchActivity(name: string): void {
  */
 export async function whileActive<T>(name: string, work: Promise<T>): Promise<T> {
   touchActivity(name)
-  const timer = setInterval(() => touchActivity(name), 15_000)
+  const timer = setInterval(() => { touchActivity(name) }, 15_000)
   try {
     return await work
   } finally {
@@ -156,7 +157,7 @@ const errText = (e: unknown): string => (e instanceof Error ? e.message : String
 
 const isBusy = (e: unknown): boolean => e instanceof InstanceBusy
 
-const automatically = async <T>(instance: string, run: () => Promise<T>): Promise<T> =>
+const automatically = async <T>(instance: string, run: () => T | Promise<T>): Promise<T> =>
   await withOperation(instance, "save", run, { automatic: true })
 
 async function runWinvm(argv: readonly string[], log: (s: string) => void): Promise<boolean> {
@@ -177,8 +178,8 @@ async function runWinvm(argv: readonly string[], log: (s: string) => void): Prom
     }
     child.stdout.on("data", relay)
     child.stderr.on("data", relay)
-    child.on("error", () => res(127))
-    child.on("exit", (c) => res(c ?? 1))
+    child.on("error", () => { res(127) })
+    child.on("exit", (c) => { res(c ?? 1) })
   })
   log(`  -> exit ${String(code)} after ${String(Math.round((Date.now() - started) / 1000))} s`)
   return code === 0
@@ -235,7 +236,7 @@ export function realActions(instance: string, p: Paths, log: (s: string) => void
     deleteSaves: async (names) => {
       if (names.length === 0) return true
       try {
-        await automatically(instance, async () => {
+        await automatically(instance, () => {
           for (const n of names) saves.removeSave(instance, n)
         })
         return true
@@ -339,8 +340,8 @@ function isWatcherProcess(pid: number, name: string): boolean {
   } catch {
     return false
   }
-  const r = spawnSync("ps", ["-o", "command=", "-p", String(pid)], { encoding: "utf8" })
-  const rest = winvmCommandAfter(r.stdout ?? "", "watch")
+  const r = spawnText("ps", ["-o", "command=", "-p", String(pid)])
+  const rest = winvmCommandAfter(r.stdout, "watch")
   if (rest === null) return false
   if (/(?:^|\s)--(?:stop|status)(?:\s|$)/.test(rest)) return false
   return (commandInstance(rest) ?? "default") === name
@@ -548,13 +549,13 @@ const settingsOf = (c: InstanceConfig): Settings => ({
   stow: { enabled: c["stow.enabled"], idleMinutes: c["stow.idleMinutes"] },
 })
 
-const sleep = async (ms: number): Promise<void> => await new Promise((r) => setTimeout(r, ms))
+const sleep = async (ms: number): Promise<void> => { await new Promise((r) => setTimeout(r, ms)) }
 
 export async function watch(name: string, o: WatchOptions = {}): Promise<number> {
   const p = pathsFor(name)
   const w = watchPathsFor(name)
   const timing: Timing = { ...DEFAULT_TIMING, ...o.timing }
-  const log = (s: string): void => console.log(`${new Date().toISOString()} [${name}] ${s}`)
+  const log = (s: string): void => { console.log(`${new Date().toISOString()} [${name}] ${s}`) }
 
   if (!existsSync(p.meta)) {
     console.error(`::error::no such instance "${name}"`)
@@ -636,7 +637,7 @@ export async function watch(name: string, o: WatchOptions = {}): Promise<number>
     releaseLock(name)
     log(`watcher stopped: ${why}`)
   }
-  process.on("exit", () => finish("exit"))
+  process.on("exit", () => { finish("exit") })
   for (const sig of ["SIGINT", "SIGTERM", "SIGHUP"] as const) {
     process.on(sig, () => {
       if (busy === null) {
@@ -777,7 +778,7 @@ export async function watch(name: string, o: WatchOptions = {}): Promise<number>
         `(1-min avg ${v.cpuAvg === null ? "?" : `${(v.cpuAvg * 100).toFixed(1)}%`}) · ` +
         `${v.quiet ? "quiet" : `active: ${v.reasons.join(", ")}`} · ` +
         `idle ${String(Math.round(machine.idleMs(now) / 1000))} s` +
-        `${machine.autosaveArmed ? "" : " · autosave taken this idle stretch"}`,
+        (machine.autosaveArmed ? "" : " · autosave taken this idle stretch"),
       )
     }
 

@@ -97,7 +97,7 @@ export async function runHostStep(
       stdout: "pipe",
       stderr: "pipe",
     })
-    let timedOut = false
+    let timedOut = false as boolean
     const killer = setTimeout(() => {
       timedOut = true
       p.kill("SIGKILL")

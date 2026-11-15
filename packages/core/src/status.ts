@@ -14,7 +14,6 @@
  * and may be from a newer or older version of those commands, so they are read
  * defensively: anything unreadable is reported as absent, never thrown.
  */
-import { spawnSync } from "node:child_process"
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs"
 import { connect } from "node:net"
 import { resolve } from "node:path"
@@ -32,6 +31,7 @@ import * as qemu from "./qemu"
 import { readService } from "./servicectl"
 import * as timemachine from "./timemachine"
 import { vncPort, websocketPort } from "./vnc"
+import { spawnText } from "./shell"
 
 // ---------------------------------------------------------------------------
 // The report
@@ -114,6 +114,7 @@ export const watchPath = (instance: string): string => resolve(instanceDir(insta
 
 const str = (v: unknown): string | null => (typeof v === "string" ? v : null)
 const num = (v: unknown): number | null => (typeof v === "number" && Number.isFinite(v) ? v : null)
+const rec = (v: unknown): Record<string, unknown> | null => (typeof v === "object" && v !== null ? (v as Record<string, unknown>) : null)
 
 function readJson(path: string): Record<string, unknown> | null {
   try {
@@ -170,8 +171,8 @@ const pidAlive = (pid: number | null): boolean => {
 export function parseWatch(raw: Record<string, unknown> | null, alive: (pid: number | null) => boolean): WatchInfo | null {
   if (raw === null) return null
   const pid = num(raw["pid"])
-  const a = raw["autosave"] as Record<string, unknown> | undefined
-  const s = raw["stow"] as Record<string, unknown> | undefined
+  const a = rec(raw["autosave"])
+  const s = rec(raw["stow"])
   return {
     alive: alive(pid),
     pid,
@@ -179,11 +180,11 @@ export function parseWatch(raw: Record<string, unknown> | null, alive: (pid: num
     idleSeconds: num(raw["idleSeconds"]),
     lastActivityAt: str(raw["lastActivityAt"]),
     autosave:
-      typeof a === "object" && a !== null
+      a !== null
         ? { enabled: a["enabled"] === true, idleMinutes: num(a["idleMinutes"]), keep: num(a["keep"]), lastAt: str(a["lastAt"]) }
         : null,
     stow:
-      typeof s === "object" && s !== null
+      s !== null
         ? { enabled: s["enabled"] === true, idleMinutes: num(s["idleMinutes"]), lastAt: str(s["lastAt"]) }
         : null,
   }
@@ -219,7 +220,7 @@ export function parseHardware(argv: readonly string[]): { cpus: number | null; m
 
 // -ww: never cut to the terminal's width, or the arguments read below could be cut off.
 const psField = (pid: number, field: string): string =>
-  (spawnSync("ps", ["-ww", "-o", `${field}=`, "-p", String(pid)], { encoding: "utf8" }).stdout ?? "").trim()
+  spawnText("ps", ["-ww", "-o", `${field}=`, "-p", String(pid)]).stdout.trim()
 
 /**
  * Processors, memory and display. A running guest reports what its QEMU was
@@ -278,7 +279,7 @@ export async function probeGuest(sockPath: string, timeoutMs = 4000): Promise<Gu
       sock.destroy()
       res(g)
     }
-    const timer = setTimeout(() => finish(result.agentVersion === null ? silent : result), timeoutMs)
+    const timer = setTimeout(() => { finish(result.agentVersion === null ? silent : result) }, timeoutMs)
     const syncId = Math.floor(Math.random() * 2 ** 31)
     let step = 0
     let sentAt = 0
@@ -292,8 +293,8 @@ export async function probeGuest(sockPath: string, timeoutMs = 4000): Promise<Gu
       sentAt = Date.now()
       sock.write(`${JSON.stringify(o)}\n`)
     }
-    sock.on("error", () => finish(silent))
-    sock.on("connect", () => send({ execute: "guest-sync-delimited", arguments: { id: syncId } }))
+    sock.on("error", () => { finish(silent) })
+    sock.on("connect", () => { send({ execute: "guest-sync-delimited", arguments: { id: syncId } }) })
     sock.on("data", (chunk) => {
       // The sync reply is preceded by a 0xFF sentinel byte; drop it.
       buf += chunk.toString("latin1").replaceAll("\xff", "")
@@ -320,8 +321,8 @@ export async function probeGuest(sockPath: string, timeoutMs = 4000): Promise<Gu
           step = 2
           send({ execute: "guest-get-osinfo" })
         } else if (step === 2) {
-          const o = ret as Record<string, unknown> | undefined
-          if (typeof o === "object" && o !== null) result.os = osLabel(o)
+          const o = rec(ret)
+          if (o !== null) result.os = osLabel(o)
           step = 3
           send({ execute: "guest-get-time" })
         } else {

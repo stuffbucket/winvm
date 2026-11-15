@@ -1,5 +1,5 @@
 // vendored: wraps <button> with .btn .btn--* classes from styles.css.
-import type { ButtonHTMLAttributes, ReactNode } from "react";
+import type { ButtonHTMLAttributes, JSX, ReactNode } from "react";
 import { cx } from "./cx";
 
 type ButtonVariant = "primary" | "secondary" | "ghost" | "destructive";

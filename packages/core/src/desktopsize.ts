@@ -14,13 +14,13 @@ import { createCipheriv } from "node:crypto"
 import { connect } from "node:net"
 
 /** RFB ExtendedDesktopSize status codes. */
-export const RESIZE_STATUS = {
+export const RESIZE_STATUS: Readonly<Record<number, string>> = {
   0: "ok",
   1: "prohibited",
   2: "out of resources",
   3: "invalid screen layout (the display device cannot resize: ramfb?)",
   4: "forwarded",
-} as const
+}
 
 export interface ResizeAnswer {
   /** The ExtendedDesktopSize status QEMU answered the request with. */

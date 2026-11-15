@@ -309,7 +309,7 @@ export function parseManifest(text: string): Manifest {
     bytes,
     compat: str("compat"),
     image: str("image"),
-  } as Manifest
+  }
 }
 
 /** The size a save was taken at: its record, or LEGACY for a save from before the record. */
@@ -782,14 +782,14 @@ function readNoteSafe(instance: string, name: string): Note | null {
 // "This instance has never been started": the trigger for the automatic baseline
 
 const pendingMarker = (instance: string): string => resolve(instanceDir(instance), "baseline.pending")
-export const markPristine = (instance: string): void => writeFileSync(pendingMarker(instance), `${new Date().toISOString()}\n`)
+export const markPristine = (instance: string): void => { writeFileSync(pendingMarker(instance), `${new Date().toISOString()}\n`) }
 export const isPristine = (instance: string): boolean => existsSync(pendingMarker(instance))
-export const clearPristine = (instance: string): void => rmSync(pendingMarker(instance), { force: true })
+export const clearPristine = (instance: string): void => { rmSync(pendingMarker(instance), { force: true }) }
 
 // ---------------------------------------------------------------------------
 // Mechanics
 
-const sleep = async (ms: number): Promise<void> => await new Promise((r) => setTimeout(r, ms))
+const sleep = async (ms: number): Promise<void> => { await new Promise((r) => setTimeout(r, ms)) }
 
 /** APFS clone (`cp -c`): near-free, shares blocks until either side writes. Plain copy elsewhere. */
 export function cloneFile(src: string, dst: string): void {
@@ -866,7 +866,10 @@ async function waitMigration(p: Paths, timeoutMs: number): Promise<Record<string
     const r = (await qmp.execute(p.qmp, "query-migrate")) as Record<string, unknown>
     const s = r["status"]
     if (s === "completed") return r
-    if (s === "failed" || s === "cancelled") throw new Error(`migration ${s}: ${String(r["error-desc"] ?? "no detail")}`)
+    if (s === "failed" || s === "cancelled") {
+      const detail = r["error-desc"]
+      throw new Error(`migration ${s}: ${typeof detail === "string" ? detail : "no detail"}`)
+    }
     await sleep(250)
   }
   throw new Error("the save did not finish in time")
@@ -1084,7 +1087,7 @@ export async function cloneSave(from: string, to: string, name: string): Promise
     throw new IncompatibleSave(`"${to}" differs from "${from}"${why.length > 0 ? `: ${why.join("; ")}` : ""}`)
   }
   const src = saveDir(from, name)
-  return await withOperation(to, "save", async () => {
+  return await withOperation(to, "save", () => {
     const tmp = resolve(savesDir(to), `.${name}.partial-${String(process.pid)}`)
     rmSync(tmp, { recursive: true, force: true })
     mkdirSync(tmp, { recursive: true })

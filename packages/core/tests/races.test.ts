@@ -29,7 +29,7 @@ let previous: Record<string, string | undefined> = {}
 let previousProbe: share.Probe
 const spawned: ReturnType<typeof Bun.spawn>[] = []
 
-const sleep = async (ms: number): Promise<void> => await new Promise((r) => setTimeout(r, ms))
+const sleep = async (ms: number): Promise<void> => { await new Promise((r) => setTimeout(r, ms)) }
 
 const alive = (pid: number): boolean => {
   try {
@@ -98,9 +98,9 @@ beforeEach(() => {
   spyOn(host, "requireHost").mockImplementation(() => undefined)
   spyOn(host, "requireFirmware").mockReturnValue({ code, vars: code })
   spyOn(host, "tpmTisHasPpi").mockReturnValue(true)
-  spyOn(vnc, "ensureFreeDisplay").mockImplementation(async (_name, _p, m) => m)
+  spyOn(vnc, "ensureFreeDisplay").mockImplementation((_name, _p, m) => Promise.resolve(m))
   spyOn(vnc, "applyPassword").mockResolvedValue(null)
-  spyOn(share, "startVirtiofsd").mockImplementation(async () => ({ dir: state, readonly: false, folder: null }))
+  spyOn(share, "startVirtiofsd").mockImplementation(() => Promise.resolve({ dir: state, readonly: false, folder: null }))
   spyOn(console, "log").mockImplementation(() => undefined)
   spyOn(console, "error").mockImplementation(() => undefined)
   spyOn(console, "warn").mockImplementation(() => undefined)
@@ -173,15 +173,15 @@ describe("stop during a manual save", () => {
     spyOn(display, "runningCommand").mockImplementation(() =>
       ["qemu-system-aarch64", ...qemu.qemuArgs(NAME, pathsFor(NAME), meta, { installMedia: false, ephemeral: false, virtioBoot: true, display: VIRTIO_GPU })].join(" "),
     )
-    spyOn(qmp, "status").mockImplementation(async () => runState)
-    spyOn(qmp, "execute").mockImplementation(async (_socket, cmd) => {
+    spyOn(qmp, "status").mockImplementation(() => Promise.resolve(runState))
+    spyOn(qmp, "execute").mockImplementation((_socket, cmd) => {
       sent.push(cmd)
       if (cmd === "stop") runState = "paused"
       if (cmd === "cont") runState = "running"
-      if (cmd === "query-status") return { status: runState, running: runState === "running" }
+      if (cmd === "query-status") return Promise.resolve({ status: runState, running: runState === "running" })
       if (cmd === "migrate") migrating()
-      if (cmd === "query-migrate") return finished ? { status: "failed", "error-desc": "test over" } : { status: "active" }
-      return {}
+      if (cmd === "query-migrate") return Promise.resolve(finished ? { status: "failed", "error-desc": "test over" } : { status: "active" })
+      return Promise.resolve({})
     })
     const shutdowns: string[] = []
     let clock = 0
@@ -191,15 +191,16 @@ describe("stop during a manual save", () => {
         clock += ms
         await sleep(1)
       },
-      stopWatcher: async () => false,
+      stopWatcher: () => Promise.resolve(false),
       watcherPid: () => null,
       ensureWatcher: () => null,
       beforeDown: () => undefined,
-      afterUp: async () => undefined,
+      afterUp: () => Promise.resolve(undefined),
       stopSidecars: () => undefined,
-      waitFor: async () => true,
-      shutdown: async () => {
+      waitFor: () => Promise.resolve(true),
+      shutdown: () => {
         shutdowns.push("guest-shutdown")
+        return Promise.resolve()
       },
     }
 
@@ -223,9 +224,9 @@ describe("the watcher's work", () => {
     spyOn(qemu, "isRunning").mockImplementation(() => true)
     spyOn(qmp, "status").mockResolvedValue("running")
     spyOn(qga, "waitReady").mockResolvedValue(true)
-    spyOn(qmp, "execute").mockImplementation(async (_socket, cmd) => {
+    spyOn(qmp, "execute").mockImplementation((_socket, cmd) => {
       sent.push(cmd)
-      return {}
+      return Promise.resolve({})
     })
     const log: string[] = []
     const actions = realActions(NAME, pathsFor(NAME), (l) => log.push(l))
@@ -265,17 +266,18 @@ describe("the watcher's work", () => {
       await commands.stopWith(parseArgs(["-i", NAME]), {
         isRunning: () => running,
         pidOf: () => 1_234_567,
-        frozenState: async () => null,
-        stopWatcher: async () => false,
+        frozenState: () => Promise.resolve(null),
+        stopWatcher: () => Promise.resolve(false),
         watcherPid: () => null,
         beforeDown: () => undefined,
         stopSidecars: () => undefined,
-        waitFor: async () => true,
-        shutdown: async () => {
+        waitFor: () => Promise.resolve(true),
+        shutdown: () => {
           order.push("guest-shutdown")
           running = false
+          return Promise.resolve()
         },
-        sleep: async () => await sleep(1),
+        sleep: async () => { await sleep(1) },
       }),
     )
     await sleep(300)

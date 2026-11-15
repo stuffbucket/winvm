@@ -16,8 +16,8 @@ export interface SharedFolderView {
   /** A change running for this machine (the setup takes minutes). */
   readonly working: SharedFolderWork | null
   readonly home: string | null
-  choose(): void
-  stop(): void
+  choose: () => void
+  stop: () => void
   setReadonly(on: boolean): void
   install(): void
 }
@@ -40,7 +40,7 @@ export function useSharedFolder(instance: string | null, phase: Phase | null, gu
   useEffect(() => {
     homeDir()
       .then(setHome)
-      .catch(() => setHome(null))
+      .catch(() => { setHome(null) })
   }, [])
 
   // Another machine: nothing known about it yet.
@@ -101,7 +101,7 @@ export function useSharedFolder(instance: string | null, phase: Phase | null, gu
       .then((path) => {
         if (path !== null) void change(instance, "set", setArgs(instance, path, s?.letter ?? "Z", s?.readonly ?? false))
       })
-      .catch((e: unknown) => setError(String(e)))
+      .catch((e: unknown) => { setError(String(e)) })
   }
   const stop = (): void => {
     if (instance !== null && !busy) void change(instance, "clear", clearArgs(instance))

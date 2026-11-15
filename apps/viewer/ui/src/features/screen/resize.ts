@@ -41,7 +41,7 @@ export interface LiveResizeOptions {
 
 const realTimers: Timers = {
   set: (fn, ms) => setTimeout(fn, ms),
-  clear: (t) => clearTimeout(t as ReturnType<typeof setTimeout>),
+  clear: (t) => { clearTimeout(t as ReturnType<typeof setTimeout>) },
 }
 
 export class LiveResize {
@@ -80,7 +80,7 @@ export class LiveResize {
       return
     }
     this.enter()
-    this.still = this.timers.set(() => this.flush(), this.live ? (this.o.stillMs ?? 250) : (this.o.idleMs ?? 120))
+    this.still = this.timers.set(() => { this.flush() }, this.live ? (this.o.stillMs ?? 250) : (this.o.idleMs ?? 120))
   }
 
   /** The window's edge is being dragged. */

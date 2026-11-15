@@ -196,9 +196,9 @@ export function prune(args: Args): number {
  * which stays a pure check — this repository's own preflight says it plainly:
  * "A check that silently mutates the environment is its own defect."
  */
-export async function setup(args: Args): Promise<number> {
+export function setup(args: Args): number {
   try {
-    const rt = await ensureRuntime()
+    const rt = ensureRuntime()
     console.log(`runtime ${rt.manifest?.version ?? "?"} in ${rt.dir}`)
   } catch (error) {
     console.error(`::error::${error instanceof Error ? error.message : String(error)}`)
@@ -842,7 +842,7 @@ export async function stopWith(args: Args, seams: StopCommandSeams = {}): Promis
   const waitFor = seams.waitFor ?? qga.waitFor
   const shutdown = seams.shutdown ?? qga.shutdown
   const stopWatcher = seams.stopWatcher ?? ((n: string) => watcher.stopWatcher(n))
-  const beforeDown = seams.beforeDown ?? ((n: string) => finder.beforeDown(n))
+  const beforeDown = seams.beforeDown ?? ((n: string) => { finder.beforeDown(n) })
   const stopSidecars = seams.stopSidecars ?? qemu.stopSidecars
   const frozenState = seams.frozenState ?? ((p: Paths) => frozen.frozenState(p))
   const resume = seams.resume ?? (async (p: Paths): Promise<void> => void (await qmp.execute(p.qmp, "cont")))

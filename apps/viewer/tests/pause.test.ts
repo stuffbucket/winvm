@@ -330,16 +330,16 @@ describe("the overlay setting", () => {
 
   it("is loaded with winvm settings --json, and survives winvm failing", async () => {
     const asked: string[][] = []
-    const run = async (...a: string[]): Promise<Output> => {
+    const run = (...a: string[]): Promise<Output> => {
       asked.push(a)
-      return ok('{"viewer.pauseOverlay":false}')
+      return Promise.resolve(ok('{"viewer.pauseOverlay":false}'))
     }
     expect(await loadSettings(run)).toEqual({ pauseOverlay: false })
     expect(asked).toEqual([["settings", "--json"]])
-    expect(await loadSettings(async () => ({ code: 1, stdout: "", stderr: "no" }))).toEqual(DEFAULT_SETTINGS)
+    expect(await loadSettings(() => Promise.resolve({ code: 1, stdout: "", stderr: "no" }))).toEqual(DEFAULT_SETTINGS)
     expect(
-      await loadSettings(async () => {
-        throw new Error("not in the app")
+      await loadSettings(() => {
+        return Promise.reject(new Error("not in the app"))
       }),
     ).toEqual(DEFAULT_SETTINGS)
   })
@@ -347,17 +347,17 @@ describe("the overlay setting", () => {
   it("is stored with winvm settings viewer.pauseOverlay=…, and says why it wasn't", async () => {
     // A store that persists, as winvm's settings.json does: what is saved is what loads next time.
     let stored = "{}"
-    const run = async (...a: string[]): Promise<Output> => {
-      if (a[1] === "--json") return ok(stored)
+    const run = (...a: string[]): Promise<Output> => {
+      if (a[1] === "--json") return Promise.resolve(ok(stored))
       const [k, v] = (a[1] ?? "").split("=")
       stored = JSON.stringify({ ...(JSON.parse(stored) as object), [k ?? ""]: v === "true" })
-      return ok("")
+      return Promise.resolve(ok(""))
     }
     expect(pauseOverlayArgs(false)).toEqual(["settings", "viewer.pauseOverlay=false"])
     expect(await savePauseOverlay(run, false)).toBeNull()
     expect(await loadSettings(run)).toEqual({ pauseOverlay: false })
     expect(await savePauseOverlay(run, true)).toBeNull()
     expect(await loadSettings(run)).toEqual({ pauseOverlay: true })
-    expect(await savePauseOverlay(async () => ({ code: 2, stdout: "", stderr: "read-only\n" }), true)).toBe("read-only")
+    expect(await savePauseOverlay(() => Promise.resolve({ code: 2, stdout: "", stderr: "read-only\n" }), true)).toBe("read-only")
   })
 })

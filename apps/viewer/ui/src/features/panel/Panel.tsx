@@ -1,4 +1,4 @@
-import type { ReactNode } from "react"
+import type { ReactNode, JSX } from "react"
 
 import { Button } from "../../components/Button"
 import { Icon } from "../../components/Icon"
@@ -39,7 +39,7 @@ interface PanelProps {
   /** Why the last write failed (the CLI's words); the select keeps the value it had. */
   readonly closePolicyError: string | null
   onClosePolicy(policy: ClosePolicy): void
-  onForceStop(): void
+  onForceStop: () => void
 }
 
 function Section({ title, hint, open, children }: { title: string; hint?: string | undefined; open?: boolean | undefined; children: ReactNode }): JSX.Element {
@@ -104,7 +104,7 @@ export function Panel(p: PanelProps): JSX.Element {
             value={p.closePolicy}
             disabled={p.closePolicyBusy || p.status === null}
             aria-describedby={p.closePolicyError === null ? undefined : "close-policy-error"}
-            onChange={(e) => p.onClosePolicy(e.target.value as ClosePolicy)}
+            onChange={(e) => { p.onClosePolicy(e.target.value as ClosePolicy) }}
           >
             {CLOSE_POLICIES.map((policy) => (
               <option key={policy} value={policy}>

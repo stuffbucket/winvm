@@ -23,7 +23,7 @@ export class FakeQmp {
 
   constructor(path: string) {
     this.path = path
-    this.server = createServer((s) => this.accept(s))
+    this.server = createServer((s) => { this.accept(s) })
   }
 
   async listen(): Promise<void> {
@@ -33,7 +33,7 @@ export class FakeQmp {
 
   async close(): Promise<void> {
     for (const s of this.sockets) s.destroy()
-    await new Promise<void>((r) => this.server.close(() => r()))
+    await new Promise<void>((r) => this.server.close(() => { r() }))
     rmSync(this.path, { force: true })
   }
 

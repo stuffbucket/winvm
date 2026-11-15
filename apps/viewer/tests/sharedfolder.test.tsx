@@ -3,6 +3,7 @@
  * it shows for each state (rendered in happy-dom), and the one-time setup's
  * confirmation.
  */
+import type { JSX } from "react"
 import { GlobalRegistrator } from "@happy-dom/global-registrator"
 import { afterAll, afterEach, describe, expect, it } from "bun:test"
 
@@ -64,7 +65,7 @@ function view(over: Partial<View> = {}): View & { calls: string[] } {
   }
 }
 
-const buttons = (host: HTMLElement): string[] => [...host.querySelectorAll("button")].map((b) => b.getAttribute("aria-label") ?? b.textContent ?? "")
+const buttons = (host: HTMLElement): string[] => [...host.querySelectorAll("button")].map((b) => b.getAttribute("aria-label") ?? b.textContent)
 const button = (label: string): HTMLButtonElement => {
   const b = [...document.querySelectorAll("button")].find((x) => (x.getAttribute("aria-label") ?? x.textContent) === label)
   if (b === undefined) throw new Error(`no button "${label}"`)
@@ -132,7 +133,7 @@ describe("the Shared folder section", () => {
     const host = render(<SharedFolder view={v} guestReady />)
     expect(host.textContent).toContain("Share a folder on this Mac with Windows")
     expect(buttons(host)).toEqual(["Choose folder…"])
-    act(() => button("Choose folder…").click())
+    act(() => { button("Choose folder…").click() })
     expect(v.calls).toEqual(["choose"])
   })
 
@@ -142,7 +143,7 @@ describe("the Shared folder section", () => {
     expect(host.querySelector(".oneline")?.getAttribute("title")).toBe("~/Projects/site")
     expect(host.textContent).toContain("In File Explorer as Mac (Z:)")
     expect(buttons(host)).toEqual(["Show in Finder", "Choose folder…", "Stop sharing"])
-    act(() => button("Stop sharing").click())
+    act(() => { button("Stop sharing").click() })
     expect(v.calls).toEqual(["stop"])
   })
 
@@ -168,9 +169,9 @@ describe("the Shared folder section", () => {
   it("confirms the one-time setup before restarting Windows", () => {
     const v = view({ status: status({ folder: "/Users/me/Shared", guest: { installed: false, mounted: false } }) })
     render(<SharedFolder view={v} guestReady />)
-    act(() => button("Set up in Windows…").click())
+    act(() => { button("Set up in Windows…").click() })
     expect(document.querySelector("dialog")?.textContent).toContain("restarts Windows twice")
-    act(() => button("Set up and restart").click())
+    act(() => { button("Set up and restart").click() })
     expect(v.calls).toEqual(["install"])
   })
 
@@ -193,7 +194,7 @@ describe("the Shared folder section", () => {
     ]
     for (const s of states) {
       const host = render(<SharedFolder view={view({ status: s })} guestReady={false} />)
-      expect(host.textContent?.toLowerCase()).not.toContain("instance")
+      expect(host.textContent.toLowerCase()).not.toContain("instance")
       act(() => root?.unmount())
       root = null
     }

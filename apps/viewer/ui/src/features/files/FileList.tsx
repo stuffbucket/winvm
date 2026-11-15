@@ -3,7 +3,7 @@
  * entries as rows. Only the rows in view (and a few either side) are in the
  * DOM, so a folder of thousands scrolls as smoothly as one of ten.
  */
-import { type KeyboardEvent, type MouseEvent, type PointerEvent, type RefObject, useEffect, useLayoutEffect, useRef, useState } from "react"
+import { type JSX, type KeyboardEvent, type MouseEvent, type PointerEvent, type RefObject, useEffect, useLayoutEffect, useRef, useState } from "react"
 
 import { cx } from "../../components/cx"
 import { t } from "../../i18n"
@@ -33,13 +33,13 @@ interface FileListProps {
   readonly loading: boolean
   readonly more: string | null
   onSort(key: SortKey): void
-  onKeyDown(e: KeyboardEvent<HTMLDivElement>): void
+  onKeyDown: (e: KeyboardEvent<HTMLDivElement>) => void
   onRowPointerDown(e: PointerEvent<HTMLDivElement>, entry: Entry): void
   onRowDoubleClick(entry: Entry): void
   onContextMenu(e: MouseEvent<HTMLDivElement>, entry: Entry | null): void
   onBackgroundPointerDown(e: PointerEvent<HTMLDivElement>): void
-  onDraft(draft: string): void
-  onRenameDone(commit: boolean): void
+  onDraft: (draft: string) => void
+  onRenameDone: (commit: boolean) => void
 }
 
 const COLUMNS: readonly { key: SortKey; label: string; className: string }[] = [
@@ -73,7 +73,7 @@ function When({ ms, now }: { readonly ms: number; readonly now: number }): JSX.E
 }
 
 /** The editable name: the stem selected, as Finder does, so typing keeps the extension. */
-function NameField({ draft, onDraft, onDone }: { readonly draft: string; onDraft(d: string): void; onDone(commit: boolean): void }): JSX.Element {
+function NameField({ draft, onDraft, onDone }: { readonly draft: string; onDraft: (d: string) => void; onDone: (commit: boolean) => void }): JSX.Element {
   const input = useRef<HTMLInputElement | null>(null)
   const cancelled = useRef(false)
   useLayoutEffect(() => {
@@ -91,9 +91,9 @@ function NameField({ draft, onDraft, onDone }: { readonly draft: string; onDraft
       value={draft}
       spellCheck={false}
       autoComplete="off"
-      onChange={(e) => onDraft(e.target.value)}
-      onPointerDown={(e) => e.stopPropagation()}
-      onDoubleClick={(e) => e.stopPropagation()}
+      onChange={(e) => { onDraft(e.target.value) }}
+      onPointerDown={(e) => { e.stopPropagation() }}
+      onDoubleClick={(e) => { e.stopPropagation() }}
       onKeyDown={(e) => {
         e.stopPropagation()
         if (e.key === "Enter") {
@@ -118,11 +118,11 @@ export function FileList(p: FileListProps): JSX.Element {
   useEffect(() => {
     const el = p.list.current
     if (el === null) return
-    const measure = (): void => setView({ top: el.scrollTop, height: el.clientHeight, row: rowHeight(el) })
+    const measure = (): void => { setView({ top: el.scrollTop, height: el.clientHeight, row: rowHeight(el) }) }
     measure()
     const ro = new ResizeObserver(measure)
     ro.observe(el)
-    return () => ro.disconnect()
+    return () => { ro.disconnect() }
   }, [p.list])
 
   const n = p.entries.length
@@ -144,8 +144,8 @@ export function FileList(p: FileListProps): JSX.Element {
               className={cx("files__heading", c.className, on && "files__heading--on")}
               // A heading sorts without taking the keyboard from the list, as in Finder.
               tabIndex={-1}
-              onMouseDown={(e) => e.preventDefault()}
-              onClick={() => p.onSort(c.key)}
+              onMouseDown={(e) => { e.preventDefault() }}
+              onClick={() => { p.onSort(c.key) }}
             >
               <span className="files__heading-label">{t(c.label)}</span>
               <span className="files__chevron" aria-hidden="true">
@@ -198,9 +198,9 @@ export function FileList(p: FileListProps): JSX.Element {
                 title={renaming === null ? e.name : undefined}
                 data-name={e.name}
                 data-dir={e.dir ? "" : undefined}
-                onPointerDown={(ev) => p.onRowPointerDown(ev, e)}
-                onDoubleClick={() => p.onRowDoubleClick(e)}
-                onContextMenu={(ev) => p.onContextMenu(ev, e)}
+                onPointerDown={(ev) => { p.onRowPointerDown(ev, e) }}
+                onDoubleClick={() => { p.onRowDoubleClick(e) }}
+                onContextMenu={(ev) => { p.onContextMenu(ev, e) }}
               >
                 <span className="files__c-name files__name">
                   <span className={cx("files__glyph", `files__glyph--${kindOf(e.name, e.dir)}`)} aria-hidden="true">

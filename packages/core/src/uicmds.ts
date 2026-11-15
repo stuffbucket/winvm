@@ -67,7 +67,7 @@ export function selectorFrom(args: Args, positional: string | undefined): Select
   set("controlType", f.get("type"))
   set("className", f.get("class"))
   set("index", int(f.get("index")))
-  return s as Selector
+  return s
 }
 
 export async function uiCmd(args: Args): Promise<number> {
@@ -82,9 +82,9 @@ export async function uiCmd(args: Args): Promise<number> {
   const timeoutMs = dur(args, "timeout", "s")
   const t0 = performance.now()
   const took = (): string => `${(performance.now() - t0).toFixed(0)} ms`
-  const out = (v: unknown, human: string): void => console.log(json ? JSON.stringify(v, null, 2) : human)
+  const out = (v: unknown, human: string): void => { console.log(json ? JSON.stringify(v, null, 2) : human) }
   try {
-    const ui = await forInstance(name, { log: (l) => console.error(l) })
+    const ui = await forInstance(name, { log: (l) => { console.error(l) } })
     const sel = selectorFrom(args, arg)
     const t = timeoutMs === undefined ? {} : { timeoutMs }
     switch (verb) {

@@ -172,7 +172,8 @@ export class AgentClient {
     const out = createWriteStream(hostPath)
     let n = 0
     try {
-      for await (const chunk of r.body ?? new ReadableStream<Uint8Array>()) {
+      const body: ReadableStream<Uint8Array> = r.body ?? new ReadableStream<Uint8Array>()
+      for await (const chunk of body) {
         n += chunk.length
         if (!out.write(chunk)) await once(out, "drain")
       }

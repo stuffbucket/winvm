@@ -139,28 +139,28 @@ describe("fetching the runtime", () => {
     return { path, sha256 }
   }
 
-  it("downloads the pinned tarball, checks it, unpacks it into the cache and keeps no tarball", async () => {
+  it("downloads the pinned tarball, checks it, unpacks it into the cache and keeps no tarball", () => {
     const t = tarball()
     const cache = resolve(tmp, "cache")
-    const rt = await ensureRuntime({ pin: { version: "11.1.2-1", url: `file://${t.path}`, sha256: t.sha256 }, cache })
+    const rt = ensureRuntime({ pin: { version: "11.1.2-1", url: `file://${t.path}`, sha256: t.sha256 }, cache })
     expect(rt).toMatchObject({ source: "cache", dir: resolve(cache, "11.1.2-1") })
     expect(verifyRuntime(rt)).toEqual([])
     expect(readdirSync(cache)).toEqual(["11.1.2-1"])
   })
 
-  it("refuses a tarball that does not match the pin and leaves the cache without it", async () => {
+  it("refuses a tarball that does not match the pin and leaves the cache without it", () => {
     const t = tarball()
     const cache = resolve(tmp, "cache")
-    await expect(
+    expect(() =>
       ensureRuntime({ pin: { version: "11.1.2-1", url: `file://${t.path}`, sha256: "0".repeat(64) }, cache }),
-    ).rejects.toThrow("does not match its pinned digest")
+    ).toThrow("does not match its pinned digest")
     expect(existsSync(resolve(cache, "11.1.2-1"))).toBe(false)
   })
 
-  it("does nothing when the cached runtime is already there and intact", async () => {
+  it("does nothing when the cached runtime is already there and intact", () => {
     const cache = resolve(tmp, "cache")
     makeRuntime(resolve(cache, "11.1.2-1"))
-    const rt = await ensureRuntime({ pin: { version: "11.1.2-1", url: "file:///nonexistent", sha256: "x" }, cache })
+    const rt = ensureRuntime({ pin: { version: "11.1.2-1", url: "file:///nonexistent", sha256: "x" }, cache })
     expect(rt.source).toBe("cache")
   })
 })

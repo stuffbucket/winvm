@@ -79,7 +79,7 @@ export function readState(p: Paths): WebviewState | null {
   }
 }
 
-const writeState = (p: Paths, s: WebviewState): void => writeFileSync(statePath(p), `${JSON.stringify(s, null, 2)}\n`)
+const writeState = (p: Paths, s: WebviewState): void => { writeFileSync(statePath(p), `${JSON.stringify(s, null, 2)}\n`) }
 
 // --- the guest side -----------------------------------------------------------
 
@@ -216,7 +216,8 @@ export async function webview(args: Args): Promise<number> {
   const name = instanceName(args)
   // A boolean flag before a positional eats it (`wait --visible "#x"`); take it back.
   const eaten = ["visible", "json"].map((f) => args.flags.get(f)).filter((v): v is string => v !== undefined && v !== "true")
-  const [verb, ...pos] = [...args.positional, ...eaten, ...args.rest]
+  const [first, ...pos] = [...args.positional, ...eaten, ...args.rest]
+  const verb = first ?? ""
   const portFlag = args.flags.get("port")
   const port = portFlag === undefined ? undefined : Number(portFlag)
   if (port !== undefined && (!Number.isInteger(port) || port <= 0 || relayPort(port) > 65_535)) return fail(`--port must be 1-${String(65_535 - 10_000)}`)
@@ -253,7 +254,8 @@ export async function webview(args: Args): Promise<number> {
         try {
           if (verb === "eval") {
             const v = await s.eval(arg, timeoutMs)
-            console.log(typeof v === "string" ? v : JSON.stringify(v, null, 2) ?? "undefined")
+            const json: unknown = typeof v === "string" ? v : JSON.stringify(v, null, 2)
+            console.log(typeof json === "string" ? json : "undefined")
           } else if (verb === "click") {
             await s.waitFor(arg, { timeoutMs, visible: true })
             const at = await s.click(arg)

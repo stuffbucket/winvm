@@ -25,7 +25,7 @@ import {
 import { FakeAgent } from "./fakes/agent"
 import { FakeQmp } from "./fakes/qmp"
 
-const sleep = async (ms: number): Promise<void> => await new Promise((r) => setTimeout(r, ms))
+const sleep = async (ms: number): Promise<void> => { await new Promise((r) => setTimeout(r, ms)) }
 
 let home = ""
 let savedHome: string | undefined
@@ -309,7 +309,7 @@ describe("one service per instance, continued", () => {
 
   it("asks for the guest's port without waiting behind a QMP caller", async () => {
     svc = await runService("t", { exitAfterMs: 5000, checkMs: 50 })
-    const held = monitor.withQmp(p.qmp, async () => await sleep(1500), 3000)
+    const held = monitor.withQmp(p.qmp, async () => { await sleep(1500) }, 3000)
     await sleep(100)
     const t0 = Date.now()
     expect(await qga.call(p.qga, { execute: "guest-ping" }, 1000)).toEqual({ return: {} })
@@ -375,7 +375,7 @@ const fakeService = (name: string): ReturnType<typeof Bun.spawn> =>
 const alive = (pid: number): boolean => {
   try {
     process.kill(pid, 0)
-    return spawnSync("ps", ["-o", "stat=", "-p", String(pid)], { encoding: "utf8" }).stdout.trim().startsWith("Z") === false
+    return !spawnSync("ps", ["-o", "stat=", "-p", String(pid)], { encoding: "utf8" }).stdout.trim().startsWith("Z")
   } catch {
     return false
   }
@@ -470,7 +470,7 @@ describe("service generations", () => {
         current: CURRENT,
         timeoutMs: 400,
         // A replacement that answers, but that is still the old generation.
-        start: () => record(holder().pid, "sha256:old"),
+        start: () => { record(holder().pid, "sha256:old") },
       }),
     ).rejects.toThrow("did not start")
   })
@@ -492,7 +492,7 @@ describe("service generations", () => {
     await expect(ensureService("t", p, { current: CURRENT, timeoutMs: 200, start: () => undefined })).rejects.toThrow("did not start")
     const info = await ensureService("t", p, {
       current: CURRENT,
-      start: () => record(holder().pid, CURRENT),
+      start: () => { record(holder().pid, CURRENT) },
     })
     expect(info.build).toBe(CURRENT)
     const again = await ensureService("t", p, {

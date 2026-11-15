@@ -28,7 +28,7 @@ const thenRm = opt("--then-rm")
 const logSignals = opt("--log-signals")
 
 for (const sig of ["SIGHUP", "SIGINT"] as const) {
-  if (logSignals !== undefined) process.on(sig, () => appendFileSync(logSignals, `${sig}\n`))
+  if (logSignals !== undefined) process.on(sig, () => { appendFileSync(logSignals, `${sig}\n`) })
 }
 process.on("SIGTERM", () => {
   if (logSignals !== undefined) appendFileSync(logSignals, "SIGTERM\n")

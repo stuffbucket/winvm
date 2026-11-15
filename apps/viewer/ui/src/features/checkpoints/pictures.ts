@@ -58,7 +58,7 @@ export function forgetPictures(paths: readonly (string | null)[]): void {
   for (const [key, url] of cache) {
     if (!paths.some((p) => p !== null && key.startsWith(`${p}#`))) continue
     cache.delete(key)
-    void url.then((u) => URL.revokeObjectURL(u)).catch(() => undefined)
+    void url.then((u) => { URL.revokeObjectURL(u) }).catch(() => undefined)
   }
 }
 

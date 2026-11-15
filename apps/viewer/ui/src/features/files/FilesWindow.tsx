@@ -12,7 +12,7 @@
  * promises, written only when Finder asks), and arrive by dropping Mac files
  * anywhere on the window. A right-click or Option-click shows a native menu.
  */
-import { type KeyboardEvent, type MouseEvent, type PointerEvent, useCallback, useEffect, useMemo, useRef, useState } from "react"
+import { type KeyboardEvent, type MouseEvent, type PointerEvent, useCallback, useEffect, useMemo, useRef, useState, type JSX } from "react"
 
 import {
   copyText,
@@ -122,7 +122,13 @@ const why = (code: OpCode): string => t(`files.why.${code}`)
 export function FilesWindow({ instance, initialTitle }: { readonly instance: string; readonly initialTitle: string | null }): JSX.Element {
   // What the instance is called: given when the window opened, then kept up to date by the main window.
   const [title, setTitle] = useState<string | null>(initialTitle)
-  useEffect(() => onInstanceTitle((e) => (e.instance === instance ? setTitle(e.title) : undefined)), [instance])
+  useEffect(
+    () =>
+      onInstanceTitle((e) => {
+        if (e.instance === instance) setTitle(e.title)
+      }),
+    [instance],
+  )
   const list = useRef<HTMLDivElement | null>(null)
   const [listing, setListing] = useState<Listing | null>(null)
   const [failure, setFailure] = useState<ListFailure | null>(null)
@@ -146,7 +152,7 @@ export function FilesWindow({ instance, initialTitle }: { readonly instance: str
   const afterLoad = useRef<((l: Listing) => void) | null>(null)
   const queue = useRef<Promise<void>>(Promise.resolve())
 
-  useEffect(() => showWindow(), [])
+  useEffect(() => { showWindow() }, [])
 
   // The webview's own menu (Reload, Inspect) is no use here; text fields keep theirs for cut and paste.
   useEffect(() => {
@@ -154,7 +160,7 @@ export function FilesWindow({ instance, initialTitle }: { readonly instance: str
       if (!(e.target instanceof HTMLInputElement)) e.preventDefault()
     }
     window.addEventListener("contextmenu", quiet)
-    return () => window.removeEventListener("contextmenu", quiet)
+    return () => { window.removeEventListener("contextmenu", quiet) }
   }, [])
 
   /** Open `path` (null: the Desktop). `how` says what it does to back and forward. */
@@ -272,11 +278,11 @@ export function FilesWindow({ instance, initialTitle }: { readonly instance: str
 
   /** One operation at a time, in the order asked for; the folder is read again after each. */
   const enqueue = (work: () => Promise<void>): void => {
-    queue.current = queue.current.then(work).catch((error: unknown) => copies.report({ ok: false, title: t("files.failed"), detail: String(error) }))
+    queue.current = queue.current.then(work).catch((error: unknown) => { copies.report({ ok: false, title: t("files.failed"), detail: String(error) }) })
   }
 
   const fail = (title: string, code: OpCode, detail: string): void =>
-    copies.report({ ok: false, title, detail: code === "other" ? detail : why(code) })
+    { copies.report({ ok: false, title, detail: code === "other" ? detail : why(code) }) }
 
   // ---- Operations ----
 
@@ -328,7 +334,7 @@ export function FilesWindow({ instance, initialTitle }: { readonly instance: str
     enqueue(async () => {
       const done = await move(instance, childPath(folder, r.name), childPath(folder, name))
       if (!done.ok) fail(t("files.failedRename", { name: r.name }), done.code, done.detail)
-      else afterLoad.current = () => select([name])
+      else afterLoad.current = () => { select([name]) }
       await load(folder, "stay")
     })
   }
@@ -391,8 +397,8 @@ export function FilesWindow({ instance, initialTitle }: { readonly instance: str
   const copyPaths = (names: readonly string[]): void => {
     const paths = names.length === 0 ? [live.current.listing?.path ?? ""] : names.map(pathOf)
     copyText(paths.join("\n"))
-      .then(() => copies.report({ ok: true, title: t("files.copiedPath", { count: paths.length }) }))
-      .catch((e: unknown) => copies.report({ ok: false, title: t("files.failed"), detail: String(e) }))
+      .then(() => { copies.report({ ok: true, title: t("files.copiedPath", { count: paths.length }) }) })
+      .catch((e: unknown) => { copies.report({ ok: false, title: t("files.failed"), detail: String(e) }) })
   }
 
   const terminalIn = (cwd: string): void => {
@@ -405,18 +411,18 @@ export function FilesWindow({ instance, initialTitle }: { readonly instance: str
           title,
         }),
       )
-      .catch((e: unknown) => copies.report({ ok: false, title: t("terminal.failed"), detail: String(e) }))
+      .catch((e: unknown) => { copies.report({ ok: false, title: t("terminal.failed"), detail: String(e) }) })
   }
 
   /** The folder in Finder, through the guest's C:\ or home folder mounted on the Mac (`winvm files open --path`). */
   const finderAt = (folder: string): void => {
     copies.report({ ok: true, title: t("files.finder.opening", { place: leafName(folder) || folder }) })
     revealGuestPath(instance, folder)
-      .then(() => copies.dismiss())
-      .catch((e: unknown) => copies.report({ ok: false, title: t("files.finder.failed"), detail: e instanceof Error ? e.message : String(e) }))
+      .then(() => { copies.dismiss() })
+      .catch((e: unknown) => { copies.report({ ok: false, title: t("files.finder.failed"), detail: e instanceof Error ? e.message : String(e) }) })
   }
   const finderItem = (folder: string): Action[] =>
-    GUEST_FOLDERS_IN_FINDER && inFinderReach(folder) ? [{ kind: "action", label: t("files.finder.here"), run: () => finderAt(folder) }] : []
+    GUEST_FOLDERS_IN_FINDER && inFinderReach(folder) ? [{ kind: "action", label: t("files.finder.here"), run: () => { finderAt(folder) } }] : []
 
   const copyOut = (): void => {
     const l = live.current.listing
@@ -440,15 +446,15 @@ export function FilesWindow({ instance, initialTitle }: { readonly instance: str
     const folder = live.current.listing?.path ?? ""
     const names = sel.map((e) => e.name)
     return [
-      { kind: "action", label: t("files.menu.open"), enabled: one?.dir === true, accelerator: "CmdOrCtrl+O", run: () => openEntry(one) },
+      { kind: "action", label: t("files.menu.open"), enabled: one?.dir === true, accelerator: "CmdOrCtrl+O", run: () => { openEntry(one) } },
       { kind: "separator" },
       { kind: "action", label: t("files.copyOut"), run: copyOut },
       { kind: "separator" },
       { kind: "action", label: t("files.menu.rename"), enabled: one !== undefined, run: startRename },
-      { kind: "action", label: t("files.menu.trash"), accelerator: "CmdOrCtrl+Backspace", run: () => trash(names) },
+      { kind: "action", label: t("files.menu.trash"), accelerator: "CmdOrCtrl+Backspace", run: () => { trash(names) } },
       { kind: "separator" },
-      { kind: "action", label: t("files.menu.copyPath", { count: names.length }), accelerator: "CmdOrCtrl+Alt+C", run: () => copyPaths(names) },
-      { kind: "action", label: t("files.menu.terminal"), run: () => terminalIn(one?.dir === true ? childPath(folder, one.name) : folder) },
+      { kind: "action", label: t("files.menu.copyPath", { count: names.length }), accelerator: "CmdOrCtrl+Alt+C", run: () => { copyPaths(names) } },
+      { kind: "action", label: t("files.menu.terminal"), run: () => { terminalIn(one?.dir === true ? childPath(folder, one.name) : folder) } },
       ...finderItem(one?.dir === true ? childPath(folder, one.name) : folder),
       { kind: "separator" },
       { kind: "action", label: t("files.menu.newFolder"), accelerator: "CmdOrCtrl+Shift+N", run: newFolder },
@@ -459,18 +465,18 @@ export function FilesWindow({ instance, initialTitle }: { readonly instance: str
     const folder = live.current.listing?.path ?? ""
     return [
       { kind: "action", label: t("files.menu.newFolder"), accelerator: "CmdOrCtrl+Shift+N", run: newFolder },
-      { kind: "action", label: t("files.copyIn"), run: () => copyIn() },
+      { kind: "action", label: t("files.copyIn"), run: () => { copyIn() } },
       { kind: "separator" },
-      { kind: "action", label: t("files.menu.terminalHere"), run: () => terminalIn(folder) },
+      { kind: "action", label: t("files.menu.terminalHere"), run: () => { terminalIn(folder) } },
       ...finderItem(folder),
-      { kind: "action", label: t("files.menu.copyPath", { count: 1 }), run: () => copyPaths([]) },
+      { kind: "action", label: t("files.menu.copyPath", { count: 1 }), run: () => { copyPaths([]) } },
       { kind: "separator" },
       { kind: "action", label: t("files.refresh.menu"), accelerator: "CmdOrCtrl+R", run: refresh },
     ]
   }
 
   const showMenu = (nodes: Action[]): void => {
-    popupActions(nodes).catch((e: unknown) => copies.report({ ok: false, title: t("files.failed"), detail: String(e) }))
+    popupActions(nodes).catch((e: unknown) => { copies.report({ ok: false, title: t("files.failed"), detail: String(e) }) })
   }
 
   const onContextMenu = (e: MouseEvent<HTMLDivElement>, entry: Entry | null): void => {
@@ -483,7 +489,7 @@ export function FilesWindow({ instance, initialTitle }: { readonly instance: str
     }
     if (!live.current.selected.has(entry.name)) select([entry.name])
     // The selection above lands before the menu reads it.
-    setTimeout(() => showMenu(itemMenu()), 0)
+    setTimeout(() => { showMenu(itemMenu()) }, 0)
   }
 
   // ---- Pointer: selection, drags inside the window, and handing a drag to the Mac ----
@@ -553,7 +559,7 @@ export function FilesWindow({ instance, initialTitle }: { readonly instance: str
         const items = d.names.flatMap((n) => l.entries.filter((x) => x.name === n)).map((x) => ({ path: childPath(l.path, x.name), name: x.name, dir: x.dir }))
         copies.expectPromises(items.length)
         // A rejection means macOS never started the drag (the button was already up): nothing to say.
-        dragOut(instance, items).catch((error: unknown) => console.warn("the drag out of the window did not start", error))
+        dragOut(instance, items).catch((error: unknown) => { console.warn("the drag out of the window did not start", error) })
         return
       }
       setDrag({ ...d, x: e.clientX, y: e.clientY, target: targetAt(e.clientX, e.clientY, new Set(d.names)), copy: e.altKey })
@@ -619,7 +625,6 @@ export function FilesWindow({ instance, initialTitle }: { readonly instance: str
         setHostTarget((cur) => (e.type === "over" && cur === null ? null : into))
       }),
     // targetAt reads live values only.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
     [copyInto],
   )
 
@@ -730,7 +735,7 @@ export function FilesWindow({ instance, initialTitle }: { readonly instance: str
                         aria-current={listing !== null && samePath(listing.path, p.path) ? "location" : undefined}
                         title={p.path}
                         data-place={p.path}
-                        onClick={() => go(p.path)}
+                        onClick={() => { go(p.path) }}
                       >
                         <Icon name={PLACE_ICON[p.kind]} />
                         <span className="fw__place-name">{placeName(p)}</span>
@@ -779,7 +784,7 @@ export function FilesWindow({ instance, initialTitle }: { readonly instance: str
                     aria-current={i === all.length - 1 ? "location" : undefined}
                     title={c.path}
                     data-place={i === all.length - 1 ? undefined : c.path}
-                    onClick={() => go(c.path)}
+                    onClick={() => { go(c.path) }}
                   >
                     {i === all.length - 1 ? here : c.name}
                   </button>
@@ -801,11 +806,11 @@ export function FilesWindow({ instance, initialTitle }: { readonly instance: str
                 aria-label={t("files.goTo")}
                 value={draft}
                 autoFocus
-                onFocus={(e) => e.currentTarget.select()}
+                onFocus={(e) => { e.currentTarget.select() }}
                 spellCheck={false}
                 autoComplete="off"
-                onChange={(e) => setDraft(e.target.value)}
-                onBlur={() => setDraft(null)}
+                onChange={(e) => { setDraft(e.target.value) }}
+                onBlur={() => { setDraft(null) }}
                 onKeyDown={(e) => {
                   if (e.key !== "Escape") return
                   e.preventDefault()
@@ -865,7 +870,7 @@ export function FilesWindow({ instance, initialTitle }: { readonly instance: str
             onRowDoubleClick={openEntry}
             onContextMenu={onContextMenu}
             onBackgroundPointerDown={onBackgroundPointerDown}
-            onDraft={(d) => setRenaming((r) => (r === null ? r : { ...r, draft: d }))}
+            onDraft={(d) => { setRenaming((r) => (r === null ? r : { ...r, draft: d })) }}
             onRenameDone={finishRename}
           />
         </div>

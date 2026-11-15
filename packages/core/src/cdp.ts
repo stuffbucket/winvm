@@ -76,7 +76,7 @@ export class CdpSession {
   static async open(wsUrl: string, timeoutMs = 5000): Promise<CdpSession> {
     const ws = new WebSocket(wsUrl)
     await new Promise<void>((res, rej) => {
-      const t = setTimeout(() => rej(new CdpError(`could not open ${wsUrl} in ${String(timeoutMs)} ms`)), timeoutMs)
+      const t = setTimeout(() => { rej(new CdpError(`could not open ${wsUrl} in ${String(timeoutMs)} ms`)) }, timeoutMs)
       ws.onopen = (): void => {
         clearTimeout(t)
         res()
@@ -151,8 +151,8 @@ export class CdpSession {
     const v = await this.eval(
       `(() => { const e = document.querySelector(${JSON.stringify(selector)}); return e ? (e.innerText ?? e.textContent ?? "") : null })()`,
     )
-    if (v === null) throw new CdpError(`no element matches ${selector}`)
-    return String(v)
+    if (typeof v !== "string") throw new CdpError(`no element matches ${selector}`)
+    return v
   }
 
   /**

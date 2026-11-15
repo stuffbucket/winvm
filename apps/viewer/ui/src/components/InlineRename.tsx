@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react"
+import { type JSX, useEffect, useRef } from "react"
 
 import { cx } from "./cx"
 
@@ -10,7 +10,7 @@ interface InlineRenameProps {
   readonly className?: string
   readonly maxLength?: number
   /** Return or leaving the field: the text typed (empty asks for the automatic name). Escape: null, no change. */
-  onDone(next: string | null): void
+  onDone: (next: string | null) => void
 }
 
 /**
@@ -45,9 +45,9 @@ export function InlineRename({ value, label, className, maxLength, onDone }: Inl
         if (e.key === "Enter") finish(e.currentTarget.value)
         else if (e.key === "Escape") finish(null)
       }}
-      onBlur={(e) => finish(e.currentTarget.value)}
-      onClick={(e) => e.stopPropagation()}
-      onDoubleClick={(e) => e.stopPropagation()}
+      onBlur={(e) => { finish(e.currentTarget.value) }}
+      onClick={(e) => { e.stopPropagation() }}
+      onDoubleClick={(e) => { e.stopPropagation() }}
     />
   )
 }

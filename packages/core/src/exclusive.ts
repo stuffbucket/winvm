@@ -42,9 +42,9 @@ export function replaceWhole(file: string, text: string): void {
 
 export function takeOver(file: string, judged: string): boolean {
   const aside = scratch(file, "stale")
-  if (!attempt(() => renameSync(file, aside))) return false
+  if (!attempt(() => { renameSync(file, aside) })) return false
   const same = readOr(aside, null) === judged
-  if (!same) attempt(() => linkSync(aside, file))
+  if (!same) attempt(() => { linkSync(aside, file) })
   rmSync(aside, { force: true })
   return same
 }

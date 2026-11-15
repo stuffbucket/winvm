@@ -3,6 +3,7 @@
  * settings, and what Go Back and Delete ask and do. And the confirmation
  * dialog's third button, rendered in happy-dom.
  */
+import type { JSX } from "react"
 import { GlobalRegistrator } from "@happy-dom/global-registrator"
 import { afterAll, afterEach, describe, expect, it, mock } from "bun:test"
 
@@ -343,12 +344,12 @@ describe("settings", () => {
   it("go through `winvm settings --section checkpoints`, the file's one writer", async () => {
     const calls: string[][] = []
     let stored: unknown = null
-    const invoke = async (cmd: string, a: { args: string[] }): Promise<unknown> => {
-      if (cmd !== "winvm") throw new Error(`unexpected ${cmd}`)
+    const invoke = (cmd: string, a: { args: string[] }): Promise<unknown> => {
+      if (cmd !== "winvm") return Promise.reject(new Error(`unexpected ${cmd}`))
       calls.push(a.args)
       const set = a.args.find((x) => x.startsWith("--set="))
       if (set !== undefined) stored = JSON.parse(set.slice("--set=".length))
-      return { code: 0, stdout: JSON.stringify(stored), stderr: "" }
+      return Promise.resolve({ code: 0, stdout: JSON.stringify(stored), stderr: "" })
     }
     Object.assign(window, { __TAURI__: { core: { invoke } } })
     try {

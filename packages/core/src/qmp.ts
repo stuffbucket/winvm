@@ -71,7 +71,7 @@ async function withSocket<T>(
     try {
       const candidate = connect(sockPath)
       await new Promise<void>((res, rej) => {
-        candidate.on("connect", () => res())
+        candidate.on("connect", () => { res() })
         candidate.on("error", rej)
       })
       sock = candidate
@@ -109,7 +109,7 @@ async function withSocket<T>(
     let timer: ReturnType<typeof setTimeout> | undefined
     const reply = new Promise<Record<string, unknown>>((res) => waiting.push(res))
     const expiry = new Promise<Record<string, unknown>>((res) => {
-      timer = setTimeout(() => res({ error: { desc: "qmp timed out" } }), timeoutMs)
+      timer = setTimeout(() => { res({ error: { desc: "qmp timed out" } }) }, timeoutMs)
     })
     sock.write(`${JSON.stringify(o)}\n`)
     const out = await Promise.race([reply, expiry])

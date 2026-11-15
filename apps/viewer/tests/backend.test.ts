@@ -40,6 +40,7 @@ beforeEach(() => {
   asked.length = 0
   const invoke = (cmd: string, args?: unknown): Promise<unknown> => {
     asked.push({ cmd, args })
+    // oxlint-disable-next-line typescript/prefer-promise-reject-errors -- Tauri rejects invoke with a bare string, not an Error; the test fake must do the same
     return rejection === null ? Promise.resolve(answer) : Promise.reject(rejection)
   }
   if (!hadWindow) Object.assign(globalThis, { window: {} })

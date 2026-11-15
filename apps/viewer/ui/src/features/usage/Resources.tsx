@@ -1,3 +1,4 @@
+import type { JSX } from "react"
 import { t } from "../../i18n"
 import { type Amount, formatGB, formatPercent, fraction, type Usage } from "./usage"
 import type { UsageView } from "./useUsage"

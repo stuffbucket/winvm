@@ -123,7 +123,7 @@ export function hostWindowsTimeZone(): string | null {
       },
     })
     try {
-      const id = new Uint16Array([...iana].map((c) => c.charCodeAt(0)))
+      const id = Uint16Array.from(iana, (c) => c.charCodeAt(0))
       const out = new Uint16Array(128)
       const status = new Int32Array(1)
       const n = lib.symbols.ucal_getWindowsTimeZoneID(ptr(id), id.length, ptr(out), out.length, ptr(status))

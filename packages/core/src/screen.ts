@@ -319,7 +319,7 @@ export async function display(args: Args): Promise<number> {
   }
   try {
     let result: guestDisplay.GuestDisplay
-    if (asked === null) {
+    if (asked === null || wantRaw === undefined) {
       result = await guestDisplay.setGuestScale(name, scale ?? 100)
     } else {
       const size = clampSize(asked)

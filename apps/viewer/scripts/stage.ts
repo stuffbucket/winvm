@@ -24,7 +24,7 @@ for (const dir of ["assets", "firmware", "web"]) {
 }
 cpSync(resolve(ROOT, "packages", "novnc"), resolve(winvm, "packages", "novnc"), { recursive: true })
 
-const rt = (process.env["WINVM_RUNTIME"] ?? "") !== "" ? findRuntime() : await ensureRuntime()
+const rt = (process.env["WINVM_RUNTIME"] ?? "") !== "" ? findRuntime() : ensureRuntime()
 if (rt === null || rt.manifest === null) {
   console.error("no runtime with a manifest to bundle")
   process.exit(1)

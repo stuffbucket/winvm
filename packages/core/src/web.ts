@@ -179,7 +179,7 @@ export async function ensureServer(): Promise<ServerInfo> {
   const child = spawn(process.execPath, [...cliArgv("web")], { detached: true, stdio: ["ignore", log, log], env: process.env })
   closeSync(log)
   child.unref()
-  let gone = false
+  let gone = false as boolean
   child.on("exit", () => {
     gone = true
   })
@@ -236,7 +236,7 @@ function startJob(instance: string, verb: string, argv: readonly string[]): Job 
   }
   child.stdout.on("data", add)
   child.stderr.on("data", add)
-  child.on("error", (error) => add(Buffer.from(`\n${error.message}\n`)))
+  child.on("error", (error) => { add(Buffer.from(`\n${error.message}\n`)) })
   child.on("close", (code) => {
     job.exitCode = code ?? 1
     job.finishedAt = new Date().toISOString()

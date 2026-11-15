@@ -37,9 +37,9 @@ export function useUsage(
   const prev = useRef<Sample | null>(null)
 
   useEffect(() => {
-    const on = (): void => setShown(visible())
+    const on = (): void => { setShown(visible()) }
     document.addEventListener("visibilitychange", on)
-    return () => document.removeEventListener("visibilitychange", on)
+    return () => { document.removeEventListener("visibilitychange", on) }
   }, [])
 
   // Another QEMU process: start again.

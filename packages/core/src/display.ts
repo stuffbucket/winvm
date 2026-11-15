@@ -44,11 +44,11 @@
  * that size on its command line (so its saves still load) until switched
  * again.
  */
-import { spawnSync } from "node:child_process"
 import { readFileSync, writeFileSync } from "node:fs"
 import { resolve } from "node:path"
 
 import type { Paths } from "./paths"
+import { spawnText } from "./shell"
 
 export type DisplayConfig =
   | { readonly device: "ramfb" }
@@ -175,9 +175,9 @@ export const sharesFolderFromCommandLine = (command: string): boolean => /(?:^|\
 /** The full command line of the running process `pid`; null when it cannot be read. */
 export function runningCommand(pid: number): string | null {
   // -ww: never cut to the terminal's width, or a device could be cut off.
-  const r = spawnSync("ps", ["-ww", "-o", "command=", "-p", String(pid)], { encoding: "utf8" })
+  const r = spawnText("ps", ["-ww", "-o", "command=", "-p", String(pid)])
   if (r.status !== 0) return null
-  const cmd = (r.stdout ?? "").trim()
+  const cmd = r.stdout.trim()
   return cmd === "" ? null : cmd
 }
 

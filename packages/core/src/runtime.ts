@@ -131,7 +131,7 @@ export function verifyRuntime(rt: Runtime, o: { readonly signatureOk?: (path: st
   return problems
 }
 
-export async function ensureRuntime(o: { readonly pin?: RuntimePin; readonly cache?: string } = {}): Promise<Runtime> {
+export function ensureRuntime(o: { readonly pin?: RuntimePin; readonly cache?: string } = {}): Runtime {
   const pin = o.pin ?? runtimePin()
   const cache = o.cache ?? runtimeCache()
   const found = findRuntime({ env: {}, execPath: "", cache, pin })

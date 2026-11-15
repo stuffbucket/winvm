@@ -37,6 +37,10 @@ const BIOME_IGNORE_END = /^biome-ignore-end\s+\S+/
 const BIOME_IGNORE_ANY = /^biome-ignore/
 const TS_EXPECT_ERROR = /^@ts-expect-error\s+\S/
 const TS_EXPECT_ERROR_NO_REASON = /^@ts-expect-error\s*$/
+const OXLINT_DISABLE =
+  /^oxlint-disable-next-line\s+typescript\/[a-z-]+\s+--\s+\S/
+const OXLINT_ANY = /^oxlint-/
+const ESLINT_DIRECTIVE = /\beslint-(?:disable|enable)/
 const TS_DIRECTIVE = /^@ts-check$/
 const PURE_ANNOTATION = /^[@#]__(?:PURE|NO_SIDE_EFFECTS)__$/
 const REFERENCE_DIRECTIVE = /^\/\/\/\s*<reference\s/
@@ -193,12 +197,20 @@ function body(raw: string, block: boolean): string {
   return raw.replace(/^\/\/[/!]?/, "").trim()
 }
 
-function problem(
+export function problem(
   language: Language,
   raw: string,
   block: boolean,
 ): string | undefined {
   const content = body(raw, block)
+  if (ESLINT_DIRECTIVE.test(content)) {
+    return "eslint directive (there is no ESLint here; oxlint would still honor it)"
+  }
+  if (language === "ts" && OXLINT_ANY.test(content)) {
+    return !block && OXLINT_DISABLE.test(content)
+      ? undefined
+      : "oxlint directive other than `oxlint-disable-next-line typescript/<rule> -- <reason>`"
+  }
   if (URL_PATTERN.test(content)) return undefined
   if (language === "rust") {
     return !block && /^\/\/(?![/!])/.test(raw) && SAFETY.test(content)
@@ -252,14 +264,16 @@ function check(file: string): Violation[] {
   return violations
 }
 
-const requested = process.argv.slice(2)
-const files = requested.length > 0 ? requested : trackedFiles()
-const violations = files.flatMap(check)
-for (const v of violations) {
-  console.log(`${v.file}:${String(v.line)}: ${v.reason}: ${v.excerpt}`)
+if (import.meta.main) {
+  const requested = process.argv.slice(2)
+  const files = requested.length > 0 ? requested : trackedFiles()
+  const violations = files.flatMap(check)
+  for (const v of violations) {
+    console.log(`${v.file}:${String(v.line)}: ${v.reason}: ${v.excerpt}`)
+  }
+  const filesWithViolations = new Set(violations.map((v) => v.file)).size
+  console.log(
+    `check-comments: ${String(violations.length)} disallowed comments in ${String(filesWithViolations)} files`,
+  )
+  process.exit(violations.length > 0 ? 1 : 0)
 }
-const filesWithViolations = new Set(violations.map((v) => v.file)).size
-console.log(
-  `check-comments: ${String(violations.length)} disallowed comments in ${String(filesWithViolations)} files`,
-)
-process.exit(violations.length > 0 ? 1 : 0)
