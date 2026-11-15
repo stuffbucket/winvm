@@ -13,8 +13,13 @@
     "winvm": "bun apps/cli/src/winvm.ts"
   },
   "devDependencies": {
+    "@biomejs/biome": "2.6.6",
+    "@types/bun": "1.4.0",
     "@winvm/cli": "workspace:*",
-    "turbo": "^2.11.4"
+    "dependency-cruiser": "18.7.2",
+    "knip": "6.44.2",
+    "turbo": "2.11.9",
+    "typescript": "6.0.3"
   },
   "packageManager": "pnpm@12.3.4",
   "pnpmTarballUrlPolicy": {
