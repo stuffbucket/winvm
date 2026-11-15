@@ -15,7 +15,7 @@ import * as qemu from "../src/qemu"
 import * as qga from "../src/qga"
 import * as qmp from "../src/qmp"
 import * as savecmds from "../src/savecmds"
-import * as service from "../src/service"
+import * as servicectl from "../src/servicectl"
 import * as share from "../src/share"
 import * as vnc from "../src/vnc"
 import { realActions } from "../src/watch"
@@ -131,7 +131,7 @@ describe("two cold starts at once", () => {
     })
     let calls = 0
     // The first launch is mid-way (its swtpm up, its control service starting) when the second start runs.
-    spyOn(service, "ensureService").mockImplementation(async () => {
+    spyOn(servicectl, "ensureService").mockImplementation(async () => {
       calls += 1
       if (calls === 1) {
         inLaunch()
@@ -317,7 +317,7 @@ describe("kill", () => {
     })
     spawned.push(emulator)
     for (let i = 0; i < 100 && lines(swtpmLog()).length === 0; i += 1) await sleep(10)
-    spyOn(service, "stopService").mockImplementation(() => undefined)
+    spyOn(servicectl, "stopService").mockImplementation(() => undefined)
     let release: () => void = () => undefined
     const starting = withOperation(NAME, "start", async () => {
       await new Promise<void>((r) => {
@@ -355,7 +355,7 @@ describe("kill", () => {
     const own = Bun.spawn([resolve(state, "runtime", "bin", "qemu-system-aarch64"), "-name", `winvm-${NAME}`, "-pidfile", p.pid], { stdout: "ignore", stderr: "ignore" })
     spawned.push(own)
     writeFileSync(p.pid, `${String(own.pid)}\n`)
-    spyOn(service, "stopService").mockImplementation(() => undefined)
+    spyOn(servicectl, "stopService").mockImplementation(() => undefined)
     let release: () => void = () => undefined
     const wedged = withOperation(NAME, "stop", async () => {
       await new Promise<void>((r) => {

@@ -12,17 +12,16 @@ import { processStart } from "../src/proc"
 import { qemuArgs } from "../src/qemu"
 import * as qmp from "../src/qmp"
 import { buildIdentity } from "../src/identity"
+import { runService, type ServiceHandle } from "../src/service"
 import {
   dropServiceRecord,
   ensureService,
   keepService,
   readService,
-  runService,
   serviceFreshness,
   stopService,
-  type ServiceHandle,
   type ServiceInfo,
-} from "../src/service"
+} from "../src/servicectl"
 import { FakeAgent } from "./fakes/agent"
 import { FakeQmp } from "./fakes/qmp"
 

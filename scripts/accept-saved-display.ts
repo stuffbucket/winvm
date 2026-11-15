@@ -73,7 +73,7 @@ const { ensureInstance } = await import("../packages/core/src/instance")
 const { pathsFor } = await import("../packages/core/src/paths")
 const { stopSidecars } = await import("../packages/core/src/qemu")
 const { quitQemu, readSave } = await import("../packages/core/src/saves")
-const { stopService } = await import("../packages/core/src/service")
+const { stopService } = await import("../packages/core/src/servicectl")
 const { virtiofsdSocket } = await import("../packages/core/src/share")
 
 const name = "accept-display"

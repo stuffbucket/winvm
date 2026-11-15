@@ -26,7 +26,7 @@ import * as qga from "../src/qga"
 import * as qmp from "../src/qmp"
 import * as savecmds from "../src/savecmds"
 import * as screen from "../src/screen"
-import * as service from "../src/service"
+import * as servicectl from "../src/servicectl"
 import * as share from "../src/share"
 import * as shell from "../src/shell"
 import { gather } from "../src/status"
@@ -152,7 +152,7 @@ beforeEach(() => {
     writeFileSync(path, "result")
   })
   // The control service is what answers on p.qmp; a new instance has no socket until it starts.
-  spyOn(service, "ensureService").mockImplementation(async (_name, p) => {
+  spyOn(servicectl, "ensureService").mockImplementation(async (_name, p) => {
     writeFileSync(p.qmp, "")
     return {} as never
   })
