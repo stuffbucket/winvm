@@ -22,9 +22,9 @@ import { resolve } from "node:path"
 import { effectiveConfig } from "./config"
 import type { ClosePolicy } from "./config"
 import { describeDisplay, readDisplay, runningDisplay } from "./display"
-import { frozenFrom, markedAsleep, savingRunning } from "./frozen"
+import { frozenFrom, markedAsleep } from "./frozen"
 import { qmpCommand } from "./monitor"
-import { readOperation } from "./operation"
+import { readOperation, savingRunning } from "./operation"
 import type { OperationInfo } from "./operation"
 import { home, instanceDir, listInstances, pathsFor, readImageMeta, readMeta } from "./paths"
 import type { Paths } from "./paths"
@@ -418,7 +418,7 @@ export async function gather(name: string, deep = true): Promise<InstanceStatus>
   const pid = qemu.pidOf(p)
   const running = pid !== null
   const vmStatus = running ? await queryStatus(p) : null
-  const saving = running && savingRunning(p)
+  const saving = running && savingRunning(name)
   const state = deriveState(running, vmStatus, saves, markedAsleep(p, pid), saving)
   // A paused or asleep guest cannot answer its agent: asking only waits out
   // the probe's timeout (~4 s), and leaves calls queued for when it resumes.

@@ -47,6 +47,7 @@ import * as finder from "./finder"
 import type { Decision, SaveInfo, Settings, Timing } from "./idle"
 import { DEFAULT_TIMING, DRIFT_TOLERANCE_MS, IdleMachine, autosaveName, savesToRotate } from "./idle"
 import { isFrozenRunState } from "./frozen"
+import { AUTOMATIC_ENV, InstanceBusy, leaseHolder, withOperation } from "./operation"
 import { buildIdentity } from "./identity"
 import type { Paths } from "./paths"
 import { cliArgv, instanceDir, managedEnv, pathsFor } from "./paths"
@@ -153,15 +154,17 @@ export interface Actions {
 
 const errText = (e: unknown): string => (e instanceof Error ? e.message : String(e))
 
-/** saves.withLock's refusal: another winvm is saving or loading this instance. */
-const isBusy = (e: unknown): boolean => /is busy: another winvm/.test(errText(e))
+const isBusy = (e: unknown): boolean => e instanceof InstanceBusy
+
+const automatically = async <T>(instance: string, run: () => Promise<T>): Promise<T> =>
+  await withOperation(instance, "save", run, { automatic: true })
 
 async function runWinvm(argv: readonly string[], log: (s: string) => void): Promise<boolean> {
   log(`run: winvm ${argv.join(" ")}`)
   const started = Date.now()
   const code = await new Promise<number>((res) => {
     // Marked so the stow it runs never turns round and reconciles this watcher (lifecycle.ts).
-    const child = spawn(process.execPath, [...cliArgv(...argv)], { stdio: ["ignore", "pipe", "pipe"], env: managedEnv() })
+    const child = spawn(process.execPath, [...cliArgv(...argv)], { stdio: ["ignore", "pipe", "pipe"], env: { ...managedEnv(), [AUTOMATIC_ENV]: "1" } })
     // Bounded, so a command that prints its usage (or worse) every time cannot grow the log without limit.
     let lines = 0
     const relay = (chunk: Buffer): void => {
@@ -208,7 +211,7 @@ export function realActions(instance: string, p: Paths, log: (s: string) => void
             return "busy"
           }
         }
-        const r = await saves.withLock(instance, async () => await saves.createSave(instance, { name, kind: "auto" }))
+        const r = await automatically(instance, async () => await saves.createSave(instance, { name, kind: "auto" }))
         const m = r.manifest
         log(
           `autosave: saved "${m.name}" in ${String(Math.round((m.saveMs ?? 0) / 100) / 10)} s, ` +
@@ -232,7 +235,7 @@ export function realActions(instance: string, p: Paths, log: (s: string) => void
     deleteSaves: async (names) => {
       if (names.length === 0) return true
       try {
-        await saves.withLock(instance, async () => {
+        await automatically(instance, async () => {
           for (const n of names) saves.removeSave(instance, n)
         })
         return true
@@ -268,17 +271,7 @@ const newestOfKind = (list: readonly SaveInfo[], kind: string): string | undefin
     .toSorted()
     .at(-1)
 
-/** Whether a save or load holds the instance — during a load, QEMU is down only because it is being replaced. */
-function saveLockHeld(instance: string): boolean {
-  try {
-    const pid = Number.parseInt(readFileSync(resolve(saves.savesDir(instance), ".lock"), "utf8").trim(), 10)
-    if (!Number.isFinite(pid)) return false
-    process.kill(pid, 0)
-    return true
-  } catch {
-    return false
-  }
-}
+const leaseHeld = (instance: string): boolean => leaseHolder(instance) !== null
 
 // ---------------------------------------------------------------------------
 // Sampling
@@ -741,7 +734,7 @@ export async function watch(name: string, o: WatchOptions = {}): Promise<number>
       if (livePid === null) {
         // A load quits QEMU and starts another; only a QEMU gone with nobody
         // holding the instance means it has stopped for good.
-        if (saveLockHeld(name)) continue
+        if (leaseHeld(name)) continue
         // Its drives in Finder would hang whatever touches them now.
         finder.cleanStale(name)
         finish("qemu exited")

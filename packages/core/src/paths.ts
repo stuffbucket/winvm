@@ -154,8 +154,7 @@ export interface Paths {
   readonly events: string
   /** Held while one winvm brings the service and watcher up to its build (lifecycle.ts). */
   readonly reconcile: string
-  /** One `<pid>.json` per active machine-impacting command (operation.ts). */
-  readonly operations: string
+  readonly lease: string
   readonly pid: string
   readonly serial: string
   /**
@@ -194,7 +193,7 @@ export function pathsFor(name: string): Paths {
     control: resolve(dir, "control.sock"),
     events: resolve(dir, "events.jsonl"),
     reconcile: resolve(dir, "reconcile.lock"),
-    operations: resolve(dir, "operations"),
+    lease: resolve(dir, "lease.json"),
     pid: resolve(dir, "qemu.pid"),
     serial: resolve(dir, "serial.log"),
     serialPrev: resolve(dir, "serial.prev.log"),

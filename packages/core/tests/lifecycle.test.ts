@@ -14,7 +14,7 @@ import { resolve } from "node:path"
 
 import { ManagementError, reconcileManagement, reconcileNote, shouldReconcileVerb, type ReconcileOptions } from "../src/lifecycle"
 import { PACKAGE_DIR, pathsFor, type Paths } from "../src/paths"
-import * as saves from "../src/saves"
+import { processStart } from "../src/proc"
 import { ensureService, readService, stopService, type ServiceInfo } from "../src/service"
 import { ensureWatcher, realActions, stopWatcher, watchPathsFor, watcherRecord } from "../src/watch"
 import { FakeAgent } from "./fakes/agent"
@@ -122,9 +122,29 @@ function expectQemuUntouched(): void {
   expect(readFileSync(p.pid, "utf8").trim()).toBe(String(qemu.pid))
 }
 
+const lease = (pid: number, operation: string, automatic = false): void =>
+  writeFileSync(
+    p.lease,
+    JSON.stringify({ operation, id: `lease-${String(pid)}`, pid, pidStart: processStart(pid), startedAt: "2026-11-14T00:00:00.000Z", instance: "t", automatic }),
+  )
+
 /** Where a watcher still owed is written down, as a reconciliation that stopped one and died would leave it. */
 const owedPath = (): string => resolve(p.dir, "watch.owed")
 const owe = (qemuPid: number): void => writeFileSync(owedPath(), JSON.stringify({ qemu: qemuPid }))
+
+function loadFromAnotherProcess(): Promise<string> {
+  const f = resolve(home, `load-${String(Date.now())}.ts`)
+  writeFileSync(
+    f,
+    `import { readFileSync } from "node:fs"\n` +
+      `import { withOperation } from ${JSON.stringify(resolve(import.meta.dir, "..", "src", "operation.ts"))}\n` +
+      `const watcherBuild = () => JSON.parse(readFileSync(${JSON.stringify(watchPathsFor("t").state)}, "utf8")).build\n` +
+      `console.log(await withOperation("t", "load", watcherBuild, { pollMs: 20, onWait: () => undefined }).catch(() => "refused"))\n`,
+  )
+  const child = Bun.spawn([process.execPath, f], { env: childEnv(), stdout: "pipe", stderr: "ignore" })
+  spawned.push(child)
+  return new Response(child.stdout).text().then((t) => t.trim())
+}
 
 /** A script, in the temporary home, that runs `body` with reconcileManagement imported: another winvm process. */
 function childScript(body: string): string {
@@ -306,17 +326,12 @@ describe("reconciling management processes", () => {
 })
 
 describe("saves in progress", () => {
-  for (const how of ["the save lock", "saving.json"] as const) {
-    it(`defers while a manual save holds ${how}, and changes nothing`, async () => {
+  for (const operation of ["save", "load", "reboot"] as const) {
+    it(`defers while a person's ${operation} holds the instance's lease, and changes nothing`, async () => {
       const svc = await service(OLD)
       const w = await watcher(OLD)
-      const saver = await hold("winvm", "save", "-i", "t")
-      if (how === "the save lock") {
-        mkdirSync(resolve(home, "saves", "t"), { recursive: true })
-        writeFileSync(resolve(home, "saves", "t", ".lock"), String(saver.pid))
-      } else {
-        writeFileSync(resolve(p.dir, "saving.json"), JSON.stringify({ pid: saver.pid }))
-      }
+      const saver = await hold("winvm", operation, "-i", "t")
+      lease(saver.pid, operation)
       const s = seams()
       expect(await reconcileManagement("t", p, s.options)).toEqual({
         changed: false,
@@ -336,21 +351,21 @@ describe("saves in progress", () => {
     })
   }
 
-  it("holds the save lock while it replaces the service, so no save can start under it", async () => {
+  it("holds the instance's lease while it replaces the service, so no save can start under it", async () => {
     await service(OLD)
-    const saveLock = resolve(home, "saves", "t", ".lock")
-    const during: string[] = []
+    const during: unknown[] = []
     const s = seams()
     const base = s.options
     await reconcileManagement("t", p, {
       ...base,
       startService: () => {
-        during.push(existsSync(saveLock) ? readFileSync(saveLock, "utf8").trim() : "no save lock")
+        const held = existsSync(p.lease) ? (JSON.parse(readFileSync(p.lease, "utf8")) as Record<string, unknown>) : null
+        during.push(held === null ? "no lease" : { operation: held["operation"], pid: held["pid"], automatic: held["automatic"] })
         base.startService?.()
       },
     })
-    expect(during).toEqual([String(process.pid)])
-    expect(existsSync(saveLock)).toBe(false)
+    expect(during).toEqual([{ operation: "reconcile", pid: process.pid, automatic: true }])
+    expect(existsSync(p.lease)).toBe(false)
     expectQemuUntouched()
   })
 
@@ -358,10 +373,7 @@ describe("saves in progress", () => {
     const svc = await service(OLD)
     // SIGTERM to a watcher mid-autosave: it finishes the save (here, 1 s) and then exits.
     const w = await watcher(OLD, "autosaving", "--linger", "1000")
-    // The save lock, held by the watcher itself, as saves.withLock does in-process.
-    mkdirSync(resolve(home, "saves", "t"), { recursive: true })
-    writeFileSync(resolve(home, "saves", "t", ".lock"), String(w.pid))
-    void w.exited.then(() => rmSync(resolve(home, "saves", "t", ".lock"), { force: true }))
+    lease(w.pid, "save", true)
     const s = seams()
     const t0 = Date.now()
     const first = reconcileManagement("t", p, s.options)
@@ -831,7 +843,7 @@ describe("races", () => {
     expectQemuUntouched()
   })
 
-  it("holds the save lock from stopping the watcher until it is back, so a load cannot start in between", async () => {
+  it("holds the instance's lease from stopping the watcher until it is back, so a load waits rather than start in between", async () => {
     await service(OLD)
     const w = await watcher(OLD)
     const loads: Promise<string>[] = []
@@ -839,13 +851,13 @@ describe("races", () => {
       if (sig !== 0) {
         signals.push({ pid, sig: String(sig ?? "SIGTERM") })
         // A load, arriving the moment the watcher is told to stop.
-        if (pid === w.pid) loads.push(saves.withLock("t", async () => await Promise.resolve()).then(() => "loaded", () => "refused"))
+        if (pid === w.pid) loads.push(loadFromAnotherProcess())
       }
       return realKill(pid, sig)
     }) as typeof process.kill
     const s = seams()
     const r = await reconcileManagement("t", p, s.options)
-    expect(await Promise.all(loads)).toEqual(["refused"])
+    expect(await Promise.all(loads)).toEqual([CURRENT])
     expect(r.changed).toBe(true)
     expect(s.starts).toEqual({ service: 1, watcher: 1 })
     expectQemuUntouched()

@@ -1,21 +1,13 @@
-/**
- * Which machine-impacting command is running against an instance, across
- * processes. The viewer and the close policy read this to tell "starting" or
- * "saving" from an idle machine, so it has to survive a crashed command
- * without becoming a permanent busy state.
- *
- * Each running command publishes `operations/<pid>.json` and removes exactly
- * that record when it settles. Readers never trust a record on its own: the
- * pid must be alive and still be a WinVM CLI process running the recorded verb.
- */
-import { spawnSync } from "node:child_process"
+import { AsyncLocalStorage } from "node:async_hooks"
 import { randomUUID } from "node:crypto"
-import { existsSync, linkSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from "node:fs"
-import { resolve } from "node:path"
+import { existsSync, mkdirSync, rmSync } from "node:fs"
+import { dirname } from "node:path"
 
-import { commandInstance, isValidInstanceName, winvmCommandAfter } from "./args"
+import { isValidInstanceName } from "./args"
 import type { Args } from "./args"
+import { linkNew, readOr, replaceWhole, takeOver } from "./exclusive"
 import { pathsFor } from "./paths"
+import { isSameProcess, ownStart, processStart } from "./proc"
 
 export const VM_OPERATIONS = [
   "start",
@@ -40,115 +32,86 @@ export const VM_OPERATIONS = [
 
 export type VmOperation = (typeof VM_OPERATIONS)[number]
 
+const INTERNAL_OPERATIONS = ["reconcile", "destroy"] as const
+
+export type LeaseOperation = VmOperation | (typeof INTERNAL_OPERATIONS)[number]
+
 export interface OperationInfo {
   readonly operation: VmOperation
   readonly pid: number
   readonly startedAt: string
 }
 
-/** What is on disk: the public record plus the lease token that proves ownership. */
-interface OperationRecord extends OperationInfo {
+export interface LeaseHolder {
+  readonly operation: LeaseOperation
+  readonly pid: number
+  readonly startedAt: string
+  readonly automatic: boolean
+}
+
+interface LeaseRecord extends LeaseHolder {
+  readonly id: string
+  readonly pidStart: string | null
   readonly instance: string
-  readonly token: string
+  readonly savingRunning?: true
 }
 
-export interface OperationReadSeams {
-  readonly alive?: (pid: number) => boolean
-  readonly command?: (pid: number) => string | null
+export interface LeaseSeams {
+  readonly startOf?: (pid: number) => string | null
 }
 
-/** Whether a process with this pid exists. EPERM means it does, and is someone else's. */
-function isAlive(pid: number): boolean {
-  try {
-    process.kill(pid, 0)
-    return true
-  } catch (e) {
-    return (e as NodeJS.ErrnoException).code === "EPERM"
-  }
+export interface LeaseOptions extends LeaseSeams {
+  readonly automatic?: boolean
+  readonly waitMs?: number
+  readonly pollMs?: number
+  readonly onWait?: (holder: LeaseHolder) => void
 }
 
-/** The process's command line as `ps` prints it, or null when there is none. */
-function commandOf(pid: number): string | null {
-  const r = spawnSync("ps", ["-o", "command=", "-p", String(pid)], { encoding: "utf8" })
-  const text = (r.stdout ?? "").trim()
-  return r.status === 0 && text !== "" ? text : null
+export const AUTOMATIC_ENV = "WINVM_AUTOMATIC"
+export const AUTOMATIC_WAIT_MS = 10 * 60_000
+
+const isVmOperation = (v: unknown): v is VmOperation => typeof v === "string" && (VM_OPERATIONS as readonly string[]).includes(v)
+const isLeaseOperation = (v: unknown): v is LeaseOperation =>
+  isVmOperation(v) || (typeof v === "string" && (INTERNAL_OPERATIONS as readonly string[]).includes(v))
+
+const GOLDEN_ACTION: Readonly<Record<string, VmOperation>> = { create: "golden-create", reset: "golden-reset" }
+
+export function operationFor(sub: string | undefined, args: Args): LeaseOperation | null {
+  const action = args.positional[0]
+  if (sub === "golden") return action === undefined ? null : (GOLDEN_ACTION[action] ?? null)
+  if (sub === "share") return action === "install" ? "setup" : null
+  if (sub === "destroy") return "destroy"
+  if (sub === "setup" || sub === "golden-create" || sub === "golden-reset") return null
+  return isVmOperation(sub) ? sub : null
 }
 
-const recordFile = (name: string, pid: number): string => resolve(pathsFor(name).operations, `${String(pid)}.json`)
+const CREATES: readonly LeaseOperation[] = ["start", "load", "golden-create"]
 
-/** Write the record whole, or not at all: a reader never sees half of one. */
-function publish(file: string, record: OperationRecord): void {
-  const tmp = `${file}.${String(process.pid)}.${randomUUID()}.tmp`
-  writeFileSync(tmp, JSON.stringify(record), { mode: 0o600 })
-  renameSync(tmp, file)
-}
-
-/** Remove the file only while it still carries this lease; a newer owner's is left alone. */
-function release(file: string, token: string): void {
-  try {
-    const current = JSON.parse(readFileSync(file, "utf8")) as { token?: unknown }
-    if (current.token === token) rmSync(file, { force: true })
-  } catch {
-    // already gone or replaced by something unreadable: not this lease's to remove
-  }
-}
-
-const isOperation = (v: unknown): v is VmOperation => typeof v === "string" && (VM_OPERATIONS as readonly string[]).includes(v)
-
-/** The nested `winvm golden <action>` each golden operation is. */
-const GOLDEN_ACTION: Readonly<Partial<Record<VmOperation, string>>> = { "golden-create": "create", "golden-reset": "reset" }
-
-/**
- * The operation a CLI invocation performs on its machine, or null for one that
- * only reads or touches something else. `golden` counts only for the two
- * actions that run or replace the machine's state.
- */
-export function operationFor(sub: string | undefined, args: Args): VmOperation | null {
-  if (sub === "golden") {
-    const action = args.positional[0]
-    return action === "create" ? "golden-create" : action === "reset" ? "golden-reset" : null
-  }
-  return isOperation(sub) && GOLDEN_ACTION[sub] === undefined ? sub : null
-}
-
-/** Commands that bring an instance into being, so may lease one that does not exist yet. */
-const CREATES: readonly VmOperation[] = ["start", "setup", "golden-create"]
-
-/** A single directory name under instances/: nothing that resolves outside it. */
 const isPlainName = (name: string): boolean => name !== "" && name !== "." && name !== ".." && !name.includes("/") && !name.includes("\0")
 
-/**
- * Whether `name` may have operation records. Never a name that leaves
- * instances/. An existing instance always (it may predate today's naming
- * rule); otherwise only a name `create` would take, and only for a command that
- * creates the instance — so a mistyped `-i` leaves no directory behind.
- */
-function leaseable(name: string, operation: VmOperation): boolean {
+function leaseable(name: string, operation: LeaseOperation): boolean {
   if (!isPlainName(name)) return false
   return existsSync(pathsFor(name).meta) || (CREATES.includes(operation) && isValidInstanceName(name))
 }
 
-export async function withOperation<T>(name: string, operation: VmOperation, run: () => T | Promise<T>): Promise<T> {
-  if (!leaseable(name, operation)) return await run()
-  const file = recordFile(name, process.pid)
-  const token = randomUUID()
-  mkdirSync(pathsFor(name).operations, { recursive: true })
-  publish(file, { operation, pid: process.pid, startedAt: new Date().toISOString(), instance: name, token })
-  // A command may call process.exit inside its lease (ensureInstance, requireHost),
-  // which skips `finally`. The exit event still runs, synchronously, and release
-  // is token-checked, so it clears this lease's record and no other.
-  const onExit = (): void => release(file, token)
-  process.on("exit", onExit)
-  try {
-    return await run()
-  } finally {
-    process.off("exit", onExit)
-    release(file, token)
+const held = new AsyncLocalStorage<ReadonlyMap<string, string>>()
+
+const heldHere = (name: string): string | undefined => held.getStore()?.get(name)
+
+export class InstanceBusy extends Error {
+  readonly holder: LeaseHolder
+
+  constructor(name: string, holder: LeaseHolder) {
+    super(
+      `instance "${name}" is busy: ${holder.operation} (pid ${String(holder.pid)}${holder.automatic ? ", started by winvm itself" : ""}) ` +
+        `since ${holder.startedAt}; try again once it finishes`,
+    )
+    this.name = "InstanceBusy"
+    this.holder = holder
   }
 }
 
-/** The record in `text`, if it is a whole one written by process `pid` for `name`. */
-function parseRecord(text: string, pid: number, name: string): OperationRecord | null {
+function parseRecord(text: string, name: string): LeaseRecord | null {
   let v: unknown
   try {
     v = JSON.parse(text)
@@ -157,83 +120,121 @@ function parseRecord(text: string, pid: number, name: string): OperationRecord |
   }
   if (typeof v !== "object" || v === null || Array.isArray(v)) return null
   const r = v as Record<string, unknown>
-  if (!isOperation(r["operation"]) || r["pid"] !== pid || r["instance"] !== name) return null
-  if (typeof r["startedAt"] !== "string" || typeof r["token"] !== "string" || r["token"] === "") return null
-  return { operation: r["operation"], pid, startedAt: r["startedAt"], instance: name, token: r["token"] }
-}
-
-/**
- * Whether `command` is a WinVM CLI process running `operation` for `name`. An
- * explicit selector must name this instance; without one the command ran
- * against the instance it resolved (WINVM_INSTANCE, else "default"), which `ps`
- * cannot show, so the record's own instance stands.
- */
-function runs(command: string, operation: VmOperation, name: string): boolean {
-  const nested = GOLDEN_ACTION[operation]
-  const after = winvmCommandAfter(command, nested === undefined ? operation : "golden")
-  if (after === null) return false
-  if (nested !== undefined && after.trim().split(/\s+/)[0] !== nested) return false
-  const selected = commandInstance(after)
-  return selected === null || selected === name
-}
-
-/**
- * Remove a record judged stale — exactly the one inspected. A command that
- * published its own meanwhile (a reused pid, or a lease renewed in place) must
- * keep it, so the file is moved aside, compared with what was judged, and put
- * back if it differs.
- */
-function dropStale(file: string, judged: string): void {
-  const aside = `${file}.${String(process.pid)}.${randomUUID()}.stale`
-  try {
-    renameSync(file, aside)
-  } catch {
-    return
+  const pid = r["pid"]
+  const pidStart = r["pidStart"]
+  if (!isLeaseOperation(r["operation"]) || typeof pid !== "number" || !Number.isInteger(pid) || pid <= 0 || r["instance"] !== name) return null
+  if (typeof r["id"] !== "string" || r["id"] === "" || typeof r["startedAt"] !== "string") return null
+  if (pidStart !== null && typeof pidStart !== "string") return null
+  return {
+    operation: r["operation"],
+    id: r["id"],
+    pid,
+    pidStart,
+    startedAt: r["startedAt"],
+    instance: name,
+    automatic: r["automatic"] === true,
+    ...(r["savingRunning"] === true ? { savingRunning: true as const } : {}),
   }
-  try {
-    if (readFileSync(aside, "utf8") !== judged) {
-      try {
-        // Another owner may have published since; if so, theirs stands.
-        linkSync(aside, file)
-      } catch {
-        // EEXIST: a newer record already holds the name
-      }
-    }
-  } catch {
-    // vanished: nothing of ours to put back
-  }
-  rmSync(aside, { force: true })
 }
 
-export function readOperation(name: string, seams: OperationReadSeams = {}): OperationInfo | null {
+function readLease(name: string, seams: LeaseSeams = {}): LeaseRecord | null {
   if (!isPlainName(name)) return null
-  const alive = seams.alive ?? isAlive
-  const command = seams.command ?? commandOf
-  const dir = pathsFor(name).operations
-  let entries: string[]
+  const file = pathsFor(name).lease
+  const text = readOr(file, null)
+  if (text === null) return null
+  const r = parseRecord(text, name)
+  if (r !== null && isSameProcess(r.pid, r.pidStart, seams.startOf ?? processStart)) return r
+  takeOver(file, text)
+  return null
+}
+
+const holderOf = (r: LeaseRecord): LeaseHolder => ({ operation: r.operation, pid: r.pid, startedAt: r.startedAt, automatic: r.automatic })
+
+export function readOperation(name: string, seams: LeaseSeams = {}): OperationInfo | null {
+  const r = readLease(name, seams)
+  return r === null || !isVmOperation(r.operation) ? null : { operation: r.operation, pid: r.pid, startedAt: r.startedAt }
+}
+
+export function leaseHolder(name: string, seams: LeaseSeams = {}): LeaseHolder | null {
+  const r = readLease(name, seams)
+  return r === null || r.id === heldHere(name) ? null : holderOf(r)
+}
+
+export const savingRunning = (name: string, seams: LeaseSeams = {}): boolean => readLease(name, seams)?.savingRunning === true
+
+function rewriteOwn(name: string, change: (r: LeaseRecord) => LeaseRecord): void {
+  const id = heldHere(name)
+  if (id === undefined) return
+  const file = pathsFor(name).lease
+  const current = parseRecord(readOr(file, ""), name)
+  if (current?.id === id) replaceWhole(file, JSON.stringify(change(current)))
+}
+
+export const markSavingRunning = (name: string): void => rewriteOwn(name, (r) => ({ ...r, savingRunning: true }))
+
+export const clearSavingRunning = (name: string): void =>
+  rewriteOwn(name, ({ savingRunning: _, ...rest }) => rest)
+
+function release(file: string, id: string, name: string): void {
+  if (parseRecord(readOr(file, ""), name)?.id === id) rmSync(file, { force: true })
+}
+
+const sleep = async (ms: number): Promise<void> => await new Promise((r) => setTimeout(r, ms))
+
+const waitsFor = (automatic: boolean, holder: LeaseHolder): boolean => !automatic && holder.automatic
+
+function announceWait(name: string): (holder: LeaseHolder) => void {
+  return (holder) => console.error(`instance "${name}": waiting for the ${holder.operation} winvm started by itself (pid ${String(holder.pid)}) to finish`)
+}
+
+const TAKE_ATTEMPTS = 50
+
+async function acquire(name: string, operation: LeaseOperation, o: LeaseOptions): Promise<LeaseRecord | InstanceBusy> {
+  const file = pathsFor(name).lease
+  const automatic = o.automatic ?? process.env[AUTOMATIC_ENV] === "1"
+  const record: LeaseRecord = {
+    operation,
+    id: randomUUID(),
+    pid: process.pid,
+    pidStart: ownStart(),
+    startedAt: new Date().toISOString(),
+    instance: name,
+    automatic,
+  }
+  const deadline = Date.now() + (o.waitMs ?? AUTOMATIC_WAIT_MS)
+  const onWait = o.onWait ?? announceWait(name)
+  let announced = false
+  for (let vanished = 0; vanished < TAKE_ATTEMPTS; ) {
+    mkdirSync(dirname(file), { recursive: true })
+    if (linkNew(file, JSON.stringify(record))) return record
+    const holder = leaseHolder(name, o)
+    if (holder === null) {
+      vanished += 1
+      continue
+    }
+    if (!waitsFor(automatic, holder) || Date.now() >= deadline) return new InstanceBusy(name, holder)
+    if (!announced) onWait(holder)
+    announced = true
+    await sleep(o.pollMs ?? 200)
+  }
+  throw new Error(`could not take ${file}: it kept changing under this command`)
+}
+
+export async function withOperation<T>(name: string, operation: LeaseOperation, run: () => T | Promise<T>, o: LeaseOptions = {}): Promise<T> {
+  if (heldHere(name) !== undefined || !leaseable(name, operation)) return await run()
+  const got = await acquire(name, operation, operation === "kill" ? { ...o, waitMs: 0 } : o)
+  if (got instanceof InstanceBusy) {
+    if (operation !== "kill") throw got
+    console.error(`note: ${got.holder.operation} (pid ${String(got.holder.pid)}) holds "${name}"; killing it anyway`)
+    return await run()
+  }
+  const file = pathsFor(name).lease
+  const onExit = (): void => release(file, got.id, name)
+  process.on("exit", onExit)
   try {
-    entries = readdirSync(dir)
-  } catch {
-    return null
+    return await held.run(new Map([...(held.getStore() ?? []), [name, got.id]]), run)
+  } finally {
+    process.off("exit", onExit)
+    release(file, got.id, name)
   }
-  let newest: OperationRecord | null = null
-  for (const entry of entries) {
-    const pid = /^(\d+)\.json$/.exec(entry)?.[1]
-    if (pid === undefined) continue
-    const file = resolve(dir, entry)
-    let text: string
-    try {
-      text = readFileSync(file, "utf8")
-    } catch {
-      continue
-    }
-    const r = parseRecord(text, Number(pid), name)
-    const cmd = r !== null && alive(r.pid) ? command(r.pid) : null
-    if (r === null || cmd === null || !runs(cmd, r.operation, name)) {
-      dropStale(file, text)
-      continue
-    }
-    if (newest === null || r.startedAt > newest.startedAt || (r.startedAt === newest.startedAt && r.pid > newest.pid)) newest = r
-  }
-  return newest === null ? null : { operation: newest.operation, pid: newest.pid, startedAt: newest.startedAt }
 }

@@ -13,7 +13,9 @@ import { parseArgs } from "../src/args"
 import { stopWith, type StopCommandSeams } from "../src/commands"
 import { configPath, parseAssignment, writeAssignments } from "../src/config"
 import { filesCmd } from "../src/finder"
-import { GuestFrozen, clearSavingRunning, frozenFrom, frozenState, isFrozenRunState, markAsleep, clearAsleep, markSavingRunning, markedAsleep, refuseFrozen, savingRunning } from "../src/frozen"
+import { GuestFrozen, frozenFrom, frozenState, isFrozenRunState, markAsleep, clearAsleep, markedAsleep, refuseFrozen } from "../src/frozen"
+import { markSavingRunning, savingRunning, withOperation } from "../src/operation"
+import { processStart } from "../src/proc"
 import { pathsFor } from "../src/paths"
 import { deriveState, gather } from "../src/status"
 import { FakeQmp } from "./fakes/qmp"
@@ -84,31 +86,30 @@ describe("a save of a running guest", () => {
     expect(deriveState(false, null, [], false, true)).toBe("stopped")
   })
 
-  it("is marked by the process saving, and the mark of a process gone counts for nothing", () => {
-    const p = pathsFor(NAME)
-    expect(savingRunning(p)).toBe(false)
-    markSavingRunning(p)
-    expect(savingRunning(p)).toBe(true)
-    // A pid no process has: a save that died left its mark behind.
-    markSavingRunning(p, 2 ** 22 + 12_345)
-    expect(savingRunning(p)).toBe(false)
-    clearSavingRunning(p)
-    expect(savingRunning(p)).toBe(false)
+  it("is marked on the saving command's lease, and the mark of a process gone counts for nothing", async () => {
+    expect(savingRunning(NAME)).toBe(false)
+    await withOperation(NAME, "save", () => {
+      markSavingRunning(NAME)
+      expect(savingRunning(NAME)).toBe(true)
+    })
+    expect(savingRunning(NAME)).toBe(false)
+    const lease = { operation: "save", id: "dead", pid: 2 ** 22 + 12_345, pidStart: null, startedAt: "2026-03-03T00:00:00.000Z", instance: NAME, automatic: false, savingRunning: true }
+    writeFileSync(pathsFor(NAME).lease, JSON.stringify(lease))
+    expect(savingRunning(NAME)).toBe(false)
+    expect(existsSync(pathsFor(NAME).lease)).toBe(false)
   })
 
   it("status says running while the save holds it stopped, and does not wait on its guest agent", async () => {
     runState = "postmigrate"
-    markSavingRunning(pathsFor(NAME))
-    try {
+    await withOperation(NAME, "save", async () => {
+      markSavingRunning(NAME)
       const t0 = Date.now()
       const s = await gather(NAME, true)
       expect(s.state).toBe("running")
       expect(s.vmStatus).toBe("postmigrate")
       expect(s.guest).toBeNull()
       expect(Date.now() - t0).toBeLessThan(1500)
-    } finally {
-      clearSavingRunning(pathsFor(NAME))
-    }
+    })
     expect((await gather(NAME, false)).state).toBe("paused")
   })
 })
@@ -231,14 +232,16 @@ describe("status exposes the operation in flight", () => {
   afterAll(() => {
     for (const c of children) c.kill()
     rmSync(dir, { recursive: true, force: true })
-    rmSync(pathsFor(NAME).operations, { recursive: true, force: true })
+    rmSync(pathsFor(NAME).lease, { force: true })
     rmSync(pathsFor("frozen-gone").dir, { recursive: true, force: true })
   })
 
-  const publish = (instance: string, pid: number, operation: string): void => {
-    const ops = pathsFor(instance).operations
-    mkdirSync(ops, { recursive: true })
-    writeFileSync(resolve(ops, `${String(pid)}.json`), JSON.stringify({ operation, pid, startedAt: "2026-03-03T00:00:00.000Z", instance, token: "t" }))
+  const publish = (instance: string, pid: number, operation: string, automatic = false): void => {
+    mkdirSync(pathsFor(instance).dir, { recursive: true })
+    writeFileSync(
+      pathsFor(instance).lease,
+      JSON.stringify({ operation, id: "t", pid, pidStart: processStart(pid), startedAt: "2026-03-03T00:00:00.000Z", instance, automatic }),
+    )
   }
   const launch = (...argv: string[]): { pid: number; exited: Promise<number>; kill: () => void } => {
     const c = Bun.spawn(["bun", resolve(dir, "winvm.ts"), ...argv], { stdio: ["ignore", "ignore", "ignore"] })
@@ -253,6 +256,14 @@ describe("status exposes the operation in flight", () => {
     const s = await gather(NAME, false)
     expect(s.state).toBe("running")
     expect(s.operation).toEqual({ operation: "start", pid: c.pid, startedAt: "2026-03-03T00:00:00.000Z" })
+    c.kill()
+    await c.exited
+  })
+
+  it("includes the work winvm does by itself: the watcher's autosave is a save", async () => {
+    const c = launch("watch", "-i", NAME)
+    publish(NAME, c.pid, "save", true)
+    expect((await gather(NAME, false)).operation).toEqual({ operation: "save", pid: c.pid, startedAt: "2026-03-03T00:00:00.000Z" })
     c.kill()
     await c.exited
   })

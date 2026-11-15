@@ -141,7 +141,7 @@
 import { instanceName, parseArgs } from "@winvm/core/args"
 import { bunVersionWarning, listInstances, pinnedBunVersion, recordCliEntry } from "@winvm/core/paths"
 import { ManagementError, reconcileManagement, reconcileNote, shouldReconcileVerb } from "@winvm/core/lifecycle"
-import { operationFor, withOperation } from "@winvm/core/operation"
+import { InstanceBusy, operationFor, withOperation } from "@winvm/core/operation"
 import * as agentcmds from "@winvm/core/agentcmds"
 import * as termcmds from "@winvm/core/termcmds"
 import * as uicmds from "@winvm/core/uicmds"
@@ -179,8 +179,16 @@ const args = parseArgs(rawArgs)
 // `status` (operation.ts). The lease callback only returns the exit code; the
 // process exits after it has cleared, never inside it.
 const operation = operationFor(sub, args)
-const leased = async (run: () => number | Promise<number>): Promise<number> =>
-  operation === null ? await run() : await withOperation(instanceName(args), operation, run)
+const leased = async (run: () => number | Promise<number>): Promise<number> => {
+  if (operation === null) return await run()
+  try {
+    return await withOperation(instanceName(args), operation, run)
+  } catch (error) {
+    if (!(error instanceof InstanceBusy)) throw error
+    console.error(`::error::${error.message}`)
+    return 1
+  }
+}
 // The guest's drives in Finder, left mounted by a QEMU that died: unmounted
 // before anything else runs (finder.ts). Free unless the instance shares its
 // drives and is not running. Unmounting from a dead server takes a minute, so
@@ -259,7 +267,7 @@ switch (sub) {
     process.exit(await leased(() => commands.reset(args)))
   // eslint-disable-next-line no-fallthrough
   case "destroy":
-    process.exit(commands.destroy(args))
+    process.exit(await leased(() => commands.destroy(args)))
   // eslint-disable-next-line no-fallthrough
   case "exec":
     process.exit(await commands.exec(args))
@@ -319,7 +327,7 @@ switch (sub) {
     process.exit(await leased(() => savecmds.load(args)))
   // eslint-disable-next-line no-fallthrough
   case "share":
-    process.exit(await sharecmds.shareCmd(args))
+    process.exit(await leased(() => sharecmds.shareCmd(args)))
   // eslint-disable-next-line no-fallthrough
   case "golden":
     process.exit(await leased(() => goldens.golden(args)))
