@@ -365,7 +365,13 @@ export async function runPool(jobs: readonly Job[], o: PoolOptions): Promise<Poo
   if (o.keep) {
     console.log(`\n--keep: instances left running in their last job's state`)
   } else {
-    await Promise.all(members.map(async (m) => await withOperation(m, "stop", async () => await saves.quitQemu(pathsFor(m))).catch(() => undefined)))
+    await Promise.all(
+      members.map(async (m) =>
+        await withOperation(m, "stop", async () => await saves.quitQemu(pathsFor(m))).catch((error: unknown) => {
+          console.warn(`warning: left "${m}" running: ${errMsg(error)}`)
+        }),
+      ),
+    )
   }
   return { results, setupMs, instances: members }
 }
