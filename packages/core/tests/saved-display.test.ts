@@ -28,6 +28,7 @@ import * as savecmds from "../src/savecmds"
 import * as screen from "../src/screen"
 import * as service from "../src/service"
 import * as share from "../src/share"
+import * as shell from "../src/shell"
 import { gather } from "../src/status"
 import * as vnc from "../src/vnc"
 import {
@@ -143,7 +144,7 @@ beforeEach(() => {
   writeFileSync(vars, "variables")
   spyOn(host, "requireFirmware").mockReturnValue({ code, vars })
   spyOn(host, "tpmTisHasPpi").mockReturnValue(true)
-  spyOn(host, "run").mockImplementation((_cmd, args) => {
+  spyOn(shell, "run").mockImplementation((_cmd, args) => {
     writeFileSync(args.at(-1) ?? "", "created disk")
     return 0
   })

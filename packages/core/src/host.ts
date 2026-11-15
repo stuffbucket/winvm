@@ -1,16 +1,17 @@
 /**
- * Host-side primitives: shelling out, prerequisite checks, downloads.
+ * Host-side prerequisite checks.
  *
  * The prerequisite list is the one thing a new user hits first, so it is kept
  * where it can be read without following any other code path.
  */
 import { spawnSync } from "node:child_process"
-import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs"
-import { basename, resolve } from "node:path"
+import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs"
+import { resolve } from "node:path"
 import { gunzipSync } from "node:zlib"
 
 import { PACKAGE_DIR, home } from "./paths"
 import { findRuntime, runtimeBin, verifyRuntime, type Runtime } from "./runtime"
+import { capture, have } from "./shell"
 
 /**
  * Where to look for UEFI firmware: `WINVM_QEMU_DATA`, else the vendored copy,
@@ -169,38 +170,6 @@ export const PWSH_URL =
   `https://github.com/PowerShell/PowerShell/releases/download/v${PWSH_VERSION}/PowerShell-${PWSH_VERSION}-win-arm64.msi`
 export const PWSH_SHA256 = "ddb2f3613a0ad27817b90601a0827f7347e81dfa5bce18d4be8009b8cb0e0a31"
 
-export const sha256Of = (path: string): string => capture("shasum", ["-a", "256", path]).split(/\s+/)[0] ?? ""
-
-export function run(cmd: string, args: readonly string[]): number {
-  return spawnSync(cmd, [...args], { stdio: "inherit" }).status ?? 1
-}
-
-export function capture(cmd: string, args: readonly string[]): string {
-  return (spawnSync(cmd, [...args], { encoding: "utf8" }).stdout ?? "").trim()
-}
-
-/** Like `run`, but silent — for probes whose failure is expected and handled by the caller. */
-export function quiet(cmd: string, args: readonly string[]): number {
-  return spawnSync(cmd, [...args], { stdio: "ignore" }).status ?? 1
-}
-
-export function have(cmd: string): boolean {
-  return spawnSync("command", ["-v", cmd], { shell: true, stdio: "ignore" }).status === 0
-}
-
-/**
- * Human-readable size, for `winvm ls`. Overlays and base images differ by orders
- * of magnitude.
- *
- * `-s` is load-bearing now that directories are measured too: plain `du -h`
- * prints a line per subdirectory and the first one is NOT the total, so a state
- * directory holding a 14 GB image reported 128 MB.
- */
-export function du(path: string): string {
-  if (!existsSync(path)) return "-"
-  return capture("du", ["-sh", path]).split(/\s+/)[0] ?? "-"
-}
-
 export interface Check {
   readonly label: string
   readonly ok: boolean
@@ -270,33 +239,4 @@ export function requireHost(): void {
   console.error("::error::missing prerequisites — run `winvm doctor`")
   for (const c of missing) console.error(`  ${c.label} -> ${c.hint}`)
   process.exit(1)
-}
-
-export function download(url: string, dest: string, sha256?: string): void {
-  if (existsSync(dest)) {
-    if (sha256 === undefined || sha256Of(dest) === sha256) return
-    // A cached file that no longer matches is not silently re-used.
-    console.warn(`warning: ${basename(dest)} does not match its pin; re-fetching`)
-    rmSync(dest, { force: true })
-  }
-  mkdirSync(resolve(dest, ".."), { recursive: true })
-  console.log(`fetching ${basename(dest)}`)
-  if (run("curl", ["-fL", "--progress-bar", "-o", dest, url]) !== 0) {
-    // A truncated file that looks present is worse than one that is absent:
-    // the next run would skip the download and fail somewhere unrelated.
-    rmSync(dest, { force: true })
-    throw new Error(`download failed: ${url}`)
-  }
-  if (sha256 === undefined) return
-  const got = sha256Of(dest)
-  if (got === sha256) return
-  // The pin's job is to DETECT drift, not to prevent it. Upstream publishing a
-  // new build is expected and legitimate; adopting it silently is not.
-  rmSync(dest, { force: true })
-  throw new Error(
-    `${basename(dest)} does not match its pinned digest.\n` +
-      `  expected ${sha256}\n  got      ${got}\n` +
-      `  Upstream has probably published a new build. Review it, then update ` +
-      `TOOLS_SHA256 in host.ts to the new digest.`,
-  )
 }

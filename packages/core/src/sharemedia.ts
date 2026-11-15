@@ -21,7 +21,7 @@ import { createHash } from "node:crypto"
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs"
 import { resolve } from "node:path"
 
-import { download } from "./host"
+import { download } from "./shell"
 import { PACKAGE_DIR, mediaDir } from "./paths"
 
 export const VIRTIO_WIN_VERSION = "0.1.302"

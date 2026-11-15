@@ -5,7 +5,7 @@ import { homedir } from "node:os"
 import { relative, resolve } from "node:path"
 
 import pinned from "../runtime.json"
-import { download } from "./host"
+import { download } from "./shell"
 
 export interface RuntimePin {
   readonly version: string
