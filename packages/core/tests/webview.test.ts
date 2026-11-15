@@ -55,7 +55,7 @@ describe("webview", () => {
     expect(pickTarget(list, "SETTINGS")?.id).toBe("2")
     expect(pickTarget(list, "/ui/dashboard")?.id).toBe("1")
     expect(pickTarget(list, "nope")).toBeNull()
-    expect(pickTarget([t({ webSocketDebuggerUrl: undefined })], null)).toBeNull()
+    expect(pickTarget([{ id: "x", type: "page", title: "", url: "" }], null)).toBeNull()
   })
 })
 
