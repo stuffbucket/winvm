@@ -253,7 +253,7 @@ describe("virtiofsd's lifecycle", () => {
 
   it("says why when the daemon does not start", async () => {
     process.env["FAKE_FAIL"] = "1"
-    expect(share.startVirtiofsd(p, { bin: fake, timeoutMs: 3000 })).rejects.toThrow(/cannot serve/)
+    await expect(share.startVirtiofsd(p, { bin: fake, timeoutMs: 3000 })).rejects.toThrow(/cannot serve/)
     await Bun.sleep(200)
     expect(share.readServing(p)).toBeNull()
   })
@@ -401,9 +401,9 @@ describe("the agent's /fs/touch", () => {
 
   it("refuses paths that climb out, and bad requests", async () => {
     expect(await touchPaths(root, ["../outside"])).toEqual({ touched: 0, failed: 1 })
-    expect(touchPaths(root, "x")).rejects.toThrow(/array/)
-    expect(touchPaths("", [])).rejects.toThrow(/root/)
-    expect(touchPaths(root, Array.from({ length: 2001 }, () => "a"))).rejects.toThrow(/at most/)
+    await expect(touchPaths(root, "x")).rejects.toThrow(/array/)
+    await expect(touchPaths("", [])).rejects.toThrow(/root/)
+    await expect(touchPaths(root, Array.from({ length: 2001 }, () => "a"))).rejects.toThrow(/at most/)
   })
 })
 
@@ -442,9 +442,9 @@ describe.skipIf(process.platform !== "darwin")("reading an ISO by ranges", () =>
   })
 
   it("names what is missing", async () => {
-    expect(readIsoFiles(fileRanges(iso), ["viofs", "w10"], ["viofs.inf"])).rejects.toThrow(/viofs\/w10/)
-    expect(readIsoFiles(fileRanges(iso), ["viofs", "w11", "ARM64"], ["viofs.sys"])).rejects.toThrow(/viofs.sys/)
-    expect(readIsoFiles(async (_o, n) => new Uint8Array(n), ["viofs"], [])).rejects.toThrow(/ISO 9660/)
+    await expect(readIsoFiles(fileRanges(iso), ["viofs", "w10"], ["viofs.inf"])).rejects.toThrow(/viofs\/w10/)
+    await expect(readIsoFiles(fileRanges(iso), ["viofs", "w11", "ARM64"], ["viofs.sys"])).rejects.toThrow(/viofs.sys/)
+    await expect(readIsoFiles(async (_o, n) => new Uint8Array(n), ["viofs"], [])).rejects.toThrow(/ISO 9660/)
   })
 
   it("skips the . and .. records and sector padding", () => {
