@@ -46,9 +46,9 @@ describe("once", () => {
 
   test("shares a failure instead of retrying", async () => {
     let runs = 0
-    const cleanup = once(async () => {
+    const cleanup = once(() => {
       runs += 1
-      throw new Error("boom")
+      return Promise.reject(new Error("boom"))
     })
     await expect(cleanup()).rejects.toThrow("boom")
     await expect(cleanup()).rejects.toThrow("boom")
@@ -101,7 +101,7 @@ describe("exitOnSignals", () => {
 
   test("marks the run interrupted, cleans up, reports, then exits 130 for SIGINT and 143 for SIGTERM", async () => {
     for (const [signal, code] of [["SIGINT", 130], ["SIGTERM", 143]] as const) {
-      const { source, log } = run(async () => undefined)
+      const { source, log } = run(() => Promise.resolve(undefined))
       source.emit(signal)
       await settle()
       expect(log).toEqual([`interrupted ${signal}`, "cleanup start", "cleanup end", `report ${signal}`, `exit ${String(code)}`])
@@ -110,8 +110,8 @@ describe("exitOnSignals", () => {
   })
 
   test("still exits non-zero after the cleanup itself fails", async () => {
-    const { source, log } = run(async () => {
-      throw new Error("could not stop")
+    const { source, log } = run(() => {
+      return Promise.reject(new Error("could not stop"))
     })
     source.emit("SIGTERM")
     await settle()

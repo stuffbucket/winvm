@@ -62,7 +62,7 @@ if (!hadMounts) await must(["files", "mount", "-i", name, "home", "--json"], { t
 const results: { title: string; ok: boolean; skipped: string | null; checks: { name: string; ok: boolean; evidence: string }[]; notes: string[] }[] = []
 for (const key of names.filter((n) => only.includes(n))) {
   const started = Date.now()
-  console.log(`${key}`)
+  console.log(key)
   const sc = await ALL[key](ctx)
   console.log(`  -> ${sc.skipped !== null ? "SKIPPED" : sc.ok ? "PASS" : "FAIL"} (${String(Math.round((Date.now() - started) / 1000))} s)\n`)
   results.push({ title: sc.title, ok: sc.ok, skipped: sc.skipped, checks: sc.checks, notes: sc.notes })

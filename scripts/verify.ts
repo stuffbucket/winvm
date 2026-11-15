@@ -12,7 +12,7 @@ interface Step {
   lane?: "tests" | "rust"
   commands: Command[]
   findings: (output: string) => number
-  prepare?: () => Promise<void>
+  prepare?: () => void
 }
 
 interface Result {
@@ -80,24 +80,23 @@ function netWarnings(output: string): number {
   )
 }
 
-let rustInputs: Promise<void> | undefined
+let rustInputsReady = false
 
-function ensureRustInputs(): Promise<void> {
-  rustInputs ??= (async () => {
-    if (!existsSync(SIDECAR)) {
-      Bun.spawnSync(["bun", join(VIEWER, "scripts", "build-sidecar.ts")], {
-        cwd: ROOT,
-        env: ENV,
-      })
-    }
-    if (!existsSync(DIST_INDEX)) {
-      Bun.spawnSync(["bun", join(VIEWER, "scripts", "build-ui.ts")], {
-        cwd: VIEWER,
-        env: ENV,
-      })
-    }
-  })()
-  return rustInputs
+function ensureRustInputs(): void {
+  if (rustInputsReady) return
+  rustInputsReady = true
+  if (!existsSync(SIDECAR)) {
+    Bun.spawnSync(["bun", join(VIEWER, "scripts", "build-sidecar.ts")], {
+      cwd: ROOT,
+      env: ENV,
+    })
+  }
+  if (!existsSync(DIST_INDEX)) {
+    Bun.spawnSync(["bun", join(VIEWER, "scripts", "build-ui.ts")], {
+      cwd: VIEWER,
+      env: ENV,
+    })
+  }
 }
 
 const STEPS: Step[] = [
@@ -258,7 +257,7 @@ function parseArgs(argv: string[]): {
 
 async function runStep(step: Step, logs: string): Promise<Result> {
   const started = performance.now()
-  await step.prepare?.()
+  step.prepare?.()
   let output = ""
   let ok = true
   for (const command of step.commands) {

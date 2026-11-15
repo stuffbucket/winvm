@@ -35,7 +35,7 @@ export function parseRemoteHead(output: string): string | null {
 
   const lines = trimmed.split("\n")
   const [record] = lines
-  if (lines.length !== 1 || record === undefined) throw new Error(`expected exactly one ${RELEASE_PR_REF} record, found ${lines.length}`)
+  if (lines.length !== 1 || record === undefined) throw new Error(`expected exactly one ${RELEASE_PR_REF} record, found ${String(lines.length)}`)
 
   const fields = record.trim().split(/\s+/)
   const [head, ref] = fields
@@ -51,7 +51,7 @@ export function parseRemoteHead(output: string): string | null {
 export function releasePrHead(run: CommandRunner = runCommand): string | null {
   const result = run(["git", "ls-remote", "origin", RELEASE_PR_REF])
   if (result.exitCode !== 0) {
-    throw new Error(`git ls-remote failed: ${result.stderr.trim() || `exit ${result.exitCode}`}`)
+    throw new Error(`git ls-remote failed: ${result.stderr.trim() || `exit ${String(result.exitCode)}`}`)
   }
   return parseRemoteHead(result.stdout)
 }
@@ -86,7 +86,7 @@ export function dispatchReleasePrCi({
     `expected_sha=${after}`,
   ])
   if (dispatch.exitCode !== 0) {
-    throw new Error(`CI dispatch failed: ${dispatch.stderr.trim() || `exit ${dispatch.exitCode}`}`)
+    throw new Error(`CI dispatch failed: ${dispatch.stderr.trim() || `exit ${String(dispatch.exitCode)}`}`)
   }
 
   return { before, after, decision: "dispatched", dispatchedSha: after }
@@ -128,7 +128,7 @@ function writeSummary(result: DispatchResult, forced: boolean): void {
       "",
       `- Before: \`${shown(result.before)}\``,
       `- After: \`${shown(result.after)}\``,
-      `- Forced: \`${forced}\``,
+      `- Forced: \`${String(forced)}\``,
       `- Decision: **${result.decision}**`,
       ...(result.dispatchedSha ? [`- Dispatched SHA: \`${result.dispatchedSha}\``] : []),
       "",
@@ -160,7 +160,7 @@ function main(): void {
       repository: process.env.GITHUB_REPOSITORY ?? "",
     })
     writeSummary(result, force)
-    if (result.decision === "dispatched") console.log(`Dispatched CI for ${RELEASE_PR_BRANCH} at ${result.dispatchedSha}.`)
+    if (result.decision === "dispatched") console.log(`Dispatched CI for ${RELEASE_PR_BRANCH} at ${result.dispatchedSha ?? "an unknown commit"}.`)
     else console.log(`Release PR head is ${result.decision}; no CI dispatch needed.`)
     return
   }

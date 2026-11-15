@@ -72,7 +72,7 @@ export async function must(args: readonly string[], o: { readonly timeoutMs?: nu
   return r
 }
 
-export const json = <T>(r: Ran): T => JSON.parse(r.stdout) as T
+export const json = (r: Ran): unknown => JSON.parse(r.stdout)
 
 export const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms))
 
@@ -257,7 +257,7 @@ export class AppPoller {
     const r = await winvm(["agent", "-i", this.name, "connect", "--json"], { timeoutMs: 120_000 })
     const at = Date.now()
     if (r.code === 0) {
-      const l = json<{ url: string; token: string }>(r)
+      const l = json(r) as { url: string; token: string }
       this.link = { url: l.url, token: l.token }
       this.calls.push({ at, what: "agent-connect", ok: true, detail: `${l.url} in ${String(r.ms)} ms` })
       return this.link
