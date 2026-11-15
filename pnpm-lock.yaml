@@ -154,6 +154,9 @@ importers:
       '@winvm/canvas':
         specifier: workspace:*
         version: link:../../packages/canvas
+      '@winvm/displayfit':
+        specifier: workspace:*
+        version: link:../../packages/displayfit
       '@winvm/terminal':
         specifier: workspace:*
         version: link:../../packages/terminal
@@ -218,6 +221,18 @@ importers:
       '@anthropic-ai/sdk':
         specifier: 0.134.0
         version: 0.134.0(zod@4.1.11)
+      '@winvm/displayfit':
+        specifier: workspace:*
+        version: link:../displayfit
+    devDependencies:
+      '@types/bun':
+        specifier: 1.4.0
+        version: 1.4.0
+      typescript:
+        specifier: 6.0.3
+        version: 6.0.3
+
+  packages/displayfit:
     devDependencies:
       '@types/bun':
         specifier: 1.4.0

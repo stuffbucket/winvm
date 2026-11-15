@@ -9,6 +9,19 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { resolve } from "node:path"
 
+import {
+  MAX_FRAMEBUFFER_BYTES,
+  MAX_HEIGHT,
+  MAX_WIDTH,
+  SizeDebouncer,
+  clampSize,
+  drawSize,
+  guestSizeFor,
+  parseSize,
+  scaleFor,
+  type Size,
+} from "@winvm/displayfit"
+
 import { setDesktopSizeMessage, vncAuthResponse } from "../src/desktopsize"
 import {
   RAMFB,
@@ -26,18 +39,6 @@ import {
   sharesFolderFromCommandLine,
   writeDisplay,
 } from "../src/display"
-import {
-  MAX_FRAMEBUFFER_BYTES,
-  MAX_HEIGHT,
-  MAX_WIDTH,
-  SizeDebouncer,
-  clampSize,
-  drawSize,
-  guestSizeFor,
-  parseSize,
-  scaleFor,
-  type Size,
-} from "../src/displayfit"
 import { deviceFromCommandLine } from "../src/guestdisplay"
 import { type DisplayOutcome, LockedDisplay, lockScreenUp } from "../src/guestagent"
 import { displayArgv } from "../src/guestagent"

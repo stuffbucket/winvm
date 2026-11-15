@@ -52,6 +52,8 @@ describe("sourceBuildIdentity", () => {
     "packages/core/src/paths.ts": "paths\n",
     "packages/core/src/deep/more.ts": "more\n",
     "packages/core/package.json": '{"version":"0.1.0"}\n',
+    "packages/displayfit/src/displayfit.ts": "displayfit\n",
+    "packages/displayfit/package.json": '{"version":"0.1.0"}\n',
     "packages/core/runtime.json": "{}\n",
     ".bun-version": "1.4.3\n",
     "pnpm-lock.yaml": "lock\n",

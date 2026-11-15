@@ -9,12 +9,13 @@
 import { spawnSync } from "node:child_process"
 import { resolve } from "node:path"
 
+import { SCALES, clampSize, parseSize, sameSize } from "@winvm/displayfit"
+
 import * as agent from "./agent"
 import type { Args } from "./args"
 import { instanceName } from "./args"
 import type { DisplayConfig } from "./display"
 import { describeDisplay, parseDevice, readDisplay, sameDevice, writeDisplay } from "./display"
-import { SCALES, clampSize, parseSize, sameSize } from "./displayfit"
 import * as guestDisplay from "./guestdisplay"
 import * as input from "./input"
 import * as ocr from "./ocr"

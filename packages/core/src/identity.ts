@@ -29,12 +29,13 @@ const INPUT_FILES = [
   "package.json",
   "apps/cli/package.json",
   "packages/core/package.json",
+  "packages/displayfit/package.json",
   ".bun-version",
   "pnpm-lock.yaml",
   "packages/core/runtime.json",
   "apps/viewer/scripts/build-sidecar.ts",
 ] as const
-const SOURCE_DIRS = ["apps/cli/src", "packages/core/src"] as const
+const SOURCE_DIRS = ["apps/cli/src", "packages/core/src", "packages/displayfit/src"] as const
 
 export interface IdentityEntry {
   readonly path: string
