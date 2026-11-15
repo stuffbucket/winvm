@@ -231,7 +231,7 @@ fn connect_failed(f: SidecarFailure) -> ConnectFailure {
 
 async fn connect(app: &tauri::AppHandle, instance: &str) -> Result<Link, ConnectFailure> {
     let args = ["agent", "-i", instance, "connect", "--json"].map(String::from);
-    let out = sidecar::run_sidecar(app, &args, Some(sidecar::AGENT_CONNECT_TIMEOUT)).await.map_err(connect_failed)?;
+    let out = sidecar::run_sidecar(app, &args, Some(sidecar::AGENT_CONNECT_TIMEOUT)).await.map_err(|f| connect_failed(*f))?;
     parse_link(&out.stdout).map_err(ConnectFailure::Other)
 }
 
@@ -247,7 +247,7 @@ pub async fn agent_fetch(
     body: Option<Value>,
     timeout_ms: Option<u64>,
 ) -> Result<Reply, String> {
-    let timeout = timeout_ms.map(Duration::from_millis).unwrap_or(DEFAULT_TIMEOUT);
+    let timeout = timeout_ms.map_or(DEFAULT_TIMEOUT, Duration::from_millis);
     agents.fetch(&app, &instance, &method, &path, body.as_ref(), timeout).await
 }
 

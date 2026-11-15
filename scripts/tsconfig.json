@@ -1,7 +1,10 @@
 {
   "extends": "../tsconfig.base.json",
   "compilerOptions": {
-    "allowImportingTsExtensions": true
+    "allowImportingTsExtensions": true,
+    "paths": {
+      "@winvm/displayfit": ["../packages/core/src/displayfit.ts"]
+    }
   },
   "include": ["./**/*.ts"]
 }

@@ -42,7 +42,7 @@ interface PanelProps {
   onForceStop(): void
 }
 
-function Section({ title, hint, open, children }: { title: string; hint?: string; open?: boolean; children: ReactNode }): JSX.Element {
+function Section({ title, hint, open, children }: { title: string; hint?: string | undefined; open?: boolean | undefined; children: ReactNode }): JSX.Element {
   return (
     <details className="advanced-section" open={open}>
       <summary className="advanced-section__summary">

@@ -53,7 +53,7 @@ interface ToolButtonProps {
   readonly icon: IconName
   readonly label: string
   readonly enabled: boolean
-  readonly pressed?: boolean
+  readonly pressed?: boolean | undefined
   readonly expanded?: boolean
   onClick(button: HTMLElement): void
 }

@@ -230,220 +230,225 @@ if (sub !== undefined && shouldReconcileVerb(sub) && !(sub === "files" && args.p
   else await reconcileOne(instanceName(args))
 }
 
+let exitCode: number
 switch (sub) {
   case "doctor":
-    process.exit(commands.doctor(args.flags.has("json")))
-  // eslint-disable-next-line no-fallthrough
+    exitCode = commands.doctor(args.flags.has("json"))
+    break
   case "timemachine":
   case "tm":
-    process.exit(timemachine.run(process.argv.includes("--yes")))
+    exitCode = timemachine.run(process.argv.includes("--yes"))
+    break
 
   case "ls":
   case "list":
-    process.exit(commands.ls(args.flags.has("json")))
-  // eslint-disable-next-line no-fallthrough
+    exitCode = commands.ls(args.flags.has("json"))
+    break
   case "create":
-    process.exit(commands.create(args))
-  // eslint-disable-next-line no-fallthrough
+    exitCode = commands.create(args)
+    break
   case "adopt":
-    process.exit(commands.adopt(args))
-  // eslint-disable-next-line no-fallthrough
+    exitCode = commands.adopt(args)
+    break
   case "build":
-    process.exit(await commands.build(args))
-  // eslint-disable-next-line no-fallthrough
+    exitCode = await commands.build(args)
+    break
   case "start":
-    process.exit(await leased(() => commands.start(args)))
-  // eslint-disable-next-line no-fallthrough
+    exitCode = await leased(() => commands.start(args))
+    break
   case "stop":
-    process.exit(await leased(() => commands.stop(args)))
-  // eslint-disable-next-line no-fallthrough
+    exitCode = await leased(() => commands.stop(args))
+    break
   case "reboot":
-    process.exit(await leased(() => commands.reboot(args)))
-  // eslint-disable-next-line no-fallthrough
+    exitCode = await leased(() => commands.reboot(args))
+    break
   case "kill":
-    process.exit(await leased(() => commands.kill(args)))
-  // eslint-disable-next-line no-fallthrough
+    exitCode = await leased(() => commands.kill(args))
+    break
   case "reset":
-    process.exit(await leased(() => commands.reset(args)))
-  // eslint-disable-next-line no-fallthrough
+    exitCode = await leased(() => commands.reset(args))
+    break
   case "destroy":
-    process.exit(await leased(() => commands.destroy(args)))
-  // eslint-disable-next-line no-fallthrough
+    exitCode = await leased(() => commands.destroy(args))
+    break
   case "exec":
-    process.exit(await commands.exec(args))
-  // eslint-disable-next-line no-fallthrough
+    exitCode = await commands.exec(args)
+    break
   case "agent":
-    process.exit(await agentcmds.agentCmd(args))
-  // eslint-disable-next-line no-fallthrough
+    exitCode = await agentcmds.agentCmd(args)
+    break
   case "put":
-    process.exit(await agentcmds.put(args))
-  // eslint-disable-next-line no-fallthrough
+    exitCode = await agentcmds.put(args)
+    break
   case "get":
-    process.exit(await agentcmds.get(args))
-  // eslint-disable-next-line no-fallthrough
+    exitCode = await agentcmds.get(args)
+    break
   case "dir":
-    process.exit(await agentcmds.dir(args))
-  // eslint-disable-next-line no-fallthrough
+    exitCode = await agentcmds.dir(args)
+    break
   case "mkdir":
-    process.exit(await agentcmds.mkdir(args))
-  // eslint-disable-next-line no-fallthrough
+    exitCode = await agentcmds.mkdir(args)
+    break
   case "mv":
-    process.exit(await agentcmds.mv(args))
-  // eslint-disable-next-line no-fallthrough
+    exitCode = await agentcmds.mv(args)
+    break
   case "cp":
-    process.exit(await agentcmds.cp(args))
-  // eslint-disable-next-line no-fallthrough
+    exitCode = await agentcmds.cp(args)
+    break
   case "rm":
-    process.exit(await agentcmds.rm(args))
-  // eslint-disable-next-line no-fallthrough
+    exitCode = await agentcmds.rm(args)
+    break
   case "files":
-    process.exit(await finder.filesCmd(args))
-  // eslint-disable-next-line no-fallthrough
+    exitCode = await finder.filesCmd(args)
+    break
   case "launch":
-    process.exit(await agentcmds.launch(args))
-  // eslint-disable-next-line no-fallthrough
+    exitCode = await agentcmds.launch(args)
+    break
   case "ui":
-    process.exit(await uicmds.uiCmd(args))
-  // eslint-disable-next-line no-fallthrough
+    exitCode = await uicmds.uiCmd(args)
+    break
   case "terminal":
-    process.exit(await termcmds.terminal(args))
-  // eslint-disable-next-line no-fallthrough
+    exitCode = await termcmds.terminal(args)
+    break
   case "smoke":
-    process.exit(await commands.smoke(args))
-  // eslint-disable-next-line no-fallthrough
+    exitCode = await commands.smoke(args)
+    break
   case "snapshot":
-    process.exit(await leased(() => commands.snap(args)))
-  // eslint-disable-next-line no-fallthrough
+    exitCode = await leased(() => commands.snap(args))
+    break
   case "rewind":
-    process.exit(await leased(() => commands.rewind(args)))
-  // eslint-disable-next-line no-fallthrough
+    exitCode = await leased(() => commands.rewind(args))
+    break
   case "snapshots":
-    process.exit(await commands.snapshots(args))
-  // eslint-disable-next-line no-fallthrough
+    exitCode = await commands.snapshots(args)
+    break
   case "save":
-    process.exit(await leased(() => savecmds.save(args)))
-  // eslint-disable-next-line no-fallthrough
+    exitCode = await leased(() => savecmds.save(args))
+    break
   case "load":
-    process.exit(await leased(() => savecmds.load(args)))
-  // eslint-disable-next-line no-fallthrough
+    exitCode = await leased(() => savecmds.load(args))
+    break
   case "share":
-    process.exit(await leased(() => sharecmds.shareCmd(args)))
-  // eslint-disable-next-line no-fallthrough
+    exitCode = await leased(() => sharecmds.shareCmd(args))
+    break
   case "golden":
-    process.exit(await leased(() => goldens.golden(args)))
-  // eslint-disable-next-line no-fallthrough
+    exitCode = await leased(() => goldens.golden(args))
+    break
   case "saves":
-    process.exit(savecmds.list(args))
-  // eslint-disable-next-line no-fallthrough
+    exitCode = savecmds.list(args)
+    break
   case "pause":
-    process.exit(await leased(() => savecmds.pause(args)))
-  // eslint-disable-next-line no-fallthrough
+    exitCode = await leased(() => savecmds.pause(args))
+    break
   case "resume":
   case "wake":
-    process.exit(await leased(() => savecmds.resume(args)))
-  // eslint-disable-next-line no-fallthrough
+    exitCode = await leased(() => savecmds.resume(args))
+    break
   case "sleep":
-    process.exit(await leased(() => savecmds.sleep(args)))
-  // eslint-disable-next-line no-fallthrough
+    exitCode = await leased(() => savecmds.sleep(args))
+    break
   case "lock":
-    process.exit(await leased(() => savecmds.lock(args)))
-  // eslint-disable-next-line no-fallthrough
+    exitCode = await leased(() => savecmds.lock(args))
+    break
   case "settings":
-    process.exit(settings.settingsCmd(args))
-  // eslint-disable-next-line no-fallthrough
+    exitCode = settings.settingsCmd(args)
+    break
   case "stow":
-    process.exit(await leased(() => savecmds.stow(args)))
-  // eslint-disable-next-line no-fallthrough
+    exitCode = await leased(() => savecmds.stow(args))
+    break
   case "clock":
-    process.exit(await savecmds.clock(args))
+    exitCode = await savecmds.clock(args)
+    break
   case "watch":
-    process.exit(await commands.watchCmd(args))
-  // eslint-disable-next-line no-fallthrough
+    exitCode = await commands.watchCmd(args)
+    break
   case "serve": {
     const handle = await service.runService(instanceName(args))
     for (const sig of ["SIGINT", "SIGTERM", "SIGHUP"] as const) process.on(sig, () => void handle.stop())
     await handle.done
-    process.exit(0)
+    exitCode = 0
+    break
   }
-  // eslint-disable-next-line no-fallthrough
   case "run":
-    process.exit(await runcmds.run(args))
-  // eslint-disable-next-line no-fallthrough
+    exitCode = await runcmds.run(args)
+    break
   case "test":
-    process.exit(await runcmds.test(args))
-  // eslint-disable-next-line no-fallthrough
+    exitCode = await runcmds.test(args)
+    break
   case "config":
-    process.exit(commands.configCmd(args))
-  // eslint-disable-next-line no-fallthrough
+    exitCode = commands.configCmd(args)
+    break
   case "diagnose":
-    process.exit(commands.diagnoseCmd(args))
-  // eslint-disable-next-line no-fallthrough
+    exitCode = commands.diagnoseCmd(args)
+    break
   case "setup":
-    process.exit(await leased(() => commands.setup(args)))
-  // eslint-disable-next-line no-fallthrough
+    exitCode = await leased(() => commands.setup(args))
+    break
   case "rmi":
-    process.exit(commands.rmi(args))
-  // eslint-disable-next-line no-fallthrough
+    exitCode = commands.rmi(args)
+    break
   case "prune":
-    process.exit(commands.prune(args))
-  // eslint-disable-next-line no-fallthrough
+    exitCode = commands.prune(args)
+    break
   case "status":
-    process.exit(await status.run({ instance: args.flags.get("instance") ?? process.env["WINVM_INSTANCE"] ?? null, json: args.flags.has("json") }))
-  // eslint-disable-next-line no-fallthrough
+    exitCode = await status.run({ instance: args.flags.get("instance") ?? process.env["WINVM_INSTANCE"] ?? null, json: args.flags.has("json") })
+    break
   case "info":
-    process.exit(await machineinfo.infoCmd(args))
-  // eslint-disable-next-line no-fallthrough
+    exitCode = await machineinfo.infoCmd(args)
+    break
   case "open":
-    process.exit(await screen.open(args))
-  // eslint-disable-next-line no-fallthrough
+    exitCode = await screen.open(args)
+    break
   case "web":
-    process.exit(await web.run(args))
-  // eslint-disable-next-line no-fallthrough
+    exitCode = await web.run(args)
+    break
   case "screenshot":
-    process.exit(await screen.screenshot(args))
-  // eslint-disable-next-line no-fallthrough
+    exitCode = await screen.screenshot(args)
+    break
   case "type":
-    process.exit(await screen.type(args))
-  // eslint-disable-next-line no-fallthrough
+    exitCode = await screen.type(args)
+    break
   case "key":
-    process.exit(await screen.key(args))
-  // eslint-disable-next-line no-fallthrough
+    exitCode = await screen.key(args)
+    break
   case "click":
-    process.exit(await screen.click(args))
-  // eslint-disable-next-line no-fallthrough
+    exitCode = await screen.click(args)
+    break
   case "move":
-    process.exit(await screen.move(args))
-  // eslint-disable-next-line no-fallthrough
+    exitCode = await screen.move(args)
+    break
   case "scroll":
-    process.exit(await screen.scroll(args))
-  // eslint-disable-next-line no-fallthrough
+    exitCode = await screen.scroll(args)
+    break
   case "display":
-    process.exit(await screen.display(args))
-  // eslint-disable-next-line no-fallthrough
+    exitCode = await screen.display(args)
+    break
   case "webview":
-    process.exit(await webview.webview(args))
-  // eslint-disable-next-line no-fallthrough
+    exitCode = await webview.webview(args)
+    break
   case "ocr":
-    process.exit(await ocr.ocr(args))
-  // eslint-disable-next-line no-fallthrough
+    exitCode = await ocr.ocr(args)
+    break
   case "toasts":
-    process.exit(await toasts.toasts(args))
-  // eslint-disable-next-line no-fallthrough
+    exitCode = await toasts.toasts(args)
+    break
   case "cua":
-    process.exit(await cuacmds.cua(args))
-  // eslint-disable-next-line no-fallthrough
+    exitCode = await cuacmds.cua(args)
+    break
   case "cua-serve":
-    process.exit(await cuacmds.cua(args, "serve"))
-  // eslint-disable-next-line no-fallthrough
+    exitCode = await cuacmds.cua(args, "serve")
+    break
   case "mcp":
-    process.exit(await mcpcmds.mcpCmd(args))
-  // eslint-disable-next-line no-fallthrough
+    exitCode = await mcpcmds.mcpCmd(args)
+    break
   case "help":
   case "--help":
     console.log(commands.USAGE)
-    process.exit(0)
-  // eslint-disable-next-line no-fallthrough
+    exitCode = 0
+    break
   default:
     console.error(commands.USAGE)
-    process.exit(2)
+    exitCode = 2
+    break
 }
+process.exit(exitCode)

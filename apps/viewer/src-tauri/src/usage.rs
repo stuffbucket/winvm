@@ -54,7 +54,7 @@ fn host_usage(pid: u32) -> Option<HostUsage> {
 /// A sample for the meters: QEMU process `pid`, and machine `instance`'s agent when given (Windows is up).
 #[tauri::command]
 pub async fn instance_usage(app: tauri::AppHandle, agents: tauri::State<'_, Agents>, pid: u32, instance: Option<String>) -> Result<Usage, String> {
-    let at_ms = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs_f64() * 1000.0).unwrap_or(0.0);
+    let at_ms = SystemTime::now().duration_since(UNIX_EPOCH).map_or(0.0, |d| d.as_secs_f64() * 1000.0);
     let ps = tauri::async_runtime::spawn_blocking(move || host_usage(pid));
     let (guest, guest_error) = match instance {
         None => (None, None),
