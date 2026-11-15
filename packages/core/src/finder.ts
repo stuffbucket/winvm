@@ -106,7 +106,7 @@ function runSync(cmd: string, args: readonly string[], timeoutMs: number): { cod
 async function mountInChild(req: { url: string; dir: string; user: string; password: string }, timeoutMs: number): Promise<number> {
   const limit = Math.min(timeoutMs, 25_000)
   const child = Bun.spawn([process.execPath, ...cliArgv("files", "_netfs")], { stdin: "pipe", stdout: "pipe", stderr: "inherit" })
-  child.stdin.write(JSON.stringify(req))
+  await child.stdin.write(JSON.stringify(req))
   await child.stdin.end()
   let timer: ReturnType<typeof setTimeout> | undefined
   const timedOut = new Promise<"timeout">((res) => {

@@ -237,7 +237,7 @@ class PwshHost {
     if (proc === null || reader === null) throw new Error("powershell did not start")
     const nonce = `__winvm_end_${crypto.randomUUID().replaceAll("-", "")}__`
     const b64 = Buffer.from(script, "utf8").toString("base64")
-    proc.stdin.write(
+    await proc.stdin.write(
       `$global:LASTEXITCODE = 0; $__ok = $true; try { & ([scriptblock]::Create([Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${b64}')))) 2>&1 | Out-String -Width 4096 | Write-Output } catch { $__ok = $false; "ERROR: $_" }; "${nonce} $(if ($__ok) { $global:LASTEXITCODE } else { 1 })"\n`,
     )
     await proc.stdin.flush()
@@ -1143,7 +1143,7 @@ class UiHost {
     const proc = this.proc ?? this.start()
     const id = this.next++
     const reply = new Promise<UiReply>((res) => this.waiting.set(id, res))
-    proc.stdin.write(`${JSON.stringify({ ...req, id })}\n`)
+    await proc.stdin.write(`${JSON.stringify({ ...req, id })}\n`)
     await proc.stdin.flush()
     return await reply
   }
@@ -1212,7 +1212,7 @@ export class DisplayHost {
     let timer: ReturnType<typeof setTimeout> | undefined
     const late = new Promise<typeof LATE>((res) => (timer = setTimeout(() => res(LATE), timeoutMs)))
     try {
-      proc.stdin.write(`${args.join(" ")}\n`)
+      await proc.stdin.write(`${args.join(" ")}\n`)
       await proc.stdin.flush()
       const got = await Promise.race([line, late])
       if (got === LATE) {
@@ -1363,7 +1363,7 @@ class Spawner {
     if (this.dead) throw new Error("the spawner exited")
     const id = this.next++
     const p = new Promise<unknown>((res, rej) => this.waiting.set(id, { res, rej }))
-    this.proc.stdin.write(`${JSON.stringify({ id, ...o })}\n`)
+    await this.proc.stdin.write(`${JSON.stringify({ id, ...o })}\n`)
     await this.proc.stdin.flush()
     return (await p) as T
   }

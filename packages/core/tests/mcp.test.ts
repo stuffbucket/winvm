@@ -417,7 +417,7 @@ describe("the stdio server", () => {
         { jsonrpc: "2.0", id: 2, method: "tools/list" },
         { jsonrpc: "2.0", id: 3, method: "tools/call", params: { name: "screenshot", arguments: {} } },
       ]
-      proc.stdin.write(`${msgs.map((m) => JSON.stringify(m)).join("\n")}\nnot json\n`)
+      await proc.stdin.write(`${msgs.map((m) => JSON.stringify(m)).join("\n")}\nnot json\n`)
       await proc.stdin.end()
       const out = await new Response(proc.stdout).text()
       expect(await proc.exited).toBe(0)
