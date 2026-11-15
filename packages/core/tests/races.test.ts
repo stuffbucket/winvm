@@ -308,6 +308,47 @@ describe("kill", () => {
     expect(alive(other.pid)).toBe(true)
   })
 
+  it("leaves a cold start's TPM emulator alone when that start holds the lease and has no QEMU yet", async () => {
+    const p = pathsFor(NAME)
+    const emulator = Bun.spawn([resolve(state, "runtime", "bin", "swtpm"), "socket", "--tpmstate", `dir=${p.tpmDir}`, "--ctrl", `type=unixio,path=${p.tpmSock},terminate`, "--tpm2"], {
+      stdout: "ignore",
+      stderr: "ignore",
+      env: { ...process.env },
+    })
+    spawned.push(emulator)
+    for (let i = 0; i < 100 && lines(swtpmLog()).length === 0; i += 1) await sleep(10)
+    spyOn(service, "stopService").mockImplementation(() => undefined)
+    let release: () => void = () => undefined
+    const starting = withOperation(NAME, "start", async () => {
+      await new Promise<void>((r) => {
+        release = r
+      })
+      return 0
+    })
+    await sleep(20)
+    const killed = await outcome(withOperation(NAME, "kill", () => commands.kill(parseArgs(["-i", NAME]))))
+    const survived = alive(Number(lines(swtpmLog())[0]))
+    release()
+    await starting
+    expect(survived).toBe(true)
+    expect(killed).toBe("resolved:1")
+  })
+
+  it("refuses without blaming the pid file when it cannot read the process's command line", async () => {
+    const p = pathsFor(NAME)
+    const own = await hold("qemu-system-aarch64", "-name", `winvm-${NAME}`, "-pidfile", p.pid)
+    writeFileSync(p.pid, `${String(own.pid)}\n`)
+    spyOn(display, "runningCommand").mockReturnValue(null)
+    const errors: string[] = []
+    spyOn(console, "error").mockImplementation((...a: unknown[]) => {
+      errors.push(a.map(String).join(" "))
+    })
+    expect(commands.kill(parseArgs(["-i", NAME]))).toBe(1)
+    expect(alive(own.pid)).toBe(true)
+    expect(errors.join("\n")).toContain("could not read")
+    expect(errors.join("\n")).not.toContain("remove that file")
+  })
+
   it("kills this instance's QEMU without waiting on a lease another command holds", async () => {
     const p = pathsFor(NAME)
     script("qemu-system-aarch64", "while :; do sleep 0.2; done")
