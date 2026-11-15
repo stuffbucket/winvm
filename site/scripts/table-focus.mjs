@@ -11,10 +11,10 @@ const HEADINGS = ["h1", "h2", "h3", "h4", "h5", "h6"];
 const CELLS = new Set(["td", "th"]);
 
 /** Tables with fewer columns stay tables on a narrow screen; their text wraps. */
-export const STACK_COLUMNS = 3;
+const STACK_COLUMNS = 3;
 
 /** Code this long with no spaces may break anywhere in a table cell. A 19-character name stays whole. */
-export const LONG_CODE = 20;
+const LONG_CODE = 20;
 
 /** A plugin factory: Sätteri calls it once per document, so `heading` starts empty on each page. */
 export function tableFocus() {
