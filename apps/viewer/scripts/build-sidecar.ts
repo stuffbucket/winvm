@@ -2,7 +2,7 @@ import { spawnSync } from "node:child_process"
 import { mkdirSync } from "node:fs"
 import { resolve } from "node:path"
 
-import { sourceBuildIdentity } from "../../../packages/core/src/identity"
+import { releaseVersion, sourceBuildIdentity } from "../../../packages/core/src/identity"
 
 const ROOT = resolve(import.meta.dir, "..", "..", "..")
 const out = resolve(import.meta.dir, "..", "src-tauri", "binaries", "winvm-aarch64-apple-darwin")
@@ -17,6 +17,7 @@ const r = spawnSync(
     "--compile",
     "--target=bun-darwin-arm64",
     `--define=WINVM_BUILD_ID=${JSON.stringify(identity)}`,
+    `--define=WINVM_VERSION=${JSON.stringify(releaseVersion(ROOT))}`,
     resolve(ROOT, "apps", "cli", "src", "winvm.ts"),
     "--outfile",
     out,

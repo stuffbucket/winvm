@@ -3,7 +3,7 @@ import { spawnSync } from "node:child_process"
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { dirname, resolve } from "node:path"
-import { identityFromEntries, selectBuildIdentity, sourceBuildIdentity } from "../src/identity"
+import { identityFromEntries, releaseVersion, selectBuildIdentity, sourceBuildIdentity } from "../src/identity"
 
 const bytes = (s: string): Uint8Array => new TextEncoder().encode(s)
 const SHAPE = /^sha256:[0-9a-f]{64}$/
@@ -86,6 +86,10 @@ describe("sourceBuildIdentity", () => {
   it("ignores files that are not TypeScript sources", () => {
     const base = sourceBuildIdentity(tree())
     expect(sourceBuildIdentity(tree({ "packages/core/src/notes.md": "scratch\n" }))).toBe(base)
+  })
+
+  it("reads the release version from the workspace's package.json", () => {
+    expect(releaseVersion(tree({ "package.json": '{"version":"0.1.3"}\n' }))).toBe("0.1.3")
   })
 })
 

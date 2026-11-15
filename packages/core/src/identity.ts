@@ -20,6 +20,7 @@ import { resolve } from "node:path"
 
 /** Set by `bun build --compile --define`; absent when running from source. */
 declare const WINVM_BUILD_ID: string | undefined
+declare const WINVM_VERSION: string | undefined
 
 const REPO_ROOT = resolve(import.meta.dir, "..", "..", "..")
 
@@ -86,6 +87,9 @@ function packageVersion(root: string, rel: string): string {
     return ""
   }
 }
+
+export const releaseVersion = (root: string = REPO_ROOT): string =>
+  typeof WINVM_VERSION === "string" ? WINVM_VERSION : packageVersion(root, "package.json")
 
 /** Hash of the CLI and core sources and the inputs that decide how they build and run. */
 export function sourceBuildIdentity(root: string = REPO_ROOT): string {

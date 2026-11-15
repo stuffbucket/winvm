@@ -27,8 +27,6 @@ import { homedir } from "node:os"
 import { isAbsolute, resolve } from "node:path"
 import { createInterface } from "node:readline"
 
-import workspace from "../../../package.json" with { type: "json" }
-
 import * as agent from "./agent"
 import { folderOf, formatListing, getTree, putTree } from "./agentcmds"
 import type { Args } from "./args"
@@ -36,6 +34,7 @@ import { instanceName } from "./args"
 import type { Block, Result } from "./cua"
 import { Computer, DEFAULT_BOX } from "./cua"
 import { Extras, selectorSchema } from "./cuacmds"
+import { releaseVersion } from "./identity"
 import { listInstances, pathsFor, readMeta } from "./paths"
 import * as qemu from "./qemu"
 import * as watcher from "./watch"
@@ -724,7 +723,7 @@ export async function serve(args: Args, deps: Deps = realDeps()): Promise<number
 
   const instance = instanceName(args)
   const tools = new Tools(deps, instance)
-  const info: ServerInfo = { name: `winvm-${instance}`, version: workspace.version }
+  const info: ServerInfo = { name: `winvm-${instance}`, version: releaseVersion() }
   console.error(`winvm mcp: serving instance "${instance}" on stdio`)
 
   const pending = new Set<Promise<void>>()
