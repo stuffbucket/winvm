@@ -271,6 +271,25 @@ importers:
         specifier: 6.0.3
         version: 6.0.3
 
+  scripts:
+    dependencies:
+      '@winvm/core':
+        specifier: workspace:*
+        version: link:../packages/core
+      '@winvm/displayfit':
+        specifier: workspace:*
+        version: link:../packages/displayfit
+      '@winvm/viewer':
+        specifier: workspace:*
+        version: link:../apps/viewer
+      typescript:
+        specifier: 6.0.3
+        version: 6.0.3
+    devDependencies:
+      '@types/bun':
+        specifier: 1.4.0
+        version: 1.4.0
+
   site:
     dependencies:
       '@astrojs/starlight':

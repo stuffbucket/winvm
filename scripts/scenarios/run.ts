@@ -21,7 +21,8 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { resolve } from "node:path"
 
-import { parseArgs } from "../../packages/core/src/args"
+import { parseArgs } from "@winvm/core/args"
+
 import { must, smbMounts } from "./lib"
 import { ALL, type Context, ready } from "./scenarios"
 

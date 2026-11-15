@@ -7,6 +7,8 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "no
 import { tmpdir } from "node:os"
 import { resolve } from "node:path"
 
+import { GuestKeyboardRouter, type RoutedKeyEvent } from "@winvm/viewer/keyboard"
+
 import {
   AppPoller,
   Scenario,
@@ -23,7 +25,6 @@ import {
   waitFor,
   winvm,
 } from "./lib"
-import { GuestKeyboardRouter, type RoutedKeyEvent } from "../../apps/viewer/ui/src/features/screen/keyboard"
 
 export interface Context {
   readonly name: string
@@ -155,7 +156,7 @@ async function runsAgain(sc: Scenario, ctx: Context, poller: AppPoller, label: s
 
 // ---- 1. Pause ---------------------------------------------------------------------------------
 
-export async function pause(ctx: Context): Promise<Scenario> {
+async function pause(ctx: Context): Promise<Scenario> {
   const sc = new Scenario("1. Pause", resolve(ctx.out, "1-pause"))
   await polled(sc, ctx.name, async (poller) => {
     const mountedBefore = await smbMounts(ctx.name)
@@ -196,7 +197,7 @@ export async function pause(ctx: Context): Promise<Scenario> {
 
 // ---- 2. Sleep, wake, lock -----------------------------------------------------------------------
 
-export async function sleepWake(ctx: Context): Promise<Scenario> {
+async function sleepWake(ctx: Context): Promise<Scenario> {
   const sc = new Scenario("2. Sleep, wake and lock", resolve(ctx.out, "2-sleep"))
   await polled(sc, ctx.name, async (poller) => {
     // Only the sizes the hold offers: Windows refuses a mode change mid sign-in
@@ -243,7 +244,7 @@ export async function sleepWake(ctx: Context): Promise<Scenario> {
 
 const ALLOWED_DOWN = new Set(["running", "stopped", "stowed"])
 
-export async function stopStart(ctx: Context): Promise<Scenario> {
+async function stopStart(ctx: Context): Promise<Scenario> {
   const sc = new Scenario("3. Stop/start and stow/recall", resolve(ctx.out, "3-stop-start"))
   const share = json<{ available: boolean; reason?: string }>(await must(["share", "-i", ctx.name, "status", "--json"]))
   sc.note(share.available ? "the runtime has virtiofsd: it must come and go with QEMU" : `no virtiofsd in this runtime (${share.reason ?? "?"}): none may run`)
@@ -300,7 +301,7 @@ interface SaveEntry {
   readonly notes: { title: string | null; text: string; tags: string[] } | null
 }
 
-export async function saveLoad(ctx: Context): Promise<Scenario> {
+async function saveLoad(ctx: Context): Promise<Scenario> {
   const sc = new Scenario("4. Save and load", resolve(ctx.out, "4-save-load"))
   const tag = `scen-${String(Date.now() % 100000)}`
   const live = `${tag}-live`
@@ -386,7 +387,7 @@ export async function saveLoad(ctx: Context): Promise<Scenario> {
 
 // ---- 5. Resize while paused --------------------------------------------------------------------
 
-export async function resizeHeld(ctx: Context): Promise<Scenario> {
+async function resizeHeld(ctx: Context): Promise<Scenario> {
   const sc = new Scenario("5. A resize during pause is held, then applied", resolve(ctx.out, "5-resize"))
   await polled(sc, ctx.name, async (poller) => {
     // This scenario is the one resizing the window.
@@ -429,7 +430,7 @@ export async function resizeHeld(ctx: Context): Promise<Scenario> {
 
 // ---- 6. Terminal, files, stats ------------------------------------------------------------------
 
-export async function terminalFiles(ctx: Context): Promise<Scenario> {
+async function terminalFiles(ctx: Context): Promise<Scenario> {
   const sc = new Scenario("6. Terminal, files and /stats", resolve(ctx.out, "6-terminal-files"))
   await polled(sc, ctx.name, async (poller) => {
     const shells = json<Record<string, boolean>>(await must(["terminal", "-i", ctx.name, "--shells", "--json"]))
@@ -501,7 +502,7 @@ export async function terminalFiles(ctx: Context): Promise<Scenario> {
 
 // ---- 7. Shared folder ---------------------------------------------------------------------------
 
-export async function sharedFolder(ctx: Context): Promise<Scenario> {
+async function sharedFolder(ctx: Context): Promise<Scenario> {
   const sc = new Scenario("7. Shared folder", resolve(ctx.out, "7-share"))
   const st = json<{ available: boolean; reason?: string; guest?: { installed: boolean | null } }>(await must(["share", "-i", ctx.name, "status", "--json"]))
   if (!st.available) {
@@ -560,7 +561,7 @@ const KEYSYM: Record<string, number> = { MetaLeft: 0xffeb, MetaRight: 0xffec, Co
 const START_OPEN = /Search for apps|\bPinned\b|\bRecommended\b/
 const RUN_OPEN = /Type the name of a program|\bOpen:/
 
-export async function startMenu(ctx: Context): Promise<Scenario> {
+async function startMenu(ctx: Context): Promise<Scenario> {
   const sc = new Scenario("8. The Windows key: a Cmd-Tab leaves Start closed", resolve(ctx.out, "8-start-menu"))
   let shot = 0
   const look = async (label: string): Promise<string> => await screenText(ctx.name, resolve(sc.out, `${String(++shot).padStart(2, "0")}-${label}.png`))

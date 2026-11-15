@@ -3,8 +3,7 @@
   "ignoreWorkspaces": ["packages/novnc"],
   "workspaces": {
     ".": {
-      "entry": ["scripts/*.ts"],
-      "project": ["scripts/**/*.ts", "*.{mjs,cjs}"],
+      "project": ["*.{mjs,cjs}"],
       "ignoreDependencies": ["@winvm/cli"]
     },
     "apps/cli": {
@@ -29,6 +28,10 @@
     "packages/terminal": {
       "entry": ["tests/**/*.test.{ts,tsx}"],
       "project": ["src/**/*.{ts,tsx}", "tests/**/*.{ts,tsx}"]
+    },
+    "scripts": {
+      "entry": ["*.ts", "scenarios/run.ts", "scenarios/*.test.ts"],
+      "project": ["**/*.ts"]
     },
     "site": {}
   }
