@@ -1,9 +1,9 @@
 {
   "$schema": "https://unpkg.com/knip@6.44.2/schema.json",
+  "ignoreWorkspaces": ["packages/novnc"],
   "workspaces": {
     ".": {
-      "entry": ["scripts/*.ts"],
-      "project": ["scripts/**/*.ts", "*.{mjs,cjs}"],
+      "project": ["*.{mjs,cjs}"],
       "ignoreDependencies": ["@winvm/cli"]
     },
     "apps/cli": {
@@ -13,7 +13,8 @@
       "entry": [
         "ui/src/{main,files,terminal}.tsx",
         "scripts/*.{ts,mjs}",
-        "tests/**/*.test.{ts,tsx}"
+        "tests/**/*.test.{ts,tsx}",
+        "tests/render/fake-tauri.js"
       ],
       "project": ["ui/src/**/*.{ts,tsx}", "scripts/**", "tests/**"]
     },
@@ -22,12 +23,21 @@
       "project": ["src/**/*.{ts,tsx}", "tests/**/*.{ts,tsx}"]
     },
     "packages/core": {
-      "entry": ["src/*.ts", "tests/**/*.test.ts"],
-      "project": ["src/**/*.ts", "tests/**/*.ts"]
+      "entry": [
+        "src/*.ts",
+        "tests/**/*.test.ts",
+        "tests/fakes/{conpty,holder}.ts"
+      ],
+      "project": ["src/**/*.ts", "tests/**/*.ts"],
+      "ignoreBinaries": ["hdiutil"]
     },
     "packages/terminal": {
       "entry": ["tests/**/*.test.{ts,tsx}"],
       "project": ["src/**/*.{ts,tsx}", "tests/**/*.{ts,tsx}"]
+    },
+    "scripts": {
+      "entry": ["*.ts", "scenarios/run.ts", "scenarios/*.test.ts"],
+      "project": ["**/*.ts"]
     },
     "site": {}
   }

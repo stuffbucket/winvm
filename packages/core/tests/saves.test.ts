@@ -14,7 +14,6 @@ import {
   FILES,
   hardwareArgs,
   migrationPlan,
-  nameError,
   parseManifest,
   ramFileFor,
   ramFormatOf,
@@ -22,6 +21,7 @@ import {
   thumbSize,
   shQuote,
 } from "../src/saves"
+import { nameError } from "../src/savename"
 
 describe("save names", () => {
   it("accepts ordinary names and the default timestamp", () => {

@@ -15,10 +15,11 @@
  * WHY NOT qemu-ga. qemu-ga runs in session 0: ChangeDisplaySettingsEx there
  * returns success and changes nothing on the user's desktop.
  */
+import type { Size } from "@winvm/displayfit"
+
 import * as agent from "./agent"
 import { requestDesktopSize, RESIZE_STATUS } from "./desktopsize"
 import { displayFromCommandLine, runningDisplay } from "./display"
-import type { Size } from "./displayfit"
 import { withQmp } from "./monitor"
 import type { InstanceMeta, Paths } from "./paths"
 import * as qemu from "./qemu"

@@ -29,7 +29,7 @@ import type { OperationInfo } from "./operation"
 import { home, instanceDir, listInstances, pathsFor, readImageMeta, readMeta } from "./paths"
 import type { Paths } from "./paths"
 import * as qemu from "./qemu"
-import { readService } from "./service"
+import { readService } from "./servicectl"
 import * as timemachine from "./timemachine"
 import { vncPort, websocketPort } from "./vnc"
 

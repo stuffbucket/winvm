@@ -8,7 +8,7 @@ import { z } from "zod"
 
 export type Shell = "pwsh" | "powershell" | "cmd"
 
-export const SHELLS: readonly Shell[] = ["pwsh", "powershell", "cmd"]
+const SHELLS: readonly Shell[] = ["pwsh", "powershell", "cmd"]
 
 /** Which shells a guest has. Windows comes with Windows PowerShell and Command Prompt; PowerShell 7 may be missing. */
 export type Installed = Readonly<Record<Shell, boolean>>

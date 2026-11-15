@@ -4,7 +4,7 @@ import { createServer, type Server, type Socket } from "node:net"
 type Json = Record<string, unknown>
 export type QmpHandler = (cmd: Json) => Json | null | Promise<Json | null>
 
-export const GREETING = { QMP: { version: { qemu: { major: 11, minor: 0, micro: 3 } }, capabilities: [] } }
+const GREETING = { QMP: { version: { qemu: { major: 11, minor: 0, micro: 3 } }, capabilities: [] } }
 
 export class FakeQmp {
   handler: QmpHandler = (cmd) => {

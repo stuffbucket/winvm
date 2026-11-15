@@ -9,6 +9,19 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { resolve } from "node:path"
 
+import {
+  MAX_FRAMEBUFFER_BYTES,
+  MAX_HEIGHT,
+  MAX_WIDTH,
+  SizeDebouncer,
+  clampSize,
+  drawSize,
+  guestSizeFor,
+  parseSize,
+  scaleFor,
+  type Size,
+} from "@winvm/displayfit"
+
 import { setDesktopSizeMessage, vncAuthResponse } from "../src/desktopsize"
 import {
   RAMFB,
@@ -26,18 +39,6 @@ import {
   sharesFolderFromCommandLine,
   writeDisplay,
 } from "../src/display"
-import {
-  MAX_FRAMEBUFFER_BYTES,
-  MAX_HEIGHT,
-  MAX_WIDTH,
-  SizeDebouncer,
-  clampSize,
-  drawSize,
-  guestSizeFor,
-  parseSize,
-  scaleFor,
-  type Size,
-} from "../src/displayfit"
 import { deviceFromCommandLine } from "../src/guestdisplay"
 import { type DisplayOutcome, LockedDisplay, lockScreenUp } from "../src/guestagent"
 import { displayArgv } from "../src/guestagent"
@@ -408,7 +409,7 @@ describe("wire formats", () => {
 
   it("answers VNC's DES challenge as noVNC does (bit-reversed password key)", () => {
     const challenge = Uint8Array.from({ length: 16 }, (_, i) => i * 17)
-    // Computed with noVNC's own core/crypto/des.js (packages/core/web/novnc).
+    // Computed with noVNC's own core/crypto/des.js (packages/novnc).
     expect(vncAuthResponse("password", challenge).toString("hex")).toBe("b7b9c87777661a7a2299733209bfdfce")
     expect(vncAuthResponse("passwordTOOLONG", challenge).toString("hex")).toBe("b7b9c87777661a7a2299733209bfdfce")
   })

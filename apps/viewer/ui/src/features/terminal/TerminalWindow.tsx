@@ -37,7 +37,7 @@ import { activeTab, noTabs, type Tab, tabName, type TabState, tabsReducer } from
 
 const newId = (): string => crypto.randomUUID()
 
-export const tabTitle = (tab: Tab): string => tabName(tab, t(`shell.${tab.shell}`))
+const tabTitle = (tab: Tab): string => tabName(tab, t(`shell.${tab.shell}`))
 
 function stateOf(status: SessionStatus): TabState | null {
   switch (status.kind) {

@@ -19,9 +19,8 @@
  */
 import { existsSync, realpathSync } from "node:fs"
 import { dirname } from "node:path"
-
-import { capture, quiet } from "./host"
 import { home, media } from "./paths"
+import { capture, quiet } from "./shell"
 
 const EXCLUDE_XATTR = "com.apple.metadata:com_apple_backup_excludeItem"
 

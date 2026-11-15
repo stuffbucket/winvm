@@ -52,7 +52,7 @@ const COLUMNS: readonly { key: SortKey; label: string; className: string }[] = [
 /** Rows drawn beyond the visible ones, above and below. */
 const OVERSCAN = 8
 
-export const rowId = (name: string): string => `files-row-${encodeURIComponent(name)}`
+const rowId = (name: string): string => `files-row-${encodeURIComponent(name)}`
 
 /** The row height the stylesheet sets, in CSS pixels. */
 export function rowHeight(el: HTMLElement | null): number {

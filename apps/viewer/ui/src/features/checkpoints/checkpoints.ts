@@ -21,22 +21,22 @@ import type { SaveEntry } from "../../model"
 export type Checkpoint = SaveEntry
 
 /** World units (CSS pixels at 100%). A card is a 16:10 picture over a caption. */
-export const CARD_WIDTH = 320
-export const CARD_FRAME = 200
-export const CARD_CAPTION = 92
-export const NOW_WIDTH = 560
-export const NOW_CAPTION = 64
-export const COLUMN_GAP = 36
-export const LINE_GAP = 36
+const CARD_WIDTH = 320
+const CARD_FRAME = 200
+const CARD_CAPTION = 92
+const NOW_WIDTH = 560
+const NOW_CAPTION = 64
+const COLUMN_GAP = 36
+const LINE_GAP = 36
 /** Room above a day's block, for its date. */
 export const DAY_GAP = 112
 /** Between Now and the newest day. */
-export const NOW_GAP = 150
+const NOW_GAP = 150
 /** Each older day is this much smaller than the one in front of it... */
 export const DEPTH_STEP = 0.93
 /** ...down to this. */
 export const DEPTH_MIN = 0.62
-export const COLUMNS = 6
+const COLUMNS = 6
 
 export interface CardBox extends Rect {
   readonly name: string
@@ -84,7 +84,7 @@ export function dayKey(d: Date): string {
 const midnight = (d: Date): Date => new Date(d.getFullYear(), d.getMonth(), d.getDate())
 
 /** Oldest first, by when it was taken (then by name, so equal times keep one order). */
-export function byTime(a: Checkpoint, b: Checkpoint): number {
+function byTime(a: Checkpoint, b: Checkpoint): number {
   return Date.parse(a.createdAt) - Date.parse(b.createdAt) || a.name.localeCompare(b.name)
 }
 
@@ -301,11 +301,11 @@ export const hasNotes = (c: Pick<Checkpoint, "notes" | "note">): boolean =>
 
 const SAVE_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]*$/
 
-/** saves.ts nameError's rule: a save name is a directory name. */
+/** savename.ts nameError's rule: a save name is a directory name. */
 export const validSaveName = (name: string): boolean => name.length > 0 && name.length <= 64 && SAVE_NAME.test(name)
 
 /** winvm's default save name, the local time: "2026-10-21_16-43-05". */
-export const timestampName = (d: Date): string =>
+const timestampName = (d: Date): string =>
   `${String(d.getFullYear())}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}_${pad(d.getHours())}-${pad(d.getMinutes())}-${pad(d.getSeconds())}`
 
 /**

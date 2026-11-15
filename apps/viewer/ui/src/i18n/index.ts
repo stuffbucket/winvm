@@ -19,7 +19,7 @@ const CATALOGS: Record<string, Catalog> = { en }
 
 const LOCALE_OVERRIDE_KEY = "winvm.locale"
 
-export const availableLocales = (): string[] => Object.keys(CATALOGS)
+const availableLocales = (): string[] => Object.keys(CATALOGS)
 
 function readOverride(): string | null {
   try {
@@ -45,7 +45,7 @@ function bestFitFromNavigator(available: string[]): string | null {
 }
 
 /** An explicit override if it is shipped, else the best fit of the browser's languages, else en. */
-export function resolveLocale(): string {
+function resolveLocale(): string {
   const available = availableLocales()
   const override = readOverride()
   if (override !== null && available.includes(override)) return override

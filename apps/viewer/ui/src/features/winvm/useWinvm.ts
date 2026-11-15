@@ -14,7 +14,7 @@ export interface Ran {
 }
 
 /** How this window's last command on one machine ended; `seq` grows with each command, so a later one is told from an earlier. */
-export interface RanOn extends Ran {
+interface RanOn extends Ran {
   readonly seq: number
 }
 

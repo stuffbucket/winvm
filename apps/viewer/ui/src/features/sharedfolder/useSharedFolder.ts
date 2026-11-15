@@ -6,7 +6,7 @@ import type { Phase, SharedFolderStatus } from "../../model"
 import { parseSharedFolder } from "../../model"
 import { clearArgs, cliError, installArgs, setArgs, statusArgs } from "./folder"
 
-export type SharedFolderWork = "set" | "clear" | "install"
+type SharedFolderWork = "set" | "clear" | "install"
 
 /** The shared Mac folder of the machine shown, and what the panel can do with it. */
 export interface SharedFolderView {

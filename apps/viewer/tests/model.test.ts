@@ -1,7 +1,8 @@
 import { describe, expect, it } from "bun:test"
 
-import { CLOSE_POLICIES as CORE_CLOSE_POLICIES } from "../../../packages/core/src/config"
-import { VM_OPERATIONS as CORE_VM_OPERATIONS } from "../../../packages/core/src/operation"
+import { CLOSE_POLICIES as CORE_CLOSE_POLICIES } from "@winvm/core/config"
+import { VM_OPERATIONS as CORE_VM_OPERATIONS } from "@winvm/core/operation"
+
 import {
   CLOSE_POLICIES,
   VM_OPERATIONS,

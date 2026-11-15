@@ -29,17 +29,16 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
 import { connect } from "node:net"
 import { resolve } from "node:path"
 
+import { vncAuthResponse } from "@winvm/core/desktopsize"
+import { requestSize } from "@winvm/core/guestdisplay"
+import { pathsFor, readMeta } from "@winvm/core/paths"
+import { passwordFor, vncPort } from "@winvm/core/vnc"
 import type { Size } from "@winvm/displayfit"
+import { HeldSizes } from "@winvm/viewer/held"
+import { parseStatus, phase } from "@winvm/viewer/model"
+import { StatusGuard, type Verb, phaseAfter } from "@winvm/viewer/statusGuard"
 
-import { HeldSizes } from "../../apps/viewer/ui/src/features/screen/held"
-import { parseStatus, phase } from "../../apps/viewer/ui/src/model"
-import { StatusGuard, type Verb, phaseAfter } from "../../apps/viewer/ui/src/features/winvm/statusGuard"
-import { requestSize } from "../../packages/core/src/guestdisplay"
-import { pathsFor, readMeta } from "../../packages/core/src/paths"
-import { vncAuthResponse } from "../../packages/core/src/desktopsize"
-import { passwordFor, vncPort } from "../../packages/core/src/vnc"
-
-export const REPO = resolve(import.meta.dir, "..", "..")
+const REPO = resolve(import.meta.dir, "..", "..")
 const CLI = resolve(REPO, "apps", "cli", "src", "winvm.ts")
 
 export interface Ran {

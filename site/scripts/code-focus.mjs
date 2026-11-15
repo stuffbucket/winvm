@@ -26,7 +26,7 @@ export function codeName({ title, language }) {
 }
 
 /** The first element with this tag name, searching depth first. */
-export function findElement(node, tagName) {
+function findElement(node, tagName) {
   if (node?.type === "element" && node.tagName === tagName) return node;
   for (const child of node?.children ?? []) {
     const found = findElement(child, tagName);
@@ -36,7 +36,7 @@ export function findElement(node, tagName) {
 }
 
 /** Give the block's <pre> what it needs to take focus and be announced. */
-export function makeFocusable(blockAst, codeBlock) {
+function makeFocusable(blockAst, codeBlock) {
   const pre = findElement(blockAst, "pre");
   if (!pre) return;
   pre.properties ??= {};

@@ -39,7 +39,7 @@ import { cx } from "../../components/cx"
 import { Icon, type IconName } from "../../components/Icon"
 import { t } from "../../i18n"
 import { defaultShell, installedList, runnable } from "../terminal/shells"
-import { FileList, type Renaming, rowHeight, rowId } from "./FileList"
+import { FileList, type Renaming, rowHeight } from "./FileList"
 import type { Entry, ListFailure, Listing, Place, Sort, SortKey } from "./files"
 import { childPath, clickSelect, crumbs, findByPrefix, freeName, isListing, isWithin, leafName, nameProblem, samePath, sortEntries } from "./files"
 import { glyphOf, kindLabel } from "./kinds"
@@ -59,7 +59,7 @@ const PLACE_ICON: Record<Place["kind"], IconName> = {
 const placeName = (p: Place): string => (p.kind === "desktop" || p.kind === "documents" || p.kind === "downloads" ? t(`files.place.${p.kind}`) : p.name)
 
 /** What to call a folder: a known folder's name, else its own. */
-export function folderName(path: string, places: readonly Place[]): string {
+function folderName(path: string, places: readonly Place[]): string {
   const place = places.find((p) => samePath(p.path, path) && p.kind !== "home")
   return place === undefined ? leafName(path) : placeName(place)
 }
@@ -928,5 +928,3 @@ export function FilesWindow({ instance, initialTitle }: { readonly instance: str
     </div>
   )
 }
-
-export { rowId }

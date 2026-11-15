@@ -20,6 +20,7 @@ import { resolve } from "node:path"
 
 /** Set by `bun build --compile --define`; absent when running from source. */
 declare const WINVM_BUILD_ID: string | undefined
+declare const WINVM_VERSION: string | undefined
 
 const REPO_ROOT = resolve(import.meta.dir, "..", "..", "..")
 
@@ -28,12 +29,13 @@ const INPUT_FILES = [
   "package.json",
   "apps/cli/package.json",
   "packages/core/package.json",
+  "packages/displayfit/package.json",
   ".bun-version",
   "pnpm-lock.yaml",
   "packages/core/runtime.json",
   "apps/viewer/scripts/build-sidecar.ts",
 ] as const
-const SOURCE_DIRS = ["apps/cli/src", "packages/core/src"] as const
+const SOURCE_DIRS = ["apps/cli/src", "packages/core/src", "packages/displayfit/src"] as const
 
 export interface IdentityEntry {
   readonly path: string
@@ -86,6 +88,9 @@ function packageVersion(root: string, rel: string): string {
     return ""
   }
 }
+
+export const releaseVersion = (root: string = REPO_ROOT): string =>
+  typeof WINVM_VERSION === "string" ? WINVM_VERSION : packageVersion(root, "package.json")
 
 /** Hash of the CLI and core sources and the inputs that decide how they build and run. */
 export function sourceBuildIdentity(root: string = REPO_ROOT): string {

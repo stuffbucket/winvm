@@ -10,7 +10,7 @@ import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdir
 import { homedir, tmpdir } from "node:os"
 import { resolve } from "node:path"
 
-import { capture, download, quiet, run } from "./host"
+import { capture, download, quiet, run } from "./shell"
 import { PACKAGE_DIR, media, mediaDir, pinnedBunVersion } from "./paths"
 
 const ASSETS = resolve(PACKAGE_DIR, "assets")

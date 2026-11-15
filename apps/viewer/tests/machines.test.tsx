@@ -16,7 +16,7 @@ const { MachinePicker } = await import("../ui/src/features/machines/MachinePicke
 const { NewMachineDialog } = await import("../ui/src/features/machines/NewMachineDialog")
 const { DeleteMachineBody } = await import("../ui/src/features/machines/DeleteMachine")
 const machines = await import("../ui/src/features/machines/machines")
-const { isValidInstanceName } = await import("../../../packages/core/src/args")
+const { isValidInstanceName } = await import("@winvm/core/args")
 
 type Root = ReturnType<typeof createRoot>
 let root: Root | null = null

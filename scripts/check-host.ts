@@ -1,5 +1,5 @@
-import { hostChecks, printChecks } from "../packages/core/src/host"
-import { ensureRuntime } from "../packages/core/src/runtime"
+import { hostChecks, printChecks } from "@winvm/core/host"
+import { ensureRuntime } from "@winvm/core/runtime"
 
 if ((process.env["WINVM_RUNTIME"] ?? "") === "") {
   try {

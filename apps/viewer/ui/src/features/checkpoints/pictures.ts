@@ -35,7 +35,7 @@ function done(): void {
 const keyOf = (path: string, version: string): string => `${path}#${version}`
 
 /** A blob: URL for a checkpoint picture; rejects when it can't be read. */
-export function pictureUrl(path: string, version: string, read: (path: string) => Promise<ArrayBuffer> = checkpointImage): Promise<string> {
+function pictureUrl(path: string, version: string, read: (path: string) => Promise<ArrayBuffer> = checkpointImage): Promise<string> {
   const key = keyOf(path, version)
   const had = cache.get(key)
   if (had !== undefined) return had

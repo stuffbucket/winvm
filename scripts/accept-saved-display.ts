@@ -52,7 +52,7 @@ function refuse(message: string): never {
 
 // The runtime lives under XDG_DATA_HOME by default, which is redirected below
 // so the run cannot touch your notes: find it first, in your own environment.
-const runtime = await import("../packages/core/src/runtime")
+const runtime = await import("@winvm/core/runtime")
 const found = runtime.findRuntime()
 if (found === null) refuse("winvm's runtime is not installed: run `winvm setup`, or set WINVM_RUNTIME or WINVM_RUNTIME_CACHE")
 Object.assign(process.env, runtimePin(process.env, runtime.runtimeCache()))
@@ -66,15 +66,15 @@ process.env["WINVM_HOME"] = resolve(state, "home")
 process.env["XDG_CONFIG_HOME"] = resolve(state, "xdg-config")
 process.env["XDG_DATA_HOME"] = resolve(state, "xdg-data")
 
-const { measureOffset } = await import("../packages/core/src/clock")
-const { RAMFB, VIRTIO_GPU, describeDisplay, displayPath, readDisplay } = await import("../packages/core/src/display")
-type DisplayConfig = import("../packages/core/src/display").DisplayConfig
-const { ensureInstance } = await import("../packages/core/src/instance")
-const { pathsFor } = await import("../packages/core/src/paths")
-const { stopSidecars } = await import("../packages/core/src/qemu")
-const { quitQemu, readSave } = await import("../packages/core/src/saves")
-const { stopService } = await import("../packages/core/src/service")
-const { virtiofsdSocket } = await import("../packages/core/src/share")
+const { measureOffset } = await import("@winvm/core/clock")
+const { RAMFB, VIRTIO_GPU, describeDisplay, displayPath, readDisplay } = await import("@winvm/core/display")
+type DisplayConfig = import("@winvm/core/display").DisplayConfig
+const { ensureInstance } = await import("@winvm/core/instance")
+const { pathsFor } = await import("@winvm/core/paths")
+const { stopSidecars } = await import("@winvm/core/qemu")
+const { quitQemu, readSave } = await import("@winvm/core/saves")
+const { stopService } = await import("@winvm/core/servicectl")
+const { virtiofsdSocket } = await import("@winvm/core/share")
 
 const name = "accept-display"
 const imageName = "win11-arm64"

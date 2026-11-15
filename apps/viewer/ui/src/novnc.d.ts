@@ -1,4 +1,4 @@
-declare module "novnc/core/rfb.js" {
+declare module "@winvm/novnc/core/rfb.js" {
   export default class RFB extends EventTarget {
     constructor(
       target: HTMLElement,
@@ -48,7 +48,7 @@ declare module "novnc/core/rfb.js" {
 
 }
 
-declare module "novnc/core/input/util.js" {
+declare module "@winvm/novnc/core/input/util.js" {
   export function getKeycode(event: KeyboardEvent): string
   export function getKeysym(event: KeyboardEvent): number | null
 }

@@ -154,6 +154,12 @@ importers:
       '@winvm/canvas':
         specifier: workspace:*
         version: link:../../packages/canvas
+      '@winvm/displayfit':
+        specifier: workspace:*
+        version: link:../../packages/displayfit
+      '@winvm/novnc':
+        specifier: workspace:*
+        version: link:../../packages/novnc
       '@winvm/terminal':
         specifier: workspace:*
         version: link:../../packages/terminal
@@ -185,6 +191,9 @@ importers:
       '@types/react-dom':
         specifier: 18.3.1
         version: 18.3.1
+      '@winvm/core':
+        specifier: workspace:*
+        version: link:../../packages/core
       typescript:
         specifier: 6.0.3
         version: 6.0.3
@@ -218,6 +227,9 @@ importers:
       '@anthropic-ai/sdk':
         specifier: 0.134.0
         version: 0.134.0(zod@4.1.11)
+      '@winvm/displayfit':
+        specifier: workspace:*
+        version: link:../displayfit
     devDependencies:
       '@types/bun':
         specifier: 1.4.0
@@ -225,6 +237,17 @@ importers:
       typescript:
         specifier: 6.0.3
         version: 6.0.3
+
+  packages/displayfit:
+    devDependencies:
+      '@types/bun':
+        specifier: 1.4.0
+        version: 1.4.0
+      typescript:
+        specifier: 6.0.3
+        version: 6.0.3
+
+  packages/novnc: {}
 
   packages/terminal:
     dependencies:
@@ -247,6 +270,25 @@ importers:
       typescript:
         specifier: 6.0.3
         version: 6.0.3
+
+  scripts:
+    dependencies:
+      '@winvm/core':
+        specifier: workspace:*
+        version: link:../packages/core
+      '@winvm/displayfit':
+        specifier: workspace:*
+        version: link:../packages/displayfit
+      '@winvm/viewer':
+        specifier: workspace:*
+        version: link:../apps/viewer
+      typescript:
+        specifier: 6.0.3
+        version: 6.0.3
+    devDependencies:
+      '@types/bun':
+        specifier: 1.4.0
+        version: 1.4.0
 
   site:
     dependencies:

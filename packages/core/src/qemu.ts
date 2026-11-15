@@ -13,7 +13,7 @@ import { closeSync, existsSync, openSync, readFileSync, renameSync, rmSync } fro
 import { restoreForward } from "./agentfwd"
 import { requireFirmware, tpmTisHasPpi } from "./host"
 import { runtimeBin } from "./runtime"
-import { ensureService } from "./service"
+import { ensureService } from "./servicectl"
 import type { InstanceMeta, Paths } from "./paths"
 import { media } from "./paths"
 import type { DisplayConfig } from "./display"

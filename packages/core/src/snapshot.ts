@@ -21,7 +21,7 @@
  */
 import { existsSync } from "node:fs"
 
-import { capture } from "./host"
+import { capture } from "./shell"
 import { runtimeBin } from "./runtime"
 import type { Paths } from "./paths"
 import * as qmp from "./qmp"

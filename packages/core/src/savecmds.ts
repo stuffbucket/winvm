@@ -38,6 +38,7 @@ import { pathsFor, readImageMeta, readMeta } from "./paths"
 import * as qemu from "./qemu"
 import * as qga from "./qga"
 import * as qmp from "./qmp"
+import { nameError } from "./savename"
 import * as saves from "./saves"
 import * as snapshot from "./snapshot"
 import * as watcher from "./watch"
@@ -131,7 +132,7 @@ export function formatFlag(args: Args): saves.RamFormat | string {
 export async function save(args: Args): Promise<number> {
   const name = instanceName(args)
   const saveName = args.positional[0] ?? saves.defaultName(new Date())
-  const err = saves.nameError(saveName)
+  const err = nameError(saveName)
   if (err !== null) return fail(err)
   if (saveName === saves.STOW) return fail(`"${saves.STOW}" is reserved for \`winvm stow\``)
   const format = formatFlag(args)
@@ -260,7 +261,7 @@ export function note(args: Args, stdin: () => string = readStdin): number {
   const name = instanceName(args)
   const target = args.positional[1]
   if (target === undefined) return fail(NOTE_USAGE)
-  const err = saves.nameError(target)
+  const err = nameError(target)
   if (err !== null) return fail(err)
   if (!saves.hasSave(name, target)) return fail(`instance "${name}" has no save "${target}"`)
   const json = args.flags.has("json")

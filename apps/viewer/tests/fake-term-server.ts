@@ -18,7 +18,7 @@
  */
 import type { Server, ServerWebSocket } from "bun"
 
-export interface FakeSession {
+interface FakeSession {
   readonly shell: string | null
   readonly cwd: string | null
   readonly protocols: readonly string[]

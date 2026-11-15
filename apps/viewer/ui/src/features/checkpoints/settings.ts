@@ -18,7 +18,7 @@ export type CheckpointSettings = z.infer<typeof Settings>
 
 export const DEFAULT_SETTINGS: CheckpointSettings = { showAutomatic: true, zoom: null }
 
-export const SECTION = "checkpoints"
+const SECTION = "checkpoints"
 
 /** Whatever is in the file, made sound: unknown or broken values fall back to the defaults. */
 export function parseSettings(raw: unknown): CheckpointSettings {

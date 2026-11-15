@@ -55,6 +55,7 @@ export interface ServerInfo {
 export const statePath = (): string => resolve(home(), "web.json")
 export const logPath = (): string => resolve(home(), "web.log")
 const webRoot = resolve(PACKAGE_DIR, "web")
+const novncRoot = resolve(PACKAGE_DIR, "..", "novnc")
 
 // ---------------------------------------------------------------------------
 // Pure pieces
@@ -272,10 +273,10 @@ const json = (body: unknown, code = 200): Response =>
 
 const notFound = (): Response => new Response("not found", { status: 404 })
 
-function staticFile(rel: string): Response {
-  const path = resolve(webRoot, rel)
+function staticFile(rel: string, root: string = webRoot): Response {
+  const path = resolve(root, rel)
   // No escaping the web/ directory, whatever the URL says.
-  if (!path.startsWith(webRoot + sep)) return notFound()
+  if (!path.startsWith(root + sep)) return notFound()
   const type = TYPES[extname(path)]
   try {
     if (type === undefined || !statSync(path).isFile()) return notFound()
@@ -329,11 +330,11 @@ export function makeHandler(port: () => number, token: string): (req: Request) =
       if (path.startsWith("/novnc/")) {
         let rel: string
         try {
-          rel = decodeURIComponent(path.slice(1))
+          rel = decodeURIComponent(path.slice("/novnc/".length))
         } catch {
           return notFound()
         }
-        return staticFile(rel)
+        return staticFile(rel, novncRoot)
       }
       return notFound()
     }

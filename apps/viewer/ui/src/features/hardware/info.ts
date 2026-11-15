@@ -47,8 +47,6 @@ const MachineInfo = z.object({
 })
 
 export type MachineInfo = z.infer<typeof MachineInfo>
-export type Forward = z.infer<typeof Forward>
-export type Listener = z.infer<typeof Listener>
 
 export function parseMachineInfo(stdout: string): MachineInfo | null {
   try {

@@ -90,7 +90,7 @@ import { InstanceBusy, leaseHolder, withOperation } from "./operation"
 import { NO_RECONCILE, cliEntry, pathsFor, type Paths } from "./paths"
 import { isSameProcess, ownStart } from "./proc"
 import { pidOf as qemuPid } from "./qemu"
-import { ensureService, readService, type ServiceInfo } from "./service"
+import { ensureService, readService, type ServiceInfo } from "./servicectl"
 import { ensureWatcher, readWatchState, stopWatcher, watchPathsFor, watcherFreshness, watcherRecord, type WatcherRecord } from "./watch"
 
 /**
