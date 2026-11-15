@@ -40,7 +40,7 @@
  * and a dead server would hang it. The mount table is read without touching
  * any mount.
  */
-import { spawn, spawnSync } from "node:child_process"
+import { spawn } from "node:child_process"
 import { existsSync, mkdirSync, readdirSync, rmdirSync } from "node:fs"
 import { resolve } from "node:path"
 
@@ -67,6 +67,7 @@ import {
   withMounted,
   writeSmb,
 } from "./smbstate"
+import { spawnText } from "./shell"
 
 const errMsg = (e: unknown): string => (e instanceof Error ? e.message : String(e))
 
@@ -93,8 +94,8 @@ export interface Sys {
 }
 
 function runSync(cmd: string, args: readonly string[], timeoutMs: number): { code: number | null; out: string } {
-  const r = spawnSync(cmd, [...args], { encoding: "utf8", timeout: timeoutMs, killSignal: "SIGKILL" })
-  return { code: r.status, out: `${r.stdout ?? ""}${r.stderr ?? ""}${r.error === undefined ? "" : String(r.error)}` }
+  const r = spawnText(cmd, args, { timeout: timeoutMs, killSignal: "SIGKILL" })
+  return { code: r.status, out: `${r.stdout}${r.stderr}${r.error === undefined ? "" : String(r.error)}` }
 }
 
 /**
@@ -256,7 +257,7 @@ export async function mountShares(instance: string, keys: readonly ShareKey[], o
   const { state: first, created } = ensureSmb(p)
   const port = await sys.forward(instance)
   let state: SmbState = { ...(readSmb(p) ?? first), hostPort: port }
-  let setUp = false
+  let setUp = false as boolean
   const setup = async (why: string): Promise<void> => {
     sys.log(`setting up file sharing in the guest (${why})`)
     await sys.setup(instance, state, sys.log)

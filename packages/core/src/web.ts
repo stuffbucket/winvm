@@ -179,7 +179,7 @@ export async function ensureServer(): Promise<ServerInfo> {
   const child = spawn(process.execPath, [...cliArgv("web")], { detached: true, stdio: ["ignore", log, log], env: process.env })
   closeSync(log)
   child.unref()
-  let gone = false
+  let gone = false as boolean
   child.on("exit", () => {
     gone = true
   })

@@ -138,7 +138,7 @@ export function settingsCmd(args: Args): number {
     }
     changes[p.key] = p.value
   }
-  const now = Object.keys(changes).length === 0 ? readSettings() : writeSettings(changes as Partial<Settings>)
+  const now = Object.keys(changes).length === 0 ? readSettings() : writeSettings(changes)
   if (args.flags.has("json")) console.log(JSON.stringify(now))
   else {
     for (const k of KEYS) console.log(`${k}=${String(now[k])}`)

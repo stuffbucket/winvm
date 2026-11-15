@@ -67,7 +67,7 @@ export function selectorFrom(args: Args, positional: string | undefined): Select
   set("controlType", f.get("type"))
   set("className", f.get("class"))
   set("index", int(f.get("index")))
-  return s as Selector
+  return s
 }
 
 export async function uiCmd(args: Args): Promise<number> {

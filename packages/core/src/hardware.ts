@@ -17,12 +17,12 @@
  * recall launch QEMU at THAT size, so changing the setting never makes a save
  * unloadable. The setting applies again at the next cold boot.
  */
-import { spawnSync } from "node:child_process"
 import { readFileSync, writeFileSync } from "node:fs"
 import { cpus as osCpus, totalmem } from "node:os"
 import { resolve } from "node:path"
 
 import type { Paths } from "./paths"
+import { spawnText } from "./shell"
 
 export interface Hardware {
   readonly cpus: number
@@ -56,8 +56,8 @@ export function limitsFor(performanceCores: number, hostBytes: number): Limits {
 
 /** Performance cores on Apple silicon (`hw.perflevel0.physicalcpu`), else every core. */
 export function performanceCores(): number {
-  const r = spawnSync("sysctl", ["-n", "hw.perflevel0.physicalcpu"], { encoding: "utf8" })
-  const n = Number.parseInt((r.stdout ?? "").trim(), 10)
+  const r = spawnText("sysctl", ["-n", "hw.perflevel0.physicalcpu"])
+  const n = Number.parseInt(r.stdout.trim(), 10)
   return Number.isFinite(n) && n > 0 ? n : osCpus().length
 }
 
@@ -133,7 +133,7 @@ export function hardwareFromArgv(argv: readonly string[]): Hardware | null {
 
 /** What a running QEMU was started with, off its own command line; null when that cannot be read. */
 export function runningHardware(pid: number): Hardware | null {
-  const r = spawnSync("ps", ["-o", "command=", "-p", String(pid)], { encoding: "utf8" })
-  const cmd = (r.stdout ?? "").trim()
+  const r = spawnText("ps", ["-o", "command=", "-p", String(pid)])
+  const cmd = r.stdout.trim()
   return cmd === "" ? null : hardwareFromArgv(cmd.split(/\s+/))
 }

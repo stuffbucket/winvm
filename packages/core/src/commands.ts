@@ -196,9 +196,9 @@ export function prune(args: Args): number {
  * which stays a pure check — this repository's own preflight says it plainly:
  * "A check that silently mutates the environment is its own defect."
  */
-export async function setup(args: Args): Promise<number> {
+export function setup(args: Args): number {
   try {
-    const rt = await ensureRuntime()
+    const rt = ensureRuntime()
     console.log(`runtime ${rt.manifest?.version ?? "?"} in ${rt.dir}`)
   } catch (error) {
     console.error(`::error::${error instanceof Error ? error.message : String(error)}`)

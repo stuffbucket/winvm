@@ -1,12 +1,9 @@
-import { spawnSync } from "node:child_process"
+import { spawnText } from "./shell"
 
 export const ps = (fields: readonly string[], pid: number): string =>
-  (
-    spawnSync("ps", [...fields.flatMap((f) => ["-o", `${f}=`]), "-p", String(pid)], {
-      encoding: "utf8",
-      env: { ...process.env, LC_ALL: "C", TZ: "UTC" },
-    }).stdout ?? ""
-  ).trim()
+  spawnText("ps", [...fields.flatMap((f) => ["-o", `${f}=`]), "-p", String(pid)], {
+    env: { ...process.env, LC_ALL: "C", TZ: "UTC" },
+  }).stdout.trim()
 
 function exists(pid: number): boolean {
   if (!Number.isInteger(pid) || pid <= 0) return false

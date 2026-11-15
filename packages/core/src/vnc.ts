@@ -113,7 +113,7 @@ const ALPHABET = "abcdefghijkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789"
 /** 8 characters: VNC authentication ignores anything past that. URL-safe by construction. */
 export function generatePassword(): string {
   let s = ""
-  for (let i = 0; i < 8; i += 1) s += ALPHABET[randomInt(ALPHABET.length)]
+  for (let i = 0; i < 8; i += 1) s += ALPHABET.charAt(randomInt(ALPHABET.length))
   return s
 }
 

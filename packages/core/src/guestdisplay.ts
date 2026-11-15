@@ -50,7 +50,7 @@ export async function liveSize(p: Paths): Promise<Size | null> {
 export async function requestSize(p: Paths, meta: InstanceMeta, size: Size): Promise<void> {
   const answer = await requestDesktopSize(vncPort(meta.vnc), passwordFor(p), size.width, size.height)
   if (answer.status !== 4 && answer.status !== 0) {
-    const why = RESIZE_STATUS[answer.status as keyof typeof RESIZE_STATUS] ?? `status ${String(answer.status)}`
+    const why = RESIZE_STATUS[answer.status] ?? `status ${String(answer.status)}`
     throw new Error(`QEMU did not pass the size on: ${why}`)
   }
 }

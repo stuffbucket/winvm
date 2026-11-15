@@ -54,6 +54,7 @@ import { resolve } from "node:path"
 import type { DisplayConfig } from "./display"
 import type { Paths } from "./paths"
 import { findRuntime, type Runtime } from "./runtime"
+import { spawnText } from "./shell"
 
 /** The virtio-fs tag: fixed, because the device is part of the hardware hash. */
 export const SHARE_TAG = "winvm"
@@ -170,8 +171,8 @@ export const probeRuntime: Probe = (rt) => {
   if (!existsSync(virtiofsd)) return { ok: false, reason: "this winvm runtime has no virtiofsd; a newer runtime brings the shared folder" }
   const q = resolve(rt.dir, "bin", "qemu-system-aarch64")
   const ask = (...a: string[]): string => {
-    const r = spawnSync(q, ["-M", "virt", ...a], { encoding: "utf8" })
-    return `${r.stdout ?? ""}${r.stderr ?? ""}`
+    const r = spawnText(q, ["-M", "virt", ...a])
+    return `${r.stdout}${r.stderr}`
   }
   return parseSupport(ask("-device", "help"), ask("-chardev", "help"), ask("-object", "help"))
 }
@@ -330,7 +331,7 @@ export async function startVirtiofsd(p: Paths, o: StartOptions = {}): Promise<Se
   const proc = spawn(bin, [...daemonArgs(p, served)], { detached: true, stdio: ["ignore", log, log] })
   closeSync(log)
   proc.unref()
-  let exited = false
+  let exited = false as boolean
   proc.on("exit", () => {
     exited = true
   })

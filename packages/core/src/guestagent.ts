@@ -531,7 +531,7 @@ async function hiddenNames(dir: string): Promise<string[]> {
 }
 
 function listError(error: unknown, path: string): Error {
-  switch ((error as { code?: string }).code) {
+  switch ((error as { code?: string }).code ?? "") {
     case "ENOENT":
       return new FsError("notfound", `no such folder: ${path}`)
     case "EACCES":
@@ -596,7 +596,7 @@ export async function listDir(
 
 /** An fs call's failure as an FsError, naming `path`. */
 function fsFailure(error: unknown, path: string): Error {
-  switch ((error as { code?: string }).code) {
+  switch ((error as { code?: string }).code ?? "") {
     case "ENOENT":
       return new FsError("notfound", `no such file or folder: ${path}`)
     case "EACCES":
@@ -990,7 +990,7 @@ export async function guestStats(): Promise<GuestStats> {
   let disk: GuestStats["disk"] = null
   try {
     const s = await statfs(path)
-    disk = { path, total: Number(s.blocks) * Number(s.bsize), free: Number(s.bavail) * Number(s.bsize) }
+    disk = { path, total: s.blocks * s.bsize, free: s.bavail * s.bsize }
   } catch {
     // reported as unknown
   }

@@ -288,7 +288,7 @@ export async function serve(args: Args): Promise<number> {
         }
         if (req.method === "GET" && path === "/v1/extra") return json({ tools: EXTRA_TOOLS })
         if (req.method === "POST" && (path === "/v1/computer" || path === "/v1/extra")) {
-          const body = (await req.json().catch(() => null)) as unknown
+          const body = await req.json().catch(() => null)
           if (body === null || typeof body !== "object" || Array.isArray(body)) return json({ error: "body must be a JSON object" }, 400)
           const b = body as Record<string, unknown>
           const result =

@@ -352,7 +352,7 @@ function failed(json: boolean, error: string): number {
   return 1
 }
 
-async function change(args: Args, verb: "install" | "uninstall"): Promise<number> {
+function change(args: Args, verb: "install" | "uninstall"): number {
   const json = args.flags.has("json")
   const client = positionals(args)[1]
   if (client === undefined || !(CLIENTS as readonly string[]).includes(client)) return failed(json, `say which: winvm mcp ${verb} claude-code|claude-desktop [-i name]`)
@@ -422,7 +422,7 @@ function status(args: Args): number {
 export async function mcpCmd(args: Args): Promise<number> {
   const verb = positionals(args)[0]
   if (verb === undefined) return await mcp.serve(args)
-  if (verb === "install" || verb === "uninstall") return await change(args, verb)
+  if (verb === "install" || verb === "uninstall") return change(args, verb)
   if (verb === "status") return status(args)
   console.error(USAGE)
   return 2

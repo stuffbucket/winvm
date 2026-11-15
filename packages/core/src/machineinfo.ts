@@ -257,7 +257,7 @@ export function setHardware(name: string, assignments: readonly string[]): strin
   writeHardware(p, next)
   const pid = qemu.pidOf(p)
   const running = pid === null ? null : runningHardware(pid)
-  const said = pendingNote(running, next) ?? (running === null ? `${fmtHw(next)}; applies the next time Windows starts` : `${fmtHw(next)}`)
+  const said = pendingNote(running, next) ?? (running === null ? `${fmtHw(next)}; applies the next time Windows starts` : fmtHw(next))
   // A stow is recalled at the size it was taken at (saves.ts), so the new size waits for a boot after it.
   return hasSave(name, STOW) ? `${said} (the stowed session resumes at its own size first)` : said
 }

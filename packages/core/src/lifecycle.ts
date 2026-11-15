@@ -454,7 +454,7 @@ async function reconcileHeld(name: string, p: Paths, o: ReconcileOptions, curren
   if (busy !== null && o.waitForBusyWatcher === false) return { changed: false, ...pids(name, p), deferred: busy }
 
   let changed = false
-  let stopped = false
+  let stopped = false as boolean
   const stop = async (): Promise<void> => {
     owe(p, qemu)
     await stopWatcher(name)

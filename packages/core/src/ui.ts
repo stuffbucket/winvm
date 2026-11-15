@@ -281,7 +281,7 @@ export async function forInstance(name: string, o: { readonly log?: (line: strin
 const q = (s: string): string => JSON.stringify(s.replace(/\s+/g, " "))
 
 /** One line: `Button "Settings…" id=Item 1008 [569,490 228x22] pid 2800`. */
-export function formatElement(e: Element): string {
+export function formatElement(e: Omit<Element, "bounds" | "pid"> & Partial<Pick<Element, "bounds" | "pid">>): string {
   const parts = [e.controlType, q(e.name)]
   if (e.automationId !== undefined) parts.push(`id=${q(e.automationId)}`)
   if (e.className !== undefined) parts.push(`class=${q(e.className)}`)

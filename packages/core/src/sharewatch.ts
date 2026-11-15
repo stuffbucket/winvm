@@ -52,7 +52,7 @@ export function pathState(abs: string): string {
 
 const fsEvents = (root: string, onChange: (rel: string) => void): { close(): void } => {
   const w: FSWatcher = fsWatch(root, { recursive: true }, (_event, filename) => {
-    if (filename !== null) onChange(filename.toString())
+    if (filename !== null) onChange(filename)
   })
   w.on("error", () => undefined)
   return w

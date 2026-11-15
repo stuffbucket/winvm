@@ -146,8 +146,8 @@ async function relay(url: string, token: string): Promise<number> {
   const tty = process.stdin.isTTY
   const ws = new WebSocket(url, { headers: { authorization: `Bearer ${token}` } })
   ws.binaryType = "arraybuffer"
-  let code: number | null = null
-  let error: string | null = null
+  let code = null as number | null
+  let error = null as string | null
 
   const onInput = (chunk: Buffer): void => {
     if (ws.readyState === WebSocket.OPEN) ws.send(chunk)

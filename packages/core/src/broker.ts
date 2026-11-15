@@ -331,6 +331,14 @@ export class QgaChannel {
     void this.pump()
   }
 
+  private ended(next: Socket): boolean {
+    return next.destroyed || this.stopped
+  }
+
+  private superseded(next: Socket): boolean {
+    return this.active !== next
+  }
+
   private async pump(): Promise<void> {
     if (this.active !== null || this.stopped) return
     const next = this.queue.shift()
@@ -340,10 +348,10 @@ export class QgaChannel {
       return
     }
     this.active = next
-    while (!next.destroyed && !this.stopped && (await this.o.portOpen().catch(() => null)) !== true) {
+    while (!this.ended(next) && (await this.o.portOpen().catch(() => null)) !== true) {
       await new Promise((r) => setTimeout(r, this.o.pollMs ?? 250))
     }
-    if (next.destroyed || this.stopped || this.active !== next) return
+    if (this.ended(next) || this.superseded(next)) return
     const up = connect(this.o.upstream)
     this.upstream = up
     up.on("error", () => undefined)
