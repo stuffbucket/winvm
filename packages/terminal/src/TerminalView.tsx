@@ -60,6 +60,8 @@ interface TerminalViewCommonProps extends TerminalDescriptor {
   labels?: { startFailed: string; retry: string };
 }
 
+const mounted = (ref: { readonly current: HTMLDivElement | null }): HTMLDivElement | null => ref.current;
+
 /**
  * The view's own lifetime, and the session's, as two decisions.
  *
@@ -141,7 +143,7 @@ export function TerminalView({
     const term = terminal.current;
     if (!term) return;
     const focusedTransport = transport.focus?.(id, term.cols, term.rows);
-    if (focusedTransport) void focusedTransport.catch((error) => callbacks.current.onError?.(error));
+    if (focusedTransport) void focusedTransport.catch((error: unknown) => callbacks.current.onError?.(error));
   };
   const focusEmulator = (renewLease: boolean): void => {
     if (!terminal.current || !nativeWindowFocused.current) return;
@@ -164,6 +166,7 @@ export function TerminalView({
     lifecycle.current = { id, generation };
 
     let disposed = false;
+    const isDisposed = (): boolean => disposed;
     let failed = false;
     let spawnAttempted = false;
     let term: TerminalEmulator | undefined;
@@ -218,7 +221,7 @@ export function TerminalView({
     );
 
     void Promise.resolve().then(async () => {
-      if (disposed || !host.current) return;
+      if (disposed || mounted(host) === null) return;
 
       term = await createTerminalEmulator(
         emulator,
@@ -226,12 +229,13 @@ export function TerminalView({
         ghosttyWindow,
         typography,
       );
-      if (disposed || !host.current) {
+      const opening = mounted(host);
+      if (isDisposed() || opening === null) {
         term.dispose();
         return;
       }
-      await term.open(host.current);
-      if (disposed || !host.current) {
+      await term.open(opening);
+      if (isDisposed() || mounted(host) === null) {
         term.dispose();
         return;
       }

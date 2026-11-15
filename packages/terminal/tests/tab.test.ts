@@ -21,7 +21,7 @@ describe('terminal tab identity', () => {
   it('removes controls and bounds a process-supplied title', () => {
     expect(terminalProcessTitle('  vim\u0000 README.md\u0080\u009f  ')).toBe('vim README.md');
     expect(terminalProcessTitle('café')).toBe('café');
-    expect([...terminalProcessTitle('x'.repeat(200))]).toHaveLength(160);
+    expect(Array.from(terminalProcessTitle('x'.repeat(200)))).toHaveLength(160);
     expect(terminalProcessTitle('\u0000\u001f\u007f\u009f')).toBe('');
   });
 

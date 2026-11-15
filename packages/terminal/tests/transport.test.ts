@@ -131,7 +131,7 @@ describe('SHELL_TERMINAL_PROPERTIES', () => {
  * would fail them.
  */
 
-const CHANNELS: TerminalChannels = {
+const CHANNELS = {
   spawn: 'consumer/open',
   write: 'consumer/write',
   resize: 'consumer/resize',
@@ -139,7 +139,7 @@ const CHANNELS: TerminalChannels = {
   list: 'consumer/list',
   data: 'consumer/output',
   exit: 'consumer/ended',
-};
+} satisfies TerminalChannels;
 
 /** A transport over recorded calls, plus the recordings. */
 function wired(answer: unknown = []) {

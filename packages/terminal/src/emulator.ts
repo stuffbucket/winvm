@@ -191,11 +191,11 @@ function clampTerminalGrid(cols: number, rows: number): { cols: number; rows: nu
  * @wterm/ghostty WebAssembly adapter) is left out, so asking for it gets the
  * xterm adapter; `ghosttyWindow` is accepted and ignored for the same reason.
  */
-export async function createTerminalEmulator(
+export function createTerminalEmulator(
   _kind: TerminalEmulatorKind = 'xterm',
   theme?: TerminalTheme,
   _ghosttyWindow?: GhosttyWindowAdjustment,
   typography?: TerminalTypography,
 ): Promise<TerminalEmulator> {
-  return createXtermEmulator(theme, typography);
+  return Promise.resolve(createXtermEmulator(theme, typography));
 }
