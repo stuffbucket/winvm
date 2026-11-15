@@ -43,7 +43,7 @@ export interface OperationInfo {
 }
 
 export interface LeaseHolder {
-  readonly operation: LeaseOperation
+  readonly operation: string
   readonly pid: number
   readonly startedAt: string
   readonly automatic: boolean
@@ -71,8 +71,6 @@ export const AUTOMATIC_ENV = "WINVM_AUTOMATIC"
 export const AUTOMATIC_WAIT_MS = 10 * 60_000
 
 const isVmOperation = (v: unknown): v is VmOperation => typeof v === "string" && (VM_OPERATIONS as readonly string[]).includes(v)
-const isLeaseOperation = (v: unknown): v is LeaseOperation =>
-  isVmOperation(v) || (typeof v === "string" && (INTERNAL_OPERATIONS as readonly string[]).includes(v))
 
 const GOLDEN_ACTION: Readonly<Record<string, VmOperation>> = { create: "golden-create", reset: "golden-reset" }
 
@@ -111,40 +109,39 @@ export class InstanceBusy extends Error {
   }
 }
 
-function parseRecord(text: string, name: string): LeaseRecord | null {
+const text = (v: unknown, fallback: string): string => (typeof v === "string" ? v : fallback)
+
+function parseRecord(json: string): LeaseRecord | null {
   let v: unknown
   try {
-    v = JSON.parse(text)
+    v = JSON.parse(json)
   } catch {
     return null
   }
   if (typeof v !== "object" || v === null || Array.isArray(v)) return null
   const r = v as Record<string, unknown>
   const pid = r["pid"]
-  const pidStart = r["pidStart"]
-  if (!isLeaseOperation(r["operation"]) || typeof pid !== "number" || !Number.isInteger(pid) || pid <= 0 || r["instance"] !== name) return null
-  if (typeof r["id"] !== "string" || r["id"] === "" || typeof r["startedAt"] !== "string") return null
-  if (pidStart !== null && typeof pidStart !== "string") return null
+  if (typeof pid !== "number" || !Number.isInteger(pid) || pid <= 0) return null
   return {
-    operation: r["operation"],
-    id: r["id"],
+    operation: text(r["operation"], "unknown"),
+    id: text(r["id"], ""),
     pid,
-    pidStart,
-    startedAt: r["startedAt"],
-    instance: name,
+    pidStart: typeof r["pidStart"] === "string" ? r["pidStart"] : null,
+    startedAt: text(r["startedAt"], ""),
+    instance: text(r["instance"], ""),
     automatic: r["automatic"] === true,
     ...(r["savingRunning"] === true ? { savingRunning: true as const } : {}),
   }
 }
 
-function readLease(name: string, seams: LeaseSeams = {}): LeaseRecord | null {
+function readLease(name: string, seams: LeaseSeams = {}, recover = false): LeaseRecord | null {
   if (!isPlainName(name)) return null
   const file = pathsFor(name).lease
-  const text = readOr(file, null)
-  if (text === null) return null
-  const r = parseRecord(text, name)
+  const json = readOr(file, null)
+  if (json === null) return null
+  const r = parseRecord(json)
   if (r !== null && isSameProcess(r.pid, r.pidStart, seams.startOf ?? processStart)) return r
-  takeOver(file, text)
+  if (recover) takeOver(file, json)
   return null
 }
 
@@ -155,8 +152,8 @@ export function readOperation(name: string, seams: LeaseSeams = {}): OperationIn
   return r === null || !isVmOperation(r.operation) ? null : { operation: r.operation, pid: r.pid, startedAt: r.startedAt }
 }
 
-export function leaseHolder(name: string, seams: LeaseSeams = {}): LeaseHolder | null {
-  const r = readLease(name, seams)
+export function leaseHolder(name: string, seams: LeaseSeams = {}, recover = false): LeaseHolder | null {
+  const r = readLease(name, seams, recover)
   return r === null || r.id === heldHere(name) ? null : holderOf(r)
 }
 
@@ -166,7 +163,7 @@ function rewriteOwn(name: string, change: (r: LeaseRecord) => LeaseRecord): void
   const id = heldHere(name)
   if (id === undefined) return
   const file = pathsFor(name).lease
-  const current = parseRecord(readOr(file, ""), name)
+  const current = parseRecord(readOr(file, ""))
   if (current?.id === id) replaceWhole(file, JSON.stringify(change(current)))
 }
 
@@ -175,8 +172,8 @@ export const markSavingRunning = (name: string): void => rewriteOwn(name, (r) =>
 export const clearSavingRunning = (name: string): void =>
   rewriteOwn(name, ({ savingRunning: _, ...rest }) => rest)
 
-function release(file: string, id: string, name: string): void {
-  if (parseRecord(readOr(file, ""), name)?.id === id) rmSync(file, { force: true })
+function release(file: string, id: string): void {
+  if (parseRecord(readOr(file, ""))?.id === id) rmSync(file, { force: true })
 }
 
 const sleep = async (ms: number): Promise<void> => await new Promise((r) => setTimeout(r, ms))
@@ -207,7 +204,7 @@ async function acquire(name: string, operation: LeaseOperation, o: LeaseOptions)
   for (let vanished = 0; vanished < TAKE_ATTEMPTS; ) {
     mkdirSync(dirname(file), { recursive: true })
     if (linkNew(file, JSON.stringify(record))) return record
-    const holder = leaseHolder(name, o)
+    const holder = leaseHolder(name, o, true)
     if (holder === null) {
       vanished += 1
       continue
@@ -229,12 +226,12 @@ export async function withOperation<T>(name: string, operation: LeaseOperation, 
     return await run()
   }
   const file = pathsFor(name).lease
-  const onExit = (): void => release(file, got.id, name)
+  const onExit = (): void => release(file, got.id)
   process.on("exit", onExit)
   try {
     return await held.run(new Map([...(held.getStore() ?? []), [name, got.id]]), run)
   } finally {
     process.off("exit", onExit)
-    release(file, got.id, name)
+    release(file, got.id)
   }
 }

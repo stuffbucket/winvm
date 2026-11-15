@@ -18,11 +18,13 @@ function exists(pid: number): boolean {
   }
 }
 
+export const UNREADABLE_START = ""
+
 export function processStart(pid: number): string | null {
   if (!exists(pid)) return null
   const m = /^(\S+)\s+(.+)$/.exec(ps(["stat", "lstart"], pid))
-  if (m === null || m[1]?.startsWith("Z") === true) return null
-  return m[2]?.trim() ?? null
+  if (m === null) return UNREADABLE_START
+  return m[1]?.startsWith("Z") === true ? null : (m[2]?.trim() ?? UNREADABLE_START)
 }
 
 export const isAlive = (pid: number): boolean => processStart(pid) !== null
@@ -36,5 +38,5 @@ export function ownStart(): string | null {
 
 export function isSameProcess(pid: number, start: string | null, startOf: (pid: number) => string | null = processStart): boolean {
   const now = startOf(pid)
-  return now !== null && (start === null || now === start)
+  return now !== null && (start === null || start === UNREADABLE_START || now === UNREADABLE_START || now === start)
 }

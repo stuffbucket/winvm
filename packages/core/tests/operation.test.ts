@@ -17,7 +17,7 @@ import {
   withOperation,
 } from "../src/operation"
 import type { LeaseOperation, VmOperation } from "../src/operation"
-import { processStart } from "../src/proc"
+import { isSameProcess, processStart } from "../src/proc"
 
 const NAME = "op-test"
 const HOLDER = resolve(import.meta.dir, "fakes", "holder.ts")
@@ -131,35 +131,76 @@ describe("the lease record", () => {
     expect(onDisk()).toBeNull()
   })
 
-  it("trusts a record only while its pid is still the process that started when the record says", async () => {
+  it("trusts a record only while its pid is still the process that started when the record says, and reading never removes one", async () => {
     const h = await hold("winvm", "save", "-i", NAME)
     put(h.pid)
     expect(readOperation(NAME)).toEqual({ operation: "save", pid: h.pid, startedAt: "2026-01-01T00:00:00.000Z" })
 
     put(h.pid, { pidStart: "Thu Jan  1 00:00:00 1970" })
     expect(readOperation(NAME)).toBeNull()
-    expect(onDisk()).toBeNull()
+    expect(onDisk()?.["pid"]).toBe(h.pid)
 
     const gone = Bun.spawn(["true"])
     await gone.exited
     put(gone.pid, { pidStart: "whenever" })
     expect(readOperation(NAME)).toBeNull()
-    expect(onDisk()).toBeNull()
+    expect(onDisk()?.["pid"]).toBe(gone.pid)
 
-    for (const raw of ["not json", "[]", "null", JSON.stringify({ operation: "save" })]) {
+    for (const raw of ["not json", "[]", "null", JSON.stringify({ operation: "save" }), JSON.stringify({ operation: "save", pid: 0 })]) {
       writeFileSync(leaseFile(), raw)
       expect(readOperation(NAME)).toBeNull()
-      expect(onDisk()).toBeNull()
+      expect(readFileSync(leaseFile(), "utf8")).toBe(raw)
     }
-    for (const over of [{ operation: "format" }, { instance: "other" }, { id: "" }, { pid: 0 }, { startedAt: 5 }, { pidStart: 5 }]) {
+    for (const over of [{ instance: "other" }, { id: "" }, { startedAt: 5 }, { pidStart: 5 }]) {
       put(h.pid, over)
-      expect(readOperation(NAME)).toBeNull()
+      expect(leaseHolder(NAME)?.pid).toBe(h.pid)
     }
   })
 
-  it("is taken over from a holder that died or whose pid was reused", async () => {
+  it("keeps a live holder's lease when it names the instance in another case, as macOS resolves both to one file", async () => {
+    const other = NAME.toUpperCase()
+    if (!existsSync(pathsFor(other).meta)) return
+    const script = resolve(home, "case-holder.ts")
+    writeFileSync(
+      script,
+      [
+        `import { withOperation } from ${JSON.stringify(resolve(import.meta.dir, "../src/operation.ts"))}`,
+        `await withOperation(${JSON.stringify(other)}, "save", async () => { console.log("held"); await Bun.sleep(5000) })`,
+      ].join("\n"),
+    )
+    const child = Bun.spawn([process.execPath, script], { env: { ...process.env, WINVM_HOME: home }, stdout: "pipe", stderr: "ignore" })
+    spawned.push(child)
+    const reader = (child.stdout as ReadableStream<Uint8Array>).getReader()
+    await reader.read()
+    reader.releaseLock()
+    rmSync(script, { force: true })
+    expect(readOperation(NAME)).toEqual({ operation: "save", pid: child.pid, startedAt: expect.any(String) as string })
+    await expect(withOperation(NAME, "stop", () => "ran")).rejects.toThrow(`is busy: save (pid ${String(child.pid)})`)
+    expect(onDisk()?.["pid"]).toBe(child.pid)
+    expect(onDisk()?.["instance"]).toBe(other)
+  })
+
+  it("keeps a live holder's lease whose operation this build does not know, and shows it to no one", async () => {
+    const h = await hold("winvm", "defragment", "-i", NAME)
+    put(h.pid, { operation: "defragment" })
+    expect(readOperation(NAME)).toBeNull()
+    expect(onDisk()?.["operation"]).toBe("defragment")
+    await expect(withOperation(NAME, "stop", () => "ran")).rejects.toThrow(`is busy: defragment (pid ${String(h.pid)})`)
+    expect(onDisk()?.["pid"]).toBe(h.pid)
+  })
+
+  it("counts a live process whose start cannot be read as still holding, never as gone", () => {
+    expect(isSameProcess(process.pid, "Sun Nov 15 08:09:46 2026", () => "")).toBe(true)
+    expect(isSameProcess(process.pid, "", () => "Sun Nov 15 08:09:46 2026")).toBe(true)
+    expect(isSameProcess(process.pid, "Sun Nov 15 08:09:46 2026", () => null)).toBe(false)
+  })
+
+  it("is taken over from a holder that died or whose pid was reused, or a record that names no process", async () => {
     const reused = await hold("unrelated")
     put(reused.pid, { pidStart: "Thu Jan  1 00:00:00 1970" })
+    expect(await withOperation(NAME, "pause", () => onDisk()?.["pid"])).toBe(process.pid)
+
+    writeFileSync(leaseFile(), "not json")
     expect(await withOperation(NAME, "pause", () => onDisk()?.["pid"])).toBe(process.pid)
 
     const gone = Bun.spawn(["true"])

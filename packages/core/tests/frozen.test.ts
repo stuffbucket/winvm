@@ -96,7 +96,7 @@ describe("a save of a running guest", () => {
     const lease = { operation: "save", id: "dead", pid: 2 ** 22 + 12_345, pidStart: null, startedAt: "2026-03-03T00:00:00.000Z", instance: NAME, automatic: false, savingRunning: true }
     writeFileSync(pathsFor(NAME).lease, JSON.stringify(lease))
     expect(savingRunning(NAME)).toBe(false)
-    expect(existsSync(pathsFor(NAME).lease)).toBe(false)
+    rmSync(pathsFor(NAME).lease, { force: true })
   })
 
   it("status says running while the save holds it stopped, and does not wait on its guest agent", async () => {
