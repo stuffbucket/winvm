@@ -1,7 +1,7 @@
 //! The start and end of a live resize (the person dragging the window's edge),
 //! as `live-resize` events to the main window: `true` when it starts, `false`
 //! when the mouse is let go. The viewer resizes the guest on the release rather
-//! than guessing it from a pause; WebKit sees only the sizes, not the drag.
+//! than guessing it from a pause; `WebKit` sees only the sizes, not the drag.
 
 use tauri::{Emitter, WebviewWindow};
 

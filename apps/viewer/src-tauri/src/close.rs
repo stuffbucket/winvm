@@ -42,7 +42,7 @@ impl CloseCoordinator {
     fn lock(&self) -> std::sync::MutexGuard<'_, CloseState> {
         self.0
             .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
     #[cfg(test)]
@@ -189,6 +189,10 @@ pub fn request<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> bool {
 /// listener exists, so the window asks right after registering one, and answers with `close_start`
 /// when this says true. It changes nothing.
 #[tauri::command]
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "tauri injects these extractors by value; a command cannot take a reference to them"
+)]
 pub fn close_pending(
     window: tauri::WebviewWindow,
     close: tauri::State<CloseCoordinator>,
@@ -199,6 +203,10 @@ pub fn close_pending(
 
 /// The main window heard the request and is running its close flow.
 #[tauri::command]
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "tauri injects these extractors by value; a command cannot take a reference to them"
+)]
 pub fn close_start(
     window: tauri::WebviewWindow,
     close: tauri::State<CloseCoordinator>,
@@ -209,6 +217,10 @@ pub fn close_start(
 
 /// The person backed out of closing.
 #[tauri::command]
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "tauri injects these extractors by value; a command cannot take a reference to them"
+)]
 pub fn close_cancel(
     window: tauri::WebviewWindow,
     close: tauri::State<CloseCoordinator>,
@@ -219,6 +231,10 @@ pub fn close_cancel(
 
 /// The close flow finished: authorize, then exit. This never touches a VM; the flow already decided that.
 #[tauri::command]
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "tauri injects these extractors by value; a command cannot take a reference to them"
+)]
 pub fn close_complete(
     window: tauri::WebviewWindow,
     app: tauri::AppHandle,

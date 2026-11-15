@@ -3,8 +3,8 @@
 //! The Files window runs its own drag while the pointer is inside it (moving
 //! files between guest folders). When the pointer leaves the window with the
 //! button still held, it calls `files_drag_out`, which starts a native drag
-//! session from the window's WKWebView carrying one file promise
-//! (NSFilePromiseProvider) per item. Nothing is copied at that point: only when
+//! session from the window's `WKWebView` carrying one file promise
+//! (`NSFilePromiseProvider`) per item. Nothing is copied at that point: only when
 //! Finder accepts the drop does it ask each promise to write its file, and the
 //! promise then runs the bundled `winvm get` into the place Finder chose, on a
 //! background queue. A folder is promised as `public.folder` and `winvm get`
@@ -132,7 +132,7 @@ mod mac {
                 (true, Some(false)) => false,
                 (true, Some(true)) => l.written < l.items,
                 _ => true,
-            })
+            });
         });
     }
 
@@ -185,7 +185,7 @@ mod mac {
                     None => done.call((std::ptr::null_mut(),)),
                     Some(message) => {
                         let error = error(&message);
-                        done.call((Retained::as_ptr(&error) as *mut NSError,));
+                        done.call((Retained::as_ptr(&error).cast_mut(),));
                     }
                 }
                 let (app, drag) = (self.ivars().app.clone(), self.ivars().drag);
@@ -228,7 +228,7 @@ mod mac {
             let asked = Path::new(&asked);
             let dest = if asked.symlink_metadata().is_ok() {
                 let dir = asked.parent().map(|d| d.display().to_string()).unwrap_or_default();
-                crate::unused_path(dir, i.item.name.clone(), i.item.dir)
+                crate::unused_path(&dir, &i.item.name, i.item.dir)
             } else {
                 asked.display().to_string()
             };
@@ -265,6 +265,7 @@ mod mac {
     }
 
     fn error(message: &str) -> Retained<NSError> {
+        // SAFETY: a Foundation string constant that is never mutated.
         let key = unsafe { objc2_foundation::NSLocalizedDescriptionKey };
         let text = NSString::from_str(message);
         let info = objc2_foundation::NSDictionary::<NSString, AnyObject>::from_slices(&[key], &[&*text as &AnyObject]);
@@ -412,7 +413,7 @@ mod mac {
                 NSDraggingItem::initWithPasteboardWriter(NSDraggingItem::alloc(), ProtocolObject::from_ref(&*provider));
             let icon = workspace.iconForContentType(&kind);
             // A small fan under the pointer, as Finder stacks a multiple selection.
-            let shift = (k.min(4) as f64) * 4.0;
+            let shift = f64::from(u8::try_from(k).unwrap_or(u8::MAX).min(4)) * 4.0;
             let frame = NSRect::new(
                 NSPoint::new(at.x - ICON / 2.0 + shift, at.y - ICON / 2.0 + shift),
                 NSSize::new(ICON, ICON),
@@ -442,7 +443,7 @@ mod mac {
                 items: count,
                 written: 0,
                 ended: None,
-            })
+            });
         });
         let items = NSArray::from_retained_slice(&dragging);
         let _session =
