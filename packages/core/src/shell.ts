@@ -10,7 +10,6 @@ export function run(cmd: string, args: readonly string[]): number {
 
 export type TextResult = Omit<SpawnSyncReturns<string>, "stdout" | "stderr"> & { readonly stdout: string; readonly stderr: string }
 
-/** `spawnSync` with text output; a command that never started leaves both streams null at runtime, so they come back empty. */
 export function spawnText(cmd: string, args: readonly string[], o: Omit<SpawnSyncOptionsWithStringEncoding, "encoding"> = {}): TextResult {
   const r = spawnSync(cmd, [...args], { ...o, encoding: "utf8" })
   const streams: { readonly stdout: string | null; readonly stderr: string | null } = r
