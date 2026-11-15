@@ -17,7 +17,7 @@ export function LiveFrame({
   interval = INTERVAL_MS,
   maxWidth = MAX_WIDTH,
 }: {
-  source(): HTMLCanvasElement | null
+  source: () => HTMLCanvasElement | null
   readonly className?: string
   /** How often to copy, in ms. */
   readonly interval?: number

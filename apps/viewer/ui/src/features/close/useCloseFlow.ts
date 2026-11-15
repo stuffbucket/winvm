@@ -29,9 +29,9 @@ export type CloseChoice = "leave" | "stow" | "shutdown"
 
 export interface CloseFlow {
   readonly state: CloseFlowState
-  setRemember(value: boolean): void
-  choose(policy: CloseChoice): void
-  cancel(): void
+  setRemember: (value: boolean) => void
+  choose: (policy: CloseChoice) => void
+  cancel: () => void
 }
 
 const IDLE: CloseFlowState = { kind: "idle" }

@@ -39,7 +39,7 @@ interface PanelProps {
   /** Why the last write failed (the CLI's words); the select keeps the value it had. */
   readonly closePolicyError: string | null
   onClosePolicy(policy: ClosePolicy): void
-  onForceStop(): void
+  onForceStop: () => void
 }
 
 function Section({ title, hint, open, children }: { title: string; hint?: string | undefined; open?: boolean | undefined; children: ReactNode }): JSX.Element {

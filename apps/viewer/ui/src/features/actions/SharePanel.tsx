@@ -15,8 +15,8 @@ interface SharePanelProps {
   readonly share: Share | null
   readonly starting: boolean
   readonly error: string | null
-  onStart(): void
-  onStop(): void
+  onStart: () => void
+  onStop: () => void
 }
 
 type Busy = { readonly id: ClaudeClientId; readonly verb: "install" | "uninstall" }
@@ -56,10 +56,10 @@ interface ClientRowProps {
   readonly client: ClaudeClient
   readonly busy: Busy | null
   readonly confirming: boolean
-  onAdd(): void
-  onRemove(): void
-  onConfirm(): void
-  onCancel(): void
+  onAdd: () => void
+  onRemove: () => void
+  onConfirm: () => void
+  onCancel: () => void
 }
 
 /** One Claude app: Add, or a quiet Added and Remove; Claude Desktop's Add asks first. */

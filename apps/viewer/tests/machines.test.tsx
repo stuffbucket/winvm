@@ -158,8 +158,8 @@ describe("the machine picker", () => {
 
 function type(input: HTMLInputElement, value: string): void {
   act(() => {
-    const set = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")?.set
-    set?.call(input, value)
+    const descriptor = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")
+    descriptor?.set?.call(input, value)
     input.dispatchEvent(new Event("input", { bubbles: true }))
   })
 }

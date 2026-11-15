@@ -89,7 +89,7 @@ export interface Sys {
   forward(instance: string): Promise<number>
   running(instance: string): boolean
   sleep(ms: number): Promise<void>
-  log(line: string): void
+  log: (line: string) => void
 }
 
 function runSync(cmd: string, args: readonly string[], timeoutMs: number): { code: number | null; out: string } {

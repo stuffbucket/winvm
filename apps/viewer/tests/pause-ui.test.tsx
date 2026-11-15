@@ -420,7 +420,7 @@ describe("the meters while held", () => {
 })
 
 /** Renders `useWinvm`, answers the list of machines (`names`, in `state`) and the first read of the first one. */
-async function boot(tauri: ReturnType<typeof fakeTauri>, state = "running", names: readonly string[] = ["demo"]): Promise<{ w(): ReturnType<typeof useWinvm> }> {
+async function boot(tauri: ReturnType<typeof fakeTauri>, state = "running", names: readonly string[] = ["demo"]): Promise<{ w: () => ReturnType<typeof useWinvm> }> {
   let w: ReturnType<typeof useWinvm> | null = null
   function Probe(): null {
     w = useWinvm()

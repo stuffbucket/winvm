@@ -6,9 +6,9 @@ import type { CloseChoice, CloseFlowState } from "./useCloseFlow"
 
 interface ClosePolicyDialogProps {
   readonly state: CloseFlowState
-  onChoose(policy: CloseChoice): void
-  onRemember(value: boolean): void
-  onCancel(): void
+  onChoose: (policy: CloseChoice) => void
+  onRemember: (value: boolean) => void
+  onCancel: () => void
 }
 
 const CHOICES = [

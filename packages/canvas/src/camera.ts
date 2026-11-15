@@ -227,11 +227,11 @@ export interface CanvasCamera {
   /** What is drawn now. */
   readonly camera: Camera
   /** The latest camera asked for, drawn or not: where the next move starts from. */
-  current(): Camera
+  current: () => Camera
   /** Jump (coalesced to the next frame); stops a flight. */
-  set(next: Camera): void
+  set: (next: Camera) => void
   /** Ease to `to`; resolves true when it arrives, false when something else moved the camera first. */
-  fly(to: Camera, options?: FlyOptions): Promise<boolean>
+  fly: (to: Camera, options?: FlyOptions) => Promise<boolean>
   /** Stop a flight where it is. */
   stop(): void
 }

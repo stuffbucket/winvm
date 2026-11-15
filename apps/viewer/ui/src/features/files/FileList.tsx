@@ -33,13 +33,13 @@ interface FileListProps {
   readonly loading: boolean
   readonly more: string | null
   onSort(key: SortKey): void
-  onKeyDown(e: KeyboardEvent<HTMLDivElement>): void
+  onKeyDown: (e: KeyboardEvent<HTMLDivElement>) => void
   onRowPointerDown(e: PointerEvent<HTMLDivElement>, entry: Entry): void
   onRowDoubleClick(entry: Entry): void
   onContextMenu(e: MouseEvent<HTMLDivElement>, entry: Entry | null): void
   onBackgroundPointerDown(e: PointerEvent<HTMLDivElement>): void
-  onDraft(draft: string): void
-  onRenameDone(commit: boolean): void
+  onDraft: (draft: string) => void
+  onRenameDone: (commit: boolean) => void
 }
 
 const COLUMNS: readonly { key: SortKey; label: string; className: string }[] = [
@@ -73,7 +73,7 @@ function When({ ms, now }: { readonly ms: number; readonly now: number }): JSX.E
 }
 
 /** The editable name: the stem selected, as Finder does, so typing keeps the extension. */
-function NameField({ draft, onDraft, onDone }: { readonly draft: string; onDraft(d: string): void; onDone(commit: boolean): void }): JSX.Element {
+function NameField({ draft, onDraft, onDone }: { readonly draft: string; onDraft: (d: string) => void; onDone: (commit: boolean) => void }): JSX.Element {
   const input = useRef<HTMLInputElement | null>(null)
   const cancelled = useRef(false)
   useLayoutEffect(() => {

@@ -98,7 +98,7 @@ export interface CheckpointCanvasProps {
   /** Where the live screen is in the window, to fly into and out of. */
   displayRect(): Rect | null
   /** noVNC's canvas, to show live in the Now card. */
-  liveSource(): HTMLCanvasElement | null
+  liveSource: () => HTMLCanvasElement | null
   /** Runs `save` or `load` the way the main window does (its busy state, its failure callout). */
   run(verb: "save" | "load", arg: string): Promise<Ran | null>
   /** Bumped by the main window (⌘⇧T, the menu) to leave. */

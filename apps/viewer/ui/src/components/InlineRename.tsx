@@ -10,7 +10,7 @@ interface InlineRenameProps {
   readonly className?: string
   readonly maxLength?: number
   /** Return or leaving the field: the text typed (empty asks for the automatic name). Escape: null, no change. */
-  onDone(next: string | null): void
+  onDone: (next: string | null) => void
 }
 
 /**

@@ -28,14 +28,14 @@ export interface Copies {
   /** Bumped each time files land in Windows, so a browser showing that folder reads it again. */
   readonly landed: number
   /** Copy Mac files and folders into a Windows folder; null is the Desktop. */
-  copyIn(paths: readonly string[], folder: string | null): void
+  copyIn: (paths: readonly string[], folder: string | null) => void
   /** Copy Windows files and folders to the Mac, asking where with the native panels. */
   copyOut(folder: string, entries: readonly Entry[]): void
   /** A drag carrying `count` items left for the Mac: their promises' progress and result are this hook's. */
   expectPromises(count: number): void
   /** Say something in the copies' place: what an operation did, or why it failed. */
   report(result: CopyResult): void
-  dismiss(): void
+  dismiss: () => void
 }
 
 const dirOf = (path: string): string => path.slice(0, Math.max(1, path.lastIndexOf("/")))

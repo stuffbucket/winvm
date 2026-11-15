@@ -169,9 +169,9 @@ const policySelect = (host: HTMLElement): HTMLSelectElement => {
 
 async function choose(select: HTMLSelectElement, value: string): Promise<void> {
   // React tracks the value: set it through the native setter, then fire the change it listens for.
-  const set = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value")?.set
+  const descriptor = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value")
   act(() => {
-    set?.call(select, value)
+    descriptor?.set?.call(select, value)
     select.dispatchEvent(new Event("change", { bubbles: true }))
   })
   await flush()

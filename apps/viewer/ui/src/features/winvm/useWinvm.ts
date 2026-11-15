@@ -44,18 +44,18 @@ export interface Winvm {
   readonly failure: Ran | null
   readonly last: Ran | null
   readonly cliPath: string | null
-  select(name: string): void
+  select: (name: string) => void
   /** Runs a verb on this instance; `arg` names the save for save and load. Resolves with what it did (null: nothing to run). */
-  act(verb: Verb, arg?: string): Promise<Ran | null>
+  act: (verb: Verb, arg?: string) => Promise<Ran | null>
   /** Runs a verb on `name`, the machine given and not the selected one; the selection may move before it ends. */
-  runOn(name: string, verb: Verb, arg?: string): Promise<Ran | null>
+  runOn: (name: string, verb: Verb, arg?: string) => Promise<Ran | null>
   /** How this window's last command on `name` ended (read now, not as of the last render); null when it has run none there. */
   lastOn(name: string): RanOn | null
   openScreenSharing(): Promise<void>
-  installCommand(): Promise<void>
-  dismissFailure(): void
+  installCommand: () => Promise<void>
+  dismissFailure: () => void
   /** Sets this instance's title (empty clears it); resolves with why it couldn't, or null. */
-  rename(title: string): Promise<string | null>
+  rename: (title: string) => Promise<string | null>
   /** Sets the selected machine's close policy by its stable name; resolves with why it couldn't, or null. */
   setClosePolicy(policy: ClosePolicy): Promise<string | null>
   /** Reads the list of machines again (after one is made or deleted). */

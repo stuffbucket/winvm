@@ -11,7 +11,7 @@ interface OverviewProps {
   readonly status: Status | null
   readonly steps: readonly Step[] | null
   readonly canStart: boolean
-  onStart(): void
+  onStart: () => void
 }
 
 // The same glyphs as their toolbar buttons, so each reads as "that button".

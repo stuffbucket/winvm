@@ -16,8 +16,8 @@ export interface SharedFolderView {
   /** A change running for this machine (the setup takes minutes). */
   readonly working: SharedFolderWork | null
   readonly home: string | null
-  choose(): void
-  stop(): void
+  choose: () => void
+  stop: () => void
   setReadonly(on: boolean): void
   install(): void
 }

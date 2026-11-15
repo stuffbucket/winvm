@@ -39,7 +39,7 @@ export function SpatialCanvasSearchResult({
   readonly icon?: ReactNode
   readonly active?: boolean
   readonly disabled?: boolean
-  onSelect(): void
+  onSelect: () => void
 }): JSX.Element {
   return (
     <button

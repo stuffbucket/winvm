@@ -1087,7 +1087,7 @@ describe("useCloseFlow", () => {
     const bridge = fakeBridge()
     const world = fakeWinvm([{ name: "a", state: "running", closePolicy: "leave" }], "a")
     await mount(world)
-    const invoke = (window as unknown as { __TAURI__: { core: { invoke(cmd: string, a?: unknown): Promise<unknown> } } }).__TAURI__.core
+    const invoke = (window as unknown as { __TAURI__: { core: { invoke: (cmd: string, a?: unknown) => Promise<unknown> } } }).__TAURI__.core
     const answer = invoke.invoke
     invoke.invoke = (cmd, a) => (cmd === "close_complete" ? Promise.reject("close complete arrived while the close was Idle") : answer(cmd, a))
     act(() => { bridge.fire() })

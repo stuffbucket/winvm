@@ -10,11 +10,11 @@ interface TimelineProps {
   /** The tick the view is on. */
   readonly active: string
   /** Fly there (a click, a key, the end of a drag). */
-  onPick(tick: Tick): void
+  onPick: (tick: Tick) => void
   /** Follow the pointer while it drags. */
-  onScrub(tick: Tick): void
-  onOlder(): void
-  onNewer(): void
+  onScrub: (tick: Tick) => void
+  onOlder: () => void
+  onNewer: () => void
   readonly canOlder: boolean
   readonly canNewer: boolean
 }

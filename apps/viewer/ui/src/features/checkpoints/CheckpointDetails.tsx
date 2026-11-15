@@ -27,12 +27,12 @@ interface DetailsProps {
   /** Something is running (a save, a load, a start…): the actions wait. */
   readonly busy: boolean
   readonly saving: "idle" | "saving" | "saved" | "failed"
-  onClose(): void
+  onClose: () => void
   /** Show the screenshot as big as the window allows. */
-  onLook(): void
-  onNote(draft: NoteDraft): void
-  onGoBack(): void
-  onDelete(): void
+  onLook: () => void
+  onNote: (draft: NoteDraft) => void
+  onGoBack: () => void
+  onDelete: () => void
 }
 
 /** How long typing has to pause before a note is written. */

@@ -874,7 +874,7 @@ export class LockedDisplay {
   private readonly set: (args: readonly string[]) => Promise<DisplayOutcome>
   private readonly everyMs: number
 
-  constructor(o: { locked(): Promise<boolean>; set(args: readonly string[]): Promise<DisplayOutcome>; everyMs?: number }) {
+  constructor(o: { locked: () => Promise<boolean>; set: (args: readonly string[]) => Promise<DisplayOutcome>; everyMs?: number }) {
     this.locked = o.locked
     this.set = o.set
     this.everyMs = o.everyMs ?? 1000

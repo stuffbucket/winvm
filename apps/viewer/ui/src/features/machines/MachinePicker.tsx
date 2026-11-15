@@ -17,11 +17,11 @@ export interface MachinePickerProps {
   readonly phase: Phase | null
   /** The title is being edited, in place of the picker. */
   readonly renaming: boolean
-  onRenamed(next: string | null): void
+  onRenamed: (next: string | null) => void
   onSelect(name: string): void
-  onNew(): void
-  onRename(): void
-  onDelete(): void
+  onNew: () => void
+  onRename: () => void
+  onDelete: () => void
 }
 
 /**

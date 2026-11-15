@@ -18,7 +18,7 @@ import { type WakeSock, keepRefreshing } from "./wake"
 interface ScreenProps {
   readonly connection: Connection
   readonly keyboardCaptured: boolean
-  onKeyboardCaptured(captured: boolean): void
+  onKeyboardCaptured: (captured: boolean) => void
   /**
    * The guest's screen can follow the view (virtio-gpu). Then the viewer asks
    * QEMU for the view's size in device pixels and `onGuestSize` has the guest
@@ -47,7 +47,7 @@ interface ScreenProps {
   readonly asleep?: boolean
   /** A wake is under way: keys are dropped until the machine runs. */
   readonly waking?: boolean
-  onWake?(): void
+  onWake?: () => void
   /** Dim the held screen and mark it with a glyph (the "Show Pause Overlay" setting). */
   readonly overlay?: boolean
 }

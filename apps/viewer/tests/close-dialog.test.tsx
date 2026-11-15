@@ -59,7 +59,7 @@ interface Heard {
   cancels: number
 }
 
-function render(state: CloseFlowState, heard: Heard = { chose: [], remember: [], cancels: 0 }): { host: HTMLElement; heard: Heard; show(next: CloseFlowState): void } {
+function render(state: CloseFlowState, heard: Heard = { chose: [], remember: [], cancels: 0 }): { host: HTMLElement; heard: Heard; show: (next: CloseFlowState) => void } {
   const host = document.createElement("div")
   document.body.append(host)
   const r = createRoot(host)
