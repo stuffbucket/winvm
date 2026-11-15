@@ -23,7 +23,7 @@ import { t } from "./i18n"
  * the helper is `missing`, it would not `launch`, it ran past its deadline and
  * was stopped (`timeout`), or it ended with a nonzero code or on a signal (`exit`).
  */
-export type SidecarFailureKind = "missing" | "launch" | "timeout" | "exit"
+type SidecarFailureKind = "missing" | "launch" | "timeout" | "exit"
 
 export interface SidecarFailure {
   readonly kind: SidecarFailureKind
@@ -86,7 +86,7 @@ export function normalizeSidecarFailure(raw: unknown, operation = "winvm"): Side
 }
 
 /** What to tell the person about a failure: what happened, and what to do. */
-export function sidecarCopy(f: SidecarFailure): string {
+function sidecarCopy(f: SidecarFailure): string {
   switch (f.kind) {
     case "missing":
       return t("sidecar.missing")
@@ -371,9 +371,6 @@ const menuItems = (nodes: readonly MenuNode[], pick: (node: Extract<MenuNode, { 
     if (n.kind === "submenu") return { text: n.label, items: menuItems(n.items, pick) }
     return { text: n.label, enabled: n.enabled, action: () => pick(n) }
   })
-
-/** A native menu's rows, each item carrying what it does. */
-export type ActionNode = Action
 
 /** Opens the instance's Files window, or brings it forward; `title` is what the instance is called. */
 export const openFiles = (instance: string, title: string | null): Promise<void> => tauri().core.invoke<void>("files_open", { instance, title })

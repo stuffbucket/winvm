@@ -27,7 +27,7 @@ export type SessionStatus =
   | { readonly kind: "lost"; readonly message: string | null }
 
 /** The parts of the WebSocket constructor this uses; tests pass their own. */
-export type SocketConstructor = new (url: string, protocols: string[]) => WebSocket
+type SocketConstructor = new (url: string, protocols: string[]) => WebSocket
 
 export interface SocketTransportOptions {
   connect(descriptor: TerminalDescriptor): Promise<Endpoint>

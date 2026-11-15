@@ -31,7 +31,7 @@ export type Kind =
   | "other"
 
 /** Each kind's glyph: nf-oct-* and nf-seti-* code points in the vendored subset. */
-export const GLYPH: Record<Kind, string> = {
+const GLYPH: Record<Kind, string> = {
   folder: "\u{F4D3}", // nf-oct-file_directory_fill
   text: "\u{E64E}", // nf-seti-text
   log: "\u{F4ED}", // nf-oct-log
@@ -90,7 +90,7 @@ const BY_EXT: Readonly<Record<string, Kind>> = Object.fromEntries(
 )
 
 /** A name's extension, lower case and without the dot; "" for none (a leading dot alone is not one). */
-export function extension(name: string): string {
+function extension(name: string): string {
   const dot = name.lastIndexOf(".")
   return dot > 0 && dot < name.length - 1 ? name.slice(dot + 1).toLowerCase() : ""
 }

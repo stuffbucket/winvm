@@ -7,14 +7,14 @@ import { childPath, freeName, hostName, isListing, leafName } from "./files"
 import { listFolder } from "./ops"
 
 /** A copy under way: which way, how far, and what it's on. */
-export interface CopyJob {
+interface CopyJob {
   readonly way: "in" | "out"
   readonly done: number
   readonly total: number
   readonly name: string
 }
 
-export interface CopyResult {
+interface CopyResult {
   readonly ok: boolean
   readonly title: string
   readonly detail?: string

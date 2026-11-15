@@ -4,7 +4,7 @@ import { instanceUsage } from "../../backend"
 import { fraction, parseSample, pushHistory, type Sample, type Usage, usageFrom } from "./usage"
 
 /** How often the meters are read, while the window is showing and the machine runs. */
-export const USAGE_EVERY_MS = 2500
+const USAGE_EVERY_MS = 2500
 
 export interface UsageView {
   readonly now: Usage | null

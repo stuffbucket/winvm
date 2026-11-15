@@ -9,7 +9,7 @@ export interface UsageContext {
 }
 
 /** Recent values (0-1) as a line, oldest at the left, filled beneath. */
-export function Sparkline({ values }: { readonly values: readonly number[] }): JSX.Element {
+function Sparkline({ values }: { readonly values: readonly number[] }): JSX.Element {
   const w = 100
   const h = 24
   const clamp = (v: number): number => Math.min(1, Math.max(0, v))

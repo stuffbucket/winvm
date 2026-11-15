@@ -13,8 +13,8 @@ export type OsKind = "macos" | "windows" | "linux";
 
 /**
  * The current OS, normalized to the values the i18n catalog's `os` argument
- * expects (see shell/src/i18n). Single source of the OS branch; isWindows()
- * and any runtime OS check derive from it.
+ * expects (see shell/src/i18n). Single source of the OS branch; any runtime
+ * OS check derives from it.
  */
 export function osKind(): OsKind {
   if (typeof navigator === "undefined") return "macos";
@@ -24,8 +24,4 @@ export function osKind(): OsKind {
   if (/win/i.test(signal)) return "windows";
   if (/linux|x11/i.test(signal) && !/android/i.test(signal)) return "linux";
   return "macos";
-}
-
-export function isWindows(): boolean {
-  return osKind() === "windows";
 }

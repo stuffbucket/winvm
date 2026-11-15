@@ -38,8 +38,6 @@ const OperationInfoSchema = z.object({
   startedAt: z.string(),
 })
 
-export type OperationInfo = z.infer<typeof OperationInfoSchema>
-
 /** Mirrors core's config.ts: what closing the viewer window does to a running machine. */
 export const CLOSE_POLICIES = ["ask", "leave", "stow", "shutdown"] as const
 
@@ -182,12 +180,12 @@ const GiB = 1024 ** 3
 export const formatSize = (bytes: number): string =>
   bytes < GiB ? `${String(Math.round(bytes / 1024 ** 2))} MiB` : `${(bytes / GiB).toFixed(1)} GiB`
 
-export function formatMemory(mib: number): string {
+function formatMemory(mib: number): string {
   const gib = mib / 1024
   return Number.isInteger(gib) ? `${String(gib)} GiB` : `${String(mib)} MiB`
 }
 
-export function formatDuration(seconds: number): string {
+function formatDuration(seconds: number): string {
   const m = Math.floor(seconds / 60)
   const h = Math.floor(m / 60)
   const d = Math.floor(h / 24)
