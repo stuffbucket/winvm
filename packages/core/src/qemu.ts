@@ -343,10 +343,10 @@ export async function launch(name: string, p: Paths, meta: InstanceMeta, o: Laun
   closeSync(log)
   proc.unref()
 
-  const exited = new Promise<"exited">((res) => proc.on("exit", () => res("exited")))
+  const exited = new Promise<"exited">((res) => proc.on("exit", () => { res("exited") }))
   let timer: ReturnType<typeof setTimeout> | undefined
   const survived = new Promise<"alive">((res) => {
-    timer = setTimeout(() => res("alive"), 2000)
+    timer = setTimeout(() => { res("alive") }, 2000)
   })
   // A LOAD WAITS ON QEMU, NOT ON THE TIMER. Two seconds of "still alive?" was
   // most of a mapped-ram load, which cannot even start until the monitor takes

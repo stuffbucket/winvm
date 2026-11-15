@@ -52,7 +52,7 @@ export async function lockWindows(
   c: LockAgent,
   o: { readonly waitMs?: number; readonly sleep?: (ms: number) => Promise<void> } = {},
 ): Promise<Locked> {
-  const sleep = o.sleep ?? (async (ms: number): Promise<void> => await new Promise((r) => setTimeout(r, ms)))
+  const sleep = o.sleep ?? (async (ms: number): Promise<void> => { await new Promise((r) => setTimeout(r, ms)) })
   const r = await c.pwsh(ENABLE_SIGN_IN, { timeoutMs: 30_000 })
   if (r.code !== 0) throw new Error(`could not make sure Windows can sign back in: ${r.output.trim()}`)
   const enabled = /^enabled (.+)$/m.exec(r.output)?.[1]?.trim() ?? null

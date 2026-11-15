@@ -244,7 +244,7 @@ function fakeSys(): Fake {
     },
     forward: async () => await Promise.resolve(PORT),
     running: () => f.isRunning,
-    sleep: async () => await Promise.resolve(),
+    sleep: async () => { await Promise.resolve() },
     log: () => undefined,
   }
   return f

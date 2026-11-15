@@ -49,7 +49,7 @@ export interface HeldSizesOptions {
 
 const realTimers: Timers = {
   set: (fn, ms) => setTimeout(fn, ms),
-  clear: (t) => clearTimeout(t as ReturnType<typeof setTimeout>),
+  clear: (t) => { clearTimeout(t as ReturnType<typeof setTimeout>) },
 }
 
 const MAX_RETRY_MS = 30_000

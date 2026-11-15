@@ -290,7 +290,7 @@ exitOnSignals(process, {
     passed = false
   },
   cleanup,
-  report: (signal) => console.error(`interrupted by ${signal}; ${retained()}`),
+  report: (signal) => { console.error(`interrupted by ${signal}; ${retained()}`) },
   exit: (code) => process.exit(code),
 })
 

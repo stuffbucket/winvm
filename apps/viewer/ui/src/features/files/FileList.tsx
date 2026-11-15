@@ -91,9 +91,9 @@ function NameField({ draft, onDraft, onDone }: { readonly draft: string; onDraft
       value={draft}
       spellCheck={false}
       autoComplete="off"
-      onChange={(e) => onDraft(e.target.value)}
-      onPointerDown={(e) => e.stopPropagation()}
-      onDoubleClick={(e) => e.stopPropagation()}
+      onChange={(e) => { onDraft(e.target.value) }}
+      onPointerDown={(e) => { e.stopPropagation() }}
+      onDoubleClick={(e) => { e.stopPropagation() }}
       onKeyDown={(e) => {
         e.stopPropagation()
         if (e.key === "Enter") {
@@ -118,11 +118,11 @@ export function FileList(p: FileListProps): JSX.Element {
   useEffect(() => {
     const el = p.list.current
     if (el === null) return
-    const measure = (): void => setView({ top: el.scrollTop, height: el.clientHeight, row: rowHeight(el) })
+    const measure = (): void => { setView({ top: el.scrollTop, height: el.clientHeight, row: rowHeight(el) }) }
     measure()
     const ro = new ResizeObserver(measure)
     ro.observe(el)
-    return () => ro.disconnect()
+    return () => { ro.disconnect() }
   }, [p.list])
 
   const n = p.entries.length
@@ -144,8 +144,8 @@ export function FileList(p: FileListProps): JSX.Element {
               className={cx("files__heading", c.className, on && "files__heading--on")}
               // A heading sorts without taking the keyboard from the list, as in Finder.
               tabIndex={-1}
-              onMouseDown={(e) => e.preventDefault()}
-              onClick={() => p.onSort(c.key)}
+              onMouseDown={(e) => { e.preventDefault() }}
+              onClick={() => { p.onSort(c.key) }}
             >
               <span className="files__heading-label">{t(c.label)}</span>
               <span className="files__chevron" aria-hidden="true">
@@ -198,9 +198,9 @@ export function FileList(p: FileListProps): JSX.Element {
                 title={renaming === null ? e.name : undefined}
                 data-name={e.name}
                 data-dir={e.dir ? "" : undefined}
-                onPointerDown={(ev) => p.onRowPointerDown(ev, e)}
-                onDoubleClick={() => p.onRowDoubleClick(e)}
-                onContextMenu={(ev) => p.onContextMenu(ev, e)}
+                onPointerDown={(ev) => { p.onRowPointerDown(ev, e) }}
+                onDoubleClick={() => { p.onRowDoubleClick(e) }}
+                onContextMenu={(ev) => { p.onContextMenu(ev, e) }}
               >
                 <span className="files__c-name files__name">
                   <span className={cx("files__glyph", `files__glyph--${kindOf(e.name, e.dir)}`)} aria-hidden="true">

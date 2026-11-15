@@ -71,7 +71,7 @@ export async function call(
       fn()
     }
     const timer = setTimeout(() => {
-      settle(() => rej(new AgentTimeout(String(payload["execute"] ?? "?"), timeoutMs)))
+      settle(() => { rej(new AgentTimeout(String(payload["execute"] ?? "?"), timeoutMs)) })
     }, timeoutMs)
     sock.on("connect", () => {
       const sync = JSON.stringify({ execute: "guest-sync-delimited", arguments: { id } })
@@ -115,7 +115,7 @@ export async function call(
       })
     })
     sock.on("error", (error) => {
-      settle(() => rej(error))
+      settle(() => { rej(error) })
     })
   })
 }

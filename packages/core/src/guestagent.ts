@@ -320,7 +320,7 @@ async function launch(r: LaunchRequest): Promise<{ readonly pid: number }> {
   }
   const child = nodeSpawn(exe, rest, { detached: true, stdio: "ignore", ...cwd, env })
   await new Promise<void>((res, rej) => {
-    child.once("spawn", () => res())
+    child.once("spawn", () => { res() })
     child.once("error", rej)
   })
   child.unref()
@@ -1210,7 +1210,7 @@ export class DisplayHost {
     const proc = this.proc ?? this.start()
     const line = new Promise<string | null>((res) => (this.answer = res))
     let timer: ReturnType<typeof setTimeout> | undefined
-    const late = new Promise<typeof LATE>((res) => (timer = setTimeout(() => res(LATE), timeoutMs)))
+    const late = new Promise<typeof LATE>((res) => (timer = setTimeout(() => { res(LATE) }, timeoutMs)))
     try {
       await proc.stdin.write(`${args.join(" ")}\n`)
       await proc.stdin.flush()

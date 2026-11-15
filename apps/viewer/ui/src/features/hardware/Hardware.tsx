@@ -28,7 +28,7 @@ export function Hardware({ view }: { readonly view: MachineInfoView }): JSX.Elem
     setGb(toGB(next.memoryMiB))
   }, [next?.cpus, next?.memoryMiB])
 
-  useEffect(() => () => clearTimeout(timer.current), [])
+  useEffect(() => () => { clearTimeout(timer.current) }, [])
 
   if (info === null)
     return view.error === null ? <p className="panel__note">{t("state.loading")}</p> : <p className="action__error">{view.error}</p>
@@ -59,7 +59,7 @@ export function Hardware({ view }: { readonly view: MachineInfoView }): JSX.Elem
               decrementLabel={t("hardware.fewer")}
               incrementLabel={t("hardware.more")}
               onValueChange={setCpus}
-              onValueCommitted={(v) => commit({ cpus: v, memoryMiB: fromGB(gb) })}
+              onValueCommitted={(v) => { commit({ cpus: v, memoryMiB: fromGB(gb) }) }}
             />
           </dd>
         </div>
@@ -77,7 +77,7 @@ export function Hardware({ view }: { readonly view: MachineInfoView }): JSX.Elem
               incrementLabel={t("hardware.more")}
               unit={t("hardware.gb")}
               onValueChange={setGb}
-              onValueCommitted={(v) => commit({ cpus, memoryMiB: fromGB(v) })}
+              onValueCommitted={(v) => { commit({ cpus, memoryMiB: fromGB(v) }) }}
             />
           </dd>
         </div>

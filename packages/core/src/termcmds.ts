@@ -100,7 +100,7 @@ export async function terminal(args: Args): Promise<number> {
   let client: agent.AgentClient
   try {
     // Current, not just answering: an image with an older agent baked in has no terminals.
-    const c = await agent.ensure(name, { log: (l) => console.error(l) })
+    const c = await agent.ensure(name, { log: (l) => { console.error(l) } })
     await c.health()
     client = c
     const s = agent.readState(pathsFor(name))

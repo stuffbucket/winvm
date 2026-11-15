@@ -362,7 +362,7 @@ export function modifiers(params: Params): readonly string[] {
 }
 
 const ok = (ms: Record<string, number>): Result => ({ content: [{ type: "text", text: "OK" }], isError: false, ms })
-const sleep = async (ms: number): Promise<void> => await new Promise((r) => setTimeout(r, ms))
+const sleep = async (ms: number): Promise<void> => { await new Promise((r) => setTimeout(r, ms)) }
 
 /**
  * The executor. Holds what QMP can't be asked for — where the pointer is —

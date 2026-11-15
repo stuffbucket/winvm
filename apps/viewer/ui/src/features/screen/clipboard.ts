@@ -52,7 +52,7 @@ export class ClipboardSync {
     if (!this.started || !this.ports.focused() || text === this.shared) return
     this.shared = text
     this.generation++
-    this.ports.writeMac(text).catch((error: unknown) => console.warn("putting Windows' clipboard on the Mac failed", error))
+    this.ports.writeMac(text).catch((error: unknown) => { console.warn("putting Windows' clipboard on the Mac failed", error) })
   }
 
   /** The window came forward: send the Mac's clipboard to Windows if it changed. */

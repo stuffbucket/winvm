@@ -186,7 +186,7 @@ export function stopService(p: Paths, seams: StopServiceSeams = {}): void {
   const name = basename(p.dir)
   const kill = seams.kill ?? ((pid: number, signal: NodeJS.Signals): void => void process.kill(pid, signal))
   const now = seams.now ?? Date.now
-  const sleep = seams.sleep ?? ((ms: number): void => Bun.sleepSync(ms))
+  const sleep = seams.sleep ?? ((ms: number): void => { Bun.sleepSync(ms) })
   const running = seams.running ?? ((pid: number): boolean => alive(pid) && !exited(pid))
   const isService = seams.isService ?? ((pid: number): boolean => alive(pid) && isServiceFor(pid, name))
   // Only a pid the record names AND that is still this instance's service is ever signalled.

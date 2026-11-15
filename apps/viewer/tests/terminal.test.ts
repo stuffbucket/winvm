@@ -39,7 +39,7 @@ describe("the socket transport, against a fake guest", () => {
   beforeAll(() => {
     fake = startFakeTermServer()
   })
-  afterAll(() => fake.stop())
+  afterAll(() => { fake.stop() })
 
   const open = (id: string, statuses: SessionStatus[] = [], endpoint = fake.endpoint()) => {
     const transport = createSocketTransport({ connect: async () => endpoint, onStatus: (_, s) => statuses.push(s) })
@@ -113,7 +113,7 @@ describe("the socket transport, against a fake guest", () => {
     const transport = createSocketTransport({
       connect: () =>
         new Promise((resolve) => {
-          release = () => resolve(fake.endpoint())
+          release = () => { resolve(fake.endpoint()) }
         }),
     })
     const spawned = transport.spawn({ id: "f", cols: 80, rows: 24 })

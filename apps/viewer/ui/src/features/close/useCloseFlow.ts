@@ -244,7 +244,10 @@ export function useCloseFlow(w: Winvm): CloseFlow {
       // The machine to stay on if the list can't be read: the one shown, else the last one resolved.
       let last: Status | null = wRef.current.status
       let list = await wRef.current.refreshAll()
-      if (list === null) return fail(tx, last, t("close.statusFailed"))
+      if (list === null) {
+        fail(tx, last, t("close.statusFailed"))
+        return
+      }
       let queue = orderCloseQueue(list, wRef.current.name, resolved)
       while (queue.length > 0) {
         for (let next = queue.shift(); next !== undefined; next = queue.shift()) {
@@ -256,7 +259,10 @@ export function useCloseFlow(w: Winvm): CloseFlow {
         // Every machine asked about is resolved: one started meanwhile is not silently left out.
         list = await wRef.current.refreshAll()
         // Never read as "none left": that would let the app exit past a machine it never asked about.
-        if (list === null) return fail(tx, last, t("close.statusFailed"))
+        if (list === null) {
+          fail(tx, last, t("close.statusFailed"))
+          return
+        }
         queue = orderCloseQueue(list, null, resolved)
       }
       // The app exits from here: nothing more to show.

@@ -450,7 +450,7 @@ async function terminalFiles(ctx: Context): Promise<Scenario> {
         ws.close()
         done({ ok: false, detail: `timed out; saw ${JSON.stringify(seen.slice(-200))}` })
       }, 60_000)
-      ws.onopen = () => ws.send(new TextEncoder().encode(`echo ${marker}-$((6*7))\r`))
+      ws.onopen = () => { ws.send(new TextEncoder().encode(`echo ${marker}-$((6*7))\r`)) }
       ws.onmessage = (ev) => {
         if (typeof ev.data === "string") {
           const m = JSON.parse(ev.data) as { type: string; code?: number }
@@ -583,7 +583,7 @@ async function startMenu(ctx: Context): Promise<Scenario> {
       const novnc = new Map<string, number>()
       let captured = false
       const router = new GuestKeyboardRouter({
-        send: (keysym, code, down) => keys.send(keysym, code, down),
+        send: (keysym, code, down) => { keys.send(keysym, code, down) },
         translate: (e) => ({ keysym: KEYSYM[e.code] ?? 0, code: e.code }),
         releaseNoVnc: () => {
           for (const [code, keysym] of novnc) keys.send(keysym, code, false)

@@ -335,7 +335,7 @@ describe("display device", () => {
     beforeAll(() => {
       dir = mkdtempSync(resolve(tmpdir(), "winvm-display-"))
     })
-    afterAll(() => rmSync(dir, { recursive: true, force: true }))
+    afterAll(() => { rmSync(dir, { recursive: true, force: true }) })
     const paths = (): Paths => ({ dir }) as Paths
 
     it("is ramfb when absent (instances older than the virtio-gpu default)", () => {
@@ -361,7 +361,7 @@ describe("the save hash and the guest's resolution", () => {
   beforeAll(() => {
     dir = mkdtempSync(resolve(tmpdir(), "winvm-hash-"))
   })
-  afterAll(() => rmSync(dir, { recursive: true, force: true }))
+  afterAll(() => { rmSync(dir, { recursive: true, force: true }) })
 
   function hardwareFor(display: Parameters<typeof writeDisplay>[1] | null): readonly string[] {
     const p = { dir } as Paths

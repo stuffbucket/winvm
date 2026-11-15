@@ -388,7 +388,7 @@ describe("the agent's /fs/touch", () => {
     writeFileSync(resolve(root, "sub", "a.txt"), "a")
     utimesSync(resolve(root, "sub", "a.txt"), 1_700_000_000, 1_700_000_000.25)
   })
-  afterEach(() => rmSync(root, { recursive: true, force: true }))
+  afterEach(() => { rmSync(root, { recursive: true, force: true }) })
 
   it("leaves a file with the times it had", async () => {
     expect(await touchPaths(root, ["sub/a.txt"])).toEqual({ touched: 1, failed: 0 })
@@ -422,7 +422,7 @@ describe.skipIf(process.platform !== "darwin")("reading an ISO by ranges", () =>
     iso = resolve(dir, "t.iso")
     spawnSync("hdiutil", ["makehybrid", "-iso", "-joliet", "-o", iso, src], { stdio: "ignore" })
   })
-  afterAll(() => rmSync(dir, { recursive: true, force: true }))
+  afterAll(() => { rmSync(dir, { recursive: true, force: true }) })
 
   const fileRanges = (path: string) => async (offset: number, length: number): Promise<Uint8Array> => {
     const fd = openSync(path, "r")

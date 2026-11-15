@@ -85,7 +85,7 @@ export class ChangeNotices {
     if (this.timer !== null) clearTimeout(this.timer)
     this.timer = setTimeout(() => {
       this.timer = null
-      this.sending = this.sending.then(async () => await this.flush())
+      this.sending = this.sending.then(async () => { await this.flush() })
     }, this.o.debounceMs ?? 300)
   }
 

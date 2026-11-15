@@ -33,7 +33,7 @@ export class FakeAgent {
   }
 
   async close(): Promise<void> {
-    await new Promise<void>((r) => this.server.close(() => r()))
+    await new Promise<void>((r) => this.server.close(() => { r() }))
   }
 
   /** The guest-file-* commands; undefined for anything else, null for "no reply". */

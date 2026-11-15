@@ -115,7 +115,7 @@ async function runAll(files: readonly string[], args: Args): Promise<number> {
     )
   const goldens = [...new Set(jobs.filter((j) => j.reset).map((j) => goldenFlag ?? j.golden ?? DEFAULT_GOLDEN))]
   try {
-    for (const g of goldens) await ensureGolden(instance, g, (s) => console.log(s))
+    for (const g of goldens) await ensureGolden(instance, g, (s) => { console.log(s) })
   } catch (error) {
     return fail(errMsg(error))
   }
@@ -127,7 +127,7 @@ async function runAll(files: readonly string[], args: Args): Promise<number> {
 
   const results: JobResult[] = []
   for (const job of jobs) {
-    results.push(await runJob(job, { instance, golden: goldenFlag, artifactsDir, log: (s) => console.log(s) }))
+    results.push(await runJob(job, { instance, golden: goldenFlag, artifactsDir, log: (s) => { console.log(s) } }))
     const last = results.at(-1)
     if (last?.error !== null && last?.error !== undefined) console.log(`  error: ${last.error}`)
   }
@@ -137,7 +137,7 @@ async function runAll(files: readonly string[], args: Args): Promise<number> {
     console.log(`\n--keep: instance "${instance}" left running in the last job's state (\`winvm open -i ${instance}\`)`)
   } else if (qemu.isRunning(p)) {
     // Nothing is lost: every job starts from the golden save anyway.
-    await withOperation(instance, "stop", async () => await saves.quitQemu(p)).catch((error: unknown) => {
+    await withOperation(instance, "stop", async () => { await saves.quitQemu(p) }).catch((error: unknown) => {
       if (!(error instanceof InstanceBusy)) throw error
       console.warn(`warning: left "${instance}" running: ${error.message}`)
     })

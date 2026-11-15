@@ -59,7 +59,7 @@ export async function winvm(args: readonly string[], o: { readonly timeoutMs?: n
     stdout: "pipe",
     stderr: "pipe",
   })
-  const timer = setTimeout(() => proc.kill(), o.timeoutMs ?? 600_000)
+  const timer = setTimeout(() => { proc.kill() }, o.timeoutMs ?? 600_000)
   const [stdout, stderr, code] = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text(), proc.exited])
   clearTimeout(timer)
   return { args, code, stdout, stderr, ms: Date.now() - started }
@@ -110,7 +110,7 @@ export class AppPoller {
   private link: { url: string; token: string } | null = null
   private connectFailedAt = 0
   /** Until a read says otherwise, Windows is not ready for a size. */
-  private readonly held = new HeldSizes(true, { onRetry: (size) => this.track(this.resize(size)) })
+  private readonly held = new HeldSizes(true, { onRetry: (size) => { this.track(this.resize(size)) } })
   /** Resizes under way that nothing awaits (a retry, a size kept while held): stop() waits for them. */
   private readonly inflight = new Set<Promise<void>>()
 

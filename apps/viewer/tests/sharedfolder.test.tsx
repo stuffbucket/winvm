@@ -132,7 +132,7 @@ describe("the Shared folder section", () => {
     const host = render(<SharedFolder view={v} guestReady />)
     expect(host.textContent).toContain("Share a folder on this Mac with Windows")
     expect(buttons(host)).toEqual(["Choose folder…"])
-    act(() => button("Choose folder…").click())
+    act(() => { button("Choose folder…").click() })
     expect(v.calls).toEqual(["choose"])
   })
 
@@ -142,7 +142,7 @@ describe("the Shared folder section", () => {
     expect(host.querySelector(".oneline")?.getAttribute("title")).toBe("~/Projects/site")
     expect(host.textContent).toContain("In File Explorer as Mac (Z:)")
     expect(buttons(host)).toEqual(["Show in Finder", "Choose folder…", "Stop sharing"])
-    act(() => button("Stop sharing").click())
+    act(() => { button("Stop sharing").click() })
     expect(v.calls).toEqual(["stop"])
   })
 
@@ -168,9 +168,9 @@ describe("the Shared folder section", () => {
   it("confirms the one-time setup before restarting Windows", () => {
     const v = view({ status: status({ folder: "/Users/me/Shared", guest: { installed: false, mounted: false } }) })
     render(<SharedFolder view={v} guestReady />)
-    act(() => button("Set up in Windows…").click())
+    act(() => { button("Set up in Windows…").click() })
     expect(document.querySelector("dialog")?.textContent).toContain("restarts Windows twice")
-    act(() => button("Set up and restart").click())
+    act(() => { button("Set up and restart").click() })
     expect(v.calls).toEqual(["install"])
   })
 

@@ -44,7 +44,7 @@ const flush = async (): Promise<void> => {
 
 /** Open a Base UI menu from its trigger, as the keyboard does. */
 async function open(trigger: HTMLElement): Promise<HTMLElement> {
-  act(() => trigger.focus())
+  act(() => { trigger.focus() })
   act(() => {
     trigger.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true }))
   })
@@ -56,9 +56,9 @@ async function open(trigger: HTMLElement): Promise<HTMLElement> {
 
 const items = (): HTMLElement[] => [...document.querySelectorAll<HTMLElement>('[role="menuitem"], [role="menuitemradio"]')]
 const click = (el: HTMLElement): void =>
-  act(() => {
+  { act(() => {
     el.click()
-  })
+  }) }
 
 describe("Menu (the Base UI wrapper)", () => {
   it("opens from its trigger with a heading, a check on the chosen item, and items that act", async () => {

@@ -96,7 +96,7 @@ describe("XDG directories", () => {
 describe("the user's settings", () => {
   const dir = mkdtempSync(resolve(tmpdir(), "wvset-"))
   const env = { HOME: "/nonexistent", XDG_CONFIG_HOME: dir }
-  afterAll(() => rmSync(dir, { recursive: true, force: true }))
+  afterAll(() => { rmSync(dir, { recursive: true, force: true }) })
 
   it("are the defaults with no file, the pause overlay on", () => {
     expect(readSettings(env)).toEqual(SETTING_DEFAULTS)
@@ -144,7 +144,7 @@ describe("the user's settings", () => {
     expect(sectionError("viewer.pauseOverlay")).not.toBeNull()
     expect(sectionError("")).not.toBeNull()
     expect(sectionError("../x")).not.toBeNull()
-    expect(() => writeSection("a.b", 1, env)).toThrow()
+    expect(() => { writeSection("a.b", 1, env) }).toThrow()
   })
 
   it("parse key=value against the key's type", () => {

@@ -75,8 +75,8 @@ export async function displayFree(display: number): Promise<boolean> {
   for (const port of [vncPort(display), websocketPort(display)]) {
     const free = await new Promise<boolean>((res) => {
       const s = createServer()
-      s.once("error", () => res(false))
-      s.listen(port, "127.0.0.1", () => s.close(() => res(true)))
+      s.once("error", () => { res(false) })
+      s.listen(port, "127.0.0.1", () => s.close(() => { res(true) }))
     })
     if (!free) return false
   }

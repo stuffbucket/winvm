@@ -121,7 +121,7 @@ export function parsePercent(s: string): number {
 // ---------------------------------------------------------------------------
 // Settling, measured from the host
 
-const sleep = async (ms: number): Promise<void> => await new Promise((r) => setTimeout(r, ms))
+const sleep = async (ms: number): Promise<void> => { await new Promise((r) => setTimeout(r, ms)) }
 
 function sampleCpu(pid: number): CpuSample {
   return { atMs: Date.now(), cpuSec: parseCpuTime(capture("ps", ["-o", "time=", "-p", String(pid)])) }
@@ -348,7 +348,7 @@ export async function golden(args: Args): Promise<number> {
         ...(cpu === undefined ? {} : { cpuPct: parsePercent(cpu) }),
         ...(forS === undefined ? {} : { forMs: parseDuration(forS) }),
         ...(max === undefined ? {} : { maxWaitMs: parseDuration(max) }),
-        log: (l) => console.log(l),
+        log: (l) => { console.log(l) },
       })
       const m = r.manifest
       console.log(

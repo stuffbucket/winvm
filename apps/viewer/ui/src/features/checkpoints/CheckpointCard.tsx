@@ -106,7 +106,7 @@ export const CheckpointCard = memo(function CheckpointCard({ c, box, selected, s
         style={style}
         aria-pressed={selected}
         aria-label={t("checkpoints.card.label", { name, when })}
-        onClick={() => onSelect(c.name)}
+        onClick={() => { onSelect(c.name) }}
       >
         <Picture c={c} sharp={sharpAt(screenWidth)} wanted>
           {reason !== null && <span className="checkpoint__badge">{t(reason)}</span>}

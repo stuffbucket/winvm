@@ -71,7 +71,7 @@ export async function freePort(): Promise<number> {
     srv.listen(0, "127.0.0.1", () => {
       const a = srv.address()
       const port = typeof a === "object" && a !== null ? a.port : 0
-      srv.close(() => res(port))
+      srv.close(() => { res(port) })
     })
   })
 }

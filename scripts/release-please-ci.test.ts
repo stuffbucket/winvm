@@ -198,12 +198,12 @@ describe("command-line wiring", () => {
 
 describe("Release Please trigger validation", () => {
   test("accepts push and manual runs on main", () => {
-    expect(() => validateReleasePleaseTrigger("push", "refs/heads/main")).not.toThrow()
-    expect(() => validateReleasePleaseTrigger("workflow_dispatch", "refs/heads/main")).not.toThrow()
+    expect(() => { validateReleasePleaseTrigger("push", "refs/heads/main") }).not.toThrow()
+    expect(() => { validateReleasePleaseTrigger("workflow_dispatch", "refs/heads/main") }).not.toThrow()
   })
 
   test("rejects a manual run from another ref", () => {
-    expect(() => validateReleasePleaseTrigger("workflow_dispatch", "refs/heads/feature")).toThrow(
+    expect(() => { validateReleasePleaseTrigger("workflow_dispatch", "refs/heads/feature") }).toThrow(
       "must run from refs/heads/main",
     )
   })

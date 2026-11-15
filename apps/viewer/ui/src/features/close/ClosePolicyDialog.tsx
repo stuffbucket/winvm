@@ -86,14 +86,14 @@ export function ClosePolicyDialog({ state, onChoose, onRemember, onCancel }: Clo
           <>
             <div className="close-dialog__choices">
               {CHOICES.map((c) => (
-                <button key={c.policy} type="button" className="close-dialog__choice" onClick={() => onChoose(c.policy)}>
+                <button key={c.policy} type="button" className="close-dialog__choice" onClick={() => { onChoose(c.policy) }}>
                   <span className="close-dialog__choice-label">{t(c.key)}</span>
                   <span className="close-dialog__choice-body">{t(`${c.key}.body`)}</span>
                 </button>
               ))}
             </div>
             <label className="check-field">
-              <input type="checkbox" name="remember-close" checked={shown.remember} onChange={(e) => onRemember(e.target.checked)} />
+              <input type="checkbox" name="remember-close" checked={shown.remember} onChange={(e) => { onRemember(e.target.checked) }} />
               <span>{t("close.remember")}</span>
             </label>
           </>

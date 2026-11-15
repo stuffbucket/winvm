@@ -38,7 +38,7 @@ const spawned: Proc[] = []
 const signals: { readonly pid: number; readonly sig: string }[] = []
 const realKill = process.kill.bind(process)
 
-const sleep = async (ms: number): Promise<void> => await new Promise((r) => setTimeout(r, ms))
+const sleep = async (ms: number): Promise<void> => { await new Promise((r) => setTimeout(r, ms)) }
 
 const live = (pid: number): boolean => {
   try {
@@ -123,14 +123,14 @@ function expectQemuUntouched(): void {
 }
 
 const lease = (pid: number, operation: string, automatic = false): void =>
-  writeFileSync(
+  { writeFileSync(
     p.lease,
     JSON.stringify({ operation, id: `lease-${String(pid)}`, pid, pidStart: processStart(pid), startedAt: "2026-11-14T00:00:00.000Z", instance: "t", automatic }),
-  )
+  ) }
 
 /** Where a watcher still owed is written down, as a reconciliation that stopped one and died would leave it. */
 const owedPath = (): string => resolve(p.dir, "watch.owed")
-const owe = (qemuPid: number): void => writeFileSync(owedPath(), JSON.stringify({ qemu: qemuPid }))
+const owe = (qemuPid: number): void => { writeFileSync(owedPath(), JSON.stringify({ qemu: qemuPid })) }
 
 function loadFromAnotherProcess(): Promise<string> {
   const f = resolve(home, `load-${String(Date.now())}.ts`)
@@ -990,7 +990,7 @@ describe("the CLI", () => {
     const got = resolve(home, "a-watcher-signals")
     const w = await hold("--log-signals", got, "winvm", "watch", "-i", "a")
     writeFileSync(watchPathsFor("a").pid, `${String(w.pid)}\n`)
-    const busy = (state: string): void => writeFileSync(watchPathsFor("a").state, JSON.stringify({ pid: w.pid, build: OLD, state }))
+    const busy = (state: string): void => { writeFileSync(watchPathsFor("a").state, JSON.stringify({ pid: w.pid, build: OLD, state })) }
     busy("autosaving")
     // "t": a stale service that can be repaired.
     const old = await staleFromSameCli()

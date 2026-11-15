@@ -223,7 +223,10 @@ export async function runService(name: string, o: ServiceOptions = {}): Promise<
   }, checkMs)
 
   async function stop(): Promise<void> {
-    if (stopping) return await done
+    if (stopping) {
+      await done
+      return
+    }
     stopping = true
     clearInterval(check)
     clearInterval(heartbeat)

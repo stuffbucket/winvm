@@ -192,7 +192,7 @@ export function reconcileNote(name: string, r: ReconcileResult, p: Paths = paths
 
 const errText = (e: unknown): string => (e instanceof Error ? e.message : String(e))
 
-const sleep = async (ms: number): Promise<void> => await new Promise((r) => setTimeout(r, ms))
+const sleep = async (ms: number): Promise<void> => { await new Promise((r) => setTimeout(r, ms)) }
 
 // ---------------------------------------------------------------------------
 // The lock
@@ -331,7 +331,7 @@ function owe(p: Paths, qemu: number): void {
   renameSync(tmp, owedPath(p))
 }
 
-const forgive = (p: Paths): void => rmSync(owedPath(p), { force: true })
+const forgive = (p: Paths): void => { rmSync(owedPath(p), { force: true }) }
 
 // ---------------------------------------------------------------------------
 // What is out of date

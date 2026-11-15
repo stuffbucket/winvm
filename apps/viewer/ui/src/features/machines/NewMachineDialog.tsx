@@ -116,12 +116,12 @@ export function NewMachineDialog(p: NewMachineDialogProps): JSX.Element | null {
             <summary>{t("machine.advanced")}</summary>
             <label className="field">
               <span className="field__label">{t("machine.imageLabel")}</span>
-              <select className="input" name="image" value={chosen ?? ""} disabled={p.busy || p.images === null || p.images.length === 0} onChange={(e) => setImage(e.target.value)}>
+              <select className="input" name="image" value={chosen ?? ""} disabled={p.busy || p.images === null || p.images.length === 0} onChange={(e) => { setImage(e.target.value) }}>
                 {p.images === null ? <option value="">{t("state.loading")}</option> : p.images.map((i) => <option key={i} value={i}>{i}</option>)}
               </select>
             </label>
             <label className="check-field">
-              <input type="checkbox" name="start" checked={start} disabled={p.busy} onChange={(e) => setStart(e.target.checked)} />
+              <input type="checkbox" name="start" checked={start} disabled={p.busy} onChange={(e) => { setStart(e.target.checked) }} />
               <span>{t("machine.startNow")}</span>
             </label>
           </details>

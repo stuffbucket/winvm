@@ -18,7 +18,7 @@ const held: Server[] = []
 
 async function hold(port: number): Promise<void> {
   const s = createServer()
-  await new Promise<void>((res) => s.listen(port, "127.0.0.1", () => res()))
+  await new Promise<void>((res) => s.listen(port, "127.0.0.1", () => { res() }))
   held.push(s)
 }
 

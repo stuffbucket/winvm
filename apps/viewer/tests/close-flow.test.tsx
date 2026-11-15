@@ -268,8 +268,8 @@ async function mount(world: FakeWinvm): Promise<void> {
   document.body.append(host)
   const r = createRoot(host)
   root = r
-  world.rerender = () => r.render(<Probe w={world.snapshot()} />)
-  act(() => world.rerender())
+  world.rerender = () => { r.render(<Probe w={world.snapshot()} />) }
+  act(() => { world.rerender() })
   await flush()
 }
 
@@ -318,7 +318,7 @@ describe("useCloseFlow", () => {
     await mount(world)
     expect(current().state).toEqual({ kind: "idle" })
 
-    act(() => bridge.fire())
+    act(() => { bridge.fire() })
     await flush()
     expect(bridge.count("close_start")).toBe(1)
     expect(current().state.kind).toBe("asking")
@@ -356,7 +356,7 @@ describe("useCloseFlow", () => {
     bridge.pending = answer
     const world = fakeWinvm([{ name: "a", state: "running" }], "a")
     await mount(world)
-    act(() => bridge.fire())
+    act(() => { bridge.fire() })
     await flush()
     answer.resolve(true)
     await flush()
@@ -377,7 +377,7 @@ describe("useCloseFlow", () => {
     expect(current().state).toEqual({ kind: "idle" })
     // …and leaves the window free to take the next request.
     late.start = "ok"
-    act(() => late.fire())
+    act(() => { late.fire() })
     await flush()
     expect(late.count("close_start")).toBe(2)
     expect(current().state.kind).toBe("asking")
@@ -393,16 +393,16 @@ describe("useCloseFlow", () => {
     const r = createRoot(host)
     root = r
     world.rerender = () =>
-      r.render(
+      { r.render(
         <StrictMode>
           <Probe w={world.snapshot()} />
         </StrictMode>,
-      )
-    act(() => world.rerender())
+      ) }
+    act(() => { world.rerender() })
     await flush()
     expect(bridge.count("close_start")).toBe(1)
     expect(bridge.listening()).toBe(1)
-    act(() => bridge.fire())
+    act(() => { bridge.fire() })
     await flush()
     expect(bridge.count("close_start")).toBe(1)
     expect(world.log.filter((l) => l === "refreshAll")).toHaveLength(1)
@@ -432,7 +432,7 @@ describe("useCloseFlow", () => {
       "c",
     )
     await mount(world)
-    act(() => bridge.fire())
+    act(() => { bridge.fire() })
     await flush()
 
     const first = current().state
@@ -444,7 +444,7 @@ describe("useCloseFlow", () => {
     // Already selected: read afresh, not selected again.
     expect(world.log).toEqual(["refreshAll", "refreshOne c"])
 
-    act(() => current().choose("leave"))
+    act(() => { current().choose("leave") })
     await flush()
     const second = current().state
     expect(second.kind).toBe("asking")
@@ -455,7 +455,7 @@ describe("useCloseFlow", () => {
     expect(world.log.slice(2)).toEqual(["select a", "refreshOne a"])
     expect(bridge.count("close_complete")).toBe(0)
 
-    act(() => current().choose("leave"))
+    act(() => { current().choose("leave") })
     await flush()
     expect(world.log.slice(4)).toEqual(["refreshAll"])
     expect(bridge.count("close_complete")).toBe(1)
@@ -469,7 +469,7 @@ describe("useCloseFlow", () => {
     const world = fakeWinvm([{ name: "a", state: "running" }], "a")
     world.all = "fail"
     await mount(world)
-    act(() => bridge.fire())
+    act(() => { bridge.fire() })
     await flush()
     expect(bridge.count("close_complete")).toBe(0)
     expect(bridge.count("close_cancel")).toBe(1)
@@ -480,13 +480,13 @@ describe("useCloseFlow", () => {
     expect(failed.machine?.name).toBe("a")
 
     // The final recheck too: the one machine left running, then the list can't be read.
-    act(() => current().cancel())
+    act(() => { current().cancel() })
     world.all = "ok"
-    act(() => bridge.fire())
+    act(() => { bridge.fire() })
     await flush()
     expect(current().state.kind).toBe("asking")
     world.all = "fail"
-    act(() => current().choose("leave"))
+    act(() => { current().choose("leave") })
     await flush()
     expect(bridge.count("close_complete")).toBe(0)
     expect(bridge.count("close_cancel")).toBe(2)
@@ -504,7 +504,7 @@ describe("useCloseFlow", () => {
       "a",
     )
     await mount(world)
-    act(() => bridge.fire())
+    act(() => { bridge.fire() })
     await flush()
 
     const stowing = current().state
@@ -542,16 +542,16 @@ describe("useCloseFlow", () => {
       "a",
     )
     await mount(world)
-    act(() => bridge.fire())
+    act(() => { bridge.fire() })
     await flush()
     expect(current().state.kind).toBe("asking")
-    act(() => current().choose("stow"))
+    act(() => { current().choose("stow") })
     await flush()
     expect(world.runs.map((r) => `${r.name} ${r.verb}`)).toEqual(["a stow"])
     world.set("a", { state: "stowed" })
     world.settle(0)
     await flush()
-    act(() => current().choose("shutdown"))
+    act(() => { current().choose("shutdown") })
     await flush()
     expect(world.runs.map((r) => `${r.name} ${r.verb}`)).toEqual(["a stow", "b stop"])
     world.set("b", { state: "stopped" })
@@ -559,7 +559,7 @@ describe("useCloseFlow", () => {
     await flush()
     const last = current().state
     expect(last.kind === "asking" ? last.machine.name : null).toBe("c")
-    act(() => current().choose("leave"))
+    act(() => { current().choose("leave") })
     await flush()
     expect(world.runs).toHaveLength(2)
     expect(bridge.count("close_complete")).toBe(1)
@@ -575,7 +575,7 @@ describe("useCloseFlow", () => {
       "a",
     )
     await mount(world)
-    act(() => bridge.fire())
+    act(() => { bridge.fire() })
     await flush()
     expect(current().state.kind).toBe("acting")
     // An hour: still stowing, nothing else asked about, nothing closed.
@@ -603,15 +603,15 @@ describe("useCloseFlow", () => {
       "b",
     )
     await mount(world)
-    act(() => bridge.fire())
+    act(() => { bridge.fire() })
     await flush()
-    act(() => current().choose("leave"))
+    act(() => { current().choose("leave") })
     await flush()
-    act(() => current().choose("stow"))
+    act(() => { current().choose("stow") })
     await flush()
     expect(world.runs.map((r) => `${r.name} ${r.verb}`)).toEqual(["a stow"])
     // The person looks at another machine meanwhile.
-    act(() => world.snapshot().select("b"))
+    act(() => { world.snapshot().select("b") })
     world.settle(1, "winvm stow: the disk is full")
     await flush()
 
@@ -630,10 +630,10 @@ describe("useCloseFlow", () => {
     expect(world.log.filter((l) => l.includes(" c"))).toEqual([])
 
     // An action that ran nothing fails the same way.
-    act(() => current().cancel())
-    act(() => bridge.fire())
+    act(() => { current().cancel() })
+    act(() => { bridge.fire() })
     await flush()
-    act(() => current().choose("shutdown"))
+    act(() => { current().choose("shutdown") })
     await flush()
     expect(world.runs.map((r) => `${r.name} ${r.verb}`)).toEqual(["a stow", "a stop"])
     world.runs[1]?.done.resolve(null)
@@ -647,11 +647,11 @@ describe("useCloseFlow", () => {
     const bridge = fakeBridge()
     const world = fakeWinvm([{ name: "a", state: "running" }, { name: "b", state: "running", title: "Lab" }], "a")
     await mount(world)
-    act(() => bridge.fire())
+    act(() => { bridge.fire() })
     await flush()
     // `b` vanishes between the list and its own read.
     world.machines = world.machines.filter((m) => m.name !== "b")
-    act(() => current().choose("leave"))
+    act(() => { current().choose("leave") })
     await flush()
     const failed = current().state
     expect(failed.kind).toBe("failed")
@@ -676,21 +676,21 @@ describe("useCloseFlow", () => {
     )
     const writes = (): string[] => bridge.log.filter((l) => l.startsWith("winvm"))
     await mount(world)
-    act(() => bridge.fire())
+    act(() => { bridge.fire() })
     await flush()
 
-    act(() => current().setRemember(true))
+    act(() => { current().setRemember(true) })
     const checked = current().state
     expect(checked.kind === "asking" ? checked.remember : null).toBe(true)
-    act(() => current().choose("leave"))
+    act(() => { current().choose("leave") })
     await flush()
     // Leave Running succeeds at once.
     expect(writes()).toEqual(["winvm config -i a viewer.closePolicy=leave"])
 
     const second = current().state
     expect(second.kind === "asking" ? [second.machine.name, second.remember] : null).toEqual(["b", false])
-    act(() => current().setRemember(true))
-    act(() => current().choose("stow"))
+    act(() => { current().setRemember(true) })
+    act(() => { current().choose("stow") })
     await flush()
     // Not while it runs…
     expect(writes()).toHaveLength(1)
@@ -702,8 +702,8 @@ describe("useCloseFlow", () => {
 
     const third = current().state
     expect(third.kind === "asking" ? [third.machine.name, third.remember] : null).toEqual(["c", false])
-    act(() => current().setRemember(true))
-    act(() => current().choose("shutdown"))
+    act(() => { current().setRemember(true) })
+    act(() => { current().choose("shutdown") })
     await flush()
     world.set("c", { state: "stopped" })
     world.settle(0)
@@ -711,8 +711,8 @@ describe("useCloseFlow", () => {
     // The policy is Shut Down, though the command was stop.
     expect(writes().at(-1)).toBe("winvm config -i c viewer.closePolicy=shutdown")
 
-    act(() => current().setRemember(true))
-    act(() => current().choose("stow"))
+    act(() => { current().setRemember(true) })
+    act(() => { current().choose("stow") })
     await flush()
     world.settle(1, "no")
     await flush()
@@ -726,10 +726,10 @@ describe("useCloseFlow", () => {
     bridge.config = { code: 2, stdout: "", stderr: "winvm config: settings folder is read-only" }
     const world = fakeWinvm([{ name: "a", state: "running" }, { name: "b", state: "running" }], "b")
     await mount(world)
-    act(() => bridge.fire())
+    act(() => { bridge.fire() })
     await flush()
-    act(() => current().setRemember(true))
-    act(() => current().choose("leave"))
+    act(() => { current().setRemember(true) })
+    act(() => { current().choose("leave") })
     await flush()
     const failed = current().state
     expect(failed.kind).toBe("failed")
@@ -753,15 +753,15 @@ describe("useCloseFlow", () => {
       "a",
     )
     await mount(world)
-    act(() => bridge.fire())
+    act(() => { bridge.fire() })
     await flush()
     world.set("a", { state: "stowed" })
     world.settle(0)
     await flush()
     expect(current().state.kind).toBe("asking")
 
-    act(() => current().setRemember(true))
-    act(() => current().cancel())
+    act(() => { current().setRemember(true) })
+    act(() => { current().cancel() })
     await flush()
     expect(current().state).toEqual({ kind: "idle" })
     expect(bridge.count("close_cancel")).toBe(1)
@@ -774,12 +774,12 @@ describe("useCloseFlow", () => {
     expect(world.name).toBe("b")
 
     // A choice made after cancelling does nothing.
-    act(() => current().choose("stow"))
+    act(() => { current().choose("stow") })
     await flush()
     expect(world.runs).toHaveLength(1)
 
     // The next close starts afresh from a fresh list, its ask unchecked again.
-    act(() => bridge.fire())
+    act(() => { bridge.fire() })
     await flush()
     expect(bridge.count("close_start")).toBe(2)
     const again = current().state
@@ -790,16 +790,16 @@ describe("useCloseFlow", () => {
     const bridge = fakeBridge()
     const world = fakeWinvm([{ name: "a", state: "running" }], "a")
     await mount(world)
-    act(() => bridge.fire())
+    act(() => { bridge.fire() })
     await flush()
-    act(() => current().choose("shutdown"))
+    act(() => { current().choose("shutdown") })
     await flush()
-    act(() => current().cancel())
+    act(() => { current().cancel() })
     await flush()
     expect(current().state.kind).toBe("acting")
     expect(bridge.count("close_cancel")).toBe(0)
     // A repeated close request meanwhile is the same close.
-    act(() => bridge.fire())
+    act(() => { bridge.fire() })
     await flush()
     expect(bridge.count("close_start")).toBe(1)
     world.set("a", { state: "stopped" })
@@ -819,7 +819,7 @@ describe("useCloseFlow", () => {
       "a",
     )
     await mount(world)
-    act(() => bridge.fire())
+    act(() => { bridge.fire() })
     await flush()
     const waiting = current().state
     expect(waiting.kind).toBe("waiting")
@@ -834,7 +834,7 @@ describe("useCloseFlow", () => {
     world.set("a", { operation: null })
     await tick(1500)
     expect(current().state.kind).toBe("asking")
-    act(() => current().choose("leave"))
+    act(() => { current().choose("leave") })
     await flush()
 
     // `b` is being stowed elsewhere, and is stowed when that ends: nothing to ask.
@@ -850,13 +850,13 @@ describe("useCloseFlow", () => {
     const world = fakeWinvm([{ name: "a", state: "running" }], "a")
     world.busy = "pause"
     await mount(world)
-    act(() => bridge.fire())
+    act(() => { bridge.fire() })
     await flush()
     const waiting = current().state
     expect(waiting.kind === "waiting" ? waiting.operation : null).toEqual({ operation: "pause", source: "local" })
     world.busy = null
     world.set("a", { state: "paused" })
-    act(() => world.rerender())
+    act(() => { world.rerender() })
     await tick(1500)
     const asking = current().state
     expect(asking.kind === "asking" ? phaseOf(asking.machine) : null).toBe("paused")
@@ -868,12 +868,12 @@ describe("useCloseFlow", () => {
     const world = fakeWinvm([{ name: "a", state: "running", closePolicy: "leave" }, { name: "b", state: "running", closePolicy: "stow" }], "a")
     world.busy = "stop"
     await mount(world)
-    act(() => bridge.fire())
+    act(() => { bridge.fire() })
     await flush()
     expect(current().state.kind).toBe("waiting")
 
     // The person's Shut Down, started before the close, fails; Windows is still running.
-    act(() => world.finishLocal("a", 1, "winvm stop: Windows didn't shut down in 180 seconds"))
+    act(() => { world.finishLocal("a", 1, "winvm stop: Windows didn't shut down in 180 seconds") })
     await tick(1500)
     const failed = current().state
     expect(failed.kind).toBe("failed")
@@ -899,7 +899,7 @@ describe("useCloseFlow", () => {
       "a",
     )
     await mount(world)
-    act(() => bridge.fire())
+    act(() => { bridge.fire() })
     await flush()
     expect(current().state.kind).toBe("waiting")
     world.set("a", { operation: null })
@@ -920,7 +920,7 @@ describe("useCloseFlow", () => {
     const again = fakeBridge()
     const held = fakeWinvm([{ name: "c", state: "paused", closePolicy: "leave", operation: "resume" }], "c")
     await mount(held)
-    act(() => again.fire())
+    act(() => { again.fire() })
     await flush()
     expect(current().state.kind).toBe("waiting")
     held.set("c", { operation: null })
@@ -936,14 +936,14 @@ describe("useCloseFlow", () => {
     const bridge = fakeBridge()
     const world = fakeWinvm([{ name: "a", state: "running", closePolicy: "leave", operation: "save" }], "a")
     await mount(world)
-    act(() => bridge.fire())
+    act(() => { bridge.fire() })
     await flush()
     world.set("a", { operation: null })
     await tick(1500)
     const asked = current().state
     expect(asked.kind === "asking" ? [asked.machine.name, asked.remember] : null).toEqual(["a", false])
     expect(bridge.count("close_complete")).toBe(0)
-    act(() => current().choose("leave"))
+    act(() => { current().choose("leave") })
     await flush()
     expect(bridge.count("close_complete")).toBe(1)
     act(() => root?.unmount())
@@ -952,7 +952,7 @@ describe("useCloseFlow", () => {
     const again = fakeBridge()
     const paused = fakeWinvm([{ name: "b", state: "running", closePolicy: "leave", operation: "pause" }], "b")
     await mount(paused)
-    act(() => again.fire())
+    act(() => { again.fire() })
     await flush()
     paused.set("b", { operation: null, state: "paused" })
     await tick(1500)
@@ -971,12 +971,12 @@ describe("useCloseFlow", () => {
     )
     await mount(world)
     // A Shut Down of B's, started from this window before the close, is still running.
-    act(() => bridge.fire())
+    act(() => { bridge.fire() })
     await flush()
     expect(current().state.kind).toBe("asking")
     // …and fails while A's dialog is open.
     world.ranLocal("b", "stop", 1, "winvm stop: Windows didn't shut down in 180 seconds")
-    act(() => current().choose("leave"))
+    act(() => { current().choose("leave") })
     await flush()
     const failed = current().state
     expect(failed.kind).toBe("failed")
@@ -1003,7 +1003,7 @@ describe("useCloseFlow", () => {
     world.busy = "save"
     world.finishLocal("a", 1, "an old failure")
     await mount(world)
-    act(() => bridge.fire())
+    act(() => { bridge.fire() })
     await flush()
     expect(bridge.count("close_complete")).toBe(1)
     expect(bridge.count("close_cancel")).toBe(0)
@@ -1013,10 +1013,10 @@ describe("useCloseFlow", () => {
     const bridge = fakeBridge()
     const world = fakeWinvm([{ name: "a", state: "running", operation: "stop" }], "a")
     await mount(world)
-    act(() => bridge.fire())
+    act(() => { bridge.fire() })
     await flush()
     expect(current().state.kind).toBe("waiting")
-    act(() => current().cancel())
+    act(() => { current().cancel() })
     await flush()
     expect(current().state).toEqual({ kind: "idle" })
     expect(bridge.count("close_cancel")).toBe(1)
@@ -1044,24 +1044,24 @@ describe("useCloseFlow", () => {
       return s.kind === "asking" ? [s.machine.name, s.index, s.total] : null
     }
     await mount(world)
-    act(() => bridge.fire())
+    act(() => { bridge.fire() })
     await flush()
     expect(asked()).toEqual(["a", 1, 1])
 
     // `b` starts while `a` is asked about.
     world.set("b", { state: "running", agent: "silent" })
-    act(() => current().choose("leave"))
+    act(() => { current().choose("leave") })
     await flush()
     expect(asked()).toEqual(["b", 2, 2])
 
     // …and `c` while `b` is.
     world.set("c", { state: "running" })
-    act(() => current().choose("leave"))
+    act(() => { current().choose("leave") })
     await flush()
     expect(asked()).toEqual(["c", 3, 3])
     expect(bridge.count("close_complete")).toBe(0)
 
-    act(() => current().choose("leave"))
+    act(() => { current().choose("leave") })
     await flush()
     expect(world.log.filter((l) => l === "refreshAll")).toHaveLength(4)
     expect(bridge.count("close_complete")).toBe(1)
@@ -1076,8 +1076,8 @@ describe("useCloseFlow", () => {
     await mount(first)
     const later = fakeWinvm([{ name: "a", state: "running", closePolicy: "stow" }], "a")
     later.rerender = () => root?.render(<Probe w={later.snapshot()} />)
-    act(() => later.rerender())
-    act(() => bridge.fire())
+    act(() => { later.rerender() })
+    act(() => { bridge.fire() })
     await flush()
     expect(first.log).toEqual([])
     expect(later.log).toEqual(["refreshAll", "refreshOne a", "runOn a stow"])
@@ -1090,15 +1090,15 @@ describe("useCloseFlow", () => {
     const invoke = (window as unknown as { __TAURI__: { core: { invoke(cmd: string, a?: unknown): Promise<unknown> } } }).__TAURI__.core
     const answer = invoke.invoke
     invoke.invoke = (cmd, a) => (cmd === "close_complete" ? Promise.reject("close complete arrived while the close was Idle") : answer(cmd, a))
-    act(() => bridge.fire())
+    act(() => { bridge.fire() })
     await flush()
     const failed = current().state
     expect(failed.kind === "failed" ? failed.message : null).toBe("close complete arrived while the close was Idle")
     expect(bridge.count("close_cancel")).toBe(1)
 
     invoke.invoke = answer
-    act(() => current().cancel())
-    act(() => bridge.fire())
+    act(() => { current().cancel() })
+    act(() => { bridge.fire() })
     await flush()
     expect(bridge.count("close_start")).toBe(2)
     expect(bridge.count("close_complete")).toBe(1)
@@ -1134,7 +1134,7 @@ describe("useWinvm's lastOn", () => {
     document.body.append(host)
     const r = createRoot(host)
     root = r
-    act(() => r.render(<Host />))
+    act(() => { r.render(<Host />) })
     await flush()
     const first = latest as Winvm | null
     if (first === null) throw new Error("not mounted")

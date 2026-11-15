@@ -23,7 +23,7 @@ export function Popover({ anchor, label, onClose, children }: PopoverProps): JSX
     }
     measure()
     window.addEventListener("resize", measure)
-    return () => window.removeEventListener("resize", measure)
+    return () => { window.removeEventListener("resize", measure) }
   }, [anchor])
 
   useEffect(() => {

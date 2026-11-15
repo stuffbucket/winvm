@@ -66,7 +66,7 @@ for (const key of names.filter((n) => only.includes(n))) {
   const sc = await ALL[key](ctx)
   console.log(`  -> ${sc.skipped !== null ? "SKIPPED" : sc.ok ? "PASS" : "FAIL"} (${String(Math.round((Date.now() - started) / 1000))} s)\n`)
   results.push({ title: sc.title, ok: sc.ok, skipped: sc.skipped, checks: sc.checks, notes: sc.notes })
-  await ready(name).catch((error: unknown) => console.error(`could not get "${name}" ready again: ${String(error)}`))
+  await ready(name).catch((error: unknown) => { console.error(`could not get "${name}" ready again: ${String(error)}`) })
 }
 
 if (!hadMounts) await must(["files", "unmount", "-i", name, "--json"]).catch(() => undefined)

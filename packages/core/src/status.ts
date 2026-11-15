@@ -278,7 +278,7 @@ export async function probeGuest(sockPath: string, timeoutMs = 4000): Promise<Gu
       sock.destroy()
       res(g)
     }
-    const timer = setTimeout(() => finish(result.agentVersion === null ? silent : result), timeoutMs)
+    const timer = setTimeout(() => { finish(result.agentVersion === null ? silent : result) }, timeoutMs)
     const syncId = Math.floor(Math.random() * 2 ** 31)
     let step = 0
     let sentAt = 0
@@ -292,8 +292,8 @@ export async function probeGuest(sockPath: string, timeoutMs = 4000): Promise<Gu
       sentAt = Date.now()
       sock.write(`${JSON.stringify(o)}\n`)
     }
-    sock.on("error", () => finish(silent))
-    sock.on("connect", () => send({ execute: "guest-sync-delimited", arguments: { id: syncId } }))
+    sock.on("error", () => { finish(silent) })
+    sock.on("connect", () => { send({ execute: "guest-sync-delimited", arguments: { id: syncId } }) })
     sock.on("data", (chunk) => {
       // The sync reply is preceded by a 0xFF sentinel byte; drop it.
       buf += chunk.toString("latin1").replaceAll("\xff", "")

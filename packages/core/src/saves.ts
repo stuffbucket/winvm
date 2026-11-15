@@ -782,14 +782,14 @@ function readNoteSafe(instance: string, name: string): Note | null {
 // "This instance has never been started": the trigger for the automatic baseline
 
 const pendingMarker = (instance: string): string => resolve(instanceDir(instance), "baseline.pending")
-export const markPristine = (instance: string): void => writeFileSync(pendingMarker(instance), `${new Date().toISOString()}\n`)
+export const markPristine = (instance: string): void => { writeFileSync(pendingMarker(instance), `${new Date().toISOString()}\n`) }
 export const isPristine = (instance: string): boolean => existsSync(pendingMarker(instance))
-export const clearPristine = (instance: string): void => rmSync(pendingMarker(instance), { force: true })
+export const clearPristine = (instance: string): void => { rmSync(pendingMarker(instance), { force: true }) }
 
 // ---------------------------------------------------------------------------
 // Mechanics
 
-const sleep = async (ms: number): Promise<void> => await new Promise((r) => setTimeout(r, ms))
+const sleep = async (ms: number): Promise<void> => { await new Promise((r) => setTimeout(r, ms)) }
 
 /** APFS clone (`cp -c`): near-free, shares blocks until either side writes. Plain copy elsewhere. */
 export function cloneFile(src: string, dst: string): void {

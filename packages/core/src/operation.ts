@@ -167,21 +167,21 @@ function rewriteOwn(name: string, change: (r: LeaseRecord) => LeaseRecord): void
   if (current?.id === id) replaceWhole(file, JSON.stringify(change(current)))
 }
 
-export const markSavingRunning = (name: string): void => rewriteOwn(name, (r) => ({ ...r, savingRunning: true }))
+export const markSavingRunning = (name: string): void => { rewriteOwn(name, (r) => ({ ...r, savingRunning: true })) }
 
 export const clearSavingRunning = (name: string): void =>
-  rewriteOwn(name, ({ savingRunning: _, ...rest }) => rest)
+  { rewriteOwn(name, ({ savingRunning: _, ...rest }) => rest) }
 
 function release(file: string, id: string): void {
   if (parseRecord(readOr(file, ""))?.id === id) rmSync(file, { force: true })
 }
 
-const sleep = async (ms: number): Promise<void> => await new Promise((r) => setTimeout(r, ms))
+const sleep = async (ms: number): Promise<void> => { await new Promise((r) => setTimeout(r, ms)) }
 
 const waitsFor = (automatic: boolean, holder: LeaseHolder): boolean => !automatic && holder.automatic
 
 function announceWait(name: string): (holder: LeaseHolder) => void {
-  return (holder) => console.error(`instance "${name}": waiting for the ${holder.operation} winvm started by itself (pid ${String(holder.pid)}) to finish`)
+  return (holder) => { console.error(`instance "${name}": waiting for the ${holder.operation} winvm started by itself (pid ${String(holder.pid)}) to finish`) }
 }
 
 const TAKE_ATTEMPTS = 50
@@ -226,7 +226,7 @@ export async function withOperation<T>(name: string, operation: LeaseOperation, 
     return await run()
   }
   const file = pathsFor(name).lease
-  const onExit = (): void => release(file, got.id)
+  const onExit = (): void => { release(file, got.id) }
   process.on("exit", onExit)
   try {
     return await held.run(new Map([...(held.getStore() ?? []), [name, got.id]]), run)

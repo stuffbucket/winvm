@@ -79,7 +79,7 @@ export function readState(p: Paths): WebviewState | null {
   }
 }
 
-const writeState = (p: Paths, s: WebviewState): void => writeFileSync(statePath(p), `${JSON.stringify(s, null, 2)}\n`)
+const writeState = (p: Paths, s: WebviewState): void => { writeFileSync(statePath(p), `${JSON.stringify(s, null, 2)}\n`) }
 
 // --- the guest side -----------------------------------------------------------
 

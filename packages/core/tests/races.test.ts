@@ -29,7 +29,7 @@ let previous: Record<string, string | undefined> = {}
 let previousProbe: share.Probe
 const spawned: ReturnType<typeof Bun.spawn>[] = []
 
-const sleep = async (ms: number): Promise<void> => await new Promise((r) => setTimeout(r, ms))
+const sleep = async (ms: number): Promise<void> => { await new Promise((r) => setTimeout(r, ms)) }
 
 const alive = (pid: number): boolean => {
   try {
@@ -275,7 +275,7 @@ describe("the watcher's work", () => {
           order.push("guest-shutdown")
           running = false
         },
-        sleep: async () => await sleep(1),
+        sleep: async () => { await sleep(1) },
       }),
     )
     await sleep(300)

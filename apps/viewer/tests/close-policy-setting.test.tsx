@@ -137,7 +137,7 @@ function fakeApp(world: World): void {
         return answer
       }
       if (!world.hold) return Promise.resolve(apply())
-      return new Promise((resolve) => world.pending.push(() => resolve(apply())))
+      return new Promise((resolve) => world.pending.push(() => { resolve(apply()) }))
     }
     return Promise.resolve({ code: 1, stdout: "", stderr: "" })
   }
@@ -156,7 +156,7 @@ async function mount(world: World): Promise<HTMLElement> {
 async function openDetails(host: HTMLElement): Promise<void> {
   const details = host.querySelector<HTMLButtonElement>('button[aria-label="Details"]')
   if (details === null) throw new Error("no Details button")
-  act(() => details.click())
+  act(() => { details.click() })
   await flush()
 }
 
@@ -285,7 +285,7 @@ describe("useWinvm.setClosePolicy", () => {
         if (args.includes("-i") && target !== undefined) {
           reads.push(target)
           const answer = ok(machine(target, policies[target] ?? "ask"))
-          if (holdReadsOf.name === target) return new Promise((resolve) => held.push(() => resolve(answer)))
+          if (holdReadsOf.name === target) return new Promise((resolve) => held.push(() => { resolve(answer) }))
           return Promise.resolve(answer)
         }
         return Promise.resolve(ok({ instances: [machine("a", policies.a ?? "ask"), machine("b", policies.b ?? "ask")] }))
@@ -336,7 +336,7 @@ describe("useWinvm.setClosePolicy", () => {
     expect(world.configs).toEqual([["config", "-i", "a", "viewer.closePolicy=leave"]])
 
     // The person moves to machine b while a's write is out; a's refresh read is held too.
-    act(() => app.latest().select("b"))
+    act(() => { app.latest().select("b") })
     await flush()
     await tick(0)
     expect(app.latest().status?.name).toBe("b")

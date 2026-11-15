@@ -68,7 +68,7 @@ function ToolButton({ icon, label, enabled, pressed, expanded, onClick }: ToolBu
       aria-pressed={pressed}
       aria-expanded={expanded}
       disabled={!enabled}
-      onClick={(e) => onClick(e.currentTarget)}
+      onClick={(e) => { onClick(e.currentTarget) }}
     >
       <Icon name={icon} />
     </button>
@@ -90,7 +90,10 @@ function TerminalButton({ blocked, onOpen, onMenu }: { readonly blocked: string 
       aria-haspopup="menu"
       title={blocked === null ? t("terminal.tip") : t(blocked)}
       disabled={blocked !== null}
-      onClick={(e) => (e.altKey ? onMenu() : onOpen())}
+      onClick={(e) => {
+        if (e.altKey) onMenu()
+        else onOpen()
+      }}
       onContextMenu={(e) => {
         e.preventDefault()
         if (blocked === null) onMenu()
@@ -119,7 +122,11 @@ function PauseButton({ phase, c, onPause, onResume, onMenu }: { readonly phase: 
       aria-haspopup="menu"
       title={t("power.tip", { action: label })}
       disabled={!enabled}
-      onClick={(e) => (e.altKey ? onMenu() : frozen ? onResume() : onPause())}
+      onClick={(e) => {
+        if (e.altKey) onMenu()
+        else if (frozen) onResume()
+        else onPause()
+      }}
       onContextMenu={(e) => {
         e.preventDefault()
         onMenu()
@@ -141,7 +148,10 @@ function FilesButton({ enabled, onOpen, onMenu }: { readonly enabled: boolean; o
       aria-haspopup="menu"
       title={t("files.tip")}
       disabled={!enabled}
-      onClick={(e) => (e.altKey ? onMenu() : onOpen())}
+      onClick={(e) => {
+        if (e.altKey) onMenu()
+        else onOpen()
+      }}
       onContextMenu={(e) => {
         e.preventDefault()
         if (enabled) onMenu()
@@ -168,7 +178,10 @@ function CheckpointsButton({ enabled, open, onOpen, onMenu }: { readonly enabled
       aria-pressed={open}
       title={t("checkpoints.tip")}
       disabled={!enabled}
-      onClick={(e) => (e.altKey ? onMenu() : onOpen())}
+      onClick={(e) => {
+        if (e.altKey) onMenu()
+        else onOpen()
+      }}
       onContextMenu={(e) => {
         e.preventDefault()
         if (enabled) onMenu()
@@ -187,7 +200,7 @@ export function Toolbar(p: ToolbarProps): JSX.Element {
   const c = p.controls
   const live = isLivePhase(p.phase)
   const panel = (id: PanelId, icon: IconName, label: string, enabled: boolean, pressed?: boolean): JSX.Element => (
-    <ToolButton icon={icon} label={label} enabled={enabled} pressed={pressed} expanded={p.open === id} onClick={(b) => p.onOpen(id, b)} />
+    <ToolButton icon={icon} label={label} enabled={enabled} pressed={pressed} expanded={p.open === id} onClick={(b) => { p.onOpen(id, b) }} />
   )
   return (
     <header className="toolbar" data-tauri-drag-region>
@@ -214,7 +227,7 @@ export function Toolbar(p: ToolbarProps): JSX.Element {
 
       <div className="toolbar__group">
         <TerminalButton blocked={p.terminalBlocked} onOpen={p.onTerminal} onMenu={p.onTerminalMenu} />
-        <FilesButton enabled={p.guestReady} onOpen={() => p.onOpen("files", document.body)} onMenu={p.onFilesMenu} />
+        <FilesButton enabled={p.guestReady} onOpen={() => { p.onOpen("files", document.body) }} onMenu={p.onFilesMenu} />
         <CheckpointsButton enabled={p.canCheckpoints} open={p.checkpointsOpen} onOpen={p.onCheckpoints} onMenu={p.onCheckpointsMenu} />
         {panel("share", "agent", t("action.share"), p.canShare || p.sharing, p.sharing)}
       </div>

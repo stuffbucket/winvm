@@ -120,7 +120,7 @@ export interface Timers {
 
 const realTimers: Timers = {
   set: (fn, ms) => setTimeout(fn, ms),
-  clear: (t) => clearTimeout(t as ReturnType<typeof setTimeout>),
+  clear: (t) => { clearTimeout(t as ReturnType<typeof setTimeout>) },
 }
 
 export class SizeDebouncer {
@@ -139,7 +139,7 @@ export class SizeDebouncer {
   push(s: Size): void {
     this.pending = s
     if (this.timer !== null) this.timers.clear(this.timer)
-    this.timer = this.timers.set(() => this.flush(), this.delayMs)
+    this.timer = this.timers.set(() => { this.flush() }, this.delayMs)
   }
 
   flush(): void {

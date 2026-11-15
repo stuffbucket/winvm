@@ -213,7 +213,7 @@ export const btnEv = (button: string, down: boolean): Event => ({ type: "btn", d
  * neither; under heavy host load the guest needs a little more.
  */
 export const GAP_MS = 30
-const sleep = async (ms: number): Promise<void> => await new Promise((r) => setTimeout(r, ms))
+const sleep = async (ms: number): Promise<void> => { await new Promise((r) => setTimeout(r, ms)) }
 
 export async function send(q: QmpSend, events: readonly Event[]): Promise<void> {
   await q("input-send-event", { events: [...events] })

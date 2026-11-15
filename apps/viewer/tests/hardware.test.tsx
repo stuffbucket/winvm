@@ -135,7 +135,7 @@ describe("the Hardware part", () => {
       more?.dispatchEvent(new PointerEvent("pointerup", { bubbles: true, button: 0 }))
       more?.dispatchEvent(new MouseEvent("click", { bubbles: true, button: 0 }))
     })
-    await act(async () => await new Promise((r) => setTimeout(r, 700)))
+    await act(async () => { await new Promise((r) => setTimeout(r, 700)) })
     expect(v.sizes).toEqual([{ cpus: 7, memoryMiB: 8192 }])
   })
 

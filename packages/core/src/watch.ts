@@ -92,7 +92,7 @@ export function touchActivity(name: string): void {
  */
 export async function whileActive<T>(name: string, work: Promise<T>): Promise<T> {
   touchActivity(name)
-  const timer = setInterval(() => touchActivity(name), 15_000)
+  const timer = setInterval(() => { touchActivity(name) }, 15_000)
   try {
     return await work
   } finally {
@@ -177,8 +177,8 @@ async function runWinvm(argv: readonly string[], log: (s: string) => void): Prom
     }
     child.stdout.on("data", relay)
     child.stderr.on("data", relay)
-    child.on("error", () => res(127))
-    child.on("exit", (c) => res(c ?? 1))
+    child.on("error", () => { res(127) })
+    child.on("exit", (c) => { res(c ?? 1) })
   })
   log(`  -> exit ${String(code)} after ${String(Math.round((Date.now() - started) / 1000))} s`)
   return code === 0
@@ -548,13 +548,13 @@ const settingsOf = (c: InstanceConfig): Settings => ({
   stow: { enabled: c["stow.enabled"], idleMinutes: c["stow.idleMinutes"] },
 })
 
-const sleep = async (ms: number): Promise<void> => await new Promise((r) => setTimeout(r, ms))
+const sleep = async (ms: number): Promise<void> => { await new Promise((r) => setTimeout(r, ms)) }
 
 export async function watch(name: string, o: WatchOptions = {}): Promise<number> {
   const p = pathsFor(name)
   const w = watchPathsFor(name)
   const timing: Timing = { ...DEFAULT_TIMING, ...o.timing }
-  const log = (s: string): void => console.log(`${new Date().toISOString()} [${name}] ${s}`)
+  const log = (s: string): void => { console.log(`${new Date().toISOString()} [${name}] ${s}`) }
 
   if (!existsSync(p.meta)) {
     console.error(`::error::no such instance "${name}"`)
@@ -636,7 +636,7 @@ export async function watch(name: string, o: WatchOptions = {}): Promise<number>
     releaseLock(name)
     log(`watcher stopped: ${why}`)
   }
-  process.on("exit", () => finish("exit"))
+  process.on("exit", () => { finish("exit") })
   for (const sig of ["SIGINT", "SIGTERM", "SIGHUP"] as const) {
     process.on(sig, () => {
       if (busy === null) {

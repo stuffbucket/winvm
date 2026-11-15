@@ -228,7 +228,7 @@ function listen<T>(name: string, cb: (payload: T) => void, ready?: () => void): 
   let gone = false
   try {
     void tauri()
-      .event.listen<T>(name, (e) => cb(e.payload))
+      .event.listen<T>(name, (e) => { cb(e.payload) })
       .then(
         (u) => {
           if (gone) u()
@@ -255,7 +255,7 @@ export const onMenu = (cb: (id: string) => void): Unlisten => listen<string>("me
  * the listener is in place, the moment to ask `closePending` for a request told before it was.
  */
 export const onViewerCloseRequested = (cb: () => void, listening?: () => void): Unlisten =>
-  listen<unknown>("viewer-close-requested", () => cb(), listening)
+  listen<unknown>("viewer-close-requested", () => { cb() }, listening)
 
 /** Whether a close request waits for the main window (one told before it listened); changes nothing. */
 export const closePending = (): Promise<boolean> => tauri().core.invoke<boolean>("close_pending")
@@ -318,7 +318,7 @@ export const openTerminal = (request: TerminalRequest): Promise<void> => tauri()
 export const takeTerminalRequests = (): Promise<TerminalRequest[]> => tauri().core.invoke<TerminalRequest[]>("terminal_take")
 
 /** Rung when tabs have been asked for. */
-export const onTerminalOpen = (cb: () => void): Unlisten => listen<unknown>("terminal-open", () => cb())
+export const onTerminalOpen = (cb: () => void): Unlisten => listen<unknown>("terminal-open", () => { cb() })
 
 export type TerminalMenuId = "new-tab" | "close-tab" | "rename-tab"
 
@@ -358,7 +358,7 @@ export type Action =
 export async function popupActions(actions: readonly Action[]): Promise<void> {
   const items = actions.map((a) => {
     if (a.kind === "separator") return { item: "Separator" }
-    const base = { text: a.label, enabled: a.enabled ?? true, action: () => a.run(), ...(a.accelerator === undefined ? {} : { accelerator: a.accelerator }) }
+    const base = { text: a.label, enabled: a.enabled ?? true, action: () => { a.run() }, ...(a.accelerator === undefined ? {} : { accelerator: a.accelerator }) }
     return a.checked === undefined ? base : { ...base, checked: a.checked }
   })
   const menu = await tauri().menu.Menu.new({ items })
@@ -369,7 +369,7 @@ const menuItems = (nodes: readonly MenuNode[], pick: (node: Extract<MenuNode, { 
   nodes.map((n) => {
     if (n.kind === "separator") return { item: "Separator" }
     if (n.kind === "submenu") return { text: n.label, items: menuItems(n.items, pick) }
-    return { text: n.label, enabled: n.enabled, action: () => pick(n) }
+    return { text: n.label, enabled: n.enabled, action: () => { pick(n) } }
   })
 
 /** Opens the instance's Files window, or brings it forward; `title` is what the instance is called. */

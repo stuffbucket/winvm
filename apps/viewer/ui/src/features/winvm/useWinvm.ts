@@ -426,6 +426,6 @@ export function useWinvm(): Winvm {
     lastOn,
     openScreenSharing,
     installCommand,
-    dismissFailure: () => setFailure(null),
+    dismissFailure: () => { setFailure(null) },
   }
 }

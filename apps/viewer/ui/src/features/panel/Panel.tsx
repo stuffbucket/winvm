@@ -104,7 +104,7 @@ export function Panel(p: PanelProps): JSX.Element {
             value={p.closePolicy}
             disabled={p.closePolicyBusy || p.status === null}
             aria-describedby={p.closePolicyError === null ? undefined : "close-policy-error"}
-            onChange={(e) => p.onClosePolicy(e.target.value as ClosePolicy)}
+            onChange={(e) => { p.onClosePolicy(e.target.value as ClosePolicy) }}
           >
             {CLOSE_POLICIES.map((policy) => (
               <option key={policy} value={policy}>

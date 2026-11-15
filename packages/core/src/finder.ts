@@ -110,7 +110,7 @@ async function mountInChild(req: { url: string; dir: string; user: string; passw
   await child.stdin.end()
   let timer: ReturnType<typeof setTimeout> | undefined
   const timedOut = new Promise<"timeout">((res) => {
-    timer = setTimeout(() => res("timeout"), limit)
+    timer = setTimeout(() => { res("timeout") }, limit)
   })
   const done = await Promise.race([child.exited, timedOut])
   clearTimeout(timer)
@@ -124,7 +124,7 @@ async function mountInChild(req: { url: string; dir: string; user: string; passw
 }
 
 async function guestSetup(instance: string, s: SmbState, log: (line: string) => void): Promise<void> {
-  const c = await agent.ensure(instance, { log: (l) => log(`  ${l}`) })
+  const c = await agent.ensure(instance, { log: (l) => { log(`  ${l}`) } })
   const r = await c.smbSetup({ user: s.user, password: s.password })
   for (const line of r.output.split(/\r?\n/)) if (line.trim() !== "") log(`  guest: ${line.trimEnd()}`)
   if (r.code !== 0 || r.timedOut) throw new Error(`setting up file sharing in the guest failed (exit ${String(r.code)})`)
@@ -137,8 +137,8 @@ export const realSys: Sys = {
   setup: guestSetup,
   forward: async (instance) => await ensureSmbForward(pathsFor(instance)),
   running: (instance) => qemu.isRunning(pathsFor(instance)),
-  sleep: async (ms) => await Bun.sleep(ms),
-  log: (line) => console.log(line),
+  sleep: async (ms) => { await Bun.sleep(ms) },
+  log: (line) => { console.log(line) },
 }
 
 // --- unmounting ----------------------------------------------------------------
@@ -472,7 +472,7 @@ export async function filesCmd(args: Args): Promise<number> {
   }
   const json = args.flags.has("json")
   // With --json, stdout is the JSON alone; what happens on the way goes to stderr.
-  const sys: Sys = json ? { ...realSys, log: (line) => console.error(line) } : realSys
+  const sys: Sys = json ? { ...realSys, log: (line) => { console.error(line) } } : realSys
   if (sub === undefined || !["open", "mount", "unmount", "status"].includes(sub)) {
     console.error(USAGE)
     return 2

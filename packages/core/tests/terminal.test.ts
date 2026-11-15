@@ -156,10 +156,10 @@ class Client {
     this.ws = init === undefined ? new WebSocket(url) : Array.isArray(init) ? new WebSocket(url, init) : new WebSocket(url, init)
     this.ws.binaryType = "arraybuffer"
     this.opened = new Promise((res) => {
-      this.ws.addEventListener("open", () => res(true))
-      this.ws.addEventListener("error", () => res(false))
+      this.ws.addEventListener("open", () => { res(true) })
+      this.ws.addEventListener("error", () => { res(false) })
     })
-    this.closed = new Promise((res) => this.ws.addEventListener("close", (e) => res(e.code)))
+    this.closed = new Promise((res) => { this.ws.addEventListener("close", (e) => { res(e.code) }) })
     this.ws.addEventListener("message", (e) => {
       if (typeof e.data === "string") this.events.push(JSON.parse(e.data))
       else this.out += new TextDecoder().decode(new Uint8Array(e.data as ArrayBuffer))

@@ -236,7 +236,7 @@ function startJob(instance: string, verb: string, argv: readonly string[]): Job 
   }
   child.stdout.on("data", add)
   child.stderr.on("data", add)
-  child.on("error", (error) => add(Buffer.from(`\n${error.message}\n`)))
+  child.on("error", (error) => { add(Buffer.from(`\n${error.message}\n`)) })
   child.on("close", (code) => {
     job.exitCode = code ?? 1
     job.finishedAt = new Date().toISOString()

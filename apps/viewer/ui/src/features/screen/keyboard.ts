@@ -28,7 +28,7 @@ const SUPER = 0xffeb
 const SUPER_RIGHT = 0xffec
 const CONTROL = 0xffe3
 
-const stopGuest = (event: RoutedKeyEvent): void => event.stopImmediatePropagation()
+const stopGuest = (event: RoutedKeyEvent): void => { event.stopImmediatePropagation() }
 const stopAll = (event: RoutedKeyEvent): void => {
   event.preventDefault()
   event.stopImmediatePropagation()

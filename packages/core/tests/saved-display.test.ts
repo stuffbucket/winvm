@@ -278,7 +278,7 @@ describe("capturing the running display", () => {
     spyOn(display, "runningCommand").mockReturnValue("qemu-system-aarch64 -device virtio-gpu-pci,xres=8000,yres=600 -display none")
     const refusal = createSave("source", { name: "huge", kind: "manual", format: "raw" })
     await expect(refusal).rejects.toThrow(/virtio-gpu profile \(xres=8000,yres=600\) that a save cannot record.*640x480 to 7680x4320.*winvm display/)
-    await refusal.catch((error: Error) => expect(error.message).not.toContain("no single"))
+    await refusal.catch((error: Error) => { expect(error.message).not.toContain("no single") })
     expect(commands).toEqual([])
     expect(statusCalls).toBe(0)
     expect(existsSync(savesDir("source"))).toBe(false)

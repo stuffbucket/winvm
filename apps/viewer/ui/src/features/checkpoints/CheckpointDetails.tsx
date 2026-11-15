@@ -114,7 +114,7 @@ export function CheckpointDetails({ c, now, busy, saving, onClose, onLook, onNot
         autoComplete="off"
         spellCheck={false}
         maxLength={120}
-        onChange={(e) => edit({ title: e.target.value })}
+        onChange={(e) => { edit({ title: e.target.value }) }}
         onBlur={flush}
       />
       <label className="checkpoint-details__label" htmlFor="checkpoint-text">
@@ -126,7 +126,7 @@ export function CheckpointDetails({ c, now, busy, saving, onClose, onLook, onNot
         value={draft.text}
         placeholder={t("checkpoints.note.textPlaceholder")}
         rows={6}
-        onChange={(e) => edit({ text: e.target.value })}
+        onChange={(e) => { edit({ text: e.target.value }) }}
         onBlur={flush}
         onKeyDown={(e) => {
           if (e.key === "s" && (e.metaKey || e.ctrlKey)) {
@@ -145,7 +145,7 @@ export function CheckpointDetails({ c, now, busy, saving, onClose, onLook, onNot
         placeholder={t("checkpoints.note.tagsPlaceholder")}
         autoComplete="off"
         spellCheck={false}
-        onChange={(e) => edit({ tags: e.target.value })}
+        onChange={(e) => { edit({ tags: e.target.value }) }}
         onBlur={flush}
       />
       {c.note !== undefined && c.note !== "" && <p className="checkpoint-details__manifest-note">{t("checkpoints.note.taken", { note: c.note })}</p>}

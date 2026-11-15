@@ -528,11 +528,11 @@ describe("operations in the window", () => {
     expect(w().operation).toBeNull()
 
     // Selecting it shows the command this viewer is running on it.
-    act(() => w().select("other"))
+    act(() => { w().select("other") })
     await flush()
     expect(w().busy).toBe("pause")
     expect(w().operation).toEqual({ operation: "pause", source: "local" })
-    act(() => w().select("demo"))
+    act(() => { w().select("demo") })
     await flush()
     expect(w().operation).toBeNull()
 

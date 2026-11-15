@@ -98,7 +98,7 @@ export function Timeline({ ticks, active, onPick, onScrub, onOlder, onNewer, can
         onPointerCancel={() => {
           dragging.current = false
         }}
-        onPointerLeave={() => setHover(null)}
+        onPointerLeave={() => { setHover(null) }}
         onKeyDown={key}
       >
         <span className="timeline__rail" aria-hidden="true" />

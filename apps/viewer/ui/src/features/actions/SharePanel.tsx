@@ -34,7 +34,7 @@ function CopyRow({ label, copyLabel, value }: { readonly label: string; readonly
       .writeText(value)
       .then(() => {
         setCopied(true)
-        setTimeout(() => setCopied(false), 1500)
+        setTimeout(() => { setCopied(false) }, 1500)
       })
       .catch(() => undefined)
   }
@@ -185,7 +185,7 @@ export function SharePanel({ instance, guestReady, share, starting, error, onSta
                   }}
                   onRemove={() => void change(c.id, "uninstall")}
                   onConfirm={() => void change(c.id, "install")}
-                  onCancel={() => setConfirming(null)}
+                  onCancel={() => { setConfirming(null) }}
                 />
               ))}
             </ul>
@@ -199,7 +199,7 @@ export function SharePanel({ instance, guestReady, share, starting, error, onSta
         {problem !== null && <p className="action__error">{problem}</p>}
       </section>
 
-      <details className="disclosure" open={otherOpen} onToggle={(e) => setOtherOpen(e.currentTarget.open)}>
+      <details className="disclosure" open={otherOpen} onToggle={(e) => { setOtherOpen(e.currentTarget.open) }}>
         <summary className="disclosure__summary">{t("share.other")}</summary>
         <div className="disclosure__body">
           <p className="action__hint">{t("share.body")}</p>

@@ -335,7 +335,7 @@ export function TerminalView({
         if (!disposed) term?.fit();
       });
       observer.observe(element);
-      cleanupObserver = () => observer.disconnect();
+      cleanupObserver = () => { observer.disconnect() };
     }).catch(reportFailure);
 
     return () => {

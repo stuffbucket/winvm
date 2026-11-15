@@ -51,7 +51,7 @@ export function MachinePicker(p: MachinePickerProps): JSX.Element {
   return (
     <MenuRoot trigger={trigger} label={t("machine.menu")}>
       <MenuGroup label={t("machine.menu")}>
-        <MenuRadioGroup value={p.name ?? ""} onValueChange={(v: unknown) => p.onSelect(String(v))}>
+        <MenuRadioGroup value={p.name ?? ""} onValueChange={(v: unknown) => { p.onSelect(String(v)) }}>
           {p.names.map((n) => (
             <MenuRadioItem key={n} value={n} closeOnClick trailing={state(n) ?? undefined}>
               {shownTitle(n, p.titles[n])}
