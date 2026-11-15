@@ -233,7 +233,7 @@ async function ensurePoolGoldens(
 async function hardStop(instance: string): Promise<void> {
   const p = pathsFor(instance)
   const pid = qemu.pidOf(p)
-  if (pid !== null) {
+  if (pid !== null && qemu.isInstanceQemu(pid, p)) {
     try {
       process.kill(pid, "SIGKILL")
     } catch {

@@ -286,3 +286,48 @@ describe("the watcher's work", () => {
     expect(order).toEqual(["autosave begins", "released", "autosave ends", "guest-shutdown"])
   })
 })
+
+describe("kill", () => {
+  it("never SIGKILLs a process that is not this instance's QEMU", async () => {
+    const p = pathsFor(NAME)
+    const stranger = await hold("unrelated-process")
+    writeFileSync(p.pid, `${String(stranger.pid)}\n`)
+    const code = commands.kill(parseArgs(["-i", NAME]))
+    await sleep(100)
+    expect(alive(stranger.pid)).toBe(true)
+    expect(code).toBe(1)
+    expect(readFileSync(p.pid, "utf8").trim()).toBe(String(stranger.pid))
+  })
+
+  it("does not take another instance's QEMU for this one's", async () => {
+    const p = pathsFor(NAME)
+    const other = await hold("qemu-system-aarch64", "-name", "winvm-other", "-pidfile", pathsFor("other").pid)
+    writeFileSync(p.pid, `${String(other.pid)}\n`)
+    expect(commands.kill(parseArgs(["-i", NAME]))).toBe(1)
+    await sleep(100)
+    expect(alive(other.pid)).toBe(true)
+  })
+
+  it("kills this instance's QEMU without waiting on a lease another command holds", async () => {
+    const p = pathsFor(NAME)
+    script("qemu-system-aarch64", "while :; do sleep 0.2; done")
+    const own = Bun.spawn([resolve(state, "runtime", "bin", "qemu-system-aarch64"), "-name", `winvm-${NAME}`, "-pidfile", p.pid], { stdout: "ignore", stderr: "ignore" })
+    spawned.push(own)
+    writeFileSync(p.pid, `${String(own.pid)}\n`)
+    spyOn(service, "stopService").mockImplementation(() => undefined)
+    let release: () => void = () => undefined
+    const wedged = withOperation(NAME, "stop", async () => {
+      await new Promise<void>((r) => {
+        release = r
+      })
+      return 0
+    })
+    await sleep(50)
+    const killed = await outcome(withOperation(NAME, "kill", () => commands.kill(parseArgs(["-i", NAME]))))
+    release()
+    await wedged
+    await own.exited
+    expect(killed).toBe("resolved:0")
+    expect(own.signalCode).toBe("SIGKILL")
+  })
+})

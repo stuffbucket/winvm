@@ -991,6 +991,13 @@ export function kill(args: Args): number {
     console.log(`instance "${name}" is not running`)
     return 0
   }
+  if (!qemu.isInstanceQemu(pid, p)) {
+    console.error(
+      `::error::${p.pid} names pid ${String(pid)}, which is not the QEMU of "${name}"; nothing was killed. ` +
+        `If no QEMU of "${name}" is running, remove that file`,
+    )
+    return 1
+  }
   // While their server still answers: a mount whose server is gone hangs whatever touches it.
   finder.beforeDown(name)
   process.kill(pid, "SIGKILL")

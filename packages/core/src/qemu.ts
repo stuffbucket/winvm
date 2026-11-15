@@ -17,7 +17,7 @@ import { ensureService } from "./service"
 import type { InstanceMeta, Paths } from "./paths"
 import { media } from "./paths"
 import type { DisplayConfig } from "./display"
-import { RAMFB, displayArgs, readDisplay } from "./display"
+import { RAMFB, displayArgs, readDisplay, runningCommand } from "./display"
 import type { Hardware } from "./hardware"
 import { readHardware } from "./hardware"
 import * as share from "./share"
@@ -464,3 +464,11 @@ export function pidOf(p: Paths): number | null {
 }
 
 export const isRunning = (p: Paths): boolean => pidOf(p) !== null
+
+export const isQemuCommandOf = (command: string, p: Paths): boolean =>
+  /(^|[\s/])qemu-system-[A-Za-z0-9_]+(\s|$)/.test(command) && `${command} `.includes(` -pidfile ${p.pid} `)
+
+export function isInstanceQemu(pid: number, p: Paths, commandOf: (pid: number) => string | null = runningCommand): boolean {
+  const command = commandOf(pid)
+  return command !== null && isQemuCommandOf(command, p)
+}
