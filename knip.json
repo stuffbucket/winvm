@@ -2,21 +2,12 @@
   "$schema": "https://unpkg.com/knip@6.44.2/schema.json",
   "workspaces": {
     ".": {
-      "entry": [
-        "scripts/*.ts"
-      ],
-      "project": [
-        "scripts/**/*.ts",
-        "*.{mjs,cjs}"
-      ],
-      "ignoreDependencies": [
-        "@winvm/cli"
-      ]
+      "entry": ["scripts/*.ts"],
+      "project": ["scripts/**/*.ts", "*.{mjs,cjs}"],
+      "ignoreDependencies": ["@winvm/cli"]
     },
     "apps/cli": {
-      "project": [
-        "src/**/*.ts"
-      ]
+      "project": ["src/**/*.ts"]
     },
     "apps/viewer": {
       "entry": [
@@ -24,39 +15,19 @@
         "scripts/*.{ts,mjs}",
         "tests/**/*.test.{ts,tsx}"
       ],
-      "project": [
-        "ui/src/**/*.{ts,tsx}",
-        "scripts/**",
-        "tests/**"
-      ]
+      "project": ["ui/src/**/*.{ts,tsx}", "scripts/**", "tests/**"]
     },
     "packages/canvas": {
-      "entry": [
-        "tests/**/*.test.{ts,tsx}"
-      ],
-      "project": [
-        "src/**/*.{ts,tsx}",
-        "tests/**/*.{ts,tsx}"
-      ]
+      "entry": ["tests/**/*.test.{ts,tsx}"],
+      "project": ["src/**/*.{ts,tsx}", "tests/**/*.{ts,tsx}"]
     },
     "packages/core": {
-      "entry": [
-        "src/*.ts",
-        "tests/**/*.test.ts"
-      ],
-      "project": [
-        "src/**/*.ts",
-        "tests/**/*.ts"
-      ]
+      "entry": ["src/*.ts", "tests/**/*.test.ts"],
+      "project": ["src/**/*.ts", "tests/**/*.ts"]
     },
     "packages/terminal": {
-      "entry": [
-        "tests/**/*.test.{ts,tsx}"
-      ],
-      "project": [
-        "src/**/*.{ts,tsx}",
-        "tests/**/*.{ts,tsx}"
-      ]
+      "entry": ["tests/**/*.test.{ts,tsx}"],
+      "project": ["src/**/*.{ts,tsx}", "tests/**/*.{ts,tsx}"]
     },
     "site": {}
   }
