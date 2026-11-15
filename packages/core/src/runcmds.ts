@@ -18,6 +18,7 @@ import { parseArgs } from "./args"
 import * as commands from "./commands"
 import type { Job } from "./job"
 import { JobError, readJob } from "./job"
+import { InstanceBusy, withOperation } from "./operation"
 import { home, pathsFor } from "./paths"
 import * as qemu from "./qemu"
 import { poolOptions, runPool } from "./pool"
@@ -105,7 +106,13 @@ async function runAll(files: readonly string[], args: Args): Promise<number> {
   // A watcher would autosave or stow the guest between steps.
   if (await watcher.stopWatcher(instance)) console.log(`  stopped the idle watcher of "${instance}"`)
 
-  const boot = async (name: string): Promise<number> => await commands.start(parseArgs(["-i", name, "--no-watch", "--no-autosave"]))
+  const boot = async (name: string): Promise<number> =>
+    await withOperation(name, "start", async () => await commands.start(parseArgs(["-i", name, "--no-watch", "--no-autosave"]))).catch(
+      (error: unknown) => {
+        if (!(error instanceof InstanceBusy)) throw error
+        return fail(error.message)
+      },
+    )
   const goldens = [...new Set(jobs.filter((j) => j.reset).map((j) => goldenFlag ?? j.golden ?? DEFAULT_GOLDEN))]
   try {
     for (const g of goldens) await ensureGolden(instance, g, (s) => console.log(s))
@@ -130,7 +137,10 @@ async function runAll(files: readonly string[], args: Args): Promise<number> {
     console.log(`\n--keep: instance "${instance}" left running in the last job's state (\`winvm open -i ${instance}\`)`)
   } else if (qemu.isRunning(p)) {
     // Nothing is lost: every job starts from the golden save anyway.
-    await saves.quitQemu(p)
+    await withOperation(instance, "stop", async () => await saves.quitQemu(p)).catch((error: unknown) => {
+      if (!(error instanceof InstanceBusy)) throw error
+      console.warn(`warning: left "${instance}" running: ${error.message}`)
+    })
   }
 
   return report({ jobs: results, wallMs: Date.now() - wall0, setupMs }, args)
