@@ -13,7 +13,8 @@
       "entry": [
         "ui/src/{main,files,terminal}.tsx",
         "scripts/*.{ts,mjs}",
-        "tests/**/*.test.{ts,tsx}"
+        "tests/**/*.test.{ts,tsx}",
+        "tests/render/fake-tauri.js"
       ],
       "project": ["ui/src/**/*.{ts,tsx}", "scripts/**", "tests/**"]
     },
@@ -22,8 +23,13 @@
       "project": ["src/**/*.{ts,tsx}", "tests/**/*.{ts,tsx}"]
     },
     "packages/core": {
-      "entry": ["src/*.ts", "tests/**/*.test.ts"],
-      "project": ["src/**/*.ts", "tests/**/*.ts"]
+      "entry": [
+        "src/*.ts",
+        "tests/**/*.test.ts",
+        "tests/fakes/{conpty,holder}.ts"
+      ],
+      "project": ["src/**/*.ts", "tests/**/*.ts"],
+      "ignoreBinaries": ["hdiutil"]
     },
     "packages/terminal": {
       "entry": ["tests/**/*.test.{ts,tsx}"],
