@@ -8,7 +8,7 @@ import { endpoint, forwardKey, listenerKey, windowsAddress } from "./info"
 import type { MachineInfoView } from "./useMachineInfo"
 
 /** A value and a button that copies `copy` (default: the value itself). */
-function CopyRow({ label, value, copy }: { readonly label: string; readonly value: string; readonly copy?: string }): JSX.Element {
+function CopyRow({ label, value, copy }: { readonly label: string; readonly value: string; readonly copy?: string | undefined }): JSX.Element {
   const [copied, setCopied] = useState(false)
   const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
   useEffect(() => () => clearTimeout(timer.current), [])

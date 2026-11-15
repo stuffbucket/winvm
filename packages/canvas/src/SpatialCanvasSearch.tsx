@@ -33,7 +33,7 @@ export function SpatialCanvasSearchResult({
   disabled = false,
   onSelect,
 }: {
-  readonly id?: string
+  readonly id?: string | undefined
   readonly title: string
   readonly description: string
   readonly icon?: ReactNode

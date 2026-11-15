@@ -50,8 +50,11 @@ export class GuestKeyboardRouter {
   private rightCommand = false
   private rightWindowsDown = false
   private readonly capturedWindows = new Map<string, GuestKey>()
+  private readonly options: RouterOptions
 
-  constructor(private readonly options: RouterOptions) {}
+  constructor(options: RouterOptions) {
+    this.options = options
+  }
 
   setCaptured(captured: boolean): void {
     if (this.captured === captured) return
