@@ -23,16 +23,16 @@ export interface TerminalDescriptor {
    */
   id: string;
   /** Absolute. Immutable for one session; a new directory is a new session. */
-  cwd?: string;
+  cwd?: string | undefined;
   /** Defaults to the host's own choice when absent. */
-  shell?: string;
+  shell?: string | undefined;
   /** Names the terminal for assistive technology. */
   ariaLabel?: string;
 }
 
 /** Output, or the end of it. */
 export type TerminalEvent =
-  | { type: 'data'; data: string; sequence?: number }
+  | { type: 'data'; data: string; sequence?: number | undefined }
   | { type: 'exit'; exitCode: number }
   | { type: 'size'; cols: number; rows: number };
 
@@ -75,7 +75,7 @@ export interface TerminalTransport {
   resize(id: string, cols: number, rows: number): Promise<void>;
   terminate(id: string): Promise<void>;
   /** Optional cumulative output acknowledgement capability. */
-  ack?(id: string, sequence: number): Promise<void>;
+  ack?: ((id: string, sequence: number) => Promise<void>) | undefined;
   /** Only this session's events. Returns its own unsubscribe. */
   subscribe(id: string, listener: (event: TerminalEvent) => void): () => void;
 }

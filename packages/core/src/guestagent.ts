@@ -193,7 +193,7 @@ async function runExec(r: ExecRequest): Promise<ExecResponse> {
  */
 class PwshHost {
   private proc: ReturnType<typeof Bun.spawn<"pipe", "pipe", "ignore">> | null = null
-  private reader: { read(): Promise<{ done: boolean; value?: Uint8Array }> } | null = null
+  private reader: { read(): Promise<{ done: boolean; value?: Uint8Array | undefined }> } | null = null
   private buf = ""
   private readonly dec = new TextDecoder()
   private queue: Promise<unknown> = Promise.resolve()

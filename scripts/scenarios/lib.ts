@@ -292,7 +292,7 @@ export class AppPoller {
       const res = await fetch(link.url + path, {
         method,
         headers: { authorization: `Bearer ${link.token}`, ...(body === undefined ? {} : { "content-type": "application/json" }) },
-        body: body === undefined ? undefined : JSON.stringify(body),
+        ...(body === undefined ? {} : { body: JSON.stringify(body) }),
         signal: AbortSignal.timeout(timeoutMs),
       })
       const text = await res.text()

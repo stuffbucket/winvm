@@ -41,7 +41,7 @@ interface ResourceProps {
   readonly value: string
   /** 0-1, for assistive tech and the bar. */
   readonly fill: number
-  readonly note?: string
+  readonly note?: string | undefined
   readonly children: JSX.Element
 }
 

@@ -8,11 +8,16 @@ export class TerminalAcknowledgements {
   private acknowledgedSequence = 0;
   private scheduled = false;
   private disposed = false;
+  private readonly acknowledge: (sequence: number) => void;
+  private readonly scheduler: TerminalAckScheduler;
 
   constructor(
-    private readonly acknowledge: (sequence: number) => void,
-    private readonly scheduler: TerminalAckScheduler,
-  ) {}
+    acknowledge: (sequence: number) => void,
+    scheduler: TerminalAckScheduler,
+  ) {
+    this.acknowledge = acknowledge;
+    this.scheduler = scheduler;
+  }
 
   consume(sequence: number): void {
     if (this.disposed || sequence <= this.acknowledgedSequence) return;
@@ -39,11 +44,16 @@ export class TerminalResizes {
   private pending: { cols: number; rows: number } | undefined;
   private scheduled = false;
   private disposed = false;
+  private readonly resize: (cols: number, rows: number) => void;
+  private readonly scheduler: TerminalAckScheduler;
 
   constructor(
-    private readonly resize: (cols: number, rows: number) => void,
-    private readonly scheduler: TerminalAckScheduler,
-  ) {}
+    resize: (cols: number, rows: number) => void,
+    scheduler: TerminalAckScheduler,
+  ) {
+    this.resize = resize;
+    this.scheduler = scheduler;
+  }
 
   update(cols: number, rows: number): void {
     if (this.disposed) return;
