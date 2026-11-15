@@ -12,7 +12,7 @@ export interface GhosttyWindowAdjustment {
   /** Backdrop blur radius in CSS pixels. Zero disables blur. */
   blur?: number;
   /** Optional composited colour layer when effects are not stamped into the palette. */
-  tint?: string;
+  tint?: string | undefined;
   /** Tint layer opacity from 0 through 1. */
   tintAmount?: number;
   /** Tone adjustment from -1 (black) through 1 (white). */
