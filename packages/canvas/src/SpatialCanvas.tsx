@@ -8,7 +8,7 @@
  * and collaborators' cursors (its project map's own things). A node here is
  * any positioned content (`SpatialCanvasNode`), and the app draws its own.
  */
-import { forwardRef, type ComponentPropsWithoutRef, type CSSProperties, type ReactNode } from "react"
+import { forwardRef, type ComponentPropsWithoutRef, type CSSProperties, type ReactNode, type JSX } from "react"
 
 import type { Camera, Point, Rect } from "./camera"
 

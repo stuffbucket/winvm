@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react"
+import { type JSX, useEffect, useRef } from "react"
 
 import { t } from "../../i18n"
 import { shownTitle } from "../../model"

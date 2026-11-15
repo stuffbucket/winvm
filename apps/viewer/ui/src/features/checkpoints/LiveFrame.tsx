@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react"
+import { type JSX, useEffect, useRef } from "react"
 
 /** A few times a second: enough to read as live without costing the guest's screen anything noticeable. */
 const INTERVAL_MS = 125

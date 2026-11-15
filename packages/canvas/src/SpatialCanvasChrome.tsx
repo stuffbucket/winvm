@@ -9,7 +9,7 @@
  * design-system IconButton. Left out: monimal's page tabs and project
  * switcher, presence avatars and tool buttons (its whiteboard's tools).
  */
-import { forwardRef, type ComponentPropsWithoutRef, type ReactNode } from "react"
+import { forwardRef, type ComponentPropsWithoutRef, type ReactNode, type JSX } from "react"
 
 /** A 16 px Lucide glyph, stroked in the current color. */
 export function CanvasGlyph({ children, size = 16 }: { readonly children: ReactNode; readonly size?: number }): JSX.Element {

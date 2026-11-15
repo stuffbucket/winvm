@@ -3,6 +3,7 @@
  * settings, and what Go Back and Delete ask and do. And the confirmation
  * dialog's third button, rendered in happy-dom.
  */
+import type { JSX } from "react"
 import { GlobalRegistrator } from "@happy-dom/global-registrator"
 import { afterAll, afterEach, describe, expect, it, mock } from "bun:test"
 

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react"
+import { type JSX, useEffect, useRef, useState } from "react"
 
 import { NumberField } from "../../components/NumberField"
 import { t } from "../../i18n"

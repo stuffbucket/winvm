@@ -6,7 +6,7 @@
  * separators, each a styled Base UI part. Styles: `.menu*` in styles.css.
  */
 import { Menu as BaseMenu } from "@base-ui/react/menu"
-import type { ComponentPropsWithRef, ReactElement, ReactNode } from "react"
+import type { ComponentPropsWithRef, JSX, ReactElement, ReactNode } from "react"
 
 import { cx } from "./cx"
 import { Icon } from "./Icon"

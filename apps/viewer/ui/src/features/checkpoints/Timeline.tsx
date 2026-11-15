@@ -1,4 +1,4 @@
-import { type KeyboardEvent, type PointerEvent, useRef, useState } from "react"
+import { type KeyboardEvent, type PointerEvent, useRef, useState, type JSX } from "react"
 
 import { CanvasGlyph } from "@winvm/canvas"
 

@@ -1,3 +1,4 @@
+import type { JSX } from "react"
 import { Icon, type IconName } from "../../components/Icon"
 import { t } from "../../i18n"
 import { type Controls, isFrozen, isLivePhase, type Phase } from "../../model"

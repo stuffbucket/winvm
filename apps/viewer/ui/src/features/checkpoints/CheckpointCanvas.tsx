@@ -14,7 +14,7 @@
  * The rules (layout, timeline, search, confirmations) are in checkpoints.ts;
  * the canvas and its camera are @winvm/canvas.
  */
-import { type PointerEvent, useCallback, useEffect, useMemo, useRef, useState } from "react"
+import { type PointerEvent, useCallback, useEffect, useMemo, useRef, useState, type JSX } from "react"
 
 import {
   type Camera,

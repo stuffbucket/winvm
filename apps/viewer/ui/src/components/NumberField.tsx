@@ -3,7 +3,9 @@
  * keys, clamping, the increment and decrement buttons) in the window's style.
  * The same wrapper shape as Menu.tsx. Styles: `.number-field*` in styles.css.
  */
+
 import { NumberField as BaseNumberField } from "@base-ui/react/number-field"
+import type { JSX } from "react"
 
 import { Icon } from "./Icon"
 

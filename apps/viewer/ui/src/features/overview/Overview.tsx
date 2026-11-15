@@ -1,3 +1,4 @@
+import type { JSX } from "react"
 import { Button } from "../../components/Button"
 import { Icon, type IconName } from "../../components/Icon"
 import { cx } from "../../components/cx"

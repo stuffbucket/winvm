@@ -12,7 +12,7 @@
  * promises, written only when Finder asks), and arrive by dropping Mac files
  * anywhere on the window. A right-click or Option-click shows a native menu.
  */
-import { type KeyboardEvent, type MouseEvent, type PointerEvent, useCallback, useEffect, useMemo, useRef, useState } from "react"
+import { type KeyboardEvent, type MouseEvent, type PointerEvent, useCallback, useEffect, useMemo, useRef, useState, type JSX } from "react"
 
 import {
   copyText,

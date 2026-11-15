@@ -3,6 +3,7 @@
  * wrapper over Base UI, the picker's states, New Machine…'s checks and
  * Delete…'s text and Keep checkpoints. And the pure rules under them.
  */
+import type { JSX } from "react"
 import { GlobalRegistrator } from "@happy-dom/global-registrator"
 import { afterAll, afterEach, describe, expect, it } from "bun:test"
 

@@ -1,6 +1,6 @@
 import RFB from "@winvm/novnc/core/rfb.js"
 import * as KeyboardUtil from "@winvm/novnc/core/input/util.js"
-import { forwardRef, useEffect, useImperativeHandle, useLayoutEffect, useRef, useState } from "react"
+import { forwardRef, useEffect, useImperativeHandle, useLayoutEffect, useRef, useState, type JSX } from "react"
 
 import { type Size, drawSize, guestSizeFor, sameSize, scaleFor } from "@winvm/displayfit"
 

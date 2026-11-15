@@ -3,7 +3,7 @@
  * entries as rows. Only the rows in view (and a few either side) are in the
  * DOM, so a folder of thousands scrolls as smoothly as one of ten.
  */
-import { type KeyboardEvent, type MouseEvent, type PointerEvent, type RefObject, useEffect, useLayoutEffect, useRef, useState } from "react"
+import { type JSX, type KeyboardEvent, type MouseEvent, type PointerEvent, type RefObject, useEffect, useLayoutEffect, useRef, useState } from "react"
 
 import { cx } from "../../components/cx"
 import { t } from "../../i18n"

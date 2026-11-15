@@ -3,6 +3,7 @@
  * while held, and the Resources panel. Rendered in happy-dom, with the app's
  * Tauri bridge faked (window.__TAURI__) and winvm's answers handed out by hand.
  */
+import type { JSX } from "react"
 import { GlobalRegistrator } from "@happy-dom/global-registrator"
 import { afterAll, afterEach, describe, expect, it, jest } from "bun:test"
 

@@ -1,4 +1,4 @@
-import { memo, type CSSProperties, type ReactNode } from "react"
+import { memo, type CSSProperties, type ReactNode, type JSX } from "react"
 
 import { SpatialCanvasNode } from "@winvm/canvas"
 

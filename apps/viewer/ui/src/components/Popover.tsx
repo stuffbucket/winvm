@@ -1,4 +1,4 @@
-import { type ReactNode, useEffect, useLayoutEffect, useRef, useState } from "react"
+import { type JSX, type ReactNode, useEffect, useLayoutEffect, useRef, useState } from "react"
 
 interface PopoverProps {
   readonly anchor: HTMLElement | null

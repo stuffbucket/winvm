@@ -3,6 +3,7 @@
  * it shows for each state (rendered in happy-dom), and the one-time setup's
  * confirmation.
  */
+import type { JSX } from "react"
 import { GlobalRegistrator } from "@happy-dom/global-registrator"
 import { afterAll, afterEach, describe, expect, it } from "bun:test"
 

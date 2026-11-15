@@ -3,6 +3,7 @@
  * for it, the copy for each operation, and what the rest of the window stops
  * doing meanwhile. Rendered in happy-dom with the app's Tauri bridge faked.
  */
+import type { JSX } from "react"
 import { GlobalRegistrator } from "@happy-dom/global-registrator"
 import { afterAll, afterEach, describe, expect, it, jest } from "bun:test"
 import { readFileSync } from "node:fs"

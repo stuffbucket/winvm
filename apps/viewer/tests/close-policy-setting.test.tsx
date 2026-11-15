@@ -4,6 +4,7 @@
  * and keeps the old value when the write fails. Rendered in happy-dom with the app's
  * Tauri bridge faked; no real machine is touched.
  */
+import type { JSX } from "react"
 import { GlobalRegistrator } from "@happy-dom/global-registrator"
 import { afterAll, afterEach, describe, expect, it, jest } from "bun:test"
 

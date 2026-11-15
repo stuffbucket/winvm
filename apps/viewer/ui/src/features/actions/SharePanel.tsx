@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react"
+import { type JSX, useCallback, useEffect, useState } from "react"
 
 import { outputText, winvm } from "../../backend"
 import { Button } from "../../components/Button"

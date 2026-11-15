@@ -1,3 +1,4 @@
+import type { JSX } from "react"
 import { Icon } from "../../components/Icon"
 import { InlineRename } from "../../components/InlineRename"
 import { MenuGroup, MenuItem, MenuRadioGroup, MenuRadioItem, MenuRoot, MenuSeparator } from "../../components/Menu"

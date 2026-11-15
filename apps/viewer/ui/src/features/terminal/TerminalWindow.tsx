@@ -6,7 +6,7 @@
  * (Cmd-T, the + button and its menu). Each tab is a TerminalView on the
  * guest's terminal WebSocket. Closing the last tab closes the window.
  */
-import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react"
+import { useCallback, useEffect, useMemo, useReducer, useRef, useState, type JSX } from "react"
 
 import { TerminalView, terminalProcessTitle } from "@winvm/terminal"
 
