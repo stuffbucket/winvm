@@ -2,7 +2,7 @@ import { spawnSync } from "node:child_process"
 import { mkdirSync } from "node:fs"
 import { resolve } from "node:path"
 
-import { releaseVersion, sourceBuildIdentity } from "../../../packages/core/src/identity"
+import { releaseVersion, sourceBuildIdentity } from "@winvm/core/identity"
 
 const ROOT = resolve(import.meta.dir, "..", "..", "..")
 const out = resolve(import.meta.dir, "..", "src-tauri", "binaries", "winvm-aarch64-apple-darwin")
