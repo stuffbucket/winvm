@@ -73,7 +73,7 @@ pub struct SidecarFailure {
 }
 
 fn seconds(d: Duration) -> String {
-    format!("{}", d.as_millis() as f64 / 1000.0)
+    format!("{}", d.as_secs_f64())
 }
 
 /// The `::error::` lines a command printed, else its stderr.
@@ -127,7 +127,7 @@ impl SidecarFailure {
             "`winvm {operation}` didn't answer in {} seconds, so it was stopped. Windows wasn't touched; winvm may be busy finishing a save or a repair. Try again in a moment.",
             seconds(after)
         );
-        SidecarFailure { stdout, stderr, timeout_ms: Some(after.as_millis() as u64), ..Self::new(FailureKind::Timeout, operation, message) }
+        SidecarFailure { stdout, stderr, timeout_ms: Some(u64::try_from(after.as_millis()).unwrap_or(u64::MAX)), ..Self::new(FailureKind::Timeout, operation, message) }
     }
 
     pub fn exit(operation: &str, code: Option<i32>, signal: Option<i32>, stdout: String, stderr: String) -> Self {
@@ -180,7 +180,7 @@ pub fn operation_of(args: &[String]) -> String {
 
 /// The deadline for a `winvm` run from the app, by what it does. None: no automatic deadline.
 pub fn timeout_for(args: &[String]) -> Option<Duration> {
-    match args.first().map(String::as_str).unwrap_or("") {
+    match args.first().map_or("", String::as_str) {
         "status" | "info" | "doctor" | "ls" | "settings" | "config" | "help" => Some(READ_TIMEOUT),
         "saves" if !matches!(subcommand(args), Some("rm" | "note")) => Some(READ_TIMEOUT),
         "terminal" | "open" => Some(CONNECT_TIMEOUT),
@@ -280,7 +280,7 @@ impl Collected {
         Output { code, stdout: self.stdout.clone(), stderr: self.stderr.clone() }
     }
 
-    fn finish(self, operation: &str, t: TerminatedPayload) -> Result<Output, SidecarFailure> {
+    fn finish(self, operation: &str, t: &TerminatedPayload) -> Result<Output, Box<SidecarFailure>> {
         if t.code == Some(0) && self.errors.is_empty() {
             return Ok(Output { code: 0, stdout: self.stdout, stderr: self.stderr });
         }
@@ -288,14 +288,17 @@ impl Collected {
         if t.code == Some(0) {
             let why = detail.clone().unwrap_or_else(|| "the output stream failed".into());
             let message = format!("winvm couldn't read all of its helper's output for `{operation}` ({why}). Try again.");
-            return Err(SidecarFailure {
+            return Err(Box::new(SidecarFailure {
                 stdout: self.stdout,
                 stderr: self.stderr,
                 detail,
                 ..SidecarFailure::new(FailureKind::Launch, operation, message)
-            });
+            }));
         }
-        Err(SidecarFailure { detail, ..SidecarFailure::exit(operation, t.code, t.signal, self.stdout, self.stderr) })
+        Err(Box::new(SidecarFailure {
+            detail,
+            ..SidecarFailure::exit(operation, t.code, t.signal, self.stdout, self.stderr)
+        }))
     }
 
     /// The events ended without the process's exit: it can't be told what happened.
@@ -307,7 +310,7 @@ impl Collected {
 
 /// Reads a spawned CLI's events to its end, or until `plan.ready`, or until the
 /// deadline: then SIGTERM to its pid, `plan.grace` to end, and SIGKILL.
-pub async fn collect<C: SidecarChild>(mut rx: Receiver<CommandEvent>, child: C, operation: &str, plan: Plan<'_>) -> Result<Finished<C>, SidecarFailure> {
+pub async fn collect<C: SidecarChild>(mut rx: Receiver<CommandEvent>, child: C, operation: &str, plan: Plan<'_>) -> Result<Finished<C>, Box<SidecarFailure>> {
     let mut got = Collected::default();
     let deadline = plan.timeout.map(|t| Instant::now() + t);
     let ready = |got: &Collected| got.errors.is_empty() && plan.ready.is_some_and(|r| r(&got.stdout));
@@ -322,15 +325,15 @@ pub async fn collect<C: SidecarChild>(mut rx: Receiver<CommandEvent>, child: C, 
         match got.take(event) {
             Step::More if ready(&got) => return Ok(Finished::Ready { output: got.output(0), child }),
             Step::More => {}
-            Step::Ended(t) => return got.finish(operation, t).map(Finished::Exited),
-            Step::Closed => return Err(got.lost(operation)),
+            Step::Ended(t) => return got.finish(operation, &t).map(Finished::Exited),
+            Step::Closed => return Err(Box::new(got.lost(operation))),
         }
     }
     // An exit (or readiness) already queued when the deadline struck wins over it.
     while let Ok(event) = rx.try_recv() {
         match got.take(Some(event)) {
             Step::More if ready(&got) => return Ok(Finished::Ready { output: got.output(0), child }),
-            Step::Ended(t) => return got.finish(operation, t).map(Finished::Exited),
+            Step::Ended(t) => return got.finish(operation, &t).map(Finished::Exited),
             _ => {}
         }
     }
@@ -352,15 +355,15 @@ pub async fn collect<C: SidecarChild>(mut rx: Receiver<CommandEvent>, child: C, 
     let notes: Vec<String> = [termed.err(), killed.err()].into_iter().flatten().chain(got.errors.iter().cloned()).collect();
     let mut failure = SidecarFailure::timeout(operation, after, got.stdout, got.stderr);
     failure.detail = (!notes.is_empty()).then(|| notes.join("\n"));
-    Err(failure)
+    Err(Box::new(failure))
 }
 
-fn spawn(app: &tauri::AppHandle, operation: &str, args: &[String]) -> Result<(Receiver<CommandEvent>, CommandChild), SidecarFailure> {
-    app.shell().sidecar("winvm").map_err(|e| spawn_failure(operation, &e))?.args(args).spawn().map_err(|e| spawn_failure(operation, &e))
+fn spawn(app: &tauri::AppHandle, operation: &str, args: &[String]) -> Result<(Receiver<CommandEvent>, CommandChild), Box<SidecarFailure>> {
+    app.shell().sidecar("winvm").map_err(|e| spawn_failure(operation, &e))?.args(args).spawn().map_err(|e| Box::new(spawn_failure(operation, &e)))
 }
 
-/// Runs `winvm ARGS` to its end, within `timeout` when given. Exit 0 is Ok; anything else is a SidecarFailure.
-pub async fn run_sidecar(app: &tauri::AppHandle, args: &[String], timeout: Option<Duration>) -> Result<Output, SidecarFailure> {
+/// Runs `winvm ARGS` to its end, within `timeout` when given. Exit 0 is Ok; anything else is a `SidecarFailure`.
+pub async fn run_sidecar(app: &tauri::AppHandle, args: &[String], timeout: Option<Duration>) -> Result<Output, Box<SidecarFailure>> {
     let operation = operation_of(args);
     let (rx, child) = spawn(app, &operation, args)?;
     let plan = Plan { timeout, grace: TERM_GRACE, terminate: &terminate_child, ready: None };
@@ -375,7 +378,7 @@ pub async fn start_sidecar(
     args: &[String],
     timeout: Duration,
     ready: &(dyn Fn(&str) -> bool + Sync),
-) -> Result<Finished<CommandChild>, SidecarFailure> {
+) -> Result<Finished<CommandChild>, Box<SidecarFailure>> {
     let operation = operation_of(args);
     let (rx, child) = spawn(app, &operation, args)?;
     collect(rx, child, &operation, Plan { timeout: Some(timeout), grace: TERM_GRACE, terminate: &terminate_child, ready: Some(ready) }).await
@@ -384,11 +387,13 @@ pub async fn start_sidecar(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::os::unix::process::ExitStatusExt;
     use std::sync::{Arc, Mutex};
     use tauri::async_runtime::{block_on, channel, Sender};
     use tauri_plugin_shell::process::TerminatedPayload;
 
     type Log = Arc<Mutex<Vec<String>>>;
+    type TermHook = Box<dyn Fn(&Sender<CommandEvent>) + Send + Sync>;
 
     struct FakeChild {
         pid: u32,
@@ -406,7 +411,7 @@ mod tests {
     }
 
     fn args(a: &[&str]) -> Vec<String> {
-        a.iter().map(|s| s.to_string()).collect()
+        a.iter().map(ToString::to_string).collect()
     }
 
     fn line(s: &str) -> Vec<u8> {
@@ -429,8 +434,8 @@ mod tests {
         close: bool,
         timeout: Option<Duration>,
         ready: Option<&(dyn Fn(&str) -> bool + Sync)>,
-        on_term: Option<Box<dyn Fn(&Sender<CommandEvent>) + Send + Sync>>,
-    ) -> (Result<Finished<FakeChild>, SidecarFailure>, Vec<String>) {
+        on_term: Option<TermHook>,
+    ) -> (Result<Finished<FakeChild>, Box<SidecarFailure>>, Vec<String>) {
         block_on(async move {
             let log: Log = Arc::default();
             let (tx, rx) = channel(16);
@@ -458,7 +463,9 @@ mod tests {
         })
     }
 
-    fn exited(got: Result<Finished<FakeChild>, SidecarFailure>) -> Result<Output, SidecarFailure> {
+    fn exited(
+        got: Result<Finished<FakeChild>, Box<SidecarFailure>>,
+    ) -> Result<Output, Box<SidecarFailure>> {
         got.map(|f| match f {
             Finished::Exited(out) => out,
             Finished::Ready { .. } => panic!("not a handshake"),
@@ -543,7 +550,7 @@ mod tests {
         assert_eq!(f.operation, "status");
         assert_eq!(f.stderr, "::error::instance \"demo\" is not running\n");
         assert_eq!(f.message, "instance \"demo\" is not running");
-        assert!(log.is_empty());
+        assert!(log.is_empty(), "{log:?}");
     }
 
     #[test]
@@ -587,7 +594,7 @@ mod tests {
 
     #[test]
     fn a_child_that_ends_on_sigterm_is_not_killed() {
-        let on_term: Box<dyn Fn(&Sender<CommandEvent>) + Send + Sync> = Box::new(|tx| {
+        let on_term: TermHook = Box::new(|tx| {
             let _ = tx.try_send(ended(None, Some(15)));
         });
         let (got, log) = run(vec![], false, Some(Duration::from_millis(30)), None, Some(on_term));
@@ -621,7 +628,7 @@ mod tests {
             }
             Finished::Exited(_) => panic!("it is still serving"),
         }
-        assert!(log.is_empty());
+        assert!(log.is_empty(), "{log:?}");
     }
 
     #[test]
@@ -641,7 +648,7 @@ mod tests {
         assert!(missing.detail.is_some());
         let denied = spawn_failure("status", &tauri_plugin_shell::Error::Io(std::io::Error::from(std::io::ErrorKind::PermissionDenied)));
         assert_eq!(denied.kind, FailureKind::Launch);
-        assert!(!denied.message.is_empty());
+        assert_ne!(denied.message, "");
     }
 
     #[test]
@@ -654,6 +661,7 @@ mod tests {
         assert_eq!(v["stdout"], "half");
         assert!(v["code"].is_null() && v["signal"].is_null());
         assert!(v["message"].as_str().unwrap().contains("45"));
+        assert_eq!(serde_json::to_value(Box::new(f)).unwrap(), v);
     }
 
     #[test]
@@ -662,7 +670,6 @@ mod tests {
         let mut child = std::process::Command::new("/bin/sleep").arg("30").spawn().unwrap();
         terminate_child(child.id()).expect("our own child");
         let status = child.wait().unwrap();
-        use std::os::unix::process::ExitStatusExt;
         assert_eq!(status.signal(), Some(15));
 
         // A grandchild: alive, ours to start, but not this process's child. Left alone.
