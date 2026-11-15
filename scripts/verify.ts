@@ -137,6 +137,16 @@ const STEPS: Step[] = [
     findings: count(/error TS\d+/g),
   },
   {
+    name: "types",
+    group: "fast",
+    commands: [npmScript("lint:types")],
+    findings: (output) =>
+      [...output.matchAll(/^Found (\d+) warnings? and (\d+) errors?\./gm)].reduce(
+        (total, match) => total + Number(match[1] ?? 0) + Number(match[2] ?? 0),
+        0,
+      ),
+  },
+  {
     name: "typecheck-scripts",
     group: "fast",
     commands: [

@@ -14,6 +14,7 @@
     "verify": "bun scripts/verify.ts",
     "verify:fast": "bun scripts/verify.ts --fast",
     "lint": "biome ci --error-on-warnings .",
+    "lint:types": "oxlint --type-aware -f default",
     "comments": "bun scripts/check-comments.ts",
     "boundaries": "turbo boundaries",
     "knip": "knip",
@@ -25,6 +26,8 @@
     "@winvm/cli": "workspace:*",
     "dependency-cruiser": "18.7.2",
     "knip": "6.44.2",
+    "oxlint": "1.92.0",
+    "oxlint-tsgolint": "7.0.2006",
     "turbo": "2.11.9",
     "typescript": "6.0.3"
   },
