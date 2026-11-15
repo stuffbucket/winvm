@@ -34,16 +34,18 @@ export function parseRemoteHead(output: string): string | null {
   if (!trimmed) return null
 
   const lines = trimmed.split("\n")
-  if (lines.length !== 1) throw new Error(`expected exactly one ${RELEASE_PR_REF} record, found ${lines.length}`)
+  const [record] = lines
+  if (lines.length !== 1 || record === undefined) throw new Error(`expected exactly one ${RELEASE_PR_REF} record, found ${lines.length}`)
 
-  const fields = lines[0].trim().split(/\s+/)
-  if (fields.length !== 2 || !SHA_PATTERN.test(fields[0])) {
+  const fields = record.trim().split(/\s+/)
+  const [head, ref] = fields
+  if (fields.length !== 2 || head === undefined || ref === undefined || !SHA_PATTERN.test(head)) {
     throw new Error(`malformed ${RELEASE_PR_REF} record`)
   }
-  if (fields[1] !== RELEASE_PR_REF) {
-    throw new Error(`unexpected ref ${fields[1]}; expected ${RELEASE_PR_REF}`)
+  if (ref !== RELEASE_PR_REF) {
+    throw new Error(`unexpected ref ${ref}; expected ${RELEASE_PR_REF}`)
   }
-  return fields[0]
+  return head
 }
 
 export function releasePrHead(run: CommandRunner = runCommand): string | null {

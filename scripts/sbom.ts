@@ -81,8 +81,9 @@ function extractLicense(pkg: PackageJson, packageDirectory: string): string {
   if (pkg.license && typeof pkg.license === "object" && pkg.license.type) {
     return normalizeLicense(pkg.license.type)
   }
-  if (pkg.licenses && pkg.licenses.length > 0 && pkg.licenses[0].type) {
-    return normalizeLicense(pkg.licenses[0].type)
+  const firstLicense = pkg.licenses?.[0]
+  if (firstLicense?.type) {
+    return normalizeLicense(firstLicense.type)
   }
 
   for (const fileName of ["LICENSE", "LICENSE.txt", "LICENSE.md"]) {
@@ -217,27 +218,34 @@ function buildBom(rows: Array<ScanRow>, rootName: string, rootVersion: string) {
   }
 }
 
+function optionValue(argv: Array<string>, index: number): string {
+  const value = argv[index]
+  if (value === undefined) throw new Error(`${argv[index - 1]} requires a value`)
+  return value
+}
+
 function parseArgs(argv: Array<string>): {
   output: string
   failOnLicense: boolean
-  roots: Array<string>
+  roots: [string, ...Array<string>]
 } {
   let output = "SBOM.cdx.json"
   let failOnLicense = true
   const roots: Array<string> = []
   for (let index = 0; index < argv.length; index += 1) {
     if (argv[index] === "--output") {
-      output = argv[++index]
+      output = optionValue(argv, ++index)
     } else if (argv[index] === "--root") {
-      roots.push(argv[++index])
+      roots.push(optionValue(argv, ++index))
     } else if (argv[index] === "--no-fail-on-license") {
       failOnLicense = false
     }
   }
+  const [firstRoot, ...otherRoots] = roots
   return {
     output,
     failOnLicense,
-    roots: roots.length === 0 ? ["."] : roots,
+    roots: firstRoot === undefined ? ["."] : [firstRoot, ...otherRoots],
   }
 }
 
