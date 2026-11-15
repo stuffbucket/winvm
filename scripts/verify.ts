@@ -141,7 +141,9 @@ const STEPS: Step[] = [
     group: "fast",
     commands: [npmScript("lint:types")],
     findings: (output) =>
-      [...output.matchAll(/^Found (\d+) warnings? and (\d+) errors?\./gm)].reduce(
+      [
+        ...output.matchAll(/^Found (\d+) warnings? and (\d+) errors?\./gm),
+      ].reduce(
         (total, match) => total + Number(match[1] ?? 0) + Number(match[2] ?? 0),
         0,
       ),
