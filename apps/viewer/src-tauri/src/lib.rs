@@ -544,7 +544,7 @@ fn handle_menu(app: &tauri::AppHandle, event: &tauri::menu::MenuEvent) {
 
 #[expect(
     clippy::missing_panics_doc,
-    reason = "run is the binary's entry point rather than an API, its only panic is the startup failure the app cannot continue past, and the comment policy leaves no place for a Panics section"
+    reason = "run is the binary's entry point rather than an API, and its only panic is a startup failure the app cannot continue past"
 )]
 pub fn run() {
     tauri::Builder::default()

@@ -4,7 +4,7 @@ all-features = true
 [advisories]
 yanked = "deny"
 ignore = [
-    { id = "RUSTSEC-2024-0370", reason = "proc-macro-error is pulled in only by glib-macros 0.18.5 (gtk3-rs), on tauri's Linux target; no release of the gtk 0.18 line drops it, and it is not compiled for macOS" },
+    { id = "RUSTSEC-2024-0370", reason = "proc-macro-error is pulled in only by glib-macros and gtk3-macros 0.18 (gtk3-rs), on tauri's Linux target; no release of the gtk 0.18 line drops it, and it is not compiled for macOS" },
 ]
 
 [licenses]
