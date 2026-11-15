@@ -71,9 +71,13 @@ function sumOf(pattern: RegExp): (output: string) => number {
     )
 }
 
-function uniqueLines(pattern: RegExp): (output: string) => number {
-  return (output) =>
-    new Set(output.split("\n").filter((line) => pattern.test(line))).size
+function netWarnings(output: string): number {
+  return [
+    ...output.matchAll(/generated (\d+) warnings?(?: \((\d+) duplicates?\))?/g),
+  ].reduce(
+    (total, match) => total + Number(match[1] ?? 0) - Number(match[2] ?? 0),
+    0,
+  )
 }
 
 let rustInputs: Promise<void> | undefined
@@ -201,8 +205,8 @@ const STEPS: Step[] = [
     group: "slow",
     lane: "rust",
     prepare: ensureRustInputs,
-    commands: [cargo("clippy", "--all-targets", "--message-format=short")],
-    findings: uniqueLines(/^\S+:\d+:\d+: (?:warning|error)/),
+    commands: [cargo("clippy", "--all-targets")],
+    findings: netWarnings,
   },
   {
     name: "clippy-unwrap",
@@ -210,17 +214,9 @@ const STEPS: Step[] = [
     lane: "rust",
     prepare: ensureRustInputs,
     commands: [
-      cargo(
-        "clippy",
-        "--lib",
-        "--bins",
-        "--message-format=short",
-        "--",
-        "-D",
-        "clippy::unwrap_used",
-      ),
+      cargo("clippy", "--lib", "--bins", "--", "-D", "clippy::unwrap_used"),
     ],
-    findings: uniqueLines(/^\S+:\d+:\d+: error: used `unwrap\(\)`/),
+    findings: sumOf(/due to (\d+) previous errors?/g),
   },
   {
     name: "cargo-test",
