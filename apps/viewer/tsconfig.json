@@ -14,10 +14,7 @@
     "resolveJsonModule": true,
     "isolatedModules": true,
     "skipLibCheck": true,
-    "noEmit": true,
-    "paths": {
-      "novnc/*": ["../../packages/core/web/novnc/*"]
-    }
+    "noEmit": true
   },
   "include": ["ui/src", "scripts", "tests"]
 }

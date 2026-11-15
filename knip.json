@@ -1,5 +1,6 @@
 {
   "$schema": "https://unpkg.com/knip@6.44.2/schema.json",
+  "ignoreWorkspaces": ["packages/novnc"],
   "workspaces": {
     ".": {
       "entry": ["scripts/*.ts"],
