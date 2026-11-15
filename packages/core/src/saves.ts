@@ -135,7 +135,7 @@ import { basePath, home, imageMetaPath, instanceDir, pathsFor, readImageMeta, re
 import * as qemu from "./qemu"
 import * as qmp from "./qmp"
 import * as finder from "./finder"
-import { clearSavingRunning, markSavingRunning } from "./frozen"
+import { clearSavingRunning, markSavingRunning, withOperation } from "./operation"
 import { instanceOf } from "./smbstate"
 
 // ---------------------------------------------------------------------------
@@ -800,45 +800,6 @@ export const isPristine = (instance: string): boolean => existsSync(pendingMarke
 export const clearPristine = (instance: string): void => rmSync(pendingMarker(instance), { force: true })
 
 // ---------------------------------------------------------------------------
-// One save/load at a time per instance
-
-/**
- * Two of these at once on one instance — a user's `load` racing an idle
- * watcher's automatic save — would quit QEMU under a migration, or clone a disk
- * mid-swap. A lock file holding the owner's pid; a dead owner's lock is stale.
- */
-export async function withLock<T>(instance: string, fn: () => Promise<T>): Promise<T> {
-  mkdirSync(savesDir(instance), { recursive: true })
-  const lock = resolve(savesDir(instance), ".lock")
-  for (let attempt = 0; ; attempt += 1) {
-    try {
-      writeFileSync(lock, String(process.pid), { flag: "wx" })
-      break
-    } catch {
-      const owner = Number.parseInt(readFileSync(lock, "utf8").trim(), 10)
-      let alive = false
-      try {
-        if (Number.isFinite(owner)) {
-          process.kill(owner, 0)
-          alive = true
-        }
-      } catch {
-        alive = false
-      }
-      if (alive || attempt > 0) {
-        throw new Error(`instance "${instance}" is busy: another winvm (pid ${String(owner)}) is saving or loading it`)
-      }
-      rmSync(lock, { force: true })
-    }
-  }
-  try {
-    return await fn()
-  } finally {
-    rmSync(lock, { force: true })
-  }
-}
-
-// ---------------------------------------------------------------------------
 // Mechanics
 
 const sleep = async (ms: number): Promise<void> => await new Promise((r) => setTimeout(r, ms))
@@ -975,7 +936,10 @@ export interface CreateResult {
  * On return the guest is running again (if it was) — its clock is the caller's
  * job (clock.ts), because it needs the agent.
  */
-export async function createSave(instance: string, o: CreateOptions): Promise<CreateResult> {
+export const createSave = async (instance: string, o: CreateOptions): Promise<CreateResult> =>
+  await withOperation(instance, o.kind === "stow" ? "stow" : "save", async () => await createSaveHeld(instance, o))
+
+async function createSaveHeld(instance: string, o: CreateOptions): Promise<CreateResult> {
   const p = pathsFor(instance)
   const meta = readMeta(instance)
   if (meta === null) throw new Error(`no such instance "${instance}"`)
@@ -1029,7 +993,7 @@ export async function createSave(instance: string, o: CreateOptions): Promise<Cr
   let migrated: Record<string, unknown>
   let ppm: string | null = null
   // Not the user's pause, for anyone reading the status meanwhile (frozen.ts).
-  if (wasRunning) markSavingRunning(p)
+  if (wasRunning) markSavingRunning(instance)
   try {
     if (wasRunning) await qmp.execute(p.qmp, "stop")
     // The screen exactly as saved; encoded once the guest runs again.
@@ -1045,7 +1009,7 @@ export async function createSave(instance: string, o: CreateOptions): Promise<Cr
   } catch (error) {
     rmSync(tmp, { recursive: true, force: true })
     if (wasRunning) await qmp.execute(p.qmp, "cont").catch(() => undefined)
-    clearSavingRunning(p)
+    clearSavingRunning(instance)
     throw error
   }
   try {
@@ -1055,7 +1019,7 @@ export async function createSave(instance: string, o: CreateOptions): Promise<Cr
       await qmp.execute(p.qmp, "cont")
     }
   } finally {
-    clearSavingRunning(p)
+    clearSavingRunning(instance)
   }
   const saveMs = Date.now() - started
   const screen = ppm === null ? null : writeScreenshots(ppm, tmp)
@@ -1133,7 +1097,7 @@ export async function cloneSave(from: string, to: string, name: string): Promise
     throw new IncompatibleSave(`"${to}" differs from "${from}"${why.length > 0 ? `: ${why.join("; ")}` : ""}`)
   }
   const src = saveDir(from, name)
-  return await withLock(to, async () => {
+  return await withOperation(to, "save", async () => {
     const tmp = resolve(savesDir(to), `.${name}.partial-${String(process.pid)}`)
     rmSync(tmp, { recursive: true, force: true })
     mkdirSync(tmp, { recursive: true })
@@ -1168,7 +1132,10 @@ export async function cloneSave(from: string, to: string, name: string): Promise
  * either way (see "Loading" above). On return the guest is running; waiting for
  * its agent and fixing its clock is the caller's job.
  */
-export async function loadSave(instance: string, name: string): Promise<Manifest> {
+export const loadSave = async (instance: string, name: string): Promise<Manifest> =>
+  await withOperation(instance, "load", async () => await loadSaveHeld(instance, name))
+
+async function loadSaveHeld(instance: string, name: string): Promise<Manifest> {
   const m = readSave(instance, name)
   if (m === null) throw new Error(`instance "${instance}" has no save "${name}" — \`winvm saves -i ${instance}\``)
   const created = readMeta(instance) === null

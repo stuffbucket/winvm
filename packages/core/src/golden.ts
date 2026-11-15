@@ -33,6 +33,7 @@ import { imageName, instanceName } from "./args"
 import { alignGuestTimeZone, formatOffset, syncGuestClock } from "./clock"
 import { capture } from "./host"
 import { ensureInstance } from "./instance"
+import { withOperation } from "./operation"
 import type { Paths } from "./paths"
 import { pathsFor, readImageMeta, readMeta } from "./paths"
 import * as qemu from "./qemu"
@@ -202,7 +203,10 @@ export interface CreateGoldenResult {
  * the guest is running, clock synced. Stops the instance's idle watcher first:
  * a guest left idle on purpose is exactly what it would autosave or stow.
  */
-export async function createGolden(instance: string, o: CreateGoldenOptions = {}): Promise<CreateGoldenResult> {
+export const createGolden = async (instance: string, o: CreateGoldenOptions = {}): Promise<CreateGoldenResult> =>
+  await withOperation(instance, "golden-create", async () => await createGoldenHeld(instance, o))
+
+async function createGoldenHeld(instance: string, o: CreateGoldenOptions): Promise<CreateGoldenResult> {
   const log = o.log ?? (() => undefined)
   const name = o.name ?? saves.GOLDEN
   const nameErr = saves.nameError(name)
@@ -215,7 +219,7 @@ export async function createGolden(instance: string, o: CreateGoldenOptions = {}
   if (o.from !== undefined) {
     const from = o.from
     log(`loading "${from}"`)
-    await saves.withLock(instance, async () => await saves.loadSave(instance, from))
+    await saves.loadSave(instance, from)
     if (!(await qga.waitResponsive(p.qga, 300_000))) throw new Error(`guest did not answer after loading "${from}"`)
   } else if (qemu.isRunning(p)) {
     log("checking the guest has finished starting")
@@ -256,10 +260,7 @@ export async function createGolden(instance: string, o: CreateGoldenOptions = {}
     `settled: ${settle.settled ? "yes" : "no"}, cpu ${settle.lastPct.toFixed(1)}% ` +
     `after ${String(Math.round(settle.waitedMs / 1000))} s`
   log("saving (mapped-ram)")
-  const r = await saves.withLock(
-    instance,
-    async () => await saves.createSave(instance, { name, kind: "golden", format: "mapped", note }),
-  )
+  const r = await saves.createSave(instance, { name, kind: "golden", format: "mapped", note })
   // It stood still while being saved.
   await syncGuestClock(p).catch(() => undefined)
   return {
@@ -297,7 +298,7 @@ export async function resetToGolden(
   o: { readonly timeoutMs?: number } = {},
 ): Promise<ResetResult> {
   const started = Date.now()
-  const manifest = await saves.withLock(instance, async () => await saves.loadSave(instance, name))
+  const manifest = await saves.loadSave(instance, name)
   const restoredMs = Date.now() - started
   const p = pathsFor(instance)
   if (!(await qga.waitResponsive(p.qga, o.timeoutMs ?? 120_000))) {

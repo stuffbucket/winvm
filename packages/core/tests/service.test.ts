@@ -8,6 +8,7 @@ import { QmpChannel } from "../src/broker"
 import * as monitor from "../src/monitor"
 import { PACKAGE_DIR, pathsFor, type Paths } from "../src/paths"
 import * as qga from "../src/qga"
+import { processStart } from "../src/proc"
 import { qemuArgs } from "../src/qemu"
 import * as qmp from "../src/qmp"
 import { buildIdentity } from "../src/identity"
@@ -157,11 +158,12 @@ describe("the service", () => {
     expect(lastEvent()).toMatchObject({ kind: "service", what: "stopped" })
   })
 
-  it("waits out a load: QEMU gone but the save lock held by a live pid", async () => {
+  it("waits out a load: QEMU gone but the instance's lease held by a live process", async () => {
     svc = await runService("t", { exitAfterMs: 200, checkMs: 50 })
-    const lockDir = resolve(home, "saves", "t")
-    mkdirSync(lockDir, { recursive: true })
-    writeFileSync(resolve(lockDir, ".lock"), String(process.pid))
+    writeFileSync(
+      p.lease,
+      JSON.stringify({ operation: "load", id: "l", pid: process.pid, pidStart: processStart(process.pid), startedAt: "", instance: "t", automatic: false }),
+    )
     rmSync(p.pid)
     await sleep(600)
     expect(recorded()?.pid).toBe(process.pid)

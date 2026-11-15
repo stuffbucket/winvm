@@ -105,7 +105,7 @@ async function doSave(
   }
   let r: saves.CreateResult
   try {
-    r = await saves.withLock(name, async () => await saves.createSave(name, o))
+    r = await saves.createSave(name, o)
   } catch (error) {
     return fail(msg(error))
   }
@@ -155,7 +155,7 @@ async function doLoad(name: string, saveName: string, verb: string): Promise<num
   finder.beforeDown(name)
   let m: saves.Manifest
   try {
-    m = await saves.withLock(name, async () => await saves.loadSave(name, saveName))
+    m = await saves.loadSave(name, saveName)
   } catch (error) {
     return fail(msg(error))
   }

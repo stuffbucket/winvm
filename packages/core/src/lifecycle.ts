@@ -79,17 +79,17 @@
  * service that keeps failing to start leaves a current watcher running
  * untouched rather than cycling it on every attempt.
  */
-import { spawnSync } from "node:child_process"
 import { randomUUID } from "node:crypto"
-import { existsSync, linkSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs"
+import { existsSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs"
 import { resolve } from "node:path"
 
 import { effectiveConfig } from "./config"
-import { savingPath } from "./frozen"
+import { linkNew, takeOver } from "./exclusive"
 import { buildIdentity } from "./identity"
+import { InstanceBusy, leaseHolder, withOperation } from "./operation"
 import { NO_RECONCILE, cliEntry, pathsFor, type Paths } from "./paths"
+import { isSameProcess, ownStart } from "./proc"
 import { pidOf as qemuPid } from "./qemu"
-import * as saves from "./saves"
 import { ensureService, readService, type ServiceInfo } from "./service"
 import { ensureWatcher, readWatchState, stopWatcher, watchPathsFor, watcherFreshness, watcherRecord, type WatcherRecord } from "./watch"
 
@@ -190,56 +190,6 @@ export function reconcileNote(name: string, r: ReconcileResult, p: Paths = paths
 // ---------------------------------------------------------------------------
 // Processes
 
-/**
- * `ps`, always in the C locale and UTC: its `lstart` is local time in the
- * caller's locale, so two winvms run from shells with different TZ or LANG
- * would otherwise disagree about one process's start — and take a live
- * holder's lock for an abandoned one.
- */
-const ps = (field: string, pid: number): string =>
-  (
-    spawnSync("ps", ["-o", `${field}=`, "-p", String(pid)], { encoding: "utf8", env: { ...process.env, LC_ALL: "C", TZ: "UTC" } }).stdout ??
-    ""
-  ).trim()
-
-const alive = (pid: number): boolean => {
-  try {
-    process.kill(pid, 0)
-  } catch {
-    return false
-  }
-  return !ps("stat", pid).startsWith("Z")
-}
-
-/** When a process started: with its pid, it names one process for good. */
-function startOf(pid: number): string | null {
-  const s = ps("lstart", pid)
-  return s === "" ? null : s
-}
-
-let ownStart: string | null | undefined
-
-/** The live pid a save mark names, if any: the save lock (saves.withLock) or saving.json (frozen.ts). */
-function saverPid(name: string, p: Paths): number | null {
-  const fromLock = (): number | null => {
-    try {
-      return Number.parseInt(readFileSync(resolve(saves.savesDir(name), ".lock"), "utf8").trim(), 10)
-    } catch {
-      return null
-    }
-  }
-  const fromMark = (): number | null => {
-    try {
-      const pid = (JSON.parse(readFileSync(savingPath(p), "utf8")) as { pid?: unknown }).pid
-      return typeof pid === "number" ? pid : null
-    } catch {
-      return null
-    }
-  }
-  for (const pid of [fromLock(), fromMark()]) if (pid !== null && Number.isFinite(pid) && alive(pid)) return pid
-  return null
-}
-
 const errText = (e: unknown): string => (e instanceof Error ? e.message : String(e))
 
 const sleep = async (ms: number): Promise<void> => await new Promise((r) => setTimeout(r, ms))
@@ -264,7 +214,7 @@ function parseLock(text: string): LockBody | null {
   }
 }
 
-const holds = (b: LockBody): boolean => alive(b.pid) && (b.start === null || startOf(b.pid) === b.start)
+const holds = (b: LockBody): boolean => isSameProcess(b.pid, b.start)
 
 const lockError = (file: string, why: string, cause?: unknown): ManagementError =>
   new ManagementError(
@@ -273,52 +223,6 @@ const lockError = (file: string, why: string, cause?: unknown): ManagementError 
       "or remove that file if no other winvm is running",
     cause === undefined ? undefined : { cause },
   )
-
-/** Put a complete file in place only if none is there: never a moment with a partial one. */
-function linkNew(file: string, text: string): boolean {
-  const tmp = `${file}.${String(process.pid)}.${randomUUID()}.tmp`
-  writeFileSync(tmp, text, { mode: 0o600 })
-  try {
-    linkSync(tmp, file)
-    return true
-  } catch (e) {
-    if ((e as NodeJS.ErrnoException).code === "EEXIST") return false
-    throw e
-  } finally {
-    rmSync(tmp, { force: true })
-  }
-}
-
-/**
- * Remove a lock judged abandoned — exactly that one. It is moved aside first
- * and compared with what was judged: if another caller took the lock over in
- * between, that holder's lock is linked back rather than lost.
- */
-function takeOver(file: string, judged: string): boolean {
-  const aside = `${file}.${String(process.pid)}.${randomUUID()}.stale`
-  try {
-    renameSync(file, aside)
-  } catch {
-    return false
-  }
-  let moved = ""
-  try {
-    moved = readFileSync(aside, "utf8")
-  } catch {
-    // vanished: treat as not ours to remove
-  }
-  if (moved !== judged) {
-    try {
-      linkSync(aside, file)
-    } catch {
-      // Someone holds the lock again already.
-    }
-    rmSync(aside, { force: true })
-    return false
-  }
-  rmSync(aside, { force: true })
-  return true
-}
 
 class ReconcileLock {
   private body: LockBody
@@ -365,8 +269,7 @@ type Acquired = { readonly lock: ReconcileLock } | { readonly busy: LockBody }
  * a "reconcile-lock" ManagementError rather than a spin.
  */
 async function acquire(file: string, waitMs: number): Promise<Acquired> {
-  ownStart ??= startOf(process.pid)
-  const body: LockBody = { pid: process.pid, start: ownStart, token: randomUUID() }
+  const body: LockBody = { pid: process.pid, start: ownStart(), token: randomUUID() }
   const deadline = Date.now() + waitMs
   let live: LockBody | null = null
   let problem = "it kept changing under this command"
@@ -545,8 +448,8 @@ async function reconcileHeld(name: string, p: Paths, o: ReconcileOptions, curren
   const stopsWatcher = pl.watcher !== null && (pl.serviceAction === "replace" || pl.rotateWatcher)
   const busy = stopsWatcher ? busyWith(name, pl.watcher) : null
   // Anyone else's save is not interrupted at all.
-  const saver = saverPid(name, p)
-  if (busy === null && saver !== null && saver !== pl.watcher?.pid) return { changed: false, ...pids(name, p), deferred: "saving" }
+  const holder = leaseHolder(name)
+  if (busy === null && holder !== null && holder.pid !== pl.watcher?.pid) return { changed: false, ...pids(name, p), deferred: "saving" }
   // The watcher's own: deferred without a word to it, unless this caller may wait.
   if (busy !== null && o.waitForBusyWatcher === false) return { changed: false, ...pids(name, p), deferred: busy }
 
@@ -583,7 +486,7 @@ async function reconcileHeld(name: string, p: Paths, o: ReconcileOptions, curren
   // an older winvm that knows nothing of reconcile.lock.
   let outcome: ReconcileResult | Failed
   try {
-    outcome = await saves.withLock(name, async (): Promise<ReconcileResult | Failed> => {
+    outcome = await withOperation(name, "reconcile", async (): Promise<ReconcileResult | Failed> => {
       try {
         if (qemuPid(p) !== qemu) {
           forgive(p)
@@ -618,9 +521,9 @@ async function reconcileHeld(name: string, p: Paths, o: ReconcileOptions, curren
         if (error instanceof ManagementError) return new Failed(error)
         throw error
       }
-    })
+    }, { automatic: true })
   } catch (error) {
-    if (/is busy: another winvm/.test(errText(error))) {
+    if (error instanceof InstanceBusy) {
       // A save or load got there first. A watcher already stopped (above,
       // after its own save) comes back; nothing else was touched.
       if (stopped) await restoreWatcher(name, p, current, o).catch(() => undefined)

@@ -9,6 +9,7 @@ import type { Args } from "./args"
 import { imageName, instanceName, isValidImageName, isValidInstanceName } from "./args"
 import { PWSH_SHA256, PWSH_URL, TOOLS_SHA256, TOOLS_URL, checksReport, download, du, hostChecks, printChecks, requireHost, run, sha256Of } from "./host"
 import { diagnose, formatFindings } from "./diagnose"
+import { runningCommand } from "./display"
 import { ensureInstance, makeVars, resetInstance, sealBase } from "./instance"
 import { ISO_SOURCE, buildSeed, checkIsoIsArm64, makeResultVolume, readResult, resolveWindowsIso } from "./media"
 import type { InstanceMeta, Paths } from "./paths"
@@ -41,6 +42,7 @@ import * as savecmds from "./savecmds"
 import * as snapshot from "./snapshot"
 import * as timemachine from "./timemachine"
 import { ManagementError, reconcileManagement } from "./lifecycle"
+import { leaseHolder } from "./operation"
 import { stopService } from "./service"
 import { ensureRuntime, findRuntime, runtimeBin } from "./runtime"
 import * as share from "./share"
@@ -982,6 +984,11 @@ export function kill(args: Args): number {
   const name = instanceName(args)
   const p = pathsFor(name)
   const pid = qemu.pidOf(p)
+  const holder = leaseHolder(name)
+  if (pid === null && holder !== null) {
+    console.error(`::error::"${name}" has no QEMU running, and its ${holder.operation} (pid ${String(holder.pid)}) is still in progress; nothing was killed`)
+    return 1
+  }
   if (pid === null) {
     // Still worth a sweep: a launch that failed, or an older winvm, can leave
     // the TPM emulator running with no guest.
@@ -990,6 +997,17 @@ export function kill(args: Args): number {
     finder.cleanStale(name)
     console.log(`instance "${name}" is not running`)
     return 0
+  }
+  if (runningCommand(pid) === null) {
+    console.error(`::error::could not read the command line of pid ${String(pid)}, named by ${p.pid}; nothing was killed. Try again`)
+    return 1
+  }
+  if (!qemu.isInstanceQemu(pid, p)) {
+    console.error(
+      `::error::${p.pid} names pid ${String(pid)}, which is not the QEMU of "${name}"; nothing was killed. ` +
+        `If no QEMU of "${name}" is running, remove that file`,
+    )
+    return 1
   }
   // While their server still answers: a mount whose server is gone hangs whatever touches it.
   finder.beforeDown(name)

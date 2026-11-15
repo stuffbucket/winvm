@@ -45,6 +45,7 @@ import { ensureState, readState, writeState } from "./agentfwd"
 import type { Args } from "./args"
 import { NEW_DEFAULT } from "./hardware"
 import type { Job } from "./job"
+import { withOperation } from "./operation"
 import { home, pathsFor, readMeta } from "./paths"
 import { parseDuration } from "./golden"
 import * as qemu from "./qemu"
@@ -232,7 +233,7 @@ async function ensurePoolGoldens(
 async function hardStop(instance: string): Promise<void> {
   const p = pathsFor(instance)
   const pid = qemu.pidOf(p)
-  if (pid !== null) {
+  if (pid !== null && qemu.isInstanceQemu(pid, p)) {
     try {
       process.kill(pid, "SIGKILL")
     } catch {
@@ -364,7 +365,13 @@ export async function runPool(jobs: readonly Job[], o: PoolOptions): Promise<Poo
   if (o.keep) {
     console.log(`\n--keep: instances left running in their last job's state`)
   } else {
-    await Promise.all(members.map(async (m) => await saves.quitQemu(pathsFor(m)).catch(() => undefined)))
+    await Promise.all(
+      members.map(async (m) =>
+        await withOperation(m, "stop", async () => await saves.quitQemu(pathsFor(m))).catch((error: unknown) => {
+          console.warn(`warning: left "${m}" running: ${errMsg(error)}`)
+        }),
+      ),
+    )
   }
   return { results, setupMs, instances: members }
 }

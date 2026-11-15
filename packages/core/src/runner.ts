@@ -39,6 +39,7 @@ import * as input from "./input"
 import type { FileSpec, Job, Step } from "./job"
 import { stepScript } from "./job"
 import { ensureInstance } from "./instance"
+import { withOperation } from "./operation"
 import { home, pathsFor, readImageMeta, readMeta } from "./paths"
 import * as qemu from "./qemu"
 import * as qga from "./qga"
@@ -92,6 +93,10 @@ export async function ensureGolden(
   image: string | null = null,
 ): Promise<number> {
   if (saves.readSave(instance, goldenName) !== null) return 0
+  return await withOperation(instance, "golden-create", async () => await createMissingGolden(instance, goldenName, log, image))
+}
+
+async function createMissingGolden(instance: string, goldenName: string, log: (s: string) => void, image: string | null): Promise<number> {
   const t0 = Date.now()
   const p = pathsFor(instance)
   log(`golden "${goldenName}" not found on "${instance}": creating it (boot, agent, settle — a few minutes, once)`)

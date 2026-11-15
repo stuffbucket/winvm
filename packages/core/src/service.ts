@@ -5,7 +5,8 @@ import { basename, resolve } from "node:path"
 import { commandInstance, winvmCommandAfter } from "./args"
 import { QgaChannel, QmpChannel } from "./broker"
 import { buildIdentity } from "./identity"
-import { PACKAGE_DIR, cliArgv, home, managedEnv, pathsFor, type Paths } from "./paths"
+import { leaseHolder } from "./operation"
+import { PACKAGE_DIR, cliArgv, managedEnv, pathsFor, type Paths } from "./paths"
 import * as qga from "./qga"
 import * as share from "./share"
 import type { ChangeNotices } from "./sharewatch"
@@ -424,7 +425,6 @@ export async function runService(name: string, o: ServiceOptions = {}): Promise<
   })
   let stopping = false
   let goneMs = 0
-  const lock = resolve(home(), "saves", name, ".lock")
 
   // The shared folder's change notices, for as long as a guest with one runs.
   // Imported on first use: they need the agent's client, which needs qemu.ts.
@@ -474,7 +474,7 @@ export async function runService(name: string, o: ServiceOptions = {}): Promise<
       return
     }
     void syncNotices()
-    if (livePidIn(p.pid) !== null || livePidIn(lock) !== null || keptWithin(p, exitAfterMs)) {
+    if (livePidIn(p.pid) !== null || leaseHolder(name) !== null || keptWithin(p, exitAfterMs)) {
       goneMs = 0
       return
     }
