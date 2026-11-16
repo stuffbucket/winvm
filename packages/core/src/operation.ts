@@ -4,6 +4,7 @@ import { existsSync, mkdirSync, rmSync } from "node:fs"
 import { dirname } from "node:path"
 import type { Args } from "./args"
 import { isValidInstanceName } from "./args"
+import { appendEntry, type OpIdentity, type OpOutcome } from "./eventlog"
 import { linkNew, readOr, replaceWhole, takeOver } from "./exclusive"
 import { pathsFor } from "./paths"
 import { isSameProcess, ownStart, processStart } from "./proc"
@@ -152,6 +153,57 @@ function parseRecord(json: string): LeaseRecord | null {
   }
 }
 
+const identityOf = (r: LeaseRecord, leased: boolean): OpIdentity => ({
+  id: r.id,
+  operation: r.operation,
+  pid: r.pid,
+  startedAt: r.startedAt,
+  automatic: r.automatic,
+  leased,
+})
+
+function recordBegin(name: string, who: OpIdentity): void {
+  appendEntry(name, { kind: "op", phase: "begin", ...who })
+}
+
+function recordEnd(name: string, who: OpIdentity, outcome: OpOutcome): void {
+  appendEntry(name, {
+    kind: "op",
+    phase: "end",
+    ...who,
+    endedAt: new Date().toISOString(),
+    ...outcome,
+  })
+}
+
+const exited = (code: number): OpOutcome => ({ ok: code === 0, exitCode: code })
+
+const settled = (result: unknown): OpOutcome =>
+  typeof result === "number" && Number.isInteger(result)
+    ? exited(result)
+    : { ok: true }
+
+const failed = (error: unknown): OpOutcome => ({
+  ok: false,
+  error: error instanceof Error ? error.message : String(error),
+})
+
+async function recorded<T>(
+  name: string,
+  who: OpIdentity,
+  run: () => T | Promise<T>,
+): Promise<T> {
+  recordBegin(name, who)
+  try {
+    const result = await run()
+    recordEnd(name, who, settled(result))
+    return result
+  } catch (error) {
+    recordEnd(name, who, failed(error))
+    throw error
+  }
+}
+
 function readLease(
   name: string,
   seams: LeaseSeams = {},
@@ -167,7 +219,12 @@ function readLease(
     isSameProcess(r.pid, r.pidStart, seams.startOf ?? processStart)
   )
     return r
-  if (recover) takeOver(file, json)
+  if (recover && takeOver(file, json) && r !== null)
+    recordEnd(name, identityOf(r, true), {
+      ok: false,
+      abandoned: true,
+      error: `pid ${String(r.pid)} went away without letting go of the instance`,
+    })
   return null
 }
 
@@ -240,22 +297,31 @@ function announceWait(name: string): (holder: LeaseHolder) => void {
 
 const TAKE_ATTEMPTS = 50
 
+const automaticOf = (o: LeaseOptions): boolean =>
+  o.automatic ?? process.env[AUTOMATIC_ENV] === "1"
+
+const ownRecord = (
+  name: string,
+  operation: LeaseOperation,
+  automatic: boolean,
+): LeaseRecord => ({
+  operation,
+  id: randomUUID(),
+  pid: process.pid,
+  pidStart: ownStart(),
+  startedAt: new Date().toISOString(),
+  instance: name,
+  automatic,
+})
+
 async function acquire(
   name: string,
   operation: LeaseOperation,
   o: LeaseOptions,
 ): Promise<LeaseRecord | InstanceBusy> {
   const file = pathsFor(name).lease
-  const automatic = o.automatic ?? process.env[AUTOMATIC_ENV] === "1"
-  const record: LeaseRecord = {
-    operation,
-    id: randomUUID(),
-    pid: process.pid,
-    pidStart: ownStart(),
-    startedAt: new Date().toISOString(),
-    instance: name,
-    automatic,
-  }
+  const automatic = automaticOf(o)
+  const record = ownRecord(name, operation, automatic)
   const deadline = Date.now() + (o.waitMs ?? AUTOMATIC_WAIT_MS)
   const onWait = o.onWait ?? announceWait(name)
   let announced = false
@@ -294,18 +360,29 @@ export async function withOperation<T>(
     console.error(
       `note: ${got.holder.operation} (pid ${String(got.holder.pid)}) holds "${name}"; killing it anyway`,
     )
-    return await run()
+    const own = ownRecord(name, operation, automaticOf(o))
+    return await recorded(name, identityOf(own, false), run)
   }
   const file = pathsFor(name).lease
-  const onExit = (): void => {
+  const who = identityOf(got, true)
+  let ended = false
+  const onExit = (code: number): void => {
+    if (!ended) recordEnd(name, who, exited(code))
+    ended = true
     release(file, got.id)
   }
   process.on("exit", onExit)
   try {
-    return await held.run(
-      new Map([...(held.getStore() ?? []), [name, got.id]]),
-      run,
-    )
+    return await recorded(name, who, async () => {
+      try {
+        return await held.run(
+          new Map([...(held.getStore() ?? []), [name, got.id]]),
+          run,
+        )
+      } finally {
+        ended = true
+      }
+    })
   } finally {
     process.off("exit", onExit)
     release(file, got.id)
