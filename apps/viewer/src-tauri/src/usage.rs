@@ -1,14 +1,9 @@
-//! The title bar's meters: QEMU's CPU time and memory from `ps`, and Windows'
-//! own memory and C: from the agent's GET /stats (agent.rs), in one call every
-//! few seconds that starts no CLI.
-
 use serde::Serialize;
 use serde_json::Value;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use crate::agent::Agents;
 
-/// QEMU's CPU time so far and its resident memory, from `ps -o time=,rss=`.
 #[derive(Debug, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct HostUsage {
@@ -16,18 +11,15 @@ pub struct HostUsage {
     rss_bytes: u64,
 }
 
-/// One sample for the meters: QEMU's side from `ps`, Windows' side from the agent.
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Usage {
-    /// Milliseconds since the epoch when `ps` ran, for CPU over time.
     at_ms: f64,
     host: Option<HostUsage>,
     guest: Option<Value>,
     guest_error: Option<String>,
 }
 
-/// macOS `ps` prints CPU time as [[dd-]hh:]mm:ss.cc and RSS in KiB.
 pub fn parse_ps(out: &str) -> Option<HostUsage> {
     let mut words = out.split_whitespace();
     let time = words.next()?;
@@ -51,7 +43,6 @@ fn host_usage(pid: u32) -> Option<HostUsage> {
     parse_ps(&String::from_utf8_lossy(&out.stdout))
 }
 
-/// A sample for the meters: QEMU process `pid`, and machine `instance`'s agent when given (Windows is up).
 #[tauri::command]
 pub async fn instance_usage(app: tauri::AppHandle, agents: tauri::State<'_, Agents>, pid: u32, instance: Option<String>) -> Result<Usage, String> {
     let at_ms = SystemTime::now().duration_since(UNIX_EPOCH).map_or(0.0, |d| d.as_secs_f64() * 1000.0);

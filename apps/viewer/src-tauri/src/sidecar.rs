@@ -1,19 +1,3 @@
-//! Running the winvm CLI (the bundled sidecar), with a deadline where one
-//! belongs, and saying why it failed: the helper is `missing`, it would not
-//! `launch`, it ran past its `timeout` and was stopped, or it `exit`ed nonzero
-//! (or on a signal).
-//!
-//! A deadline stops only the CLI process this app started: SIGTERM to its own
-//! pid (checked to still be this app's child first), two seconds to finish,
-//! then the shell plugin's SIGKILL of that same child. Never a process group:
-//! QEMU, the per-instance service and the watcher are detached from the CLI
-//! and are never signalled from here. A `status` stopped mid-repair leaves its
-//! repair lock behind for the next poll to pick up.
-//!
-//! Reads and connects are bounded; long mutations (setup, start, stop, save,
-//! load, file copies, exec, …) keep no automatic deadline, as before: killing
-//! them halfway would do more harm than waiting.
-
 use serde::Serialize;
 use std::time::Duration;
 use tauri::async_runtime::Receiver;
@@ -21,23 +5,14 @@ use tauri_plugin_shell::process::{CommandChild, CommandEvent, TerminatedPayload}
 use tauri_plugin_shell::ShellExt;
 use tokio::time::{timeout_at, Instant};
 
-/// Status, info, doctor and the like: long enough for `status` to repair a stale
-/// service or watcher, short enough that a wedged CLI never stops the polling.
 pub const READ_TIMEOUT: Duration = Duration::from_secs(45);
-/// A terminal's endpoint, the shells it has, the screen's address: these may
-/// install or update the guest agent first.
 pub const CONNECT_TIMEOUT: Duration = Duration::from_secs(120);
-/// `winvm agent connect`, which may also install the agent.
 pub const AGENT_CONNECT_TIMEOUT: Duration = CONNECT_TIMEOUT;
-/// `winvm cua serve` printing its token.
 pub const SHARE_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(60);
-/// Between SIGTERM and SIGKILL.
 pub const TERM_GRACE: Duration = Duration::from_secs(2);
 
-/// Verbs whose first word after the flags names what they do (`share status`, `saves rm`).
 const WITH_SUBCOMMANDS: &[&str] = &["share", "mcp", "saves", "files", "agent", "cua"];
 
-/// What a command printed, and its exit code.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct Output {
     pub code: i32,
@@ -54,9 +29,6 @@ pub enum FailureKind {
     Exit,
 }
 
-/// Why a sidecar run failed, for the UI: a stable `kind`, the `operation`, and
-/// an actionable `message`; what it printed, its code or signal, and the
-/// deadline it ran past are kept for details.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SidecarFailure {
@@ -68,7 +40,6 @@ pub struct SidecarFailure {
     pub code: Option<i32>,
     pub signal: Option<i32>,
     pub timeout_ms: Option<u64>,
-    /// The host's own words (an OS error), when there are any.
     pub detail: Option<String>,
 }
 
@@ -76,7 +47,6 @@ fn seconds(d: Duration) -> String {
     format!("{}", d.as_secs_f64())
 }
 
-/// The `::error::` lines a command printed, else its stderr.
 fn said(stdout: &str, stderr: &str) -> String {
     let errors: Vec<&str> =
         stdout.lines().chain(stderr.lines()).filter_map(|l| l.strip_prefix("::error::")).map(str::trim).filter(|l| !l.is_empty()).collect();
@@ -117,7 +87,6 @@ impl SidecarFailure {
         }
     }
 
-    /// Not run at all: the request itself was wrong.
     pub fn rejected(operation: &str, message: String) -> Self {
         Self::new(FailureKind::Launch, operation, message)
     }
@@ -145,7 +114,6 @@ impl SidecarFailure {
     }
 }
 
-/// Why the helper couldn't be started: not there at all, or there and refused.
 pub fn spawn_failure(operation: &str, err: &tauri_plugin_shell::Error) -> SidecarFailure {
     match err {
         tauri_plugin_shell::Error::Io(e) if e.kind() == std::io::ErrorKind::NotFound => SidecarFailure::missing(operation, err.to_string()),
@@ -153,7 +121,6 @@ pub fn spawn_failure(operation: &str, err: &tauri_plugin_shell::Error) -> Sideca
     }
 }
 
-/// The word after the verb's flags (and `-i NAME`), for verbs that have one.
 fn subcommand(args: &[String]) -> Option<&str> {
     let mut rest = args.iter().skip(1);
     while let Some(a) = rest.next() {
@@ -166,7 +133,6 @@ fn subcommand(args: &[String]) -> Option<&str> {
     None
 }
 
-/// What a run is called in messages: the verb, and its subcommand where it has one.
 pub fn operation_of(args: &[String]) -> String {
     match args.first().map(String::as_str) {
         None => "winvm".into(),
@@ -178,7 +144,6 @@ pub fn operation_of(args: &[String]) -> String {
     }
 }
 
-/// The deadline for a `winvm` run from the app, by what it does. None: no automatic deadline.
 pub fn timeout_for(args: &[String]) -> Option<Duration> {
     match args.first().map_or("", String::as_str) {
         "status" | "info" | "doctor" | "ls" | "settings" | "config" | "help" => Some(READ_TIMEOUT),
@@ -189,8 +154,6 @@ pub fn timeout_for(args: &[String]) -> Option<Duration> {
     }
 }
 
-/// SIGTERM to `pid`, only while it is this process's own child (a zombie not yet
-/// reaped still is; a reaped pid taken by something else is not). Never a group.
 pub fn terminate_child(pid: u32) -> Result<(), String> {
     if pid == 0 || pid > i32::MAX as u32 {
         return Err(format!("not a process id: {pid}"));
@@ -209,10 +172,8 @@ pub fn terminate_child(pid: u32) -> Result<(), String> {
     }
 }
 
-/// The running CLI, as the runner needs it: its pid for SIGTERM, and SIGKILL.
 pub trait SidecarChild {
     fn pid(&self) -> u32;
-    /// SIGKILL to this child only (the shell plugin's, which is a no-op once it is reaped).
     fn kill(self) -> Result<(), String>;
 }
 
@@ -225,8 +186,6 @@ impl SidecarChild for CommandChild {
     }
 }
 
-/// How to run: the deadline (None: none), the SIGTERM-to-SIGKILL grace, how to
-/// SIGTERM a pid, and, for a server, when what it printed says it is ready.
 pub struct Plan<'a> {
     pub timeout: Option<Duration>,
     pub grace: Duration,
@@ -234,7 +193,6 @@ pub struct Plan<'a> {
     pub ready: Option<&'a (dyn Fn(&str) -> bool + Sync)>,
 }
 
-/// A run that ended (exit 0), or a server that said it is ready and keeps running.
 pub enum Finished<C> {
     Exited(Output),
     Ready { output: Output, child: C },
@@ -301,15 +259,12 @@ impl Collected {
         }))
     }
 
-    /// The events ended without the process's exit: it can't be told what happened.
     fn lost(self, operation: &str) -> SidecarFailure {
         let why = if self.errors.is_empty() { "its output ended without an exit status".to_owned() } else { self.errors.join("\n") };
         SidecarFailure { stdout: self.stdout, stderr: self.stderr, ..SidecarFailure::launch(operation, why) }
     }
 }
 
-/// Reads a spawned CLI's events to its end, or until `plan.ready`, or until the
-/// deadline: then SIGTERM to its pid, `plan.grace` to end, and SIGKILL.
 pub async fn collect<C: SidecarChild>(mut rx: Receiver<CommandEvent>, child: C, operation: &str, plan: Plan<'_>) -> Result<Finished<C>, Box<SidecarFailure>> {
     let mut got = Collected::default();
     let deadline = plan.timeout.map(|t| Instant::now() + t);
@@ -329,7 +284,6 @@ pub async fn collect<C: SidecarChild>(mut rx: Receiver<CommandEvent>, child: C, 
             Step::Closed => return Err(Box::new(got.lost(operation))),
         }
     }
-    // An exit (or readiness) already queued when the deadline struck wins over it.
     while let Ok(event) = rx.try_recv() {
         match got.take(Some(event)) {
             Step::More if ready(&got) => return Ok(Finished::Ready { output: got.output(0), child }),
@@ -362,7 +316,6 @@ fn spawn(app: &tauri::AppHandle, operation: &str, args: &[String]) -> Result<(Re
     app.shell().sidecar("winvm").map_err(|e| spawn_failure(operation, &e))?.args(args).spawn().map_err(|e| Box::new(spawn_failure(operation, &e)))
 }
 
-/// Runs `winvm ARGS` to its end, within `timeout` when given. Exit 0 is Ok; anything else is a `SidecarFailure`.
 pub async fn run_sidecar(app: &tauri::AppHandle, args: &[String], timeout: Option<Duration>) -> Result<Output, Box<SidecarFailure>> {
     let operation = operation_of(args);
     let (rx, child) = spawn(app, &operation, args)?;
@@ -372,7 +325,6 @@ pub async fn run_sidecar(app: &tauri::AppHandle, args: &[String], timeout: Optio
     }
 }
 
-/// Starts a long-running `winvm ARGS` and waits, within `timeout`, for what it prints to satisfy `ready`.
 pub async fn start_sidecar(
     app: &tauri::AppHandle,
     args: &[String],
@@ -428,7 +380,6 @@ mod tests {
         }
     }
 
-    /// Runs `collect` over `events` with a fake child (pid 4242) whose SIGTERM and SIGKILL are logged.
     fn run(
         events: Vec<CommandEvent>,
         close: bool,
@@ -440,7 +391,6 @@ mod tests {
             let log: Log = Arc::default();
             let (tx, rx) = channel(16);
             send_all(&tx, events).await;
-            // `close`: no sender is left, so the channel ends after the events (the plugin's threads are done).
             let keep = if close {
                 drop(tx);
                 None
@@ -605,7 +555,6 @@ mod tests {
 
     #[test]
     fn an_exit_already_queued_at_the_deadline_is_not_a_timeout() {
-        // Nothing arrives before the deadline is checked, but the exit is waiting in the channel.
         let (got, log) = run(vec![CommandEvent::Stdout(line("done")), ended(Some(0), None)], false, Some(Duration::from_millis(0)), None, None);
         assert_eq!(exited(got).expect("finished").stdout, "done\n");
         assert!(log.is_empty(), "{log:?}");
@@ -672,7 +621,6 @@ mod tests {
         let status = child.wait().unwrap();
         assert_eq!(status.signal(), Some(15));
 
-        // A grandchild: alive, ours to start, but not this process's child. Left alone.
         let mut parent = std::process::Command::new("/bin/sh")
             .args(["-c", "/bin/sleep 30 & echo $!; wait"])
             .stdout(std::process::Stdio::piped())

@@ -1,8 +1,3 @@
-//! The start and end of a live resize (the person dragging the window's edge),
-//! as `live-resize` events to the main window: `true` when it starts, `false`
-//! when the mouse is let go. The viewer resizes the guest on the release rather
-//! than guessing it from a pause; `WebKit` sees only the sizes, not the drag.
-
 use tauri::{Emitter, WebviewWindow};
 
 #[cfg(target_os = "macos")]
@@ -26,7 +21,6 @@ pub fn watch(window: &WebviewWindow) {
         });
         // SAFETY: the observer filters on this window's object and runs the block on the posting (main) thread.
         let observer = unsafe { center.addObserverForName_object_queue_usingBlock(Some(name), Some(object), None, &block) };
-        // Kept for the app's life: the main window never goes away while it runs.
         std::mem::forget(observer);
     }
 }

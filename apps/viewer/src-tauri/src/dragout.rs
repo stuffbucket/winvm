@@ -1,28 +1,10 @@
-//! Dragging guest files out of the Files window onto Finder or the Desktop.
-//!
-//! The Files window runs its own drag while the pointer is inside it (moving
-//! files between guest folders). When the pointer leaves the window with the
-//! button still held, it calls `files_drag_out`, which starts a native drag
-//! session from the window's `WKWebView` carrying one file promise
-//! (`NSFilePromiseProvider`) per item. Nothing is copied at that point: only when
-//! Finder accepts the drop does it ask each promise to write its file, and the
-//! promise then runs the bundled `winvm get` into the place Finder chose, on a
-//! background queue. A folder is promised as `public.folder` and `winvm get`
-//! writes the whole tree there.
-//!
-//! Events to the window that started the drag:
-//!   `files-promise`  {state: "start" | "done" | "failed", name, dest?, error?}
-//!   `files-drag-end` {operation: "copy" | "none"}
-
 use serde::{Deserialize, Serialize};
 #[cfg(target_os = "macos")]
 use tauri::Manager;
 
-/// One guest file or folder being dragged out.
 #[derive(Clone, Deserialize)]
 #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 pub struct DragItem {
-    /// The guest's Windows path.
     pub path: String,
     pub name: String,
     pub dir: bool,
@@ -43,7 +25,6 @@ struct DragEnd {
     operation: &'static str,
 }
 
-/// Starts the native drag of `items` from `window`; returns once the session has begun (or why it didn't).
 #[tauri::command]
 pub async fn files_drag_out(
     window: tauri::WebviewWindow,
@@ -103,11 +84,8 @@ mod mac {
     use tauri::Emitter;
     use tauri_plugin_shell::ShellExt;
 
-    /// The edge of each item's icon under the pointer, in points.
     const ICON: f64 = 48.0;
 
-    /// What one live drag holds on to: providers keep their delegates only weakly, and Finder asks
-    /// for the files after the session has ended, so all of it lives until every promise is kept.
     struct Live {
         id: u64,
         _source: Retained<DragSource>,
@@ -119,13 +97,10 @@ mod mac {
     }
 
     thread_local! {
-        /// Main thread only.
         static LIVE: RefCell<Vec<Live>> = const { RefCell::new(Vec::new()) };
         static NEXT: std::cell::Cell<u64> = const { std::cell::Cell::new(1) };
     }
 
-    /// Drops a drag's objects once nothing can ask them for more: the session ended with nothing
-    /// dropped, or every promise has been written.
     fn settle(id: u64) {
         LIVE.with(|live| {
             live.borrow_mut().retain(|l| match (l.id == id, l.ended) {
@@ -145,7 +120,6 @@ mod mac {
         settle(id);
     }
 
-    /// Where promises are written: off the main thread, a few at a time.
     fn queue() -> &'static NSOperationQueue {
         static QUEUE: OnceLock<Retained<NSOperationQueue>> = OnceLock::new();
         QUEUE.get_or_init(|| {
@@ -217,8 +191,6 @@ mod mac {
             let _ = i.app.emit_to(i.label.as_str(), "files-promise", event);
         }
 
-        /// Runs `winvm get` into the place Finder chose. Never replaces what is there: a taken name
-        /// becomes Finder's "name 2" beside it.
         fn fetch(&self, url: &NSURL) -> Result<(), String> {
             let i = self.ivars();
             let asked = url
@@ -291,8 +263,6 @@ mod mac {
         unsafe impl NSObjectProtocol for DragSource {}
 
         unsafe impl NSDraggingSource for DragSource {
-            /// Copy to other apps. Nothing within this one: the webview accepts any drag, so a
-            /// drag that passes back over a winvm window would otherwise end there, unfulfilled.
             #[unsafe(method(draggingSession:sourceOperationMaskForDraggingContext:))]
             fn operation_mask(&self, _session: &NSDraggingSession, context: NSDraggingContext) -> NSDragOperation {
                 if context == NSDraggingContext::OutsideApplication {
@@ -306,8 +276,6 @@ mod mac {
             fn ended(&self, _session: &NSDraggingSession, _at: NSPoint, operation: NSDragOperation) {
                 let i = self.ivars();
                 let copied = operation.contains(NSDragOperation::Copy);
-                // The session took the mouse-up; give the webview one so its page doesn't think the
-                // button is still down.
                 if let Some(window) = i.webview.window() {
                     if let Some(up) = mouse_event(&window, NSEventType::LeftMouseUp) {
                         i.webview.mouseUp(&up);
@@ -329,7 +297,6 @@ mod mac {
         }
     }
 
-    /// A left-mouse event of `kind` where the pointer is now, in `window`.
     fn mouse_event(window: &NSWindow, kind: NSEventType) -> Option<Retained<NSEvent>> {
         let at = window.mouseLocationOutsideOfEventStream();
         let now = NSProcessInfo::processInfo().systemUptime();
@@ -346,7 +313,6 @@ mod mac {
         )
     }
 
-    /// The item's type for the promise and its icon: a folder, the extension's type, or plain data.
     fn content_type(item: &DragItem) -> Retained<UTType> {
         let data =
             || UTType::typeWithIdentifier(&NSString::from_str("public.data")).expect("public.data is a system type");
@@ -379,7 +345,6 @@ mod mac {
                 Retained::retain(ns_window.cast::<NSWindow>()).ok_or("the window has no NSWindow")?,
             )
         };
-        // Released already (a quick flick out of the window): there is nothing left to drag.
         if NSEvent::pressedMouseButtons() & 1 == 0 {
             return Err("the mouse button is up".into());
         }
@@ -412,7 +377,6 @@ mod mac {
             let entry =
                 NSDraggingItem::initWithPasteboardWriter(NSDraggingItem::alloc(), ProtocolObject::from_ref(&*provider));
             let icon = workspace.iconForContentType(&kind);
-            // A small fan under the pointer, as Finder stacks a multiple selection.
             let shift = f64::from(u8::try_from(k).unwrap_or(u8::MAX).min(4)) * 4.0;
             let frame = NSRect::new(
                 NSPoint::new(at.x - ICON / 2.0 + shift, at.y - ICON / 2.0 + shift),
@@ -456,7 +420,6 @@ mod mac {
         use super::{content_type, DragItem, DragSource, PromiseDelegate};
         use objc2::ClassType;
 
-        /// Registering the classes checks each method against its protocol's declared types.
         #[test]
         fn classes_register() {
             assert_eq!(PromiseDelegate::class().name().to_str(), Ok("WinvmFilePromiseDelegate"));

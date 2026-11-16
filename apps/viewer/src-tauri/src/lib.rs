@@ -47,8 +47,6 @@ mod command_allowlist_tests {
     }
 }
 
-/// Runs `winvm ARGS` (within the deadline its verb has: sidecar.rs). A nonzero exit is a
-/// `SidecarFailure` of kind `exit`, which the UI turns back into its output (backend.ts).
 #[tauri::command]
 async fn winvm(app: tauri::AppHandle, args: Vec<String>) -> Result<Output, Box<SidecarFailure>> {
     match args.first() {
@@ -63,19 +61,15 @@ async fn winvm(app: tauri::AppHandle, args: Vec<String>) -> Result<Output, Box<S
     sidecar::run_sidecar(&app, &args, sidecar::timeout_for(&args)).await
 }
 
-/// The `winvm cua serve` this app started, while the screen is shared with an agent.
 #[derive(Default)]
 struct Sharing(Mutex<Option<CommandChild>>);
 
 fn stop_sharing(sharing: &Sharing) {
     if let Some(child) = sharing.0.lock().ok().and_then(|mut c| c.take()) {
-        // SIGTERM, so the server removes its cua.json; CommandChild::kill is SIGKILL. Only while it is still ours.
         let _ = sidecar::terminate_child(child.pid());
     }
 }
 
-/// Starts `winvm cua serve` and returns what it printed once it is listening (or what it said before
-/// exiting), within `SHARE_HANDSHAKE_TIMEOUT`: a server that never prints its token is stopped.
 #[tauri::command]
 async fn share_start(app: tauri::AppHandle, instance: String) -> Result<Output, Box<SidecarFailure>> {
     let sharing = app.state::<Sharing>();
@@ -103,8 +97,6 @@ fn share_stop(app: tauri::AppHandle) {
 const TERMINAL: &str = "terminal";
 const SHELLS: &[&str] = &["pwsh", "powershell", "cmd"];
 
-/// One tab the Terminal window should open: a shell in an instance, started in `cwd` (home when absent),
-/// with the shells that instance has when the main window already asked, and the instance's title.
 #[derive(Clone, Deserialize, Serialize)]
 struct TerminalRequest {
     instance: String,
@@ -116,11 +108,9 @@ struct TerminalRequest {
     title: Option<String>,
 }
 
-/// Tabs asked for and not yet taken by the Terminal window, which may still be loading.
 #[derive(Default)]
 struct TerminalRequests(Mutex<Vec<TerminalRequest>>);
 
-/// Brings the Terminal window forward, or opens it beside the main window.
 fn show_terminal(app: &tauri::AppHandle) -> Result<(), String> {
     if let Some(window) = app.get_webview_window(TERMINAL) {
         let _ = window.unminimize();
@@ -133,7 +123,6 @@ fn show_terminal(app: &tauri::AppHandle) -> Result<(), String> {
         .inner_size(820.0, 520.0)
         .min_inner_size(420.0, 240.0)
         .visible(false);
-    // Tabs in the title bar, beside traffic lights where the main window has them (tauri.conf.json).
     #[cfg(target_os = "macos")]
     {
         builder = builder
@@ -147,7 +136,6 @@ fn show_terminal(app: &tauri::AppHandle) -> Result<(), String> {
     builder.build().map(|_| ()).map_err(|e| e.to_string())
 }
 
-/// Just right of the main window, when the screen has room for `width` there.
 fn beside_main(app: &tauri::AppHandle, width: f64) -> Option<(f64, f64)> {
     let main = app.get_webview_window("main")?;
     let scale = main.scale_factor().ok()?;
@@ -178,27 +166,21 @@ fn terminal_take(app: tauri::AppHandle) -> Vec<TerminalRequest> {
     app.state::<TerminalRequests>().0.lock().map(|mut q| std::mem::take(&mut *q)).unwrap_or_default()
 }
 
-/// The window with keyboard focus, if any of the app's has it.
 fn focused_window(app: &tauri::AppHandle) -> Option<tauri::WebviewWindow> {
     app.webview_windows().into_values().find(|w| w.is_focused().unwrap_or(false))
 }
 
-/// The Files window's label for an instance: one window per instance.
 fn files_label(instance: &str) -> String {
     let safe: String = instance.chars().map(|c| if c.is_ascii_alphanumeric() || c == '-' || c == '_' { c } else { '_' }).collect();
     format!("files-{safe}")
 }
 
-/// Percent-encodes a query value.
 fn query_value(s: &str) -> String {
     s.bytes()
         .map(|b| if b.is_ascii_alphanumeric() || b"-_.~".contains(&b) { (b as char).to_string() } else { format!("%{b:02X}") })
         .collect()
 }
 
-/// Opens the instance's Files window, or brings it forward. The overlay title bar puts the traffic
-/// lights over the window's own sidebar, where the main window puts them over its toolbar. `title`
-/// is what the instance is called (its name when absent); the window hears of later changes itself.
 #[tauri::command]
 async fn files_open(app: tauri::AppHandle, instance: String, title: Option<String>) -> Result<(), String> {
     if instance.is_empty() || instance.len() > 64 {
@@ -233,8 +215,6 @@ async fn files_open(app: tauri::AppHandle, instance: String, title: Option<Strin
     builder.build().map(|_| ()).map_err(|e| e.to_string())
 }
 
-/// Puts text on the Mac's clipboard (the webview's own clipboard needs a user gesture a menu item isn't).
-/// pbcopy reads its input in LANG's encoding, and an app started from Finder has none: say UTF-8.
 #[tauri::command]
 fn copy_text(text: &str) -> Result<(), String> {
     use std::io::Write;
@@ -248,8 +228,6 @@ fn copy_text(text: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// The text on the Mac's clipboard, for Windows' clipboard; empty when it holds none (an image,
-/// files). Off the main thread: the screen asks each time the window comes forward.
 #[tauri::command]
 async fn read_text() -> Result<String, String> {
     tauri::async_runtime::spawn_blocking(|| {
@@ -267,7 +245,6 @@ async fn read_text() -> Result<String, String> {
     .map_err(|e| e.to_string())?
 }
 
-/// The Mac user's home folder, so the UI can show paths under it as `~/…`.
 #[tauri::command]
 fn home_dir() -> Result<String, String> {
     std::env::var("HOME").map_err(|e| e.to_string())
@@ -279,7 +256,6 @@ fn downloads_dir() -> Result<String, String> {
     Ok(Path::new(&home).join("Downloads").display().to_string())
 }
 
-/// `dir/name`, or Finder's "name 2", "name 3"... when that is taken, so a copy never replaces a Mac file.
 #[tauri::command]
 fn unused_path(dir: &str, name: &str, folder: bool) -> String {
     let dir = Path::new(dir);
@@ -296,7 +272,6 @@ fn unused_path(dir: &str, name: &str, folder: bool) -> String {
     path.display().to_string()
 }
 
-/// Shows a file or folder in Finder, selected.
 #[tauri::command]
 fn reveal(path: &str) -> Result<(), String> {
     std::process::Command::new("/usr/bin/open").arg("-R").arg(path).status().map_err(|e| e.to_string())?;
@@ -320,12 +295,9 @@ fn install_cli() -> Result<String, String> {
     Ok(link.display().to_string())
 }
 
-/// Set while an update check or install is running, so a second one waits its turn.
 #[derive(Default)]
 struct Updating(AtomicBool);
 
-/// Checks the release's latest.json for a newer signed winvm and offers to install it.
-/// `asked`: the person chose Check for Updates, so say when there is nothing new or the check failed.
 fn check_for_update(app: tauri::AppHandle, asked: bool) {
     if app.state::<Updating>().0.swap(true, Ordering::SeqCst) {
         return;
@@ -348,7 +320,6 @@ fn check_for_update(app: tauri::AppHandle, asked: bool) {
                     match done {
                         Ok(()) => {
                             stop_sharing(&app.state::<Sharing>());
-                            // Updating never opens the close flow or changes a VM: let the restart through.
                             app.state::<close::CloseCoordinator>().authorize_bypass();
                             app.restart();
                         }
@@ -381,13 +352,9 @@ fn check_for_update(app: tauri::AppHandle, asked: bool) {
     });
 }
 
-/// The default menu, plus updates and the command line (app menu), terminal tabs and Checkpoints… (File) and the
-/// command reference (Help). File's New Terminal Tab and Close act on the Terminal window's tabs when
-/// it is in front, so Cmd-T and Cmd-W are tab keys there and window keys elsewhere.
 fn menu(app: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
     let menu = Menu::default(app)?;
     let new_tab = MenuItem::with_id(app, "new-tab", "New Terminal Tab", true, Some("CmdOrCtrl+T"))?;
-    // The checkpoints view. A menu key works even while Windows' screen has the keyboard.
     let checkpoints = MenuItem::with_id(app, "checkpoints", "Checkpoints…", true, Some("CmdOrCtrl+Shift+T"))?;
     let close = MenuItem::with_id(app, "close", "Close", true, Some("CmdOrCtrl+W"))?;
     let file = menu
@@ -401,8 +368,6 @@ fn menu(app: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
         }
         file.append_items(&[&new_tab, &checkpoints, &PredefinedMenuItem::separator(app)?, &close])?;
     }
-    // The Window menu's own Close Window (after a separator) would take Cmd-W back from File's Close.
-    // Rename Windowâ¦ names the instance (main window) or the active tab (Terminal).
     let rename = MenuItem::with_id(app, "rename-window", "Rename Windowâ¦", true, None::<&str>)?;
     if let Some(window) = menu.get(WINDOW_SUBMENU_ID).and_then(|i| i.as_submenu().cloned()) {
         if window.items()?.len() == 4 {
@@ -434,7 +399,6 @@ fn menu(app: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
     let input_index = menu.items()?.len().saturating_sub(2);
     menu.insert(&input, input_index)?;
     if let Some(app_menu) = menu.items()?.first().and_then(|i| i.as_submenu().cloned()) {
-        // The predefined Quit terminates the app without asking; ours joins the main window's close.
         let items = app_menu.items()?;
         let predefined_quit = items
             .last()
@@ -453,7 +417,6 @@ fn menu(app: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
     Ok(menu)
 }
 
-/// A line on stderr, for the viewer's timings (a resize from release to its first sharp frame).
 #[tauri::command]
 fn trace(line: &str) {
     eprintln!("{line}");
@@ -473,7 +436,6 @@ fn system_keyboard_capture(captured: bool) -> Result<(), String> {
             fn CGSMainConnectionID() -> Connection;
             fn CGSSetGlobalHotKeyOperatingMode(connection: Connection, mode: u32) -> i32;
         }
-        // The same CoreGraphics SPI UTM uses: 0 enables host hotkeys, 1 disables them.
         // SAFETY: both functions take and return plain integers and have no preconditions.
         let result = unsafe { CGSSetGlobalHotKeyOperatingMode(CGSMainConnectionID(), u32::from(captured)) };
         if result != 0 {
@@ -558,14 +520,11 @@ pub fn run() {
         .manage(agent::Agents::default())
         .menu(menu)
         .on_window_event(|window, event| {
-            // The main window's close is the viewer's close: it asks the window to run its flow, and
-            // the window closes only once that is done. Other windows close themselves.
             if let WindowEvent::CloseRequested { api, .. } = event {
                 if close::closes_viewer(window.label()) && close::request(window.app_handle()) {
                     api.prevent_close();
                 }
             }
-            // Tabs asked for and never taken die with the window, rather than open in the next one.
             if let (WindowEvent::Destroyed, TERMINAL) = (event, window.label()) {
                 if let Ok(mut queue) = window.state::<TerminalRequests>().0.lock() {
                     queue.clear();
@@ -610,7 +569,6 @@ pub fn run() {
         .build(tauri::generate_context!())
         .expect("winvm could not start")
         .run(|app, event| match event {
-            // A backstop: an exit nobody approved asks the main window instead of leaving.
             RunEvent::ExitRequested { api, .. } => {
                 if close::request(app) {
                     api.prevent_exit();

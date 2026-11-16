@@ -1,24 +1,3 @@
-//! The machines' in-guest agents, called by the app directly over HTTP: a few
-//! milliseconds a call, where running the winvm CLI costs a process start
-//! (~0.7 s). For anything that calls often: a live resize, the meters, the
-//! Files window.
-//!
-//! The address and token come from `winvm agent -i NAME connect --json`, run
-//! once per machine (it also installs or updates the agent if need be) and
-//! kept. A call that cannot reach the agent, or is refused its token, forgets
-//! them and asks again once: the machine restarted (a new forward), or the
-//! agent was reinstalled. A connect that failed is not tried again for a few
-//! seconds, so a machine still starting is not asked on every call.
-//!
-//! A machine paused or asleep can't answer. `winvm agent connect` says so at
-//! once (exit 3) rather than wait for the agent or reinstall it; that answer
-//! comes back as an error starting "paused:", and is not kept, so the first
-//! call after it runs again connects straight away.
-//!
-//! The connect itself runs within a deadline (sidecar.rs): a CLI that never
-//! answers is stopped and its failure kept like any other, so the one connect
-//! at a time never holds every other call indefinitely.
-
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
@@ -28,15 +7,11 @@ use tauri::async_runtime::Mutex as AsyncMutex;
 
 use crate::sidecar::{self, FailureKind, SidecarFailure};
 
-/// After a failed connect, calls fail at once for this long.
 const RETRY_AFTER: Duration = Duration::from_secs(10);
-/// `winvm agent connect`'s exit code for a machine paused or asleep.
 const EXIT_PAUSED: i32 = 3;
-/// How an error from a paused or asleep machine starts, for the UI to tell it apart.
 pub const PAUSED_PREFIX: &str = "paused:";
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(30);
 
-/// Where an agent is and its token, as `winvm agent connect --json` prints them.
 #[derive(Clone, Deserialize)]
 struct Link {
     url: String,
@@ -49,51 +24,40 @@ struct Cache {
     failed: HashMap<String, (Instant, String)>,
 }
 
-/// One HTTP client for every agent (it keeps their connections open), and what each machine's connect said.
 pub struct Agents {
     http: Result<reqwest::Client, String>,
     cache: Mutex<Cache>,
-    /// One connect at a time, so calls arriving together run the CLI once.
     connecting: AsyncMutex<()>,
 }
 
 impl Default for Agents {
     fn default() -> Self {
-        // reqwest here has rustls without a crypto provider (the updater's
-        // choice of features), and panics building a client unless one is
-        // set: the one the updater installs, before it would.
         if rustls::crypto::CryptoProvider::get_default().is_none() {
             let _ = rustls::crypto::ring::default_provider().install_default();
         }
-        // Agents are on loopback: never through a system proxy.
         let http = reqwest::Client::builder().no_proxy().build().map_err(|e| e.to_string());
         Agents { http, cache: Mutex::default(), connecting: AsyncMutex::new(()) }
     }
 }
 
-/// What the agent answered: its HTTP status, and its body (JSON, or the text when it isn't).
 #[derive(Debug, Serialize)]
 pub struct Reply {
     pub status: u16,
     pub body: Value,
 }
 
-/// An instance name as winvm makes them; anything else never reaches the CLI.
 fn valid_instance(name: &str) -> bool {
     !name.is_empty() && name.len() <= 64 && name.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_' || b == b'.') && !name.starts_with(['.', '-'])
 }
 
-/// A path on the agent: absolute, no scheme or host smuggled in.
 fn valid_path(path: &str) -> bool {
     path.starts_with('/') && !path.starts_with("//") && !path.contains("://") && !path.contains(char::is_whitespace)
 }
 
-/// Only the agent's loopback forward.
 fn valid_url(url: &str) -> bool {
     url.strip_prefix("http://127.0.0.1:").is_some_and(|port| !port.is_empty() && port.bytes().all(|b| b.is_ascii_digit()))
 }
 
-/// `winvm agent connect --json`'s answer.
 fn parse_link(stdout: &str) -> Result<Link, String> {
     let link: Link = serde_json::from_str(stdout.trim()).map_err(|e| format!("winvm agent connect said: {e}"))?;
     if !valid_url(&link.url) || link.token.is_empty() {
@@ -103,7 +67,6 @@ fn parse_link(stdout: &str) -> Result<Link, String> {
 }
 
 enum Failure {
-    /// Never reached the agent, or it refused the token: worth a fresh link.
     Unreachable(String),
     Other(String),
 }
@@ -130,7 +93,6 @@ impl Agents {
         }
     }
 
-    /// The machine's agent: as kept, or asked of the CLI.
     async fn link(&self, app: &tauri::AppHandle, instance: &str) -> Result<Link, String> {
         if let Some(link) = self.cached(instance)? {
             return Ok(link);
@@ -147,7 +109,6 @@ impl Agents {
                 c.links.insert(instance.to_owned(), link.clone());
                 Ok(link)
             }
-            // Not kept: it runs again the moment it is resumed or woken.
             Err(ConnectFailure::Paused(why)) => Err(why),
             Err(ConnectFailure::Other(why)) => {
                 c.failed.insert(instance.to_owned(), (Instant::now(), why.clone()));
@@ -171,7 +132,6 @@ impl Agents {
         Ok(Reply { status, body })
     }
 
-    /// One call to a machine's agent, with a fresh link and a second try if the kept one no longer works.
     pub async fn fetch(&self, app: &tauri::AppHandle, instance: &str, method: &str, path: &str, body: Option<&Value>, timeout: Duration) -> Result<Reply, String> {
         if !valid_instance(instance) {
             return Err(format!("not a machine name: {instance}"));
@@ -206,12 +166,10 @@ impl Agents {
 
 #[derive(Debug, PartialEq)]
 enum ConnectFailure {
-    /// The machine is paused or asleep: say so, and don't keep it.
     Paused(String),
     Other(String),
 }
 
-/// Why `winvm agent connect` failed, from its exit code and what it said.
 fn connect_failure(code: Option<i32>, stderr: &str) -> ConnectFailure {
     let said = stderr.trim().trim_start_matches("::error::").trim().to_owned();
     if code == Some(EXIT_PAUSED) {
@@ -220,8 +178,6 @@ fn connect_failure(code: Option<i32>, stderr: &str) -> ConnectFailure {
     ConnectFailure::Other(if said.is_empty() { format!("winvm agent connect exited {code:?}") } else { said })
 }
 
-/// Why a bounded `winvm agent connect` failed: an exit keeps its code (3: paused); a
-/// missing helper, one that would not start, or one past its deadline says so.
 fn connect_failed(f: SidecarFailure) -> ConnectFailure {
     match f.kind {
         FailureKind::Exit => connect_failure(f.code, &f.stderr),
@@ -235,8 +191,6 @@ async fn connect(app: &tauri::AppHandle, instance: &str) -> Result<Link, Connect
     parse_link(&out.stdout).map_err(ConnectFailure::Other)
 }
 
-/// A request to a machine's agent (`GET /stats`, `POST /display`, …): its status and body.
-/// Fails only when the agent can't be reached; an error status comes back as a reply.
 #[tauri::command]
 pub async fn agent_fetch(
     app: tauri::AppHandle,
