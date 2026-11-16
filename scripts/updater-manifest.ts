@@ -1,16 +1,3 @@
-/**
- * The update manifest the winvm app reads (`latest.json`, attached to each
- * release), after checking the update's signature the way the app will.
- *
- * The app's updater (tauri-plugin-updater, `plugins.updater` in
- * apps/viewer/src-tauri/tauri.conf.json) installs a bundle only when its
- * `.sig` was made by `pubkey` and its trusted comment names the release
- * version (`requireSignedVersion`). Checking both here makes a wrongly signed
- * bundle fail the release instead of every user's update.
- *
- * usage: bun scripts/updater-manifest.ts --tag vX.Y.Z --file <.app.tar.gz> --url <download url>
- *          [--sig <path>] [--notes <text>] [--config <tauri.conf.json>] --out <latest.json>
- */
 import { createHash, createPublicKey, verify } from "node:crypto"
 import { readFileSync, writeFileSync } from "node:fs"
 import { basename, resolve } from "node:path"
@@ -32,13 +19,11 @@ function publicKey(pubkey: string): { id: Buffer; key: Buffer } {
   return { id: raw.subarray(2, 10), key: raw.subarray(10, 42) }
 }
 
-/** The key id as minisign prints it. */
 const keyId = (id: Buffer): string => Buffer.from(id).reverse().toString("hex").toUpperCase()
 
 const ed25519 = (key: Buffer, message: Buffer, signature: Buffer): boolean =>
   verify(null, message, createPublicKey({ key: Buffer.concat([ED25519_SPKI_PREFIX, key]), format: "der", type: "spki" }), signature)
 
-/** Throws unless `sigFile` signs `data` with `pubkey` for `version`. Returns the trusted comment. */
 export function verifyUpdaterSignature(data: Uint8Array, sigFile: string, pubkey: string, version: string): string {
   const { id, key } = publicKey(pubkey)
   const box = unbase64(sigFile)
@@ -50,7 +35,6 @@ export function verifyUpdaterSignature(data: Uint8Array, sigFile: string, pubkey
   const algorithm = sig.subarray(0, 2).toString("latin1")
   if (algorithm !== "ED" && algorithm !== "Ed") throw new Error(`unsupported signature algorithm ${algorithm}`)
   if (!sig.subarray(2, 10).equals(id)) throw new Error(`signed with key ${keyId(sig.subarray(2, 10))}, expected ${keyId(id)}`)
-  // "ED" signs the file's BLAKE2b-512 hash; the older "Ed" signs the file itself.
   const message = algorithm === "ED" ? createHash("blake2b512").update(data).digest() : Buffer.from(data)
   if (!ed25519(key, message, sig.subarray(10))) throw new Error("the signature does not match the file")
   const trusted = trustedLine.slice(TRUSTED.length)
@@ -74,7 +58,6 @@ export interface ManifestInput {
   readonly date: Date
 }
 
-/** tauri-plugin-updater's static JSON format, for Apple Silicon Macs only. */
 export function updaterManifest(i: ManifestInput) {
   return {
     version: i.tag.replace(/^v/u, ""),

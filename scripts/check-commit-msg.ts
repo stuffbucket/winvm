@@ -1,13 +1,3 @@
-/**
- * Enforce Conventional Commit subjects. release-please reads every commit that
- * reaches main: a squash brings the PR title, a merge commit brings each of
- * the branch's commits, and a subject it can't parse is silently dropped from
- * the release.
- *
- *   bun scripts/check-commit-msg.ts <message-file>   # commit-msg hook
- *   printf '%s\n' "$SUBJECTS" | bun scripts/check-commit-msg.ts --subjects
- */
-
 const TYPES = [
   "build",
   "chore",
@@ -24,7 +14,6 @@ const TYPES = [
 const CONVENTIONAL = new RegExp(
   `^(?:${TYPES.join("|")})(?:\\([\\w./-]+\\))?!?: \\S`,
 )
-// Subjects git itself writes: merges, reverts, and autosquash markers.
 const GIT_GENERATED = /^(?:Merge |Revert "|(?:fixup|squash|amend)! )/
 
 export function subjectProblem(subject: string): string | undefined {

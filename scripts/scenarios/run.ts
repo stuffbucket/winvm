@@ -1,22 +1,3 @@
-/**
- * Real scenario checks against a running machine: the CLI and agent paths the
- * app uses, with the app's polling running in the background throughout
- * (lib.ts), each asserting what must hold over time. Unit tests can't see
- * these: a guest that resumes itself while paused, a status that lies during a
- * save, a mount left behind by a stop.
- *
- *   bun scripts/scenarios/run.ts -i <machine> [--only pause,sleep,...] [--hold 60] [--out DIR] [--real-xdg]
- *
- * Use a scratch machine: the scenarios pause, sleep, lock, stop, stow, save,
- * load and resize it, mount its drives in Finder (and unmount them), and make
- * and delete files on its desktop. Scenarios: pause, sleep, stop-start,
- * save-load, resize, terminal-files, share (skipped, with the reason, when the
- * runtime has no virtiofsd).
- *
- * WINVM_HOME and WINVM_RUNTIME are taken as they are. XDG_CONFIG_HOME and
- * XDG_DATA_HOME are pointed at a temporary folder (--real-xdg: leave them), so
- * the notes and settings a scenario writes never touch yours.
- */
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { resolve } from "node:path"
@@ -55,7 +36,6 @@ console.log(`evidence in ${out}\n`)
 
 const ctx: Context = { name, holdS, out }
 await ready(name)
-// Finder's drives mounted, so every scenario also checks they come and go with the guest.
 const hadMounts = (await smbMounts(name)).length > 0
 if (!hadMounts) await must(["files", "mount", "-i", name, "home", "--json"], { timeoutMs: 180_000 })
 

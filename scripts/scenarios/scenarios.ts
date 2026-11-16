@@ -1,8 +1,3 @@
-/**
- * The scenarios: each drives the CLI and the agent the way the app does, with
- * the app's polling running throughout (lib.ts AppPoller), and asserts what
- * must stay true over time, not only at the end.
- */
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { resolve } from "node:path"
@@ -28,7 +23,6 @@ import {
 
 export interface Context {
   readonly name: string
-  /** How long a hold lasts (pause, sleep), in seconds. */
   readonly holdS: number
   readonly out: string
 }
@@ -38,13 +32,11 @@ const status = async (name: string): Promise<Status> => json(await must(["status
 const settle = async (name: string, want: string, timeoutMs: number): Promise<{ ok: boolean; value: Status; ms: number }> =>
   await waitFor(() => status(name), (s) => s.state === want, timeoutMs)
 
-/** Whether Windows shows its lock screen: LogonUI.exe in the user's session. */
 async function lockScreenUp(name: string): Promise<boolean> {
   const r = await winvm(["exec", "-i", name, "--", "tasklist", "/FI", "IMAGENAME eq LogonUI.exe"], { timeoutMs: 60_000 })
   return r.code === 0 && /LogonUI\.exe/i.test(r.stdout)
 }
 
-/** Signs back in from the lock screen: Enter lifts the curtain, Enter again signs in (blank password). */
 async function unlock(name: string): Promise<boolean> {
   for (let i = 0; i < 6; i++) {
     if (!(await lockScreenUp(name))) return true
@@ -54,7 +46,6 @@ async function unlock(name: string): Promise<boolean> {
   return !(await lockScreenUp(name))
 }
 
-/** The guest's screen: saved to the evidence folder, and its text (macOS Vision on the image, not the Mac's screen). */
 async function screenText(name: string, file: string): Promise<string> {
   await must(["screenshot", "-i", name, file])
   const r = await must(["ocr", "-i", name, "--image", file])
@@ -63,7 +54,6 @@ async function screenText(name: string, file: string): Promise<string> {
 
 const LOCK_SCREEN = /\b(Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday)\b/
 
-/** Running, signed in, agent answering: where every scenario starts. */
 export async function ready(name: string): Promise<void> {
   const s = await status(name)
   if (s.state === "paused") await must(["resume", "-i", name])
@@ -74,13 +64,11 @@ export async function ready(name: string): Promise<void> {
   if (!(await unlock(name))) throw new Error(`could not sign "${name}" back in`)
 }
 
-/** Runs `body` with the app's polling on, and keeps the poller's trace as evidence. */
 async function polled(sc: Scenario, name: string, body: (poller: AppPoller) => Promise<void>): Promise<void> {
   const poller = new AppPoller(name)
   const from = Date.now()
   poller.start()
   try {
-    // A few reads first, so the app has a state and the agent an address, as an open window would.
     await waitFor(() => Promise.resolve(poller.state), (s) => s !== null, 30_000, 250)
     await sleep(6000)
     await body(poller)
@@ -88,8 +76,6 @@ async function polled(sc: Scenario, name: string, body: (poller: AppPoller) => P
     sc.check("ran to the end", false, String(error instanceof Error ? error.message : error))
   } finally {
     await poller.stop()
-    // A size the guest missed (not ready yet, a restart under way) is asked for again, as the app does;
-    // only one never taken fails.
     const resizes = poller.calls.filter((c) => c.what === "resize")
     const missed = poller.calls.filter((c) => c.what === "resize-missed").length
     const left = poller.calls.filter((c) => c.what === "resize-left").map((c) => c.detail)
@@ -104,7 +90,6 @@ async function polled(sc: Scenario, name: string, body: (poller: AppPoller) => P
   }
 }
 
-/** Every hold: the frozen state seen on every read for `holdS`, the agent refused at once, nothing resumed. */
 async function hold(sc: Scenario, ctx: Context, poller: AppPoller, state: "paused" | "asleep"): Promise<void> {
   const from = Date.now()
   const until = from + ctx.holdS * 1000
@@ -112,8 +97,6 @@ async function hold(sc: Scenario, ctx: Context, poller: AppPoller, state: "pause
   const files: { code: number; ms: number }[] = []
   let held = 0
   while (Date.now() < until) {
-    // What the app does while a machine is held, beyond its polling: the Files window or a
-    // resize asks for the agent; the window is resized.
     const c = await winvm(["agent", "-i", ctx.name, "connect", "--json"], { timeoutMs: 60_000 })
     connects.push({ code: c.code, ms: c.ms })
     const d = await winvm(["dir", "-i", ctx.name, "--json"], { timeoutMs: 60_000 })
@@ -144,7 +127,6 @@ async function hold(sc: Scenario, ctx: Context, poller: AppPoller, state: "pause
   sc.check("no GET /stats while held (the meters wait)", stats.length === 0, `${String(stats.length)} calls`)
 }
 
-/** After a resume or wake: running, and staying so. */
 async function runsAgain(sc: Scenario, ctx: Context, poller: AppPoller, label: string): Promise<void> {
   const s = await settle(ctx.name, "running", 30_000)
   sc.check(`${label}: running`, s.ok && s.value.vmStatus === "running", `${s.value.state}/${s.value.vmStatus ?? "-"} after ${String(s.ms)} ms`)
@@ -153,8 +135,6 @@ async function runsAgain(sc: Scenario, ctx: Context, poller: AppPoller, label: s
   const h = heldThroughout(poller.samples, from, Date.now(), ["running"], { vm: ["running"], minSamples: 2 })
   sc.check(`${label}: stays running`, h.ok, `${String(h.count)} reads, all running`)
 }
-
-// ---- 1. Pause ---------------------------------------------------------------------------------
 
 async function pause(ctx: Context): Promise<Scenario> {
   const sc = new Scenario("1. Pause", resolve(ctx.out, "1-pause"))
@@ -168,8 +148,6 @@ async function pause(ctx: Context): Promise<Scenario> {
     await hold(sc, ctx, poller, "paused")
     const watchLog = resolve(process.env["WINVM_HOME"] ?? "", "instances", ctx.name, "watch.log")
     if (existsSync(watchLog)) {
-      // What the watcher did while it was paused: its lines from the hold, the
-      // actions only (its start-up line names autosave and stow as settings).
       const during = readFileSync(watchLog, "utf8")
         .split("\n")
         .filter((l) => {
@@ -195,26 +173,19 @@ async function pause(ctx: Context): Promise<Scenario> {
   return sc
 }
 
-// ---- 2. Sleep, wake, lock -----------------------------------------------------------------------
-
 async function sleepWake(ctx: Context): Promise<Scenario> {
   const sc = new Scenario("2. Sleep, wake and lock", resolve(ctx.out, "2-sleep"))
   await polled(sc, ctx.name, async (poller) => {
-    // Only the sizes the hold offers: Windows refuses a mode change mid sign-in
-    // (ChangeDisplaySettingsEx fails while the lock screen gives way), which is
-    // not what this scenario is about.
     poller.autoResize = false
     const r = await poller.act("sleep")
     sc.check("winvm sleep", r.code === 0, r.stdout.trim().split("\n").slice(-1).join(""))
     sc.check("the app shows asleep at once", poller.state === "asleep", `shown: ${poller.state ?? "-"}`)
     await hold(sc, ctx, poller, "asleep")
-    // The app wakes on a key press in its screen by running `winvm wake` (held.ts keyVerdict "wake").
     const w = await poller.act("wake")
     sc.check("winvm wake (the app's key-press path)", w.code === 0, w.stdout.trim().split("\n").slice(-1).join(""))
     await runsAgain(sc, ctx, poller, "after wake")
     const woke = await screenText(ctx.name, resolve(sc.out, "after-wake.png"))
     sc.check("woken at the lock screen", LOCK_SCREEN.test(woke) && (await lockScreenUp(ctx.name)), `OCR: ${woke.split("\n").map((l) => l.replace(/^\S+\s+\S+\s+\S+\s+/, "")).join(" | ").slice(0, 160)}; LogonUI running`)
-    // The size the window wanted while asleep reached Windows at its lock screen: set at sign-in.
     const kept = poller.calls.filter((c) => c.what === "resize-held").at(-1)?.detail ?? null
     const sentAtWake = poller.calls.filter((c) => c.what === "resize").at(-1)
     sc.check("the size kept while asleep is sent on wake", kept !== null && sentAtWake?.detail.startsWith(kept) === true && sentAtWake.ok, `${kept ?? "none kept"} -> ${sentAtWake?.detail ?? "nothing sent"}`)
@@ -240,8 +211,6 @@ async function sleepWake(ctx: Context): Promise<Scenario> {
   return sc
 }
 
-// ---- 3. Stop/start, stow/recall -----------------------------------------------------------------
-
 const ALLOWED_DOWN = new Set(["running", "stopped", "stowed"])
 
 async function stopStart(ctx: Context): Promise<Scenario> {
@@ -256,7 +225,6 @@ async function stopStart(ctx: Context): Promise<Scenario> {
 
     for (const way of ["stop", "stow"] as const) {
       const from = Date.now()
-      // The stow as if from the app: under way, so the app leaves the agent alone meanwhile.
       if (way === "stow") poller.busy = true
       const r = way === "stop" ? await poller.act("stop") : await winvm(["stow", "-i", ctx.name])
       if (way === "stow") {
@@ -290,8 +258,6 @@ async function stopStart(ctx: Context): Promise<Scenario> {
   return sc
 }
 
-// ---- 4. Save and load ------------------------------------------------------------------------
-
 interface SaveEntry {
   readonly name: string
   readonly screenshot: string | null
@@ -307,11 +273,8 @@ async function saveLoad(ctx: Context): Promise<Scenario> {
   const live = `${tag}-live`
   const paused = `${tag}-paused`
   await polled(sc, ctx.name, async (poller) => {
-    // A checkpoint while running, as New Checkpoint takes one.
     let from = Date.now()
     const r = await poller.act("save", live)
-    // act returns after its fresh read: reads that began before the save ended may have found QEMU
-    // stopped for the save, which winvm shows as running by design (the saving marker, status.ts).
     const saved = Date.now()
     sc.check("winvm save (running)", r.code === 0, r.stdout.trim().split("\n").slice(-1).join(""))
     await runsAgain(sc, ctx, poller, "after the save")
@@ -332,7 +295,6 @@ async function saveLoad(ctx: Context): Promise<Scenario> {
     sc.check("the checkpoint has its screenshot", shot !== null && shot.width > 0, `${e?.screenshot ?? "none"} ${shot === null ? "" : `${String(shot.width)}x${String(shot.height)}`}`)
     sc.check("and its thumbnail", thumb !== null && thumb.width > 0 && shot !== null && thumb.width < shot.width, `${e?.thumbnail ?? "none"} ${thumb === null ? "" : `${String(thumb.width)}x${String(thumb.height)}`}`)
 
-    // A note, as the Checkpoints view writes and reads it.
     const text = "- first line\nsecond line with “quotes”"
     const w = await must(["saves", "note", "-i", ctx.name, live, "--title=Before the scenario", `--text=${text}`, "--tags=scenario,a b", "--json"])
     const back = json(await must(["saves", "note", "-i", ctx.name, live, "--json"])) as { title: string; text: string; tags: string[] } | null
@@ -343,7 +305,6 @@ async function saveLoad(ctx: Context): Promise<Scenario> {
     )
     sc.check("winvm saves --json carries the note's title", entry(await saves(), live)?.title === "Before the scenario", String(entry(await saves(), live)?.title))
 
-    // A checkpoint of a paused machine: it must stay paused, shown paused (postmigrate is frozen).
     const p = await poller.act("pause")
     sc.check("pause before the second save", p.code === 0, p.stdout.trim())
     from = Date.now()
@@ -358,7 +319,6 @@ async function saveLoad(ctx: Context): Promise<Scenario> {
     sc.check("resume after a paused save", r3.code === 0, r3.stdout.trim().split("\n").slice(-1).join(""))
     await runsAgain(sc, ctx, poller, "after resume")
 
-    // Go Back.
     from = Date.now()
     const mounted = await smbMounts(ctx.name)
     const l = await poller.act("load", live)
@@ -372,7 +332,6 @@ async function saveLoad(ctx: Context): Promise<Scenario> {
     }
     await ready(ctx.name)
 
-    // Delete: the note goes with the save.
     const notesDir = resolve(process.env["XDG_DATA_HOME"] ?? resolve(process.env["HOME"] ?? "", ".local", "share"), "winvm", "notes", ctx.name)
     const noteFile = resolve(notesDir, `${live}.json`)
     const had = existsSync(noteFile)
@@ -385,12 +344,9 @@ async function saveLoad(ctx: Context): Promise<Scenario> {
   return sc
 }
 
-// ---- 5. Resize while paused --------------------------------------------------------------------
-
 async function resizeHeld(ctx: Context): Promise<Scenario> {
   const sc = new Scenario("5. A resize during pause is held, then applied", resolve(ctx.out, "5-resize"))
   await polled(sc, ctx.name, async (poller) => {
-    // This scenario is the one resizing the window.
     poller.autoResize = false
     const get = async (): Promise<{ width?: number; height?: number }> => {
       const r = await poller.agent("POST", "/display", { op: "get" }, 20_000)
@@ -427,8 +383,6 @@ async function resizeHeld(ctx: Context): Promise<Scenario> {
   })
   return sc
 }
-
-// ---- 6. Terminal, files, stats ------------------------------------------------------------------
 
 async function terminalFiles(ctx: Context): Promise<Scenario> {
   const sc = new Scenario("6. Terminal, files and /stats", resolve(ctx.out, "6-terminal-files"))
@@ -500,8 +454,6 @@ async function terminalFiles(ctx: Context): Promise<Scenario> {
   return sc
 }
 
-// ---- 7. Shared folder ---------------------------------------------------------------------------
-
 async function sharedFolder(ctx: Context): Promise<Scenario> {
   const sc = new Scenario("7. Shared folder", resolve(ctx.out, "7-share"))
   const st = json(await must(["share", "-i", ctx.name, "status", "--json"])) as { available: boolean; reason?: string; guest?: { installed: boolean | null } }
@@ -520,14 +472,12 @@ async function sharedFolder(ctx: Context): Promise<Scenario> {
     }
     const set = await winvm(["share", "-i", ctx.name, "set", dir, "--letter", "Z"])
     sc.check("share set", set.code === 0, set.stdout.trim().split("\n").slice(-1).join(""))
-    // A different folder takes effect at the next start: stow and recall keep the session.
     await must(["stow", "-i", ctx.name])
     poller.settled()
     await poller.act("start")
     await ready(ctx.name)
     const z = await waitFor(async () => await winvm(["dir", "-i", ctx.name, "Z:\\", "--json"]), (r) => r.code === 0 && r.stdout.includes("from-mac.txt"), 60_000, 2000)
     sc.check("Windows sees the folder as Z:", z.ok, z.value.stdout.slice(0, 200))
-    // The watcher: a FileSystemWatcher in Windows sees a change made on the Mac.
     const watching = winvm(
       ["exec", "-i", ctx.name, "--", "powershell", "-NoProfile", "-Command", "$w=New-Object IO.FileSystemWatcher 'Z:\\'; $w.IncludeSubdirectories=$true; $r=$w.WaitForChanged('All', 40000); if ($r.TimedOut) {'TIMEOUT'} else {'EVENT ' + $r.ChangeType + ' ' + $r.Name}"],
       { timeoutMs: 90_000 },
@@ -538,7 +488,6 @@ async function sharedFolder(ctx: Context): Promise<Scenario> {
     sc.check("a Mac change fires Windows' watcher", /EVENT/.test(ev.stdout), ev.stdout.trim())
     const later = await waitFor(async () => await winvm(["dir", "-i", ctx.name, "Z:\\", "--json"]), (r) => r.stdout.includes("later.txt"), 30_000, 2000)
     sc.check("and the new file is in Z:", later.ok, "later.txt listed")
-    // The other way: a file Windows writes to Z: lands in the Mac folder.
     const wrote = await winvm(["exec", "-i", ctx.name, "--", "powershell", "-NoProfile", "-Command", "[IO.File]::WriteAllText('Z:\\from-windows.txt', 'three')"], { timeoutMs: 60_000 })
     const back = await waitFor(
       () => Promise.resolve(existsSync(resolve(dir, "from-windows.txt")) ? readFileSync(resolve(dir, "from-windows.txt"), "utf8") : ""),
@@ -553,9 +502,6 @@ async function sharedFolder(ctx: Context): Promise<Scenario> {
   return sc
 }
 
-// ---- 8. The Windows key and the Start menu ------------------------------------------------------
-
-/** The keysyms noVNC gives these keys. */
 const KEYSYM: Record<string, number> = { MetaLeft: 0xffeb, MetaRight: 0xffec, ControlLeft: 0xffe3, AltLeft: 0xffe9, KeyR: 0x72, Tab: 0xff09 }
 
 const START_OPEN = /Search for apps|\bPinned\b|\bRecommended\b/
@@ -577,9 +523,6 @@ async function startMenu(ctx: Context): Promise<Scenario> {
     poller.autoResize = false
     const keys = await vncKeys(ctx.name)
     try {
-      // The app's keyboard path: GuestKeyboardRouter first (capture phase), and
-      // whatever it lets through goes to noVNC, which holds it until a key-up or
-      // its blur cleanup.
       const novnc = new Map<string, number>()
       let captured = false as boolean
       const router = new GuestKeyboardRouter({
@@ -618,8 +561,6 @@ async function startMenu(ctx: Context): Promise<Scenario> {
 
       sc.check("Start closed to begin with", await closeStart(), "OCR: no Start menu")
 
-      // The control: what noVNC alone did before the router — Win down, the Tab taken by
-      // macOS, Win up from its blur cleanup. Windows opens Start: the check can see it.
       keys.send(0xffeb, "MetaLeft", true)
       await sleep(300)
       keys.send(0xffeb, "MetaLeft", false)
@@ -628,7 +569,6 @@ async function startMenu(ctx: Context): Promise<Scenario> {
       sc.check("control: a lone Windows press (noVNC alone, before the fix) opens Start", START_OPEN.test(before), "OCR found the Start menu")
       sc.check("Start closed again", await closeStart(), "Escape")
 
-      // Not captured: Cmd down, the Tab goes to macOS, the window loses focus.
       let n = keys.sent.length
       key("MetaLeft", true, { meta: true })
       await sleep(300)
@@ -639,7 +579,6 @@ async function startMenu(ctx: Context): Promise<Scenario> {
       sc.check("and Start stays closed", !START_OPEN.test(a), "OCR: no Start menu")
       key("MetaLeft", false, { meta: false })
 
-      // Captured: Cmd is Windows; the window loses focus with it down.
       router.setCaptured(true)
       n = keys.sent.length
       key("MetaLeft", true, { meta: true })
@@ -652,7 +591,6 @@ async function startMenu(ctx: Context): Promise<Scenario> {
       sc.check("focus loss releases capture", !captured && !router.isCaptured(), `captured: ${String(router.isCaptured())}`)
       sc.check("Start closed before Right-Cmd+R", await closeStart(), "OCR: no Start menu")
 
-      // Right Command is the Windows key on purpose: Right-Cmd+R opens Run.
       n = keys.sent.length
       key("MetaRight", true, { meta: true })
       key("KeyR", true, { meta: true })

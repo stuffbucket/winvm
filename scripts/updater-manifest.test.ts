@@ -4,7 +4,6 @@ import { updaterManifest, verifyUpdaterSignature } from "./updater-manifest.ts"
 
 const b64 = (b: Uint8Array | string): string => Buffer.from(b).toString("base64")
 
-/** A minisign key pair in the format `tauri signer generate` writes, and a signer for it. */
 function keyPair(id = Buffer.from("0123456789abcdef", "hex")) {
   const { publicKey, privateKey } = generateKeyPairSync("ed25519")
   const raw = publicKey.export({ format: "der", type: "spki" }).subarray(-32)

@@ -1,30 +1,3 @@
-/**
- * What the scenarios share: running the worktree's winvm CLI as the app does,
- * the app's background polling, and assertions held over time.
- *
- * THE POLLER IS THE APP'S, NOT A STAND-IN. While a scenario runs, it does what
- * the open app does to a machine, on the app's own timers:
- *
- *   - `winvm status --json` (the list) and `winvm status --json -i NAME`, every
- *     1.5 s while something is happening and 4 s otherwise (useWinvm.ts);
- *   - `winvm agent -i NAME connect --json` when it has no address for the agent
- *     yet, or its last call failed, at most every 10 s after a failure
- *     (src-tauri/src/agent.rs), and GET /stats every 2.5 s while Windows is up
- *     (useUsage.ts);
- *   - a live resize, SetDesktopSize over VNC and then POST /display {op:"set"}
- *     (guestdisplay.ts), through the app's own HeldSizes
- *     (features/screen/held.ts): held while the machine is paused or asleep,
- *     or Windows is not ready (App.tsx guestReady: the app's phase is
- *     "running", so its guest agent answers, and no verb is under way), and
- *     asked for, both steps, once it is; a size the guest misses is asked for
- *     again, as Screen.tsx does;
- *   - verbs run as useWinvm's `act` runs them, the shown state settled through
- *     the app's own StatusGuard (features/winvm/statusGuard.ts), so a read that
- *     raced a verb is dropped as the app drops it.
- *
- * Every answer is kept with its time, so a scenario can assert what the app
- * would have shown at every moment, not only at the end.
- */
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
 import { connect } from "node:net"
 import { resolve } from "node:path"
@@ -49,7 +22,6 @@ export interface Ran {
   readonly ms: number
 }
 
-/** The worktree's winvm, as the app's sidecar runs it: a process per call. */
 export async function winvm(args: readonly string[], o: { readonly timeoutMs?: number; readonly stdin?: string } = {}): Promise<Ran> {
   const started = Date.now()
   const proc = Bun.spawn([process.execPath, CLI, ...args], {
@@ -65,7 +37,6 @@ export async function winvm(args: readonly string[], o: { readonly timeoutMs?: n
   return { args, code, stdout, stderr, ms: Date.now() - started }
 }
 
-/** Runs winvm and throws, with what it said, unless it exits 0. */
 export async function must(args: readonly string[], o: { readonly timeoutMs?: number; readonly stdin?: string } = {}): Promise<Ran> {
   const r = await winvm(args, o)
   if (r.code !== 0) throw new Error(`winvm ${args.join(" ")} exited ${String(r.code)}:\n${(r.stderr + r.stdout).trim()}`)
@@ -76,7 +47,6 @@ export const json = (r: Ran): unknown => JSON.parse(r.stdout)
 
 export const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms))
 
-/** What `winvm status --json -i NAME` says, the parts the app reads. */
 export interface Status {
   readonly state: string
   readonly vmStatus: string | null
@@ -100,7 +70,6 @@ export interface Call {
 
 const FROZEN = new Set(["paused", "asleep"])
 
-/** The app's background polling of one machine (see the top of this file). */
 export class AppPoller {
   readonly samples: Sample[] = []
   readonly calls: Call[] = []
@@ -109,9 +78,7 @@ export class AppPoller {
   private loops: Promise<void>[] = []
   private link: { url: string; token: string } | null = null
   private connectFailedAt = 0
-  /** Until a read says otherwise, Windows is not ready for a size. */
   private readonly held = new HeldSizes(true, { onRetry: (size) => { this.track(this.resize(size)) } })
-  /** Resizes under way that nothing awaits (a retry, a size kept while held): stop() waits for them. */
   private readonly inflight = new Set<Promise<void>>()
 
   private track(p: Promise<void>): void {
@@ -119,13 +86,9 @@ export class AppPoller {
     void p.finally(() => this.inflight.delete(p))
   }
   private readonly guard = new StatusGuard()
-  /** The state the window shows: what the last verb left until a fresh read lands, else the newest read. */
   private shown: string | null = null
-  /** The scenario says something is happening: poll fast, as the app does while busy. */
   busy = false
-  /** The window is resized now and then on its own; off when a scenario resizes it itself. */
   autoResize = true
-  /** Sizes the resize loop alternates between. */
   sizes: readonly Size[] = [
     { width: 1600, height: 1000 },
     { width: 1440, height: 900 },
@@ -146,11 +109,8 @@ export class AppPoller {
     this.stopped = true
     await Promise.all(this.loops)
     this.loops = []
-    // Their answers belong in the record: a retry still out at the end is waited for.
     while (this.inflight.size > 0) await Promise.all([...this.inflight])
     this.held.cancel()
-    // A size still waiting is a size lost, unless the machine can't take one now (stopped, say: the
-    // app's screen asks again when it connects). Once more, as a retry would, before calling it lost.
     const left = this.held.pending
     if (left === null) return
     const label = `${String(left.width)}x${String(left.height)}`
@@ -164,20 +124,14 @@ export class AppPoller {
     if (this.held.pending !== null) this.calls.push({ at: Date.now(), what: "resize", ok: false, detail: `${label}: never taken` })
   }
 
-  /** The state the app shows now. */
   get state(): string | null {
     return this.guard.held ?? this.shown
   }
 
-  /** Windows is up (its guest agent answers) and nothing is under way: when the app calls the agent (App.tsx guestReady). */
   get guestReady(): boolean {
     return this.state === "running" && !this.busy
   }
 
-  /**
-   * A verb as the app's buttons run it (useWinvm's `act`): `winvm VERB -i NAME`,
-   * polling fast meanwhile, then what it did shown at once and a fresh read.
-   */
   async act(verb: Verb, ...extra: string[]): Promise<Ran> {
     this.busy = true
     this.follow()
@@ -194,13 +148,11 @@ export class AppPoller {
     }
   }
 
-  /** Something other than a verb changed the machine (the scenario ran the CLI itself): reads already out are stale. */
   settled(): void {
     this.guard.settle(null)
     this.follow()
   }
 
-  /** The window was resized: ask for its size, or keep it while the machine is held (Screen.tsx). */
   async offerSize(size: Size): Promise<"sent" | "held"> {
     if (!this.held.offer(size)) {
       this.calls.push({ at: Date.now(), what: "resize-held", ok: true, detail: `${String(size.width)}x${String(size.height)}` })
@@ -210,10 +162,6 @@ export class AppPoller {
     return "sent"
   }
 
-  /**
-   * The held sizes follow the state shown (Screen.tsx: frozen || !ready); a
-   * size kept meanwhile is asked for, both steps, once Windows can take it.
-   */
   private follow(): void {
     const s = this.state
     if (s === null) return
@@ -221,15 +169,12 @@ export class AppPoller {
     if (thawed !== null) this.track(this.resize(thawed))
   }
 
-  /** One `winvm status --json -i NAME`: kept as the machine's truth, and shown if the guard lets it land. */
   private async readOnce(): Promise<void> {
     const ticket = this.guard.begin()
-    // A read describes the machine when it was asked: it is kept at its start.
     const at = Date.now()
     const one = await winvm(["status", "--json", "-i", this.name], { timeoutMs: 30_000 })
     let state: string | null = null
     if (one.code === 0) {
-      // The app shows its phase: "starting" while the machine runs but its guest agent is silent (model.ts).
       const s = parseStatus(one.stdout)?.[0]
       if (s !== undefined) {
         state = phase(s)
@@ -250,7 +195,6 @@ export class AppPoller {
     }
   }
 
-  /** Connects as agent.rs does: once, again after a failure, never more often than every 10 s after one. */
   private async ensureLink(): Promise<{ url: string; token: string } | null> {
     if (this.link !== null) return this.link
     if (Date.now() - this.connectFailedAt < 10_000) return null
@@ -262,17 +206,11 @@ export class AppPoller {
       this.calls.push({ at, what: "agent-connect", ok: true, detail: `${l.url} in ${String(r.ms)} ms` })
       return this.link
     }
-    // Exit 3: paused or asleep, said at once and not kept (agent.rs).
     if (r.code !== 3) this.connectFailedAt = at
     this.calls.push({ at, what: "agent-connect", ok: r.code === 3, detail: `exit ${String(r.code)} in ${String(r.ms)} ms: ${r.stderr.trim().slice(0, 200)}` })
     return null
   }
 
-  /**
-   * One call to the agent, as agent.rs makes it: one that cannot reach the
-   * agent, or is refused its token, forgets the address and connects again,
-   * once (the machine restarted, or the agent was reinstalled).
-   */
   async agent(method: string, path: string, body: unknown, timeoutMs: number): Promise<{ status: number; body: unknown } | null> {
     const cached = this.link !== null
     try {
@@ -300,7 +238,6 @@ export class AppPoller {
       try {
         parsed = JSON.parse(text)
       } catch {
-        // text it is
       }
       if (res.status === 401) this.link = null
       return { status: res.status, body: parsed }
@@ -312,7 +249,6 @@ export class AppPoller {
 
   private async statsLoop(): Promise<void> {
     while (!this.stopped) {
-      // GET /stats only while Windows is up and nothing is under way (guestReady), as useUsage does.
       if (this.guestReady) {
         const at = Date.now()
         try {
@@ -336,15 +272,9 @@ export class AppPoller {
     }
   }
 
-  /**
-   * The app's two steps (guestdisplay.ts): SetDesktopSize over VNC, as its
-   * noVNC does, then the agent sets the mode, or keeps the size until Windows
-   * is ready (App.tsx resizeGuest).
-   */
   private async resize(size: Size): Promise<void> {
     const at = Date.now()
     const label = `${String(size.width)}x${String(size.height)}`
-    // Missed: kept and asked for again (held.ts), as Screen.tsx does; only a size never taken is a failure.
     const missed = (why: string): void => {
       this.calls.push({ at, what: "resize-missed", ok: true, detail: `${label}: ${why}; asked for again` })
       this.held.missed(size)
@@ -357,14 +287,12 @@ export class AppPoller {
       missed(`SetDesktopSize: ${String(error).slice(0, 200)}`)
       return
     }
-    // App.tsx resizeGuest refuses a size while Windows is not ready (the state moved on meanwhile).
     if (!this.guestReady) {
       missed(`Windows not ready (${this.state ?? "unknown"})`)
       return
     }
     try {
       const r = await this.agent("POST", "/display", { op: "set", width: size.width, height: size.height, waitMs: 2000, scale: 100 }, 22_000)
-      // 202: Windows is at its lock screen; the agent sets the size at sign-in (App.tsx takes it as done).
       if (r !== null && (r.status === 200 || r.status === 202)) {
         this.held.took()
         this.calls.push({ at, what: "resize", ok: true, detail: `${label}: status ${String(r.status)}${r.status === 200 ? "" : ` ${JSON.stringify(r.body).slice(0, 200)}`}` })
@@ -379,18 +307,11 @@ export class AppPoller {
     while (!this.stopped && Date.now() < until) await sleep(Math.min(250, until - Date.now()))
   }
 
-  /** Samples and calls in [from, to]. */
   between(from: number, to: number): { samples: Sample[]; calls: Call[] } {
     return { samples: this.samples.filter((s) => s.at >= from && s.at <= to), calls: this.calls.filter((c) => c.at >= from && c.at <= to) }
   }
 }
 
-// ---- assertions over time ---------------------------------------------------------------------
-
-/**
- * That every status read in [from, to] showed one of `states` (and, when given,
- * QEMU's run state one of `vm`), with enough reads to mean something. Pure.
- */
 export function heldThroughout(
   samples: readonly Sample[],
   from: number,
@@ -403,7 +324,6 @@ export function heldThroughout(
   return { ok: bad.length === 0 && inside.length >= (o.minSamples ?? 1), count: inside.length, bad }
 }
 
-/** The states the reads in [from, to] went through, each run of the same state once: "running > paused > running". */
 export function path(samples: readonly Sample[], from: number, to: number): string {
   const out: string[] = []
   for (const s of samples) {
@@ -414,7 +334,6 @@ export function path(samples: readonly Sample[], from: number, to: number): stri
   return out.join(" > ")
 }
 
-/** Polls `get` until `ok` says yes, up to `timeoutMs`; the last value either way. */
 export async function waitFor<T>(get: () => Promise<T>, ok: (v: T) => boolean, timeoutMs: number, everyMs = 1000): Promise<{ ok: boolean; value: T; ms: number }> {
   const started = Date.now()
   let value = await get()
@@ -425,20 +344,14 @@ export async function waitFor<T>(get: () => Promise<T>, ok: (v: T) => boolean, t
   return { ok: ok(value), value, ms: Date.now() - started }
 }
 
-// ---- keys over VNC, as the app's noVNC sends them ----------------------------------------------
-
-/** A key sender over the machine's VNC server: QEMU extended key events, as noVNC sends them (rfb.js). */
 export interface VncKeys {
   send(keysym: number, code: string, down: boolean): void
-  /** What was sent, in order: "MetaLeft down", ... */
   readonly sent: string[]
   close(): void
 }
 
-/** The XT scancodes of the keys the scenarios press, from noVNC's table (core/input/xtscancodes.js). */
 const XT_SCANCODES: Readonly<Record<string, number>> = { MetaLeft: 0xe05b, MetaRight: 0xe05c, ControlLeft: 0x1d, AltLeft: 0x38, KeyR: 0x13, Tab: 0x0f, Escape: 0x01 }
 
-/** noVNC's getRFBkeycode: an 0xE0-prefixed XT scancode goes as its low byte with the top bit set. */
 export function rfbKeycode(code: string): number {
   const xt = XT_SCANCODES[code] ?? 0
   const upper = xt >> 8
@@ -446,7 +359,6 @@ export function rfbKeycode(code: string): number {
   return upper === 0xe0 && lower < 0x7f ? lower | 0x80 : xt
 }
 
-/** Connects to the machine's VNC server as a second, shared client, and sends keys. */
 export async function vncKeys(name: string, timeoutMs = 5000): Promise<VncKeys> {
   const meta = readMeta(name)
   if (meta === null) throw new Error(`no instance "${name}"`)
@@ -456,7 +368,6 @@ export async function vncKeys(name: string, timeoutMs = 5000): Promise<VncKeys> 
   let failed: Error | null = null
   let handshaking = true
   sock.on("data", (d: Buffer) => {
-    // After the handshake, what QEMU says (the extended key event's ack) is not needed.
     if (!handshaking) return
     buf = Buffer.concat([buf, d])
     wake?.()
@@ -488,14 +399,13 @@ export async function vncKeys(name: string, timeoutMs = 5000): Promise<VncKeys> 
       sock.write(vncAuthResponse(passwordFor(pathsFor(name)), await need(16)))
     } else sock.write(Buffer.from([1]))
     if ((await need(4)).readUInt32BE(0) !== 0) throw new Error("VNC authentication failed")
-    sock.write(Buffer.from([1])) // shared, so the app's own connection stays
+    sock.write(Buffer.from([1]))
     const init = await need(24)
     await need(init.readUInt32BE(20))
   } finally {
     clearTimeout(timer)
   }
   handshaking = false
-  // SetEncodings: QEMU's extended key event (-258), which noVNC uses with QEMU.
   const enc = Buffer.alloc(8)
   enc[0] = 2
   enc.writeUInt16BE(1, 2)
@@ -520,9 +430,6 @@ export async function vncKeys(name: string, timeoutMs = 5000): Promise<VncKeys> 
   }
 }
 
-// ---- the Mac side, looked at and never touched -------------------------------------------------
-
-/** This instance's smbfs mounts in the mount table: the folders. Never reads through a mount. */
 export async function smbMounts(instance: string): Promise<string[]> {
   const out = await new Response(Bun.spawn(["mount"], { stdout: "pipe" }).stdout).text()
   const dir = resolve(process.env["HOME"] ?? "", "winvm", instance)
@@ -532,7 +439,6 @@ export async function smbMounts(instance: string): Promise<string[]> {
     .map((l) => l.slice(l.indexOf(" on ") + 4, l.indexOf(" (smbfs")))
 }
 
-/** virtiofsd processes serving this instance (found by their socket in its directory, as share.ts does). */
 export async function virtiofsds(instance: string): Promise<string[]> {
   const out = await new Response(Bun.spawn(["ps", "-axo", "pid=,command="], { stdout: "pipe" }).stdout).text()
   const needle = `/instances/${instance}/`
@@ -542,15 +448,12 @@ export async function virtiofsds(instance: string): Promise<string[]> {
     .filter((l) => /(^|\/)virtiofsd /.test(l.replace(/^\d+\s+/, "")) && l.includes(needle))
 }
 
-/** Whether a file is a PNG, and its size, from its header. */
 export function pngSize(file: string): { width: number; height: number } | null {
   if (!existsSync(file)) return null
   const b = readFileSync(file)
   if (b.length < 24 || b.readUInt32BE(0) !== 0x89504e47) return null
   return { width: b.readUInt32BE(16), height: b.readUInt32BE(20) }
 }
-
-// ---- results ----------------------------------------------------------------------------------
 
 export interface Check {
   readonly name: string
@@ -591,7 +494,6 @@ export class Scenario {
     return this.checks.every((c) => c.ok)
   }
 
-  /** The poller's record for this scenario, for whoever reads the evidence later. */
   saveTrace(poller: AppPoller, from: number, to: number, file: string): string {
     const t = poller.between(from, to)
     const rel = (at: number): string => `+${((at - from) / 1000).toFixed(1)}s`

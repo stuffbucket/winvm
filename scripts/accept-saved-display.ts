@@ -1,36 +1,4 @@
 #!/usr/bin/env bun
-/**
- * Disposable acceptance run for saved-display restore, against a real guest.
- *
- *   bun scripts/accept-saved-display.ts /path/to/immutable/image-directory
- *
- * The image directory must hold `base.qcow2` and `image.json` and must NOT be
- * an instance anyone is using: it is APFS-cloned (never opened for writing)
- * into a fresh temporary WINVM_HOME, so a run never reads or changes the
- * person's own machines, saves or settings. The temporary home is removed when
- * the run passes and kept, with its VM stopped, when it fails or is interrupted
- * (the path is printed). SIGINT and SIGTERM stop the disposable processes
- * first and then exit non-zero.
- *
- * What it proves, for zstd and mapped-ram saves, in both directions between
- * the two display devices (a save taken on A, the cold-boot preference then
- * set to B, the save loaded):
- *
- *   - the manifest records the running display profile (A);
- *   - `saves --json` calls the save compatible while the preference is B;
- *   - loading leaves the preference (display.json) byte-for-byte B;
- *   - `display --json` and `status --json` report the running device A;
- *   - the disk holds the save's marker, and the guest answers a fresh nonce;
- *   - the guest clock is within five seconds of the host's;
- *   - a screenshot is a nonempty PNG;
- *   - a save made after the restore records and hashes A again;
- *   - a retained save recreates a destroyed instance on its own display.
- *
- * Needs winvm's runtime (`winvm setup`, or WINVM_RUNTIME / WINVM_RUNTIME_CACHE:
- * it is looked up in your own environment before XDG_DATA_HOME is redirected),
- * the image directory on the same APFS volume as /tmp, and tens of minutes for
- * the cold boots. Not part of `pnpm check`.
- */
 import { spawn, spawnSync, type ChildProcess } from "node:child_process"
 import { randomUUID } from "node:crypto"
 import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync } from "node:fs"
@@ -44,23 +12,16 @@ if (source === undefined || !existsSync(resolve(source, "base.qcow2")) || !exist
   process.exit(2)
 }
 
-/** Fail before anything is created or cloned. */
 function refuse(message: string): never {
   console.error(`::error::${message}`)
   process.exit(2)
 }
 
-// The runtime lives under XDG_DATA_HOME by default, which is redirected below
-// so the run cannot touch your notes: find it first, in your own environment.
 const runtime = await import("@winvm/core/runtime")
 const found = runtime.findRuntime()
 if (found === null) refuse("winvm's runtime is not installed: run `winvm setup`, or set WINVM_RUNTIME or WINVM_RUNTIME_CACHE")
 Object.assign(process.env, runtimePin(process.env, runtime.runtimeCache()))
 
-// Everything else the run touches lives under one temporary root. It is a
-// short fixed parent, not $TMPDIR (49 characters on macOS): the sockets under
-// it must fit a 104-byte unix socket path. Set before the other winvm modules
-// are loaded: they read these when asked for a path.
 const state = mkdtempSync("/tmp/wd-")
 process.env["WINVM_HOME"] = resolve(state, "home")
 process.env["XDG_CONFIG_HOME"] = resolve(state, "xdg-config")
@@ -82,8 +43,6 @@ const cli = resolve(import.meta.dir, "../apps/cli/src/winvm.ts")
 const p = pathsFor(name)
 const MARKER = "C:\\Windows\\Temp\\winvm-display-accept.txt"
 
-// Guards, while the root is still empty: a runtime that moved with the
-// redirection, or sockets that cannot fit.
 if (runtime.findRuntime()?.dir !== found.dir) {
   rmSync(state, { recursive: true, force: true })
   refuse("winvm's runtime is no longer found once XDG_DATA_HOME is redirected; set WINVM_RUNTIME")
@@ -97,7 +56,6 @@ if (socketProblem !== null) {
 let passed = false
 let interrupted = null as TerminationSignal | null
 let child: ChildProcess | null = null
-/** True once QEMU, the sidecars and the service were stopped without error. */
 let stopped = false
 
 function check(ok: boolean, message: string): void {
@@ -110,10 +68,6 @@ function same(a: unknown, b: unknown): boolean {
   return JSON.stringify(a) === JSON.stringify(b)
 }
 
-/**
- * One CLI verb against the disposable instance; throws unless it exits 0.
- * Asynchronous so a signal is handled while it runs, and the child dies with it.
- */
 async function w(verb: string, ...args: string[]): Promise<string> {
   if (interrupted !== null) throw new Error(`interrupted by ${interrupted}`)
   const argv = [cli, verb, "-i", name, ...args]
@@ -140,7 +94,6 @@ async function w(verb: string, ...args: string[]): Promise<string> {
   return done.stdout
 }
 
-/** The device `display --json` says the guest is running, parsed. */
 async function runningDevice(): Promise<string | null> {
   const shown = JSON.parse(await w("display", "--json")) as { running: string | null }
   return shown.running
@@ -171,7 +124,6 @@ async function screenshot(label: string): Promise<string> {
 
 const preferenceFile = (): string => readFileSync(displayPath(p), "utf8")
 
-/** Everything that must hold once `save` has been loaded and the guest is up on `running` while the preference is `preference`. */
 async function verifyRestored(save: string, token: string, running: DisplayConfig, preference: DisplayConfig, preferenceBytes: string): Promise<void> {
   check(preferenceFile() === preferenceBytes && same(readDisplay(p), preference), `${save}: loading rewrote the display preference`)
   pass(`${save}: preference unchanged (${preference.device})`)
@@ -194,12 +146,6 @@ async function verifyRestored(save: string, token: string, running: DisplayConfi
   pass(`${save}: screenshot ${await screenshot(save)}`)
 }
 
-/**
- * Boot on `a`, take a zstd and a mapped save, switch the preference to `b`
- * while stopped, then load each: the first into the stopped instance, the
- * second into the running one. `recreate` also destroys the instance (keeping
- * its saves) and loads the mapped save into the recreated one.
- */
 async function direction(a: DisplayConfig, b: DisplayConfig, recreate: boolean): Promise<void> {
   const tag = `${a.device}-to-${b.device}`
   console.log(`\n== ${tag}: saves taken on ${a.device}, preference switched to ${b.device} ==`)
@@ -253,11 +199,6 @@ async function direction(a: DisplayConfig, b: DisplayConfig, recreate: boolean):
   pass(`${save}: retained save recreated the instance on ${a.device} (screenshot ${await screenshot(`${save}-recreated`)})`)
 }
 
-/**
- * Stop everything this run started, then drop the root if it passed. Shared by
- * the normal path and the signal handlers (`once`): whichever asks first does
- * it, the other waits for the same result.
- */
 const cleanup = once(async (): Promise<void> => {
   const proc: ChildProcess | null = child
   proc?.kill("SIGKILL")
@@ -279,7 +220,6 @@ const cleanup = once(async (): Promise<void> => {
   if (finish({ passed, interrupted, stopped: ok }).removeRoot) rmSync(state, { recursive: true, force: true })
 })
 
-/** One line after any failed or interrupted run: where it is, and whether its processes are known to be stopped. */
 const retained = (): string =>
   `the disposable machine is kept at ${state} for diagnosis` +
   (stopped ? " (its processes are stopped)" : "; its processes may still be running: check `ps` for qemu, swtpm and virtiofsd using it")
@@ -298,7 +238,6 @@ console.log(`disposable root: ${state}`)
 try {
   const images = resolve(process.env["WINVM_HOME"] ?? "", "images", imageName)
   mkdirSync(images, { recursive: true })
-  // An APFS clone: the immutable source is read, never written.
   const cloned = spawnSync("cp", ["-c", resolve(source, "base.qcow2"), resolve(images, "base.qcow2")], { stdio: "inherit" })
   check(cloned.status === 0, "APFS clone of base.qcow2 failed (the image directory must be on the same APFS volume as /tmp)")
   chmodSync(resolve(images, "base.qcow2"), 0o444)
@@ -308,7 +247,6 @@ try {
   ensureInstance(name, imageName, VIRTIO_GPU)
   await direction(VIRTIO_GPU, RAMFB, false)
 
-  // The instance now prefers ramfb: stop the restored guest and cold boot it there.
   await w("stop")
   check(same(readDisplay(p), RAMFB), "the preference should still be ramfb for the second direction")
   await direction(RAMFB, VIRTIO_GPU, true)
@@ -325,5 +263,4 @@ try {
   passed = end.passed
   if (!passed) console.error(`acceptance failed; ${retained()}`)
 }
-// An interrupt exits with its signal's code, as its handler does; any other failure, including a pass whose cleanup could not confirm a stop, with 1.
 process.exit(finish({ passed, interrupted, stopped }).exitCode)

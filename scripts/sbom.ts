@@ -1,18 +1,4 @@
 #!/usr/bin/env bun
-/**
- * Emit a CycloneDX 1.4 SBOM for production npm dependencies and run a
- * license scan. Pure Bun script — no new GitHub Actions / build deps.
- *
- * Usage:
- *
- *   bun scripts/sbom.ts
- *   bun scripts/sbom.ts --root . --root packages/mcp-broker
- *   bun scripts/sbom.ts --output PATH
- *   bun scripts/sbom.ts --no-fail-on-license
- *
- * License allowlist matches the conservative set from the parent PRD.
- * Loosen only with a documented justification in the commit message.
- */
 
 import fs from "node:fs"
 import path from "node:path"
@@ -30,11 +16,9 @@ const ALLOWED_LICENSES = new Set([
   "BlueOak-1.0.0",
   "Python-2.0",
   "WTFPL",
-  // SPDX expressions are split on AND / OR and checked leaf by leaf.
 ])
 
 const LICENSE_ALIASES = new Map([
-  // human-readable-ids@1.0.4 uses this non-SPDX spelling.
   ["Apache2", "Apache-2.0"],
 ])
 
@@ -98,7 +82,6 @@ function extractLicense(pkg: PackageJson, packageDirectory: string): string {
         return "MIT"
       }
     } catch {
-      // Try the next conventional license filename.
     }
   }
   return "UNKNOWN"
