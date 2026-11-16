@@ -53,8 +53,8 @@ describe("the Files window", () => {
         th.getAttribute("aria-sort"),
       )
     expect(sorts()).toEqual(["ascending", "none", "none", "none"])
-    const size = [...host.querySelectorAll("th button")].find(
-      (b) => b.textContent?.startsWith("Size") === true,
+    const size = [...host.querySelectorAll("th button")].find((b) =>
+      b.textContent.startsWith("Size"),
     )
     if (!(size instanceof HTMLButtonElement)) throw new Error("no Size")
     act(() => {
