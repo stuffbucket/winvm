@@ -245,7 +245,8 @@ export function nameProblem(
   name: string,
 ): "empty" | "chars" | "reserved" | "ends" | null {
   if (name.trim() === "" || name === "." || name === "..") return "empty"
-  if (/[<>:"/\\|?*\u0000-\u001f]/.test(name)) return "chars"
+  if (/[<>:"/\\|?*]/.test(name) || Array.from(name).some((c) => c < " "))
+    return "chars"
   if (/^(con|prn|aux|nul|com[1-9]|lpt[1-9])(\..*)?$/i.test(name))
     return "reserved"
   if (/[. ]$/.test(name)) return "ends"
