@@ -219,11 +219,11 @@ describe("ClosePolicyDialog", () => {
     })
     const el = dialog(host)
     if (el === null) throw new Error("no dialog")
-    const escape = new Event("cancel", { cancelable: true })
+    const cancelEvent = new Event("cancel", { cancelable: true })
     act(() => {
-      el.dispatchEvent(escape)
+      el.dispatchEvent(cancelEvent)
     })
-    expect(escape.defaultPrevented).toBe(true)
+    expect(cancelEvent.defaultPrevented).toBe(true)
     expect(heard.cancels).toBe(1)
     expect(el.open).toBe(true)
     act(() => {
@@ -260,9 +260,9 @@ describe("ClosePolicyDialog", () => {
       cancel.click()
     })
     expect(heard.cancels).toBe(1)
-    const escape = new Event("cancel", { cancelable: true })
+    const cancelEvent = new Event("cancel", { cancelable: true })
     act(() => {
-      el?.dispatchEvent(escape)
+      el?.dispatchEvent(cancelEvent)
     })
     expect(heard.cancels).toBe(2)
   })

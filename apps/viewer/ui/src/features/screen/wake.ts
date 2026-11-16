@@ -17,12 +17,12 @@ export function sendWake(sock: WakeSock): void {
 }
 
 export interface WakeTimers {
-  every(fn: () => void, ms: number): unknown
+  repeat(fn: () => void, ms: number): unknown
   stop(t: unknown): void
 }
 
 const realTimers: WakeTimers = {
-  every: (fn, ms) => setInterval(fn, ms),
+  repeat: (fn, ms) => setInterval(fn, ms),
   stop: (t) => {
     clearInterval(t as ReturnType<typeof setInterval>)
   },
@@ -33,7 +33,7 @@ export function keepRefreshing(
   active: () => boolean,
   timers: WakeTimers = realTimers,
 ): () => void {
-  const t = timers.every(() => {
+  const t = timers.repeat(() => {
     if (active()) sendWake(sock)
   }, WAKE_MS)
   return () => {

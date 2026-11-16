@@ -66,7 +66,7 @@ export function tailToKeep(shown: string): number {
 }
 
 export const needsSetup = (s: SharedFolderStatus | null): boolean =>
-  s !== null && s.available && s.folder !== null && s.guest.installed === false
+  s?.available === true && s.folder !== null && s.guest.installed === false
 
 export function sectionHint(
   s: SharedFolderStatus | null,

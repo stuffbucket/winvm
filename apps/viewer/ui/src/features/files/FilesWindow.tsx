@@ -186,7 +186,8 @@ export function FilesWindow({
       path: string | null,
       how: "go" | "back" | "forward" | "stay",
     ): Promise<void> => {
-      const id = (request.current += 1)
+      request.current += 1
+      const id = request.current
       setLoading(true)
       const got = await listFolder(instance, path)
       if (id !== request.current) return
