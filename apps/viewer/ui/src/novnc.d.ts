@@ -3,7 +3,10 @@ declare module "@winvm/novnc/core/rfb.js" {
     constructor(
       target: HTMLElement,
       url: string,
-      options?: { readonly credentials?: { readonly password?: string }; readonly wsProtocols?: readonly string[] },
+      options?: {
+        readonly credentials?: { readonly password?: string }
+        readonly wsProtocols?: readonly string[]
+      },
     )
     scaleViewport: boolean
     clipViewport: boolean
@@ -15,7 +18,9 @@ declare module "@winvm/novnc/core/rfb.js" {
     sendKey(keysym: number, code: string, down?: boolean): void
     sendCredentials(credentials: { readonly password: string }): void
     clipboardPasteFrom(text: string): void
-    readonly _clipboardServerCapabilitiesFormats?: Readonly<Record<number, boolean>>
+    readonly _clipboardServerCapabilitiesFormats?: Readonly<
+      Record<number, boolean>
+    >
     readonly _sock: unknown
     readonly _screenID?: number
     readonly _screenFlags?: number
@@ -29,10 +34,15 @@ declare module "@winvm/novnc/core/rfb.js" {
       _allKeysUp(): void
     }
     static readonly messages: {
-      setDesktopSize(sock: unknown, width: number, height: number, id: number, flags: number): void
+      setDesktopSize(
+        sock: unknown,
+        width: number,
+        height: number,
+        id: number,
+        flags: number,
+      ): void
     }
   }
-
 }
 
 declare module "@winvm/novnc/core/input/util.js" {
