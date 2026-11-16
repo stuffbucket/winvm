@@ -589,7 +589,9 @@ describe("the screenshot look", () => {
     })
     expect(cancel.defaultPrevented).toBe(true)
     expect(onClose).toHaveBeenCalledTimes(2)
-    act(() => dialog.click())
+    act(() => {
+      dialog.click()
+    })
     expect(onClose).toHaveBeenCalledTimes(3)
   })
 
