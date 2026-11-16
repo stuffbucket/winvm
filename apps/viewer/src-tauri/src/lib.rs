@@ -693,7 +693,10 @@ pub fn run() {
         .on_menu_event(|app, event| handle_menu(app, &event))
         .setup(|app| {
             let handle = app.handle().clone();
-            terminate::install(move |quit| close::should_terminate(&handle, quit))?;
+            terminate::settle_install(
+                terminate::install(move |quit| close::should_terminate(&handle, quit)),
+                terminate::Fatality::of_this_build(),
+            )?;
             if let Some(main) = app.get_webview_window("main") {
                 liveresize::watch(&main);
             }

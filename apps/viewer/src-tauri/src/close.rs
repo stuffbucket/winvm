@@ -432,6 +432,11 @@ pub fn caller_may_answer(label: &str) -> Result<(), String> {
     }
 }
 
+pub fn note(line: &str) {
+    use std::io::Write;
+    let _ = writeln!(std::io::stderr(), "{line}");
+}
+
 fn bring_forward<R: tauri::Runtime>(main: &tauri::WebviewWindow<R>) {
     let _ = main.unminimize();
     let _ = main.show();

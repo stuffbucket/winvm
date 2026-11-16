@@ -259,8 +259,10 @@ window's `WindowEvent::CloseRequested` calls `prevent_close()` unless state is
 replaces the predefined macOS Quit item and enters the same coordinator before
 AppKit termination. Every other AppKit termination reaches the coordinator
 through `applicationShouldTerminate:`, which the viewer adds at startup to
-tao's app delegate class (`TaoAppDelegateParent`); startup fails loudly if
-that class is missing, renamed, or already answers the selector.
+tao's app delegate class (`TaoAppDelegateParent`). If that class is missing,
+renamed, or already answers the selector, a debug or test build refuses to
+start; a release build logs it and runs without the hook, so Dock Quit and
+logout skip the close flow as they did before the hook existed.
 `RunEvent::ExitRequested` prevents any otherwise unapproved exit as a
 backstop.
 

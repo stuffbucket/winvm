@@ -57,6 +57,40 @@ pub fn check_delegate(class: &str, implemented: bool) -> Result<(), String> {
     Ok(())
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Fatality {
+    Fatal,
+    Logged,
+}
+
+impl Fatality {
+    #[must_use]
+    pub fn of_this_build() -> Self {
+        if cfg!(debug_assertions) {
+            Fatality::Fatal
+        } else {
+            Fatality::Logged
+        }
+    }
+}
+
+#[expect(
+    clippy::missing_errors_doc,
+    reason = "the error is the startup failure message itself"
+)]
+pub fn settle_install(installed: Result<(), String>, fatality: Fatality) -> Result<(), String> {
+    match (installed, fatality) {
+        (Err(why), Fatality::Fatal) => Err(why),
+        (Err(why), Fatality::Logged) => {
+            crate::close::note(&format!(
+                "winvm: couldn't add the quit hook, so Dock Quit and logout skip the close flow: {why}"
+            ));
+            Ok(())
+        }
+        (Ok(()), _) => Ok(()),
+    }
+}
+
 type Handler = Box<dyn Fn(Quit) -> Terminate + Send + Sync>;
 
 static HANDLER: OnceLock<Handler> = OnceLock::new();
@@ -231,6 +265,35 @@ mod tests {
         assert_eq!(four(*b"rlgo"), 0x726c_676f);
         assert_eq!(four(*b"rest"), 0x7265_7374);
         assert_eq!(four(*b"shut"), 0x7368_7574);
+    }
+
+    #[test]
+    fn a_hook_that_cannot_install_stops_a_debug_or_test_build() {
+        let failed = Err("the delegate is WryAppDelegate".to_owned());
+        assert_eq!(
+            settle_install(failed, Fatality::Fatal),
+            Err("the delegate is WryAppDelegate".to_owned())
+        );
+        assert_eq!(settle_install(Ok(()), Fatality::Fatal), Ok(()));
+    }
+
+    #[test]
+    fn a_release_build_runs_without_a_hook_that_cannot_install() {
+        let failed = Err("the delegate is WryAppDelegate".to_owned());
+        assert_eq!(settle_install(failed, Fatality::Logged), Ok(()));
+        assert_eq!(settle_install(Ok(()), Fatality::Logged), Ok(()));
+    }
+
+    #[test]
+    fn only_a_release_build_tolerates_a_missing_hook() {
+        assert_eq!(
+            Fatality::of_this_build(),
+            if cfg!(debug_assertions) {
+                Fatality::Fatal
+            } else {
+                Fatality::Logged
+            }
+        );
     }
 
     #[test]
