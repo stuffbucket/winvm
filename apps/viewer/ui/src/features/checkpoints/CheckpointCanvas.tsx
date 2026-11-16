@@ -115,6 +115,15 @@ const viewSize = (): Size => ({
   height: window.innerHeight,
 })
 
+const centreIn = (
+  world: { x: number; y: number },
+  zoom: number,
+  reserve: number,
+): Camera => {
+  const c = centreOn(world, zoom, viewSize())
+  return { ...c, x: c.x - reserve / 2 }
+}
+
 export function CheckpointCanvas(p: CheckpointCanvasProps): JSX.Element {
   const live = p.phase === "running" || p.phase === "paused"
   const [list, setList] = useState<Checkpoint[] | null>(null)
@@ -268,15 +277,6 @@ export function CheckpointCanvas(p: CheckpointCanvasProps): JSX.Element {
       ),
     [content, limits],
   )
-
-  const centreIn = (
-    world: { x: number; y: number },
-    zoom: number,
-    reserve: number,
-  ): Camera => {
-    const c = centreOn(world, zoom, viewSize())
-    return { ...c, x: c.x - reserve / 2 }
-  }
 
   const overview = useCallback((): Camera => {
     const view = openingView(layout)
