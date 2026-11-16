@@ -7,7 +7,6 @@ import codeFocus, { codeName, TABINDEX_SCRIPT_MARKER, withoutTabindexScript } fr
 
 const el = (tagName, children = [], properties = {}) => ({ type: "element", tagName, properties, children });
 
-// The shape Expressive Code renders: a figure with a caption, then pre > code.
 const block = () =>
   el("figure", [el("figcaption", [el("span")]), el("pre", [el("code")], { dataLanguage: "sh" })], {
     className: ["frame"],
