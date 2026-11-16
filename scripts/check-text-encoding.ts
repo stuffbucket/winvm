@@ -22,21 +22,50 @@ const EXTENSIONS = new Set([
   ".toml",
   ".yaml",
   ".yml",
+  ".html",
+  ".ps1",
+  ".psm1",
+  ".cs",
+  ".xml",
+  ".sh",
+  ".nsh",
+  ".cmd",
+  ".swift",
 ])
 
 const VENDORED = /(^|\/)novnc(\/|$)/
 
-const SUSPECT = /â[\u0080-\u009f€]|Ã[\u0080-¿]|[\u0080-\u009f]/gu
+const CP1252_GLYPHS =
+  "\u20ac\u201a\u0192\u201e\u2026\u2020\u2021\u02c6\u2030\u0160\u2039\u0152\u017d\u2018\u2019\u201c\u201d\u2022\u2013\u2014\u02dc\u2122\u0161\u203a\u0153\u017e\u0178"
+
+const CONTINUATION = `[\\u0080-\\u00bf${CP1252_GLYPHS}]`
+
+const SUSPECT = new RegExp(
+  [
+    `[\\u00f0-\\u00f4]${CONTINUATION}{3}`,
+    `[\\u00e0-\\u00ef]${CONTINUATION}{2}`,
+    `[\\u00c2-\\u00df]${CONTINUATION}`,
+    "\\u00e2[\\u0080-\\u009f\\u20ac]",
+    "[\\u0080-\\u009f]",
+    "\\ufffd",
+  ].join("|"),
+  "gu",
+)
 
 const hex = (char: string): string =>
   `U+${(char.codePointAt(0) ?? 0).toString(16).toUpperCase().padStart(4, "0")}`
 
+const isControl = (char: string): boolean => /[\u0080-\u009f]/u.test(char)
+
 function reasonFor(match: string): string {
-  if (match.length === 1) return `C1 control character ${hex(match)}`
-  const lead = match.charAt(0)
-  const next = match.charAt(1)
-  if (next === "€") return `double-encoded UTF-8 (${lead}${next})`
-  return `double-encoded UTF-8 (${lead} followed by ${hex(next)})`
+  if (match === "\ufffd") return `replacement character ${hex(match)}`
+  if (match.length === 1 && isControl(match)) {
+    return `C1 control character ${hex(match)}`
+  }
+  const shown = Array.from(match)
+    .map((char) => (isControl(char) ? `<${hex(char)}>` : char))
+    .join("")
+  return `double-encoded UTF-8 (${shown})`
 }
 
 export function encodingProblems(text: string): Problem[] {
@@ -47,6 +76,22 @@ export function encodingProblems(text: string): Problem[] {
     }
   })
   return problems
+}
+
+export function decodeText(bytes: Uint8Array): string {
+  if (bytes[0] === 0xff && bytes[1] === 0xfe) {
+    return new TextDecoder("utf-16le").decode(bytes.subarray(2))
+  }
+  if (bytes[0] === 0xfe && bytes[1] === 0xff) {
+    const swapped = Uint8Array.from(bytes.subarray(2))
+    for (let i = 0; i + 1 < swapped.length; i += 2) {
+      const first = swapped[i] ?? 0
+      swapped[i] = swapped[i + 1] ?? 0
+      swapped[i + 1] = first
+    }
+    return new TextDecoder("utf-16le").decode(swapped)
+  }
+  return new TextDecoder("utf-8").decode(bytes)
 }
 
 function trackedFiles(): string[] {
@@ -69,7 +114,7 @@ if (import.meta.main) {
   )
   let total = 0
   for (const file of files) {
-    for (const problem of encodingProblems(readFileSync(file, "utf8"))) {
+    for (const problem of encodingProblems(decodeText(readFileSync(file)))) {
       total += 1
       console.log(`${file}:${String(problem.line)}: ${problem.reason}`)
     }
