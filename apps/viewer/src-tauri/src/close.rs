@@ -361,8 +361,10 @@ fn close_command(args: &[String]) -> Result<Command, String> {
 }
 
 #[derive(Deserialize)]
-struct Listed {
-    instances: Vec<Listing>,
+#[serde(untagged)]
+enum Listed {
+    All { instances: Vec<Listing> },
+    One(Listing),
 }
 
 #[derive(Deserialize)]
@@ -378,13 +380,14 @@ struct Listing {
 impl Listing {
     fn needs_resolving(&self) -> bool {
         let live = matches!(self.state.as_str(), "running" | "paused" | "asleep");
-        self.operation.is_some() || (live && self.close_policy.as_deref() != Some("leave"))
+        live && (self.operation.is_some() || self.close_policy.as_deref() != Some("leave"))
     }
 }
 
 pub fn needs_resolving(status: &str) -> bool {
     match serde_json::from_str::<Listed>(status) {
-        Ok(listed) => listed.instances.iter().any(Listing::needs_resolving),
+        Ok(Listed::All { instances }) => instances.iter().any(Listing::needs_resolving),
+        Ok(Listed::One(one)) => one.needs_resolving(),
         Err(_) => true,
     }
 }
@@ -485,9 +488,14 @@ fn session_needs_close(app: &tauri::AppHandle) -> bool {
         &args,
         Some(SESSION_STATUS_TIMEOUT),
     ));
+    needs_from(&read)
+}
+
+fn needs_from(read: &Result<Output, Box<SidecarFailure>>) -> bool {
     match read {
-        Ok(out) if out.code == 0 => needs_resolving(&out.stdout),
-        _ => true,
+        Ok(out) => needs_resolving(&out.stdout),
+        Err(failure) if failure.code.is_some() => needs_resolving(&failure.stdout),
+        Err(_) => true,
     }
 }
 
@@ -1158,14 +1166,78 @@ mod tests {
             { "name": "a", "state": "stopped", "closePolicy": "ask",
               "operation": { "operation": "start", "pid": 1, "startedAt": "x" } },
         ]));
-        assert!(needs_resolving(&busy_off), "a start under way may go live");
+        assert!(
+            !needs_resolving(&busy_off),
+            "the window only resolves live machines, so neither does a logout"
+        );
+    }
+
+    fn single(instance: &serde_json::Value) -> String {
+        let mut one = instance.clone();
+        one["timeMachine"] = serde_json::json!({ "enabled": false });
+        one.to_string()
+    }
+
+    #[test]
+    fn a_session_end_reads_the_single_machine_status_winvm_prints_for_one_machine() {
+        let stopped = single(&serde_json::json!(
+            { "name": "default", "state": "stopped", "closePolicy": "ask", "operation": null }
+        ));
+        assert!(!needs_resolving(&stopped));
+        let left = single(&serde_json::json!(
+            { "name": "default", "state": "running", "closePolicy": "leave", "operation": null }
+        ));
+        assert!(!needs_resolving(&left));
+        let asked = single(&serde_json::json!(
+            { "name": "default", "state": "running", "closePolicy": "ask", "operation": null }
+        ));
+        assert!(needs_resolving(&asked));
+        let older = single(&serde_json::json!({ "name": "default", "state": "paused" }));
+        assert!(needs_resolving(&older));
     }
 
     #[test]
     fn a_session_end_that_cannot_read_the_machines_runs_the_close() {
-        for unreadable in ["", "not json", "{}", "{\"instances\": 3}"] {
+        for unreadable in [
+            "",
+            "not json",
+            "{}",
+            "{\"instances\": 3}",
+            "[]",
+            "{\"name\": \"a\"}",
+            "{\"state\": 7}",
+        ] {
             assert!(needs_resolving(unreadable), "{unreadable:?}");
         }
+    }
+
+    #[test]
+    fn a_session_end_reads_what_status_printed_even_when_it_exited_nonzero() {
+        let missing = single(&serde_json::json!({ "name": "default", "state": "missing" }));
+        let exited = Err(Box::new(SidecarFailure::exit(
+            "status",
+            Some(1),
+            None,
+            missing,
+            String::new(),
+        )));
+        assert!(!needs_from(&exited));
+        let printed = Ok(Output {
+            code: 0,
+            stdout: status(&serde_json::json!([])),
+            stderr: String::new(),
+        });
+        assert!(!needs_from(&printed));
+        let unlaunched = Err(Box::new(SidecarFailure::launch("status", "gone".into())));
+        assert!(needs_from(&unlaunched));
+        let silent = Err(Box::new(SidecarFailure::exit(
+            "status",
+            Some(1),
+            None,
+            String::new(),
+            "boom".into(),
+        )));
+        assert!(needs_from(&silent));
     }
 
     #[test]
