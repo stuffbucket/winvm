@@ -137,8 +137,11 @@ function collectDependencies(rootDirectories: Array<string>): Array<ScanRow> {
   }
 
   const rows = new Map<string, ScanRow>()
-  while (queue.length > 0) {
-    const packageJsonPath = queue.shift()!
+  for (
+    let packageJsonPath = queue.shift();
+    packageJsonPath !== undefined;
+    packageJsonPath = queue.shift()
+  ) {
     const pkg = readJson(packageJsonPath) as PackageJson | undefined
     if (!pkg) continue
     const name = pkg.name ?? path.basename(path.dirname(packageJsonPath))
