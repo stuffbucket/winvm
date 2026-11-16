@@ -115,9 +115,9 @@ export async function runService(
       state = fields.status ?? UNKNOWN
       record(fields)
     },
-    onLost: () => {
+    onLost: (reason) => {
       state = UNKNOWN
-      record({ kind: "disconnected" })
+      record({ kind: "disconnected", reason })
     },
   })
   const askPortOpen = async (): Promise<boolean | null> => {

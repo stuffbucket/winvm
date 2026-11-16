@@ -186,7 +186,7 @@ describe("the service", () => {
     expect(await serviceState()).toBe("shutdown")
   })
 
-  it("reads QEMU's run state as soon as it connects, before any event", async () => {
+  it("reads QEMU's run state on every connect, so a sync always follows the connection", async () => {
     fake.handler = (cmd) =>
       cmd.execute === "query-status"
         ? { return: { status: "paused", running: false } }
@@ -219,6 +219,9 @@ describe("the service", () => {
         .filter((e) => e.kind === "sync" || e.kind === "disconnected")
         .map((e) => (e.kind === "sync" ? e.status : e.kind)),
     ).toEqual(["running", "disconnected", "suspended"])
+    expect(entries().find((e) => e.kind === "disconnected")).toMatchObject({
+      reason: "qemu-closed",
+    })
     expect(await serviceState()).toBe("suspended")
   })
 
@@ -605,7 +608,7 @@ describe("waiting for an entry while the service runs", () => {
     })
     const got = await waiting
     expect(Date.now() - t0).toBeLessThan(1000)
-    expect(got).toMatchObject({
+    expect(got?.entry).toMatchObject({
       kind: "qmp",
       event: "SHUTDOWN",
       data: { guest: true, reason: "guest-shutdown" },
@@ -636,7 +639,7 @@ describe("waiting for an entry while the service runs", () => {
       data: { guest: false, reason: "host-signal" },
       timestamp: { seconds: 8, microseconds: 0 },
     })
-    expect(await waiting).toMatchObject({
+    expect((await waiting)?.entry).toMatchObject({
       event: "SHUTDOWN",
       data: { guest: false, reason: "host-signal" },
     })

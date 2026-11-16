@@ -509,7 +509,13 @@ async function reconcileHeld(
           throw error
         }
       },
-      { automatic: true },
+      {
+        automatic: true,
+        outcome: (r) =>
+          r instanceof Failed
+            ? { ok: false, error: r.error.message }
+            : { ok: true },
+      },
     )
   } catch (error) {
     if (error instanceof InstanceBusy) {

@@ -2,6 +2,8 @@ import { readlinkSync, renameSync, rmSync, symlinkSync } from "node:fs"
 import { connect, createServer, type Server, type Socket } from "node:net"
 import { basename } from "node:path"
 
+import type { DisconnectReason } from "./eventlog"
+
 type Json = Record<string, unknown>
 
 function lineReader(onLine: (line: string) => void): (chunk: Buffer) => void {
@@ -76,7 +78,7 @@ export interface QmpChannelOptions {
   readonly upstream: string
   readonly onEvent?: (event: Json) => void
   readonly onSync?: (reply: Json) => void
-  readonly onLost?: () => void
+  readonly onLost?: (reason: DisconnectReason) => void
   readonly drainTimeoutMs?: number
   readonly negotiateTimeoutMs?: number
 }
@@ -99,6 +101,7 @@ export class QmpChannel {
   private nextId = 0
   private readonly requests = new Map<string, (reply: Json) => void>()
   private syncId: string | null = null
+  private dropped: DisconnectReason | null = null
 
   constructor(o: QmpChannelOptions) {
     this.o = o
@@ -225,7 +228,9 @@ export class QmpChannel {
     this.owed = 0
     this.draining = false
     clearTimeout(this.drainTimer)
-    if (!this.stopped) this.o.onLost?.()
+    const reason = this.dropped ?? "qemu-closed"
+    this.dropped = null
+    if (!this.stopped) this.o.onLost?.(reason)
   }
 
   private fromUpstream(line: string, msg: Json): void {
@@ -306,10 +311,10 @@ export class QmpChannel {
     this.active = null
     if (this.owed > 0 && this.upstream !== null) {
       this.draining = true
-      this.drainTimer = setTimeout(
-        () => this.upstream?.destroy(),
-        this.o.drainTimeoutMs ?? 200_000,
-      )
+      this.drainTimer = setTimeout(() => {
+        this.dropped = "drain-timeout"
+        this.upstream?.destroy()
+      }, this.o.drainTimeoutMs ?? 200_000)
       return
     }
     this.owed = 0

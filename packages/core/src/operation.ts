@@ -192,11 +192,12 @@ async function recorded<T>(
   name: string,
   who: OpIdentity,
   run: () => T | Promise<T>,
+  outcome: (result: T) => OpOutcome = settled,
 ): Promise<T> {
   recordBegin(name, who)
   try {
     const result = await run()
-    recordEnd(name, who, settled(result))
+    recordEnd(name, who, outcome(result))
     return result
   } catch (error) {
     recordEnd(name, who, failed(error))
@@ -342,11 +343,15 @@ async function acquire(
   throw new Error(`could not take ${file}: it kept changing under this command`)
 }
 
+export interface OperationOptions<T> extends LeaseOptions {
+  readonly outcome?: (result: T) => OpOutcome
+}
+
 export async function withOperation<T>(
   name: string,
   operation: LeaseOperation,
   run: () => T | Promise<T>,
-  o: LeaseOptions = {},
+  o: OperationOptions<T> = {},
 ): Promise<T> {
   if (heldHere(name) !== undefined || !leaseable(name, operation))
     return await run()
@@ -361,7 +366,7 @@ export async function withOperation<T>(
       `note: ${got.holder.operation} (pid ${String(got.holder.pid)}) holds "${name}"; killing it anyway`,
     )
     const own = ownRecord(name, operation, automaticOf(o))
-    return await recorded(name, identityOf(own, false), run)
+    return await recorded(name, identityOf(own, false), run, o.outcome)
   }
   const file = pathsFor(name).lease
   const who = identityOf(got, true)
@@ -373,16 +378,21 @@ export async function withOperation<T>(
   }
   process.on("exit", onExit)
   try {
-    return await recorded(name, who, async () => {
-      try {
-        return await held.run(
-          new Map([...(held.getStore() ?? []), [name, got.id]]),
-          run,
-        )
-      } finally {
-        ended = true
-      }
-    })
+    return await recorded(
+      name,
+      who,
+      async () => {
+        try {
+          return await held.run(
+            new Map([...(held.getStore() ?? []), [name, got.id]]),
+            run,
+          )
+        } finally {
+          ended = true
+        }
+      },
+      o.outcome,
+    )
   } finally {
     process.off("exit", onExit)
     release(file, got.id)

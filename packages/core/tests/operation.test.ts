@@ -621,6 +621,22 @@ describe("the event record of operations", () => {
     })
   })
 
+  it("records the outcome its caller reads from a result that is not an exit code", async () => {
+    const result = await withOperation(
+      NAME,
+      "reconcile",
+      () => ({ failed: "service would not start" }),
+      { outcome: (r) => ({ ok: false, error: r.failed }) },
+    )
+    expect(result.failed).toBe("service would not start")
+    expect(ops().at(-1)).toMatchObject({
+      phase: "end",
+      operation: "reconcile",
+      ok: false,
+      error: "service would not start",
+    })
+  })
+
   it("records nested steps once, as the operation that took the lease", async () => {
     await withOperation(NAME, "stow", async () => {
       await withOperation(NAME, "save", () => 0)

@@ -37,8 +37,11 @@ export interface SyncFields {
   readonly error?: string
 }
 
+export type DisconnectReason = "qemu-closed" | "drain-timeout"
+
 export interface DisconnectedFields {
   readonly kind: "disconnected"
+  readonly reason: DisconnectReason
 }
 
 export interface OpIdentity {
@@ -87,12 +90,16 @@ export type SyncEntry = SyncFields & Stamp
 export type OpEntry = (OpBeginFields | OpEndFields) & Stamp
 export type Entry = EntryFields & Stamp
 
-export interface Cursor {
+export interface Position {
   readonly ino: number
   readonly offset: number
 }
 
-export const START: Cursor = { ino: 0, offset: 0 }
+export interface Cursor extends Position {
+  readonly archive: Position | null
+}
+
+export const START: Cursor = { ino: 0, offset: 0, archive: null }
 
 export interface Batch {
   readonly entries: readonly Entry[]
@@ -104,6 +111,7 @@ export const MAX_LINE_BYTES = 8192
 export const DEFAULT_MAX_BYTES = 1 << 20
 const SHORT_FIELD = 256
 const TAIL_BYTES = 64 * 1024
+const READ_LIMIT = 2 * DEFAULT_MAX_BYTES
 const LINE_START = '{"t":"'
 
 const isObject = (v: unknown): v is Json =>
@@ -158,9 +166,9 @@ export function rotateEvents(
   allowed: () => boolean = () => true,
 ): boolean {
   const p = pathsFor(instance)
-  const size = statSync(p.events, { throwIfNoEntry: false })?.size
-  if (size === undefined || size < maxBytes || !allowed()) return false
   try {
+    const size = statSync(p.events, { throwIfNoEntry: false })?.size
+    if (size === undefined || size < maxBytes || !allowed()) return false
     renameSync(p.events, p.eventsPrev)
     return true
   } catch {
@@ -303,7 +311,11 @@ function entryOf(r: Json): Entry | null {
       }
     }
     case "disconnected":
-      return { ...stamp, kind: "disconnected" }
+      return {
+        ...stamp,
+        kind: "disconnected",
+        reason: r.reason === "drain-timeout" ? "drain-timeout" : "qemu-closed",
+      }
     case "op":
       return opEntry(stamp, r)
     case "service":
@@ -331,13 +343,6 @@ export function parseEntry(line: string): Entry | null {
   const after = line.indexOf(LINE_START, 1)
   return after < 0 ? null : parseEntry(line.slice(after))
 }
-
-const parseLines = (text: string): Entry[] =>
-  text
-    .split("\n")
-    .filter((l) => l.trim() !== "")
-    .map(parseEntry)
-    .filter((e): e is Entry => e !== null)
 
 interface Opened {
   readonly fd: number
@@ -367,58 +372,169 @@ function readFrom(o: Opened, from: number): Buffer {
   return buf.subarray(0, got)
 }
 
-interface Lines {
+interface Line {
   readonly text: string
   readonly end: number
 }
 
-function wholeLines(o: Opened, from: number): Lines {
-  const buf = readFrom(o, from)
-  const used = buf.lastIndexOf(0x0a) + 1
-  return { text: buf.subarray(0, used).toString("utf8"), end: from + used }
+interface Lines {
+  readonly lines: readonly Line[]
+  readonly end: number
+  readonly skipped: boolean
 }
+
+function wholeLines(o: Opened, from: number): Lines {
+  const bounded = Math.max(from, o.size - READ_LIMIT)
+  const buf = readFrom(o, bounded)
+  const lines: Line[] = []
+  let at = bounded > from ? buf.indexOf(0x0a) + 1 : 0
+  for (;;) {
+    const nl = buf.indexOf(0x0a, at)
+    if (nl < 0) break
+    lines.push({
+      text: buf.subarray(at, nl).toString("utf8"),
+      end: bounded + nl + 1,
+    })
+    at = nl + 1
+  }
+  return { lines, end: bounded + at, skipped: bounded > from }
+}
+
+interface Item {
+  readonly entry: Entry
+  readonly after: Cursor
+}
+
+interface Scan {
+  readonly items: readonly Item[]
+  readonly cursor: Cursor
+  readonly gap: boolean
+}
+
+const itemsOf = (read: Lines | null, after: (end: number) => Cursor): Item[] =>
+  (read?.lines ?? []).flatMap((l) => {
+    const entry = parseEntry(l.text)
+    return entry === null ? [] : [{ entry, after: after(l.end) }]
+  })
 
 const closeAll = (...opened: readonly (Opened | null)[]): void => {
   for (const o of opened) if (o !== null) closeSync(o.fd)
 }
 
-const holds = (o: Opened | null, cursor: Cursor): boolean =>
-  o !== null && cursor.ino !== 0 && o.ino === cursor.ino
+const holds = (o: Opened | null, at: Position | null): o is Opened =>
+  o !== null && at !== null && at.ino !== 0 && o.ino === at.ino
 
-export function readSince(instance: string, cursor: Cursor): Batch {
+function archiveBeside(cur: Opened | null, prev: Opened | null): Opened | null {
+  if (prev === null || cur === null || prev.ino !== cur.ino) return prev
+  closeSync(prev.fd)
+  return null
+}
+
+export interface ReadSeams {
+  readonly betweenOpens?: () => void
+}
+
+function openBoth(
+  instance: string,
+  seams: ReadSeams,
+): { readonly cur: Opened | null; readonly prev: Opened | null } {
   const p = pathsFor(instance)
-  const prev = openRecord(p.eventsPrev)
   const cur = openRecord(p.events)
-  try {
-    if (cur !== null && holds(cur, cursor)) {
-      const shrunk = cur.size < cursor.offset
-      const now = wholeLines(cur, shrunk ? 0 : cursor.offset)
-      return {
-        entries: parseLines(now.text),
-        cursor: { ino: cur.ino, offset: now.end },
-        gap: shrunk,
-      }
-    }
-    const fromPrev = holds(prev, cursor)
-    const older =
-      prev === null
-        ? null
-        : wholeLines(prev, fromPrev ? Math.min(cursor.offset, prev.size) : 0)
-    const now = cur === null ? null : wholeLines(cur, 0)
-    const next =
+  seams.betweenOpens?.()
+  return { cur, prev: archiveBeside(cur, openRecord(p.eventsPrev)) }
+}
+
+function readCurrent(cur: Opened, prev: Opened | null, cursor: Cursor): Scan {
+  const tracked = holds(prev, cursor.archive) ? prev : null
+  const from = cursor.archive?.offset ?? 0
+  const late =
+    tracked === null ? null : wholeLines(tracked, Math.min(from, tracked.size))
+  const shrunk = cur.size < cursor.offset
+  const base = shrunk ? 0 : cursor.offset
+  const now = wholeLines(cur, base)
+  const archive =
+    tracked === null || late === null
+      ? null
+      : { ino: tracked.ino, offset: late.end }
+  return {
+    items: [
+      ...(tracked === null
+        ? []
+        : itemsOf(late, (end) => ({
+            ino: cur.ino,
+            offset: base,
+            archive: { ino: tracked.ino, offset: end },
+          }))),
+      ...itemsOf(now, (end) => ({ ino: cur.ino, offset: end, archive })),
+    ],
+    cursor: { ino: cur.ino, offset: now.end, archive },
+    gap: shrunk || now.skipped || late?.skipped === true,
+  }
+}
+
+function readAcross(
+  cur: Opened | null,
+  prev: Opened | null,
+  cursor: Cursor,
+): Scan {
+  const fromPrev = holds(prev, cursor)
+  const older =
+    prev === null
+      ? null
+      : wholeLines(prev, fromPrev ? Math.min(cursor.offset, prev.size) : 0)
+  const now = cur === null ? null : wholeLines(cur, 0)
+  const left =
+    prev === null || older === null
+      ? null
+      : { ino: prev.ino, offset: older.end }
+  return {
+    items: [
+      ...(prev === null
+        ? []
+        : itemsOf(older, (end) => ({
+            ino: prev.ino,
+            offset: end,
+            archive: null,
+          }))),
+      ...(cur === null
+        ? []
+        : itemsOf(now, (end) => ({
+            ino: cur.ino,
+            offset: end,
+            archive: left,
+          }))),
+    ],
+    cursor:
       cur !== null && now !== null
-        ? { ino: cur.ino, offset: now.end }
-        : prev !== null && older !== null
-          ? { ino: prev.ino, offset: older.end }
-          : START
-    return {
-      entries: parseLines(`${older?.text ?? ""}${now?.text ?? ""}`),
-      cursor: next,
-      gap: cursor.ino !== 0 && !fromPrev,
-    }
+        ? { ino: cur.ino, offset: now.end, archive: left }
+        : left === null
+          ? START
+          : { ...left, archive: null },
+    gap:
+      (cursor.ino !== 0 && !fromPrev) ||
+      older?.skipped === true ||
+      now?.skipped === true,
+  }
+}
+
+function scan(instance: string, cursor: Cursor, seams: ReadSeams = {}): Scan {
+  const { cur, prev } = openBoth(instance, seams)
+  try {
+    return holds(cur, cursor)
+      ? readCurrent(cur, prev, cursor)
+      : readAcross(cur, prev, cursor)
   } finally {
     closeAll(prev, cur)
   }
+}
+
+export function readSince(
+  instance: string,
+  cursor: Cursor,
+  seams: ReadSeams = {},
+): Batch {
+  const s = scan(instance, cursor, seams)
+  return { entries: s.items.map((i) => i.entry), cursor: s.cursor, gap: s.gap }
 }
 
 function lastLineEnd(o: Opened): number {
@@ -428,18 +544,17 @@ function lastLineEnd(o: Opened): number {
   return from === 0 ? 0 : o.size
 }
 
+const endOf = (o: Opened): Position => ({ ino: o.ino, offset: lastLineEnd(o) })
+
 export function endCursor(instance: string): Cursor {
-  const p = pathsFor(instance)
-  for (const file of [p.events, p.eventsPrev]) {
-    const o = openRecord(file)
-    if (o === null) continue
-    try {
-      return { ino: o.ino, offset: lastLineEnd(o) }
-    } finally {
-      closeSync(o.fd)
-    }
+  const { cur, prev } = openBoth(instance, {})
+  try {
+    if (cur !== null)
+      return { ...endOf(cur), archive: prev === null ? null : endOf(prev) }
+    return prev === null ? START : { ...endOf(prev), archive: null }
+  } finally {
+    closeAll(prev, cur)
   }
-  return START
 }
 
 export const qmpEvent =
@@ -532,24 +647,34 @@ class ServiceStream {
   }
 }
 
+export interface Found<E extends Entry> {
+  readonly entry: E
+  readonly cursor: Cursor
+  readonly gap: boolean
+}
+
 export function waitForEvent<E extends Entry>(
   instance: string,
   predicate: (e: Entry) => e is E,
   deadline: number,
   o?: WaitOptions,
-): Promise<E | null>
+): Promise<Found<E> | null>
 export function waitForEvent(
   instance: string,
   predicate: (e: Entry) => boolean,
   deadline: number,
   o?: WaitOptions,
-): Promise<Entry | null>
+): Promise<Found<Entry> | null>
 export async function waitForEvent(
   instance: string,
   predicate: (e: Entry) => boolean,
   deadline: number,
   o: WaitOptions = {},
-): Promise<Entry | null> {
+): Promise<Found<Entry> | null> {
+  if (!Number.isFinite(deadline))
+    throw new RangeError(
+      `waitForEvent needs a deadline in epoch milliseconds, not ${String(deadline)}`,
+    )
   const pollMs = o.pollMs ?? 250
   const streamPollMs = o.streamPollMs ?? 2000
   const alarm = new Alarm()
@@ -559,13 +684,15 @@ export async function waitForEvent(
   const stream = new ServiceStream(pathsFor(instance).control, ring)
   o.signal?.addEventListener("abort", ring)
   let cursor = o.since ?? endCursor(instance)
+  let gap = false
   try {
     for (;;) {
       o.signal?.throwIfAborted()
-      const batch = readSince(instance, cursor)
-      cursor = batch.cursor
-      const hit = batch.entries.find(predicate)
-      if (hit !== undefined) return hit
+      const s = scan(instance, cursor)
+      gap ||= s.gap
+      const hit = s.items.find((i) => predicate(i.entry))
+      if (hit !== undefined) return { entry: hit.entry, cursor: hit.after, gap }
+      cursor = s.cursor
       const left = deadline - Date.now()
       if (left <= 0) return null
       stream.ensure(pollMs)
