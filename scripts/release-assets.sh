@@ -23,15 +23,15 @@ trigger="gh workflow run build.yml --repo stuffbucket/macos-builder --ref main -
 here=$(cd "$(dirname "$0")" && pwd)
 
 assets() {
-  gh release view "$tag" --repo "$repo" --json assets --jq '.assets[].name' 2> /dev/null
+  gh release view "$tag" --repo "$repo" --json assets --jq '.assets[].name' 2>/dev/null
 }
 
 ready() {
   local have
   have=$(assets)
-  { grep -Fxq "$src" <<< "$have" || grep -Fxq "$dmg" <<< "$have"; } &&
-    grep -Fxq "$bundle" <<< "$have" &&
-    grep -Fxq "$bundle.sig" <<< "$have"
+  { grep -Fxq "$src" <<<"$have" || grep -Fxq "$dmg" <<<"$have"; } &&
+    grep -Fxq "$bundle" <<<"$have" &&
+    grep -Fxq "$bundle.sig" <<<"$have"
 }
 
 deadline=$((SECONDS + wait))
@@ -50,10 +50,10 @@ trap 'rm -rf "$tmp"' EXIT
 if ! assets | grep -Fxq "$dmg"; then
   gh release download "$tag" --repo "$repo" --pattern "$src" --dir "$tmp"
   mv "$tmp/$src" "$tmp/$dmg"
-  (cd "$tmp" && shasum -a 256 "$dmg" > "$dmg.sha256")
+  (cd "$tmp" && shasum -a 256 "$dmg" >"$dmg.sha256")
   gh release upload "$tag" --repo "$repo" "$tmp/$dmg" "$tmp/$dmg.sha256" --clobber
-  gh release delete-asset "$tag" "$src" --repo "$repo" --yes 2> /dev/null || true
-  gh release delete-asset "$tag" "$src.sha256" --repo "$repo" --yes 2> /dev/null || true
+  gh release delete-asset "$tag" "$src" --repo "$repo" --yes 2>/dev/null || true
+  gh release delete-asset "$tag" "$src.sha256" --repo "$repo" --yes 2>/dev/null || true
   echo "attached $dmg and $dmg.sha256 to the $tag draft"
 fi
 
