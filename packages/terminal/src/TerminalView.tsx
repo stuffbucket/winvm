@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import {
   animationFrameScheduler,
   TerminalAcknowledgements,
@@ -122,7 +122,7 @@ export function TerminalView({
   onUnmount.current = disposition
   const shownSession = useRef<FocusSession>({ id, transport })
   shownSession.current = { id, transport }
-  const focusTransport = (session: FocusSession): void => {
+  const focusTransport = useCallback((session: FocusSession): void => {
     const term = terminal.current
     if (!term) return
     const focusedTransport = session.transport.focus?.(
@@ -134,24 +134,44 @@ export function TerminalView({
       void focusedTransport.catch((error: unknown) =>
         callbacks.current.onError?.(error),
       )
+  }, [])
+  const focusEmulator = useCallback(
+    (
+      renewLease: boolean,
+      session: FocusSession = shownSession.current,
+    ): void => {
+      if (!terminal.current || !nativeWindowFocused.current) return
+      programmaticFocus.current = true
+      try {
+        terminal.current.focus()
+      } finally {
+        programmaticFocus.current = false
+      }
+      if (renewLease) focusTransport(session)
+    },
+    [focusTransport],
+  )
+  const startValues = {
+    cwd,
+    shell,
+    transport,
+    theme,
+    ghosttyWindow,
+    typography,
   }
-  const focusEmulator = (
-    renewLease: boolean,
-    session: FocusSession = shownSession.current,
-  ): void => {
-    if (!terminal.current || !nativeWindowFocused.current) return
-    programmaticFocus.current = true
-    try {
-      terminal.current.focus()
-    } finally {
-      programmaticFocus.current = false
-    }
-    if (renewLease) focusTransport(session)
-  }
+  const startWith = useRef(startValues)
+  startWith.current = startValues
+  const start = useMemo(
+    () => ({ emulator, id, attempt: startAttempt }),
+    [emulator, id, startAttempt],
+  )
 
   useEffect(() => {
     const element = host.current
     if (!element) return
+    const { emulator, id } = start
+    const { cwd, shell, transport, theme, ghosttyWindow, typography } =
+      startWith.current
     const generation = lifecycle.current.generation + 1
     lifecycle.current = { id, generation }
 
@@ -349,7 +369,7 @@ export function TerminalView({
       if (terminal.current === term) terminal.current = undefined
       term?.dispose()
     }
-  }, [emulator, id, startAttempt])
+  }, [start, focusEmulator])
 
   useEffect(() => {
     if (!terminal.current) return
@@ -362,7 +382,7 @@ export function TerminalView({
       handledFocusRequest.current = focusRequest
       focusEmulator(focused === true)
     }
-  }, [focusRequest, focused])
+  }, [focusRequest, focused, focusEmulator])
 
   useEffect(() => {
     const restoreWindowFocus = () => {
@@ -385,7 +405,7 @@ export function TerminalView({
       window.removeEventListener("focus", restoreWindowFocus)
       window.removeEventListener("blur", relinquishWindowFocus)
     }
-  }, [])
+  }, [focusEmulator])
 
   return (
     <div
