@@ -32,6 +32,8 @@ export const VM_OPERATIONS = [
 
 export type VmOperation = (typeof VM_OPERATIONS)[number]
 
+export const STOP_UNFINISHED = 3
+
 const INTERNAL_OPERATIONS = ["reconcile", "destroy"] as const
 
 export type LeaseOperation = VmOperation | (typeof INTERNAL_OPERATIONS)[number]

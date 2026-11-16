@@ -27,6 +27,7 @@ import {
 import { diagnose, formatFindings } from "./diagnose"
 import { runningCommand } from "./display"
 import {
+  appendEntry,
   type Cursor,
   type Entry,
   endCursor,
@@ -60,7 +61,7 @@ import {
   resolveWindowsIso,
 } from "./media"
 import * as monitor from "./monitor"
-import { leaseHolder } from "./operation"
+import { leaseHolder, STOP_UNFINISHED } from "./operation"
 import type { InstanceMeta, Paths } from "./paths"
 import {
   allocateVnc,
@@ -817,6 +818,7 @@ const FORCE_AFTER_MS = 60_000
 const EXIT_GRACE_MS = 15_000
 const EXIT_POLL_MS = 250
 const POWERDOWN_TIMEOUT_MS = 10_000
+const FORCE_MIN_LEFT_MS = 10_000
 const MAX_SIGHTINGS = 12
 
 export interface StopCommandSeams {
@@ -878,6 +880,27 @@ function sighting(e: Entry): string | null {
     case "warning":
       return null
   }
+}
+
+function leftRunning(
+  name: string,
+  pid: number | null,
+  original: frozen.Frozen | null,
+): readonly string[] {
+  const again =
+    original === null
+      ? ""
+      : `, then \`winvm ${original === "paused" ? "pause" : "sleep"} -i ${name}\` to freeze it again`
+  return [
+    `Nothing was undone after the request. QEMU is still running${pid === null ? "" : ` (pid ${String(pid)})`}.` +
+      (original === null
+        ? ""
+        : ` Windows was ${original}, and stop resumed it to shut it down.`) +
+      " The watcher (autosave, idle sleep) and the guest's Finder drives were taken down for the shutdown and are still down.",
+    `Still shutting down (installing updates, say)? Wait, and follow it with \`winvm status -i ${name}\`.`,
+    `Want it back as it was? \`winvm start -i ${name}\` restarts the watcher and mounts the drives again${again}.`,
+    `Stuck? \`winvm kill -i ${name}\` powers it off at once, and anything unsaved in Windows is lost.`,
+  ]
 }
 
 function sightings(entries: readonly Entry[]): string {
@@ -1019,7 +1042,20 @@ export async function stopWith(
       warn(forced.note)
       return
     }
+    if (deadline - now() < FORCE_MIN_LEFT_MS) {
+      forced.note =
+        "guest-shutdown (forced) was not sent: the guest agent answered with too little time left to see it through"
+      warn(forced.note)
+      return
+    }
     const at = seconds(now() - requestedAt)
+    forced.note = `guest-shutdown (forced) sent at ${at} s, with no answer yet`
+    appendEntry(name, {
+      kind: "warning",
+      what: "stop forced a shutdown through the guest agent (guest-shutdown), which closes open apps without saving",
+      operation: "stop",
+      afterSeconds: Number(at),
+    })
     try {
       await shutdown(p.qga)
       forced.note = `guest-shutdown (forced) at ${at} s`
@@ -1038,11 +1074,13 @@ export async function stopWith(
   try {
     while (isRunning(p)) {
       if (now() >= exitBy) {
+        const left = leftRunning(name, pidOf(p), original)
         if (seen !== null) {
           console.error(
-            `::error::QEMU recorded ${sighting(seen) ?? "SHUTDOWN"} but has not exited — \`winvm kill -i ${name}\` if it is wedged`,
+            `::error::QEMU recorded ${sighting(seen) ?? "SHUTDOWN"} but has not exited`,
           )
-          return 1
+          for (const line of left) console.error(`  ${line}`)
+          return STOP_UNFINISHED
         }
         const sent = [
           unconfirmed === null
@@ -1058,11 +1096,10 @@ export async function stopWith(
         console.error(
           `::error::guest did not shut down within ${seconds(STOP_DEADLINE_MS)} s. ` +
             `Sent: ${sent.join("; ")}. ` +
-            `Seen since: ${sightings(record.entries)}${holes}. ` +
-            "Nothing was undone: Windows is left as it is and may still be shutting down — " +
-            `\`winvm kill -i ${name}\` if it is wedged`,
+            `Seen since: ${sightings(record.entries)}${holes}.`,
         )
-        return 1
+        for (const line of left) console.error(`  ${line}`)
+        return STOP_UNFINISHED
       }
       if (closed) {
         await sleep(Math.min(EXIT_POLL_MS, exitBy - now()))

@@ -30,6 +30,7 @@ import {
   appendEntry,
   type Cursor,
   readSince,
+  START,
   waitForEvent,
 } from "../src/eventlog"
 import { filesCmd } from "../src/finder"
@@ -46,6 +47,7 @@ import {
 import { QmpError, QmpNotDelivered } from "../src/monitor"
 import {
   markSavingRunning,
+  STOP_UNFINISHED,
   savingRunning,
   withOperation,
 } from "../src/operation"
@@ -426,6 +428,7 @@ describe("graceful stop", () => {
     acpiExitAfterMs?: number
     forcedExitAfterMs?: number
     agent?: boolean
+    agentReadyAt?: number
     refuse?: string
     request?: "refused" | "unanswered"
     resumeFails?: boolean
@@ -539,6 +542,8 @@ describe("graceful stop", () => {
       waitFor: (_sock, ms) => {
         note("waitFor")
         waitForMs.push(ms)
+        if (o.agentReadyAt !== undefined)
+          clock.t = Math.max(clock.t, T0 + o.agentReadyAt)
         return Promise.resolve(o.agent !== false)
       },
       shutdown: () => {
@@ -732,7 +737,7 @@ describe("graceful stop", () => {
   it("when Windows does not shut down in time, undoes nothing after the request and says what was sent and seen", async () => {
     const r = rig({ frozen: "paused", watcher: true })
     const o = await stopped(r.seams)
-    expect(o.code).toBe(1)
+    expect(o.code).toBe(STOP_UNFINISHED)
     expect(r.events).toEqual([
       "stopWatcher",
       "beforeDown",
@@ -750,9 +755,59 @@ describe("graceful stop", () => {
     expect(o.err).toContain("winvm kill -i frozen-test")
   })
 
+  it("after a timeout says what is left running and down, and how to wait, get it back, or end it", async () => {
+    const r = rig({ frozen: "paused", watcher: true })
+    const o = await stopped(r.seams)
+    expect(o.code).toBe(STOP_UNFINISHED)
+    for (const text of [
+      "QEMU is still running",
+      "Windows was paused, and stop resumed it",
+      "the watcher",
+      "Finder drives",
+      "winvm status -i frozen-test",
+      "winvm start -i frozen-test",
+      "winvm pause -i frozen-test",
+      "winvm kill -i frozen-test",
+    ])
+      expect(o.err).toContain(text)
+  })
+
+  it("after a timeout of a running guest says nothing about resuming it", async () => {
+    const r = rig({ frozen: null })
+    const o = await stopped(r.seams)
+    expect(o.code).toBe(STOP_UNFINISHED)
+    expect(o.err).not.toContain("resumed")
+    expect(o.err).toContain("winvm start -i frozen-test")
+  })
+
+  it("says when QEMU never confirmed the power-button request", async () => {
+    const r = rig({ frozen: null, request: "unanswered" })
+    const o = await stopped(r.seams)
+    expect(o.code).toBe(STOP_UNFINISHED)
+    expect(o.err).toContain("which QEMU did not confirm")
+  })
+
+  it("does not start the forced shutdown with too little time left to see it through", async () => {
+    const r = rig({ frozen: null, agentReadyAt: DEADLINE - 5000 })
+    const o = await stopped(r.seams)
+    expect(o.code).toBe(STOP_UNFINISHED)
+    expect(r.events).not.toContain("shutdown")
+    expect(o.err).toContain("too little time")
+  })
+
+  it("leaves a warning in the record when it forces the shutdown", async () => {
+    const r = rig({ frozen: null, forcedExitAfterMs: 5000 })
+    expect((await stopped(r.seams)).code).toBe(0)
+    expect(
+      readSince(NAME, START).entries.some(
+        (e) => e.kind === "warning" && e.what.includes("guest-shutdown"),
+      ),
+    ).toBe(true)
+  })
+
   it("does not put an asleep guest back to sleep once shutdown was requested", async () => {
     const r = rig({ frozen: "asleep" })
-    expect((await stopped(r.seams)).code).toBe(1)
+    expect((await stopped(r.seams)).code).toBe(STOP_UNFINISHED)
     expect(r.events).not.toContain("hold")
     expect(r.events).not.toContain("afterUp")
     expect(markedAsleep(pathsFor(NAME), OWN_PID)).toBe(false)
@@ -772,7 +827,7 @@ describe("graceful stop", () => {
   it("says the forced shutdown was never sent when the agent does not answer", async () => {
     const r = rig({ frozen: null, agent: false })
     const o = await stopped(r.seams)
-    expect(o.code).toBe(1)
+    expect(o.code).toBe(STOP_UNFINISHED)
     expect(r.events).not.toContain("shutdown")
     expect(o.err).toContain("the guest agent did not answer")
   })
@@ -809,7 +864,7 @@ describe("graceful stop", () => {
       lingers: true,
     })
     const o = await stopped(r.seams)
-    expect(o.code).toBe(1)
+    expect(o.code).toBe(STOP_UNFINISHED)
     expect(o.err).toContain("disconnected (qemu-closed)")
     expect(o.err).toContain("has not exited")
   })
@@ -818,7 +873,7 @@ describe("graceful stop", () => {
     appendEntry(NAME, { kind: "sync", status: "running", running: true })
     const r = rig({ frozen: null, agent: false, replaceRecord: true })
     const o = await stopped(r.seams)
-    expect(o.code).toBe(1)
+    expect(o.code).toBe(STOP_UNFINISHED)
     expect(o.err).toContain("the record has a gap")
   })
 
@@ -830,11 +885,12 @@ describe("graceful stop", () => {
       lingers: true,
     })
     const o = await stopped(r.seams)
-    expect(o.code).toBe(1)
+    expect(o.code).toBe(STOP_UNFINISHED)
     expect(r.events).not.toContain("stopSidecars")
     expect(r.events).not.toContain("afterUp")
     expect(o.err).toContain("has not exited")
     expect(o.err).toContain("winvm kill -i frozen-test")
+    expect(o.err).toContain("winvm start -i frozen-test")
   })
 
   it("a request QEMU may have acted on without answering is past the point of no return", async () => {
