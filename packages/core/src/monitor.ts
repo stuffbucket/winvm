@@ -2,6 +2,8 @@ import { connect } from "node:net"
 
 export class QmpError extends Error {}
 
+export class QmpNotDelivered extends QmpError {}
+
 export type QmpSend = (
   execute: string,
   args?: Record<string, unknown>,
@@ -26,12 +28,13 @@ export async function withQmp<T>(
   sock.on("error", (error) => {
     deadErr = error
     failed?.(error)
-    for (const w of waiting.splice(0)) w({ error: { desc: error.message } })
+    for (const w of waiting.splice(0))
+      w({ error: { desc: error.message, local: true } })
   })
   sock.on("close", () => {
     deadErr ??= new QmpError("qmp connection closed")
     for (const w of waiting.splice(0))
-      w({ error: { desc: "qmp connection closed" } })
+      w({ error: { desc: "qmp connection closed", local: true } })
   })
   sock.on("data", (chunk) => {
     buf += chunk.toString("utf8")
@@ -68,6 +71,7 @@ export async function withQmp<T>(
           error: {
             desc: `no answer in ${String(timeoutMs)} ms`,
             timeout: true,
+            local: true,
           },
         })
       }, timeoutMs)
@@ -75,10 +79,15 @@ export async function withQmp<T>(
     sock.write(`${JSON.stringify(o)}\n`)
     const msg = await Promise.race([reply, expiry])
     clearTimeout(timer)
-    const error = msg.error as { desc?: string } | undefined
+    const error = msg.error as
+      | { desc?: string; timeout?: boolean; local?: boolean }
+      | undefined
     if (error !== undefined) {
-      if ((error as { timeout?: boolean }).timeout === true) sock.destroy()
-      throw new QmpError(`qmp ${label}: ${error.desc ?? JSON.stringify(error)}`)
+      if (error.timeout === true) sock.destroy()
+      const text = `qmp ${label}: ${error.desc ?? JSON.stringify(error)}`
+      throw error.local === true
+        ? new QmpError(text)
+        : new QmpNotDelivered(text)
     }
     return msg.return
   }
@@ -118,9 +127,21 @@ export async function qmpCommand(
   args?: Record<string, unknown>,
   timeoutMs = 3000,
 ): Promise<unknown> {
-  return await withQmp(
-    sockPath,
-    async (send) => await send(execute, args),
-    timeoutMs,
-  )
+  const request = { asked: false }
+  try {
+    return await withQmp(
+      sockPath,
+      async (send) => {
+        request.asked = true
+        return await send(execute, args)
+      },
+      timeoutMs,
+    )
+  } catch (error) {
+    if (request.asked || error instanceof QmpNotDelivered) throw error
+    throw new QmpNotDelivered(
+      error instanceof Error ? error.message : String(error),
+      { cause: error },
+    )
+  }
 }

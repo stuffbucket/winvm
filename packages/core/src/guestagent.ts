@@ -29,7 +29,7 @@ import type {
   WebSocketHandler,
 } from "bun"
 
-export const AGENT_VERSION = 11
+export const AGENT_VERSION = 12
 export const GUEST_PORT = 7801
 export const WINDOWS_DIR = "C:\\ProgramData\\winvm\\agent"
 

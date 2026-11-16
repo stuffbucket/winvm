@@ -12,13 +12,16 @@ export interface ExecResult {
 }
 
 export class AgentTimeout extends Error {
-  constructor(command = "", timeoutMs = 0) {
+  readonly sent: boolean
+
+  constructor(command = "", timeoutMs = 0, sent = false) {
     super(
       command === ""
         ? "guest agent timed out"
         : `guest agent timed out: ${command} after ${String(timeoutMs / 1000)} s`,
     )
     this.name = "AgentTimeout"
+    this.sent = sent
   }
 }
 
@@ -48,6 +51,7 @@ export async function call(
           new AgentTimeout(
             typeof execute === "string" ? execute : "?",
             timeoutMs,
+            synced,
           ),
         )
       })
@@ -137,6 +141,7 @@ export async function portOpen(sockPath: string): Promise<boolean | null> {
 
 export interface WaitOptions {
   readonly portOpen?: (sockPath: string) => Promise<boolean | null>
+  readonly signal?: AbortSignal
 }
 
 export async function waitFor(
@@ -146,7 +151,7 @@ export async function waitFor(
 ): Promise<boolean> {
   const isOpen = o.portOpen ?? portOpen
   const deadline = Date.now() + timeoutMs
-  while (Date.now() < deadline) {
+  while (Date.now() < deadline && o.signal?.aborted !== true) {
     if ((await isOpen(sockPath)) === false) {
       await new Promise((r) => setTimeout(r, 250))
       continue
@@ -384,24 +389,47 @@ export async function exec(
   throw new Error("guest command timed out")
 }
 
-export async function shutdown(sockPath: string): Promise<void> {
+async function requestShutdown(
+  sockPath: string,
+  mode: "powerdown" | "reboot",
+  timeoutMs: number,
+): Promise<void> {
+  const what =
+    mode === "powerdown" ? "guest-shutdown" : `guest-shutdown (${mode})`
+  let reply: Record<string, unknown>
   try {
-    await call(
+    reply = await call(
       sockPath,
-      { execute: "guest-shutdown", arguments: { mode: "powerdown" } },
-      5000,
+      { execute: "guest-shutdown", arguments: { mode } },
+      timeoutMs,
     )
-  } catch {}
+  } catch (error) {
+    if (error instanceof AgentTimeout && error.sent) return
+    if (error instanceof AgentTimeout)
+      throw new Error(`${what} was not sent: the guest agent did not answer`, {
+        cause: error,
+      })
+    throw error
+  }
+  const refusal = reply.error as { desc?: unknown } | undefined
+  if (refusal !== undefined)
+    throw new Error(
+      `${what}: ${typeof refusal.desc === "string" ? refusal.desc : JSON.stringify(refusal)}`,
+    )
 }
 
-export async function reboot(sockPath: string): Promise<void> {
-  try {
-    await call(
-      sockPath,
-      { execute: "guest-shutdown", arguments: { mode: "reboot" } },
-      5000,
-    )
-  } catch {}
+export async function shutdown(
+  sockPath: string,
+  timeoutMs = 5000,
+): Promise<void> {
+  await requestShutdown(sockPath, "powerdown", timeoutMs)
+}
+
+export async function reboot(
+  sockPath: string,
+  timeoutMs = 5000,
+): Promise<void> {
+  await requestShutdown(sockPath, "reboot", timeoutMs)
 }
 
 export async function bootTime(sockPath: string): Promise<string | null> {

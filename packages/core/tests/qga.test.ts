@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from "bun:test"
 import { mkdtempSync, rmSync } from "node:fs"
+import { createServer } from "node:net"
 import { tmpdir } from "node:os"
 import { resolve } from "node:path"
 
@@ -8,6 +9,8 @@ import {
   loggedOnUser,
   READ_CHUNK,
   readFile,
+  reboot,
+  shutdown,
   untilNewBoot,
   untilReady,
   waitFor,
@@ -129,6 +132,68 @@ describe("qga.waitFor", () => {
       }),
     ).toBe(false)
     expect(agent.connections).toBe(before)
+  })
+
+  it("stops waiting as soon as its signal is aborted", async () => {
+    const ac = new AbortController()
+    setTimeout(() => {
+      ac.abort()
+    }, 100)
+    const t0 = Date.now()
+    expect(
+      await waitFor(agent.path, 30_000, {
+        portOpen: () => Promise.resolve(false),
+        signal: ac.signal,
+      }),
+    ).toBe(false)
+    expect(Date.now() - t0).toBeLessThan(5000)
+  })
+})
+
+describe("qga.shutdown", () => {
+  it("surfaces the agent's error reply instead of swallowing it", async () => {
+    agent.handler = (req) =>
+      req.execute === "guest-shutdown"
+        ? {
+            error: {
+              class: "GenericError",
+              desc: "A required privilege is not held by the client.",
+            },
+          }
+        : { return: {} }
+    await expect(shutdown(agent.path)).rejects.toThrow(
+      "guest-shutdown: A required privilege is not held by the client.",
+    )
+  })
+
+  it("takes silence after the request as delivered, since a successful guest-shutdown never answers", async () => {
+    const asked: unknown[] = []
+    agent.handler = (req) => {
+      asked.push(req.execute)
+      return req.execute === "guest-shutdown" ? null : { return: {} }
+    }
+    await shutdown(agent.path, 50)
+    expect(asked).toEqual(["guest-shutdown"])
+    await new Promise((r) => setTimeout(r, 250))
+  })
+
+  it("says the request was never sent when the agent does not answer at all", async () => {
+    const path = resolve(dir, "silent.sock")
+    const silent = createServer((s) => {
+      s.on("error", () => undefined)
+    })
+    await new Promise<void>((r) => silent.listen(path, r))
+    try {
+      await expect(shutdown(path, 50)).rejects.toThrow(
+        "guest-shutdown was not sent: the guest agent did not answer",
+      )
+    } finally {
+      silent.close()
+    }
+  })
+
+  it("fails when there is no agent to ask", async () => {
+    await expect(shutdown(resolve(dir, "missing.sock"), 50)).rejects.toThrow()
   })
 })
 
@@ -319,5 +384,47 @@ describe("qga.untilNewBoot", () => {
       }),
     ).toBe("no-logon")
     expect(asked).toBe(0)
+  })
+})
+
+describe("qga.reboot", () => {
+  it("surfaces the agent's error reply instead of swallowing it", async () => {
+    const asked: unknown[] = []
+    agent.handler = (req) => {
+      asked.push(req.arguments)
+      return req.execute === "guest-shutdown"
+        ? { error: { class: "GenericError", desc: "reboot refused" } }
+        : { return: {} }
+    }
+    await expect(reboot(agent.path)).rejects.toThrow(
+      "guest-shutdown (reboot): reboot refused",
+    )
+    expect(asked).toEqual([{ mode: "reboot" }])
+  })
+
+  it("takes silence after the request as delivered", async () => {
+    agent.handler = (req) =>
+      req.execute === "guest-shutdown" ? null : { return: {} }
+    await reboot(agent.path, 50)
+    await new Promise((r) => setTimeout(r, 250))
+  })
+
+  it("says the request was never sent when the agent does not answer at all", async () => {
+    const path = resolve(dir, "silent-reboot.sock")
+    const silent = createServer((s) => {
+      s.on("error", () => undefined)
+    })
+    await new Promise<void>((r) => silent.listen(path, r))
+    try {
+      await expect(reboot(path, 50)).rejects.toThrow(
+        "guest-shutdown (reboot) was not sent: the guest agent did not answer",
+      )
+    } finally {
+      silent.close()
+    }
+  })
+
+  it("fails when there is no agent to ask", async () => {
+    await expect(reboot(resolve(dir, "missing.sock"), 50)).rejects.toThrow()
   })
 })

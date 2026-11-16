@@ -276,6 +276,15 @@ describe("stop during a manual save", () => {
         shutdowns.push("guest-shutdown")
         return Promise.resolve()
       },
+      ensureService: () => Promise.resolve(),
+      powerdown: () => {
+        shutdowns.push("system_powerdown")
+        return Promise.resolve()
+      },
+      untilEvent: (_name, _matches, _since, until) => {
+        clock = Math.max(clock, until)
+        return Promise.resolve(null)
+      },
     }
 
     const save = outcome(
@@ -355,6 +364,7 @@ describe("the watcher's work", () => {
     )
     await sleep(20)
     let running = true
+    let clock = 0
     const stop = withOperation(
       NAME,
       "stop",
@@ -367,13 +377,19 @@ describe("the watcher's work", () => {
           watcherPid: () => null,
           beforeDown: () => undefined,
           stopSidecars: () => undefined,
-          waitFor: () => Promise.resolve(true),
-          shutdown: () => {
-            order.push("guest-shutdown")
+          ensureService: () => Promise.resolve(),
+          powerdown: () => {
+            order.push("system_powerdown")
             running = false
             return Promise.resolve()
           },
-          sleep: async () => {
+          untilEvent: (_name, _matches, _since, until) => {
+            clock = Math.max(clock, until)
+            return Promise.resolve(null)
+          },
+          now: () => clock,
+          sleep: async (ms) => {
+            clock += ms
             await sleep(1)
           },
         }),
@@ -387,7 +403,7 @@ describe("the watcher's work", () => {
       "autosave begins",
       "released",
       "autosave ends",
-      "guest-shutdown",
+      "system_powerdown",
     ])
   })
 })

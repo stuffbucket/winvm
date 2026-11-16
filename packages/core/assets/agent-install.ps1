@@ -98,6 +98,19 @@ if (Test-Path $cs) {
     }
 }
 
+$powerFailed = @()
+try {
+    powercfg.exe /setacvalueindex SCHEME_CURRENT SUB_BUTTONS PBUTTONACTION 3 | Out-Null
+    if ($LASTEXITCODE -ne 0) { $powerFailed += "setacvalueindex" }
+    powercfg.exe /setdcvalueindex SCHEME_CURRENT SUB_BUTTONS PBUTTONACTION 3 | Out-Null
+    if ($LASTEXITCODE -ne 0) { $powerFailed += "setdcvalueindex" }
+    powercfg.exe /setactive SCHEME_CURRENT | Out-Null
+    if ($LASTEXITCODE -ne 0) { $powerFailed += "setactive" }
+} catch {
+    $powerFailed += "($($_.Exception.Message))"
+}
+if ($powerFailed.Count -gt 0) { Write-Output "WARNING: could not make the power button shut Windows down (powercfg $($powerFailed -join ', ') failed); winvm stop will need the guest agent" }
+
 netsh advfirewall firewall delete rule name=winvm-agent 2>&1 | Out-Null
 netsh advfirewall firewall add rule name=winvm-agent dir=in action=allow protocol=TCP localport=$Port remoteip=10.0.2.2 program="$bun" | Out-Null
 netsh advfirewall set allprofiles settings inboundusernotification disable | Out-Null
