@@ -99,12 +99,16 @@ if (Test-Path $cs) {
 }
 
 $powerFailed = @()
-powercfg.exe /setacvalueindex SCHEME_CURRENT SUB_BUTTONS PBUTTONACTION 3 | Out-Null
-if ($LASTEXITCODE -ne 0) { $powerFailed += "setacvalueindex" }
-powercfg.exe /setdcvalueindex SCHEME_CURRENT SUB_BUTTONS PBUTTONACTION 3 | Out-Null
-if ($LASTEXITCODE -ne 0) { $powerFailed += "setdcvalueindex" }
-powercfg.exe /setactive SCHEME_CURRENT | Out-Null
-if ($LASTEXITCODE -ne 0) { $powerFailed += "setactive" }
+try {
+    powercfg.exe /setacvalueindex SCHEME_CURRENT SUB_BUTTONS PBUTTONACTION 3 | Out-Null
+    if ($LASTEXITCODE -ne 0) { $powerFailed += "setacvalueindex" }
+    powercfg.exe /setdcvalueindex SCHEME_CURRENT SUB_BUTTONS PBUTTONACTION 3 | Out-Null
+    if ($LASTEXITCODE -ne 0) { $powerFailed += "setdcvalueindex" }
+    powercfg.exe /setactive SCHEME_CURRENT | Out-Null
+    if ($LASTEXITCODE -ne 0) { $powerFailed += "setactive" }
+} catch {
+    $powerFailed += "($($_.Exception.Message))"
+}
 if ($powerFailed.Count -gt 0) { Write-Output "WARNING: could not make the power button shut Windows down (powercfg $($powerFailed -join ', ') failed); winvm stop will need the guest agent" }
 
 netsh advfirewall firewall delete rule name=winvm-agent 2>&1 | Out-Null
