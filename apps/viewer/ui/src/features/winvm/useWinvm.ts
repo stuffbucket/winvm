@@ -1,6 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 
-import { errorMessage, installCli, outputText, winvm } from "../../backend"
+import {
+  errorMessage,
+  installCli,
+  type Output,
+  outputText,
+  winvm,
+} from "../../backend"
 import type {
   Checks,
   ClosePolicy,
@@ -38,6 +44,8 @@ interface RanOn extends Ran {
   readonly seq: number
 }
 
+type Runner = (...args: string[]) => Promise<Output>
+
 export interface ActiveOperation {
   readonly operation: VmOperation
   readonly source: "local" | "external"
@@ -61,7 +69,12 @@ export interface Winvm {
   readonly cliPath: string | null
   select: (name: string) => void
   act: (verb: Verb, arg?: string) => Promise<Ran | null>
-  runOn: (name: string, verb: Verb, arg?: string) => Promise<Ran | null>
+  runOn: (
+    name: string,
+    verb: Verb,
+    arg?: string,
+    through?: Runner,
+  ) => Promise<Ran | null>
   lastOn(name: string): RanOn | null
   openScreenSharing(): Promise<void>
   installCommand: () => Promise<void>
@@ -294,7 +307,12 @@ export function useWinvm(): Winvm {
   }, [polled, connection])
 
   const execute = useCallback(
-    async (machine: string | null, verb: Verb, arg?: string): Promise<Ran> => {
+    async (
+      machine: string | null,
+      verb: Verb,
+      arg?: string,
+      through: Runner = winvm,
+    ): Promise<Ran> => {
       const target = verb === "setup" ? null : machine
       const owner = target ?? nameRef.current
       const local: Local = { target, verb }
@@ -311,7 +329,7 @@ export function useWinvm(): Winvm {
         const out =
           target === null
             ? await winvm("setup")
-            : await winvm(verb, "-i", target, ...extra)
+            : await through(verb, "-i", target, ...extra)
         const ran: Ran = { verb, code: out.code, output: outputText(out) }
         result = ran
         record(ran)
@@ -340,8 +358,12 @@ export function useWinvm(): Winvm {
   )
 
   const runOn = useCallback(
-    (target: string, verb: Verb, arg?: string): Promise<Ran | null> =>
-      execute(target, verb, arg),
+    (
+      target: string,
+      verb: Verb,
+      arg?: string,
+      through?: Runner,
+    ): Promise<Ran | null> => execute(target, verb, arg, through),
     [execute],
   )
 

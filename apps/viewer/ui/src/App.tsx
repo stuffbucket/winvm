@@ -34,6 +34,7 @@ import { Popover } from "./components/Popover"
 import { SharePanel } from "./features/actions/SharePanel"
 import { CheckpointCanvas } from "./features/checkpoints/CheckpointCanvas"
 import { ClosePolicyDialog } from "./features/close/ClosePolicyDialog"
+import { SessionEndNote } from "./features/close/SessionEndNote"
 import { useCloseFlow } from "./features/close/useCloseFlow"
 import { useCopies } from "./features/files/useCopies"
 import { useMachineInfo } from "./features/hardware/useMachineInfo"
@@ -113,6 +114,9 @@ export function App(): JSX.Element {
   const w = useWinvm()
   const close = useCloseFlow(w)
   const closeFailed = close.state.kind === "failed" ? close.state : null
+  const closeAsking =
+    close.state.kind === "asking" || close.state.kind === "waiting"
+  const sessionEnd = closeAsking ? null : close.session
   const [actualSize, setActualSize] = useState(false)
   const [detailsOpen, setDetailsOpen] = useState(false)
   const [confirm, setConfirm] = useState<Confirm | null>(null)
@@ -740,6 +744,7 @@ export function App(): JSX.Element {
         <div className="display-area">
           {(w.failure !== null ||
             closeFailed !== null ||
+            sessionEnd !== null ||
             notice !== null ||
             copyNotice ||
             (w.checks !== null && !w.checks.ready) ||
@@ -760,6 +765,11 @@ export function App(): JSX.Element {
                   }
                 >
                   <pre className="output">{w.failure.output}</pre>
+                </Callout>
+              )}
+              {sessionEnd !== null && (
+                <Callout tone="notice" title={t("close.sessionTitle")}>
+                  <SessionEndNote session={sessionEnd} />
                 </Callout>
               )}
               {closeFailed !== null && (
@@ -1088,6 +1098,7 @@ export function App(): JSX.Element {
 
       <ClosePolicyDialog
         state={close.state}
+        session={close.session}
         onChoose={close.choose}
         onRemember={close.setRemember}
         onCancel={close.cancel}

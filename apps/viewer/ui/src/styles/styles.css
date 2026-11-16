@@ -1466,6 +1466,11 @@ html[data-os="macos"] .toolbar {
   color: var(--text-muted);
 }
 
+.close-dialog__session {
+  font-variant-numeric: tabular-nums;
+  color: var(--text-strong);
+}
+
 .close-dialog__operation {
   font-weight: var(--weight-md);
   color: var(--text-strong);

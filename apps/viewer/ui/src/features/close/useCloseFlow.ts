@@ -1,12 +1,18 @@
 import { useCallback, useEffect, useRef, useState } from "react"
 
 import {
+  type CloseSession,
+  type CloseSnapshot,
+  closeAt,
   closeCancel,
   closeComplete,
-  closePending,
+  closeResolved,
+  closeRun,
   closeStart,
+  closeState,
   errorMessage,
   onViewerCloseRequested,
+  onViewerCloseSession,
   outputText,
   winvm,
 } from "../../backend"
@@ -55,6 +61,7 @@ export type CloseChoice = "leave" | "stow" | "shutdown"
 
 export interface CloseFlow {
   readonly state: CloseFlowState
+  readonly session: CloseSession | null
   setRemember: (value: boolean) => void
   choose: (policy: CloseChoice) => void
   cancel: () => void
@@ -73,7 +80,23 @@ interface Transaction {
   cancelled: boolean
   wake: (() => void) | null
   ranBefore: (name: string) => number
+  readonly resolved: Set<string>
+  first: string | null
 }
+
+const transactionOf = (
+  resolved: readonly string[],
+  first: string | null,
+): Transaction => ({
+  cancelled: false,
+  wake: null,
+  ranBefore: () => 0,
+  resolved: new Set(resolved),
+  first,
+})
+
+const policyOf = (verb: string): "stow" | "shutdown" =>
+  verb === "stow" ? "stow" : "shutdown"
 
 const isCancelled = (tx: Transaction): boolean => tx.cancelled
 
@@ -140,6 +163,7 @@ async function rememberChoice(
 
 export function useCloseFlow(w: Winvm): CloseFlow {
   const [state, setState] = useState<CloseFlowState>(IDLE)
+  const [session, setSession] = useState<CloseSession | null>(null)
   const wRef = useRef(w)
   wRef.current = w
   const active = useRef(false)
@@ -165,6 +189,7 @@ export function useCloseFlow(w: Winvm): CloseFlow {
       if (machine !== null && wRef.current.name !== machine.name)
         wRef.current.select(machine.name)
       show({ kind: "failed", machine, message })
+      setSession(null)
       active.current = false
       closeCancel().catch(() => undefined)
     }
@@ -177,6 +202,7 @@ export function useCloseFlow(w: Winvm): CloseFlow {
       total: number,
     ): Promise<Outcome> => {
       if (wRef.current.name !== name) wRef.current.select(name)
+      closeAt(name).catch(() => undefined)
       const before = tx.ranBefore(name)
       let external: VmOperation | null = null
       let s: Status | null
@@ -240,7 +266,12 @@ export function useCloseFlow(w: Winvm): CloseFlow {
       }
       if (choice !== "leave") {
         show({ kind: "acting", machine: s, policy: choice, index, total })
-        const ran = await wRef.current.runOn(name, VERB[choice])
+        const ran = await wRef.current.runOn(
+          name,
+          VERB[choice],
+          undefined,
+          closeRun,
+        )
         if (ran === null || ran.code !== 0) {
           fail(
             tx,
@@ -258,19 +289,20 @@ export function useCloseFlow(w: Winvm): CloseFlow {
           return "stopped"
         }
       }
+      await closeResolved(name).catch(() => undefined)
       show(IDLE)
       return "resolved"
     }
 
     const run = async (tx: Transaction): Promise<void> => {
-      const resolved = new Set<string>()
+      const resolved = tx.resolved
       let last: Status | null = wRef.current.status
       let list = await wRef.current.refreshAll()
       if (list === null) {
         fail(tx, last, t("close.statusFailed"))
         return
       }
-      let queue = orderCloseQueue(list, wRef.current.name, resolved)
+      let queue = orderCloseQueue(list, tx.first ?? wRef.current.name, resolved)
       while (queue.length > 0) {
         for (
           let next = queue.shift();
@@ -298,21 +330,21 @@ export function useCloseFlow(w: Winvm): CloseFlow {
       await closeComplete()
     }
 
+    const settle = (tx: Transaction, work: Promise<void>): void => {
+      work.catch((e: unknown) => {
+        if (!tx.cancelled) fail(tx, wRef.current.status, errorMessage(e))
+      })
+    }
+
     const begin = (): void => {
       if (active.current) return
       active.current = true
-      const tx: Transaction = {
-        cancelled: false,
-        wake: null,
-        ranBefore: () => 0,
-      }
+      const tx = transactionOf([], null)
       transaction.current = tx
       closeStart().then(
         () => {
           tx.ranBefore = ranBefore(wRef.current)
-          return run(tx).catch((e: unknown) => {
-            if (!tx.cancelled) fail(tx, wRef.current.status, errorMessage(e))
-          })
+          settle(tx, run(tx))
         },
         () => {
           active.current = false
@@ -320,10 +352,76 @@ export function useCloseFlow(w: Winvm): CloseFlow {
       )
     }
 
+    const resume = async (
+      tx: Transaction,
+      from: CloseSnapshot,
+    ): Promise<void> => {
+      let snapshot = from
+      for (
+        let command = snapshot.command;
+        command !== null;
+        command = snapshot.command
+      ) {
+        if (wRef.current.name !== command.machine)
+          wRef.current.select(command.machine)
+        const s = await wRef.current.refreshOne(command.machine)
+        if (isCancelled(tx)) return
+        if (s !== null)
+          show({
+            kind: "acting",
+            machine: s,
+            policy: policyOf(command.verb),
+            index: tx.resolved.size + 1,
+            total: tx.resolved.size + 1,
+          })
+        await new Promise<void>((wake) => {
+          setTimeout(wake, WAIT_MS)
+        })
+        snapshot = await closeState().catch(() => snapshot)
+        if (isCancelled(tx)) return
+      }
+      if (snapshot.state !== "running") {
+        if (transaction.current === tx) transaction.current = null
+        active.current = false
+        show(IDLE)
+        return
+      }
+      const ended = snapshot.last
+      if (ended !== null && ended.code !== 0) {
+        const s = await wRef.current.refreshOne(ended.machine)
+        fail(
+          tx,
+          s,
+          ended.output ||
+            t("close.actionFailed", {
+              title: s === null ? ended.machine : shownTitle(s.name, s.title),
+            }),
+        )
+        return
+      }
+      tx.first = snapshot.machine ?? tx.first
+      await run(tx)
+    }
+
+    const adopt = (snapshot: CloseSnapshot): void => {
+      if (active.current) return
+      active.current = true
+      const tx = transactionOf(snapshot.resolved, snapshot.machine)
+      tx.ranBefore = ranBefore(wRef.current)
+      transaction.current = tx
+      settle(tx, resume(tx, snapshot))
+    }
+
+    const unlistenSession = onViewerCloseSession((next) => {
+      if (!gone) setSession(next)
+    })
     const unlisten = onViewerCloseRequested(begin, () => {
-      closePending().then(
-        (pending) => {
-          if (pending && !gone) begin()
+      closeState().then(
+        (snapshot) => {
+          if (gone) return
+          if (snapshot.session !== null) setSession(snapshot.session)
+          if (snapshot.state === "requested") begin()
+          else if (snapshot.state === "running") adopt(snapshot)
         },
         () => undefined,
       )
@@ -331,6 +429,7 @@ export function useCloseFlow(w: Winvm): CloseFlow {
     return () => {
       gone = true
       unlisten()
+      unlistenSession()
     }
   }, [show])
 
@@ -367,11 +466,13 @@ export function useCloseFlow(w: Winvm): CloseFlow {
     answer.current?.(null)
     active.current = false
     show(IDLE)
+    setSession(null)
     closeCancel().catch(() => undefined)
   }, [show])
 
   return {
     state,
+    session,
     setRemember,
     choose,
     cancel,
