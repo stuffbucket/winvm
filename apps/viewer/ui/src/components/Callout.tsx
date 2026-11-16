@@ -39,6 +39,7 @@ export function Callout({
 function AlertIcon(): JSX.Element {
   return (
     <svg
+      aria-hidden="true"
       viewBox="0 0 24 24"
       fill="none"
       stroke="currentColor"
@@ -56,6 +57,7 @@ function AlertIcon(): JSX.Element {
 function InfoIcon(): JSX.Element {
   return (
     <svg
+      aria-hidden="true"
       viewBox="0 0 24 24"
       fill="none"
       stroke="currentColor"

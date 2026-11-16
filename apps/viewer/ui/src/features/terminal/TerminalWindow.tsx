@@ -289,6 +289,7 @@ export function TerminalWindow(): JSX.Element {
             return (
               <div
                 key={tab.id}
+                role="none"
                 className={cx(
                   "term__tab",
                   tab.id === s.active && "term__tab--active",

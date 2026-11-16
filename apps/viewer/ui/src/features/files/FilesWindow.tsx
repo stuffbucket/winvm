@@ -1001,7 +1001,7 @@ export function FilesWindow({
       : folderName(dropTarget.path, listing.places)
 
   return (
-    <div className="fw" onKeyDown={onWindowKey}>
+    <div className="fw" role="none" onKeyDown={onWindowKey}>
       <aside className="fw__side">
         <div className="fw__lights" data-tauri-drag-region />
         <nav className="fw__places" aria-label={t("files.places")}>
