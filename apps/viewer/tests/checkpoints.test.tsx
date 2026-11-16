@@ -15,6 +15,9 @@ const { CheckpointDetails, draftOf, tagsOf } = await import(
   "../ui/src/features/checkpoints/CheckpointDetails"
 )
 const { ConfirmDialog } = await import("../ui/src/components/ConfirmDialog")
+const { CheckpointLook } = await import(
+  "../ui/src/features/checkpoints/CheckpointLook"
+)
 const { usePicture } = await import("../ui/src/features/checkpoints/pictures")
 const { parseNote, parseSaves } = await import("../ui/src/model")
 const { centreOf, clampCamera, fitRect } = await import("@winvm/canvas")
@@ -530,6 +533,77 @@ describe("a checkpoint's picture", () => {
     await settle()
     expect(seen.at(-1)).toBeNull()
     expect(asked).toEqual(["/shown.png", "/shown.png", "/held.png"])
+  })
+})
+
+describe("the screenshot look", () => {
+  let root: ReturnType<typeof createRoot> | null = null
+  afterEach(() => {
+    act(() => root?.unmount())
+    root = null
+    document.body.replaceChildren()
+  })
+  const c = checkpoint("a", at(2026, 8, 9, 10), { title: "Office installed" })
+
+  function open(
+    onClose: () => void,
+    opener: HTMLElement | null = null,
+  ): HTMLDialogElement {
+    const host = document.createElement("div")
+    document.body.append(host)
+    root = createRoot(host)
+    act(() =>
+      root?.render(
+        <CheckpointLook
+          c={c}
+          now={Date.now()}
+          opener={opener}
+          onClose={onClose}
+        />,
+      ),
+    )
+    const dialog = host.querySelector("dialog")
+    if (dialog === null) throw new Error("no dialog")
+    return dialog
+  }
+
+  it("opens as a modal dialog named for the screenshot, and moves focus to its close button", () => {
+    const dialog = open(() => undefined)
+    expect(dialog.open).toBe(true)
+    expect(dialog.getAttribute("aria-label")).toBe(
+      "Screenshot of Office installed",
+    )
+    const close = dialog.querySelector("button")
+    expect(close?.getAttribute("aria-label")).toBe("Close the screenshot")
+    expect(document.activeElement).toBe(close)
+  })
+
+  it("closes from its close button, from Escape and from a click on it", () => {
+    const onClose = mock(() => undefined)
+    const dialog = open(onClose)
+    act(() => dialog.querySelector("button")?.click())
+    expect(onClose).toHaveBeenCalledTimes(1)
+    const cancel = new Event("cancel", { cancelable: true })
+    act(() => {
+      dialog.dispatchEvent(cancel)
+    })
+    expect(cancel.defaultPrevented).toBe(true)
+    expect(onClose).toHaveBeenCalledTimes(2)
+    act(() => {
+      dialog.click()
+    })
+    expect(onClose).toHaveBeenCalledTimes(3)
+  })
+
+  it("hands focus back to the button that opened it when it closes", () => {
+    const opener = document.createElement("button")
+    document.body.append(opener)
+    opener.focus()
+    open(() => undefined, opener)
+    expect(document.activeElement).not.toBe(opener)
+    act(() => root?.unmount())
+    root = null
+    expect(document.activeElement).toBe(opener)
   })
 })
 

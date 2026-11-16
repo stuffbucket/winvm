@@ -804,14 +804,18 @@ describe("watcher generations", () => {
     delete env.WINVM_BUILD_ID
     const child = Bun.spawn([process.execPath, cli, "watch", "-i", "w"], {
       env,
-      stdout: "ignore",
+      stdout: "pipe",
       stderr: "ignore",
     })
     spawned.push(child)
+    let output = ""
+    const decoder = new TextDecoder()
+    void (async () => {
+      for await (const chunk of child.stdout) output += decoder.decode(chunk)
+    })()
     try {
-      const deadline = Date.now() + 15_000
-      while (Date.now() < deadline && readWatchState("w")?.build === undefined)
-        await new Promise((r) => setTimeout(r, 50))
+      while (readWatchState("w")?.build === undefined)
+        await new Promise((r) => setTimeout(r, 5))
       expect(readWatchState("w")).toMatchObject({
         pid: child.pid,
         build: buildIdentity(),
@@ -821,6 +825,8 @@ describe("watcher generations", () => {
         build: buildIdentity(),
         cli,
       })
+      while (!output.includes("watching qemu pid"))
+        await new Promise((r) => setTimeout(r, 5))
       child.kill("SIGTERM")
       await child.exited
       expect(

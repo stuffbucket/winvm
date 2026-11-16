@@ -530,6 +530,7 @@
   "checkpoints.goBackTip": "Put Windows back exactly as it was at this moment",
   "checkpoints.look": "Screenshot of {name}",
   "checkpoints.lookTip": "Show it bigger (Space)",
+  "checkpoints.lookClose": "Close the screenshot",
   "checkpoints.delete": "Delete…",
   "checkpoints.note.title": "Title",
   "checkpoints.note.text": "Notes",

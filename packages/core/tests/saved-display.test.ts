@@ -7,18 +7,19 @@ import {
   mock,
   spyOn,
 } from "bun:test"
-import { spawn } from "node:child_process"
+import { ChildProcess, type SpawnOptions, spawn } from "node:child_process"
 import {
-  chmodSync,
+  appendFileSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
   rmSync,
   writeFileSync,
+  writeSync,
 } from "node:fs"
 import { tmpdir } from "node:os"
-import { resolve } from "node:path"
+import { basename, resolve } from "node:path"
 
 import { parseArgs } from "../src/args"
 import * as clock from "../src/clock"
@@ -80,6 +81,9 @@ const meta: InstanceMeta = {
 let state = ""
 let previous: Record<string, string | undefined> = {}
 let previousProbe: share.Probe
+let previousSettle: qemu.Settle
+let previousSpawner: qemu.Spawner
+let qemuOutput: string | null = null
 let initialRunning: DisplayConfig | null = VIRTIO_GPU
 let initialDevices: share.DeviceSet | undefined
 let spacedHome: string | null = null
@@ -88,6 +92,7 @@ let commands: string[] = []
 let virtiofsd = 0
 let statusCalls = 0
 let answered = 0
+let settled = 0
 const realRunningCommand = display.runningCommand
 
 const qemuLog = (): string => resolve(state, "qemu.log")
@@ -99,10 +104,30 @@ const launches = (): readonly string[] =>
     : []
 const lastLaunch = (): string => launches().at(-1) ?? ""
 
-function script(name: string, body: string): void {
-  const path = resolve(state, "runtime", "bin", name)
-  writeFileSync(path, `#!/bin/sh\n${body}\n`)
-  chmodSync(path, 0o755)
+function fakeSpawner(
+  command: string,
+  args: readonly string[],
+  options: SpawnOptions,
+): ChildProcess {
+  const child = new ChildProcess()
+  const binary = basename(command)
+  if (binary === "swtpm") {
+    const sock = /path=([^,]+)/.exec(args.join(" "))?.[1]
+    if (sock === undefined)
+      throw new Error(`swtpm without a socket: ${args.join(" ")}`)
+    writeFileSync(sock, "")
+  } else if (binary === "qemu-system-aarch64") {
+    appendFileSync(qemuLog(), `${args.join(" ")}\n`)
+    const output = qemuOutput
+    if (output !== null) {
+      const fd = Array.isArray(options.stdio) ? options.stdio[1] : undefined
+      if (typeof fd === "number") writeSync(fd, output)
+      setImmediate(() => child.emit("exit", 1, null))
+    }
+  } else {
+    throw new Error(`unexpected spawn: ${command}`)
+  }
+  return child
 }
 
 function makeInstance(name: string): void {
@@ -154,22 +179,29 @@ beforeEach(() => {
   previous = {
     WINVM_HOME: process.env.WINVM_HOME,
     WINVM_RUNTIME: process.env.WINVM_RUNTIME,
-    WINVM_TEST_QEMU_LOG: process.env.WINVM_TEST_QEMU_LOG,
   }
   state = mkdtempSync(resolve(tmpdir(), "winvm-saved-display-"))
   process.env.WINVM_HOME = state
   process.env.WINVM_RUNTIME = resolve(state, "runtime")
-  process.env.WINVM_TEST_QEMU_LOG = qemuLog()
   mkdirSync(resolve(state, "runtime", "bin"), { recursive: true })
-  script(
-    "swtpm",
-    `while [ $# -gt 0 ]; do case "$1" in --ctrl) s="\${2#*path=}"; s="\${s%%,*}"; shift;; esac; shift; done; : > "$s"`,
-  )
-  script(
-    "qemu-system-aarch64",
-    'printf "%s\\n" "$*" >> "$WINVM_TEST_QEMU_LOG"; exec sleep 3',
-  )
+  qemuOutput = null
+  previousSpawner = qemu.setSpawner(fakeSpawner)
   previousProbe = share.setProbe(() => ({ ok: true, reason: null }))
+  settled = 0
+  previousSettle = qemu.setSettle((survived) => {
+    let cancelled = false
+    settled += 1
+    const target = settled
+    const poll = (): void => {
+      if (cancelled) return
+      if (launches().length >= target && runningPid !== null) survived()
+      else setTimeout(poll, 5)
+    }
+    poll()
+    return () => {
+      cancelled = true
+    }
+  })
   initialRunning = VIRTIO_GPU
   initialDevices = undefined
   spacedHome = null
@@ -263,6 +295,8 @@ beforeEach(() => {
 afterEach(() => {
   mock.restore()
   share.setProbe(previousProbe)
+  qemu.setSettle(previousSettle)
+  qemu.setSpawner(previousSpawner)
   for (const [k, v] of Object.entries(previous)) {
     if (v === undefined) delete process.env[k]
     else process.env[k] = v
@@ -681,6 +715,20 @@ describe("launch resolves the display once", () => {
     expect(lastLaunch()).toContain("vhost-user-fs-pci")
     expect(lastLaunch()).toContain("qemu-vdagent")
     expect(virtiofsd).toBe(2)
+  })
+})
+
+describe("launch outcome", () => {
+  it("reports a qemu that exits at once, with its output, under the real settle window", async () => {
+    qemu.setSettle()
+    qemuOutput = "boom\n"
+    await expect(
+      qemu.launch("source", pathsFor("source"), meta, {
+        installMedia: false,
+        ephemeral: false,
+        virtioBoot: true,
+      }),
+    ).rejects.toThrow(/qemu exited immediately:\n {2}boom/)
   })
 })
 

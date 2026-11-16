@@ -48,8 +48,9 @@ import { focusOnMount } from "../../components/focusOnMount"
 import { t } from "../../i18n"
 import { type Phase, parseNote, parseSaves } from "../../model"
 import type { Ran } from "../winvm/useWinvm"
-import { CheckpointCard, MONITOR, Picture, takenAt } from "./CheckpointCard"
+import { CheckpointCard, MONITOR, takenAt } from "./CheckpointCard"
 import { CheckpointDetails, type NoteDraft, tagsOf } from "./CheckpointDetails"
+import { CheckpointLook } from "./CheckpointLook"
 import {
   type CardBox,
   type Checkpoint,
@@ -160,6 +161,7 @@ export function CheckpointCanvas(p: CheckpointCanvasProps): JSX.Element {
   const [panning, setPanning] = useState(false)
   const [nowMs, setNowMs] = useState(() => Date.now())
   const [looking, setLooking] = useState(false)
+  const [lookOpener, setLookOpener] = useState<HTMLElement | null>(null)
 
   const viewport = useRef<HTMLDivElement>(null)
   const searchInput = useRef<HTMLInputElement>(null)
@@ -809,6 +811,11 @@ export function CheckpointCanvas(p: CheckpointCanvasProps): JSX.Element {
     })
   }
 
+  const openLook = (opener: Element | null): void => {
+    setLookOpener(opener instanceof HTMLElement ? opener : null)
+    setLooking(true)
+  }
+
   const onKeyDown = (e: KeyboardEvent): void => {
     const target = e.target instanceof Element ? e.target : document.body
     if (target.closest("dialog") !== null || e.defaultPrevented) return
@@ -821,8 +828,7 @@ export function CheckpointCanvas(p: CheckpointCanvasProps): JSX.Element {
         setSearchOpen(false)
         return
       }
-      if (looking) setLooking(false)
-      else if (creating) setCreating(false)
+      if (creating) setCreating(false)
       else if (searchOpen) setSearchOpen(false)
       else if (selected !== null) select(null)
       else void leave()
@@ -871,7 +877,7 @@ export function CheckpointCanvas(p: CheckpointCanvasProps): JSX.Element {
         target.closest(".checkpoint__hit") !== null)
     ) {
       e.preventDefault()
-      setLooking((l) => !l)
+      openLook(document.activeElement)
     } else if (!cmd && (e.key === "+" || e.key === "=")) {
       zoomBy(ZOOM_STEP)
     } else if (!cmd && e.key === "-") {
@@ -1286,9 +1292,7 @@ export function CheckpointCanvas(p: CheckpointCanvasProps): JSX.Element {
             onClose={() => {
               select(null)
             }}
-            onLook={() => {
-              setLooking(true)
-            }}
+            onLook={openLook}
             onNote={(name, d) => {
               writeNote(name, d)
             }}
@@ -1303,23 +1307,14 @@ export function CheckpointCanvas(p: CheckpointCanvasProps): JSX.Element {
       </SpatialCanvas>
 
       {looking && selectedCheckpoint !== undefined && (
-        // biome-ignore lint/a11y/useKeyWithClickEvents: Escape closes the look from the canvas's window key handler, which keeps focus where it was
-        <div
-          className="checkpoints__look"
-          role="dialog"
-          aria-label={t("checkpoints.look", {
-            name: shownName(selectedCheckpoint),
-          })}
-          onClick={() => {
+        <CheckpointLook
+          c={selectedCheckpoint}
+          now={nowMs}
+          opener={lookOpener}
+          onClose={() => {
             setLooking(false)
           }}
-        >
-          <Picture c={selectedCheckpoint} sharp wanted />
-          <p>
-            <strong>{shownName(selectedCheckpoint)}</strong>{" "}
-            {takenAt(selectedCheckpoint, nowMs)}
-          </p>
-        </div>
+        />
       )}
 
       <ConfirmDialog

@@ -663,16 +663,38 @@
 }
 
 .checkpoints__look {
-  position: absolute;
-  z-index: 6;
+  position: fixed;
   inset: 0;
-  display: grid;
+  box-sizing: border-box;
+  width: 100%;
+  max-width: none;
+  height: 100%;
+  max-height: none;
+  margin: 0;
+  border: 0;
+  overflow: hidden;
+  color: inherit;
+  display: none;
   grid-template-rows: minmax(0, 1fr) auto;
   place-items: center;
   gap: var(--space-3);
   padding: var(--space-7) var(--space-7) var(--space-5);
   background: color-mix(in srgb, var(--surface-base) 86%, transparent);
   cursor: zoom-out;
+}
+
+.checkpoints__look[open] {
+  display: grid;
+}
+
+.checkpoints__look::backdrop {
+  background: transparent;
+}
+
+.checkpoints__look-close {
+  position: absolute;
+  inset-block-start: var(--space-3);
+  inset-inline-end: var(--space-3);
 }
 
 .checkpoints__look .checkpoint__frame {

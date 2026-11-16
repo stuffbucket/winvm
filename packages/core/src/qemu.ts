@@ -1,4 +1,9 @@
-import { spawn, spawnSync } from "node:child_process"
+import {
+  type ChildProcess,
+  type SpawnOptions,
+  spawn,
+  spawnSync,
+} from "node:child_process"
 import {
   closeSync,
   existsSync,
@@ -153,6 +158,20 @@ export function qemuArgs(
   return a
 }
 
+export type Spawner = (
+  command: string,
+  args: readonly string[],
+  options: SpawnOptions,
+) => ChildProcess
+
+let spawner: Spawner = spawn
+
+export function setSpawner(next: Spawner = spawn): Spawner {
+  const previous = spawner
+  spawner = next
+  return previous
+}
+
 function swtpmPids(p: Paths): readonly number[] {
   const dir = p.tpmDir.replace(/[.*+?^$()|[\]{}\\]/g, "\\$&")
   const r = spawnSync(
@@ -185,7 +204,7 @@ async function startSwtpm(p: Paths): Promise<void> {
   stopSwtpm(p)
   for (let i = 0; i < 50 && swtpmPids(p).length > 0; i += 1)
     await new Promise((r) => setTimeout(r, 20))
-  const proc = spawn(
+  const proc = spawner(
     runtimeBin("swtpm"),
     [
       "socket",
@@ -205,6 +224,23 @@ async function startSwtpm(p: Paths): Promise<void> {
     await new Promise((r) => setTimeout(r, 20))
   }
   throw new Error(`swtpm never created ${p.tpmSock} — check \`winvm doctor\``)
+}
+
+export type Settle = (survived: () => void) => () => void
+
+const SETTLE_MS = 2000
+const settleByClock: Settle = (survived) => {
+  const timer = setTimeout(survived, SETTLE_MS)
+  return () => {
+    clearTimeout(timer)
+  }
+}
+let settle: Settle = settleByClock
+
+export function setSettle(next: Settle = settleByClock): Settle {
+  const previous = settle
+  settle = next
+  return previous
 }
 
 export async function launch(
@@ -230,7 +266,7 @@ export async function launch(
   const m = await ensureFreeDisplay(name, p, meta)
 
   const log = openSync(p.qemuLog, "w")
-  const proc = spawn(
+  const proc = spawner(
     runtimeBin("qemu-system-aarch64"),
     [...qemuArgs(name, p, m, { ...o, display, shareDevices: devices })],
     {
@@ -246,11 +282,11 @@ export async function launch(
       res("exited")
     }),
   )
-  let timer: ReturnType<typeof setTimeout> | undefined
+  let unsettle = (): void => undefined
   const survived = new Promise<"alive">((res) => {
-    timer = setTimeout(() => {
+    unsettle = settle(() => {
       res("alive")
-    }, 2000)
+    })
   })
   let stop = false
   const answering =
@@ -259,7 +295,7 @@ export async function launch(
       : monitorAnswers(p, () => stop)
   const outcome = await Promise.race([exited, survived, answering])
   stop = true
-  clearTimeout(timer)
+  unsettle()
   if (outcome === "alive") {
     await applyPassword(p).catch((error: unknown) => {
       console.warn(
