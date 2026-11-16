@@ -1,8 +1,16 @@
-import { appendFileSync, chmodSync, readFileSync, rmSync } from "node:fs"
+import { chmodSync, readFileSync, rmSync } from "node:fs"
 import { resolve } from "node:path"
 
 import * as agent from "./agent"
 import { QgaChannel, QmpChannel } from "./broker"
+import {
+  appendEntry,
+  DEFAULT_MAX_BYTES,
+  type EntryFields,
+  qmpFields,
+  rotateEvents,
+  syncFields,
+} from "./eventlog"
 import { buildIdentity } from "./identity"
 import { leaseHolder } from "./operation"
 import { PACKAGE_DIR, type Paths, pathsFor } from "./paths"
@@ -11,17 +19,11 @@ import { claim, keptWithin, livePidIn, recordedPid } from "./servicectl"
 import * as share from "./share"
 import { ChangeNotices } from "./sharewatch"
 
-export interface WinvmEvent {
-  readonly t: string
-  readonly instance: string
-  readonly kind: "state" | "warning" | "service"
-  readonly [field: string]: unknown
-}
-
 export interface ServiceOptions {
   readonly exitAfterMs?: number
   readonly heartbeatMs?: number
   readonly checkMs?: number
+  readonly eventsMaxBytes?: number
 }
 
 export interface ServiceHandle {
@@ -37,12 +39,16 @@ const coreVersion = (): string =>
     }
   ).version
 
-const STATES: Readonly<Record<string, string>> = {
+const RUN_STATE_AFTER: Readonly<Record<string, string>> = {
   STOP: "paused",
   RESUME: "running",
-  SHUTDOWN: "stopped",
-  RESET: "reset",
+  SHUTDOWN: "shutdown",
+  SUSPEND: "suspended",
+  WAKEUP: "running",
+  GUEST_PANICKED: "guest-panicked",
 }
+
+const UNKNOWN = "unknown"
 
 export function noticeTarget(
   p: Paths,
@@ -56,22 +62,6 @@ export function noticeTarget(
     root: serving.folder,
     letter: share.readShare(p)?.letter ?? share.DEFAULT_LETTER,
   }
-}
-
-export function stateEvent(
-  e: Record<string, unknown>,
-): Record<string, unknown> | null {
-  const name = String(e.event)
-  const data = e.data as Record<string, unknown> | undefined
-  const state = STATES[name]
-  if (state !== undefined)
-    return data === undefined ? { state } : { state, data }
-  if (name === "MIGRATION")
-    return {
-      state: "migration",
-      status: (data as { status?: string } | undefined)?.status,
-    }
-  return null
 }
 
 export async function runService(
@@ -88,9 +78,10 @@ export async function runService(
   })
   const exitAfterMs = o.exitAfterMs ?? 10_000
   const checkMs = o.checkMs ?? 1000
+  const eventsMaxBytes = o.eventsMaxBytes ?? DEFAULT_MAX_BYTES
   const enc = new TextEncoder()
   const subs = new Set<ReadableStreamDefaultController<Uint8Array>>()
-  let state = "unknown"
+  let state = UNKNOWN
 
   const send = (
     c: ReadableStreamDefaultController<Uint8Array>,
@@ -102,33 +93,31 @@ export async function runService(
       subs.delete(c)
     }
   }
-  const record = (
-    kind: WinvmEvent["kind"],
-    fields: Record<string, unknown>,
-  ): void => {
-    const event: WinvmEvent = {
-      t: new Date().toISOString(),
-      instance: name,
-      kind,
-      ...fields,
-    }
-    const line = JSON.stringify(event)
-    try {
-      appendFileSync(p.events, `${line}\n`)
-    } catch {
-      return
-    }
+  const record = (fields: EntryFields): void => {
+    const line = appendEntry(name, fields)
+    if (line === null) return
     for (const c of subs) send(c, `data: ${line}\n\n`)
+  }
+  const rotate = (): void => {
+    rotateEvents(name, eventsMaxBytes, () => leaseHolder(name) === null)
   }
 
   const qmpChannel = new QmpChannel({
     listen: p.qmp,
     upstream: p.qmpQemu,
     onEvent: (e) => {
-      const s = stateEvent(e)
-      if (s === null) return
-      state = String(s.state)
-      record("state", s)
+      const fields = qmpFields(e)
+      state = RUN_STATE_AFTER[fields.event] ?? state
+      record(fields)
+    },
+    onSync: (reply) => {
+      const fields = syncFields(reply)
+      state = fields.status ?? UNKNOWN
+      record(fields)
+    },
+    onLost: () => {
+      state = UNKNOWN
+      record({ kind: "disconnected" })
     },
   })
   const askPortOpen = async (): Promise<boolean | null> => {
@@ -208,7 +197,8 @@ export async function runService(
     for (const c of subs) send(c, ": heartbeat\n\n")
   }, o.heartbeatMs ?? 15_000)
 
-  record("service", { what: "started" })
+  rotate()
+  record({ kind: "service", what: "started" })
 
   let finish: () => void = () => undefined
   const done = new Promise<void>((r) => {
@@ -238,10 +228,19 @@ export async function runService(
           try {
             const r = await client.touch(`${want.letter}:\\`, paths)
             if (process.env.WINVM_SHARE_DEBUG)
-              record("service", { what: "share notices sent", paths, ...r })
+              record({
+                ...r,
+                kind: "service",
+                what: "share notices sent",
+                paths,
+              })
           } catch (error) {
             if (process.env.WINVM_SHARE_DEBUG)
-              record("warning", { what: "share notices", error: String(error) })
+              record({
+                kind: "warning",
+                what: "share notices",
+                error: String(error),
+              })
             client = null
             throw error
           }
@@ -249,13 +248,15 @@ export async function runService(
       })
       n.start()
       notices = { key, n }
-      record("service", {
+      record({
+        kind: "service",
         what: "share notices",
         root: want.root,
         letter: want.letter,
       })
     } catch (error) {
-      record("warning", {
+      record({
+        kind: "warning",
         what: "share notices",
         error: error instanceof Error ? error.message : String(error),
       })
@@ -271,6 +272,7 @@ export async function runService(
       return
     }
     void syncNotices()
+    rotate()
     if (
       livePidIn(p.pid) !== null ||
       leaseHolder(name) !== null ||
@@ -303,7 +305,7 @@ export async function runService(
     await qmpChannel.stop()
     await qgaChannel.stop()
     release()
-    record("service", { what: "stopped" })
+    record({ kind: "service", what: "stopped" })
     finish()
   }
 

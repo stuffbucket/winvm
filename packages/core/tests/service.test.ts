@@ -13,6 +13,15 @@ import { tmpdir } from "node:os"
 import { resolve } from "node:path"
 
 import { QmpChannel } from "../src/broker"
+import {
+  appendEntry,
+  type Entry,
+  endCursor,
+  qmpEvent,
+  readSince,
+  START,
+  waitForEvent,
+} from "../src/eventlog"
 import { buildIdentity } from "../src/identity"
 import * as monitor from "../src/monitor"
 import { PACKAGE_DIR, type Paths, pathsFor } from "../src/paths"
@@ -72,6 +81,31 @@ const lastEvent = (): Record<string, unknown> => {
   return JSON.parse(lines[lines.length - 1] ?? "{}") as Record<string, unknown>
 }
 
+const entries = (): readonly Entry[] => readSince("t", START).entries
+
+const qmpEntries = (): readonly Entry[] =>
+  entries().filter((e) => e.kind === "qmp")
+
+const until = async (ok: () => boolean, ms = 5000): Promise<void> => {
+  const end = Date.now() + ms
+  while (!ok()) {
+    if (Date.now() > end) throw new Error("timed out waiting")
+    await sleep(20)
+  }
+}
+
+const synced = async (): Promise<Entry | undefined> => {
+  await until(() => entries().some((e) => e.kind === "sync"))
+  return entries().find((e) => e.kind === "sync")
+}
+
+const serviceState = async (): Promise<string> =>
+  (
+    (await (
+      await fetch("http://localhost/status", { unix: p.control })
+    ).json()) as { state: string }
+  ).state
+
 const recorded = (): ServiceInfo | null => {
   try {
     return JSON.parse(readFileSync(p.service, "utf8")) as ServiceInfo
@@ -88,14 +122,14 @@ describe("the service", () => {
     expect(info?.pid).toBe(process.pid)
     expect(statSync(p.service).mode & 0o777).toBe(0o600)
     expect(info?.build).toBe(buildIdentity())
-    expect(lastEvent()).toMatchObject({
+    expect(entries().find((e) => e.kind === "service")).toMatchObject({
       instance: "t",
       kind: "service",
       what: "started",
     })
   })
 
-  it("records QMP events as state events, on disk and on the stream", async () => {
+  it("records QMP events whole, on disk and on the stream", async () => {
     svc = await runService("t", { exitAfterMs: 200, checkMs: 50 })
     const res = await fetch("http://localhost/events", { unix: p.control })
     const reader = (res.body as ReadableStream<Uint8Array>).getReader()
@@ -103,11 +137,155 @@ describe("the service", () => {
     fake.emit({ event: "STOP", timestamp: { seconds: 1, microseconds: 0 } })
     let text = ""
     const dec = new TextDecoder()
-    while (!text.includes('"state"'))
+    while (!text.includes('"STOP"'))
       text += dec.decode((await reader.read()).value)
     await reader.cancel()
-    expect(text).toContain('"state":"paused"')
-    expect(lastEvent()).toMatchObject({ kind: "state", state: "paused" })
+    expect(text).toContain('"kind":"qmp","event":"STOP"')
+    expect(lastEvent()).toMatchObject({
+      kind: "qmp",
+      event: "STOP",
+      data: null,
+      timestamp: { seconds: 1, microseconds: 0 },
+    })
+    expect(await serviceState()).toBe("paused")
+  })
+
+  it("keeps each event's data and QEMU's timestamp, for events with no run state too", async () => {
+    svc = await runService("t", { exitAfterMs: 5000, checkMs: 50 })
+    await synced()
+    const sent = [
+      { event: "POWERDOWN", timestamp: { seconds: 10, microseconds: 1 } },
+      {
+        event: "RESET",
+        data: { guest: true, reason: "guest-reset" },
+        timestamp: { seconds: 11, microseconds: 2 },
+      },
+      {
+        event: "VSERPORT_CHANGE",
+        data: { id: "qga0", open: false },
+        timestamp: { seconds: 12, microseconds: 3 },
+      },
+      {
+        event: "SHUTDOWN",
+        data: { guest: true, reason: "guest-shutdown" },
+        timestamp: { seconds: 13, microseconds: 4 },
+      },
+    ]
+    for (const e of sent) fake.emit(e)
+    await until(() => qmpEntries().length === sent.length)
+    expect(qmpEntries()).toEqual(
+      sent.map((e) => ({
+        t: expect.any(String) as string,
+        instance: "t",
+        kind: "qmp",
+        event: e.event,
+        data: e.data ?? null,
+        timestamp: e.timestamp,
+      })),
+    )
+    expect(await serviceState()).toBe("shutdown")
+  })
+
+  it("reads QEMU's run state as soon as it connects, before any event", async () => {
+    fake.handler = (cmd) =>
+      cmd.execute === "query-status"
+        ? { return: { status: "paused", running: false } }
+        : { return: {} }
+    svc = await runService("t", { exitAfterMs: 5000, checkMs: 50 })
+    expect(await synced()).toMatchObject({
+      instance: "t",
+      kind: "sync",
+      status: "paused",
+      running: false,
+    })
+    expect(await serviceState()).toBe("paused")
+  })
+
+  it("reads the run state again on every reconnect, recording the loss between", async () => {
+    svc = await runService("t", { exitAfterMs: 5000, checkMs: 50 })
+    await synced()
+    await fake.close()
+    await until(() => entries().some((e) => e.kind === "disconnected"))
+    expect(await serviceState()).toBe("unknown")
+    fake = new FakeQmp(p.qmpQemu)
+    fake.handler = (cmd) =>
+      cmd.execute === "query-status"
+        ? { return: { status: "suspended", running: false } }
+        : { return: {} }
+    await fake.listen()
+    await until(() => entries().filter((e) => e.kind === "sync").length === 2)
+    expect(
+      entries()
+        .filter((e) => e.kind === "sync" || e.kind === "disconnected")
+        .map((e) => (e.kind === "sync" ? e.status : e.kind)),
+    ).toEqual(["running", "disconnected", "suspended"])
+    expect(await serviceState()).toBe("suspended")
+  })
+
+  it("records the run state it read in QEMU's order against the events around it", async () => {
+    fake.handler = (cmd) => {
+      if (cmd.execute !== "query-status") return { return: {} }
+      fake.emit({ return: { status: "running", running: true }, id: cmd.id })
+      fake.emit({ event: "STOP", timestamp: { seconds: 5, microseconds: 0 } })
+      return null
+    }
+    svc = await runService("t", { exitAfterMs: 5000, checkMs: 50 })
+    await until(() => qmpEntries().length === 1)
+    expect(
+      entries()
+        .filter((e) => e.kind === "sync" || e.kind === "qmp")
+        .map((e) => e.kind),
+    ).toEqual(["sync", "qmp"])
+    expect(await serviceState()).toBe("paused")
+  })
+
+  it("records a failed read of the run state instead of guessing one", async () => {
+    fake.handler = (cmd) =>
+      cmd.execute === "query-status"
+        ? { error: { class: "GenericError", desc: "not now" } }
+        : { return: {} }
+    svc = await runService("t", { exitAfterMs: 5000, checkMs: 50 })
+    expect(await synced()).toMatchObject({
+      kind: "sync",
+      status: null,
+      running: null,
+      error: "not now",
+    })
+    expect(await serviceState()).toBe("unknown")
+  })
+
+  it("rotates its record past the size bound, but never while an operation holds the instance", async () => {
+    svc = await runService("t", {
+      exitAfterMs: 5000,
+      checkMs: 50,
+      eventsMaxBytes: 2048,
+    })
+    await synced()
+    writeFileSync(
+      p.lease,
+      JSON.stringify({
+        operation: "stop",
+        id: "l",
+        pid: process.pid,
+        pidStart: processStart(process.pid),
+        startedAt: "",
+        instance: "t",
+        automatic: false,
+      }),
+    )
+    for (let i = 0; i < 40; i += 1)
+      fake.emit({ event: "RTC_CHANGE", data: { offset: i } })
+    await until(() => qmpEntries().length === 40)
+    await sleep(300)
+    expect(existsSync(p.eventsPrev)).toBe(false)
+    rmSync(p.lease)
+    await until(() => existsSync(p.eventsPrev))
+    expect(
+      statSync(p.events, { throwIfNoEntry: false })?.size ?? 0,
+    ).toBeLessThan(2048)
+    expect(
+      readSince("t", START).entries.filter((e) => e.kind === "qmp"),
+    ).toHaveLength(40)
   })
 
   it("keeps a quiet stream open past Bun's default idle timeout", async () => {
@@ -124,13 +302,13 @@ describe("the service", () => {
     fake.emit({ event: "STOP", timestamp: { seconds: 1, microseconds: 0 } })
     let text = ""
     const dec = new TextDecoder()
-    while (!text.includes('"state"')) {
+    while (!text.includes('"STOP"')) {
       const r = await reader.read()
       if (r.done) break
       text += dec.decode(r.value)
     }
     await reader.cancel().catch(() => undefined)
-    expect(text).toContain('"state":"paused"')
+    expect(text).toContain('"kind":"qmp","event":"STOP"')
   }, 25_000)
 
   it("drops a subscriber that went away", async () => {
@@ -406,6 +584,63 @@ describe("which process is the default instance's service", () => {
       }
     })
   }
+})
+
+describe("waiting for an entry while the service runs", () => {
+  it("wakes from the service's stream instead of waiting for the next look at the file", async () => {
+    svc = await runService("t", { exitAfterMs: 5000, checkMs: 50 })
+    await synced()
+    const since = endCursor("t")
+    const waiting = waitForEvent("t", qmpEvent("SHUTDOWN"), Date.now() + 8000, {
+      since,
+      pollMs: 30_000,
+      streamPollMs: 30_000,
+    })
+    await until(() => svc?.subscribers() === 1)
+    const t0 = Date.now()
+    fake.emit({
+      event: "SHUTDOWN",
+      data: { guest: true, reason: "guest-shutdown" },
+      timestamp: { seconds: 7, microseconds: 0 },
+    })
+    const got = await waiting
+    expect(Date.now() - t0).toBeLessThan(1000)
+    expect(got).toMatchObject({
+      kind: "qmp",
+      event: "SHUTDOWN",
+      data: { guest: true, reason: "guest-shutdown" },
+    })
+  })
+
+  it("keeps waiting across the service being replaced, and loses nothing recorded meanwhile", async () => {
+    svc = await runService("t", { exitAfterMs: 5000, checkMs: 50 })
+    await synced()
+    const since = endCursor("t")
+    const waiting = waitForEvent(
+      "t",
+      qmpEvent("SHUTDOWN"),
+      Date.now() + 10_000,
+      {
+        since,
+        pollMs: 50,
+        streamPollMs: 30_000,
+      },
+    )
+    await until(() => svc?.subscribers() === 1)
+    await svc.stop()
+    appendEntry("t", { kind: "service", what: "between services" })
+    svc = await runService("t", { exitAfterMs: 5000, checkMs: 50 })
+    await until(() => svc?.subscribers() === 1)
+    fake.emit({
+      event: "SHUTDOWN",
+      data: { guest: false, reason: "host-signal" },
+      timestamp: { seconds: 8, microseconds: 0 },
+    })
+    expect(await waiting).toMatchObject({
+      event: "SHUTDOWN",
+      data: { guest: false, reason: "host-signal" },
+    })
+  })
 })
 
 describe("one service per instance, continued", () => {
