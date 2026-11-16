@@ -514,7 +514,9 @@ export async function run(args: Args): Promise<number> {
   const modelMs: number[] = []
   const actionMs: Record<string, number[]> = {}
   const record = (name: string, ms: number): void => {
-    ;(actionMs[name] ??= []).push(ms)
+    const list = actionMs[name]
+    if (list) list.push(ms)
+    else actionMs[name] = [ms]
   }
   let usageIn = 0
   let usageOut = 0
