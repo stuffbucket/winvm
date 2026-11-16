@@ -1,8 +1,22 @@
 #!/usr/bin/env bun
 import { instanceName, parseArgs } from "@winvm/core/args"
-import { bunVersionWarning, listInstances, pinnedBunVersion, recordCliEntry } from "@winvm/core/paths"
-import { ManagementError, reconcileManagement, reconcileNote, shouldReconcileVerb } from "@winvm/core/lifecycle"
-import { InstanceBusy, operationFor, withOperation } from "@winvm/core/operation"
+import {
+  bunVersionWarning,
+  listInstances,
+  pinnedBunVersion,
+  recordCliEntry,
+} from "@winvm/core/paths"
+import {
+  ManagementError,
+  reconcileManagement,
+  reconcileNote,
+  shouldReconcileVerb,
+} from "@winvm/core/lifecycle"
+import {
+  InstanceBusy,
+  operationFor,
+  withOperation,
+} from "@winvm/core/operation"
 import * as agentcmds from "@winvm/core/agentcmds"
 import * as termcmds from "@winvm/core/termcmds"
 import * as uicmds from "@winvm/core/uicmds"
@@ -43,23 +57,61 @@ const leased = async (run: () => number | Promise<number>): Promise<number> => {
     return 1
   }
 }
-const NO_SWEEP = ["help", "--help", "ls", "list", "doctor", "timemachine", "tm", "watch", "serve"]
-const LOOK_ONLY = ["status", "info", "saves", "snapshots", "config", "screenshot", "mcp", "cua-serve"]
-if (sub !== undefined && !NO_SWEEP.includes(sub) && !(sub === "files" && args.positional[0]?.startsWith("_") === true)) {
-  if (LOOK_ONLY.includes(sub) || (sub === "files" && args.positional[0] === "status")) finder.cleanStaleLater(instanceName(args))
+const NO_SWEEP = [
+  "help",
+  "--help",
+  "ls",
+  "list",
+  "doctor",
+  "timemachine",
+  "tm",
+  "watch",
+  "serve",
+]
+const LOOK_ONLY = [
+  "status",
+  "info",
+  "saves",
+  "snapshots",
+  "config",
+  "screenshot",
+  "mcp",
+  "cua-serve",
+]
+if (
+  sub !== undefined &&
+  !NO_SWEEP.includes(sub) &&
+  !(sub === "files" && args.positional[0]?.startsWith("_") === true)
+) {
+  if (
+    LOOK_ONLY.includes(sub) ||
+    (sub === "files" && args.positional[0] === "status")
+  )
+    finder.cleanStaleLater(instanceName(args))
   else finder.cleanStale(instanceName(args))
 }
 
-if (sub !== undefined && shouldReconcileVerb(sub) && !(sub === "files" && args.positional[0]?.startsWith("_") === true)) {
+if (
+  sub !== undefined &&
+  shouldReconcileVerb(sub) &&
+  !(sub === "files" && args.positional[0]?.startsWith("_") === true)
+) {
   const named = args.flags.get("instance") ?? process.env["WINVM_INSTANCE"]
   const every = sub === "status" && named === undefined
   const reconcileOne = async (name: string): Promise<void> => {
     try {
-      const note = reconcileNote(name, await reconcileManagement(name, undefined, { waitForBusyWatcher: false }))
+      const note = reconcileNote(
+        name,
+        await reconcileManagement(name, undefined, {
+          waitForBusyWatcher: false,
+        }),
+      )
       if (note !== null) console.error(note)
     } catch (error) {
       if (!(error instanceof ManagementError) && !every) throw error
-      console.error(`::error::${error instanceof Error ? error.message : String(error)}`)
+      console.error(
+        `::error::${error instanceof Error ? error.message : String(error)}`,
+      )
       if (!every) process.exit(1)
     }
   }
@@ -201,7 +253,8 @@ switch (sub ?? "") {
     break
   case "serve": {
     const handle = await service.runService(instanceName(args))
-    for (const sig of ["SIGINT", "SIGTERM", "SIGHUP"] as const) process.on(sig, () => void handle.stop())
+    for (const sig of ["SIGINT", "SIGTERM", "SIGHUP"] as const)
+      process.on(sig, () => void handle.stop())
     await handle.done
     exitCode = 0
     break
@@ -228,7 +281,11 @@ switch (sub ?? "") {
     exitCode = commands.prune(args)
     break
   case "status":
-    exitCode = await status.run({ instance: args.flags.get("instance") ?? process.env["WINVM_INSTANCE"] ?? null, json: args.flags.has("json") })
+    exitCode = await status.run({
+      instance:
+        args.flags.get("instance") ?? process.env["WINVM_INSTANCE"] ?? null,
+      json: args.flags.has("json"),
+    })
     break
   case "info":
     exitCode = await machineinfo.infoCmd(args)
