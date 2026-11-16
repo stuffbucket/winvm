@@ -34,11 +34,11 @@ export function subjectOf(message: string): string {
 if (import.meta.main) {
   const arg = process.argv[2] ?? ""
   const subjects =
-    arg === "--subjects" ?
-      (await new Response(Bun.stdin.stream()).text())
-        .split("\n")
-        .filter((line) => line.trim() !== "")
-    : [subjectOf(await Bun.file(arg).text())]
+    arg === "--subjects"
+      ? (await new Response(Bun.stdin.stream()).text())
+          .split("\n")
+          .filter((line) => line.trim() !== "")
+      : [subjectOf(await Bun.file(arg).text())]
   const problems = subjects.flatMap((subject) => subjectProblem(subject) ?? [])
   for (const problem of problems) console.error(problem)
   process.exit(problems.length > 0 ? 1 : 0)

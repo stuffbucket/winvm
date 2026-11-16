@@ -1,5 +1,11 @@
 import { describe, expect, test } from "bun:test"
-import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
+import {
+  chmodSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs"
 import { tmpdir } from "node:os"
 import { resolve } from "node:path"
 import {
@@ -17,8 +23,14 @@ function runnerFor(afterOutput: string, ghExitCode = 0) {
   const calls: string[][] = []
   const run: CommandRunner = (command) => {
     calls.push(command)
-    if (command[0] === "git") return { exitCode: 0, stdout: afterOutput, stderr: "" }
-    if (command[0] === "gh") return { exitCode: ghExitCode, stdout: "", stderr: ghExitCode ? "dispatch failed" : "" }
+    if (command[0] === "git")
+      return { exitCode: 0, stdout: afterOutput, stderr: "" }
+    if (command[0] === "gh")
+      return {
+        exitCode: ghExitCode,
+        stdout: "",
+        stderr: ghExitCode ? "dispatch failed" : "",
+      }
     throw new Error(`unexpected command: ${command.join(" ")}`)
   }
   return { calls, run }
@@ -27,11 +39,16 @@ function runnerFor(afterOutput: string, ghExitCode = 0) {
 describe("release PR branch contract", () => {
   test("matches the explicit Release Please component", () => {
     const config = JSON.parse(
-      readFileSync(new URL("../release-please-config.json", import.meta.url), "utf8"),
+      readFileSync(
+        new URL("../release-please-config.json", import.meta.url),
+        "utf8",
+      ),
     ) as { packages: { ".": { component?: string } } }
 
     expect(config.packages["."].component).toBe("winvm-workspace")
-    expect(RELEASE_PR_BRANCH).toBe("release-please--branches--main--components--winvm-workspace")
+    expect(RELEASE_PR_BRANCH).toBe(
+      "release-please--branches--main--components--winvm-workspace",
+    )
   })
 
   test("accepts an absent branch or one exact remote ref", () => {
@@ -41,8 +58,12 @@ describe("release PR branch contract", () => {
 
   test("rejects malformed, unexpected, or ambiguous remote refs", () => {
     expect(() => parseRemoteHead(`not-a-sha\t${ref}\n`)).toThrow("malformed")
-    expect(() => parseRemoteHead(`${sha("a")}\trefs/heads/another-branch\n`)).toThrow("unexpected ref")
-    expect(() => parseRemoteHead(`${sha("a")}\t${ref}\n${sha("b")}\t${ref}\n`)).toThrow("exactly one")
+    expect(() =>
+      parseRemoteHead(`${sha("a")}\trefs/heads/another-branch\n`),
+    ).toThrow("unexpected ref")
+    expect(() =>
+      parseRemoteHead(`${sha("a")}\t${ref}\n${sha("b")}\t${ref}\n`),
+    ).toThrow("exactly one")
   })
 })
 
@@ -50,7 +71,14 @@ describe("release PR CI dispatch", () => {
   test("does nothing when the branch is absent before and after", () => {
     const { calls, run } = runnerFor("")
 
-    expect(dispatchReleasePrCi({ before: null, force: false, repository: "stuffbucket/winvm", run })).toEqual({
+    expect(
+      dispatchReleasePrCi({
+        before: null,
+        force: false,
+        repository: "stuffbucket/winvm",
+        run,
+      }),
+    ).toEqual({
       before: null,
       after: null,
       decision: "absent",
@@ -62,7 +90,14 @@ describe("release PR CI dispatch", () => {
     const head = sha("a")
     const { calls, run } = runnerFor(`${head}\t${ref}\n`)
 
-    expect(dispatchReleasePrCi({ before: head, force: false, repository: "stuffbucket/winvm", run })).toEqual({
+    expect(
+      dispatchReleasePrCi({
+        before: head,
+        force: false,
+        repository: "stuffbucket/winvm",
+        run,
+      }),
+    ).toEqual({
       before: head,
       after: head,
       decision: "unchanged",
@@ -74,7 +109,14 @@ describe("release PR CI dispatch", () => {
     const head = sha("b")
     const { calls, run } = runnerFor(`${head}\t${ref}\n`)
 
-    expect(dispatchReleasePrCi({ before: null, force: false, repository: "stuffbucket/winvm", run })).toEqual({
+    expect(
+      dispatchReleasePrCi({
+        before: null,
+        force: false,
+        repository: "stuffbucket/winvm",
+        run,
+      }),
+    ).toEqual({
       before: null,
       after: head,
       decision: "dispatched",
@@ -99,7 +141,12 @@ describe("release PR CI dispatch", () => {
     const after = sha("b")
     const { calls, run } = runnerFor(`${after}\t${ref}\n`)
 
-    const result = dispatchReleasePrCi({ before, force: false, repository: "stuffbucket/winvm", run })
+    const result = dispatchReleasePrCi({
+      before,
+      force: false,
+      repository: "stuffbucket/winvm",
+      run,
+    })
 
     expect(result.dispatchedSha).toBe(after)
     expect(calls[1]?.at(-1)).toBe(`expected_sha=${after}`)
@@ -109,27 +156,46 @@ describe("release PR CI dispatch", () => {
     const head = sha("c")
     const { calls, run } = runnerFor(`${head}\t${ref}\n`)
 
-    expect(dispatchReleasePrCi({ before: head, force: true, repository: "stuffbucket/winvm", run }).decision).toBe(
-      "dispatched",
-    )
+    expect(
+      dispatchReleasePrCi({
+        before: head,
+        force: true,
+        repository: "stuffbucket/winvm",
+        run,
+      }).decision,
+    ).toBe("dispatched")
     expect(calls).toHaveLength(2)
   })
 
   test("fails when the remote ref command fails", () => {
-    const run: CommandRunner = () => ({ exitCode: 2, stdout: "", stderr: "network failed" })
+    const run: CommandRunner = () => ({
+      exitCode: 2,
+      stdout: "",
+      stderr: "network failed",
+    })
 
-    expect(() => dispatchReleasePrCi({ before: null, force: false, repository: "stuffbucket/winvm", run })).toThrow(
-      "git ls-remote failed",
-    )
+    expect(() =>
+      dispatchReleasePrCi({
+        before: null,
+        force: false,
+        repository: "stuffbucket/winvm",
+        run,
+      }),
+    ).toThrow("git ls-remote failed")
   })
 
   test("fails when workflow dispatch fails", () => {
     const head = sha("d")
     const { run } = runnerFor(`${head}\t${ref}\n`, 1)
 
-    expect(() => dispatchReleasePrCi({ before: null, force: false, repository: "stuffbucket/winvm", run })).toThrow(
-      "CI dispatch failed",
-    )
+    expect(() =>
+      dispatchReleasePrCi({
+        before: null,
+        force: false,
+        repository: "stuffbucket/winvm",
+        run,
+      }),
+    ).toThrow("CI dispatch failed")
   })
 })
 
@@ -142,11 +208,22 @@ describe("command-line wiring", () => {
     chmodSync(git, 0o755)
 
     try {
-      const result = Bun.spawnSync([process.execPath, new URL("./release-please-ci.ts", import.meta.url).pathname, "capture"], {
-        env: { ...process.env, GITHUB_OUTPUT: output, PATH: `${dir}:${process.env.PATH ?? ""}` },
-        stdout: "pipe",
-        stderr: "pipe",
-      })
+      const result = Bun.spawnSync(
+        [
+          process.execPath,
+          new URL("./release-please-ci.ts", import.meta.url).pathname,
+          "capture",
+        ],
+        {
+          env: {
+            ...process.env,
+            GITHUB_OUTPUT: output,
+            PATH: `${dir}:${process.env.PATH ?? ""}`,
+          },
+          stdout: "pipe",
+          stderr: "pipe",
+        },
+      )
 
       expect(result.exitCode).toBe(0)
       expect(readFileSync(output, "utf8")).toBe("sha=absent\n")
@@ -163,14 +240,27 @@ describe("command-line wiring", () => {
     chmodSync(git, 0o755)
 
     try {
-      const result = Bun.spawnSync([process.execPath, new URL("./release-please-ci.ts", import.meta.url).pathname, "capture"], {
-        env: { ...process.env, GITHUB_OUTPUT: output, PATH: `${dir}:${process.env.PATH ?? ""}` },
-        stdout: "pipe",
-        stderr: "pipe",
-      })
+      const result = Bun.spawnSync(
+        [
+          process.execPath,
+          new URL("./release-please-ci.ts", import.meta.url).pathname,
+          "capture",
+        ],
+        {
+          env: {
+            ...process.env,
+            GITHUB_OUTPUT: output,
+            PATH: `${dir}:${process.env.PATH ?? ""}`,
+          },
+          stdout: "pipe",
+          stderr: "pipe",
+        },
+      )
 
       expect(result.exitCode).not.toBe(0)
-      expect(result.stderr.toString()).toContain("git ls-remote failed: network failed")
+      expect(result.stderr.toString()).toContain(
+        "git ls-remote failed: network failed",
+      )
       expect(() => readFileSync(output, "utf8")).toThrow()
     } finally {
       rmSync(dir, { recursive: true, force: true })
@@ -198,13 +288,17 @@ describe("command-line wiring", () => {
 
 describe("Release Please trigger validation", () => {
   test("accepts push and manual runs on main", () => {
-    expect(() => { validateReleasePleaseTrigger("push", "refs/heads/main") }).not.toThrow()
-    expect(() => { validateReleasePleaseTrigger("workflow_dispatch", "refs/heads/main") }).not.toThrow()
+    expect(() => {
+      validateReleasePleaseTrigger("push", "refs/heads/main")
+    }).not.toThrow()
+    expect(() => {
+      validateReleasePleaseTrigger("workflow_dispatch", "refs/heads/main")
+    }).not.toThrow()
   })
 
   test("rejects a manual run from another ref", () => {
-    expect(() => { validateReleasePleaseTrigger("workflow_dispatch", "refs/heads/feature") }).toThrow(
-      "must run from refs/heads/main",
-    )
+    expect(() => {
+      validateReleasePleaseTrigger("workflow_dispatch", "refs/heads/feature")
+    }).toThrow("must run from refs/heads/main")
   })
 })
