@@ -1288,8 +1288,8 @@ export function CheckpointCanvas(p: CheckpointCanvasProps): JSX.Element {
             onLook={() => {
               setLooking(true)
             }}
-            onNote={(d) => {
-              writeNote(selectedCheckpoint.name, d)
+            onNote={(name, d) => {
+              writeNote(name, d)
             }}
             onGoBack={() => {
               setConfirm({ kind: "go-back", name: selectedCheckpoint.name })

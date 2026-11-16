@@ -11,7 +11,7 @@ const cp = await import("../ui/src/features/checkpoints/checkpoints")
 const { loadSettings, parseSettings, saveSettings } = await import(
   "../ui/src/features/checkpoints/settings"
 )
-const { draftOf, tagsOf } = await import(
+const { CheckpointDetails, draftOf, tagsOf } = await import(
   "../ui/src/features/checkpoints/CheckpointDetails"
 )
 const { ConfirmDialog } = await import("../ui/src/components/ConfirmDialog")
@@ -350,6 +350,73 @@ describe("going back", () => {
       body: "checkpoints.goBack.bodyLive",
       offerSaveFirst: true,
     })
+  })
+})
+
+type Draft =
+  import("../ui/src/features/checkpoints/CheckpointDetails").NoteDraft
+
+function Selected({
+  c,
+  writes,
+}: {
+  readonly c: Checkpoint
+  readonly writes: [string, Draft][]
+}): JSX.Element {
+  return (
+    <CheckpointDetails
+      c={c}
+      now={Date.now()}
+      busy={false}
+      saving="idle"
+      onClose={() => undefined}
+      onLook={() => undefined}
+      onNote={(name, d) => {
+        writes.push([name, d])
+      }}
+      onGoBack={() => undefined}
+      onDelete={() => undefined}
+    />
+  )
+}
+
+describe("a checkpoint's note", () => {
+  let root: ReturnType<typeof createRoot> | null = null
+  afterEach(() => {
+    act(() => root?.unmount())
+    root = null
+    document.body.replaceChildren()
+  })
+
+  it("saves an edit still waiting to be written to the checkpoint it was typed for, when another is selected", () => {
+    const writes: [string, Draft][] = []
+    const a = checkpoint("a", at(2026, 8, 9, 10))
+    const b = checkpoint("b", at(2026, 10, 20, 9))
+    const host = document.createElement("div")
+    document.body.append(host)
+    const r = createRoot(host)
+    root = r
+    act(() => {
+      r.render(<Selected c={a} writes={writes} />)
+    })
+    const title = host.querySelector<HTMLInputElement>("#checkpoint-title")
+    if (title === null) throw new Error("no title field")
+    act(() => {
+      const descriptor = Object.getOwnPropertyDescriptor(
+        window.HTMLInputElement.prototype,
+        "value",
+      )
+      descriptor?.set?.call(title, "Before the update")
+      title.dispatchEvent(new Event("input", { bubbles: true }))
+    })
+    expect(writes).toEqual([])
+    act(() => {
+      r.render(<Selected c={b} writes={writes} />)
+    })
+    expect(writes).toEqual([
+      ["a", { title: "Before the update", text: "", tags: "" }],
+    ])
+    expect(title.value).toBe("")
   })
 })
 

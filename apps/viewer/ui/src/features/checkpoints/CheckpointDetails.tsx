@@ -1,5 +1,5 @@
 import { SpatialCanvasSidePanel } from "@winvm/canvas"
-import { type JSX, useEffect, useRef, useState } from "react"
+import { type JSX, useCallback, useEffect, useRef, useState } from "react"
 
 import { Button } from "../../components/Button"
 import { t } from "../../i18n"
@@ -45,7 +45,7 @@ interface DetailsProps {
   readonly saving: "idle" | "saving" | "saved" | "failed"
   onClose: () => void
   onLook: () => void
-  onNote: (draft: NoteDraft) => void
+  onNote: (name: string, draft: NoteDraft) => void
   onGoBack: () => void
   onDelete: () => void
 }
@@ -75,15 +75,23 @@ export function CheckpointDetails({
     written.current = d
   }, [c.name, c.createdAt])
 
-  const flush = (): void => {
+  const flushTo = useCallback((checkpoint: string): void => {
     if (timer.current !== null) clearTimeout(timer.current)
     timer.current = null
     const d = latest.current.draft
     if (sameDraft(d, written.current)) return
     written.current = d
-    latest.current.onNote(d)
+    latest.current.onNote(checkpoint, d)
+  }, [])
+  const flush = (): void => {
+    flushTo(c.name)
   }
-  useEffect(() => flush, [c.name])
+  useEffect(() => {
+    const typedFor = c.name
+    return () => {
+      flushTo(typedFor)
+    }
+  }, [c.name, flushTo])
 
   const edit = (patch: Partial<NoteDraft>): void => {
     setDraft((d) => ({ ...d, ...patch }))
