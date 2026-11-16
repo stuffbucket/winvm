@@ -4,6 +4,7 @@ mod close;
 mod dragout;
 mod liveresize;
 mod sidecar;
+pub mod terminate;
 mod usage;
 
 use serde::{Deserialize, Serialize};
@@ -385,9 +386,10 @@ fn check_for_update(app: tauri::AppHandle, asked: bool) {
                     );
                     match done {
                         Ok(()) => {
-                            stop_sharing(&app.state::<Sharing>());
-                            app.state::<close::CloseCoordinator>().authorize_bypass();
-                            app.restart();
+                            if app.state::<close::CloseCoordinator>().wait_to_restart() {
+                                stop_sharing(&app.state::<Sharing>());
+                                app.restart();
+                            }
                         }
                         Err(e) => {
                             app.dialog()
@@ -690,6 +692,11 @@ pub fn run() {
         })
         .on_menu_event(|app, event| handle_menu(app, &event))
         .setup(|app| {
+            let handle = app.handle().clone();
+            terminate::settle_install(
+                terminate::install(move |quit| close::should_terminate(&handle, quit)),
+                terminate::Fatality::of_this_build(),
+            )?;
             if let Some(main) = app.get_webview_window("main") {
                 liveresize::watch(&main);
             }
@@ -718,8 +725,11 @@ pub fn run() {
             dragout::files_drag_out,
             trace,
             set_system_keyboard_capture,
-            close::close_pending,
+            close::close_state,
             close::close_start,
+            close::close_at,
+            close::close_resolved,
+            close::close_run,
             close::close_cancel,
             close::close_complete
         ])

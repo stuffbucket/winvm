@@ -44,7 +44,7 @@ interface DetailsProps {
   readonly busy: boolean
   readonly saving: "idle" | "saving" | "saved" | "failed"
   onClose: () => void
-  onLook: () => void
+  onLook: (opener: HTMLElement) => void
   onNote: (name: string, draft: NoteDraft) => void
   onGoBack: () => void
   onDelete: () => void
@@ -150,7 +150,9 @@ export function CheckpointDetails({
         type="button"
         className="checkpoint-details__picture"
         title={t("checkpoints.lookTip")}
-        onClick={onLook}
+        onClick={(e) => {
+          onLook(e.currentTarget)
+        }}
       >
         <Picture c={c} sharp wanted />
       </button>

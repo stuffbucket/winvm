@@ -127,9 +127,11 @@ export class FakeAgent {
           const late = Buffer.from(
             `${JSON.stringify({ return: `late reply to ${String(req.execute)}` })}\n`,
           )
-          setTimeout(() => {
-            send(late)
-          }, 150)
+          if (open)
+            sock.once("close", () => {
+              send(late)
+            })
+          else send(late)
           continue
         }
         const bytes = Buffer.from(`${JSON.stringify(reply)}\n`)
