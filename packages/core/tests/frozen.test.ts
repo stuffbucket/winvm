@@ -19,7 +19,12 @@ import { resolve } from "node:path"
 
 import * as agent from "../src/agent"
 import { parseArgs } from "../src/args"
-import { type StopCommandSeams, stopWith } from "../src/commands"
+import {
+  type RunningStartSeams,
+  type StopCommandSeams,
+  startRunning,
+  stopWith,
+} from "../src/commands"
 import { configPath, parseAssignment, writeAssignments } from "../src/config"
 import {
   appendEntry,
@@ -923,5 +928,51 @@ describe("graceful stop", () => {
       "afterUp",
       "ensureWatcher",
     ])
+  })
+})
+
+describe("winvm start on a running instance", () => {
+  const run = async (
+    frozen: "paused" | "asleep" | null,
+  ): Promise<{ code: number; events: string[] }> => {
+    const events: string[] = []
+    const seams: RunningStartSeams = {
+      reconcile: () => {
+        events.push("reconcile")
+        return Promise.resolve()
+      },
+      startWatcher: () => {
+        events.push("startWatcher")
+      },
+      frozenState: () => Promise.resolve(frozen),
+      afterUp: () => {
+        events.push("afterUp")
+        return Promise.resolve()
+      },
+    }
+    const log = console.log
+    console.log = () => undefined
+    try {
+      const code = await startRunning(
+        NAME,
+        parseArgs(["start", "-i", NAME]),
+        seams,
+      )
+      return { code, events }
+    } finally {
+      console.log = log
+    }
+  }
+
+  it("brings back what a stop took down: the watcher and the guest's Finder drives", async () => {
+    expect(await run(null)).toEqual({
+      code: 0,
+      events: ["reconcile", "startWatcher", "afterUp"],
+    })
+  })
+
+  it("does not mount drives into a paused or asleep guest", async () => {
+    for (const f of ["paused", "asleep"] as const)
+      expect((await run(f)).events).toEqual(["reconcile", "startWatcher"])
   })
 })

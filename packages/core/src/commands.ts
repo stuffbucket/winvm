@@ -584,22 +584,41 @@ export function create(args: Args): number {
   return 0
 }
 
+export interface RunningStartSeams {
+  readonly reconcile?: (name: string, p: Paths) => Promise<unknown>
+  readonly startWatcher?: (name: string, args: Args) => void
+  readonly frozenState?: (p: Paths) => Promise<frozen.Frozen | null>
+  readonly afterUp?: (name: string) => Promise<void>
+}
+
+export async function startRunning(
+  name: string,
+  args: Args,
+  seams: RunningStartSeams = {},
+): Promise<number> {
+  const p = pathsFor(name)
+  const reconcile = seams.reconcile ?? reconcileManagement
+  const startWatcher = seams.startWatcher ?? watcher.startWatcherFor
+  const frozenState = seams.frozenState ?? ((q: Paths) => frozen.frozenState(q))
+  const afterUp = seams.afterUp ?? ((n: string) => finder.afterUp(n))
+  console.log(`instance "${name}" already running`)
+  try {
+    await reconcile(name, p)
+  } catch (error) {
+    if (!(error instanceof ManagementError)) throw error
+    console.error(`::error::${error.message}`)
+    return 1
+  }
+  startWatcher(name, args)
+  if ((await frozenState(p)) === null) await afterUp(name)
+  return 0
+}
+
 export async function start(args: Args): Promise<number> {
   requireHost()
   const name = instanceName(args)
   const p = pathsFor(name)
-  if (qemu.isRunning(p)) {
-    console.log(`instance "${name}" already running`)
-    try {
-      await reconcileManagement(name, p)
-    } catch (error) {
-      if (!(error instanceof ManagementError)) throw error
-      console.error(`::error::${error.message}`)
-      return 1
-    }
-    watcher.startWatcherFor(name, args)
-    return 0
-  }
+  if (qemu.isRunning(p)) return await startRunning(name, args)
   const recalled = await savecmds.recallStow(name, args)
   if (recalled === 0) watcher.startWatcherFor(name, args)
   if (recalled !== null) return recalled
