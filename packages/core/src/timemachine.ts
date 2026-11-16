@@ -9,15 +9,16 @@ export function isExcluded(path: string): boolean {
   return quiet("xattr", ["-p", EXCLUDE_XATTR, path]) === 0
 }
 
-export function targets(o: { readonly realpath?: (path: string) => string } = {}): readonly string[] {
+export function targets(
+  o: { readonly realpath?: (path: string) => string } = {},
+): readonly string[] {
   const out = [home()]
   const iso = media.iso()
   if (existsSync(iso)) {
     try {
       const isoDir = dirname((o.realpath ?? realpathSync)(iso))
       if (!isoDir.startsWith(`${home()}/`)) out.push(isoDir)
-    } catch {
-    }
+    } catch {}
   }
   return out.filter((p) => existsSync(p))
 }
@@ -60,15 +61,25 @@ export function run(yes: boolean): number {
       continue
     }
     console.log(`MISS  not excluded from backups: ${path}`)
-    const answer = yes ? "y" : process.stdin.isTTY ? prompt(`      Exclude it? [y/N]`) : null
+    const answer = yes
+      ? "y"
+      : process.stdin.isTTY
+        ? prompt(`      Exclude it? [y/N]`)
+        : null
     if (answer?.trim().toLowerCase() !== "y") {
-      console.log(yes || process.stdin.isTTY ? "      left as is" : "      (run with --yes to exclude it)")
+      console.log(
+        yes || process.stdin.isTTY
+          ? "      left as is"
+          : "      (run with --yes to exclude it)",
+      )
       continue
     }
     if (quiet("tmutil", ["addexclusion", path]) === 0 && isExcluded(path)) {
       console.log(`      excluded`)
     } else {
-      console.error(`::error::could not exclude ${path} (tmutil addexclusion failed)`)
+      console.error(
+        `::error::could not exclude ${path} (tmutil addexclusion failed)`,
+      )
       failed++
     }
   }

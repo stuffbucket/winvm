@@ -1,4 +1,13 @@
-import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, rmdirSync, statSync, writeFileSync } from "node:fs"
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  rmdirSync,
+  statSync,
+  writeFileSync,
+} from "node:fs"
 import { resolve } from "node:path"
 
 import { nameError } from "./savename"
@@ -18,7 +27,12 @@ export interface NotePatch {
 }
 
 function checkInstance(instance: string): void {
-  if (instance === "" || instance.includes("/") || instance.includes("\\") || instance.startsWith(".")) {
+  if (
+    instance === "" ||
+    instance.includes("/") ||
+    instance.includes("\\") ||
+    instance.startsWith(".")
+  ) {
     throw new Error(`"${instance}" is not a valid instance name`)
   }
 }
@@ -28,21 +42,34 @@ function checkSave(save: string): void {
   if (err !== null) throw new Error(err)
 }
 
-export function notesDir(instance: string, env: NodeJS.ProcessEnv = process.env): string {
+export function notesDir(
+  instance: string,
+  env: NodeJS.ProcessEnv = process.env,
+): string {
   checkInstance(instance)
   return resolve(dataDir(env), "notes", instance)
 }
 
-export function notePath(instance: string, save: string, env: NodeJS.ProcessEnv = process.env): string {
+export function notePath(
+  instance: string,
+  save: string,
+  env: NodeJS.ProcessEnv = process.env,
+): string {
   checkSave(save)
   return resolve(notesDir(instance, env), `${save}.json`)
 }
 
 const EMPTY = { title: null, text: "", tags: [] } as const
 
-export const cleanTags = (tags: readonly string[]): string[] => [...new Set(tags.map((t) => t.trim()).filter((t) => t !== ""))]
+export const cleanTags = (tags: readonly string[]): string[] => [
+  ...new Set(tags.map((t) => t.trim()).filter((t) => t !== "")),
+]
 
-export function readNote(instance: string, save: string, env: NodeJS.ProcessEnv = process.env): Note | null {
+export function readNote(
+  instance: string,
+  save: string,
+  env: NodeJS.ProcessEnv = process.env,
+): Note | null {
   let path: string
   let raw: unknown
   try {
@@ -53,9 +80,14 @@ export function readNote(instance: string, save: string, env: NodeJS.ProcessEnv 
   }
   if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return null
   const r = raw as Record<string, unknown>
-  const title = typeof r["title"] === "string" && r["title"].trim() !== "" ? r["title"] : null
+  const title =
+    typeof r["title"] === "string" && r["title"].trim() !== ""
+      ? r["title"]
+      : null
   const text = typeof r["text"] === "string" ? r["text"] : ""
-  const tags = Array.isArray(r["tags"]) ? cleanTags(r["tags"].filter((t): t is string => typeof t === "string")) : []
+  const tags = Array.isArray(r["tags"])
+    ? cleanTags(r["tags"].filter((t): t is string => typeof t === "string"))
+    : []
   let updatedAt = typeof r["updatedAt"] === "string" ? r["updatedAt"] : ""
   if (Number.isNaN(Date.parse(updatedAt))) {
     try {
@@ -67,8 +99,9 @@ export function readNote(instance: string, save: string, env: NodeJS.ProcessEnv 
   return { title, text, tags, updatedAt }
 }
 
-export const isEmptyNote = (n: Pick<Note, "title" | "text" | "tags">): boolean =>
-  n.title === null && n.text.trim() === "" && n.tags.length === 0
+export const isEmptyNote = (
+  n: Pick<Note, "title" | "text" | "tags">,
+): boolean => n.title === null && n.text.trim() === "" && n.tags.length === 0
 
 function writeAtomic(path: string, text: string): void {
   mkdirSync(resolve(path, ".."), { recursive: true })
@@ -85,8 +118,7 @@ function writeAtomic(path: string, text: string): void {
 function pruneDir(instance: string, env: NodeJS.ProcessEnv): void {
   try {
     rmdirSync(notesDir(instance, env))
-  } catch {
-  }
+  } catch {}
 }
 
 export function writeNote(
@@ -98,7 +130,12 @@ export function writeNote(
 ): Note {
   const path = notePath(instance, save, env)
   const old = readNote(instance, save, env) ?? EMPTY
-  const title = patch.title === undefined ? old.title : patch.title === null || patch.title.trim() === "" ? null : patch.title.trim()
+  const title =
+    patch.title === undefined
+      ? old.title
+      : patch.title === null || patch.title.trim() === ""
+        ? null
+        : patch.title.trim()
   const rawText = patch.text ?? old.text
   const note: Note = {
     title,
@@ -114,16 +151,28 @@ export function writeNote(
   return note
 }
 
-export function removeNote(instance: string, save: string, env: NodeJS.ProcessEnv = process.env): void {
+export function removeNote(
+  instance: string,
+  save: string,
+  env: NodeJS.ProcessEnv = process.env,
+): void {
   rmSync(notePath(instance, save, env), { force: true })
   pruneDir(instance, env)
 }
 
-export function removeNotes(instance: string, env: NodeJS.ProcessEnv = process.env): void {
+export function removeNotes(
+  instance: string,
+  env: NodeJS.ProcessEnv = process.env,
+): void {
   rmSync(notesDir(instance, env), { recursive: true, force: true })
 }
 
-export function copyNote(fromInstance: string, toInstance: string, save: string, env: NodeJS.ProcessEnv = process.env): void {
+export function copyNote(
+  fromInstance: string,
+  toInstance: string,
+  save: string,
+  env: NodeJS.ProcessEnv = process.env,
+): void {
   const src = notePath(fromInstance, save, env)
   const dst = notePath(toInstance, save, env)
   if (src === dst) return

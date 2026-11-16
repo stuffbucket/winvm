@@ -14,15 +14,31 @@ import {
   readHardware,
   writeHardware,
 } from "../src/hardware"
-import { applyAssignments, forwardKind, isHardwareKey, parseUsernet, pendingNote, windowsAdapter } from "../src/machineinfo"
+import {
+  applyAssignments,
+  forwardKind,
+  isHardwareKey,
+  parseUsernet,
+  pendingNote,
+  windowsAdapter,
+} from "../src/machineinfo"
 import { pathsFor, type InstanceMeta, type Paths } from "../src/paths"
 import { qemuArgs } from "../src/qemu"
-import { hardwareArgs, parseManifest, saveHardware, savesReport } from "../src/saves"
+import {
+  hardwareArgs,
+  parseManifest,
+  saveHardware,
+  savesReport,
+} from "../src/saves"
 import * as share from "../src/share"
 
 const GIB = 1024 ** 3
 const META: InstanceMeta = { image: "win11-arm64", vnc: 9, created: "" }
-const LAUNCH = { installMedia: false, ephemeral: false, virtioBoot: true } as const
+const LAUNCH = {
+  installMedia: false,
+  ephemeral: false,
+  virtioBoot: true,
+} as const
 
 let home = ""
 const saved: Record<string, string | undefined> = {}
@@ -56,9 +72,15 @@ const instance = (name: string): Paths => {
 describe("limits", () => {
   it("are 2 to the performance cores, and 4 GB to half the Mac's memory in whole GB", () => {
     const l = limitsFor(16, 64 * GIB)
-    expect(l).toEqual({ cpus: { min: 2, max: 16 }, memoryMiB: { min: 4096, max: 32768, step: 1024 } })
+    expect(l).toEqual({
+      cpus: { min: 2, max: 16 },
+      memoryMiB: { min: 4096, max: 32768, step: 1024 },
+    })
     expect(limitsFor(4, 15 * GIB).memoryMiB.max).toBe(7168)
-    expect(limitsFor(1, 6 * GIB)).toEqual({ cpus: { min: 2, max: 2 }, memoryMiB: { min: 4096, max: 4096, step: 1024 } })
+    expect(limitsFor(1, 6 * GIB)).toEqual({
+      cpus: { min: 2, max: 2 },
+      memoryMiB: { min: 4096, max: 4096, step: 1024 },
+    })
   })
 
   it("refuse what is out of range or not in whole GB", () => {
@@ -66,7 +88,9 @@ describe("limits", () => {
     expect(hardwareError({ cpus: 6, memoryMiB: 8192 }, l)).toBeNull()
     expect(hardwareError({ cpus: 1, memoryMiB: 8192 }, l)).toContain("2 to 16")
     expect(hardwareError({ cpus: 17, memoryMiB: 8192 }, l)).toContain("2 to 16")
-    expect(hardwareError({ cpus: 4, memoryMiB: 3072 }, l)).toContain("4 GB to 32 GB")
+    expect(hardwareError({ cpus: 4, memoryMiB: 3072 }, l)).toContain(
+      "4 GB to 32 GB",
+    )
     expect(hardwareError({ cpus: 4, memoryMiB: 33792 }, l)).not.toBeNull()
     expect(hardwareError({ cpus: 4, memoryMiB: 8000 }, l)).not.toBeNull()
   })
@@ -100,7 +124,12 @@ describe("the setting", () => {
 
   it("gives a machine without it exactly the command line every machine had before (so its saves' hash holds)", () => {
     const a = hardwareArgs(qemuArgs("old", instance("old"), META, LAUNCH))
-    expect(a.slice(a.indexOf("-smp"), a.indexOf("-smp") + 4)).toEqual(["-smp", "4", "-m", "4096"])
+    expect(a.slice(a.indexOf("-smp"), a.indexOf("-smp") + 4)).toEqual([
+      "-smp",
+      "4",
+      "-m",
+      "4096",
+    ])
     expect(a).toContain("memory-backend-shm,id=mem,size=4096M,share=on")
   })
 })
@@ -118,8 +147,16 @@ describe("saves and the size", () => {
 
   it("a save without a record was taken at LEGACY; one with a record at its own size", () => {
     expect(saveHardware(parseManifest(JSON.stringify(m)))).toEqual(LEGACY)
-    expect(saveHardware(parseManifest(JSON.stringify({ ...m, hardware: { cpus: 6, memoryMiB: 8192 } })))).toEqual({ cpus: 6, memoryMiB: 8192 })
-    expect(() => parseManifest(JSON.stringify({ ...m, hardware: { cpus: "six" } }))).toThrow("manifest.hardware")
+    expect(
+      saveHardware(
+        parseManifest(
+          JSON.stringify({ ...m, hardware: { cpus: 6, memoryMiB: 8192 } }),
+        ),
+      ),
+    ).toEqual({ cpus: 6, memoryMiB: 8192 })
+    expect(() =>
+      parseManifest(JSON.stringify({ ...m, hardware: { cpus: "six" } })),
+    ).toThrow("manifest.hardware")
   })
 
   it("loads at the save's size: the command line at the save's size hashes as it did when it was taken", () => {
@@ -128,25 +165,75 @@ describe("saves and the size", () => {
     writeHardware(p, { cpus: 6, memoryMiB: 8192 })
     const now = hardwareArgs(qemuArgs("moved", p, META, LAUNCH))
     expect(now).not.toEqual(taken)
-    const atSave = hardwareArgs(qemuArgs("moved", p, META, { ...LAUNCH, hardware: saveHardware(parseManifest(JSON.stringify(m))) }))
+    const atSave = hardwareArgs(
+      qemuArgs("moved", p, META, {
+        ...LAUNCH,
+        hardware: saveHardware(parseManifest(JSON.stringify(m))),
+      }),
+    )
     expect(atSave).toEqual(taken)
     const at6 = hardwareArgs(qemuArgs("moved", p, META, LAUNCH))
     writeHardware(p, { cpus: 4, memoryMiB: 6144 })
-    const rec = saveHardware(parseManifest(JSON.stringify({ ...m, hardware: { cpus: 6, memoryMiB: 8192 } })))
-    expect(hardwareArgs(qemuArgs("moved", p, META, { ...LAUNCH, hardware: rec }))).toEqual(at6)
+    const rec = saveHardware(
+      parseManifest(
+        JSON.stringify({ ...m, hardware: { cpus: 6, memoryMiB: 8192 } }),
+      ),
+    )
+    expect(
+      hardwareArgs(qemuArgs("moved", p, META, { ...LAUNCH, hardware: rec })),
+    ).toEqual(at6)
   })
 
   it("`saves` judges each save at its own size", () => {
     const parts = { base: "b", hardware: "h", firmware: "f", qemu: "q" }
     const rows = [
-      { name: "old", manifest: parseManifest(JSON.stringify({ ...m, name: "old", compat: "legacy-hash" })) },
-      { name: "big", manifest: parseManifest(JSON.stringify({ ...m, name: "big", compat: "big-hash", hardware: { cpus: 6, memoryMiB: 8192 } })) },
-      { name: "gone", manifest: parseManifest(JSON.stringify({ ...m, name: "gone", compat: "stale", hardware: { cpus: 6, memoryMiB: 8192 } })) },
+      {
+        name: "old",
+        manifest: parseManifest(
+          JSON.stringify({ ...m, name: "old", compat: "legacy-hash" }),
+        ),
+      },
+      {
+        name: "big",
+        manifest: parseManifest(
+          JSON.stringify({
+            ...m,
+            name: "big",
+            compat: "big-hash",
+            hardware: { cpus: 6, memoryMiB: 8192 },
+          }),
+        ),
+      },
+      {
+        name: "gone",
+        manifest: parseManifest(
+          JSON.stringify({
+            ...m,
+            name: "gone",
+            compat: "stale",
+            hardware: { cpus: 6, memoryMiB: 8192 },
+          }),
+        ),
+      },
     ]
-    const at = (hw: { cpus: number; memoryMiB: number }): { compat: { hash: string; parts: typeof parts } } => ({
-      compat: { hash: hw.cpus === 6 ? "big-hash" : hw.memoryMiB === 4096 ? "legacy-hash" : "setting-hash", parts },
+    const at = (hw: {
+      cpus: number
+      memoryMiB: number
+    }): { compat: { hash: string; parts: typeof parts } } => ({
+      compat: {
+        hash:
+          hw.cpus === 6
+            ? "big-hash"
+            : hw.memoryMiB === 4096
+              ? "legacy-hash"
+              : "setting-hash",
+        parts,
+      },
     })
-    const got = savesReport(rows, { compat: { hash: "setting-hash", parts }, at })
+    const got = savesReport(rows, {
+      compat: { hash: "setting-hash", parts },
+      at,
+    })
     expect(got.map((e) => [e.name, e.compatible])).toEqual([
       ["old", true],
       ["big", true],
@@ -159,11 +246,19 @@ describe("winvm config cpus= memory=", () => {
   const l = limitsFor(16, 64 * GIB)
 
   it("sets either or both, checked against the Mac", () => {
-    expect(applyAssignments(LEGACY, ["cpus=6", "memory=8G"], l)).toEqual({ cpus: 6, memoryMiB: 8192 })
-    expect(applyAssignments(LEGACY, ["memory=6144"], l)).toEqual({ cpus: 4, memoryMiB: 6144 })
+    expect(applyAssignments(LEGACY, ["cpus=6", "memory=8G"], l)).toEqual({
+      cpus: 6,
+      memoryMiB: 8192,
+    })
+    expect(applyAssignments(LEGACY, ["memory=6144"], l)).toEqual({
+      cpus: 4,
+      memoryMiB: 6144,
+    })
     expect(() => applyAssignments(LEGACY, ["cpus=24"], l)).toThrow("2 to 16")
     expect(() => applyAssignments(LEGACY, ["memory=2G"], l)).toThrow("4 GB")
-    expect(() => applyAssignments(LEGACY, ["cpus=two"], l)).toThrow("whole number")
+    expect(() => applyAssignments(LEGACY, ["cpus=two"], l)).toThrow(
+      "whole number",
+    )
     expect(isHardwareKey("cpus=6")).toBe(true)
     expect(isHardwareKey("autosave.keep=3")).toBe(false)
   })
@@ -171,7 +266,9 @@ describe("winvm config cpus= memory=", () => {
   it("says when the change waits for the next start", () => {
     expect(pendingNote(null, NEW_DEFAULT)).toBeNull()
     expect(pendingNote(NEW_DEFAULT, NEW_DEFAULT)).toBeNull()
-    expect(pendingNote(LEGACY, NEW_DEFAULT)).toContain("applies the next time Windows starts")
+    expect(pendingNote(LEGACY, NEW_DEFAULT)).toContain(
+      "applies the next time Windows starts",
+    )
   })
 })
 
@@ -193,7 +290,12 @@ describe("winvm info's network", () => {
 
   it("takes Windows' address from the adapter that has one", () => {
     const reply = [
-      { name: "Loopback Pseudo-Interface 1", "ip-addresses": [{ "ip-address-type": "ipv4", "ip-address": "127.0.0.1", prefix: 8 }] },
+      {
+        name: "Loopback Pseudo-Interface 1",
+        "ip-addresses": [
+          { "ip-address-type": "ipv4", "ip-address": "127.0.0.1", prefix: 8 },
+        ],
+      },
       {
         name: "Ethernet",
         "ip-addresses": [
@@ -202,7 +304,10 @@ describe("winvm info's network", () => {
         ],
       },
     ]
-    expect(windowsAdapter(reply)).toEqual({ adapter: "Ethernet", ipv4: "10.0.2.15" })
+    expect(windowsAdapter(reply)).toEqual({
+      adapter: "Ethernet",
+      ipv4: "10.0.2.15",
+    })
     expect(windowsAdapter(null)).toBeNull()
   })
 })

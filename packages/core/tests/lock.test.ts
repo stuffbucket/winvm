@@ -5,8 +5,22 @@ import { resolve } from "node:path"
 import { afterAll, describe, expect, it } from "bun:test"
 
 import type { Proc, PwshResponse } from "../src/guestagent"
-import { ENABLE_SIGN_IN, LOCK_ARGV, type LockAgent, lockWindows } from "../src/lock"
-import { SETTING_DEFAULTS, parseSetting, readSection, readSettings, sectionError, settingsPath, writeSection, writeSettings } from "../src/settings"
+import {
+  ENABLE_SIGN_IN,
+  LOCK_ARGV,
+  type LockAgent,
+  lockWindows,
+} from "../src/lock"
+import {
+  SETTING_DEFAULTS,
+  parseSetting,
+  readSection,
+  readSettings,
+  sectionError,
+  settingsPath,
+  writeSection,
+  writeSettings,
+} from "../src/settings"
 import { configDir, dataDir } from "../src/xdg"
 
 class FakeAgent implements LockAgent {
@@ -20,7 +34,12 @@ class FakeAgent implements LockAgent {
 
   pwsh(script: string): Promise<PwshResponse> {
     this.scripts.push(script)
-    return Promise.resolve({ code: this.pwshCode, output: this.pwshOutput, ms: 1, timedOut: false })
+    return Promise.resolve({
+      code: this.pwshCode,
+      output: this.pwshOutput,
+      ms: 1,
+      timedOut: false,
+    })
   }
 
   launch(argv: readonly string[]): Promise<{ readonly pid: number }> {
@@ -32,7 +51,11 @@ class FakeAgent implements LockAgent {
   procs(): Promise<readonly Proc[]> {
     if (this.launched.length > 0) {
       this.sinceLaunch += 1
-      if (this.appearsAfter !== null && this.sinceLaunch >= this.appearsAfter) return Promise.resolve([...this.procList, { pid: 900, name: "LogonUI.exe", session: 1 }])
+      if (this.appearsAfter !== null && this.sinceLaunch >= this.appearsAfter)
+        return Promise.resolve([
+          ...this.procList,
+          { pid: 900, name: "LogonUI.exe", session: 1 },
+        ])
     }
     return Promise.resolve(this.procList)
   }
@@ -69,7 +92,9 @@ describe("locking Windows", () => {
     const a = new FakeAgent()
     a.pwshCode = 1
     a.pwshOutput = "Access denied"
-    expect(await lockWindows(a, { sleep: noSleep }).catch((e: unknown) => String(e))).toContain("Access denied")
+    expect(
+      await lockWindows(a, { sleep: noSleep }).catch((e: unknown) => String(e)),
+    ).toContain("Access denied")
     expect(a.launched).toHaveLength(0)
   })
 })
@@ -83,15 +108,21 @@ describe("XDG directories", () => {
   })
 
   it("ignores empty and relative values, as the spec says", () => {
-    expect(configDir({ HOME: "/h", XDG_CONFIG_HOME: "" })).toBe("/h/.config/winvm")
-    expect(dataDir({ HOME: "/h", XDG_DATA_HOME: "rel/dir" })).toBe("/h/.local/share/winvm")
+    expect(configDir({ HOME: "/h", XDG_CONFIG_HOME: "" })).toBe(
+      "/h/.config/winvm",
+    )
+    expect(dataDir({ HOME: "/h", XDG_DATA_HOME: "rel/dir" })).toBe(
+      "/h/.local/share/winvm",
+    )
   })
 })
 
 describe("the user's settings", () => {
   const dir = mkdtempSync(resolve(tmpdir(), "wvset-"))
   const env = { HOME: "/nonexistent", XDG_CONFIG_HOME: dir }
-  afterAll(() => { rmSync(dir, { recursive: true, force: true }) })
+  afterAll(() => {
+    rmSync(dir, { recursive: true, force: true })
+  })
 
   it("are the defaults with no file, the pause overlay on", () => {
     expect(readSettings(env)).toEqual(SETTING_DEFAULTS)
@@ -101,14 +132,19 @@ describe("the user's settings", () => {
   it("persist the overlay toggle in $XDG_CONFIG_HOME/winvm/settings.json", () => {
     writeSettings({ "viewer.pauseOverlay": false }, env)
     expect(settingsPath(env)).toBe(resolve(dir, "winvm", "settings.json"))
-    expect(JSON.parse(readFileSync(settingsPath(env), "utf8"))).toEqual({ "viewer.pauseOverlay": false })
+    expect(JSON.parse(readFileSync(settingsPath(env), "utf8"))).toEqual({
+      "viewer.pauseOverlay": false,
+    })
     expect(readSettings(env)["viewer.pauseOverlay"]).toBe(false)
     writeSettings({ "viewer.pauseOverlay": true }, env)
     expect(readSettings(env)["viewer.pauseOverlay"]).toBe(true)
   })
 
   it("keep only known keys of the right type; a broken file is the defaults", () => {
-    writeFileSync(settingsPath(env), JSON.stringify({ "viewer.pauseOverlay": "no", other: 1 }))
+    writeFileSync(
+      settingsPath(env),
+      JSON.stringify({ "viewer.pauseOverlay": "no", other: 1 }),
+    )
     expect(readSettings(env)).toEqual(SETTING_DEFAULTS)
     writeFileSync(settingsPath(env), "{not json")
     expect(readSettings(env)).toEqual(SETTING_DEFAULTS)
@@ -118,16 +154,25 @@ describe("the user's settings", () => {
     rmSync(settingsPath(env), { force: true })
     writeSection("checkpoints", { showAutomatic: false, zoom: 1.5 }, env)
     writeSettings({ "viewer.pauseOverlay": false }, env)
-    expect(readSection("checkpoints", env)).toEqual({ showAutomatic: false, zoom: 1.5 })
+    expect(readSection("checkpoints", env)).toEqual({
+      showAutomatic: false,
+      zoom: 1.5,
+    })
     writeSection("checkpoints", { showAutomatic: true, zoom: null }, env)
     expect(readSettings(env)["viewer.pauseOverlay"]).toBe(false)
     expect(JSON.parse(readFileSync(settingsPath(env), "utf8"))).toEqual({
       "viewer.pauseOverlay": false,
       checkpoints: { showAutomatic: true, zoom: null },
     })
-    writeFileSync(settingsPath(env), JSON.stringify({ later: { a: 1 }, "viewer.pauseOverlay": true }))
+    writeFileSync(
+      settingsPath(env),
+      JSON.stringify({ later: { a: 1 }, "viewer.pauseOverlay": true }),
+    )
     writeSettings({ "viewer.pauseOverlay": false }, env)
-    expect(JSON.parse(readFileSync(settingsPath(env), "utf8"))).toEqual({ later: { a: 1 }, "viewer.pauseOverlay": false })
+    expect(JSON.parse(readFileSync(settingsPath(env), "utf8"))).toEqual({
+      later: { a: 1 },
+      "viewer.pauseOverlay": false,
+    })
     writeSection("later", null, env)
     expect(readSection("later", env)).toBeNull()
     expect(readSection("missing", env)).toBeNull()
@@ -138,11 +183,16 @@ describe("the user's settings", () => {
     expect(sectionError("viewer.pauseOverlay")).not.toBeNull()
     expect(sectionError("")).not.toBeNull()
     expect(sectionError("../x")).not.toBeNull()
-    expect(() => { writeSection("a.b", 1, env) }).toThrow()
+    expect(() => {
+      writeSection("a.b", 1, env)
+    }).toThrow()
   })
 
   it("parse key=value against the key's type", () => {
-    expect(parseSetting("viewer.pauseOverlay=false")).toEqual({ key: "viewer.pauseOverlay", value: false })
+    expect(parseSetting("viewer.pauseOverlay=false")).toEqual({
+      key: "viewer.pauseOverlay",
+      value: false,
+    })
     expect(parseSetting("viewer.pauseOverlay=maybe")).toContain("true or false")
     expect(parseSetting("nope=true")).toContain("unknown setting")
     expect(parseSetting("viewer.pauseOverlay")).toContain("key=value")

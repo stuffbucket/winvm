@@ -1,4 +1,10 @@
-import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs"
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  statSync,
+  writeFileSync,
+} from "node:fs"
 import { resolve } from "node:path"
 import { gunzipSync } from "node:zlib"
 
@@ -6,7 +12,10 @@ import { PACKAGE_DIR, home } from "./paths"
 import { findRuntime, runtimeBin, verifyRuntime, type Runtime } from "./runtime"
 import { capture, have, spawnText } from "./shell"
 
-let dataDirs: { readonly key: string; readonly dirs: readonly string[] } | null = null
+let dataDirs: {
+  readonly key: string
+  readonly dirs: readonly string[]
+} | null = null
 export function qemuDataDirs(): readonly string[] {
   const override = process.env["WINVM_QEMU_DATA"]
   const key = `${override ?? ""}\n${home()}`
@@ -31,7 +40,12 @@ export function tpmTisHasPpi(): boolean {
   if (tpmPpi !== null) return tpmPpi
   const rt = findRuntime()
   if (rt === null) return false
-  const r = spawnText(resolve(rt.dir, "bin", "qemu-system-aarch64"), ["-M", "virt", "-device", "tpm-tis-device,help"])
+  const r = spawnText(resolve(rt.dir, "bin", "qemu-system-aarch64"), [
+    "-M",
+    "virt",
+    "-device",
+    "tpm-tis-device,help",
+  ])
   tpmPpi = parseHasPpi(`${r.stdout}${r.stderr}`)
   return tpmPpi
 }
@@ -73,16 +87,28 @@ function findFirmware(names: readonly string[]): string | null {
   return null
 }
 
-const CODE_NAMES = ["edk2-aarch64-code.fd", "AAVMF_CODE.fd", "QEMU_EFI.fd"] as const
-const VARS_NAMES = ["edk2-arm-vars.fd", "AAVMF_VARS.fd", "QEMU_VARS.fd"] as const
+const CODE_NAMES = [
+  "edk2-aarch64-code.fd",
+  "AAVMF_CODE.fd",
+  "QEMU_EFI.fd",
+] as const
+const VARS_NAMES = [
+  "edk2-arm-vars.fd",
+  "AAVMF_VARS.fd",
+  "QEMU_VARS.fd",
+] as const
 
 export const firmwareCode = (): string | null => findFirmware(CODE_NAMES)
 export const firmwareVars = (): string | null => findFirmware(VARS_NAMES)
 
-export function requireFirmware(): { readonly code: string; readonly vars: string } {
+export function requireFirmware(): {
+  readonly code: string
+  readonly vars: string
+} {
   const code = firmwareCode()
   const vars = firmwareVars()
-  if (code === null || vars === null) throw new Error(`UEFI firmware not found — ${firmwareHint()}`)
+  if (code === null || vars === null)
+    throw new Error(`UEFI firmware not found — ${firmwareHint()}`)
   return { code, vars }
 }
 
@@ -94,13 +120,15 @@ export function firmwareHint(): string {
   )
 }
 
-export const TOOLS_URL = "https://github.com/utmapp/qemu/releases/download/v10.0.2-utm/utm-guest-tools-0.1.271.iso"
-export const TOOLS_SHA256 = "65b6a69b392ee01dd314c10f3dad9ebbf9c4160be43f5f0dd6bb715944d9095b"
+export const TOOLS_URL =
+  "https://github.com/utmapp/qemu/releases/download/v10.0.2-utm/utm-guest-tools-0.1.271.iso"
+export const TOOLS_SHA256 =
+  "65b6a69b392ee01dd314c10f3dad9ebbf9c4160be43f5f0dd6bb715944d9095b"
 
 export const PWSH_VERSION = "7.6.7"
-export const PWSH_URL =
-  `https://github.com/PowerShell/PowerShell/releases/download/v${PWSH_VERSION}/PowerShell-${PWSH_VERSION}-win-arm64.msi`
-export const PWSH_SHA256 = "ddb2f3613a0ad27817b90601a0827f7347e81dfa5bce18d4be8009b8cb0e0a31"
+export const PWSH_URL = `https://github.com/PowerShell/PowerShell/releases/download/v${PWSH_VERSION}/PowerShell-${PWSH_VERSION}-win-arm64.msi`
+export const PWSH_SHA256 =
+  "ddb2f3613a0ad27817b90601a0827f7347e81dfa5bce18d4be8009b8cb0e0a31"
 
 export interface Check {
   readonly label: string
@@ -108,25 +136,42 @@ export interface Check {
   readonly hint: string
 }
 
-export function runtimeCheck(rt: Runtime | null, problems: readonly string[]): Check {
-  if (rt === null) return { label: "runtime (not installed)", ok: false, hint: "winvm setup" }
+export function runtimeCheck(
+  rt: Runtime | null,
+  problems: readonly string[],
+): Check {
+  if (rt === null)
+    return { label: "runtime (not installed)", ok: false, hint: "winvm setup" }
   if (rt.source === "override") {
-    const note = problems.length === 0 ? "" : ` (unverified: ${problems[0] ?? ""})`
+    const note =
+      problems.length === 0 ? "" : ` (unverified: ${problems[0] ?? ""})`
     return { label: `runtime override ${rt.dir}${note}`, ok: true, hint: "" }
   }
   const version = rt.manifest?.version ?? "?"
   if (problems.length > 0) {
-    const more = problems.length > 1 ? ` (and ${String(problems.length - 1)} more)` : ""
-    return { label: `runtime ${version} does not verify: ${problems[0] ?? ""}${more}`, ok: false, hint: "winvm setup" }
+    const more =
+      problems.length > 1 ? ` (and ${String(problems.length - 1)} more)` : ""
+    return {
+      label: `runtime ${version} does not verify: ${problems[0] ?? ""}${more}`,
+      ok: false,
+      hint: "winvm setup",
+    }
   }
-  return { label: `runtime ${version} (QEMU ${rt.manifest?.qemu ?? "?"}, ${rt.source})`, ok: true, hint: "" }
+  return {
+    label: `runtime ${version} (QEMU ${rt.manifest?.qemu ?? "?"}, ${rt.source})`,
+    ok: true,
+    hint: "",
+  }
 }
 
 export function macosCheck(productVersion: string, arch: string): Check {
   const label = `macOS ${productVersion} on ${arch === "arm64" ? "Apple Silicon" : arch}`
-  if (arch !== "arm64") return { label, ok: false, hint: "winvm needs an Apple Silicon Mac" }
+  if (arch !== "arm64")
+    return { label, ok: false, hint: "winvm needs an Apple Silicon Mac" }
   const major = Number.parseInt(productVersion.split(".")[0] ?? "0", 10)
-  return major >= 15 ? { label, ok: true, hint: "" } : { label, ok: false, hint: "winvm needs macOS 15 or later" }
+  return major >= 15
+    ? { label, ok: true, hint: "" }
+    : { label, ok: false, hint: "winvm needs macOS 15 or later" }
 }
 
 export function hostChecks(): readonly Check[] {
@@ -149,14 +194,20 @@ export interface ChecksReport {
   readonly timeMachine: string
 }
 
-export const checksReport = (checks: readonly Check[], timeMachine: string): ChecksReport => ({
+export const checksReport = (
+  checks: readonly Check[],
+  timeMachine: string,
+): ChecksReport => ({
   ready: checks.every((c) => c.ok),
   checks,
   timeMachine,
 })
 
 export function printChecks(checks: readonly Check[]): number {
-  for (const c of checks) console.log(`${c.ok ? "ok  " : "MISS"}  ${c.label}${c.ok ? "" : `  -> ${c.hint}`}`)
+  for (const c of checks)
+    console.log(
+      `${c.ok ? "ok  " : "MISS"}  ${c.label}${c.ok ? "" : `  -> ${c.hint}`}`,
+    )
   return checks.filter((c) => !c.ok).length
 }
 

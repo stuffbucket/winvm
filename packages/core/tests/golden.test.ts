@@ -1,7 +1,14 @@
 import { describe, expect, it } from "bun:test"
 
 import type { CpuSample } from "../src/golden"
-import { cpuPercent, isSettled, parseCpuTime, parseDuration, parsePercent, parseSmp } from "../src/golden"
+import {
+  cpuPercent,
+  isSettled,
+  parseCpuTime,
+  parseDuration,
+  parsePercent,
+  parseSmp,
+} from "../src/golden"
 
 describe("reading QEMU from ps", () => {
   it("parses every shape of ps cputime", () => {
@@ -12,7 +19,9 @@ describe("reading QEMU from ps", () => {
     expect(parseCpuTime("")).toBeNaN()
   })
   it("finds the vCPU count on the command line", () => {
-    expect(parseSmp("qemu-system-aarch64 -name winvm-x -cpu host -smp 4 -m 4096")).toBe(4)
+    expect(
+      parseSmp("qemu-system-aarch64 -name winvm-x -cpu host -smp 4 -m 4096"),
+    ).toBe(4)
     expect(parseSmp("qemu -smp cpus=8,sockets=1")).toBe(8)
     expect(parseSmp("qemu -m 4096")).toBe(1)
   })
@@ -23,7 +32,10 @@ describe("settling", () => {
     const out: CpuSample[] = [{ atMs: 0, cpuSec: 0 }]
     for (const pct of pcts) {
       const prev = out.at(-1) as CpuSample
-      out.push({ atMs: prev.atMs + 5000, cpuSec: prev.cpuSec + (pct / 100) * 4 * 5 })
+      out.push({
+        atMs: prev.atMs + 5000,
+        cpuSec: prev.cpuSec + (pct / 100) * 4 * 5,
+      })
     }
     return out
   }
@@ -34,11 +46,20 @@ describe("settling", () => {
   })
   it("needs the whole window covered", () => {
     expect(isSettled(series([1, 1, 1]), 4, 3, 60_000)).toBe(false)
-    expect(isSettled(series(Array(12).fill(1) as number[]), 4, 3, 60_000)).toBe(true)
+    expect(isSettled(series(Array(12).fill(1) as number[]), 4, 3, 60_000)).toBe(
+      true,
+    )
     expect(isSettled([], 4, 3, 60_000)).toBe(false)
   })
   it("only looks at the last window: a busy boot before it does not count", () => {
-    expect(isSettled(series([80, 60, 40, ...(Array(12).fill(2) as number[])]), 4, 3, 60_000)).toBe(true)
+    expect(
+      isSettled(
+        series([80, 60, 40, ...(Array(12).fill(2) as number[])]),
+        4,
+        3,
+        60_000,
+      ),
+    ).toBe(true)
   })
   it("one burst inside the window means not settled", () => {
     const pcts = Array(12).fill(1) as number[]

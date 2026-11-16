@@ -11,7 +11,9 @@ import * as qmp from "../src/qmp"
 import { FakeAgent } from "./fakes/agent"
 import { FakeQmp } from "./fakes/qmp"
 
-const sleep = async (ms: number): Promise<void> => { await new Promise((r) => setTimeout(r, ms)) }
+const sleep = async (ms: number): Promise<void> => {
+  await new Promise((r) => setTimeout(r, ms))
+}
 
 let dir = ""
 let fake: FakeQmp
@@ -25,7 +27,11 @@ beforeEach(async () => {
   fake = new FakeQmp(resolve(dir, "up.sock"))
   await fake.listen()
   events.length = 0
-  channel = new QmpChannel({ listen, upstream: fake.path, onEvent: (e) => events.push(e) })
+  channel = new QmpChannel({
+    listen,
+    upstream: fake.path,
+    onEvent: (e) => events.push(e),
+  })
   await channel.start()
 })
 
@@ -37,16 +43,23 @@ afterEach(async () => {
 
 describe("the QMP channel", () => {
   it("hands clients the greeting and answers qmp_capabilities itself", async () => {
-    expect(await monitor.qmpCommand(listen, "query-status")).toEqual({ status: "running", running: true })
+    expect(await monitor.qmpCommand(listen, "query-status")).toEqual({
+      status: "running",
+      running: true,
+    })
     expect(await qmp.status(listen)).toBe("running")
     expect(fake.connections).toBe(1)
-    expect(fake.commands.filter((c) => c === "qmp_capabilities")).toHaveLength(1)
+    expect(fake.commands.filter((c) => c === "qmp_capabilities")).toHaveLength(
+      1,
+    )
   })
 
   it("admits one client at a time, in order", async () => {
     fake.handler = async (cmd) => {
       if (cmd["execute"] === "slow") await sleep(300)
-      return cmd["execute"] === "query-status" ? { return: { status: "running" } } : { return: {} }
+      return cmd["execute"] === "query-status"
+        ? { return: { status: "running" } }
+        : { return: {} }
     }
     const done: string[] = []
     const a = qmp.execute(listen, "slow").then(() => done.push("a"))
@@ -65,7 +78,9 @@ describe("the QMP channel", () => {
       }
       return { return: { status: "running" } }
     }
-    await expect(monitor.qmpCommand(listen, "late", undefined, 100)).rejects.toThrow("no answer")
+    await expect(
+      monitor.qmpCommand(listen, "late", undefined, 100),
+    ).rejects.toThrow("no answer")
     expect(await qmp.status(listen)).toBe("running")
   })
 
@@ -92,16 +107,27 @@ describe("the QMP channel", () => {
   })
 
   it("asks QEMU itself, ahead of a caller holding the queue", async () => {
-    const held = monitor.withQmp(listen, async () => { await sleep(1000) }, 3000)
+    const held = monitor.withQmp(
+      listen,
+      async () => {
+        await sleep(1000)
+      },
+      3000,
+    )
     await sleep(100)
     const t0 = Date.now()
-    expect(await channel.request("query-chardev")).toEqual({ return: [{ label: "qga0", "frontend-open": true }] })
+    expect(await channel.request("query-chardev")).toEqual({
+      return: [{ label: "qga0", "frontend-open": true }],
+    })
     expect(Date.now() - t0).toBeLessThan(500)
     await held
   })
 
   it("leaves a newer listener's socket in place when it stops", async () => {
-    const newer = new QmpChannel({ listen, upstream: resolve(dir, "nowhere.sock") })
+    const newer = new QmpChannel({
+      listen,
+      upstream: resolve(dir, "nowhere.sock"),
+    })
     await newer.start()
     await channel.stop()
     expect(existsSync(listen)).toBe(true)
@@ -124,7 +150,11 @@ describe("the QMP channel's own timeouts", () => {
     fake = new FakeQmp(resolve(dir, "up.sock"))
     fake.greets = false
     await fake.listen()
-    other = new QmpChannel({ listen: resolve(dir, "other.sock"), upstream: fake.path, negotiateTimeoutMs: 200 })
+    other = new QmpChannel({
+      listen: resolve(dir, "other.sock"),
+      upstream: fake.path,
+      negotiateTimeoutMs: 200,
+    })
     await other.start()
     await sleep(700)
     expect(fake.connections).toBeGreaterThanOrEqual(2)
@@ -140,10 +170,16 @@ describe("the QMP channel's own timeouts", () => {
       return { return: { status: "running" } }
     }
     const otherListen = resolve(dir, "other.sock")
-    other = new QmpChannel({ listen: otherListen, upstream: fake.path, drainTimeoutMs: 200 })
+    other = new QmpChannel({
+      listen: otherListen,
+      upstream: fake.path,
+      drainTimeoutMs: 200,
+    })
     await other.start()
     while (!other.connected) await sleep(20)
-    await expect(monitor.qmpCommand(otherListen, "savevm", undefined, 100)).rejects.toThrow("no answer")
+    await expect(
+      monitor.qmpCommand(otherListen, "savevm", undefined, 100),
+    ).rejects.toThrow("no answer")
     expect(await qmp.status(otherListen)).toBe("running")
   })
 })
@@ -159,7 +195,11 @@ describe("the qemu-ga channel", () => {
     await agent.listen()
     qgaListen = resolve(dir, "qga.sock")
     open = true
-    qgaChannel = new QgaChannel({ listen: qgaListen, upstream: agent.path, portOpen: () => Promise.resolve(open) })
+    qgaChannel = new QgaChannel({
+      listen: qgaListen,
+      upstream: agent.path,
+      portOpen: () => Promise.resolve(open),
+    })
     await qgaChannel.start()
   })
 
@@ -194,13 +234,18 @@ describe("the qemu-ga channel", () => {
     const t0 = Date.now()
     agent.handler = (req) => {
       if (req["execute"] === "guest-exec") return { return: { pid: 42 } }
-      if (req["execute"] === "guest-exec-status") return { return: { exited: Date.now() - t0 > 1000, exitcode: 0 } }
+      if (req["execute"] === "guest-exec-status")
+        return { return: { exited: Date.now() - t0 > 1000, exitcode: 0 } }
       return { return: "pong" }
     }
     const order: string[] = []
-    const exec = qga.exec(qgaListen, "cmd.exe", ["/c", "ver"], 10_000).then(() => order.push("exec"))
+    const exec = qga
+      .exec(qgaListen, "cmd.exe", ["/c", "ver"], 10_000)
+      .then(() => order.push("exec"))
     await sleep(200)
-    const ping = qga.call(qgaListen, { execute: "guest-ping" }).then(() => order.push("ping"))
+    const ping = qga
+      .call(qgaListen, { execute: "guest-ping" })
+      .then(() => order.push("ping"))
     await Promise.all([exec, ping])
     expect(order).toEqual(["ping", "exec"])
   })
@@ -211,7 +256,11 @@ describe("the qemu-ga channel", () => {
     const sock = connect(qgaListen)
     sock.on("error", () => undefined)
     sock.write(Buffer.from([0xff]))
-    await new Promise<void>((r) => sock.on("close", () => { r() }))
+    await new Promise<void>((r) =>
+      sock.on("close", () => {
+        r()
+      }),
+    )
     expect(Date.now() - t0).toBeLessThan(1500)
     agent = new FakeAgent(resolve(dir, "qga-up.sock"))
     await agent.listen()

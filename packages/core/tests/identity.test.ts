@@ -3,13 +3,21 @@ import { spawnSync } from "node:child_process"
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { dirname, resolve } from "node:path"
-import { identityFromEntries, releaseVersion, selectBuildIdentity, sourceBuildIdentity } from "../src/identity"
+import {
+  identityFromEntries,
+  releaseVersion,
+  selectBuildIdentity,
+  sourceBuildIdentity,
+} from "../src/identity"
 
 const bytes = (s: string): Uint8Array => new TextEncoder().encode(s)
 const SHAPE = /^sha256:[0-9a-f]{64}$/
 
 describe("identityFromEntries", () => {
-  const a = { path: "packages/core/src/a.ts", bytes: bytes("export const a = 1\n") }
+  const a = {
+    path: "packages/core/src/a.ts",
+    bytes: bytes("export const a = 1\n"),
+  }
   const b = { path: "apps/cli/src/b.ts", bytes: bytes("export const b = 2\n") }
 
   it("is a deterministic sha256 that does not depend on the order entries are listed", () => {
@@ -27,7 +35,13 @@ describe("identityFromEntries", () => {
 
   it("changes when a file is renamed, even with the same bytes", () => {
     const x = identityFromEntries([a, b], "0.1.0", "1.4.3")
-    expect(identityFromEntries([{ path: "packages/core/src/c.ts", bytes: a.bytes }, b], "0.1.0", "1.4.3")).not.toBe(x)
+    expect(
+      identityFromEntries(
+        [{ path: "packages/core/src/c.ts", bytes: a.bytes }, b],
+        "0.1.0",
+        "1.4.3",
+      ),
+    ).not.toBe(x)
   })
 
   it("changes with the package version and with the Bun version", () => {
@@ -87,36 +101,66 @@ describe("sourceBuildIdentity", () => {
 
   it("ignores files that are not TypeScript sources", () => {
     const base = sourceBuildIdentity(tree())
-    expect(sourceBuildIdentity(tree({ "packages/core/src/notes.md": "scratch\n" }))).toBe(base)
+    expect(
+      sourceBuildIdentity(tree({ "packages/core/src/notes.md": "scratch\n" })),
+    ).toBe(base)
   })
 
   it("reads the release version from the workspace's package.json", () => {
-    expect(releaseVersion(tree({ "package.json": '{"version":"0.1.3"}\n' }))).toBe("0.1.3")
+    expect(
+      releaseVersion(tree({ "package.json": '{"version":"0.1.3"}\n' })),
+    ).toBe("0.1.3")
   })
 })
 
 describe("selectBuildIdentity", () => {
   it("prefers the compile-time identity, then the environment, then the source tree", () => {
     const source = (): string => "sha256:source"
-    expect(selectBuildIdentity({ embedded: "sha256:embedded", env: "sha256:env", source })).toBe("sha256:embedded")
-    expect(selectBuildIdentity({ embedded: undefined, env: "sha256:env", source })).toBe("sha256:env")
-    expect(selectBuildIdentity({ embedded: undefined, env: undefined, source })).toBe("sha256:source")
-    expect(selectBuildIdentity({ embedded: "", env: "", source })).toBe("sha256:source")
+    expect(
+      selectBuildIdentity({
+        embedded: "sha256:embedded",
+        env: "sha256:env",
+        source,
+      }),
+    ).toBe("sha256:embedded")
+    expect(
+      selectBuildIdentity({ embedded: undefined, env: "sha256:env", source }),
+    ).toBe("sha256:env")
+    expect(
+      selectBuildIdentity({ embedded: undefined, env: undefined, source }),
+    ).toBe("sha256:source")
+    expect(selectBuildIdentity({ embedded: "", env: "", source })).toBe(
+      "sha256:source",
+    )
   })
 
   it("does not read the source tree when an identity is already fixed", () => {
     const source = (): string => {
       throw new Error("must not hash the source tree")
     }
-    expect(selectBuildIdentity({ embedded: undefined, env: "sha256:env", source })).toBe("sha256:env")
+    expect(
+      selectBuildIdentity({ embedded: undefined, env: "sha256:env", source }),
+    ).toBe("sha256:env")
   })
 
   it("keeps an environment identity stable after the source files change", () => {
     let content = "one"
     const source = (): string => `sha256:${content}`
-    expect(selectBuildIdentity({ embedded: undefined, env: "sha256:parent", source })).toBe("sha256:parent")
+    expect(
+      selectBuildIdentity({
+        embedded: undefined,
+        env: "sha256:parent",
+        source,
+      }),
+    ).toBe("sha256:parent")
     content = "two"
-    expect(selectBuildIdentity({ embedded: undefined, env: "sha256:parent", source })).toBe("sha256:parent")
+    expect(
+      selectBuildIdentity({
+        embedded: undefined,
+        env: "sha256:parent",
+        source,
+      }),
+    ).toBe("sha256:parent")
   })
 })
 
@@ -135,9 +179,13 @@ describe("recordCliEntry exports the generation", () => {
       console.log(JSON.stringify({ cli: process.env.WINVM_CLI, id: process.env.WINVM_BUILD_ID, built: buildIdentity(), source: sourceBuildIdentity() }))
     `
     const env: Record<string, string> = {}
-    for (const [k, v] of Object.entries(process.env)) if (v !== undefined && k !== "WINVM_BUILD_ID") env[k] = v
+    for (const [k, v] of Object.entries(process.env))
+      if (v !== undefined && k !== "WINVM_BUILD_ID") env[k] = v
     if (buildId !== undefined) env["WINVM_BUILD_ID"] = buildId
-    const r = spawnSync(process.execPath, ["-e", script], { env, encoding: "utf8" })
+    const r = spawnSync(process.execPath, ["-e", script], {
+      env,
+      encoding: "utf8",
+    })
     expect(r.status).toBe(0)
     return JSON.parse(r.stdout.trim()) as Probe
   }

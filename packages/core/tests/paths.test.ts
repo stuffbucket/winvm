@@ -2,7 +2,13 @@ import { afterEach, expect, it } from "bun:test"
 import { existsSync, readFileSync } from "node:fs"
 import { resolve } from "node:path"
 import { agentBunVersion } from "../src/media"
-import { PACKAGE_DIR, bunVersionWarning, cliEntry, pinnedBunVersion, recordCliEntry } from "../src/paths"
+import {
+  PACKAGE_DIR,
+  bunVersionWarning,
+  cliEntry,
+  pinnedBunVersion,
+  recordCliEntry,
+} from "../src/paths"
 
 const saved = process.env["WINVM_CLI"]
 afterEach(() => {
@@ -11,7 +17,8 @@ afterEach(() => {
 })
 
 it("finds the package's own files from any working directory", () => {
-  for (const d of ["assets", "firmware", "web"]) expect(existsSync(resolve(PACKAGE_DIR, d))).toBe(true)
+  for (const d of ["assets", "firmware", "web"])
+    expect(existsSync(resolve(PACKAGE_DIR, d))).toBe(true)
 })
 
 it("spawns the CLI it was started through", () => {
@@ -21,7 +28,9 @@ it("spawns the CLI it was started through", () => {
 
 it("says how to start winvm when it does not know its CLI", () => {
   delete process.env["WINVM_CLI"]
-  expect(() => cliEntry()).toThrow("WINVM_CLI is not set: start winvm through apps/cli")
+  expect(() => cliEntry()).toThrow(
+    "WINVM_CLI is not set: start winvm through apps/cli",
+  )
 })
 
 it("records the CLI actually running, over one inherited from a parent", () => {

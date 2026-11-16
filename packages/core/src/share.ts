@@ -1,5 +1,14 @@
 import { spawn, spawnSync } from "node:child_process"
-import { closeSync, existsSync, mkdirSync, openSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs"
+import {
+  closeSync,
+  existsSync,
+  mkdirSync,
+  openSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs"
 import { homedir } from "node:os"
 import { resolve } from "node:path"
 
@@ -20,11 +29,15 @@ export interface ShareConfig {
   readonly readonly: boolean
 }
 
-export const shareConfigPath = (p: Paths): string => resolve(p.dir, "share.json")
+export const shareConfigPath = (p: Paths): string =>
+  resolve(p.dir, "share.json")
 export const emptyShareDir = (p: Paths): string => resolve(p.dir, "share-empty")
-export const virtiofsdSocket = (p: Paths): string => resolve(p.dir, "virtiofsd.sock")
-export const virtiofsdLog = (p: Paths): string => resolve(p.dir, "virtiofsd.log")
-export const virtiofsdState = (p: Paths): string => resolve(p.dir, "virtiofsd.json")
+export const virtiofsdSocket = (p: Paths): string =>
+  resolve(p.dir, "virtiofsd.sock")
+export const virtiofsdLog = (p: Paths): string =>
+  resolve(p.dir, "virtiofsd.log")
+export const virtiofsdState = (p: Paths): string =>
+  resolve(p.dir, "virtiofsd.json")
 
 export function parseLetter(s: string): string | null {
   const m = /^([A-Za-z]):?$/.exec(s.trim())
@@ -33,7 +46,11 @@ export function parseLetter(s: string): string | null {
 }
 
 export const expandPath = (s: string, cwd = process.cwd()): string =>
-  s === "~" ? homedir() : s.startsWith("~/") ? resolve(homedir(), s.slice(2)) : resolve(cwd, s)
+  s === "~"
+    ? homedir()
+    : s.startsWith("~/")
+      ? resolve(homedir(), s.slice(2))
+      : resolve(cwd, s)
 
 export function folderError(path: string): string | null {
   try {
@@ -55,8 +72,13 @@ export function readShare(p: Paths): ShareConfig | null {
   const r = raw as Record<string, unknown>
   const path = r["path"]
   if (typeof path !== "string" || !path.startsWith("/")) return null
-  const letter = typeof r["letter"] === "string" ? parseLetter(r["letter"]) : null
-  return { path, letter: letter ?? DEFAULT_LETTER, readonly: r["readonly"] === true }
+  const letter =
+    typeof r["letter"] === "string" ? parseLetter(r["letter"]) : null
+  return {
+    path,
+    letter: letter ?? DEFAULT_LETTER,
+    readonly: r["readonly"] === true,
+  }
 }
 
 export function writeShare(p: Paths, cfg: ShareConfig | null): void {
@@ -74,23 +96,40 @@ export interface Served {
   readonly missing?: string
 }
 
-export function servedFor(p: Paths, cfg: ShareConfig | null = readShare(p)): Served {
-  if (cfg === null) return { dir: emptyShareDir(p), readonly: true, folder: null }
-  if (folderError(cfg.path) !== null) return { dir: emptyShareDir(p), readonly: true, folder: null, missing: cfg.path }
+export function servedFor(
+  p: Paths,
+  cfg: ShareConfig | null = readShare(p),
+): Served {
+  if (cfg === null)
+    return { dir: emptyShareDir(p), readonly: true, folder: null }
+  if (folderError(cfg.path) !== null)
+    return {
+      dir: emptyShareDir(p),
+      readonly: true,
+      folder: null,
+      missing: cfg.path,
+    }
   return { dir: cfg.path, readonly: cfg.readonly, folder: cfg.path }
 }
 
 export function readServing(p: Paths): Served | null {
   try {
-    const r = JSON.parse(readFileSync(virtiofsdState(p), "utf8")) as Partial<Served>
+    const r = JSON.parse(
+      readFileSync(virtiofsdState(p), "utf8"),
+    ) as Partial<Served>
     if (typeof r.dir !== "string") return null
-    return { dir: r.dir, readonly: r.readonly === true, folder: typeof r.folder === "string" ? r.folder : null }
+    return {
+      dir: r.dir,
+      readonly: r.readonly === true,
+      folder: typeof r.folder === "string" ? r.folder : null,
+    }
   } catch {
     return null
   }
 }
 
-export const sameServed = (a: Served, b: Served): boolean => a.dir === b.dir && a.readonly === b.readonly
+export const sameServed = (a: Served, b: Served): boolean =>
+  a.dir === b.dir && a.readonly === b.readonly
 
 export interface Support {
   readonly ok: boolean
@@ -101,23 +140,41 @@ export type Probe = (rt: Runtime) => Support
 
 export const probeRuntime: Probe = (rt) => {
   const virtiofsd = resolve(rt.dir, "bin", "virtiofsd")
-  if (!existsSync(virtiofsd)) return { ok: false, reason: "this winvm runtime has no virtiofsd; a newer runtime brings the shared folder" }
+  if (!existsSync(virtiofsd))
+    return {
+      ok: false,
+      reason:
+        "this winvm runtime has no virtiofsd; a newer runtime brings the shared folder",
+    }
   const q = resolve(rt.dir, "bin", "qemu-system-aarch64")
   const ask = (...a: string[]): string => {
     const r = spawnText(q, ["-M", "virt", ...a])
     return `${r.stdout}${r.stderr}`
   }
-  return parseSupport(ask("-device", "help"), ask("-chardev", "help"), ask("-object", "help"))
+  return parseSupport(
+    ask("-device", "help"),
+    ask("-chardev", "help"),
+    ask("-object", "help"),
+  )
 }
 
-export function parseSupport(devices: string, chardevs: string, objects: string): Support {
+export function parseSupport(
+  devices: string,
+  chardevs: string,
+  objects: string,
+): Support {
   const missing: string[] = []
-  if (!devices.includes('"vhost-user-fs-pci"')) missing.push("vhost-user-fs-pci")
+  if (!devices.includes('"vhost-user-fs-pci"'))
+    missing.push("vhost-user-fs-pci")
   if (!/^\s*qemu-vdagent\s*$/m.test(chardevs)) missing.push("qemu-vdagent")
-  if (!/^\s*memory-backend-shm\s*$/m.test(objects)) missing.push("memory-backend-shm")
+  if (!/^\s*memory-backend-shm\s*$/m.test(objects))
+    missing.push("memory-backend-shm")
   return missing.length === 0
     ? { ok: true, reason: null }
-    : { ok: false, reason: `this winvm runtime's QEMU lacks ${missing.join(", ")}; a newer runtime brings the shared folder` }
+    : {
+        ok: false,
+        reason: `this winvm runtime's QEMU lacks ${missing.join(", ")}; a newer runtime brings the shared folder`,
+      }
 }
 
 const supportCache = new Map<string, Support>()
@@ -131,7 +188,8 @@ export function setProbe(p: Probe): Probe {
 }
 
 export function runtimeSupport(rt: Runtime | null = findRuntime()): Support {
-  if (rt === null) return { ok: false, reason: "winvm's runtime is not installed" }
+  if (rt === null)
+    return { ok: false, reason: "winvm's runtime is not installed" }
   const hit = supportCache.get(rt.dir)
   if (hit !== undefined) return hit
   const s = probe(rt)
@@ -141,13 +199,20 @@ export function runtimeSupport(rt: Runtime | null = findRuntime()): Support {
 
 export type DeviceSet = "none" | "fs" | "all"
 
-export function devicesFor(display: DisplayConfig, installMedia: boolean, support: Support = runtimeSupport()): DeviceSet {
+export function devicesFor(
+  display: DisplayConfig,
+  installMedia: boolean,
+  support: Support = runtimeSupport(),
+): DeviceSet {
   if (!support.ok) return "none"
   if (installMedia) return "fs"
   return display.device === "virtio-gpu" ? "all" : "none"
 }
 
-export function unavailableReason(display: DisplayConfig, support: Support = runtimeSupport()): string | null {
+export function unavailableReason(
+  display: DisplayConfig,
+  support: Support = runtimeSupport(),
+): string | null {
   if (!support.ok) return support.reason
   if (display.device !== "virtio-gpu") {
     return "this Windows machine uses the fixed 800x600 display; the shared folder needs the resizable one (winvm display virtio-gpu)"
@@ -157,16 +222,25 @@ export function unavailableReason(display: DisplayConfig, support: Support = run
 
 export const MACHINE_WITH_SHM = "virt,accel=hvf,memory-backend=mem"
 
-export function deviceArgs(p: Paths, set: DeviceSet, memoryMiB: number): readonly string[] {
+export function deviceArgs(
+  p: Paths,
+  set: DeviceSet,
+  memoryMiB: number,
+): readonly string[] {
   if (set === "none") return []
   return [
-    "-object", `memory-backend-shm,id=mem,size=${String(memoryMiB)}M,share=on`,
-    "-chardev", `socket,id=vfs0,path=${virtiofsdSocket(p)}`,
-    "-device", `vhost-user-fs-pci,chardev=vfs0,tag=${SHARE_TAG},queue-size=1024,addr=0x10`,
+    "-object",
+    `memory-backend-shm,id=mem,size=${String(memoryMiB)}M,share=on`,
+    "-chardev",
+    `socket,id=vfs0,path=${virtiofsdSocket(p)}`,
+    "-device",
+    `vhost-user-fs-pci,chardev=vfs0,tag=${SHARE_TAG},queue-size=1024,addr=0x10`,
     ...(set === "all"
       ? [
-          "-chardev", `qemu-vdagent,id=${VDAGENT_CHARDEV},clipboard=on,mouse=off`,
-          "-device", `virtserialport,chardev=${VDAGENT_CHARDEV},name=${VDAGENT_PORT}`,
+          "-chardev",
+          `qemu-vdagent,id=${VDAGENT_CHARDEV},clipboard=on,mouse=off`,
+          "-device",
+          `virtserialport,chardev=${VDAGENT_CHARDEV},name=${VDAGENT_PORT}`,
         ]
       : []),
   ]
@@ -174,20 +248,34 @@ export function deviceArgs(p: Paths, set: DeviceSet, memoryMiB: number): readonl
 
 export function daemonArgs(p: Paths, s: Served): readonly string[] {
   return [
-    "--shared-dir", s.dir,
-    "--socket-path", virtiofsdSocket(p),
-    "--sandbox", "none",
-    "--cache", "auto",
-    "--migration-on-error", "guest-error",
+    "--shared-dir",
+    s.dir,
+    "--socket-path",
+    virtiofsdSocket(p),
+    "--sandbox",
+    "none",
+    "--cache",
+    "auto",
+    "--migration-on-error",
+    "guest-error",
     ...(s.readonly ? ["--readonly"] : []),
-    ...(process.env["WINVM_VIRTIOFSD_LOG"] ? ["--log-level", process.env["WINVM_VIRTIOFSD_LOG"]] : []),
+    ...(process.env["WINVM_VIRTIOFSD_LOG"]
+      ? ["--log-level", process.env["WINVM_VIRTIOFSD_LOG"]]
+      : []),
   ]
 }
 
 const escapeRe = (s: string): string => s.replace(/[.*+?^$()|[\]{}\\]/g, "\\$&")
 
 export function virtiofsdPids(p: Paths): readonly number[] {
-  const r = spawnSync("pgrep", ["-f", `(^|/)virtiofsd .*--socket-path ${escapeRe(virtiofsdSocket(p))}( |$)`], { encoding: "utf8" })
+  const r = spawnSync(
+    "pgrep",
+    [
+      "-f",
+      `(^|/)virtiofsd .*--socket-path ${escapeRe(virtiofsdSocket(p))}( |$)`,
+    ],
+    { encoding: "utf8" },
+  )
   if (r.status !== 0) return []
   return r.stdout
     .split("\n")
@@ -199,8 +287,7 @@ export function stopVirtiofsd(p: Paths): void {
   for (const pid of virtiofsdPids(p)) {
     try {
       process.kill(pid, "SIGKILL")
-    } catch {
-    }
+    } catch {}
   }
   rmSync(virtiofsdSocket(p), { force: true })
   rmSync(`${virtiofsdSocket(p)}.pid`, { force: true })
@@ -212,16 +299,30 @@ export interface StartOptions {
   readonly timeoutMs?: number
 }
 
-export async function startVirtiofsd(p: Paths, o: StartOptions = {}): Promise<Served> {
+export async function startVirtiofsd(
+  p: Paths,
+  o: StartOptions = {},
+): Promise<Served> {
   stopVirtiofsd(p)
-  for (let i = 0; i < 50 && virtiofsdPids(p).length > 0; i += 1) await new Promise((r) => setTimeout(r, 20))
+  for (let i = 0; i < 50 && virtiofsdPids(p).length > 0; i += 1)
+    await new Promise((r) => setTimeout(r, 20))
   const served = servedFor(p)
   mkdirSync(emptyShareDir(p), { recursive: true })
   const bin = o.bin ?? resolve(findRuntime()?.dir ?? "", "bin", "virtiofsd")
   const log = openSync(virtiofsdLog(p), "a")
-  writeFileSync(log, `--- ${new Date().toISOString()} serving ${served.dir}${served.readonly ? " (read-only)" : ""}\n`)
-  if (served.missing !== undefined) writeFileSync(log, `the shared folder ${served.missing} is missing; serving an empty folder\n`)
-  const proc = spawn(bin, [...daemonArgs(p, served)], { detached: true, stdio: ["ignore", log, log] })
+  writeFileSync(
+    log,
+    `--- ${new Date().toISOString()} serving ${served.dir}${served.readonly ? " (read-only)" : ""}\n`,
+  )
+  if (served.missing !== undefined)
+    writeFileSync(
+      log,
+      `the shared folder ${served.missing} is missing; serving an empty folder\n`,
+    )
+  const proc = spawn(bin, [...daemonArgs(p, served)], {
+    detached: true,
+    stdio: ["ignore", log, log],
+  })
   closeSync(log)
   proc.unref()
   let exited = false as boolean
@@ -231,7 +332,10 @@ export async function startVirtiofsd(p: Paths, o: StartOptions = {}): Promise<Se
   const deadline = Date.now() + (o.timeoutMs ?? 10_000)
   while (Date.now() < deadline) {
     if (existsSync(virtiofsdSocket(p))) {
-      writeFileSync(virtiofsdState(p), `${JSON.stringify({ ...served, pid: proc.pid }, null, 2)}\n`)
+      writeFileSync(
+        virtiofsdState(p),
+        `${JSON.stringify({ ...served, pid: proc.pid }, null, 2)}\n`,
+      )
       return served
     }
     if (exited) break
@@ -240,8 +344,13 @@ export async function startVirtiofsd(p: Paths, o: StartOptions = {}): Promise<Se
   stopVirtiofsd(p)
   let tail = ""
   try {
-    tail = readFileSync(virtiofsdLog(p), "utf8").trim().split("\n").slice(-3).join("\n  ")
-  } catch {
-  }
-  throw new Error(`virtiofsd did not start (the shared folder's daemon)${tail === "" ? "" : `:\n  ${tail}`}`)
+    tail = readFileSync(virtiofsdLog(p), "utf8")
+      .trim()
+      .split("\n")
+      .slice(-3)
+      .join("\n  ")
+  } catch {}
+  throw new Error(
+    `virtiofsd did not start (the shared folder's daemon)${tail === "" ? "" : `:\n  ${tail}`}`,
+  )
 }

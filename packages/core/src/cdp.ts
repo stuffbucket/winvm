@@ -18,17 +18,32 @@ export interface Target {
 
 export class CdpError extends Error {}
 
-export async function targets(base: string, timeoutMs = 3000): Promise<readonly Target[]> {
-  const r = await fetch(`${base}/json/list`, { signal: AbortSignal.timeout(timeoutMs) })
+export async function targets(
+  base: string,
+  timeoutMs = 3000,
+): Promise<readonly Target[]> {
+  const r = await fetch(`${base}/json/list`, {
+    signal: AbortSignal.timeout(timeoutMs),
+  })
   if (!r.ok) throw new CdpError(`${base}/json/list: ${String(r.status)}`)
   return (await r.json()) as Target[]
 }
 
-export function pickTarget(list: readonly Target[], match: string | null): Target | null {
-  const pages = list.filter((t) => t.type === "page" && t.webSocketDebuggerUrl !== undefined)
+export function pickTarget(
+  list: readonly Target[],
+  match: string | null,
+): Target | null {
+  const pages = list.filter(
+    (t) => t.type === "page" && t.webSocketDebuggerUrl !== undefined,
+  )
   if (match === null || match === "") return pages[0] ?? null
   const m = match.toLowerCase()
-  return pages.find((t) => t.url.toLowerCase().includes(m) || t.title.toLowerCase().includes(m)) ?? null
+  return (
+    pages.find(
+      (t) =>
+        t.url.toLowerCase().includes(m) || t.title.toLowerCase().includes(m),
+    ) ?? null
+  )
 }
 
 interface RemoteObject {
@@ -40,19 +55,29 @@ interface RemoteObject {
 }
 interface EvalResult {
   readonly result: RemoteObject
-  readonly exceptionDetails?: { readonly text: string; readonly exception?: RemoteObject }
+  readonly exceptionDetails?: {
+    readonly text: string
+    readonly exception?: RemoteObject
+  }
 }
 
 export class CdpSession {
   private readonly ws: WebSocket
   private nextId = 0
-  private readonly pending = new Map<number, { res: (v: unknown) => void; rej: (e: Error) => void }>()
+  private readonly pending = new Map<
+    number,
+    { res: (v: unknown) => void; rej: (e: Error) => void }
+  >()
   private closed: Error | null = null
 
   private constructor(ws: WebSocket) {
     this.ws = ws
     ws.onmessage = (e: MessageEvent): void => {
-      const msg = JSON.parse(String(e.data)) as { id?: number; result?: unknown; error?: { message: string } }
+      const msg = JSON.parse(String(e.data)) as {
+        id?: number
+        result?: unknown
+        error?: { message: string }
+      }
       if (msg.id === undefined) return
       const p = this.pending.get(msg.id)
       if (p === undefined) return
@@ -70,7 +95,9 @@ export class CdpSession {
   static async open(wsUrl: string, timeoutMs = 5000): Promise<CdpSession> {
     const ws = new WebSocket(wsUrl)
     await new Promise<void>((res, rej) => {
-      const t = setTimeout(() => { rej(new CdpError(`could not open ${wsUrl} in ${String(timeoutMs)} ms`)) }, timeoutMs)
+      const t = setTimeout(() => {
+        rej(new CdpError(`could not open ${wsUrl} in ${String(timeoutMs)} ms`))
+      }, timeoutMs)
       ws.onopen = (): void => {
         clearTimeout(t)
         res()
@@ -83,7 +110,11 @@ export class CdpSession {
     return new CdpSession(ws)
   }
 
-  async send<T = unknown>(method: string, params: Record<string, unknown> = {}, timeoutMs = 30_000): Promise<T> {
+  async send<T = unknown>(
+    method: string,
+    params: Record<string, unknown> = {},
+    timeoutMs = 30_000,
+  ): Promise<T> {
     if (this.closed !== null) throw this.closed
     this.nextId += 1
     const id = this.nextId
@@ -109,11 +140,17 @@ export class CdpSession {
   async eval(expression: string, timeoutMs = 30_000): Promise<unknown> {
     const r = await this.send<EvalResult>(
       "Runtime.evaluate",
-      { expression, returnByValue: true, awaitPromise: true, userGesture: true },
+      {
+        expression,
+        returnByValue: true,
+        awaitPromise: true,
+        userGesture: true,
+      },
       timeoutMs,
     )
     if (r.exceptionDetails !== undefined) {
-      const d = r.exceptionDetails.exception?.description ?? r.exceptionDetails.text
+      const d =
+        r.exceptionDetails.exception?.description ?? r.exceptionDetails.text
       throw new CdpError(d.split("\n")[0] ?? d)
     }
     const o = r.result
@@ -122,15 +159,23 @@ export class CdpSession {
     return o.value
   }
 
-  async waitFor(selector: string, o: { readonly timeoutMs?: number; readonly visible?: boolean } = {}): Promise<number> {
+  async waitFor(
+    selector: string,
+    o: { readonly timeoutMs?: number; readonly visible?: boolean } = {},
+  ): Promise<number> {
     const t0 = performance.now()
     const deadline = t0 + (o.timeoutMs ?? 10_000)
     const probe = `(() => { const e = document.querySelector(${JSON.stringify(selector)}); if (!e) return false; ${
-      o.visible === true ? "const r = e.getBoundingClientRect(); return r.width > 0 && r.height > 0" : "return true"
+      o.visible === true
+        ? "const r = e.getBoundingClientRect(); return r.width > 0 && r.height > 0"
+        : "return true"
     } })()`
     for (;;) {
       if ((await this.eval(probe)) === true) return performance.now() - t0
-      if (performance.now() >= deadline) throw new CdpError(`no element matches ${selector} after ${String(o.timeoutMs ?? 10_000)} ms`)
+      if (performance.now() >= deadline)
+        throw new CdpError(
+          `no element matches ${selector} after ${String(o.timeoutMs ?? 10_000)} ms`,
+        )
       await Bun.sleep(100)
     }
   }
@@ -139,27 +184,37 @@ export class CdpSession {
     const v = await this.eval(
       `(() => { const e = document.querySelector(${JSON.stringify(selector)}); return e ? (e.innerText ?? e.textContent ?? "") : null })()`,
     )
-    if (typeof v !== "string") throw new CdpError(`no element matches ${selector}`)
+    if (typeof v !== "string")
+      throw new CdpError(`no element matches ${selector}`)
     return v
   }
 
-  async click(selector: string): Promise<{ readonly x: number; readonly y: number }> {
+  async click(
+    selector: string,
+  ): Promise<{ readonly x: number; readonly y: number }> {
     const at = (await this.eval(
       `(() => { const e = document.querySelector(${JSON.stringify(selector)}); if (!e) return null; e.scrollIntoView({ block: "center", inline: "center" }); const r = e.getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2, w: r.width, h: r.height } })()`,
     )) as { x: number; y: number; w: number; h: number } | null
     if (at === null) throw new CdpError(`no element matches ${selector}`)
-    if (at.w === 0 || at.h === 0) throw new CdpError(`${selector} has no box (hidden?)`)
+    if (at.w === 0 || at.h === 0)
+      throw new CdpError(`${selector} has no box (hidden?)`)
     const ev = { x: at.x, y: at.y, button: "left", clickCount: 1 }
-    await this.send("Input.dispatchMouseEvent", { type: "mouseMoved", x: at.x, y: at.y })
+    await this.send("Input.dispatchMouseEvent", {
+      type: "mouseMoved",
+      x: at.x,
+      y: at.y,
+    })
     await this.send("Input.dispatchMouseEvent", { type: "mousePressed", ...ev })
-    await this.send("Input.dispatchMouseEvent", { type: "mouseReleased", ...ev })
+    await this.send("Input.dispatchMouseEvent", {
+      type: "mouseReleased",
+      ...ev,
+    })
     return { x: at.x, y: at.y }
   }
 
   close(): void {
     try {
       this.ws.close()
-    } catch {
-    }
+    } catch {}
   }
 }

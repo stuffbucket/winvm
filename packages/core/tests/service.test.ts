@@ -1,6 +1,14 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test"
 import { spawnSync } from "node:child_process"
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs"
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs"
 import { tmpdir } from "node:os"
 import { resolve } from "node:path"
 
@@ -25,7 +33,9 @@ import {
 import { FakeAgent } from "./fakes/agent"
 import { FakeQmp } from "./fakes/qmp"
 
-const sleep = async (ms: number): Promise<void> => { await new Promise((r) => setTimeout(r, ms)) }
+const sleep = async (ms: number): Promise<void> => {
+  await new Promise((r) => setTimeout(r, ms))
+}
 
 let home = ""
 let savedHome: string | undefined
@@ -78,7 +88,11 @@ describe("the service", () => {
     expect(info?.pid).toBe(process.pid)
     expect(statSync(p.service).mode & 0o777).toBe(0o600)
     expect(info?.build).toBe(buildIdentity())
-    expect(lastEvent()).toMatchObject({ instance: "t", kind: "service", what: "started" })
+    expect(lastEvent()).toMatchObject({
+      instance: "t",
+      kind: "service",
+      what: "started",
+    })
   })
 
   it("records QMP events as state events, on disk and on the stream", async () => {
@@ -89,14 +103,19 @@ describe("the service", () => {
     fake.emit({ event: "STOP", timestamp: { seconds: 1, microseconds: 0 } })
     let text = ""
     const dec = new TextDecoder()
-    while (!text.includes('"state"')) text += dec.decode((await reader.read()).value)
+    while (!text.includes('"state"'))
+      text += dec.decode((await reader.read()).value)
     await reader.cancel()
     expect(text).toContain('"state":"paused"')
     expect(lastEvent()).toMatchObject({ kind: "state", state: "paused" })
   })
 
   it("keeps a quiet stream open past Bun's default idle timeout", async () => {
-    svc = await runService("t", { exitAfterMs: 30_000, checkMs: 50, heartbeatMs: 60_000 })
+    svc = await runService("t", {
+      exitAfterMs: 30_000,
+      checkMs: 50,
+      heartbeatMs: 60_000,
+    })
     const res = await fetch("http://localhost/events", { unix: p.control })
     const reader = (res.body as ReadableStream<Uint8Array>).getReader()
     await reader.read()
@@ -115,9 +134,16 @@ describe("the service", () => {
   }, 25_000)
 
   it("drops a subscriber that went away", async () => {
-    svc = await runService("t", { exitAfterMs: 200, checkMs: 50, heartbeatMs: 50 })
+    svc = await runService("t", {
+      exitAfterMs: 200,
+      checkMs: 50,
+      heartbeatMs: 50,
+    })
     const ac = new AbortController()
-    const res = await fetch("http://localhost/events", { unix: p.control, signal: ac.signal })
+    const res = await fetch("http://localhost/events", {
+      unix: p.control,
+      signal: ac.signal,
+    })
     await (res.body as ReadableStream<Uint8Array>).getReader().read()
     expect(svc.subscribers()).toBe(1)
     ac.abort()
@@ -129,7 +155,9 @@ describe("the service", () => {
     svc = await runService("t", { exitAfterMs: 200, checkMs: 50 })
     expect(statSync(p.control).mode & 0o777).toBe(0o600)
     const res = await fetch("http://localhost/status", { unix: p.control })
-    expect(((await res.json()) as { qemuPid: number }).qemuPid).toBe(process.pid)
+    expect(((await res.json()) as { qemuPid: number }).qemuPid).toBe(
+      process.pid,
+    )
     expect(recorded()).not.toHaveProperty("port")
     expect(recorded()).not.toHaveProperty("token")
   })
@@ -156,7 +184,15 @@ describe("the service", () => {
     svc = await runService("t", { exitAfterMs: 200, checkMs: 50 })
     writeFileSync(
       p.lease,
-      JSON.stringify({ operation: "load", id: "l", pid: process.pid, pidStart: processStart(process.pid), startedAt: "", instance: "t", automatic: false }),
+      JSON.stringify({
+        operation: "load",
+        id: "l",
+        pid: process.pid,
+        pidStart: processStart(process.pid),
+        startedAt: "",
+        instance: "t",
+        automatic: false,
+      }),
     )
     rmSync(p.pid)
     await sleep(600)
@@ -168,25 +204,38 @@ describe("the service", () => {
 describe("one service per instance", () => {
   it("refuses to start while another service holds the instance, and leaves it working", async () => {
     svc = await runService("t", { exitAfterMs: 5000, checkMs: 50 })
-    await expect(runService("t", { exitAfterMs: 5000, checkMs: 50 })).rejects.toThrow(`holds instance "t"`)
+    await expect(
+      runService("t", { exitAfterMs: 5000, checkMs: 50 }),
+    ).rejects.toThrow(`holds instance "t"`)
     expect(recorded()?.pid).toBe(process.pid)
     expect(await qmp.status(p.qmp)).toBe("running")
-    expect((await fetch("http://localhost/status", { unix: p.control })).status).toBe(200)
+    expect(
+      (await fetch("http://localhost/status", { unix: p.control })).status,
+    ).toBe(200)
   })
 
   it("takes over the record of a service that has gone", async () => {
     const gone = Bun.spawn(["true"])
     await gone.exited
-    writeFileSync(p.service, JSON.stringify({ pid: gone.pid, cli: "", version: "", startedAt: "" }))
+    writeFileSync(
+      p.service,
+      JSON.stringify({ pid: gone.pid, cli: "", version: "", startedAt: "" }),
+    )
     svc = await runService("t", { exitAfterMs: 5000, checkMs: 50 })
     expect(recorded()?.pid).toBe(process.pid)
   })
 
   it("stops when its record names another service, and leaves that service's sockets", async () => {
     svc = await runService("t", { exitAfterMs: 5000, checkMs: 50 })
-    const newer = new QmpChannel({ listen: p.qmp, upstream: resolve(home, "nowhere.sock") })
+    const newer = new QmpChannel({
+      listen: p.qmp,
+      upstream: resolve(home, "nowhere.sock"),
+    })
     await newer.start()
-    writeFileSync(p.service, JSON.stringify({ pid: 1, cli: "", version: "", startedAt: "" }))
+    writeFileSync(
+      p.service,
+      JSON.stringify({ pid: 1, cli: "", version: "", startedAt: "" }),
+    )
     await svc.done
     svc = null
     expect(existsSync(p.qmp)).toBe(true)
@@ -206,13 +255,19 @@ describe("one service per instance", () => {
 
   it("does not take a live process that is not this instance's service for one", () => {
     const other = Bun.spawn(["sleep", "30"])
-    writeFileSync(p.service, JSON.stringify({ pid: other.pid, cli: "", version: "", startedAt: "" }))
+    writeFileSync(
+      p.service,
+      JSON.stringify({ pid: other.pid, cli: "", version: "", startedAt: "" }),
+    )
     expect(readService(p)).toBeNull()
     other.kill()
   })
 
   it("never takes this very process for a service, so a stale record naming it cannot make it signal itself", () => {
-    writeFileSync(p.service, JSON.stringify({ pid: process.pid, cli: "", version: "", startedAt: "" }))
+    writeFileSync(
+      p.service,
+      JSON.stringify({ pid: process.pid, cli: "", version: "", startedAt: "" }),
+    )
     expect(readService(p)).toBeNull()
     let t = 0
     const kills: string[] = []
@@ -227,8 +282,19 @@ describe("one service per instance", () => {
   })
 
   it("drops a rejected record only while it is still that record, never a service's fresh claim", () => {
-    const rejected = JSON.stringify({ pid: 424_242, cli: "", version: "", startedAt: "" })
-    const fresh = JSON.stringify({ pid: 424_243, cli: "", version: "", startedAt: "", build: "sha256:new" })
+    const rejected = JSON.stringify({
+      pid: 424_242,
+      cli: "",
+      version: "",
+      startedAt: "",
+    })
+    const fresh = JSON.stringify({
+      pid: 424_243,
+      cli: "",
+      version: "",
+      startedAt: "",
+      build: "sha256:new",
+    })
     writeFileSync(p.service, fresh)
     expect(dropServiceRecord(p, rejected)).toBe(false)
     expect(readFileSync(p.service, "utf8")).toBe(fresh)
@@ -238,13 +304,29 @@ describe("one service per instance", () => {
   })
 
   for (const [label, argv] of [
-    ["an instance whose name starts with this one's", ["winvm", "serve", "-i", "tt"]],
-    ["another instance named with --instance=", ["winvm", "serve", "--instance=other"]],
+    [
+      "an instance whose name starts with this one's",
+      ["winvm", "serve", "-i", "tt"],
+    ],
+    [
+      "another instance named with --instance=",
+      ["winvm", "serve", "--instance=other"],
+    ],
   ] as const) {
     it(`never takes the service of ${label} for this one's, nor signals it`, () => {
-      const h = Bun.spawn([process.execPath, resolve(import.meta.dir, "fakes", "holder.ts"), ...argv], { stdout: "ignore", stderr: "ignore" })
+      const h = Bun.spawn(
+        [
+          process.execPath,
+          resolve(import.meta.dir, "fakes", "holder.ts"),
+          ...argv,
+        ],
+        { stdout: "ignore", stderr: "ignore" },
+      )
       try {
-        writeFileSync(p.service, JSON.stringify({ pid: h.pid, cli: "", version: "", startedAt: "" }))
+        writeFileSync(
+          p.service,
+          JSON.stringify({ pid: h.pid, cli: "", version: "", startedAt: "" }),
+        )
         expect(readService(p)).toBeNull()
         const kills: string[] = []
         stopService(p, { kill: (_pid, sig) => void kills.push(sig) })
@@ -264,12 +346,25 @@ describe("which process is the default instance's service", () => {
     return dp
   }
 
-  for (const argv of [["ollama", "serve"], ["hugo", "serve"], ["node", "server.js", "serve"], ["winvm", "serve"], ["evilwinvm", "serve", "-i", "default"], ["ollama", "serve", "-i", "default"]]) {
+  for (const argv of [
+    ["ollama", "serve"],
+    ["hugo", "serve"],
+    ["node", "server.js", "serve"],
+    ["winvm", "serve"],
+    ["evilwinvm", "serve", "-i", "default"],
+    ["ollama", "serve", "-i", "default"],
+  ]) {
     it(`is never \`${argv.join(" ")}\``, () => {
       const dp = d()
-      const h = Bun.spawn([process.execPath, holder, ...argv], { stdout: "ignore", stderr: "ignore" })
+      const h = Bun.spawn([process.execPath, holder, ...argv], {
+        stdout: "ignore",
+        stderr: "ignore",
+      })
       try {
-        writeFileSync(dp.service, JSON.stringify({ pid: h.pid, cli: "", version: "", startedAt: "" }))
+        writeFileSync(
+          dp.service,
+          JSON.stringify({ pid: h.pid, cli: "", version: "", startedAt: "" }),
+        )
         expect(readService(dp)).toBeNull()
         const kills: string[] = []
         stopService(dp, { kill: (_pid, sig) => void kills.push(sig) })
@@ -282,14 +377,29 @@ describe("which process is the default instance's service", () => {
 
   for (const argv of [
     ["/repo/apps/cli/src/winvm.ts", "serve", "-i", "default"],
-    ["/Applications/winvm.app/Contents/MacOS/winvm", "serve", "--instance=default"],
-    ["/Applications/winvm.app/Contents/MacOS/winvm-aarch64-apple-darwin", "serve", "-i", "default"],
+    [
+      "/Applications/winvm.app/Contents/MacOS/winvm",
+      "serve",
+      "--instance=default",
+    ],
+    [
+      "/Applications/winvm.app/Contents/MacOS/winvm-aarch64-apple-darwin",
+      "serve",
+      "-i",
+      "default",
+    ],
   ]) {
     it(`is \`${argv.join(" ")}\``, () => {
       const dp = d()
-      const h = Bun.spawn([process.execPath, holder, ...argv], { stdout: "ignore", stderr: "ignore" })
+      const h = Bun.spawn([process.execPath, holder, ...argv], {
+        stdout: "ignore",
+        stderr: "ignore",
+      })
       try {
-        writeFileSync(dp.service, JSON.stringify({ pid: h.pid, cli: "", version: "", startedAt: "" }))
+        writeFileSync(
+          dp.service,
+          JSON.stringify({ pid: h.pid, cli: "", version: "", startedAt: "" }),
+        )
         expect(readService(dp)?.pid).toBe(h.pid)
       } finally {
         h.kill()
@@ -299,25 +409,38 @@ describe("which process is the default instance's service", () => {
 })
 
 describe("one service per instance, continued", () => {
-
   it("asks for the guest's port without waiting behind a QMP caller", async () => {
     svc = await runService("t", { exitAfterMs: 5000, checkMs: 50 })
-    const held = monitor.withQmp(p.qmp, async () => { await sleep(1500) }, 3000)
+    const held = monitor.withQmp(
+      p.qmp,
+      async () => {
+        await sleep(1500)
+      },
+      3000,
+    )
     await sleep(100)
     const t0 = Date.now()
-    expect(await qga.call(p.qga, { execute: "guest-ping" }, 1000)).toEqual({ return: {} })
+    expect(await qga.call(p.qga, { execute: "guest-ping" }, 1000)).toEqual({
+      return: {},
+    })
     expect(Date.now() - t0).toBeLessThan(800)
     await held
   })
 
   it("never connects to the agent after the guest closed its port, though QEMU sends no event for it", async () => {
     svc = await runService("t", { exitAfterMs: 5000, checkMs: 50 })
-    expect(await qga.call(p.qga, { execute: "guest-ping" }, 1000)).toEqual({ return: {} })
+    expect(await qga.call(p.qga, { execute: "guest-ping" }, 1000)).toEqual({
+      return: {},
+    })
     const before = agent.connections
     const open = fake.handler
     fake.handler = (cmd) =>
-      cmd["execute"] === "query-chardev" ? { return: [{ label: "qga0", "frontend-open": false }] } : open(cmd)
-    await expect(qga.call(p.qga, { execute: "guest-ping" }, 500)).rejects.toThrow("timed out")
+      cmd["execute"] === "query-chardev"
+        ? { return: [{ label: "qga0", "frontend-open": false }] }
+        : open(cmd)
+    await expect(
+      qga.call(p.qga, { execute: "guest-ping" }, 500),
+    ).rejects.toThrow("timed out")
     expect(agent.connections).toBe(before)
   })
 })
@@ -343,7 +466,9 @@ describe("starting the service", () => {
     expect(first.cli).toBe(cli)
     expect(existsSync(p.qmp) && existsSync(p.qga)).toBe(true)
     expect(await qmp.status(p.qmp)).toBe("running")
-    expect((await fetch("http://localhost/status", { unix: p.control })).status).toBe(200)
+    expect(
+      (await fetch("http://localhost/status", { unix: p.control })).status,
+    ).toBe(200)
     const again = await ensureService("t", p)
     expect(again.pid).toBe(first.pid)
     expect(first.build).toBe(buildIdentity())
@@ -353,17 +478,35 @@ describe("starting the service", () => {
     const info = await ensureService("t", p)
     stopService(p)
     expect(readService(p)).toBeNull()
-    expect(spawnSync("ps", ["-o", "stat=", "-p", String(info.pid)], { encoding: "utf8" }).stdout.trim()).toMatch(/^(Z.*)?$/)
+    expect(
+      spawnSync("ps", ["-o", "stat=", "-p", String(info.pid)], {
+        encoding: "utf8",
+      }).stdout.trim(),
+    ).toMatch(/^(Z.*)?$/)
   }, 30_000)
 })
 
 const fakeService = (name: string): ReturnType<typeof Bun.spawn> =>
-  Bun.spawn([process.execPath, resolve(import.meta.dir, "fakes", "holder.ts"), "winvm", "serve", "-i", name], { stdout: "ignore", stderr: "ignore" })
+  Bun.spawn(
+    [
+      process.execPath,
+      resolve(import.meta.dir, "fakes", "holder.ts"),
+      "winvm",
+      "serve",
+      "-i",
+      name,
+    ],
+    { stdout: "ignore", stderr: "ignore" },
+  )
 
 const alive = (pid: number): boolean => {
   try {
     process.kill(pid, 0)
-    return !spawnSync("ps", ["-o", "stat=", "-p", String(pid)], { encoding: "utf8" }).stdout.trim().startsWith("Z")
+    return !spawnSync("ps", ["-o", "stat=", "-p", String(pid)], {
+      encoding: "utf8",
+    })
+      .stdout.trim()
+      .startsWith("Z")
   } catch {
     return false
   }
@@ -382,7 +525,13 @@ describe("service generations", () => {
     return h
   }
   const record = (pid: number, build: string | undefined, cli = CLI): void => {
-    const info: ServiceInfo = { pid, cli, version: "0", startedAt: "", ...(build === undefined ? {} : { build }) }
+    const info: ServiceInfo = {
+      pid,
+      cli,
+      version: "0",
+      startedAt: "",
+      ...(build === undefined ? {} : { build }),
+    }
     writeFileSync(p.service, JSON.stringify(info))
   }
 
@@ -402,10 +551,16 @@ describe("service generations", () => {
 
   it("classifies a record by its build: current, stale, or legacy when it has none", () => {
     const base = { pid: 1, cli: CLI, version: "0", startedAt: "" }
-    expect(serviceFreshness({ ...base, build: CURRENT }, CURRENT)).toBe("current")
-    expect(serviceFreshness({ ...base, build: "sha256:old" }, CURRENT)).toBe("stale")
+    expect(serviceFreshness({ ...base, build: CURRENT }, CURRENT)).toBe(
+      "current",
+    )
+    expect(serviceFreshness({ ...base, build: "sha256:old" }, CURRENT)).toBe(
+      "stale",
+    )
     expect(serviceFreshness(base, CURRENT)).toBe("legacy")
-    expect(serviceFreshness({ ...base, build: buildIdentity() })).toBe("current")
+    expect(serviceFreshness({ ...base, build: buildIdentity() })).toBe(
+      "current",
+    )
   })
 
   it("still reads a live legacy record: freshness is the caller's decision", () => {
@@ -415,7 +570,10 @@ describe("service generations", () => {
     expect(readService(p)?.build).toBeUndefined()
   })
 
-  for (const [label, cli] of [["this CLI path", CLI], ["another CLI path", "/Applications/winvm.app/Contents/MacOS/winvm"]] as const) {
+  for (const [label, cli] of [
+    ["this CLI path", CLI],
+    ["another CLI path", "/Applications/winvm.app/Contents/MacOS/winvm"],
+  ] as const) {
     it(`reuses a service of the current generation from ${label}`, async () => {
       const h = holder()
       record(h.pid, CURRENT, cli)
@@ -430,7 +588,10 @@ describe("service generations", () => {
     })
   }
 
-  for (const [label, build] of [["another generation", "sha256:old"], ["no recorded generation", undefined]] as const) {
+  for (const [label, build] of [
+    ["another generation", "sha256:old"],
+    ["no recorded generation", undefined],
+  ] as const) {
     it(`replaces a service with ${label}`, async () => {
       const old = holder()
       record(old.pid, build)
@@ -457,7 +618,9 @@ describe("service generations", () => {
       ensureService("t", p, {
         current: CURRENT,
         timeoutMs: 400,
-        start: () => { record(holder().pid, "sha256:old") },
+        start: () => {
+          record(holder().pid, "sha256:old")
+        },
       }),
     ).rejects.toThrow("did not start")
   })
@@ -467,19 +630,31 @@ describe("service generations", () => {
     spawned.push(stranger)
     record(stranger.pid, "sha256:old")
     let started = 0
-    await expect(ensureService("t", p, { current: CURRENT, timeoutMs: 300, start: () => void (started += 1) })).rejects.toThrow(
-      "did not start",
-    )
+    await expect(
+      ensureService("t", p, {
+        current: CURRENT,
+        timeoutMs: 300,
+        start: () => void (started += 1),
+      }),
+    ).rejects.toThrow("did not start")
     expect(started).toBe(1)
     expect(alive(stranger.pid)).toBe(true)
     expect(existsSync(p.service)).toBe(false)
   })
 
   it("can be called again after a start that failed", async () => {
-    await expect(ensureService("t", p, { current: CURRENT, timeoutMs: 200, start: () => undefined })).rejects.toThrow("did not start")
+    await expect(
+      ensureService("t", p, {
+        current: CURRENT,
+        timeoutMs: 200,
+        start: () => undefined,
+      }),
+    ).rejects.toThrow("did not start")
     const info = await ensureService("t", p, {
       current: CURRENT,
-      start: () => { record(holder().pid, CURRENT) },
+      start: () => {
+        record(holder().pid, CURRENT)
+      },
     })
     expect(info.build).toBe(CURRENT)
     const again = await ensureService("t", p, {
@@ -493,8 +668,13 @@ describe("service generations", () => {
 })
 
 describe("stopping a service", () => {
-  const run = (o: { readonly isService: (t: number) => boolean }): { kills: string[]; elapsed: number } => {
-    writeFileSync(p.service, JSON.stringify({ pid: 424_242, cli: "", version: "", startedAt: "" }))
+  const run = (o: {
+    readonly isService: (t: number) => boolean
+  }): { kills: string[]; elapsed: number } => {
+    writeFileSync(
+      p.service,
+      JSON.stringify({ pid: 424_242, cli: "", version: "", startedAt: "" }),
+    )
     let t = 0
     const kills: string[] = []
     stopService(p, {
@@ -528,11 +708,16 @@ describe("stopping a service", () => {
 
 describe("QEMU's command line", () => {
   it("hands QEMU the private sockets", () => {
-    const args = qemuArgs("t", p, { image: "win11-arm64", vnc: 9, created: "" }, {
-      installMedia: false,
-      ephemeral: true,
-      virtioBoot: false,
-    }).join(" ")
+    const args = qemuArgs(
+      "t",
+      p,
+      { image: "win11-arm64", vnc: 9, created: "" },
+      {
+        installMedia: false,
+        ephemeral: true,
+        virtioBoot: false,
+      },
+    ).join(" ")
     expect(args).toContain(`unix:${p.qmpQemu},server=on,wait=off`)
     expect(args).toContain(`socket,path=${p.qgaQemu},`)
     expect(args).not.toContain(`unix:${p.qmp},`)

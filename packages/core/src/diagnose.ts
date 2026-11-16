@@ -2,7 +2,15 @@ import { existsSync, readFileSync, readdirSync, statSync } from "node:fs"
 import { resolve } from "node:path"
 
 import { readResult } from "./media"
-import { PACKAGE_DIR, basePath, imageMetaPath, instancesDir, pathsFor, readImageMeta, readMeta } from "./paths"
+import {
+  PACKAGE_DIR,
+  basePath,
+  imageMetaPath,
+  instancesDir,
+  pathsFor,
+  readImageMeta,
+  readMeta,
+} from "./paths"
 import * as qemu from "./qemu"
 
 export type Severity = "error" | "warning" | "note"
@@ -41,9 +49,13 @@ const tail = (text: string, lines: number): string =>
     .slice(-lines)
     .join("\n")
 
-export const defaultAnswerFile = (): string => resolve(PACKAGE_DIR, "assets", "autounattend.xml")
+export const defaultAnswerFile = (): string =>
+  resolve(PACKAGE_DIR, "assets", "autounattend.xml")
 
-export function diagnose(name: string, answerFile: string = defaultAnswerFile()): readonly Finding[] {
+export function diagnose(
+  name: string,
+  answerFile: string = defaultAnswerFile(),
+): readonly Finding[] {
   const p = pathsFor(name)
   const findings: Finding[] = []
   const meta = readMeta(name)
@@ -70,9 +82,14 @@ export function diagnose(name: string, answerFile: string = defaultAnswerFile())
     }
   }
   const lastProgress = Math.max(mtimeOf(p.serial), mtimeOf(p.overlay))
-  const quietSeconds = lastProgress === 0 ? Infinity : Math.round((Date.now() - lastProgress) / 1000)
+  const quietSeconds =
+    lastProgress === 0
+      ? Infinity
+      : Math.round((Date.now() - lastProgress) / 1000)
   const stalled = !running || quietSeconds > 90
-  const quietNote = running ? ` after ${String(quietSeconds)}s with no console or disk activity` : ""
+  const quietNote = running
+    ? ` after ${String(quietSeconds)}s with no console or disk activity`
+    : ""
 
   const qemuLog = readText(p.qemuLog).trim()
   if (qemuLog !== "") {
@@ -80,7 +97,8 @@ export function diagnose(name: string, answerFile: string = defaultAnswerFile())
       severity: "error",
       title: "QEMU printed errors on startup",
       evidence: tail(qemuLog, 5),
-      remedy: "Fix what it names. QEMU exits 0 on these, so they are invisible unless read here.",
+      remedy:
+        "Fix what it names. QEMU exits 0 on these, so they are invisible unless read here.",
     })
   }
 
@@ -92,7 +110,8 @@ export function diagnose(name: string, answerFile: string = defaultAnswerFile())
   ) {
     findings.push({
       severity: "error",
-      title: "firmware stopped while enumerating USB, and never chose a boot target",
+      title:
+        "firmware stopped while enumerating USB, and never chose a boot target",
       evidence: `${p.serial} ends at: ${tail(boot, 1)}${quietNote}`,
       remedy:
         "A running instance should attach NO usb-storage; check qemu.ts. Seen on qemu-xhci and nec-usb-xhci alike, " +
@@ -111,7 +130,8 @@ export function diagnose(name: string, answerFile: string = defaultAnswerFile())
       severity: "error",
       title: "the install media asked for a keypress and nothing answered",
       evidence: `saw winvm-keypress-needed; overlay is only ${String(Math.round(overlayBytes / 1_048_576))} MB${quietNote}`,
-      remedy: "The host answers this over QMP after seeing that marker — check qmp.tapEnter and the QMP socket.",
+      remedy:
+        "The host answers this over QMP after seeing that marker — check qmp.tapEnter and the QMP socket.",
     })
   }
 
@@ -119,8 +139,15 @@ export function diagnose(name: string, answerFile: string = defaultAnswerFile())
     findings.push({
       severity: "warning",
       title: "firmware could not start the TPM",
-      evidence: tail(boot.split("\n").filter((l) => /tpm/i.test(l)).join("\n"), 3),
-      remedy: "swtpm state is out of step with the disk. `winvm reset` clears TPM state along with everything else.",
+      evidence: tail(
+        boot
+          .split("\n")
+          .filter((l) => /tpm/i.test(l))
+          .join("\n"),
+        3,
+      ),
+      remedy:
+        "swtpm state is out of step with the disk. `winvm reset` clears TPM state along with everything else.",
     })
   }
 
@@ -148,7 +175,8 @@ export function diagnose(name: string, answerFile: string = defaultAnswerFile())
         severity: "warning",
         title: "viostor did not come out boot-start",
         evidence: "virtio.txt = no",
-        remedy: "The guest cannot boot on virtio-blk, so it gets no snapshots. Rebuild with the scratch virtio disk attached.",
+        remedy:
+          "The guest cannot boot on virtio-blk, so it gets no snapshots. Rebuild with the scratch virtio disk attached.",
       })
     }
   }
@@ -158,7 +186,8 @@ export function diagnose(name: string, answerFile: string = defaultAnswerFile())
       severity: "warning",
       title: `image "${meta.image}" predates virtio boot`,
       evidence: `${imageMetaPath(meta.image)} does not exist`,
-      remedy: "It boots on NVMe, which QEMU cannot snapshot. Rebuild the image to enable `winvm snapshot`/`rewind`.",
+      remedy:
+        "It boots on NVMe, which QEMU cannot snapshot. Rebuild the image to enable `winvm snapshot`/`rewind`.",
     })
   }
   if (existsSync(resolve(p.dir, "efi-vars.fd"))) {
@@ -166,7 +195,8 @@ export function diagnose(name: string, answerFile: string = defaultAnswerFile())
       severity: "warning",
       title: "instance still has raw firmware variables",
       evidence: `${resolve(p.dir, "efi-vars.fd")} exists`,
-      remedy: "A writable raw pflash blocks savevm for the whole machine. `winvm start` converts it; `winvm reset` also fixes it.",
+      remedy:
+        "A writable raw pflash blocks savevm for the whole machine. `winvm start` converts it; `winvm reset` also fixes it.",
     })
   }
 
@@ -175,7 +205,9 @@ export function diagnose(name: string, answerFile: string = defaultAnswerFile())
       const sp = pathsFor(other)
       findings.push({
         severity: qemu.isRunning(sp) ? "error" : "note",
-        title: qemu.isRunning(sp) ? `a build is still running as "${other}"` : `leftover scratch instance "${other}"`,
+        title: qemu.isRunning(sp)
+          ? `a build is still running as "${other}"`
+          : `leftover scratch instance "${other}"`,
         evidence: `${sp.dir}${qemu.isRunning(sp) ? ` (pid ${String(qemu.pidOf(sp))})` : ""}`,
         remedy: qemu.isRunning(sp)
           ? `\`winvm kill -i ${other}\` before building again.`
@@ -191,7 +223,8 @@ export function diagnose(name: string, answerFile: string = defaultAnswerFile())
       severity: "error",
       title: `image "${meta.image}" is missing`,
       evidence: `${basePath(meta.image)} does not exist`,
-      remedy: "The overlay is backed by a file that is gone. Rebuild the image, or destroy this instance.",
+      remedy:
+        "The overlay is backed by a file that is gone. Rebuild the image, or destroy this instance.",
     })
   }
 
@@ -201,7 +234,8 @@ export function diagnose(name: string, answerFile: string = defaultAnswerFile())
 function checkAnswerFile(file: string): readonly Finding[] {
   const xml = readText(file)
   if (xml === "") return []
-  const oobe = /<settings pass="oobeSystem">([\s\S]*?)<\/settings>/.exec(xml)?.[1] ?? ""
+  const oobe =
+    /<settings pass="oobeSystem">([\s\S]*?)<\/settings>/.exec(xml)?.[1] ?? ""
   let withoutComments = oobe
   for (;;) {
     const stripped = withoutComments.replace(/<!--[\s\S]*?-->/g, "")
@@ -209,14 +243,15 @@ function checkAnswerFile(file: string): readonly Finding[] {
     withoutComments = stripped
   }
   const auditMode = /<Mode>\s*Audit\s*<\/Mode>/i.test(withoutComments)
-  const conflicts = ["AutoLogon", "UserAccounts", "FirstLogonCommands"].filter((tag) =>
-    new RegExp(`<${tag}>`).test(withoutComments),
+  const conflicts = ["AutoLogon", "UserAccounts", "FirstLogonCommands"].filter(
+    (tag) => new RegExp(`<${tag}>`).test(withoutComments),
   )
   if (!auditMode || conflicts.length === 0) return []
   return [
     {
       severity: "error",
-      title: "the answer file asks for audit mode AND leaves OOBE logon settings in place",
+      title:
+        "the answer file asks for audit mode AND leaves OOBE logon settings in place",
       evidence: `${file}: oobeSystem has Reseal/Mode=Audit alongside ${conflicts.join(", ")}`,
       remedy:
         "Delete them. They are not inert in audit mode: AutoLogon signs in its own account, the audit logon never " +
@@ -233,10 +268,21 @@ function listScratch(): readonly string[] {
   }
 }
 
-export function formatFindings(name: string, findings: readonly Finding[]): string {
-  if (findings.length === 0) return `instance "${name}": nothing known looks wrong`
-  const icon: Record<Severity, string> = { error: "FAIL", warning: "WARN", note: "note" }
+export function formatFindings(
+  name: string,
+  findings: readonly Finding[],
+): string {
+  if (findings.length === 0)
+    return `instance "${name}": nothing known looks wrong`
+  const icon: Record<Severity, string> = {
+    error: "FAIL",
+    warning: "WARN",
+    note: "note",
+  }
   return findings
-    .map((f) => `${icon[f.severity]}  ${f.title}\n      ${f.evidence.split("\n").join("\n      ")}\n      -> ${f.remedy}`)
+    .map(
+      (f) =>
+        `${icon[f.severity]}  ${f.title}\n      ${f.evidence.split("\n").join("\n      ")}\n      -> ${f.remedy}`,
+    )
     .join("\n\n")
 }

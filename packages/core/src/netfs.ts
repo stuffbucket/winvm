@@ -13,39 +13,82 @@ export interface NetfsMount {
 }
 
 const cstr = (s: string): Buffer => Buffer.from(`${s}\0`, "utf8")
-const xmlEscape = (s: string): string => s.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;")
+const xmlEscape = (s: string): string =>
+  s.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;")
 
-export function plist(entries: Readonly<Record<string, string | number | boolean>>): string {
+export function plist(
+  entries: Readonly<Record<string, string | number | boolean>>,
+): string {
   const body = Object.entries(entries)
     .map(([k, v]) => {
-      const value = typeof v === "boolean" ? (v ? "<true/>" : "<false/>") : typeof v === "number" ? `<integer>${String(v)}</integer>` : `<string>${xmlEscape(v)}</string>`
+      const value =
+        typeof v === "boolean"
+          ? v
+            ? "<true/>"
+            : "<false/>"
+          : typeof v === "number"
+            ? `<integer>${String(v)}</integer>`
+            : `<string>${xmlEscape(v)}</string>`
       return `<key>${xmlEscape(k)}</key>${value}`
     })
     .join("")
   return `<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd"><plist version="1.0"><dict>${body}</dict></plist>`
 }
 
-export const OPEN_OPTIONS = { UIOption: "NoUI", NoUserPreferences: true, AllowLoopback: true } as const
-export const MOUNT_OPTIONS = { UIOption: "NoUI", MountAtMountDir: true, SoftMount: true, MountFlags: MNT_DONTBROWSE } as const
+export const OPEN_OPTIONS = {
+  UIOption: "NoUI",
+  NoUserPreferences: true,
+  AllowLoopback: true,
+} as const
+export const MOUNT_OPTIONS = {
+  UIOption: "NoUI",
+  MountAtMountDir: true,
+  SoftMount: true,
+  MountFlags: MNT_DONTBROWSE,
+} as const
 
 export function netfsMount(m: NetfsMount): number {
   const cf = dlopen(CF, {
-    CFStringCreateWithCString: { args: [FFIType.ptr, FFIType.ptr, FFIType.u32], returns: FFIType.ptr },
-    CFURLCreateWithString: { args: [FFIType.ptr, FFIType.ptr, FFIType.ptr], returns: FFIType.ptr },
-    CFURLCreateFromFileSystemRepresentation: { args: [FFIType.ptr, FFIType.ptr, FFIType.i64, FFIType.bool], returns: FFIType.ptr },
-    CFDataCreate: { args: [FFIType.ptr, FFIType.ptr, FFIType.i64], returns: FFIType.ptr },
-    CFPropertyListCreateWithData: { args: [FFIType.ptr, FFIType.ptr, FFIType.u64, FFIType.ptr, FFIType.ptr], returns: FFIType.ptr },
+    CFStringCreateWithCString: {
+      args: [FFIType.ptr, FFIType.ptr, FFIType.u32],
+      returns: FFIType.ptr,
+    },
+    CFURLCreateWithString: {
+      args: [FFIType.ptr, FFIType.ptr, FFIType.ptr],
+      returns: FFIType.ptr,
+    },
+    CFURLCreateFromFileSystemRepresentation: {
+      args: [FFIType.ptr, FFIType.ptr, FFIType.i64, FFIType.bool],
+      returns: FFIType.ptr,
+    },
+    CFDataCreate: {
+      args: [FFIType.ptr, FFIType.ptr, FFIType.i64],
+      returns: FFIType.ptr,
+    },
+    CFPropertyListCreateWithData: {
+      args: [FFIType.ptr, FFIType.ptr, FFIType.u64, FFIType.ptr, FFIType.ptr],
+      returns: FFIType.ptr,
+    },
     CFRelease: { args: [FFIType.ptr], returns: FFIType.void },
   })
   const netfs = dlopen(NETFS, {
     NetFSMountURLSync: {
-      args: [FFIType.ptr, FFIType.ptr, FFIType.ptr, FFIType.ptr, FFIType.ptr, FFIType.ptr, FFIType.ptr],
+      args: [
+        FFIType.ptr,
+        FFIType.ptr,
+        FFIType.ptr,
+        FFIType.ptr,
+        FFIType.ptr,
+        FFIType.ptr,
+        FFIType.ptr,
+      ],
       returns: FFIType.i32,
     },
   })
   const owned: Pointer[] = []
   const keep = (p: Pointer | bigint | null, what: string): Pointer => {
-    if (p === null || typeof p === "bigint") throw new Error(`could not create ${what}`)
+    if (p === null || typeof p === "bigint")
+      throw new Error(`could not create ${what}`)
     owned.push(p)
     return p
   }
@@ -53,17 +96,44 @@ export function netfsMount(m: NetfsMount): number {
     const b = cstr(s)
     return keep(cf.symbols.CFStringCreateWithCString(null, ptr(b), UTF8), what)
   }
-  const dict = (entries: Readonly<Record<string, string | number | boolean>>): Pointer => {
+  const dict = (
+    entries: Readonly<Record<string, string | number | boolean>>,
+  ): Pointer => {
     const xml = Buffer.from(plist(entries), "utf8")
-    const data = keep(cf.symbols.CFDataCreate(null, ptr(xml), xml.length), "options data")
-    return keep(cf.symbols.CFPropertyListCreateWithData(null, data, 2, null, null), "options")
+    const data = keep(
+      cf.symbols.CFDataCreate(null, ptr(xml), xml.length),
+      "options data",
+    )
+    return keep(
+      cf.symbols.CFPropertyListCreateWithData(null, data, 2, null, null),
+      "options",
+    )
   }
   try {
-    const url = keep(cf.symbols.CFURLCreateWithString(null, str(m.url, "url text"), null), "url")
+    const url = keep(
+      cf.symbols.CFURLCreateWithString(null, str(m.url, "url text"), null),
+      "url",
+    )
     const dirBytes = Buffer.from(m.dir, "utf8")
-    const dir = keep(cf.symbols.CFURLCreateFromFileSystemRepresentation(null, ptr(dirBytes), dirBytes.length, true), "mount folder")
+    const dir = keep(
+      cf.symbols.CFURLCreateFromFileSystemRepresentation(
+        null,
+        ptr(dirBytes),
+        dirBytes.length,
+        true,
+      ),
+      "mount folder",
+    )
     const out = new BigUint64Array(1)
-    return netfs.symbols.NetFSMountURLSync(url, dir, str(m.user, "user"), str(m.password, "password"), dict(OPEN_OPTIONS), dict(MOUNT_OPTIONS), ptr(out))
+    return netfs.symbols.NetFSMountURLSync(
+      url,
+      dir,
+      str(m.user, "user"),
+      str(m.password, "password"),
+      dict(OPEN_OPTIONS),
+      dict(MOUNT_OPTIONS),
+      ptr(out),
+    )
   } finally {
     for (const p of owned.reverse()) cf.symbols.CFRelease(p)
     cf.close()

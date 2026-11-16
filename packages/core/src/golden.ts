@@ -22,7 +22,12 @@ export function parseCpuTime(s: string): number {
   const m = /^(?:(\d+)-)?(?:(\d+):)?(\d+):(\d+(?:\.\d+)?)$/.exec(t)
   if (m === null) return Number.NaN
   const [, d, h, min, sec] = m
-  return Number(d ?? 0) * 86_400 + Number(h ?? 0) * 3600 + Number(min) * 60 + Number(sec)
+  return (
+    Number(d ?? 0) * 86_400 +
+    Number(h ?? 0) * 3600 +
+    Number(min) * 60 +
+    Number(sec)
+  )
 }
 
 export function parseSmp(cmdline: string): number {
@@ -36,7 +41,12 @@ export function cpuPercent(a: CpuSample, b: CpuSample, vcpus: number): number {
   return ((b.cpuSec - a.cpuSec) / wall / Math.max(1, vcpus)) * 100
 }
 
-export function isSettled(samples: readonly CpuSample[], vcpus: number, maxPct: number, forMs: number): boolean {
+export function isSettled(
+  samples: readonly CpuSample[],
+  vcpus: number,
+  maxPct: number,
+  forMs: number,
+): boolean {
   const last = samples.at(-1)
   if (last === undefined) return false
   let start = -1
@@ -59,23 +69,39 @@ export function isSettled(samples: readonly CpuSample[], vcpus: number, maxPct: 
 
 export function parseDuration(s: string): number {
   const m = /^(\d+(?:\.\d+)?)\s*(ms|s|m|h)?$/.exec(s.trim())
-  if (m === null) throw new Error(`not a duration: "${s}" (e.g. 90s, 10m, 500ms)`)
+  if (m === null)
+    throw new Error(`not a duration: "${s}" (e.g. 90s, 10m, 500ms)`)
   const n = Number(m[1])
   const unit = m[2] ?? "s"
-  return Math.round(n * (unit === "ms" ? 1 : unit === "s" ? 1000 : unit === "m" ? 60_000 : 3_600_000))
+  return Math.round(
+    n *
+      (unit === "ms"
+        ? 1
+        : unit === "s"
+          ? 1000
+          : unit === "m"
+            ? 60_000
+            : 3_600_000),
+  )
 }
 
 export function parsePercent(s: string): number {
   const m = /^(\d+(?:\.\d+)?)\s*%?$/.exec(s.trim())
   const n = m === null ? Number.NaN : Number(m[1])
-  if (!Number.isFinite(n) || n < 0 || n > 100) throw new Error(`not a percentage: "${s}" (e.g. 3%)`)
+  if (!Number.isFinite(n) || n < 0 || n > 100)
+    throw new Error(`not a percentage: "${s}" (e.g. 3%)`)
   return n
 }
 
-const sleep = async (ms: number): Promise<void> => { await new Promise((r) => setTimeout(r, ms)) }
+const sleep = async (ms: number): Promise<void> => {
+  await new Promise((r) => setTimeout(r, ms))
+}
 
 function sampleCpu(pid: number): CpuSample {
-  return { atMs: Date.now(), cpuSec: parseCpuTime(capture("ps", ["-o", "time=", "-p", String(pid)])) }
+  return {
+    atMs: Date.now(),
+    cpuSec: parseCpuTime(capture("ps", ["-o", "time=", "-p", String(pid)])),
+  }
 }
 
 export interface SettleOptions {
@@ -108,13 +134,15 @@ export async function waitSettled(
   let lastPct = Number.NaN
   for (;;) {
     await sleep(sampleMs)
-    if (qemu.pidOf(p) !== pid) throw new Error("QEMU exited while waiting for the guest to settle")
+    if (qemu.pidOf(p) !== pid)
+      throw new Error("QEMU exited while waiting for the guest to settle")
     samples.push(sampleCpu(pid))
     const [a, b] = samples.slice(-2)
     if (a !== undefined && b !== undefined) lastPct = cpuPercent(a, b, vcpus)
     const waitedMs = Date.now() - started
     progress(lastPct, waitedMs)
-    if (isSettled(samples, vcpus, cpuPct, forMs)) return { settled: true, waitedMs, lastPct }
+    if (isSettled(samples, vcpus, cpuPct, forMs))
+      return { settled: true, waitedMs, lastPct }
     if (waitedMs >= maxWaitMs) return { settled: false, waitedMs, lastPct }
   }
 }
@@ -134,15 +162,26 @@ export interface CreateGoldenResult {
   readonly ms: number
 }
 
-export const createGolden = async (instance: string, o: CreateGoldenOptions = {}): Promise<CreateGoldenResult> =>
-  await withOperation(instance, "golden-create", async () => await createGoldenHeld(instance, o))
+export const createGolden = async (
+  instance: string,
+  o: CreateGoldenOptions = {},
+): Promise<CreateGoldenResult> =>
+  await withOperation(
+    instance,
+    "golden-create",
+    async () => await createGoldenHeld(instance, o),
+  )
 
-async function createGoldenHeld(instance: string, o: CreateGoldenOptions): Promise<CreateGoldenResult> {
+async function createGoldenHeld(
+  instance: string,
+  o: CreateGoldenOptions,
+): Promise<CreateGoldenResult> {
   const log = o.log ?? (() => undefined)
   const name = o.name ?? saves.GOLDEN
   const nameErr = nameError(name)
   if (nameErr !== null) throw new Error(nameErr)
-  if (name === saves.STOW) throw new Error(`"${saves.STOW}" is reserved for \`winvm stow\``)
+  if (name === saves.STOW)
+    throw new Error(`"${saves.STOW}" is reserved for \`winvm stow\``)
   const started = Date.now()
   const p = pathsFor(instance)
   await watcher.stopWatcher(instance)
@@ -151,46 +190,66 @@ async function createGoldenHeld(instance: string, o: CreateGoldenOptions): Promi
     const from = o.from
     log(`loading "${from}"`)
     await saves.loadSave(instance, from)
-    if (!(await qga.waitResponsive(p.qga, 300_000))) throw new Error(`guest did not answer after loading "${from}"`)
+    if (!(await qga.waitResponsive(p.qga, 300_000)))
+      throw new Error(`guest did not answer after loading "${from}"`)
   } else if (qemu.isRunning(p)) {
     log("checking the guest has finished starting")
-    if (!(await qga.waitReady(p.qga, 600_000))) throw new Error("the guest is not ready (still booting or in OOBE)")
+    if (!(await qga.waitReady(p.qga, 600_000)))
+      throw new Error("the guest is not ready (still booting or in OOBE)")
   } else {
-    ensureInstance(instance, readMeta(instance)?.image ?? o.image ?? "win11-arm64")
+    ensureInstance(
+      instance,
+      readMeta(instance)?.image ?? o.image ?? "win11-arm64",
+    )
     const meta = readMeta(instance)
-    if (meta === null) throw new Error(`could not create instance "${instance}"`)
+    if (meta === null)
+      throw new Error(`could not create instance "${instance}"`)
     log("booting")
     await qemu.launch(instance, p, meta, {
       installMedia: false,
       ephemeral: false,
       virtioBoot: readImageMeta(meta.image)?.virtioBoot === true,
     })
-    if (!(await qga.waitReady(p.qga, 600_000))) throw new Error(`guest never became ready — see ${p.serial}`)
+    if (!(await qga.waitReady(p.qga, 600_000)))
+      throw new Error(`guest never became ready — see ${p.serial}`)
   }
   const meta = readMeta(instance)
   if (meta === null) throw new Error(`no such instance "${instance}"`)
   if (readImageMeta(meta.image)?.virtioBoot !== true) {
-    throw new Error(`image "${meta.image}" predates virtio boot, so its disk is NVMe, which QEMU cannot save. Rebuild the image.`)
+    throw new Error(
+      `image "${meta.image}" predates virtio boot, so its disk is NVMe, which QEMU cannot save. Rebuild the image.`,
+    )
   }
 
   const cpuPct = o.cpuPct ?? 3
   const forMs = o.forMs ?? 60_000
-  log(`waiting for the guest to settle (CPU <= ${String(cpuPct)}% for ${String(Math.round(forMs / 1000))} s)`)
+  log(
+    `waiting for the guest to settle (CPU <= ${String(cpuPct)}% for ${String(Math.round(forMs / 1000))} s)`,
+  )
   const settle = await waitSettled(p, o, (pct, waited) => {
-    log(`  ${String(Math.round(waited / 1000)).padStart(4)} s  cpu ${pct.toFixed(1)}%`)
+    log(
+      `  ${String(Math.round(waited / 1000)).padStart(4)} s  cpu ${pct.toFixed(1)}%`,
+    )
   })
-  if (!settle.settled) log(`warning: still busy after ${String(Math.round(settle.waitedMs / 1000))} s; taking the golden anyway`)
+  if (!settle.settled)
+    log(
+      `warning: still busy after ${String(Math.round(settle.waitedMs / 1000))} s; taking the golden anyway`,
+    )
 
   try {
     await alignGuestTimeZone(p)
-  } catch {
-  }
+  } catch {}
   await syncGuestClock(p)
   const note =
     `settled: ${settle.settled ? "yes" : "no"}, cpu ${settle.lastPct.toFixed(1)}% ` +
     `after ${String(Math.round(settle.waitedMs / 1000))} s`
   log("saving (mapped-ram)")
-  const r = await saves.createSave(instance, { name, kind: "golden", format: "mapped", note })
+  const r = await saves.createSave(instance, {
+    name,
+    kind: "golden",
+    format: "mapped",
+    note,
+  })
   await syncGuestClock(p).catch(() => undefined)
   return {
     manifest: r.manifest,
@@ -220,12 +279,15 @@ export async function resetToGolden(
   const restoredMs = Date.now() - started
   const p = pathsFor(instance)
   if (!(await qga.waitResponsive(p.qga, o.timeoutMs ?? 120_000))) {
-    throw new Error(`guest did not answer after loading "${name}" — see ${p.serial}`)
+    throw new Error(
+      `guest did not answer after loading "${name}" — see ${p.serial}`,
+    )
   }
   const responsiveAt = Date.now()
   const c = await syncGuestClock(p)
   const done = Date.now()
-  if (saves.hasSave(instance, saves.STOW)) saves.removeSave(instance, saves.STOW)
+  if (saves.hasSave(instance, saves.STOW))
+    saves.removeSave(instance, saves.STOW)
   return {
     ms: done - started,
     restoredMs,
@@ -240,7 +302,8 @@ const fail = (msg: string): number => {
   console.error(`::error::${msg}`)
   return 1
 }
-const errMsg = (e: unknown): string => (e instanceof Error ? e.message : String(e))
+const errMsg = (e: unknown): string =>
+  e instanceof Error ? e.message : String(e)
 const secs = (ms: number): string => `${(ms / 1000).toFixed(1)} s`
 
 export async function golden(args: Args): Promise<number> {
@@ -261,7 +324,9 @@ export async function golden(args: Args): Promise<number> {
         ...(cpu === undefined ? {} : { cpuPct: parsePercent(cpu) }),
         ...(forS === undefined ? {} : { forMs: parseDuration(forS) }),
         ...(max === undefined ? {} : { maxWaitMs: parseDuration(max) }),
-        log: (l) => { console.log(l) },
+        log: (l) => {
+          console.log(l)
+        },
       })
       const m = r.manifest
       console.log(

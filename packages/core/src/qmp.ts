@@ -1,13 +1,26 @@
 import { readFileSync, rmSync } from "node:fs"
 import { connect } from "node:net"
 
-export async function hmp(sockPath: string, command: string, timeoutMs = 180_000): Promise<string> {
+export async function hmp(
+  sockPath: string,
+  command: string,
+  timeoutMs = 180_000,
+): Promise<string> {
   return await withSocket(sockPath, async (send, request) => {
-    const reply = await request({ execute: "human-monitor-command", arguments: { "command-line": command } }, timeoutMs)
+    const reply = await request(
+      {
+        execute: "human-monitor-command",
+        arguments: { "command-line": command },
+      },
+      timeoutMs,
+    )
     const error = reply["error"]
-    if (error !== undefined) throw new Error(`qmp rejected "${command}": ${JSON.stringify(error)}`)
-    const text = typeof reply["return"] === "string" ? reply["return"].trim() : ""
-    if (/^Error/i.test(text)) throw new Error(`${command}: ${text.replace(/\r/g, "")}`)
+    if (error !== undefined)
+      throw new Error(`qmp rejected "${command}": ${JSON.stringify(error)}`)
+    const text =
+      typeof reply["return"] === "string" ? reply["return"].trim() : ""
+    if (/^Error/i.test(text))
+      throw new Error(`${command}: ${text.replace(/\r/g, "")}`)
     void send
     return text
   })
@@ -20,14 +33,22 @@ export async function execute(
   timeoutMs = 60_000,
 ): Promise<unknown> {
   return await withSocket(sockPath, async (_send, request) => {
-    const reply = await request(args === undefined ? { execute: command } : { execute: command, arguments: args }, timeoutMs)
-    if (reply["error"] !== undefined) throw new Error(`qmp ${command}: ${JSON.stringify(reply["error"])}`)
+    const reply = await request(
+      args === undefined
+        ? { execute: command }
+        : { execute: command, arguments: args },
+      timeoutMs,
+    )
+    if (reply["error"] !== undefined)
+      throw new Error(`qmp ${command}: ${JSON.stringify(reply["error"])}`)
     return reply["return"]
   })
 }
 
 export async function status(sockPath: string): Promise<string> {
-  const r = (await execute(sockPath, "query-status")) as { status?: string } | undefined
+  const r = (await execute(sockPath, "query-status")) as
+    | { status?: string }
+    | undefined
   return r?.status ?? "unknown"
 }
 
@@ -35,7 +56,10 @@ async function withSocket<T>(
   sockPath: string,
   fn: (
     send: (o: object) => Promise<void>,
-    request: (o: object, timeoutMs?: number) => Promise<Record<string, unknown>>,
+    request: (
+      o: object,
+      timeoutMs?: number,
+    ) => Promise<Record<string, unknown>>,
   ) => Promise<T>,
 ): Promise<T> {
   const deadline = Date.now() + 30_000
@@ -44,13 +68,16 @@ async function withSocket<T>(
     try {
       const candidate = connect(sockPath)
       await new Promise<void>((res, rej) => {
-        candidate.on("connect", () => { res() })
+        candidate.on("connect", () => {
+          res()
+        })
         candidate.on("error", rej)
       })
       sock = candidate
       break
     } catch (error) {
-      if (Date.now() > deadline) throw error instanceof Error ? error : new Error(String(error))
+      if (Date.now() > deadline)
+        throw error instanceof Error ? error : new Error(String(error))
       await new Promise((r) => setTimeout(r, 500))
     }
   }
@@ -75,11 +102,18 @@ async function withSocket<T>(
       waiting.shift()?.(parsed)
     }
   })
-  const request = async (o: object, timeoutMs = 20_000): Promise<Record<string, unknown>> => {
+  const request = async (
+    o: object,
+    timeoutMs = 20_000,
+  ): Promise<Record<string, unknown>> => {
     let timer: ReturnType<typeof setTimeout> | undefined
-    const reply = new Promise<Record<string, unknown>>((res) => waiting.push(res))
+    const reply = new Promise<Record<string, unknown>>((res) =>
+      waiting.push(res),
+    )
     const expiry = new Promise<Record<string, unknown>>((res) => {
-      timer = setTimeout(() => { res({ error: { desc: "qmp timed out" } }) }, timeoutMs)
+      timer = setTimeout(() => {
+        res({ error: { desc: "qmp timed out" } })
+      }, timeoutMs)
     })
     sock.write(`${JSON.stringify(o)}\n`)
     const out = await Promise.race([reply, expiry])
@@ -100,13 +134,19 @@ async function withSocket<T>(
 
 export type BootFrame = "prompt" | "console" | "blank" | "graphical"
 
-export function classifyBootFrame(ppm: Buffer): { kind: BootFrame; lit: number } {
-  const m = /^P6\s+(\d+)\s+(\d+)\s+(\d+)\s/.exec(ppm.subarray(0, 64).toString("latin1"))
+export function classifyBootFrame(ppm: Buffer): {
+  kind: BootFrame
+  lit: number
+} {
+  const m = /^P6\s+(\d+)\s+(\d+)\s+(\d+)\s/.exec(
+    ppm.subarray(0, 64).toString("latin1"),
+  )
   if (m === null) return { kind: "blank", lit: 0 }
   const width = Number(m[1])
   const height = Number(m[2])
   const data = ppm.subarray(m[0].length)
-  if (width * height === 0 || data.length < width * height * 3) return { kind: "blank", lit: 0 }
+  if (width * height === 0 || data.length < width * height * 3)
+    return { kind: "blank", lit: 0 }
   let lit = 0
   let lowest = -1
   for (let i = 0; i < width * height * 3; i += 3) {
@@ -123,15 +163,22 @@ export function classifyBootFrame(ppm: Buffer): { kind: BootFrame; lit: number }
 export async function answerBootPrompt(
   sockPath: string,
   frameFile: string,
-  { maxKeys = 6, withinMs = 60_000 }: { maxKeys?: number; withinMs?: number } = {},
+  {
+    maxKeys = 6,
+    withinMs = 60_000,
+  }: { maxKeys?: number; withinMs?: number } = {},
 ): Promise<{ keys: number; answered: boolean }> {
   const FROZEN_MS = 1500
   const SETTLE_MS = 300
   const deadline = Date.now() + withinMs
   return await withSocket(sockPath, async (_send, request) => {
     const frame = async (): Promise<{ kind: BootFrame; lit: number }> => {
-      const r = await request({ execute: "screendump", arguments: { filename: frameFile } })
-      if (r["error"] !== undefined) throw new Error(`screendump rejected: ${JSON.stringify(r["error"])}`)
+      const r = await request({
+        execute: "screendump",
+        arguments: { filename: frameFile },
+      })
+      if (r["error"] !== undefined)
+        throw new Error(`screendump rejected: ${JSON.stringify(r["error"])}`)
       return classifyBootFrame(readFileSync(frameFile))
     }
     let keys = 0
@@ -145,13 +192,21 @@ export async function answerBootPrompt(
         if (f.kind === "graphical") return { keys, answered: keys > 0 }
         if (f.kind !== "prompt") {
           litAtKey = -1
-        } else if (litAtKey >= 0 && f.lit !== litAtKey && now - sentAt <= SETTLE_MS) {
+        } else if (
+          litAtKey >= 0 &&
+          f.lit !== litAtKey &&
+          now - sentAt <= SETTLE_MS
+        ) {
           litAtKey = f.lit
           changedAt = now
         } else if (litAtKey < 0 || f.lit !== litAtKey) {
           if (keys >= maxKeys) return { keys, answered: false }
-          const r = await request({ execute: "human-monitor-command", arguments: { "command-line": "sendkey ret" } })
-          if (r["error"] !== undefined) throw new Error(`sendkey rejected: ${JSON.stringify(r["error"])}`)
+          const r = await request({
+            execute: "human-monitor-command",
+            arguments: { "command-line": "sendkey ret" },
+          })
+          if (r["error"] !== undefined)
+            throw new Error(`sendkey rejected: ${JSON.stringify(r["error"])}`)
           keys += 1
           sentAt = Date.now()
           changedAt = sentAt

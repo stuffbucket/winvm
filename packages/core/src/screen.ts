@@ -7,7 +7,13 @@ import * as agent from "./agent"
 import type { Args } from "./args"
 import { instanceName } from "./args"
 import type { DisplayConfig } from "./display"
-import { describeDisplay, parseDevice, readDisplay, sameDevice, writeDisplay } from "./display"
+import {
+  describeDisplay,
+  parseDevice,
+  readDisplay,
+  sameDevice,
+  writeDisplay,
+} from "./display"
 import * as guestDisplay from "./guestdisplay"
 import * as input from "./input"
 import * as ocr from "./ocr"
@@ -15,22 +21,35 @@ import type { InstanceMeta, Paths } from "./paths"
 import { pathsFor, readMeta } from "./paths"
 import * as qemu from "./qemu"
 import * as saves from "./saves"
-import { applyPassword, connection, passwordFor, screenSharingUrl, vncPort } from "./vnc"
+import {
+  applyPassword,
+  connection,
+  passwordFor,
+  screenSharingUrl,
+  vncPort,
+} from "./vnc"
 import * as web from "./web"
 
-const errMsg = (e: unknown): string => (e instanceof Error ? e.message : String(e))
+const errMsg = (e: unknown): string =>
+  e instanceof Error ? e.message : String(e)
 
-function running(args: Args): { name: string; p: Paths; meta: InstanceMeta } | null {
+function running(
+  args: Args,
+): { name: string; p: Paths; meta: InstanceMeta } | null {
   const name = instanceName(args)
   const meta = readMeta(name)
   const flag = name === "default" ? "" : ` -i ${name}`
   if (meta === null) {
-    console.error(`::error::no instance "${name}" — \`winvm start${flag}\` creates it`)
+    console.error(
+      `::error::no instance "${name}" — \`winvm start${flag}\` creates it`,
+    )
     return null
   }
   const p = pathsFor(name)
   if (!qemu.isRunning(p)) {
-    console.error(`::error::instance "${name}" is not running — \`winvm start${flag}\``)
+    console.error(
+      `::error::instance "${name}" is not running — \`winvm start${flag}\``,
+    )
     return null
   }
   return { name, p, meta }
@@ -49,11 +68,15 @@ export async function open(args: Args): Promise<number> {
     const name = instanceName(args)
     const flag = name === "default" ? "" : ` -i ${name}`
     if (readMeta(name) === null) {
-      console.error(`::error::no instance "${name}" — \`winvm start${flag}\` creates it`)
+      console.error(
+        `::error::no instance "${name}" — \`winvm start${flag}\` creates it`,
+      )
       return 1
     }
     if (!qemu.isRunning(pathsFor(name))) {
-      console.warn(`note: "${name}" is not running — \`winvm start${flag}\`, or press Start on the page`)
+      console.warn(
+        `note: "${name}" is not running — \`winvm start${flag}\`, or press Start on the page`,
+      )
     }
     let server: web.ServerInfo
     try {
@@ -63,7 +86,11 @@ export async function open(args: Args): Promise<number> {
       return 1
     }
     const url = web.pageUrl(server.port, name, server.token)
-    console.log(printOnly ? url : `opening the browser view of "${name}" (server on 127.0.0.1:${String(server.port)})`)
+    console.log(
+      printOnly
+        ? url
+        : `opening the browser view of "${name}" (server on 127.0.0.1:${String(server.port)})`,
+    )
     return launch(url, printOnly)
   }
 
@@ -74,7 +101,9 @@ export async function open(args: Args): Promise<number> {
   try {
     password = await applyPassword(r.p)
   } catch (error) {
-    console.warn(`warning: could not confirm the VNC password (${errMsg(error)}); using the stored one`)
+    console.warn(
+      `warning: could not confirm the VNC password (${errMsg(error)}); using the stored one`,
+    )
     password = passwordFor(r.p)
   }
   if (args.flags.has("json")) {
@@ -89,7 +118,9 @@ export async function open(args: Args): Promise<number> {
   }
   const url = screenSharingUrl(r.meta.vnc, password)
   console.log(
-    printOnly ? url : `opening Screen Sharing on 127.0.0.1:${String(vncPort(r.meta.vnc))} (VNC :${String(r.meta.vnc)})`,
+    printOnly
+      ? url
+      : `opening Screen Sharing on 127.0.0.1:${String(vncPort(r.meta.vnc))} (VNC :${String(r.meta.vnc)})`,
   )
   return launch(url, printOnly)
 }
@@ -97,8 +128,14 @@ export async function open(args: Args): Promise<number> {
 export async function screenshot(args: Args): Promise<number> {
   const r = running(args)
   if (r === null) return 1
-  const stamp = new Date().toISOString().replace(/[:]/g, "").replace(/\..*$/, "").replace("T", "-")
-  const file = resolve(args.positional[0] ?? resolve(r.p.dir, "screenshots", `${stamp}.png`))
+  const stamp = new Date()
+    .toISOString()
+    .replace(/[:]/g, "")
+    .replace(/\..*$/, "")
+    .replace("T", "-")
+  const file = resolve(
+    args.positional[0] ?? resolve(r.p.dir, "screenshots", `${stamp}.png`),
+  )
   try {
     const size = await input.screenshot(r.p, file)
     console.log(`${file} (${String(size.width)}x${String(size.height)})`)
@@ -112,12 +149,16 @@ export async function screenshot(args: Args): Promise<number> {
 export async function type(args: Args): Promise<number> {
   const text = (args.rest.length > 0 ? args.rest : args.positional).join(" ")
   if (text === "") {
-    console.error('::error::usage: winvm type [-i name] "text"   (a newline in the text presses Enter)')
+    console.error(
+      '::error::usage: winvm type [-i name] "text"   (a newline in the text presses Enter)',
+    )
     return 1
   }
   const { strokes, bad } = input.textToStrokes(text)
   if (bad.length > 0) {
-    console.error(`::error::can't type ${bad.map((c) => JSON.stringify(c)).join(", ")} on a US keyboard layout`)
+    console.error(
+      `::error::can't type ${bad.map((c) => JSON.stringify(c)).join(", ")} on a US keyboard layout`,
+    )
     return 1
   }
   const r = running(args)
@@ -134,13 +175,17 @@ export async function type(args: Args): Promise<number> {
 export async function key(args: Args): Promise<number> {
   const combos = args.positional
   if (combos.length === 0) {
-    console.error("::error::usage: winvm key [-i name] <combo>...   e.g. ctrl-alt-delete, win-r, enter, f5")
+    console.error(
+      "::error::usage: winvm key [-i name] <combo>...   e.g. ctrl-alt-delete, win-r, enter, f5",
+    )
     return 1
   }
   const parsed = combos.map((c) => ({ combo: c, ...input.parseCombo(c) }))
   const unknown = parsed.find((c) => c.unknown !== null)
   if (unknown !== undefined) {
-    console.error(`::error::unknown key "${String(unknown.unknown)}" in "${unknown.combo}"`)
+    console.error(
+      `::error::unknown key "${String(unknown.unknown)}" in "${unknown.combo}"`,
+    )
     return 1
   }
   const r = running(args)
@@ -155,12 +200,23 @@ export async function key(args: Args): Promise<number> {
 }
 
 function coords(args: Args, usage: string): { x: number; y: number } | null {
-  const eaten = ["right", "middle", "double"].map((f) => args.flags.get(f)).filter((v) => v !== undefined && v !== "true")
+  const eaten = ["right", "middle", "double"]
+    .map((f) => args.flags.get(f))
+    .filter((v) => v !== undefined && v !== "true")
   const [xs, ys] = [...eaten, ...args.positional]
   const x = Number(xs)
   const y = Number(ys)
-  if (xs === undefined || ys === undefined || !Number.isFinite(x) || !Number.isFinite(y) || x < 0 || y < 0) {
-    console.error(`::error::usage: ${usage}   (screenshot pixels; 0,0 is top left)`)
+  if (
+    xs === undefined ||
+    ys === undefined ||
+    !Number.isFinite(x) ||
+    !Number.isFinite(y) ||
+    x < 0 ||
+    y < 0
+  ) {
+    console.error(
+      `::error::usage: ${usage}   (screenshot pixels; 0,0 is top left)`,
+    )
     return null
   }
   return { x, y }
@@ -168,16 +224,32 @@ function coords(args: Args, usage: string): { x: number; y: number } | null {
 
 export async function click(args: Args): Promise<number> {
   const text = args.flags.get("text")
-  if (text !== undefined && text !== "true") return await ocr.clickText(args, text)
-  const at = coords(args, "winvm click [-i name] <x> <y> | --text TEXT [--wait S]  [--right | --middle] [--double]")
+  if (text !== undefined && text !== "true")
+    return await ocr.clickText(args, text)
+  const at = coords(
+    args,
+    "winvm click [-i name] <x> <y> | --text TEXT [--wait S]  [--right | --middle] [--double]",
+  )
   if (at === null) return 1
   const r = running(args)
   if (r === null) return 1
-  const button: input.Button = args.flags.has("right") ? "right" : args.flags.has("middle") ? "middle" : "left"
+  const button: input.Button = args.flags.has("right")
+    ? "right"
+    : args.flags.has("middle")
+      ? "middle"
+      : "left"
   try {
-    const size = await input.pointer(r.p, at.x, at.y, button, args.flags.has("double") ? 2 : 1)
+    const size = await input.pointer(
+      r.p,
+      at.x,
+      at.y,
+      button,
+      args.flags.has("double") ? 2 : 1,
+    )
     if (at.x >= size.width || at.y >= size.height) {
-      console.warn(`warning: (${String(at.x)}, ${String(at.y)}) is off the ${String(size.width)}x${String(size.height)} screen; clicked the nearest edge`)
+      console.warn(
+        `warning: (${String(at.x)}, ${String(at.y)}) is off the ${String(size.width)}x${String(size.height)} screen; clicked the nearest edge`,
+      )
     }
     return 0
   } catch (error) {
@@ -203,9 +275,12 @@ export async function move(args: Args): Promise<number> {
 export async function scroll(args: Args): Promise<number> {
   const raw = [...args.positional, ...args.rest]
   let n = Number(raw[0])
-  if (raw[0] === "up" || raw[0] === "down") n = Number(raw[1] ?? 1) * (raw[0] === "up" ? -1 : 1)
+  if (raw[0] === "up" || raw[0] === "down")
+    n = Number(raw[1] ?? 1) * (raw[0] === "up" ? -1 : 1)
   if (!Number.isInteger(n) || n === 0) {
-    console.error("::error::usage: winvm scroll [-i name] <notches>   positive scrolls down; or: scroll up|down [n]")
+    console.error(
+      "::error::usage: winvm scroll [-i name] <notches>   positive scrolls down; or: scroll up|down [n]",
+    )
     return 1
   }
   const r = running(args)
@@ -233,9 +308,12 @@ export async function display(args: Args): Promise<number> {
   const configured = readDisplay(p)
   const wantRaw = args.positional[0]
   const scaleRaw = args.flags.get("scale")
-  const scale = scaleRaw === undefined ? undefined : Number(scaleRaw.replace(/%$/, ""))
+  const scale =
+    scaleRaw === undefined ? undefined : Number(scaleRaw.replace(/%$/, ""))
   if (scale !== undefined && !(SCALES as readonly number[]).includes(scale)) {
-    console.error(`::error::--scale takes one of ${SCALES.join(", ")} (percent)`)
+    console.error(
+      `::error::--scale takes one of ${SCALES.join(", ")} (percent)`,
+    )
     return 1
   }
 
@@ -243,31 +321,53 @@ export async function display(args: Args): Promise<number> {
     const device = live ? guestDisplay.liveDevice(p) : null
     const size = live ? await guestDisplay.liveSize(p) : null
     let guest: guestDisplay.GuestDisplay | null = null
-    if (live && device === "virtio-gpu" && (await agent.connect(name, { timeoutMs: 1500 })) !== null) {
+    if (
+      live &&
+      device === "virtio-gpu" &&
+      (await agent.connect(name, { timeoutMs: 1500 })) !== null
+    ) {
       guest = await guestDisplay.guestState(name).catch(() => null)
     }
     if (asJson) {
-      console.log(JSON.stringify({ configured: configured.device, running: device, size, scale: guest?.scale ?? null, dpi: guest?.dpi ?? null }))
+      console.log(
+        JSON.stringify({
+          configured: configured.device,
+          running: device,
+          size,
+          scale: guest?.scale ?? null,
+          dpi: guest?.dpi ?? null,
+        }),
+      )
       return 0
     }
     console.log(`configured: ${describeDisplay(configured)}`)
     if (live) {
-      const at = size === null ? "" : `, screen ${String(size.width)}x${String(size.height)}`
-      console.log(`running:    ${device ?? "?"}${at}${guest === null ? "" : `, scale ${String(guest.scale)}%`}`)
+      const at =
+        size === null
+          ? ""
+          : `, screen ${String(size.width)}x${String(size.height)}`
+      console.log(
+        `running:    ${device ?? "?"}${at}${guest === null ? "" : `, scale ${String(guest.scale)}%`}`,
+      )
     }
     return 0
   }
 
   const device = wantRaw === undefined ? null : parseDevice(wantRaw)
-  if (device !== null) return switchDevice(name, meta, p, configured, device, live, flag)
+  if (device !== null)
+    return switchDevice(name, meta, p, configured, device, live, flag)
 
   const asked = wantRaw === undefined ? null : parseSize(wantRaw)
   if (wantRaw !== undefined && asked === null) {
-    console.error(`::error::"${wantRaw}" is not a size or a device — use WIDTHxHEIGHT (e.g. 2560x1600), virtio-gpu or ramfb`)
+    console.error(
+      `::error::"${wantRaw}" is not a size or a device — use WIDTHxHEIGHT (e.g. 2560x1600), virtio-gpu or ramfb`,
+    )
     return 1
   }
   if (!live) {
-    console.error(`::error::"${name}" is not running; the screen is resized live — \`winvm start${flag}\` first`)
+    console.error(
+      `::error::"${name}" is not running; the screen is resized live — \`winvm start${flag}\` first`,
+    )
     return 1
   }
   if (guestDisplay.liveDevice(p) !== "virtio-gpu") {
@@ -283,27 +383,53 @@ export async function display(args: Args): Promise<number> {
       result = await guestDisplay.setGuestScale(name, scale ?? 100)
     } else {
       const size = clampSize(asked)
-      if (!sameSize(size, asked) && !asJson) console.log(`${wantRaw} is outside what the guest can show; using ${String(size.width)}x${String(size.height)}`)
-      if (!args.flags.has("no-request")) await guestDisplay.requestSize(p, meta, size)
-      result = await guestDisplay.setGuestSize(name, size, scale === undefined ? {} : { scale })
+      if (!sameSize(size, asked) && !asJson)
+        console.log(
+          `${wantRaw} is outside what the guest can show; using ${String(size.width)}x${String(size.height)}`,
+        )
+      if (!args.flags.has("no-request"))
+        await guestDisplay.requestSize(p, meta, size)
+      result = await guestDisplay.setGuestSize(
+        name,
+        size,
+        scale === undefined ? {} : { scale },
+      )
     }
     if (asJson) console.log(JSON.stringify(result))
-    else if (result.deferred === true) console.log(`Windows is at its lock screen: the screen becomes ${String(result.width)}x${String(result.height)} once someone signs in`)
-    else console.log(`screen is ${String(result.width)}x${String(result.height)} at ${String(result.scale)}%${result.ms === undefined ? "" : ` (${String(result.ms)} ms in the guest)`}`)
+    else if (result.deferred === true)
+      console.log(
+        `Windows is at its lock screen: the screen becomes ${String(result.width)}x${String(result.height)} once someone signs in`,
+      )
+    else
+      console.log(
+        `screen is ${String(result.width)}x${String(result.height)} at ${String(result.scale)}%${result.ms === undefined ? "" : ` (${String(result.ms)} ms in the guest)`}`,
+      )
     return 0
   } catch (error) {
-    console.error(`::error::could not resize the guest's screen: ${errMsg(error)}`)
+    console.error(
+      `::error::could not resize the guest's screen: ${errMsg(error)}`,
+    )
     return 1
   }
 }
 
-function switchDevice(name: string, meta: InstanceMeta, p: Paths, from: DisplayConfig, to: DisplayConfig, live: boolean, flag: string): number {
+function switchDevice(
+  name: string,
+  meta: InstanceMeta,
+  p: Paths,
+  from: DisplayConfig,
+  to: DisplayConfig,
+  live: boolean,
+  flag: string,
+): number {
   if (sameDevice(from, to)) {
     console.log(`"${name}" already uses ${describeDisplay(to)}`)
     return 0
   }
   if (live) {
-    console.error(`::error::"${name}" is running; the display device changes only while it is stopped — \`winvm stop${flag}\` first`)
+    console.error(
+      `::error::"${name}" is running; the display device changes only while it is stopped — \`winvm stop${flag}\` first`,
+    )
     return 1
   }
   if (saves.hasSave(name, saves.STOW)) {
@@ -313,12 +439,21 @@ function switchDevice(name: string, meta: InstanceMeta, p: Paths, from: DisplayC
     )
     return 1
   }
-  const listed = saves.listSaves(name).flatMap((s) => (s.manifest === null ? [] : [s.manifest]))
-  const loads = (): ReadonlySet<string> => new Set(listed.filter((m) => m.compat === saves.compatFor(name, meta, m).hash).map((m) => m.name))
+  const listed = saves
+    .listSaves(name)
+    .flatMap((s) => (s.manifest === null ? [] : [s.manifest]))
+  const loads = (): ReadonlySet<string> =>
+    new Set(
+      listed
+        .filter((m) => m.compat === saves.compatFor(name, meta, m).hash)
+        .map((m) => m.name),
+    )
   const before = loads()
   writeDisplay(p, to)
   const after = loads()
-  console.log(`display for "${name}": ${describeDisplay(to)} (was ${describeDisplay(from)}); takes effect at the next \`winvm start${flag}\``)
+  console.log(
+    `display for "${name}": ${describeDisplay(to)} (was ${describeDisplay(from)}); takes effect at the next \`winvm start${flag}\``,
+  )
   const stranded = [...before].filter((n) => !after.has(n))
   const regained = [...after].filter((n) => !before.has(n))
   if (stranded.length > 0) {
@@ -329,11 +464,18 @@ function switchDevice(name: string, meta: InstanceMeta, p: Paths, from: DisplayC
     )
   }
   if (listed.some((m) => m.display !== undefined)) {
-    console.log("saves that recorded their display still load on it; internal snapshots still need the device they were taken on.")
+    console.log(
+      "saves that recorded their display still load on it; internal snapshots still need the device they were taken on.",
+    )
   }
-  if (regained.length > 0) console.log(`${String(regained.length)} save(s) taken on ${to.device} load again: ${regained.join(", ")}`)
+  if (regained.length > 0)
+    console.log(
+      `${String(regained.length)} save(s) taken on ${to.device} load again: ${regained.join(", ")}`,
+    )
   if (from.device === "ramfb" && regained.length === 0) {
-    console.log("On its first start on virtio-gpu, Windows comes up at 1024x768; the app then sizes it to its window (or `winvm display WxH`).")
+    console.log(
+      "On its first start on virtio-gpu, Windows comes up at 1024x768; the app then sizes it to its window (or `winvm display WxH`).",
+    )
   }
   return 0
 }

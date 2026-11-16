@@ -10,7 +10,10 @@ const thenRm = opt("--then-rm")
 const logSignals = opt("--log-signals")
 
 for (const sig of ["SIGHUP", "SIGINT"] as const) {
-  if (logSignals !== undefined) process.on(sig, () => { appendFileSync(logSignals, `${sig}\n`) })
+  if (logSignals !== undefined)
+    process.on(sig, () => {
+      appendFileSync(logSignals, `${sig}\n`)
+    })
 }
 process.on("SIGTERM", () => {
   if (logSignals !== undefined) appendFileSync(logSignals, "SIGTERM\n")
@@ -18,8 +21,7 @@ process.on("SIGTERM", () => {
     if (thenKill !== undefined) {
       try {
         process.kill(Number(thenKill), "SIGTERM")
-      } catch {
-      }
+      } catch {}
     }
     if (thenRm !== undefined) rmSync(thenRm, { force: true })
     process.exit(0)

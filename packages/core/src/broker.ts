@@ -59,7 +59,12 @@ class Listener {
     }
     if (ours) rmSync(this.path, { force: true })
     const server = this.server
-    if (server !== null) await new Promise<void>((r) => server.close(() => { r() }))
+    if (server !== null)
+      await new Promise<void>((r) =>
+        server.close(() => {
+          r()
+        }),
+      )
     rmSync(this.own, { force: true })
   }
 }
@@ -102,7 +107,9 @@ export class QmpChannel {
   }
 
   async start(): Promise<void> {
-    await this.listener.start((c) => { this.accept(c) })
+    await this.listener.start((c) => {
+      this.accept(c)
+    })
     this.connectUpstream()
   }
 
@@ -129,8 +136,12 @@ export class QmpChannel {
           const { id: _id, ...rest } = reply
           res(rest)
         })
-        timer = setTimeout(() => { rej(new Error(`${execute}: no answer in ${String(timeoutMs)} ms`)) }, timeoutMs)
-        up.write(`${JSON.stringify(args === undefined ? { execute, id } : { execute, arguments: args, id })}\n`)
+        timer = setTimeout(() => {
+          rej(new Error(`${execute}: no answer in ${String(timeoutMs)} ms`))
+        }, timeoutMs)
+        up.write(
+          `${JSON.stringify(args === undefined ? { execute, id } : { execute, arguments: args, id })}\n`,
+        )
       })
     } finally {
       clearTimeout(timer)
@@ -143,13 +154,19 @@ export class QmpChannel {
     const s = connect(this.o.upstream)
     this.connecting = s
     let negotiating = false
-    const negotiation = setTimeout(() => s.destroy(), this.o.negotiateTimeoutMs ?? 10_000)
+    const negotiation = setTimeout(
+      () => s.destroy(),
+      this.o.negotiateTimeoutMs ?? 10_000,
+    )
     s.on("error", () => undefined)
     s.on("close", () => {
       clearTimeout(negotiation)
       if (this.connecting === s) this.connecting = null
       if (this.upstream === s) this.upstreamLost()
-      if (!this.stopped) setTimeout(() => { this.connectUpstream() }, 200)
+      if (!this.stopped)
+        setTimeout(() => {
+          this.connectUpstream()
+        }, 200)
     })
     s.on(
       "data",
@@ -229,14 +246,21 @@ export class QmpChannel {
   }
 
   private pump(): void {
-    if (this.active !== null || this.draining || !this.ready || this.greeting === null) return
+    if (
+      this.active !== null ||
+      this.draining ||
+      !this.ready ||
+      this.greeting === null
+    )
+      return
     for (;;) {
       const next = this.queue.shift()
       if (next === undefined) return
       if (next.destroyed) continue
       this.active = next
       next.write(`${this.greeting}\n`)
-      for (const line of this.pending.get(next)?.splice(0) ?? []) this.fromCaller(next, line)
+      for (const line of this.pending.get(next)?.splice(0) ?? [])
+        this.fromCaller(next, line)
       return
     }
   }
@@ -257,7 +281,10 @@ export class QmpChannel {
     this.active = null
     if (this.owed > 0 && this.upstream !== null) {
       this.draining = true
-      this.drainTimer = setTimeout(() => this.upstream?.destroy(), this.o.drainTimeoutMs ?? 200_000)
+      this.drainTimer = setTimeout(
+        () => this.upstream?.destroy(),
+        this.o.drainTimeoutMs ?? 200_000,
+      )
       return
     }
     this.owed = 0
@@ -295,7 +322,9 @@ export class QgaChannel {
   }
 
   async start(): Promise<void> {
-    await this.listener.start((c) => { this.accept(c) })
+    await this.listener.start((c) => {
+      this.accept(c)
+    })
   }
 
   async stop(): Promise<void> {
@@ -312,7 +341,8 @@ export class QgaChannel {
     this.pending.set(c, [])
     c.on("error", () => undefined)
     c.on("data", (chunk: Buffer) => {
-      if (this.active === c && this.upstream !== null) this.upstream.write(chunk)
+      if (this.active === c && this.upstream !== null)
+        this.upstream.write(chunk)
       else this.pending.get(c)?.push(chunk)
     })
     c.on("close", () => {
@@ -348,7 +378,10 @@ export class QgaChannel {
       return
     }
     this.active = next
-    while (!this.ended(next) && (await this.o.portOpen().catch(() => null)) !== true) {
+    while (
+      !this.ended(next) &&
+      (await this.o.portOpen().catch(() => null)) !== true
+    ) {
       await new Promise((r) => setTimeout(r, this.o.pollMs ?? 250))
     }
     if (this.ended(next) || this.superseded(next)) return
@@ -367,7 +400,8 @@ export class QgaChannel {
         up.destroy()
         return
       }
-      for (const chunk of this.pending.get(next)?.splice(0) ?? []) up.write(chunk)
+      for (const chunk of this.pending.get(next)?.splice(0) ?? [])
+        up.write(chunk)
     })
   }
 }

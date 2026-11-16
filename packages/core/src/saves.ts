@@ -1,6 +1,15 @@
 import { spawnSync } from "node:child_process"
 import { createHash } from "node:crypto"
-import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs"
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  renameSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs"
 import { resolve } from "node:path"
 
 import type { Size } from "./cua"
@@ -28,15 +37,33 @@ import { ensureInstance } from "./instance"
 import type { Note } from "./notes"
 import { copyNote, readNote, removeNote, removeNotes } from "./notes"
 import type { InstanceMeta, Paths } from "./paths"
-import { basePath, home, imageMetaPath, instanceDir, pathsFor, readImageMeta, readMeta } from "./paths"
+import {
+  basePath,
+  home,
+  imageMetaPath,
+  instanceDir,
+  pathsFor,
+  readImageMeta,
+  readMeta,
+} from "./paths"
 import * as qemu from "./qemu"
 import * as qmp from "./qmp"
 import { nameError } from "./savename"
 import * as finder from "./finder"
-import { clearSavingRunning, markSavingRunning, withOperation } from "./operation"
+import {
+  clearSavingRunning,
+  markSavingRunning,
+  withOperation,
+} from "./operation"
 import { instanceOf } from "./smbstate"
 
-export const SAVE_KINDS = ["manual", "auto", "baseline", "stow", "golden"] as const
+export const SAVE_KINDS = [
+  "manual",
+  "auto",
+  "baseline",
+  "stow",
+  "golden",
+] as const
 export type SaveKind = (typeof SAVE_KINDS)[number]
 
 export const BASELINE = "baseline"
@@ -69,7 +96,10 @@ export interface Manifest {
   readonly ramBytes?: number
   readonly saveMs?: number
   readonly format?: RamFormat
-  readonly clonedFrom?: { readonly instance: string; readonly createdAt: string }
+  readonly clonedFrom?: {
+    readonly instance: string
+    readonly createdAt: string
+  }
   readonly screenshot?: string
   readonly thumbnail?: string
   readonly screenSize?: { readonly width: number; readonly height: number }
@@ -91,8 +121,10 @@ export const FILES = {
 export const THUMB_BOX: Size = { width: 480, height: 300 }
 
 export const savesRoot = (): string => resolve(home(), "saves")
-export const savesDir = (instance: string): string => resolve(savesRoot(), instance)
-export const saveDir = (instance: string, name: string): string => resolve(savesDir(instance), name)
+export const savesDir = (instance: string): string =>
+  resolve(savesRoot(), instance)
+export const saveDir = (instance: string, name: string): string =>
+  resolve(savesDir(instance), name)
 
 export function defaultName(d: Date): string {
   const z = (n: number): string => String(n).padStart(2, "0")
@@ -107,13 +139,17 @@ export function parseManifest(text: string): Manifest {
   try {
     o = JSON.parse(text)
   } catch (error) {
-    throw new Error(`manifest is not JSON: ${error instanceof Error ? error.message : String(error)}`)
+    throw new Error(
+      `manifest is not JSON: ${error instanceof Error ? error.message : String(error)}`,
+    )
   }
-  if (typeof o !== "object" || o === null || Array.isArray(o)) throw new Error("manifest is not an object")
+  if (typeof o !== "object" || o === null || Array.isArray(o))
+    throw new Error("manifest is not an object")
   const r = o as Record<string, unknown>
   const str = (k: string): string => {
     const v = r[k]
-    if (typeof v !== "string" || v === "") throw new Error(`manifest.${k} must be a non-empty string`)
+    if (typeof v !== "string" || v === "")
+      throw new Error(`manifest.${k} must be a non-empty string`)
     return v
   }
   const name = str("name")
@@ -121,32 +157,52 @@ export function parseManifest(text: string): Manifest {
   if (err !== null) throw new Error(`manifest.name: ${err}`)
   const kind = str("kind")
   if (!(SAVE_KINDS as readonly string[]).includes(kind)) {
-    throw new Error(`manifest.kind must be one of ${SAVE_KINDS.join(", ")}, got "${kind}"`)
+    throw new Error(
+      `manifest.kind must be one of ${SAVE_KINDS.join(", ")}, got "${kind}"`,
+    )
   }
   const createdAt = str("createdAt")
-  if (Number.isNaN(Date.parse(createdAt))) throw new Error(`manifest.createdAt is not a date: "${createdAt}"`)
+  if (Number.isNaN(Date.parse(createdAt)))
+    throw new Error(`manifest.createdAt is not a date: "${createdAt}"`)
   const bytes = r["bytes"]
   if (typeof bytes !== "number" || !Number.isFinite(bytes) || bytes < 0) {
     throw new Error("manifest.bytes must be a non-negative number")
   }
   const note = r["note"]
-  if (note !== undefined && typeof note !== "string") throw new Error("manifest.note must be a string")
+  if (note !== undefined && typeof note !== "string")
+    throw new Error("manifest.note must be a string")
   const format = r["format"]
-  if (format !== undefined && !(RAM_FORMATS as readonly unknown[]).includes(format)) {
-    throw new Error(`manifest.format must be one of ${RAM_FORMATS.join(", ")}, got ${JSON.stringify(format)}`)
+  if (
+    format !== undefined &&
+    !(RAM_FORMATS as readonly unknown[]).includes(format)
+  ) {
+    throw new Error(
+      `manifest.format must be one of ${RAM_FORMATS.join(", ")}, got ${JSON.stringify(format)}`,
+    )
   }
   const hw = r["hardware"]
   if (hw !== undefined) {
     const h = hw as Record<string, unknown> | null
-    const whole = (v: unknown): boolean => typeof v === "number" && Number.isInteger(v) && v > 0
-    if (typeof hw !== "object" || h === null || !whole(h["cpus"]) || !whole(h["memoryMiB"])) {
-      throw new Error("manifest.hardware must be { cpus, memoryMiB }, positive whole numbers")
+    const whole = (v: unknown): boolean =>
+      typeof v === "number" && Number.isInteger(v) && v > 0
+    if (
+      typeof hw !== "object" ||
+      h === null ||
+      !whole(h["cpus"]) ||
+      !whole(h["memoryMiB"])
+    ) {
+      throw new Error(
+        "manifest.hardware must be { cpus, memoryMiB }, positive whole numbers",
+      )
     }
   }
   let display: DisplayConfig | undefined
   if (Object.hasOwn(r, "display")) {
     const parsed = parseDisplayConfig(r["display"])
-    if (parsed === null) throw new Error("manifest.display must be ramfb or virtio-gpu (optionally with a legacySize of whole numbers)")
+    if (parsed === null)
+      throw new Error(
+        "manifest.display must be ramfb or virtio-gpu (optionally with a legacySize of whole numbers)",
+      )
     display = parsed
   }
   return {
@@ -162,11 +218,23 @@ export function parseManifest(text: string): Manifest {
   }
 }
 
-export const saveHardware = (m: Pick<Manifest, "hardware">): Hardware => (m.hardware === undefined ? LEGACY : hardwareFrom(m.hardware))
+export const saveHardware = (m: Pick<Manifest, "hardware">): Hardware =>
+  m.hardware === undefined ? LEGACY : hardwareFrom(m.hardware)
 
-const sha = (s: string | Buffer): string => createHash("sha256").update(s).digest("hex")
+const sha = (s: string | Buffer): string =>
+  createHash("sha256").update(s).digest("hex")
 
-const PLUMBING = new Set(["-name", "-vnc", "-qmp", "-serial", "-pidfile", "-display", "-loadvm", "-incoming", "-rtc"])
+const PLUMBING = new Set([
+  "-name",
+  "-vnc",
+  "-qmp",
+  "-serial",
+  "-pidfile",
+  "-display",
+  "-loadvm",
+  "-incoming",
+  "-rtc",
+])
 
 export function hardwareArgs(argv: readonly string[]): readonly string[] {
   const out: string[] = []
@@ -178,32 +246,64 @@ export function hardwareArgs(argv: readonly string[]): readonly string[] {
       i += 1
       continue
     }
-    out.push(a.split(",").map((kv) => kv.replace(/^(file|path)=.*$/, "$1=*")).join(","))
+    out.push(
+      a
+        .split(",")
+        .map((kv) => kv.replace(/^(file|path)=.*$/, "$1=*"))
+        .join(","),
+    )
   }
   return out
 }
 
-export function baseIdentity(image: string, size: number, mtimeMs: number, created: string): string {
-  return sha(JSON.stringify([image, size, Math.round(mtimeMs), created])).slice(0, 16)
+export function baseIdentity(
+  image: string,
+  size: number,
+  mtimeMs: number,
+  created: string,
+): string {
+  return sha(JSON.stringify([image, size, Math.round(mtimeMs), created])).slice(
+    0,
+    16,
+  )
 }
 
 export function compatHash(parts: CompatParts): string {
-  return sha(JSON.stringify(["winvm-save-v1", parts.base, parts.hardware, parts.firmware, parts.qemu])).slice(0, 16)
+  return sha(
+    JSON.stringify([
+      "winvm-save-v1",
+      parts.base,
+      parts.hardware,
+      parts.firmware,
+      parts.qemu,
+    ]),
+  ).slice(0, 16)
 }
 
-export function compatDiff(saved: CompatParts, now: CompatParts): readonly string[] {
+export function compatDiff(
+  saved: CompatParts,
+  now: CompatParts,
+): readonly string[] {
   const out: string[] = []
-  if (saved.base !== now.base) out.push("the base image was rebuilt or replaced")
-  if (saved.hardware !== now.hardware) out.push("the virtual hardware (QEMU arguments) changed")
+  if (saved.base !== now.base)
+    out.push("the base image was rebuilt or replaced")
+  if (saved.hardware !== now.hardware)
+    out.push("the virtual hardware (QEMU arguments) changed")
   if (saved.firmware !== now.firmware) out.push("the UEFI firmware changed")
-  if (saved.qemu !== now.qemu) out.push(`QEMU changed (${saved.qemu} -> ${now.qemu})`)
+  if (saved.qemu !== now.qemu)
+    out.push(`QEMU changed (${saved.qemu} -> ${now.qemu})`)
   return out
 }
 
 export type CompatPart = keyof CompatParts
 
-export function compatDiffKeys(saved: CompatParts, now: CompatParts): CompatPart[] {
-  return (["base", "hardware", "firmware", "qemu"] as const).filter((k) => saved[k] !== now[k])
+export function compatDiffKeys(
+  saved: CompatParts,
+  now: CompatParts,
+): CompatPart[] {
+  return (["base", "hardware", "firmware", "qemu"] as const).filter(
+    (k) => saved[k] !== now[k],
+  )
 }
 
 export function formatBytes(n: number): string {
@@ -220,7 +320,9 @@ export function formatBytes(n: number): string {
 
 export const shQuote = (s: string): string => `'${s.replaceAll("'", `'\\''`)}'`
 
-export function ramFormatOf(m: Pick<Manifest, "format" | "ramFile">): RamFormat {
+export function ramFormatOf(
+  m: Pick<Manifest, "format" | "ramFile">,
+): RamFormat {
   if (m.format !== undefined) return m.format
   if (m.ramFile === FILES.ramRaw) return "raw"
   if (m.ramFile === FILES.ramMapped) return "mapped"
@@ -231,19 +333,29 @@ export const ramFileFor = (f: RamFormat): string =>
   f === "mapped" ? FILES.ramMapped : f === "raw" ? FILES.ramRaw : FILES.ram
 
 export interface MigrationPlan {
-  readonly capabilities: readonly { readonly capability: string; readonly state: boolean }[]
+  readonly capabilities: readonly {
+    readonly capability: string
+    readonly state: boolean
+  }[]
   readonly parameters: Readonly<Record<string, unknown>>
   readonly uri: string
   readonly incoming: string
 }
 
-export function migrationPlan(format: RamFormat, ramPath: string, zstd: string, channels = MULTIFD_CHANNELS): MigrationPlan {
+export function migrationPlan(
+  format: RamFormat,
+  ramPath: string,
+  zstd: string,
+  channels = MULTIFD_CHANNELS,
+): MigrationPlan {
   const mapped = format === "mapped"
   const capabilities = [
     { capability: "mapped-ram", state: mapped },
     { capability: "multifd", state: mapped },
   ]
-  const parameters: Record<string, unknown> = { "max-bandwidth": 64 * 1024 ** 3 }
+  const parameters: Record<string, unknown> = {
+    "max-bandwidth": 64 * 1024 ** 3,
+  }
   if (mapped) parameters["multifd-channels"] = channels
   switch (format) {
     case "zstd":
@@ -254,9 +366,19 @@ export function migrationPlan(format: RamFormat, ramPath: string, zstd: string, 
         incoming: `exec:${shQuote(zstd)} -dc ${shQuote(ramPath)}`,
       }
     case "raw":
-      return { capabilities, parameters, uri: `file:${ramPath}`, incoming: `file:${ramPath}` }
+      return {
+        capabilities,
+        parameters,
+        uri: `file:${ramPath}`,
+        incoming: `file:${ramPath}`,
+      }
     case "mapped":
-      return { capabilities, parameters, uri: `file:${ramPath}`, incoming: "defer" }
+      return {
+        capabilities,
+        parameters,
+        uri: `file:${ramPath}`,
+        incoming: "defer",
+      }
   }
 }
 
@@ -273,8 +395,7 @@ export function currentCompat(
   let created = ""
   try {
     created = readFileSync(imageMetaPath(meta.image), "utf8")
-  } catch {
-  }
+  } catch {}
   firmwareDigest ??= sha(readFileSync(requireFirmware().code)).slice(0, 16)
   qemuVersion ??= currentQemuCompat()
   const argv = qemu.qemuArgs(instance, pathsFor(instance), meta, {
@@ -302,17 +423,31 @@ export function compatFor(
   return { ...currentCompat(instance, meta, display, saveHardware(m)), display }
 }
 
-export function hardwareBeforeDevices(instance: string, meta: InstanceMeta, hardware: Hardware = LEGACY): string | null {
-  const o = { installMedia: false, ephemeral: false, virtioBoot: readImageMeta(meta.image)?.virtioBoot === true, hardware }
+export function hardwareBeforeDevices(
+  instance: string,
+  meta: InstanceMeta,
+  hardware: Hardware = LEGACY,
+): string | null {
+  const o = {
+    installMedia: false,
+    ephemeral: false,
+    virtioBoot: readImageMeta(meta.image)?.virtioBoot === true,
+    hardware,
+  }
   const p = pathsFor(instance)
   const now = qemu.qemuArgs(instance, p, meta, o)
-  const before = qemu.qemuArgs(instance, p, meta, { ...o, shareDevices: "none" })
+  const before = qemu.qemuArgs(instance, p, meta, {
+    ...o,
+    shareDevices: "none",
+  })
   if (now.join(" ") === before.join(" ")) return null
   return sha(JSON.stringify(hardwareArgs(before))).slice(0, 16)
 }
 
-export const takenBeforeDevices = (m: Pick<Manifest, "compatParts">, before: string | null): boolean =>
-  before !== null && m.compatParts?.hardware === before
+export const takenBeforeDevices = (
+  m: Pick<Manifest, "compatParts">,
+  before: string | null,
+): boolean => before !== null && m.compatParts?.hardware === before
 
 export function strandedByDevices(instance: string): readonly string[] {
   const meta = readMeta(instance)
@@ -324,10 +459,17 @@ export function strandedByDevices(instance: string): readonly string[] {
     return []
   }
   if (before === null) return []
-  return listSaves(instance).flatMap((s) => (s.manifest !== null && takenBeforeDevices(s.manifest, before) ? [s.name] : []))
+  return listSaves(instance).flatMap((s) =>
+    s.manifest !== null && takenBeforeDevices(s.manifest, before)
+      ? [s.name]
+      : [],
+  )
 }
 
-export function strandedNote(instance: string, names: readonly string[]): string | null {
+export function strandedNote(
+  instance: string,
+  names: readonly string[],
+): string | null {
   if (names.length === 0) return null
   const flag = instance === "default" ? "" : ` -i ${instance}`
   return (
@@ -345,13 +487,20 @@ export interface Listed {
 
 export function readSave(instance: string, name: string): Manifest | null {
   try {
-    return parseManifest(readFileSync(resolve(saveDir(instance, name), FILES.manifest), "utf8"))
+    return parseManifest(
+      readFileSync(resolve(saveDir(instance, name), FILES.manifest), "utf8"),
+    )
   } catch {
     return null
   }
 }
 
-export type IncompatibleReason = "base" | "hardware" | "display" | "firmware" | "qemu"
+export type IncompatibleReason =
+  | "base"
+  | "hardware"
+  | "display"
+  | "firmware"
+  | "qemu"
 
 export interface SaveEntry {
   readonly name: string
@@ -376,22 +525,39 @@ export interface ReportContext {
   readonly beforeDevices?: string | null
   readonly file?: (save: string, file: string) => string | null
   readonly note?: (save: string) => Note | null
-  readonly at?: (hw: Hardware, display?: DisplayConfig, image?: string) => Pick<ReportContext, "compat" | "displayHardware">
+  readonly at?: (
+    hw: Hardware,
+    display?: DisplayConfig,
+    image?: string,
+  ) => Pick<ReportContext, "compat" | "displayHardware">
 }
 
 const contextFor = (m: Manifest, ctx: ReportContext): ReportContext =>
-  ctx.at === undefined ? ctx : { ...ctx, ...ctx.at(saveHardware(m), m.display, m.image) }
+  ctx.at === undefined
+    ? ctx
+    : { ...ctx, ...ctx.at(saveHardware(m), m.display, m.image) }
 
 function reasons(m: Manifest, ctx: ReportContext): IncompatibleReason[] | null {
-  if (ctx.compat === null || m.compat === ctx.compat.hash || m.compatParts === undefined) return null
+  if (
+    ctx.compat === null ||
+    m.compat === ctx.compat.hash ||
+    m.compatParts === undefined
+  )
+    return null
   const saved = m.compatParts
-  const out = compatDiffKeys(saved, ctx.compat.parts).map((k): IncompatibleReason =>
-    k === "hardware" && (ctx.displayHardware ?? []).includes(saved.hardware) ? "display" : k,
+  const out = compatDiffKeys(saved, ctx.compat.parts).map(
+    (k): IncompatibleReason =>
+      k === "hardware" && (ctx.displayHardware ?? []).includes(saved.hardware)
+        ? "display"
+        : k,
   )
   return out.length > 0 ? out : null
 }
 
-export function savesReport(rows: readonly Listed[], ctx: ReportContext): SaveEntry[] {
+export function savesReport(
+  rows: readonly Listed[],
+  ctx: ReportContext,
+): SaveEntry[] {
   const file = ctx.file ?? ((): null => null)
   const note = ctx.note ?? ((): null => null)
   return rows.flatMap((r) => {
@@ -410,7 +576,9 @@ export function savesReport(rows: readonly Listed[], ctx: ReportContext): SaveEn
         compatible: c.compat === null ? null : m.compat === c.compat.hash,
         ...(differ === null ? {} : { incompatible: differ }),
         ...(m.note === undefined ? {} : { note: m.note }),
-        ...(c.compat !== null && m.compat !== c.compat.hash && takenBeforeDevices(m, ctx.beforeDevices ?? null)
+        ...(c.compat !== null &&
+        m.compat !== c.compat.hash &&
+        takenBeforeDevices(m, ctx.beforeDevices ?? null)
           ? { why: "taken before the shared folder and clipboard devices" }
           : {}),
         screenshot: file(r.name, FILES.screen),
@@ -423,16 +591,31 @@ export function savesReport(rows: readonly Listed[], ctx: ReportContext): SaveEn
   })
 }
 
-export function saveFile(instance: string, save: string, file: string): string | null {
+export function saveFile(
+  instance: string,
+  save: string,
+  file: string,
+): string | null {
   const path = resolve(saveDir(instance, save), file)
   return existsSync(path) ? path : null
 }
 
 export function reportContext(instance: string): ReportContext {
   const meta = readMeta(instance)
-  const measured = new Map<string, Pick<ReportContext, "compat" | "displayHardware">>()
-  const at = (hw?: Hardware, shown?: DisplayConfig, image?: string): Pick<ReportContext, "compat" | "displayHardware"> => {
-    const standIn: InstanceMeta | null = meta ?? (shown !== undefined && image !== undefined ? { image, vnc: 0, created: "" } : null)
+  const measured = new Map<
+    string,
+    Pick<ReportContext, "compat" | "displayHardware">
+  >()
+  const at = (
+    hw?: Hardware,
+    shown?: DisplayConfig,
+    image?: string,
+  ): Pick<ReportContext, "compat" | "displayHardware"> => {
+    const standIn: InstanceMeta | null =
+      meta ??
+      (shown !== undefined && image !== undefined
+        ? { image, vnc: 0, created: "" }
+        : null)
     const key = [
       hw === undefined ? "" : `${String(hw.cpus)}/${String(hw.memoryMiB)}`,
       shown === undefined ? "" : displayArgs(shown).join(" "),
@@ -450,8 +633,7 @@ export function reportContext(instance: string): ReportContext {
           .filter((d) => !sameDevice(d, own))
           .map((d) => currentCompat(instance, standIn, d, hw).parts.hardware)
       }
-    } catch {
-    }
+    } catch {}
     const out = { compat, displayHardware }
     measured.set(key, out)
     return out
@@ -459,8 +641,7 @@ export function reportContext(instance: string): ReportContext {
   let beforeDevices: string | null = null
   try {
     if (meta !== null) beforeDevices = hardwareBeforeDevices(instance, meta)
-  } catch {
-  }
+  } catch {}
   return {
     ...at(),
     beforeDevices,
@@ -480,15 +661,30 @@ export function listSaves(instance: string): readonly Listed[] {
   const out: Listed[] = []
   for (const name of names.filter((n) => !n.startsWith(".")).sort()) {
     try {
-      out.push({ name, manifest: parseManifest(readFileSync(resolve(saveDir(instance, name), FILES.manifest), "utf8")) })
+      out.push({
+        name,
+        manifest: parseManifest(
+          readFileSync(
+            resolve(saveDir(instance, name), FILES.manifest),
+            "utf8",
+          ),
+        ),
+      })
     } catch (error) {
-      out.push({ name, manifest: null, error: error instanceof Error ? error.message : String(error) })
+      out.push({
+        name,
+        manifest: null,
+        error: error instanceof Error ? error.message : String(error),
+      })
     }
   }
-  return out.sort((a, b) => (a.manifest?.createdAt ?? "").localeCompare(b.manifest?.createdAt ?? ""))
+  return out.sort((a, b) =>
+    (a.manifest?.createdAt ?? "").localeCompare(b.manifest?.createdAt ?? ""),
+  )
 }
 
-export const hasSave = (instance: string, name: string): boolean => readSave(instance, name) !== null
+export const hasSave = (instance: string, name: string): boolean =>
+  readSave(instance, name) !== null
 
 export function removeSave(instance: string, name: string): void {
   rmSync(saveDir(instance, name), { recursive: true, force: true })
@@ -499,15 +695,13 @@ export function removeAllSaves(instance: string): void {
   rmSync(savesDir(instance), { recursive: true, force: true })
   try {
     removeNotes(instance)
-  } catch {
-  }
+  } catch {}
 }
 
 function forgetNote(instance: string, name: string): void {
   try {
     removeNote(instance, name)
-  } catch {
-  }
+  } catch {}
 }
 
 function readNoteSafe(instance: string, name: string): Note | null {
@@ -518,24 +712,39 @@ function readNoteSafe(instance: string, name: string): Note | null {
   }
 }
 
-const pendingMarker = (instance: string): string => resolve(instanceDir(instance), "baseline.pending")
-export const markPristine = (instance: string): void => { writeFileSync(pendingMarker(instance), `${new Date().toISOString()}\n`) }
-export const isPristine = (instance: string): boolean => existsSync(pendingMarker(instance))
-export const clearPristine = (instance: string): void => { rmSync(pendingMarker(instance), { force: true }) }
+const pendingMarker = (instance: string): string =>
+  resolve(instanceDir(instance), "baseline.pending")
+export const markPristine = (instance: string): void => {
+  writeFileSync(pendingMarker(instance), `${new Date().toISOString()}\n`)
+}
+export const isPristine = (instance: string): boolean =>
+  existsSync(pendingMarker(instance))
+export const clearPristine = (instance: string): void => {
+  rmSync(pendingMarker(instance), { force: true })
+}
 
-const sleep = async (ms: number): Promise<void> => { await new Promise((r) => setTimeout(r, ms)) }
+const sleep = async (ms: number): Promise<void> => {
+  await new Promise((r) => setTimeout(r, ms))
+}
 
 export function cloneFile(src: string, dst: string): void {
   rmSync(dst, { force: true })
-  if (spawnSync("cp", ["-c", src, dst], { stdio: "ignore" }).status === 0) return
-  if (spawnSync("cp", [src, dst], { stdio: "inherit" }).status !== 0) throw new Error(`could not copy ${src} -> ${dst}`)
+  if (spawnSync("cp", ["-c", src, dst], { stdio: "ignore" }).status === 0)
+    return
+  if (spawnSync("cp", [src, dst], { stdio: "inherit" }).status !== 0)
+    throw new Error(`could not copy ${src} -> ${dst}`)
 }
 
-export const thumbSize = (native: Size, box: Size = THUMB_BOX): Size => scaled(native, fitScale(native, box))
+export const thumbSize = (native: Size, box: Size = THUMB_BOX): Size =>
+  scaled(native, fitScale(native, box))
 
 const SCREEN_PPM = ".screen.ppm"
 
-export async function captureScreen(qmpPath: string, dir: string, timeoutMs = 5000): Promise<string | null> {
+export async function captureScreen(
+  qmpPath: string,
+  dir: string,
+  timeoutMs = 5000,
+): Promise<string | null> {
   const file = resolve(dir, SCREEN_PPM)
   try {
     await qmp.execute(qmpPath, "screendump", { filename: file }, timeoutMs)
@@ -576,18 +785,28 @@ const allocated = (f: string): number => {
 export function isEphemeral(p: Paths): boolean {
   const pid = qemu.pidOf(p)
   if (pid === null) return false
-  return / -snapshot( |$)/.test(capture("ps", ["-o", "command=", "-p", String(pid)]))
+  return / -snapshot( |$)/.test(
+    capture("ps", ["-o", "command=", "-p", String(pid)]),
+  )
 }
 
-async function waitMigration(p: Paths, timeoutMs: number): Promise<Record<string, unknown>> {
+async function waitMigration(
+  p: Paths,
+  timeoutMs: number,
+): Promise<Record<string, unknown>> {
   const deadline = Date.now() + timeoutMs
   while (Date.now() < deadline) {
-    const r = (await qmp.execute(p.qmp, "query-migrate")) as Record<string, unknown>
+    const r = (await qmp.execute(p.qmp, "query-migrate")) as Record<
+      string,
+      unknown
+    >
     const s = r["status"]
     if (s === "completed") return r
     if (s === "failed" || s === "cancelled") {
       const detail = r["error-desc"]
-      throw new Error(`migration ${s}: ${typeof detail === "string" ? detail : "no detail"}`)
+      throw new Error(
+        `migration ${s}: ${typeof detail === "string" ? detail : "no detail"}`,
+      )
     }
     await sleep(250)
   }
@@ -600,8 +819,7 @@ export async function quitQemu(p: Paths, timeoutMs = 120_000): Promise<void> {
   finder.beforeDown(instanceOf(p))
   try {
     await qmp.execute(p.qmp, "quit", undefined, 20_000)
-  } catch {
-  }
+  } catch {}
   const deadline = Date.now() + timeoutMs
   while (Date.now() < deadline) {
     if (qemu.pidOf(p) === null) {
@@ -630,19 +848,36 @@ export interface CreateResult {
   readonly resumed: boolean
 }
 
-export const createSave = async (instance: string, o: CreateOptions): Promise<CreateResult> =>
-  await withOperation(instance, o.kind === "stow" ? "stow" : "save", async () => await createSaveHeld(instance, o))
+export const createSave = async (
+  instance: string,
+  o: CreateOptions,
+): Promise<CreateResult> =>
+  await withOperation(
+    instance,
+    o.kind === "stow" ? "stow" : "save",
+    async () => await createSaveHeld(instance, o),
+  )
 
-async function createSaveHeld(instance: string, o: CreateOptions): Promise<CreateResult> {
+async function createSaveHeld(
+  instance: string,
+  o: CreateOptions,
+): Promise<CreateResult> {
   const p = pathsFor(instance)
   const meta = readMeta(instance)
   if (meta === null) throw new Error(`no such instance "${instance}"`)
-  if (!qemu.isRunning(p)) throw new Error(`instance "${instance}" is not running — a save captures a live guest`)
-  if (isEphemeral(p)) throw new Error(`instance "${instance}" is --ephemeral; its disk changes are not durable, so it cannot be saved`)
+  if (!qemu.isRunning(p))
+    throw new Error(
+      `instance "${instance}" is not running — a save captures a live guest`,
+    )
+  if (isEphemeral(p))
+    throw new Error(
+      `instance "${instance}" is --ephemeral; its disk changes are not durable, so it cannot be saved`,
+    )
   const nameErr = nameError(o.name)
   if (nameErr !== null) throw new Error(nameErr)
   const pid = qemu.pidOf(p)
-  const hardware = (pid === null ? null : runningHardware(pid)) ?? readHardware(p)
+  const hardware =
+    (pid === null ? null : runningHardware(pid)) ?? readHardware(p)
   const command = pid === null ? null : runningCommand(pid)
   const display = command === null ? null : displayFromCommandLine(command)
   if (command === null || display === null) {
@@ -655,7 +890,8 @@ async function createSaveHeld(instance: string, o: CreateOptions): Promise<Creat
             "Nothing was saved. Stop it, run `winvm display virtio-gpu` (or `winvm display ramfb`) to reset the display, and start it again",
     )
   }
-  const replayShares = qemu.launchDevices(p, { installMedia: false, display }).devices !== "none"
+  const replayShares =
+    qemu.launchDevices(p, { installMedia: false, display }).devices !== "none"
   if (sharesFolderFromCommandLine(command) !== replayShares) {
     throw new Error(
       `"${instance}" is running a temporary setup configuration (its shared folder devices differ from what restoring a ${display.device} guest launches, as during \`winvm share install\`), ` +
@@ -664,7 +900,10 @@ async function createSaveHeld(instance: string, o: CreateOptions): Promise<Creat
   }
   const compat = currentCompat(instance, meta, display, hardware)
 
-  const tmp = resolve(savesDir(instance), `.${o.name}.partial-${String(process.pid)}`)
+  const tmp = resolve(
+    savesDir(instance),
+    `.${o.name}.partial-${String(process.pid)}`,
+  )
   rmSync(tmp, { recursive: true, force: true })
   mkdirSync(tmp, { recursive: true })
   const format: RamFormat = o.format ?? (o.compress === false ? "raw" : "zstd")
@@ -681,7 +920,9 @@ async function createSaveHeld(instance: string, o: CreateOptions): Promise<Creat
   try {
     if (wasRunning) await qmp.execute(p.qmp, "stop")
     ppm = await captureScreen(p.qmp, tmp)
-    await qmp.execute(p.qmp, "migrate-set-capabilities", { capabilities: plan.capabilities })
+    await qmp.execute(p.qmp, "migrate-set-capabilities", {
+      capabilities: plan.capabilities,
+    })
     await qmp.execute(p.qmp, "migrate-set-parameters", plan.parameters)
     await qmp.execute(p.qmp, "migrate", { uri: plan.uri })
     migrated = await waitMigration(p, 30 * 60_000)
@@ -706,7 +947,10 @@ async function createSaveHeld(instance: string, o: CreateOptions): Promise<Creat
   const screen = ppm === null ? null : writeScreenshots(ppm, tmp)
 
   const ramBytes = allocated(ramPath)
-  const bytes = ramBytes + allocated(resolve(tmp, FILES.overlay)) + allocated(resolve(tmp, FILES.vars))
+  const bytes =
+    ramBytes +
+    allocated(resolve(tmp, FILES.overlay)) +
+    allocated(resolve(tmp, FILES.vars))
   const manifest: Manifest = {
     name: o.name,
     instance,
@@ -723,37 +967,65 @@ async function createSaveHeld(instance: string, o: CreateOptions): Promise<Creat
     format,
     hardware,
     display,
-    ...(screen === null ? {} : { screenshot: FILES.screen, thumbnail: FILES.thumb, screenSize: screen }),
+    ...(screen === null
+      ? {}
+      : {
+          screenshot: FILES.screen,
+          thumbnail: FILES.thumb,
+          screenSize: screen,
+        }),
   }
-  writeFileSync(resolve(tmp, FILES.manifest), `${JSON.stringify(manifest, null, 2)}\n`)
+  writeFileSync(
+    resolve(tmp, FILES.manifest),
+    `${JSON.stringify(manifest, null, 2)}\n`,
+  )
 
   const final = saveDir(instance, o.name)
-  const old = resolve(savesDir(instance), `.${o.name}.old-${String(process.pid)}`)
+  const old = resolve(
+    savesDir(instance),
+    `.${o.name}.old-${String(process.pid)}`,
+  )
   const replaced = existsSync(final)
   if (replaced) renameSync(final, old)
   renameSync(tmp, final)
   rmSync(old, { recursive: true, force: true })
   if (replaced) forgetNote(instance, o.name)
 
-  const ram = migrated["ram"] as { transferred?: number; total?: number } | undefined
-  return { manifest, rawRamBytes: ram?.transferred ?? 0, resumed: wasRunning && o.quitAfter !== true }
+  const ram = migrated["ram"] as
+    | { transferred?: number; total?: number }
+    | undefined
+  return {
+    manifest,
+    rawRamBytes: ram?.transferred ?? 0,
+    resumed: wasRunning && o.quitAfter !== true,
+  }
 }
 
 export class IncompatibleSave extends Error {}
 
-export async function cloneSave(from: string, to: string, name: string): Promise<Manifest> {
+export async function cloneSave(
+  from: string,
+  to: string,
+  name: string,
+): Promise<Manifest> {
   const m = readSave(from, name)
   if (m === null) throw new Error(`instance "${from}" has no save "${name}"`)
-  if (readMeta(to) === null) ensureInstance(to, m.image, readDisplay(pathsFor(from)))
+  if (readMeta(to) === null)
+    ensureInstance(to, m.image, readDisplay(pathsFor(from)))
   const meta = readMeta(to)
   if (meta === null) throw new Error(`could not create instance "${to}"`)
   if (meta.image !== m.image) {
-    throw new IncompatibleSave(`save "${name}" is of image "${m.image}", but instance "${to}" runs "${meta.image}"`)
+    throw new IncompatibleSave(
+      `save "${name}" is of image "${m.image}", but instance "${to}" runs "${meta.image}"`,
+    )
   }
   const now = compatFor(to, meta, m)
   if (now.hash !== m.compat) {
-    const why = m.compatParts === undefined ? [] : compatDiff(m.compatParts, now.parts)
-    throw new IncompatibleSave(`"${to}" differs from "${from}"${why.length > 0 ? `: ${why.join("; ")}` : ""}`)
+    const why =
+      m.compatParts === undefined ? [] : compatDiff(m.compatParts, now.parts)
+    throw new IncompatibleSave(
+      `"${to}" differs from "${from}"${why.length > 0 ? `: ${why.join("; ")}` : ""}`,
+    )
   }
   const src = saveDir(from, name)
   return await withOperation(to, "save", () => {
@@ -765,8 +1037,15 @@ export async function cloneSave(from: string, to: string, name: string): Promise
         if (f.startsWith(".") || f === FILES.manifest) continue
         cloneFile(resolve(src, f), resolve(tmp, f))
       }
-      const copy = { ...m, instance: to, clonedFrom: { instance: from, createdAt: m.createdAt } }
-      writeFileSync(resolve(tmp, FILES.manifest), `${JSON.stringify(copy, null, 2)}\n`)
+      const copy = {
+        ...m,
+        instance: to,
+        clonedFrom: { instance: from, createdAt: m.createdAt },
+      }
+      writeFileSync(
+        resolve(tmp, FILES.manifest),
+        `${JSON.stringify(copy, null, 2)}\n`,
+      )
     } catch (error) {
       rmSync(tmp, { recursive: true, force: true })
       throw error
@@ -778,34 +1057,51 @@ export async function cloneSave(from: string, to: string, name: string): Promise
     rmSync(old, { recursive: true, force: true })
     try {
       copyNote(from, to, name)
-    } catch {
-    }
+    } catch {}
     return parseManifest(readFileSync(resolve(final, FILES.manifest), "utf8"))
   })
 }
 
-export const loadSave = async (instance: string, name: string): Promise<Manifest> =>
-  await withOperation(instance, "load", async () => await loadSaveHeld(instance, name))
+export const loadSave = async (
+  instance: string,
+  name: string,
+): Promise<Manifest> =>
+  await withOperation(
+    instance,
+    "load",
+    async () => await loadSaveHeld(instance, name),
+  )
 
 async function loadSaveHeld(instance: string, name: string): Promise<Manifest> {
   const m = readSave(instance, name)
-  if (m === null) throw new Error(`instance "${instance}" has no save "${name}" — \`winvm saves -i ${instance}\``)
+  if (m === null)
+    throw new Error(
+      `instance "${instance}" has no save "${name}" — \`winvm saves -i ${instance}\``,
+    )
   const created = readMeta(instance) === null
   if (created) ensureInstance(instance, m.image)
   const meta = readMeta(instance)
   if (meta === null) throw new Error(`no such instance "${instance}"`)
   if (meta.image !== m.image) {
-    throw new IncompatibleSave(`save "${name}" is of image "${m.image}", but instance "${instance}" runs "${meta.image}"`)
+    throw new IncompatibleSave(
+      `save "${name}" is of image "${m.image}", but instance "${instance}" runs "${meta.image}"`,
+    )
   }
   const now = compatFor(instance, meta, m)
   if (m.compat !== now.hash) {
     const devices = takenBeforeDevices(m, hardwareBeforeDevices(instance, meta))
-    const diff = m.compatParts === undefined ? [] : compatDiff(m.compatParts, now.parts)
+    const diff =
+      m.compatParts === undefined ? [] : compatDiff(m.compatParts, now.parts)
     const why = diff.map((w) =>
-      devices && w === "the virtual hardware (QEMU arguments) changed" ? "it was taken before winvm added the shared folder and clipboard devices" : w,
+      devices && w === "the virtual hardware (QEMU arguments) changed"
+        ? "it was taken before winvm added the shared folder and clipboard devices"
+        : w,
     )
     const manual =
-      m.display === undefined && !devices && (m.compatParts === undefined || diff.some((w) => w.startsWith("the virtual hardware")))
+      m.display === undefined &&
+      !devices &&
+      (m.compatParts === undefined ||
+        diff.some((w) => w.startsWith("the virtual hardware")))
         ? `; it has no recorded display, so it loads only while the instance's display is the one it was taken on — \`winvm display ramfb|virtio-gpu\` (stopped) sets it`
         : ""
     throw new IncompatibleSave(
@@ -820,8 +1116,13 @@ async function loadSaveHeld(instance: string, name: string): Promise<Manifest> {
   const ramFile = m.ramFile ?? ramFileFor(format)
   const ramPath = resolve(dir, ramFile)
   const plan = migrationPlan(format, ramPath, runtimeBin("zstd"))
-  for (const f of [ramPath, resolve(dir, FILES.overlay), resolve(dir, FILES.vars)]) {
-    if (!existsSync(f)) throw new Error(`save "${name}" is incomplete: ${f} is missing`)
+  for (const f of [
+    ramPath,
+    resolve(dir, FILES.overlay),
+    resolve(dir, FILES.vars),
+  ]) {
+    if (!existsSync(f))
+      throw new Error(`save "${name}" is incomplete: ${f} is missing`)
   }
 
   const p = pathsFor(instance)
@@ -844,7 +1145,9 @@ async function loadSaveHeld(instance: string, name: string): Promise<Manifest> {
     display: now.display,
   })
   if (plan.incoming === "defer") {
-    await qmp.execute(p.qmp, "migrate-set-capabilities", { capabilities: plan.capabilities })
+    await qmp.execute(p.qmp, "migrate-set-capabilities", {
+      capabilities: plan.capabilities,
+    })
     await qmp.execute(p.qmp, "migrate-set-parameters", plan.parameters)
     await qmp.execute(p.qmp, "migrate-incoming", { uri: plan.uri })
   }
@@ -854,21 +1157,24 @@ async function loadSaveHeld(instance: string, name: string): Promise<Manifest> {
       let why = ""
       try {
         why = readFileSync(p.qemuLog, "utf8").trim()
-      } catch {
-      }
-      throw new Error(`QEMU exited while loading save "${name}"${why === "" ? "" : `:\n  ${why.split("\n").join("\n  ")}`}`)
+      } catch {}
+      throw new Error(
+        `QEMU exited while loading save "${name}"${why === "" ? "" : `:\n  ${why.split("\n").join("\n  ")}`}`,
+      )
     }
     let s = "unknown"
     try {
       s = await qmp.status(p.qmp)
-    } catch {
-    }
+    } catch {}
     if (s === "running") break
     if (s === "paused" || s === "postmigrate" || s === "prelaunch") {
       await qmp.execute(p.qmp, "cont")
       break
     }
-    if (Date.now() > deadline) throw new Error(`loading save "${name}" did not finish in time (state: ${s})`)
+    if (Date.now() > deadline)
+      throw new Error(
+        `loading save "${name}" did not finish in time (state: ${s})`,
+      )
     await sleep(50)
   }
   return m

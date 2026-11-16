@@ -9,7 +9,14 @@ import { frozenFrom, markedAsleep } from "./frozen"
 import { qmpCommand } from "./monitor"
 import { readOperation, savingRunning } from "./operation"
 import type { OperationInfo } from "./operation"
-import { home, instanceDir, listInstances, pathsFor, readImageMeta, readMeta } from "./paths"
+import {
+  home,
+  instanceDir,
+  listInstances,
+  pathsFor,
+  readImageMeta,
+  readMeta,
+} from "./paths"
 import type { Paths } from "./paths"
 import * as qemu from "./qemu"
 import { readService } from "./servicectl"
@@ -17,7 +24,13 @@ import * as timemachine from "./timemachine"
 import { vncPort, websocketPort } from "./vnc"
 import { spawnText } from "./shell"
 
-export type State = "running" | "paused" | "asleep" | "stopped" | "stowed" | "missing"
+export type State =
+  | "running"
+  | "paused"
+  | "asleep"
+  | "stopped"
+  | "stowed"
+  | "missing"
 
 export interface SaveInfo {
   readonly name: string
@@ -33,8 +46,17 @@ export interface WatchInfo {
   readonly state: string
   readonly idleSeconds: number | null
   readonly lastActivityAt: string | null
-  readonly autosave: { readonly enabled: boolean; readonly idleMinutes: number | null; readonly keep: number | null; readonly lastAt: string | null } | null
-  readonly stow: { readonly enabled: boolean; readonly idleMinutes: number | null; readonly lastAt: string | null } | null
+  readonly autosave: {
+    readonly enabled: boolean
+    readonly idleMinutes: number | null
+    readonly keep: number | null
+    readonly lastAt: string | null
+  } | null
+  readonly stow: {
+    readonly enabled: boolean
+    readonly idleMinutes: number | null
+    readonly lastAt: string | null
+  } | null
 }
 
 export interface GuestInfo {
@@ -62,7 +84,12 @@ export interface InstanceStatus {
   readonly websocketPort: number | null
   readonly overlayBytes: number | null
   readonly guest: GuestInfo | null
-  readonly saves: { readonly count: number; readonly bytes: number; readonly latest: SaveInfo | null; readonly latestBaseline: SaveInfo | null }
+  readonly saves: {
+    readonly count: number
+    readonly bytes: number
+    readonly latest: SaveInfo | null
+    readonly latestBaseline: SaveInfo | null
+  }
   readonly watcher: WatchInfo | null
   readonly service: { readonly pid: number } | null
   readonly serviceExpected: boolean
@@ -70,17 +97,23 @@ export interface InstanceStatus {
   readonly notes: readonly string[]
 }
 
-export const savesDir = (instance: string): string => resolve(home(), "saves", instance)
-export const watchPath = (instance: string): string => resolve(instanceDir(instance), "watch.json")
+export const savesDir = (instance: string): string =>
+  resolve(home(), "saves", instance)
+export const watchPath = (instance: string): string =>
+  resolve(instanceDir(instance), "watch.json")
 
 const str = (v: unknown): string | null => (typeof v === "string" ? v : null)
-const num = (v: unknown): number | null => (typeof v === "number" && Number.isFinite(v) ? v : null)
-const rec = (v: unknown): Record<string, unknown> | null => (typeof v === "object" && v !== null ? (v as Record<string, unknown>) : null)
+const num = (v: unknown): number | null =>
+  typeof v === "number" && Number.isFinite(v) ? v : null
+const rec = (v: unknown): Record<string, unknown> | null =>
+  typeof v === "object" && v !== null ? (v as Record<string, unknown>) : null
 
 function readJson(path: string): Record<string, unknown> | null {
   try {
     const v = JSON.parse(readFileSync(path, "utf8")) as unknown
-    return typeof v === "object" && v !== null && !Array.isArray(v) ? (v as Record<string, unknown>) : null
+    return typeof v === "object" && v !== null && !Array.isArray(v)
+      ? (v as Record<string, unknown>)
+      : null
   } catch {
     return null
   }
@@ -110,7 +143,9 @@ export function readSaves(instance: string): readonly SaveInfo[] {
 }
 
 export function sortSaves(saves: readonly SaveInfo[]): readonly SaveInfo[] {
-  return [...saves].sort((a, b) => Date.parse(b.createdAt || "0") - Date.parse(a.createdAt || "0"))
+  return [...saves].sort(
+    (a, b) => Date.parse(b.createdAt || "0") - Date.parse(a.createdAt || "0"),
+  )
 }
 
 function serviceOf(p: Paths): { pid: number } | null {
@@ -128,7 +163,10 @@ const pidAlive = (pid: number | null): boolean => {
   }
 }
 
-export function parseWatch(raw: Record<string, unknown> | null, alive: (pid: number | null) => boolean): WatchInfo | null {
+export function parseWatch(
+  raw: Record<string, unknown> | null,
+  alive: (pid: number | null) => boolean,
+): WatchInfo | null {
   if (raw === null) return null
   const pid = num(raw["pid"])
   const a = rec(raw["autosave"])
@@ -141,33 +179,55 @@ export function parseWatch(raw: Record<string, unknown> | null, alive: (pid: num
     lastActivityAt: str(raw["lastActivityAt"]),
     autosave:
       a !== null
-        ? { enabled: a["enabled"] === true, idleMinutes: num(a["idleMinutes"]), keep: num(a["keep"]), lastAt: str(a["lastAt"]) }
+        ? {
+            enabled: a["enabled"] === true,
+            idleMinutes: num(a["idleMinutes"]),
+            keep: num(a["keep"]),
+            lastAt: str(a["lastAt"]),
+          }
         : null,
     stow:
       s !== null
-        ? { enabled: s["enabled"] === true, idleMinutes: num(s["idleMinutes"]), lastAt: str(s["lastAt"]) }
+        ? {
+            enabled: s["enabled"] === true,
+            idleMinutes: num(s["idleMinutes"]),
+            lastAt: str(s["lastAt"]),
+          }
         : null,
   }
 }
 
-export const readWatch = (instance: string): WatchInfo | null => parseWatch(readJson(watchPath(instance)), pidAlive)
+export const readWatch = (instance: string): WatchInfo | null =>
+  parseWatch(readJson(watchPath(instance)), pidAlive)
 
 export function parseEtime(s: string): number | null {
   const m = /^\s*(?:(\d+)-)?(?:(\d+):)?(\d+):(\d+)\s*$/.exec(s)
   if (m === null) return null
   const [, d, h, mm, ss] = m
-  return Number(d ?? 0) * 86400 + Number(h ?? 0) * 3600 + Number(mm) * 60 + Number(ss)
+  return (
+    Number(d ?? 0) * 86400 +
+    Number(h ?? 0) * 3600 +
+    Number(mm) * 60 +
+    Number(ss)
+  )
 }
 
-export function parseHardware(argv: readonly string[]): { cpus: number | null; memoryMiB: number | null } {
+export function parseHardware(argv: readonly string[]): {
+  cpus: number | null
+  memoryMiB: number | null
+} {
   let cpus: number | null = null
   let memoryMiB: number | null = null
   for (let i = 0; i < argv.length - 1; i += 1) {
     const v = argv[i + 1] ?? ""
-    if (argv[i] === "-smp") cpus = Number.parseInt(v.split(",")[0]?.replace(/^cpus=/, "") ?? "", 10) || null
+    if (argv[i] === "-smp")
+      cpus =
+        Number.parseInt(v.split(",")[0]?.replace(/^cpus=/, "") ?? "", 10) ||
+        null
     if (argv[i] === "-m") {
       const mm = /^(?:size=)?(\d+)([MG]?)/i.exec(v)
-      if (mm !== null) memoryMiB = Number(mm[1]) * (mm[2]?.toUpperCase() === "G" ? 1024 : 1)
+      if (mm !== null)
+        memoryMiB = Number(mm[1]) * (mm[2]?.toUpperCase() === "G" ? 1024 : 1)
     }
   }
   return { cpus, memoryMiB }
@@ -176,19 +236,35 @@ export function parseHardware(argv: readonly string[]): { cpus: number | null; m
 const psField = (pid: number, field: string): string =>
   spawnText("ps", ["-ww", "-o", `${field}=`, "-p", String(pid)]).stdout.trim()
 
-function hardwareFor(name: string, p: Paths, pid: number | null): Pick<InstanceStatus, "cpus" | "memoryMiB" | "screen"> {
+function hardwareFor(
+  name: string,
+  p: Paths,
+  pid: number | null,
+): Pick<InstanceStatus, "cpus" | "memoryMiB" | "screen"> {
   if (pid !== null) {
     const cmd = psField(pid, "command")
     if (cmd !== "") {
       const live = runningDisplay(pid)
-      return { ...parseHardware(cmd.split(/\s+/)), screen: live === null ? null : describeDisplay(live) }
+      return {
+        ...parseHardware(cmd.split(/\s+/)),
+        screen: live === null ? null : describeDisplay(live),
+      }
     }
   }
   const screen = describeDisplay(readDisplay(p))
   const meta = readMeta(name)
   if (meta === null) return { cpus: null, memoryMiB: null, screen }
   try {
-    return { ...parseHardware(qemu.qemuArgs(name, p, meta, { installMedia: false, ephemeral: false, virtioBoot: false })), screen }
+    return {
+      ...parseHardware(
+        qemu.qemuArgs(name, p, meta, {
+          installMedia: false,
+          ephemeral: false,
+          virtioBoot: false,
+        }),
+      ),
+      screen,
+    }
   } catch {
     return { cpus: null, memoryMiB: null, screen }
   }
@@ -203,8 +279,16 @@ function allocatedBytes(path: string): number | null {
   }
 }
 
-export async function probeGuest(sockPath: string, timeoutMs = 4000): Promise<GuestInfo> {
-  const silent: GuestInfo = { agent: "silent", agentVersion: null, os: null, clockOffsetMs: null }
+export async function probeGuest(
+  sockPath: string,
+  timeoutMs = 4000,
+): Promise<GuestInfo> {
+  const silent: GuestInfo = {
+    agent: "silent",
+    agentVersion: null,
+    os: null,
+    clockOffsetMs: null,
+  }
   if (!existsSync(sockPath)) return silent
   return await new Promise((res) => {
     const sock = connect(sockPath)
@@ -217,11 +301,18 @@ export async function probeGuest(sockPath: string, timeoutMs = 4000): Promise<Gu
       sock.destroy()
       res(g)
     }
-    const timer = setTimeout(() => { finish(result.agentVersion === null ? silent : result) }, timeoutMs)
+    const timer = setTimeout(() => {
+      finish(result.agentVersion === null ? silent : result)
+    }, timeoutMs)
     const syncId = Math.floor(Math.random() * 2 ** 31)
     let step = 0
     let sentAt = 0
-    const result: { agent: "ok" | "silent"; agentVersion: string | null; os: string | null; clockOffsetMs: number | null } = {
+    const result: {
+      agent: "ok" | "silent"
+      agentVersion: string | null
+      os: string | null
+      clockOffsetMs: number | null
+    } = {
       agent: "silent",
       agentVersion: null,
       os: null,
@@ -231,8 +322,12 @@ export async function probeGuest(sockPath: string, timeoutMs = 4000): Promise<Gu
       sentAt = Date.now()
       sock.write(`${JSON.stringify(o)}\n`)
     }
-    sock.on("error", () => { finish(silent) })
-    sock.on("connect", () => { send({ execute: "guest-sync-delimited", arguments: { id: syncId } }) })
+    sock.on("error", () => {
+      finish(silent)
+    })
+    sock.on("connect", () => {
+      send({ execute: "guest-sync-delimited", arguments: { id: syncId } })
+    })
     sock.on("data", (chunk) => {
       buf += chunk.toString("latin1").replaceAll("\xff", "")
       for (;;) {
@@ -264,7 +359,10 @@ export async function probeGuest(sockPath: string, timeoutMs = 4000): Promise<Gu
           send({ execute: "guest-get-time" })
         } else {
           const receivedAt = Date.now()
-          if (typeof ret === "number") result.clockOffsetMs = Math.round(ret / 1e6 - (sentAt + receivedAt) / 2)
+          if (typeof ret === "number")
+            result.clockOffsetMs = Math.round(
+              ret / 1e6 - (sentAt + receivedAt) / 2,
+            )
           finish(result)
           return
         }
@@ -276,33 +374,51 @@ export async function probeGuest(sockPath: string, timeoutMs = 4000): Promise<Gu
 export function osLabel(o: Record<string, unknown>): string | null {
   const build = str(o["kernel-release"])
   let pretty = str(o["pretty-name"]) ?? str(o["name"])
-  if (pretty !== null && build !== null && Number(build) >= 22000) pretty = pretty.replace(/Windows 10\b/, "Windows 11")
+  if (pretty !== null && build !== null && Number(build) >= 22000)
+    pretty = pretty.replace(/Windows 10\b/, "Windows 11")
   if (pretty === null) return build === null ? null : `build ${build}`
   return build === null ? pretty : `${pretty} (build ${build})`
 }
 
 async function queryStatus(p: Paths): Promise<string | null> {
   try {
-    const r = (await qmpCommand(p.qmp, "query-status", undefined, 2000)) as { status?: unknown } | undefined
+    const r = (await qmpCommand(p.qmp, "query-status", undefined, 2000)) as
+      | { status?: unknown }
+      | undefined
     return typeof r?.status === "string" ? r.status : null
   } catch {
     return null
   }
 }
 
-export function deriveState(running: boolean, vmStatus: string | null, saves: readonly SaveInfo[], asleep = false, saving = false): State {
-  if (running) return saving ? "running" : (frozenFrom(vmStatus, asleep) ?? "running")
+export function deriveState(
+  running: boolean,
+  vmStatus: string | null,
+  saves: readonly SaveInfo[],
+  asleep = false,
+  saving = false,
+): State {
+  if (running)
+    return saving ? "running" : (frozenFrom(vmStatus, asleep) ?? "running")
   return saves.some((s) => s.kind === "stow") ? "stowed" : "stopped"
 }
 
-export async function gather(name: string, deep = true): Promise<InstanceStatus> {
+export async function gather(
+  name: string,
+  deep = true,
+): Promise<InstanceStatus> {
   const p = pathsFor(name)
   const meta = readMeta(name)
   const notes: string[] = []
   const saves = readSaves(name)
   const latest = saves[0] ?? null
   const latestBaseline = saves.find((s) => s.kind === "baseline") ?? null
-  const savesSummary = { count: saves.length, bytes: saves.reduce((n, s) => n + (s.bytes ?? 0), 0), latest, latestBaseline }
+  const savesSummary = {
+    count: saves.length,
+    bytes: saves.reduce((n, s) => n + (s.bytes ?? 0), 0),
+    latest,
+    latestBaseline,
+  }
   const config = effectiveConfig(name)
   const title = config.title || null
   const closePolicy = config["viewer.closePolicy"]
@@ -340,10 +456,21 @@ export async function gather(name: string, deep = true): Promise<InstanceStatus>
   const running = pid !== null
   const vmStatus = running ? await queryStatus(p) : null
   const saving = running && savingRunning(name)
-  const state = deriveState(running, vmStatus, saves, markedAsleep(p, pid), saving)
-  const guest = running && deep && state === "running" && !saving ? await probeGuest(p.qga) : null
-  if (running && vmStatus === null) notes.push("QEMU's monitor did not answer (busy with a save or load?)")
-  if (guest?.agent === "silent" && state === "running") notes.push("the guest agent did not answer — still booting, or busy")
+  const state = deriveState(
+    running,
+    vmStatus,
+    saves,
+    markedAsleep(p, pid),
+    saving,
+  )
+  const guest =
+    running && deep && state === "running" && !saving
+      ? await probeGuest(p.qga)
+      : null
+  if (running && vmStatus === null)
+    notes.push("QEMU's monitor did not answer (busy with a save or load?)")
+  if (guest?.agent === "silent" && state === "running")
+    notes.push("the guest agent did not answer — still booting, or busy")
 
   return {
     name,
@@ -370,8 +497,12 @@ export async function gather(name: string, deep = true): Promise<InstanceStatus>
   }
 }
 
-export const gatherAll = async (deep = false): Promise<readonly InstanceStatus[]> =>
-  await Promise.all([...listInstances()].sort().map(async (n) => await gather(n, deep)))
+export const gatherAll = async (
+  deep = false,
+): Promise<readonly InstanceStatus[]> =>
+  await Promise.all(
+    [...listInstances()].sort().map(async (n) => await gather(n, deep)),
+  )
 
 export function formatDuration(seconds: number): string {
   const s = Math.max(0, Math.round(seconds))
@@ -385,7 +516,11 @@ export function formatDuration(seconds: number): string {
 }
 
 export function formatMemory(mib: number): string {
-  return mib % 1024 === 0 ? `${String(mib / 1024)} GiB` : mib >= 1024 ? `${(mib / 1024).toFixed(1)} GiB` : `${String(mib)} MiB`
+  return mib % 1024 === 0
+    ? `${String(mib / 1024)} GiB`
+    : mib >= 1024
+      ? `${(mib / 1024).toFixed(1)} GiB`
+      : `${String(mib)} MiB`
 }
 
 export function formatBytes(n: number): string {
@@ -409,7 +544,8 @@ export function formatAge(iso: string, now: number): string {
 export function formatOffset(ms: number): string {
   const abs = Math.abs(ms)
   if (abs < 1000) return "in sync with the host (within 1 s)"
-  const amount = abs < 60_000 ? `${(abs / 1000).toFixed(1)} s` : formatDuration(abs / 1000)
+  const amount =
+    abs < 60_000 ? `${(abs / 1000).toFixed(1)} s` : formatDuration(abs / 1000)
   return `guest is ${amount} ${ms > 0 ? "ahead of" : "behind"} the host`
 }
 
@@ -418,10 +554,19 @@ const fmtSave = (s: SaveInfo, now: number): string =>
 
 export function formatWatcher(w: WatchInfo | null, now: number): string {
   if (w === null) return "not set up"
-  if (!w.alive) return `not running${w.state !== "stopped" ? " (left a stale watch.json)" : ""}`
-  const parts = [w.state + (w.idleSeconds === null ? "" : `, guest idle ${formatDuration(w.idleSeconds)}`)]
+  if (!w.alive)
+    return `not running${w.state !== "stopped" ? " (left a stale watch.json)" : ""}`
+  const parts = [
+    w.state +
+      (w.idleSeconds === null
+        ? ""
+        : `, guest idle ${formatDuration(w.idleSeconds)}`),
+  ]
   if (w.autosave?.enabled === true) {
-    const last = w.autosave.lastAt === null ? "" : `, last ${formatAge(w.autosave.lastAt, now)}`
+    const last =
+      w.autosave.lastAt === null
+        ? ""
+        : `, last ${formatAge(w.autosave.lastAt, now)}`
     parts.push(
       `autosave after ${String(w.autosave.idleMinutes ?? "?")} min idle (keep ${String(w.autosave.keep ?? "?")}${last})`,
     )
@@ -429,8 +574,11 @@ export function formatWatcher(w: WatchInfo | null, now: number): string {
     parts.push("autosave off")
   }
   if (w.stow?.enabled === true) {
-    const last = w.stow.lastAt === null ? "" : `, last ${formatAge(w.stow.lastAt, now)}`
-    parts.push(`stow after ${String(w.stow.idleMinutes ?? "?")} min idle${last}`)
+    const last =
+      w.stow.lastAt === null ? "" : `, last ${formatAge(w.stow.lastAt, now)}`
+    parts.push(
+      `stow after ${String(w.stow.idleMinutes ?? "?")} min idle${last}`,
+    )
   } else {
     parts.push("stow off")
   }
@@ -452,13 +600,26 @@ export interface Report {
   readonly notes: readonly string[]
 }
 
-export function statusReport(s: InstanceStatus, timeMachine: string, now: number): Report {
+export function statusReport(
+  s: InstanceStatus,
+  timeMachine: string,
+  now: number,
+): Report {
   const rows: [string, string][] = []
   const flag = s.name === "default" ? "" : ` -i ${s.name}`
-  if (s.state === "missing") return { title: `instance "${s.name}" ${STATE_WORDS.missing}`, rows: [], notes: s.notes }
-  const live = s.state === "running" || s.state === "paused" || s.state === "asleep"
+  if (s.state === "missing")
+    return {
+      title: `instance "${s.name}" ${STATE_WORDS.missing}`,
+      rows: [],
+      notes: s.notes,
+    }
+  const live =
+    s.state === "running" || s.state === "paused" || s.state === "asleep"
   if (live) {
-    rows.push(["uptime", `${s.uptimeSeconds === null ? "?" : formatDuration(s.uptimeSeconds)} (qemu pid ${String(s.pid)})`])
+    rows.push([
+      "uptime",
+      `${s.uptimeSeconds === null ? "?" : formatDuration(s.uptimeSeconds)} (qemu pid ${String(s.pid)})`,
+    ])
     const g = s.guest
     if (g !== null) {
       rows.push([
@@ -467,13 +628,16 @@ export function statusReport(s: InstanceStatus, timeMachine: string, now: number
           ? `${g.os ?? "Windows (version unknown)"} · agent responding (qemu-ga ${g.agentVersion ?? "?"})`
           : "agent not responding",
       ])
-      if (g.clockOffsetMs !== null) rows.push(["clock", formatOffset(g.clockOffsetMs)])
+      if (g.clockOffsetMs !== null)
+        rows.push(["clock", formatOffset(g.clockOffsetMs)])
     }
   }
   const hw = [
     s.cpus === null ? null : `${String(s.cpus)} vCPU`,
     s.memoryMiB === null ? null : `${formatMemory(s.memoryMiB)} RAM`,
-    s.image === null ? null : `image ${s.image}${s.snapshotsCapable === false ? " (no snapshots)" : ""}`,
+    s.image === null
+      ? null
+      : `image ${s.image}${s.snapshotsCapable === false ? " (no snapshots)" : ""}`,
   ].filter((x) => x !== null)
   rows.push(["hardware", hw.join(", ")])
   if (s.display !== null) {
@@ -485,15 +649,24 @@ export function statusReport(s: InstanceStatus, timeMachine: string, now: number
           : `VNC :${String(s.display)} (when running)`),
     ])
   }
-  rows.push(["disk", s.overlayBytes === null ? "no overlay" : `overlay uses ${formatBytes(s.overlayBytes)}`])
+  rows.push([
+    "disk",
+    s.overlayBytes === null
+      ? "no overlay"
+      : `overlay uses ${formatBytes(s.overlayBytes)}`,
+  ])
   rows.push([
     "saves",
     s.saves.count === 0
       ? "none"
       : [
           `${String(s.saves.count)} (${formatBytes(s.saves.bytes)})`,
-          s.saves.latest === null ? null : `latest ${fmtSave(s.saves.latest, now)}`,
-          s.saves.latestBaseline === null ? "no baseline" : `baseline ${fmtSave(s.saves.latestBaseline, now)}`,
+          s.saves.latest === null
+            ? null
+            : `latest ${fmtSave(s.saves.latest, now)}`,
+          s.saves.latestBaseline === null
+            ? "no baseline"
+            : `baseline ${fmtSave(s.saves.latestBaseline, now)}`,
         ]
           .filter((x) => x !== null)
           .join(" · "),
@@ -508,9 +681,15 @@ export function statusReport(s: InstanceStatus, timeMachine: string, now: number
     rows.push(["service", service])
   }
   rows.push(["watcher", formatWatcher(s.watcher, now)])
-  rows.push(["time machine", timeMachine.replace(/^(ok|note)\s+Time Machine:\s*/, "")])
+  rows.push([
+    "time machine",
+    timeMachine.replace(/^(ok|note)\s+Time Machine:\s*/, ""),
+  ])
 
-  const state = s.state === "running" && s.vmStatus !== null && s.vmStatus !== "running" ? `running (${s.vmStatus})` : STATE_WORDS[s.state]
+  const state =
+    s.state === "running" && s.vmStatus !== null && s.vmStatus !== "running"
+      ? `running (${s.vmStatus})`
+      : STATE_WORDS[s.state]
   return {
     title: `instance "${s.name}" — ${state}`,
     rows,
@@ -518,13 +697,25 @@ export function statusReport(s: InstanceStatus, timeMachine: string, now: number
   }
 }
 
-export function formatStatus(s: InstanceStatus, timeMachine: string, now: number): string {
+export function formatStatus(
+  s: InstanceStatus,
+  timeMachine: string,
+  now: number,
+): string {
   const r = statusReport(s, timeMachine, now)
   const width = Math.max(0, ...r.rows.map(([k]) => k.length))
-  return [r.title, ...r.rows.map(([k, v]) => `  ${k.padEnd(width)}  ${v}`), ...r.notes.map((n) => `  note: ${n}`)].join("\n")
+  return [
+    r.title,
+    ...r.rows.map(([k, v]) => `  ${k.padEnd(width)}  ${v}`),
+    ...r.notes.map((n) => `  note: ${n}`),
+  ].join("\n")
 }
 
-export function formatTable(all: readonly InstanceStatus[], timeMachine: string, now: number): string {
+export function formatTable(
+  all: readonly InstanceStatus[],
+  timeMachine: string,
+  now: number,
+): string {
   const head = ["NAME", "STATE", "UPTIME", "VNC", "DISK", "SAVES", "WATCHER"]
   const body = all.map((s) => [
     s.name,
@@ -532,12 +723,30 @@ export function formatTable(all: readonly InstanceStatus[], timeMachine: string,
     s.uptimeSeconds === null ? "-" : formatDuration(s.uptimeSeconds),
     s.display === null ? "-" : `:${String(s.display)}`,
     s.overlayBytes === null ? "-" : formatBytes(s.overlayBytes),
-    s.saves.count === 0 ? "-" : `${String(s.saves.count)}${s.saves.latest === null ? "" : `, ${formatAge(s.saves.latest.createdAt, now)}`}`,
-    s.watcher === null ? "-" : s.watcher.alive ? s.watcher.state : "not running",
+    s.saves.count === 0
+      ? "-"
+      : `${String(s.saves.count)}${s.saves.latest === null ? "" : `, ${formatAge(s.saves.latest.createdAt, now)}`}`,
+    s.watcher === null
+      ? "-"
+      : s.watcher.alive
+        ? s.watcher.state
+        : "not running",
   ])
-  const widths = head.map((h, i) => Math.max(h.length, ...body.map((r) => (r[i] ?? "").length)))
-  const line = (r: readonly string[]): string => r.map((c, i) => c.padEnd(widths[i] ?? 0)).join("  ").trimEnd()
-  return [line(head), ...body.map(line), "", timeMachine, "details: winvm status -i <name>"].join("\n")
+  const widths = head.map((h, i) =>
+    Math.max(h.length, ...body.map((r) => (r[i] ?? "").length)),
+  )
+  const line = (r: readonly string[]): string =>
+    r
+      .map((c, i) => c.padEnd(widths[i] ?? 0))
+      .join("  ")
+      .trimEnd()
+  return [
+    line(head),
+    ...body.map(line),
+    "",
+    timeMachine,
+    "details: winvm status -i <name>",
+  ].join("\n")
 }
 
 export interface StatusArgs {
@@ -551,8 +760,10 @@ export async function run(a: StatusArgs): Promise<number> {
   const names = listInstances()
   if (a.instance === null && names.length !== 1) {
     const all = await gatherAll(false)
-    if (a.json) console.log(JSON.stringify({ instances: all, timeMachine: tm }, null, 2))
-    else if (all.length === 0) console.log("no instances yet — `winvm start` creates \"default\"")
+    if (a.json)
+      console.log(JSON.stringify({ instances: all, timeMachine: tm }, null, 2))
+    else if (all.length === 0)
+      console.log('no instances yet — `winvm start` creates "default"')
     else console.log(formatTable(all, tm, now))
     return 0
   }

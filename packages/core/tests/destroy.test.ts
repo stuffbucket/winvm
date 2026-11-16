@@ -1,5 +1,19 @@
-import { afterEach, beforeEach, describe, expect, it, mock, spyOn } from "bun:test"
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
+import {
+  afterEach,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  mock,
+  spyOn,
+} from "bun:test"
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs"
 import { tmpdir } from "node:os"
 import { resolve } from "node:path"
 
@@ -15,7 +29,14 @@ let previousData: string | undefined
 
 function makeInstance(name: string, saveNames: readonly string[]): void {
   mkdirSync(instanceDir(name), { recursive: true })
-  writeFileSync(pathsFor(name).meta, JSON.stringify({ image: "win11-arm64", vnc: 9, created: new Date().toISOString() }))
+  writeFileSync(
+    pathsFor(name).meta,
+    JSON.stringify({
+      image: "win11-arm64",
+      vnc: 9,
+      created: new Date().toISOString(),
+    }),
+  )
   for (const s of saveNames) {
     mkdirSync(saveDir(name, s), { recursive: true })
     writeFileSync(resolve(saveDir(name, s), "manifest.json"), "{}")

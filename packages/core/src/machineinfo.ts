@@ -2,7 +2,16 @@ import { spawnSync } from "node:child_process"
 
 import { GUEST_PORT } from "./guestagent"
 import type { Hardware, Limits } from "./hardware"
-import { formatMiB, hardwareError, hostLimits, parseMemory, readHardware, runningHardware, sameHardware, writeHardware } from "./hardware"
+import {
+  formatMiB,
+  hardwareError,
+  hostLimits,
+  parseMemory,
+  readHardware,
+  runningHardware,
+  sameHardware,
+  writeHardware,
+} from "./hardware"
 import type { Args } from "./args"
 import { instanceName } from "./args"
 import { pathsFor, readMeta } from "./paths"
@@ -60,39 +69,68 @@ export interface MachineInfo {
 }
 
 export const forwardKind = (guestPort: number): ForwardKind =>
-  guestPort === SMB_GUEST_PORT ? "finder" : guestPort === GUEST_PORT ? "agent" : "other"
+  guestPort === SMB_GUEST_PORT
+    ? "finder"
+    : guestPort === GUEST_PORT
+      ? "agent"
+      : "other"
 
 export function parseUsernet(text: string): Forward[] {
   const out: Forward[] = []
   for (const line of text.split(/\r?\n/)) {
-    const m = /^\s*TCP\[HOST_FORWARD\]\s+\d+\s+(\S+)\s+(\d+)\s+\S+\s+(\d+)\s/.exec(line)
+    const m =
+      /^\s*TCP\[HOST_FORWARD\]\s+\d+\s+(\S+)\s+(\d+)\s+\S+\s+(\d+)\s/.exec(line)
     if (m === null) continue
     const guestPort = Number(m[3])
-    out.push({ kind: forwardKind(guestPort), host: m[1] ?? "", hostPort: Number(m[2]), guestPort })
+    out.push({
+      kind: forwardKind(guestPort),
+      host: m[1] ?? "",
+      hostPort: Number(m[2]),
+      guestPort,
+    })
   }
   return out.sort((a, b) => a.guestPort - b.guestPort)
 }
 
-export function windowsAdapter(reply: unknown): { adapter: string; ipv4: string } | null {
+export function windowsAdapter(
+  reply: unknown,
+): { adapter: string; ipv4: string } | null {
   if (!Array.isArray(reply)) return null
   for (const i of reply as unknown[]) {
     if (typeof i !== "object" || i === null) continue
     const r = i as Record<string, unknown>
-    const ips = Array.isArray(r["ip-addresses"]) ? (r["ip-addresses"] as unknown[]) : []
+    const ips = Array.isArray(r["ip-addresses"])
+      ? (r["ip-addresses"] as unknown[])
+      : []
     for (const a of ips) {
       const ip = (a as Record<string, unknown> | null)?.["ip-address"]
       const type = (a as Record<string, unknown> | null)?.["ip-address-type"]
-      if (type !== "ipv4" || typeof ip !== "string" || ip.startsWith("127.") || ip.startsWith("169.254.")) continue
-      return { adapter: typeof r["name"] === "string" ? r["name"] : "", ipv4: ip }
+      if (
+        type !== "ipv4" ||
+        typeof ip !== "string" ||
+        ip.startsWith("127.") ||
+        ip.startsWith("169.254.")
+      )
+        continue
+      return {
+        adapter: typeof r["name"] === "string" ? r["name"] : "",
+        ipv4: ip,
+      }
     }
   }
   return null
 }
 
-const fmtHw = (h: Hardware): string => `${String(h.cpus)} processors, ${formatMiB(h.memoryMiB)}`
+const fmtHw = (h: Hardware): string =>
+  `${String(h.cpus)} processors, ${formatMiB(h.memoryMiB)}`
 
-export const pendingNote = (running: Hardware | null, next: Hardware): string | null =>
-  running === null || sameHardware(running, next) ? null : `running with ${fmtHw(running)}; ${fmtHw(next)} applies the next time Windows starts`
+export const pendingNote = (
+  running: Hardware | null,
+  next: Hardware,
+): string | null =>
+  running === null || sameHardware(running, next)
+    ? null
+    : `running with ${fmtHw(running)}; ${fmtHw(next)} applies the next time Windows starts`
 
 export function formatInfo(i: MachineInfo): string {
   const hw = i.hardware
@@ -112,14 +150,22 @@ export function formatInfo(i: MachineInfo): string {
     `    gateway   ${n.gateway} (this Mac)`,
     `    DNS       ${n.dns}`,
   )
-  const label = { finder: "Finder drives", agent: "winvm agent", other: "" } as const
+  const label = {
+    finder: "Finder drives",
+    agent: "winvm agent",
+    other: "",
+  } as const
   if (!i.running) lines.push("    forwards  none while it is not running")
   else if (n.forwards.length === 0) lines.push("    forwards  none")
   n.forwards.forEach((f, k) =>
-    lines.push(`    ${k === 0 ? "forwards  " : "          "}${f.host}:${String(f.hostPort)} -> ${String(f.guestPort)}${f.kind === "other" ? "" : ` (${label[f.kind]})`}`),
+    lines.push(
+      `    ${k === 0 ? "forwards  " : "          "}${f.host}:${String(f.hostPort)} -> ${String(f.guestPort)}${f.kind === "other" ? "" : ` (${label[f.kind]})`}`,
+    ),
   )
   n.listeners.forEach((l, k) =>
-    lines.push(`    ${k === 0 ? "screen    " : "          "}${l.host}:${String(l.port)} (${l.kind === "vnc" ? "VNC" : "WebSocket"})`),
+    lines.push(
+      `    ${k === 0 ? "screen    " : "          "}${l.host}:${String(l.port)} (${l.kind === "vnc" ? "VNC" : "WebSocket"})`,
+    ),
   )
   lines.push(
     `  Windows reaches the internet, and this Mac at ${n.gateway}. Nothing else reaches Windows except the forwards above, which listen on this Mac only.`,
@@ -128,7 +174,11 @@ export function formatInfo(i: MachineInfo): string {
 }
 
 function diskBytes(p: Paths): number | null {
-  const r = spawnSync(runtimeBin("qemu-img"), ["info", "-U", "--output=json", p.overlay], { encoding: "utf8" })
+  const r = spawnSync(
+    runtimeBin("qemu-img"),
+    ["info", "-U", "--output=json", p.overlay],
+    { encoding: "utf8" },
+  )
   if (r.status !== 0) return null
   try {
     const v = (JSON.parse(r.stdout) as Record<string, unknown>)["virtual-size"]
@@ -138,10 +188,16 @@ function diskBytes(p: Paths): number | null {
   }
 }
 
-async function windowsSide(p: Paths): Promise<MachineInfo["network"]["windows"]> {
+async function windowsSide(
+  p: Paths,
+): Promise<MachineInfo["network"]["windows"]> {
   try {
     if ((await qmp.status(p.qmp)) !== "running") return null
-    const r = await qga.call(p.qga, { execute: "guest-network-get-interfaces" }, 4000)
+    const r = await qga.call(
+      p.qga,
+      { execute: "guest-network-get-interfaces" },
+      4000,
+    )
     return windowsAdapter(r["return"])
   } catch {
     return null
@@ -158,13 +214,17 @@ export async function gatherInfo(name: string): Promise<MachineInfo | null> {
   if (running) {
     try {
       forwards = parseUsernet(await qmp.hmp(p.qmp, "info usernet", 5000))
-    } catch {
-    }
+    } catch {}
   }
   return {
     name,
     running,
-    hardware: { running: pid === null ? null : runningHardware(pid), next: readHardware(p), limits: hostLimits(), diskBytes: diskBytes(p) },
+    hardware: {
+      running: pid === null ? null : runningHardware(pid),
+      next: readHardware(p),
+      limits: hostLimits(),
+      diskBytes: diskBytes(p),
+    },
     network: {
       ...NETWORK,
       windows: running ? await windowsSide(p) : null,
@@ -172,7 +232,11 @@ export async function gatherInfo(name: string): Promise<MachineInfo | null> {
       listeners: running
         ? [
             { kind: "vnc", host: "127.0.0.1", port: vncPort(meta.vnc) },
-            { kind: "websocket", host: "127.0.0.1", port: websocketPort(meta.vnc) },
+            {
+              kind: "websocket",
+              host: "127.0.0.1",
+              port: websocketPort(meta.vnc),
+            },
           ]
         : [],
     },
@@ -186,26 +250,35 @@ export async function infoCmd(args: Args): Promise<number> {
     console.error(`::error::no such instance "${name}"`)
     return 1
   }
-  console.log(args.flags.has("json") ? JSON.stringify(info, null, 2) : formatInfo(info))
+  console.log(
+    args.flags.has("json") ? JSON.stringify(info, null, 2) : formatInfo(info),
+  )
   return 0
 }
 
 export const HARDWARE_KEYS = ["cpus", "memory"] as const
 
-export const isHardwareKey = (assignment: string): boolean => HARDWARE_KEYS.some((k) => assignment.trim().startsWith(`${k}=`))
+export const isHardwareKey = (assignment: string): boolean =>
+  HARDWARE_KEYS.some((k) => assignment.trim().startsWith(`${k}=`))
 
-export function applyAssignments(current: Hardware, assignments: readonly string[], limits: Limits): Hardware {
+export function applyAssignments(
+  current: Hardware,
+  assignments: readonly string[],
+  limits: Limits,
+): Hardware {
   let next = current
   for (const a of assignments) {
     const eq = a.indexOf("=")
     const key = a.slice(0, eq).trim()
     const value = a.slice(eq + 1).trim()
     if (key === "cpus") {
-      if (!/^\d+$/.test(value)) throw new Error(`cpus is a whole number, got "${value}"`)
+      if (!/^\d+$/.test(value))
+        throw new Error(`cpus is a whole number, got "${value}"`)
       next = { ...next, cpus: Number(value) }
     } else {
       const mib = parseMemory(value)
-      if (mib === null) throw new Error(`memory is a size like 8G or 8192 (MB), got "${value}"`)
+      if (mib === null)
+        throw new Error(`memory is a size like 8G or 8192 (MB), got "${value}"`)
       next = { ...next, memoryMiB: mib }
     }
   }
@@ -214,18 +287,30 @@ export function applyAssignments(current: Hardware, assignments: readonly string
   return next
 }
 
-export function setHardware(name: string, assignments: readonly string[]): string {
+export function setHardware(
+  name: string,
+  assignments: readonly string[],
+): string {
   const p = pathsFor(name)
   const next = applyAssignments(readHardware(p), assignments, hostLimits())
   writeHardware(p, next)
   const pid = qemu.pidOf(p)
   const running = pid === null ? null : runningHardware(pid)
-  const said = pendingNote(running, next) ?? (running === null ? `${fmtHw(next)}; applies the next time Windows starts` : fmtHw(next))
-  return hasSave(name, STOW) ? `${said} (the stowed session resumes at its own size first)` : said
+  const said =
+    pendingNote(running, next) ??
+    (running === null
+      ? `${fmtHw(next)}; applies the next time Windows starts`
+      : fmtHw(next))
+  return hasSave(name, STOW)
+    ? `${said} (the stowed session resumes at its own size first)`
+    : said
 }
 
 export function hardwareLines(name: string): string[] {
   const p = pathsFor(name)
   const next = readHardware(p)
-  return [`  ${"cpus".padEnd(22)} ${String(next.cpus)}`, `  ${"memory".padEnd(22)} ${formatMiB(next.memoryMiB)}`]
+  return [
+    `  ${"cpus".padEnd(22)} ${String(next.cpus)}`,
+    `  ${"memory".padEnd(22)} ${formatMiB(next.memoryMiB)}`,
+  ]
 }

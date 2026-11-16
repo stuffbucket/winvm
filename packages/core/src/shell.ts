@@ -1,18 +1,33 @@
-import { type SpawnSyncOptionsWithStringEncoding, type SpawnSyncReturns, spawnSync } from "node:child_process"
+import {
+  type SpawnSyncOptionsWithStringEncoding,
+  type SpawnSyncReturns,
+  spawnSync,
+} from "node:child_process"
 import { existsSync, mkdirSync, rmSync } from "node:fs"
 import { basename, resolve } from "node:path"
 
-export const sha256Of = (path: string): string => capture("shasum", ["-a", "256", path]).split(/\s+/)[0] ?? ""
+export const sha256Of = (path: string): string =>
+  capture("shasum", ["-a", "256", path]).split(/\s+/)[0] ?? ""
 
 export function run(cmd: string, args: readonly string[]): number {
   return spawnSync(cmd, [...args], { stdio: "inherit" }).status ?? 1
 }
 
-export type TextResult = Omit<SpawnSyncReturns<string>, "stdout" | "stderr"> & { readonly stdout: string; readonly stderr: string }
+export type TextResult = Omit<SpawnSyncReturns<string>, "stdout" | "stderr"> & {
+  readonly stdout: string
+  readonly stderr: string
+}
 
-export function spawnText(cmd: string, args: readonly string[], o: Omit<SpawnSyncOptionsWithStringEncoding, "encoding"> = {}): TextResult {
+export function spawnText(
+  cmd: string,
+  args: readonly string[],
+  o: Omit<SpawnSyncOptionsWithStringEncoding, "encoding"> = {},
+): TextResult {
   const r = spawnSync(cmd, [...args], { ...o, encoding: "utf8" })
-  const streams: { readonly stdout: string | null; readonly stderr: string | null } = r
+  const streams: {
+    readonly stdout: string | null
+    readonly stderr: string | null
+  } = r
   return { ...r, stdout: streams.stdout ?? "", stderr: streams.stderr ?? "" }
 }
 
@@ -25,7 +40,10 @@ export function quiet(cmd: string, args: readonly string[]): number {
 }
 
 export function have(cmd: string): boolean {
-  return spawnSync("command", ["-v", cmd], { shell: true, stdio: "ignore" }).status === 0
+  return (
+    spawnSync("command", ["-v", cmd], { shell: true, stdio: "ignore" })
+      .status === 0
+  )
 }
 
 export function du(path: string): string {
@@ -36,7 +54,9 @@ export function du(path: string): string {
 export function download(url: string, dest: string, sha256?: string): void {
   if (existsSync(dest)) {
     if (sha256 === undefined || sha256Of(dest) === sha256) return
-    console.warn(`warning: ${basename(dest)} does not match its pin; re-fetching`)
+    console.warn(
+      `warning: ${basename(dest)} does not match its pin; re-fetching`,
+    )
     rmSync(dest, { force: true })
   }
   mkdirSync(resolve(dest, ".."), { recursive: true })

@@ -1,6 +1,15 @@
 import { spawnSync } from "node:child_process"
 import { createHash } from "node:crypto"
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, statSync } from "node:fs"
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  renameSync,
+  rmSync,
+  statSync,
+} from "node:fs"
 import { homedir } from "node:os"
 import { relative, resolve } from "node:path"
 
@@ -31,7 +40,11 @@ export interface Runtime {
   readonly manifest: RuntimeManifest | null
 }
 
-export type RuntimeBinary = "qemu-system-aarch64" | "qemu-img" | "swtpm" | "zstd"
+export type RuntimeBinary =
+  | "qemu-system-aarch64"
+  | "qemu-img"
+  | "swtpm"
+  | "zstd"
 
 export interface FindOptions {
   readonly env?: Readonly<Record<string, string | undefined>>
@@ -42,22 +55,34 @@ export interface FindOptions {
 
 export class RuntimeMissing extends Error {
   constructor() {
-    super("winvm's runtime (QEMU, swtpm, zstd) is not installed — run `winvm setup`")
+    super(
+      "winvm's runtime (QEMU, swtpm, zstd) is not installed — run `winvm setup`",
+    )
   }
 }
 
 export const runtimePin = (): RuntimePin => pinned
 
-export function runtimeCache(env: Readonly<Record<string, string | undefined>> = process.env): string {
+export function runtimeCache(
+  env: Readonly<Record<string, string | undefined>> = process.env,
+): string {
   const own = env["WINVM_RUNTIME_CACHE"]
   if (own !== undefined && own !== "") return resolve(own)
   const data = env["XDG_DATA_HOME"]
-  return resolve(data !== undefined && data !== "" ? data : resolve(homedir(), ".local", "share"), "winvm", "runtime")
+  return resolve(
+    data !== undefined && data !== ""
+      ? data
+      : resolve(homedir(), ".local", "share"),
+    "winvm",
+    "runtime",
+  )
 }
 
 function readManifest(dir: string): RuntimeManifest | null {
   try {
-    return JSON.parse(readFileSync(resolve(dir, "manifest.json"), "utf8")) as RuntimeManifest
+    return JSON.parse(
+      readFileSync(resolve(dir, "manifest.json"), "utf8"),
+    ) as RuntimeManifest
   } catch {
     return null
   }
@@ -78,7 +103,8 @@ export function findRuntime(o: FindOptions = {}): Runtime | null {
     return { dir, source: "override", manifest: readManifest(dir) }
   }
   const app = appRuntimeDir(o.execPath ?? process.execPath)
-  if (app !== null) return { dir: app, source: "app", manifest: readManifest(app) }
+  if (app !== null)
+    return { dir: app, source: "app", manifest: readManifest(app) }
   const pin = o.pin ?? runtimePin()
   const cached = resolve(o.cache ?? runtimeCache(env), pin.version)
   const manifest = readManifest(cached)
@@ -92,10 +118,12 @@ export function runtimeBin(name: RuntimeBinary, o: FindOptions = {}): string {
   return resolve(rt.dir, "bin", name)
 }
 
-const sha256File = (path: string): string => createHash("sha256").update(readFileSync(path)).digest("hex")
+const sha256File = (path: string): string =>
+  createHash("sha256").update(readFileSync(path)).digest("hex")
 
 const codesignOk = (path: string): boolean =>
-  spawnSync("codesign", ["--verify", "--strict", path], { stdio: "ignore" }).status === 0
+  spawnSync("codesign", ["--verify", "--strict", path], { stdio: "ignore" })
+    .status === 0
 
 function filesUnder(dir: string): string[] {
   const out: string[] = []
@@ -110,7 +138,10 @@ function filesUnder(dir: string): string[] {
   return out
 }
 
-export function verifyRuntime(rt: Runtime, o: { readonly signatureOk?: (path: string) => boolean } = {}): readonly string[] {
+export function verifyRuntime(
+  rt: Runtime,
+  o: { readonly signatureOk?: (path: string) => boolean } = {},
+): readonly string[] {
   const m = rt.manifest
   if (m === null) return ["no manifest.json"]
   const signatureOk = o.signatureOk ?? codesignOk
@@ -121,17 +152,21 @@ export function verifyRuntime(rt: Runtime, o: { readonly signatureOk?: (path: st
     if (!existsSync(path)) problems.push(`${file} is missing`)
     else if (rt.source === "app" && macho.has(file)) {
       if (!signatureOk(path)) problems.push(`${file} has no valid signature`)
-    } else if (sha256File(path) !== digest) problems.push(`${file} does not match manifest.json`)
+    } else if (sha256File(path) !== digest)
+      problems.push(`${file} does not match manifest.json`)
   }
   if (rt.source !== "app") {
     for (const file of filesUnder(rt.dir)) {
-      if (file !== "manifest.json" && !(file in m.files)) problems.push(`${file} is not in manifest.json`)
+      if (file !== "manifest.json" && !(file in m.files))
+        problems.push(`${file} is not in manifest.json`)
     }
   }
   return problems
 }
 
-export function ensureRuntime(o: { readonly pin?: RuntimePin; readonly cache?: string } = {}): Runtime {
+export function ensureRuntime(
+  o: { readonly pin?: RuntimePin; readonly cache?: string } = {},
+): Runtime {
   const pin = o.pin ?? runtimePin()
   const cache = o.cache ?? runtimeCache()
   const found = findRuntime({ env: {}, execPath: "", cache, pin })
@@ -144,15 +179,24 @@ export function ensureRuntime(o: { readonly pin?: RuntimePin; readonly cache?: s
     download(pin.url, tarball, pin.sha256)
     const unpacked = resolve(work, "unpacked")
     mkdirSync(unpacked)
-    if (spawnSync("tar", ["-xzf", tarball, "-C", unpacked], { stdio: "inherit" }).status !== 0) {
+    if (
+      spawnSync("tar", ["-xzf", tarball, "-C", unpacked], { stdio: "inherit" })
+        .status !== 0
+    ) {
       throw new Error(`could not unpack ${pin.url}`)
     }
     const [top] = readdirSync(unpacked)
     const staged = resolve(unpacked, top ?? "")
-    const rt: Runtime = { dir: staged, source: "cache", manifest: readManifest(staged) }
+    const rt: Runtime = {
+      dir: staged,
+      source: "cache",
+      manifest: readManifest(staged),
+    }
     const problems = verifyRuntime(rt)
     if (rt.manifest?.version !== pin.version || problems.length > 0) {
-      throw new Error(`the runtime from ${pin.url} is not ${pin.version} as pinned: ${problems.join("; ")}`)
+      throw new Error(
+        `the runtime from ${pin.url} is not ${pin.version} as pinned: ${problems.join("; ")}`,
+      )
     }
     const dest = resolve(cache, pin.version)
     rmSync(dest, { recursive: true, force: true })
@@ -163,7 +207,8 @@ export function ensureRuntime(o: { readonly pin?: RuntimePin; readonly cache?: s
   }
 }
 
-export const qemuCompat = (m: RuntimeManifest): string => `${m.qemu}+patches:${m.qemuPatches}`
+export const qemuCompat = (m: RuntimeManifest): string =>
+  `${m.qemu}+patches:${m.qemuPatches}`
 
 export function currentQemuCompat(o: FindOptions = {}): string {
   const rt = findRuntime(o)

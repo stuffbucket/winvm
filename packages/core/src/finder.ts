@@ -27,35 +27,68 @@ import {
 } from "./smbstate"
 import { spawnText } from "./shell"
 
-const errMsg = (e: unknown): string => (e instanceof Error ? e.message : String(e))
+const errMsg = (e: unknown): string =>
+  e instanceof Error ? e.message : String(e)
 
 export const EAUTH = 80
 export const ETIMEDOUT = 60
 
 export interface Sys {
   mountTable(): readonly MountEntry[]
-  run(cmd: string, args: readonly string[], timeoutMs: number): { readonly code: number | null; readonly out: string }
-  mount(req: { readonly url: string; readonly dir: string; readonly user: string; readonly password: string }, timeoutMs: number): Promise<number>
-  setup(instance: string, s: SmbState, log: (line: string) => void): Promise<void>
+  run(
+    cmd: string,
+    args: readonly string[],
+    timeoutMs: number,
+  ): { readonly code: number | null; readonly out: string }
+  mount(
+    req: {
+      readonly url: string
+      readonly dir: string
+      readonly user: string
+      readonly password: string
+    },
+    timeoutMs: number,
+  ): Promise<number>
+  setup(
+    instance: string,
+    s: SmbState,
+    log: (line: string) => void,
+  ): Promise<void>
   forward(instance: string): Promise<number>
   running(instance: string): boolean
   sleep(ms: number): Promise<void>
   log: (line: string) => void
 }
 
-function runSync(cmd: string, args: readonly string[], timeoutMs: number): { code: number | null; out: string } {
+function runSync(
+  cmd: string,
+  args: readonly string[],
+  timeoutMs: number,
+): { code: number | null; out: string } {
   const r = spawnText(cmd, args, { timeout: timeoutMs, killSignal: "SIGKILL" })
-  return { code: r.status, out: `${r.stdout}${r.stderr}${r.error === undefined ? "" : String(r.error)}` }
+  return {
+    code: r.status,
+    out: `${r.stdout}${r.stderr}${r.error === undefined ? "" : String(r.error)}`,
+  }
 }
 
-async function mountInChild(req: { url: string; dir: string; user: string; password: string }, timeoutMs: number): Promise<number> {
+async function mountInChild(
+  req: { url: string; dir: string; user: string; password: string },
+  timeoutMs: number,
+): Promise<number> {
   const limit = Math.min(timeoutMs, 25_000)
-  const child = Bun.spawn([process.execPath, ...cliArgv("files", "_netfs")], { stdin: "pipe", stdout: "pipe", stderr: "inherit" })
+  const child = Bun.spawn([process.execPath, ...cliArgv("files", "_netfs")], {
+    stdin: "pipe",
+    stdout: "pipe",
+    stderr: "inherit",
+  })
   await child.stdin.write(JSON.stringify(req))
   await child.stdin.end()
   let timer: ReturnType<typeof setTimeout> | undefined
   const timedOut = new Promise<"timeout">((res) => {
-    timer = setTimeout(() => { res("timeout") }, limit)
+    timer = setTimeout(() => {
+      res("timeout")
+    }, limit)
   })
   const done = await Promise.race([child.exited, timedOut])
   clearTimeout(timer)
@@ -68,11 +101,23 @@ async function mountInChild(req: { url: string; dir: string; user: string; passw
   return m === null ? -1 : Number(m[1])
 }
 
-async function guestSetup(instance: string, s: SmbState, log: (line: string) => void): Promise<void> {
-  const c = await agent.ensure(instance, { log: (l) => { log(`  ${l}`) } })
+async function guestSetup(
+  instance: string,
+  s: SmbState,
+  log: (line: string) => void,
+): Promise<void> {
+  const c = await agent.ensure(instance, {
+    log: (l) => {
+      log(`  ${l}`)
+    },
+  })
   const r = await c.smbSetup({ user: s.user, password: s.password })
-  for (const line of r.output.split(/\r?\n/)) if (line.trim() !== "") log(`  guest: ${line.trimEnd()}`)
-  if (r.code !== 0 || r.timedOut) throw new Error(`setting up file sharing in the guest failed (exit ${String(r.code)})`)
+  for (const line of r.output.split(/\r?\n/))
+    if (line.trim() !== "") log(`  guest: ${line.trimEnd()}`)
+  if (r.code !== 0 || r.timedOut)
+    throw new Error(
+      `setting up file sharing in the guest failed (exit ${String(r.code)})`,
+    )
 }
 
 export const realSys: Sys = {
@@ -82,8 +127,12 @@ export const realSys: Sys = {
   setup: guestSetup,
   forward: async (instance) => await ensureSmbForward(pathsFor(instance)),
   running: (instance) => qemu.isRunning(pathsFor(instance)),
-  sleep: async (ms) => { await Bun.sleep(ms) },
-  log: (line) => { console.log(line) },
+  sleep: async (ms) => {
+    await Bun.sleep(ms)
+  },
+  log: (line) => {
+    console.log(line)
+  },
 }
 
 export type UnmountOutcome = "not-mounted" | "unmounted" | "failed"
@@ -117,16 +166,25 @@ function unmountAll(
   keys: readonly ShareKey[],
   sys: Sys,
   dead = false,
-): { readonly unmounted: string[]; readonly failed: string[]; readonly failedKeys: ShareKey[] } {
+): {
+  readonly unmounted: string[]
+  readonly failed: string[]
+  readonly failedKeys: ShareKey[]
+} {
   const s = readSmb(pathsFor(instance))
   const unmounted: string[] = []
   const failed: string[] = []
   const failedKeys: ShareKey[] = []
-  if (s === null || s.hostPort === null) return { unmounted, failed, failedKeys }
+  if (s === null || s.hostPort === null)
+    return { unmounted, failed, failedKeys }
   for (const key of keys) {
     const dir = mountDir(instance, key)
     try {
-      const r = unmountShare({ dir, port: s.hostPort, share: SHARES[key].share }, sys, dead ? { umountMs: 2000 } : {})
+      const r = unmountShare(
+        { dir, port: s.hostPort, share: SHARES[key].share },
+        sys,
+        dead ? { umountMs: 2000 } : {},
+      )
       if (r === "unmounted") unmounted.push(dir)
       if (r === "failed") {
         failed.push(dir)
@@ -167,10 +225,17 @@ const describeCode = (code: number): string =>
       ? "the guest's file server did not answer"
       : `error ${String(code)}`
 
-export async function mountShares(instance: string, keys: readonly ShareKey[], o: MountOptions = {}): Promise<readonly string[]> {
+export async function mountShares(
+  instance: string,
+  keys: readonly ShareKey[],
+  o: MountOptions = {},
+): Promise<readonly string[]> {
   const sys = o.sys ?? realSys
   const p = pathsFor(instance)
-  if (!sys.running(instance)) throw new Error(`instance "${instance}" is not running — \`winvm start -i ${instance}\``)
+  if (!sys.running(instance))
+    throw new Error(
+      `instance "${instance}" is not running — \`winvm start -i ${instance}\``,
+    )
   const { state: first, created } = ensureSmb(p)
   const port = await sys.forward(instance)
   let state: SmbState = { ...(readSmb(p) ?? first), hostPort: port }
@@ -190,19 +255,41 @@ export async function mountShares(instance: string, keys: readonly ShareKey[], o
     const table = sys.mountTable()
     if (findOurMount(table, want) === null) {
       const other = table.find((e) => e.dir === dir)
-      if (other !== undefined) throw new Error(`${dir} already has ${other.source} (${other.type}) mounted on it; unmount that first`)
+      if (other !== undefined)
+        throw new Error(
+          `${dir} already has ${other.source} (${other.type}) mounted on it; unmount that first`,
+        )
       mkdirSync(dir, { recursive: true })
-      const req = { url: `smb://127.0.0.1:${String(port)}/${share}`, dir, user: state.user, password: state.password }
-      let code = await tryMount(req, want, Date.now() + (o.waitMs ?? 10_000), sys)
+      const req = {
+        url: `smb://127.0.0.1:${String(port)}/${share}`,
+        dir,
+        user: state.user,
+        password: state.password,
+      }
+      let code = await tryMount(
+        req,
+        want,
+        Date.now() + (o.waitMs ?? 10_000),
+        sys,
+      )
       if (code !== 0 && !setUp) {
-        await setup(code === EAUTH ? "the guest refused the saved password" : "the guest's file server did not answer")
+        await setup(
+          code === EAUTH
+            ? "the guest refused the saved password"
+            : "the guest's file server did not answer",
+        )
         code = await tryMount(req, want, Date.now() + 30_000, sys)
       }
       if (code !== 0) {
         tidy(instance, dir, sys)
-        throw new Error(`could not mount ${share} on ${dir}: ${describeCode(code)}`)
+        throw new Error(
+          `could not mount ${share} on ${dir}: ${describeCode(code)}`,
+        )
       }
-      if (findOurMount(sys.mountTable(), want) === null) throw new Error(`mounting ${share} reported success, but ${dir} is not in the mount table`)
+      if (findOurMount(sys.mountTable(), want) === null)
+        throw new Error(
+          `mounting ${share} reported success, but ${dir} is not in the mount table`,
+        )
       sys.log(`mounted ${share} on ${dir}`)
     }
     state = withMounted(state, key, true)
@@ -222,7 +309,8 @@ export function unmountShares(
   const s = readSmb(p)
   if (s !== null) {
     let next = s
-    for (const k of keys) if (!r.failedKeys.includes(k)) next = withMounted(next, k, false)
+    for (const k of keys)
+      if (!r.failedKeys.includes(k)) next = withMounted(next, k, false)
     writeSmb(p, next)
   }
   return r
@@ -235,34 +323,52 @@ export function beforeDown(instance: string, sys: Sys = realSys): void {
     for (const d of r.unmounted) sys.log(`unmounted ${d}`)
     for (const d of r.failed) console.warn(`warning: could not unmount ${d}`)
   } catch (error) {
-    console.warn(`warning: could not unmount the guest's drives (${errMsg(error)})`)
+    console.warn(
+      `warning: could not unmount the guest's drives (${errMsg(error)})`,
+    )
   }
 }
 
-export async function afterUp(instance: string, sys: Sys = realSys): Promise<void> {
+export async function afterUp(
+  instance: string,
+  sys: Sys = realSys,
+): Promise<void> {
   const s = readSmb(pathsFor(instance))
   if (s === null || s.mounted.length === 0 || !sys.running(instance)) return
   try {
     await mountShares(instance, s.mounted, { waitMs: 30_000, sys })
   } catch (error) {
-    console.warn(`warning: the guest's drives were not mounted again (${errMsg(error)}) — \`winvm files mount -i ${instance}\``)
+    console.warn(
+      `warning: the guest's drives were not mounted again (${errMsg(error)}) — \`winvm files mount -i ${instance}\``,
+    )
   }
 }
 
-export function cleanStale(instance: string, sys: Sys = realSys): readonly string[] {
+export function cleanStale(
+  instance: string,
+  sys: Sys = realSys,
+): readonly string[] {
   try {
     const stale = staleMounts(instance, sys)
     if (stale.length === 0) return []
-    console.error(`unmounting ${stale.join(" and ")}, left by a guest that is gone (this can take a minute)`)
+    console.error(
+      `unmounting ${stale.join(" and ")}, left by a guest that is gone (this can take a minute)`,
+    )
     const r = unmountAll(instance, SHARE_KEYS, sys, true)
-    for (const d of r.failed) console.warn(`warning: could not unmount ${d}, left by a guest that is gone`)
+    for (const d of r.failed)
+      console.warn(
+        `warning: could not unmount ${d}, left by a guest that is gone`,
+      )
     return r.unmounted
   } catch {
     return []
   }
 }
 
-export function staleMounts(instance: string, sys: Sys = realSys): readonly string[] {
+export function staleMounts(
+  instance: string,
+  sys: Sys = realSys,
+): readonly string[] {
   const s = readSmb(pathsFor(instance))
   if (s === null || s.hostPort === null || sys.running(instance)) return []
   const port = s.hostPort
@@ -276,9 +382,11 @@ export function staleMounts(instance: string, sys: Sys = realSys): readonly stri
 export function cleanStaleLater(instance: string, sys: Sys = realSys): void {
   try {
     if (staleMounts(instance, sys).length === 0) return
-    spawn(process.execPath, [...cliArgv("files", "_clean", "-i", instance)], { detached: true, stdio: "ignore" }).unref()
-  } catch {
-  }
+    spawn(process.execPath, [...cliArgv("files", "_clean", "-i", instance)], {
+      detached: true,
+      stdio: "ignore",
+    }).unref()
+  } catch {}
 }
 
 export interface ShareStatus {
@@ -313,7 +421,13 @@ export function status(instance: string, sys: Sys = realSys): FilesStatus {
         share: SHARES[key].share,
         guest: SHARES[key].guest,
         dir,
-        mounted: s?.hostPort != null && findOurMount(table, { dir, port: s.hostPort, share: SHARES[key].share }) !== null,
+        mounted:
+          s?.hostPort != null &&
+          findOurMount(table, {
+            dir,
+            port: s.hostPort,
+            share: SHARES[key].share,
+          }) !== null,
         remembered: s?.mounted.includes(key) ?? false,
       }
     }),
@@ -326,14 +440,22 @@ const USAGE =
   "       winvm files unmount [-i name] [c|home]\n" +
   "       winvm files status  [-i name] [--json]"
 
-function keysOf(arg: string | undefined, fallback: readonly ShareKey[]): readonly ShareKey[] | string {
+function keysOf(
+  arg: string | undefined,
+  fallback: readonly ShareKey[],
+): readonly ShareKey[] | string {
   if (arg === undefined) return fallback
   const k = arg.toLowerCase().replace(/[:\\]+$/, "")
   return isShareKey(k) ? [k] : `"${arg}" is not a share: c or home`
 }
 
 async function netfsHelper(): Promise<number> {
-  const req = JSON.parse(await Bun.stdin.text()) as { url: string; dir: string; user: string; password: string }
+  const req = JSON.parse(await Bun.stdin.text()) as {
+    url: string
+    dir: string
+    user: string
+    password: string
+  }
   let code: number
   try {
     code = netfsMount(req)
@@ -354,8 +476,18 @@ export async function filesCmd(args: Args): Promise<number> {
     return 0
   }
   const json = args.flags.has("json")
-  const sys: Sys = json ? { ...realSys, log: (line) => { console.error(line) } } : realSys
-  if (sub === undefined || !["open", "mount", "unmount", "status"].includes(sub)) {
+  const sys: Sys = json
+    ? {
+        ...realSys,
+        log: (line) => {
+          console.error(line)
+        },
+      }
+    : realSys
+  if (
+    sub === undefined ||
+    !["open", "mount", "unmount", "status"].includes(sub)
+  ) {
     console.error(USAGE)
     return 2
   }
@@ -369,9 +501,14 @@ export async function filesCmd(args: Args): Promise<number> {
       console.log(JSON.stringify(st, null, 2))
       return 0
     }
-    if (!st.setUp) console.log(`instance "${instance}" has not shared its drives yet — \`winvm files open -i ${instance}\``)
+    if (!st.setUp)
+      console.log(
+        `instance "${instance}" has not shared its drives yet — \`winvm files open -i ${instance}\``,
+      )
     for (const s of st.shares) {
-      console.log(`  ${s.share.padEnd(5)} ${s.guest.padEnd(24)} ${s.mounted ? `mounted on ${s.dir}` : "not mounted"}${s.remembered && !s.mounted ? " (mounted again when the guest is back)" : ""}`)
+      console.log(
+        `  ${s.share.padEnd(5)} ${s.guest.padEnd(24)} ${s.mounted ? `mounted on ${s.dir}` : "not mounted"}${s.remembered && !s.mounted ? " (mounted again when the guest is back)" : ""}`,
+      )
     }
     return 0
   }
@@ -396,7 +533,10 @@ export async function filesCmd(args: Args): Promise<number> {
   let rel: readonly string[] = []
   if (sub === "open" && guestPath !== undefined) {
     const mapped = shareFor(guestPath)
-    if (mapped === null) return fail(`${guestPath} is not on C:\\, so there is no share to show it from`)
+    if (mapped === null)
+      return fail(
+        `${guestPath} is not on C:\\, so there is no share to show it from`,
+      )
     keys = [mapped.key]
     rel = mapped.rel
   } else {
@@ -410,9 +550,13 @@ export async function filesCmd(args: Args): Promise<number> {
     return fail(errMsg(error))
   }
   if (sub === "open") {
-    const target = resolve(dirs[0] ?? mountDir(instance, keys[0] ?? "home"), ...rel)
+    const target = resolve(
+      dirs[0] ?? mountDir(instance, keys[0] ?? "home"),
+      ...rel,
+    )
     const r = runSync("/usr/bin/open", [target], 15_000)
-    if (r.code !== 0) return fail(`could not show ${target} in Finder: ${r.out.trim()}`)
+    if (r.code !== 0)
+      return fail(`could not show ${target} in Finder: ${r.out.trim()}`)
     if (!json) console.log(`opened ${target} in Finder`)
   }
   if (json) console.log(JSON.stringify(status(instance), null, 2))

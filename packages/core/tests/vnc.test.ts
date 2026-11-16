@@ -1,12 +1,32 @@
-import { afterEach, beforeEach, describe, expect, it, mock, spyOn } from "bun:test"
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
+import {
+  afterEach,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  mock,
+  spyOn,
+} from "bun:test"
+import {
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs"
 import { createServer, type Server } from "node:net"
 import { tmpdir } from "node:os"
 import { resolve } from "node:path"
 
 import type { InstanceMeta } from "../src/paths"
 import { instanceDir, pathsFor } from "../src/paths"
-import { connection, displayFree, ensureFreeDisplay, vncPort, websocketPort } from "../src/vnc"
+import {
+  connection,
+  displayFree,
+  ensureFreeDisplay,
+  vncPort,
+  websocketPort,
+} from "../src/vnc"
 
 let state = ""
 let previousHome: string | undefined
@@ -14,7 +34,11 @@ const held: Server[] = []
 
 async function hold(port: number): Promise<void> {
   const s = createServer()
-  await new Promise<void>((res) => s.listen(port, "127.0.0.1", () => { res() }))
+  await new Promise<void>((res) =>
+    s.listen(port, "127.0.0.1", () => {
+      res()
+    }),
+  )
   held.push(s)
 }
 
@@ -24,7 +48,11 @@ async function someFreeDisplay(from: number): Promise<number> {
 }
 
 function makeInstance(name: string, vnc: number): InstanceMeta {
-  const meta: InstanceMeta = { image: "win11-arm64", vnc, created: new Date().toISOString() }
+  const meta: InstanceMeta = {
+    image: "win11-arm64",
+    vnc,
+    created: new Date().toISOString(),
+  }
   mkdirSync(instanceDir(name), { recursive: true })
   writeFileSync(pathsFor(name).meta, JSON.stringify(meta))
   return meta
@@ -38,7 +66,9 @@ describe("VNC display in use on the host", () => {
     spyOn(console, "log").mockImplementation(() => undefined)
   })
   afterEach(async () => {
-    await Promise.all(held.splice(0).map((s) => new Promise((res) => s.close(res))))
+    await Promise.all(
+      held.splice(0).map((s) => new Promise((res) => s.close(res))),
+    )
     if (previousHome === undefined) delete process.env["WINVM_HOME"]
     else process.env["WINVM_HOME"] = previousHome
     rmSync(state, { recursive: true, force: true })
@@ -70,13 +100,21 @@ describe("VNC display in use on the host", () => {
     expect(moved.vnc).toBeGreaterThan(busy)
     expect(await displayFree(moved.vnc)).toBe(true)
     expect(moved.image).toBe(meta.image)
-    expect((JSON.parse(readFileSync(pathsFor("a").meta, "utf8")) as InstanceMeta).vnc).toBe(moved.vnc)
+    expect(
+      (JSON.parse(readFileSync(pathsFor("a").meta, "utf8")) as InstanceMeta)
+        .vnc,
+    ).toBe(moved.vnc)
   })
 })
 
 describe("connection", () => {
   it("gives both ports for the display and the password", () => {
-    expect(connection(3, "abcd1234")).toEqual({ display: 3, vncPort: 5903, websocketPort: 5703, password: "abcd1234" })
+    expect(connection(3, "abcd1234")).toEqual({
+      display: 3,
+      vncPort: 5903,
+      websocketPort: 5703,
+      password: "abcd1234",
+    })
   })
 
   it("keeps a missing password as null", () => {

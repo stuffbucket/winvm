@@ -15,7 +15,8 @@ export function splitWords(line: string): string[] {
     } else if (ch === '"') {
       let j = i + 1
       for (; j < line.length && line[j] !== '"'; j += 1) {
-        if (line[j] === "\\" && (line[j + 1] === '"' || line[j + 1] === "\\")) j += 1
+        if (line[j] === "\\" && (line[j + 1] === '"' || line[j + 1] === "\\"))
+          j += 1
         cur += line[j] ?? ""
       }
       if (j >= line.length) throw new Error(`unterminated " in: ${line}`)
@@ -55,7 +56,8 @@ export interface HostStepResult {
   readonly timedOut: boolean
 }
 
-export const quote = (w: string): string => (/^[\w@%+=:,./#-]+$/.test(w) ? w : `'${w.replaceAll("'", `'"'"'`)}'`)
+export const quote = (w: string): string =>
+  /^[\w@%+=:,./#-]+$/.test(w) ? w : `'${w.replaceAll("'", `'"'"'`)}'`
 
 export async function runHostStep(
   run: string,
@@ -67,18 +69,28 @@ export async function runHostStep(
   let stdout = ""
   let stderr = ""
   for (const argv of commands(run, instance)) {
-    stdout += `$ winvm ${argv.filter((_, i) => i !== 1 && i !== 2).map(quote).join(" ")}\n`
+    stdout += `$ winvm ${argv
+      .filter((_, i) => i !== 1 && i !== 2)
+      .map(quote)
+      .join(" ")}\n`
     const p = Bun.spawn([process.execPath, cliEntry(), ...argv], {
       env: { ...process.env, ...env, WINVM_INSTANCE: instance },
       stdout: "pipe",
       stderr: "pipe",
     })
     let timedOut = false as boolean
-    const killer = setTimeout(() => {
-      timedOut = true
-      p.kill("SIGKILL")
-    }, Math.max(0, deadline - Date.now()))
-    const [o, e, code] = await Promise.all([new Response(p.stdout).text(), new Response(p.stderr).text(), p.exited])
+    const killer = setTimeout(
+      () => {
+        timedOut = true
+        p.kill("SIGKILL")
+      },
+      Math.max(0, deadline - Date.now()),
+    )
+    const [o, e, code] = await Promise.all([
+      new Response(p.stdout).text(),
+      new Response(p.stderr).text(),
+      p.exited,
+    ])
     clearTimeout(killer)
     stdout += o
     stderr += e

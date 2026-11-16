@@ -2,9 +2,16 @@ import { connect } from "node:net"
 
 export class QmpError extends Error {}
 
-export type QmpSend = (execute: string, args?: Record<string, unknown>) => Promise<unknown>
+export type QmpSend = (
+  execute: string,
+  args?: Record<string, unknown>,
+) => Promise<unknown>
 
-export async function withQmp<T>(sockPath: string, fn: (send: QmpSend) => Promise<T>, timeoutMs = 3000): Promise<T> {
+export async function withQmp<T>(
+  sockPath: string,
+  fn: (send: QmpSend) => Promise<T>,
+  timeoutMs = 3000,
+): Promise<T> {
   const sock = connect(sockPath)
   let buf = ""
   let greeted: (() => void) | null = null
@@ -23,7 +30,8 @@ export async function withQmp<T>(sockPath: string, fn: (send: QmpSend) => Promis
   })
   sock.on("close", () => {
     deadErr ??= new QmpError("qmp connection closed")
-    for (const w of waiting.splice(0)) w({ error: { desc: "qmp connection closed" } })
+    for (const w of waiting.splice(0))
+      w({ error: { desc: "qmp connection closed" } })
   })
   sock.on("data", (chunk) => {
     buf += chunk.toString("utf8")
@@ -51,9 +59,18 @@ export async function withQmp<T>(sockPath: string, fn: (send: QmpSend) => Promis
   const raw = async (o: object, label: string): Promise<unknown> => {
     if (deadErr !== null) throw deadErr
     let timer: ReturnType<typeof setTimeout> | undefined
-    const reply = new Promise<Record<string, unknown>>((res) => waiting.push(res))
+    const reply = new Promise<Record<string, unknown>>((res) =>
+      waiting.push(res),
+    )
     const expiry = new Promise<Record<string, unknown>>((res) => {
-      timer = setTimeout(() => { res({ error: { desc: `no answer in ${String(timeoutMs)} ms`, timeout: true } }) }, timeoutMs)
+      timer = setTimeout(() => {
+        res({
+          error: {
+            desc: `no answer in ${String(timeoutMs)} ms`,
+            timeout: true,
+          },
+        })
+      }, timeoutMs)
     })
     sock.write(`${JSON.stringify(o)}\n`)
     const msg = await Promise.race([reply, expiry])
@@ -71,11 +88,25 @@ export async function withQmp<T>(sockPath: string, fn: (send: QmpSend) => Promis
     await Promise.race([
       greeting,
       new Promise<never>((_, rej) => {
-        timer = setTimeout(() => { rej(new QmpError(`qmp: no greeting in ${String(timeoutMs)} ms (monitor busy?)`)) }, timeoutMs)
+        timer = setTimeout(() => {
+          rej(
+            new QmpError(
+              `qmp: no greeting in ${String(timeoutMs)} ms (monitor busy?)`,
+            ),
+          )
+        }, timeoutMs)
       }),
-    ]).finally(() => { clearTimeout(timer) })
+    ]).finally(() => {
+      clearTimeout(timer)
+    })
     await raw({ execute: "qmp_capabilities" }, "qmp_capabilities")
-    return await fn(async (execute, args) => await raw(args === undefined ? { execute } : { execute, arguments: args }, execute))
+    return await fn(
+      async (execute, args) =>
+        await raw(
+          args === undefined ? { execute } : { execute, arguments: args },
+          execute,
+        ),
+    )
   } finally {
     sock.destroy()
   }
@@ -87,5 +118,9 @@ export async function qmpCommand(
   args?: Record<string, unknown>,
   timeoutMs = 3000,
 ): Promise<unknown> {
-  return await withQmp(sockPath, async (send) => await send(execute, args), timeoutMs)
+  return await withQmp(
+    sockPath,
+    async (send) => await send(execute, args),
+    timeoutMs,
+  )
 }

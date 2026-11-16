@@ -1,10 +1,33 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs"
 import { tmpdir } from "node:os"
 import { resolve } from "node:path"
 
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "bun:test"
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+} from "bun:test"
 
-import { CLOSE_POLICIES, DEFAULTS, configPath, effectiveConfig, parseAssignment, readOverrides, writeAssignments } from "../src/config"
+import {
+  CLOSE_POLICIES,
+  DEFAULTS,
+  configPath,
+  effectiveConfig,
+  parseAssignment,
+  readOverrides,
+  writeAssignments,
+} from "../src/config"
 import { buildIdentity } from "../src/identity"
 import { PACKAGE_DIR, instanceDir, pathsFor } from "../src/paths"
 import type { Decision, Sample, Settings, Timing } from "../src/idle"
@@ -21,7 +44,13 @@ import {
 } from "../src/watch"
 
 const MIN = 60_000
-const TIMING: Timing = { tickMs: 15_000, wakeGapMs: 45_000, cpuWindowMs: 60_000, settleMs: 60_000, driftCheckMs: 30 * MIN }
+const TIMING: Timing = {
+  tickMs: 15_000,
+  wakeGapMs: 45_000,
+  cpuWindowMs: 60_000,
+  settleMs: 60_000,
+  driftCheckMs: 30 * MIN,
+}
 const SETTINGS: Settings = {
   idleCpuPercent: 5,
   autosave: { enabled: true, idleMinutes: 10 },
@@ -44,7 +73,13 @@ class Harness {
 
   tick(cpu: number | null, advanceMs = TIMING.tickMs): Decision[] {
     this.now += advanceMs
-    const s: Sample = { wallMs: this.now, cpu, activityAtMs: this.activityAt, vncClients: this.vnc, frozen: this.frozen }
+    const s: Sample = {
+      wallMs: this.now,
+      cpu,
+      activityAtMs: this.activityAt,
+      vncClients: this.vnc,
+      frozen: this.frozen,
+    }
     const ds = this.machine.tick(s, this.settings)
     for (const d of ds) {
       this.log.push({ at: this.now, d })
@@ -145,14 +180,21 @@ describe("idle state machine", () => {
   })
 
   it("stow supersedes an autosave due at the same moment", () => {
-    const h = new Harness({ ...SETTINGS, autosave: { enabled: true, idleMinutes: 5 }, stow: { enabled: true, idleMinutes: 5 } })
+    const h = new Harness({
+      ...SETTINGS,
+      autosave: { enabled: true, idleMinutes: 5 },
+      stow: { enabled: true, idleMinutes: 5 },
+    })
     h.run(6, IDLE)
     expect(h.kinds("stow")).toHaveLength(1)
     expect(h.kinds("autosave")).toHaveLength(0)
   })
 
   it("retries a failed stow only after another full idle period", () => {
-    const h = new Harness({ ...SETTINGS, autosave: { enabled: false, idleMinutes: 10 } })
+    const h = new Harness({
+      ...SETTINGS,
+      autosave: { enabled: false, idleMinutes: 10 },
+    })
     h.run(60.25, IDLE)
     expect(h.kinds("stow")).toHaveLength(1)
     h.machine.stowFailed(h.now)
@@ -163,7 +205,11 @@ describe("idle state machine", () => {
   })
 
   it("honours disabled autosave and stow", () => {
-    const h = new Harness({ ...SETTINGS, autosave: { enabled: false, idleMinutes: 10 }, stow: { enabled: false, idleMinutes: 60 } })
+    const h = new Harness({
+      ...SETTINGS,
+      autosave: { enabled: false, idleMinutes: 10 },
+      stow: { enabled: false, idleMinutes: 60 },
+    })
     h.run(120, IDLE)
     expect(h.log.filter((e) => e.d.kind !== "checkDrift")).toEqual([])
   })
@@ -193,7 +239,11 @@ describe("idle state machine", () => {
   })
 
   it("asks for a drift check every 30 minutes", () => {
-    const h = new Harness({ ...SETTINGS, autosave: { enabled: false, idleMinutes: 10 }, stow: { enabled: false, idleMinutes: 60 } })
+    const h = new Harness({
+      ...SETTINGS,
+      autosave: { enabled: false, idleMinutes: 10 },
+      stow: { enabled: false, idleMinutes: 60 },
+    })
     h.run(95, IDLE)
     expect(h.kinds("checkDrift")).toHaveLength(3)
   })
@@ -240,12 +290,15 @@ describe("idle state machine", () => {
   it("treats the wall clock going backwards as a jump to resync", () => {
     const h = new Harness()
     h.tick(IDLE)
-    expect(h.tick(IDLE, -10 * MIN)).toEqual([{ kind: "syncClock", reason: "clock-jump" }])
+    expect(h.tick(IDLE, -10 * MIN)).toEqual([
+      { kind: "syncClock", reason: "clock-jump" },
+    ])
   })
 })
 
 describe("autosave rotation", () => {
-  const at = (min: number): string => new Date(Date.UTC(2026, 9, 21, 12, min)).toISOString()
+  const at = (min: number): string =>
+    new Date(Date.UTC(2026, 9, 21, 12, min)).toISOString()
   const saves = [
     { name: "auto-1", kind: "auto", createdAt: at(1) },
     { name: "baseline", kind: "baseline", createdAt: at(0) },
@@ -259,7 +312,12 @@ describe("autosave rotation", () => {
 
   it("keeps the newest N auto saves and deletes the rest", () => {
     expect(savesToRotate(saves, 3)).toEqual(["auto-2", "auto-1"])
-    expect(savesToRotate(saves, 1)).toEqual(["auto-6", "auto-4", "auto-2", "auto-1"])
+    expect(savesToRotate(saves, 1)).toEqual([
+      "auto-6",
+      "auto-4",
+      "auto-2",
+      "auto-1",
+    ])
     expect(savesToRotate(saves, 10)).toEqual([])
   })
 
@@ -272,7 +330,9 @@ describe("autosave rotation", () => {
   })
 
   it("names autosaves sortably", () => {
-    expect(autosaveName(Date.UTC(2026, 9, 21, 16, 43, 7, 250))).toBe("auto-20261021T164307Z")
+    expect(autosaveName(Date.UTC(2026, 9, 21, 16, 43, 7, 250))).toBe(
+      "auto-20261021T164307Z",
+    )
   })
 })
 
@@ -300,7 +360,10 @@ describe("instance config", () => {
 
   it("defaults, overrides, and back to default", () => {
     expect(effectiveConfig("t")).toEqual(DEFAULTS)
-    writeAssignments("t", [parseAssignment("autosave.idleMinutes=1"), parseAssignment("stow.enabled=off")])
+    writeAssignments("t", [
+      parseAssignment("autosave.idleMinutes=1"),
+      parseAssignment("stow.enabled=off"),
+    ])
     expect(effectiveConfig("t")["autosave.idleMinutes"]).toBe(1)
     expect(effectiveConfig("t")["stow.enabled"]).toBe(false)
     writeAssignments("t", [parseAssignment("stow.enabled=true")])
@@ -318,9 +381,15 @@ describe("instance config", () => {
 
   it("keeps a title for the Mac app, checked, and clears it when empty", () => {
     expect(effectiveConfig("titled").title).toBe("")
-    expect(parseAssignment("title=  Build box  ")).toEqual(["title", "Build box"])
+    expect(parseAssignment("title=  Build box  ")).toEqual([
+      "title",
+      "Build box",
+    ])
     expect(parseAssignment("title=a=b")).toEqual(["title", "a=b"])
-    writeAssignments("titled", [parseAssignment("title=Build box"), parseAssignment("stow.enabled=off")])
+    writeAssignments("titled", [
+      parseAssignment("title=Build box"),
+      parseAssignment("stow.enabled=off"),
+    ])
     expect(effectiveConfig("titled").title).toBe("Build box")
     writeAssignments("titled", [parseAssignment("title=")])
     expect(readOverrides("titled")).toEqual({ "stow.enabled": false })
@@ -330,7 +399,10 @@ describe("instance config", () => {
 
   it("ignores a title in config.json that would not pass the check", () => {
     mkdirSync(instanceDir("edited"), { recursive: true })
-    writeFileSync(configPath("edited"), JSON.stringify({ title: "bad\u0007bell", "stow.enabled": false }))
+    writeFileSync(
+      configPath("edited"),
+      JSON.stringify({ title: "bad\u0007bell", "stow.enabled": false }),
+    )
     expect(readOverrides("edited")).toEqual({ "stow.enabled": false })
     writeFileSync(configPath("edited"), JSON.stringify({ title: 42 }))
     expect(effectiveConfig("edited").title).toBe("")
@@ -355,23 +427,42 @@ describe("instance settings: close policy", () => {
   })
 
   it("accepts each policy exactly", () => {
-    for (const policy of CLOSE_POLICIES) expect(parseAssignment(`viewer.closePolicy=${policy}`)).toEqual(["viewer.closePolicy", policy])
+    for (const policy of CLOSE_POLICIES)
+      expect(parseAssignment(`viewer.closePolicy=${policy}`)).toEqual([
+        "viewer.closePolicy",
+        policy,
+      ])
   })
 
   it("rejects case variants and unknown values, listing what is allowed", () => {
-    for (const bad of ["Ask", "LEAVE", "Stow", "shutDown", "pause", "", "leave now"]) {
-      expect(() => parseAssignment(`viewer.closePolicy=${bad}`)).toThrow("ask, leave, stow, shutdown")
+    for (const bad of [
+      "Ask",
+      "LEAVE",
+      "Stow",
+      "shutDown",
+      "pause",
+      "",
+      "leave now",
+    ]) {
+      expect(() => parseAssignment(`viewer.closePolicy=${bad}`)).toThrow(
+        "ask, leave, stow, shutdown",
+      )
     }
   })
 
   it("does not apply title validation to it", () => {
-    expect(() => parseAssignment(`viewer.closePolicy=${"x".repeat(81)}`)).not.toThrow("80")
+    expect(() =>
+      parseAssignment(`viewer.closePolicy=${"x".repeat(81)}`),
+    ).not.toThrow("80")
   })
 
   it("falls back to ask for an invalid value on disk, keeping valid neighbours", () => {
     mkdirSync(instanceDir("badpolicy"), { recursive: true })
     for (const bad of ["Ask", "pause", "", 3, null, true]) {
-      writeFileSync(configPath("badpolicy"), JSON.stringify({ "viewer.closePolicy": bad, "stow.enabled": false }))
+      writeFileSync(
+        configPath("badpolicy"),
+        JSON.stringify({ "viewer.closePolicy": bad, "stow.enabled": false }),
+      )
       expect(readOverrides("badpolicy")).toEqual({ "stow.enabled": false })
       expect(effectiveConfig("badpolicy")["viewer.closePolicy"]).toBe("ask")
     }
@@ -379,15 +470,26 @@ describe("instance settings: close policy", () => {
 
   it("persists a non-default policy and reads it back", () => {
     writeAssignments("chosen", [parseAssignment("viewer.closePolicy=shutdown")])
-    expect(readOverrides("chosen")).toEqual({ "viewer.closePolicy": "shutdown" })
+    expect(readOverrides("chosen")).toEqual({
+      "viewer.closePolicy": "shutdown",
+    })
     expect(effectiveConfig("chosen")["viewer.closePolicy"]).toBe("shutdown")
   })
 
   it("writing ask removes the override and keeps unrelated settings", () => {
-    writeAssignments("reset", [parseAssignment("viewer.closePolicy=stow"), parseAssignment("title=Build box"), parseAssignment("stow.enabled=off")])
+    writeAssignments("reset", [
+      parseAssignment("viewer.closePolicy=stow"),
+      parseAssignment("title=Build box"),
+      parseAssignment("stow.enabled=off"),
+    ])
     writeAssignments("reset", [parseAssignment("viewer.closePolicy=ask")])
-    expect(readOverrides("reset")).toEqual({ title: "Build box", "stow.enabled": false })
-    expect(JSON.parse(readFileSync(configPath("reset"), "utf8"))).not.toHaveProperty("viewer.closePolicy")
+    expect(readOverrides("reset")).toEqual({
+      title: "Build box",
+      "stow.enabled": false,
+    })
+    expect(
+      JSON.parse(readFileSync(configPath("reset"), "utf8")),
+    ).not.toHaveProperty("viewer.closePolicy")
     expect(effectiveConfig("reset")["viewer.closePolicy"]).toBe("ask")
   })
 })
@@ -438,7 +540,10 @@ describe("watcher generations", () => {
 
   const fakeWatcher = (): ReturnType<typeof Bun.spawn> => {
     const holder = resolve(import.meta.dir, "fakes", "holder.ts")
-    const h = Bun.spawn([process.execPath, holder, "winvm", "watch", "-i", "w"], { stdout: "ignore", stderr: "ignore" })
+    const h = Bun.spawn(
+      [process.execPath, holder, "winvm", "watch", "-i", "w"],
+      { stdout: "ignore", stderr: "ignore" },
+    )
     spawned.push(h)
     return h
   }
@@ -450,12 +555,20 @@ describe("watcher generations", () => {
       return false
     }
   }
-  const lock = (pid: number): void => { writeFileSync(watchPathsFor("w").pid, `${String(pid)}\n`) }
-  const state = (o: Record<string, unknown>): void => { writeFileSync(watchPathsFor("w").state, JSON.stringify(o)) }
+  const lock = (pid: number): void => {
+    writeFileSync(watchPathsFor("w").pid, `${String(pid)}\n`)
+  }
+  const state = (o: Record<string, unknown>): void => {
+    writeFileSync(watchPathsFor("w").state, JSON.stringify(o))
+  }
 
   it("classifies a record by its build: current, stale, or legacy when it has none", () => {
-    expect(watcherFreshness({ pid: 1, build: CURRENT }, CURRENT)).toBe("current")
-    expect(watcherFreshness({ pid: 1, build: "sha256:old" }, CURRENT)).toBe("stale")
+    expect(watcherFreshness({ pid: 1, build: CURRENT }, CURRENT)).toBe(
+      "current",
+    )
+    expect(watcherFreshness({ pid: 1, build: "sha256:old" }, CURRENT)).toBe(
+      "stale",
+    )
     expect(watcherFreshness({ pid: 1 }, CURRENT)).toBe("legacy")
     expect(watcherFreshness({ pid: 1, build: buildIdentity() })).toBe("current")
   })
@@ -588,21 +701,38 @@ describe("watcher generations", () => {
     spawned.push(stranger)
     lock(stranger.pid)
     const kills: string[] = []
-    expect(await stopWatcher("w", { kill: (_p, sig) => void kills.push(sig) })).toBe(false)
+    expect(
+      await stopWatcher("w", { kill: (_p, sig) => void kills.push(sig) }),
+    ).toBe(false)
     expect(kills).toEqual([])
     expect(alive(stranger.pid)).toBe(true)
   })
 
   for (const [label, argv] of [
     ["another instance's watcher", ["winvm", "watch", "-i", "other"]],
-    ["the watcher of an instance whose name starts with this one's", ["winvm", "watch", "-i", "wx"]],
-    ["a watcher named with --instance=", ["winvm", "watch", "--instance=other"]],
-    ["a `watch --stop` for this instance", ["winvm", "watch", "-i", "w", "--stop"]],
-    ["an unrelated executable whose name ends in winvm", ["evilwinvm", "watch", "-i", "w"]],
+    [
+      "the watcher of an instance whose name starts with this one's",
+      ["winvm", "watch", "-i", "wx"],
+    ],
+    [
+      "a watcher named with --instance=",
+      ["winvm", "watch", "--instance=other"],
+    ],
+    [
+      "a `watch --stop` for this instance",
+      ["winvm", "watch", "-i", "w", "--stop"],
+    ],
+    [
+      "an unrelated executable whose name ends in winvm",
+      ["evilwinvm", "watch", "-i", "w"],
+    ],
   ] as const) {
     it(`never takes ${label} for this instance's watcher, before SIGTERM or SIGKILL`, async () => {
       const holder = resolve(import.meta.dir, "fakes", "holder.ts")
-      const h = Bun.spawn([process.execPath, holder, ...argv], { stdout: "ignore", stderr: "ignore" })
+      const h = Bun.spawn([process.execPath, holder, ...argv], {
+        stdout: "ignore",
+        stderr: "ignore",
+      })
       spawned.push(h)
       lock(h.pid)
       state({ pid: h.pid, build: CURRENT, state: "watching" })
@@ -631,7 +761,10 @@ describe("watcher generations", () => {
       ["winvm", "watch", "--instance=w"],
       ["winvm-aarch64-apple-darwin", "watch", "-i", "w"],
     ]) {
-      const h = Bun.spawn([process.execPath, holder, ...argv], { stdout: "ignore", stderr: "ignore" })
+      const h = Bun.spawn([process.execPath, holder, ...argv], {
+        stdout: "ignore",
+        stderr: "ignore",
+      })
       spawned.push(h)
       lock(h.pid)
       expect(watcherRecord("w")?.pid).toBe(h.pid)
@@ -639,22 +772,47 @@ describe("watcher generations", () => {
   })
 
   it("publishes its build as soon as it holds the lock, and in every later state", async () => {
-    const cli = resolve(PACKAGE_DIR, "..", "..", "apps", "cli", "src", "winvm.ts")
+    const cli = resolve(
+      PACKAGE_DIR,
+      "..",
+      "..",
+      "apps",
+      "cli",
+      "src",
+      "winvm.ts",
+    )
     const p = pathsFor("w")
     writeFileSync(p.meta, JSON.stringify({ image: "x", vnc: 9, created: "" }))
     writeFileSync(p.pid, `${String(process.pid)}\n`)
-    const env: Record<string, string | undefined> = { ...process.env, WINVM_HOME: home }
+    const env: Record<string, string | undefined> = {
+      ...process.env,
+      WINVM_HOME: home,
+    }
     delete env["WINVM_BUILD_ID"]
-    const child = Bun.spawn([process.execPath, cli, "watch", "-i", "w"], { env, stdout: "ignore", stderr: "ignore" })
+    const child = Bun.spawn([process.execPath, cli, "watch", "-i", "w"], {
+      env,
+      stdout: "ignore",
+      stderr: "ignore",
+    })
     spawned.push(child)
     try {
       const deadline = Date.now() + 15_000
-      while (Date.now() < deadline && readWatchState("w")?.build === undefined) await new Promise((r) => setTimeout(r, 50))
-      expect(readWatchState("w")).toMatchObject({ pid: child.pid, build: buildIdentity() })
-      expect(watcherRecord("w")).toEqual({ pid: child.pid, build: buildIdentity(), cli })
+      while (Date.now() < deadline && readWatchState("w")?.build === undefined)
+        await new Promise((r) => setTimeout(r, 50))
+      expect(readWatchState("w")).toMatchObject({
+        pid: child.pid,
+        build: buildIdentity(),
+      })
+      expect(watcherRecord("w")).toEqual({
+        pid: child.pid,
+        build: buildIdentity(),
+        cli,
+      })
       child.kill("SIGTERM")
       await child.exited
-      expect(JSON.parse(readFileSync(watchPathsFor("w").state, "utf8"))).toMatchObject({ state: "stopped", build: buildIdentity() })
+      expect(
+        JSON.parse(readFileSync(watchPathsFor("w").state, "utf8")),
+      ).toMatchObject({ state: "stopped", build: buildIdentity() })
     } finally {
       child.kill("SIGKILL")
     }

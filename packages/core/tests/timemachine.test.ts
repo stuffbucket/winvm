@@ -1,5 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test"
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs"
+import {
+  mkdirSync,
+  mkdtempSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs"
 import { tmpdir } from "node:os"
 import { resolve } from "node:path"
 
@@ -27,12 +33,19 @@ afterEach(() => {
 
 describe("Time Machine targets", () => {
   it("includes the folder the ISO lives in", () => {
-    expect(targets().map((p) => p.replace(/^\/private/, ""))).toEqual([resolve(tmp, "home"), resolve(tmp, "isos")].map((p) => p.replace(/^\/private/, "")))
+    expect(targets().map((p) => p.replace(/^\/private/, ""))).toEqual(
+      [resolve(tmp, "home"), resolve(tmp, "isos")].map((p) =>
+        p.replace(/^\/private/, ""),
+      ),
+    )
   })
 
   it("skips the ISO's folder when macOS will not let winvm resolve it, instead of failing", () => {
     const denied = (): string => {
-      throw Object.assign(new Error("EPERM: operation not permitted, realpath"), { code: "EPERM" })
+      throw Object.assign(
+        new Error("EPERM: operation not permitted, realpath"),
+        { code: "EPERM" },
+      )
     }
     expect(targets({ realpath: denied })).toEqual([resolve(tmp, "home")])
   })

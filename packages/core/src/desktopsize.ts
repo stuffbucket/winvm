@@ -14,7 +14,10 @@ export interface ResizeAnswer {
   readonly before: { readonly width: number; readonly height: number }
 }
 
-export function vncAuthResponse(password: string, challenge: Uint8Array): Buffer {
+export function vncAuthResponse(
+  password: string,
+  challenge: Uint8Array,
+): Buffer {
   const key = Buffer.alloc(8)
   for (let i = 0; i < 8; i += 1) {
     const c = i < password.length ? password.charCodeAt(i) & 0xff : 0
@@ -27,7 +30,12 @@ export function vncAuthResponse(password: string, challenge: Uint8Array): Buffer
   return Buffer.concat([cipher.update(challenge), cipher.final()])
 }
 
-export function setDesktopSizeMessage(width: number, height: number, screenId = 0, flags = 0): Buffer {
+export function setDesktopSizeMessage(
+  width: number,
+  height: number,
+  screenId = 0,
+  flags = 0,
+): Buffer {
   const b = Buffer.alloc(24)
   b[0] = 251
   b.writeUInt16BE(width, 2)
@@ -73,7 +81,9 @@ export async function requestDesktopSize(
     return out
   }
   const timer = setTimeout(() => {
-    failed = new Error(`no answer from the VNC server on port ${String(port)} within ${String(timeoutMs)} ms`)
+    failed = new Error(
+      `no answer from the VNC server on port ${String(port)} within ${String(timeoutMs)} ms`,
+    )
     sock.destroy()
   }, timeoutMs)
 
@@ -84,15 +94,19 @@ export async function requestDesktopSize(
     if (nTypes === 0) throw new Error("the VNC server refused the connection")
     const types = [...(await need(nTypes))]
     if (types.includes(2)) {
-      if (password === null) throw new Error("the VNC server wants a password and there is none")
+      if (password === null)
+        throw new Error("the VNC server wants a password and there is none")
       sock.write(Buffer.from([2]))
       sock.write(vncAuthResponse(password, await need(16)))
     } else if (types.includes(1)) {
       sock.write(Buffer.from([1]))
     } else {
-      throw new Error(`no VNC security type winvm speaks (offered ${types.join(",")})`)
+      throw new Error(
+        `no VNC security type winvm speaks (offered ${types.join(",")})`,
+      )
     }
-    if ((await need(4)).readUInt32BE(0) !== 0) throw new Error("VNC authentication failed")
+    if ((await need(4)).readUInt32BE(0) !== 0)
+      throw new Error("VNC authentication failed")
     sock.write(Buffer.from([1]))
     const init = await need(24)
     const before = { width: init.readUInt16BE(0), height: init.readUInt16BE(2) }
@@ -127,7 +141,14 @@ export async function requestDesktopSize(
             const layout = await need(16 * screens)
             if (reason === 1 && sent) return { status, before }
             if (!sent) {
-              sock.write(setDesktopSizeMessage(width, height, screens > 0 ? layout.readUInt32BE(0) : 0, screens > 0 ? layout.readUInt32BE(12) : 0))
+              sock.write(
+                setDesktopSizeMessage(
+                  width,
+                  height,
+                  screens > 0 ? layout.readUInt32BE(0) : 0,
+                  screens > 0 ? layout.readUInt32BE(12) : 0,
+                ),
+              )
               sent = true
             }
           } else if (encoding === 0) {

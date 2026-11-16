@@ -46,7 +46,8 @@ import * as qemu from "./qemu"
 import type { Element, Selector, Ui } from "./ui"
 import { forInstance } from "./ui"
 
-const errMsg = (e: unknown): string => (e instanceof Error ? e.message : String(e))
+const errMsg = (e: unknown): string =>
+  e instanceof Error ? e.message : String(e)
 
 export const USAGE =
   "usage: winvm cua serve [-i name] [--port N] [--size WxH]\n" +
@@ -62,7 +63,9 @@ export function parseSize(s: string | undefined): Size | null {
   if (m === null) return null
   const width = Number(m[1])
   const height = Number(m[2])
-  return width >= 200 && height >= 200 && width <= 2576 && height <= 2576 ? { width, height } : null
+  return width >= 200 && height >= 200 && width <= 2576 && height <= 2576
+    ? { width, height }
+    : null
 }
 
 function running(args: Args): { name: string; p: Paths } | null {
@@ -73,7 +76,9 @@ function running(args: Args): { name: string; p: Paths } | null {
   }
   const p = pathsFor(name)
   if (!qemu.isRunning(p)) {
-    console.error(`::error::instance "${name}" is not running — \`winvm start -i ${name}\``)
+    console.error(
+      `::error::instance "${name}" is not running — \`winvm start -i ${name}\``,
+    )
     return null
   }
   return { name, p }
@@ -81,9 +86,20 @@ function running(args: Args): { name: string; p: Paths } | null {
 
 export const selectorSchema = {
   name: { type: "string", description: "The element's exact accessible name" },
-  nameContains: { type: "string", description: "Part of the element's accessible name" },
-  window: { type: "string", description: "Part of the top-level window's title (or its class) to search in" },
-  controlType: { type: "string", description: "UI Automation control type, e.g. Button, Edit, MenuItem, ListItem, Hyperlink" },
+  nameContains: {
+    type: "string",
+    description: "Part of the element's accessible name",
+  },
+  window: {
+    type: "string",
+    description:
+      "Part of the top-level window's title (or its class) to search in",
+  },
+  controlType: {
+    type: "string",
+    description:
+      "UI Automation control type, e.g. Button, Edit, MenuItem, ListItem, Hyperlink",
+  },
   automationId: { type: "string", description: "The element's AutomationId" },
 } as const
 
@@ -93,7 +109,11 @@ export const EXTRA_TOOLS = [
     description:
       "Find elements on the Windows desktop by UI Automation (accessibility) properties instead of by pixels. " +
       "Returns up to 10 matches with their bounds and centre in screenshot coordinates. Give at least one of name/nameContains/automationId.",
-    input_schema: { type: "object", properties: selectorSchema, additionalProperties: false },
+    input_schema: {
+      type: "object",
+      properties: selectorSchema,
+      additionalProperties: false,
+    },
   },
   {
     name: "ui_click",
@@ -102,16 +122,29 @@ export const EXTRA_TOOLS = [
       "for named buttons, menu items and links. Give at least one of name/nameContains/automationId.",
     input_schema: {
       type: "object",
-      properties: { ...selectorSchema, button: { type: "string", enum: ["left", "right", "double"] } },
+      properties: {
+        ...selectorSchema,
+        button: { type: "string", enum: ["left", "right", "double"] },
+      },
       additionalProperties: false,
     },
   },
   {
     name: "ocr_find",
-    description: "Find text on the screen by OCR. Returns matching lines with their centre in screenshot coordinates (whole-line matches first).",
+    description:
+      "Find text on the screen by OCR. Returns matching lines with their centre in screenshot coordinates (whole-line matches first).",
     input_schema: {
       type: "object",
-      properties: { text: { type: "string", description: "The text to look for (case-insensitive)" }, wait: { type: "number", description: "Seconds to keep looking, default 0" } },
+      properties: {
+        text: {
+          type: "string",
+          description: "The text to look for (case-insensitive)",
+        },
+        wait: {
+          type: "number",
+          description: "Seconds to keep looking, default 0",
+        },
+      },
       required: ["text"],
       additionalProperties: false,
     },
@@ -120,16 +153,28 @@ export const EXTRA_TOOLS = [
 
 export const EXTRA_NAMES: readonly string[] = EXTRA_TOOLS.map((t) => t.name)
 
-export function selectorFrom(input: Readonly<Record<string, unknown>>): Selector {
+export function selectorFrom(
+  input: Readonly<Record<string, unknown>>,
+): Selector {
   const sel: Record<string, string> = {}
-  for (const k of ["name", "nameContains", "window", "controlType", "automationId"] as const) {
+  for (const k of [
+    "name",
+    "nameContains",
+    "window",
+    "controlType",
+    "automationId",
+  ] as const) {
     const v = input[k]
     if (typeof v === "string" && v !== "") sel[k] = v
   }
   return sel
 }
 
-const text = (t: string, isError = false): Result => ({ content: [{ type: "text", text: t }], isError, ms: {} })
+const text = (t: string, isError = false): Result => ({
+  content: [{ type: "text", text: t }],
+  isError,
+  ms: {},
+})
 
 export class Extras {
   private ui: Ui | null = null
@@ -154,34 +199,64 @@ export class Extras {
       const c = toModel(x + w / 2, y + h / 2, scale)
       where = `box [${String(tl.x)}, ${String(tl.y)}, ${String(Math.round(w * scale))}x${String(Math.round(h * scale))}] centre [${String(c.x)}, ${String(c.y)}]`
     }
-    const flags = [e.enabled === false ? "disabled" : "", e.offscreen === true ? "offscreen" : "", e.focused === true ? "focused" : ""].filter((f) => f !== "")
-    const value = e.value !== undefined && e.value !== "" ? ` value=${JSON.stringify(e.value)}` : ""
+    const flags = [
+      e.enabled === false ? "disabled" : "",
+      e.offscreen === true ? "offscreen" : "",
+      e.focused === true ? "focused" : "",
+    ].filter((f) => f !== "")
+    const value =
+      e.value !== undefined && e.value !== ""
+        ? ` value=${JSON.stringify(e.value)}`
+        : ""
     return `${e.controlType} ${JSON.stringify(e.name)}${e.automationId === undefined ? "" : ` id=${JSON.stringify(e.automationId)}`} ${where}${value}${flags.length > 0 ? ` (${flags.join(", ")})` : ""}`
   }
 
-  async run(action: string, input: Readonly<Record<string, unknown>>): Promise<Result> {
+  async run(
+    action: string,
+    input: Readonly<Record<string, unknown>>,
+  ): Promise<Result> {
     const t0 = performance.now()
     try {
       const r = await this.dispatch(action, input)
       return { ...r, ms: { total: performance.now() - t0 } }
     } catch (error) {
-      return { ...text(errMsg(error), true), ms: { total: performance.now() - t0 } }
+      return {
+        ...text(errMsg(error), true),
+        ms: { total: performance.now() - t0 },
+      }
     }
   }
 
-  private async dispatch(action: string, input: Readonly<Record<string, unknown>>): Promise<Result> {
+  private async dispatch(
+    action: string,
+    input: Readonly<Record<string, unknown>>,
+  ): Promise<Result> {
     switch (action) {
       case "ui_find":
       case "ui_click": {
         const sel = selectorFrom(input)
-        if (sel.name === undefined && sel.nameContains === undefined && sel.automationId === undefined) {
-          return text("give at least one of name, nameContains, automationId", true)
+        if (
+          sel.name === undefined &&
+          sel.nameContains === undefined &&
+          sel.automationId === undefined
+        ) {
+          return text(
+            "give at least one of name, nameContains, automationId",
+            true,
+          )
         }
         const ui = await this.getUi()
         if (action === "ui_find") {
-          const found = (await ui.findAll(sel, { timeoutMs: 1000 })).slice(0, 10)
+          const found = (await ui.findAll(sel, { timeoutMs: 1000 })).slice(
+            0,
+            10,
+          )
           if (found.length === 0) return text("no matching element")
-          return text((await Promise.all(found.map(async (e) => await this.describe(e)))).join("\n"))
+          return text(
+            (
+              await Promise.all(found.map(async (e) => await this.describe(e)))
+            ).join("\n"),
+          )
         }
         const b = input["button"]
         const button = b === "right" || b === "double" ? b : "left"
@@ -190,11 +265,18 @@ export class Extras {
       }
       case "ocr_find": {
         const needle = input["text"]
-        if (typeof needle !== "string" || needle === "") return text("text must be a non-empty string", true)
-        const wait = typeof input["wait"] === "number" ? Math.min(Math.max(input["wait"], 0), 30) : 0
+        if (typeof needle !== "string" || needle === "")
+          return text("text must be a non-empty string", true)
+        const wait =
+          typeof input["wait"] === "number"
+            ? Math.min(Math.max(input["wait"], 0), 30)
+            : 0
         const { scale } = await this.computer.display()
-        const { last } = await ocr.findOnScreen(this.computer.p, needle, { waitMs: wait * 1000 })
-        if (last.boxes.length === 0) return text(`"${needle}" is not on the screen`)
+        const { last } = await ocr.findOnScreen(this.computer.p, needle, {
+          waitMs: wait * 1000,
+        })
+        if (last.boxes.length === 0)
+          return text(`"${needle}" is not on the screen`)
         return text(
           last.boxes
             .slice(0, 10)
@@ -207,7 +289,10 @@ export class Extras {
         )
       }
       default:
-        return text(`unknown extra action "${action}" (have ${EXTRA_NAMES.join(", ")})`, true)
+        return text(
+          `unknown extra action "${action}" (have ${EXTRA_NAMES.join(", ")})`,
+          true,
+        )
     }
   }
 }
@@ -231,14 +316,23 @@ export function authorized(header: string | null, token: string): boolean {
 }
 
 const json = (body: unknown, status = 200): Response =>
-  new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } })
+  new Response(JSON.stringify(body), {
+    status,
+    headers: { "content-type": "application/json" },
+  })
 
-const wire = (r: Result): Record<string, unknown> => ({ content: r.content, is_error: r.isError, ms: r.ms })
+const wire = (r: Result): Record<string, unknown> => ({
+  content: r.content,
+  is_error: r.isError,
+  ms: r.ms,
+})
 
 export async function serve(args: Args): Promise<number> {
   const box = parseSize(args.flags.get("size"))
   if (box === null) {
-    console.error(`::error::--size must be WIDTHxHEIGHT, 200..2576 a side\n${USAGE}`)
+    console.error(
+      `::error::--size must be WIDTHxHEIGHT, 200..2576 a side\n${USAGE}`,
+    )
     return 2
   }
   const portFlag = args.flags.get("port")
@@ -259,7 +353,8 @@ export async function serve(args: Args): Promise<number> {
     hostname: "127.0.0.1",
     port,
     fetch: async (req): Promise<Response> => {
-      if (!authorized(req.headers.get("authorization"), token)) return json({ error: "unauthorized" }, 401)
+      if (!authorized(req.headers.get("authorization"), token))
+        return json({ error: "unauthorized" }, 401)
       const path = new URL(req.url).pathname
       try {
         if (req.method === "GET" && path === "/v1/info") {
@@ -271,20 +366,33 @@ export async function serve(args: Args): Promise<number> {
             size: d.size,
             actions: ACTIONS,
             tool: { type: "computer_toolset_20260801" },
-            legacy_tool: { type: "computer_20251124", name: "computer", display_width_px: d.size.width, display_height_px: d.size.height },
+            legacy_tool: {
+              type: "computer_20251124",
+              name: "computer",
+              display_width_px: d.size.width,
+              display_height_px: d.size.height,
+            },
           })
         }
-        if (req.method === "GET" && path === "/v1/extra") return json({ tools: EXTRA_TOOLS })
-        if (req.method === "POST" && (path === "/v1/computer" || path === "/v1/extra")) {
+        if (req.method === "GET" && path === "/v1/extra")
+          return json({ tools: EXTRA_TOOLS })
+        if (
+          req.method === "POST" &&
+          (path === "/v1/computer" || path === "/v1/extra")
+        ) {
           const body = await req.json().catch(() => null)
-          if (body === null || typeof body !== "object" || Array.isArray(body)) return json({ error: "body must be a JSON object" }, 400)
+          if (body === null || typeof body !== "object" || Array.isArray(body))
+            return json({ error: "body must be a JSON object" }, 400)
           const b = body as Record<string, unknown>
           const result =
             path === "/v1/computer"
               ? await one(async () => await computer.run(b))
               : await one(async () => {
                   const { action, ...rest } = b
-                  return await extras.run(typeof action === "string" ? action : "", rest)
+                  return await extras.run(
+                    typeof action === "string" ? action : "",
+                    rest,
+                  )
                 })
           return json(wire(result))
         }
@@ -297,10 +405,17 @@ export async function serve(args: Args): Promise<number> {
 
   const statePath = resolve(r.p.dir, "cua.json")
   const url = `http://127.0.0.1:${String(server.port)}`
-  writeFileSync(statePath, `${JSON.stringify({ url, port: server.port, token, pid: process.pid }, null, 2)}\n`, { mode: 0o600 })
+  writeFileSync(
+    statePath,
+    `${JSON.stringify({ url, port: server.port, token, pid: process.pid }, null, 2)}\n`,
+    { mode: 0o600 },
+  )
   const d = await computer.display().catch(() => null)
   console.log(`computer use for "${r.name}" on ${url}`)
-  if (d !== null) console.log(`  screen ${String(d.native.width)}x${String(d.native.height)}, screenshots ${String(d.size.width)}x${String(d.size.height)} (scale ${d.scale.toFixed(4)})`)
+  if (d !== null)
+    console.log(
+      `  screen ${String(d.native.width)}x${String(d.native.height)}, screenshots ${String(d.size.width)}x${String(d.size.height)} (scale ${d.scale.toFixed(4)})`,
+    )
   console.log(`  token ${token}`)
   console.log(`  (also in ${statePath})`)
 
@@ -322,7 +437,9 @@ export function systemPrompt(size: Size, extras: boolean): string {
     `You are operating a Windows 11 (ARM64) desktop through the computer tools. Screenshots are ${String(size.width)}x${String(size.height)}; give coordinates in their pixels.`,
     "The keyboard is US-layout: the type action can only type ASCII characters. Keys use xdotool names (Return, ctrl+s, super, alt+F4).",
     "End each group of actions with a screenshot so you can check the result before continuing.",
-    extras ? "ui_find, ui_click and ocr_find locate controls by accessible name or visible text; prefer them to guessing pixels for named controls." : "",
+    extras
+      ? "ui_find, ui_click and ocr_find locate controls by accessible name or visible text; prefer them to guessing pixels for named controls."
+      : "",
     "When the task is done, reply with a one-paragraph summary of what you did and what you saw, and make no further tool calls.",
   ]
     .filter((l) => l !== "")
@@ -333,13 +450,17 @@ const median = (xs: readonly number[]): number => {
   if (xs.length === 0) return Number.NaN
   const s = [...xs].sort((a, b) => a - b)
   const mid = Math.floor(s.length / 2)
-  return s.length % 2 === 1 ? (s[mid] ?? 0) : ((s[mid - 1] ?? 0) + (s[mid] ?? 0)) / 2
+  return s.length % 2 === 1
+    ? (s[mid] ?? 0)
+    : ((s[mid - 1] ?? 0) + (s[mid] ?? 0)) / 2
 }
 
 const NOT_RUN = "Not executed: an earlier computer action in this turn failed."
 
 export async function run(args: Args): Promise<number> {
-  const task = (args.rest.length > 0 ? args.rest : args.positional).join(" ").trim()
+  const task = (args.rest.length > 0 ? args.rest : args.positional)
+    .join(" ")
+    .trim()
   if (task === "") {
     console.error(USAGE)
     return 2
@@ -347,7 +468,12 @@ export async function run(args: Args): Promise<number> {
   const box = parseSize(args.flags.get("size"))
   const maxSteps = Number(args.flags.get("max-steps") ?? 40)
   const effort = args.flags.get("effort") ?? "medium"
-  if (box === null || !Number.isInteger(maxSteps) || maxSteps < 1 || !["low", "medium", "high", "xhigh", "max"].includes(effort)) {
+  if (
+    box === null ||
+    !Number.isInteger(maxSteps) ||
+    maxSteps < 1 ||
+    !["low", "medium", "high", "xhigh", "max"].includes(effort)
+  ) {
     console.error(USAGE)
     return 2
   }
@@ -360,21 +486,31 @@ export async function run(args: Args): Promise<number> {
   if (shots !== undefined) mkdirSync(shots, { recursive: true })
 
   const { default: AnthropicSdk } = await import("@anthropic-ai/sdk")
-  const direct = (process.env["ANTHROPIC_API_KEY"] ?? "") !== "" && args.flags.get("base-url") === undefined
+  const direct =
+    (process.env["ANTHROPIC_API_KEY"] ?? "") !== "" &&
+    args.flags.get("base-url") === undefined
   const client: Anthropic = direct
     ? new AnthropicSdk()
-    : new AnthropicSdk({ baseURL: args.flags.get("base-url") ?? MAXIMAL_URL, apiKey: "maximal" })
-  const endpoint = direct ? (process.env["ANTHROPIC_BASE_URL"] ?? "https://api.anthropic.com") : (args.flags.get("base-url") ?? MAXIMAL_URL)
+    : new AnthropicSdk({
+        baseURL: args.flags.get("base-url") ?? MAXIMAL_URL,
+        apiKey: "maximal",
+      })
+  const endpoint = direct
+    ? (process.env["ANTHROPIC_BASE_URL"] ?? "https://api.anthropic.com")
+    : (args.flags.get("base-url") ?? MAXIMAL_URL)
 
   const computer = new Computer(r.p, box)
   const extras = new Extras(r.name, computer)
   const { size } = await computer.display()
   const tools: Anthropic.ToolUnion[] = [{ type: "computer_toolset_20260801" }]
-  if (useExtras) for (const t of EXTRA_TOOLS) tools.push(t as unknown as Anthropic.Tool)
+  if (useExtras)
+    for (const t of EXTRA_TOOLS) tools.push(t as unknown as Anthropic.Tool)
   const system = systemPrompt(size, useExtras)
   const messages: Anthropic.MessageParam[] = [{ role: "user", content: task }]
 
-  console.log(`model ${model} via ${endpoint}; screenshots ${String(size.width)}x${String(size.height)}; effort ${effort}`)
+  console.log(
+    `model ${model} via ${endpoint}; screenshots ${String(size.width)}x${String(size.height)}; effort ${effort}`,
+  )
   const modelMs: number[] = []
   const actionMs: Record<string, number[]> = {}
   const record = (name: string, ms: number): void => {
@@ -397,19 +533,35 @@ export async function run(args: Args): Promise<number> {
         output_config: { effort: effort as Anthropic.OutputConfig["effort"] },
         ...(direct ? { fallbacks: "default" } : {}),
       } as Anthropic.MessageCreateParamsNonStreaming
-      const msg = await client.messages.create(body, direct ? { headers: { "anthropic-beta": "server-side-fallback-2026-07-01" } } : {})
+      const msg = await client.messages.create(
+        body,
+        direct
+          ? { headers: { "anthropic-beta": "server-side-fallback-2026-07-01" } }
+          : {},
+      )
       const took = performance.now() - t0
       modelMs.push(took)
-      usageIn += msg.usage.input_tokens + (msg.usage.cache_read_input_tokens ?? 0) + (msg.usage.cache_creation_input_tokens ?? 0)
+      usageIn +=
+        msg.usage.input_tokens +
+        (msg.usage.cache_read_input_tokens ?? 0) +
+        (msg.usage.cache_creation_input_tokens ?? 0)
       usageOut += msg.usage.output_tokens
       messages.push({ role: "assistant", content: msg.content })
 
-      for (const b of msg.content) if (b.type === "text" && b.text.trim() !== "") console.log(`\n${b.text.trim()}\n`)
-      const calls = msg.content.filter((b): b is Anthropic.ToolUseBlock => b.type === "tool_use")
-      console.log(`[step ${String(step)}] model ${(took / 1000).toFixed(1)} s, ${String(calls.length)} action(s), stop ${String(msg.stop_reason)}`)
+      for (const b of msg.content)
+        if (b.type === "text" && b.text.trim() !== "")
+          console.log(`\n${b.text.trim()}\n`)
+      const calls = msg.content.filter(
+        (b): b is Anthropic.ToolUseBlock => b.type === "tool_use",
+      )
+      console.log(
+        `[step ${String(step)}] model ${(took / 1000).toFixed(1)} s, ${String(calls.length)} action(s), stop ${String(msg.stop_reason)}`,
+      )
 
       if (msg.stop_reason === "refusal") {
-        console.error(`::error::the model declined (${msg.stop_details?.category ?? "no category"})`)
+        console.error(
+          `::error::the model declined (${msg.stop_details?.category ?? "no category"})`,
+        )
         break
       }
       if (calls.length === 0) {
@@ -422,7 +574,11 @@ export async function run(args: Args): Promise<number> {
       for (const call of calls) {
         const input = (call.input ?? {}) as Record<string, unknown>
         const isComputer = call.toolset_name === "computer"
-        const base = { type: "tool_result" as const, tool_use_id: call.id, ...(isComputer ? { toolset_name: "computer" } : {}) }
+        const base = {
+          type: "tool_result" as const,
+          tool_use_id: call.id,
+          ...(isComputer ? { toolset_name: "computer" } : {}),
+        }
         if (failed) {
           results.push({ ...base, is_error: true, content: NOT_RUN })
           continue
@@ -433,23 +589,38 @@ export async function run(args: Args): Promise<number> {
             ? await extras.run(call.name, input)
             : text(`unknown tool "${call.name}"`, true)
         record(call.name, res.ms["total"] ?? 0)
-        if (res.ms["capture"] !== undefined) record("screenshot:capture", res.ms["capture"])
-        if (res.ms["encode"] !== undefined) record("screenshot:scale+encode", res.ms["encode"])
+        if (res.ms["capture"] !== undefined)
+          record("screenshot:capture", res.ms["capture"])
+        if (res.ms["encode"] !== undefined)
+          record("screenshot:scale+encode", res.ms["encode"])
         const shown = JSON.stringify(input)
-        console.log(`  ${call.name}${shown === "{}" ? "" : ` ${shown}`} -> ${res.isError ? `ERROR ${blockText(res.content)}` : summarize(res.content)} (${(res.ms["total"] ?? 0).toFixed(0)} ms)`)
+        console.log(
+          `  ${call.name}${shown === "{}" ? "" : ` ${shown}`} -> ${res.isError ? `ERROR ${blockText(res.content)}` : summarize(res.content)} (${(res.ms["total"] ?? 0).toFixed(0)} ms)`,
+        )
         if (shots !== undefined) {
           for (const c of res.content) {
             if (c.type === "image") {
               shotN += 1
-              writeFileSync(resolve(shots, `${String(step).padStart(2, "0")}-${String(shotN).padStart(3, "0")}-${call.name}.png`), Buffer.from(c.source.data, "base64"))
+              writeFileSync(
+                resolve(
+                  shots,
+                  `${String(step).padStart(2, "0")}-${String(shotN).padStart(3, "0")}-${call.name}.png`,
+                ),
+                Buffer.from(c.source.data, "base64"),
+              )
             }
           }
         }
-        results.push({ ...base, content: [...res.content], ...(res.isError ? { is_error: true } : {}) })
+        results.push({
+          ...base,
+          content: [...res.content],
+          ...(res.isError ? { is_error: true } : {}),
+        })
         if (res.isError) failed = true
       }
       messages.push({ role: "user", content: results })
-      if (step === maxSteps) console.error(`::error::stopped after --max-steps ${String(maxSteps)}`)
+      if (step === maxSteps)
+        console.error(`::error::stopped after --max-steps ${String(maxSteps)}`)
     }
   } catch (error) {
     console.error(`::error::${errMsg(error)}`)
@@ -458,8 +629,13 @@ export async function run(args: Args): Promise<number> {
     computer.close()
   }
 
-  console.log(`\nlatency (median ms): model ${median(modelMs).toFixed(0)} over ${String(modelMs.length)} call(s)`)
-  for (const [name, xs] of Object.entries(actionMs).sort()) console.log(`  ${name.padEnd(24)} ${median(xs).toFixed(1).padStart(8)}  (n=${String(xs.length)})`)
+  console.log(
+    `\nlatency (median ms): model ${median(modelMs).toFixed(0)} over ${String(modelMs.length)} call(s)`,
+  )
+  for (const [name, xs] of Object.entries(actionMs).sort())
+    console.log(
+      `  ${name.padEnd(24)} ${median(xs).toFixed(1).padStart(8)}  (n=${String(xs.length)})`,
+    )
   console.log(`tokens: ${String(usageIn)} in, ${String(usageOut)} out`)
   return outcome
 }
@@ -475,7 +651,8 @@ function summarize(content: readonly Block[]): string {
 
 export async function cua(args: Args, sub?: string): Promise<number> {
   const verb = sub ?? args.positional[0]
-  const rest: Args = sub === undefined ? { ...args, positional: args.positional.slice(1) } : args
+  const rest: Args =
+    sub === undefined ? { ...args, positional: args.positional.slice(1) } : args
   if (verb === "serve") return await serve(rest)
   if (verb === "run") return await run(rest)
   console.error(USAGE)

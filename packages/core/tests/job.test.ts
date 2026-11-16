@@ -53,18 +53,43 @@ describe("parseJob", () => {
     expect(j.golden).toBe("g1")
     expect(j.timeoutMs).toBe(300_000)
     expect(j.env).toEqual({ A: "x", N: "3" })
-    expect(j.files[0]).toEqual({ kind: "path", src: "/tmp/a.msi", dest: "C:\\work\\" })
-    expect(j.files[1]).toEqual({ kind: "url", url: "https://example.com/b.zip", dest: null })
-    expect(j.files[2]).toEqual({ kind: "release", repo: "owner/repo", tag: "x", patterns: ["*.msi", "*.zip"], dest: "C:\\work\\" })
+    expect(j.files[0]).toEqual({
+      kind: "path",
+      src: "/tmp/a.msi",
+      dest: "C:\\work\\",
+    })
+    expect(j.files[1]).toEqual({
+      kind: "url",
+      url: "https://example.com/b.zip",
+      dest: null,
+    })
+    expect(j.files[2]).toEqual({
+      kind: "release",
+      repo: "owner/repo",
+      tag: "x",
+      patterns: ["*.msi", "*.zip"],
+      dest: "C:\\work\\",
+    })
     const s = j.steps[0]
-    expect(s).toMatchObject({ shell: "cmd", run: "echo x", timeoutMs: 30_000, continueOnError: true, env: { B: "y" }, if: "always", background: true })
+    expect(s).toMatchObject({
+      shell: "cmd",
+      run: "echo x",
+      timeoutMs: 30_000,
+      continueOnError: true,
+      env: { B: "y" },
+      if: "always",
+      background: true,
+    })
     expect(j.steps[1]?.timeoutMs).toBe(120_000)
     expect(j.artifacts).toEqual({ when: "always", paths: ["C:\\work\\*.log"] })
     expect(j.screenshot).toBe("never")
   })
 
   it("resolves a relative src against the job file", () => {
-    const j = parseJob("files:\n  - src: fixtures/x.bin\n" + minimal, "/jobs/a/job.yml")
+    const j = parseJob(
+      "files:\n  - src: fixtures/x.bin\n" + minimal,
+      "/jobs/a/job.yml",
+    )
     expect(j.files[0]).toMatchObject({ src: "/jobs/a/fixtures/x.bin" })
     expect(j.name).toBe("job")
   })
@@ -110,26 +135,41 @@ describe("parseDuration", () => {
 })
 
 describe("stepScript", () => {
-  const step = parseJob("steps:\n  - run: |\n      echo 100%\n      exit 3\n    shell: cmd\n").steps[0]
+  const step = parseJob(
+    "steps:\n  - run: |\n      echo 100%\n      exit 3\n    shell: cmd\n",
+  ).steps[0]
   it("cmd: CRLF, env set at the top, % escaped in values", () => {
     if (step === undefined) throw new Error("no step")
     const s = stepScript(step, { P: "50%" })
     expect(s.ext).toBe(".cmd")
-    expect(s.text).toBe('@echo off\r\nset "P=50%%"\r\necho 100%\r\nexit 3\r\n\r\n')
+    expect(s.text).toBe(
+      '@echo off\r\nset "P=50%%"\r\necho 100%\r\nexit 3\r\n\r\n',
+    )
   })
   it("powershell: BOM, stop on error, quoted env, exit with the native code", () => {
     const ps = parseJob("steps:\n  - run: Write-Output 1\n").steps[0]
     if (ps === undefined) throw new Error("no step")
     const s = stepScript(ps, { Q: "it's" })
     expect(s.ext).toBe(".ps1")
-    expect(s.text.startsWith("\uFEFF$ErrorActionPreference = 'Stop'\r\n")).toBe(true)
+    expect(s.text.startsWith("\uFEFF$ErrorActionPreference = 'Stop'\r\n")).toBe(
+      true,
+    )
     expect(s.text).toContain("$env:Q = 'it''s'\r\n")
     expect(s.text).toContain("exit $LASTEXITCODE")
   })
 })
 
 describe("report", () => {
-  const step = { name: "a<b", status: "failed" as const, exitcode: 2, ms: 1500, stdout: "out & \u0001", stderr: "", continueOnError: false, background: false }
+  const step = {
+    name: "a<b",
+    status: "failed" as const,
+    exitcode: 2,
+    ms: 1500,
+    stdout: "out & \u0001",
+    stderr: "",
+    continueOnError: false,
+    background: false,
+  }
   const job = {
     name: "j",
     file: "/x.yml",
@@ -147,11 +187,23 @@ describe("report", () => {
     artifacts: [],
     startedAt: "2026-01-01T00:00:00.000Z",
   }
-  const s: RunSummary = { jobs: [job, { ...job, status: "passed", steps: [] }], wallMs: 25_000, setupMs: 5000 }
+  const s: RunSummary = {
+    jobs: [job, { ...job, status: "passed", steps: [] }],
+    wallMs: 25_000,
+    setupMs: 5000,
+  }
 
   it("totals reset against test time", () => {
-    expect(totals(s)).toEqual({ passed: 1, failed: 1, resetMs: 6000, testMs: 14_000, overheadMs: 5000 })
-    expect(formatSummary(s)).toContain("resets were 24% of the wall clock (30% excluding setup)")
+    expect(totals(s)).toEqual({
+      passed: 1,
+      failed: 1,
+      resetMs: 6000,
+      testMs: 14_000,
+      overheadMs: 5000,
+    })
+    expect(formatSummary(s)).toContain(
+      "resets were 24% of the wall clock (30% excluding setup)",
+    )
   })
 
   it("junit escapes and marks failures", () => {

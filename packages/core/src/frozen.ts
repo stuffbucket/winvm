@@ -8,14 +8,22 @@ import * as qmp from "./qmp"
 
 export type Frozen = "paused" | "asleep"
 
-const FROZEN_RUN_STATES: ReadonlySet<string> = new Set(["paused", "suspended", "postmigrate"])
+const FROZEN_RUN_STATES: ReadonlySet<string> = new Set([
+  "paused",
+  "suspended",
+  "postmigrate",
+])
 
-export const isFrozenRunState = (vmStatus: string | null): boolean => vmStatus !== null && FROZEN_RUN_STATES.has(vmStatus)
+export const isFrozenRunState = (vmStatus: string | null): boolean =>
+  vmStatus !== null && FROZEN_RUN_STATES.has(vmStatus)
 
 export const asleepPath = (p: Paths): string => resolve(p.dir, "asleep.json")
 
 export function markAsleep(p: Paths, pid: number, now = new Date()): void {
-  writeFileSync(asleepPath(p), `${JSON.stringify({ pid, since: now.toISOString() })}\n`)
+  writeFileSync(
+    asleepPath(p),
+    `${JSON.stringify({ pid, since: now.toISOString() })}\n`,
+  )
 }
 
 export function clearAsleep(p: Paths): void {
@@ -25,21 +33,35 @@ export function clearAsleep(p: Paths): void {
 export function markedAsleep(p: Paths, pid: number | null): boolean {
   if (pid === null) return false
   try {
-    return (JSON.parse(readFileSync(asleepPath(p), "utf8")) as { pid?: unknown }).pid === pid
+    return (
+      (JSON.parse(readFileSync(asleepPath(p), "utf8")) as { pid?: unknown })
+        .pid === pid
+    )
   } catch {
     return false
   }
 }
 
-export const frozenFrom = (vmStatus: string | null, asleep: boolean): Frozen | null =>
+export const frozenFrom = (
+  vmStatus: string | null,
+  asleep: boolean,
+): Frozen | null =>
   isFrozenRunState(vmStatus) ? (asleep ? "asleep" : "paused") : null
 
-export async function frozenState(p: Paths, timeoutMs = 3000): Promise<Frozen | null> {
+export async function frozenState(
+  p: Paths,
+  timeoutMs = 3000,
+): Promise<Frozen | null> {
   const pid = qemu.pidOf(p)
   if (pid === null) return null
   let vmStatus: string | null = null
   try {
-    const r = (await qmp.execute(p.qmp, "query-status", undefined, timeoutMs)) as { status?: unknown } | undefined
+    const r = (await qmp.execute(
+      p.qmp,
+      "query-status",
+      undefined,
+      timeoutMs,
+    )) as { status?: unknown } | undefined
     vmStatus = typeof r?.status === "string" ? r.status : null
   } catch {
     return null

@@ -17,14 +17,22 @@ export const GIB_MIB = 1024
 
 export interface Limits {
   readonly cpus: { readonly min: number; readonly max: number }
-  readonly memoryMiB: { readonly min: number; readonly max: number; readonly step: number }
+  readonly memoryMiB: {
+    readonly min: number
+    readonly max: number
+    readonly step: number
+  }
 }
 
 export function limitsFor(performanceCores: number, hostBytes: number): Limits {
   const halfGiB = Math.floor(hostBytes / 2 / 1024 ** 3)
   return {
     cpus: { min: 2, max: Math.max(2, performanceCores) },
-    memoryMiB: { min: 4 * GIB_MIB, max: Math.max(4, halfGiB) * GIB_MIB, step: GIB_MIB },
+    memoryMiB: {
+      min: 4 * GIB_MIB,
+      max: Math.max(4, halfGiB) * GIB_MIB,
+      step: GIB_MIB,
+    },
   }
 }
 
@@ -34,7 +42,8 @@ export function performanceCores(): number {
   return Number.isFinite(n) && n > 0 ? n : osCpus().length
 }
 
-export const hostLimits = (): Limits => limitsFor(performanceCores(), totalmem())
+export const hostLimits = (): Limits =>
+  limitsFor(performanceCores(), totalmem())
 
 export function hardwareError(hw: Hardware, limits: Limits): string | null {
   const c = limits.cpus
@@ -42,7 +51,12 @@ export function hardwareError(hw: Hardware, limits: Limits): string | null {
   if (!Number.isInteger(hw.cpus) || hw.cpus < c.min || hw.cpus > c.max) {
     return `processors must be a whole number from ${String(c.min)} to ${String(c.max)} (this Mac's performance cores), got ${String(hw.cpus)}`
   }
-  if (!Number.isInteger(hw.memoryMiB) || hw.memoryMiB % m.step !== 0 || hw.memoryMiB < m.min || hw.memoryMiB > m.max) {
+  if (
+    !Number.isInteger(hw.memoryMiB) ||
+    hw.memoryMiB % m.step !== 0 ||
+    hw.memoryMiB < m.min ||
+    hw.memoryMiB > m.max
+  ) {
     return (
       `memory must be whole GB from ${formatMiB(m.min)} to ${formatMiB(m.max)} (half this Mac's memory), ` +
       `got ${Number.isInteger(hw.memoryMiB) && hw.memoryMiB % GIB_MIB === 0 ? formatMiB(hw.memoryMiB) : `${String(hw.memoryMiB)} MB`}`
@@ -59,18 +73,25 @@ export function parseMemory(raw: string): number | null {
   return Number.isFinite(mib) ? mib : null
 }
 
-export const formatMiB = (mib: number): string => (mib % GIB_MIB === 0 ? `${String(mib / GIB_MIB)} GB` : `${String(mib)} MB`)
+export const formatMiB = (mib: number): string =>
+  mib % GIB_MIB === 0 ? `${String(mib / GIB_MIB)} GB` : `${String(mib)} MB`
 
-export const sameHardware = (a: Hardware, b: Hardware): boolean => a.cpus === b.cpus && a.memoryMiB === b.memoryMiB
+export const sameHardware = (a: Hardware, b: Hardware): boolean =>
+  a.cpus === b.cpus && a.memoryMiB === b.memoryMiB
 
-export const hardwarePath = (p: Paths): string => resolve(p.dir, "hardware.json")
+export const hardwarePath = (p: Paths): string =>
+  resolve(p.dir, "hardware.json")
 
-const posInt = (v: unknown): number | null => (typeof v === "number" && Number.isInteger(v) && v > 0 ? v : null)
+const posInt = (v: unknown): number | null =>
+  typeof v === "number" && Number.isInteger(v) && v > 0 ? v : null
 
 export function hardwareFrom(raw: unknown): Hardware {
   if (typeof raw !== "object" || raw === null) return LEGACY
   const r = raw as Record<string, unknown>
-  return { cpus: posInt(r["cpus"]) ?? LEGACY.cpus, memoryMiB: posInt(r["memoryMiB"]) ?? LEGACY.memoryMiB }
+  return {
+    cpus: posInt(r["cpus"]) ?? LEGACY.cpus,
+    memoryMiB: posInt(r["memoryMiB"]) ?? LEGACY.memoryMiB,
+  }
 }
 
 export function readHardware(p: Paths): Hardware {
@@ -82,7 +103,10 @@ export function readHardware(p: Paths): Hardware {
 }
 
 export function writeHardware(p: Paths, hw: Hardware): void {
-  writeFileSync(hardwarePath(p), `${JSON.stringify({ cpus: hw.cpus, memoryMiB: hw.memoryMiB }, null, 2)}\n`)
+  writeFileSync(
+    hardwarePath(p),
+    `${JSON.stringify({ cpus: hw.cpus, memoryMiB: hw.memoryMiB }, null, 2)}\n`,
+  )
 }
 
 export function hardwareFromArgv(argv: readonly string[]): Hardware | null {
@@ -90,10 +114,14 @@ export function hardwareFromArgv(argv: readonly string[]): Hardware | null {
   let memoryMiB: number | null = null
   for (let i = 0; i < argv.length - 1; i += 1) {
     const v = argv[i + 1] ?? ""
-    if (argv[i] === "-smp") cpus = Number.parseInt(v.split(",")[0]?.replace(/^cpus=/, "") ?? "", 10) || null
+    if (argv[i] === "-smp")
+      cpus =
+        Number.parseInt(v.split(",")[0]?.replace(/^cpus=/, "") ?? "", 10) ||
+        null
     if (argv[i] === "-m") {
       const mm = /^(?:size=)?(\d+)([MG]?)/i.exec(v)
-      if (mm !== null) memoryMiB = Number(mm[1]) * (mm[2]?.toUpperCase() === "G" ? GIB_MIB : 1)
+      if (mm !== null)
+        memoryMiB = Number(mm[1]) * (mm[2]?.toUpperCase() === "G" ? GIB_MIB : 1)
     }
   }
   return cpus === null || memoryMiB === null ? null : { cpus, memoryMiB }

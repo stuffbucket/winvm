@@ -11,11 +11,15 @@ export interface OffsetSample {
 async function guestNowNs(p: Paths): Promise<number> {
   const r = await qga.call(p.qga, { execute: "guest-get-time" }, 20_000)
   const t = r["return"]
-  if (typeof t !== "number") throw new Error(`guest-get-time: ${JSON.stringify(r)}`)
+  if (typeof t !== "number")
+    throw new Error(`guest-get-time: ${JSON.stringify(r)}`)
   return t
 }
 
-export async function measureOffset(p: Paths, probes = 3): Promise<OffsetSample> {
+export async function measureOffset(
+  p: Paths,
+  probes = 3,
+): Promise<OffsetSample> {
   let best: OffsetSample | null = null
   for (let i = 0; i < probes; i += 1) {
     const t0 = Date.now()
@@ -28,14 +32,21 @@ export async function measureOffset(p: Paths, probes = 3): Promise<OffsetSample>
   return best
 }
 
-export async function syncGuestClock(p: Paths): Promise<{ beforeOffsetMs: number; afterOffsetMs: number }> {
+export async function syncGuestClock(
+  p: Paths,
+): Promise<{ beforeOffsetMs: number; afterOffsetMs: number }> {
   const before = await measureOffset(p)
   let after = before
   let bias = 0
   for (let round = 0; round < 3; round += 1) {
     const ns = (Date.now() + after.rttMs / 2 + bias) * 1e6
-    const r = await qga.call(p.qga, { execute: "guest-set-time", arguments: { time: Math.round(ns) } }, 20_000)
-    if (r["error"] !== undefined) throw new Error(`guest-set-time: ${JSON.stringify(r["error"])}`)
+    const r = await qga.call(
+      p.qga,
+      { execute: "guest-set-time", arguments: { time: Math.round(ns) } },
+      20_000,
+    )
+    if (r["error"] !== undefined)
+      throw new Error(`guest-set-time: ${JSON.stringify(r["error"])}`)
     after = await measureOffset(p)
     if (Math.abs(after.offsetMs) <= 50) break
     bias -= after.offsetMs
@@ -70,7 +81,13 @@ export function hostWindowsTimeZone(): string | null {
       const id = Uint16Array.from(iana, (c) => c.charCodeAt(0))
       const out = new Uint16Array(128)
       const status = new Int32Array(1)
-      const n = lib.symbols.ucal_getWindowsTimeZoneID(ptr(id), id.length, ptr(out), out.length, ptr(status))
+      const n = lib.symbols.ucal_getWindowsTimeZoneID(
+        ptr(id),
+        id.length,
+        ptr(out),
+        out.length,
+        ptr(status),
+      )
       if ((status[0] ?? 1) > 0 || n <= 0) return null
       return String.fromCharCode(...out.subarray(0, n))
     } finally {
@@ -82,27 +99,56 @@ export function hostWindowsTimeZone(): string | null {
 }
 
 export function parseGuestTz(out: string): { zone: string; rtcUtc: boolean } {
-  const zone = out.split(/\r?\n/).map((l) => l.trim()).find((l) => l !== "") ?? ""
+  const zone =
+    out
+      .split(/\r?\n/)
+      .map((l) => l.trim())
+      .find((l) => l !== "") ?? ""
   const m = /RealTimeIsUniversal\s+REG_\w+\s+0x([0-9a-f]+)/i.exec(out)
-  return { zone, rtcUtc: m?.[1] !== undefined && Number.parseInt(m[1], 16) === 1 }
+  return {
+    zone,
+    rtcUtc: m?.[1] !== undefined && Number.parseInt(m[1], 16) === 1,
+  }
 }
 
-export async function alignGuestTimeZone(p: Paths): Promise<{ from: string; to: string; changed: boolean } | null> {
+export async function alignGuestTimeZone(
+  p: Paths,
+): Promise<{ from: string; to: string; changed: boolean } | null> {
   const want = hostWindowsTimeZone()
   if (want === null) return null
   const now = parseGuestTz(
-    (await qga.exec(p.qga, `${SYS32}\\cmd.exe`, ["/c", `tzutil /g & echo. & reg query ${TZ_KEY} /v RealTimeIsUniversal`])).stdout,
+    (
+      await qga.exec(p.qga, `${SYS32}\\cmd.exe`, [
+        "/c",
+        `tzutil /g & echo. & reg query ${TZ_KEY} /v RealTimeIsUniversal`,
+      ])
+    ).stdout,
   )
-  if (now.zone === want && now.rtcUtc) return { from: now.zone, to: want, changed: false }
+  if (now.zone === want && now.rtcUtc)
+    return { from: now.zone, to: want, changed: false }
   if (!now.rtcUtc) {
     const r = await qga.exec(p.qga, `${SYS32}\\reg.exe`, [
-      "add", TZ_KEY, "/v", "RealTimeIsUniversal", "/t", "REG_DWORD", "/d", "1", "/f",
+      "add",
+      TZ_KEY,
+      "/v",
+      "RealTimeIsUniversal",
+      "/t",
+      "REG_DWORD",
+      "/d",
+      "1",
+      "/f",
     ])
-    if (r.exitcode !== 0) throw new Error(`could not set RealTimeIsUniversal: ${r.stderr.trim() || r.stdout.trim()}`)
+    if (r.exitcode !== 0)
+      throw new Error(
+        `could not set RealTimeIsUniversal: ${r.stderr.trim() || r.stdout.trim()}`,
+      )
   }
   if (now.zone !== want) {
     const r = await qga.exec(p.qga, `${SYS32}\\tzutil.exe`, ["/s", want])
-    if (r.exitcode !== 0) throw new Error(`tzutil /s "${want}" failed: ${r.stderr.trim() || r.stdout.trim()}`)
+    if (r.exitcode !== 0)
+      throw new Error(
+        `tzutil /s "${want}" failed: ${r.stderr.trim() || r.stdout.trim()}`,
+      )
   }
   return { from: now.zone, to: want, changed: true }
 }

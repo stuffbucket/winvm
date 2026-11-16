@@ -16,7 +16,10 @@ export interface Snapshot {
 function parseRows(out: string): readonly Snapshot[] {
   const rows: Snapshot[] = []
   for (const line of out.split("\n")) {
-    const m = /^\s*(?:\d+|--)\s+(\S+)\s+(\d+(?:\.\d+)?\s*\S+)\s+(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})/.exec(line)
+    const m =
+      /^\s*(?:\d+|--)\s+(\S+)\s+(\d+(?:\.\d+)?\s*\S+)\s+(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})/.exec(
+        line,
+      )
     if (m?.[1] !== undefined && m[2] !== undefined && m[3] !== undefined) {
       rows.push({ tag: m[1], vmSize: m[2].replace(/\s+/g, " "), date: m[3] })
     }
@@ -26,14 +29,17 @@ function parseRows(out: string): readonly Snapshot[] {
 
 export function list(p: Paths): readonly Snapshot[] {
   if (!existsSync(p.overlay)) return []
-  return parseRows(capture(runtimeBin("qemu-img"), ["snapshot", "-l", p.overlay]))
+  return parseRows(
+    capture(runtimeBin("qemu-img"), ["snapshot", "-l", p.overlay]),
+  )
 }
 
 export async function listLive(p: Paths): Promise<readonly Snapshot[]> {
   return parseRows(await qmp.hmp(p.qmp, "info snapshots"))
 }
 
-export const has = (p: Paths, tag: string): boolean => list(p).some((s) => s.tag === tag)
+export const has = (p: Paths, tag: string): boolean =>
+  list(p).some((s) => s.tag === tag)
 
 export async function save(p: Paths, tag: string): Promise<void> {
   await qmp.hmp(p.qmp, `savevm ${tag}`)

@@ -1,7 +1,23 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs"
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs"
 import { resolve } from "node:path"
 
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "bun:test"
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+} from "bun:test"
 
 import { parseArgs } from "../src/args"
 import type { Args } from "../src/args"
@@ -40,7 +56,14 @@ afterAll(() => {
 beforeEach(() => {
   rmSync(pathsFor(NAME).dir, { recursive: true, force: true })
   mkdirSync(pathsFor(NAME).dir, { recursive: true })
-  writeFileSync(pathsFor(NAME).meta, JSON.stringify({ image: "win11-arm64", vnc: 1, created: "2026-01-01T00:00:00.000Z" }))
+  writeFileSync(
+    pathsFor(NAME).meta,
+    JSON.stringify({
+      image: "win11-arm64",
+      vnc: 1,
+      created: "2026-01-01T00:00:00.000Z",
+    }),
+  )
 })
 
 afterEach(() => {
@@ -48,10 +71,16 @@ afterEach(() => {
 })
 
 const leaseFile = (): string => pathsFor(NAME).lease
-const onDisk = (): Record<string, unknown> | null => (existsSync(leaseFile()) ? (JSON.parse(readFileSync(leaseFile(), "utf8")) as Record<string, unknown>) : null)
+const onDisk = (): Record<string, unknown> | null =>
+  existsSync(leaseFile())
+    ? (JSON.parse(readFileSync(leaseFile(), "utf8")) as Record<string, unknown>)
+    : null
 
 async function hold(...argv: string[]): Promise<ReturnType<typeof Bun.spawn>> {
-  const h = Bun.spawn([process.execPath, HOLDER, ...argv], { stdout: "pipe", stderr: "ignore" })
+  const h = Bun.spawn([process.execPath, HOLDER, ...argv], {
+    stdout: "pipe",
+    stderr: "ignore",
+  })
   spawned.push(h)
   const reader = (h.stdout as ReadableStream<Uint8Array>).getReader()
   await reader.read()
@@ -73,7 +102,10 @@ function put(pid: number, over: Record<string, unknown> = {}): void {
   writeFileSync(leaseFile(), JSON.stringify(body))
 }
 
-const gate = (): { readonly opened: Promise<void>; readonly open: () => void } => {
+const gate = (): {
+  readonly opened: Promise<void>
+  readonly open: () => void
+} => {
   let open: () => void = () => undefined
   const opened = new Promise<void>((r) => {
     open = r
@@ -86,17 +118,58 @@ const quietly = { onWait: (): void => undefined }
 describe("operationFor", () => {
   it("maps the per-instance machine-impacting invocations, golden by its nested action", () => {
     const a = (...argv: string[]): Args => parseArgs(argv)
-    for (const verb of ["start", "stop", "reboot", "kill", "reset", "snapshot", "rewind", "save", "load", "pause", "resume", "sleep", "wake", "lock", "stow"]) {
+    for (const verb of [
+      "start",
+      "stop",
+      "reboot",
+      "kill",
+      "reset",
+      "snapshot",
+      "rewind",
+      "save",
+      "load",
+      "pause",
+      "resume",
+      "sleep",
+      "wake",
+      "lock",
+      "stow",
+    ]) {
       expect(operationFor(verb, a())).toBe(verb as VmOperation)
     }
     expect(operationFor("golden", a("create"))).toBe("golden-create")
-    expect(operationFor("golden", a("reset", "--name", "x"))).toBe("golden-reset")
+    expect(operationFor("golden", a("reset", "--name", "x"))).toBe(
+      "golden-reset",
+    )
     expect(operationFor("share", a("install", "--restart"))).toBe("setup")
     expect(operationFor("destroy", a())).toBe("destroy")
-    for (const [verb, rest] of [["golden", []], ["golden", ["status"]], ["golden", ["list"]], ["share", ["status"]], ["share", ["set", "/x"]]] as const) {
+    for (const [verb, rest] of [
+      ["golden", []],
+      ["golden", ["status"]],
+      ["golden", ["list"]],
+      ["share", ["status"]],
+      ["share", ["set", "/x"]],
+    ] as const) {
       expect(operationFor(verb, a(...rest))).toBeNull()
     }
-    for (const verb of ["setup", "status", "exec", "snapshots", "saves", "serve", "watch", "build", "doctor", "info", "clock", "ls", "open", "web", "run", "test"]) {
+    for (const verb of [
+      "setup",
+      "status",
+      "exec",
+      "snapshots",
+      "saves",
+      "serve",
+      "watch",
+      "build",
+      "doctor",
+      "info",
+      "clock",
+      "ls",
+      "open",
+      "web",
+      "run",
+      "test",
+    ]) {
       expect(operationFor(verb, a())).toBeNull()
     }
     expect(operationFor(undefined, a())).toBeNull()
@@ -108,7 +181,9 @@ describe("operationFor", () => {
 describe("the lease record", () => {
   it("is one file naming the operation, its holder's pid and start, and is gone once the command settles", async () => {
     const during = await withOperation(NAME, "start", () => {
-      expect(readdirSync(pathsFor(NAME).dir).filter((f) => f.startsWith("lease"))).toEqual(["lease.json"])
+      expect(
+        readdirSync(pathsFor(NAME).dir).filter((f) => f.startsWith("lease")),
+      ).toEqual(["lease.json"])
       return { record: onDisk(), status: readOperation(NAME) }
     })
     expect(during.record).toEqual({
@@ -120,7 +195,11 @@ describe("the lease record", () => {
       instance: NAME,
       automatic: false,
     })
-    expect(during.status).toEqual({ operation: "start", pid: process.pid, startedAt: during.record?.["startedAt"] as string })
+    expect(during.status).toEqual({
+      operation: "start",
+      pid: process.pid,
+      startedAt: during.record?.["startedAt"] as string,
+    })
     expect(onDisk()).toBeNull()
 
     await expect(
@@ -134,7 +213,11 @@ describe("the lease record", () => {
   it("trusts a record only while its pid is still the process that started when the record says, and reading never removes one", async () => {
     const h = await hold("winvm", "save", "-i", NAME)
     put(h.pid)
-    expect(readOperation(NAME)).toEqual({ operation: "save", pid: h.pid, startedAt: "2026-01-01T00:00:00.000Z" })
+    expect(readOperation(NAME)).toEqual({
+      operation: "save",
+      pid: h.pid,
+      startedAt: "2026-01-01T00:00:00.000Z",
+    })
 
     put(h.pid, { pidStart: "Thu Jan  1 00:00:00 1970" })
     expect(readOperation(NAME)).toBeNull()
@@ -146,12 +229,23 @@ describe("the lease record", () => {
     expect(readOperation(NAME)).toBeNull()
     expect(onDisk()?.["pid"]).toBe(gone.pid)
 
-    for (const raw of ["not json", "[]", "null", JSON.stringify({ operation: "save" }), JSON.stringify({ operation: "save", pid: 0 })]) {
+    for (const raw of [
+      "not json",
+      "[]",
+      "null",
+      JSON.stringify({ operation: "save" }),
+      JSON.stringify({ operation: "save", pid: 0 }),
+    ]) {
       writeFileSync(leaseFile(), raw)
       expect(readOperation(NAME)).toBeNull()
       expect(readFileSync(leaseFile(), "utf8")).toBe(raw)
     }
-    for (const over of [{ instance: "other" }, { id: "" }, { startedAt: 5 }, { pidStart: 5 }]) {
+    for (const over of [
+      { instance: "other" },
+      { id: "" },
+      { startedAt: 5 },
+      { pidStart: 5 },
+    ]) {
       put(h.pid, over)
       expect(leaseHolder(NAME)?.pid).toBe(h.pid)
     }
@@ -168,14 +262,24 @@ describe("the lease record", () => {
         `await withOperation(${JSON.stringify(other)}, "save", async () => { console.log("held"); await Bun.sleep(5000) })`,
       ].join("\n"),
     )
-    const child = Bun.spawn([process.execPath, script], { env: { ...process.env, WINVM_HOME: home }, stdout: "pipe", stderr: "ignore" })
+    const child = Bun.spawn([process.execPath, script], {
+      env: { ...process.env, WINVM_HOME: home },
+      stdout: "pipe",
+      stderr: "ignore",
+    })
     spawned.push(child)
     const reader = (child.stdout as ReadableStream<Uint8Array>).getReader()
     await reader.read()
     reader.releaseLock()
     rmSync(script, { force: true })
-    expect(readOperation(NAME)).toEqual({ operation: "save", pid: child.pid, startedAt: expect.any(String) as string })
-    await expect(withOperation(NAME, "stop", () => "ran")).rejects.toThrow(`is busy: save (pid ${String(child.pid)})`)
+    expect(readOperation(NAME)).toEqual({
+      operation: "save",
+      pid: child.pid,
+      startedAt: expect.any(String) as string,
+    })
+    await expect(withOperation(NAME, "stop", () => "ran")).rejects.toThrow(
+      `is busy: save (pid ${String(child.pid)})`,
+    )
     expect(onDisk()?.["pid"]).toBe(child.pid)
     expect(onDisk()?.["instance"]).toBe(other)
   })
@@ -185,28 +289,42 @@ describe("the lease record", () => {
     put(h.pid, { operation: "defragment" })
     expect(readOperation(NAME)).toBeNull()
     expect(onDisk()?.["operation"]).toBe("defragment")
-    await expect(withOperation(NAME, "stop", () => "ran")).rejects.toThrow(`is busy: defragment (pid ${String(h.pid)})`)
+    await expect(withOperation(NAME, "stop", () => "ran")).rejects.toThrow(
+      `is busy: defragment (pid ${String(h.pid)})`,
+    )
     expect(onDisk()?.["pid"]).toBe(h.pid)
   })
 
   it("counts a live process whose start cannot be read as still holding, never as gone", () => {
-    expect(isSameProcess(process.pid, "Sun Nov 15 08:09:46 2026", () => "")).toBe(true)
-    expect(isSameProcess(process.pid, "", () => "Sun Nov 15 08:09:46 2026")).toBe(true)
-    expect(isSameProcess(process.pid, "Sun Nov 15 08:09:46 2026", () => null)).toBe(false)
+    expect(
+      isSameProcess(process.pid, "Sun Nov 15 08:09:46 2026", () => ""),
+    ).toBe(true)
+    expect(
+      isSameProcess(process.pid, "", () => "Sun Nov 15 08:09:46 2026"),
+    ).toBe(true)
+    expect(
+      isSameProcess(process.pid, "Sun Nov 15 08:09:46 2026", () => null),
+    ).toBe(false)
   })
 
   it("is taken over from a holder that died or whose pid was reused, or a record that names no process", async () => {
     const reused = await hold("unrelated")
     put(reused.pid, { pidStart: "Thu Jan  1 00:00:00 1970" })
-    expect(await withOperation(NAME, "pause", () => onDisk()?.["pid"])).toBe(process.pid)
+    expect(await withOperation(NAME, "pause", () => onDisk()?.["pid"])).toBe(
+      process.pid,
+    )
 
     writeFileSync(leaseFile(), "not json")
-    expect(await withOperation(NAME, "pause", () => onDisk()?.["pid"])).toBe(process.pid)
+    expect(await withOperation(NAME, "pause", () => onDisk()?.["pid"])).toBe(
+      process.pid,
+    )
 
     const gone = Bun.spawn(["true"])
     await gone.exited
     put(gone.pid)
-    expect(await withOperation(NAME, "pause", () => onDisk()?.["pid"])).toBe(process.pid)
+    expect(await withOperation(NAME, "pause", () => onDisk()?.["pid"])).toBe(
+      process.pid,
+    )
     expect(onDisk()).toBeNull()
   })
 
@@ -236,11 +354,17 @@ describe("the lease record", () => {
 describe("exclusion", () => {
   it("refuses a second command while the first holds the instance, naming what holds it", async () => {
     const g = gate()
-    const first = withOperation(NAME, "start", async () => { await g.opened })
+    const first = withOperation(NAME, "start", async () => {
+      await g.opened
+    })
     await Bun.sleep(20)
     const second = withOperation(NAME, "start", () => "ran")
     await expect(second).rejects.toBeInstanceOf(InstanceBusy)
-    await expect(second).rejects.toThrow(new RegExp(`"${NAME}" is busy: start \\(pid ${String(process.pid)}\\) since `))
+    await expect(second).rejects.toThrow(
+      new RegExp(
+        `"${NAME}" is busy: start \\(pid ${String(process.pid)}\\) since `,
+      ),
+    )
     g.open()
     await first
     expect(await withOperation(NAME, "start", () => "ran")).toBe("ran")
@@ -249,7 +373,9 @@ describe("exclusion", () => {
   it("refuses a command while another process holds the lease", async () => {
     const h = await hold("winvm", "stop", "-i", NAME)
     put(h.pid, { operation: "stop" })
-    await expect(withOperation(NAME, "save", () => "ran")).rejects.toThrow(`is busy: stop (pid ${String(h.pid)})`)
+    await expect(withOperation(NAME, "save", () => "ran")).rejects.toThrow(
+      `is busy: stop (pid ${String(h.pid)})`,
+    )
     expect(onDisk()?.["pid"]).toBe(h.pid)
   })
 
@@ -263,7 +389,13 @@ describe("exclusion", () => {
       ].join("\n"),
     )
     const run = (): string =>
-      Bun.spawnSync([process.execPath, script], { env: { ...process.env, WINVM_HOME: home }, stdout: "pipe", stderr: "pipe" }).stdout.toString().trim()
+      Bun.spawnSync([process.execPath, script], {
+        env: { ...process.env, WINVM_HOME: home },
+        stdout: "pipe",
+        stderr: "pipe",
+      })
+        .stdout.toString()
+        .trim()
     const refused = await withOperation(NAME, "save", () => run())
     expect(refused).toContain(`is busy: save (pid ${String(process.pid)})`)
     expect(run()).toBe("ran")
@@ -271,7 +403,16 @@ describe("exclusion", () => {
   })
 
   it("lets a command call its own nested steps without refusing itself", async () => {
-    const seen = await withOperation(NAME, "stow", async () => await withOperation(NAME, "save", async () => await withOperation(NAME, "stop", () => onDisk())))
+    const seen = await withOperation(
+      NAME,
+      "stow",
+      async () =>
+        await withOperation(
+          NAME,
+          "save",
+          async () => await withOperation(NAME, "stop", () => onDisk()),
+        ),
+    )
     expect(seen?.["operation"]).toBe("stow")
     expect(onDisk()).toBeNull()
   })
@@ -284,7 +425,9 @@ describe("exclusion", () => {
       inner.push(await withOperation(NAME, "save", () => "nested"))
     })
     await Bun.sleep(20)
-    await expect(withOperation(NAME, "save", () => "ran")).rejects.toBeInstanceOf(InstanceBusy)
+    await expect(
+      withOperation(NAME, "save", () => "ran"),
+    ).rejects.toBeInstanceOf(InstanceBusy)
     g.open()
     await first
     expect(inner).toEqual(["nested"])
@@ -295,11 +438,26 @@ describe("waiting", () => {
   it("waits out winvm's own work for a person's command, and refuses another person's at once", async () => {
     const g = gate()
     const waited: number[] = []
-    const auto = withOperation(NAME, "save", async () => { await g.opened }, { automatic: true })
+    const auto = withOperation(
+      NAME,
+      "save",
+      async () => {
+        await g.opened
+      },
+      { automatic: true },
+    )
     await Bun.sleep(20)
-    expect(leaseHolder(NAME)).toEqual({ operation: "save", pid: process.pid, startedAt: expect.any(String) as string, automatic: true })
+    expect(leaseHolder(NAME)).toEqual({
+      operation: "save",
+      pid: process.pid,
+      startedAt: expect.any(String) as string,
+      automatic: true,
+    })
     expect(readOperation(NAME)?.operation).toBe("save")
-    const stop = withOperation(NAME, "stop", () => onDisk()?.["operation"], { pollMs: 10, onWait: (h) => waited.push(h.pid) })
+    const stop = withOperation(NAME, "stop", () => onDisk()?.["operation"], {
+      pollMs: 10,
+      onWait: (h) => waited.push(h.pid),
+    })
     await Bun.sleep(100)
     g.open()
     await auto
@@ -307,10 +465,14 @@ describe("waiting", () => {
     expect(waited).toEqual([process.pid])
 
     const user = gate()
-    const held = withOperation(NAME, "pause", async () => { await user.opened })
+    const held = withOperation(NAME, "pause", async () => {
+      await user.opened
+    })
     await Bun.sleep(20)
     const t0 = Date.now()
-    await expect(withOperation(NAME, "stop", () => "ran", { pollMs: 10, ...quietly })).rejects.toBeInstanceOf(InstanceBusy)
+    await expect(
+      withOperation(NAME, "stop", () => "ran", { pollMs: 10, ...quietly }),
+    ).rejects.toBeInstanceOf(InstanceBusy)
     expect(Date.now() - t0).toBeLessThan(500)
     user.open()
     await held
@@ -318,18 +480,44 @@ describe("waiting", () => {
 
   it("gives up after its bound, naming the automatic holder", async () => {
     const g = gate()
-    const auto = withOperation(NAME, "save", async () => { await g.opened }, { automatic: true })
+    const auto = withOperation(
+      NAME,
+      "save",
+      async () => {
+        await g.opened
+      },
+      { automatic: true },
+    )
     await Bun.sleep(20)
-    await expect(withOperation(NAME, "pause", () => "ran", { waitMs: 100, pollMs: 10, ...quietly })).rejects.toThrow(/busy: save \(pid \d+, started by winvm itself\)/)
+    await expect(
+      withOperation(NAME, "pause", () => "ran", {
+        waitMs: 100,
+        pollMs: 10,
+        ...quietly,
+      }),
+    ).rejects.toThrow(/busy: save \(pid \d+, started by winvm itself\)/)
     g.open()
     await auto
   })
 
   it("never waits when winvm's own work finds the instance busy: it skips instead", async () => {
     const g = gate()
-    const auto = withOperation(NAME, "reconcile", async () => { await g.opened }, { automatic: true })
+    const auto = withOperation(
+      NAME,
+      "reconcile",
+      async () => {
+        await g.opened
+      },
+      { automatic: true },
+    )
     await Bun.sleep(20)
-    await expect(withOperation(NAME, "save", () => "ran", { automatic: true, pollMs: 10, ...quietly })).rejects.toBeInstanceOf(InstanceBusy)
+    await expect(
+      withOperation(NAME, "save", () => "ran", {
+        automatic: true,
+        pollMs: 10,
+        ...quietly,
+      }),
+    ).rejects.toBeInstanceOf(InstanceBusy)
     g.open()
     await auto
   })
@@ -338,7 +526,9 @@ describe("waiting", () => {
     const before = process.env["WINVM_AUTOMATIC"]
     process.env["WINVM_AUTOMATIC"] = "1"
     try {
-      expect(await withOperation(NAME, "stow", () => onDisk()?.["automatic"])).toBe(true)
+      expect(
+        await withOperation(NAME, "stow", () => onDisk()?.["automatic"]),
+      ).toBe(true)
     } finally {
       if (before === undefined) delete process.env["WINVM_AUTOMATIC"]
       else process.env["WINVM_AUTOMATIC"] = before
@@ -349,27 +539,51 @@ describe("waiting", () => {
 describe("kill", () => {
   it("never waits on a lease: it runs beside a wedged holder, and holds the lease itself when it is free", async () => {
     const g = gate()
-    const wedged = withOperation(NAME, "stop", async () => { await g.opened })
+    const wedged = withOperation(NAME, "stop", async () => {
+      await g.opened
+    })
     await Bun.sleep(20)
     const t0 = Date.now()
-    expect(await withOperation(NAME, "kill", () => onDisk()?.["operation"])).toBe("stop")
+    expect(
+      await withOperation(NAME, "kill", () => onDisk()?.["operation"]),
+    ).toBe("stop")
     expect(Date.now() - t0).toBeLessThan(500)
     g.open()
     await wedged
-    expect(await withOperation(NAME, "kill", () => onDisk()?.["operation"])).toBe("kill")
+    expect(
+      await withOperation(NAME, "kill", () => onDisk()?.["operation"]),
+    ).toBe("kill")
   })
 })
 
 describe("which instances get a lease", () => {
   const instance = (name: string): void => {
     mkdirSync(pathsFor(name).dir, { recursive: true })
-    writeFileSync(pathsFor(name).meta, JSON.stringify({ image: "win11-arm64", vnc: 1, created: "2026-01-01T00:00:00.000Z" }))
+    writeFileSync(
+      pathsFor(name).meta,
+      JSON.stringify({
+        image: "win11-arm64",
+        vnc: 1,
+        created: "2026-01-01T00:00:00.000Z",
+      }),
+    )
   }
-  const leased = async (name: string, operation: LeaseOperation): Promise<boolean> => await withOperation(name, operation, () => existsSync(pathsFor(name).lease))
+  const leased = async (
+    name: string,
+    operation: LeaseOperation,
+  ): Promise<boolean> =>
+    await withOperation(name, operation, () => existsSync(pathsFor(name).lease))
 
   it("creates no path for a name that could leave the instances directory, and still runs the command", async () => {
     mkdirSync(resolve(home, "instances"), { recursive: true })
-    for (const name of ["../escape", "../../wvop-escape", "a/b", "..", ".", ""]) {
+    for (const name of [
+      "../escape",
+      "../../wvop-escape",
+      "a/b",
+      "..",
+      ".",
+      "",
+    ]) {
       expect(await withOperation(name, "stop", () => "ran")).toBe("ran")
       expect(readOperation(name)).toBeNull()
     }
@@ -384,12 +598,20 @@ describe("which instances get a lease", () => {
     expect(await leased("op-existing", "stop")).toBe(true)
     instance("My VM")
     expect(await leased("My VM", "stop")).toBe(true)
-    for (const operation of ["start", "load", "golden-create"] as const) expect(await leased(`op-new-${operation}`, operation)).toBe(true)
+    for (const operation of ["start", "load", "golden-create"] as const)
+      expect(await leased(`op-new-${operation}`, operation)).toBe(true)
     expect(await leased("op-typo", "stop")).toBe(false)
     expect(existsSync(pathsFor("op-typo").dir)).toBe(false)
     expect(await leased("-bad name", "start")).toBe(false)
     expect(existsSync(pathsFor("-bad name").dir)).toBe(false)
-    for (const n of ["op-existing", "My VM", "op-new-start", "op-new-load", "op-new-golden-create"]) rmSync(pathsFor(n).dir, { recursive: true, force: true })
+    for (const n of [
+      "op-existing",
+      "My VM",
+      "op-new-start",
+      "op-new-load",
+      "op-new-golden-create",
+    ])
+      rmSync(pathsFor(n).dir, { recursive: true, force: true })
   })
 })
 
@@ -399,15 +621,26 @@ describe("a command that exits inside its lease", () => {
     const script = resolve(home, `child-${String(Math.random()).slice(2)}.ts`)
     writeFileSync(
       script,
-      [`import { withOperation } from ${JSON.stringify(SRC)}`, `import { writeFileSync } from "node:fs"`, `const leaseFile = ${JSON.stringify(leaseFile())}`, body].join("\n"),
+      [
+        `import { withOperation } from ${JSON.stringify(SRC)}`,
+        `import { writeFileSync } from "node:fs"`,
+        `const leaseFile = ${JSON.stringify(leaseFile())}`,
+        body,
+      ].join("\n"),
     )
-    const r = Bun.spawnSync(["bun", script], { env: { ...process.env, WINVM_HOME: home }, stdout: "pipe", stderr: "pipe" })
+    const r = Bun.spawnSync(["bun", script], {
+      env: { ...process.env, WINVM_HOME: home },
+      stdout: "pipe",
+      stderr: "pipe",
+    })
     rmSync(script, { force: true })
     return { code: r.exitCode, out: r.stdout.toString().trim() }
   }
 
   it("clears its record when the command calls process.exit", () => {
-    const r = child(`await withOperation(${JSON.stringify(NAME)}, "stop", () => { console.log(leaseFile); process.exit(3) })`)
+    const r = child(
+      `await withOperation(${JSON.stringify(NAME)}, "stop", () => { console.log(leaseFile); process.exit(3) })`,
+    )
     expect(r.code).toBe(3)
     expect(r.out).toBe(leaseFile())
     expect(onDisk()).toBeNull()
@@ -424,8 +657,18 @@ describe("a command that exits inside its lease", () => {
   })
 
   it("leaves a record that carries someone else's lease", () => {
-    const foreign = JSON.stringify({ operation: "save", id: "newer-owner", pid: 1, pidStart: null, startedAt: "2026-01-01T00:00:00.000Z", instance: NAME, automatic: false })
-    const r = child(`await withOperation(${JSON.stringify(NAME)}, "start", () => { writeFileSync(leaseFile, ${JSON.stringify(foreign)}); process.exit(5) })`)
+    const foreign = JSON.stringify({
+      operation: "save",
+      id: "newer-owner",
+      pid: 1,
+      pidStart: null,
+      startedAt: "2026-01-01T00:00:00.000Z",
+      instance: NAME,
+      automatic: false,
+    })
+    const r = child(
+      `await withOperation(${JSON.stringify(NAME)}, "start", () => { writeFileSync(leaseFile, ${JSON.stringify(foreign)}); process.exit(5) })`,
+    )
     expect(r.code).toBe(5)
     expect(onDisk()?.["id"]).toBe("newer-owner")
   })

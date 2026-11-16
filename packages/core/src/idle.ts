@@ -51,7 +51,12 @@ export class IdleMachine {
   private ignoreCpuUntilMs: number
   private lastDriftCheckMs: number
   private cpuWindow: { readonly at: number; readonly cpu: number }[] = []
-  lastVerdict: Verdict = { quiet: false, cpuAvg: null, reasons: ["starting"], woke: false }
+  lastVerdict: Verdict = {
+    quiet: false,
+    cpuAvg: null,
+    reasons: ["starting"],
+    woke: false,
+  }
 
   private readonly timing: Timing
 
@@ -97,23 +102,37 @@ export class IdleMachine {
       this.restartIdle(s.wallMs)
       this.ignoreCpuUntilMs = s.wallMs + this.timing.settleMs
       this.lastDriftCheckMs = s.wallMs
-      this.lastVerdict = { quiet: false, cpuAvg: null, reasons: ["host woke"], woke }
+      this.lastVerdict = {
+        quiet: false,
+        cpuAvg: null,
+        reasons: ["host woke"],
+        woke,
+      }
       return decisions
     }
 
     if (s.frozen === true) {
       this.restartIdle(s.wallMs)
       this.lastDriftCheckMs = s.wallMs
-      this.lastVerdict = { quiet: false, cpuAvg: null, reasons: ["paused"], woke }
+      this.lastVerdict = {
+        quiet: false,
+        cpuAvg: null,
+        reasons: ["paused"],
+        woke,
+      }
       return decisions
     }
 
     if (s.cpu !== null && s.wallMs >= this.ignoreCpuUntilMs) {
       this.cpuWindow.push({ at: s.wallMs, cpu: s.cpu })
     }
-    this.cpuWindow = this.cpuWindow.filter((c) => s.wallMs - c.at < this.timing.cpuWindowMs)
+    this.cpuWindow = this.cpuWindow.filter(
+      (c) => s.wallMs - c.at < this.timing.cpuWindowMs,
+    )
     const cpuAvg =
-      this.cpuWindow.length === 0 ? null : this.cpuWindow.reduce((a, c) => a + c.cpu, 0) / this.cpuWindow.length
+      this.cpuWindow.length === 0
+        ? null
+        : this.cpuWindow.reduce((a, c) => a + c.cpu, 0) / this.cpuWindow.length
     let quiet = true
     if (cpuAvg !== null && cpuAvg * 100 >= cfg.idleCpuPercent) {
       quiet = false
@@ -145,7 +164,11 @@ export class IdleMachine {
     if (cfg.stow.enabled && idle >= cfg.stow.idleMinutes * 60_000) {
       this.stowing = true
       decisions.push({ kind: "stow" })
-    } else if (cfg.autosave.enabled && this.autosaveArmed && idle >= cfg.autosave.idleMinutes * 60_000) {
+    } else if (
+      cfg.autosave.enabled &&
+      this.autosaveArmed &&
+      idle >= cfg.autosave.idleMinutes * 60_000
+    ) {
       this.autosaveArmed = false
       decisions.push({ kind: "autosave" })
     }
@@ -180,13 +203,23 @@ export interface SaveInfo {
   readonly createdAt: string
 }
 
-export function savesToRotate(saves: readonly SaveInfo[], keep: number): readonly string[] {
+export function savesToRotate(
+  saves: readonly SaveInfo[],
+  keep: number,
+): readonly string[] {
   const autos = saves
     .filter((s) => s.kind === "auto")
-    .toSorted((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt) || b.name.localeCompare(a.name))
+    .toSorted(
+      (a, b) =>
+        Date.parse(b.createdAt) - Date.parse(a.createdAt) ||
+        b.name.localeCompare(a.name),
+    )
   return autos.slice(Math.max(0, keep)).map((s) => s.name)
 }
 
 export function autosaveName(nowMs: number): string {
-  return `auto-${new Date(nowMs).toISOString().replace(/[-:]/g, "").replace(/\.\d+Z$/, "Z")}`
+  return `auto-${new Date(nowMs)
+    .toISOString()
+    .replace(/[-:]/g, "")
+    .replace(/\.\d+Z$/, "Z")}`
 }

@@ -14,7 +14,8 @@ export const imagesDir = (): string => resolve(home(), "images")
 export const instancesDir = (): string => resolve(home(), "instances")
 export const mediaDir = (): string => resolve(home(), "media")
 
-const isCompiled = (modulePath: string): boolean => modulePath.startsWith("/$bunfs/")
+const isCompiled = (modulePath: string): boolean =>
+  modulePath.startsWith("/$bunfs/")
 
 export function packageDirFor(o: {
   readonly modulePath: string
@@ -23,21 +24,39 @@ export function packageDirFor(o: {
 }): string {
   const own = o.env["WINVM_PACKAGE_DIR"]
   if (own !== undefined && own !== "") return resolve(own)
-  if (isCompiled(o.modulePath)) return resolve(dirname(o.execPath), "..", "Resources", "winvm", "packages", "core")
+  if (isCompiled(o.modulePath))
+    return resolve(
+      dirname(o.execPath),
+      "..",
+      "Resources",
+      "winvm",
+      "packages",
+      "core",
+    )
   return resolve(dirname(o.modulePath), "..")
 }
 
-export const PACKAGE_DIR = packageDirFor({ modulePath: import.meta.path, execPath: process.execPath, env: process.env })
+export const PACKAGE_DIR = packageDirFor({
+  modulePath: import.meta.path,
+  execPath: process.execPath,
+  env: process.env,
+})
 
-export const cliArgvFor = (o: { readonly compiled: boolean; readonly entry: string }, argv: readonly string[]): readonly string[] =>
-  o.compiled ? [...argv] : [o.entry, ...argv]
+export const cliArgvFor = (
+  o: { readonly compiled: boolean; readonly entry: string },
+  argv: readonly string[],
+): readonly string[] => (o.compiled ? [...argv] : [o.entry, ...argv])
 
 export const cliArgv = (...argv: string[]): readonly string[] =>
-  cliArgvFor({ compiled: isCompiled(import.meta.path), entry: cliEntry() }, argv)
+  cliArgvFor(
+    { compiled: isCompiled(import.meta.path), entry: cliEntry() },
+    argv,
+  )
 
 export function cliEntry(): string {
   const cli = process.env["WINVM_CLI"]
-  if (cli === undefined || cli === "") throw new Error("WINVM_CLI is not set: start winvm through apps/cli")
+  if (cli === undefined || cli === "")
+    throw new Error("WINVM_CLI is not set: start winvm through apps/cli")
   return cli
 }
 
@@ -48,14 +67,19 @@ export function recordCliEntry(path: string): void {
 
 export const NO_RECONCILE = "WINVM_NO_RECONCILE"
 
-export const managedEnv = (env: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv => ({ ...env, [NO_RECONCILE]: "1" })
+export const managedEnv = (
+  env: NodeJS.ProcessEnv = process.env,
+): NodeJS.ProcessEnv => ({ ...env, [NO_RECONCILE]: "1" })
 
 export function pinnedBunVersion(): string | null {
   const f = resolve(PACKAGE_DIR, "..", "..", ".bun-version")
   return existsSync(f) ? readFileSync(f, "utf8").trim() : null
 }
 
-export function bunVersionWarning(running: string, pinned: string | null): string | null {
+export function bunVersionWarning(
+  running: string,
+  pinned: string | null,
+): string | null {
   if (pinned === null || running === pinned) return null
   return (
     `warning: winvm is running on Bun ${running}; this checkout pins ${pinned} (.bun-version). ` +
@@ -64,9 +88,12 @@ export function bunVersionWarning(running: string, pinned: string | null): strin
 }
 
 export const imageDir = (image: string): string => resolve(imagesDir(), image)
-export const basePath = (image: string): string => resolve(imageDir(image), "base.qcow2")
-export const imageMetaPath = (image: string): string => resolve(imageDir(image), "image.json")
-export const instanceDir = (name: string): string => resolve(instancesDir(), name)
+export const basePath = (image: string): string =>
+  resolve(imageDir(image), "base.qcow2")
+export const imageMetaPath = (image: string): string =>
+  resolve(imageDir(image), "image.json")
+export const instanceDir = (name: string): string =>
+  resolve(instancesDir(), name)
 
 export const media = {
   iso: (): string => resolve(mediaDir(), "windows-arm64.iso"),
@@ -100,7 +127,8 @@ export interface Paths {
   readonly meta: string
 }
 
-export const monitorBeside = (qgaSock: string): string => resolve(dirname(qgaSock), "qmp.sock")
+export const monitorBeside = (qgaSock: string): string =>
+  resolve(dirname(qgaSock), "qmp.sock")
 
 export function pathsFor(name: string): Paths {
   const dir = instanceDir(name)

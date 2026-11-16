@@ -51,7 +51,9 @@ export function parseArgs(argv: readonly string[]): Args {
 }
 
 export function instanceName(args: Args): string {
-  return args.flags.get("instance") ?? process.env["WINVM_INSTANCE"] ?? "default"
+  return (
+    args.flags.get("instance") ?? process.env["WINVM_INSTANCE"] ?? "default"
+  )
 }
 
 export function commandInstance(afterVerb: string): string | null {
@@ -64,10 +66,16 @@ export function commandInstance(afterVerb: string): string | null {
   return null
 }
 
-export function winvmCommandAfter(command: string, verb: string): string | null {
-  const target = "[A-Za-z0-9_]+-[A-Za-z0-9_]+-[A-Za-z0-9_.]+(?:-[A-Za-z0-9_.]+)?"
+export function winvmCommandAfter(
+  command: string,
+  verb: string,
+): string | null {
+  const target =
+    "[A-Za-z0-9_]+-[A-Za-z0-9_]+-[A-Za-z0-9_.]+(?:-[A-Za-z0-9_.]+)?"
   const escapedVerb = verb.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
-  const match = new RegExp(`(?:^|[\\s/])winvm(?:\\.ts|-${target})?\\s+${escapedVerb}(\\s.*)?$`).exec(command.trim())
+  const match = new RegExp(
+    `(?:^|[\\s/])winvm(?:\\.ts|-${target})?\\s+${escapedVerb}(\\s.*)?$`,
+  ).exec(command.trim())
   return match === null ? null : (match[1] ?? "")
 }
 

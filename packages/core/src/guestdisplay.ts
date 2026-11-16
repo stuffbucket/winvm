@@ -26,10 +26,20 @@ export async function liveSize(p: Paths): Promise<Size | null> {
   }
 }
 
-export async function requestSize(p: Paths, meta: InstanceMeta, size: Size): Promise<void> {
-  const answer = await requestDesktopSize(vncPort(meta.vnc), passwordFor(p), size.width, size.height)
+export async function requestSize(
+  p: Paths,
+  meta: InstanceMeta,
+  size: Size,
+): Promise<void> {
+  const answer = await requestDesktopSize(
+    vncPort(meta.vnc),
+    passwordFor(p),
+    size.width,
+    size.height,
+  )
   if (answer.status !== 4 && answer.status !== 0) {
-    const why = RESIZE_STATUS[answer.status] ?? `status ${String(answer.status)}`
+    const why =
+      RESIZE_STATUS[answer.status] ?? `status ${String(answer.status)}`
     throw new Error(`QEMU did not pass the size on: ${why}`)
   }
 }
@@ -47,10 +57,16 @@ export interface GuestDisplay {
 }
 
 export async function guestState(name: string): Promise<GuestDisplay> {
-  return await (await agent.requireAgent(name)).display<GuestDisplay>({ op: "get" })
+  return await (await agent.requireAgent(name)).display<GuestDisplay>({
+    op: "get",
+  })
 }
 
-export async function setGuestSize(name: string, size: Size, o: { readonly scale?: number; readonly waitMs?: number } = {}): Promise<GuestDisplay> {
+export async function setGuestSize(
+  name: string,
+  size: Size,
+  o: { readonly scale?: number; readonly waitMs?: number } = {},
+): Promise<GuestDisplay> {
   const c = await agent.ensure(name)
   return await c.display<GuestDisplay>({
     op: "set",
@@ -61,6 +77,12 @@ export async function setGuestSize(name: string, size: Size, o: { readonly scale
   })
 }
 
-export async function setGuestScale(name: string, scale: number): Promise<GuestDisplay> {
-  return await (await agent.ensure(name)).display<GuestDisplay>({ op: "scale", scale })
+export async function setGuestScale(
+  name: string,
+  scale: number,
+): Promise<GuestDisplay> {
+  return await (await agent.ensure(name)).display<GuestDisplay>({
+    op: "scale",
+    scale,
+  })
 }

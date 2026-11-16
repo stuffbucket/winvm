@@ -35,7 +35,11 @@ import {
   writeDisplay,
 } from "../src/display"
 import { deviceFromCommandLine } from "../src/guestdisplay"
-import { type DisplayOutcome, LockedDisplay, lockScreenUp } from "../src/guestagent"
+import {
+  type DisplayOutcome,
+  LockedDisplay,
+  lockScreenUp,
+} from "../src/guestagent"
 import { displayArgv } from "../src/guestagent"
 import type { Paths } from "../src/paths"
 import { compatHash, hardwareArgs } from "../src/saves"
@@ -44,13 +48,24 @@ const bytes = (s: Size): number => s.width * s.height * 4
 
 describe("clampSize", () => {
   it("keeps a size that fits, with the width rounded down to a multiple of 16", () => {
-    expect(clampSize({ width: 2560, height: 1600 })).toEqual({ width: 2560, height: 1600 })
-    expect(clampSize({ width: 1501, height: 950 })).toEqual({ width: 1488, height: 950 })
+    expect(clampSize({ width: 2560, height: 1600 })).toEqual({
+      width: 2560,
+      height: 1600,
+    })
+    expect(clampSize({ width: 1501, height: 950 })).toEqual({
+      width: 1488,
+      height: 950,
+    })
   })
 
   it("shrinks a size over the framebuffer limit, keeping its shape", () => {
-    expect(clampSize({ width: 3840, height: 2048 })).toEqual({ width: 3840, height: 2048 })
-    expect(bytes(clampSize({ width: 3840, height: 2050 }))).toBeLessThanOrEqual(MAX_FRAMEBUFFER_BYTES)
+    expect(clampSize({ width: 3840, height: 2048 })).toEqual({
+      width: 3840,
+      height: 2048,
+    })
+    expect(bytes(clampSize({ width: 3840, height: 2050 }))).toBeLessThanOrEqual(
+      MAX_FRAMEBUFFER_BYTES,
+    )
     const s = clampSize({ width: 3840, height: 2160 })
     expect(bytes(s)).toBeLessThanOrEqual(MAX_FRAMEBUFFER_BYTES)
     expect(s.width % 16).toBe(0)
@@ -63,12 +78,20 @@ describe("clampSize", () => {
   it("never exceeds VNC's 5120x2160", () => {
     const wide = clampSize({ width: 6000, height: 1000 })
     expect(wide.width).toBeLessThanOrEqual(MAX_WIDTH)
-    expect(clampSize({ width: 1200, height: 4000 }).height).toBeLessThanOrEqual(MAX_HEIGHT)
+    expect(clampSize({ width: 1200, height: 4000 }).height).toBeLessThanOrEqual(
+      MAX_HEIGHT,
+    )
   })
 
   it("raises a small size to 1024x768", () => {
-    expect(clampSize({ width: 300, height: 200 })).toEqual({ width: 1024, height: 768 })
-    expect(clampSize({ width: 1600, height: 500 })).toEqual({ width: 1600, height: 768 })
+    expect(clampSize({ width: 300, height: 200 })).toEqual({
+      width: 1024,
+      height: 768,
+    })
+    expect(clampSize({ width: 1600, height: 500 })).toEqual({
+      width: 1600,
+      height: 768,
+    })
   })
 
   it("everything it returns fits", () => {
@@ -86,15 +109,33 @@ describe("clampSize", () => {
 
 describe("guestSizeFor", () => {
   it("is the view in device pixels", () => {
-    expect(guestSizeFor({ width: 1280, height: 800 }, 2)).toEqual({ width: 2560, height: 1600 })
-    expect(guestSizeFor({ width: 1280.6, height: 800.4 }, 2)).toEqual({ width: 2560, height: 1600 })
-    expect(guestSizeFor({ width: 1440, height: 900 }, 1)).toEqual({ width: 1440, height: 900 })
-    expect(guestSizeFor({ width: 1001, height: 700.5 }, 1.5)).toEqual({ width: 1488, height: 1050 })
+    expect(guestSizeFor({ width: 1280, height: 800 }, 2)).toEqual({
+      width: 2560,
+      height: 1600,
+    })
+    expect(guestSizeFor({ width: 1280.6, height: 800.4 }, 2)).toEqual({
+      width: 2560,
+      height: 1600,
+    })
+    expect(guestSizeFor({ width: 1440, height: 900 }, 1)).toEqual({
+      width: 1440,
+      height: 900,
+    })
+    expect(guestSizeFor({ width: 1001, height: 700.5 }, 1.5)).toEqual({
+      width: 1488,
+      height: 1050,
+    })
   })
 
   it("treats a missing ratio as 1", () => {
-    expect(guestSizeFor({ width: 1280, height: 800 }, Number.NaN)).toEqual({ width: 1280, height: 800 })
-    expect(guestSizeFor({ width: 1280, height: 800 }, 0)).toEqual({ width: 1280, height: 800 })
+    expect(guestSizeFor({ width: 1280, height: 800 }, Number.NaN)).toEqual({
+      width: 1280,
+      height: 800,
+    })
+    expect(guestSizeFor({ width: 1280, height: 800 }, 0)).toEqual({
+      width: 1280,
+      height: 800,
+    })
   })
 })
 
@@ -181,11 +222,18 @@ describe("display device", () => {
   it("never puts a size on virtio-gpu's command line", () => {
     expect(displayArgs(VIRTIO_GPU)).toEqual(["-device", "virtio-gpu-pci"])
     expect(displayArgs(RAMFB)).toEqual(["-device", "ramfb"])
-    expect(displayArgs({ device: "virtio-gpu", legacySize: { width: 1920, height: 1080 } })).toEqual([
-      "-device",
-      "virtio-gpu-pci,xres=1920,yres=1080",
-    ])
-    expect(sameDevice(VIRTIO_GPU, { device: "virtio-gpu", legacySize: { width: 1920, height: 1080 } })).toBe(false)
+    expect(
+      displayArgs({
+        device: "virtio-gpu",
+        legacySize: { width: 1920, height: 1080 },
+      }),
+    ).toEqual(["-device", "virtio-gpu-pci,xres=1920,yres=1080"])
+    expect(
+      sameDevice(VIRTIO_GPU, {
+        device: "virtio-gpu",
+        legacySize: { width: 1920, height: 1080 },
+      }),
+    ).toBe(false)
   })
 
   it("parses device names", () => {
@@ -197,70 +245,164 @@ describe("display device", () => {
   })
 
   it("reads the running device back off a command line", () => {
-    expect(deviceFromCommandLine("qemu -device virtio-gpu-pci -display none")).toBe("virtio-gpu")
-    expect(deviceFromCommandLine("qemu -device virtio-gpu-pci,xres=1920,yres=1080 -display none")).toBe("virtio-gpu")
-    expect(deviceFromCommandLine("qemu -device ramfb -display none")).toBe("ramfb")
+    expect(
+      deviceFromCommandLine("qemu -device virtio-gpu-pci -display none"),
+    ).toBe("virtio-gpu")
+    expect(
+      deviceFromCommandLine(
+        "qemu -device virtio-gpu-pci,xres=1920,yres=1080 -display none",
+      ),
+    ).toBe("virtio-gpu")
+    expect(deviceFromCommandLine("qemu -device ramfb -display none")).toBe(
+      "ramfb",
+    )
     expect(deviceFromCommandLine("qemu -display none")).toBeNull()
-    expect(deviceFromCommandLine("qemu -name virtio-gpu-pci -device ramfb")).toBe("ramfb")
-    expect(deviceFromCommandLine("qemu -device ramfb -device virtio-gpu-pci")).toBeNull()
-    expect(deviceFromCommandLine("qemu -device virtio-gpu-pci,xres=1920,yres=1080,extra=on")).toBeNull()
+    expect(
+      deviceFromCommandLine("qemu -name virtio-gpu-pci -device ramfb"),
+    ).toBe("ramfb")
+    expect(
+      deviceFromCommandLine("qemu -device ramfb -device virtio-gpu-pci"),
+    ).toBeNull()
+    expect(
+      deviceFromCommandLine(
+        "qemu -device virtio-gpu-pci,xres=1920,yres=1080,extra=on",
+      ),
+    ).toBeNull()
   })
 
   it("reads the display profile strictly off a command line", () => {
-    expect(displayFromCommandLine("qemu -device ramfb -display none")).toEqual(RAMFB)
-    expect(displayFromCommandLine("qemu -device virtio-gpu-pci -display none")).toEqual(VIRTIO_GPU)
-    expect(displayFromCommandLine("qemu -device virtio-gpu-pci,xres=1920,yres=1080")).toEqual({
+    expect(displayFromCommandLine("qemu -device ramfb -display none")).toEqual(
+      RAMFB,
+    )
+    expect(
+      displayFromCommandLine("qemu -device virtio-gpu-pci -display none"),
+    ).toEqual(VIRTIO_GPU)
+    expect(
+      displayFromCommandLine("qemu -device virtio-gpu-pci,xres=1920,yres=1080"),
+    ).toEqual({
       device: "virtio-gpu",
       legacySize: { width: 1920, height: 1080 },
     })
     expect(displayFromCommandLine("qemu -display none")).toBeNull()
-    expect(displayFromCommandLine("qemu -device ramfb -device virtio-gpu-pci")).toBeNull()
-    expect(displayFromCommandLine("qemu -device virtio-gpu-pci -device virtio-gpu-pci")).toBeNull()
-    expect(displayFromCommandLine("qemu -device virtio-gpu-pci,xres=1920,yres=1080,extra=on")).toBeNull()
-    expect(displayFromCommandLine("qemu -device virtio-gpu-pci,xres=1920")).toBeNull()
-    expect(displayFromCommandLine("qemu -device virtio-gpu-pci,xres=10,yres=10")).toBeNull()
+    expect(
+      displayFromCommandLine("qemu -device ramfb -device virtio-gpu-pci"),
+    ).toBeNull()
+    expect(
+      displayFromCommandLine(
+        "qemu -device virtio-gpu-pci -device virtio-gpu-pci",
+      ),
+    ).toBeNull()
+    expect(
+      displayFromCommandLine(
+        "qemu -device virtio-gpu-pci,xres=1920,yres=1080,extra=on",
+      ),
+    ).toBeNull()
+    expect(
+      displayFromCommandLine("qemu -device virtio-gpu-pci,xres=1920"),
+    ).toBeNull()
+    expect(
+      displayFromCommandLine("qemu -device virtio-gpu-pci,xres=10,yres=10"),
+    ).toBeNull()
     expect(displayFromCommandLine("qemu -device virtio-gpu-gl-pci")).toBeNull()
     expect(displayFromCommandLine("qemu -device ramfb-extra")).toBeNull()
-    expect(displayFromCommandLine("qemu -name virtio-gpu-pci,xres=1920,yres=1080 -device ramfb")).toEqual(RAMFB)
+    expect(
+      displayFromCommandLine(
+        "qemu -name virtio-gpu-pci,xres=1920,yres=1080 -device ramfb",
+      ),
+    ).toEqual(RAMFB)
     expect(displayFromCommandLine("qemu -name ramfb -display none")).toBeNull()
   })
 
   it("names a legacy size the strict parser refuses, and nothing else", () => {
-    for (const size of ["xres=8000,yres=600", "xres=10,yres=10", "xres=1920.5,yres=1080", "xres=abc,yres=600", "xres=1920,yres=9999"]) {
-      expect(displayFromCommandLine(`qemu -device virtio-gpu-pci,${size} -display none`)).toBeNull()
-      expect(rejectedLegacySize(`qemu -device virtio-gpu-pci,${size} -display none`)).toBe(size)
+    for (const size of [
+      "xres=8000,yres=600",
+      "xres=10,yres=10",
+      "xres=1920.5,yres=1080",
+      "xres=abc,yres=600",
+      "xres=1920,yres=9999",
+    ]) {
+      expect(
+        displayFromCommandLine(
+          `qemu -device virtio-gpu-pci,${size} -display none`,
+        ),
+      ).toBeNull()
+      expect(
+        rejectedLegacySize(`qemu -device virtio-gpu-pci,${size} -display none`),
+      ).toBe(size)
     }
-    expect(rejectedLegacySize("qemu -device virtio-gpu-pci,xres=1920,yres=1080")).toBeNull()
+    expect(
+      rejectedLegacySize("qemu -device virtio-gpu-pci,xres=1920,yres=1080"),
+    ).toBeNull()
     expect(rejectedLegacySize("qemu -device virtio-gpu-pci")).toBeNull()
     expect(rejectedLegacySize("qemu -device ramfb")).toBeNull()
-    expect(rejectedLegacySize("qemu -device virtio-gpu-pci,xres=8000")).toBeNull()
-    expect(rejectedLegacySize("qemu -device virtio-gpu-pci,xres=8000,yres=600,extra=on")).toBeNull()
-    expect(rejectedLegacySize("qemu -device virtio-gpu-pci,xres=8000,yres=600 -device ramfb")).toBeNull()
+    expect(
+      rejectedLegacySize("qemu -device virtio-gpu-pci,xres=8000"),
+    ).toBeNull()
+    expect(
+      rejectedLegacySize(
+        "qemu -device virtio-gpu-pci,xres=8000,yres=600,extra=on",
+      ),
+    ).toBeNull()
+    expect(
+      rejectedLegacySize(
+        "qemu -device virtio-gpu-pci,xres=8000,yres=600 -device ramfb",
+      ),
+    ).toBeNull()
     expect(rejectedLegacySize("qemu -display none")).toBeNull()
-    expect(rejectedLegacySize("qemu -name virtio-gpu-pci,xres=8000,yres=600 -device ramfb")).toBeNull()
+    expect(
+      rejectedLegacySize(
+        "qemu -name virtio-gpu-pci,xres=8000,yres=600 -device ramfb",
+      ),
+    ).toBeNull()
     expect(LEGACY_SIZE_BOUNDS).toBe("640x480 to 7680x4320, whole numbers")
   })
 
   it("tells the shared folder's device from the -device argument, not from words", () => {
-    const share = "-object memory-backend-shm,id=mem,size=4096M,share=on -device vhost-user-fs-pci,chardev=vfs0,tag=winvm,queue-size=1024,addr=0x10"
-    expect(sharesFolderFromCommandLine(`qemu -device ramfb ${share}`)).toBe(true)
-    expect(sharesFolderFromCommandLine("qemu -device vhost-user-fs-pci")).toBe(true)
-    expect(sharesFolderFromCommandLine("qemu -device ramfb -display none")).toBe(false)
-    expect(sharesFolderFromCommandLine("qemu -device vhost-user-fs-pci-extra")).toBe(false)
-    expect(sharesFolderFromCommandLine("qemu -drive file=/Users/a b/vhost-user-fs-pci/x.qcow2 -device ramfb")).toBe(false)
-    expect(sharesFolderFromCommandLine("qemu -name vhost-user-fs-pci -device ramfb")).toBe(false)
-    expect(sharesFolderFromCommandLine(`qemu -drive file=/Users/a b/c.qcow2 -device ramfb ${share}`)).toBe(true)
+    const share =
+      "-object memory-backend-shm,id=mem,size=4096M,share=on -device vhost-user-fs-pci,chardev=vfs0,tag=winvm,queue-size=1024,addr=0x10"
+    expect(sharesFolderFromCommandLine(`qemu -device ramfb ${share}`)).toBe(
+      true,
+    )
+    expect(sharesFolderFromCommandLine("qemu -device vhost-user-fs-pci")).toBe(
+      true,
+    )
+    expect(
+      sharesFolderFromCommandLine("qemu -device ramfb -display none"),
+    ).toBe(false)
+    expect(
+      sharesFolderFromCommandLine("qemu -device vhost-user-fs-pci-extra"),
+    ).toBe(false)
+    expect(
+      sharesFolderFromCommandLine(
+        "qemu -drive file=/Users/a b/vhost-user-fs-pci/x.qcow2 -device ramfb",
+      ),
+    ).toBe(false)
+    expect(
+      sharesFolderFromCommandLine("qemu -name vhost-user-fs-pci -device ramfb"),
+    ).toBe(false)
+    expect(
+      sharesFolderFromCommandLine(
+        `qemu -drive file=/Users/a b/c.qcow2 -device ramfb ${share}`,
+      ),
+    ).toBe(true)
   })
 
   it("reads the running process's profile from its untruncated command line", async () => {
     for (const [argv, expected] of [
       [["-device", "ramfb"], RAMFB],
       [["-device", "virtio-gpu-pci"], VIRTIO_GPU],
-      [["-device", "virtio-gpu-pci,xres=1600,yres=900"], { device: "virtio-gpu", legacySize: { width: 1600, height: 900 } }],
+      [
+        ["-device", "virtio-gpu-pci,xres=1600,yres=900"],
+        { device: "virtio-gpu", legacySize: { width: 1600, height: 900 } },
+      ],
       [["-display", "none"], null],
     ] as const) {
       const pad = ["-name", "x".repeat(400)]
-      const child = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)", "--", ...pad, ...argv], { stdio: "ignore" })
+      const child = spawn(
+        process.execPath,
+        ["-e", "setInterval(() => {}, 1000)", "--", ...pad, ...argv],
+        { stdio: "ignore" },
+      )
       try {
         expect(child.pid).toBeDefined()
         expect(runningDisplay(child.pid ?? 0)).toEqual(expected)
@@ -275,11 +417,18 @@ describe("display device", () => {
 
   describe("parseDisplayConfig", () => {
     it("accepts each launch profile and round-trips it", () => {
-      const sized = { device: "virtio-gpu", legacySize: { width: 1920, height: 1080 } } as const
+      const sized = {
+        device: "virtio-gpu",
+        legacySize: { width: 1920, height: 1080 },
+      } as const
       for (const cfg of [RAMFB, VIRTIO_GPU, sized]) {
         expect(parseDisplayConfig(cfg)).toEqual(cfg)
         expect(parseDisplayConfig(JSON.parse(JSON.stringify(cfg)))).toEqual(cfg)
-        expect(displayFromCommandLine(`qemu ${displayArgs(cfg).join(" ")} -display none`)).toEqual(cfg)
+        expect(
+          displayFromCommandLine(
+            `qemu ${displayArgs(cfg).join(" ")} -display none`,
+          ),
+        ).toEqual(cfg)
       }
     })
 
@@ -307,7 +456,10 @@ describe("display device", () => {
         { device: "virtio-gpu", legacySize: { width: 1920, height: 479 } },
         { device: "virtio-gpu", legacySize: { width: 7681, height: 1080 } },
         { device: "virtio-gpu", legacySize: { width: 1920, height: 4321 } },
-        { device: "virtio-gpu", legacySize: { width: 1920, height: 1080, depth: 32 } },
+        {
+          device: "virtio-gpu",
+          legacySize: { width: 1920, height: 1080, depth: 32 },
+        },
         { device: "virtio-gpu", width: 1920, height: 1080 },
       ]
       for (const v of bad) expect(parseDisplayConfig(v)).toBeNull()
@@ -319,7 +471,9 @@ describe("display device", () => {
     beforeAll(() => {
       dir = mkdtempSync(resolve(tmpdir(), "winvm-display-"))
     })
-    afterAll(() => { rmSync(dir, { recursive: true, force: true }) })
+    afterAll(() => {
+      rmSync(dir, { recursive: true, force: true })
+    })
     const paths = (): Paths => ({ dir }) as Paths
 
     it("is ramfb when absent (instances older than the virtio-gpu default)", () => {
@@ -331,8 +485,14 @@ describe("display device", () => {
       expect(readDisplay(paths())).toEqual(VIRTIO_GPU)
       writeDisplay(paths(), RAMFB)
       expect(readDisplay(paths())).toEqual(RAMFB)
-      writeFileSync(resolve(dir, "display.json"), JSON.stringify({ device: "virtio-gpu", width: 1600, height: 900 }))
-      expect(readDisplay(paths())).toEqual({ device: "virtio-gpu", legacySize: { width: 1600, height: 900 } })
+      writeFileSync(
+        resolve(dir, "display.json"),
+        JSON.stringify({ device: "virtio-gpu", width: 1600, height: 900 }),
+      )
+      expect(readDisplay(paths())).toEqual({
+        device: "virtio-gpu",
+        legacySize: { width: 1600, height: 900 },
+      })
     })
   })
 })
@@ -342,36 +502,59 @@ describe("the save hash and the guest's resolution", () => {
   beforeAll(() => {
     dir = mkdtempSync(resolve(tmpdir(), "winvm-hash-"))
   })
-  afterAll(() => { rmSync(dir, { recursive: true, force: true }) })
+  afterAll(() => {
+    rmSync(dir, { recursive: true, force: true })
+  })
 
-  function hardwareFor(display: Parameters<typeof writeDisplay>[1] | null): readonly string[] {
+  function hardwareFor(
+    display: Parameters<typeof writeDisplay>[1] | null,
+  ): readonly string[] {
     const p = { dir } as Paths
     if (display === null) rmSync(resolve(dir, "display.json"), { force: true })
     else writeDisplay(p, display)
-    return hardwareArgs(["-machine", "virt,accel=hvf", ...displayArgs(readDisplay(p)), "-display", "none", "-vnc", "127.0.0.1:3"])
+    return hardwareArgs([
+      "-machine",
+      "virt,accel=hvf",
+      ...displayArgs(readDisplay(p)),
+      "-display",
+      "none",
+      "-vnc",
+      "127.0.0.1:3",
+    ])
   }
 
   it("has no size in it on virtio-gpu, so resizing the guest cannot change it", () => {
     const hw = hardwareFor(VIRTIO_GPU)
     expect(hw).toContain("virtio-gpu-pci")
     expect(hw.join(" ")).not.toMatch(/xres|yres/)
-    expect(compatHash(parts(hw))).toBe(compatHash(parts(hardwareFor(VIRTIO_GPU))))
+    expect(compatHash(parts(hw))).toBe(
+      compatHash(parts(hardwareFor(VIRTIO_GPU))),
+    )
   })
 
   it("changes with the device: switching makes the other device's saves unloadable", () => {
-    expect(compatHash(parts(hardwareFor(VIRTIO_GPU)))).not.toBe(compatHash(parts(hardwareFor(RAMFB))))
+    expect(compatHash(parts(hardwareFor(VIRTIO_GPU)))).not.toBe(
+      compatHash(parts(hardwareFor(RAMFB))),
+    )
     expect(hardwareFor(null)).toEqual(hardwareFor(RAMFB))
   })
 
   it("qemu.ts builds the display arguments from display.json alone", () => {
     const src = readFileSync(resolve(import.meta.dir, "../src/qemu.ts"), "utf8")
-    expect(src).toContain("const display = o.installMedia ? RAMFB : (o.display ?? readDisplay(p))")
+    expect(src).toContain(
+      "const display = o.installMedia ? RAMFB : (o.display ?? readDisplay(p))",
+    )
     expect(src).toContain("...displayArgs(display),")
     expect(src).toContain("readonly display?: DisplayConfig")
   })
 })
 
-const parts = (hw: readonly string[]) => ({ base: "b", hardware: JSON.stringify(hw), firmware: "f", qemu: "11.1.2" })
+const parts = (hw: readonly string[]) => ({
+  base: "b",
+  hardware: JSON.stringify(hw),
+  firmware: "f",
+  qemu: "11.1.2",
+})
 
 describe("wire formats", () => {
   it("builds RFB SetDesktopSize for one screen", () => {
@@ -388,28 +571,54 @@ describe("wire formats", () => {
 
   it("answers VNC's DES challenge as noVNC does (bit-reversed password key)", () => {
     const challenge = Uint8Array.from({ length: 16 }, (_, i) => i * 17)
-    expect(vncAuthResponse("password", challenge).toString("hex")).toBe("b7b9c87777661a7a2299733209bfdfce")
-    expect(vncAuthResponse("passwordTOOLONG", challenge).toString("hex")).toBe("b7b9c87777661a7a2299733209bfdfce")
+    expect(vncAuthResponse("password", challenge).toString("hex")).toBe(
+      "b7b9c87777661a7a2299733209bfdfce",
+    )
+    expect(vncAuthResponse("passwordTOOLONG", challenge).toString("hex")).toBe(
+      "b7b9c87777661a7a2299733209bfdfce",
+    )
   })
 
   it("maps /display requests to winvm-display.exe arguments", () => {
     expect(displayArgv({ op: "get" })).toEqual(["get"])
-    expect(displayArgv({ op: "set", width: 2560, height: 1600 })).toEqual(["set", "2560", "1600", "2000", "0"])
-    expect(displayArgv({ op: "set", width: 2560, height: 1600, waitMs: 500, scale: 200 })).toEqual(["set", "2560", "1600", "500", "200"])
+    expect(displayArgv({ op: "set", width: 2560, height: 1600 })).toEqual([
+      "set",
+      "2560",
+      "1600",
+      "2000",
+      "0",
+    ])
+    expect(
+      displayArgv({
+        op: "set",
+        width: 2560,
+        height: 1600,
+        waitMs: 500,
+        scale: 200,
+      }),
+    ).toEqual(["set", "2560", "1600", "500", "200"])
     expect(displayArgv({ op: "scale", scale: 150 })).toEqual(["scale", "150"])
     expect(displayArgv({ op: "set", width: 2560 })).toBeNull()
     expect(displayArgv({ op: "set", width: -1, height: 2 })).toBeNull()
-    expect(displayArgv({ op: "nope" } as unknown as Parameters<typeof displayArgv>[0])).toBeNull()
+    expect(
+      displayArgv({ op: "nope" } as unknown as Parameters<
+        typeof displayArgv
+      >[0]),
+    ).toBeNull()
   })
 })
 
 describe("drawSize", () => {
   it("draws one guest pixel per device pixel when the guest can match the view", () => {
-    expect(drawSize({ width: 2560, height: 1600 }, { width: 1280, height: 800 }, 2)).toEqual({ width: 1280, height: 800 })
+    expect(
+      drawSize({ width: 2560, height: 1600 }, { width: 1280, height: 800 }, 2),
+    ).toEqual({ width: 1280, height: 800 })
   })
 
   it("never draws larger than the view while a bigger guest is switching away", () => {
-    expect(drawSize({ width: 3200, height: 2000 }, { width: 1280, height: 800 }, 2)).toEqual({ width: 1280, height: 800 })
+    expect(
+      drawSize({ width: 3200, height: 2000 }, { width: 1280, height: 800 }, 2),
+    ).toEqual({ width: 1280, height: 800 })
   })
 
   it("scales a capped guest up to fill a view past the limits", () => {
@@ -421,12 +630,18 @@ describe("drawSize", () => {
 
   it("stops at 5K device pixels", () => {
     const view = { width: 3008, height: 1692 }
-    expect(drawSize(guestSizeFor(view, 2), view, 2)).toEqual({ width: 2560, height: 1440 })
+    expect(drawSize(guestSizeFor(view, 2), view, 2)).toEqual({
+      width: 2560,
+      height: 1440,
+    })
   })
 })
 
 describe("a size Windows refuses at its lock screen (LockedDisplay)", () => {
-  const make = (answers: { locked: boolean[]; set: DisplayOutcome[] }): { d: LockedDisplay; sets: string[] } => {
+  const make = (answers: {
+    locked: boolean[]
+    set: DisplayOutcome[]
+  }): { d: LockedDisplay; sets: string[] } => {
     const sets: string[] = []
     const d = new LockedDisplay({
       locked: () => Promise.resolve(answers.locked.shift() ?? false),
@@ -462,7 +677,10 @@ describe("a size Windows refuses at its lock screen (LockedDisplay)", () => {
   })
 
   it("tries again while Windows still refuses just after the lock screen goes, then gives up", async () => {
-    const { d, sets } = make({ locked: [], set: Array<DisplayOutcome>(20).fill("fail") })
+    const { d, sets } = make({
+      locked: [],
+      set: Array<DisplayOutcome>(20).fill("fail"),
+    })
     d.later(["set", "1360", "800", "2000", "0"])
     for (let i = 0; i < 12; i++) await d.tick()
     expect(sets).toHaveLength(10)

@@ -18,7 +18,8 @@ const isKey = (k: string): k is SettingKey => (KEYS as string[]).includes(k)
 
 type Env = Readonly<Record<string, string | undefined>>
 
-export const settingsPath = (env: Env = process.env): string => resolve(configDir(env), "settings.json")
+export const settingsPath = (env: Env = process.env): string =>
+  resolve(configDir(env), "settings.json")
 
 function readAll(env: Env): Record<string, unknown> {
   let raw: unknown
@@ -27,10 +28,15 @@ function readAll(env: Env): Record<string, unknown> {
   } catch {
     return {}
   }
-  return typeof raw === "object" && raw !== null && !Array.isArray(raw) ? (raw as Record<string, unknown>) : {}
+  return typeof raw === "object" && raw !== null && !Array.isArray(raw)
+    ? (raw as Record<string, unknown>)
+    : {}
 }
 
-function update(env: Env, change: (all: Record<string, unknown>) => void): void {
+function update(
+  env: Env,
+  change: (all: Record<string, unknown>) => void,
+): void {
   const all = readAll(env)
   change(all)
   const file = settingsPath(env)
@@ -43,27 +49,35 @@ function update(env: Env, change: (all: Record<string, unknown>) => void): void 
 export function readSettings(env: Env = process.env): Settings {
   const got = readAll(env)
   const out: Record<string, unknown> = { ...SETTING_DEFAULTS }
-  for (const k of KEYS) if (typeof got[k] === typeof SETTING_DEFAULTS[k]) out[k] = got[k]
+  for (const k of KEYS)
+    if (typeof got[k] === typeof SETTING_DEFAULTS[k]) out[k] = got[k]
   return out as unknown as Settings
 }
 
-export function parseSetting(assignment: string): { key: SettingKey; value: Settings[SettingKey] } | string {
+export function parseSetting(
+  assignment: string,
+): { key: SettingKey; value: Settings[SettingKey] } | string {
   const eq = assignment.indexOf("=")
   if (eq <= 0) return `expected key=value, got "${assignment}"`
   const key = assignment.slice(0, eq)
   const value = assignment.slice(eq + 1)
   if (!isKey(key)) return `unknown setting "${key}" (known: ${KEYS.join(", ")})`
-  if (value !== "true" && value !== "false") return `${key} is true or false, got "${value}"`
+  if (value !== "true" && value !== "false")
+    return `${key} is true or false, got "${value}"`
   return { key, value: value === "true" }
 }
 
-export function writeSettings(changes: Partial<Settings>, env: Env = process.env): Settings {
+export function writeSettings(
+  changes: Partial<Settings>,
+  env: Env = process.env,
+): Settings {
   update(env, (all) => Object.assign(all, changes))
   return readSettings(env)
 }
 
 export function sectionError(name: string): string | null {
-  if (!/^[a-z][a-zA-Z0-9-]{0,63}$/.test(name)) return `a settings section is a plain word, got "${name}"`
+  if (!/^[a-z][a-zA-Z0-9-]{0,63}$/.test(name))
+    return `a settings section is a plain word, got "${name}"`
   return null
 }
 
@@ -71,7 +85,11 @@ export function readSection(name: string, env: Env = process.env): unknown {
   return readAll(env)[name] ?? null
 }
 
-export function writeSection(name: string, value: unknown, env: Env = process.env): void {
+export function writeSection(
+  name: string,
+  value: unknown,
+  env: Env = process.env,
+): void {
   const err = sectionError(name)
   if (err !== null) throw new Error(err)
   update(env, (all) => {
@@ -112,7 +130,8 @@ export function settingsCmd(args: Args): number {
     }
     changes[p.key] = p.value
   }
-  const now = Object.keys(changes).length === 0 ? readSettings() : writeSettings(changes)
+  const now =
+    Object.keys(changes).length === 0 ? readSettings() : writeSettings(changes)
   if (args.flags.has("json")) console.log(JSON.stringify(now))
   else {
     for (const k of KEYS) console.log(`${k}=${String(now[k])}`)

@@ -8,7 +8,10 @@ export interface NoticeOptions {
   readonly send: (paths: readonly string[]) => Promise<void>
   readonly debounceMs?: number
   readonly maxPaths?: number
-  readonly watch?: (root: string, onChange: (rel: string) => void) => { close(): void }
+  readonly watch?: (
+    root: string,
+    onChange: (rel: string) => void,
+  ) => { close(): void }
   readonly state?: (abs: string) => string
 }
 
@@ -21,10 +24,17 @@ export function pathState(abs: string): string {
   }
 }
 
-const fsEvents = (root: string, onChange: (rel: string) => void): { close(): void } => {
-  const w: FSWatcher = fsWatch(root, { recursive: true }, (_event, filename) => {
-    if (filename !== null) onChange(filename)
-  })
+const fsEvents = (
+  root: string,
+  onChange: (rel: string) => void,
+): { close(): void } => {
+  const w: FSWatcher = fsWatch(
+    root,
+    { recursive: true },
+    (_event, filename) => {
+      if (filename !== null) onChange(filename)
+    },
+  )
   w.on("error", () => undefined)
   return w
 }
@@ -49,13 +59,18 @@ export class ChangeNotices {
   }
 
   changed(rel: string): void {
-    const clean = rel.split(sep).join("/").replace(/^\.\/+/, "")
+    const clean = rel
+      .split(sep)
+      .join("/")
+      .replace(/^\.\/+/, "")
     if (clean === "" || clean.startsWith("..")) return
     this.pending.add(clean)
     if (this.timer !== null) clearTimeout(this.timer)
     this.timer = setTimeout(() => {
       this.timer = null
-      this.sending = this.sending.then(async () => { await this.flush() })
+      this.sending = this.sending.then(async () => {
+        await this.flush()
+      })
     }, this.o.debounceMs ?? 300)
   }
 
@@ -79,8 +94,7 @@ export class ChangeNotices {
     const max = this.o.maxPaths ?? TOUCH_LIMIT
     try {
       await this.o.send(paths.length > max ? ["."] : paths)
-    } catch {
-    }
+    } catch {}
   }
 
   async stop(): Promise<void> {

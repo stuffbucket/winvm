@@ -1,13 +1,41 @@
-import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs"
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs"
 import { resolve } from "node:path"
 
 import type { Args } from "./args"
-import { imageName, instanceName, isValidImageName, isValidInstanceName } from "./args"
-import { PWSH_SHA256, PWSH_URL, TOOLS_SHA256, TOOLS_URL, checksReport, hostChecks, printChecks, requireHost } from "./host"
+import {
+  imageName,
+  instanceName,
+  isValidImageName,
+  isValidInstanceName,
+} from "./args"
+import {
+  PWSH_SHA256,
+  PWSH_URL,
+  TOOLS_SHA256,
+  TOOLS_URL,
+  checksReport,
+  hostChecks,
+  printChecks,
+  requireHost,
+} from "./host"
 import { diagnose, formatFindings } from "./diagnose"
 import { runningCommand } from "./display"
 import { ensureInstance, makeVars, resetInstance, sealBase } from "./instance"
-import { ISO_SOURCE, buildSeed, checkIsoIsArm64, makeResultVolume, readResult, resolveWindowsIso } from "./media"
+import {
+  ISO_SOURCE,
+  buildSeed,
+  checkIsoIsArm64,
+  makeResultVolume,
+  readResult,
+  resolveWindowsIso,
+} from "./media"
 import type { InstanceMeta, Paths } from "./paths"
 import {
   allocateVnc,
@@ -45,10 +73,18 @@ import * as share from "./share"
 import { ensureShareMedia } from "./sharemedia"
 import { download, du, run, sha256Of } from "./shell"
 import * as watcher from "./watch"
-import { CONFIG_KEYS, DEFAULTS, effectiveConfig, parseAssignment, readOverrides, writeAssignments } from "./config"
+import {
+  CONFIG_KEYS,
+  DEFAULTS,
+  effectiveConfig,
+  parseAssignment,
+  readOverrides,
+  writeAssignments,
+} from "./config"
 import * as machineinfo from "./machineinfo"
 
-const virtioBootFor = (meta: InstanceMeta): boolean => readImageMeta(meta.image)?.virtioBoot === true
+const virtioBootFor = (meta: InstanceMeta): boolean =>
+  readImageMeta(meta.image)?.virtioBoot === true
 
 export function doctor(json = false): number {
   if (json) {
@@ -58,14 +94,28 @@ export function doctor(json = false): number {
   }
   const missing = printChecks(hostChecks())
   console.log(timemachine.summary())
-  console.log(missing === 0 ? `\nhost is ready · state: ${home()}` : `\n${String(missing)} prerequisite(s) missing`)
+  console.log(
+    missing === 0
+      ? `\nhost is ready · state: ${home()}`
+      : `\n${String(missing)} prerequisite(s) missing`,
+  )
   return missing === 0 ? 0 : 1
 }
 
-export function lsJson(): { images: { name: string; snapshots: boolean }[]; instances: { name: string; image: string | null; running: boolean }[] } {
+export function lsJson(): {
+  images: { name: string; snapshots: boolean }[]
+  instances: { name: string; image: string | null; running: boolean }[]
+} {
   return {
-    images: listImages().map((name) => ({ name, snapshots: readImageMeta(name)?.virtioBoot === true })),
-    instances: listInstances().map((name) => ({ name, image: readMeta(name)?.image ?? null, running: qemu.isRunning(pathsFor(name)) })),
+    images: listImages().map((name) => ({
+      name,
+      snapshots: readImageMeta(name)?.virtioBoot === true,
+    })),
+    instances: listInstances().map((name) => ({
+      name,
+      image: readMeta(name)?.image ?? null,
+      running: qemu.isRunning(pathsFor(name)),
+    })),
   }
 }
 
@@ -76,9 +126,14 @@ export function ls(json = false): number {
   }
   console.log(`state: ${home()}\n`)
   const images = listImages()
-  console.log(images.length === 0 ? "images: (none — run `winvm build`)" : "images:")
+  console.log(
+    images.length === 0 ? "images: (none — run `winvm build`)" : "images:",
+  )
   for (const i of images) {
-    const virtio = readImageMeta(i)?.virtioBoot === true ? "snapshots" : "no snapshots (pre-virtio)"
+    const virtio =
+      readImageMeta(i)?.virtioBoot === true
+        ? "snapshots"
+        : "no snapshots (pre-virtio)"
     console.log(`  ${i.padEnd(18)} ${du(basePath(i)).padEnd(7)} ${virtio}`)
   }
 
@@ -104,7 +159,10 @@ export function ls(json = false): number {
   ]
   for (const [label, path] of entries) {
     if (!existsSync(path)) continue
-    const note = label === "windows ISO" ? "  (symlink; the ISO itself is not counted)" : ""
+    const note =
+      label === "windows ISO"
+        ? "  (symlink; the ISO itself is not counted)"
+        : ""
     console.log(`  ${label.padEnd(18)} ${du(path).padEnd(7)}${note}`)
   }
 
@@ -137,7 +195,9 @@ export function prune(args: Args): number {
   for (const name of listInstances().filter((n) => n.startsWith("build-"))) {
     const p = pathsFor(name)
     if (qemu.isRunning(p)) {
-      console.log(`  keeping "${name}" — still running (pid ${String(qemu.pidOf(p))})`)
+      console.log(
+        `  keeping "${name}" — still running (pid ${String(qemu.pidOf(p))})`,
+      )
       continue
     }
     const size = du(p.dir)
@@ -149,7 +209,12 @@ export function prune(args: Args): number {
     freedAnything = true
   }
   if (args.flags.has("media")) {
-    for (const path of [media.tools(), media.pwsh(), media.seed(), media.seedDir()]) {
+    for (const path of [
+      media.tools(),
+      media.pwsh(),
+      media.seed(),
+      media.seedDir(),
+    ]) {
       if (!existsSync(path)) continue
       const size = du(path)
       rmSync(path, { recursive: true, force: true })
@@ -167,7 +232,9 @@ export function setup(args: Args): number {
     const rt = ensureRuntime()
     console.log(`runtime ${rt.manifest?.version ?? "?"} in ${rt.dir}`)
   } catch (error) {
-    console.error(`::error::${error instanceof Error ? error.message : String(error)}`)
+    console.error(
+      `::error::${error instanceof Error ? error.message : String(error)}`,
+    )
     return 1
   }
   if (!args.flags.has("no-media")) {
@@ -176,7 +243,9 @@ export function setup(args: Args): number {
       download(TOOLS_URL, media.tools(), TOOLS_SHA256)
       download(PWSH_URL, media.pwsh(), PWSH_SHA256)
     } catch (error) {
-      console.error(`::error::${error instanceof Error ? error.message : String(error)}`)
+      console.error(
+        `::error::${error instanceof Error ? error.message : String(error)}`,
+      )
       return 1
     }
   }
@@ -198,17 +267,23 @@ export function adopt(args: Args): number {
   }
   const image = imageName(args)
   if (!isValidImageName(image)) {
-    console.error(`::error::invalid image name "${image}" — letters, digits, ".", "_" and "-" only`)
+    console.error(
+      `::error::invalid image name "${image}" — letters, digits, ".", "_" and "-" only`,
+    )
     return 1
   }
   if (existsSync(basePath(image))) {
-    console.error(`::error::image "${image}" already exists at ${basePath(image)}`)
+    console.error(
+      `::error::image "${image}" already exists at ${basePath(image)}`,
+    )
     return 1
   }
   mkdirSync(imageDir(image), { recursive: true })
   if (run("mv", [from, basePath(image)]) !== 0) return 1
   sealBase(image)
-  console.log(`adopted as image "${image}" (${du(basePath(image))}), now read-only`)
+  console.log(
+    `adopted as image "${image}" (${du(basePath(image))}), now read-only`,
+  )
   return 0
 }
 
@@ -216,14 +291,20 @@ export async function build(args: Args): Promise<number> {
   requireHost()
   const image = imageName(args)
   if (!isValidImageName(image)) {
-    console.error(`::error::invalid image name "${image}" — letters, digits, ".", "_" and "-" only`)
+    console.error(
+      `::error::invalid image name "${image}" — letters, digits, ".", "_" and "-" only`,
+    )
     return 1
   }
   if (existsSync(basePath(image))) {
-    console.error(`::error::image "${image}" already exists — use --image <other>, or remove it deliberately`)
+    console.error(
+      `::error::image "${image}" already exists — use --image <other>, or remove it deliberately`,
+    )
     return 1
   }
-  const dependents = listInstances().filter((n) => n !== `build-${image}` && readMeta(n)?.image === image)
+  const dependents = listInstances().filter(
+    (n) => n !== `build-${image}` && readMeta(n)?.image === image,
+  )
   if (dependents.length > 0) {
     console.error(
       `::error::instances ${dependents.join(", ")} name image "${image}" — build under another --image name`,
@@ -245,7 +326,9 @@ export async function build(args: Args): Promise<number> {
   mkdirSync(mediaDir(), { recursive: true })
   const iso = resolveWindowsIso(args.flags.get("iso"))
   if (iso === null) {
-    console.error(`::error::pass a Windows 11 ARM64 ISO: winvm build --iso <path>, or set WINVM_ISO\n${ISO_SOURCE}`)
+    console.error(
+      `::error::pass a Windows 11 ARM64 ISO: winvm build --iso <path>, or set WINVM_ISO\n${ISO_SOURCE}`,
+    )
     return 1
   }
   if (!checkIsoIsArm64(iso)) return 1
@@ -263,7 +346,9 @@ export async function build(args: Args): Promise<number> {
     try {
       shareMedia = await ensureShareMedia()
     } catch (error) {
-      console.warn(`warning: no shared folder in this image (${error instanceof Error ? error.message : String(error)}); \`winvm share install\` adds it later`)
+      console.warn(
+        `warning: no shared folder in this image (${error instanceof Error ? error.message : String(error)}); \`winvm share install\` adds it later`,
+      )
     }
   }
   buildSeed(args.flags.get("payload"), args.flags.get("bun"), shareMedia)
@@ -275,7 +360,11 @@ export async function build(args: Args): Promise<number> {
   run(runtimeBin("qemu-img"), ["create", "-f", "qcow2", p.prime, "64M"])
   makeVars(p.vars)
   makeResultVolume(p.result)
-  const meta: InstanceMeta = { image, vnc: allocateVnc(), created: new Date().toISOString() }
+  const meta: InstanceMeta = {
+    image,
+    vnc: allocateVnc(),
+    created: new Date().toISOString(),
+  }
   writeFileSync(p.meta, `${JSON.stringify(meta, null, 2)}\n`)
 
   const reap = (): void => {
@@ -286,17 +375,27 @@ export async function build(args: Args): Promise<number> {
   for (const sig of ["SIGINT", "SIGTERM"] as const) {
     process.on(sig, () => {
       reap()
-      console.error(`\n::error::build interrupted — guest killed, scratch instance "${scratch}" kept`)
+      console.error(
+        `\n::error::build interrupted — guest killed, scratch instance "${scratch}" kept`,
+      )
       process.exit(1)
     })
   }
 
-  console.log(`installing Windows (unattended, ~20 min) · watch: winvm open -i ${scratch}`)
+  console.log(
+    `installing Windows (unattended, ~20 min) · watch: winvm open -i ${scratch}`,
+  )
   try {
-    await qemu.launch(scratch, p, meta, { installMedia: true, ephemeral: false, virtioBoot: false })
+    await qemu.launch(scratch, p, meta, {
+      installMedia: true,
+      ephemeral: false,
+      virtioBoot: false,
+    })
   } catch (error) {
     qemu.stopSidecars(p)
-    console.error(`::error::could not start the installer VM: ${error instanceof Error ? error.message : String(error)}`)
+    console.error(
+      `::error::could not start the installer VM: ${error instanceof Error ? error.message : String(error)}`,
+    )
     return 1
   }
 
@@ -309,19 +408,34 @@ export async function build(args: Args): Promise<number> {
   }
   void (async () => {
     if (!(await qemu.waitForSerial(p, "winvm-keypress-needed", 10 * 60_000))) {
-      console.warn("warning: the firmware never asked for a keypress; the install may stall at the boot prompt")
+      console.warn(
+        "warning: the firmware never asked for a keypress; the install may stall at the boot prompt",
+      )
       return
     }
-    const { keys, answered } = await qmp.answerBootPrompt(p.qmp, resolve(p.dir, "boot-prompt.ppm"))
-    if (answered) console.log(`boot prompt answered (${String(keys)} key${keys === 1 ? "" : "s"})`)
-    else console.warn(`warning: the boot prompt was not seen to take a key (${String(keys)} sent)`)
+    const { keys, answered } = await qmp.answerBootPrompt(
+      p.qmp,
+      resolve(p.dir, "boot-prompt.ppm"),
+    )
+    if (answered)
+      console.log(
+        `boot prompt answered (${String(keys)} key${keys === 1 ? "" : "s"})`,
+      )
+    else
+      console.warn(
+        `warning: the boot prompt was not seen to take a key (${String(keys)} sent)`,
+      )
     for (let waited = 0; waited < 300_000; waited += 5000) {
       if (installerWriting()) return
       await new Promise((r) => setTimeout(r, 5000))
     }
-    console.error("::error::the installer never started writing — the boot prompt appears to have gone unanswered")
+    console.error(
+      "::error::the installer never started writing — the boot prompt appears to have gone unanswered",
+    )
   })().catch((error: unknown) => {
-    console.warn(`warning: could not answer the boot prompt: ${error instanceof Error ? error.message : String(error)}`)
+    console.warn(
+      `warning: could not answer the boot prompt: ${error instanceof Error ? error.message : String(error)}`,
+    )
   })
 
   const guestFailed = (why: string): number => {
@@ -332,7 +446,8 @@ export async function build(args: Args): Promise<number> {
       if (line.trim() !== "") console.error(`  | ${line}`)
     }
     const findings = diagnose(scratch)
-    if (findings.length > 0) console.error(`\n${formatFindings(scratch, findings)}\n`)
+    if (findings.length > 0)
+      console.error(`\n${formatFindings(scratch, findings)}\n`)
     console.error(
       `  firmware log: ${p.serial}\n` +
         `  scratch instance "${scratch}" kept for inspection — \`winvm destroy -i ${scratch}\` when done`,
@@ -341,13 +456,17 @@ export async function build(args: Args): Promise<number> {
   }
 
   if (!(await qga.waitFor(p.qga, 45 * 60_000))) {
-    return guestFailed("the guest agent never came up, so provisioning did not get far enough to install it")
+    return guestFailed(
+      "the guest agent never came up, so provisioning did not get far enough to install it",
+    )
   }
 
   const ps = "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe"
   const ask = async (command: string): Promise<string | null> => {
     try {
-      return (await qga.exec(p.qga, ps, ["-NoProfile", "-Command", command])).stdout.trim()
+      return (
+        await qga.exec(p.qga, ps, ["-NoProfile", "-Command", command])
+      ).stdout.trim()
     } catch {
       return null
     }
@@ -362,7 +481,8 @@ export async function build(args: Args): Promise<number> {
     }
     await new Promise((r) => setTimeout(r, 10_000))
   }
-  if (!provisioned) return guestFailed("provisioning never reported that it finished")
+  if (!provisioned)
+    return guestFailed("provisioning never reported that it finished")
 
   let virtioAnswer: string | null = null
   for (let attempt = 0; attempt < 5 && virtioAnswer === null; attempt += 1) {
@@ -387,8 +507,13 @@ export async function build(args: Args): Promise<number> {
         return 1
       }
       mkdirSync(imageDir(image), { recursive: true })
-      if (run("mv", ["-n", p.overlay, basePath(image)]) !== 0 || existsSync(p.overlay)) {
-        console.error(`::error::could not move the new disk into place; it is kept at ${p.overlay}`)
+      if (
+        run("mv", ["-n", p.overlay, basePath(image)]) !== 0 ||
+        existsSync(p.overlay)
+      ) {
+        console.error(
+          `::error::could not move the new disk into place; it is kept at ${p.overlay}`,
+        )
         return 1
       }
       sealBase(image)
@@ -399,11 +524,16 @@ export async function build(args: Args): Promise<number> {
         isoSha256,
         guestToolsSha256: TOOLS_SHA256,
       })
-      writeFileSync(imageMetaPath(image), `${JSON.stringify(imageMeta, null, 2)}\n`)
+      writeFileSync(
+        imageMetaPath(image),
+        `${JSON.stringify(imageMeta, null, 2)}\n`,
+      )
       qemu.stopSidecars(p)
       stopService(p)
       rmSync(p.dir, { recursive: true, force: true })
-      console.log(`base image ready: ${basePath(image)} (${du(basePath(image))})`)
+      console.log(
+        `base image ready: ${basePath(image)} (${du(basePath(image))})`,
+      )
       console.log(
         virtioBoot
           ? "snapshots: available (`winvm snapshot` / `winvm rewind`)"
@@ -423,7 +553,9 @@ export function create(args: Args): number {
   requireHost()
   const name = instanceName(args)
   if (!isValidInstanceName(name)) {
-    console.error(`::error::"${name}" is not a name winvm takes: letters, digits, ".", "-" and "_", starting with a letter or digit, up to 64`)
+    console.error(
+      `::error::"${name}" is not a name winvm takes: letters, digits, ".", "-" and "_", starting with a letter or digit, up to 64`,
+    )
     return 1
   }
   if (readMeta(name) !== null) {
@@ -458,7 +590,9 @@ export async function start(args: Args): Promise<number> {
   if (recalled !== null) return recalled
   const isNew = readMeta(name) === null
   if (isNew && !isValidInstanceName(name)) {
-    console.error(`::error::"${name}" is not a name winvm takes: letters, digits, ".", "-" and "_", starting with a letter or digit, up to 64`)
+    console.error(
+      `::error::"${name}" is not a name winvm takes: letters, digits, ".", "-" and "_", starting with a letter or digit, up to 64`,
+    )
     return 1
   }
   ensureInstance(name, imageName(args))
@@ -476,7 +610,9 @@ export async function start(args: Args): Promise<number> {
       virtioBoot,
     })
   } catch (error) {
-    console.error(`::error::${error instanceof Error ? error.message : String(error)}`)
+    console.error(
+      `::error::${error instanceof Error ? error.message : String(error)}`,
+    )
     return 1
   }
   process.stdout.write("booting")
@@ -486,14 +622,20 @@ export async function start(args: Args): Promise<number> {
   })
   process.stdout.write("\n")
   if (ready === "no-logon") {
-    const file = resolve(p.dir, "screenshots", `${new Date().toISOString().replace(/[:]/g, "").replace(/\..*$/, "").replace("T", "-")}-no-logon.png`)
+    const file = resolve(
+      p.dir,
+      "screenshots",
+      `${new Date().toISOString().replace(/[:]/g, "").replace(/\..*$/, "").replace("T", "-")}-no-logon.png`,
+    )
     const shot = await input.screenshot(p, file).then(
       () => file,
       () => null,
     )
     console.error(
       `::error::the guest is up but no one logged on in ${String(NO_LOGON_MS / 1000)} s — it is most likely at the sign-in screen. ` +
-        (shot === null ? `Look at it with \`winvm screenshot -i ${name}\`` : `Screen: ${shot}`),
+        (shot === null
+          ? `Look at it with \`winvm screenshot -i ${name}\``
+          : `Screen: ${shot}`),
     )
     return 1
   }
@@ -503,7 +645,9 @@ export async function start(args: Args): Promise<number> {
     )
     return 1
   }
-  console.log(`instance "${name}" up (vnc :${String(readMeta(name)?.vnc ?? meta.vnc)})`)
+  console.log(
+    `instance "${name}" up (vnc :${String(readMeta(name)?.vnc ?? meta.vnc)})`,
+  )
   await savecmds.afterBoot(name, args)
   await finder.afterUp(name)
   watcher.startWatcherFor(name, args)
@@ -519,7 +663,9 @@ export async function snap(args: Args): Promise<number> {
     return 1
   }
   if (!qemu.isRunning(p)) {
-    console.error(`::error::instance "${name}" is not running — a snapshot captures a LIVE guest`)
+    console.error(
+      `::error::instance "${name}" is not running — a snapshot captures a LIVE guest`,
+    )
     return 1
   }
   if (!virtioBootFor(meta)) {
@@ -536,7 +682,9 @@ export async function snap(args: Args): Promise<number> {
     return 0
   }
   if (!(await qga.waitReady(p.qga, 120_000))) {
-    console.error(`::error::guest "${name}" is not ready — snapshotting one that is still booting wedges it`)
+    console.error(
+      `::error::guest "${name}" is not ready — snapshotting one that is still booting wedges it`,
+    )
     return 1
   }
   watcher.touchActivity(name)
@@ -567,7 +715,9 @@ export async function rewind(args: Args): Promise<number> {
 
   if (!qemu.isRunning(p)) {
     if (!snapshot.has(p, tag)) {
-      console.error(`::error::instance "${name}" has no snapshot "${tag}" — \`winvm snapshots -i ${name}\``)
+      console.error(
+        `::error::instance "${name}" has no snapshot "${tag}" — \`winvm snapshots -i ${name}\``,
+      )
       return 1
     }
     try {
@@ -578,23 +728,31 @@ export async function rewind(args: Args): Promise<number> {
         loadvm: tag,
       })
     } catch (error) {
-      console.error(`::error::${error instanceof Error ? error.message : String(error)}`)
+      console.error(
+        `::error::${error instanceof Error ? error.message : String(error)}`,
+      )
       return 1
     }
   } else {
     try {
       await snapshot.load(p, tag)
     } catch (error) {
-      console.error(`::error::${error instanceof Error ? error.message : String(error)}`)
+      console.error(
+        `::error::${error instanceof Error ? error.message : String(error)}`,
+      )
       return 1
     }
   }
 
   if (!(await qga.waitResponsive(p.qga, 120_000))) {
-    console.error(`::error::guest did not come back after the rewind — see ${p.serial}`)
+    console.error(
+      `::error::guest did not come back after the rewind — see ${p.serial}`,
+    )
     return 1
   }
-  console.log(`rewound "${name}" to "${tag}" in ${String(Date.now() - started)} ms`)
+  console.log(
+    `rewound "${name}" to "${tag}" in ${String(Date.now() - started)} ms`,
+  )
   await savecmds.afterRewind(name)
   await finder.afterUp(name)
   watcher.touchActivity(name)
@@ -614,7 +772,8 @@ export async function snapshots(args: Args): Promise<number> {
     console.log(`instance "${name}" has no snapshots`)
     return 0
   }
-  for (const s of rows) console.log(`  ${s.tag.padEnd(18)} ${s.vmSize.padStart(9)}  ${s.date}`)
+  for (const s of rows)
+    console.log(`  ${s.tag.padEnd(18)} ${s.vmSize.padStart(9)}  ${s.date}`)
   return 0
 }
 
@@ -641,19 +800,33 @@ export interface StopCommandSeams {
 
 export const stop = (args: Args): Promise<number> => stopWith(args)
 
-export async function stopWith(args: Args, seams: StopCommandSeams = {}): Promise<number> {
+export async function stopWith(
+  args: Args,
+  seams: StopCommandSeams = {},
+): Promise<number> {
   const now = seams.now ?? Date.now
-  const sleep = seams.sleep ?? ((ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms)))
+  const sleep =
+    seams.sleep ??
+    ((ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms)))
   const isRunning = seams.isRunning ?? qemu.isRunning
   const pidOf = seams.pidOf ?? qemu.pidOf
   const waitFor = seams.waitFor ?? qga.waitFor
   const shutdown = seams.shutdown ?? qga.shutdown
-  const stopWatcher = seams.stopWatcher ?? ((n: string) => watcher.stopWatcher(n))
-  const beforeDown = seams.beforeDown ?? ((n: string) => { finder.beforeDown(n) })
+  const stopWatcher =
+    seams.stopWatcher ?? ((n: string) => watcher.stopWatcher(n))
+  const beforeDown =
+    seams.beforeDown ??
+    ((n: string) => {
+      finder.beforeDown(n)
+    })
   const stopSidecars = seams.stopSidecars ?? qemu.stopSidecars
   const frozenState = seams.frozenState ?? ((p: Paths) => frozen.frozenState(p))
-  const resume = seams.resume ?? (async (p: Paths): Promise<void> => void (await qmp.execute(p.qmp, "cont")))
-  const hold = seams.hold ?? (async (p: Paths): Promise<void> => void (await qmp.execute(p.qmp, "stop")))
+  const resume =
+    seams.resume ??
+    (async (p: Paths): Promise<void> => void (await qmp.execute(p.qmp, "cont")))
+  const hold =
+    seams.hold ??
+    (async (p: Paths): Promise<void> => void (await qmp.execute(p.qmp, "stop")))
   const afterUp = seams.afterUp ?? ((n: string) => finder.afterUp(n))
   const ensureWatcher = seams.ensureWatcher ?? watcher.ensureWatcher
   const watcherPid = seams.watcherPid ?? ((n: string) => watcher.watcherPid(n))
@@ -671,16 +844,20 @@ export async function stopWith(args: Args, seams: StopCommandSeams = {}): Promis
     try {
       await f()
     } catch (error) {
-      console.warn(`warning: could not ${what}: ${error instanceof Error ? error.message : String(error)}`)
+      console.warn(
+        `warning: could not ${what}: ${error instanceof Error ? error.message : String(error)}`,
+      )
     }
   }
   const rollback = async (): Promise<void> => {
-    if (original === null || resumed) await attempt("remount the guest's drives", () => afterUp(name))
+    if (original === null || resumed)
+      await attempt("remount the guest's drives", () => afterUp(name))
     if (original !== null && pid !== null && pidOf(p) === pid) {
       await attempt("pause the guest again", () => hold(p))
       if (original === "asleep" && resumed) frozen.markAsleep(p, pid)
     }
-    if (hadWatcher) await attempt("restart the watcher", () => ensureWatcher(name))
+    if (hadWatcher)
+      await attempt("restart the watcher", () => ensureWatcher(name))
   }
   let why: string
   try {
@@ -704,7 +881,8 @@ export async function stopWith(args: Args, seams: StopCommandSeams = {}): Promis
       }
       why = "guest did not shut down — `winvm kill` if it is wedged"
     } else {
-      why = "the guest agent did not answer, so shutdown cannot be asked for — `winvm kill` if it is wedged"
+      why =
+        "the guest agent did not answer, so shutdown cannot be asked for — `winvm kill` if it is wedged"
     }
   } catch (error) {
     why = error instanceof Error ? error.message : String(error)
@@ -718,12 +896,16 @@ export async function reboot(args: Args): Promise<number> {
   const name = instanceName(args)
   const p = pathsFor(name)
   if (!qemu.isRunning(p)) {
-    console.error(`::error::instance "${name}" is not running — \`winvm start -i ${name}\``)
+    console.error(
+      `::error::instance "${name}" is not running — \`winvm start -i ${name}\``,
+    )
     return 1
   }
   const s = Number(args.flags.get("timeout") ?? 600)
   if (!Number.isFinite(s) || s <= 0) {
-    console.error(`::error::--timeout wants seconds, got "${args.flags.get("timeout") ?? ""}"`)
+    console.error(
+      `::error::--timeout wants seconds, got "${args.flags.get("timeout") ?? ""}"`,
+    )
     return 1
   }
   const before = await qga.bootTime(p.qga)
@@ -757,11 +939,18 @@ export async function reboot(args: Args): Promise<number> {
     )
     return 1
   }
-  if (agent.readState(p) !== null && (await agent.connect(name, { timeoutMs: 60_000 })) === null) {
-    console.warn(`warning: the in-guest agent did not answer within 60 s of logon — \`winvm agent status -i ${name}\``)
+  if (
+    agent.readState(p) !== null &&
+    (await agent.connect(name, { timeoutMs: 60_000 })) === null
+  ) {
+    console.warn(
+      `warning: the in-guest agent did not answer within 60 s of logon — \`winvm agent status -i ${name}\``,
+    )
   }
   await finder.afterUp(name)
-  console.log(`instance "${name}" rebooted in ${String(Math.round((Date.now() - t0) / 1000))} s`)
+  console.log(
+    `instance "${name}" rebooted in ${String(Math.round((Date.now() - t0) / 1000))} s`,
+  )
   return 0
 }
 
@@ -771,7 +960,9 @@ export function kill(args: Args): number {
   const pid = qemu.pidOf(p)
   const holder = leaseHolder(name)
   if (pid === null && holder !== null) {
-    console.error(`::error::"${name}" has no QEMU running, and its ${holder.operation} (pid ${String(holder.pid)}) is still in progress; nothing was killed`)
+    console.error(
+      `::error::"${name}" has no QEMU running, and its ${holder.operation} (pid ${String(holder.pid)}) is still in progress; nothing was killed`,
+    )
     return 1
   }
   if (pid === null) {
@@ -782,7 +973,9 @@ export function kill(args: Args): number {
     return 0
   }
   if (runningCommand(pid) === null) {
-    console.error(`::error::could not read the command line of pid ${String(pid)}, named by ${p.pid}; nothing was killed. Try again`)
+    console.error(
+      `::error::could not read the command line of pid ${String(pid)}, named by ${p.pid}; nothing was killed. Try again`,
+    )
     return 1
   }
   if (!qemu.isInstanceQemu(pid, p)) {
@@ -841,7 +1034,9 @@ export function destroy(args: Args): number {
   if (!existsSync(saves.savesDir(name))) return 0
   const kept = saves.listSaves(name)
   if (args.flags.has("keep-saves")) {
-    console.log(`  kept its ${plural(kept.length, "save")} in ${saves.savesDir(name)}`)
+    console.log(
+      `  kept its ${plural(kept.length, "save")} in ${saves.savesDir(name)}`,
+    )
     return 0
   }
   const savesSize = du(saves.savesDir(name))
@@ -850,28 +1045,38 @@ export function destroy(args: Args): number {
   return 0
 }
 
-const plural = (n: number, noun: string): string => `${String(n)} ${noun}${n === 1 ? "" : "s"}`
+const plural = (n: number, noun: string): string =>
+  `${String(n)} ${noun}${n === 1 ? "" : "s"}`
 
 export async function exec(args: Args): Promise<number> {
   const name = instanceName(args)
   const p = pathsFor(name)
   if (!qemu.isRunning(p)) {
-    console.error(`::error::instance "${name}" is not running — \`winvm start -i ${name}\``)
+    console.error(
+      `::error::instance "${name}" is not running — \`winvm start -i ${name}\``,
+    )
     return 1
   }
   const argv = args.rest.length > 0 ? args.rest : args.positional
   const [program, ...rest] = argv
   if (program === undefined) {
-    console.error("::error::usage: winvm exec [-i name] [--timeout S] -- <program> [args...]")
+    console.error(
+      "::error::usage: winvm exec [-i name] [--timeout S] -- <program> [args...]",
+    )
     return 1
   }
   try {
     agentcmds.execTimeoutMs(args)
   } catch (error) {
-    console.error(`::error::${error instanceof Error ? error.message : String(error)}`)
+    console.error(
+      `::error::${error instanceof Error ? error.message : String(error)}`,
+    )
     return 1
   }
-  const r = await watcher.whileActive(name, agentcmds.exec(name, args, program, rest))
+  const r = await watcher.whileActive(
+    name,
+    agentcmds.exec(name, args, program, rest),
+  )
   if (r.stdout !== "") process.stdout.write(r.stdout)
   if (r.stderr !== "") process.stderr.write(r.stderr)
   return r.exitcode
@@ -887,15 +1092,31 @@ export async function smoke(args: Args): Promise<number> {
   watcher.touchActivity(name)
   const ps = "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe"
   const archCode = (
-    await qga.exec(p.qga, ps, ["-NoProfile", "-Command", "(Get-CimInstance Win32_Processor).Architecture"])
+    await qga.exec(p.qga, ps, [
+      "-NoProfile",
+      "-Command",
+      "(Get-CimInstance Win32_Processor).Architecture",
+    ])
   ).stdout.trim()
-  const archName = archCode === "12" ? "ARM64" : archCode === "9" ? "x64" : `unknown(${archCode})`
+  const archName =
+    archCode === "12"
+      ? "ARM64"
+      : archCode === "9"
+        ? "x64"
+        : `unknown(${archCode})`
   const envArch = (
-    await qga.exec(p.qga, ps, ["-NoProfile", "-Command", "$env:PROCESSOR_ARCHITECTURE"])
+    await qga.exec(p.qga, ps, [
+      "-NoProfile",
+      "-Command",
+      "$env:PROCESSOR_ARCHITECTURE",
+    ])
   ).stdout.trim()
-  console.log(`guest cpu -> ${archName}   (exec environment reports ${envArch}; qemu-ga is emulated x64)`)
+  console.log(
+    `guest cpu -> ${archName}   (exec environment reports ${envArch}; qemu-ga is emulated x64)`,
+  )
 
-  const probe = args.flags.get("probe") ?? "C:\\payload\\bun-windows-aarch64\\bun.exe"
+  const probe =
+    args.flags.get("probe") ?? "C:\\payload\\bun-windows-aarch64\\bun.exe"
   const versionArg = args.flags.get("version-arg") ?? "--version"
   const got = (
     await qga.exec(p.qga, ps, [
@@ -916,7 +1137,9 @@ export async function smoke(args: Args): Promise<number> {
     expected = readFileSync(f, "utf8").trim()
   }
 
-  console.log(`guest probe -> ${got}${expected === undefined ? "" : ` (expected ${expected})`}`)
+  console.log(
+    `guest probe -> ${got}${expected === undefined ? "" : ` (expected ${expected})`}`,
+  )
   if (expected !== undefined && got !== expected) {
     console.error(`::error::guest reported ${got}, expected ${expected}`)
     return 1
@@ -926,7 +1149,10 @@ export async function smoke(args: Args): Promise<number> {
 
 export function diagnoseCmd(args: Args): number {
   const name = instanceName(args)
-  for (const dir of finder.cleanStale(name)) console.log(`unmounted ${dir}, left behind by a guest that is no longer running`)
+  for (const dir of finder.cleanStale(name))
+    console.log(
+      `unmounted ${dir}, left behind by a guest that is no longer running`,
+    )
   const findings = diagnose(name)
   console.log(formatFindings(name, findings))
   return findings.some((f) => f.severity === "error") ? 1 : 0
@@ -936,14 +1162,25 @@ export async function watchCmd(args: Args): Promise<number> {
   const name = instanceName(args)
   if (args.flags.has("stop")) {
     const stopped = await watcher.stopWatcher(name)
-    console.log(stopped ? `stopped the watcher for "${name}"` : `instance "${name}" has no watcher running`)
+    console.log(
+      stopped
+        ? `stopped the watcher for "${name}"`
+        : `instance "${name}" has no watcher running`,
+    )
     return 0
   }
   if (args.flags.has("status")) {
     const pid = watcher.watcherPid(name)
     const st = watcher.readWatchState(name)
     if (st === null) console.log(`instance "${name}" has never been watched`)
-    else console.log(JSON.stringify(pid === null ? { ...st, state: "stopped" } : st, null, 2))
+    else
+      console.log(
+        JSON.stringify(
+          pid === null ? { ...st, state: "stopped" } : st,
+          null,
+          2,
+        ),
+      )
     return 0
   }
   const interval = args.flags.get("interval")
@@ -966,12 +1203,16 @@ export function configCmd(args: Args): number {
       return 1
     }
     try {
-      const parsed = args.positional.filter((a) => !machineinfo.isHardwareKey(a)).map(parseAssignment)
+      const parsed = args.positional
+        .filter((a) => !machineinfo.isHardwareKey(a))
+        .map(parseAssignment)
       const hw = args.positional.filter(machineinfo.isHardwareKey)
       if (hw.length > 0) sized = machineinfo.setHardware(name, hw)
       if (parsed.length > 0) writeAssignments(name, parsed)
     } catch (error) {
-      console.error(`::error::${error instanceof Error ? error.message : String(error)}`)
+      console.error(
+        `::error::${error instanceof Error ? error.message : String(error)}`,
+      )
       return 1
     }
   }
@@ -979,11 +1220,15 @@ export function configCmd(args: Args): number {
   const set = readOverrides(name)
   console.log(`instance "${name}":`)
   for (const k of CONFIG_KEYS) {
-    const show = (v: unknown): string => (typeof v === "string" ? JSON.stringify(v) : String(v))
-    const note = Object.hasOwn(set, k) ? `(default ${show(DEFAULTS[k])})` : "(default)"
+    const show = (v: unknown): string =>
+      typeof v === "string" ? JSON.stringify(v) : String(v)
+    const note = Object.hasOwn(set, k)
+      ? `(default ${show(DEFAULTS[k])})`
+      : "(default)"
     console.log(`  ${k.padEnd(22)} ${show(eff[k]).padEnd(6)} ${note}`)
   }
-  if (readMeta(name) !== null) for (const l of machineinfo.hardwareLines(name)) console.log(l)
+  if (readMeta(name) !== null)
+    for (const l of machineinfo.hardwareLines(name)) console.log(l)
   if (sized !== null) console.log(`\n${sized}`)
   return 0
 }
@@ -1046,7 +1291,7 @@ export const USAGE =
   "          [--print]             print the URL instead of opening it\n" +
   "  web     [--port n] [--stop]   the browser view's local server, in the foreground\n" +
   "  screenshot [-i name] [file.png]  save the screen (default: <instance>/screenshots/)\n" +
-  "  type    [-i name] \"text\"      type into the guest (US layout)\n" +
+  '  type    [-i name] "text"      type into the guest (US layout)\n' +
   "  key     [-i name] <combo>...  e.g. ctrl-alt-delete, win-r, enter, f5\n" +
   "  click   [-i name] <x> <y> [--right|--middle] [--double]   screenshot pixels\n" +
   "          [-i name] --text TEXT [--wait S]   OCR the screen, click the middle of TEXT\n" +
@@ -1066,7 +1311,7 @@ export const USAGE =
   "                                drive WebView2 windows over DevTools (winvm webview for more)\n" +
   "  ui      [-i name] <verb> [selector]   find and click windows, controls, the tray (winvm ui help)\n" +
   "  cua serve [-i name] [--port N] [--size WxH]   Claude computer-use endpoint on 127.0.0.1 (bearer token)\n" +
-  "  cua run [-i name] \"<task>\" [--model M] [--max-steps N] [--extras]   a computer-use agent loop\n" +
+  '  cua run [-i name] "<task>" [--model M] [--max-steps N] [--extras]   a computer-use agent loop\n' +
   "  mcp     [-i name]             the guest as an MCP server on stdio, for Claude Code and Claude Desktop\n" +
   "  mcp install|uninstall claude-code|claude-desktop [-i name] [--json]   add it to Claude, or take it out\n" +
   "  mcp status [-i name] [--json] whether Claude Code and Claude Desktop have it\n" +
@@ -1085,10 +1330,10 @@ export const USAGE =
   "                                in $XDG_CONFIG_HOME/winvm/settings.json (default ~/.config/winvm)\n" +
   "          [--section NAME [--set JSON]]   one part the app keeps there (checkpoints), as JSON\n" +
   "  run     <job.yml>... [-i name] [--golden NAME] [--keep] [--junit f] [--json f] [--artifacts dir]\n" +
-  "                                run CI jobs, each from a golden save (instance default \"ci\")\n" +
+  '                                run CI jobs, each from a golden save (instance default "ci")\n' +
   "          [--pool N] [--pool-prefix ci]   on N instances at once (ci-1 … ci-N)\n" +
   "  test    <dir>... [same flags] every *.yml in the directory, in order\n\n" +
   "  state:    WINVM_HOME       (default ~/.local/state/winvm)\n" +
   "  iso:      WINVM_ISO        (else asked once, then remembered)\n" +
-  "  instance: WINVM_INSTANCE / -i   (default \"default\")\n" +
-  "  image:    WINVM_IMAGE / --image (default \"win11-arm64\")\n"
+  '  instance: WINVM_INSTANCE / -i   (default "default")\n' +
+  '  image:    WINVM_IMAGE / --image (default "win11-arm64")\n'

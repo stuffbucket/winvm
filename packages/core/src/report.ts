@@ -44,7 +44,11 @@ export interface PoolStats {
   readonly resetMs: number
   readonly exposedResetMs: number
   readonly initialResetMs: number
-  readonly perInstance: readonly { readonly instance: string; readonly jobs: number; readonly busyMs: number }[]
+  readonly perInstance: readonly {
+    readonly instance: string
+    readonly jobs: number
+    readonly busyMs: number
+  }[]
 }
 
 export interface Interval {
@@ -53,35 +57,58 @@ export interface Interval {
 }
 
 export function merge(xs: readonly Interval[]): Interval[] {
-  const sorted = xs.filter((x) => x.end > x.start).sort((a, b) => a.start - b.start)
+  const sorted = xs
+    .filter((x) => x.end > x.start)
+    .sort((a, b) => a.start - b.start)
   const out: Interval[] = []
   for (const x of sorted) {
     const last = out.at(-1)
-    if (last !== undefined && x.start <= last.end) out[out.length - 1] = { start: last.start, end: Math.max(last.end, x.end) }
+    if (last !== undefined && x.start <= last.end)
+      out[out.length - 1] = {
+        start: last.start,
+        end: Math.max(last.end, x.end),
+      }
     else out.push({ ...x })
   }
   return out
 }
 
-const length = (xs: readonly Interval[]): number => xs.reduce((a, x) => a + x.end - x.start, 0)
+const length = (xs: readonly Interval[]): number =>
+  xs.reduce((a, x) => a + x.end - x.start, 0)
 
-export function uncoveredMs(a: readonly Interval[], b: readonly Interval[]): number {
+export function uncoveredMs(
+  a: readonly Interval[],
+  b: readonly Interval[],
+): number {
   const bs = merge(b)
   let out = 0
   for (const x of merge(a)) {
     let covered = 0
-    for (const y of bs) covered += Math.max(0, Math.min(x.end, y.end) - Math.max(x.start, y.start))
+    for (const y of bs)
+      covered += Math.max(
+        0,
+        Math.min(x.end, y.end) - Math.max(x.start, y.start),
+      )
     out += x.end - x.start - covered
   }
   return out
 }
 
-export function jobIntervals(j: JobResult): { readonly reset: Interval; readonly work: Interval } {
+export function jobIntervals(j: JobResult): {
+  readonly reset: Interval
+  readonly work: Interval
+} {
   const start = Date.parse(j.startedAt)
-  return { reset: { start, end: start + j.resetMs }, work: { start: start + j.resetMs, end: start + j.totalMs } }
+  return {
+    reset: { start, end: start + j.resetMs },
+    work: { start: start + j.resetMs, end: start + j.totalMs },
+  }
 }
 
-export function poolStats(jobs: readonly JobResult[], instances: readonly string[]): PoolStats {
+export function poolStats(
+  jobs: readonly JobResult[],
+  instances: readonly string[],
+): PoolStats {
   const iv = jobs.map(jobIntervals)
   const all = merge(iv.flatMap((x) => [x.reset, x.work]))
   return {
@@ -93,16 +120,29 @@ export function poolStats(jobs: readonly JobResult[], instances: readonly string
       iv.map((x) => x.reset),
       iv.map((x) => x.work),
     ),
-    initialResetMs: iv.length === 0 ? 0 : Math.min(...iv.map((x) => x.work.start)) - Math.min(...iv.map((x) => x.reset.start)),
+    initialResetMs:
+      iv.length === 0
+        ? 0
+        : Math.min(...iv.map((x) => x.work.start)) -
+          Math.min(...iv.map((x) => x.reset.start)),
     perInstance: instances.map((instance) => {
       const mine = jobs.filter((j) => j.instance === instance)
-      return { instance, jobs: mine.length, busyMs: length(merge(mine.map((j) => jobIntervals(j)).flatMap((x) => [x.reset, x.work]))) }
+      return {
+        instance,
+        jobs: mine.length,
+        busyMs: length(
+          merge(
+            mine.map((j) => jobIntervals(j)).flatMap((x) => [x.reset, x.work]),
+          ),
+        ),
+      }
     }),
   }
 }
 
 export const secs = (ms: number): string => `${(ms / 1000).toFixed(1)} s`
-const pct = (part: number, whole: number): string => (whole <= 0 ? "-" : `${((100 * part) / whole).toFixed(0)}%`)
+const pct = (part: number, whole: number): string =>
+  whole <= 0 ? "-" : `${((100 * part) / whole).toFixed(0)}%`
 
 export function totals(s: RunSummary): {
   readonly passed: number
@@ -112,7 +152,10 @@ export function totals(s: RunSummary): {
   readonly overheadMs: number
 } {
   const resetMs = s.jobs.reduce((a, j) => a + j.resetMs, 0)
-  const testMs = s.jobs.reduce((a, j) => a + j.stageMs + j.stepsMs + j.collectMs, 0)
+  const testMs = s.jobs.reduce(
+    (a, j) => a + j.stageMs + j.stepsMs + j.collectMs,
+    0,
+  )
   return {
     passed: s.jobs.filter((j) => j.status === "passed").length,
     failed: s.jobs.filter((j) => j.status !== "passed").length,
@@ -123,11 +166,25 @@ export function totals(s: RunSummary): {
 }
 
 const mark = (st: StepStatus | JobStatus): string =>
-  st === "passed" ? "ok  " : st === "skipped" ? "skip" : st === "timed-out" ? "TIME" : st === "error" ? "ERR " : "FAIL"
+  st === "passed"
+    ? "ok  "
+    : st === "skipped"
+      ? "skip"
+      : st === "timed-out"
+        ? "TIME"
+        : st === "error"
+          ? "ERR "
+          : "FAIL"
 
 export function formatStep(r: StepResult): string {
-  const tail = r.status === "failed" && r.continueOnError ? " (continue-on-error)" : r.background ? " (background)" : ""
-  const code = r.exitcode === null || r.exitcode === 0 ? "" : ` exit ${String(r.exitcode)}`
+  const tail =
+    r.status === "failed" && r.continueOnError
+      ? " (continue-on-error)"
+      : r.background
+        ? " (background)"
+        : ""
+  const code =
+    r.exitcode === null || r.exitcode === 0 ? "" : ` exit ${String(r.exitcode)}`
   return `  [${mark(r.status)}] ${r.name} — ${secs(r.ms)}${code}${tail}`
 }
 
@@ -144,12 +201,19 @@ export function outputTail(r: StepResult, lines = 15): string {
 export function formatSummary(s: RunSummary): string {
   const t = totals(s)
   const pool = s.pool
-  const out: string[] = ["", "job".padEnd(34) + "result   reset    stage    steps    collect  total" + (pool === undefined ? "" : "    instance")]
+  const out: string[] = [
+    "",
+    "job".padEnd(34) +
+      "result   reset    stage    steps    collect  total" +
+      (pool === undefined ? "" : "    instance"),
+  ]
   for (const j of s.jobs) {
     out.push(
       j.name.slice(0, 33).padEnd(34) +
         j.status.padEnd(9) +
-        [j.resetMs, j.stageMs, j.stepsMs, j.collectMs, j.totalMs].map((ms) => secs(ms).padEnd(9)).join("") +
+        [j.resetMs, j.stageMs, j.stepsMs, j.collectMs, j.totalMs]
+          .map((ms) => secs(ms).padEnd(9))
+          .join("") +
         (pool === undefined ? "" : j.instance),
     )
   }
@@ -169,7 +233,9 @@ export function formatPool(p: PoolStats): string[] {
   return [
     `pool of ${String(p.instances.length)} (${p.instances.join(", ")}): ${secs(p.runMs)} wall clock, setup excluded; ` +
       `job time ${secs(p.jobMs)} summed, resets ${secs(p.resetMs)} summed` +
-      (p.runMs > 0 ? ` — ${(serial / p.runMs).toFixed(2)}x one instance back to back` : ""),
+      (p.runMs > 0
+        ? ` — ${(serial / p.runMs).toFixed(2)}x one instance back to back`
+        : ""),
     `exposed reset (resetting, no job running): ${secs(p.exposedResetMs)}, ${pct(p.exposedResetMs, p.runMs)} of the wall clock` +
       ` (${secs(p.initialResetMs)} of it the first round, ${secs(Math.max(0, p.exposedResetMs - p.initialResetMs))} after)`,
     `  ${p.perInstance.map((i) => `${i.instance}: ${String(i.jobs)} job(s), busy ${secs(i.busyMs)}`).join("; ")}`,
@@ -194,7 +260,11 @@ export function toJunit(s: RunSummary): string {
     `<testsuites name="winvm" tests="${String(cases)}" failures="${String(t.failed)}" time="${sec(s.wallMs)}">`,
   )
   for (const j of s.jobs) {
-    const failures = j.steps.filter((r) => (r.status === "failed" || r.status === "timed-out") && !r.continueOnError).length
+    const failures = j.steps.filter(
+      (r) =>
+        (r.status === "failed" || r.status === "timed-out") &&
+        !r.continueOnError,
+    ).length
     const skipped = j.steps.filter((r) => r.status === "skipped").length
     out.push(
       `  <testsuite name="${xmlEscape(j.name)}" tests="${String(j.steps.length + 1)}" failures="${String(failures)}"` +
@@ -207,17 +277,29 @@ export function toJunit(s: RunSummary): string {
         `<property name="file" value="${xmlEscape(j.file)}"/></properties>`,
     )
     const setup = `    <testcase classname="${xmlEscape(j.name)}" name="reset + stage" time="${sec(j.resetMs + j.stageMs)}"`
-    out.push(j.error === null ? `${setup}/>` : `${setup}><error message="${xmlEscape(j.error)}"/></testcase>`)
+    out.push(
+      j.error === null
+        ? `${setup}/>`
+        : `${setup}><error message="${xmlEscape(j.error)}"/></testcase>`,
+    )
     for (const r of j.steps) {
       const head = `    <testcase classname="${xmlEscape(j.name)}" name="${xmlEscape(r.name)}" time="${sec(r.ms)}">`
       const body: string[] = []
       if (r.status === "skipped") body.push("      <skipped/>")
-      if ((r.status === "failed" || r.status === "timed-out") && !r.continueOnError) {
-        const msg = r.status === "timed-out" ? "timed out" : `exit code ${String(r.exitcode)}`
+      if (
+        (r.status === "failed" || r.status === "timed-out") &&
+        !r.continueOnError
+      ) {
+        const msg =
+          r.status === "timed-out"
+            ? "timed out"
+            : `exit code ${String(r.exitcode)}`
         body.push(`      <failure message="${xmlEscape(msg)}"/>`)
       }
-      if (r.stdout !== "") body.push(`      <system-out>${xmlEscape(r.stdout)}</system-out>`)
-      if (r.stderr !== "") body.push(`      <system-err>${xmlEscape(r.stderr)}</system-err>`)
+      if (r.stdout !== "")
+        body.push(`      <system-out>${xmlEscape(r.stdout)}</system-out>`)
+      if (r.stderr !== "")
+        body.push(`      <system-err>${xmlEscape(r.stderr)}</system-err>`)
       out.push(head, ...body, "    </testcase>")
     }
     out.push("  </testsuite>")
@@ -236,7 +318,13 @@ export function toJson(s: RunSummary): string {
       resetShare: s.wallMs > 0 ? t.resetMs / s.wallMs : null,
       ...(s.pool === undefined
         ? {}
-        : { pool: { ...s.pool, exposedResetShare: s.pool.runMs > 0 ? s.pool.exposedResetMs / s.pool.runMs : null } }),
+        : {
+            pool: {
+              ...s.pool,
+              exposedResetShare:
+                s.pool.runMs > 0 ? s.pool.exposedResetMs / s.pool.runMs : null,
+            },
+          }),
       jobs: s.jobs,
     },
     null,

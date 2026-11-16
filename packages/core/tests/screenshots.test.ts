@@ -1,5 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test"
-import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs"
+import {
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs"
 import { tmpdir } from "node:os"
 import { resolve } from "node:path"
 
@@ -9,8 +16,12 @@ import { FakeQmp } from "./fakes/qmp"
 
 function ppm(w: number, h: number): Buffer {
   const data = Buffer.alloc(w * h * 3)
-  for (let i = 0; i < w * h; i += 1) data.set([i % 256, (i >> 8) % 256, 128], i * 3)
-  return Buffer.concat([Buffer.from(`P6\n${String(w)} ${String(h)}\n255\n`, "latin1"), data])
+  for (let i = 0; i < w * h; i += 1)
+    data.set([i % 256, (i >> 8) % 256, 128], i * 3)
+  return Buffer.concat([
+    Buffer.from(`P6\n${String(w)} ${String(h)}\n255\n`, "latin1"),
+    data,
+  ])
 }
 
 describe("save screenshots", () => {
@@ -24,7 +35,8 @@ describe("save screenshots", () => {
     fake.handler = (cmd) => {
       if (cmd["execute"] !== "screendump") return { return: {} }
       const args = cmd["arguments"] as Record<string, unknown>
-      if (args["format"] !== undefined) return { error: { class: "GenericError", desc: "expected a raw dump" } }
+      if (args["format"] !== undefined)
+        return { error: { class: "GenericError", desc: "expected a raw dump" } }
       writeFileSync(String(args["filename"]), ppm(size.width, size.height))
       return { return: {} }
     }
@@ -39,23 +51,42 @@ describe("save screenshots", () => {
   it("captures a raw dump as a dot-file, then writes screen.png and a fitted thumb.png", async () => {
     const shot = await captureScreen(fake.path, dir)
     expect(shot).toBe(resolve(dir, ".screen.ppm"))
-    expect(writeScreenshots(shot ?? "", dir)).toEqual({ width: 1024, height: 768 })
-    expect(pngSize(readFileSync(resolve(dir, FILES.screen)))).toEqual({ width: 1024, height: 768 })
-    expect(pngSize(readFileSync(resolve(dir, FILES.thumb)))).toEqual({ width: 400, height: 300 })
+    expect(writeScreenshots(shot ?? "", dir)).toEqual({
+      width: 1024,
+      height: 768,
+    })
+    expect(pngSize(readFileSync(resolve(dir, FILES.screen)))).toEqual({
+      width: 1024,
+      height: 768,
+    })
+    expect(pngSize(readFileSync(resolve(dir, FILES.thumb)))).toEqual({
+      width: 400,
+      height: 300,
+    })
     expect(existsSync(shot ?? "")).toBe(false)
-    expect(readdirSync(dir).sort()).toEqual([FILES.screen, "qmp.sock", FILES.thumb].sort())
+    expect(readdirSync(dir).sort()).toEqual(
+      [FILES.screen, "qmp.sock", FILES.thumb].sort(),
+    )
   })
 
   it("keeps a small screen's thumbnail at its own size", async () => {
     size = { width: 320, height: 240 }
     const shot = await captureScreen(fake.path, dir)
-    expect(writeScreenshots(shot ?? "", dir)).toEqual({ width: 320, height: 240 })
-    expect(pngSize(readFileSync(resolve(dir, FILES.thumb)))).toEqual({ width: 320, height: 240 })
+    expect(writeScreenshots(shot ?? "", dir)).toEqual({
+      width: 320,
+      height: 240,
+    })
+    expect(pngSize(readFileSync(resolve(dir, FILES.thumb)))).toEqual({
+      width: 320,
+      height: 240,
+    })
     size = { width: 1024, height: 768 }
   })
 
   it("gives no screenshot, and no files, when QEMU cannot dump the screen", async () => {
-    fake.handler = () => ({ error: { class: "GenericError", desc: "no surface" } })
+    fake.handler = () => ({
+      error: { class: "GenericError", desc: "no surface" },
+    })
     expect(await captureScreen(fake.path, dir)).toBeNull()
     expect(readdirSync(dir)).toEqual(["qmp.sock"])
   })

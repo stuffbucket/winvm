@@ -1,7 +1,9 @@
 import type { Server, Socket } from "node:net"
 import { createServer } from "node:net"
 
-export type Handler = (req: Record<string, unknown>) => Record<string, unknown> | null
+export type Handler = (
+  req: Record<string, unknown>,
+) => Record<string, unknown> | null
 
 export class FakeAgent {
   owed: Buffer[] = []
@@ -27,32 +29,47 @@ export class FakeAgent {
   }
 
   async close(): Promise<void> {
-    await new Promise<void>((r) => this.server.close(() => { r() }))
+    await new Promise<void>((r) =>
+      this.server.close(() => {
+        r()
+      }),
+    )
   }
 
-  private file(req: Record<string, unknown>): Record<string, unknown> | null | undefined {
+  private file(
+    req: Record<string, unknown>,
+  ): Record<string, unknown> | null | undefined {
     const a = (req["arguments"] ?? {}) as Record<string, unknown>
     switch (req["execute"]) {
       case "guest-file-open": {
         const data = this.files.get(a["path"] as string)
-        if (data === undefined) return { error: { class: "GenericError", desc: "not found" } }
+        if (data === undefined)
+          return { error: { class: "GenericError", desc: "not found" } }
         this.nextHandle += 1
         this.handles.set(this.nextHandle, { data, pos: 0 })
         return { return: this.nextHandle }
       }
       case "guest-file-read": {
         const h = this.handles.get(a["handle"] as number)
-        if (h === undefined) return { error: { class: "GenericError", desc: "bad handle" } }
+        if (h === undefined)
+          return { error: { class: "GenericError", desc: "bad handle" } }
         const count = a["count"] as number
         this.reads.push(count)
         const bytes = h.data.subarray(h.pos, h.pos + count)
         h.pos += bytes.length
         if (count > this.readCeiling) return null
-        return { return: { count: bytes.length, "buf-b64": bytes.toString("base64"), eof: h.pos >= h.data.length } }
+        return {
+          return: {
+            count: bytes.length,
+            "buf-b64": bytes.toString("base64"),
+            eof: h.pos >= h.data.length,
+          },
+        }
       }
       case "guest-file-seek": {
         const h = this.handles.get(a["handle"] as number)
-        if (h === undefined || a["whence"] !== "set") return { error: { class: "GenericError", desc: "bad seek" } }
+        if (h === undefined || a["whence"] !== "set")
+          return { error: { class: "GenericError", desc: "bad seek" } }
         h.pos = a["offset"] as number
         return { return: { position: h.pos, eof: h.pos >= h.data.length } }
       }
@@ -84,28 +101,40 @@ export class FakeAgent {
         if (ff >= 0) buf = buf.subarray(ff + 1)
         const nl = buf.indexOf(0x0a)
         if (nl < 0) return
-        const req = JSON.parse(buf.subarray(0, nl).toString("utf8")) as Record<string, unknown>
+        const req = JSON.parse(buf.subarray(0, nl).toString("utf8")) as Record<
+          string,
+          unknown
+        >
         buf = buf.subarray(nl + 1)
         if (req["execute"] === "guest-sync-delimited") {
           const id = (req["arguments"] as { id: number }).id
-          send(Buffer.concat([Buffer.from([0xff]), Buffer.from(`${JSON.stringify({ return: id })}\n`)]))
+          send(
+            Buffer.concat([
+              Buffer.from([0xff]),
+              Buffer.from(`${JSON.stringify({ return: id })}\n`),
+            ]),
+          )
           continue
         }
         const fileReply = this.file(req)
         if (fileReply !== undefined) {
-          if (fileReply !== null) send(Buffer.from(`${JSON.stringify(fileReply)}\n`))
+          if (fileReply !== null)
+            send(Buffer.from(`${JSON.stringify(fileReply)}\n`))
           continue
         }
         const reply = this.handler(req)
         if (reply === null) {
-          const late = Buffer.from(`${JSON.stringify({ return: `late reply to ${String(req["execute"])}` })}\n`)
+          const late = Buffer.from(
+            `${JSON.stringify({ return: `late reply to ${String(req["execute"])}` })}\n`,
+          )
           setTimeout(() => {
             send(late)
           }, 150)
           continue
         }
         const bytes = Buffer.from(`${JSON.stringify(reply)}\n`)
-        for (let off = 0; off < bytes.length; off += 7) send(bytes.subarray(off, off + 7))
+        for (let off = 0; off < bytes.length; off += 7)
+          send(bytes.subarray(off, off + 7))
       }
     })
   }

@@ -9,8 +9,14 @@ let rfbTarget = ""
 let pollTimer = null
 
 async function api(path, opts = {}) {
-  const r = await fetch(path, { ...opts, headers: { ...(opts.headers ?? {}), "x-winvm-token": token } })
-  if (r.status === 401) throw new Error("this page's access token is missing or stale — reopen it with `winvm open --web`")
+  const r = await fetch(path, {
+    ...opts,
+    headers: { ...(opts.headers ?? {}), "x-winvm-token": token },
+  })
+  if (r.status === 401)
+    throw new Error(
+      "this page's access token is missing or stale — reopen it with `winvm open --web`",
+    )
   return r
 }
 
@@ -32,7 +38,9 @@ function disconnectScreen() {
     const old = rfb
     rfb = null
     rfbTarget = ""
-    try { old.disconnect() } catch { }
+    try {
+      old.disconnect()
+    } catch {}
   }
 }
 
@@ -51,9 +59,13 @@ function connectScreen(vnc) {
     screenMessage("")
     $("screen-state").textContent = `screen: connected (VNC :${vnc.display})`
   })
-  conn.addEventListener("credentialsrequired", () => conn.sendCredentials({ password: vnc.password }))
+  conn.addEventListener("credentialsrequired", () =>
+    conn.sendCredentials({ password: vnc.password }),
+  )
   conn.addEventListener("securityfailure", (e) => {
-    screenMessage(`the VNC server refused the password (${e.detail.reason ?? "no reason given"}) — try \`winvm open --web\` again`)
+    screenMessage(
+      `the VNC server refused the password (${e.detail.reason ?? "no reason given"}) — try \`winvm open --web\` again`,
+    )
   })
   conn.addEventListener("disconnect", () => {
     if (rfb !== conn) return
@@ -82,13 +94,22 @@ function renderStatus(data) {
     rows.append(dt, dd)
   }
   const notes = $("notes")
-  notes.replaceChildren(...data.report.notes.map((n) => Object.assign(document.createElement("li"), { textContent: n })))
+  notes.replaceChildren(
+    ...data.report.notes.map((n) =>
+      Object.assign(document.createElement("li"), { textContent: n }),
+    ),
+  )
 
   const select = $("load-name")
   const chosen = select.value
   select.replaceChildren(
     ...(data.saves.length === 0
-      ? [Object.assign(document.createElement("option"), { textContent: "(no saves)", value: "" })]
+      ? [
+          Object.assign(document.createElement("option"), {
+            textContent: "(no saves)",
+            value: "",
+          }),
+        ]
       : data.saves.map((sv) =>
           Object.assign(document.createElement("option"), {
             value: sv.name,
@@ -114,7 +135,9 @@ function renderStatus(data) {
 async function refresh() {
   if (instance === "") return
   try {
-    const { ok, body } = await apiJson(`/api/status?i=${encodeURIComponent(instance)}`)
+    const { ok, body } = await apiJson(
+      `/api/status?i=${encodeURIComponent(instance)}`,
+    )
     if (!ok) throw new Error(body.error)
     renderStatus(body)
   } catch (error) {
@@ -178,7 +201,10 @@ async function screenshot() {
   const head = $("job-head")
   try {
     const r = await api(`/api/screenshot?i=${encodeURIComponent(instance)}`)
-    if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error ?? `HTTP ${r.status}`)
+    if (!r.ok)
+      throw new Error(
+        (await r.json().catch(() => ({}))).error ?? `HTTP ${r.status}`,
+      )
     const url = URL.createObjectURL(await r.blob())
     const a = Object.assign(document.createElement("a"), {
       href: url,
@@ -201,7 +227,12 @@ async function loadInstances() {
   if (instance === "") instance = names[0] ?? "default"
   if (!names.includes(instance)) names.unshift(instance)
   $("instance").replaceChildren(
-    ...names.map((n) => Object.assign(document.createElement("option"), { value: n, textContent: n })),
+    ...names.map((n) =>
+      Object.assign(document.createElement("option"), {
+        value: n,
+        textContent: n,
+      }),
+    ),
   )
   $("instance").value = instance
 }
@@ -236,7 +267,9 @@ function wire() {
 async function main() {
   wire()
   if (token === "") {
-    screenMessage("this page needs its access token — open it with `winvm open --web`")
+    screenMessage(
+      "this page needs its access token — open it with `winvm open --web`",
+    )
     return
   }
   try {

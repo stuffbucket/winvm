@@ -1,4 +1,16 @@
-import { copyFileSync, existsSync, fsyncSync, closeSync, openSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeSync } from "node:fs"
+import {
+  copyFileSync,
+  existsSync,
+  fsyncSync,
+  closeSync,
+  openSync,
+  readFileSync,
+  realpathSync,
+  renameSync,
+  rmSync,
+  statSync,
+  writeSync,
+} from "node:fs"
 import { homedir } from "node:os"
 import { basename, delimiter, dirname, join, resolve } from "node:path"
 
@@ -15,7 +27,10 @@ export const USAGE =
 
 export const CLIENTS = ["claude-code", "claude-desktop"] as const
 export type ClientId = (typeof CLIENTS)[number]
-const CLIENT_NAMES: Readonly<Record<ClientId, string>> = { "claude-code": "Claude Code", "claude-desktop": "Claude Desktop" }
+const CLIENT_NAMES: Readonly<Record<ClientId, string>> = {
+  "claude-code": "Claude Code",
+  "claude-desktop": "Claude Desktop",
+}
 
 export const serverName = (instance: string): string => `winvm-${instance}`
 
@@ -50,14 +65,25 @@ export function launchFor(o: {
   }
   const tail = ["mcp", "-i", o.instance]
   if (o.compiled) {
-    return { command: o.execPath, args: tail, env, from: /\.app\/Contents\/MacOS\/[^/]+$/.test(o.execPath) ? "app" : "cli" }
+    return {
+      command: o.execPath,
+      args: tail,
+      env,
+      from: /\.app\/Contents\/MacOS\/[^/]+$/.test(o.execPath) ? "app" : "cli",
+    }
   }
   return { command: o.execPath, args: [o.entry, ...tail], env, from: "source" }
 }
 
 export function launch(instance: string): Launch {
   const compiled = import.meta.path.startsWith("/$bunfs/")
-  return launchFor({ compiled, execPath: realpath(process.execPath), entry: compiled ? "" : realpath(cliEntry()), env: process.env, instance })
+  return launchFor({
+    compiled,
+    execPath: realpath(process.execPath),
+    entry: compiled ? "" : realpath(cliEntry()),
+    env: process.env,
+    instance,
+  })
 }
 
 const FROM_NOTE: Readonly<Record<From, string>> = {
@@ -66,11 +92,15 @@ const FROM_NOTE: Readonly<Record<From, string>> = {
   source: "Bun running this source checkout",
 }
 
-const commandLine = (l: Launch): string => [l.command, ...l.args].map((a) => (/[\s"'\\$]/.test(a) ? JSON.stringify(a) : a)).join(" ")
+const commandLine = (l: Launch): string =>
+  [l.command, ...l.args]
+    .map((a) => (/[\s"'\\$]/.test(a) ? JSON.stringify(a) : a))
+    .join(" ")
 
 type Json = Record<string, unknown>
 
-const isObject = (v: unknown): v is Json => v !== null && typeof v === "object" && !Array.isArray(v)
+const isObject = (v: unknown): v is Json =>
+  v !== null && typeof v === "object" && !Array.isArray(v)
 
 export function readJsonObject(file: string): Json {
   if (!existsSync(file)) return {}
@@ -80,9 +110,14 @@ export function readJsonObject(file: string): Json {
   try {
     v = JSON.parse(text)
   } catch {
-    throw new Error(`${file} isn't valid JSON, so winvm left it alone. Fix it (or move it aside) and try again.`)
+    throw new Error(
+      `${file} isn't valid JSON, so winvm left it alone. Fix it (or move it aside) and try again.`,
+    )
   }
-  if (!isObject(v)) throw new Error(`${file} doesn't hold a JSON object, so winvm left it alone.`)
+  if (!isObject(v))
+    throw new Error(
+      `${file} doesn't hold a JSON object, so winvm left it alone.`,
+    )
   return v
 }
 
@@ -90,7 +125,11 @@ const pad = (x: number): string => String(x).padStart(2, "0")
 const stamp = (d: Date): string =>
   `${String(d.getFullYear())}${pad(d.getMonth() + 1)}${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`
 
-export function editJsonFile(file: string, edit: (o: Json) => boolean, now = new Date()): { changed: boolean; backup: string | null } {
+export function editJsonFile(
+  file: string,
+  edit: (o: Json) => boolean,
+  now = new Date(),
+): { changed: boolean; backup: string | null } {
   const target = existsSync(file) ? realpath(file) : file
   const o = readJsonObject(target)
   if (!edit(o)) return { changed: false, backup: null }
@@ -99,10 +138,14 @@ export function editJsonFile(file: string, edit: (o: Json) => boolean, now = new
   if (existsSync(target)) {
     mode = statSync(target).mode & 0o777
     backup = `${target}.winvm-backup-${stamp(now)}`
-    for (let i = 2; existsSync(backup); i += 1) backup = `${target}.winvm-backup-${stamp(now)}-${String(i)}`
+    for (let i = 2; existsSync(backup); i += 1)
+      backup = `${target}.winvm-backup-${stamp(now)}-${String(i)}`
     copyFileSync(target, backup)
   }
-  const tmp = join(dirname(target), `.${basename(target)}.winvm-${String(process.pid)}.tmp`)
+  const tmp = join(
+    dirname(target),
+    `.${basename(target)}.winvm-${String(process.pid)}.tmp`,
+  )
   try {
     const fd = openSync(tmp, "w", mode)
     try {
@@ -131,25 +174,47 @@ export function entryMatches(e: Entry | undefined, l: Launch): boolean {
   return (
     e.command === l.command &&
     JSON.stringify(e.args ?? []) === JSON.stringify(l.args) &&
-    JSON.stringify(Object.entries(env).sort()) === JSON.stringify(Object.entries(l.env).sort())
+    JSON.stringify(Object.entries(env).sort()) ===
+      JSON.stringify(Object.entries(l.env).sort())
   )
 }
 
-const servers = (o: Json): Json => (isObject(o["mcpServers"]) ? o["mcpServers"] : {})
+const servers = (o: Json): Json =>
+  isObject(o["mcpServers"]) ? o["mcpServers"] : {}
 
-export const desktopConfigPath = (env: Readonly<Record<string, string | undefined>> = process.env): string =>
-  env["WINVM_CLAUDE_DESKTOP_CONFIG"] ?? join(homedir(), "Library", "Application Support", "Claude", "claude_desktop_config.json")
+export const desktopConfigPath = (
+  env: Readonly<Record<string, string | undefined>> = process.env,
+): string =>
+  env["WINVM_CLAUDE_DESKTOP_CONFIG"] ??
+  join(
+    homedir(),
+    "Library",
+    "Application Support",
+    "Claude",
+    "claude_desktop_config.json",
+  )
 
 const desktopAvailable = (config: string): boolean =>
-  existsSync(dirname(config)) || existsSync("/Applications/Claude.app") || existsSync(join(homedir(), "Applications", "Claude.app"))
+  existsSync(dirname(config)) ||
+  existsSync("/Applications/Claude.app") ||
+  existsSync(join(homedir(), "Applications", "Claude.app"))
 
-export function desktopInstall(config: string, name: string, l: Launch, now = new Date()): { changed: boolean; backup: string | null } {
+export function desktopInstall(
+  config: string,
+  name: string,
+  l: Launch,
+  now = new Date(),
+): { changed: boolean; backup: string | null } {
   return editJsonFile(
     config,
     (o) => {
       const s = servers(o)
       if (entryMatches(s[name] as Entry | undefined, l)) return false
-      s[name] = { command: l.command, args: [...l.args], ...(Object.keys(l.env).length > 0 ? { env: { ...l.env } } : {}) }
+      s[name] = {
+        command: l.command,
+        args: [...l.args],
+        ...(Object.keys(l.env).length > 0 ? { env: { ...l.env } } : {}),
+      }
       o["mcpServers"] = s
       return true
     },
@@ -157,7 +222,11 @@ export function desktopInstall(config: string, name: string, l: Launch, now = ne
   )
 }
 
-export function desktopUninstall(config: string, name: string, now = new Date()): { changed: boolean; backup: string | null } {
+export function desktopUninstall(
+  config: string,
+  name: string,
+  now = new Date(),
+): { changed: boolean; backup: string | null } {
   if (!existsSync(config)) return { changed: false, backup: null }
   return editJsonFile(
     config,
@@ -172,12 +241,19 @@ export function desktopUninstall(config: string, name: string, now = new Date())
   )
 }
 
-export const codeConfigPath = (env: Readonly<Record<string, string | undefined>> = process.env): string => {
+export const codeConfigPath = (
+  env: Readonly<Record<string, string | undefined>> = process.env,
+): string => {
   const dir = env["CLAUDE_CONFIG_DIR"]
-  return dir !== undefined && dir !== "" ? join(dir, ".claude.json") : join(env["HOME"] ?? homedir(), ".claude.json")
+  return dir !== undefined && dir !== ""
+    ? join(dir, ".claude.json")
+    : join(env["HOME"] ?? homedir(), ".claude.json")
 }
 
-export function findClaude(env: Readonly<Record<string, string | undefined>> = process.env, exists: (p: string) => boolean = isExecutable): string | null {
+export function findClaude(
+  env: Readonly<Record<string, string | undefined>> = process.env,
+  exists: (p: string) => boolean = isExecutable,
+): string | null {
   const own = env["WINVM_CLAUDE"]
   if (own !== undefined && own !== "") return exists(own) ? own : null
   const home = env["HOME"] ?? homedir()
@@ -215,11 +291,28 @@ export interface Ran {
 
 export type Runner = (argv: readonly string[]) => Ran
 
-export function runnerFor(claude: string, env: Readonly<Record<string, string | undefined>> = process.env): Runner {
-  const path = [dirname(claude), ...(env["PATH"] ?? "/usr/bin:/bin:/usr/sbin:/sbin").split(delimiter), "/opt/homebrew/bin", "/usr/local/bin"].join(delimiter)
+export function runnerFor(
+  claude: string,
+  env: Readonly<Record<string, string | undefined>> = process.env,
+): Runner {
+  const path = [
+    dirname(claude),
+    ...(env["PATH"] ?? "/usr/bin:/bin:/usr/sbin:/sbin").split(delimiter),
+    "/opt/homebrew/bin",
+    "/usr/local/bin",
+  ].join(delimiter)
   return (argv) => {
-    const r = Bun.spawnSync([claude, ...argv], { env: { ...env, PATH: path }, stdin: "ignore", stdout: "pipe", stderr: "pipe" })
-    return { code: r.exitCode, stdout: r.stdout.toString(), stderr: r.stderr.toString() }
+    const r = Bun.spawnSync([claude, ...argv], {
+      env: { ...env, PATH: path },
+      stdin: "ignore",
+      stdout: "pipe",
+      stderr: "pipe",
+    })
+    return {
+      code: r.exitCode,
+      stdout: r.stdout.toString(),
+      stderr: r.stderr.toString(),
+    }
   }
 }
 
@@ -231,23 +324,49 @@ export const entryIn = (config: string, name: string): Entry | undefined => {
   }
 }
 
-export function codeInstall(run: Runner, config: string, name: string, l: Launch): { changed: boolean } {
+export function codeInstall(
+  run: Runner,
+  config: string,
+  name: string,
+  l: Launch,
+): { changed: boolean } {
   const have = entryIn(config, name)
   if (entryMatches(have, l)) return { changed: false }
   if (have !== undefined) {
     const r = run(["mcp", "remove", "-s", "user", name])
-    if (r.code !== 0) throw new Error(`claude mcp remove failed: ${(r.stderr || r.stdout).trim()}`)
+    if (r.code !== 0)
+      throw new Error(
+        `claude mcp remove failed: ${(r.stderr || r.stdout).trim()}`,
+      )
   }
   const env = Object.entries(l.env).flatMap(([k, v]) => ["-e", `${k}=${v}`])
-  const r = run(["mcp", "add", "-s", "user", name, ...env, "--", l.command, ...l.args])
-  if (r.code !== 0) throw new Error(`claude mcp add failed: ${(r.stderr || r.stdout).trim()}`)
+  const r = run([
+    "mcp",
+    "add",
+    "-s",
+    "user",
+    name,
+    ...env,
+    "--",
+    l.command,
+    ...l.args,
+  ])
+  if (r.code !== 0)
+    throw new Error(`claude mcp add failed: ${(r.stderr || r.stdout).trim()}`)
   return { changed: true }
 }
 
-export function codeUninstall(run: Runner, config: string, name: string): { changed: boolean } {
+export function codeUninstall(
+  run: Runner,
+  config: string,
+  name: string,
+): { changed: boolean } {
   if (entryIn(config, name) === undefined) return { changed: false }
   const r = run(["mcp", "remove", "-s", "user", name])
-  if (r.code !== 0) throw new Error(`claude mcp remove failed: ${(r.stderr || r.stdout).trim()}`)
+  if (r.code !== 0)
+    throw new Error(
+      `claude mcp remove failed: ${(r.stderr || r.stdout).trim()}`,
+    )
   return { changed: true }
 }
 
@@ -260,21 +379,42 @@ export interface ClientStatus {
   readonly config: string
 }
 
-export function clientStatus(id: ClientId, instance: string, l: Launch, env: Readonly<Record<string, string | undefined>> = process.env): ClientStatus {
+export function clientStatus(
+  id: ClientId,
+  instance: string,
+  l: Launch,
+  env: Readonly<Record<string, string | undefined>> = process.env,
+): ClientStatus {
   const name = serverName(instance)
   if (id === "claude-code") {
     const config = codeConfigPath(env)
     const e = entryIn(config, name)
-    return { id, name: CLIENT_NAMES[id], available: findClaude(env) !== null, added: e !== undefined, current: entryMatches(e, l), config }
+    return {
+      id,
+      name: CLIENT_NAMES[id],
+      available: findClaude(env) !== null,
+      added: e !== undefined,
+      current: entryMatches(e, l),
+      config,
+    }
   }
   const config = desktopConfigPath(env)
   const e = entryIn(config, name)
-  return { id, name: CLIENT_NAMES[id], available: desktopAvailable(config), added: e !== undefined, current: entryMatches(e, l), config }
+  return {
+    id,
+    name: CLIENT_NAMES[id],
+    available: desktopAvailable(config),
+    added: e !== undefined,
+    current: entryMatches(e, l),
+    config,
+  }
 }
 
 function positionals(args: Args): readonly string[] {
   const v = args.flags.get("json")
-  return v !== undefined && v !== "true" ? [...args.positional, v] : args.positional
+  return v !== undefined && v !== "true"
+    ? [...args.positional, v]
+    : args.positional
 }
 
 function report(json: boolean, body: Json, text: string): number {
@@ -291,10 +431,15 @@ function failed(json: boolean, error: string): number {
 function change(args: Args, verb: "install" | "uninstall"): number {
   const json = args.flags.has("json")
   const client = positionals(args)[1]
-  if (client === undefined || !(CLIENTS as readonly string[]).includes(client)) return failed(json, `say which: winvm mcp ${verb} claude-code|claude-desktop [-i name]`)
+  if (client === undefined || !(CLIENTS as readonly string[]).includes(client))
+    return failed(
+      json,
+      `say which: winvm mcp ${verb} claude-code|claude-desktop [-i name]`,
+    )
   const id = client as ClientId
   const instance = instanceName(args)
-  if (verb === "install" && readMeta(instance) === null) return failed(json, `there is no winvm instance named "${instance}"`)
+  if (verb === "install" && readMeta(instance) === null)
+    return failed(json, `there is no winvm instance named "${instance}"`)
   const name = serverName(instance)
   const l = launch(instance)
   try {
@@ -305,31 +450,77 @@ function change(args: Args, verb: "install" | "uninstall"): number {
       const claude = findClaude()
       config = codeConfigPath()
       if (claude === null) {
-        if (verb === "uninstall" && entryIn(config, name) === undefined) return report(json, { ok: true, client: id, server: name, changed: false, config, backup: null, restart: false }, `${name} isn't in Claude Code`)
-        return failed(json, "Claude Code's `claude` command wasn't found. Install Claude Code, or set WINVM_CLAUDE to its path.")
+        if (verb === "uninstall" && entryIn(config, name) === undefined)
+          return report(
+            json,
+            {
+              ok: true,
+              client: id,
+              server: name,
+              changed: false,
+              config,
+              backup: null,
+              restart: false,
+            },
+            `${name} isn't in Claude Code`,
+          )
+        return failed(
+          json,
+          "Claude Code's `claude` command wasn't found. Install Claude Code, or set WINVM_CLAUDE to its path.",
+        )
       }
       const run = runnerFor(claude)
-      changed = (verb === "install" ? codeInstall(run, config, name, l) : codeUninstall(run, config, name)).changed
+      changed = (
+        verb === "install"
+          ? codeInstall(run, config, name, l)
+          : codeUninstall(run, config, name)
+      ).changed
     } else {
       config = desktopConfigPath()
-      const r = verb === "install" ? desktopInstall(config, name, l) : desktopUninstall(config, name)
+      const r =
+        verb === "install"
+          ? desktopInstall(config, name, l)
+          : desktopUninstall(config, name)
       changed = r.changed
       backup = r.backup
     }
     const restart = id === "claude-desktop" && changed
-    const body = { ok: true, client: id, server: name, changed, config, backup, restart, command: l.command, args: l.args, env: l.env, from: l.from }
+    const body = {
+      ok: true,
+      client: id,
+      server: name,
+      changed,
+      config,
+      backup,
+      restart,
+      command: l.command,
+      args: l.args,
+      env: l.env,
+      from: l.from,
+    }
     const who = CLIENT_NAMES[id]
     const lines: string[] = []
     if (verb === "install") {
-      lines.push(changed ? `Added ${name} to ${who}${id === "claude-code" ? " (user scope, every project)" : ""}.` : `${name} is already in ${who}.`)
+      lines.push(
+        changed
+          ? `Added ${name} to ${who}${id === "claude-code" ? " (user scope, every project)" : ""}.`
+          : `${name} is already in ${who}.`,
+      )
       lines.push(`  runs: ${commandLine(l)}`)
-      lines.push(`  (${FROM_NOTE[l.from]}${Object.keys(l.env).length > 0 ? `; with ${Object.keys(l.env).join(", ")}` : ""})`)
+      lines.push(
+        `  (${FROM_NOTE[l.from]}${Object.keys(l.env).length > 0 ? `; with ${Object.keys(l.env).join(", ")}` : ""})`,
+      )
     } else {
-      lines.push(changed ? `Removed ${name} from ${who}.` : `${name} isn't in ${who}.`)
+      lines.push(
+        changed ? `Removed ${name} from ${who}.` : `${name} isn't in ${who}.`,
+      )
     }
     lines.push(`  config: ${config}`)
     if (backup !== null) lines.push(`  backup: ${backup}`)
-    if (restart) lines.push("Restart Claude Desktop (quit it and open it again) to pick this up.")
+    if (restart)
+      lines.push(
+        "Restart Claude Desktop (quit it and open it again) to pick this up.",
+      )
     return report(json, body, lines.join("\n"))
   } catch (error) {
     return failed(json, error instanceof Error ? error.message : String(error))
@@ -340,8 +531,18 @@ function status(args: Args): number {
   const instance = instanceName(args)
   const l = launch(instance)
   const clients = CLIENTS.map((id) => clientStatus(id, instance, l))
-  const body = { instance, server: serverName(instance), command: l.command, args: l.args, env: l.env, from: l.from, clients }
-  const lines = [`${serverName(instance)} runs: ${commandLine(l)}  (${FROM_NOTE[l.from]})`]
+  const body = {
+    instance,
+    server: serverName(instance),
+    command: l.command,
+    args: l.args,
+    env: l.env,
+    from: l.from,
+    clients,
+  }
+  const lines = [
+    `${serverName(instance)} runs: ${commandLine(l)}  (${FROM_NOTE[l.from]})`,
+  ]
   for (const c of clients) {
     const state = !c.available
       ? "not installed on this Mac"

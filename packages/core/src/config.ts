@@ -37,14 +37,17 @@ export const TITLE_MAX = 80
 
 export function checkTitle(raw: string): string {
   const title = raw.trim()
-  if (Array.from(title).length > TITLE_MAX) throw new Error(`title is at most ${String(TITLE_MAX)} characters`)
-  if (/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/.test(title)) throw new Error("title is one line of text, without control characters")
+  if (Array.from(title).length > TITLE_MAX)
+    throw new Error(`title is at most ${String(TITLE_MAX)} characters`)
+  if (/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/.test(title))
+    throw new Error("title is one line of text, without control characters")
   return title
 }
 
 type Value = InstanceConfig[ConfigKey]
 
-const isClosePolicy = (v: string): v is ClosePolicy => (CLOSE_POLICIES as readonly string[]).includes(v)
+const isClosePolicy = (v: string): v is ClosePolicy =>
+  (CLOSE_POLICIES as readonly string[]).includes(v)
 
 const valid = (k: ConfigKey, v: unknown): v is Value => {
   if (typeof v !== typeof DEFAULTS[k]) return false
@@ -59,7 +62,8 @@ const valid = (k: ConfigKey, v: unknown): v is Value => {
 
 export const CONFIG_KEYS = Object.keys(DEFAULTS) as readonly ConfigKey[]
 
-export const configPath = (name: string): string => resolve(instanceDir(name), "config.json")
+export const configPath = (name: string): string =>
+  resolve(instanceDir(name), "config.json")
 
 const isKey = (k: string): k is ConfigKey => Object.hasOwn(DEFAULTS, k)
 
@@ -87,10 +91,15 @@ export function parseAssignment(assignment: string): [ConfigKey, Value] {
   if (eq < 1) throw new Error(`expected key=value, got "${assignment}"`)
   const key = assignment.slice(0, eq).trim()
   const value = assignment.slice(eq + 1).trim()
-  if (!isKey(key)) throw new Error(`unknown setting "${key}" — one of: ${CONFIG_KEYS.join(", ")}`)
+  if (!isKey(key))
+    throw new Error(
+      `unknown setting "${key}" — one of: ${CONFIG_KEYS.join(", ")}`,
+    )
   if (key === "viewer.closePolicy") {
     if (isClosePolicy(value)) return [key, value]
-    throw new Error(`${key} is one of: ${CLOSE_POLICIES.join(", ")}, got "${value}"`)
+    throw new Error(
+      `${key} is one of: ${CLOSE_POLICIES.join(", ")}, got "${value}"`,
+    )
   }
   if (typeof DEFAULTS[key] === "string") return [key, checkTitle(value)]
   if (typeof DEFAULTS[key] === "boolean") {
@@ -99,12 +108,17 @@ export function parseAssignment(assignment: string): [ConfigKey, Value] {
     throw new Error(`${key} is true or false, got "${value}"`)
   }
   const n = Number(value)
-  if (value === "" || !Number.isFinite(n) || n <= 0) throw new Error(`${key} is a positive number, got "${value}"`)
-  if (key === "autosave.keep" && !Number.isInteger(n)) throw new Error(`${key} is a whole number, got "${value}"`)
+  if (value === "" || !Number.isFinite(n) || n <= 0)
+    throw new Error(`${key} is a positive number, got "${value}"`)
+  if (key === "autosave.keep" && !Number.isInteger(n))
+    throw new Error(`${key} is a whole number, got "${value}"`)
   return [key, n]
 }
 
-export function writeAssignments(name: string, assignments: readonly (readonly [ConfigKey, Value])[]): void {
+export function writeAssignments(
+  name: string,
+  assignments: readonly (readonly [ConfigKey, Value])[],
+): void {
   const next: Partial<Record<ConfigKey, Value>> = { ...readOverrides(name) }
   for (const [k, v] of assignments) {
     if (DEFAULTS[k] === v) delete next[k]

@@ -1,5 +1,15 @@
 import { spawn } from "node:child_process"
-import { chmodSync, closeSync, linkSync, openSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs"
+import {
+  chmodSync,
+  closeSync,
+  linkSync,
+  openSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs"
 import { basename, resolve } from "node:path"
 
 import { commandInstance, winvmCommandAfter } from "./args"
@@ -17,8 +27,15 @@ export interface ServiceInfo {
 
 export type Freshness = "current" | "stale" | "legacy"
 
-export const serviceFreshness = (info: ServiceInfo, current: string = buildIdentity()): Freshness =>
-  info.build === undefined || info.build === "" ? "legacy" : info.build === current ? "current" : "stale"
+export const serviceFreshness = (
+  info: ServiceInfo,
+  current: string = buildIdentity(),
+): Freshness =>
+  info.build === undefined || info.build === ""
+    ? "legacy"
+    : info.build === current
+      ? "current"
+      : "stale"
 
 const alive = (pid: number): boolean => {
   try {
@@ -70,7 +87,11 @@ function isServiceFor(pid: number, name: string): boolean {
 export function readService(p: Paths): ServiceInfo | null {
   try {
     const s = JSON.parse(readFileSync(p.service, "utf8")) as ServiceInfo
-    return typeof s.pid === "number" && alive(s.pid) && isServiceFor(s.pid, basename(p.dir)) ? s : null
+    return typeof s.pid === "number" &&
+      alive(s.pid) &&
+      isServiceFor(s.pid, basename(p.dir))
+      ? s
+      : null
   } catch {
     return null
   }
@@ -86,13 +107,11 @@ export function dropServiceRecord(p: Paths, judged: string): boolean {
   let moved: string | null = null
   try {
     moved = readFileSync(aside, "utf8")
-  } catch {
-  }
+  } catch {}
   if (moved !== judged) {
     try {
       linkSync(aside, p.service)
-    } catch {
-    }
+    } catch {}
     rmSync(aside, { force: true })
     return false
   }
@@ -128,12 +147,20 @@ export function claim(p: Paths, name: string, info: ServiceInfo): void {
       }
       const seen = readRecord(p)
       const holderPid = pidIn(seen)
-      if (holderPid === process.pid) throw new Error(`another winvm service (pid ${String(holderPid)}) holds instance "${name}"`)
+      if (holderPid === process.pid)
+        throw new Error(
+          `another winvm service (pid ${String(holderPid)}) holds instance "${name}"`,
+        )
       const holder = readService(p)
-      if (holder !== null) throw new Error(`another winvm service (pid ${String(holder.pid)}) holds instance "${name}"`)
+      if (holder !== null)
+        throw new Error(
+          `another winvm service (pid ${String(holder.pid)}) holds instance "${name}"`,
+        )
       if (seen !== null) dropServiceRecord(p, seen)
     }
-    throw new Error(`could not claim instance "${name}": ${p.service} keeps reappearing`)
+    throw new Error(
+      `could not claim instance "${name}": ${p.service} keeps reappearing`,
+    )
   } finally {
     rmSync(tmp, { force: true })
   }
@@ -141,7 +168,12 @@ export function claim(p: Paths, name: string, info: ServiceInfo): void {
 
 async function answers(control: string): Promise<boolean> {
   try {
-    return (await fetch("http://localhost/status", { unix: control, signal: AbortSignal.timeout(1000) })).ok
+    return (
+      await fetch("http://localhost/status", {
+        unix: control,
+        signal: AbortSignal.timeout(1000),
+      })
+    ).ok
   } catch {
     return false
   }
@@ -157,11 +189,21 @@ export interface StopServiceSeams {
 
 export function stopService(p: Paths, seams: StopServiceSeams = {}): void {
   const name = basename(p.dir)
-  const kill = seams.kill ?? ((pid: number, signal: NodeJS.Signals): void => void process.kill(pid, signal))
+  const kill =
+    seams.kill ??
+    ((pid: number, signal: NodeJS.Signals): void =>
+      void process.kill(pid, signal))
   const now = seams.now ?? Date.now
-  const sleep = seams.sleep ?? ((ms: number): void => { Bun.sleepSync(ms) })
-  const running = seams.running ?? ((pid: number): boolean => alive(pid) && !exited(pid))
-  const isService = seams.isService ?? ((pid: number): boolean => alive(pid) && isServiceFor(pid, name))
+  const sleep =
+    seams.sleep ??
+    ((ms: number): void => {
+      Bun.sleepSync(ms)
+    })
+  const running =
+    seams.running ?? ((pid: number): boolean => alive(pid) && !exited(pid))
+  const isService =
+    seams.isService ??
+    ((pid: number): boolean => alive(pid) && isServiceFor(pid, name))
   const seen = readRecord(p)
   const pid = pidIn(seen)
   if (seen === null || pid === null || !isService(pid)) return
@@ -175,8 +217,7 @@ export function stopService(p: Paths, seams: StopServiceSeams = {}): void {
   if (running(pid) && isService(pid)) {
     try {
       kill(pid, "SIGKILL")
-    } catch {
-    }
+    } catch {}
   }
   dropServiceRecord(p, seen)
 }
@@ -193,7 +234,11 @@ export interface EnsureServiceOptions {
   readonly current?: string
 }
 
-export async function ensureService(name: string, p: Paths, o: EnsureServiceOptions = {}): Promise<ServiceInfo> {
+export async function ensureService(
+  name: string,
+  p: Paths,
+  o: EnsureServiceOptions = {},
+): Promise<ServiceInfo> {
   const current = o.current ?? buildIdentity()
   const seen = readRecord(p)
   const running = readService(p)
@@ -220,8 +265,15 @@ export async function ensureService(name: string, p: Paths, o: EnsureServiceOpti
   const deadline = Date.now() + (o.timeoutMs ?? 10_000)
   while (Date.now() < deadline) {
     const info = readService(p)
-    if (info !== null && serviceFreshness(info, current) === "current" && (await answers(p.control))) return info
+    if (
+      info !== null &&
+      serviceFreshness(info, current) === "current" &&
+      (await answers(p.control))
+    )
+      return info
     await new Promise((r) => setTimeout(r, 50))
   }
-  throw new Error(`the control service for "${name}" did not start; see ${resolve(p.dir, "service.log")}`)
+  throw new Error(
+    `the control service for "${name}" did not start; see ${resolve(p.dir, "service.log")}`,
+  )
 }

@@ -14,8 +14,13 @@ export function scaleAxis(px: number, size: number): number {
   return Math.round((clamped * ABS_MAX) / (size - 1))
 }
 
-export function ppmSize(header: Buffer | string): { width: number; height: number } | null {
-  const text = typeof header === "string" ? header : header.subarray(0, 64).toString("latin1")
+export function ppmSize(
+  header: Buffer | string,
+): { width: number; height: number } | null {
+  const text =
+    typeof header === "string"
+      ? header
+      : header.subarray(0, 64).toString("latin1")
   const m = /^P6\s+(?:#[^\n]*\n\s*)*(\d+)\s+(\d+)\s/.exec(text)
   return m === null ? null : { width: Number(m[1]), height: Number(m[2]) }
 }
@@ -81,7 +86,10 @@ export function charToStroke(ch: string): Stroke | null {
   return null
 }
 
-export function textToStrokes(text: string): { strokes: readonly Stroke[]; bad: readonly string[] } {
+export function textToStrokes(text: string): {
+  strokes: readonly Stroke[]
+  bad: readonly string[]
+} {
   const strokes: Stroke[] = []
   const bad: string[] = []
   for (const ch of text.replace(/\r\n?/g, "\n")) {
@@ -140,7 +148,10 @@ const KEY_NAMES: Record<string, string> = {
   equal: "equal",
 }
 
-export function parseCombo(combo: string): { qcodes: readonly string[]; unknown: string | null } {
+export function parseCombo(combo: string): {
+  qcodes: readonly string[]
+  unknown: string | null
+} {
   const parts = combo
     .trim()
     .split(/(?<=.)[-+](?=.)/)
@@ -169,89 +180,157 @@ export function parseCombo(combo: string): { qcodes: readonly string[]; unknown:
 }
 
 export type Event = Record<string, unknown>
-export const keyEv = (qcode: string, down: boolean): Event => ({ type: "key", data: { down, key: { type: "qcode", data: qcode } } })
-export const absEv = (axis: "x" | "y", value: number): Event => ({ type: "abs", data: { axis, value } })
-export const btnEv = (button: string, down: boolean): Event => ({ type: "btn", data: { down, button } })
+export const keyEv = (qcode: string, down: boolean): Event => ({
+  type: "key",
+  data: { down, key: { type: "qcode", data: qcode } },
+})
+export const absEv = (axis: "x" | "y", value: number): Event => ({
+  type: "abs",
+  data: { axis, value },
+})
+export const btnEv = (button: string, down: boolean): Event => ({
+  type: "btn",
+  data: { down, button },
+})
 
 export const GAP_MS = 30
-const sleep = async (ms: number): Promise<void> => { await new Promise((r) => setTimeout(r, ms)) }
+const sleep = async (ms: number): Promise<void> => {
+  await new Promise((r) => setTimeout(r, ms))
+}
 
-export async function send(q: QmpSend, events: readonly Event[]): Promise<void> {
+export async function send(
+  q: QmpSend,
+  events: readonly Event[],
+): Promise<void> {
   await q("input-send-event", { events: [...events] })
 }
 
-export async function screenSize(q: QmpSend): Promise<{ width: number; height: number }> {
-  const tmp = resolve(tmpdir(), `winvm-size-${String(process.pid)}-${String(Date.now())}.ppm`)
+export async function screenSize(
+  q: QmpSend,
+): Promise<{ width: number; height: number }> {
+  const tmp = resolve(
+    tmpdir(),
+    `winvm-size-${String(process.pid)}-${String(Date.now())}.ppm`,
+  )
   try {
     await q("screendump", { filename: tmp })
     const size = ppmSize(readFileSync(tmp).subarray(0, 64))
-    if (size === null) throw new Error("could not read the screen size from a screendump")
+    if (size === null)
+      throw new Error("could not read the screen size from a screendump")
     return size
   } finally {
     rmSync(tmp, { force: true })
   }
 }
 
-export async function screenshot(p: Paths, file: string): Promise<{ width: number; height: number }> {
+export async function screenshot(
+  p: Paths,
+  file: string,
+): Promise<{ width: number; height: number }> {
   mkdirSync(dirname(file), { recursive: true })
-  await withQmp(p.qmp, async (q) => await q("screendump", { filename: file, format: "png" }), 30_000)
+  await withQmp(
+    p.qmp,
+    async (q) => await q("screendump", { filename: file, format: "png" }),
+    30_000,
+  )
   const size = pngSize(readFileSync(file).subarray(0, 32))
   if (size === null) throw new Error(`QEMU wrote ${file}, but it isn't a PNG`)
   return size
 }
 
-export async function typeText(p: Paths, strokes: readonly Stroke[]): Promise<void> {
-  await withQmp(p.qmp, async (q) => {
-    for (const s of strokes) {
-      await send(q, s.shift ? [keyEv("shift", true), keyEv(s.qcode, true)] : [keyEv(s.qcode, true)])
-      await sleep(GAP_MS)
-      await send(q, s.shift ? [keyEv(s.qcode, false), keyEv("shift", false)] : [keyEv(s.qcode, false)])
-      await sleep(GAP_MS)
-    }
-  }, 10_000)
+export async function typeText(
+  p: Paths,
+  strokes: readonly Stroke[],
+): Promise<void> {
+  await withQmp(
+    p.qmp,
+    async (q) => {
+      for (const s of strokes) {
+        await send(
+          q,
+          s.shift
+            ? [keyEv("shift", true), keyEv(s.qcode, true)]
+            : [keyEv(s.qcode, true)],
+        )
+        await sleep(GAP_MS)
+        await send(
+          q,
+          s.shift
+            ? [keyEv(s.qcode, false), keyEv("shift", false)]
+            : [keyEv(s.qcode, false)],
+        )
+        await sleep(GAP_MS)
+      }
+    },
+    10_000,
+  )
 }
 
-export async function pressCombo(p: Paths, qcodes: readonly string[]): Promise<void> {
-  await withQmp(p.qmp, async (q) => {
-    for (const k of qcodes) {
-      await send(q, [keyEv(k, true)])
-      await sleep(GAP_MS)
-    }
-    await sleep(GAP_MS * 2)
-    for (const k of [...qcodes].reverse()) {
-      await send(q, [keyEv(k, false)])
-      await sleep(GAP_MS)
-    }
-  }, 10_000)
+export async function pressCombo(
+  p: Paths,
+  qcodes: readonly string[],
+): Promise<void> {
+  await withQmp(
+    p.qmp,
+    async (q) => {
+      for (const k of qcodes) {
+        await send(q, [keyEv(k, true)])
+        await sleep(GAP_MS)
+      }
+      await sleep(GAP_MS * 2)
+      for (const k of [...qcodes].reverse()) {
+        await send(q, [keyEv(k, false)])
+        await sleep(GAP_MS)
+      }
+    },
+    10_000,
+  )
 }
 
 export type Button = "left" | "right" | "middle"
 
-export async function pointer(p: Paths, x: number, y: number, button: Button | null, clicks = 1): Promise<{ width: number; height: number }> {
-  return await withQmp(p.qmp, async (q) => {
-    const size = await screenSize(q)
-    await send(q, [absEv("x", scaleAxis(x, size.width)), absEv("y", scaleAxis(y, size.height))])
-    if (button !== null) {
-      await sleep(GAP_MS * 2)
-      for (let i = 0; i < clicks; i += 1) {
-        await send(q, [btnEv(button, true)])
-        await sleep(GAP_MS)
-        await send(q, [btnEv(button, false)])
+export async function pointer(
+  p: Paths,
+  x: number,
+  y: number,
+  button: Button | null,
+  clicks = 1,
+): Promise<{ width: number; height: number }> {
+  return await withQmp(
+    p.qmp,
+    async (q) => {
+      const size = await screenSize(q)
+      await send(q, [
+        absEv("x", scaleAxis(x, size.width)),
+        absEv("y", scaleAxis(y, size.height)),
+      ])
+      if (button !== null) {
         await sleep(GAP_MS * 2)
+        for (let i = 0; i < clicks; i += 1) {
+          await send(q, [btnEv(button, true)])
+          await sleep(GAP_MS)
+          await send(q, [btnEv(button, false)])
+          await sleep(GAP_MS * 2)
+        }
       }
-    }
-    return size
-  }, 10_000)
+      return size
+    },
+    10_000,
+  )
 }
 
 export async function scroll(p: Paths, notches: number): Promise<void> {
   const button = notches > 0 ? "wheel-down" : "wheel-up"
-  await withQmp(p.qmp, async (q) => {
-    for (let i = 0; i < Math.abs(notches); i += 1) {
-      await send(q, [btnEv(button, true)])
-      await sleep(GAP_MS)
-      await send(q, [btnEv(button, false)])
-      await sleep(GAP_MS)
-    }
-  }, 10_000)
+  await withQmp(
+    p.qmp,
+    async (q) => {
+      for (let i = 0; i < Math.abs(notches); i += 1) {
+        await send(q, [btnEv(button, true)])
+        await sleep(GAP_MS)
+        await send(q, [btnEv(button, false)])
+        await sleep(GAP_MS)
+      }
+    },
+    10_000,
+  )
 }
