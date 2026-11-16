@@ -41,6 +41,11 @@ interface TerminalViewCommonProps extends TerminalDescriptor {
   labels?: { startFailed: string; retry: string }
 }
 
+interface FocusSession {
+  readonly id: string
+  readonly transport: TerminalTransport
+}
+
 const mounted = (ref: {
   readonly current: HTMLDivElement | null
 }): HTMLDivElement | null => ref.current
@@ -115,16 +120,25 @@ export function TerminalView({
 
   const onUnmount = useRef(disposition)
   onUnmount.current = disposition
-  const focusTransport = (): void => {
+  const shownSession = useRef<FocusSession>({ id, transport })
+  shownSession.current = { id, transport }
+  const focusTransport = (session: FocusSession): void => {
     const term = terminal.current
     if (!term) return
-    const focusedTransport = transport.focus?.(id, term.cols, term.rows)
+    const focusedTransport = session.transport.focus?.(
+      session.id,
+      term.cols,
+      term.rows,
+    )
     if (focusedTransport)
       void focusedTransport.catch((error: unknown) =>
         callbacks.current.onError?.(error),
       )
   }
-  const focusEmulator = (renewLease: boolean): void => {
+  const focusEmulator = (
+    renewLease: boolean,
+    session: FocusSession = shownSession.current,
+  ): void => {
     if (!terminal.current || !nativeWindowFocused.current) return
     programmaticFocus.current = true
     try {
@@ -132,7 +146,7 @@ export function TerminalView({
     } finally {
       programmaticFocus.current = false
     }
-    if (renewLease) focusTransport()
+    if (renewLease) focusTransport(session)
   }
 
   useEffect(() => {
@@ -220,7 +234,7 @@ export function TerminalView({
           pendingFocusRequest.current > handledFocusRequest.current
         ) {
           handledFocusRequest.current = pendingFocusRequest.current
-          focusEmulator(requestedFocus.current === true)
+          focusEmulator(requestedFocus.current === true, { id, transport })
         }
 
         ;(host.current as TerminalHost).__terminal = term
@@ -390,7 +404,7 @@ export function TerminalView({
           focused === undefined &&
           !programmaticFocus.current
         )
-          focusTransport()
+          focusTransport(shownSession.current)
         onFocus?.()
       }}
       onBlur={(event) => {
