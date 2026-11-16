@@ -19,6 +19,7 @@ import {
   ensureRuntime,
   findRuntime,
   qemuCompat,
+  type Runtime,
   type RuntimeManifest,
   RuntimeMissing,
   type RuntimePin,
@@ -130,21 +131,26 @@ describe("finding the runtime", () => {
 })
 
 describe("verifying the runtime", () => {
+  const found = (o: Parameters<typeof findRuntime>[0]): Runtime => {
+    const rt = findRuntime(o)
+    if (rt === null) throw new Error("findRuntime found no runtime")
+    return rt
+  }
+
   it("checks every file of a cached runtime against the manifest", () => {
     const dir = resolve(tmp, "cache", "11.1.2-1")
     makeRuntime(dir)
-    const rt = findRuntime({
+    const rt = found({
       env: {},
       execPath: "/x/bun",
       cache: resolve(tmp, "cache"),
       pin,
     })
-    expect(rt).not.toBeNull()
-    expect(verifyRuntime(rt!)).toEqual([])
+    expect(verifyRuntime(rt)).toEqual([])
     writeFileSync(resolve(dir, "bin", "zstd"), "#!/bin/sh\necho tampered\n")
     writeFileSync(resolve(dir, "bin", "extra"), "x")
     rmSync(resolve(dir, "share", "qemu", "efi-virtio.rom"))
-    expect(verifyRuntime(rt!)).toEqual([
+    expect(verifyRuntime(rt)).toEqual([
       "bin/zstd does not match manifest.json",
       "share/qemu/efi-virtio.rom is missing",
       "bin/extra is not in manifest.json",
@@ -156,18 +162,18 @@ describe("verifying the runtime", () => {
     const dir = resolve(app, "Contents", "Resources", "runtime")
     makeRuntime(dir)
     writeFileSync(resolve(dir, "bin", "qemu-img"), "re-signed bytes")
-    const rt = findRuntime({
+    const rt = found({
       env: {},
       execPath: resolve(app, "Contents", "MacOS", "winvm"),
       cache: resolve(tmp, "c"),
       pin,
     })
-    expect(verifyRuntime(rt!, { signatureOk: () => true })).toEqual([])
+    expect(verifyRuntime(rt, { signatureOk: () => true })).toEqual([])
     expect(
-      verifyRuntime(rt!, { signatureOk: (p) => !p.endsWith("swtpm") }),
+      verifyRuntime(rt, { signatureOk: (p) => !p.endsWith("swtpm") }),
     ).toEqual(["bin/swtpm has no valid signature"])
     writeFileSync(resolve(dir, "share", "qemu", "efi-virtio.rom"), "changed")
-    expect(verifyRuntime(rt!, { signatureOk: () => true })).toEqual([
+    expect(verifyRuntime(rt, { signatureOk: () => true })).toEqual([
       "share/qemu/efi-virtio.rom does not match manifest.json",
     ])
   })
@@ -175,14 +181,14 @@ describe("verifying the runtime", () => {
   it("reports an override without a manifest rather than refusing it", () => {
     const dir = resolve(tmp, "override")
     mkdirSync(resolve(dir, "bin"), { recursive: true })
-    const rt = findRuntime({
+    const rt = found({
       env: { WINVM_RUNTIME: dir },
       execPath: "/x/bun",
       cache: resolve(tmp, "c"),
       pin,
     })
     expect(rt).toMatchObject({ source: "override", manifest: null })
-    expect(verifyRuntime(rt!)).toEqual(["no manifest.json"])
+    expect(verifyRuntime(rt)).toEqual(["no manifest.json"])
   })
 })
 

@@ -326,13 +326,14 @@ describe("winvm saves note", () => {
     writeNote("dev", "clean", { title: "Clean" })
     expect(list(parseArgs(["-i", "dev", "--json"]))).toBe(0)
     const [e] = JSON.parse(out.join("\n")) as Record<string, unknown>[]
+    if (e === undefined) throw new Error("saves --json listed no save")
     expect(e).toMatchObject({
       name: "clean",
       format: "zstd",
       title: "Clean",
       screenshot: null,
     })
-    expect(e?.thumbnail).toBe(resolve(saveDir("dev", "clean"), "thumb.png"))
-    expect((e?.notes as Record<string, unknown>).title).toBe("Clean")
+    expect(e.thumbnail).toBe(resolve(saveDir("dev", "clean"), "thumb.png"))
+    expect((e.notes as Record<string, unknown>).title).toBe("Clean")
   })
 })

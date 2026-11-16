@@ -764,17 +764,23 @@ describe("the stdio server", () => {
       )
       const byId = (id: unknown): (typeof parsed)[number] | undefined =>
         parsed.find((m) => m.id === id)
+      const resultOf = (id: number): Record<string, unknown> => {
+        const result = byId(id)?.result
+        if (result === undefined)
+          throw new Error(`no result for id ${String(id)}`)
+        return result
+      }
       expect(parsed.map((m) => String(m.id)).sort()).toEqual([
         "1",
         "2",
         "3",
         "null",
       ])
-      expect((byId(1)?.result?.serverInfo as { name: string }).name).toBe(
+      expect((resultOf(1).serverInfo as { name: string }).name).toBe(
         "winvm-nothere",
       )
-      expect((byId(2)?.result?.tools as unknown[]).length).toBe(16)
-      const call = byId(3)?.result as {
+      expect((resultOf(2).tools as unknown[]).length).toBe(16)
+      const call = resultOf(3) as {
         isError: boolean
         content: { text: string }[]
       }

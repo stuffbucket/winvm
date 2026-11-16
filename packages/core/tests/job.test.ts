@@ -30,17 +30,17 @@ describe("parseJob", () => {
         "    dest: C:\\work\\",
         "  - url: https://example.com/b.zip",
         "  - release: owner/repo",
-        "    tag: ${{ env.A }}",
+        `    tag: \${{ env.A }}`,
         "    pattern: ['*.msi', '*.zip']",
         "    dest: C:\\work\\",
         "steps:",
         "  - name: s",
         "    shell: cmd",
-        "    run: echo ${{ env.A }}",
+        `    run: echo \${{ env.A }}`,
         "    timeout: 30",
         "    continue-on-error: true",
         "    env: { B: y }",
-        "    if: ${{ always() }}",
+        `    if: \${{ always() }}`,
         "    background: true",
         "  - run: x",
         "    timeout-minutes: 2",
@@ -106,7 +106,7 @@ describe("parseJob", () => {
       `files:\n  - src: a\n    url: https://x\n${minimal}`,
       `files:\n  - release: not-a-repo\n    pattern: '*'\n${minimal}`,
       `files:\n  - release: o/r\n${minimal}`,
-      "steps:\n  - run: echo ${{ env.WINVM_SURELY_UNSET_VAR }}",
+      `steps:\n  - run: echo \${{ env.WINVM_SURELY_UNSET_VAR }}`,
       "steps: [\n",
     ]) {
       expect(() => parseJob(bad)).toThrow(JobError)
@@ -118,7 +118,7 @@ describe("interpolation", () => {
   it("takes job env, then host env, then a default", () => {
     process.env.WINVM_TEST_HOST_VAR = "host"
     const j = parseJob(
-      "env: { A: job }\nsteps:\n  - run: ${{ env.A }} ${{ env.WINVM_TEST_HOST_VAR }} ${{ env.WINVM_UNSET_X || 'dflt' }} ${{env.A||'no'}}\n",
+      `env: { A: job }\nsteps:\n  - run: \${{ env.A }} \${{ env.WINVM_TEST_HOST_VAR }} \${{ env.WINVM_UNSET_X || 'dflt' }} \${{env.A||'no'}}\n`,
     )
     expect(j.steps[0]?.run).toBe("job host dflt job")
   })
