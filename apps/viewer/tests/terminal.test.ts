@@ -25,6 +25,7 @@ import { createSocketTransport, type SessionStatus, sizedUrl } from "../ui/src/f
 import { noTabs, tabName, type Tabs, tabsReducer } from "../ui/src/features/terminal/tabs"
 import { copy } from "./copy"
 import { type FakeTermServer, startFakeTermServer } from "./fake-term-server"
+import { rejectLikeTauri } from "./reject-like-tauri"
 
 const until = async (ok: () => boolean, what: string): Promise<void> => {
   for (let i = 0; i < 200; i++) {
@@ -164,8 +165,7 @@ describe("a tab whose connect fails", () => {
 
   it("fails the tab with the timeout copy, and its Try again connects once the CLI answers", async () => {
     const transport = createSocketTransport({ connect: () => terminalEndpoint(req) })
-    // oxlint-disable-next-line typescript/prefer-promise-reject-errors -- the sidecar rejects with a plain failure object, not an Error; the test fake must do the same
-    reply = () => Promise.reject(timedOut)
+    reply = () => rejectLikeTauri(timedOut)
     // TerminalView's spawn: a rejection is its failed state, whose message the window shows.
     const error: unknown = await transport.spawn({ id: "x1", cols: 80, rows: 24 }).catch((e: unknown) => e)
     const failed = tabsReducer(tabsReducer(noTabs, { type: "open", id: "x1", request: req }), {
@@ -185,8 +185,7 @@ describe("a tab whose connect fails", () => {
   })
 
   it("keeps the CLI's own words for a terminal that exits nonzero", async () => {
-    // oxlint-disable-next-line typescript/prefer-promise-reject-errors -- the sidecar rejects with a plain failure object, not an Error; the test fake must do the same
-    reply = () => Promise.reject({ ...timedOut, kind: "exit", code: 1, stderr: "::error::the agent isn't answering\n", timeoutMs: null })
+    reply = () => rejectLikeTauri({ ...timedOut, kind: "exit", code: 1, stderr: "::error::the agent isn't answering\n", timeoutMs: null })
     const error: unknown = await terminalEndpoint(req).catch((e: unknown) => e)
     expect(errorMessage(error)).toBe("the agent isn't answering")
   })

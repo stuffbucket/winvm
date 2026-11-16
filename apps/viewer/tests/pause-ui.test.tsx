@@ -7,6 +7,8 @@ import type { JSX } from "react"
 import { GlobalRegistrator } from "@happy-dom/global-registrator"
 import { afterAll, afterEach, describe, expect, it, jest } from "bun:test"
 
+import { rejectLikeTauri } from "./reject-like-tauri"
+
 GlobalRegistrator.register()
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true })
 
@@ -66,7 +68,7 @@ function fakeTauri(): { calls: Call[]; reads(): Call[]; verb(v: string): Call } 
     const args = a?.args ?? []
     if (cmd !== "winvm") return Promise.resolve(null)
     if (!held.has(args[0] ?? "")) return Promise.resolve({ code: 1, stdout: "", stderr: "" })
-    return new Promise<Output>((resolve, reject) => {
+    return new Promise<Output>((resolve) => {
       const call: Call = {
         args,
         done: false,
@@ -76,8 +78,7 @@ function fakeTauri(): { calls: Call[]; reads(): Call[]; verb(v: string): Call } 
         },
         reject: (failure) => {
           call.done = true
-          // oxlint-disable-next-line typescript/prefer-promise-reject-errors -- Tauri rejects invoke with whatever the command returned, not an Error; the test fake forwards it unchanged
-          reject(failure)
+          resolve(rejectLikeTauri(failure))
         },
       }
       calls.push(call)
