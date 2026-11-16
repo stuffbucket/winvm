@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, writeFileSync } from "node:fs"
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
 import { join, resolve } from "node:path"
 
 interface Command {
@@ -430,7 +430,10 @@ const results: Result[] = (
 console.log("")
 table(results)
 const failed = results.filter((r) => !r.ok)
-for (const r of failed) console.log(`log: ${r.log}`)
+for (const r of failed) {
+  console.log(`log: ${r.log}`)
+  if (process.env.CI !== undefined) console.log(readFileSync(r.log, "utf8"))
+}
 if (failed.length > 0) {
   console.log(
     `\nverify: ${String(failed.length)} of ${String(results.length)} steps failed`,

@@ -105,5 +105,24 @@ jobs:
           path: ${{ steps.pnpm-store.outputs.path }}
           key: ${{ steps.pnpm-cache.outputs.cache-primary-key }}
 
+      - uses: jdx/mise-action@6612f0ef07ed2a736cd1e00a94a065522dd41195 # v5.2.5
+        with:
+          version: 2026.9.14
+          install: false
+
+      - name: Install the pinned static-analysis tools
+        run: |
+          mise trust mise.toml
+          mise trust apps/viewer/mise.toml
+          mise install
+          mise --cd apps/viewer install
+
+      # The fast group of scripts/verify.ts: biome, comments, encoding,
+      # shellcheck, shfmt, actionlint, typecheck, types, typecheck-scripts,
+      # boundaries, knip, deps, cargo fmt, cargo-deny and cargo-machete.
+      # Clippy and cargo test need the macOS target and stay local.
+      - name: Static gates
+        run: pnpm verify --fast
+
       - name: Typecheck and test
         run: pnpm check
