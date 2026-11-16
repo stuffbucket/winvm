@@ -165,38 +165,54 @@ export function FileList(p: FileListProps): JSX.Element {
 
   return (
     <div className="files__table">
-      <div className="files__head" role="row">
-        {COLUMNS.map((c) => {
-          const on = p.sort.key === c.key
-          return (
-            <button
-              key={c.key}
-              type="button"
-              role="columnheader"
-              aria-sort={
-                on ? (p.sort.descending ? "descending" : "ascending") : "none"
-              }
-              className={cx(
-                "files__heading",
-                c.className,
-                on && "files__heading--on",
-              )}
-              tabIndex={-1}
-              onMouseDown={(e) => {
-                e.preventDefault()
-              }}
-              onClick={() => {
-                p.onSort(c.key)
-              }}
-            >
-              <span className="files__heading-label">{t(c.label)}</span>
-              <span className="files__chevron" aria-hidden="true">
-                {on ? (p.sort.descending ? CHEVRON.down : CHEVRON.up) : ""}
-              </span>
-            </button>
-          )
-        })}
-      </div>
+      <table className="files__head-table">
+        <thead>
+          <tr className="files__head">
+            {COLUMNS.map((c) => {
+              const on = p.sort.key === c.key
+              return (
+                <th
+                  key={c.key}
+                  scope="col"
+                  className={c.className}
+                  aria-sort={
+                    on
+                      ? p.sort.descending
+                        ? "descending"
+                        : "ascending"
+                      : "none"
+                  }
+                >
+                  <button
+                    type="button"
+                    className={cx(
+                      "files__heading",
+                      c.className,
+                      on && "files__heading--on",
+                    )}
+                    tabIndex={-1}
+                    onMouseDown={(e) => {
+                      e.preventDefault()
+                    }}
+                    onClick={() => {
+                      p.onSort(c.key)
+                    }}
+                  >
+                    <span className="files__heading-label">{t(c.label)}</span>
+                    <span className="files__chevron" aria-hidden="true">
+                      {on
+                        ? p.sort.descending
+                          ? CHEVRON.down
+                          : CHEVRON.up
+                        : ""}
+                    </span>
+                  </button>
+                </th>
+              )
+            })}
+          </tr>
+        </thead>
+      </table>
       <div
         ref={p.list as RefObject<HTMLDivElement>}
         className="files__list"

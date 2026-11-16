@@ -34,6 +34,35 @@ const listing = {
 }
 
 describe("the Files window", () => {
+  it("heads its list with sortable column headers", async () => {
+    const invoke = (cmd: string): Promise<unknown> =>
+      Promise.resolve(
+        cmd === "agent_fetch" ? { status: 200, body: listing } : null,
+      )
+    Object.assign(window, { __TAURI__: { core: { invoke } } })
+    const host = document.createElement("div")
+    document.body.append(host)
+    const r = createRoot(host)
+    root = r
+    act(() => {
+      r.render(<FilesWindow instance="demo" initialTitle={null} />)
+    })
+    await settle()
+    const sorts = (): (string | null)[] =>
+      [...host.querySelectorAll('th[scope="col"]')].map((th) =>
+        th.getAttribute("aria-sort"),
+      )
+    expect(sorts()).toEqual(["ascending", "none", "none", "none"])
+    const size = [...host.querySelectorAll("th button")].find(
+      (b) => b.textContent?.startsWith("Size") === true,
+    )
+    if (!(size instanceof HTMLButtonElement)) throw new Error("no Size")
+    act(() => {
+      size.click()
+    })
+    expect(sorts()).toEqual(["none", "none", "descending", "none"])
+  })
+
   it("lists the folder again once a copy into it lands", async () => {
     const lists: string[] = []
     const puts: string[][] = []
