@@ -87,12 +87,16 @@ export type SyncEntry = SyncFields & Stamp
 export type OpEntry = (OpBeginFields | OpEndFields) & Stamp
 export type Entry = EntryFields & Stamp
 
-export interface Cursor {
+export interface Position {
   readonly ino: number
   readonly offset: number
 }
 
-export const START: Cursor = { ino: 0, offset: 0 }
+export interface Cursor extends Position {
+  readonly archive: Position | null
+}
+
+export const START: Cursor = { ino: 0, offset: 0, archive: null }
 
 export interface Batch {
   readonly entries: readonly Entry[]
@@ -382,8 +386,8 @@ const closeAll = (...opened: readonly (Opened | null)[]): void => {
   for (const o of opened) if (o !== null) closeSync(o.fd)
 }
 
-const holds = (o: Opened | null, cursor: Cursor): boolean =>
-  o !== null && cursor.ino !== 0 && o.ino === cursor.ino
+const holds = (o: Opened | null, at: Position | null): o is Opened =>
+  o !== null && at !== null && at.ino !== 0 && o.ino === at.ino
 
 function archiveBeside(cur: Opened | null, prev: Opened | null): Opened | null {
   if (prev === null || cur === null || prev.ino !== cur.ino) return prev
@@ -395,42 +399,74 @@ export interface ReadSeams {
   readonly betweenOpens?: () => void
 }
 
+function openBoth(
+  instance: string,
+  seams: ReadSeams,
+): { readonly cur: Opened | null; readonly prev: Opened | null } {
+  const p = pathsFor(instance)
+  const cur = openRecord(p.events)
+  seams.betweenOpens?.()
+  return { cur, prev: archiveBeside(cur, openRecord(p.eventsPrev)) }
+}
+
+function readCurrent(cur: Opened, prev: Opened | null, cursor: Cursor): Batch {
+  const tracked = holds(prev, cursor.archive) ? prev : null
+  const from = cursor.archive?.offset ?? 0
+  const late =
+    tracked === null ? null : wholeLines(tracked, Math.min(from, tracked.size))
+  const shrunk = cur.size < cursor.offset
+  const now = wholeLines(cur, shrunk ? 0 : cursor.offset)
+  return {
+    entries: parseLines(`${late?.text ?? ""}${now.text}`),
+    cursor: {
+      ino: cur.ino,
+      offset: now.end,
+      archive:
+        tracked === null || late === null
+          ? null
+          : { ino: tracked.ino, offset: late.end },
+    },
+    gap: shrunk,
+  }
+}
+
+function readAcross(
+  cur: Opened | null,
+  prev: Opened | null,
+  cursor: Cursor,
+): Batch {
+  const fromPrev = holds(prev, cursor)
+  const older =
+    prev === null
+      ? null
+      : wholeLines(prev, fromPrev ? Math.min(cursor.offset, prev.size) : 0)
+  const now = cur === null ? null : wholeLines(cur, 0)
+  const left =
+    prev === null || older === null
+      ? null
+      : { ino: prev.ino, offset: older.end }
+  return {
+    entries: parseLines(`${older?.text ?? ""}${now?.text ?? ""}`),
+    cursor:
+      cur !== null && now !== null
+        ? { ino: cur.ino, offset: now.end, archive: left }
+        : left === null
+          ? START
+          : { ...left, archive: null },
+    gap: cursor.ino !== 0 && !fromPrev,
+  }
+}
+
 export function readSince(
   instance: string,
   cursor: Cursor,
   seams: ReadSeams = {},
 ): Batch {
-  const p = pathsFor(instance)
-  const cur = openRecord(p.events)
-  seams.betweenOpens?.()
-  const prev = archiveBeside(cur, openRecord(p.eventsPrev))
+  const { cur, prev } = openBoth(instance, seams)
   try {
-    if (cur !== null && holds(cur, cursor)) {
-      const shrunk = cur.size < cursor.offset
-      const now = wholeLines(cur, shrunk ? 0 : cursor.offset)
-      return {
-        entries: parseLines(now.text),
-        cursor: { ino: cur.ino, offset: now.end },
-        gap: shrunk,
-      }
-    }
-    const fromPrev = holds(prev, cursor)
-    const older =
-      prev === null
-        ? null
-        : wholeLines(prev, fromPrev ? Math.min(cursor.offset, prev.size) : 0)
-    const now = cur === null ? null : wholeLines(cur, 0)
-    const next =
-      cur !== null && now !== null
-        ? { ino: cur.ino, offset: now.end }
-        : prev !== null && older !== null
-          ? { ino: prev.ino, offset: older.end }
-          : START
-    return {
-      entries: parseLines(`${older?.text ?? ""}${now?.text ?? ""}`),
-      cursor: next,
-      gap: cursor.ino !== 0 && !fromPrev,
-    }
+    return holds(cur, cursor)
+      ? readCurrent(cur, prev, cursor)
+      : readAcross(cur, prev, cursor)
   } finally {
     closeAll(prev, cur)
   }
@@ -443,18 +479,17 @@ function lastLineEnd(o: Opened): number {
   return from === 0 ? 0 : o.size
 }
 
+const endOf = (o: Opened): Position => ({ ino: o.ino, offset: lastLineEnd(o) })
+
 export function endCursor(instance: string): Cursor {
-  const p = pathsFor(instance)
-  for (const file of [p.events, p.eventsPrev]) {
-    const o = openRecord(file)
-    if (o === null) continue
-    try {
-      return { ino: o.ino, offset: lastLineEnd(o) }
-    } finally {
-      closeSync(o.fd)
-    }
+  const { cur, prev } = openBoth(instance, {})
+  try {
+    if (cur !== null)
+      return { ...endOf(cur), archive: prev === null ? null : endOf(prev) }
+    return prev === null ? START : { ...endOf(prev), archive: null }
+  } finally {
+    closeAll(prev, cur)
   }
-  return START
 }
 
 export const qmpEvent =

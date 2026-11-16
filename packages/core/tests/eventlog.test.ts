@@ -1,14 +1,17 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test"
 import {
   appendFileSync,
+  closeSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
+  openSync,
   readFileSync,
   renameSync,
   rmSync,
   statSync,
   writeFileSync,
+  writeSync,
 } from "node:fs"
 import { tmpdir } from "node:os"
 import { resolve } from "node:path"
@@ -60,6 +63,9 @@ const note = (
 })
 
 const all = (): readonly Entry[] => readSince(NAME, START).entries
+
+const lateLine = (what: string): string =>
+  `${JSON.stringify({ t: "2026-11-01T00:00:00.000Z", instance: NAME, kind: "service", what })}\n`
 
 const whats = (entries: readonly Entry[]): readonly string[] =>
   entries.map((e) => (e.kind === "service" ? e.what : e.kind))
@@ -397,6 +403,33 @@ describe("bounding the event record", () => {
     expect(gaps).toBe(0)
     expect(seen).toEqual(Array.from({ length: total }, (_, i) => i))
   }, 60_000)
+
+  it("picks up a line written into the archive after the cursor had moved past the rotation", () => {
+    appendEntry(NAME, note("one"))
+    const before = readSince(NAME, START).cursor
+    const late = openSync(p.events, "a")
+    rotateEvents(NAME, 1)
+    appendEntry(NAME, note("two"))
+    const moved = readSince(NAME, before)
+    expect(whats(moved.entries)).toEqual(["two"])
+    writeSync(late, lateLine("late"))
+    closeSync(late)
+    const r = readSince(NAME, moved.cursor)
+    expect(whats(r.entries)).toEqual(["late"])
+    expect(r.gap).toBe(false)
+    expect(readSince(NAME, r.cursor).entries).toEqual([])
+  })
+
+  it("picks up a late line in the archive behind a cursor taken just after a rotation", () => {
+    appendEntry(NAME, note("one"))
+    const late = openSync(p.events, "a")
+    rotateEvents(NAME, 1)
+    appendEntry(NAME, note("two"))
+    const cursor = endCursor(NAME)
+    writeSync(late, lateLine("late"))
+    closeSync(late)
+    expect(whats(readSince(NAME, cursor).entries)).toEqual(["late"])
+  })
 
   it("starts over when the record was replaced underneath a cursor", () => {
     appendEntry(NAME, note("one"))
