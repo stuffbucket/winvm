@@ -24,13 +24,53 @@ const OUT = resolve(import.meta.dir, "..", "ui", "src", "styles", "tokens.css")
 
 const kebab = (s: string): string => s.replace(/([a-z0-9])([A-Z])/g, "$1-$2").toLowerCase()
 
+const WIDTH = 80
+
+function topLevelItems(value: string): string[] {
+  const items: string[] = []
+  let depth = 0
+  let start = 0
+  for (let i = 0; i < value.length; i += 1) {
+    const char = value.charAt(i)
+    if (char === "(") depth += 1
+    else if (char === ")") depth -= 1
+    else if (char === "," && depth === 0) {
+      items.push(value.slice(start, i).trim())
+      start = i + 1
+    }
+  }
+  items.push(value.slice(start).trim())
+  return items
+}
+
+function declaration(indent: string, name: string, value: string): string[] {
+  const line = `${indent}--${name}: ${value};`
+  const items = topLevelItems(value)
+  if (line.length <= WIDTH || items.length < 2) return [line]
+  const inner = `${indent}  `
+  const lines: string[] = []
+  let current = inner
+  items.forEach((item, index) => {
+    const piece = `${item}${index === items.length - 1 ? ";" : ","}`
+    const joined = current === inner ? `${inner}${piece}` : `${current} ${piece}`
+    if (joined.length > WIDTH && current !== inner) {
+      lines.push(current)
+      current = `${inner}${piece}`
+    } else {
+      current = joined
+    }
+  })
+  lines.push(current)
+  return [`${indent}--${name}:`, ...lines]
+}
+
 const group = (prefix: string, values: Record<string, string>): string[] =>
-  Object.entries(values).map(([k, v]) => `  --${prefix}-${kebab(k)}: ${v};`)
+  Object.entries(values).flatMap(([k, v]) => declaration("  ", `${prefix}-${kebab(k)}`, v))
 
 type ThemeColors = Record<string, string>
 
 const declarations = (colors: ThemeColors, indent: string): string[] =>
-  Object.entries(colors).map(([k, v]) => `${indent}--${kebab(k)}: ${v};`)
+  Object.entries(colors).flatMap(([k, v]) => declaration(indent, kebab(k), v))
 
 function themeBlocks(dark: ThemeColors, light: ThemeColors): string[] {
   const darkKeys = Object.keys(dark).sort().join(",")
