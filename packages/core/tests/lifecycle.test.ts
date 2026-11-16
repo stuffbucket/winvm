@@ -11,7 +11,7 @@ import {
 } from "node:fs"
 import { tmpdir } from "node:os"
 import { resolve } from "node:path"
-
+import { readSince, START } from "../src/eventlog"
 import {
   ManagementError,
   type ReconcileOptions,
@@ -730,6 +730,17 @@ describe("a replacement that fails", () => {
     expect((error as ManagementError).message).toContain(
       resolve(p.dir, "service.log"),
     )
+    expect(
+      readSince("t", START)
+        .entries.filter((e) => e.kind === "op" && e.phase === "end")
+        .at(-1),
+    ).toMatchObject({
+      operation: "reconcile",
+      ok: false,
+      error: expect.stringContaining(
+        "could not start a current control service",
+      ) as string,
+    })
     expect(live(svc.pid)).toBe(false)
     expect(readService(p)).toBeNull()
     expect(watcherRecord("t")?.build).toBe(CURRENT)
