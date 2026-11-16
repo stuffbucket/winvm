@@ -18,21 +18,34 @@ interface SharePanelProps {
   onStop: () => void
 }
 
-type Busy = { readonly id: ClaudeClientId; readonly verb: "install" | "uninstall" }
+type Busy = {
+  readonly id: ClaudeClientId
+  readonly verb: "install" | "uninstall"
+}
 
 const AFTER: Record<ClaudeClientId, string> = {
   "claude-code": "claude.newSession",
   "claude-desktop": "claude.restartDesktop",
 }
 
-function CopyRow({ label, copyLabel, value }: { readonly label: string; readonly copyLabel: string; readonly value: string }): JSX.Element {
+function CopyRow({
+  label,
+  copyLabel,
+  value,
+}: {
+  readonly label: string
+  readonly copyLabel: string
+  readonly value: string
+}): JSX.Element {
   const [copied, setCopied] = useState(false)
   const copy = (): void => {
     navigator.clipboard
       .writeText(value)
       .then(() => {
         setCopied(true)
-        setTimeout(() => { setCopied(false) }, 1500)
+        setTimeout(() => {
+          setCopied(false)
+        }, 1500)
       })
       .catch(() => undefined)
   }
@@ -42,7 +55,13 @@ function CopyRow({ label, copyLabel, value }: { readonly label: string; readonly
       <dt>{label}</dt>
       <dd className="copyable">
         <OneLine value={value} />
-        <button type="button" className="btn btn--ghost btn--icon" aria-label={tip} title={tip} onClick={copy}>
+        <button
+          type="button"
+          className="btn btn--ghost btn--icon"
+          aria-label={tip}
+          title={tip}
+          onClick={copy}
+        >
           <Icon name={copied ? "check" : "copy"} />
         </button>
       </dd>
@@ -60,15 +79,34 @@ interface ClientRowProps {
   onCancel: () => void
 }
 
-function ClientRow({ client: c, busy, confirming, onAdd, onRemove, onConfirm, onCancel }: ClientRowProps): JSX.Element {
+function ClientRow({
+  client: c,
+  busy,
+  confirming,
+  onAdd,
+  onRemove,
+  onConfirm,
+  onCancel,
+}: ClientRowProps): JSX.Element {
   const disabled = busy !== null
   const vars = { client: c.name }
   let end: JSX.Element
-  if (!c.available) end = <span className="client__state">{t("claude.notInstalled")}</span>
-  else if (busy?.id === c.id) end = <span className="client__state">{t(busy.verb === "install" ? "claude.adding" : "claude.removing")}</span>
+  if (!c.available)
+    end = <span className="client__state">{t("claude.notInstalled")}</span>
+  else if (busy?.id === c.id)
+    end = (
+      <span className="client__state">
+        {t(busy.verb === "install" ? "claude.adding" : "claude.removing")}
+      </span>
+    )
   else if (!c.added)
     end = (
-      <Button size="sm" aria-label={t("claude.addTo", vars)} disabled={disabled || confirming} onClick={onAdd}>
+      <Button
+        size="sm"
+        aria-label={t("claude.addTo", vars)}
+        disabled={disabled || confirming}
+        onClick={onAdd}
+      >
         {t("claude.add")}
       </Button>
     )
@@ -81,11 +119,22 @@ function ClientRow({ client: c, busy, confirming, onAdd, onRemove, onConfirm, on
             {t("claude.added")}
           </span>
         ) : (
-          <Button size="sm" title={t("claude.updateTip", vars)} disabled={disabled} onClick={onAdd}>
+          <Button
+            size="sm"
+            title={t("claude.updateTip", vars)}
+            disabled={disabled}
+            onClick={onAdd}
+          >
             {t("claude.update")}
           </Button>
         )}
-        <Button size="sm" variant="ghost" aria-label={t("claude.removeFrom", vars)} disabled={disabled} onClick={onRemove}>
+        <Button
+          size="sm"
+          variant="ghost"
+          aria-label={t("claude.removeFrom", vars)}
+          disabled={disabled}
+          onClick={onRemove}
+        >
           {t("claude.remove")}
         </Button>
       </>
@@ -103,7 +152,12 @@ function ClientRow({ client: c, busy, confirming, onAdd, onRemove, onConfirm, on
             <Button size="sm" variant="ghost" onClick={onCancel}>
               {t("confirm.cancel")}
             </Button>
-            <Button size="sm" variant="primary" aria-label={t("claude.addTo", vars)} onClick={onConfirm}>
+            <Button
+              size="sm"
+              variant="primary"
+              aria-label={t("claude.addTo", vars)}
+              onClick={onConfirm}
+            >
               {t("claude.add")}
             </Button>
           </div>
@@ -113,7 +167,15 @@ function ClientRow({ client: c, busy, confirming, onAdd, onRemove, onConfirm, on
   )
 }
 
-export function SharePanel({ instance, guestReady, share, starting, error, onStart, onStop }: SharePanelProps): JSX.Element {
+export function SharePanel({
+  instance,
+  guestReady,
+  share,
+  starting,
+  error,
+  onStart,
+  onStop,
+}: SharePanelProps): JSX.Element {
   const [clients, setClients] = useState<readonly ClaudeClient[] | null>(null)
   const [problem, setProblem] = useState<string | null>(null)
   const [busy, setBusy] = useState<Busy | null>(null)
@@ -126,7 +188,11 @@ export function SharePanel({ instance, guestReady, share, starting, error, onSta
       const out = await winvm("mcp", "status", "-i", instance, "--json")
       const got = parseClaudeStatus(out.stdout)
       setClients(got?.clients ?? [])
-      setProblem(got === null ? `${t("claude.statusError")} ${outputText(out)}`.trim() : null)
+      setProblem(
+        got === null
+          ? `${t("claude.statusError")} ${outputText(out)}`.trim()
+          : null,
+      )
     } catch (e: unknown) {
       setClients([])
       setProblem(`${t("claude.statusError")} ${String(e)}`)
@@ -137,7 +203,10 @@ export function SharePanel({ instance, guestReady, share, starting, error, onSta
     void refresh()
   }, [refresh])
 
-  const change = async (id: ClaudeClientId, verb: "install" | "uninstall"): Promise<void> => {
+  const change = async (
+    id: ClaudeClientId,
+    verb: "install" | "uninstall",
+  ): Promise<void> => {
     setConfirming(null)
     setAfter(null)
     setProblem(null)
@@ -172,12 +241,15 @@ export function SharePanel({ instance, guestReady, share, starting, error, onSta
                   busy={busy}
                   confirming={confirming === c.id}
                   onAdd={() => {
-                    if (c.id === "claude-desktop" && !c.added) setConfirming(c.id)
+                    if (c.id === "claude-desktop" && !c.added)
+                      setConfirming(c.id)
                     else void change(c.id, "install")
                   }}
                   onRemove={() => void change(c.id, "uninstall")}
                   onConfirm={() => void change(c.id, "install")}
-                  onCancel={() => { setConfirming(null) }}
+                  onCancel={() => {
+                    setConfirming(null)
+                  }}
                 />
               ))}
             </ul>
@@ -191,22 +263,42 @@ export function SharePanel({ instance, guestReady, share, starting, error, onSta
         {problem !== null && <p className="action__error">{problem}</p>}
       </section>
 
-      <details className="disclosure" open={otherOpen} onToggle={(e) => { setOtherOpen(e.currentTarget.open) }}>
+      <details
+        className="disclosure"
+        open={otherOpen}
+        onToggle={(e) => {
+          setOtherOpen(e.currentTarget.open)
+        }}
+      >
         <summary className="disclosure__summary">{t("share.other")}</summary>
         <div className="disclosure__body">
           <p className="action__hint">{t("share.body")}</p>
           {share === null ? (
             <div className="action__row">
-              <Button size="sm" disabled={starting || !guestReady} onClick={onStart}>
+              <Button
+                size="sm"
+                disabled={starting || !guestReady}
+                onClick={onStart}
+              >
                 {starting ? t("share.starting") : t("share.start")}
               </Button>
-              {!guestReady && <span className="action__hint">{t("share.needsRunning")}</span>}
+              {!guestReady && (
+                <span className="action__hint">{t("share.needsRunning")}</span>
+              )}
             </div>
           ) : (
             <>
               <dl className="kv">
-                <CopyRow label={t("share.address")} copyLabel={t("share.copyAddress")} value={share.url} />
-                <CopyRow label={t("share.token")} copyLabel={t("share.copyToken")} value={share.token} />
+                <CopyRow
+                  label={t("share.address")}
+                  copyLabel={t("share.copyAddress")}
+                  value={share.url}
+                />
+                <CopyRow
+                  label={t("share.token")}
+                  copyLabel={t("share.copyToken")}
+                  value={share.token}
+                />
               </dl>
               <p className="action__hint">{t("share.hint")}</p>
               <div className="action__row">

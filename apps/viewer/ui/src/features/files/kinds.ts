@@ -60,7 +60,10 @@ const BY_EXT: Readonly<Record<string, Kind>> = Object.fromEntries(
       ["archive", "zip 7z rar tar gz tgz bz2 xz zst cab"],
       ["audio", "mp3 wav flac m4a aac ogg wma"],
       ["video", "mp4 mov mkv avi wmv webm m4v"],
-      ["code", "js mjs cjs ts tsx jsx py rs c h cpp hpp cs go java json xml yaml yml toml html htm css"],
+      [
+        "code",
+        "js mjs cjs ts tsx jsx py rs c h cpp hpp cs go java json xml yaml yml toml html htm css",
+      ],
       ["script", "ps1 psm1 psd1 bat cmd sh vbs reg ahk"],
       ["app", "exe com scr"],
       ["installer", "msi msix msixbundle appx appxbundle"],
@@ -80,7 +83,9 @@ const BY_EXT: Readonly<Record<string, Kind>> = Object.fromEntries(
 
 function extension(name: string): string {
   const dot = name.lastIndexOf(".")
-  return dot > 0 && dot < name.length - 1 ? name.slice(dot + 1).toLowerCase() : ""
+  return dot > 0 && dot < name.length - 1
+    ? name.slice(dot + 1).toLowerCase()
+    : ""
 }
 
 export function kindOf(name: string, dir: boolean): Kind {
@@ -93,9 +98,16 @@ export function glyphOf(name: string, dir: boolean): string {
   return GLYPH[kindOf(name, dir)]
 }
 
-export function kindLabel(name: string, dir: boolean, label: (key: string, values?: Record<string, string>) => string): string {
+export function kindLabel(
+  name: string,
+  dir: boolean,
+  label: (key: string, values?: Record<string, string>) => string,
+): string {
   const kind = kindOf(name, dir)
   const ext = extension(name).toUpperCase()
-  if (kind === "other") return ext === "" ? label("files.kind.plain") : label("files.kind.other", { ext })
+  if (kind === "other")
+    return ext === ""
+      ? label("files.kind.plain")
+      : label("files.kind.other", { ext })
   return label(`files.kind.${kind}`, { ext })
 }

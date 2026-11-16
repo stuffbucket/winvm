@@ -22,7 +22,10 @@ export function terminalTheme(dark: boolean): TerminalTheme {
       selectionBackground: c.terminalSelection,
     },
   }
-  return { ...resolveTerminalAppearance(settings, dark, c.surfaceBase).theme, cursorAccent: c.surfaceBase }
+  return {
+    ...resolveTerminalAppearance(settings, dark, c.surfaceBase).theme,
+    cursorAccent: c.surfaceBase,
+  }
 }
 
 const PX_PER_REM = 16
@@ -44,13 +47,19 @@ export const terminalTypography: TerminalTypography = {
 const LIGHT = "(prefers-color-scheme: light)"
 
 export function useDark(): boolean {
-  const [dark, setDark] = useState(() => typeof matchMedia !== "function" || !matchMedia(LIGHT).matches)
+  const [dark, setDark] = useState(
+    () => typeof matchMedia !== "function" || !matchMedia(LIGHT).matches,
+  )
   useEffect(() => {
     if (typeof matchMedia !== "function") return
     const query = matchMedia(LIGHT)
-    const change = (): void => { setDark(!query.matches) }
+    const change = (): void => {
+      setDark(!query.matches)
+    }
     query.addEventListener("change", change)
-    return () => { query.removeEventListener("change", change) }
+    return () => {
+      query.removeEventListener("change", change)
+    }
   }, [])
   return dark
 }

@@ -1,6 +1,19 @@
 import type { Phase, Status, VmOperation } from "../../model"
 
-export type Verb = "start" | "stop" | "reboot" | "pause" | "resume" | "sleep" | "wake" | "lock" | "kill" | "setup" | "save" | "load" | "stow"
+export type Verb =
+  | "start"
+  | "stop"
+  | "reboot"
+  | "pause"
+  | "resume"
+  | "sleep"
+  | "wake"
+  | "lock"
+  | "kill"
+  | "setup"
+  | "save"
+  | "load"
+  | "stow"
 
 export const operationFor = (verb: Verb): VmOperation => verb
 
@@ -53,7 +66,11 @@ export class StatusGuard {
   }
 }
 
-export function shownPhase(held: Phase | null, status: Status | null, statusPhase: (s: Status) => Phase): Phase | null {
+export function shownPhase(
+  held: Phase | null,
+  status: Status | null,
+  statusPhase: (s: Status) => Phase,
+): Phase | null {
   if (held !== null) return held
   return status === null ? null : statusPhase(status)
 }

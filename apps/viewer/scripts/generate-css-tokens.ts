@@ -22,7 +22,8 @@ import {
 
 const OUT = resolve(import.meta.dir, "..", "ui", "src", "styles", "tokens.css")
 
-const kebab = (s: string): string => s.replace(/([a-z0-9])([A-Z])/g, "$1-$2").toLowerCase()
+const kebab = (s: string): string =>
+  s.replace(/([a-z0-9])([A-Z])/g, "$1-$2").toLowerCase()
 
 const WIDTH = 80
 
@@ -52,7 +53,8 @@ function declaration(indent: string, name: string, value: string): string[] {
   let current = inner
   items.forEach((item, index) => {
     const piece = `${item}${index === items.length - 1 ? ";" : ","}`
-    const joined = current === inner ? `${inner}${piece}` : `${current} ${piece}`
+    const joined =
+      current === inner ? `${inner}${piece}` : `${current} ${piece}`
     if (joined.length > WIDTH && current !== inner) {
       lines.push(current)
       current = `${inner}${piece}`
@@ -65,7 +67,9 @@ function declaration(indent: string, name: string, value: string): string[] {
 }
 
 const group = (prefix: string, values: Record<string, string>): string[] =>
-  Object.entries(values).flatMap(([k, v]) => declaration("  ", `${prefix}-${kebab(k)}`, v))
+  Object.entries(values).flatMap(([k, v]) =>
+    declaration("  ", `${prefix}-${kebab(k)}`, v),
+  )
 
 type ThemeColors = Record<string, string>
 
@@ -75,7 +79,10 @@ const declarations = (colors: ThemeColors, indent: string): string[] =>
 function themeBlocks(dark: ThemeColors, light: ThemeColors): string[] {
   const darkKeys = Object.keys(dark).sort().join(",")
   const lightKeys = Object.keys(light).sort().join(",")
-  if (darkKeys !== lightKeys) throw new Error(`themes.dark and themes.light must declare the same colors.\n  dark:  ${darkKeys}\n  light: ${lightKeys}`)
+  if (darkKeys !== lightKeys)
+    throw new Error(
+      `themes.dark and themes.light must declare the same colors.\n  dark:  ${darkKeys}\n  light: ${lightKeys}`,
+    )
   return [
     ":root {",
     "  color-scheme: dark;",
@@ -141,7 +148,9 @@ if (import.meta.main) {
   const css = tokensCss()
   if (process.argv.includes("--check")) {
     if (readFileSync(OUT, "utf8") !== css) {
-      console.error("::error::tokens.css is stale — run `bun scripts/generate-css-tokens.ts`")
+      console.error(
+        "::error::tokens.css is stale — run `bun scripts/generate-css-tokens.ts`",
+      )
       process.exit(1)
     }
   } else {

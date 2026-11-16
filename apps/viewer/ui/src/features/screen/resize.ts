@@ -21,7 +21,9 @@ export interface LiveResizeOptions {
 
 const realTimers: Timers = {
   set: (fn, ms) => setTimeout(fn, ms),
-  clear: (t) => { clearTimeout(t as ReturnType<typeof setTimeout>) },
+  clear: (t) => {
+    clearTimeout(t as ReturnType<typeof setTimeout>)
+  },
 }
 
 export class LiveResize {
@@ -53,12 +55,21 @@ export class LiveResize {
     this.wanted = size
     if (!this.live) this.endedAt = this.now()
     this.clearStill()
-    if (!this.inFlight && sameSize(size, this.asked) && sameSize(size, this.drawn)) {
+    if (
+      !this.inFlight &&
+      sameSize(size, this.asked) &&
+      sameSize(size, this.drawn)
+    ) {
       if (!this.live) this.settle(false)
       return
     }
     this.enter()
-    this.still = this.timers.set(() => { this.flush() }, this.live ? (this.o.stillMs ?? 250) : (this.o.idleMs ?? 120))
+    this.still = this.timers.set(
+      () => {
+        this.flush()
+      },
+      this.live ? (this.o.stillMs ?? 250) : (this.o.idleMs ?? 120),
+    )
   }
 
   liveStart(): void {
@@ -119,7 +130,8 @@ export class LiveResize {
 
   private maybeSettle(): void {
     if (this.phase !== "resizing" || this.live) return
-    if (sameSize(this.drawn, this.asked) && sameSize(this.asked, this.wanted)) this.settle(false)
+    if (sameSize(this.drawn, this.asked) && sameSize(this.asked, this.wanted))
+      this.settle(false)
   }
 
   private enter(): void {

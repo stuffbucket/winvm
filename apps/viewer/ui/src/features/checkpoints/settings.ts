@@ -9,7 +9,10 @@ const Settings = z.object({
 
 export type CheckpointSettings = z.infer<typeof Settings>
 
-export const DEFAULT_SETTINGS: CheckpointSettings = { showAutomatic: true, zoom: null }
+export const DEFAULT_SETTINGS: CheckpointSettings = {
+  showAutomatic: true,
+  zoom: null,
+}
 
 const SECTION = "checkpoints"
 
@@ -18,6 +21,8 @@ export function parseSettings(raw: unknown): CheckpointSettings {
   return r.success ? r.data : DEFAULT_SETTINGS
 }
 
-export const loadSettings = async (): Promise<CheckpointSettings> => parseSettings(await readSettings(SECTION))
+export const loadSettings = async (): Promise<CheckpointSettings> =>
+  parseSettings(await readSettings(SECTION))
 
-export const saveSettings = (s: CheckpointSettings): Promise<void> => writeSettings(SECTION, s)
+export const saveSettings = (s: CheckpointSettings): Promise<void> =>
+  writeSettings(SECTION, s)

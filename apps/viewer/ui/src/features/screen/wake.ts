@@ -23,12 +23,20 @@ export interface WakeTimers {
 
 const realTimers: WakeTimers = {
   every: (fn, ms) => setInterval(fn, ms),
-  stop: (t) => { clearInterval(t as ReturnType<typeof setInterval>) },
+  stop: (t) => {
+    clearInterval(t as ReturnType<typeof setInterval>)
+  },
 }
 
-export function keepRefreshing(sock: WakeSock, active: () => boolean, timers: WakeTimers = realTimers): () => void {
+export function keepRefreshing(
+  sock: WakeSock,
+  active: () => boolean,
+  timers: WakeTimers = realTimers,
+): () => void {
   const t = timers.every(() => {
     if (active()) sendWake(sock)
   }, WAKE_MS)
-  return () => { timers.stop(t) }
+  return () => {
+    timers.stop(t)
+  }
 }

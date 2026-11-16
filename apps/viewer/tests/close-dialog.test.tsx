@@ -6,11 +6,14 @@ Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true })
 
 const { act } = await import("react")
 const { createRoot } = await import("react-dom/client")
-const { ClosePolicyDialog } = await import("../ui/src/features/close/ClosePolicyDialog")
+const { ClosePolicyDialog } = await import(
+  "../ui/src/features/close/ClosePolicyDialog"
+)
 const { parseStatus } = await import("../ui/src/model")
 const { copy } = await import("./copy")
 
-type CloseFlowState = import("../ui/src/features/close/useCloseFlow").CloseFlowState
+type CloseFlowState =
+  import("../ui/src/features/close/useCloseFlow").CloseFlowState
 type CloseChoice = import("../ui/src/features/close/useCloseFlow").CloseChoice
 type Status = import("../ui/src/model").Status
 
@@ -54,14 +57,17 @@ interface Heard {
   cancels: number
 }
 
-function render(state: CloseFlowState, heard: Heard = { chose: [], remember: [], cancels: 0 }): { host: HTMLElement; heard: Heard; show: (next: CloseFlowState) => void } {
+function render(
+  state: CloseFlowState,
+  heard: Heard = { chose: [], remember: [], cancels: 0 },
+): { host: HTMLElement; heard: Heard; show: (next: CloseFlowState) => void } {
   const host = document.createElement("div")
   document.body.append(host)
   const r = createRoot(host)
   root = r
-  const show = (next: CloseFlowState): void =>
-    { act(() =>
-      { r.render(
+  const show = (next: CloseFlowState): void => {
+    act(() => {
+      r.render(
         <ClosePolicyDialog
           state={next}
           onChoose={(p) => heard.chose.push(p)}
@@ -70,22 +76,34 @@ function render(state: CloseFlowState, heard: Heard = { chose: [], remember: [],
             heard.cancels += 1
           }}
         />,
-      ) },
-    ) }
+      )
+    })
+  }
   show(state)
   return { host, heard, show }
 }
 
-const dialog = (host: HTMLElement): HTMLDialogElement | null => host.querySelector<HTMLDialogElement>("dialog.close-dialog")
+const dialog = (host: HTMLElement): HTMLDialogElement | null =>
+  host.querySelector<HTMLDialogElement>("dialog.close-dialog")
 const buttonNamed = (host: HTMLElement, label: string): HTMLButtonElement => {
-  const found = [...host.querySelectorAll<HTMLButtonElement>("button")].find((b) => b.querySelector(".close-dialog__choice-label")?.textContent === label || b.textContent === label)
+  const found = [...host.querySelectorAll<HTMLButtonElement>("button")].find(
+    (b) =>
+      b.querySelector(".close-dialog__choice-label")?.textContent === label ||
+      b.textContent === label,
+  )
   if (found === undefined) throw new Error(`no ${label} button`)
   return found
 }
 
 describe("ClosePolicyDialog", () => {
   it("asks what should happen to one machine, named by its title, with its place in the queue and the three choices explained", () => {
-    const { host, heard } = render({ kind: "asking", machine: machine("work", "Work PC"), index: 2, total: 3, remember: false })
+    const { host, heard } = render({
+      kind: "asking",
+      machine: machine("work", "Work PC"),
+      index: 2,
+      total: 3,
+      remember: false,
+    })
     const el = dialog(host)
     expect(el?.open).toBe(true)
     expect(el?.querySelector("h2")?.textContent).toBe(copy("close.title"))
@@ -100,51 +118,105 @@ describe("ClosePolicyDialog", () => {
     ] as const) {
       const b = buttonNamed(host, copy(key))
       expect(b.textContent).toContain(copy(`${key}.body`))
-      act(() => { b.click() })
+      act(() => {
+        b.click()
+      })
       expect(heard.chose.at(-1)).toBe(policy)
     }
-    expect([copy("close.leave"), copy("close.stow"), copy("close.shutdown")]).toEqual(["Leave Running", "Stow Windows", "Shut Down"])
+    expect([
+      copy("close.leave"),
+      copy("close.stow"),
+      copy("close.shutdown"),
+    ]).toEqual(["Leave Running", "Stow Windows", "Shut Down"])
 
-    act(() => { buttonNamed(host, copy("confirm.cancel")).click() })
+    act(() => {
+      buttonNamed(host, copy("confirm.cancel")).click()
+    })
     expect(heard.cancels).toBe(1)
   })
 
   it("leaves out the progress when there is only one machine to ask about", () => {
-    const { host } = render({ kind: "asking", machine: machine("solo"), index: 1, total: 1, remember: false })
+    const { host } = render({
+      kind: "asking",
+      machine: machine("solo"),
+      index: 1,
+      total: 1,
+      remember: false,
+    })
     expect(dialog(host)?.textContent).toContain("solo")
     expect(dialog(host)?.textContent).not.toContain("Machine 1 of 1")
   })
 
   it("offers Remember unchecked on every ask, and reports a change to it", () => {
-    const first: CloseFlowState = { kind: "asking", machine: machine("a"), index: 1, total: 2, remember: false }
+    const first: CloseFlowState = {
+      kind: "asking",
+      machine: machine("a"),
+      index: 1,
+      total: 2,
+      remember: false,
+    }
     const { host, heard, show } = render(first)
     const box = (): HTMLInputElement => {
-      const input = dialog(host)?.querySelector<HTMLInputElement>('input[type="checkbox"]')
+      const input = dialog(host)?.querySelector<HTMLInputElement>(
+        'input[type="checkbox"]',
+      )
       if (input == null) throw new Error("no Remember box")
       return input
     }
     expect(box().closest("label")?.textContent).toBe(copy("close.remember"))
     expect(copy("close.remember")).toBe("Remember for this Windows machine")
     expect(box().checked).toBe(false)
-    act(() => { box().click() })
+    act(() => {
+      box().click()
+    })
     expect(heard.remember).toEqual([true])
     show({ ...first, remember: true })
     expect(box().checked).toBe(true)
-    show({ kind: "asking", machine: machine("b"), index: 2, total: 2, remember: false })
+    show({
+      kind: "asking",
+      machine: machine("b"),
+      index: 2,
+      total: 2,
+      remember: false,
+    })
     expect(box().checked).toBe(false)
   })
 
   it("puts focus on Cancel when it asks, and again when it asks about the next machine", () => {
-    const { host, show } = render({ kind: "asking", machine: machine("a"), index: 1, total: 2, remember: false })
-    expect(document.activeElement).toBe(buttonNamed(host, copy("confirm.cancel")))
-    act(() => { buttonNamed(host, copy("close.stow")).focus() })
+    const { host, show } = render({
+      kind: "asking",
+      machine: machine("a"),
+      index: 1,
+      total: 2,
+      remember: false,
+    })
+    expect(document.activeElement).toBe(
+      buttonNamed(host, copy("confirm.cancel")),
+    )
+    act(() => {
+      buttonNamed(host, copy("close.stow")).focus()
+    })
     expect(document.activeElement).toBe(buttonNamed(host, copy("close.stow")))
-    show({ kind: "asking", machine: machine("b"), index: 2, total: 2, remember: false })
-    expect(document.activeElement).toBe(buttonNamed(host, copy("confirm.cancel")))
+    show({
+      kind: "asking",
+      machine: machine("b"),
+      index: 2,
+      total: 2,
+      remember: false,
+    })
+    expect(document.activeElement).toBe(
+      buttonNamed(host, copy("confirm.cancel")),
+    )
   })
 
   it("treats Escape and a click on the backdrop as Cancel", () => {
-    const { host, heard } = render({ kind: "asking", machine: machine("a"), index: 1, total: 1, remember: false })
+    const { host, heard } = render({
+      kind: "asking",
+      machine: machine("a"),
+      index: 1,
+      total: 1,
+      remember: false,
+    })
     const el = dialog(host)
     if (el === null) throw new Error("no dialog")
     const escape = new Event("cancel", { cancelable: true })
@@ -154,7 +226,9 @@ describe("ClosePolicyDialog", () => {
     expect(escape.defaultPrevented).toBe(true)
     expect(heard.cancels).toBe(1)
     expect(el.open).toBe(true)
-    act(() => { el.click() })
+    act(() => {
+      el.click()
+    })
     expect(heard.cancels).toBe(2)
     act(() => el.querySelector<HTMLElement>(".close-dialog__machine")?.click())
     expect(heard.cancels).toBe(2)
@@ -171,7 +245,9 @@ describe("ClosePolicyDialog", () => {
     })
     const el = dialog(host)
     expect(el?.open).toBe(true)
-    expect(el?.querySelector("[role=status]")?.textContent).toBe(copy("operation.save"))
+    expect(el?.querySelector("[role=status]")?.textContent).toBe(
+      copy("operation.save"),
+    )
     expect(el?.textContent).toContain(copy("close.waiting"))
     expect(el?.textContent).toContain("Lab")
     expect(el?.textContent).toContain("Machine 1 of 2")
@@ -180,7 +256,9 @@ describe("ClosePolicyDialog", () => {
     const cancel = buttonNamed(host, copy("confirm.cancel"))
     expect(cancel.disabled).toBe(false)
     expect(document.activeElement).toBe(cancel)
-    act(() => { cancel.click() })
+    act(() => {
+      cancel.click()
+    })
     expect(heard.cancels).toBe(1)
     const escape = new Event("cancel", { cancelable: true })
     act(() => {
@@ -191,12 +269,21 @@ describe("ClosePolicyDialog", () => {
 
   it("goes once the close runs its own stow or shutdown, so nothing in it can cancel that, and shows nothing otherwise", () => {
     const a = machine("a")
-    const { host, heard, show } = render({ kind: "asking", machine: a, index: 1, total: 1, remember: false })
+    const { host, heard, show } = render({
+      kind: "asking",
+      machine: a,
+      index: 1,
+      total: 1,
+      remember: false,
+    })
     expect(dialog(host)).not.toBeNull()
     show({ kind: "acting", machine: a, policy: "stow", index: 1, total: 1 })
     expect(dialog(host)).toBeNull()
     expect(host.querySelector("button")).toBeNull()
-    for (const quiet of [{ kind: "idle" }, { kind: "failed", machine: a, message: "no" }] as const) {
+    for (const quiet of [
+      { kind: "idle" },
+      { kind: "failed", machine: a, message: "no" },
+    ] as const) {
       show(quiet)
       expect(host.innerHTML).toBe("")
     }
@@ -242,33 +329,62 @@ const statusJson = (w: World): Record<string, unknown> => ({
   memoryMiB: 4096,
   screen: "virtio-gpu 1280x800",
   overlayBytes: 1,
-  guest: w.state === "running" ? { agent: "ok", agentVersion: "9", os: "Windows 11" } : null,
+  guest:
+    w.state === "running"
+      ? { agent: "ok", agentVersion: "9", os: "Windows 11" }
+      : null,
   saves: { count: 0, bytes: 0 },
   notes: [],
 })
 
 function fakeApp(world: World) {
   const log: string[] = []
-  const stows: ((o: { code: number; stdout: string; stderr: string }) => void)[] = []
+  const stows: ((o: {
+    code: number
+    stdout: string
+    stderr: string
+  }) => void)[] = []
   const listeners: ((e: { payload: unknown }) => void)[] = []
-  const ok = (stdout: unknown) => ({ code: 0, stdout: JSON.stringify(stdout), stderr: "" })
+  const ok = (stdout: unknown) => ({
+    code: 0,
+    stdout: JSON.stringify(stdout),
+    stderr: "",
+  })
   const invoke = (cmd: string, a?: { args?: string[] }): Promise<unknown> => {
     if (cmd !== "winvm") {
       log.push(cmd)
       return Promise.resolve(cmd === "close_pending" ? false : null)
     }
     const args = a?.args ?? []
-    if (args[0] === "status") return Promise.resolve(ok(args.includes("-i") ? statusJson(world) : { instances: [statusJson(world)] }))
-    if (args[0] === "open") return Promise.resolve(ok({ display: 1, vncPort: 5901, websocketPort: 5701, password: null }))
+    if (args[0] === "status")
+      return Promise.resolve(
+        ok(
+          args.includes("-i")
+            ? statusJson(world)
+            : { instances: [statusJson(world)] },
+        ),
+      )
+    if (args[0] === "open")
+      return Promise.resolve(
+        ok({ display: 1, vncPort: 5901, websocketPort: 5701, password: null }),
+      )
     log.push(`winvm ${args.join(" ")}`)
     if (args[0] === "stow") return new Promise((resolve) => stows.push(resolve))
     return Promise.resolve({ code: 1, stdout: "", stderr: "" })
   }
-  const listen = (name: string, cb: (e: { payload: unknown }) => void): Promise<() => void> => {
+  const listen = (
+    name: string,
+    cb: (e: { payload: unknown }) => void,
+  ): Promise<() => void> => {
     if (name === "viewer-close-requested") listeners.push(cb)
     return Promise.resolve(() => undefined)
   }
-  Object.assign(window, { __TAURI__: { core: { invoke }, event: { listen, emit: () => Promise.resolve() } } })
+  Object.assign(window, {
+    __TAURI__: {
+      core: { invoke },
+      event: { listen, emit: () => Promise.resolve() },
+    },
+  })
   return {
     log,
     stows,
@@ -285,7 +401,9 @@ describe("closing the window", () => {
     })
   }
 
-  async function mountApp(world: World): Promise<{ host: HTMLElement; app: ReturnType<typeof fakeApp> }> {
+  async function mountApp(
+    world: World,
+  ): Promise<{ host: HTMLElement; app: ReturnType<typeof fakeApp> }> {
     Object.assign(globalThis, { WebSocket: QuietSocket })
     const { App } = await import("../ui/src/App")
     const app = fakeApp(world)
@@ -293,7 +411,9 @@ describe("closing the window", () => {
     document.body.append(host)
     const r = createRoot(host)
     root = r
-    act(() => { r.render(<App />) })
+    act(() => {
+      r.render(<App />)
+    })
     await flush()
     await flush()
     return { host, app }
@@ -304,12 +424,16 @@ describe("closing the window", () => {
     const { host, app } = await mountApp(world)
     expect(dialog(host)).toBeNull()
 
-    act(() => { app.requestClose() })
+    act(() => {
+      app.requestClose()
+    })
     await flush()
     expect(app.log.filter((l) => l === "close_start")).toHaveLength(1)
     expect(dialog(host)?.textContent).toContain("Demo PC")
 
-    act(() => { buttonNamed(host, copy("close.stow")).click() })
+    act(() => {
+      buttonNamed(host, copy("close.stow")).click()
+    })
     await flush()
     expect(app.log).toContain("winvm stow -i demo")
     expect(dialog(host)).toBeNull()
@@ -329,17 +453,31 @@ describe("closing the window", () => {
   it("stays open with what the stow said when it fails, and calls the close off", async () => {
     const world: World = { state: "running" }
     const { host, app } = await mountApp(world)
-    act(() => { app.requestClose() })
+    act(() => {
+      app.requestClose()
+    })
     await flush()
-    act(() => { buttonNamed(host, copy("close.stow")).click() })
+    act(() => {
+      buttonNamed(host, copy("close.stow")).click()
+    })
     await flush()
-    act(() => app.stows[0]?.({ code: 1, stdout: "", stderr: "winvm stow: the disk is full" }))
+    act(() =>
+      app.stows[0]?.({
+        code: 1,
+        stdout: "",
+        stderr: "winvm stow: the disk is full",
+      }),
+    )
     await flush()
     await flush()
     expect(app.log).toContain("close_cancel")
     expect(app.log).not.toContain("close_complete")
     expect(dialog(host)).toBeNull()
-    expect(host.querySelector(".notices")?.textContent).toContain("winvm stow: the disk is full")
-    expect(host.querySelector(".notices")?.textContent).toContain(copy("close.failed"))
+    expect(host.querySelector(".notices")?.textContent).toContain(
+      "winvm stow: the disk is full",
+    )
+    expect(host.querySelector(".notices")?.textContent).toContain(
+      copy("close.failed"),
+    )
   })
 })

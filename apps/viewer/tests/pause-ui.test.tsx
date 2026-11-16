@@ -12,7 +12,10 @@ const { createRoot } = await import("react-dom/client")
 const { useWinvm } = await import("../ui/src/features/winvm/useWinvm")
 const { useUsage } = await import("../ui/src/features/usage/useUsage")
 const { Resources } = await import("../ui/src/features/usage/Resources")
-const en = (await import("../ui/src/i18n/en.json")).default as Record<string, string>
+const en = (await import("../ui/src/i18n/en.json")).default as Record<
+  string,
+  string
+>
 const { copy } = await import("./copy")
 
 type Root = ReturnType<typeof createRoot>
@@ -54,13 +57,27 @@ interface Call {
   done: boolean
 }
 
-function fakeTauri(): { calls: Call[]; reads(): Call[]; verb(v: string): Call } {
+function fakeTauri(): {
+  calls: Call[]
+  reads(): Call[]
+  verb(v: string): Call
+} {
   const calls: Call[] = []
-  const held = new Set(["status", "pause", "resume", "sleep", "wake", "stop", "stow", "setup"])
+  const held = new Set([
+    "status",
+    "pause",
+    "resume",
+    "sleep",
+    "wake",
+    "stop",
+    "stow",
+    "setup",
+  ])
   const invoke = (cmd: string, a?: { args?: string[] }): Promise<unknown> => {
     const args = a?.args ?? []
     if (cmd !== "winvm") return Promise.resolve(null)
-    if (!held.has(args[0] ?? "")) return Promise.resolve({ code: 1, stdout: "", stderr: "" })
+    if (!held.has(args[0] ?? ""))
+      return Promise.resolve({ code: 1, stdout: "", stderr: "" })
     return new Promise<Output>((resolve) => {
       const call: Call = {
         args,
@@ -80,7 +97,8 @@ function fakeTauri(): { calls: Call[]; reads(): Call[]; verb(v: string): Call } 
   Object.assign(window, { __TAURI__: { core: { invoke } } })
   return {
     calls,
-    reads: () => calls.filter((c) => c.args[0] === "status" && c.args.includes("-i")),
+    reads: () =>
+      calls.filter((c) => c.args[0] === "status" && c.args.includes("-i")),
     verb: (v) => {
       const c = calls.find((x) => x.args[0] === v && !x.done)
       if (c === undefined) throw new Error(`no ${v} pending`)
@@ -89,13 +107,21 @@ function fakeTauri(): { calls: Call[]; reads(): Call[]; verb(v: string): Call } 
   }
 }
 
-const status = (state: string, agent: "ok" | "silent" | null = "ok", operation: string | null = null, name = "demo"): Output => ({
+const status = (
+  state: string,
+  agent: "ok" | "silent" | null = "ok",
+  operation: string | null = null,
+  name = "demo",
+): Output => ({
   code: 0,
   stderr: "",
   stdout: JSON.stringify({
     name,
     title: null,
-    operation: operation === null ? null : { operation, pid: 777, startedAt: "2026-11-12T10:00:00.000Z" },
+    operation:
+      operation === null
+        ? null
+        : { operation, pid: 777, startedAt: "2026-11-12T10:00:00.000Z" },
     state,
     vmStatus: state === "running" ? "running" : "paused",
     image: "win11-arm64",
@@ -105,7 +131,8 @@ const status = (state: string, agent: "ok" | "silent" | null = "ok", operation: 
     memoryMiB: 4096,
     screen: "virtio-gpu 1280x800",
     overlayBytes: 1,
-    guest: agent === null ? null : { agent, agentVersion: "9", os: "Windows 11" },
+    guest:
+      agent === null ? null : { agent, agentVersion: "9", os: "Windows 11" },
     saves: { count: 0, bytes: 0 },
     notes: [],
   }),
@@ -121,8 +148,15 @@ describe("pausing in the window", () => {
     }
     render(<Probe />)
     await flush()
-    const list = tauri.calls.find((c) => c.args[0] === "status" && !c.args.includes("-i"))
-    list?.resolve({ ...status("running"), stdout: JSON.stringify({ instances: [JSON.parse(status("running").stdout)] }) })
+    const list = tauri.calls.find(
+      (c) => c.args[0] === "status" && !c.args.includes("-i"),
+    )
+    list?.resolve({
+      ...status("running"),
+      stdout: JSON.stringify({
+        instances: [JSON.parse(status("running").stdout)],
+      }),
+    })
     await flush()
     tauri.reads()[0]?.resolve(status("running"))
     await flush()
@@ -137,7 +171,9 @@ describe("pausing in the window", () => {
     const raced = tauri.reads().filter((c) => !c.done)
     expect(raced.length).toBeGreaterThan(0)
 
-    tauri.verb("pause").resolve({ code: 0, stdout: 'paused "demo"\n', stderr: "" })
+    tauri
+      .verb("pause")
+      .resolve({ code: 0, stdout: 'paused "demo"\n', stderr: "" })
     await flush()
     expect(w!.busy).toBeNull()
     expect(w!.phase).toBe("paused")
@@ -168,10 +204,14 @@ describe("pausing in the window", () => {
     }
     render(<Probe />)
     await flush()
-    tauri.calls.find((c) => c.args[0] === "status" && !c.args.includes("-i"))?.resolve({
-      ...status("asleep", null),
-      stdout: JSON.stringify({ instances: [JSON.parse(status("asleep", null).stdout)] }),
-    })
+    tauri.calls
+      .find((c) => c.args[0] === "status" && !c.args.includes("-i"))
+      ?.resolve({
+        ...status("asleep", null),
+        stdout: JSON.stringify({
+          instances: [JSON.parse(status("asleep", null).stdout)],
+        }),
+      })
     await flush()
     tauri.reads()[0]?.resolve(status("asleep", null))
     await flush()
@@ -199,10 +239,14 @@ describe("pausing in the window", () => {
     }
     render(<Probe />)
     await flush()
-    tauri.calls.find((c) => c.args[0] === "status" && !c.args.includes("-i"))?.resolve({
-      ...status("running"),
-      stdout: JSON.stringify({ instances: [JSON.parse(status("running").stdout)] }),
-    })
+    tauri.calls
+      .find((c) => c.args[0] === "status" && !c.args.includes("-i"))
+      ?.resolve({
+        ...status("running"),
+        stdout: JSON.stringify({
+          instances: [JSON.parse(status("running").stdout)],
+        }),
+      })
     await flush()
     tauri.reads()[0]?.resolve(status("running"))
     await flush()
@@ -217,7 +261,10 @@ describe("pausing in the window", () => {
   })
 })
 
-const sidecarFailure = (kind: "missing" | "timeout", operation: string): Record<string, unknown> => ({
+const sidecarFailure = (
+  kind: "missing" | "timeout",
+  operation: string,
+): Record<string, unknown> => ({
   kind,
   operation,
   message: `raw ${kind} text from Rust`,
@@ -239,7 +286,9 @@ describe("when the sidecar fails", () => {
     }
     render(<Probe />)
     await flush()
-    tauri.calls.find((c) => c.args[0] === "status" && !c.args.includes("-i"))?.reject(sidecarFailure("missing", "status"))
+    tauri.calls
+      .find((c) => c.args[0] === "status" && !c.args.includes("-i"))
+      ?.reject(sidecarFailure("missing", "status"))
     await flush()
     expect(w!.statusError).toBe(copy("sidecar.missing"))
   })
@@ -254,14 +303,20 @@ describe("when the sidecar fails", () => {
     }
     render(<Probe />)
     await flush()
-    tauri.calls.find((c) => c.args[0] === "status" && !c.args.includes("-i"))?.resolve({
-      ...status("running"),
-      stdout: JSON.stringify({ instances: [JSON.parse(status("running").stdout)] }),
-    })
+    tauri.calls
+      .find((c) => c.args[0] === "status" && !c.args.includes("-i"))
+      ?.resolve({
+        ...status("running"),
+        stdout: JSON.stringify({
+          instances: [JSON.parse(status("running").stdout)],
+        }),
+      })
     await flush()
     tauri.reads()[0]?.reject(sidecarFailure("timeout", "status"))
     await flush()
-    expect(w!.statusError).toBe(copy("sidecar.timeout", { operation: "status", seconds: 45 }))
+    expect(w!.statusError).toBe(
+      copy("sidecar.timeout", { operation: "status", seconds: 45 }),
+    )
 
     const before = tauri.reads().length
     act(() => {
@@ -285,11 +340,16 @@ describe("when the sidecar fails", () => {
     }
     const host = render(<Probe />)
     await flush()
-    const bare = (): Call[] => tauri.calls.filter((c) => c.args[0] === "status" && !c.args.includes("-i"))
+    const bare = (): Call[] =>
+      tauri.calls.filter(
+        (c) => c.args[0] === "status" && !c.args.includes("-i"),
+      )
     expect(bare()).toHaveLength(1)
     bare()[0]?.reject(sidecarFailure("timeout", "status"))
     await flush()
-    expect(host.textContent).toBe(copy("sidecar.timeout", { operation: "status", seconds: 45 }))
+    expect(host.textContent).toBe(
+      copy("sidecar.timeout", { operation: "status", seconds: 45 }),
+    )
     expect(w!.name).toBeNull()
     expect(bare()).toHaveLength(1)
 
@@ -303,9 +363,16 @@ describe("when the sidecar fails", () => {
     })
     await flush()
     expect(bare()).toHaveLength(2)
-    expect(host.textContent).toBe(copy("sidecar.timeout", { operation: "status", seconds: 45 }))
+    expect(host.textContent).toBe(
+      copy("sidecar.timeout", { operation: "status", seconds: 45 }),
+    )
 
-    bare()[1]?.resolve({ ...status("running"), stdout: JSON.stringify({ instances: [JSON.parse(status("running").stdout)] }) })
+    bare()[1]?.resolve({
+      ...status("running"),
+      stdout: JSON.stringify({
+        instances: [JSON.parse(status("running").stdout)],
+      }),
+    })
     await flush()
     expect(w!.name).toBe("demo")
     expect(w!.statusError).toBeNull()
@@ -332,10 +399,14 @@ describe("when the sidecar fails", () => {
     }
     render(<Probe />)
     await flush()
-    tauri.calls.find((c) => c.args[0] === "status" && !c.args.includes("-i"))?.resolve({
-      ...status("running"),
-      stdout: JSON.stringify({ instances: [JSON.parse(status("running").stdout)] }),
-    })
+    tauri.calls
+      .find((c) => c.args[0] === "status" && !c.args.includes("-i"))
+      ?.resolve({
+        ...status("running"),
+        stdout: JSON.stringify({
+          instances: [JSON.parse(status("running").stdout)],
+        }),
+      })
     await flush()
     tauri.reads()[0]?.resolve(status("running"))
     await flush()
@@ -357,7 +428,12 @@ describe("the meters while held", () => {
     const asked: (string | null)[] = []
     const read = (_pid: number, instance: string | null): Promise<unknown> => {
       asked.push(instance)
-      return Promise.resolve({ atMs: Date.now(), host: { cpuSeconds: 1, rssBytes: 1024 }, guest: null, guestError: null })
+      return Promise.resolve({
+        atMs: Date.now(),
+        host: { cpuSeconds: 1, rssBytes: 1024 },
+        guest: null,
+        guestError: null,
+      })
     }
     function Probe({ instance }: { readonly instance: string | null }): null {
       useUsage(4242, instance, 4, 4096, read)
@@ -383,25 +459,41 @@ describe("the meters while held", () => {
 
   it("say Paused or Asleep instead of Windows' figures", () => {
     const usage = {
-      now: { cpu: 3, cpuSource: "windows" as const, macCpu: 12, memory: { used: 1, total: 4, source: "windows" as const }, disk: null },
+      now: {
+        cpu: 3,
+        cpuSource: "windows" as const,
+        macCpu: 12,
+        memory: { used: 1, total: 4, source: "windows" as const },
+        disk: null,
+      },
       cpuHistory: [],
       memoryHistory: [],
     }
     const ctx = { cpus: 4, overlayBytes: null }
-    const paused = render(<Resources usage={usage} context={ctx} held="paused" />)
+    const paused = render(
+      <Resources usage={usage} context={ctx} held="paused" />,
+    )
     expect(paused.textContent).toBe(en["usage.paused"] ?? "?")
     act(() => root?.unmount())
-    const asleep = render(<Resources usage={usage} context={ctx} held="asleep" />)
+    const asleep = render(
+      <Resources usage={usage} context={ctx} held="asleep" />,
+    )
     expect(asleep.textContent).toBe(en["usage.asleep"] ?? "?")
     act(() => root?.unmount())
     const running = render(<Resources usage={usage} context={ctx} />)
     expect(running.textContent).toContain(en["usage.cpu"] ?? "?")
     expect(running.textContent).toContain("3%")
-    expect(running.textContent).toContain("On the Mac, with the screen and disk: 12%")
+    expect(running.textContent).toContain(
+      "On the Mac, with the screen and disk: 12%",
+    )
   })
 })
 
-async function boot(tauri: ReturnType<typeof fakeTauri>, state = "running", names: readonly string[] = ["demo"]): Promise<{ w: () => ReturnType<typeof useWinvm> }> {
+async function boot(
+  tauri: ReturnType<typeof fakeTauri>,
+  state = "running",
+  names: readonly string[] = ["demo"],
+): Promise<{ w: () => ReturnType<typeof useWinvm> }> {
   let w: ReturnType<typeof useWinvm> | null = null
   function Probe(): null {
     w = useWinvm()
@@ -409,8 +501,18 @@ async function boot(tauri: ReturnType<typeof fakeTauri>, state = "running", name
   }
   render(<Probe />)
   await flush()
-  const list = tauri.calls.find((c) => c.args[0] === "status" && !c.args.includes("-i"))
-  list?.resolve({ code: 0, stderr: "", stdout: JSON.stringify({ instances: names.map((n) => JSON.parse(status(state, "ok", null, n).stdout) as unknown) }) })
+  const list = tauri.calls.find(
+    (c) => c.args[0] === "status" && !c.args.includes("-i"),
+  )
+  list?.resolve({
+    code: 0,
+    stderr: "",
+    stdout: JSON.stringify({
+      instances: names.map(
+        (n) => JSON.parse(status(state, "ok", null, n).stdout) as unknown,
+      ),
+    }),
+  })
   await flush()
   tauri.reads()[0]?.resolve(status(state))
   await flush()
@@ -430,13 +532,19 @@ describe("operations in the window", () => {
     })
     await flush()
     expect(tauri.reads().length).toBe(before + 1)
-    tauri.reads().at(-1)?.resolve(status("running", "ok", "stow"))
+    tauri
+      .reads()
+      .at(-1)
+      ?.resolve(status("running", "ok", "stow"))
     await flush()
     expect(w().operation).toEqual({ operation: "stow", source: "external" })
     expect(w().busy).toBeNull()
 
     const reads = (): number => tauri.reads().length
-    tauri.reads().at(-1)?.resolve(status("running", "ok", "stow"))
+    tauri
+      .reads()
+      .at(-1)
+      ?.resolve(status("running", "ok", "stow"))
     await flush()
     const n = reads()
     act(() => {
@@ -444,7 +552,10 @@ describe("operations in the window", () => {
     })
     await flush()
     expect(reads()).toBe(n + 1)
-    tauri.reads().at(-1)?.resolve(status("running", "ok", "stow"))
+    tauri
+      .reads()
+      .at(-1)
+      ?.resolve(status("running", "ok", "stow"))
     await flush()
 
     act(() => {
@@ -475,14 +586,22 @@ describe("operations in the window", () => {
     expect(w().busy).toBe("stow")
     expect(w().operation).toEqual({ operation: "stow", source: "local" })
 
-    tauri.reads().filter((c) => !c.done).at(-1)?.resolve(status("running", "ok", "stop"))
+    tauri
+      .reads()
+      .filter((c) => !c.done)
+      .at(-1)
+      ?.resolve(status("running", "ok", "stop"))
     await flush()
     expect(w().operation).toEqual({ operation: "stow", source: "local" })
 
     tauri.verb("stow").resolve({ code: 0, stdout: "", stderr: "" })
     await flush()
     expect(w().busy).toBeNull()
-    tauri.reads().filter((c) => !c.done).at(-1)?.resolve(status("running", "ok", "stop"))
+    tauri
+      .reads()
+      .filter((c) => !c.done)
+      .at(-1)
+      ?.resolve(status("running", "ok", "stop"))
     await flush()
     expect(w().operation).toEqual({ operation: "stop", source: "external" })
   })
@@ -502,19 +621,31 @@ describe("operations in the window", () => {
     expect(w().busy).toBeNull()
     expect(w().operation).toBeNull()
 
-    act(() => { w().select("other") })
+    act(() => {
+      w().select("other")
+    })
     await flush()
     expect(w().busy).toBe("pause")
     expect(w().operation).toEqual({ operation: "pause", source: "local" })
-    act(() => { w().select("demo") })
+    act(() => {
+      w().select("demo")
+    })
     await flush()
     expect(w().operation).toBeNull()
 
-    const readsOfOther = tauri.reads().filter((c) => c.args.includes("other")).length
+    const readsOfOther = tauri
+      .reads()
+      .filter((c) => c.args.includes("other")).length
     tauri.verb("pause").resolve({ code: 0, stdout: "", stderr: "" })
     await flush()
-    expect(tauri.reads().filter((c) => c.args.includes("other")).length).toBe(readsOfOther + 1)
-    tauri.reads().filter((c) => !c.done && c.args.includes("other")).at(-1)?.resolve(status("paused", null, null, "other"))
+    expect(tauri.reads().filter((c) => c.args.includes("other")).length).toBe(
+      readsOfOther + 1,
+    )
+    tauri
+      .reads()
+      .filter((c) => !c.done && c.args.includes("other"))
+      .at(-1)
+      ?.resolve(status("paused", null, null, "other"))
     await flush()
     await act(async () => {
       await ran
@@ -555,11 +686,18 @@ describe("operations in the window", () => {
       one = w().refreshOne("other")
     })
     await flush()
-    const read = tauri.reads().filter((c) => !c.done && c.args.includes("other")).at(-1)
+    const read = tauri
+      .reads()
+      .filter((c) => !c.done && c.args.includes("other"))
+      .at(-1)
     expect(read?.args).toEqual(["status", "--json", "-i", "other"])
     read?.resolve(status("stowed", null, "stow", "other"))
     await flush()
-    expect(await one).toMatchObject({ name: "other", state: "stowed", operation: { operation: "stow" } })
+    expect(await one).toMatchObject({
+      name: "other",
+      state: "stowed",
+      operation: { operation: "stow" },
+    })
     expect(w().phases.other).toBe("stowed")
     expect(w().status?.name).toBe("demo")
     expect(w().operation).toBeNull()
@@ -568,7 +706,11 @@ describe("operations in the window", () => {
       one = w().refreshOne("demo")
     })
     await flush()
-    tauri.reads().filter((c) => !c.done && c.args.includes("demo")).at(-1)?.resolve(status("paused", null, "pause"))
+    tauri
+      .reads()
+      .filter((c) => !c.done && c.args.includes("demo"))
+      .at(-1)
+      ?.resolve(status("paused", null, "pause"))
     await flush()
     expect(await one).toMatchObject({ name: "demo", state: "paused" })
     expect(w().operation).toEqual({ operation: "pause", source: "external" })
@@ -578,11 +720,20 @@ describe("operations in the window", () => {
       all = w().refreshAll()
     })
     await flush()
-    const list = tauri.calls.filter((c) => c.args[0] === "status" && !c.args.includes("-i") && !c.done).at(-1)
+    const list = tauri.calls
+      .filter(
+        (c) => c.args[0] === "status" && !c.args.includes("-i") && !c.done,
+      )
+      .at(-1)
     list?.resolve({
       code: 0,
       stderr: "",
-      stdout: JSON.stringify({ instances: [JSON.parse(status("running").stdout), JSON.parse(status("stopped", null, null, "other").stdout)] }),
+      stdout: JSON.stringify({
+        instances: [
+          JSON.parse(status("running").stdout),
+          JSON.parse(status("stopped", null, null, "other").stdout),
+        ],
+      }),
     })
     await flush()
     const got = (await all) as readonly { name: string; state: string }[] | null
@@ -596,13 +747,19 @@ describe("operations in the window", () => {
       one = w().refreshOne("other")
     })
     await flush()
-    tauri.reads().filter((c) => !c.done && c.args.includes("other")).at(-1)?.resolve({ code: 1, stdout: "", stderr: "boom" })
+    tauri
+      .reads()
+      .filter((c) => !c.done && c.args.includes("other"))
+      .at(-1)
+      ?.resolve({ code: 1, stdout: "", stderr: "boom" })
     await flush()
     expect(await one).toBeNull()
   })
 
   it("maps each viewer verb to its shared operation", async () => {
-    const { operationFor } = await import("../ui/src/features/winvm/statusGuard")
+    const { operationFor } = await import(
+      "../ui/src/features/winvm/statusGuard"
+    )
     expect(operationFor("stow")).toBe("stow")
     expect(operationFor("save")).toBe("save")
     expect(operationFor("load")).toBe("load")

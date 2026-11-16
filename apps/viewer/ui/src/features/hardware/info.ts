@@ -25,7 +25,11 @@ const MachineInfo = z.object({
     next: Size,
     limits: z.object({
       cpus: z.object({ min: z.number(), max: z.number() }),
-      memoryMiB: z.object({ min: z.number(), max: z.number(), step: z.number() }),
+      memoryMiB: z.object({
+        min: z.number(),
+        max: z.number(),
+        step: z.number(),
+      }),
     }),
     diskBytes: z.number().nullable(),
   }),
@@ -35,7 +39,9 @@ const MachineInfo = z.object({
     guest: z.string(),
     gateway: z.string(),
     dns: z.string(),
-    windows: z.object({ adapter: z.string().nullable(), ipv4: z.string().nullable() }).nullable(),
+    windows: z
+      .object({ adapter: z.string().nullable(), ipv4: z.string().nullable() })
+      .nullable(),
     forwards: z.array(Forward),
     listeners: z.array(Listener),
   }),
@@ -51,7 +57,12 @@ export function parseMachineInfo(stdout: string): MachineInfo | null {
   }
 }
 
-export const infoArgs = (instance: string): string[] => ["info", "-i", instance, "--json"]
+export const infoArgs = (instance: string): string[] => [
+  "info",
+  "-i",
+  instance,
+  "--json",
+]
 
 export function sizeArgs(instance: string, change: Partial<Size>): string[] {
   return [
@@ -59,7 +70,9 @@ export function sizeArgs(instance: string, change: Partial<Size>): string[] {
     "-i",
     instance,
     ...(change.cpus === undefined ? [] : [`cpus=${String(change.cpus)}`]),
-    ...(change.memoryMiB === undefined ? [] : [`memory=${String(change.memoryMiB)}`]),
+    ...(change.memoryMiB === undefined
+      ? []
+      : [`memory=${String(change.memoryMiB)}`]),
   ]
 }
 
@@ -79,10 +92,18 @@ export const pendingRestart = (info: MachineInfo): boolean => {
   return r !== null && (r.cpus !== n.cpus || r.memoryMiB !== n.memoryMiB)
 }
 
-export const endpoint = (host: string, port: number): string => `${host}:${String(port)}`
+export const endpoint = (host: string, port: number): string =>
+  `${host}:${String(port)}`
 
-export const forwardKey = (kind: string): string => (kind === "finder" || kind === "agent" ? `network.forward.${kind}` : "network.forward.other")
+export const forwardKey = (kind: string): string =>
+  kind === "finder" || kind === "agent"
+    ? `network.forward.${kind}`
+    : "network.forward.other"
 
-export const listenerKey = (kind: string): string => (kind === "vnc" || kind === "websocket" ? `network.listener.${kind}` : "network.listener.other")
+export const listenerKey = (kind: string): string =>
+  kind === "vnc" || kind === "websocket"
+    ? `network.listener.${kind}`
+    : "network.listener.other"
 
-export const windowsAddress = (info: MachineInfo): string => info.network.windows?.ipv4 ?? info.network.guest
+export const windowsAddress = (info: MachineInfo): string =>
+  info.network.windows?.ipv4 ?? info.network.guest

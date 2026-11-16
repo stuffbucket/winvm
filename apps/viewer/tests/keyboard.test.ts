@@ -1,6 +1,11 @@
 import { describe, expect, it } from "bun:test"
 
-import { GuestKeyboardRouter, sendCtrlAltDelete, sendWindowsKey, type RoutedKeyEvent } from "../ui/src/features/screen/keyboard"
+import {
+  GuestKeyboardRouter,
+  sendCtrlAltDelete,
+  sendWindowsKey,
+  type RoutedKeyEvent,
+} from "../ui/src/features/screen/keyboard"
 
 interface FakeEvent extends RoutedKeyEvent {
   prevented: boolean
@@ -9,7 +14,12 @@ interface FakeEvent extends RoutedKeyEvent {
 
 const event = (
   code: string,
-  modifiers: { ctrl?: boolean; alt?: boolean; meta?: boolean; repeat?: boolean } = {},
+  modifiers: {
+    ctrl?: boolean
+    alt?: boolean
+    meta?: boolean
+    repeat?: boolean
+  } = {},
 ): FakeEvent => ({
   code,
   ctrlKey: modifiers.ctrl ?? false,
@@ -26,7 +36,8 @@ const event = (
   },
 })
 
-const label = (keysym: number, code: string, down: boolean): string => `${down ? "down" : "up"}:${code}:${keysym.toString(16)}`
+const label = (keysym: number, code: string, down: boolean): string =>
+  `${down ? "down" : "up"}:${code}:${keysym.toString(16)}`
 
 function setup() {
   const sent: string[] = []
@@ -34,7 +45,8 @@ function setup() {
   let noVncReleases = 0
   const router = new GuestKeyboardRouter({
     send: (keysym, code, down) => sent.push(label(keysym, code, down)),
-    translate: (e) => (e.code === "KeyR" ? { keysym: 0x72, code: "KeyR" } : null),
+    translate: (e) =>
+      e.code === "KeyR" ? { keysym: 0x72, code: "KeyR" } : null,
     releaseNoVnc: () => {
       noVncReleases += 1
     },

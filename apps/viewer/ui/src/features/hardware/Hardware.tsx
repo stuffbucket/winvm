@@ -8,7 +8,11 @@ import type { MachineInfoView } from "./useMachineInfo"
 
 const SETTLE_MS = 500
 
-export function Hardware({ view }: { readonly view: MachineInfoView }): JSX.Element {
+export function Hardware({
+  view,
+}: {
+  readonly view: MachineInfoView
+}): JSX.Element {
   const info = view.info
   const next = info?.hardware.next ?? null
   const [cpus, setCpus] = useState(next?.cpus ?? 0)
@@ -21,17 +25,27 @@ export function Hardware({ view }: { readonly view: MachineInfoView }): JSX.Elem
     setGb(toGB(next.memoryMiB))
   }, [next?.cpus, next?.memoryMiB])
 
-  useEffect(() => () => { clearTimeout(timer.current) }, [])
+  useEffect(
+    () => () => {
+      clearTimeout(timer.current)
+    },
+    [],
+  )
 
   if (info === null)
-    return view.error === null ? <p className="panel__note">{t("state.loading")}</p> : <p className="action__error">{view.error}</p>
+    return view.error === null ? (
+      <p className="panel__note">{t("state.loading")}</p>
+    ) : (
+      <p className="action__error">{view.error}</p>
+    )
 
   const { limits, running, diskBytes } = info.hardware
   const commit = (size: { cpus: number; memoryMiB: number }): void => {
     clearTimeout(timer.current)
     const set = info.hardware.next
     timer.current = setTimeout(() => {
-      if (size.cpus !== set.cpus || size.memoryMiB !== set.memoryMiB) view.setSize(size)
+      if (size.cpus !== set.cpus || size.memoryMiB !== set.memoryMiB)
+        view.setSize(size)
     }, SETTLE_MS)
   }
 
@@ -50,7 +64,9 @@ export function Hardware({ view }: { readonly view: MachineInfoView }): JSX.Elem
               decrementLabel={t("hardware.fewer")}
               incrementLabel={t("hardware.more")}
               onValueChange={setCpus}
-              onValueCommitted={(v) => { commit({ cpus: v, memoryMiB: fromGB(gb) }) }}
+              onValueCommitted={(v) => {
+                commit({ cpus: v, memoryMiB: fromGB(gb) })
+              }}
             />
           </dd>
         </div>
@@ -68,7 +84,9 @@ export function Hardware({ view }: { readonly view: MachineInfoView }): JSX.Elem
               incrementLabel={t("hardware.more")}
               unit={t("hardware.gb")}
               onValueChange={setGb}
-              onValueCommitted={(v) => { commit({ cpus, memoryMiB: fromGB(v) }) }}
+              onValueCommitted={(v) => {
+                commit({ cpus, memoryMiB: fromGB(v) })
+              }}
             />
           </dd>
         </div>
@@ -82,10 +100,18 @@ export function Hardware({ view }: { readonly view: MachineInfoView }): JSX.Elem
 
       {running !== null && pendingRestart(info) && (
         <p className="action__hint" role="status">
-          {t("hardware.pending", { cpus: running.cpus, memory: formatMemory(running.memoryMiB) })}
+          {t("hardware.pending", {
+            cpus: running.cpus,
+            memory: formatMemory(running.memoryMiB),
+          })}
         </p>
       )}
-      <p className="action__hint">{t("hardware.limits", { cpus: limits.cpus.max, memory: formatMemory(limits.memoryMiB.max) })}</p>
+      <p className="action__hint">
+        {t("hardware.limits", {
+          cpus: limits.cpus.max,
+          memory: formatMemory(limits.memoryMiB.max),
+        })}
+      </p>
       {view.error !== null && <p className="action__error">{view.error}</p>}
     </div>
   )

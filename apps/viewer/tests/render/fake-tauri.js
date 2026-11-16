@@ -2,32 +2,196 @@
   const DAY = 86_400_000
   const now = new Date()
   const at = (daysAgo, h, m) => {
-    const d = new Date(now.getFullYear(), now.getMonth(), now.getDate() - daysAgo, h, m)
+    const d = new Date(
+      now.getFullYear(),
+      now.getMonth(),
+      now.getDate() - daysAgo,
+      h,
+      m,
+    )
     return d.toISOString()
   }
   const GiB = 1024 ** 3
-  const notes = (title, text = "", tags = []) => ({ title, text, tags, updatedAt: now.toISOString() })
+  const notes = (title, text = "", tags = []) => ({
+    title,
+    text,
+    tags,
+    updatedAt: now.toISOString(),
+  })
   const home = "/fake/saves/canvas-test"
-  const pics = (name) => ({ screenshot: `${home}/${name}/screen.png`, thumbnail: `${home}/${name}/thumb.png`, screenSize: { width: 1920, height: 1200 } })
+  const pics = (name) => ({
+    screenshot: `${home}/${name}/screen.png`,
+    thumbnail: `${home}/${name}/thumb.png`,
+    screenSize: { width: 1920, height: 1200 },
+  })
   let saves = [
-    { name: "baseline", kind: "baseline", createdAt: at(80, 10, 2), bytes: 4.1 * GiB, compatible: true, format: "zstd", ...pics("baseline"), title: null, notes: null },
-    { name: "golden", kind: "golden", createdAt: at(52, 9, 15), bytes: 6.3 * GiB, compatible: true, format: "mapped", ...pics("golden"), title: "Test base", notes: notes("Test base", "Office, VS Code and the test runner.", ["ci"]) },
-    { name: "old-display", kind: "manual", createdAt: at(31, 16, 40), bytes: 5.2 * GiB, compatible: false, incompatible: ["display"], format: "zstd", ...pics("old-display"), title: "Before the display change", notes: notes("Before the display change") },
-    { name: "2026-09-30_11-03-12", kind: "manual", createdAt: at(28, 11, 3), bytes: 5.5 * GiB, compatible: true, format: "zstd", screenshot: null, thumbnail: null, title: null, notes: null },
-    { name: "office-installed", kind: "manual", createdAt: at(12, 14, 21), bytes: 7.9 * GiB, compatible: true, format: "zstd", ...pics("office-installed"), title: "Office installed", notes: notes("Office installed", "Signed in as **test@contoso.com**.\n\n- Excel activated\n- Outlook not set up", ["office"]) },
-    { name: "auto-1", kind: "auto", createdAt: at(12, 18, 5), bytes: 7.9 * GiB, compatible: true, format: "zstd", ...pics("auto-1"), title: null, notes: null },
-    { name: "before-update", kind: "manual", createdAt: at(4, 9, 30), bytes: 8.2 * GiB, compatible: true, format: "zstd", ...pics("before-update"), title: "Before Windows Update", notes: notes("Before Windows Update", "KB5050094 pending.", ["updates"]) },
-    { name: "after-update", kind: "manual", createdAt: at(4, 13, 12), bytes: 8.6 * GiB, compatible: true, format: "zstd", ...pics("after-update"), title: "After Windows Update", notes: null },
-    { name: "auto-2", kind: "auto", createdAt: at(1, 17, 44), bytes: 8.7 * GiB, compatible: true, format: "zstd", ...pics("auto-2"), title: null, notes: null },
-    { name: "repro-bug-4521", kind: "manual", createdAt: at(1, 19, 2), bytes: 8.8 * GiB, compatible: true, format: "zstd", ...pics("repro-bug-4521"), title: "Repro for bug 4521", notes: notes("Repro for bug 4521", "Open Excel, then paste twice.", ["bug"]) },
-    { name: "vs-code-setup", kind: "manual", createdAt: at(0, 9, 12), bytes: 9.0 * GiB, compatible: true, format: "zstd", ...pics("vs-code-setup"), title: "VS Code set up", notes: null },
-    { name: "auto-3", kind: "auto", createdAt: at(0, 11, 40), bytes: 9.1 * GiB, compatible: true, format: "zstd", ...pics("auto-3"), title: null, notes: null },
-    { name: "clean-desktop", kind: "manual", createdAt: at(0, 13, 33), bytes: 9.1 * GiB, compatible: true, format: "zstd", ...pics("clean-desktop"), title: "Clean desktop", notes: notes("Clean desktop", "Before trying the new installer.") },
+    {
+      name: "baseline",
+      kind: "baseline",
+      createdAt: at(80, 10, 2),
+      bytes: 4.1 * GiB,
+      compatible: true,
+      format: "zstd",
+      ...pics("baseline"),
+      title: null,
+      notes: null,
+    },
+    {
+      name: "golden",
+      kind: "golden",
+      createdAt: at(52, 9, 15),
+      bytes: 6.3 * GiB,
+      compatible: true,
+      format: "mapped",
+      ...pics("golden"),
+      title: "Test base",
+      notes: notes("Test base", "Office, VS Code and the test runner.", ["ci"]),
+    },
+    {
+      name: "old-display",
+      kind: "manual",
+      createdAt: at(31, 16, 40),
+      bytes: 5.2 * GiB,
+      compatible: false,
+      incompatible: ["display"],
+      format: "zstd",
+      ...pics("old-display"),
+      title: "Before the display change",
+      notes: notes("Before the display change"),
+    },
+    {
+      name: "2026-09-30_11-03-12",
+      kind: "manual",
+      createdAt: at(28, 11, 3),
+      bytes: 5.5 * GiB,
+      compatible: true,
+      format: "zstd",
+      screenshot: null,
+      thumbnail: null,
+      title: null,
+      notes: null,
+    },
+    {
+      name: "office-installed",
+      kind: "manual",
+      createdAt: at(12, 14, 21),
+      bytes: 7.9 * GiB,
+      compatible: true,
+      format: "zstd",
+      ...pics("office-installed"),
+      title: "Office installed",
+      notes: notes(
+        "Office installed",
+        "Signed in as **test@contoso.com**.\n\n- Excel activated\n- Outlook not set up",
+        ["office"],
+      ),
+    },
+    {
+      name: "auto-1",
+      kind: "auto",
+      createdAt: at(12, 18, 5),
+      bytes: 7.9 * GiB,
+      compatible: true,
+      format: "zstd",
+      ...pics("auto-1"),
+      title: null,
+      notes: null,
+    },
+    {
+      name: "before-update",
+      kind: "manual",
+      createdAt: at(4, 9, 30),
+      bytes: 8.2 * GiB,
+      compatible: true,
+      format: "zstd",
+      ...pics("before-update"),
+      title: "Before Windows Update",
+      notes: notes("Before Windows Update", "KB5050094 pending.", ["updates"]),
+    },
+    {
+      name: "after-update",
+      kind: "manual",
+      createdAt: at(4, 13, 12),
+      bytes: 8.6 * GiB,
+      compatible: true,
+      format: "zstd",
+      ...pics("after-update"),
+      title: "After Windows Update",
+      notes: null,
+    },
+    {
+      name: "auto-2",
+      kind: "auto",
+      createdAt: at(1, 17, 44),
+      bytes: 8.7 * GiB,
+      compatible: true,
+      format: "zstd",
+      ...pics("auto-2"),
+      title: null,
+      notes: null,
+    },
+    {
+      name: "repro-bug-4521",
+      kind: "manual",
+      createdAt: at(1, 19, 2),
+      bytes: 8.8 * GiB,
+      compatible: true,
+      format: "zstd",
+      ...pics("repro-bug-4521"),
+      title: "Repro for bug 4521",
+      notes: notes("Repro for bug 4521", "Open Excel, then paste twice.", [
+        "bug",
+      ]),
+    },
+    {
+      name: "vs-code-setup",
+      kind: "manual",
+      createdAt: at(0, 9, 12),
+      bytes: 9.0 * GiB,
+      compatible: true,
+      format: "zstd",
+      ...pics("vs-code-setup"),
+      title: "VS Code set up",
+      notes: null,
+    },
+    {
+      name: "auto-3",
+      kind: "auto",
+      createdAt: at(0, 11, 40),
+      bytes: 9.1 * GiB,
+      compatible: true,
+      format: "zstd",
+      ...pics("auto-3"),
+      title: null,
+      notes: null,
+    },
+    {
+      name: "clean-desktop",
+      kind: "manual",
+      createdAt: at(0, 13, 33),
+      bytes: 9.1 * GiB,
+      compatible: true,
+      format: "zstd",
+      ...pics("clean-desktop"),
+      title: "Clean desktop",
+      notes: notes("Clean desktop", "Before trying the new installer."),
+    },
   ].map((s) => ({ incompatible: [], ...s }))
   const extra = Number(new URLSearchParams(location.search).get("many") ?? "0")
   for (let i = 0; i < extra; i += 1) {
     const name = `auto-many-${String(i)}`
-    saves.push({ name, kind: "auto", createdAt: new Date(now.getTime() - (i + 2) * DAY * 0.37).toISOString(), bytes: 8 * GiB, compatible: true, format: "zstd", ...pics(name), title: null, notes: null, incompatible: [] })
+    saves.push({
+      name,
+      kind: "auto",
+      createdAt: new Date(now.getTime() - (i + 2) * DAY * 0.37).toISOString(),
+      bytes: 8 * GiB,
+      compatible: true,
+      format: "zstd",
+      ...pics(name),
+      title: null,
+      notes: null,
+      incompatible: [],
+    })
   }
 
   const status = {
@@ -47,7 +211,11 @@
     notes: [],
   }
   const settings = {}
-  const out = (stdout, code = 0) => ({ code, stdout: typeof stdout === "string" ? stdout : JSON.stringify(stdout), stderr: "" })
+  const out = (stdout, code = 0) => ({
+    code,
+    stdout: typeof stdout === "string" ? stdout : JSON.stringify(stdout),
+    stderr: "",
+  })
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
   const flag = (args, key) => {
     const hit = args.find((a) => a.startsWith(`--${key}=`))
@@ -59,16 +227,26 @@
     if (verb === "status") return out(status)
     if (verb === "settings" && rest[0] === "--section") {
       const set = rest.find((a) => a.startsWith("--set="))
-      if (set !== undefined) settings[rest[1]] = JSON.parse(set.slice("--set=".length))
+      if (set !== undefined)
+        settings[rest[1]] = JSON.parse(set.slice("--set=".length))
       return out(settings[rest[1]] ?? null)
     }
-    if (verb === "doctor") return out({ ready: true, checks: [], timeMachine: "ok" })
+    if (verb === "doctor")
+      return out({ ready: true, checks: [], timeMachine: "ok" })
     if (verb === "open") return out("no screen in the fake", 1)
     if (verb === "saves" && rest.includes("note")) {
-      const name = rest[rest.indexOf("note") + 1] === "-i" ? rest[rest.indexOf("note") + 3] : rest[rest.indexOf("note") + 1]
+      const name =
+        rest[rest.indexOf("note") + 1] === "-i"
+          ? rest[rest.indexOf("note") + 3]
+          : rest[rest.indexOf("note") + 1]
       const s = saves.find((x) => x.name === name)
       if (s === undefined) return out("", 1)
-      const n = { title: flag(rest, "title") || null, text: flag(rest, "text") ?? "", tags: (flag(rest, "tags") ?? "").split(",").filter(Boolean), updatedAt: new Date().toISOString() }
+      const n = {
+        title: flag(rest, "title") || null,
+        text: flag(rest, "text") ?? "",
+        tags: (flag(rest, "tags") ?? "").split(",").filter(Boolean),
+        updatedAt: new Date().toISOString(),
+      }
       s.notes = n
       s.title = n.title
       return out(n)
@@ -81,9 +259,22 @@
     if (verb === "saves") return out(saves)
     if (verb === "save") {
       await sleep(1200)
-      const name = rest.find((a, i) => i > 0 && rest[i - 1] !== "-i" && a !== "-i") ?? "2026-10-28_12-00-00"
+      const name =
+        rest.find((a, i) => i > 0 && rest[i - 1] !== "-i" && a !== "-i") ??
+        "2026-10-28_12-00-00"
       saves = saves.filter((x) => x.name !== name)
-      saves.push({ name, kind: "manual", createdAt: new Date().toISOString(), bytes: 9.2 * GiB, compatible: true, format: "zstd", ...pics(name), title: null, notes: null, incompatible: [] })
+      saves.push({
+        name,
+        kind: "manual",
+        createdAt: new Date().toISOString(),
+        bytes: 9.2 * GiB,
+        compatible: true,
+        format: "zstd",
+        ...pics(name),
+        title: null,
+        notes: null,
+        incompatible: [],
+      })
       return out(`saved "${name}"`)
     }
     if (verb === "load") {
@@ -93,8 +284,11 @@
     return out("", 0)
   }
 
-  const hash = (s) => [...s].reduce((h, c) => (h * 31 + c.charCodeAt(0)) >>> 0, 7)
-  const real = (new URLSearchParams(location.search).get("real") ?? "").split(",").filter(Boolean)
+  const hash = (s) =>
+    [...s].reduce((h, c) => (h * 31 + c.charCodeAt(0)) >>> 0, 7)
+  const real = (new URLSearchParams(location.search).get("real") ?? "")
+    .split(",")
+    .filter(Boolean)
   async function picture(path) {
     if (real.length > 0) {
       const pick = real[hash(path.split("/").at(-2) ?? "") % real.length]
@@ -114,7 +308,14 @@
   function paintDesktop(g, w, h, name) {
     const k = w / 1920
     const hue = hash(name) % 360
-    const bg = g.createRadialGradient(w * 0.62, h * 0.55, 10 * k, w * 0.5, h * 0.5, w * 0.75)
+    const bg = g.createRadialGradient(
+      w * 0.62,
+      h * 0.55,
+      10 * k,
+      w * 0.5,
+      h * 0.5,
+      w * 0.75,
+    )
     bg.addColorStop(0, `hsl(${(hue + 200) % 360} 80% 70%)`)
     bg.addColorStop(0.45, `hsl(${(hue + 215) % 360} 75% 42%)`)
     bg.addColorStop(1, `hsl(${(hue + 230) % 360} 70% 14%)`)
@@ -142,9 +343,21 @@
       g.fillRect(x, y, ww, 44 * k)
       g.fillStyle = "hsl(0 0% 20%)"
       g.font = `${String(Math.round(22 * k))}px -apple-system, Segoe UI, sans-serif`
-      g.fillText(i === 0 ? name : ["Excel", "Visual Studio Code", "File Explorer"][i % 3], x + 18 * k, y + 30 * k)
+      g.fillText(
+        i === 0
+          ? name
+          : ["Excel", "Visual Studio Code", "File Explorer"][i % 3],
+        x + 18 * k,
+        y + 30 * k,
+      )
       g.fillStyle = "hsl(0 0% 86%)"
-      for (let r = 0; r < 8; r += 1) g.fillRect(x + 24 * k, y + (80 + r * 52) * k, ww * (0.4 + ((hash(name + r) % 50) / 100)), 18 * k)
+      for (let r = 0; r < 8; r += 1)
+        g.fillRect(
+          x + 24 * k,
+          y + (80 + r * 52) * k,
+          ww * (0.4 + (hash(name + r) % 50) / 100),
+          18 * k,
+        )
     }
     g.fillStyle = "hsl(220 20% 12% / 0.88)"
     g.fillRect(0, h - 64 * k, w, 64 * k)
@@ -163,13 +376,20 @@
       async invoke(cmd, args = {}) {
         if (cmd === "winvm") return await run(args.args)
         if (cmd === "checkpoint_image") return await picture(args.path)
-        if (cmd === "instance_usage") return { cpuSeconds: 1, rssKiB: 1, windows: null }
+        if (cmd === "instance_usage")
+          return { cpuSeconds: 1, rssKiB: 1, windows: null }
         if (cmd === "agent_fetch") throw new Error("no agent in the fake")
         if (cmd === "trace") return null
         throw new Error(`fake tauri: ${cmd}`)
       },
     },
-    window: { getCurrentWindow: () => ({ show: async () => undefined, setTitle: async () => undefined, close: async () => undefined }) },
+    window: {
+      getCurrentWindow: () => ({
+        show: async () => undefined,
+        setTitle: async () => undefined,
+        close: async () => undefined,
+      }),
+    },
     menu: { Menu: { new: async () => ({ popup: async () => undefined }) } },
     event: {
       async listen(name, cb) {
@@ -178,7 +398,11 @@
       },
       async emit() {},
     },
-    webview: { getCurrentWebview: () => ({ onDragDropEvent: async () => () => undefined }) },
+    webview: {
+      getCurrentWebview: () => ({
+        onDragDropEvent: async () => () => undefined,
+      }),
+    },
   }
   window.__fakeMenu = (id) => listeners.get("menu")?.({ payload: id })
 

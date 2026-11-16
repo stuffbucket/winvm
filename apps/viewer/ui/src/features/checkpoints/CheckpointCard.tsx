@@ -5,21 +5,41 @@ import { SpatialCanvasNode } from "@winvm/canvas"
 import { t } from "../../i18n"
 import { formatSize } from "../../model"
 import { finderDate } from "../files/files"
-import { type CardBox, type Checkpoint, hasNotes, incompatibleReason, shownName } from "./checkpoints"
+import {
+  type CardBox,
+  type Checkpoint,
+  hasNotes,
+  incompatibleReason,
+  shownName,
+} from "./checkpoints"
 import { usePicture } from "./pictures"
 
 const SHARP_WIDTH = 560
 
-const sharpAt = (cssWidth: number): boolean => cssWidth * (typeof devicePixelRatio === "number" ? devicePixelRatio : 1) > SHARP_WIDTH
+const sharpAt = (cssWidth: number): boolean =>
+  cssWidth * (typeof devicePixelRatio === "number" ? devicePixelRatio : 1) >
+  SHARP_WIDTH
 
-const label = (key: string, values?: Record<string, string>): string => t(key, values)
+const label = (key: string, values?: Record<string, string>): string =>
+  t(key, values)
 
-export const takenAt = (c: Pick<Checkpoint, "createdAt">, now: number): string => finderDate(Date.parse(c.createdAt), now, label).long
+export const takenAt = (
+  c: Pick<Checkpoint, "createdAt">,
+  now: number,
+): string => finderDate(Date.parse(c.createdAt), now, label).long
 
 export const kindLabel = (kind: string): string => t(`checkpoints.kind.${kind}`)
 
 export const MONITOR = (
-  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+  <svg
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="1.5"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+    aria-hidden="true"
+  >
     <rect width="20" height="14" x="2" y="3" rx="2" />
     <line x1="8" x2="16" y1="21" y2="21" />
     <line x1="12" x2="12" y1="17" y2="21" />
@@ -27,7 +47,15 @@ export const MONITOR = (
 )
 
 const NOTE = (
-  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+  <svg
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="2"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+    aria-hidden="true"
+  >
     <path d="M13.4 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-7.4" />
     <path d="M2 6h4" />
     <path d="M2 10h4" />
@@ -37,7 +65,17 @@ const NOTE = (
   </svg>
 )
 
-export function Picture({ c, sharp, wanted, children }: { readonly c: Checkpoint; readonly sharp: boolean; readonly wanted: boolean; readonly children?: ReactNode }): JSX.Element {
+export function Picture({
+  c,
+  sharp,
+  wanted,
+  children,
+}: {
+  readonly c: Checkpoint
+  readonly sharp: boolean
+  readonly wanted: boolean
+  readonly children?: ReactNode
+}): JSX.Element {
   const thumb = usePicture(c.thumbnail, c.createdAt, wanted)
   const full = usePicture(c.screenshot, c.createdAt, wanted && sharp)
   const src = full ?? thumb
@@ -48,7 +86,9 @@ export function Picture({ c, sharp, wanted, children }: { readonly c: Checkpoint
       ) : (
         <span className="checkpoint__placeholder">
           {MONITOR}
-          {c.thumbnail === null && c.screenshot === null && <span>{t("checkpoints.noPicture")}</span>}
+          {c.thumbnail === null && c.screenshot === null && (
+            <span>{t("checkpoints.noPicture")}</span>
+          )}
         </span>
       )}
       {children}
@@ -63,19 +103,40 @@ export interface CardProps {
   readonly screenWidth: number
   readonly now: number
   readonly dimmed: boolean
-  readonly arriving: { readonly dx: number; readonly dy: number; readonly scale: number } | null
+  readonly arriving: {
+    readonly dx: number
+    readonly dy: number
+    readonly scale: number
+  } | null
   readonly leaving: boolean
   readonly working: string | null
   onSelect: (name: string) => void
 }
 
-export const CheckpointCard = memo(function CheckpointCard({ c, box, selected, screenWidth, now, dimmed, arriving, leaving, working, onSelect }: CardProps): JSX.Element {
+export const CheckpointCard = memo(function CheckpointCard({
+  c,
+  box,
+  selected,
+  screenWidth,
+  now,
+  dimmed,
+  arriving,
+  leaving,
+  working,
+  onSelect,
+}: CardProps): JSX.Element {
   const reason = incompatibleReason(c)
   const name = shownName(c)
   const when = takenAt(c, now)
   const style = {
     "--card-scale": String(box.scale),
-    ...(arriving === null ? {} : { "--arrive-x": `${String(arriving.dx)}px`, "--arrive-y": `${String(arriving.dy)}px`, "--arrive-scale": String(arriving.scale) }),
+    ...(arriving === null
+      ? {}
+      : {
+          "--arrive-x": `${String(arriving.dx)}px`,
+          "--arrive-y": `${String(arriving.dy)}px`,
+          "--arrive-scale": String(arriving.scale),
+        }),
   } as CSSProperties
   return (
     <SpatialCanvasNode
@@ -98,17 +159,26 @@ export const CheckpointCard = memo(function CheckpointCard({ c, box, selected, s
         style={style}
         aria-pressed={selected}
         aria-label={t("checkpoints.card.label", { name, when })}
-        onClick={() => { onSelect(c.name) }}
+        onClick={() => {
+          onSelect(c.name)
+        }}
       >
         <Picture c={c} sharp={sharpAt(screenWidth)} wanted>
-          {reason !== null && <span className="checkpoint__badge">{t(reason)}</span>}
-          {working !== null && <span className="checkpoint__working">{working}</span>}
+          {reason !== null && (
+            <span className="checkpoint__badge">{t(reason)}</span>
+          )}
+          {working !== null && (
+            <span className="checkpoint__working">{working}</span>
+          )}
         </Picture>
         <span className="checkpoint__caption">
           <span className="checkpoint__title">
             <span className="checkpoint__name">{name}</span>
             {hasNotes(c) && (
-              <span className="checkpoint__notes" title={t("checkpoints.hasNotes")}>
+              <span
+                className="checkpoint__notes"
+                title={t("checkpoints.hasNotes")}
+              >
                 {NOTE}
               </span>
             )}

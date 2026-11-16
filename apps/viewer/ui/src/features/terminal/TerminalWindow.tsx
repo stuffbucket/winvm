@@ -1,4 +1,12 @@
-import { useCallback, useEffect, useMemo, useReducer, useRef, useState, type JSX } from "react"
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useReducer,
+  useRef,
+  useState,
+  type JSX,
+} from "react"
 
 import { TerminalView, terminalProcessTitle } from "@winvm/terminal"
 
@@ -23,9 +31,24 @@ import { cx } from "../../components/cx"
 import { t } from "../../i18n"
 import { TITLE_MAX } from "../../model"
 import { terminalTheme, terminalTypography, useDark } from "./appearance"
-import { defaultShell, fromList, type Launch, runnable, shellCache, shellMenu, shellTitle } from "./shells"
+import {
+  defaultShell,
+  fromList,
+  type Launch,
+  runnable,
+  shellCache,
+  shellMenu,
+  shellTitle,
+} from "./shells"
 import { createSocketTransport, type SessionStatus } from "./socket"
-import { activeTab, noTabs, type Tab, tabName, type TabState, tabsReducer } from "./tabs"
+import {
+  activeTab,
+  noTabs,
+  type Tab,
+  tabName,
+  type TabState,
+  tabsReducer,
+} from "./tabs"
 
 const newId = (): string => crypto.randomUUID()
 
@@ -46,7 +69,10 @@ function stateOf(status: SessionStatus): TabState | null {
 
 function ended(state: TabState): string | null {
   if (state.kind === "exited") return t("terminal.exited", { code: state.code })
-  if (state.kind === "lost") return state.message === null ? t("terminal.lost") : `${t("terminal.lost")} ${state.message}`
+  if (state.kind === "lost")
+    return state.message === null
+      ? t("terminal.lost")
+      : `${t("terminal.lost")} ${state.message}`
   if (state.kind === "failed") return state.message
   return null
 }
@@ -59,8 +85,16 @@ export function TerminalWindow(): JSX.Element {
   const theme = useMemo(() => terminalTheme(dark), [dark])
   const active = activeTab(s)
   const [editing, setEditing] = useState<string | null>(null)
-  const [titles, setTitles] = useState<Readonly<Record<string, string | null>>>({})
-  useEffect(() => onInstanceTitle(({ instance, title }) => { setTitles((was) => ({ ...was, [instance]: title })) }), [])
+  const [titles, setTitles] = useState<Readonly<Record<string, string | null>>>(
+    {},
+  )
+  useEffect(
+    () =>
+      onInstanceTitle(({ instance, title }) => {
+        setTitles((was) => ({ ...was, [instance]: title }))
+      }),
+    [],
+  )
   const shells = useMemo(() => shellCache(installedShells), [])
 
   const transport = useMemo(
@@ -75,20 +109,24 @@ export function TerminalWindow(): JSX.Element {
           const state = stateOf(status)
           if (state !== null) dispatch({ type: "state", id, state })
           const tab = current.current.tabs.find((x) => x.id === id)
-          if (status.kind === "lost" && tab !== undefined) shells.forget(tab.instance)
+          if (status.kind === "lost" && tab !== undefined)
+            shells.forget(tab.instance)
         },
       }),
     [shells],
   )
 
-  useEffect(() => { showWindow() }, [])
+  useEffect(() => {
+    showWindow()
+  }, [])
 
   useEffect(() => {
     const take = (): void => {
       takeTerminalRequests()
         .then((requests) => {
           for (const { installed, title, ...request } of requests) {
-            if (installed !== null) shells.seed(request.instance, fromList(installed))
+            if (installed !== null)
+              shells.seed(request.instance, fromList(installed))
             setTitles((was) => ({ ...was, [request.instance]: title }))
             dispatch({ type: "open", id: newId(), request })
           }
@@ -105,19 +143,31 @@ export function TerminalWindow(): JSX.Element {
       if (from === undefined) return
       const instance = from.instance
       void shells.get(instance).then((installed) => {
-        const request = { instance, ...runnable(launch ?? { shell: defaultShell(installed), cwd: null }, installed) }
+        const request = {
+          instance,
+          ...runnable(
+            launch ?? { shell: defaultShell(installed), cwd: null },
+            installed,
+          ),
+        }
         dispatch({ type: "open", id: newId(), request })
       })
     },
     [shells],
   )
-  const openDefault = useCallback(() => { open(null) }, [open])
+  const openDefault = useCallback(() => {
+    open(null)
+  }, [open])
   const openMenu = (): void => {
     const from = activeTab(current.current) ?? current.current.tabs.at(-1)
     if (from === undefined) return
     void shells
       .get(from.instance)
-      .then((installed) => popupMenu(shellMenu(t, installed), (item) => { open(item.launch) }))
+      .then((installed) =>
+        popupMenu(shellMenu(t, installed), (item) => {
+          open(item.launch)
+        }),
+      )
       .catch(() => undefined)
   }
 
@@ -126,7 +176,8 @@ export function TerminalWindow(): JSX.Element {
       onTerminalMenu((id) => {
         if (id === "new-tab") openDefault()
         const at = current.current.active
-        if (id === "close-tab" && at !== null) dispatch({ type: "close", id: at })
+        if (id === "close-tab" && at !== null)
+          dispatch({ type: "close", id: at })
         if (id === "rename-tab" && at !== null) setEditing(at)
       }),
     [openDefault],
@@ -134,14 +185,28 @@ export function TerminalWindow(): JSX.Element {
 
   const tabMenu = (tab: Tab): void => {
     void popupActions([
-      { kind: "action", label: t("terminal.renameTab"), run: () => { setEditing(tab.id) } },
+      {
+        kind: "action",
+        label: t("terminal.renameTab"),
+        run: () => {
+          setEditing(tab.id)
+        },
+      },
       { kind: "separator" },
-      { kind: "action", label: t("terminal.closeThisTab"), run: () => { dispatch({ type: "close", id: tab.id }) } },
+      {
+        kind: "action",
+        label: t("terminal.closeThisTab"),
+        run: () => {
+          dispatch({ type: "close", id: tab.id })
+        },
+      },
       {
         kind: "action",
         label: t("terminal.closeOtherTabs"),
         enabled: current.current.tabs.length > 1,
-        run: () => { dispatch({ type: "closeOthers", id: tab.id }) },
+        run: () => {
+          dispatch({ type: "closeOthers", id: tab.id })
+        },
       },
     ]).catch(() => undefined)
   }
@@ -160,7 +225,8 @@ export function TerminalWindow(): JSX.Element {
         dispatch({ type: "step", by })
       }
       if (e.metaKey && e.shiftKey && (e.key === "]" || e.key === "}")) step(1)
-      else if (e.metaKey && e.shiftKey && (e.key === "[" || e.key === "{")) step(-1)
+      else if (e.metaKey && e.shiftKey && (e.key === "[" || e.key === "{"))
+        step(-1)
       else if (e.ctrlKey && e.key === "Tab") step(e.shiftKey ? -1 : 1)
       else if (e.metaKey && !e.shiftKey && !e.altKey && /^[1-9]$/.test(e.key)) {
         const tabs = current.current.tabs
@@ -172,12 +238,21 @@ export function TerminalWindow(): JSX.Element {
       }
     }
     window.addEventListener("keydown", keys, { capture: true })
-    return () => { window.removeEventListener("keydown", keys, { capture: true }) }
+    return () => {
+      window.removeEventListener("keydown", keys, { capture: true })
+    }
   }, [])
 
   const title =
-    active === null ? t("terminal.title") : t("terminal.windowTitle", { instance: titles[active.instance] ?? active.instance, tab: tabTitle(active) })
-  useEffect(() => { setWindowTitle(title) }, [title])
+    active === null
+      ? t("terminal.title")
+      : t("terminal.windowTitle", {
+          instance: titles[active.instance] ?? active.instance,
+          tab: tabTitle(active),
+        })
+  useEffect(() => {
+    setWindowTitle(title)
+  }, [title])
 
   const hadTabs = useRef(false)
   useEffect(() => {
@@ -190,19 +265,36 @@ export function TerminalWindow(): JSX.Element {
   return (
     <div className="term">
       <div className="term__bar" data-tauri-drag-region>
-        <div className="term__tabs" role="tablist" aria-label={t("terminal.tabs")} data-tauri-drag-region>
+        <div
+          className="term__tabs"
+          role="tablist"
+          aria-label={t("terminal.tabs")}
+          data-tauri-drag-region
+        >
           {s.tabs.map((tab) => {
             const name = tabTitle(tab)
-            const done = tab.state.kind === "exited" || tab.state.kind === "lost" || tab.state.kind === "failed"
+            const done =
+              tab.state.kind === "exited" ||
+              tab.state.kind === "lost" ||
+              tab.state.kind === "failed"
             const shield = (
-              <span className="term__tab-admin" role="img" aria-label={t("terminal.runsAsAdmin")} title={t("terminal.runsAsAdmin")}>
+              <span
+                className="term__tab-admin"
+                role="img"
+                aria-label={t("terminal.runsAsAdmin")}
+                title={t("terminal.runsAsAdmin")}
+              >
                 <Icon name="shield" />
               </span>
             )
             return (
               <div
                 key={tab.id}
-                className={cx("term__tab", tab.id === s.active && "term__tab--active", done && "term__tab--ended")}
+                className={cx(
+                  "term__tab",
+                  tab.id === s.active && "term__tab--active",
+                  done && "term__tab--ended",
+                )}
                 onContextMenu={(e) => {
                   e.preventDefault()
                   tabMenu(tab)
@@ -215,7 +307,9 @@ export function TerminalWindow(): JSX.Element {
                       value={name}
                       label={t("terminal.tabName")}
                       maxLength={TITLE_MAX}
-                      onDone={(next) => { rename(tab, next) }}
+                      onDone={(next) => {
+                        rename(tab, next)
+                      }}
                     />
                     {shield}
                   </div>
@@ -225,13 +319,21 @@ export function TerminalWindow(): JSX.Element {
                     role="tab"
                     className="term__tab-label"
                     aria-selected={tab.id === s.active}
-                    onClick={() => { dispatch({ type: "activate", id: tab.id }) }}
-                    onDoubleClick={() => { setEditing(tab.id) }}
+                    onClick={() => {
+                      dispatch({ type: "activate", id: tab.id })
+                    }}
+                    onDoubleClick={() => {
+                      setEditing(tab.id)
+                    }}
                     onAuxClick={(e) => {
-                      if (e.button === 1) dispatch({ type: "close", id: tab.id })
+                      if (e.button === 1)
+                        dispatch({ type: "close", id: tab.id })
                     }}
                   >
-                    <span className="term__tab-name" title={t("terminal.tabTip", { name })}>
+                    <span
+                      className="term__tab-name"
+                      title={t("terminal.tabTip", { name })}
+                    >
                       {name}
                     </span>
                     {shield}
@@ -242,7 +344,9 @@ export function TerminalWindow(): JSX.Element {
                   className="term__tab-close"
                   aria-label={t("terminal.close")}
                   title={t("terminal.closeTab")}
-                  onClick={() => { dispatch({ type: "close", id: tab.id }) }}
+                  onClick={() => {
+                    dispatch({ type: "close", id: tab.id })
+                  }}
                 >
                   <Icon name="cross" />
                 </button>
@@ -271,7 +375,9 @@ export function TerminalWindow(): JSX.Element {
       </div>
 
       <div className="term__panes">
-        {s.tabs.length === 0 && <p className="term__none">{t("terminal.none")}</p>}
+        {s.tabs.length === 0 && (
+          <p className="term__none">{t("terminal.none")}</p>
+        )}
         {s.tabs.map((tab) => (
           <div key={tab.id} className="term__pane" hidden={tab.id !== s.active}>
             <TerminalView
@@ -284,9 +390,24 @@ export function TerminalWindow(): JSX.Element {
               typography={terminalTypography}
               focused={tab.id === s.active}
               testId={`terminal-${tab.id}`}
-              labels={{ startFailed: t("terminal.failed"), retry: t("terminal.retry") }}
-              onTitleChange={(raw) => { dispatch({ type: "title", id: tab.id, title: shellTitle(terminalProcessTitle(raw)) }) }}
-              onError={(error) => { dispatch({ type: "state", id: tab.id, state: { kind: "failed", message: errorMessage(error) } }) }}
+              labels={{
+                startFailed: t("terminal.failed"),
+                retry: t("terminal.retry"),
+              }}
+              onTitleChange={(raw) => {
+                dispatch({
+                  type: "title",
+                  id: tab.id,
+                  title: shellTitle(terminalProcessTitle(raw)),
+                })
+              }}
+              onError={(error) => {
+                dispatch({
+                  type: "state",
+                  id: tab.id,
+                  state: { kind: "failed", message: errorMessage(error) },
+                })
+              }}
             />
           </div>
         ))}
@@ -296,11 +417,23 @@ export function TerminalWindow(): JSX.Element {
         <div className="term__status" role="status">
           <p className="term__status-text">{end}</p>
           {active.state.kind !== "failed" && (
-            <Button size="sm" variant="secondary" onClick={() => { dispatch({ type: "reopen", id: active.id, newId: newId() }) }}>
+            <Button
+              size="sm"
+              variant="secondary"
+              onClick={() => {
+                dispatch({ type: "reopen", id: active.id, newId: newId() })
+              }}
+            >
               {t("terminal.reopen")}
             </Button>
           )}
-          <Button size="sm" variant="ghost" onClick={() => { dispatch({ type: "close", id: active.id }) }}>
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={() => {
+              dispatch({ type: "close", id: active.id })
+            }}
+          >
             {t("terminal.close")}
           </Button>
         </div>

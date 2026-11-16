@@ -1,7 +1,14 @@
 import type { JSX } from "react"
 import { Icon } from "../../components/Icon"
 import { InlineRename } from "../../components/InlineRename"
-import { MenuGroup, MenuItem, MenuRadioGroup, MenuRadioItem, MenuRoot, MenuSeparator } from "../../components/Menu"
+import {
+  MenuGroup,
+  MenuItem,
+  MenuRadioGroup,
+  MenuRadioItem,
+  MenuRoot,
+  MenuSeparator,
+} from "../../components/Menu"
 import { t } from "../../i18n"
 import { type Phase, shownTitle, TITLE_MAX } from "../../model"
 import { stateKey } from "./machines"
@@ -23,14 +30,27 @@ export interface MachinePickerProps {
 export function MachinePicker(p: MachinePickerProps): JSX.Element {
   const title = p.name === null ? null : shownTitle(p.name, p.titles[p.name])
   if (p.renaming && title !== null) {
-    return <InlineRename className="toolbar__rename" value={title} label={t("rename.windowLabel")} maxLength={TITLE_MAX} onDone={p.onRenamed} />
+    return (
+      <InlineRename
+        className="toolbar__rename"
+        value={title}
+        label={t("rename.windowLabel")}
+        maxLength={TITLE_MAX}
+        onDone={p.onRenamed}
+      />
+    )
   }
   const state = (n: string): string | null => {
     const s = n === p.name ? p.phase : p.phases[n]
     return s === null || s === undefined ? null : t(stateKey(s))
   }
   const trigger = (
-    <button type="button" className="machine-picker" title={t("machine.label")} aria-label={t("machine.trigger", { title: title ?? t("machine.none") })}>
+    <button
+      type="button"
+      className="machine-picker"
+      title={t("machine.label")}
+      aria-label={t("machine.trigger", { title: title ?? t("machine.none") })}
+    >
       <Icon name="monitor" />
       <span className="machine-picker__name">{title ?? t("machine.none")}</span>
       <span className="machine-picker__chevron">
@@ -41,9 +61,19 @@ export function MachinePicker(p: MachinePickerProps): JSX.Element {
   return (
     <MenuRoot trigger={trigger} label={t("machine.menu")}>
       <MenuGroup label={t("machine.menu")}>
-        <MenuRadioGroup value={p.name ?? ""} onValueChange={(v: unknown) => { p.onSelect(String(v)) }}>
+        <MenuRadioGroup
+          value={p.name ?? ""}
+          onValueChange={(v: unknown) => {
+            p.onSelect(String(v))
+          }}
+        >
           {p.names.map((n) => (
-            <MenuRadioItem key={n} value={n} closeOnClick trailing={state(n) ?? undefined}>
+            <MenuRadioItem
+              key={n}
+              value={n}
+              closeOnClick
+              trailing={state(n) ?? undefined}
+            >
               {shownTitle(n, p.titles[n])}
             </MenuRadioItem>
           ))}
@@ -51,7 +81,9 @@ export function MachinePicker(p: MachinePickerProps): JSX.Element {
       </MenuGroup>
       <MenuSeparator />
       <MenuItem onClick={p.onNew}>{t("machine.new")}</MenuItem>
-      {title !== null && <MenuItem onClick={p.onRename}>{t("machine.rename")}</MenuItem>}
+      {title !== null && (
+        <MenuItem onClick={p.onRename}>{t("machine.rename")}</MenuItem>
+      )}
       {title !== null && (
         <MenuItem tone="danger" onClick={p.onDelete}>
           {t("machine.delete", { title })}

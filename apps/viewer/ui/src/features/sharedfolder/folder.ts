@@ -2,9 +2,20 @@ import type { Output } from "../../backend"
 import { outputText } from "../../backend"
 import type { SharedFolderStatus } from "../../model"
 
-export const statusArgs = (instance: string): string[] => ["share", "-i", instance, "status", "--json"]
+export const statusArgs = (instance: string): string[] => [
+  "share",
+  "-i",
+  instance,
+  "status",
+  "--json",
+]
 
-export const setArgs = (instance: string, path: string, letter: string, readonly: boolean): string[] => [
+export const setArgs = (
+  instance: string,
+  path: string,
+  letter: string,
+  readonly: boolean,
+): string[] => [
   "share",
   "-i",
   instance,
@@ -16,9 +27,22 @@ export const setArgs = (instance: string, path: string, letter: string, readonly
   "--json",
 ]
 
-export const clearArgs = (instance: string): string[] => ["share", "-i", instance, "clear", "--json"]
+export const clearArgs = (instance: string): string[] => [
+  "share",
+  "-i",
+  instance,
+  "clear",
+  "--json",
+]
 
-export const installArgs = (instance: string): string[] => ["share", "-i", instance, "install", "--restart", "--json"]
+export const installArgs = (instance: string): string[] => [
+  "share",
+  "-i",
+  instance,
+  "install",
+  "--restart",
+  "--json",
+]
 
 export function cliError(out: Output): string {
   const marked = `${out.stderr}\n${out.stdout}`
@@ -41,9 +65,12 @@ export function tailToKeep(shown: string): number {
   return Math.min(Math.max(last, 8), 16, shown.length)
 }
 
-export const needsSetup = (s: SharedFolderStatus | null): boolean => s !== null && s.available && s.folder !== null && s.guest.installed === false
+export const needsSetup = (s: SharedFolderStatus | null): boolean =>
+  s !== null && s.available && s.folder !== null && s.guest.installed === false
 
-export function sectionHint(s: SharedFolderStatus | null): { key: string; values?: Record<string, string> } | null {
+export function sectionHint(
+  s: SharedFolderStatus | null,
+): { key: string; values?: Record<string, string> } | null {
   if (s === null || !s.available) return null
   if (s.folder === null) return { key: "folder.hintOff" }
   return { key: "folder.hintOn", values: { letter: s.letter } }

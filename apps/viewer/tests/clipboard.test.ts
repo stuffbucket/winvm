@@ -3,7 +3,13 @@ import { describe, expect, it } from "bun:test"
 import { ClipboardSync } from "../ui/src/features/screen/clipboard"
 
 function setup(mac = "") {
-  const state = { mac, focused: true, toGuest: [] as string[], toMac: [] as string[], reads: 0 }
+  const state = {
+    mac,
+    focused: true,
+    toGuest: [] as string[],
+    toMac: [] as string[],
+    reads: 0,
+  }
   let release: (() => void) | null = null
   let hold = false
   const sync = new ClipboardSync({

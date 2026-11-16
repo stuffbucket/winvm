@@ -11,18 +11,28 @@ async function build(): Promise<void> {
   await rm(DIST, { recursive: true, force: true })
   await mkdir(DIST, { recursive: true })
   const result = await Bun.build({
-    entrypoints: [resolve(UI, "index.html"), resolve(UI, "terminal.html"), resolve(UI, "files.html")],
+    entrypoints: [
+      resolve(UI, "index.html"),
+      resolve(UI, "terminal.html"),
+      resolve(UI, "files.html"),
+    ],
     outdir: DIST,
     minify: true,
     define: { "process.env.NODE_ENV": JSON.stringify("production") },
     sourcemap: "none",
-    naming: { entry: "[name].[ext]", chunk: "[name]-[hash].[ext]", asset: "[name]-[hash].[ext]" },
+    naming: {
+      entry: "[name].[ext]",
+      chunk: "[name]-[hash].[ext]",
+      asset: "[name]-[hash].[ext]",
+    },
   })
   if (!result.success) {
     for (const log of result.logs) console.error(log)
     throw new Error("the viewer UI did not build")
   }
-  console.error(`viewer UI built in ${String(Date.now() - started)} ms → ${DIST}`)
+  console.error(
+    `viewer UI built in ${String(Date.now() - started)} ms → ${DIST}`,
+  )
 }
 
 await build()
@@ -32,7 +42,9 @@ if (process.argv.includes("--watch")) {
   watch(UI, { recursive: true }, () => {
     if (timer !== null) clearTimeout(timer)
     timer = setTimeout(() => {
-      build().catch((error: unknown) => { console.error(error) })
+      build().catch((error: unknown) => {
+        console.error(error)
+      })
     }, 80)
   })
   await new Promise(() => undefined)

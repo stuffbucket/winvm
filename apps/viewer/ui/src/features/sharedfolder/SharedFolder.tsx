@@ -14,15 +14,23 @@ interface SharedFolderProps {
   readonly guestReady: boolean
 }
 
-export function SharedFolder({ view, guestReady }: SharedFolderProps): JSX.Element {
+export function SharedFolder({
+  view,
+  guestReady,
+}: SharedFolderProps): JSX.Element {
   const [confirming, setConfirming] = useState(false)
   const s = view.status
   const busy = view.working !== null
 
   if (s === null)
-    return view.error === null ? <p className="panel__note">{t("state.loading")}</p> : <p className="action__error">{view.error}</p>
+    return view.error === null ? (
+      <p className="panel__note">{t("state.loading")}</p>
+    ) : (
+      <p className="action__error">{view.error}</p>
+    )
 
-  if (!s.available) return <p className="panel__note">{s.reason ?? t("folder.unavailable")}</p>
+  if (!s.available)
+    return <p className="panel__note">{s.reason ?? t("folder.unavailable")}</p>
 
   const shown = s.folder === null ? null : homePath(s.folder, view.home)
   const setup = needsSetup(s)
@@ -36,13 +44,28 @@ export function SharedFolder({ view, guestReady }: SharedFolderProps): JSX.Eleme
         <>
           <div className="copyable">
             <OneLine value={shown} keep={tailToKeep(shown)} />
-            <button type="button" className="btn btn--ghost btn--icon" aria-label={reveal} title={reveal} onClick={() => void revealInFinder(s.folder ?? "")}>
+            <button
+              type="button"
+              className="btn btn--ghost btn--icon"
+              aria-label={reveal}
+              title={reveal}
+              onClick={() => void revealInFinder(s.folder ?? "")}
+            >
               <Icon name="folder" />
             </button>
           </div>
-          <p className="action__text">{t("folder.drive", { letter: s.letter })}</p>
+          <p className="action__text">
+            {t("folder.drive", { letter: s.letter })}
+          </p>
           <label className="check-field">
-            <input type="checkbox" checked={s.readonly} disabled={busy} onChange={(e) => { view.setReadonly(e.currentTarget.checked) }} />
+            <input
+              type="checkbox"
+              checked={s.readonly}
+              disabled={busy}
+              onChange={(e) => {
+                view.setReadonly(e.currentTarget.checked)
+              }}
+            />
             {t("folder.readonly")}
           </label>
         </>
@@ -53,9 +76,15 @@ export function SharedFolder({ view, guestReady }: SharedFolderProps): JSX.Eleme
           {t(s.folder === null ? "folder.pendingStop" : "folder.pending")}
         </p>
       )}
-      {!s.pending && s.folder !== null && s.running && s.guest.installed === true && s.guest.mounted === false && (
-        <p className="action__hint">{t("folder.notMounted", { letter: s.letter })}</p>
-      )}
+      {!s.pending &&
+        s.folder !== null &&
+        s.running &&
+        s.guest.installed === true &&
+        s.guest.mounted === false && (
+          <p className="action__hint">
+            {t("folder.notMounted", { letter: s.letter })}
+          </p>
+        )}
 
       <div className="action__row">
         <Button size="sm" disabled={busy} onClick={view.choose}>
@@ -77,10 +106,21 @@ export function SharedFolder({ view, guestReady }: SharedFolderProps): JSX.Eleme
           <div className="action__section">
             <p className="action__hint">{t("folder.setupNeeded")}</p>
             <div className="action__row">
-              <Button size="sm" variant="primary" disabled={busy || !guestReady} onClick={() => { setConfirming(true) }}>
+              <Button
+                size="sm"
+                variant="primary"
+                disabled={busy || !guestReady}
+                onClick={() => {
+                  setConfirming(true)
+                }}
+              >
                 {t("folder.setup")}
               </Button>
-              {!guestReady && <span className="action__hint">{t("folder.setupNeedsRunning")}</span>}
+              {!guestReady && (
+                <span className="action__hint">
+                  {t("folder.setupNeedsRunning")}
+                </span>
+              )}
             </div>
           </div>
         )
@@ -94,7 +134,9 @@ export function SharedFolder({ view, guestReady }: SharedFolderProps): JSX.Eleme
         body={<p>{t("folder.setupBody")}</p>}
         confirmLabel={t("folder.setupConfirm")}
         cancelLabel={t("confirm.cancel")}
-        onCancel={() => { setConfirming(false) }}
+        onCancel={() => {
+          setConfirming(false)
+        }}
         onConfirm={() => {
           setConfirming(false)
           view.install()

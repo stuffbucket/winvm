@@ -7,13 +7,31 @@ export interface Deleting {
   readonly live: boolean
 }
 
-export function DeleteMachineBody({ deleting, keepSaves, busy, onKeepSaves }: { readonly deleting: Deleting; readonly keepSaves: boolean; readonly busy: boolean; onKeepSaves: (keep: boolean) => void }): JSX.Element {
+export function DeleteMachineBody({
+  deleting,
+  keepSaves,
+  busy,
+  onKeepSaves,
+}: {
+  readonly deleting: Deleting
+  readonly keepSaves: boolean
+  readonly busy: boolean
+  onKeepSaves: (keep: boolean) => void
+}): JSX.Element {
   return (
     <>
       <p>{t("machine.deleteBody", { title: deleting.title })}</p>
       {deleting.live && <p>{t("machine.deleteRunning")}</p>}
       <label className="check-field">
-        <input type="checkbox" name="keep-saves" checked={keepSaves} disabled={busy} onChange={(e) => { onKeepSaves(e.target.checked) }} />
+        <input
+          type="checkbox"
+          name="keep-saves"
+          checked={keepSaves}
+          disabled={busy}
+          onChange={(e) => {
+            onKeepSaves(e.target.checked)
+          }}
+        />
         <span>{t("machine.keepSaves")}</span>
       </label>
     </>

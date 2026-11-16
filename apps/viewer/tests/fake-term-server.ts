@@ -17,7 +17,10 @@ export interface FakeTermServer {
   readonly port: number
   readonly token: string
   readonly sessions: FakeSession[]
-  endpoint(shell?: string, cwd?: string | null): { url: string; protocols: string[] }
+  endpoint(
+    shell?: string,
+    cwd?: string | null,
+  ): { url: string; protocols: string[] }
   stop(): void
 }
 
@@ -38,7 +41,9 @@ function run(ws: ServerWebSocket<Data>, line: string): void {
     ws.sendBinary(encoder.encode(text))
   }
   if (cmd === "exit") {
-    ws.send(JSON.stringify({ type: "exit", code: arg === "" ? 0 : Number(arg) }))
+    ws.send(
+      JSON.stringify({ type: "exit", code: arg === "" ? 0 : Number(arg) }),
+    )
     ws.close(1000)
     return
   }
@@ -55,7 +60,10 @@ function run(ws: ServerWebSocket<Data>, line: string): void {
     ws.sendBinary(bytes.slice(1, 4))
     ws.sendBinary(bytes.slice(4))
   } else if (cmd === "colors") {
-    for (let i = 0; i < 8; i++) say(`\x1b[3${String(i)}m color ${String(i)} \x1b[9${String(i)}m bright ${String(i)}\x1b[0m\r\n`)
+    for (let i = 0; i < 8; i++)
+      say(
+        `\x1b[3${String(i)}m color ${String(i)} \x1b[9${String(i)}m bright ${String(i)}\x1b[0m\r\n`,
+      )
   } else if (cmd !== undefined && cmd !== "") {
     say(`${line}\r\n`)
   }
@@ -70,19 +78,36 @@ export function startFakeTermServer(port = 0): FakeTermServer {
     port,
     fetch(req, srv) {
       const url = new URL(req.url)
-      if (url.pathname !== "/term") return new Response("not found", { status: 404 })
-      const protocols = (req.headers.get("sec-websocket-protocol") ?? "").split(",").map((p) => p.trim())
-      if (!protocols.includes("winvm-term") || !protocols.includes(`winvm-token.${token}`)) return new Response("forbidden", { status: 403 })
+      if (url.pathname !== "/term")
+        return new Response("not found", { status: 404 })
+      const protocols = (req.headers.get("sec-websocket-protocol") ?? "")
+        .split(",")
+        .map((p) => p.trim())
+      if (
+        !protocols.includes("winvm-term") ||
+        !protocols.includes(`winvm-token.${token}`)
+      )
+        return new Response("forbidden", { status: 403 })
       const session: FakeSession = {
         shell: url.searchParams.get("shell"),
         cwd: url.searchParams.get("cwd"),
         protocols,
-        sizes: [{ cols: Number(url.searchParams.get("cols")), rows: Number(url.searchParams.get("rows")) }],
+        sizes: [
+          {
+            cols: Number(url.searchParams.get("cols")),
+            rows: Number(url.searchParams.get("rows")),
+          },
+        ],
         input: "",
       }
       sessions.push(session)
-      const upgraded = srv.upgrade(req, { data: { session, line: "" }, headers: { "Sec-WebSocket-Protocol": "winvm-term" } })
-      return upgraded ? undefined : new Response("upgrade failed", { status: 400 })
+      const upgraded = srv.upgrade(req, {
+        data: { session, line: "" },
+        headers: { "Sec-WebSocket-Protocol": "winvm-term" },
+      })
+      return upgraded
+        ? undefined
+        : new Response("upgrade failed", { status: 400 })
     },
     websocket: {
       open(ws) {
@@ -90,8 +115,17 @@ export function startFakeTermServer(port = 0): FakeTermServer {
       },
       message(ws, message) {
         if (typeof message === "string") {
-          const m = JSON.parse(message) as { type?: string; cols?: number; rows?: number }
-          if (m.type === "resize" && typeof m.cols === "number" && typeof m.rows === "number") ws.data.session.sizes.push({ cols: m.cols, rows: m.rows })
+          const m = JSON.parse(message) as {
+            type?: string
+            cols?: number
+            rows?: number
+          }
+          if (
+            m.type === "resize" &&
+            typeof m.cols === "number" &&
+            typeof m.rows === "number"
+          )
+            ws.data.session.sizes.push({ cols: m.cols, rows: m.rows })
           return
         }
         const text = decoder.decode(message)
@@ -122,7 +156,10 @@ export function startFakeTermServer(port = 0): FakeTermServer {
     sessions,
     endpoint(shell = "pwsh", cwd = null) {
       const q = new URLSearchParams({ shell, ...(cwd === null ? {} : { cwd }) })
-      return { url: `ws://127.0.0.1:${String(actual)}/term?${q.toString()}`, protocols: ["winvm-term", `winvm-token.${token}`] }
+      return {
+        url: `ws://127.0.0.1:${String(actual)}/term?${q.toString()}`,
+        protocols: ["winvm-term", `winvm-token.${token}`],
+      }
     },
     stop() {
       void server.stop(true)

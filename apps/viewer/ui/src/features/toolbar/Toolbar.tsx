@@ -2,7 +2,10 @@ import type { JSX } from "react"
 import { Icon, type IconName } from "../../components/Icon"
 import { t } from "../../i18n"
 import { type Controls, isFrozen, isLivePhase, type Phase } from "../../model"
-import { MachinePicker, type MachinePickerProps } from "../machines/MachinePicker"
+import {
+  MachinePicker,
+  type MachinePickerProps,
+} from "../machines/MachinePicker"
 
 export type PanelId = "files" | "share"
 
@@ -50,7 +53,14 @@ interface ToolButtonProps {
   onClick: (button: HTMLElement) => void
 }
 
-function ToolButton({ icon, label, enabled, pressed, expanded, onClick }: ToolButtonProps): JSX.Element {
+function ToolButton({
+  icon,
+  label,
+  enabled,
+  pressed,
+  expanded,
+  onClick,
+}: ToolButtonProps): JSX.Element {
   return (
     <button
       type="button"
@@ -60,14 +70,24 @@ function ToolButton({ icon, label, enabled, pressed, expanded, onClick }: ToolBu
       aria-pressed={pressed}
       aria-expanded={expanded}
       disabled={!enabled}
-      onClick={(e) => { onClick(e.currentTarget) }}
+      onClick={(e) => {
+        onClick(e.currentTarget)
+      }}
     >
       <Icon name={icon} />
     </button>
   )
 }
 
-function TerminalButton({ blocked, onOpen, onMenu }: { readonly blocked: string | null; onOpen: () => void; onMenu: () => void }): JSX.Element {
+function TerminalButton({
+  blocked,
+  onOpen,
+  onMenu,
+}: {
+  readonly blocked: string | null
+  onOpen: () => void
+  onMenu: () => void
+}): JSX.Element {
   const label = t("action.terminal")
   return (
     <button
@@ -91,9 +111,27 @@ function TerminalButton({ blocked, onOpen, onMenu }: { readonly blocked: string 
   )
 }
 
-function PauseButton({ phase, c, onPause, onResume, onMenu }: { readonly phase: Phase | null; readonly c: Controls; onPause: () => void; onResume: () => void; onMenu: () => void }): JSX.Element {
+function PauseButton({
+  phase,
+  c,
+  onPause,
+  onResume,
+  onMenu,
+}: {
+  readonly phase: Phase | null
+  readonly c: Controls
+  onPause: () => void
+  onResume: () => void
+  onMenu: () => void
+}): JSX.Element {
   const frozen = isFrozen(phase)
-  const label = t(phase === "asleep" ? "action.wake" : frozen ? "action.resume" : "action.pause")
+  const label = t(
+    phase === "asleep"
+      ? "action.wake"
+      : frozen
+        ? "action.resume"
+        : "action.pause",
+  )
   const enabled = frozen ? c.resume : c.pause
   return (
     <button
@@ -118,7 +156,15 @@ function PauseButton({ phase, c, onPause, onResume, onMenu }: { readonly phase: 
   )
 }
 
-function FilesButton({ enabled, onOpen, onMenu }: { readonly enabled: boolean; onOpen: () => void; onMenu: () => void }): JSX.Element {
+function FilesButton({
+  enabled,
+  onOpen,
+  onMenu,
+}: {
+  readonly enabled: boolean
+  onOpen: () => void
+  onMenu: () => void
+}): JSX.Element {
   const label = t("action.files")
   return (
     <button
@@ -142,7 +188,17 @@ function FilesButton({ enabled, onOpen, onMenu }: { readonly enabled: boolean; o
   )
 }
 
-function CheckpointsButton({ enabled, open, onOpen, onMenu }: { readonly enabled: boolean; readonly open: boolean; onOpen: () => void; onMenu: () => void }): JSX.Element {
+function CheckpointsButton({
+  enabled,
+  open,
+  onOpen,
+  onMenu,
+}: {
+  readonly enabled: boolean
+  readonly open: boolean
+  onOpen: () => void
+  onMenu: () => void
+}): JSX.Element {
   const label = t("action.checkpoints")
   return (
     <button
@@ -170,15 +226,34 @@ function CheckpointsButton({ enabled, open, onOpen, onMenu }: { readonly enabled
 export function Toolbar(p: ToolbarProps): JSX.Element {
   const c = p.controls
   const live = isLivePhase(p.phase)
-  const panel = (id: PanelId, icon: IconName, label: string, enabled: boolean, pressed?: boolean): JSX.Element => (
-    <ToolButton icon={icon} label={label} enabled={enabled} pressed={pressed} expanded={p.open === id} onClick={(b) => { p.onOpen(id, b) }} />
+  const panel = (
+    id: PanelId,
+    icon: IconName,
+    label: string,
+    enabled: boolean,
+    pressed?: boolean,
+  ): JSX.Element => (
+    <ToolButton
+      icon={icon}
+      label={label}
+      enabled={enabled}
+      pressed={pressed}
+      expanded={p.open === id}
+      onClick={(b) => {
+        p.onOpen(id, b)
+      }}
+    />
   )
   return (
     <header className="toolbar" data-tauri-drag-region>
       <div className="toolbar__lead" data-tauri-drag-region>
         <MachinePicker {...p.picker} />
         {p.activity !== null && (
-          <span className="toolbar__activity" data-tauri-drag-region role="status">
+          <span
+            className="toolbar__activity"
+            data-tauri-drag-region
+            role="status"
+          >
             {p.activity}
           </span>
         )}
@@ -186,21 +261,64 @@ export function Toolbar(p: ToolbarProps): JSX.Element {
 
       <div className="toolbar__group">
         {live ? (
-          <ToolButton icon="power" label={t("action.shutDown")} enabled={c.shutDown} onClick={p.onShutDown} />
+          <ToolButton
+            icon="power"
+            label={t("action.shutDown")}
+            enabled={c.shutDown}
+            onClick={p.onShutDown}
+          />
         ) : (
-          <ToolButton icon="play" label={t("action.start")} enabled={c.start} onClick={p.onStart} />
+          <ToolButton
+            icon="play"
+            label={t("action.start")}
+            enabled={c.start}
+            onClick={p.onStart}
+          />
         )}
-        <ToolButton icon="restart" label={t("action.restart")} enabled={c.restart} onClick={p.onRestart} />
-        <PauseButton key={isFrozen(p.phase) ? "resume" : "pause"} phase={p.phase} c={c} onPause={p.onPause} onResume={p.onResume} onMenu={p.onPauseMenu} />
+        <ToolButton
+          icon="restart"
+          label={t("action.restart")}
+          enabled={c.restart}
+          onClick={p.onRestart}
+        />
+        <PauseButton
+          key={isFrozen(p.phase) ? "resume" : "pause"}
+          phase={p.phase}
+          c={c}
+          onPause={p.onPause}
+          onResume={p.onResume}
+          onMenu={p.onPauseMenu}
+        />
       </div>
 
       <span className="toolbar__divider" aria-hidden="true" />
 
       <div className="toolbar__group">
-        <TerminalButton blocked={p.terminalBlocked} onOpen={p.onTerminal} onMenu={p.onTerminalMenu} />
-        <FilesButton enabled={p.guestReady} onOpen={() => { p.onOpen("files", document.body) }} onMenu={p.onFilesMenu} />
-        <CheckpointsButton enabled={p.canCheckpoints} open={p.checkpointsOpen} onOpen={p.onCheckpoints} onMenu={p.onCheckpointsMenu} />
-        {panel("share", "agent", t("action.share"), p.canShare || p.sharing, p.sharing)}
+        <TerminalButton
+          blocked={p.terminalBlocked}
+          onOpen={p.onTerminal}
+          onMenu={p.onTerminalMenu}
+        />
+        <FilesButton
+          enabled={p.guestReady}
+          onOpen={() => {
+            p.onOpen("files", document.body)
+          }}
+          onMenu={p.onFilesMenu}
+        />
+        <CheckpointsButton
+          enabled={p.canCheckpoints}
+          open={p.checkpointsOpen}
+          onOpen={p.onCheckpoints}
+          onMenu={p.onCheckpointsMenu}
+        />
+        {panel(
+          "share",
+          "agent",
+          t("action.share"),
+          p.canShare || p.sharing,
+          p.sharing,
+        )}
       </div>
 
       <span className="toolbar__divider" aria-hidden="true" />
@@ -213,7 +331,9 @@ export function Toolbar(p: ToolbarProps): JSX.Element {
           pressed={p.keyboardCaptured}
           onClick={p.onKeyboardCapture}
         />
-        {p.keyboardCaptured && <span className="toolbar__capture-status">{t("input.captured")}</span>}
+        {p.keyboardCaptured && (
+          <span className="toolbar__capture-status">{t("input.captured")}</span>
+        )}
         <ToolButton
           icon="fit"
           label={t("action.actualSize")}
@@ -221,8 +341,19 @@ export function Toolbar(p: ToolbarProps): JSX.Element {
           pressed={p.actualSize && p.canActualSize}
           onClick={p.onActualSize}
         />
-        <ToolButton icon="screenSharing" label={t("action.screenSharing")} enabled={c.screen} onClick={p.onScreenSharing} />
-        <ToolButton icon="panel" label={t("action.details")} enabled pressed={p.detailsOpen} onClick={p.onDetails} />
+        <ToolButton
+          icon="screenSharing"
+          label={t("action.screenSharing")}
+          enabled={c.screen}
+          onClick={p.onScreenSharing}
+        />
+        <ToolButton
+          icon="panel"
+          label={t("action.details")}
+          enabled
+          pressed={p.detailsOpen}
+          onClick={p.onDetails}
+        />
       </div>
     </header>
   )

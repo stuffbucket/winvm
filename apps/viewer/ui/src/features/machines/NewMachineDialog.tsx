@@ -32,8 +32,7 @@ export function NewMachineDialog(p: NewMachineDialogProps): JSX.Element | null {
     if (p.open && !el.open) {
       try {
         el.showModal()
-      } catch {
-      }
+      } catch {}
     } else if (!p.open && el.open) el.close()
   }, [p.open])
 
@@ -47,14 +46,16 @@ export function NewMachineDialog(p: NewMachineDialogProps): JSX.Element | null {
 
   if (!p.open) return null
   const problem = nameProblem(name, p.names)
-  const shownProblem = touched && problem !== null && problem !== "empty" ? problem : null
+  const shownProblem =
+    touched && problem !== null && problem !== "empty" ? problem : null
   const chosen = image ?? p.images?.[0] ?? null
   const cancel = (): void => {
     if (!p.busy) p.onCancel()
   }
   const submit = (): void => {
     setTouched(true)
-    if (problem === null && !p.busy) p.onCreate({ name: name.trim(), image: chosen, start })
+    if (problem === null && !p.busy)
+      p.onCreate({ name: name.trim(), image: chosen, start })
   }
 
   return (
@@ -97,20 +98,54 @@ export function NewMachineDialog(p: NewMachineDialogProps): JSX.Element | null {
                 setTouched(true)
               }}
             />
-            <span id="new-machine-hint" className={shownProblem === null ? "field__hint" : "field__hint field__hint--error"} role={shownProblem === null ? undefined : "alert"}>
-              {shownProblem === null ? t("machine.nameHint") : t(`machine.name.${shownProblem}`)}
+            <span
+              id="new-machine-hint"
+              className={
+                shownProblem === null
+                  ? "field__hint"
+                  : "field__hint field__hint--error"
+              }
+              role={shownProblem === null ? undefined : "alert"}
+            >
+              {shownProblem === null
+                ? t("machine.nameHint")
+                : t(`machine.name.${shownProblem}`)}
             </span>
           </label>
           <details className="new-machine__advanced">
             <summary>{t("machine.advanced")}</summary>
             <label className="field">
               <span className="field__label">{t("machine.imageLabel")}</span>
-              <select className="input" name="image" value={chosen ?? ""} disabled={p.busy || p.images === null || p.images.length === 0} onChange={(e) => { setImage(e.target.value) }}>
-                {p.images === null ? <option value="">{t("state.loading")}</option> : p.images.map((i) => <option key={i} value={i}>{i}</option>)}
+              <select
+                className="input"
+                name="image"
+                value={chosen ?? ""}
+                disabled={p.busy || p.images === null || p.images.length === 0}
+                onChange={(e) => {
+                  setImage(e.target.value)
+                }}
+              >
+                {p.images === null ? (
+                  <option value="">{t("state.loading")}</option>
+                ) : (
+                  p.images.map((i) => (
+                    <option key={i} value={i}>
+                      {i}
+                    </option>
+                  ))
+                )}
               </select>
             </label>
             <label className="check-field">
-              <input type="checkbox" name="start" checked={start} disabled={p.busy} onChange={(e) => { setStart(e.target.checked) }} />
+              <input
+                type="checkbox"
+                name="start"
+                checked={start}
+                disabled={p.busy}
+                onChange={(e) => {
+                  setStart(e.target.checked)
+                }}
+              />
               <span>{t("machine.startNow")}</span>
             </label>
           </details>
@@ -121,10 +156,19 @@ export function NewMachineDialog(p: NewMachineDialogProps): JSX.Element | null {
           )}
         </div>
         <div className="confirm-dialog__actions">
-          <button type="button" className="btn btn--ghost" onClick={cancel} disabled={p.busy}>
+          <button
+            type="button"
+            className="btn btn--ghost"
+            onClick={cancel}
+            disabled={p.busy}
+          >
             {t("confirm.cancel")}
           </button>
-          <button type="submit" className="btn btn--primary" disabled={p.busy || problem !== null}>
+          <button
+            type="submit"
+            className="btn btn--primary"
+            disabled={p.busy || problem !== null}
+          >
             {p.busy ? t("machine.creating") : t("machine.create")}
           </button>
         </div>

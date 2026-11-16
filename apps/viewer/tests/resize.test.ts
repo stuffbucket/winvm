@@ -2,7 +2,11 @@ import { describe, expect, it } from "bun:test"
 
 import type { Size, Timers } from "@winvm/displayfit"
 
-import { LiveResize, type ResizePhase, type Settled } from "../ui/src/features/screen/resize"
+import {
+  LiveResize,
+  type ResizePhase,
+  type Settled,
+} from "../ui/src/features/screen/resize"
 
 class Clock implements Timers {
   now = 0
@@ -37,7 +41,9 @@ const flushPromises = async (): Promise<void> => {
 
 const S = (width: number, height: number): Size => ({ width, height })
 
-function setup(o: { stillMs?: number; idleMs?: number; settleMs?: number } = {}) {
+function setup(
+  o: { stillMs?: number; idleMs?: number; settleMs?: number } = {},
+) {
   const clock = new Clock()
   const asked: Size[] = []
   const answers: (() => void)[] = []
@@ -124,7 +130,11 @@ describe("LiveResize", () => {
     await clock.tick(50)
     r.drawnAt(S(2400, 1500))
     expect(phases.map((p) => p.phase)).toEqual(["resizing", "settled"])
-    expect(phases[1]?.settled).toEqual({ size: S(2400, 1500), ms: 90, timedOut: false })
+    expect(phases[1]?.settled).toEqual({
+      size: S(2400, 1500),
+      ms: 90,
+      timedOut: false,
+    })
   })
 
   it("settles as soon as the frame is drawn, before the guest's answer arrives", () => {

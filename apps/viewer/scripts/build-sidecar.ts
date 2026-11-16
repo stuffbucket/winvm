@@ -5,7 +5,13 @@ import { resolve } from "node:path"
 import { releaseVersion, sourceBuildIdentity } from "@winvm/core/identity"
 
 const ROOT = resolve(import.meta.dir, "..", "..", "..")
-const out = resolve(import.meta.dir, "..", "src-tauri", "binaries", "winvm-aarch64-apple-darwin")
+const out = resolve(
+  import.meta.dir,
+  "..",
+  "src-tauri",
+  "binaries",
+  "winvm-aarch64-apple-darwin",
+)
 mkdirSync(resolve(out, ".."), { recursive: true })
 const identity = sourceBuildIdentity(ROOT)
 const r = spawnSync(

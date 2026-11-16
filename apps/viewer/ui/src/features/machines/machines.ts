@@ -6,7 +6,10 @@ const NAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/
 
 export type NameProblem = "empty" | "invalid" | "taken"
 
-export function nameProblem(name: string, existing: readonly string[]): NameProblem | null {
+export function nameProblem(
+  name: string,
+  existing: readonly string[],
+): NameProblem | null {
   const n = name.trim()
   if (n === "") return "empty"
   if (!NAME.test(n)) return "invalid"
@@ -18,21 +21,36 @@ export const stateKey = (p: Phase): string => `machine.state.${p}`
 
 export const isLive = (p: Phase | null | undefined): boolean => isLivePhase(p)
 
-export const createArgs = (name: string, image: string | null): string[] => ["create", "-i", name.trim(), ...(image === null ? [] : ["--image", image])]
+export const createArgs = (name: string, image: string | null): string[] => [
+  "create",
+  "-i",
+  name.trim(),
+  ...(image === null ? [] : ["--image", image]),
+]
 
-export const destroyArgs = (name: string, keepSaves: boolean): string[] => ["destroy", "-i", name, ...(keepSaves ? ["--keep-saves"] : [])]
+export const destroyArgs = (name: string, keepSaves: boolean): string[] => [
+  "destroy",
+  "-i",
+  name,
+  ...(keepSaves ? ["--keep-saves"] : []),
+]
 
 const Ls = z.object({ images: z.array(z.object({ name: z.string() })) })
 
 export function parseImages(stdout: string): string[] {
   try {
-    return Ls.safeParse(JSON.parse(stdout)).data?.images.map((i) => i.name) ?? []
+    return (
+      Ls.safeParse(JSON.parse(stdout)).data?.images.map((i) => i.name) ?? []
+    )
   } catch {
     return []
   }
 }
 
-export function nextAfterDelete(names: readonly string[], gone: string): string | null {
+export function nextAfterDelete(
+  names: readonly string[],
+  gone: string,
+): string | null {
   const i = names.indexOf(gone)
   const rest = names.filter((n) => n !== gone)
   if (rest.length === 0) return null

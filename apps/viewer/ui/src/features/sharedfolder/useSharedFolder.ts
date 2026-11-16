@@ -19,10 +19,18 @@ export interface SharedFolderView {
   install(): void
 }
 
-export function useSharedFolder(instance: string | null, phase: Phase | null, guestReady: boolean, active: boolean): SharedFolderView {
+export function useSharedFolder(
+  instance: string | null,
+  phase: Phase | null,
+  guestReady: boolean,
+  active: boolean,
+): SharedFolderView {
   const [status, setStatus] = useState<SharedFolderStatus | null>(null)
   const [error, setError] = useState<string | null>(null)
-  const [work, setWork] = useState<{ instance: string; kind: SharedFolderWork } | null>(null)
+  const [work, setWork] = useState<{
+    instance: string
+    kind: SharedFolderWork
+  } | null>(null)
   const [home, setHome] = useState<string | null>(null)
   const shown = useRef(instance)
   shown.current = instance
@@ -31,7 +39,9 @@ export function useSharedFolder(instance: string | null, phase: Phase | null, gu
   useEffect(() => {
     homeDir()
       .then(setHome)
-      .catch(() => { setHome(null) })
+      .catch(() => {
+        setHome(null)
+      })
   }, [])
 
   useEffect(() => {
@@ -46,7 +56,11 @@ export function useSharedFolder(instance: string | null, phase: Phase | null, gu
       if (n !== reads.current || shown.current !== name) return
       const got = out.code === 0 ? parseSharedFolder(out.stdout) : null
       setStatus(got)
-      setError(got === null ? `${t("folder.statusError")} ${cliError(out)}`.trim() : null)
+      setError(
+        got === null
+          ? `${t("folder.statusError")} ${cliError(out)}`.trim()
+          : null,
+      )
     } catch (e: unknown) {
       if (n !== reads.current || shown.current !== name) return
       setError(`${t("folder.statusError")} ${String(e)}`)
@@ -60,7 +74,11 @@ export function useSharedFolder(instance: string | null, phase: Phase | null, gu
   }, [active, instance, phase, guestReady, installing, read])
 
   const change = useCallback(
-    async (name: string, kind: SharedFolderWork, args: string[]): Promise<void> => {
+    async (
+      name: string,
+      kind: SharedFolderWork,
+      args: string[],
+    ): Promise<void> => {
       setWork({ instance: name, kind })
       setError(null)
       reads.current++
@@ -88,20 +106,39 @@ export function useSharedFolder(instance: string | null, phase: Phase | null, gu
     const s = status
     pickFolder(t("folder.pickTitle"), s?.folder ?? home ?? undefined)
       .then((path) => {
-        if (path !== null) void change(instance, "set", setArgs(instance, path, s?.letter ?? "Z", s?.readonly ?? false))
+        if (path !== null)
+          void change(
+            instance,
+            "set",
+            setArgs(instance, path, s?.letter ?? "Z", s?.readonly ?? false),
+          )
       })
-      .catch((e: unknown) => { setError(String(e)) })
+      .catch((e: unknown) => {
+        setError(String(e))
+      })
   }
   const stop = (): void => {
-    if (instance !== null && !busy) void change(instance, "clear", clearArgs(instance))
+    if (instance !== null && !busy)
+      void change(instance, "clear", clearArgs(instance))
   }
   const setReadonly = (on: boolean): void => {
     const s = status
-    if (instance !== null && !busy && s !== null && s.folder !== null) void change(instance, "set", setArgs(instance, s.folder, s.letter, on))
+    if (instance !== null && !busy && s !== null && s.folder !== null)
+      void change(instance, "set", setArgs(instance, s.folder, s.letter, on))
   }
   const install = (): void => {
-    if (instance !== null && !busy) void change(instance, "install", installArgs(instance))
+    if (instance !== null && !busy)
+      void change(instance, "install", installArgs(instance))
   }
 
-  return { status, error, working: work !== null && work.instance === instance ? work.kind : null, home, choose, stop, setReadonly, install }
+  return {
+    status,
+    error,
+    working: work !== null && work.instance === instance ? work.kind : null,
+    home,
+    choose,
+    stop,
+    setReadonly,
+    install,
+  }
 }

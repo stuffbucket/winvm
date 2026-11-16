@@ -1,8 +1,22 @@
 import RFB from "@winvm/novnc/core/rfb.js"
 import * as KeyboardUtil from "@winvm/novnc/core/input/util.js"
-import { forwardRef, useEffect, useImperativeHandle, useLayoutEffect, useRef, useState, type JSX } from "react"
+import {
+  forwardRef,
+  useEffect,
+  useImperativeHandle,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type JSX,
+} from "react"
 
-import { type Size, drawSize, guestSizeFor, sameSize, scaleFor } from "@winvm/displayfit"
+import {
+  type Size,
+  drawSize,
+  guestSizeFor,
+  sameSize,
+  scaleFor,
+} from "@winvm/displayfit"
 
 import { copyText, onLiveResize, readText, trace } from "../../backend"
 import { Icon } from "../../components/Icon"
@@ -11,7 +25,11 @@ import { t } from "../../i18n"
 import type { Connection } from "../../model"
 import { ClipboardSync } from "./clipboard"
 import { HeldSizes, keyVerdict } from "./held"
-import { GuestKeyboardRouter, sendCtrlAltDelete, sendWindowsKey } from "./keyboard"
+import {
+  GuestKeyboardRouter,
+  sendCtrlAltDelete,
+  sendWindowsKey,
+} from "./keyboard"
 import { LiveResize, type ResizePhase } from "./resize"
 import { type WakeSock, keepRefreshing } from "./wake"
 
@@ -45,7 +63,20 @@ const CLIPBOARD_TEXT = 1
 const dpr = (): number => window.devicePixelRatio || 1
 
 export const Screen = forwardRef<ScreenHandle, ScreenProps>(function Screen(
-  { connection, keyboardCaptured, onKeyboardCaptured, resizable, onGuestSize, frozen = false, inputBlocked = false, ready = true, asleep = false, waking = false, onWake, overlay = true },
+  {
+    connection,
+    keyboardCaptured,
+    onKeyboardCaptured,
+    resizable,
+    onGuestSize,
+    frozen = false,
+    inputBlocked = false,
+    ready = true,
+    asleep = false,
+    waking = false,
+    onWake,
+    overlay = true,
+  },
   ref,
 ): JSX.Element {
   const area = useRef<HTMLDivElement | null>(null)
@@ -76,7 +107,11 @@ export const Screen = forwardRef<ScreenHandle, ScreenProps>(function Screen(
   const askAgainRef = useRef(askAgain)
   askAgainRef.current = askAgain
   const heldSizes = useRef<HeldSizes | null>(null)
-  heldSizes.current ??= new HeldSizes(frozen || !ready, { onRetry: () => { askAgainRef.current() } })
+  heldSizes.current ??= new HeldSizes(frozen || !ready, {
+    onRetry: () => {
+      askAgainRef.current()
+    },
+  })
   const keys = useRef({ frozen, blocked: inputBlocked, asleep, waking, onWake })
   keys.current.frozen = frozen
   keys.current.blocked = inputBlocked
@@ -93,17 +128,26 @@ export const Screen = forwardRef<ScreenHandle, ScreenProps>(function Screen(
     () => ({
       sendWindowsKey: () => {
         const conn = rfb.current
-        if (conn !== null) sendWindowsKey((keysym, code, down) => { conn.sendKey(keysym, code, down) })
+        if (conn !== null)
+          sendWindowsKey((keysym, code, down) => {
+            conn.sendKey(keysym, code, down)
+          })
       },
       sendCtrlAltDelete: () => {
         const conn = rfb.current
-        if (conn !== null) sendCtrlAltDelete((keysym, code, down) => { conn.sendKey(keysym, code, down) })
+        if (conn !== null)
+          sendCtrlAltDelete((keysym, code, down) => {
+            conn.sendKey(keysym, code, down)
+          })
       },
     }),
     [],
   )
 
-  useEffect(() => keyboard.current?.setCaptured(keyboardCaptured), [keyboardCaptured])
+  useEffect(
+    () => keyboard.current?.setCaptured(keyboardCaptured),
+    [keyboardCaptured],
+  )
 
   useEffect(() => {
     const el = target.current
@@ -120,15 +164,25 @@ export const Screen = forwardRef<ScreenHandle, ScreenProps>(function Screen(
       translate: (event) => {
         const keyboardEvent = event as KeyboardEvent
         const keysym = KeyboardUtil.getKeysym(keyboardEvent)
-        return keysym === null ? null : { keysym, code: KeyboardUtil.getKeycode(keyboardEvent) }
+        return keysym === null
+          ? null
+          : { keysym, code: KeyboardUtil.getKeycode(keyboardEvent) }
       },
       releaseNoVnc: () => conn?._keyboard._allKeysUp(),
-      onCaptured: (next) => { captureChanged.current(next) },
+      onCaptured: (next) => {
+        captureChanged.current(next)
+      },
     })
     router.setCaptured(captured.current)
-    const onKeyDown = (event: KeyboardEvent): void => { router.keyDown(event) }
-    const onKeyUp = (event: KeyboardEvent): void => { router.keyUp(event) }
-    const onBlur = (): void => { router.lostFocus() }
+    const onKeyDown = (event: KeyboardEvent): void => {
+      router.keyDown(event)
+    }
+    const onKeyUp = (event: KeyboardEvent): void => {
+      router.keyUp(event)
+    }
+    const onBlur = (): void => {
+      router.lostFocus()
+    }
     const onVisibility = (): void => {
       if (document.visibilityState === "hidden") router.lostFocus()
     }
@@ -157,7 +211,8 @@ export const Screen = forwardRef<ScreenHandle, ScreenProps>(function Screen(
     const hold = (): void => {
       const from = el.querySelector("canvas")
       const to = still.current
-      if (from === null || to === null || from.width === 0 || from.height === 0) return
+      if (from === null || to === null || from.width === 0 || from.height === 0)
+        return
       to.width = from.width
       to.height = from.height
       to.getContext("2d")?.drawImage(from, 0, 0)
@@ -170,7 +225,13 @@ export const Screen = forwardRef<ScreenHandle, ScreenProps>(function Screen(
             if (!connected || closing) return
             const sizes = heldSizes.current
             if (sizes === null || !sizes.offer(size)) return
-            RFB.messages.setDesktopSize(conn._sock, size.width, size.height, conn._screenID ?? 0, conn._screenFlags ?? 0)
+            RFB.messages.setDesktopSize(
+              conn._sock,
+              size.width,
+              size.height,
+              conn._screenID ?? 0,
+              conn._screenFlags ?? 0,
+            )
             try {
               await guestSize.current?.(size, scaleFor(dpr()))
               sizes.took()
@@ -184,7 +245,11 @@ export const Screen = forwardRef<ScreenHandle, ScreenProps>(function Screen(
             else {
               setBox(measure())
               setRatio(dpr())
-              if (settled !== null && settled.ms !== null && settled.size !== null) {
+              if (
+                settled !== null &&
+                settled.ms !== null &&
+                settled.size !== null
+              ) {
                 const { width, height } = settled.size
                 const line = `resize: ${String(width)}x${String(height)} drawn 1:1 ${String(Math.round(settled.ms))} ms after the resize ended${settled.timedOut ? " (gave up waiting for the size asked for)" : ""}`
                 console.info(line)
@@ -229,7 +294,9 @@ export const Screen = forwardRef<ScreenHandle, ScreenProps>(function Screen(
         flipped = size
         flips = 1
         clearTimeout(frameWait)
-        frameWait = setTimeout(() => { drawnAt(size) }, FRAME_WAIT_MS)
+        frameWait = setTimeout(() => {
+          drawnAt(size)
+        }, FRAME_WAIT_MS)
       } else if (++flips === 2) drawnAt(size)
     }
 
@@ -247,7 +314,9 @@ export const Screen = forwardRef<ScreenHandle, ScreenProps>(function Screen(
     }
     const observer = new ResizeObserver(onArea)
     observer.observe(outer)
-    const unlisten = onLiveResize((live) => (live ? resize?.liveStart() : resize?.liveEnd()))
+    const unlisten = onLiveResize((live) =>
+      live ? resize?.liveStart() : resize?.liveEnd(),
+    )
 
     let media: MediaQueryList | null = null
     const onRatio = (): void => {
@@ -264,13 +333,16 @@ export const Screen = forwardRef<ScreenHandle, ScreenProps>(function Screen(
     const clipboard = new ClipboardSync({
       readMac: readText,
       writeMac: copyText,
-      toGuest: (text) => { conn.clipboardPasteFrom(text) },
+      toGuest: (text) => {
+        conn.clipboardPasteFrom(text)
+      },
       focused: () => document.hasFocus(),
     })
     let clipboardReady = false
     let clipboardWait: ReturnType<typeof setTimeout> | undefined
     conn.addEventListener("clipboard", (e) => {
-      const text: unknown = (e as CustomEvent<{ text?: unknown } | null>).detail?.text
+      const text: unknown = (e as CustomEvent<{ text?: unknown } | null>).detail
+        ?.text
       if (typeof text === "string") clipboard.fromGuest(text)
     })
     const onFocus = (): void => {
@@ -279,8 +351,13 @@ export const Screen = forwardRef<ScreenHandle, ScreenProps>(function Screen(
     window.addEventListener("focus", onFocus)
     const startClipboard = (since: number): void => {
       if (closing || !connected) return
-      if (conn._clipboardServerCapabilitiesFormats?.[CLIPBOARD_TEXT] !== true && performance.now() - since < CLIPBOARD_CAPS_MS) {
-        clipboardWait = setTimeout(() => { startClipboard(since) }, 100)
+      if (
+        conn._clipboardServerCapabilitiesFormats?.[CLIPBOARD_TEXT] !== true &&
+        performance.now() - since < CLIPBOARD_CAPS_MS
+      ) {
+        clipboardWait = setTimeout(() => {
+          startClipboard(since)
+        }, 100)
         return
       }
       clipboardReady = true
@@ -290,7 +367,10 @@ export const Screen = forwardRef<ScreenHandle, ScreenProps>(function Screen(
     conn.addEventListener("connect", () => {
       connected = true
       setView("connected")
-      stopWake ??= keepRefreshing(conn._sock as WakeSock, () => connected && !closing && document.visibilityState === "visible")
+      stopWake ??= keepRefreshing(
+        conn._sock as WakeSock,
+        () => connected && !closing && document.visibilityState === "visible",
+      )
       startClipboard(performance.now())
       if (resize !== null) {
         resize.reset()
@@ -298,15 +378,21 @@ export const Screen = forwardRef<ScreenHandle, ScreenProps>(function Screen(
         resize.flush()
       }
     })
-    conn.addEventListener("credentialsrequired", () => { conn.sendCredentials({ password: password ?? "" }) })
-    conn.addEventListener("securityfailure", () => { setView("refused") })
+    conn.addEventListener("credentialsrequired", () => {
+      conn.sendCredentials({ password: password ?? "" })
+    })
+    conn.addEventListener("securityfailure", () => {
+      setView("refused")
+    })
     conn.addEventListener("disconnect", () => {
       connected = false
       stopWake?.()
       stopWake = null
       if (closing) return
       setView((v) => (v === "refused" ? v : "lost"))
-      retry = setTimeout(() => { setAttempt((a) => a + 1) }, 2000)
+      retry = setTimeout(() => {
+        setAttempt((a) => a + 1)
+      }, 2000)
     })
     return () => {
       closing = true
@@ -344,10 +430,21 @@ export const Screen = forwardRef<ScreenHandle, ScreenProps>(function Screen(
     if (kept !== null) askAgainRef.current()
   }, [frozen, ready])
 
-  const fits = resizable && fb !== null && box !== null && sameSize(fb, guestSizeFor(box, ratio))
+  const fits =
+    resizable &&
+    fb !== null &&
+    box !== null &&
+    sameSize(fb, guestSizeFor(box, ratio))
   const drawn = fits ? drawSize(fb, box, ratio) : null
-  const exact = drawn === null ? undefined : { width: `${String(drawn.width)}px`, height: `${String(drawn.height)}px` }
-  const scaled = drawn !== null && fb !== null && drawn.width > fb.width / ratio + 0.5
+  const exact =
+    drawn === null
+      ? undefined
+      : {
+          width: `${String(drawn.width)}px`,
+          height: `${String(drawn.height)}px`,
+        }
+  const scaled =
+    drawn !== null && fb !== null && drawn.width > fb.width / ratio + 0.5
   const holding = resizable && phase === "resizing" && held
 
   useLayoutEffect(() => {
@@ -360,15 +457,31 @@ export const Screen = forwardRef<ScreenHandle, ScreenProps>(function Screen(
     <div ref={area} className="screen">
       <div
         ref={target}
-        className={exact === undefined ? "screen__canvas" : scaled ? "screen__canvas screen__canvas--exact screen__canvas--scaled" : "screen__canvas screen__canvas--exact"}
+        className={
+          exact === undefined
+            ? "screen__canvas"
+            : scaled
+              ? "screen__canvas screen__canvas--exact screen__canvas--scaled"
+              : "screen__canvas screen__canvas--exact"
+        }
         style={exact}
       />
-      <canvas ref={still} className="screen__still" hidden={!holding} aria-hidden="true" />
-      <div className={cx("screen__held", frozen && overlay && "screen__held--on")} aria-hidden="true">
+      <canvas
+        ref={still}
+        className="screen__still"
+        hidden={!holding}
+        aria-hidden="true"
+      />
+      <div
+        className={cx("screen__held", frozen && overlay && "screen__held--on")}
+        aria-hidden="true"
+      >
         <div className="screen__held-mark">
           <Icon name={asleep ? "moon" : "pause"} />
         </div>
-        {asleep && <p className="screen__held-hint">{t("screen.asleepHint")}</p>}
+        {asleep && (
+          <p className="screen__held-hint">{t("screen.asleepHint")}</p>
+        )}
       </div>
       {message !== null && (
         <div className="screen__message" role="status">

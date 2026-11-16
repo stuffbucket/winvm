@@ -34,8 +34,7 @@ export function LiveFrame({
         try {
           target.getContext("2d")?.drawImage(src, 0, 0, w, h)
           target.dataset["live"] = "true"
-        } catch {
-        }
+        } catch {}
       }
       timer = setTimeout(copy, interval)
     }
@@ -45,5 +44,13 @@ export function LiveFrame({
     }
   }, [interval, maxWidth])
 
-  return <canvas ref={ref} className={className} aria-hidden="true" width={0} height={0} />
+  return (
+    <canvas
+      ref={ref}
+      className={className}
+      aria-hidden="true"
+      width={0}
+      height={0}
+    />
+  )
 }

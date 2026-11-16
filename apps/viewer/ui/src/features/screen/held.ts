@@ -8,7 +8,10 @@ export interface KeyState {
   readonly waking: boolean
 }
 
-export function keyVerdict(s: KeyState, key: { readonly metaKey: boolean }): KeyVerdict {
+export function keyVerdict(
+  s: KeyState,
+  key: { readonly metaKey: boolean },
+): KeyVerdict {
   if (key.metaKey) return "pass"
   if (s.asleep) return s.waking ? "drop" : "wake"
   return "pass"
@@ -23,7 +26,9 @@ export interface HeldSizesOptions {
 
 const realTimers: Timers = {
   set: (fn, ms) => setTimeout(fn, ms),
-  clear: (t) => { clearTimeout(t as ReturnType<typeof setTimeout>) },
+  clear: (t) => {
+    clearTimeout(t as ReturnType<typeof setTimeout>)
+  },
 }
 
 const MAX_RETRY_MS = 30_000
@@ -72,7 +77,10 @@ export class HeldSizes {
     this.misses++
     this.clearTimer()
     if (this.frozen || this.misses > (this.o.tries ?? 6)) return
-    const wait = Math.min((this.o.retryMs ?? 2000) * 2 ** (this.misses - 1), MAX_RETRY_MS)
+    const wait = Math.min(
+      (this.o.retryMs ?? 2000) * 2 ** (this.misses - 1),
+      MAX_RETRY_MS,
+    )
     this.timer = this.timers.set(() => {
       this.timer = null
       if (this.frozen || this.waiting === null) return

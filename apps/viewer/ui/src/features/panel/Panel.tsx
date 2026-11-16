@@ -36,12 +36,24 @@ interface PanelProps {
   onForceStop: () => void
 }
 
-function Section({ title, hint, open, children }: { title: string; hint?: string | undefined; open?: boolean | undefined; children: ReactNode }): JSX.Element {
+function Section({
+  title,
+  hint,
+  open,
+  children,
+}: {
+  title: string
+  hint?: string | undefined
+  open?: boolean | undefined
+  children: ReactNode
+}): JSX.Element {
   return (
     <details className="advanced-section" open={open}>
       <summary className="advanced-section__summary">
         <span className="advanced-section__title">{title}</span>
-        {hint !== undefined && <span className="advanced-section__hint">{hint}</span>}
+        {hint !== undefined && (
+          <span className="advanced-section__hint">{hint}</span>
+        )}
       </summary>
       <div className="advanced-section__body">{children}</div>
     </details>
@@ -56,10 +68,24 @@ export function Panel(p: PanelProps): JSX.Element {
   return (
     <aside className="panel" aria-label={t("action.details")}>
       <Section title={t("panel.resources")} open>
-        <Resources usage={p.usage} context={p.usageContext} held={p.held ?? null} />
+        <Resources
+          usage={p.usage}
+          context={p.usageContext}
+          held={p.held ?? null}
+        />
       </Section>
 
-      <Section title={t("panel.hardware")} hint={next === null ? undefined : t("hardware.hint", { cpus: next.cpus, memory: formatMemory(next.memoryMiB) })}>
+      <Section
+        title={t("panel.hardware")}
+        hint={
+          next === null
+            ? undefined
+            : t("hardware.hint", {
+                cpus: next.cpus,
+                memory: formatMemory(next.memoryMiB),
+              })
+        }
+      >
         <Hardware view={p.machineInfo} />
       </Section>
 
@@ -69,7 +95,11 @@ export function Panel(p: PanelProps): JSX.Element {
 
       <Section title={t("panel.status")} open>
         {rows.length === 0 ? (
-          <p className="panel__note">{p.status === null ? t("state.loading") : t(`state.${phase(p.status)}`)}</p>
+          <p className="panel__note">
+            {p.status === null
+              ? t("state.loading")
+              : t(`state.${phase(p.status)}`)}
+          </p>
         ) : (
           <dl className="kv">
             {rows.map((r) => (
@@ -80,15 +110,17 @@ export function Panel(p: PanelProps): JSX.Element {
             ))}
           </dl>
         )}
-        {p.status !== null && p.status.state !== "missing" && p.status.notes.length > 0 && (
-          <ul className="checks" aria-label={t("panel.notes")}>
-            {p.status.notes.map((n) => (
-              <li className="check" key={n}>
-                <span className="muted">{n}</span>
-              </li>
-            ))}
-          </ul>
-        )}
+        {p.status !== null &&
+          p.status.state !== "missing" &&
+          p.status.notes.length > 0 && (
+            <ul className="checks" aria-label={t("panel.notes")}>
+              {p.status.notes.map((n) => (
+                <li className="check" key={n}>
+                  <span className="muted">{n}</span>
+                </li>
+              ))}
+            </ul>
+          )}
         <label className="field">
           <span className="field__label">{t("panel.closePolicy")}</span>
           <select
@@ -96,8 +128,12 @@ export function Panel(p: PanelProps): JSX.Element {
             name="closePolicy"
             value={p.closePolicy}
             disabled={p.closePolicyBusy || p.status === null}
-            aria-describedby={p.closePolicyError === null ? undefined : "close-policy-error"}
-            onChange={(e) => { p.onClosePolicy(e.target.value as ClosePolicy) }}
+            aria-describedby={
+              p.closePolicyError === null ? undefined : "close-policy-error"
+            }
+            onChange={(e) => {
+              p.onClosePolicy(e.target.value as ClosePolicy)
+            }}
           >
             {CLOSE_POLICIES.map((policy) => (
               <option key={policy} value={policy}>
@@ -115,25 +151,41 @@ export function Panel(p: PanelProps): JSX.Element {
 
       <Section
         title={t("panel.sharedFolder")}
-        hint={folderHint === null ? undefined : t(folderHint.key, folderHint.values)}
-        open={needsSetup(p.sharedFolder.status) || p.sharedFolder.working === "install" ? true : undefined}
+        hint={
+          folderHint === null ? undefined : t(folderHint.key, folderHint.values)
+        }
+        open={
+          needsSetup(p.sharedFolder.status) ||
+          p.sharedFolder.working === "install"
+            ? true
+            : undefined
+        }
       >
         <SharedFolder view={p.sharedFolder} guestReady={p.guestReady} />
       </Section>
 
-      <Section title={t("panel.mac")} hint={macReady ? t("mac.ready") : undefined} open={p.checks !== null && !macReady}>
+      <Section
+        title={t("panel.mac")}
+        hint={macReady ? t("mac.ready") : undefined}
+        open={p.checks !== null && !macReady}
+      >
         {p.checks === null ? (
           <p className="panel__note">{p.checksError ?? t("state.loading")}</p>
         ) : (
           <ul className="checks">
             {p.checks.checks.map((c) => (
-              <li key={c.label} className={cx("check", !c.ok && "check--missing")}>
+              <li
+                key={c.label}
+                className={cx("check", !c.ok && "check--missing")}
+              >
                 <span className="check__mark">
                   <Icon name={c.ok ? "check" : "cross"} />
                 </span>
                 <span>
                   {c.label}
-                  {!c.ok && c.hint !== "" && <span className="check__hint mono">{c.hint}</span>}
+                  {!c.ok && c.hint !== "" && (
+                    <span className="check__hint mono">{c.hint}</span>
+                  )}
                 </span>
               </li>
             ))}
@@ -144,7 +196,12 @@ export function Panel(p: PanelProps): JSX.Element {
       <Section title={t("panel.troubleshooting")}>
         <p className="panel__note">{t("trouble.forceStopBody")}</p>
         <div className="actions">
-          <Button size="sm" variant="destructive" disabled={!p.canForceStop} onClick={p.onForceStop}>
+          <Button
+            size="sm"
+            variant="destructive"
+            disabled={!p.canForceStop}
+            onClick={p.onForceStop}
+          >
             {t("action.forceStop")}
           </Button>
         </div>

@@ -3,7 +3,7 @@ export const fontStacks = {
   body: '"Commissioner", "Segoe UI", Helvetica, Arial, sans-serif',
   mono: 'ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace',
   symbols: '"Symbols Nerd Font Mono"',
-} as const;
+} as const
 
 export const text = {
   xs: "0.75rem",
@@ -15,7 +15,7 @@ export const text = {
   "2xl": "2rem",
   "3xl": "2.5rem",
   "4xl": "3rem",
-} as const;
+} as const
 
 export const weight = {
   base: "400",
@@ -23,19 +23,19 @@ export const weight = {
   lg: "600",
   xl: "600",
   "2xl": "700",
-} as const;
+} as const
 
 export const leading = {
   base: "1.6",
   lg: "1.4",
   xl: "1.3",
   "2xl": "1.2",
-} as const;
+} as const
 
 export const tracking = {
   xl: "-0.01em",
   "2xl": "-0.015em",
-} as const;
+} as const
 
 export const spacing = {
   1: "4px",
@@ -46,21 +46,21 @@ export const spacing = {
   6: "32px",
   7: "48px",
   8: "64px",
-} as const;
+} as const
 
 export const radii = {
   input: "6px",
   card: "8px",
   chip: "4px",
   pill: "9999px",
-} as const;
+} as const
 
 export const borderWidth = {
   hairline: "1px",
   thin: "1px",
   thick: "2px",
   heavy: "4px",
-} as const;
+} as const
 
 export const size = {
   xs: "12px",
@@ -69,40 +69,40 @@ export const size = {
   lg: "24px",
   xl: "32px",
   "2xl": "40px",
-} as const;
+} as const
 
 export const elevation = {
   card: "0 1px 2px rgb(0 0 0 / 0.06)",
   modal: "0 8px 24px rgb(0 0 0 / 0.18)",
   tooltip: "0 2px 6px rgb(0 0 0 / 0.1)",
-} as const;
+} as const
 
 export const brand = {
   color: "#c8334a",
-} as const;
+} as const
 
 export const accent = {
   fg: "#ffffff",
   destructive: "#b32d3f",
   destructiveFg: "#ffffff",
-} as const;
+} as const
 
 export const scrim = {
   color: "rgb(0 0 0 / 0.5)",
   paused: "rgb(143 143 143 / 0.2)",
-} as const;
+} as const
 
 export const focusRing = {
   width: "2px",
   offset: "2px",
   color: "var(--accent)",
   expr: "var(--focus-ring-width) solid var(--focus-ring-color)",
-} as const;
+} as const
 
 export const layout = {
   contentMax: "640px",
   panelWidth: "320px",
-} as const;
+} as const
 
 export const themes = {
   dark: {
@@ -147,4 +147,4 @@ export const themes = {
     backdropGlowBrand: "#efd9de",
     terminalSelection: "#c9dfe2",
   },
-} as const satisfies Record<"dark" | "light", Record<string, string>>;
+} as const satisfies Record<"dark" | "light", Record<string, string>>

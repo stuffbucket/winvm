@@ -30,7 +30,9 @@ export class ClipboardSync {
     if (!this.started || !this.ports.focused() || text === this.shared) return
     this.shared = text
     this.generation++
-    this.ports.writeMac(text).catch((error: unknown) => { console.warn("putting Windows' clipboard on the Mac failed", error) })
+    this.ports.writeMac(text).catch((error: unknown) => {
+      console.warn("putting Windows' clipboard on the Mac failed", error)
+    })
   }
 
   fromMac(): Promise<void> {
@@ -58,7 +60,13 @@ export class ClipboardSync {
       console.warn("reading the Mac's clipboard failed", error)
       return
     }
-    if (text === "" || text === this.shared || before !== this.generation || !this.ports.focused()) return
+    if (
+      text === "" ||
+      text === this.shared ||
+      before !== this.generation ||
+      !this.ports.focused()
+    )
+      return
     this.shared = text
     this.ports.toGuest(text)
   }

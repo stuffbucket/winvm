@@ -40,7 +40,12 @@ const base = {
   vncPort: 5901,
   websocketPort: 5701,
   overlayBytes: 3 * 1024 ** 3,
-  guest: { agent: "ok", agentVersion: "9.2.0", os: "Windows 11 Pro 24H2", clockOffsetMs: 12 },
+  guest: {
+    agent: "ok",
+    agentVersion: "9.2.0",
+    os: "Windows 11 Pro 24H2",
+    clockOffsetMs: 12,
+  },
   saves: { count: 2, bytes: 5 * 1024 ** 3, latest: null, latestBaseline: null },
   watcher: null,
   service: { pid: 4243 },
@@ -57,11 +62,18 @@ const one = (over: Record<string, unknown> = {}) => {
 
 describe("parseStatus", () => {
   it("reads one instance", () => {
-    expect(parseStatus(JSON.stringify(base))?.map((s) => s.name)).toEqual(["default"])
+    expect(parseStatus(JSON.stringify(base))?.map((s) => s.name)).toEqual([
+      "default",
+    ])
   })
 
   it("reads the list printed for several instances", () => {
-    const got = parseStatus(JSON.stringify({ instances: [base, { ...base, name: "ci" }], timeMachine: "" }))
+    const got = parseStatus(
+      JSON.stringify({
+        instances: [base, { ...base, name: "ci" }],
+        timeMachine: "",
+      }),
+    )
     expect(got?.map((s) => s.name)).toEqual(["default", "ci"])
   })
 
@@ -73,7 +85,9 @@ describe("parseStatus", () => {
 
 describe("phase", () => {
   it("is starting while the agent has not answered", () => {
-    expect(phase(one({ guest: { ...base.guest, agent: "silent" } }))).toBe("starting")
+    expect(phase(one({ guest: { ...base.guest, agent: "silent" } }))).toBe(
+      "starting",
+    )
   })
 
   it("is running once the agent answers", () => {
@@ -81,7 +95,9 @@ describe("phase", () => {
   })
 
   it("follows the state otherwise", () => {
-    expect(phase(one({ state: "stopped", guest: null, pid: null }))).toBe("stopped")
+    expect(phase(one({ state: "stopped", guest: null, pid: null }))).toBe(
+      "stopped",
+    )
   })
 })
 
@@ -125,7 +141,15 @@ describe("controls", () => {
 
   it("offers nothing that changes state while a command runs", () => {
     const c = controls("running", true)
-    expect([c.start, c.shutDown, c.restart, c.pause, c.resume, c.screen, c.terminal]).toEqual([false, false, false, false, false, true, false])
+    expect([
+      c.start,
+      c.shutDown,
+      c.restart,
+      c.pause,
+      c.resume,
+      c.screen,
+      c.terminal,
+    ]).toEqual([false, false, false, false, false, true, false])
   })
 })
 
@@ -144,8 +168,18 @@ describe("terminalBlocked", () => {
   })
 
   it("agrees with controls on when a terminal opens", () => {
-    for (const p of ["starting", "running", "paused", "stopped", "stowed", "missing"] as const)
-      for (const busy of [false, true]) expect(controls(p, busy).terminal).toBe(terminalBlocked(p, busy) === null)
+    for (const p of [
+      "starting",
+      "running",
+      "paused",
+      "stopped",
+      "stowed",
+      "missing",
+    ] as const)
+      for (const busy of [false, true])
+        expect(controls(p, busy).terminal).toBe(
+          terminalBlocked(p, busy) === null,
+        )
   })
 })
 
@@ -163,39 +197,52 @@ describe("detailRows", () => {
   })
 
   it("leaves out what a stopped guest cannot say", () => {
-    const rows = detailRows(one({ state: "stopped", guest: null, pid: null, uptimeSeconds: null }))
-    expect(rows.map((r) => r.key)).toEqual(["detail.hardware", "detail.image", "detail.screen", "detail.disk", "detail.saves"])
+    const rows = detailRows(
+      one({ state: "stopped", guest: null, pid: null, uptimeSeconds: null }),
+    )
+    expect(rows.map((r) => r.key)).toEqual([
+      "detail.hardware",
+      "detail.image",
+      "detail.screen",
+      "detail.disk",
+      "detail.saves",
+    ])
   })
 })
 
 describe("startSteps", () => {
-  const states = (steps: ReturnType<typeof startSteps>): string[] => steps.map((s) => `${s.key}:${s.state}`)
+  const states = (steps: ReturnType<typeof startSteps>): string[] =>
+    steps.map((s) => `${s.key}:${s.state}`)
 
   it("prepares the disk first for an instance that does not exist yet", () => {
-    expect(states(startSteps(true, one({ state: "missing", guest: null, pid: null })))).toEqual([
-      "step.disk:current",
-      "step.machine:todo",
-      "step.windows:todo",
-    ])
+    expect(
+      states(
+        startSteps(true, one({ state: "missing", guest: null, pid: null })),
+      ),
+    ).toEqual(["step.disk:current", "step.machine:todo", "step.windows:todo"])
   })
 
   it("skips the disk for an instance that exists", () => {
-    expect(states(startSteps(false, one({ state: "stopped", guest: null, pid: null })))).toEqual([
-      "step.machine:current",
-      "step.windows:todo",
-    ])
+    expect(
+      states(
+        startSteps(false, one({ state: "stopped", guest: null, pid: null })),
+      ),
+    ).toEqual(["step.machine:current", "step.windows:todo"])
   })
 
   it("is starting Windows once the machine runs and the agent has not answered", () => {
-    expect(states(startSteps(true, one({ guest: { ...base.guest, agent: "silent" } })))).toEqual([
-      "step.disk:done",
-      "step.machine:done",
-      "step.windows:current",
-    ])
+    expect(
+      states(
+        startSteps(true, one({ guest: { ...base.guest, agent: "silent" } })),
+      ),
+    ).toEqual(["step.disk:done", "step.machine:done", "step.windows:current"])
   })
 
   it("is all done when the agent answers", () => {
-    expect(states(startSteps(false, one()))).toEqual(["step.machine:done", "step.windows:done"])
+    expect(states(startSteps(false, one()))).toEqual([
+      "step.machine:done",
+      "step.windows:done",
+    ])
   })
 })
 
@@ -211,22 +258,41 @@ describe("facts", () => {
   })
 
   it("leaves out what is unknown and saves when there are none", () => {
-    const got = facts(one({ image: null, cpus: null, overlayBytes: null, saves: { count: 0, bytes: 0 } }))
+    const got = facts(
+      one({
+        image: null,
+        cpus: null,
+        overlayBytes: null,
+        saves: { count: 0, bytes: 0 },
+      }),
+    )
     expect(got.map((f) => f.key)).toEqual(["fact.memory"])
   })
 
   it("gives a size under 1 GiB in MiB", () => {
-    expect(facts(one({ overlayBytes: 190 * 1024 ** 2 })).find((f) => f.key === "fact.changes")?.value).toBe("190 MiB")
+    expect(
+      facts(one({ overlayBytes: 190 * 1024 ** 2 })).find(
+        (f) => f.key === "fact.changes",
+      )?.value,
+    ).toBe("190 MiB")
   })
 })
 
 describe("displaySize", () => {
   it("reads a virtio-gpu size", () => {
-    expect(displaySize("virtio-gpu 1280x800")).toEqual({ width: 1280, height: 800, device: "virtio-gpu" })
+    expect(displaySize("virtio-gpu 1280x800")).toEqual({
+      width: 1280,
+      height: 800,
+      device: "virtio-gpu",
+    })
   })
 
   it("reads the firmware framebuffer", () => {
-    expect(displaySize("ramfb (firmware framebuffer, 800x600)")).toEqual({ width: 800, height: 600, device: "ramfb" })
+    expect(displaySize("ramfb (firmware framebuffer, 800x600)")).toEqual({
+      width: 800,
+      height: 600,
+      device: "ramfb",
+    })
   })
 
   it("is the firmware framebuffer's 800x600 when unknown", () => {
@@ -236,7 +302,15 @@ describe("displaySize", () => {
 
 describe("parseSaves", () => {
   it("reads saves --json", () => {
-    const out = JSON.stringify([{ name: "before-update", kind: "manual", createdAt: "2026-10-27T20:00:00.000Z", bytes: 2048, compatible: true }])
+    const out = JSON.stringify([
+      {
+        name: "before-update",
+        kind: "manual",
+        createdAt: "2026-10-27T20:00:00.000Z",
+        bytes: 2048,
+        compatible: true,
+      },
+    ])
     expect(parseSaves(out)?.map((s) => s.name)).toEqual(["before-update"])
   })
 
@@ -253,11 +327,16 @@ describe("parseShare", () => {
       "  token abc_DEF-123",
       "  (also in /x/cua.json)",
     ].join("\n")
-    expect(parseShare(out)).toEqual({ url: "http://127.0.0.1:61234", token: "abc_DEF-123" })
+    expect(parseShare(out)).toEqual({
+      url: "http://127.0.0.1:61234",
+      token: "abc_DEF-123",
+    })
   })
 
   it("is null until both are printed", () => {
-    expect(parseShare('computer use for "default" on http://127.0.0.1:61234')).toBeNull()
+    expect(
+      parseShare('computer use for "default" on http://127.0.0.1:61234'),
+    ).toBeNull()
   })
 })
 
@@ -270,8 +349,22 @@ describe("parseClaudeStatus", () => {
     env: { WINVM_HOME: "/x/state" },
     from: "source",
     clients: [
-      { id: "claude-code", name: "Claude Code", available: true, added: false, current: false, config: "/x/.claude.json" },
-      { id: "claude-desktop", name: "Claude Desktop", available: true, added: true, current: true, config: "/x/claude_desktop_config.json" },
+      {
+        id: "claude-code",
+        name: "Claude Code",
+        available: true,
+        added: false,
+        current: false,
+        config: "/x/.claude.json",
+      },
+      {
+        id: "claude-desktop",
+        name: "Claude Desktop",
+        available: true,
+        added: true,
+        current: true,
+        config: "/x/claude_desktop_config.json",
+      },
     ],
   })
 
@@ -285,16 +378,35 @@ describe("parseClaudeStatus", () => {
   })
 
   it("is null for an unknown client or text", () => {
-    expect(parseClaudeStatus(out.replace("claude-desktop", "claude-web"))).toBeNull()
+    expect(
+      parseClaudeStatus(out.replace("claude-desktop", "claude-web")),
+    ).toBeNull()
     expect(parseClaudeStatus("usage: winvm mcp …")).toBeNull()
   })
 })
 
 describe("parseClaudeChange", () => {
   it("reads a change, and a refusal", () => {
-    const done = { ok: true, client: "claude-desktop", server: "winvm-x", changed: true, config: "/x", backup: "/x.bak", restart: true }
-    expect(parseClaudeChange(JSON.stringify(done))).toEqual({ ok: true, client: "claude-desktop", changed: true, restart: true })
-    const refused = { ok: false as const, error: "say which: winvm mcp install claude-code|claude-desktop [-i name]" }
+    const done = {
+      ok: true,
+      client: "claude-desktop",
+      server: "winvm-x",
+      changed: true,
+      config: "/x",
+      backup: "/x.bak",
+      restart: true,
+    }
+    expect(parseClaudeChange(JSON.stringify(done))).toEqual({
+      ok: true,
+      client: "claude-desktop",
+      changed: true,
+      restart: true,
+    })
+    const refused = {
+      ok: false as const,
+      error:
+        "say which: winvm mcp install claude-code|claude-desktop [-i name]",
+    }
     expect(parseClaudeChange(JSON.stringify(refused))).toEqual(refused)
     expect(parseClaudeChange("")).toBeNull()
   })
@@ -302,7 +414,13 @@ describe("parseClaudeChange", () => {
 
 describe("parseChecks", () => {
   it("reads doctor --json", () => {
-    const out = JSON.stringify({ ready: false, checks: [{ label: "runtime (not installed)", ok: false, hint: "winvm setup" }], timeMachine: "" })
+    const out = JSON.stringify({
+      ready: false,
+      checks: [
+        { label: "runtime (not installed)", ok: false, hint: "winvm setup" },
+      ],
+      timeMachine: "",
+    })
     expect(parseChecks(out)?.ready).toBe(false)
   })
 
@@ -313,8 +431,18 @@ describe("parseChecks", () => {
 
 describe("parseConnection", () => {
   it("reads open --json", () => {
-    const out = JSON.stringify({ display: 1, vncPort: 5901, websocketPort: 5701, password: "abcd1234" })
-    expect(parseConnection(out)).toEqual({ display: 1, vncPort: 5901, websocketPort: 5701, password: "abcd1234" })
+    const out = JSON.stringify({
+      display: 1,
+      vncPort: 5901,
+      websocketPort: 5701,
+      password: "abcd1234",
+    })
+    expect(parseConnection(out)).toEqual({
+      display: 1,
+      vncPort: 5901,
+      websocketPort: 5701,
+      password: "abcd1234",
+    })
   })
 
   it("is null without a websocket port", () => {
@@ -343,8 +471,19 @@ describe("an instance's title", () => {
 
 describe("an instance's operation and close policy", () => {
   it("reads both from a current winvm", () => {
-    const s = one({ operation: { operation: "stow", pid: 77, startedAt: "2026-03-03T00:00:00.000Z" }, closePolicy: "shutdown" })
-    expect(s.operation).toEqual({ operation: "stow", pid: 77, startedAt: "2026-03-03T00:00:00.000Z" })
+    const s = one({
+      operation: {
+        operation: "stow",
+        pid: 77,
+        startedAt: "2026-03-03T00:00:00.000Z",
+      },
+      closePolicy: "shutdown",
+    })
+    expect(s.operation).toEqual({
+      operation: "stow",
+      pid: 77,
+      startedAt: "2026-03-03T00:00:00.000Z",
+    })
     expect(s.closePolicy).toBe("shutdown")
   })
 
@@ -356,18 +495,34 @@ describe("an instance's operation and close policy", () => {
   })
 
   it("accepts every close policy core can report", () => {
-    for (const closePolicy of CORE_CLOSE_POLICIES) expect(one({ closePolicy }).closePolicy).toBe(closePolicy)
+    for (const closePolicy of CORE_CLOSE_POLICIES)
+      expect(one({ closePolicy }).closePolicy).toBe(closePolicy)
   })
 
   it("rejects what would mislead: an unknown operation or policy makes the status unreadable", () => {
-    expect(parseStatus(JSON.stringify({ ...base, operation: { operation: "teleport", pid: 1, startedAt: "x" } }))).toBeNull()
-    expect(parseStatus(JSON.stringify({ ...base, closePolicy: "Leave" }))).toBeNull()
-    expect(parseStatus(JSON.stringify({ ...base, closePolicy: null }))).toBeNull()
+    expect(
+      parseStatus(
+        JSON.stringify({
+          ...base,
+          operation: { operation: "teleport", pid: 1, startedAt: "x" },
+        }),
+      ),
+    ).toBeNull()
+    expect(
+      parseStatus(JSON.stringify({ ...base, closePolicy: "Leave" })),
+    ).toBeNull()
+    expect(
+      parseStatus(JSON.stringify({ ...base, closePolicy: null })),
+    ).toBeNull()
   })
 
   it("accepts every operation core can record", () => {
     expect([...VM_OPERATIONS]).toEqual([...CORE_VM_OPERATIONS])
-    for (const operation of VM_OPERATIONS) expect(one({ operation: { operation, pid: 1, startedAt: "t" } }).operation?.operation).toBe(operation)
+    for (const operation of VM_OPERATIONS)
+      expect(
+        one({ operation: { operation, pid: 1, startedAt: "t" } }).operation
+          ?.operation,
+      ).toBe(operation)
   })
 
   it("mirrors core's close policies", () => {

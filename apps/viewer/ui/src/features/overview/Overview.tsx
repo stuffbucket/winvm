@@ -25,7 +25,11 @@ function Steps({ steps }: { readonly steps: readonly Step[] }): JSX.Element {
   return (
     <ol className="steps">
       {steps.map((s) => (
-        <li key={s.key} className={cx("step", `step--${s.state}`)} aria-current={s.state === "current" ? "step" : undefined}>
+        <li
+          key={s.key}
+          className={cx("step", `step--${s.state}`)}
+          aria-current={s.state === "current" ? "step" : undefined}
+        >
           <span className="step__mark" aria-hidden="true">
             {s.state === "done" && <Icon name="check" />}
           </span>
@@ -47,7 +51,13 @@ export function Overview(p: OverviewProps): JSX.Element {
       </div>
     )
   }
-  if (p.phase === null || p.phase === "running" || p.phase === "starting" || p.phase === "paused" || p.phase === "asleep") {
+  if (
+    p.phase === null ||
+    p.phase === "running" ||
+    p.phase === "starting" ||
+    p.phase === "paused" ||
+    p.phase === "asleep"
+  ) {
     return (
       <div className="overview overview--quiet">
         <div className="overview__content">
@@ -59,13 +69,16 @@ export function Overview(p: OverviewProps): JSX.Element {
     )
   }
 
-  const which = p.phase === "missing" || p.phase === "stowed" ? p.phase : "stopped"
+  const which =
+    p.phase === "missing" || p.phase === "stowed" ? p.phase : "stopped"
   const rows = p.status === null ? [] : facts(p.status)
   return (
     <div className="overview">
       <div className="overview__content">
         <h1 className="overview__title">{t(`overview.${which}.title`)}</h1>
-        {which === "stowed" && <p className="overview__note">{t("overview.stowed.body")}</p>}
+        {which === "stowed" && (
+          <p className="overview__note">{t("overview.stowed.body")}</p>
+        )}
         {rows.length > 0 && (
           <dl className="facts">
             {rows.map((r) => (
@@ -84,7 +97,10 @@ export function Overview(p: OverviewProps): JSX.Element {
         </div>
         {which === "missing" && (
           <p className="overview__note">
-            {t("overview.missing.noImage")} <code className="mono">winvm build --iso &lt;Windows 11 ISO&gt;</code>
+            {t("overview.missing.noImage")}{" "}
+            <code className="mono">
+              winvm build --iso &lt;Windows 11 ISO&gt;
+            </code>
           </p>
         )}
         <section className="abilities" aria-labelledby="abilities-title">

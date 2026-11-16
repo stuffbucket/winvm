@@ -12,17 +12,44 @@ import {
 } from "../../backend"
 import { t } from "../../i18n"
 import type { Phase, Status, VmOperation } from "../../model"
-import { closePolicyAssignment, isLivePhase, phase, shownTitle } from "../../model"
+import {
+  closePolicyAssignment,
+  isLivePhase,
+  phase,
+  shownTitle,
+} from "../../model"
 import type { ActiveOperation, Verb, Winvm } from "../winvm/useWinvm"
 import { operationFor } from "../winvm/statusGuard"
 import { orderCloseQueue } from "./closeQueue"
 
 export type CloseFlowState =
   | { readonly kind: "idle" }
-  | { readonly kind: "waiting"; readonly machine: Status; readonly operation: ActiveOperation; readonly index: number; readonly total: number }
-  | { readonly kind: "asking"; readonly machine: Status; readonly index: number; readonly total: number; readonly remember: boolean }
-  | { readonly kind: "acting"; readonly machine: Status; readonly policy: "stow" | "shutdown"; readonly index: number; readonly total: number }
-  | { readonly kind: "failed"; readonly machine: Status | null; readonly message: string }
+  | {
+      readonly kind: "waiting"
+      readonly machine: Status
+      readonly operation: ActiveOperation
+      readonly index: number
+      readonly total: number
+    }
+  | {
+      readonly kind: "asking"
+      readonly machine: Status
+      readonly index: number
+      readonly total: number
+      readonly remember: boolean
+    }
+  | {
+      readonly kind: "acting"
+      readonly machine: Status
+      readonly policy: "stow" | "shutdown"
+      readonly index: number
+      readonly total: number
+    }
+  | {
+      readonly kind: "failed"
+      readonly machine: Status | null
+      readonly message: string
+    }
 
 export type CloseChoice = "leave" | "stow" | "shutdown"
 
@@ -35,7 +62,10 @@ export interface CloseFlow {
 
 const IDLE: CloseFlowState = { kind: "idle" }
 
-const VERB = { stow: "stow", shutdown: "stop" } as const satisfies Record<Exclude<CloseChoice, "leave">, Verb>
+const VERB = { stow: "stow", shutdown: "stop" } as const satisfies Record<
+  Exclude<CloseChoice, "leave">,
+  Verb
+>
 
 type Answer = { readonly policy: CloseChoice; readonly remember: boolean }
 
@@ -56,8 +86,11 @@ function ranBefore(w: Winvm): (name: string) => number {
 const WAIT_MS = 1500
 
 function busyWith(w: Winvm, s: Status): ActiveOperation | null {
-  if (w.name === s.name && w.busy !== null) return { operation: operationFor(w.busy), source: "local" }
-  return s.operation === null ? null : { operation: s.operation.operation, source: "external" }
+  if (w.name === s.name && w.busy !== null)
+    return { operation: operationFor(w.busy), source: "local" }
+  return s.operation === null
+    ? null
+    : { operation: s.operation.operation, source: "external" }
 }
 
 type Outcome = "resolved" | "skipped" | "stopped"
@@ -91,10 +124,15 @@ function settled(operation: VmOperation, p: Phase): boolean | null {
   }
 }
 
-async function rememberChoice(name: string, choice: CloseChoice): Promise<string | null> {
+async function rememberChoice(
+  name: string,
+  choice: CloseChoice,
+): Promise<string | null> {
   try {
     const out = await winvm("config", "-i", name, closePolicyAssignment(choice))
-    return out.code === 0 ? null : outputText(out) || `winvm config exited ${String(out.code)}`
+    return out.code === 0
+      ? null
+      : outputText(out) || `winvm config exited ${String(out.code)}`
   } catch (e) {
     return errorMessage(e)
   }
@@ -117,16 +155,27 @@ export function useCloseFlow(w: Winvm): CloseFlow {
   useEffect(() => {
     let gone = false
 
-    const fail = (tx: Transaction, machine: Status | null, message: string): void => {
+    const fail = (
+      tx: Transaction,
+      machine: Status | null,
+      message: string,
+    ): void => {
       tx.cancelled = true
       if (transaction.current === tx) transaction.current = null
-      if (machine !== null && wRef.current.name !== machine.name) wRef.current.select(machine.name)
+      if (machine !== null && wRef.current.name !== machine.name)
+        wRef.current.select(machine.name)
       show({ kind: "failed", machine, message })
       active.current = false
       closeCancel().catch(() => undefined)
     }
 
-    const resolveOne = async (tx: Transaction, name: string, known: Status | null, index: number, total: number): Promise<Outcome> => {
+    const resolveOne = async (
+      tx: Transaction,
+      name: string,
+      known: Status | null,
+      index: number,
+      total: number,
+    ): Promise<Outcome> => {
       if (wRef.current.name !== name) wRef.current.select(name)
       const before = tx.ranBefore(name)
       let external: VmOperation | null = null
@@ -154,11 +203,23 @@ export function useCloseFlow(w: Winvm): CloseFlow {
       }
       const own = wRef.current.lastOn(name)
       if (own !== null && own.seq > before && own.code !== 0) {
-        fail(tx, s, own.output || t("close.actionFailed", { title: shownTitle(s.name, s.title) }))
+        fail(
+          tx,
+          s,
+          own.output ||
+            t("close.actionFailed", { title: shownTitle(s.name, s.title) }),
+        )
         return "stopped"
       }
       if (external !== null && settled(external, phase(s)) === false) {
-        fail(tx, s, t("close.externalFailed", { operation: external, title: shownTitle(s.name, s.title) }))
+        fail(
+          tx,
+          s,
+          t("close.externalFailed", {
+            operation: external,
+            title: shownTitle(s.name, s.title),
+          }),
+        )
         return "stopped"
       }
       if (!isLivePhase(phase(s))) return "skipped"
@@ -181,7 +242,12 @@ export function useCloseFlow(w: Winvm): CloseFlow {
         show({ kind: "acting", machine: s, policy: choice, index, total })
         const ran = await wRef.current.runOn(name, VERB[choice])
         if (ran === null || ran.code !== 0) {
-          fail(tx, s, ran?.output || t("close.actionFailed", { title: shownTitle(s.name, s.title) }))
+          fail(
+            tx,
+            s,
+            ran?.output ||
+              t("close.actionFailed", { title: shownTitle(s.name, s.title) }),
+          )
           return "stopped"
         }
       }
@@ -206,8 +272,18 @@ export function useCloseFlow(w: Winvm): CloseFlow {
       }
       let queue = orderCloseQueue(list, wRef.current.name, resolved)
       while (queue.length > 0) {
-        for (let next = queue.shift(); next !== undefined; next = queue.shift()) {
-          const outcome = await resolveOne(tx, next, list.find((s) => s.name === next) ?? null, resolved.size + 1, resolved.size + queue.length + 1)
+        for (
+          let next = queue.shift();
+          next !== undefined;
+          next = queue.shift()
+        ) {
+          const outcome = await resolveOne(
+            tx,
+            next,
+            list.find((s) => s.name === next) ?? null,
+            resolved.size + 1,
+            resolved.size + queue.length + 1,
+          )
           if (outcome === "stopped") return
           if (outcome === "resolved") resolved.add(next)
           last = list.find((s) => s.name === next) ?? last
@@ -225,7 +301,11 @@ export function useCloseFlow(w: Winvm): CloseFlow {
     const begin = (): void => {
       if (active.current) return
       active.current = true
-      const tx: Transaction = { cancelled: false, wake: null, ranBefore: () => 0 }
+      const tx: Transaction = {
+        cancelled: false,
+        wake: null,
+        ranBefore: () => 0,
+      }
       transaction.current = tx
       closeStart().then(
         () => {
@@ -265,7 +345,8 @@ export function useCloseFlow(w: Winvm): CloseFlow {
   const setRemember = useCallback(
     (value: boolean): void => {
       const now = shown.current
-      if (now.kind === "asking" && now.remember !== value) show({ ...now, remember: value })
+      if (now.kind === "asking" && now.remember !== value)
+        show({ ...now, remember: value })
     },
     [show],
   )

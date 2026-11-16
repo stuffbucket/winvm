@@ -5,7 +5,12 @@ import { SpatialCanvasSidePanel } from "@winvm/canvas"
 import { Button } from "../../components/Button"
 import { t } from "../../i18n"
 import { formatSize, type SaveNotes } from "../../model"
-import { type Checkpoint, deleteBlocked, incompatibleReason, shownName } from "./checkpoints"
+import {
+  type Checkpoint,
+  deleteBlocked,
+  incompatibleReason,
+  shownName,
+} from "./checkpoints"
 import { kindLabel, Picture, takenAt } from "./CheckpointCard"
 
 export interface NoteDraft {
@@ -14,11 +19,25 @@ export interface NoteDraft {
   readonly tags: string
 }
 
-export const draftOf = (n: SaveNotes | null): NoteDraft => ({ title: n?.title ?? "", text: n?.text ?? "", tags: (n?.tags ?? []).join(", ") })
+export const draftOf = (n: SaveNotes | null): NoteDraft => ({
+  title: n?.title ?? "",
+  text: n?.text ?? "",
+  tags: (n?.tags ?? []).join(", "),
+})
 
-export const tagsOf = (s: string): string[] => [...new Set(s.split(",").map((x) => x.trim()).filter((x) => x !== ""))]
+export const tagsOf = (s: string): string[] => [
+  ...new Set(
+    s
+      .split(",")
+      .map((x) => x.trim())
+      .filter((x) => x !== ""),
+  ),
+]
 
-const sameDraft = (a: NoteDraft, b: NoteDraft): boolean => a.title.trim() === b.title.trim() && a.text === b.text && tagsOf(a.tags).join(",") === tagsOf(b.tags).join(",")
+const sameDraft = (a: NoteDraft, b: NoteDraft): boolean =>
+  a.title.trim() === b.title.trim() &&
+  a.text === b.text &&
+  tagsOf(a.tags).join(",") === tagsOf(b.tags).join(",")
 
 interface DetailsProps {
   readonly c: Checkpoint
@@ -34,7 +53,17 @@ interface DetailsProps {
 
 const NOTE_DEBOUNCE_MS = 700
 
-export function CheckpointDetails({ c, now, busy, saving, onClose, onLook, onNote, onGoBack, onDelete }: DetailsProps): JSX.Element {
+export function CheckpointDetails({
+  c,
+  now,
+  busy,
+  saving,
+  onClose,
+  onLook,
+  onNote,
+  onGoBack,
+  onDelete,
+}: DetailsProps): JSX.Element {
   const [draft, setDraft] = useState(() => draftOf(c.notes))
   const written = useRef(draftOf(c.notes))
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -76,21 +105,47 @@ export function CheckpointDetails({ c, now, busy, saving, onClose, onLook, onNot
       footer={
         <footer className="checkpoint-details__actions">
           <span className="checkpoint-details__saved" role="status">
-            {saving === "saving" ? t("checkpoints.note.saving") : saving === "saved" ? t("checkpoints.note.saved") : saving === "failed" ? t("checkpoints.note.failed") : ""}
+            {saving === "saving"
+              ? t("checkpoints.note.saving")
+              : saving === "saved"
+                ? t("checkpoints.note.saved")
+                : saving === "failed"
+                  ? t("checkpoints.note.failed")
+                  : ""}
           </span>
-          <Button size="sm" variant="ghost" className="checkpoint-details__delete" disabled={busy || blocked !== null} title={blocked === null ? undefined : t(blocked)} onClick={onDelete}>
+          <Button
+            size="sm"
+            variant="ghost"
+            className="checkpoint-details__delete"
+            disabled={busy || blocked !== null}
+            title={blocked === null ? undefined : t(blocked)}
+            onClick={onDelete}
+          >
             {t("checkpoints.delete")}
           </Button>
-          <Button size="sm" variant="primary" disabled={busy || reason !== null} title={reason === null ? t("checkpoints.goBackTip") : t(reason)} onClick={onGoBack}>
+          <Button
+            size="sm"
+            variant="primary"
+            disabled={busy || reason !== null}
+            title={reason === null ? t("checkpoints.goBackTip") : t(reason)}
+            onClick={onGoBack}
+          >
             {t("checkpoints.goBack")}
           </Button>
         </footer>
       }
     >
-      <button type="button" className="checkpoint-details__picture" title={t("checkpoints.lookTip")} onClick={onLook}>
+      <button
+        type="button"
+        className="checkpoint-details__picture"
+        title={t("checkpoints.lookTip")}
+        onClick={onLook}
+      >
         <Picture c={c} sharp wanted />
       </button>
-      {reason !== null && <p className="checkpoint-details__reason">{t(reason)}</p>}
+      {reason !== null && (
+        <p className="checkpoint-details__reason">{t(reason)}</p>
+      )}
       <label className="checkpoint-details__label" htmlFor="checkpoint-title">
         {t("checkpoints.note.title")}
       </label>
@@ -102,7 +157,9 @@ export function CheckpointDetails({ c, now, busy, saving, onClose, onLook, onNot
         autoComplete="off"
         spellCheck={false}
         maxLength={120}
-        onChange={(e) => { edit({ title: e.target.value }) }}
+        onChange={(e) => {
+          edit({ title: e.target.value })
+        }}
         onBlur={flush}
       />
       <label className="checkpoint-details__label" htmlFor="checkpoint-text">
@@ -114,7 +171,9 @@ export function CheckpointDetails({ c, now, busy, saving, onClose, onLook, onNot
         value={draft.text}
         placeholder={t("checkpoints.note.textPlaceholder")}
         rows={6}
-        onChange={(e) => { edit({ text: e.target.value }) }}
+        onChange={(e) => {
+          edit({ text: e.target.value })
+        }}
         onBlur={flush}
         onKeyDown={(e) => {
           if (e.key === "s" && (e.metaKey || e.ctrlKey)) {
@@ -133,10 +192,16 @@ export function CheckpointDetails({ c, now, busy, saving, onClose, onLook, onNot
         placeholder={t("checkpoints.note.tagsPlaceholder")}
         autoComplete="off"
         spellCheck={false}
-        onChange={(e) => { edit({ tags: e.target.value }) }}
+        onChange={(e) => {
+          edit({ tags: e.target.value })
+        }}
         onBlur={flush}
       />
-      {c.note !== undefined && c.note !== "" && <p className="checkpoint-details__manifest-note">{t("checkpoints.note.taken", { note: c.note })}</p>}
+      {c.note !== undefined && c.note !== "" && (
+        <p className="checkpoint-details__manifest-note">
+          {t("checkpoints.note.taken", { note: c.note })}
+        </p>
+      )}
       <dl className="kv checkpoint-details__facts">
         <div className="kv__row">
           <dt>{t("checkpoints.fact.taken")}</dt>
@@ -152,7 +217,13 @@ export function CheckpointDetails({ c, now, busy, saving, onClose, onLook, onNot
         </div>
         <div className="kv__row">
           <dt>{t("checkpoints.fact.loads")}</dt>
-          <dd>{c.compatible === null ? t("checkpoints.loads.unknown") : c.compatible ? t("checkpoints.loads.yes") : t("checkpoints.loads.no")}</dd>
+          <dd>
+            {c.compatible === null
+              ? t("checkpoints.loads.unknown")
+              : c.compatible
+                ? t("checkpoints.loads.yes")
+                : t("checkpoints.loads.no")}
+          </dd>
         </div>
         <div className="kv__row">
           <dt>{t("checkpoints.fact.name")}</dt>

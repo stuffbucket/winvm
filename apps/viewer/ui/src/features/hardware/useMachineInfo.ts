@@ -4,7 +4,13 @@ import { winvm } from "../../backend"
 import { t } from "../../i18n"
 import type { Phase } from "../../model"
 import { cliError } from "../sharedfolder/folder"
-import { type MachineInfo, type Size, infoArgs, parseMachineInfo, sizeArgs } from "./info"
+import {
+  type MachineInfo,
+  type Size,
+  infoArgs,
+  parseMachineInfo,
+  sizeArgs,
+} from "./info"
 
 export interface MachineInfoView {
   readonly info: MachineInfo | null
@@ -13,7 +19,12 @@ export interface MachineInfoView {
   setSize(change: Partial<Size>): void
 }
 
-export function useMachineInfo(instance: string | null, phase: Phase | null, guestReady: boolean, active: boolean): MachineInfoView {
+export function useMachineInfo(
+  instance: string | null,
+  phase: Phase | null,
+  guestReady: boolean,
+  active: boolean,
+): MachineInfoView {
   const [info, setInfo] = useState<MachineInfo | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [working, setWorking] = useState<string | null>(null)
@@ -33,7 +44,11 @@ export function useMachineInfo(instance: string | null, phase: Phase | null, gue
       if (n !== reads.current || shown.current !== name) return
       const got = out.code === 0 ? parseMachineInfo(out.stdout) : null
       if (got !== null) setInfo(got)
-      setError(got === null ? `${t("hardware.readError")} ${cliError(out)}`.trim() : null)
+      setError(
+        got === null
+          ? `${t("hardware.readError")} ${cliError(out)}`.trim()
+          : null,
+      )
     } catch (e: unknown) {
       if (n !== reads.current || shown.current !== name) return
       setError(`${t("hardware.readError")} ${String(e)}`)
@@ -57,7 +72,8 @@ export function useMachineInfo(instance: string | null, phase: Phase | null, gue
           const out = await winvm(...sizeArgs(name, change))
           if (shown.current !== name) return
           await read(name)
-          if (out.code !== 0) setError(cliError(out) || t("hardware.changeError"))
+          if (out.code !== 0)
+            setError(cliError(out) || t("hardware.changeError"))
         } catch (e: unknown) {
           if (shown.current === name) setError(String(e))
         } finally {
@@ -68,5 +84,10 @@ export function useMachineInfo(instance: string | null, phase: Phase | null, gue
     [read],
   )
 
-  return { info, error, working: working !== null && working === instance, setSize }
+  return {
+    info,
+    error,
+    working: working !== null && working === instance,
+    setSize,
+  }
 }

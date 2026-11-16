@@ -4,7 +4,8 @@ import type { ComponentPropsWithRef, JSX, ReactElement, ReactNode } from "react"
 import { cx } from "./cx"
 import { Icon } from "./Icon"
 
-export interface MenuRootProps extends Omit<ComponentPropsWithRef<typeof BaseMenu.Root>, "children"> {
+export interface MenuRootProps
+  extends Omit<ComponentPropsWithRef<typeof BaseMenu.Root>, "children"> {
   readonly trigger: ReactElement
   readonly children: ReactNode
   readonly align?: ComponentPropsWithRef<typeof BaseMenu.Positioner>["align"]
@@ -13,12 +14,25 @@ export interface MenuRootProps extends Omit<ComponentPropsWithRef<typeof BaseMen
   readonly label?: string
 }
 
-export function MenuRoot({ trigger, children, align = "start", side = "bottom", sideOffset = 4, label, ...props }: MenuRootProps): JSX.Element {
+export function MenuRoot({
+  trigger,
+  children,
+  align = "start",
+  side = "bottom",
+  sideOffset = 4,
+  label,
+  ...props
+}: MenuRootProps): JSX.Element {
   return (
     <BaseMenu.Root {...props}>
       <BaseMenu.Trigger render={trigger} />
       <BaseMenu.Portal>
-        <BaseMenu.Positioner className="menu-positioner" align={align} side={side} sideOffset={sideOffset}>
+        <BaseMenu.Positioner
+          className="menu-positioner"
+          align={align}
+          side={side}
+          sideOffset={sideOffset}
+        >
           <BaseMenu.Popup className="menu" aria-label={label}>
             {children}
           </BaseMenu.Popup>
@@ -28,10 +42,20 @@ export function MenuRoot({ trigger, children, align = "start", side = "bottom", 
   )
 }
 
-export function MenuGroup({ label, children }: { readonly label?: ReactNode; readonly children: ReactNode }): JSX.Element {
+export function MenuGroup({
+  label,
+  children,
+}: {
+  readonly label?: ReactNode
+  readonly children: ReactNode
+}): JSX.Element {
   return (
     <BaseMenu.Group className="menu__group">
-      {label !== undefined && <BaseMenu.GroupLabel className="menu__heading">{label}</BaseMenu.GroupLabel>}
+      {label !== undefined && (
+        <BaseMenu.GroupLabel className="menu__heading">
+          {label}
+        </BaseMenu.GroupLabel>
+      )}
       {children}
     </BaseMenu.Group>
   )
@@ -43,23 +67,43 @@ interface ItemContentProps {
   readonly trailing?: ReactNode
 }
 
-function ItemContent({ children, leading, trailing }: ItemContentProps): JSX.Element {
+function ItemContent({
+  children,
+  leading,
+  trailing,
+}: ItemContentProps): JSX.Element {
   return (
     <>
       <span className="menu-item__leading">{leading}</span>
       <span className="menu-item__label">{children}</span>
-      {trailing !== undefined && <span className="menu-item__trailing">{trailing}</span>}
+      {trailing !== undefined && (
+        <span className="menu-item__trailing">{trailing}</span>
+      )}
     </>
   )
 }
 
-export interface MenuItemProps extends Omit<ComponentPropsWithRef<typeof BaseMenu.Item>, "children" | "className">, ItemContentProps {
+export interface MenuItemProps
+  extends Omit<
+      ComponentPropsWithRef<typeof BaseMenu.Item>,
+      "children" | "className"
+    >,
+    ItemContentProps {
   readonly tone?: "default" | "danger"
 }
 
-export function MenuItem({ children, leading, trailing, tone = "default", ...props }: MenuItemProps): JSX.Element {
+export function MenuItem({
+  children,
+  leading,
+  trailing,
+  tone = "default",
+  ...props
+}: MenuItemProps): JSX.Element {
   return (
-    <BaseMenu.Item {...props} className={cx("menu-item", tone === "danger" && "menu-item--danger")}>
+    <BaseMenu.Item
+      {...props}
+      className={cx("menu-item", tone === "danger" && "menu-item--danger")}
+    >
       <ItemContent leading={leading} trailing={trailing}>
         {children}
       </ItemContent>
@@ -67,15 +111,26 @@ export function MenuItem({ children, leading, trailing, tone = "default", ...pro
   )
 }
 
-export type MenuRadioGroupProps = ComponentPropsWithRef<typeof BaseMenu.RadioGroup>
+export type MenuRadioGroupProps = ComponentPropsWithRef<
+  typeof BaseMenu.RadioGroup
+>
 
 export function MenuRadioGroup(props: MenuRadioGroupProps): JSX.Element {
   return <BaseMenu.RadioGroup {...props} />
 }
 
-export interface MenuRadioItemProps extends Omit<ComponentPropsWithRef<typeof BaseMenu.RadioItem>, "children" | "className">, Omit<ItemContentProps, "leading"> {}
+export interface MenuRadioItemProps
+  extends Omit<
+      ComponentPropsWithRef<typeof BaseMenu.RadioItem>,
+      "children" | "className"
+    >,
+    Omit<ItemContentProps, "leading"> {}
 
-export function MenuRadioItem({ children, trailing, ...props }: MenuRadioItemProps): JSX.Element {
+export function MenuRadioItem({
+  children,
+  trailing,
+  ...props
+}: MenuRadioItemProps): JSX.Element {
   return (
     <BaseMenu.RadioItem {...props} className="menu-item">
       <ItemContent

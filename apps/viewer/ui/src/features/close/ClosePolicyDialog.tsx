@@ -17,19 +17,27 @@ const CHOICES = [
   { policy: "shutdown", key: "close.shutdown" },
 ] as const satisfies readonly { policy: CloseChoice; key: string }[]
 
-export function ClosePolicyDialog({ state, onChoose, onRemember, onCancel }: ClosePolicyDialogProps): JSX.Element | null {
+export function ClosePolicyDialog({
+  state,
+  onChoose,
+  onRemember,
+  onCancel,
+}: ClosePolicyDialogProps): JSX.Element | null {
   const dialogRef = useRef<HTMLDialogElement | null>(null)
   const cancelRef = useRef<HTMLButtonElement | null>(null)
-  const shown = state.kind === "asking" || state.kind === "waiting" ? state : null
-  const step = shown === null ? null : `${shown.kind}:${shown.machine.name}:${String(shown.index)}`
+  const shown =
+    state.kind === "asking" || state.kind === "waiting" ? state : null
+  const step =
+    shown === null
+      ? null
+      : `${shown.kind}:${shown.machine.name}:${String(shown.index)}`
 
   useEffect(() => {
     const el = dialogRef.current
     if (el === null || el.open) return
     try {
       el.showModal()
-    } catch {
-    }
+    } catch {}
   }, [step])
 
   useEffect(() => {
@@ -57,12 +65,22 @@ export function ClosePolicyDialog({ state, onChoose, onRemember, onCancel }: Clo
           {t("close.title")}
         </h2>
         <div className="confirm-dialog__body">
-          <p className="close-dialog__machine">{shownTitle(machine.name, machine.title)}</p>
-          {total > 1 && <p className="close-dialog__progress">{t("close.progress", { index, total })}</p>}
+          <p className="close-dialog__machine">
+            {shownTitle(machine.name, machine.title)}
+          </p>
+          {total > 1 && (
+            <p className="close-dialog__progress">
+              {t("close.progress", { index, total })}
+            </p>
+          )}
         </div>
         {shown.kind === "waiting" ? (
           <div className="confirm-dialog__body">
-            <p className="close-dialog__operation" role="status" aria-live="polite">
+            <p
+              className="close-dialog__operation"
+              role="status"
+              aria-live="polite"
+            >
               {t(`operation.${shown.operation.operation}`)}
             </p>
             <p>{t("close.waiting")}</p>
@@ -71,20 +89,41 @@ export function ClosePolicyDialog({ state, onChoose, onRemember, onCancel }: Clo
           <>
             <div className="close-dialog__choices">
               {CHOICES.map((c) => (
-                <button key={c.policy} type="button" className="close-dialog__choice" onClick={() => { onChoose(c.policy) }}>
+                <button
+                  key={c.policy}
+                  type="button"
+                  className="close-dialog__choice"
+                  onClick={() => {
+                    onChoose(c.policy)
+                  }}
+                >
                   <span className="close-dialog__choice-label">{t(c.key)}</span>
-                  <span className="close-dialog__choice-body">{t(`${c.key}.body`)}</span>
+                  <span className="close-dialog__choice-body">
+                    {t(`${c.key}.body`)}
+                  </span>
                 </button>
               ))}
             </div>
             <label className="check-field">
-              <input type="checkbox" name="remember-close" checked={shown.remember} onChange={(e) => { onRemember(e.target.checked) }} />
+              <input
+                type="checkbox"
+                name="remember-close"
+                checked={shown.remember}
+                onChange={(e) => {
+                  onRemember(e.target.checked)
+                }}
+              />
               <span>{t("close.remember")}</span>
             </label>
           </>
         )}
         <div className="confirm-dialog__actions">
-          <button ref={cancelRef} type="button" className="btn btn--ghost" onClick={onCancel}>
+          <button
+            ref={cancelRef}
+            type="button"
+            className="btn btn--ghost"
+            onClick={onCancel}
+          >
             {t("confirm.cancel")}
           </button>
         </div>

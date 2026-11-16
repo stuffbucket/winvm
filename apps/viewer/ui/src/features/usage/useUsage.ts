@@ -1,7 +1,14 @@
 import { useEffect, useRef, useState } from "react"
 
 import { instanceUsage } from "../../backend"
-import { fraction, parseSample, pushHistory, type Sample, type Usage, usageFrom } from "./usage"
+import {
+  fraction,
+  parseSample,
+  pushHistory,
+  type Sample,
+  type Usage,
+  usageFrom,
+} from "./usage"
 
 const USAGE_EVERY_MS = 2500
 
@@ -20,16 +27,23 @@ export function useUsage(
   instance: string | null,
   cpus: number | null,
   memoryMiB: number | null,
-  readUsage: (pid: number, instance: string | null) => Promise<unknown> = instanceUsage,
+  readUsage: (
+    pid: number,
+    instance: string | null,
+  ) => Promise<unknown> = instanceUsage,
 ): UsageView {
   const [view, setView] = useState<UsageView>(EMPTY)
   const [shown, setShown] = useState(visible)
   const prev = useRef<Sample | null>(null)
 
   useEffect(() => {
-    const on = (): void => { setShown(visible()) }
+    const on = (): void => {
+      setShown(visible())
+    }
     document.addEventListener("visibilitychange", on)
-    return () => { document.removeEventListener("visibilitychange", on) }
+    return () => {
+      document.removeEventListener("visibilitychange", on)
+    }
   }, [])
 
   useEffect(() => {
@@ -50,11 +64,13 @@ export function useUsage(
           setView((v) => ({
             now,
             cpuHistory: pushHistory(v.cpuHistory, now.cpu),
-            memoryHistory: pushHistory(v.memoryHistory, now.memory === null ? null : fraction(now.memory)),
+            memoryHistory: pushHistory(
+              v.memoryHistory,
+              now.memory === null ? null : fraction(now.memory),
+            ),
           }))
         }
-      } catch {
-      }
+      } catch {}
       if (!stopped) timer = setTimeout(() => void read(), USAGE_EVERY_MS)
     }
     void read()

@@ -46,11 +46,22 @@ export function NumberField({
       }}
     >
       <BaseNumberField.Group className="number-field__group">
-        <BaseNumberField.Decrement className="btn btn--ghost btn--icon number-field__step" aria-label={decrementLabel} title={decrementLabel}>
+        <BaseNumberField.Decrement
+          className="btn btn--ghost btn--icon number-field__step"
+          aria-label={decrementLabel}
+          title={decrementLabel}
+        >
           <Icon name="minus" />
         </BaseNumberField.Decrement>
-        <BaseNumberField.Input className="input number-field__input" aria-label={label} />
-        <BaseNumberField.Increment className="btn btn--ghost btn--icon number-field__step" aria-label={incrementLabel} title={incrementLabel}>
+        <BaseNumberField.Input
+          className="input number-field__input"
+          aria-label={label}
+        />
+        <BaseNumberField.Increment
+          className="btn btn--ghost btn--icon number-field__step"
+          aria-label={incrementLabel}
+          title={incrementLabel}
+        >
           <Icon name="plus" />
         </BaseNumberField.Increment>
       </BaseNumberField.Group>

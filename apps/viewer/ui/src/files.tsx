@@ -17,7 +17,10 @@ if (root === null) throw new Error("files.html has no #root")
 createRoot(root).render(
   <StrictMode>
     <ErrorBoundary title={t("error.crash")}>
-      <FilesWindow instance={instance} initialTitle={title === "" ? null : title} />
+      <FilesWindow
+        instance={instance}
+        initialTitle={title === "" ? null : title}
+      />
     </ErrorBoundary>
   </StrictMode>,
 )

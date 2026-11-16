@@ -24,7 +24,11 @@ function done(): void {
 
 const keyOf = (path: string, version: string): string => `${path}#${version}`
 
-function pictureUrl(path: string, version: string, read: (path: string) => Promise<ArrayBuffer> = checkpointImage): Promise<string> {
+function pictureUrl(
+  path: string,
+  version: string,
+  read: (path: string) => Promise<ArrayBuffer> = checkpointImage,
+): Promise<string> {
   const key = keyOf(path, version)
   const had = cache.get(key)
   if (had !== undefined) return had
@@ -46,11 +50,19 @@ export function forgetPictures(paths: readonly (string | null)[]): void {
   for (const [key, url] of cache) {
     if (!paths.some((p) => p !== null && key.startsWith(`${p}#`))) continue
     cache.delete(key)
-    void url.then((u) => { URL.revokeObjectURL(u) }).catch(() => undefined)
+    void url
+      .then((u) => {
+        URL.revokeObjectURL(u)
+      })
+      .catch(() => undefined)
   }
 }
 
-export function usePicture(path: string | null, version: string, wanted: boolean): string | null {
+export function usePicture(
+  path: string | null,
+  version: string,
+  wanted: boolean,
+): string | null {
   const [url, setUrl] = useState<string | null>(null)
   useEffect(() => {
     setUrl(null)

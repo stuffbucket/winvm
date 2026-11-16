@@ -10,27 +10,43 @@ const FAKE = resolve(VIEWER, "tests", "render", "fake-tauri.js")
 
 const dir = process.env.PLAYWRIGHT_DIR
 if (dir === undefined) {
-  console.error("set PLAYWRIGHT_DIR to a folder with playwright installed (see the comment at the top)")
+  console.error(
+    "set PLAYWRIGHT_DIR to a folder with playwright installed (see the comment at the top)",
+  )
   process.exit(2)
 }
-const { webkit } = createRequire(join(resolve(dir), "package.json"))("playwright")
+const { webkit } = createRequire(join(resolve(dir), "package.json"))(
+  "playwright",
+)
 if (!existsSync(join(DIST, "index.html"))) {
   console.error("no dist/index.html: run `bun scripts/build-ui.ts` first")
   process.exit(2)
 }
 mkdirSync(OUT, { recursive: true })
 
-const TYPES = { ".html": "text/html", ".js": "text/javascript", ".css": "text/css", ".woff2": "font/woff2", ".svg": "image/svg+xml", ".png": "image/png" }
+const TYPES = {
+  ".html": "text/html",
+  ".js": "text/javascript",
+  ".css": "text/css",
+  ".woff2": "font/woff2",
+  ".svg": "image/svg+xml",
+  ".png": "image/png",
+}
 const PICTURES = process.env.CHECKPOINT_PICTURES
 const server = createServer((req, res) => {
   const url = decodeURIComponent(new URL(req.url ?? "/", "http://x").pathname)
-  const root = url.startsWith("/pictures/") && PICTURES !== undefined ? resolve(PICTURES) : DIST
+  const root =
+    url.startsWith("/pictures/") && PICTURES !== undefined
+      ? resolve(PICTURES)
+      : DIST
   const path = join(root, url.replace(/^\/pictures/, ""))
   if (!path.startsWith(root) || !existsSync(path)) {
     res.writeHead(404).end()
     return
   }
-  res.writeHead(200, { "content-type": TYPES[extname(path)] ?? "application/octet-stream" })
+  res.writeHead(200, {
+    "content-type": TYPES[extname(path)] ?? "application/octet-stream",
+  })
   createReadStream(path).pipe(res)
 })
 await new Promise((r) => server.listen(0, "127.0.0.1", r))
@@ -41,8 +57,14 @@ const shots = []
 const wait = (ms) => new Promise((r) => setTimeout(r, ms))
 
 async function open(scheme, query = "") {
-  const page = await browser.newPage({ viewport: { width: 1280, height: 820 }, deviceScaleFactor: 2, colorScheme: scheme })
-  page.on("pageerror", (e) => console.error(`[${scheme}] page error: ${e.message}`))
+  const page = await browser.newPage({
+    viewport: { width: 1280, height: 820 },
+    deviceScaleFactor: 2,
+    colorScheme: scheme,
+  })
+  page.on("pageerror", (e) =>
+    console.error(`[${scheme}] page error: ${e.message}`),
+  )
   page.on("console", (m) => {
     if (m.type() === "error") console.error(`[${scheme}] console: ${m.text()}`)
   })
@@ -84,17 +106,25 @@ for (const scheme of ["dark", "light"]) {
 
   const track = await page.locator(".timeline__track").boundingBox()
   if (track !== null) {
-    await page.mouse.move(track.x + track.width / 2, track.y + track.height * 0.22)
+    await page.mouse.move(
+      track.x + track.width / 2,
+      track.y + track.height * 0.22,
+    )
     await page.mouse.down()
     await page.mouse.up()
-    await page.mouse.move(track.x + track.width / 2, track.y + track.height * 0.25)
+    await page.mouse.move(
+      track.x + track.width / 2,
+      track.y + track.height * 0.25,
+    )
   }
   await wait(1100)
   await shot(page, `${scheme}-05-timeline`)
 
   await page.keyboard.press("Meta+0")
   await wait(1000)
-  await page.locator('.checkpoint[data-name="office-installed"] .checkpoint__hit').click()
+  await page
+    .locator('.checkpoint[data-name="office-installed"] .checkpoint__hit')
+    .click()
   await wait(1200)
   await shot(page, `${scheme}-06-selected`)
 
@@ -112,7 +142,9 @@ for (const scheme of ["dark", "light"]) {
   await page.keyboard.press("Escape")
   await page.keyboard.press("Meta+0")
   await wait(1000)
-  await page.locator('.checkpoint[data-name="old-display"] .checkpoint__hit').click()
+  await page
+    .locator('.checkpoint[data-name="old-display"] .checkpoint__hit')
+    .click()
   await wait(1100)
   await shot(page, `${scheme}-08-incompatible`)
   await page.getByRole("button", { name: "Delete…" }).click()
@@ -138,7 +170,9 @@ for (const scheme of ["dark", "light"]) {
   await page.keyboard.press("Enter")
   await wait(500)
   await shot(page, `${scheme}-13-taking`)
-  await page.waitForSelector('.checkpoint[data-arriving="true"]', { timeout: 5000 })
+  await page.waitForSelector('.checkpoint[data-arriving="true"]', {
+    timeout: 5000,
+  })
   await wait(120)
   await shot(page, `${scheme}-14-arriving`)
   await wait(330)
@@ -179,24 +213,37 @@ for (const scheme of ["dark", "light"]) {
         const el = document.querySelector(".spatial-canvas__viewport")
         let i = 0
         const pan = setInterval(() => {
-          el?.dispatchEvent(new WheelEvent("wheel", { deltaY: -40, bubbles: true, cancelable: true }))
+          el?.dispatchEvent(
+            new WheelEvent("wheel", {
+              deltaY: -40,
+              bubbles: true,
+              cancelable: true,
+            }),
+          )
           if ((i += 1) > 50) clearInterval(pan)
         }, 16)
       }),
   )
   await shot(page, "dark-21-many-panned")
-  console.log(`many: ${String(cards)} cards drawn of 413; ${String(frames)} frames in a second of panning; fit took ${String(Date.now() - started)} ms`)
+  console.log(
+    `many: ${String(cards)} cards drawn of 413; ${String(frames)} frames in a second of panning; fit took ${String(Date.now() - started)} ms`,
+  )
   await page.close()
 }
 
 if (PICTURES !== undefined) {
   const files = readdirSync(PICTURES).filter((f) => f.endsWith(".png"))
   for (const scheme of ["dark", "light"]) {
-    const page = await open(scheme, `?real=${files.map(encodeURIComponent).join(",")}`)
+    const page = await open(
+      scheme,
+      `?real=${files.map(encodeURIComponent).join(",")}`,
+    )
     await enter(page)
     await wait(1600)
     await shot(page, `${scheme}-30-real`)
-    await page.locator('.checkpoint[data-name="clean-desktop"] .checkpoint__hit').click()
+    await page
+      .locator('.checkpoint[data-name="clean-desktop"] .checkpoint__hit')
+      .click()
     await wait(1300)
     await shot(page, `${scheme}-31-real-selected`)
     await page.close()

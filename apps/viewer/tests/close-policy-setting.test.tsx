@@ -93,7 +93,14 @@ const statusOf = (w: World): Record<string, unknown> => ({
   name: "demo",
   title: "Build box",
   closePolicy: w.closePolicy,
-  operation: w.operation === null ? null : { operation: w.operation, pid: 777, startedAt: "2026-11-12T10:00:00.000Z" },
+  operation:
+    w.operation === null
+      ? null
+      : {
+          operation: w.operation,
+          pid: 777,
+          startedAt: "2026-11-12T10:00:00.000Z",
+        },
   state: "running",
   vmStatus: "running",
   image: "win11-arm64",
@@ -109,24 +116,45 @@ const statusOf = (w: World): Record<string, unknown> => ({
 })
 
 function fakeApp(world: World): void {
-  const ok = (stdout: unknown): Answer => ({ code: 0, stdout: JSON.stringify(stdout), stderr: "" })
+  const ok = (stdout: unknown): Answer => ({
+    code: 0,
+    stdout: JSON.stringify(stdout),
+    stderr: "",
+  })
   const invoke = (cmd: string, a?: { args?: string[] }): Promise<unknown> => {
     if (cmd !== "winvm") return Promise.resolve(null)
     const args = a?.args ?? []
     if (args[0] === "status") {
       world.statusReads += 1
-      return Promise.resolve(ok(args.includes("-i") ? statusOf(world) : { instances: [statusOf(world)] }))
+      return Promise.resolve(
+        ok(
+          args.includes("-i")
+            ? statusOf(world)
+            : { instances: [statusOf(world)] },
+        ),
+      )
     }
-    if (args[0] === "open") return Promise.resolve(ok({ display: 1, vncPort: 5901, websocketPort: 5701, password: null }))
+    if (args[0] === "open")
+      return Promise.resolve(
+        ok({ display: 1, vncPort: 5901, websocketPort: 5701, password: null }),
+      )
     if (args[0] === "config") {
       world.configs.push(args)
       const answer = world.config
       const apply = (): Answer => {
-        if (answer.code === 0) world.closePolicy = (args.find((x) => x.startsWith("viewer.closePolicy=")) ?? "").split("=")[1] ?? world.closePolicy
+        if (answer.code === 0)
+          world.closePolicy =
+            (args.find((x) => x.startsWith("viewer.closePolicy=")) ?? "").split(
+              "=",
+            )[1] ?? world.closePolicy
         return answer
       }
       if (!world.hold) return Promise.resolve(apply())
-      return new Promise((resolve) => world.pending.push(() => { resolve(apply()) }))
+      return new Promise((resolve) =>
+        world.pending.push(() => {
+          resolve(apply())
+        }),
+      )
     }
     return Promise.resolve({ code: 1, stdout: "", stderr: "" })
   }
@@ -143,9 +171,13 @@ async function mount(world: World): Promise<HTMLElement> {
 }
 
 async function openDetails(host: HTMLElement): Promise<void> {
-  const details = host.querySelector<HTMLButtonElement>('button[aria-label="Details"]')
+  const details = host.querySelector<HTMLButtonElement>(
+    'button[aria-label="Details"]',
+  )
   if (details === null) throw new Error("no Details button")
-  act(() => { details.click() })
+  act(() => {
+    details.click()
+  })
   await flush()
 }
 
@@ -156,7 +188,10 @@ const policySelect = (host: HTMLElement): HTMLSelectElement => {
 }
 
 async function choose(select: HTMLSelectElement, value: string): Promise<void> {
-  const descriptor = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value")
+  const descriptor = Object.getOwnPropertyDescriptor(
+    HTMLSelectElement.prototype,
+    "value",
+  )
   act(() => {
     descriptor?.set?.call(select, value)
     select.dispatchEvent(new Event("change", { bubbles: true }))
@@ -190,25 +225,36 @@ describe("changing the policy", () => {
     await openDetails(host)
     await choose(policySelect(host), "leave")
     await flush()
-    expect(world.configs).toEqual([["config", "-i", "demo", "viewer.closePolicy=leave"]])
+    expect(world.configs).toEqual([
+      ["config", "-i", "demo", "viewer.closePolicy=leave"],
+    ])
     expect(policySelect(host).value).toBe("leave")
   })
 
   it("keeps the old value and shows the CLI's words when the write fails, without reading the machine again", async () => {
     const world = newWorld()
     world.closePolicy = "stow"
-    world.config = { code: 1, stdout: "", stderr: "winvm config: viewer.closePolicy is read-only on this machine" }
+    world.config = {
+      code: 1,
+      stdout: "",
+      stderr: "winvm config: viewer.closePolicy is read-only on this machine",
+    }
     const host = await mount(world)
     await openDetails(host)
     const reads = world.statusReads
     await choose(policySelect(host), "shutdown")
-    expect(world.configs).toEqual([["config", "-i", "demo", "viewer.closePolicy=shutdown"]])
+    expect(world.configs).toEqual([
+      ["config", "-i", "demo", "viewer.closePolicy=shutdown"],
+    ])
     const select = policySelect(host)
     expect(select.value).toBe("stow")
     expect(world.statusReads).toBe(reads)
     const described = select.getAttribute("aria-describedby")
-    const message = described === null ? null : host.querySelector(`#${described}`)
-    expect(message?.textContent).toContain("viewer.closePolicy is read-only on this machine")
+    const message =
+      described === null ? null : host.querySelector(`#${described}`)
+    expect(message?.textContent).toContain(
+      "viewer.closePolicy is read-only on this machine",
+    )
     expect(message?.getAttribute("role")).toBe("alert")
 
     world.config = { code: 0, stdout: "", stderr: "" }
@@ -247,7 +293,19 @@ describe("changing the policy", () => {
 })
 
 describe("useWinvm.setClosePolicy", () => {
-  const machine = (name: string, closePolicy: string): Record<string, unknown> => ({ ...statusOf(newWorld()), name, title: null, closePolicy, state: "stopped", vmStatus: null, pid: null, guest: null })
+  const machine = (
+    name: string,
+    closePolicy: string,
+  ): Record<string, unknown> => ({
+    ...statusOf(newWorld()),
+    name,
+    title: null,
+    closePolicy,
+    state: "stopped",
+    vmStatus: null,
+    pid: null,
+    guest: null,
+  })
 
   function twoMachines(): {
     policies: Record<string, string>
@@ -261,7 +319,11 @@ describe("useWinvm.setClosePolicy", () => {
     const held: (() => void)[] = []
     const holdReadsOf: { name: string | null } = { name: null }
     const reads: string[] = []
-    const ok = (stdout: unknown): Answer => ({ code: 0, stdout: JSON.stringify(stdout), stderr: "" })
+    const ok = (stdout: unknown): Answer => ({
+      code: 0,
+      stdout: JSON.stringify(stdout),
+      stderr: "",
+    })
     const invoke = (cmd: string, a?: { args?: string[] }): Promise<unknown> => {
       if (cmd !== "winvm") return Promise.resolve(null)
       const args = a?.args ?? []
@@ -270,17 +332,30 @@ describe("useWinvm.setClosePolicy", () => {
         if (args.includes("-i") && target !== undefined) {
           reads.push(target)
           const answer = ok(machine(target, policies[target] ?? "ask"))
-          if (holdReadsOf.name === target) return new Promise((resolve) => held.push(() => { resolve(answer) }))
+          if (holdReadsOf.name === target)
+            return new Promise((resolve) =>
+              held.push(() => {
+                resolve(answer)
+              }),
+            )
           return Promise.resolve(answer)
         }
-        return Promise.resolve(ok({ instances: [machine("a", policies.a ?? "ask"), machine("b", policies.b ?? "ask")] }))
+        return Promise.resolve(
+          ok({
+            instances: [
+              machine("a", policies.a ?? "ask"),
+              machine("b", policies.b ?? "ask"),
+            ],
+          }),
+        )
       }
       if (args[0] === "config") {
         configs.push(args)
         const target = args[args.indexOf("-i") + 1] ?? ""
         return new Promise((resolve) =>
           held.push(() => {
-            policies[target] = (args[args.length - 1] ?? "").split("=")[1] ?? "ask"
+            policies[target] =
+              (args[args.length - 1] ?? "").split("=")[1] ?? "ask"
             resolve({ code: 0, stdout: "", stderr: "" })
           }),
         )
@@ -318,9 +393,13 @@ describe("useWinvm.setClosePolicy", () => {
 
     const writing = app.latest().setClosePolicy("leave")
     await flush()
-    expect(world.configs).toEqual([["config", "-i", "a", "viewer.closePolicy=leave"]])
+    expect(world.configs).toEqual([
+      ["config", "-i", "a", "viewer.closePolicy=leave"],
+    ])
 
-    act(() => { app.latest().select("b") })
+    act(() => {
+      app.latest().select("b")
+    })
     await flush()
     await tick(0)
     expect(app.latest().status?.name).toBe("b")

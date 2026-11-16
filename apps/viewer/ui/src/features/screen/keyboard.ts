@@ -28,14 +28,18 @@ const SUPER = 0xffeb
 const SUPER_RIGHT = 0xffec
 const CONTROL = 0xffe3
 
-const stopGuest = (event: RoutedKeyEvent): void => { event.stopImmediatePropagation() }
+const stopGuest = (event: RoutedKeyEvent): void => {
+  event.stopImmediatePropagation()
+}
 const stopAll = (event: RoutedKeyEvent): void => {
   event.preventDefault()
   event.stopImmediatePropagation()
 }
 
-const isMeta = (code: string): boolean => code === "MetaLeft" || code === "MetaRight"
-const isCaptureModifier = (code: string): boolean => code.startsWith("Control") || code.startsWith("Alt")
+const isMeta = (code: string): boolean =>
+  code === "MetaLeft" || code === "MetaRight"
+const isCaptureModifier = (code: string): boolean =>
+  code.startsWith("Control") || code.startsWith("Alt")
 
 export class GuestKeyboardRouter {
   private captured = false
@@ -60,7 +64,12 @@ export class GuestKeyboardRouter {
   }
 
   keyDown(event: RoutedKeyEvent): void {
-    if (!event.repeat && isCaptureModifier(event.code) && event.ctrlKey && event.altKey) {
+    if (
+      !event.repeat &&
+      isCaptureModifier(event.code) &&
+      event.ctrlKey &&
+      event.altKey
+    ) {
       stopAll(event)
       if (!this.captureChord) {
         this.captureChord = true
@@ -75,7 +84,10 @@ export class GuestKeyboardRouter {
       if (isMeta(event.code)) {
         stopAll(event)
         if (!this.capturedWindows.has(event.code)) {
-          const key = event.code === "MetaRight" ? { keysym: SUPER_RIGHT, code: "MetaRight" } : { keysym: SUPER, code: "MetaLeft" }
+          const key =
+            event.code === "MetaRight"
+              ? { keysym: SUPER_RIGHT, code: "MetaRight" }
+              : { keysym: SUPER, code: "MetaLeft" }
           this.capturedWindows.set(event.code, key)
           this.options.send(key.keysym, key.code, true)
         }
@@ -111,7 +123,8 @@ export class GuestKeyboardRouter {
   }
 
   keyUp(event: RoutedKeyEvent): void {
-    if (isCaptureModifier(event.code) && !(event.ctrlKey && event.altKey)) this.captureChord = false
+    if (isCaptureModifier(event.code) && !(event.ctrlKey && event.altKey))
+      this.captureChord = false
     if (this.captured) {
       if (isMeta(event.code)) {
         stopAll(event)
@@ -144,7 +157,8 @@ export class GuestKeyboardRouter {
       this.options.send(CONTROL, "ControlLeft", true)
       this.options.send(CONTROL, "ControlLeft", false)
     }
-    for (const key of this.capturedWindows.values()) this.options.send(key.keysym, key.code, false)
+    for (const key of this.capturedWindows.values())
+      this.options.send(key.keysym, key.code, false)
     this.capturedWindows.clear()
     if (this.rightWindowsDown) this.options.send(SUPER, "MetaLeft", false)
     this.rightCommand = false

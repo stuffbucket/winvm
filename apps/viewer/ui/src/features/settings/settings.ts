@@ -8,7 +8,9 @@ export interface ViewerSettings {
 
 export const DEFAULT_SETTINGS: ViewerSettings = { pauseOverlay: true }
 
-const Stored = z.object({ "viewer.pauseOverlay": z.boolean().optional() }).loose()
+const Stored = z
+  .object({ "viewer.pauseOverlay": z.boolean().optional() })
+  .loose()
 
 export function parseSettings(stdout: string): ViewerSettings {
   let raw: unknown
@@ -18,10 +20,15 @@ export function parseSettings(stdout: string): ViewerSettings {
     return DEFAULT_SETTINGS
   }
   const s = Stored.safeParse(raw).data
-  return { pauseOverlay: s?.["viewer.pauseOverlay"] ?? DEFAULT_SETTINGS.pauseOverlay }
+  return {
+    pauseOverlay: s?.["viewer.pauseOverlay"] ?? DEFAULT_SETTINGS.pauseOverlay,
+  }
 }
 
-export const pauseOverlayArgs = (on: boolean): string[] => ["settings", `viewer.pauseOverlay=${String(on)}`]
+export const pauseOverlayArgs = (on: boolean): string[] => [
+  "settings",
+  `viewer.pauseOverlay=${String(on)}`,
+]
 
 type Run = (...args: string[]) => Promise<Output>
 
@@ -34,10 +41,15 @@ export async function loadSettings(run: Run): Promise<ViewerSettings> {
   }
 }
 
-export async function savePauseOverlay(run: Run, on: boolean): Promise<string | null> {
+export async function savePauseOverlay(
+  run: Run,
+  on: boolean,
+): Promise<string | null> {
   try {
     const out = await run(...pauseOverlayArgs(on))
-    return out.code === 0 ? null : out.stderr.trim() || `winvm settings exited ${String(out.code)}`
+    return out.code === 0
+      ? null
+      : out.stderr.trim() || `winvm settings exited ${String(out.code)}`
   } catch (e) {
     return e instanceof Error ? e.message : String(e)
   }

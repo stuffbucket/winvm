@@ -1,17 +1,17 @@
-import { useEffect, useRef, type ReactNode, type JSX } from "react";
+import { useEffect, useRef, type ReactNode, type JSX } from "react"
 
 interface ConfirmDialogProps {
-  open: boolean;
-  title: string;
-  body: ReactNode;
-  confirmLabel?: string;
-  cancelLabel?: string;
-  tone?: "default" | "danger";
-  busy?: boolean;
-  secondaryLabel?: string;
-  onSecondary?: () => void | Promise<void>;
-  onConfirm: () => void | Promise<void>;
-  onCancel: () => void;
+  open: boolean
+  title: string
+  body: ReactNode
+  confirmLabel?: string
+  cancelLabel?: string
+  tone?: "default" | "danger"
+  busy?: boolean
+  secondaryLabel?: string
+  onSecondary?: () => void | Promise<void>
+  onConfirm: () => void | Promise<void>
+  onCancel: () => void
 }
 
 export function ConfirmDialog({
@@ -27,39 +27,37 @@ export function ConfirmDialog({
   onConfirm,
   onCancel,
 }: ConfirmDialogProps): JSX.Element | null {
-  const dialogRef = useRef<HTMLDialogElement | null>(null);
-  const cancelRef = useRef<HTMLButtonElement | null>(null);
+  const dialogRef = useRef<HTMLDialogElement | null>(null)
+  const cancelRef = useRef<HTMLButtonElement | null>(null)
 
   useEffect(() => {
-    const el = dialogRef.current;
-    if (!el) return;
+    const el = dialogRef.current
+    if (!el) return
     if (open && !el.open) {
       try {
-        el.showModal();
-      } catch {
-      }
+        el.showModal()
+      } catch {}
     } else if (!open && el.open) {
       try {
-        el.close();
-      } catch {
-      }
+        el.close()
+      } catch {}
     }
-  }, [open]);
+  }, [open])
 
   useEffect(() => {
-    if (open) cancelRef.current?.focus();
-  }, [open]);
+    if (open) cancelRef.current?.focus()
+  }, [open])
 
-  if (!open) return null;
+  if (!open) return null
 
   const onCancelGuard = (): void => {
-    if (busy) return;
-    onCancel();
-  };
+    if (busy) return
+    onCancel()
+  }
 
   const onConfirmClick = (): void => {
-    void onConfirm();
-  };
+    void onConfirm()
+  }
 
   return (
     <dialog
@@ -67,11 +65,11 @@ export function ConfirmDialog({
       className="confirm-dialog"
       onClose={onCancelGuard}
       onCancel={(e) => {
-        e.preventDefault();
-        onCancelGuard();
+        e.preventDefault()
+        onCancelGuard()
       }}
       onClick={(e) => {
-        if (e.target === dialogRef.current) onCancelGuard();
+        if (e.target === dialogRef.current) onCancelGuard()
       }}
     >
       <div className="confirm-dialog__panel">
@@ -110,5 +108,5 @@ export function ConfirmDialog({
         </div>
       </div>
     </dialog>
-  );
+  )
 }

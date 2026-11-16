@@ -1,6 +1,12 @@
 import { describe, expect, it } from "bun:test"
 
-import { WAKE_MS, type WakeSock, type WakeTimers, keepRefreshing, sendWake } from "../ui/src/features/screen/wake"
+import {
+  WAKE_MS,
+  type WakeSock,
+  type WakeTimers,
+  keepRefreshing,
+  sendWake,
+} from "../ui/src/features/screen/wake"
 
 class Wire implements WakeSock {
   readonly sent: number[][] = []
@@ -12,7 +18,12 @@ class Wire implements WakeSock {
     this.pending.push((n >> 8) & 0xff, n & 0xff)
   }
   sQpush32(n: number): void {
-    this.pending.push((n >>> 24) & 0xff, (n >> 16) & 0xff, (n >> 8) & 0xff, n & 0xff)
+    this.pending.push(
+      (n >>> 24) & 0xff,
+      (n >> 16) & 0xff,
+      (n >> 8) & 0xff,
+      n & 0xff,
+    )
   }
   flush(): void {
     this.sent.push(this.pending)

@@ -6,7 +6,10 @@ interface State {
   readonly error: Error | null
 }
 
-export class ErrorBoundary extends Component<{ readonly title: string; readonly children: ReactNode }, State> {
+export class ErrorBoundary extends Component<
+  { readonly title: string; readonly children: ReactNode },
+  State
+> {
   override state: State = { error: null }
 
   static getDerivedStateFromError(error: Error): State {

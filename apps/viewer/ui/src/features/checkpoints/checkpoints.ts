@@ -47,15 +47,24 @@ export function dayKey(d: Date): string {
   return `${String(d.getFullYear())}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
 }
 
-const midnight = (d: Date): Date => new Date(d.getFullYear(), d.getMonth(), d.getDate())
+const midnight = (d: Date): Date =>
+  new Date(d.getFullYear(), d.getMonth(), d.getDate())
 
 function byTime(a: Checkpoint, b: Checkpoint): number {
-  return Date.parse(a.createdAt) - Date.parse(b.createdAt) || a.name.localeCompare(b.name)
+  return (
+    Date.parse(a.createdAt) - Date.parse(b.createdAt) ||
+    a.name.localeCompare(b.name)
+  )
 }
 
-export const depthScale = (daysFromFront: number): number => Math.max(DEPTH_MIN, DEPTH_STEP ** daysFromFront)
+export const depthScale = (daysFromFront: number): number =>
+  Math.max(DEPTH_MIN, DEPTH_STEP ** daysFromFront)
 
-export function layoutTimeline(checkpoints: readonly Checkpoint[], nowAspect: number, columns = COLUMNS): TimelineLayout {
+export function layoutTimeline(
+  checkpoints: readonly Checkpoint[],
+  nowAspect: number,
+  columns = COLUMNS,
+): TimelineLayout {
   const sorted = [...checkpoints].sort(byTime)
   const order = sorted.map((c) => c.name)
   const groups = new Map<string, Checkpoint[]>()
@@ -66,8 +75,17 @@ export function layoutTimeline(checkpoints: readonly Checkpoint[], nowAspect: nu
     else list.push(c)
   }
 
-  const nowFrame = Math.round(NOW_WIDTH / (Number.isFinite(nowAspect) && nowAspect > 0 ? nowAspect : 16 / 10))
-  const now = { x: -NOW_WIDTH / 2, y: 0, width: NOW_WIDTH, height: nowFrame + NOW_CAPTION, frame: nowFrame }
+  const nowFrame = Math.round(
+    NOW_WIDTH /
+      (Number.isFinite(nowAspect) && nowAspect > 0 ? nowAspect : 16 / 10),
+  )
+  const now = {
+    x: -NOW_WIDTH / 2,
+    y: 0,
+    width: NOW_WIDTH,
+    height: nowFrame + NOW_CAPTION,
+    frame: nowFrame,
+  }
 
   const keys = [...groups.keys()].reverse()
   const days: DayBlock[] = []
@@ -104,7 +122,9 @@ export function layoutTimeline(checkpoints: readonly Checkpoint[], nowAspect: nu
     const first = list[0]
     days.push({
       key,
-      date: midnight(first === undefined ? new Date() : new Date(first.createdAt)),
+      date: midnight(
+        first === undefined ? new Date() : new Date(first.createdAt),
+      ),
       x: left,
       y: top,
       width,
@@ -118,19 +138,39 @@ export function layoutTimeline(checkpoints: readonly Checkpoint[], nowAspect: nu
   days.reverse()
 
   const indexOf = new Map(order.map((n, i) => [n, i]))
-  const cards = new Map(boxes.map((b) => [b.name, { ...b, index: indexOf.get(b.name) ?? 0 }]))
+  const cards = new Map(
+    boxes.map((b) => [b.name, { ...b, index: indexOf.get(b.name) ?? 0 }]),
+  )
 
   const all: Rect[] = [now, ...days.map(withLabel)]
   const x0 = Math.min(...all.map((r) => r.x))
   const y0 = Math.min(...all.map((r) => r.y))
   const x1 = Math.max(...all.map((r) => r.x + r.width))
   const y1 = Math.max(...all.map((r) => r.y + r.height))
-  return { now, days, cards, order, bounds: { x: x0, y: y0, width: x1 - x0, height: y1 - y0 } }
+  return {
+    now,
+    days,
+    cards,
+    order,
+    bounds: { x: x0, y: y0, width: x1 - x0, height: y1 - y0 },
+  }
 }
 
-export const withLabel = (d: Pick<DayBlock, "x" | "y" | "width" | "height" | "scale">): Rect => ({ x: d.x, y: d.y - 44 * d.scale, width: d.width, height: d.height + 44 * d.scale })
+export const withLabel = (
+  d: Pick<DayBlock, "x" | "y" | "width" | "height" | "scale">,
+): Rect => ({
+  x: d.x,
+  y: d.y - 44 * d.scale,
+  width: d.width,
+  height: d.height + 44 * d.scale,
+})
 
-export const frameOf = (box: Rect & { readonly frame: number }): Rect => ({ x: box.x, y: box.y, width: box.width, height: box.frame })
+export const frameOf = (box: Rect & { readonly frame: number }): Rect => ({
+  x: box.x,
+  y: box.y,
+  width: box.width,
+  height: box.frame,
+})
 
 export function union(rects: readonly Rect[]): Rect {
   const x0 = Math.min(...rects.map((r) => r.x))
@@ -161,38 +201,75 @@ export interface TickWords {
   readonly locale?: string
 }
 
-const daysBetween = (a: Date, b: Date): number => Math.round((midnight(b).getTime() - midnight(a).getTime()) / 86_400_000)
+const daysBetween = (a: Date, b: Date): number =>
+  Math.round((midnight(b).getTime() - midnight(a).getTime()) / 86_400_000)
 
 export function dayLabel(date: Date, now: Date, words: TickWords): string {
   const ago = daysBetween(date, now)
   if (ago === 0) return words.today
   if (ago === 1) return words.yesterday
-  if (ago > 1 && ago < 7) return new Intl.DateTimeFormat(words.locale, { weekday: "long" }).format(date)
+  if (ago > 1 && ago < 7)
+    return new Intl.DateTimeFormat(words.locale, { weekday: "long" }).format(
+      date,
+    )
   const sameYear = date.getFullYear() === now.getFullYear()
-  return new Intl.DateTimeFormat(words.locale, sameYear ? { month: "long", day: "numeric" } : { dateStyle: "medium" }).format(date)
+  return new Intl.DateTimeFormat(
+    words.locale,
+    sameYear ? { month: "long", day: "numeric" } : { dateStyle: "medium" },
+  ).format(date)
 }
 
-export function timelineTicks(days: readonly Pick<DayBlock, "key" | "date">[], now: Date, words: TickWords): Tick[] {
+export function timelineTicks(
+  days: readonly Pick<DayBlock, "key" | "date">[],
+  now: Date,
+  words: TickWords,
+): Tick[] {
   const n = days.length
   const out: Tick[] = days.map((d, i) => {
     const prev = days[i - 1]
-    const newMonth = prev === undefined || prev.date.getMonth() !== d.date.getMonth() || prev.date.getFullYear() !== d.date.getFullYear()
+    const newMonth =
+      prev === undefined ||
+      prev.date.getMonth() !== d.date.getMonth() ||
+      prev.date.getFullYear() !== d.date.getFullYear()
     const month = newMonth
-      ? new Intl.DateTimeFormat(words.locale, d.date.getFullYear() === now.getFullYear() ? { month: "long" } : { month: "long", year: "numeric" }).format(d.date)
+      ? new Intl.DateTimeFormat(
+          words.locale,
+          d.date.getFullYear() === now.getFullYear()
+            ? { month: "long" }
+            : { month: "long", year: "numeric" },
+        ).format(d.date)
       : null
-    return { kind: "day", key: d.key, at: n === 0 ? 0 : i / n, month, label: dayLabel(d.date, now, words), day: i }
+    return {
+      kind: "day",
+      key: d.key,
+      at: n === 0 ? 0 : i / n,
+      month,
+      label: dayLabel(d.date, now, words),
+      day: i,
+    }
   })
-  out.push({ kind: "now", key: "now", at: 1, month: null, label: words.now, day: null })
+  out.push({
+    kind: "now",
+    key: "now",
+    at: 1,
+    month: null,
+    label: words.now,
+    day: null,
+  })
   return out
 }
 
 export function tickAt(ticks: readonly Tick[], at: number): Tick | null {
   let best: Tick | null = null
-  for (const t of ticks) if (best === null || Math.abs(t.at - at) < Math.abs(best.at - at)) best = t
+  for (const t of ticks)
+    if (best === null || Math.abs(t.at - at) < Math.abs(best.at - at)) best = t
   return best
 }
 
-export function dayNearest(layout: TimelineLayout, centre: Point): number | null {
+export function dayNearest(
+  layout: TimelineLayout,
+  centre: Point,
+): number | null {
   const nowMid = layout.now.y + layout.now.height / 2
   let best: number | null = null
   let distance = Math.abs(centre.y - nowMid)
@@ -206,12 +283,28 @@ export function dayNearest(layout: TimelineLayout, centre: Point): number | null
   return best
 }
 
-export function searchCheckpoints(list: readonly Checkpoint[], query: string, dateWords: (c: Checkpoint) => string): Checkpoint[] {
-  const terms = query.toLowerCase().split(/\s+/).filter((t) => t !== "")
+export function searchCheckpoints(
+  list: readonly Checkpoint[],
+  query: string,
+  dateWords: (c: Checkpoint) => string,
+): Checkpoint[] {
+  const terms = query
+    .toLowerCase()
+    .split(/\s+/)
+    .filter((t) => t !== "")
   if (terms.length === 0) return []
   return list
     .filter((c) => {
-      const hay = [c.name, c.title ?? "", c.notes?.title ?? "", c.notes?.text ?? "", ...(c.notes?.tags ?? []), c.note ?? "", c.kind, dateWords(c)]
+      const hay = [
+        c.name,
+        c.title ?? "",
+        c.notes?.title ?? "",
+        c.notes?.text ?? "",
+        ...(c.notes?.tags ?? []),
+        c.note ?? "",
+        c.kind,
+        dateWords(c),
+      ]
         .join("\n")
         .toLowerCase()
       return terms.every((t) => hay.includes(t))
@@ -219,19 +312,28 @@ export function searchCheckpoints(list: readonly Checkpoint[], query: string, da
     .sort((a, b) => byTime(b, a))
 }
 
-export const shownName = (c: Pick<Checkpoint, "name" | "title" | "notes">): string => c.title ?? c.notes?.title ?? c.name
+export const shownName = (
+  c: Pick<Checkpoint, "name" | "title" | "notes">,
+): string => c.title ?? c.notes?.title ?? c.name
 
 export const hasNotes = (c: Pick<Checkpoint, "notes" | "note">): boolean =>
-  (c.notes !== null && (c.notes.text.trim() !== "" || c.notes.tags.length > 0)) || (c.note !== undefined && c.note !== "")
+  (c.notes !== null &&
+    (c.notes.text.trim() !== "" || c.notes.tags.length > 0)) ||
+  (c.note !== undefined && c.note !== "")
 
 const SAVE_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]*$/
 
-export const validSaveName = (name: string): boolean => name.length > 0 && name.length <= 64 && SAVE_NAME.test(name)
+export const validSaveName = (name: string): boolean =>
+  name.length > 0 && name.length <= 64 && SAVE_NAME.test(name)
 
 const timestampName = (d: Date): string =>
   `${String(d.getFullYear())}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}_${pad(d.getHours())}-${pad(d.getMinutes())}-${pad(d.getSeconds())}`
 
-export function saveNameFor(title: string, taken: ReadonlySet<string>, now: Date): string {
+export function saveNameFor(
+  title: string,
+  taken: ReadonlySet<string>,
+  now: Date,
+): string {
   const slug = title
     .normalize("NFKD")
     .replace(/[̀-ͯ]/g, "")
@@ -253,7 +355,9 @@ export function deleteBlocked(c: Pick<Checkpoint, "kind">): string | null {
   return null
 }
 
-export function incompatibleReason(c: Pick<Checkpoint, "compatible" | "incompatible">): string | null {
+export function incompatibleReason(
+  c: Pick<Checkpoint, "compatible" | "incompatible">,
+): string | null {
   if (c.compatible !== false) return null
   for (const part of ["display", "base", "hardware", "firmware", "qemu"]) {
     if (c.incompatible.includes(part)) return `checkpoints.incompatible.${part}`
@@ -261,9 +365,16 @@ export function incompatibleReason(c: Pick<Checkpoint, "compatible" | "incompati
   return "checkpoints.incompatible.other"
 }
 
-export const isAutomatic = (c: Pick<Checkpoint, "kind">): boolean => c.kind === "auto" || c.kind === "stow"
+export const isAutomatic = (c: Pick<Checkpoint, "kind">): boolean =>
+  c.kind === "auto" || c.kind === "stow"
 
-export type Step = { readonly verb: "save"; readonly name: string; readonly title: string | null } | { readonly verb: "load"; readonly name: string }
+export type Step =
+  | {
+      readonly verb: "save"
+      readonly name: string
+      readonly title: string | null
+    }
+  | { readonly verb: "load"; readonly name: string }
 
 export interface GoBackContext {
   readonly live: boolean
@@ -272,17 +383,37 @@ export interface GoBackContext {
   readonly keepTitle: string
 }
 
-export function goBackSteps(target: string, saveFirst: boolean, ctx: GoBackContext): Step[] {
+export function goBackSteps(
+  target: string,
+  saveFirst: boolean,
+  ctx: GoBackContext,
+): Step[] {
   const load: Step = { verb: "load", name: target }
   if (!saveFirst || !ctx.live) return [load]
-  return [{ verb: "save", name: saveNameFor(ctx.keepTitle, ctx.taken, ctx.now), title: ctx.keepTitle }, load]
+  return [
+    {
+      verb: "save",
+      name: saveNameFor(ctx.keepTitle, ctx.taken, ctx.now),
+      title: ctx.keepTitle,
+    },
+    load,
+  ]
 }
 
-export function goBackConfirm(ctx: Pick<GoBackContext, "live">): { readonly body: string; readonly offerSaveFirst: boolean } {
-  return ctx.live ? { body: "checkpoints.goBack.bodyLive", offerSaveFirst: true } : { body: "checkpoints.goBack.bodyStopped", offerSaveFirst: false }
+export function goBackConfirm(ctx: Pick<GoBackContext, "live">): {
+  readonly body: string
+  readonly offerSaveFirst: boolean
+} {
+  return ctx.live
+    ? { body: "checkpoints.goBack.bodyLive", offerSaveFirst: true }
+    : { body: "checkpoints.goBack.bodyStopped", offerSaveFirst: false }
 }
 
-export function stepThrough(order: readonly string[], from: string | null, direction: -1 | 1): string | null {
+export function stepThrough(
+  order: readonly string[],
+  from: string | null,
+  direction: -1 | 1,
+): string | null {
   if (order.length === 0) return null
   if (from === null) return direction < 0 ? (order.at(-1) ?? null) : null
   const i = order.indexOf(from)
