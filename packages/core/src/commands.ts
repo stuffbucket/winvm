@@ -1086,8 +1086,12 @@ export async function reboot(args: Args): Promise<number> {
   finder.beforeDown(name)
   const outcome = await watcher.whileActive(
     name,
-    (async (): Promise<qga.Readiness> => {
-      await qga.reboot(p.qga)
+    (async (): Promise<qga.Readiness | { readonly refused: string }> => {
+      try {
+        await qga.reboot(p.qga)
+      } catch (error) {
+        return { refused: errorText(error) }
+      }
       process.stdout.write("rebooting")
       return await qga.untilNewBoot(p.qga, before, deadline - Date.now(), {
         noLogonMs: NO_LOGON_MS,
@@ -1095,6 +1099,13 @@ export async function reboot(args: Args): Promise<number> {
       })
     })(),
   )
+  if (typeof outcome === "object") {
+    console.error(
+      `::error::the guest did not take the restart: ${outcome.refused}`,
+    )
+    await finder.afterUp(name)
+    return 1
+  }
   process.stdout.write("\n")
   if (outcome !== "ready") {
     console.error(

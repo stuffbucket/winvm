@@ -389,41 +389,47 @@ export async function exec(
   throw new Error("guest command timed out")
 }
 
-export async function shutdown(
+async function requestShutdown(
   sockPath: string,
-  timeoutMs = 5000,
+  mode: "powerdown" | "reboot",
+  timeoutMs: number,
 ): Promise<void> {
+  const what =
+    mode === "powerdown" ? "guest-shutdown" : `guest-shutdown (${mode})`
   let reply: Record<string, unknown>
   try {
     reply = await call(
       sockPath,
-      { execute: "guest-shutdown", arguments: { mode: "powerdown" } },
+      { execute: "guest-shutdown", arguments: { mode } },
       timeoutMs,
     )
   } catch (error) {
     if (error instanceof AgentTimeout && error.sent) return
     if (error instanceof AgentTimeout)
-      throw new Error(
-        "guest-shutdown was not sent: the guest agent did not answer",
-        { cause: error },
-      )
+      throw new Error(`${what} was not sent: the guest agent did not answer`, {
+        cause: error,
+      })
     throw error
   }
   const refusal = reply.error as { desc?: unknown } | undefined
   if (refusal !== undefined)
     throw new Error(
-      `guest-shutdown: ${typeof refusal.desc === "string" ? refusal.desc : JSON.stringify(refusal)}`,
+      `${what}: ${typeof refusal.desc === "string" ? refusal.desc : JSON.stringify(refusal)}`,
     )
 }
 
-export async function reboot(sockPath: string): Promise<void> {
-  try {
-    await call(
-      sockPath,
-      { execute: "guest-shutdown", arguments: { mode: "reboot" } },
-      5000,
-    )
-  } catch {}
+export async function shutdown(
+  sockPath: string,
+  timeoutMs = 5000,
+): Promise<void> {
+  await requestShutdown(sockPath, "powerdown", timeoutMs)
+}
+
+export async function reboot(
+  sockPath: string,
+  timeoutMs = 5000,
+): Promise<void> {
+  await requestShutdown(sockPath, "reboot", timeoutMs)
 }
 
 export async function bootTime(sockPath: string): Promise<string | null> {

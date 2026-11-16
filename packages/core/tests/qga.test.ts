@@ -9,6 +9,7 @@ import {
   loggedOnUser,
   READ_CHUNK,
   readFile,
+  reboot,
   shutdown,
   untilNewBoot,
   untilReady,
@@ -379,5 +380,47 @@ describe("qga.untilNewBoot", () => {
       }),
     ).toBe("no-logon")
     expect(asked).toBe(0)
+  })
+})
+
+describe("qga.reboot", () => {
+  it("surfaces the agent's error reply instead of swallowing it", async () => {
+    const asked: unknown[] = []
+    agent.handler = (req) => {
+      asked.push(req.arguments)
+      return req.execute === "guest-shutdown"
+        ? { error: { class: "GenericError", desc: "reboot refused" } }
+        : { return: {} }
+    }
+    await expect(reboot(agent.path)).rejects.toThrow(
+      "guest-shutdown (reboot): reboot refused",
+    )
+    expect(asked).toEqual([{ mode: "reboot" }])
+  })
+
+  it("takes silence after the request as delivered", async () => {
+    agent.handler = (req) =>
+      req.execute === "guest-shutdown" ? null : { return: {} }
+    await reboot(agent.path, 50)
+    await new Promise((r) => setTimeout(r, 250))
+  })
+
+  it("says the request was never sent when the agent does not answer at all", async () => {
+    const path = resolve(dir, "silent-reboot.sock")
+    const silent = createServer((s) => {
+      s.on("error", () => undefined)
+    })
+    await new Promise<void>((r) => silent.listen(path, r))
+    try {
+      await expect(reboot(path, 50)).rejects.toThrow(
+        "guest-shutdown (reboot) was not sent: the guest agent did not answer",
+      )
+    } finally {
+      silent.close()
+    }
+  })
+
+  it("fails when there is no agent to ask", async () => {
+    await expect(reboot(resolve(dir, "missing.sock"), 50)).rejects.toThrow()
   })
 })
