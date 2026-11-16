@@ -101,7 +101,7 @@ fn decide(quit: Quit) -> Terminate {
         Ok(Some(terminate)) => terminate,
         Ok(None) => Terminate::Now,
         Err(_) => {
-            eprintln!("winvm: deciding whether to quit failed, so winvm stayed open");
+            crate::close::note("winvm: deciding whether to quit failed, so winvm stayed open");
             Terminate::Cancel { emit: false }
         }
     }

@@ -102,7 +102,10 @@ mod mac {
     }
 
     extern "C" fn logout_refused(_: *mut c_void) {
-        answer(Terminate::Later { id: 1, emit: true });
+        answer(Terminate::Later {
+            id: 1,
+            check: false,
+        });
         reply_after_a_while(false);
         let started = Instant::now();
         send_quit(Some(b"rlgo"));
@@ -125,7 +128,10 @@ mod mac {
     }
 
     extern "C" fn logout_accepted(_: *mut c_void) {
-        answer(Terminate::Later { id: 1, emit: true });
+        answer(Terminate::Later {
+            id: 1,
+            check: false,
+        });
         must_terminate(
             "NSTerminateLater followed by a YES reply terminates the app",
             Final::LaterYes,
@@ -155,7 +161,7 @@ mod mac {
         );
         check(
             terminate::install(|_| Terminate::Now).is_err(),
-            "a second hook, like a tao that already answers, is refused",
+            "a second install is refused",
         );
     }
 

@@ -37,7 +37,14 @@ pub enum Quit {
 pub enum Terminate {
     Now,
     Cancel { emit: bool },
-    Later { id: u64, emit: bool },
+    Later { id: u64, check: bool },
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Settled {
+    Stale,
+    Allow,
+    Ask,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -109,6 +116,7 @@ struct Inner {
     now: Snapshot,
     owed: Option<u64>,
     sessions: u64,
+    deadline: u64,
 }
 
 impl Inner {
@@ -117,6 +125,9 @@ impl Inner {
             CloseState::Idle => {
                 self.now = Snapshot {
                     state: CloseState::Requested,
+                    session: self.owed.map(|_| Session::Waiting {
+                        deadline: self.deadline,
+                    }),
                     ..Snapshot::default()
                 };
                 Request::Emit
@@ -143,38 +154,36 @@ impl Inner {
         }
     }
 
-    fn defer(&mut self, deadline: u64, emit: bool) -> Terminate {
+    fn defer(&mut self, deadline: u64, check: bool) -> Terminate {
         self.sessions += 1;
         let id = self.sessions;
         self.owed = Some(id);
+        self.deadline = deadline;
         self.now.session = Some(Session::Waiting { deadline });
-        Terminate::Later { id, emit }
+        Terminate::Later { id, check }
     }
 
-    fn terminate_at_once(
-        &mut self,
-        quit: Quit,
-        has_window: bool,
-        deadline: u64,
-    ) -> Option<Terminate> {
+    fn terminate(&mut self, quit: Quit, has_window: bool, deadline: u64) -> Terminate {
         if self.now.state == CloseState::Authorized {
-            return Some(Terminate::Now);
+            return Terminate::Now;
         }
         if self.owed.is_some() {
-            return Some(Terminate::Cancel { emit: false });
+            return Terminate::Cancel { emit: false };
         }
         if !has_window {
             self.now.state = CloseState::Authorized;
-            return Some(Terminate::Now);
+            return Terminate::Now;
         }
         match (quit, self.now.state) {
-            (Quit::User, _) => Some(Terminate::Cancel {
+            (Quit::User, _) => Terminate::Cancel {
                 emit: self.request() == Request::Emit,
-            }),
-            (Quit::SessionEnd, CloseState::Requested | CloseState::Running) => {
-                Some(self.defer(deadline, false))
+            },
+            (Quit::SessionEnd, CloseState::Idle) => {
+                let deferred = self.defer(deadline, true);
+                self.now.session = None;
+                deferred
             }
-            (Quit::SessionEnd, _) => None,
+            (Quit::SessionEnd, _) => self.defer(deadline, false),
         }
     }
 }
@@ -289,27 +298,32 @@ impl CloseCoordinator {
         });
     }
 
-    pub fn on_terminate(
-        &self,
-        quit: Quit,
-        has_window: bool,
-        deadline: u64,
-        needs: impl FnOnce() -> bool,
-    ) -> Terminate {
-        if let Some(now) = self.change(|i| i.terminate_at_once(quit, has_window, deadline)) {
-            return now;
-        }
-        let needed = needs();
+    pub fn on_terminate(&self, quit: Quit, has_window: bool, deadline: u64) -> Terminate {
+        self.change(|i| i.terminate(quit, has_window, deadline))
+    }
+
+    pub fn settle_session(&self, id: u64, needs: bool) -> Settled {
         self.change(|i| {
-            if let Some(now) = i.terminate_at_once(quit, has_window, deadline) {
-                return now;
+            if i.owed != Some(id) {
+                return Settled::Stale;
             }
-            if needed {
-                i.request();
-                i.defer(deadline, true)
-            } else {
-                i.now.state = CloseState::Authorized;
-                Terminate::Now
+            match i.now.state {
+                CloseState::Requested | CloseState::Running => Settled::Stale,
+                CloseState::Authorized => {
+                    i.owed = None;
+                    Settled::Allow
+                }
+                CloseState::Idle if needs => {
+                    let deadline = i.deadline;
+                    i.request();
+                    i.now.session = Some(Session::Waiting { deadline });
+                    Settled::Ask
+                }
+                CloseState::Idle => {
+                    i.owed = None;
+                    i.now.state = CloseState::Authorized;
+                    Settled::Allow
+                }
             }
         })
     }
@@ -320,7 +334,10 @@ impl CloseCoordinator {
                 return false;
             }
             i.owed = None;
-            i.now.session = Some(Session::Missed);
+            i.now.session = match i.now.state {
+                CloseState::Requested | CloseState::Running => Some(Session::Missed),
+                CloseState::Idle | CloseState::Authorized => None,
+            };
             true
         })
     }
@@ -329,7 +346,8 @@ impl CloseCoordinator {
         let mut inner = self
             .changed
             .wait_while(self.lock(), |i| {
-                matches!(i.now.state, CloseState::Requested | CloseState::Running)
+                i.owed.is_some()
+                    || matches!(i.now.state, CloseState::Requested | CloseState::Running)
             })
             .unwrap_or_else(PoisonError::into_inner);
         let restart = inner.now.state != CloseState::Authorized;
@@ -447,7 +465,7 @@ fn ask_window<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> bool {
     match app.emit_to(MAIN, REQUESTED_EVENT, ()) {
         Ok(()) => true,
         Err(e) => {
-            eprintln!("winvm: the close request did not reach the main window, so the close was called off: {e}");
+            note(&format!("winvm: the close request did not reach the main window, so the close was called off: {e}"));
             false
         }
     }
@@ -455,13 +473,17 @@ fn ask_window<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> bool {
 
 fn tell_session<R: tauri::Runtime>(app: &tauri::AppHandle<R>, close: &CloseCoordinator) {
     if let Err(e) = app.emit_to(MAIN, SESSION_EVENT, close.snapshot().session) {
-        eprintln!("winvm: the logout deadline did not reach the main window: {e}");
+        note(&format!(
+            "winvm: the logout deadline did not reach the main window: {e}"
+        ));
     }
 }
 
 fn answer_termination<R: tauri::Runtime>(app: &tauri::AppHandle<R>, terminate: bool) {
     if let Err(e) = app.run_on_main_thread(move || crate::terminate::reply(terminate)) {
-        eprintln!("winvm: couldn't answer macOS's request to quit: {e}");
+        note(&format!(
+            "winvm: couldn't answer macOS's request to quit: {e}"
+        ));
     }
 }
 
@@ -486,14 +508,24 @@ fn epoch_ms(at: SystemTime) -> u64 {
         .map_or(0, |d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX))
 }
 
-fn session_needs_close(app: &tauri::AppHandle) -> bool {
+async fn settle_session(app: tauri::AppHandle, id: u64) {
     let args = ["status", "--json"].map(String::from);
-    let read = tauri::async_runtime::block_on(sidecar::run_sidecar(
-        app,
-        &args,
-        Some(SESSION_STATUS_TIMEOUT),
-    ));
-    needs_from(&read)
+    let read = sidecar::run_sidecar(&app, &args, Some(SESSION_STATUS_TIMEOUT)).await;
+    let close = app.state::<CloseCoordinator>();
+    match close.settle_session(id, needs_from(&read)) {
+        Settled::Stale => {}
+        Settled::Allow => answer_termination(&app, true),
+        Settled::Ask => {
+            if let Some(main) = app.get_webview_window(MAIN) {
+                bring_forward(&main);
+            }
+            if ask_window(&app) {
+                tell_session(&app, &close);
+            } else if let Ok(Some(terminate)) = close.cancel() {
+                answer_termination(&app, terminate);
+            }
+        }
+    }
 }
 
 fn needs_from(read: &Result<Output, Box<SidecarFailure>>) -> bool {
@@ -504,10 +536,13 @@ fn needs_from(read: &Result<Output, Box<SidecarFailure>>) -> bool {
     }
 }
 
-fn expire_after(app: &tauri::AppHandle, id: u64) {
+fn expire_at(app: &tauri::AppHandle, id: u64, deadline: SystemTime) {
     let app = app.clone();
     tauri::async_runtime::spawn(async move {
-        tokio::time::sleep(SESSION_END_BUDGET).await;
+        let left = deadline
+            .duration_since(SystemTime::now())
+            .unwrap_or_default();
+        tokio::time::sleep(left).await;
         let close = app.state::<CloseCoordinator>();
         if close.expire(id) {
             answer_termination(&app, false);
@@ -519,26 +554,30 @@ fn expire_after(app: &tauri::AppHandle, id: u64) {
 pub fn should_terminate(app: &tauri::AppHandle, quit: Quit) -> Terminate {
     let close = app.state::<CloseCoordinator>();
     let main = app.get_webview_window(MAIN);
-    let deadline = epoch_ms(SystemTime::now() + SESSION_END_BUDGET);
-    let decided = close.on_terminate(quit, main.is_some(), deadline, || session_needs_close(app));
-    let emit = matches!(
-        decided,
-        Terminate::Cancel { emit: true } | Terminate::Later { emit: true, .. }
-    );
-    if emit {
-        if let Some(main) = &main {
-            bring_forward(main);
+    let deadline = SystemTime::now() + SESSION_END_BUDGET;
+    let decided = close.on_terminate(quit, main.is_some(), epoch_ms(deadline));
+    note(&format!(
+        "winvm: macOS asked winvm to quit ({quit:?}); answered {decided:?}"
+    ));
+    match decided {
+        Terminate::Cancel { emit: true } => {
+            if let Some(main) = &main {
+                bring_forward(main);
+            }
+            if !ask_window(app) {
+                let _ = close.cancel();
+            }
         }
-        if !ask_window(app) {
-            let _ = close.cancel();
-            return Terminate::Cancel { emit: false };
+        Terminate::Later { id, check } => {
+            expire_at(app, id, deadline);
+            if check {
+                tauri::async_runtime::spawn(settle_session(app.clone(), id));
+            } else {
+                tell_session(app, &close);
+            }
         }
+        Terminate::Now | Terminate::Cancel { emit: false } => {}
     }
-    if let Terminate::Later { id, .. } = decided {
-        tell_session(app, &close);
-        expire_after(app, id);
-    }
-    eprintln!("winvm: macOS asked winvm to quit ({quit:?}); answered {decided:?}");
     decided
 }
 
@@ -773,25 +812,21 @@ mod tests {
 
     const DEADLINE: u64 = 1_800_000_040_000;
 
-    fn never() -> bool {
-        panic!("the machines are only read when no close is under way")
-    }
-
     #[test]
     fn a_user_quit_starts_the_close_like_cmd_q_and_cancels_the_termination() {
         let close = CloseCoordinator::default();
         assert_eq!(
-            close.on_terminate(Quit::User, true, DEADLINE, never),
+            close.on_terminate(Quit::User, true, DEADLINE),
             Terminate::Cancel { emit: true }
         );
         assert_eq!(close.state(), CloseState::Requested);
         assert_eq!(
-            close.on_terminate(Quit::User, true, DEADLINE, never),
+            close.on_terminate(Quit::User, true, DEADLINE),
             Terminate::Cancel { emit: false }
         );
         close.start().unwrap();
         assert_eq!(
-            close.on_terminate(Quit::User, true, DEADLINE, never),
+            close.on_terminate(Quit::User, true, DEADLINE),
             Terminate::Cancel { emit: false }
         );
         assert_eq!(close.state(), CloseState::Running);
@@ -803,10 +838,7 @@ mod tests {
         for quit in [Quit::User, Quit::SessionEnd] {
             let close = running();
             close.complete().unwrap();
-            assert_eq!(
-                close.on_terminate(quit, true, DEADLINE, never),
-                Terminate::Now
-            );
+            assert_eq!(close.on_terminate(quit, true, DEADLINE), Terminate::Now);
             assert_eq!(close.state(), CloseState::Authorized);
         }
     }
@@ -815,39 +847,101 @@ mod tests {
     fn with_no_main_window_any_quit_terminates_now() {
         for quit in [Quit::User, Quit::SessionEnd] {
             let close = CloseCoordinator::default();
-            assert_eq!(
-                close.on_terminate(quit, false, DEADLINE, never),
-                Terminate::Now
-            );
+            assert_eq!(close.on_terminate(quit, false, DEADLINE), Terminate::Now);
             assert_eq!(close.state(), CloseState::Authorized);
         }
     }
 
+    fn checking(close: &CloseCoordinator) -> u64 {
+        let Terminate::Later { id, check: true } =
+            close.on_terminate(Quit::SessionEnd, true, DEADLINE)
+        else {
+            panic!("a session end with no close under way defers and reads the machines");
+        };
+        id
+    }
+
     #[test]
-    fn a_session_end_with_nothing_to_resolve_terminates_now() {
+    fn a_session_end_defers_at_once_and_reads_the_machines_afterwards() {
         let close = CloseCoordinator::default();
-        assert_eq!(
-            close.on_terminate(Quit::SessionEnd, true, DEADLINE, || false),
-            Terminate::Now
-        );
+        checking(&close);
+        assert_eq!(close.state(), CloseState::Idle);
+        assert_eq!(close.snapshot().session, None);
+    }
+
+    #[test]
+    fn a_session_end_with_nothing_to_resolve_lets_macos_go_on() {
+        let close = CloseCoordinator::default();
+        let id = checking(&close);
+        assert_eq!(close.settle_session(id, false), Settled::Allow);
         assert_eq!(close.state(), CloseState::Authorized);
+        assert!(!close.expire(id), "answered once");
         assert_eq!(close.request(), Request::Allow);
     }
 
     #[test]
-    fn a_session_end_with_machines_to_resolve_defers_and_requests_the_close_with_a_deadline() {
+    fn a_session_end_with_machines_to_resolve_requests_the_close_with_a_deadline() {
         let close = CloseCoordinator::default();
-        let Terminate::Later { emit: true, .. } =
-            close.on_terminate(Quit::SessionEnd, true, DEADLINE, || true)
-        else {
-            panic!("a session end with live machines waits for the close");
-        };
+        let id = checking(&close);
+        assert_eq!(close.settle_session(id, true), Settled::Ask);
         assert_eq!(close.state(), CloseState::Requested);
         assert_eq!(
             close.snapshot().session,
             Some(Session::Waiting { deadline: DEADLINE })
         );
         assert_eq!(close.request(), Request::Coalesced);
+        assert_eq!(close.settle_session(id, true), Settled::Stale);
+        close.start().unwrap();
+        assert_eq!(close.complete(), Ok(Finish::Reply));
+    }
+
+    #[test]
+    fn a_close_requested_while_the_machines_are_read_carries_the_deadline_and_answers_macos() {
+        let close = CloseCoordinator::default();
+        let id = checking(&close);
+        assert_eq!(close.request(), Request::Emit);
+        assert_eq!(
+            close.snapshot().session,
+            Some(Session::Waiting { deadline: DEADLINE })
+        );
+        assert_eq!(close.settle_session(id, false), Settled::Stale);
+        assert_eq!(close.state(), CloseState::Requested);
+        close.start().unwrap();
+        assert_eq!(close.complete(), Ok(Finish::Reply));
+    }
+
+    #[test]
+    fn a_read_that_ends_after_the_deadline_changes_nothing() {
+        let close = CloseCoordinator::default();
+        let id = checking(&close);
+        assert!(close.expire(id));
+        assert_eq!(close.state(), CloseState::Idle);
+        assert_eq!(close.snapshot().session, None);
+        assert_eq!(close.settle_session(id, false), Settled::Stale);
+        assert_eq!(close.state(), CloseState::Idle);
+        assert_eq!(close.request(), Request::Emit);
+    }
+
+    #[test]
+    fn any_quit_while_the_machines_are_read_is_refused() {
+        let close = CloseCoordinator::default();
+        checking(&close);
+        for quit in [Quit::User, Quit::SessionEnd] {
+            assert_eq!(
+                close.on_terminate(quit, true, DEADLINE),
+                Terminate::Cancel { emit: false }
+            );
+        }
+    }
+
+    #[test]
+    fn the_updater_waits_out_a_logout_still_reading_the_machines() {
+        let close = std::sync::Arc::new(CloseCoordinator::default());
+        let id = checking(&close);
+        let restart = updater(&close);
+        assert!(restart.recv_timeout(HELD).is_err(), "restarted mid-logout");
+        assert_eq!(close.settle_session(id, false), Settled::Allow);
+        assert_eq!(restart.recv_timeout(LONG), Ok(false));
     }
 
     #[test]
@@ -857,10 +951,10 @@ mod tests {
         let running = running();
         for close in [requested, running] {
             let before = close.state();
-            let Terminate::Later { emit: false, .. } =
-                close.on_terminate(Quit::SessionEnd, true, DEADLINE, never)
+            let Terminate::Later { check: false, .. } =
+                close.on_terminate(Quit::SessionEnd, true, DEADLINE)
             else {
-                panic!("a session end joins the close under way");
+                panic!("a session end joins the close under way without reading the machines");
             };
             assert_eq!(close.state(), before);
             assert_eq!(
@@ -873,10 +967,10 @@ mod tests {
     #[test]
     fn a_second_quit_while_a_reply_is_owed_is_refused() {
         let close = running();
-        close.on_terminate(Quit::SessionEnd, true, DEADLINE, never);
+        close.on_terminate(Quit::SessionEnd, true, DEADLINE);
         for quit in [Quit::User, Quit::SessionEnd] {
             assert_eq!(
-                close.on_terminate(quit, true, DEADLINE, never),
+                close.on_terminate(quit, true, DEADLINE),
                 Terminate::Cancel { emit: false }
             );
         }
@@ -886,7 +980,7 @@ mod tests {
     #[test]
     fn completing_a_session_end_replies_yes_instead_of_exiting() {
         let close = running();
-        close.on_terminate(Quit::SessionEnd, true, DEADLINE, never);
+        close.on_terminate(Quit::SessionEnd, true, DEADLINE);
         assert_eq!(close.complete(), Ok(Finish::Reply));
         assert_eq!(close.state(), CloseState::Authorized);
         assert_eq!(close.snapshot().session, None);
@@ -898,7 +992,7 @@ mod tests {
     #[test]
     fn cancelling_a_session_end_replies_no_and_an_ordinary_cancel_replies_nothing() {
         let close = running();
-        close.on_terminate(Quit::SessionEnd, true, DEADLINE, never);
+        close.on_terminate(Quit::SessionEnd, true, DEADLINE);
         assert_eq!(close.cancel(), Ok(Some(false)));
         assert_eq!(close.state(), CloseState::Idle);
         assert_eq!(close.snapshot().session, None);
@@ -910,8 +1004,7 @@ mod tests {
     #[test]
     fn an_expired_session_end_replies_no_once_and_the_close_goes_on() {
         let close = running();
-        let Terminate::Later { id, .. } =
-            close.on_terminate(Quit::SessionEnd, true, DEADLINE, never)
+        let Terminate::Later { id, .. } = close.on_terminate(Quit::SessionEnd, true, DEADLINE)
         else {
             panic!("deferred");
         };
@@ -925,8 +1018,7 @@ mod tests {
     #[test]
     fn an_expiry_for_a_session_end_already_answered_changes_nothing() {
         let close = running();
-        let Terminate::Later { id, .. } =
-            close.on_terminate(Quit::SessionEnd, true, DEADLINE, never)
+        let Terminate::Later { id, .. } = close.on_terminate(Quit::SessionEnd, true, DEADLINE)
         else {
             panic!("deferred");
         };
@@ -938,7 +1030,7 @@ mod tests {
         close.request();
         close.start().unwrap();
         let Terminate::Later { id: next, .. } =
-            close.on_terminate(Quit::SessionEnd, true, DEADLINE, never)
+            close.on_terminate(Quit::SessionEnd, true, DEADLINE)
         else {
             panic!("deferred");
         };
@@ -980,7 +1072,7 @@ mod tests {
     #[test]
     fn nothing_ends_the_close_while_its_own_command_runs() {
         let close = running();
-        close.on_terminate(Quit::SessionEnd, true, DEADLINE, never);
+        close.on_terminate(Quit::SessionEnd, true, DEADLINE);
         close.begin(&args(&["stop", "-i", "a"])).unwrap();
         assert!(close.cancel().is_err());
         assert!(close.complete().is_err());
@@ -1052,7 +1144,7 @@ mod tests {
     #[test]
     fn a_new_request_starts_a_fresh_transaction() {
         let close = running();
-        close.on_terminate(Quit::SessionEnd, true, DEADLINE, never);
+        close.on_terminate(Quit::SessionEnd, true, DEADLINE);
         close.resolved("a").unwrap();
         close.begin(&args(&["stow", "-i", "b"])).unwrap();
         close.end(outcome("b", "stow", 1));

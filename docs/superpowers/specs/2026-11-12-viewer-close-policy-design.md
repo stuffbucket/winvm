@@ -89,12 +89,13 @@ or process kill leaves detached VMs running.
 ### Logout, restart and shutdown
 
 macOS asks the app to quit with a `quit` Apple Event whose `why?` attribute
-names a logout, restart or shutdown. The viewer then reads every machine
-first: when none is live, or every live one is remembered as `Leave Running`
-and no operation is under way, it lets macOS go on at once. Otherwise it
-holds macOS (`NSTerminateLater`), runs the same transaction with a visible
-40-second countdown (macOS gives up on an app after about 45 seconds), and
-lets macOS go on when the transaction completes. Cancelling or a failure tells
+names a logout, restart or shutdown. The viewer holds macOS at once
+(`NSTerminateLater`) and reads every machine off the main thread: when none is
+live, or every live one is remembered as `Leave Running` and none has an
+operation under way, it lets macOS go on without showing anything. Otherwise
+it runs the same transaction with a visible countdown to one 40-second
+deadline set when macOS asked (macOS gives up on an app after about 45
+seconds), and lets macOS go on when the transaction completes. Cancelling or a failure tells
 macOS not to go on, so the logout stops and macOS says the viewer prevented it.
 When the countdown runs out the viewer tells macOS not to go on, says so, and
 keeps closing; the person logs out again once it has closed. A logout that
