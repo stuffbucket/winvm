@@ -80,6 +80,7 @@ const meta: InstanceMeta = {
 let state = ""
 let previous: Record<string, string | undefined> = {}
 let previousProbe: share.Probe
+let previousSettle: qemu.Settle
 let initialRunning: DisplayConfig | null = VIRTIO_GPU
 let initialDevices: share.DeviceSet | undefined
 let spacedHome: string | null = null
@@ -88,6 +89,7 @@ let commands: string[] = []
 let virtiofsd = 0
 let statusCalls = 0
 let answered = 0
+let settled = 0
 const realRunningCommand = display.runningCommand
 
 const qemuLog = (): string => resolve(state, "qemu.log")
@@ -170,6 +172,21 @@ beforeEach(() => {
     'printf "%s\\n" "$*" >> "$WINVM_TEST_QEMU_LOG"; exec sleep 3',
   )
   previousProbe = share.setProbe(() => ({ ok: true, reason: null }))
+  settled = 0
+  previousSettle = qemu.setSettle((survived) => {
+    let cancelled = false
+    settled += 1
+    const target = settled
+    const poll = (): void => {
+      if (cancelled) return
+      if (launches().length >= target && runningPid !== null) survived()
+      else setTimeout(poll, 5)
+    }
+    poll()
+    return () => {
+      cancelled = true
+    }
+  })
   initialRunning = VIRTIO_GPU
   initialDevices = undefined
   spacedHome = null
@@ -263,6 +280,7 @@ beforeEach(() => {
 afterEach(() => {
   mock.restore()
   share.setProbe(previousProbe)
+  qemu.setSettle(previousSettle)
   for (const [k, v] of Object.entries(previous)) {
     if (v === undefined) delete process.env[k]
     else process.env[k] = v
@@ -681,6 +699,23 @@ describe("launch resolves the display once", () => {
     expect(lastLaunch()).toContain("vhost-user-fs-pci")
     expect(lastLaunch()).toContain("qemu-vdagent")
     expect(virtiofsd).toBe(2)
+  })
+})
+
+describe("launch outcome", () => {
+  it("reports a qemu that exits at once, with its output, under the real settle window", async () => {
+    qemu.setSettle()
+    script(
+      "qemu-system-aarch64",
+      'printf "%s\\n" "$*" >> "$WINVM_TEST_QEMU_LOG"; echo boom >&2; exit 1',
+    )
+    await expect(
+      qemu.launch("source", pathsFor("source"), meta, {
+        installMedia: false,
+        ephemeral: false,
+        virtioBoot: true,
+      }),
+    ).rejects.toThrow(/qemu exited immediately:\n {2}boom/)
   })
 })
 

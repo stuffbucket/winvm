@@ -207,6 +207,23 @@ async function startSwtpm(p: Paths): Promise<void> {
   throw new Error(`swtpm never created ${p.tpmSock} — check \`winvm doctor\``)
 }
 
+export type Settle = (survived: () => void) => () => void
+
+const SETTLE_MS = 2000
+const settleByClock: Settle = (survived) => {
+  const timer = setTimeout(survived, SETTLE_MS)
+  return () => {
+    clearTimeout(timer)
+  }
+}
+let settle: Settle = settleByClock
+
+export function setSettle(next: Settle = settleByClock): Settle {
+  const previous = settle
+  settle = next
+  return previous
+}
+
 export async function launch(
   name: string,
   p: Paths,
@@ -246,11 +263,11 @@ export async function launch(
       res("exited")
     }),
   )
-  let timer: ReturnType<typeof setTimeout> | undefined
+  let unsettle = (): void => undefined
   const survived = new Promise<"alive">((res) => {
-    timer = setTimeout(() => {
+    unsettle = settle(() => {
       res("alive")
-    }, 2000)
+    })
   })
   let stop = false
   const answering =
@@ -259,7 +276,7 @@ export async function launch(
       : monitorAnswers(p, () => stop)
   const outcome = await Promise.race([exited, survived, answering])
   stop = true
-  clearTimeout(timer)
+  unsettle()
   if (outcome === "alive") {
     await applyPassword(p).catch((error: unknown) => {
       console.warn(
