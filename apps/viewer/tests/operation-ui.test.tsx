@@ -1,13 +1,8 @@
-/**
- * An operation under way, in the window: the one overlay that covers the display
- * for it, the copy for each operation, and what the rest of the window stops
- * doing meanwhile. Rendered in happy-dom with the app's Tauri bridge faked.
- */
-import type { JSX } from "react"
-import { GlobalRegistrator } from "@happy-dom/global-registrator"
 import { afterAll, afterEach, describe, expect, it, jest } from "bun:test"
 import { readFileSync } from "node:fs"
 import { resolve } from "node:path"
+import { GlobalRegistrator } from "@happy-dom/global-registrator"
+import type { JSX } from "react"
 
 GlobalRegistrator.register()
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true })
@@ -15,13 +10,14 @@ Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true })
 const { act } = await import("react")
 const { createRoot } = await import("react-dom/client")
 const { App } = await import("../ui/src/App")
-const { OperationOverlay } = await import("../ui/src/features/operation/OperationOverlay")
+const { OperationOverlay } = await import(
+  "../ui/src/features/operation/OperationOverlay"
+)
 const { VM_OPERATIONS } = await import("../ui/src/model")
 
 type Root = ReturnType<typeof createRoot>
 let root: Root | null = null
 
-/** A VNC socket that never connects: the real Screen mounts, and nothing reaches a network. */
 class QuietSocket {
   static readonly CONNECTING = 0
   static readonly OPEN = 1
@@ -66,7 +62,6 @@ const flush = async (): Promise<void> => {
   })
 }
 
-/** What each operation says over the display, word for word. */
 const COPY: Record<(typeof VM_OPERATIONS)[number], string> = {
   start: "Starting Windows",
   stop: "Shutting Down",
@@ -93,7 +88,9 @@ describe("OperationOverlay", () => {
     expect(Object.keys(COPY).sort()).toEqual([...VM_OPERATIONS].sort())
     for (const operation of VM_OPERATIONS) {
       for (const source of ["local", "external"] as const) {
-        const host = render(<OperationOverlay operation={{ operation, source }} />)
+        const host = render(
+          <OperationOverlay operation={{ operation, source }} />,
+        )
         expect(host.textContent).toBe(COPY[operation])
         act(() => root?.unmount())
         host.remove()
@@ -102,7 +99,11 @@ describe("OperationOverlay", () => {
   })
 
   it("is one polite status, and nothing when there is no operation", () => {
-    const host = render(<OperationOverlay operation={{ operation: "stow", source: "external" }} />)
+    const host = render(
+      <OperationOverlay
+        operation={{ operation: "stow", source: "external" }}
+      />,
+    )
     const statuses = host.querySelectorAll('[role="status"]')
     expect(statuses).toHaveLength(1)
     expect(statuses[0]?.getAttribute("aria-live")).toBe("polite")
@@ -112,7 +113,10 @@ describe("OperationOverlay", () => {
   })
 
   it("takes the pointer: no pass-through rule, and it sits over the display", () => {
-    const css = readFileSync(resolve(import.meta.dir, "../ui/src/styles/styles.css"), "utf8")
+    const css = readFileSync(
+      resolve(import.meta.dir, "../ui/src/styles/styles.css"),
+      "utf8",
+    )
     const rule = /\.display__operation\s*\{([^}]*)\}/.exec(css)?.[1] ?? ""
     expect(rule).toContain("position: absolute")
     expect(rule).toContain("inset: 0")
@@ -130,9 +134,17 @@ interface World {
 const statusOf = (w: World): Record<string, unknown> => ({
   name: "demo",
   title: null,
-  operation: w.operation === null ? null : { operation: w.operation, pid: 777, startedAt: "2026-11-12T10:00:00.000Z" },
+  operation:
+    w.operation === null
+      ? null
+      : {
+          operation: w.operation,
+          pid: 777,
+          startedAt: "2026-11-12T10:00:00.000Z",
+        },
   state: w.state,
-  vmStatus: w.state === "running" ? "running" : w.state === "stopped" ? null : "paused",
+  vmStatus:
+    w.state === "running" ? "running" : w.state === "stopped" ? null : "paused",
   image: "win11-arm64",
   pid: w.state === "stopped" ? null : 4242,
   uptimeSeconds: 60,
@@ -140,26 +152,58 @@ const statusOf = (w: World): Record<string, unknown> => ({
   memoryMiB: 4096,
   screen: "virtio-gpu 1280x800",
   overlayBytes: 1,
-  guest: w.state === "running" ? { agent: "ok", agentVersion: "9", os: "Windows 11" } : null,
+  guest:
+    w.state === "running"
+      ? { agent: "ok", agentVersion: "9", os: "Windows 11" }
+      : null,
   saves: { count: 0, bytes: 0 },
   notes: [],
 })
 
-/** The app's bridge: `winvm status` answers from `world`, `open` hands out a screen, `pause` waits for the test. */
-function fakeApp(world: World): { capture: boolean[]; pending: { args: readonly string[]; finish(): void }[] } {
+function fakeApp(world: World): {
+  capture: boolean[]
+  pending: { args: readonly string[]; finish(): void }[]
+} {
   const capture: boolean[] = []
   const pending: { args: readonly string[]; finish(): void }[] = []
-  const ok = (stdout: unknown): { code: number; stdout: string; stderr: string } => ({ code: 0, stdout: JSON.stringify(stdout), stderr: "" })
-  const invoke = (cmd: string, a?: { args?: string[]; captured?: boolean }): Promise<unknown> => {
+  const ok = (
+    stdout: unknown,
+  ): { code: number; stdout: string; stderr: string } => ({
+    code: 0,
+    stdout: JSON.stringify(stdout),
+    stderr: "",
+  })
+  const invoke = (
+    cmd: string,
+    a?: { args?: string[]; captured?: boolean },
+  ): Promise<unknown> => {
     if (cmd === "set_system_keyboard_capture") {
       capture.push(a?.captured === true)
       return Promise.resolve(null)
     }
     if (cmd !== "winvm") return Promise.resolve(null)
     const args = a?.args ?? []
-    if (args[0] === "status") return Promise.resolve(ok(args.includes("-i") ? statusOf(world) : { instances: [statusOf(world)] }))
-    if (args[0] === "open") return Promise.resolve(ok({ display: 1, vncPort: 5901, websocketPort: 5701, password: null }))
-    if (args[0] === "pause") return new Promise((resolve) => pending.push({ args, finish: () => { resolve({ code: 0, stdout: "", stderr: "" }) } }))
+    if (args[0] === "status")
+      return Promise.resolve(
+        ok(
+          args.includes("-i")
+            ? statusOf(world)
+            : { instances: [statusOf(world)] },
+        ),
+      )
+    if (args[0] === "open")
+      return Promise.resolve(
+        ok({ display: 1, vncPort: 5901, websocketPort: 5701, password: null }),
+      )
+    if (args[0] === "pause")
+      return new Promise((resolve) =>
+        pending.push({
+          args,
+          finish: () => {
+            resolve({ code: 0, stdout: "", stderr: "" })
+          },
+        }),
+      )
     return Promise.resolve({ code: 1, stdout: "", stderr: "" })
   }
   Object.assign(window, { __TAURI__: { core: { invoke } } })
@@ -171,9 +215,12 @@ const display = (host: HTMLElement): HTMLElement => {
   if (el === null) throw new Error("no display")
   return el
 }
-const overlay = (host: HTMLElement): HTMLElement | null => host.querySelector<HTMLElement>(".display > .display__operation")
+const overlay = (host: HTMLElement): HTMLElement | null =>
+  host.querySelector<HTMLElement>(".display > .display__operation")
 const button = (host: HTMLElement, label: string): HTMLButtonElement => {
-  const el = host.querySelector<HTMLButtonElement>(`button[aria-label="${label}"]`)
+  const el = host.querySelector<HTMLButtonElement>(
+    `button[aria-label="${label}"]`,
+  )
   if (el === null) throw new Error(`no ${label} button`)
   return el
 }
@@ -184,7 +231,9 @@ const tick = async (ms: number): Promise<void> => {
   await flush()
 }
 
-async function mount(world: World): Promise<{ host: HTMLElement; app: ReturnType<typeof fakeApp> }> {
+async function mount(
+  world: World,
+): Promise<{ host: HTMLElement; app: ReturnType<typeof fakeApp> }> {
   jest.useFakeTimers()
   const app = fakeApp(world)
   const host = render(<App />)
@@ -201,12 +250,10 @@ describe("the display while an operation runs", () => {
     expect(shown?.textContent).toBe("Starting Windows")
     expect(shown?.getAttribute("role")).toBe("status")
     expect(shown?.getAttribute("aria-live")).toBe("polite")
-    // After the Overview, so nothing under it is reachable.
     expect(display(host).lastElementChild).toBe(shown)
     expect(display(host).querySelector(".overview")).not.toBeNull()
-    expect(host.querySelectorAll(".display [role=\"status\"]")).toHaveLength(1)
+    expect(host.querySelectorAll('.display [role="status"]')).toHaveLength(1)
 
-    // Another process's lease ends: the next read says none (reads come every 1.5 s meanwhile).
     world.operation = null
     await tick(1500)
     expect(overlay(host)).toBeNull()
@@ -221,24 +268,31 @@ describe("the display while an operation runs", () => {
     expect(button(host, "Pause").disabled).toBe(false)
     expect(button(host, "Terminal").disabled).toBe(false)
 
-    // The person captures the keyboard for the guest.
-    act(() => { button(host, "Capture Keyboard (Control-Option)").click() })
+    act(() => {
+      button(host, "Capture Keyboard (Control-Option)").click()
+    })
     await flush()
     expect(app.capture.at(-1)).toBe(true)
 
-    // Another viewer begins closing it.
     world.operation = "stow"
     await tick(4000)
     const shown = overlay(host)
     expect(shown?.textContent).toBe("Stowing Windows")
-    // After the screen, so it cannot be reached.
     expect(display(host).lastElementChild).toBe(shown)
     expect(display(host).querySelector(".screen")).not.toBeNull()
-    expect(host.querySelector(".viewer")?.getAttribute("data-busy")).toBe("true")
-    for (const label of ["Shut down", "Restart", "Pause", "Terminal", "Files in Windows", "Capture Keyboard (Control-Option)"]) {
+    expect(host.querySelector(".viewer")?.getAttribute("data-busy")).toBe(
+      "true",
+    )
+    for (const label of [
+      "Shut down",
+      "Restart",
+      "Pause",
+      "Terminal",
+      "Files in Windows",
+      "Capture Keyboard (Control-Option)",
+    ]) {
       expect(button(host, label).disabled).toBe(true)
     }
-    // The system keyboard capture went back to the Mac when it began.
     expect(app.capture.at(-1)).toBe(false)
 
     world.operation = null
@@ -250,11 +304,12 @@ describe("the display while an operation runs", () => {
   it("covers it for a command this viewer runs, named by that command", async () => {
     const world: World = { state: "running", operation: null }
     const { host, app } = await mount(world)
-    act(() => { button(host, "Pause").click() })
+    act(() => {
+      button(host, "Pause").click()
+    })
     await flush()
     expect(overlay(host)?.textContent).toBe("Pausing Windows")
     expect(display(host).lastElementChild).toBe(overlay(host))
-    // The other process's lease does not rename it.
     world.operation = "stop"
     await tick(1500)
     expect(overlay(host)?.textContent).toBe("Pausing Windows")
@@ -273,7 +328,6 @@ describe("the display while an operation runs", () => {
     expect(display(host).querySelector(".screen__held--on")).not.toBeNull()
     expect(host.querySelector(".display > .display__operation")).toBeNull()
 
-    // With one under way the screen stays as it was under it, and the operation is the last thing in the display.
     world.operation = "resume"
     await tick(4000)
     expect(overlay(host)?.textContent).toBe("Resuming Windows")

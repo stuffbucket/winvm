@@ -1,7 +1,7 @@
 import type { JSX } from "react"
 import { Button } from "../../components/Button"
-import { Icon, type IconName } from "../../components/Icon"
 import { cx } from "../../components/cx"
+import { Icon, type IconName } from "../../components/Icon"
 import { t } from "../../i18n"
 import type { Phase, Status, Step } from "../../model"
 import { facts } from "../../model"
@@ -14,7 +14,6 @@ interface OverviewProps {
   onStart: () => void
 }
 
-// The same glyphs as their toolbar buttons, so each reads as "that button".
 const ABILITIES: readonly { icon: IconName; key: string }[] = [
   { icon: "terminal", key: "ability.exec" },
   { icon: "folder", key: "ability.files" },
@@ -26,7 +25,11 @@ function Steps({ steps }: { readonly steps: readonly Step[] }): JSX.Element {
   return (
     <ol className="steps">
       {steps.map((s) => (
-        <li key={s.key} className={cx("step", `step--${s.state}`)} aria-current={s.state === "current" ? "step" : undefined}>
+        <li
+          key={s.key}
+          className={cx("step", `step--${s.state}`)}
+          aria-current={s.state === "current" ? "step" : undefined}
+        >
           <span className="step__mark" aria-hidden="true">
             {s.state === "done" && <Icon name="check" />}
           </span>
@@ -37,7 +40,6 @@ function Steps({ steps }: { readonly steps: readonly Step[] }): JSX.Element {
   )
 }
 
-/** What fills the display while there is no screen: the state, what the instance is, Start, and what it does once on. */
 export function Overview(p: OverviewProps): JSX.Element {
   if (p.steps !== null) {
     return (
@@ -49,7 +51,13 @@ export function Overview(p: OverviewProps): JSX.Element {
       </div>
     )
   }
-  if (p.phase === null || p.phase === "running" || p.phase === "starting" || p.phase === "paused" || p.phase === "asleep") {
+  if (
+    p.phase === null ||
+    p.phase === "running" ||
+    p.phase === "starting" ||
+    p.phase === "paused" ||
+    p.phase === "asleep"
+  ) {
     return (
       <div className="overview overview--quiet">
         <div className="overview__content">
@@ -61,13 +69,16 @@ export function Overview(p: OverviewProps): JSX.Element {
     )
   }
 
-  const which = p.phase === "missing" || p.phase === "stowed" ? p.phase : "stopped"
+  const which =
+    p.phase === "missing" || p.phase === "stowed" ? p.phase : "stopped"
   const rows = p.status === null ? [] : facts(p.status)
   return (
     <div className="overview">
       <div className="overview__content">
         <h1 className="overview__title">{t(`overview.${which}.title`)}</h1>
-        {which === "stowed" && <p className="overview__note">{t("overview.stowed.body")}</p>}
+        {which === "stowed" && (
+          <p className="overview__note">{t("overview.stowed.body")}</p>
+        )}
         {rows.length > 0 && (
           <dl className="facts">
             {rows.map((r) => (
@@ -86,7 +97,10 @@ export function Overview(p: OverviewProps): JSX.Element {
         </div>
         {which === "missing" && (
           <p className="overview__note">
-            {t("overview.missing.noImage")} <code className="mono">winvm build --iso &lt;Windows 11 ISO&gt;</code>
+            {t("overview.missing.noImage")}{" "}
+            <code className="mono">
+              winvm build --iso &lt;Windows 11 ISO&gt;
+            </code>
           </p>
         )}
         <section className="abilities" aria-labelledby="abilities-title">

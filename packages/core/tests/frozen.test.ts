@@ -1,22 +1,36 @@
-/**
- * A paused or asleep guest (frozen.ts): what status reports, that nothing calls
- * into it, and the asleep mark. QEMU is a FakeQmp; the "QEMU process" is this one.
- */
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
+import { afterAll, afterEach, beforeAll, describe, expect, it } from "bun:test"
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs"
 import { createServer, type Server } from "node:net"
 import { resolve } from "node:path"
 
-import { afterAll, afterEach, beforeAll, describe, expect, it } from "bun:test"
-
 import * as agent from "../src/agent"
 import { parseArgs } from "../src/args"
-import { stopWith, type StopCommandSeams } from "../src/commands"
+import { type StopCommandSeams, stopWith } from "../src/commands"
 import { configPath, parseAssignment, writeAssignments } from "../src/config"
 import { filesCmd } from "../src/finder"
-import { GuestFrozen, frozenFrom, frozenState, isFrozenRunState, markAsleep, clearAsleep, markedAsleep, refuseFrozen } from "../src/frozen"
-import { markSavingRunning, savingRunning, withOperation } from "../src/operation"
-import { processStart } from "../src/proc"
+import {
+  clearAsleep,
+  frozenFrom,
+  frozenState,
+  GuestFrozen,
+  isFrozenRunState,
+  markAsleep,
+  markedAsleep,
+  refuseFrozen,
+} from "../src/frozen"
+import {
+  markSavingRunning,
+  savingRunning,
+  withOperation,
+} from "../src/operation"
 import { pathsFor } from "../src/paths"
+import { processStart } from "../src/proc"
 import { deriveState, gather } from "../src/status"
 import { FakeQmp } from "./fakes/qmp"
 
@@ -27,24 +41,33 @@ let fake: FakeQmp
 let runState = "running"
 
 beforeAll(async () => {
-  savedHome = process.env["WINVM_HOME"]
-  // Short: unix socket paths are limited to ~104 bytes.
+  savedHome = process.env.WINVM_HOME
   home = mkdtempSync("/tmp/wvfz-")
-  process.env["WINVM_HOME"] = home
+  process.env.WINVM_HOME = home
   const p = pathsFor(NAME)
   mkdirSync(p.dir, { recursive: true })
-  writeFileSync(p.meta, JSON.stringify({ image: "win11-arm64", vnc: 9, created: new Date().toISOString() }))
+  writeFileSync(
+    p.meta,
+    JSON.stringify({
+      image: "win11-arm64",
+      vnc: 9,
+      created: new Date().toISOString(),
+    }),
+  )
   writeFileSync(p.pid, `${String(process.pid)}\n`)
   fake = new FakeQmp(p.qmp)
-  fake.handler = (cmd) => (cmd["execute"] === "query-status" ? { return: { status: runState, running: runState === "running" } } : { return: {} })
+  fake.handler = (cmd) =>
+    cmd.execute === "query-status"
+      ? { return: { status: runState, running: runState === "running" } }
+      : { return: {} }
   await fake.listen()
 })
 
 afterAll(async () => {
   await fake.close()
   rmSync(home, { recursive: true, force: true })
-  if (savedHome === undefined) delete process.env["WINVM_HOME"]
-  else process.env["WINVM_HOME"] = savedHome
+  if (savedHome === undefined) delete process.env.WINVM_HOME
+  else process.env.WINVM_HOME = savedHome
 })
 
 afterEach(() => {
@@ -55,8 +78,16 @@ afterEach(() => {
 
 describe("run states", () => {
   it("counts paused, suspended and postmigrate as frozen, nothing else", () => {
-    for (const s of ["paused", "suspended", "postmigrate"]) expect(isFrozenRunState(s)).toBe(true)
-    for (const s of ["running", "finish-migrate", "inmigrate", "prelaunch", "unknown"]) expect(isFrozenRunState(s)).toBe(false)
+    for (const s of ["paused", "suspended", "postmigrate"])
+      expect(isFrozenRunState(s)).toBe(true)
+    for (const s of [
+      "running",
+      "finish-migrate",
+      "inmigrate",
+      "prelaunch",
+      "unknown",
+    ])
+      expect(isFrozenRunState(s)).toBe(false)
     expect(isFrozenRunState(null)).toBe(false)
   })
 
@@ -67,12 +98,9 @@ describe("run states", () => {
   })
 
   it("reports a save of a paused guest (postmigrate) as paused, not running", () => {
-    // The bug: after an autosave of a paused guest QEMU says "postmigrate",
-    // status said "running", and the app flipped Resume back to Pause.
     expect(deriveState(true, "postmigrate", [])).toBe("paused")
     expect(deriveState(true, "paused", [], true)).toBe("asleep")
     expect(deriveState(true, "running", [], true)).toBe("running")
-    // A monitor too busy to answer is a save or load at work, not a pause.
     expect(deriveState(true, null, [])).toBe("running")
     expect(deriveState(false, "paused", [], true)).toBe("stopped")
   })
@@ -93,7 +121,16 @@ describe("a save of a running guest", () => {
       expect(savingRunning(NAME)).toBe(true)
     })
     expect(savingRunning(NAME)).toBe(false)
-    const lease = { operation: "save", id: "dead", pid: 2 ** 22 + 12_345, pidStart: null, startedAt: "2026-03-03T00:00:00.000Z", instance: NAME, automatic: false, savingRunning: true }
+    const lease = {
+      operation: "save",
+      id: "dead",
+      pid: 2 ** 22 + 12_345,
+      pidStart: null,
+      startedAt: "2026-03-03T00:00:00.000Z",
+      instance: NAME,
+      automatic: false,
+      savingRunning: true,
+    }
     writeFileSync(pathsFor(NAME).lease, JSON.stringify(lease))
     expect(savingRunning(NAME)).toBe(false)
     rmSync(pathsFor(NAME).lease, { force: true })
@@ -153,10 +190,14 @@ describe("nothing calls into a frozen guest", () => {
   it("agent.ensure refuses at once: no waiting on the agent, no qemu-ga, no reinstall, never cont", async () => {
     runState = "paused"
     const t0 = Date.now()
-    const got = await agent.ensure(NAME, { waitMs: 15_000 }).catch((e: unknown) => e)
+    const got = await agent
+      .ensure(NAME, { waitMs: 15_000 })
+      .catch((e: unknown) => e)
     expect(got).toBeInstanceOf(GuestFrozen)
     expect(Date.now() - t0).toBeLessThan(2000)
-    expect(fake.commands.filter((c) => c !== "qmp_capabilities")).toEqual(["query-status"])
+    expect(fake.commands.filter((c) => c !== "qmp_capabilities")).toEqual([
+      "query-status",
+    ])
   })
 
   it("winvm files open and mount refuse at once, before any mount or setup", async () => {
@@ -166,13 +207,19 @@ describe("nothing calls into a frozen guest", () => {
       expect(await filesCmd(parseArgs([sub, "-i", NAME]))).toBe(1)
       expect(Date.now() - t0).toBeLessThan(2000)
     }
-    expect(fake.commands.filter((c) => c !== "qmp_capabilities" && c !== "query-status")).toEqual([])
+    expect(
+      fake.commands.filter(
+        (c) => c !== "qmp_capabilities" && c !== "query-status",
+      ),
+    ).toEqual([])
     expect(existsSync(resolve(pathsFor(NAME).dir, "smb.json"))).toBe(false)
   })
 
   it("agent.requireAgent refuses too", async () => {
     runState = "postmigrate"
-    expect(await agent.requireAgent(NAME).catch((e: unknown) => e)).toBeInstanceOf(GuestFrozen)
+    expect(
+      await agent.requireAgent(NAME).catch((e: unknown) => e),
+    ).toBeInstanceOf(GuestFrozen)
   })
 })
 
@@ -180,7 +227,6 @@ describe("status of a frozen guest", () => {
   let qga: Server
   let probes = 0
   beforeAll(async () => {
-    // A guest agent that never answers, as a paused guest's does not.
     qga = createServer((s) => {
       probes += 1
       s.on("error", () => undefined)
@@ -226,8 +272,10 @@ describe("status exposes the operation in flight", () => {
 
   beforeAll(() => {
     dir = mkdtempSync("/tmp/wvfzop-")
-    // `ps` shows `bun <dir>/winvm.ts start -i frozen-test`: a WinVM CLI process.
-    writeFileSync(resolve(dir, "winvm.ts"), "setInterval(() => undefined, 1000)\n")
+    writeFileSync(
+      resolve(dir, "winvm.ts"),
+      "setInterval(() => undefined, 1000)\n",
+    )
   })
   afterAll(() => {
     for (const c of children) c.kill()
@@ -236,15 +284,32 @@ describe("status exposes the operation in flight", () => {
     rmSync(pathsFor("frozen-gone").dir, { recursive: true, force: true })
   })
 
-  const publish = (instance: string, pid: number, operation: string, automatic = false): void => {
+  const publish = (
+    instance: string,
+    pid: number,
+    operation: string,
+    automatic = false,
+  ): void => {
     mkdirSync(pathsFor(instance).dir, { recursive: true })
     writeFileSync(
       pathsFor(instance).lease,
-      JSON.stringify({ operation, id: "t", pid, pidStart: processStart(pid), startedAt: "2026-03-03T00:00:00.000Z", instance, automatic }),
+      JSON.stringify({
+        operation,
+        id: "t",
+        pid,
+        pidStart: processStart(pid),
+        startedAt: "2026-03-03T00:00:00.000Z",
+        instance,
+        automatic,
+      }),
     )
   }
-  const launch = (...argv: string[]): { pid: number; exited: Promise<number>; kill: () => void } => {
-    const c = Bun.spawn(["bun", resolve(dir, "winvm.ts"), ...argv], { stdio: ["ignore", "ignore", "ignore"] })
+  const launch = (
+    ...argv: string[]
+  ): { pid: number; exited: Promise<number>; kill: () => void } => {
+    const c = Bun.spawn(["bun", resolve(dir, "winvm.ts"), ...argv], {
+      stdio: ["ignore", "ignore", "ignore"],
+    })
     children.push(c)
     return c
   }
@@ -255,7 +320,11 @@ describe("status exposes the operation in flight", () => {
     publish(NAME, c.pid, "start")
     const s = await gather(NAME, false)
     expect(s.state).toBe("running")
-    expect(s.operation).toEqual({ operation: "start", pid: c.pid, startedAt: "2026-03-03T00:00:00.000Z" })
+    expect(s.operation).toEqual({
+      operation: "start",
+      pid: c.pid,
+      startedAt: "2026-03-03T00:00:00.000Z",
+    })
     c.kill()
     await c.exited
   })
@@ -263,7 +332,11 @@ describe("status exposes the operation in flight", () => {
   it("includes the work winvm does by itself: the watcher's autosave is a save", async () => {
     const c = launch("watch", "-i", NAME)
     publish(NAME, c.pid, "save", true)
-    expect((await gather(NAME, false)).operation).toEqual({ operation: "save", pid: c.pid, startedAt: "2026-03-03T00:00:00.000Z" })
+    expect((await gather(NAME, false)).operation).toEqual({
+      operation: "save",
+      pid: c.pid,
+      startedAt: "2026-03-03T00:00:00.000Z",
+    })
     c.kill()
     await c.exited
   })
@@ -319,26 +392,16 @@ describe("graceful stop", () => {
     readonly waitForMs: number[]
     readonly seams: StopCommandSeams
     readonly clock: { t: number }
-    /** QEMU stays alive until this is called (a guest that finished shutting down). */
     readonly exit: () => void
     readonly asleepAtWait: boolean[]
   }
 
-  /**
-   * A stop with every outside call replaced: a fake clock that only `sleep` and
-   * `waitFor` advance, a QEMU that exits when told to, and an event log. The
-   * asleep mark is the real one, in the temp home, naming OWN_PID.
-   */
   function rig(o: {
     frozen: "paused" | "asleep" | null
     watcher?: boolean
-    /** How long the readiness wait takes (it answers true after that), or "never". */
     readyAfterMs?: number | "never"
-    /** The guest powers off this long after shutdown was requested; unset: it never does. */
     exitsAfterMs?: number
-    /** QEMU is a different process by the time of a failure (its pid was reused or it was restarted). */
     pidAfterShutdown?: number
-    /** QMP `cont` is refused. */
     resumeFails?: boolean
   }): Rig {
     const p = pathsFor(NAME)
@@ -355,15 +418,27 @@ describe("graceful stop", () => {
         clock.t += ms
         return Promise.resolve()
       },
-      pidOf: () => (!alive ? null : shutdownAt !== null && o.pidAfterShutdown !== undefined ? o.pidAfterShutdown : OWN_PID),
+      pidOf: () =>
+        !alive
+          ? null
+          : shutdownAt !== null && o.pidAfterShutdown !== undefined
+            ? o.pidAfterShutdown
+            : OWN_PID,
       isRunning: () => {
-        if (shutdownAt !== null && o.exitsAfterMs !== undefined && clock.t - shutdownAt >= o.exitsAfterMs) alive = false
+        if (
+          shutdownAt !== null &&
+          o.exitsAfterMs !== undefined &&
+          clock.t - shutdownAt >= o.exitsAfterMs
+        )
+          alive = false
         return alive
       },
       frozenState: () => Promise.resolve(o.frozen),
       resume: () => {
         events.push("resume")
-        return o.resumeFails === true ? Promise.reject(new Error("qmp refused cont")) : Promise.resolve()
+        return o.resumeFails === true
+          ? Promise.reject(new Error("qmp refused cont"))
+          : Promise.resolve()
       },
       hold: () => {
         events.push("hold")
@@ -429,12 +504,24 @@ describe("graceful stop", () => {
       console.error = err
     }
   }
-  const stopped = (seams: StopCommandSeams): Promise<number> => quiet(() => stopWith(parseArgs(["stop", "-i", NAME]), seams))
+  const stopped = (seams: StopCommandSeams): Promise<number> =>
+    quiet(() => stopWith(parseArgs(["stop", "-i", NAME]), seams))
 
   it("waits for the agent of a starting guest, asks for shutdown, and leaves nothing to restore on success", async () => {
-    const r = rig({ frozen: null, watcher: true, readyAfterMs: 20_000, exitsAfterMs: 6000 })
+    const r = rig({
+      frozen: null,
+      watcher: true,
+      readyAfterMs: 20_000,
+      exitsAfterMs: 6000,
+    })
     expect(await stopped(r.seams)).toBe(0)
-    expect(r.events).toEqual(["stopWatcher", "beforeDown", "waitFor", "shutdown", "stopSidecars"])
+    expect(r.events).toEqual([
+      "stopWatcher",
+      "beforeDown",
+      "waitFor",
+      "shutdown",
+      "stopSidecars",
+    ])
     expect(r.waitForMs).toEqual([DEADLINE])
   })
 
@@ -450,7 +537,13 @@ describe("graceful stop", () => {
     }
     expect(await stopped(seams)).toBe(0)
     expect(r.waitForMs).toEqual([DEADLINE])
-    expect(r.events).toEqual(["stopWatcher", "beforeDown", "waitFor", "shutdown", "stopSidecars"])
+    expect(r.events).toEqual([
+      "stopWatcher",
+      "beforeDown",
+      "waitFor",
+      "shutdown",
+      "stopSidecars",
+    ])
   })
 
   it("fails a guest that never becomes agent-ready without sending shutdown", async () => {
@@ -464,26 +557,56 @@ describe("graceful stop", () => {
   it("on failure brings Finder back, then the watcher that was running", async () => {
     const r = rig({ frozen: null, watcher: true, readyAfterMs: "never" })
     expect(await stopped(r.seams)).toBe(1)
-    expect(r.events).toEqual(["stopWatcher", "beforeDown", "waitFor", "afterUp", "ensureWatcher"])
+    expect(r.events).toEqual([
+      "stopWatcher",
+      "beforeDown",
+      "waitFor",
+      "afterUp",
+      "ensureWatcher",
+    ])
   })
 
   it("on failure leaves alone a watcher that was not running", async () => {
     const r = rig({ frozen: null, readyAfterMs: "never" })
     expect(await stopped(r.seams)).toBe(1)
-    expect(r.events).toEqual(["stopWatcher", "beforeDown", "waitFor", "afterUp"])
+    expect(r.events).toEqual([
+      "stopWatcher",
+      "beforeDown",
+      "waitFor",
+      "afterUp",
+    ])
   })
 
   it("resumes a paused guest before asking it to shut down, and restores nothing on success", async () => {
-    const r = rig({ frozen: "paused", watcher: true, readyAfterMs: 2000, exitsAfterMs: 3000 })
+    const r = rig({
+      frozen: "paused",
+      watcher: true,
+      readyAfterMs: 2000,
+      exitsAfterMs: 3000,
+    })
     expect(await stopped(r.seams)).toBe(0)
-    expect(r.events).toEqual(["stopWatcher", "beforeDown", "resume", "waitFor", "shutdown", "stopSidecars"])
+    expect(r.events).toEqual([
+      "stopWatcher",
+      "beforeDown",
+      "resume",
+      "waitFor",
+      "shutdown",
+      "stopSidecars",
+    ])
   })
 
   it("clears the asleep mark for the shutdown-only resume of an asleep guest, and leaves it cleared on success", async () => {
     const r = rig({ frozen: "asleep", readyAfterMs: 1000, exitsAfterMs: 3000 })
     expect(markedAsleep(pathsFor(NAME), OWN_PID)).toBe(true)
     expect(await stopped(r.seams)).toBe(0)
-    expect(r.events).toEqual(["stopWatcher", "beforeDown", "resume", "waitFor", "shutdown", "stopSidecars"])
+    expect(r.events).toEqual([
+      "stopWatcher",
+      "beforeDown",
+      "resume",
+      "waitFor",
+      "shutdown",
+      "stopSidecars",
+    ])
     expect(r.asleepAtWait).toEqual([false])
     expect(markedAsleep(pathsFor(NAME), OWN_PID)).toBe(false)
   })
@@ -491,7 +614,16 @@ describe("graceful stop", () => {
   it("when a paused guest does not shut down in time, restores Finder while resumed, then the pause, then the watcher", async () => {
     const r = rig({ frozen: "paused", watcher: true, readyAfterMs: 5000 })
     expect(await stopped(r.seams)).toBe(1)
-    expect(r.events).toEqual(["stopWatcher", "beforeDown", "resume", "waitFor", "shutdown", "afterUp", "hold", "ensureWatcher"])
+    expect(r.events).toEqual([
+      "stopWatcher",
+      "beforeDown",
+      "resume",
+      "waitFor",
+      "shutdown",
+      "afterUp",
+      "hold",
+      "ensureWatcher",
+    ])
     expect(r.waitForMs).toEqual([DEADLINE])
     expect(r.clock.t - 1_000_000).toBe(DEADLINE)
     expect(markedAsleep(pathsFor(NAME), OWN_PID)).toBe(false)
@@ -500,13 +632,24 @@ describe("graceful stop", () => {
   it("when an asleep guest does not become agent-ready, puts it back to sleep against the same QEMU", async () => {
     const r = rig({ frozen: "asleep", readyAfterMs: "never" })
     expect(await stopped(r.seams)).toBe(1)
-    expect(r.events).toEqual(["stopWatcher", "beforeDown", "resume", "waitFor", "afterUp", "hold"])
+    expect(r.events).toEqual([
+      "stopWatcher",
+      "beforeDown",
+      "resume",
+      "waitFor",
+      "afterUp",
+      "hold",
+    ])
     expect(r.asleepAtWait).toEqual([false])
     expect(markedAsleep(pathsFor(NAME), OWN_PID)).toBe(true)
   })
 
   it("never holds or marks a QEMU other than the one it resumed", async () => {
-    const r = rig({ frozen: "asleep", readyAfterMs: 1000, pidAfterShutdown: OWN_PID + 1 })
+    const r = rig({
+      frozen: "asleep",
+      readyAfterMs: 1000,
+      pidAfterShutdown: OWN_PID + 1,
+    })
     expect(await stopped(r.seams)).toBe(1)
     expect(r.events).not.toContain("hold")
     expect(markedAsleep(pathsFor(NAME), OWN_PID)).toBe(false)
@@ -524,7 +667,13 @@ describe("graceful stop", () => {
   it("when the resume itself fails, asks for nothing, keeps the asleep mark, and does not remount into a frozen guest", async () => {
     const r = rig({ frozen: "asleep", watcher: true, resumeFails: true })
     expect(await stopped(r.seams)).toBe(1)
-    expect(r.events).toEqual(["stopWatcher", "beforeDown", "resume", "hold", "ensureWatcher"])
+    expect(r.events).toEqual([
+      "stopWatcher",
+      "beforeDown",
+      "resume",
+      "hold",
+      "ensureWatcher",
+    ])
     expect(markedAsleep(pathsFor(NAME), OWN_PID)).toBe(true)
   })
 })

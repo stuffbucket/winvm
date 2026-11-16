@@ -1,7 +1,8 @@
 #!/usr/bin/env bun
 import { appendFileSync } from "node:fs"
 
-export const RELEASE_PR_BRANCH = "release-please--branches--main--components--winvm-workspace"
+export const RELEASE_PR_BRANCH =
+  "release-please--branches--main--components--winvm-workspace"
 const RELEASE_PR_REF = `refs/heads/${RELEASE_PR_BRANCH}`
 const SHA_PATTERN = /^[0-9a-f]{40}$/
 
@@ -35,11 +36,19 @@ export function parseRemoteHead(output: string): string | null {
 
   const lines = trimmed.split("\n")
   const [record] = lines
-  if (lines.length !== 1 || record === undefined) throw new Error(`expected exactly one ${RELEASE_PR_REF} record, found ${String(lines.length)}`)
+  if (lines.length !== 1 || record === undefined)
+    throw new Error(
+      `expected exactly one ${RELEASE_PR_REF} record, found ${String(lines.length)}`,
+    )
 
   const fields = record.trim().split(/\s+/)
   const [head, ref] = fields
-  if (fields.length !== 2 || head === undefined || ref === undefined || !SHA_PATTERN.test(head)) {
+  if (
+    fields.length !== 2 ||
+    head === undefined ||
+    ref === undefined ||
+    !SHA_PATTERN.test(head)
+  ) {
     throw new Error(`malformed ${RELEASE_PR_REF} record`)
   }
   if (ref !== RELEASE_PR_REF) {
@@ -51,7 +60,9 @@ export function parseRemoteHead(output: string): string | null {
 export function releasePrHead(run: CommandRunner = runCommand): string | null {
   const result = run(["git", "ls-remote", "origin", RELEASE_PR_REF])
   if (result.exitCode !== 0) {
-    throw new Error(`git ls-remote failed: ${result.stderr.trim() || `exit ${String(result.exitCode)}`}`)
+    throw new Error(
+      `git ls-remote failed: ${result.stderr.trim() || `exit ${String(result.exitCode)}`}`,
+    )
   }
   return parseRemoteHead(result.stdout)
 }
@@ -67,11 +78,13 @@ export function dispatchReleasePrCi({
   repository: string
   run?: CommandRunner
 }): DispatchResult {
-  if (before !== null && !SHA_PATTERN.test(before)) throw new Error(`invalid before SHA: ${before}`)
+  if (before !== null && !SHA_PATTERN.test(before))
+    throw new Error(`invalid before SHA: ${before}`)
 
   const after = releasePrHead(run)
   if (after === null) return { before, after, decision: "absent" }
-  if (!force && after === before) return { before, after, decision: "unchanged" }
+  if (!force && after === before)
+    return { before, after, decision: "unchanged" }
 
   const dispatch = run([
     "gh",
@@ -86,15 +99,22 @@ export function dispatchReleasePrCi({
     `expected_sha=${after}`,
   ])
   if (dispatch.exitCode !== 0) {
-    throw new Error(`CI dispatch failed: ${dispatch.stderr.trim() || `exit ${String(dispatch.exitCode)}`}`)
+    throw new Error(
+      `CI dispatch failed: ${dispatch.stderr.trim() || `exit ${String(dispatch.exitCode)}`}`,
+    )
   }
 
   return { before, after, decision: "dispatched", dispatchedSha: after }
 }
 
-export function validateReleasePleaseTrigger(eventName: string, ref: string): void {
+export function validateReleasePleaseTrigger(
+  eventName: string,
+  ref: string,
+): void {
   if (ref !== "refs/heads/main") {
-    throw new Error(`${eventName} release maintenance must run from refs/heads/main, got ${ref}`)
+    throw new Error(
+      `${eventName} release maintenance must run from refs/heads/main, got ${ref}`,
+    )
   }
 }
 
@@ -130,7 +150,9 @@ function writeSummary(result: DispatchResult, forced: boolean): void {
       `- After: \`${shown(result.after)}\``,
       `- Forced: \`${String(forced)}\``,
       `- Decision: **${result.decision}**`,
-      ...(result.dispatchedSha ? [`- Dispatched SHA: \`${result.dispatchedSha}\``] : []),
+      ...(result.dispatchedSha
+        ? [`- Dispatched SHA: \`${result.dispatchedSha}\``]
+        : []),
       "",
     ].join("\n"),
   )
@@ -139,7 +161,10 @@ function writeSummary(result: DispatchResult, forced: boolean): void {
 function main(): void {
   const [operation, ...args] = process.argv.slice(2)
   if (operation === "validate-trigger") {
-    validateReleasePleaseTrigger(process.env.GITHUB_EVENT_NAME ?? "unknown", process.env.GITHUB_REF ?? "")
+    validateReleasePleaseTrigger(
+      process.env.GITHUB_EVENT_NAME ?? "unknown",
+      process.env.GITHUB_REF ?? "",
+    )
     return
   }
   if (operation === "head") {
@@ -160,8 +185,14 @@ function main(): void {
       repository: process.env.GITHUB_REPOSITORY ?? "",
     })
     writeSummary(result, force)
-    if (result.decision === "dispatched") console.log(`Dispatched CI for ${RELEASE_PR_BRANCH} at ${result.dispatchedSha ?? "an unknown commit"}.`)
-    else console.log(`Release PR head is ${result.decision}; no CI dispatch needed.`)
+    if (result.decision === "dispatched")
+      console.log(
+        `Dispatched CI for ${RELEASE_PR_BRANCH} at ${result.dispatchedSha ?? "an unknown commit"}.`,
+      )
+    else
+      console.log(
+        `Release PR head is ${result.decision}; no CI dispatch needed.`,
+      )
     return
   }
   throw new Error(

@@ -1,9 +1,30 @@
 import { useCallback, useEffect, useRef, useState } from "react"
 
 import { errorMessage, installCli, outputText, winvm } from "../../backend"
-import type { Checks, ClosePolicy, Connection, Phase, Status, VmOperation } from "../../model"
-import { closePolicyAssignment, isLivePhase, parseChecks, parseConnection, parseStatus, phase, titleAssignment } from "../../model"
-import { operationFor, phaseAfter, shownPhase, StatusGuard, type Verb } from "./statusGuard"
+import type {
+  Checks,
+  ClosePolicy,
+  Connection,
+  Phase,
+  Status,
+  VmOperation,
+} from "../../model"
+import {
+  closePolicyAssignment,
+  isLivePhase,
+  parseChecks,
+  parseConnection,
+  parseStatus,
+  phase,
+  titleAssignment,
+} from "../../model"
+import {
+  operationFor,
+  phaseAfter,
+  StatusGuard,
+  shownPhase,
+  type Verb,
+} from "./statusGuard"
 
 export type { Verb } from "./statusGuard"
 
@@ -13,12 +34,10 @@ export interface Ran {
   readonly output: string
 }
 
-/** How this window's last command on one machine ended; `seq` grows with each command, so a later one is told from an earlier. */
 interface RanOn extends Ran {
   readonly seq: number
 }
 
-/** What a machine is busy with: this viewer's own command, or one another process published (a close elsewhere, `winvm` in a terminal). */
 export interface ActiveOperation {
   readonly operation: VmOperation
   readonly source: "local" | "external"
@@ -27,9 +46,7 @@ export interface ActiveOperation {
 export interface Winvm {
   readonly names: readonly string[]
   readonly name: string | null
-  /** Each instance's title (`winvm config title=…`); null or absent: its name. */
   readonly titles: Readonly<Record<string, string | null>>
-  /** Each machine's state, as last read (the others' every 40 s or so). */
   readonly phases: Readonly<Record<string, Phase>>
   readonly status: Status | null
   readonly phase: Phase | null
@@ -37,74 +54,60 @@ export interface Winvm {
   readonly checks: Checks | null
   readonly checksError: string | null
   readonly connection: Connection | null
-  /** The command this viewer is running on the selected machine, if any. */
   readonly busy: Verb | null
-  /** Whatever the selected machine is busy with, from either source; null when idle. */
   readonly operation: ActiveOperation | null
   readonly failure: Ran | null
   readonly last: Ran | null
   readonly cliPath: string | null
   select: (name: string) => void
-  /** Runs a verb on this instance; `arg` names the save for save and load. Resolves with what it did (null: nothing to run). */
   act: (verb: Verb, arg?: string) => Promise<Ran | null>
-  /** Runs a verb on `name`, the machine given and not the selected one; the selection may move before it ends. */
   runOn: (name: string, verb: Verb, arg?: string) => Promise<Ran | null>
-  /** How this window's last command on `name` ended (read now, not as of the last render); null when it has run none there. */
   lastOn(name: string): RanOn | null
   openScreenSharing(): Promise<void>
   installCommand: () => Promise<void>
   dismissFailure: () => void
-  /** Sets this instance's title (empty clears it); resolves with why it couldn't, or null. */
   rename: (title: string) => Promise<string | null>
-  /** Sets the selected machine's close policy by its stable name; resolves with why it couldn't, or null. */
   setClosePolicy(policy: ClosePolicy): Promise<string | null>
-  /** Reads the list of machines again (after one is made or deleted). */
   refresh(): Promise<void>
-  /** Reads every machine's status afresh; null when it can't be read. The selected machine's shown status follows. */
   refreshAll(): Promise<readonly Status[] | null>
-  /** Reads one machine's status afresh, selected or not; null when it can't be read. */
   refreshOne(name: string): Promise<Status | null>
 }
 
-/** A command this viewer is running: against `target`, or (setup) against the host, which every machine waits for. */
 interface Local {
   readonly target: string | null
   readonly verb: Verb
 }
 
-/**
- * A failure's words: a SidecarError (the helper missing, not starting, or
- * stopped at its deadline) carries the copy for it; never "[object Object]".
- * Polling carries on after any of them: the next read may well answer.
- */
 const errorText = (e: unknown): string => errorMessage(e)
 
 export function useWinvm(): Winvm {
   const [names, setNames] = useState<readonly string[]>([])
   const [name, setName] = useState<string | null>(null)
-  const [titles, setTitles] = useState<Readonly<Record<string, string | null>>>({})
+  const [titles, setTitles] = useState<Readonly<Record<string, string | null>>>(
+    {},
+  )
   const [phases, setPhases] = useState<Readonly<Record<string, Phase>>>({})
   const [status, setStatus] = useState<Status | null>(null)
   const [statusError, setStatusError] = useState<string | null>(null)
   const [checks, setChecks] = useState<Checks | null>(null)
   const [checksError, setChecksError] = useState<string | null>(null)
-  const [connection, setConnection] = useState<{ pid: number; conn: Connection } | null>(null)
+  const [connection, setConnection] = useState<{
+    pid: number
+    conn: Connection
+  } | null>(null)
   const [locals, setLocals] = useState<readonly Local[]>([])
   const [failure, setFailure] = useState<Ran | null>(null)
   const [last, setLast] = useState<Ran | null>(null)
   const [cliPath, setCliPath] = useState<string | null>(null)
   const [polls, setPolls] = useState(0)
-  // What the last verb left (paused, asleep, running), shown until a read started after it lands.
   const [held, setHeld] = useState<Phase | null>(null)
   const guard = useRef(new StatusGuard())
-  // How this window's last command on each machine ended, kept as it happens (not per render).
   const outcomes = useRef(new Map<string, RanOn>())
   const ranCount = useRef(0)
   const tick = useRef(0)
   const nameRef = useRef<string | null>(null)
   nameRef.current = name
 
-  /** The picker's view of every machine, from a list read. */
   const showList = useCallback((list: readonly Status[]): void => {
     setNames(list.map((s) => s.name))
     setTitles(Object.fromEntries(list.map((s) => [s.name, s.title])))
@@ -115,37 +118,43 @@ export function useWinvm(): Winvm {
     const out = await winvm("status", "--json")
     const list = parseStatus(out.stdout)
     if (list === null) {
-      setStatusError(outputText(out) || `winvm status exited ${String(out.code)}`)
+      setStatusError(
+        outputText(out) || `winvm status exited ${String(out.code)}`,
+      )
       return null
     }
     showList(list)
     return list[0]?.name ?? "default"
   }, [showList])
 
-  /**
-   * Reads `target`'s status. The selected machine's answer lands through the guard (and is shown
-   * only if no later read has landed); another's only updates the picker. Resolves with the answer
-   * either way, null when there was none to read; a read that cannot run rejects.
-   */
-  const loadStatus = useCallback(async (target: string): Promise<Status | null> => {
-    const ticket = guard.current.begin()
-    const out = await winvm("status", "--json", "-i", target)
-    const s = parseStatus(out.stdout)?.[0]
-    if (s === undefined) {
-      if (target === nameRef.current) setStatusError(outputText(out) || `winvm status exited ${String(out.code)}`)
-      return null
-    }
-    if (target === nameRef.current) {
-      // Overtaken by a read started later, or started before the last verb ended: stale.
-      if (!guard.current.land(ticket)) return s
-      setHeld(null)
-      setStatusError(null)
-      setStatus(s)
-    }
-    setTitles((was) => (was[s.name] === s.title ? was : { ...was, [s.name]: s.title }))
-    setPhases((was) => (was[s.name] === phase(s) ? was : { ...was, [s.name]: phase(s) }))
-    return s
-  }, [])
+  const loadStatus = useCallback(
+    async (target: string): Promise<Status | null> => {
+      const ticket = guard.current.begin()
+      const out = await winvm("status", "--json", "-i", target)
+      const s = parseStatus(out.stdout)?.[0]
+      if (s === undefined) {
+        if (target === nameRef.current)
+          setStatusError(
+            outputText(out) || `winvm status exited ${String(out.code)}`,
+          )
+        return null
+      }
+      if (target === nameRef.current) {
+        if (!guard.current.land(ticket)) return s
+        setHeld(null)
+        setStatusError(null)
+        setStatus(s)
+      }
+      setTitles((was) =>
+        was[s.name] === s.title ? was : { ...was, [s.name]: s.title },
+      )
+      setPhases((was) =>
+        was[s.name] === phase(s) ? was : { ...was, [s.name]: phase(s) },
+      )
+      return s
+    },
+    [],
+  )
 
   const refreshOne = useCallback(
     async (target: string): Promise<Status | null> => {
@@ -158,7 +167,9 @@ export function useWinvm(): Winvm {
     [loadStatus],
   )
 
-  const refreshAll = useCallback(async (): Promise<readonly Status[] | null> => {
+  const refreshAll = useCallback(async (): Promise<
+    readonly Status[] | null
+  > => {
     const ticket = guard.current.begin()
     try {
       const list = parseStatus((await winvm("status", "--json")).stdout)
@@ -181,7 +192,11 @@ export function useWinvm(): Winvm {
       const out = await winvm("doctor", "--json")
       const c = parseChecks(out.stdout)
       setChecks(c)
-      setChecksError(c === null ? outputText(out) || `winvm doctor exited ${String(out.code)}` : null)
+      setChecksError(
+        c === null
+          ? outputText(out) || `winvm doctor exited ${String(out.code)}`
+          : null,
+      )
     } catch (e) {
       setChecksError(errorText(e))
     }
@@ -191,9 +206,6 @@ export function useWinvm(): Winvm {
     void loadChecks()
   }, [loadChecks])
 
-  // Until a machine is known, the list is asked for again at the polling interval, one ask at a
-  // time: a status that timed out (busy finishing a save or repair) or failed is tried again,
-  // its error shown meanwhile, and the first answer chooses the machine.
   useEffect(() => {
     if (name !== null) return
     let stopped = false
@@ -222,8 +234,8 @@ export function useWinvm(): Winvm {
 
   const current = status !== null && status.name === name ? status : null
   const p = shownPhase(held, current, phase)
-  // This viewer's own command on the selected machine comes first; else one another process published.
-  const busy = locals.find((l) => l.target === null || l.target === name)?.verb ?? null
+  const busy =
+    locals.find((l) => l.target === null || l.target === name)?.verb ?? null
   const operation: ActiveOperation | null =
     busy !== null
       ? { operation: operationFor(busy), source: "local" }
@@ -257,13 +269,13 @@ export function useWinvm(): Winvm {
   const live = isLivePhase(p)
   const pid = current?.pid ?? null
   const asking = useRef(false)
-  // Asked again on every poll until it answers: the monitor can be busy (a save) the first time.
   useEffect(() => {
     if (!live || pid === null || name === null) {
       setConnection(null)
       return
     }
-    if ((connection !== null && connection.pid === pid) || asking.current) return
+    if ((connection !== null && connection.pid === pid) || asking.current)
+      return
     asking.current = true
     winvm("open", "--json", "-i", name)
       .then((out) => {
@@ -276,18 +288,11 @@ export function useWinvm(): Winvm {
       })
   }, [live, pid, name, connection, polls])
 
-  /**
-   * Runs `verb` against `target` (null: the host, for setup). The machine is named, not read from
-   * the selection, so a close flow can stow one machine while the person looks at another.
-   */
   const execute = useCallback(
     async (machine: string | null, verb: Verb, arg?: string): Promise<Ran> => {
-      // Setup installs the runtime for the host, whichever machine asked: it names none, and every machine waits for it.
       const target = verb === "setup" ? null : machine
-      // Whose outcome this is: the machine named, or for setup the one shown, whose commands wait for it.
       const owner = target ?? nameRef.current
       const local: Local = { target, verb }
-      // Kept before the command stops counting as busy, so whoever waited on it finds how it ended.
       const record = (ran: Ran): void => {
         if (owner === null) return
         ranCount.current += 1
@@ -298,27 +303,30 @@ export function useWinvm(): Winvm {
       let result: Ran
       try {
         const extra = arg === undefined || arg === "" ? [] : [arg]
-        const out = target === null ? await winvm("setup") : await winvm(verb, "-i", target, ...extra)
+        const out =
+          target === null
+            ? await winvm("setup")
+            : await winvm(verb, "-i", target, ...extra)
         const ran: Ran = { verb, code: out.code, output: outputText(out) }
         result = ran
         record(ran)
         setLast(ran)
         if (out.code !== 0) setFailure(ran)
-        // Show what the verb did at once; reads already out describe the machine before it.
-        if (target === null || target === nameRef.current) guard.current.settle(out.code === 0 ? phaseAfter(verb) : null)
+        if (target === null || target === nameRef.current)
+          guard.current.settle(out.code === 0 ? phaseAfter(verb) : null)
       } catch (e) {
         const ran: Ran = { verb, code: -1, output: errorText(e) }
         result = ran
         record(ran)
         setLast(ran)
         setFailure(ran)
-        if (target === null || target === nameRef.current) guard.current.settle(null)
+        if (target === null || target === nameRef.current)
+          guard.current.settle(null)
       } finally {
         setHeld(guard.current.held)
         setLocals((was) => was.filter((l) => l !== local))
       }
       if (verb === "setup") await loadChecks()
-      // Read the machine it ran on once more (the selected one, for setup): what is left is what the person and the close flow see.
       const after = target ?? nameRef.current
       if (after !== null) await loadStatus(after).catch(() => undefined)
       return result
@@ -326,9 +334,16 @@ export function useWinvm(): Winvm {
     [loadChecks, loadStatus],
   )
 
-  const runOn = useCallback((target: string, verb: Verb, arg?: string): Promise<Ran | null> => execute(target, verb, arg), [execute])
+  const runOn = useCallback(
+    (target: string, verb: Verb, arg?: string): Promise<Ran | null> =>
+      execute(target, verb, arg),
+    [execute],
+  )
 
-  const lastOn = useCallback((target: string): RanOn | null => outcomes.current.get(target) ?? null, [])
+  const lastOn = useCallback(
+    (target: string): RanOn | null => outcomes.current.get(target) ?? null,
+    [],
+  )
 
   const act = useCallback(
     async (verb: Verb, arg?: string): Promise<Ran | null> => {
@@ -342,7 +357,8 @@ export function useWinvm(): Winvm {
   const openScreenSharing = useCallback(async (): Promise<void> => {
     if (name === null) return
     const out = await winvm("open", "-i", name)
-    if (out.code !== 0) setFailure({ verb: "open", code: out.code, output: outputText(out) })
+    if (out.code !== 0)
+      setFailure({ verb: "open", code: out.code, output: outputText(out) })
   }, [name])
 
   const installCommand = useCallback(async (): Promise<void> => {
@@ -354,7 +370,6 @@ export function useWinvm(): Winvm {
   }, [])
 
   const select = useCallback((next: string): void => {
-    // Another machine: nothing held, and the last one's reads still out are stale.
     guard.current.settle(null)
     setHeld(null)
     setStatus(null)
@@ -366,7 +381,8 @@ export function useWinvm(): Winvm {
     async (title: string): Promise<string | null> => {
       if (name === null) return null
       const out = await winvm("config", "-i", name, titleAssignment(title))
-      if (out.code !== 0) return outputText(out) || `winvm config exited ${String(out.code)}`
+      if (out.code !== 0)
+        return outputText(out) || `winvm config exited ${String(out.code)}`
       const set = title.trim()
       setTitles((was) => ({ ...was, [name]: set === "" ? null : set }))
       return null
@@ -374,22 +390,22 @@ export function useWinvm(): Winvm {
     [name],
   )
 
-  /**
-   * Sets what closing the window does to the machine selected now, by its stable name (never its
-   * title, never `default`). The CLI validates and stores it; the machine is read again so what is
-   * shown is the effective value it reports.
-   */
   const setClosePolicy = useCallback(
     async (policy: ClosePolicy): Promise<string | null> => {
       const target = nameRef.current
       if (target === null) return null
       try {
-        const out = await winvm("config", "-i", target, closePolicyAssignment(policy))
-        if (out.code !== 0) return outputText(out) || `winvm config exited ${String(out.code)}`
+        const out = await winvm(
+          "config",
+          "-i",
+          target,
+          closePolicyAssignment(policy),
+        )
+        if (out.code !== 0)
+          return outputText(out) || `winvm config exited ${String(out.code)}`
       } catch (e) {
         return errorText(e)
       }
-      // Lands in the shown status only while `target` is still the selected machine.
       await refreshOne(target)
       return null
     },
@@ -400,8 +416,10 @@ export function useWinvm(): Winvm {
     names,
     name,
     titles,
-    // This machine's state as shown here, so the picker agrees with the toolbar.
-    phases: name !== null && p !== null && phases[name] !== p ? { ...phases, [name]: p } : phases,
+    phases:
+      name !== null && p !== null && phases[name] !== p
+        ? { ...phases, [name]: p }
+        : phases,
     rename,
     setClosePolicy,
     refresh: async () => {
@@ -414,7 +432,8 @@ export function useWinvm(): Winvm {
     statusError,
     checks,
     checksError,
-    connection: connection !== null && connection.pid === pid ? connection.conn : null,
+    connection:
+      connection !== null && connection.pid === pid ? connection.conn : null,
     busy,
     operation,
     failure,
@@ -426,6 +445,8 @@ export function useWinvm(): Winvm {
     lastOn,
     openScreenSharing,
     installCommand,
-    dismissFailure: () => { setFailure(null) },
+    dismissFailure: () => {
+      setFailure(null)
+    },
   }
 }

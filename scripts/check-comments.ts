@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from "node:fs"
+import { existsSync, readFileSync, writeFileSync } from "node:fs"
 import { extname } from "node:path"
 import ts from "typescript"
 
@@ -8,6 +8,16 @@ interface Found {
   start: number
   end: number
   block: boolean
+}
+
+interface Rejected extends Found {
+  reason: string
+}
+
+interface Removal {
+  start: number
+  end: number
+  container: boolean
 }
 
 interface Violation {
@@ -62,7 +72,10 @@ function languageOf(file: string): Language | undefined {
   return LANGUAGES[extname(file)]
 }
 
-function tsComments(file: string, text: string): Found[] {
+function tsComments(
+  file: string,
+  text: string,
+): { comments: Found[]; containers: Found[] } {
   const source = ts.createSourceFile(
     file,
     text,
@@ -71,7 +84,19 @@ function tsComments(file: string, text: string): Found[] {
     file.endsWith("x") ? ts.ScriptKind.TSX : undefined,
   )
   const found = new Map<number, Found>()
+  const containers: Found[] = []
   const visit = (node: ts.Node): void => {
+    if (
+      ts.isJsxExpression(node) &&
+      node.expression === undefined &&
+      (ts.isJsxElement(node.parent) || ts.isJsxFragment(node.parent))
+    ) {
+      containers.push({
+        start: node.getStart(source),
+        end: node.end,
+        block: true,
+      })
+    }
     const children = node.getChildren(source)
     if (children.length === 0) {
       if (node.kind === ts.SyntaxKind.JsxText) return
@@ -92,7 +117,10 @@ function tsComments(file: string, text: string): Found[] {
     for (const child of children) visit(child)
   }
   visit(source)
-  return [...found.values()].sort((a, b) => a.start - b.start)
+  return {
+    comments: [...found.values()].sort((a, b) => a.start - b.start),
+    containers,
+  }
 }
 
 function isIdentifierChar(char: string | undefined): boolean {
@@ -237,36 +265,257 @@ function lineOf(text: string, offset: number): number {
   return text.slice(0, offset).split("\n").length
 }
 
-function check(file: string): Violation[] {
+function coveredFile(file: string): Language | undefined {
   const language = languageOf(file)
-  if (language === undefined || VENDORED.test(file) || !existsSync(file)) {
-    return []
+  if (language === undefined || VENDORED.test(file)) return undefined
+  return language
+}
+
+function scan(
+  file: string,
+  text: string,
+  language: Language,
+): { rejected: Rejected[]; containers: Found[] } {
+  let containers: Found[] = []
+  let comments: Found[]
+  if (language === "ts") {
+    const scanned = tsComments(file, text)
+    comments = scanned.comments
+    containers = scanned.containers
+  } else {
+    comments = language === "rust" ? rustComments(text) : cssComments(text)
   }
-  const text = readFileSync(file, "utf8")
-  const comments =
-    language === "ts"
-      ? tsComments(file, text)
-      : language === "rust"
-        ? rustComments(text)
-        : cssComments(text)
-  const violations: Violation[] = []
+  const rejected: Rejected[] = []
   for (const comment of comments) {
-    const raw = text.slice(comment.start, comment.end)
-    const reason = problem(language, raw, comment.block)
-    if (reason === undefined) continue
-    violations.push({
-      file,
-      line: lineOf(text, comment.start),
-      excerpt: raw.split("\n")[0]?.slice(0, 72) ?? "",
-      reason,
+    const reason = problem(
+      language,
+      text.slice(comment.start, comment.end),
+      comment.block,
+    )
+    if (reason !== undefined) rejected.push({ ...comment, reason })
+  }
+  return { rejected, containers }
+}
+
+export function violationsIn(file: string, text: string): Violation[] {
+  const language = coveredFile(file)
+  if (language === undefined) return []
+  return scan(file, text, language).rejected.map((comment) => ({
+    file,
+    line: lineOf(text, comment.start),
+    excerpt:
+      text.slice(comment.start, comment.end).split("\n")[0]?.slice(0, 72) ?? "",
+    reason: comment.reason,
+  }))
+}
+
+function check(file: string): Violation[] {
+  if (coveredFile(file) === undefined || !existsSync(file)) return []
+  return violationsIn(file, readFileSync(file, "utf8"))
+}
+
+const COMMENT_MARK = "\u0001"
+const CONTAINER_MARK = "\u0002"
+const GAP = Symbol("gap")
+
+function containerRemovals(
+  text: string,
+  rejected: Rejected[],
+  containers: Found[],
+): { removals: Removal[]; covered: Set<Rejected> } {
+  const removals: Removal[] = []
+  const covered = new Set<Rejected>()
+  for (const container of containers) {
+    const inside = rejected.filter(
+      (comment) =>
+        comment.start >= container.start && comment.end <= container.end,
+    )
+    if (inside.length === 0) continue
+    if (commentsWithin(text, container) !== inside.length) continue
+    for (const comment of inside) covered.add(comment)
+    removals.push({
+      start: container.start,
+      end: container.end,
+      container: true,
     })
   }
-  return violations
+  return { removals, covered }
+}
+
+function commentsWithin(text: string, container: Found): number {
+  const inner = text.slice(container.start + 1, container.end - 1)
+  const ranges = ts.getLeadingCommentRanges(inner, 0) ?? []
+  const last = ranges[ranges.length - 1]
+  const trailing = last === undefined ? inner : inner.slice(last.end)
+  return trailing.trim() === "" ? ranges.length : -1
+}
+
+function removals(
+  text: string,
+  rejected: Rejected[],
+  containers: Found[],
+): Removal[] {
+  const found = containerRemovals(text, rejected, containers)
+  for (const comment of rejected) {
+    if (found.covered.has(comment)) continue
+    found.removals.push({
+      start: comment.start,
+      end: comment.end,
+      container: false,
+    })
+  }
+  return found.removals.sort((a, b) => a.start - b.start)
+}
+
+function lineBounds(text: string, from: number, to: number) {
+  const lineStart = text.lastIndexOf("\n", from - 1) + 1
+  const newline = text.indexOf("\n", to)
+  const lineEnd = newline === -1 ? text.length : newline
+  return { lineStart, lineEnd }
+}
+
+function mark(
+  text: string,
+  removal: Removal,
+): { replacement: string; splits: boolean } {
+  if (removal.container) return { replacement: CONTAINER_MARK, splits: false }
+  const raw = text.slice(removal.start, removal.end)
+  if (!raw.includes("\n")) return { replacement: COMMENT_MARK, splits: false }
+  const { lineStart, lineEnd } = lineBounds(text, removal.start, removal.end)
+  const before = text.slice(lineStart, removal.start)
+  const after = text.slice(removal.end, lineEnd)
+  if (before.trim() === "" || after.trim() === "") {
+    return { replacement: COMMENT_MARK, splits: false }
+  }
+  const indent = /^\s*/.exec(before)?.[0] ?? ""
+  return { replacement: `${COMMENT_MARK}\n${indent}`, splits: true }
+}
+
+function stripMarks(line: string): string {
+  let result = ""
+  for (let i = 0; i < line.length; i += 1) {
+    const char = line.charAt(i)
+    if (char !== COMMENT_MARK && char !== CONTAINER_MARK) {
+      result += char
+      continue
+    }
+    if (char === CONTAINER_MARK) continue
+    const before = result[result.length - 1]
+    const after = line[i + 1]
+    if (before === undefined || /\s/.test(before)) {
+      while (line[i + 1] !== undefined && /[ \t]/.test(line[i + 1] ?? ""))
+        i += 1
+    } else if (after !== undefined && /\w/.test(before) && /\w/.test(after)) {
+      result += " "
+    }
+  }
+  return result.trimEnd()
+}
+
+function opens(line: string): boolean {
+  return /[{([]$/.test(line.trimEnd())
+}
+
+function closes(line: string): boolean {
+  return /^[})\]]/.test(line.trimStart())
+}
+
+function settle(items: (string | typeof GAP)[]): string[] {
+  const result: string[] = []
+  let i = 0
+  while (i < items.length) {
+    const item = items[i]
+    if (typeof item === "string" && item.trim() !== "") {
+      result.push(item)
+      i += 1
+      continue
+    }
+    let j = i
+    let blanks = 0
+    let touched = false
+    while (j < items.length) {
+      const run = items[j]
+      if (run === GAP) touched = true
+      else if (run?.trim() === "") blanks += 1
+      else break
+      j += 1
+    }
+    const next = items[j]
+    const prev = result[result.length - 1]
+    if (!touched) {
+      for (let k = 0; k < blanks; k += 1) result.push("")
+    } else if (
+      blanks > 0 &&
+      prev !== undefined &&
+      typeof next === "string" &&
+      !opens(prev) &&
+      !closes(next)
+    ) {
+      result.push("")
+    }
+    i = j
+  }
+  return result
+}
+
+export function fixText(
+  file: string,
+  text: string,
+): { text: string; removed: number } {
+  const language = coveredFile(file)
+  if (language === undefined) return { text, removed: 0 }
+  const { rejected, containers } = scan(file, text, language)
+  if (rejected.length === 0) return { text, removed: 0 }
+  if (text.includes(COMMENT_MARK) || text.includes(CONTAINER_MARK)) {
+    throw new Error(`${file}: contains control characters used by --fix`)
+  }
+  let marked = ""
+  let cursor = 0
+  for (const removal of removals(text, rejected, containers)) {
+    const { replacement, splits } = mark(text, removal)
+    marked += text.slice(cursor, removal.start) + replacement
+    cursor = removal.end
+    if (splits) cursor += /^[ \t]*/.exec(text.slice(cursor))?.[0].length ?? 0
+  }
+  marked += text.slice(cursor)
+  const endsWithNewline = marked.endsWith("\n")
+  const lines = (endsWithNewline ? marked.slice(0, -1) : marked).split("\n")
+  const items: (string | typeof GAP)[] = lines.map((line) => {
+    if (!line.includes(COMMENT_MARK) && !line.includes(CONTAINER_MARK)) {
+      return line
+    }
+    const stripped = stripMarks(line)
+    return stripped.trim() === "" ? GAP : stripped
+  })
+  const settled = settle(items)
+  const out = settled.join("\n")
+  return {
+    text: out === "" ? "" : endsWithNewline ? `${out}\n` : out,
+    removed: rejected.length,
+  }
 }
 
 if (import.meta.main) {
-  const requested = process.argv.slice(2)
+  const args = process.argv.slice(2)
+  const fix = args.includes("--fix")
+  const requested = args.filter((arg) => arg !== "--fix")
   const files = requested.length > 0 ? requested : trackedFiles()
+  if (fix) {
+    let removed = 0
+    let changed = 0
+    for (const file of files) {
+      if (coveredFile(file) === undefined || !existsSync(file)) continue
+      const before = readFileSync(file, "utf8")
+      const result = fixText(file, before)
+      if (result.text === before) continue
+      writeFileSync(file, result.text)
+      removed += result.removed
+      changed += 1
+    }
+    console.log(
+      `check-comments --fix: removed ${String(removed)} comments in ${String(changed)} files`,
+    )
+  }
   const violations = files.flatMap(check)
   for (const v of violations) {
     console.log(`${v.file}:${String(v.line)}: ${v.reason}: ${v.excerpt}`)

@@ -1,13 +1,12 @@
+import type { Size } from "@winvm/displayfit"
 import type { CSSProperties, JSX } from "react"
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
-
-import type { Size } from "@winvm/displayfit"
 
 import {
   type Action,
   agentFetch,
-  errorMessage,
   announceTitle,
+  errorMessage,
   GUEST_FOLDERS_IN_FINDER,
   type GuestShare,
   installedShells,
@@ -30,34 +29,66 @@ import {
 import { Button } from "./components/Button"
 import { Callout } from "./components/Callout"
 import { ConfirmDialog } from "./components/ConfirmDialog"
-import { Popover } from "./components/Popover"
 import { cx } from "./components/cx"
-import { t } from "./i18n"
-import type { ClosePolicy, Phase, Share } from "./model"
-import { controls, displaySize, isFrozen, isLivePhase, parseShare, shownTitle, startSteps, terminalBlocked } from "./model"
+import { Popover } from "./components/Popover"
 import { SharePanel } from "./features/actions/SharePanel"
 import { CheckpointCanvas } from "./features/checkpoints/CheckpointCanvas"
-import { useCopies } from "./features/files/useCopies"
-import { Overview } from "./features/overview/Overview"
-import { OperationOverlay } from "./features/operation/OperationOverlay"
-import { Panel } from "./features/panel/Panel"
-import { ReferenceDialog } from "./features/reference/ReferenceDialog"
 import { ClosePolicyDialog } from "./features/close/ClosePolicyDialog"
 import { useCloseFlow } from "./features/close/useCloseFlow"
+import { useCopies } from "./features/files/useCopies"
+import { useMachineInfo } from "./features/hardware/useMachineInfo"
+import {
+  DeleteMachineBody,
+  type Deleting,
+} from "./features/machines/DeleteMachine"
+import {
+  createArgs,
+  destroyArgs,
+  isLive as machineLive,
+  nextAfterDelete,
+  parseImages,
+} from "./features/machines/machines"
+import {
+  type NewMachine,
+  NewMachineDialog,
+} from "./features/machines/NewMachineDialog"
+import { OperationOverlay } from "./features/operation/OperationOverlay"
+import { Overview } from "./features/overview/Overview"
+import { Panel } from "./features/panel/Panel"
+import { ReferenceDialog } from "./features/reference/ReferenceDialog"
 import { Screen, type ScreenHandle } from "./features/screen/Screen"
-import { defaultShell, installedList, type Launch, runnable, shellCache, shellMenu } from "./features/terminal/shells"
+import {
+  DEFAULT_SETTINGS,
+  loadSettings,
+  savePauseOverlay,
+} from "./features/settings/settings"
+import { useSharedFolder } from "./features/sharedfolder/useSharedFolder"
+import {
+  defaultShell,
+  installedList,
+  type Launch,
+  runnable,
+  shellCache,
+  shellMenu,
+} from "./features/terminal/shells"
 import { type PanelId, Toolbar } from "./features/toolbar/Toolbar"
+import type { UsageContext } from "./features/usage/Resources"
+import { useUsage } from "./features/usage/useUsage"
+import { pauseMenu } from "./features/winvm/pauseMenu"
 import type { Verb } from "./features/winvm/useWinvm"
 import { useWinvm } from "./features/winvm/useWinvm"
-import type { UsageContext } from "./features/usage/Resources"
-import { DeleteMachineBody, type Deleting } from "./features/machines/DeleteMachine"
-import { createArgs, destroyArgs, isLive as machineLive, nextAfterDelete, parseImages } from "./features/machines/machines"
-import { type NewMachine, NewMachineDialog } from "./features/machines/NewMachineDialog"
-import { useUsage } from "./features/usage/useUsage"
-import { DEFAULT_SETTINGS, loadSettings, savePauseOverlay } from "./features/settings/settings"
-import { pauseMenu } from "./features/winvm/pauseMenu"
-import { useSharedFolder } from "./features/sharedfolder/useSharedFolder"
-import { useMachineInfo } from "./features/hardware/useMachineInfo"
+import { t } from "./i18n"
+import type { ClosePolicy, Phase, Share } from "./model"
+import {
+  controls,
+  displaySize,
+  isFrozen,
+  isLivePhase,
+  parseShare,
+  shownTitle,
+  startSteps,
+  terminalBlocked,
+} from "./model"
 
 type Confirm = { kind: "stop" | "reboot" | "kill" }
 
@@ -80,32 +111,39 @@ const PANEL_LABEL: Record<PanelId, string> = {
 
 export function App(): JSX.Element {
   const w = useWinvm()
-  // The viewer's close: every live machine resolved before the app exits (one flow, one dialog).
   const close = useCloseFlow(w)
   const closeFailed = close.state.kind === "failed" ? close.state : null
   const [actualSize, setActualSize] = useState(false)
   const [detailsOpen, setDetailsOpen] = useState(false)
   const [confirm, setConfirm] = useState<Confirm | null>(null)
   const [startedFrom, setStartedFrom] = useState<Phase | null>(null)
-  const [open, setOpen] = useState<{ id: PanelId; anchor: HTMLElement } | null>(null)
+  const [open, setOpen] = useState<{ id: PanelId; anchor: HTMLElement } | null>(
+    null,
+  )
   const [share, setShare] = useState<Share | null>(null)
-  const [sharing, setSharing] = useState<{ starting: boolean; error: string | null }>({ starting: false, error: null })
+  const [sharing, setSharing] = useState<{
+    starting: boolean
+    error: string | null
+  }>({ starting: false, error: null })
   const [notice, setNotice] = useState<Notice | null>(null)
-  /** The share being opened in Finder (its menu label), while `winvm files open` runs. */
   const [finding, setFinding] = useState<string | null>(null)
-  const [reference, setReference] = useState<{ text: string | null } | null>(null)
+  const [reference, setReference] = useState<{ text: string | null } | null>(
+    null,
+  )
   const [dropping, setDropping] = useState(false)
-  // Checkpoints, the full-window view: open, and a count the menu bumps to ask it to leave.
   const [checkpoints, setCheckpoints] = useState(false)
   const [closeCheckpoints, setCloseCheckpoints] = useState(0)
   const [keyboardCaptured, setKeyboardCaptured] = useState(false)
-  // The close-policy setting's own write, and why the last one failed (for the machine it was for).
   const [settingClosePolicy, setSettingClosePolicy] = useState(false)
-  const [closePolicyError, setClosePolicyError] = useState<{ name: string; text: string } | null>(null)
+  const [closePolicyError, setClosePolicyError] = useState<{
+    name: string
+    text: string
+  } | null>(null)
   const screen = useRef<ScreenHandle | null>(null)
 
-  // A hidden window gets no animation frames, so show it straight after the first commit.
-  useEffect(() => { showWindow() }, [])
+  useEffect(() => {
+    showWindow()
+  }, [])
   useEffect(() => {
     setSystemKeyboardCapture(keyboardCaptured).catch((error: unknown) => {
       console.warn("changing keyboard capture failed", error)
@@ -118,55 +156,86 @@ export function App(): JSX.Element {
 
   const phase = w.phase
   const live = isLivePhase(phase)
-  // Paused or asleep: no input, no resize, no agent calls until it runs again.
   const frozen = isFrozen(phase)
   const held = phase === "paused" || phase === "asleep" ? phase : null
-  // A machine busy with a command, this window's or another process's (a close in another viewer,
-  // `winvm` in a terminal): no controls, no readiness, no input, no keyboard capture, no drop.
   const operating = w.operation !== null
-  // A held machine takes no keys: the Mac gets its own shortcuts (Cmd-Tab) back. So does one changing state.
   useEffect(() => {
     if (frozen || operating) setKeyboardCaptured(false)
   }, [frozen, operating])
   const guestReady = phase === "running" && !operating
   const hostReady = w.checks === null || w.checks.ready
-  const c = controls(phase ?? "missing", operating || phase === null || !hostReady)
-  const blocked = terminalBlocked(phase ?? "missing", operating || phase === null || !hostReady)
+  const c = controls(
+    phase ?? "missing",
+    operating || phase === null || !hostReady,
+  )
+  const blocked = terminalBlocked(
+    phase ?? "missing",
+    operating || phase === null || !hostReady,
+  )
   const missing = w.checks?.checks.filter((x) => !x.ok) ?? []
   const runtimeMissing = missing.some((x) => x.hint === "winvm setup")
   const display = displaySize(w.status?.screen ?? null)
-  // Where Windows' screen is, and its picture, for Checkpoints to fly into and show live.
   const displayRect = useCallback(() => {
     const r = document.querySelector(".display")?.getBoundingClientRect()
-    return r === undefined ? null : { x: r.left, y: r.top, width: r.width, height: r.height }
+    return r === undefined
+      ? null
+      : { x: r.left, y: r.top, width: r.width, height: r.height }
   }, [])
-  const liveSource = useCallback(() => document.querySelector<HTMLCanvasElement>(".screen__canvas canvas"), [])
+  const liveSource = useCallback(
+    () => document.querySelector<HTMLCanvasElement>(".screen__canvas canvas"),
+    [],
+  )
   const showScreen = live && w.connection !== null
-  // virtio-gpu: the guest's screen follows the window, one guest pixel per
-  // device pixel, so there is nothing to fit. ramfb stays a fixed 800x600.
   const resizable = display.device === "virtio-gpu"
-  const steps = w.busy === "start" && !showScreen ? startSteps(startedFrom === "missing", w.status) : null
+  const steps =
+    w.busy === "start" && !showScreen
+      ? startSteps(startedFrom === "missing", w.status)
+      : null
   const activity =
-    w.busy !== null ? t(`busy.${w.busy}`) : phase === "starting" ? t("state.starting") : held !== null ? t(`state.${held}`) : null
+    w.busy !== null
+      ? t(`busy.${w.busy}`)
+      : phase === "starting"
+        ? t("state.starting")
+        : held !== null
+          ? t(`state.${held}`)
+          : null
 
-  // The guest switches to the viewer's size through its agent, called
-  // directly (a few ms, not a CLI start per size), once it is up. The screen
-  // keeps a size asked for before that, or one this refuses, and asks again,
-  // both steps, once Windows can take it (held.ts).
   const resizeGuest = useCallback(
     async (size: Size, scale: number): Promise<void> => {
       if (w.name === null) return
-      if (!guestReady) throw new Error("Windows is not ready for a new size yet")
-      const reply = await agentFetch(w.name, "POST", "/display", { op: "set", width: size.width, height: size.height, waitMs: 2000, scale }, 22_000)
-      // 202: Windows is at its lock screen (after a wake, say); the agent sets the size at sign-in.
-      if (reply.status !== 200 && reply.status !== 202) throw new Error(`the agent answered ${String(reply.status)}: ${JSON.stringify(reply.body)}`)
+      if (!guestReady)
+        throw new Error("Windows is not ready for a new size yet")
+      const reply = await agentFetch(
+        w.name,
+        "POST",
+        "/display",
+        {
+          op: "set",
+          width: size.width,
+          height: size.height,
+          waitMs: 2000,
+          scale,
+        },
+        22_000,
+      )
+      if (reply.status !== 200 && reply.status !== 202)
+        throw new Error(
+          `the agent answered ${String(reply.status)}: ${JSON.stringify(reply.body)}`,
+        )
     },
     [w.name, guestReady],
   )
-  // `ps` keeps reading while held (the history stays); the agent only while Windows is up.
   const metered = live ? (w.status?.pid ?? null) : null
-  const usage = useUsage(metered, guestReady ? w.name : null, w.status?.cpus ?? null, w.status?.memoryMiB ?? null)
-  const usageContext: UsageContext = { cpus: w.status?.cpus ?? null, overlayBytes: w.status?.overlayBytes ?? null }
+  const usage = useUsage(
+    metered,
+    guestReady ? w.name : null,
+    w.status?.cpus ?? null,
+    w.status?.memoryMiB ?? null,
+  )
+  const usageContext: UsageContext = {
+    cpus: w.status?.cpus ?? null,
+    overlayBytes: w.status?.overlayBytes ?? null,
+  }
   const sharedFolder = useSharedFolder(w.name, phase, guestReady, detailsOpen)
   const machineInfo = useMachineInfo(w.name, phase, guestReady, detailsOpen)
 
@@ -175,8 +244,9 @@ export function App(): JSX.Element {
     void w.act(verb, arg)
   }
 
-  // The person's own settings (`winvm settings`): whether a held screen is dimmed.
-  const [pauseOverlay, setPauseOverlay] = useState(DEFAULT_SETTINGS.pauseOverlay)
+  const [pauseOverlay, setPauseOverlay] = useState(
+    DEFAULT_SETTINGS.pauseOverlay,
+  )
   useEffect(() => {
     let gone = false
     void loadSettings(winvm).then((s) => {
@@ -189,20 +259,30 @@ export function App(): JSX.Element {
   const changePauseOverlay = (on: boolean): void => {
     setPauseOverlay(on)
     void savePauseOverlay(winvm, on).then((why) => {
-      if (why !== null) setNotice({ tone: "error", title: t("settings.failed"), detail: why })
+      if (why !== null)
+        setNotice({ tone: "error", title: t("settings.failed"), detail: why })
     })
   }
   const openPauseMenu = (): void => {
     popupActions(
-      pauseMenu({ t, overlay: pauseOverlay, controls: c, setOverlay: changePauseOverlay, sleep: () => { run("sleep") }, lock: () => { run("lock") } }),
+      pauseMenu({
+        t,
+        overlay: pauseOverlay,
+        controls: c,
+        setOverlay: changePauseOverlay,
+        sleep: () => {
+          run("sleep")
+        },
+        lock: () => {
+          run("lock")
+        },
+      }),
     ).catch(() => undefined)
   }
-  // A key in an asleep machine's screen wakes it, once.
   const wake = (): void => {
     if (!operating && phase === "asleep") run("wake")
   }
 
-  // Files dropped on the main window go to the Desktop in Windows; the Files window takes them anywhere.
   const copies = useCopies(w.name)
   const copyIn = copies.copyIn
   const copyNotice = copies.job !== null || copies.result !== null
@@ -212,21 +292,25 @@ export function App(): JSX.Element {
       onFileDrop(
         (paths) => {
           if (guestReady) copyIn(paths, null)
-          else if (paths.length > 0) setNotice({ tone: "error", title: t("files.notRunning") })
+          else if (paths.length > 0)
+            setNotice({ tone: "error", title: t("files.notRunning") })
         },
-        (over) => { setDropping(over && guestReady) },
+        (over) => {
+          setDropping(over && guestReady)
+        },
       ),
     [guestReady, copyIn],
   )
 
-  // The instance's title: the toolbar shows it, the window is named by it, and
-  // every window hears it (the Terminal names itself by its tab's instance).
   const titles = w.titles
   const title = w.name === null ? null : shownTitle(w.name, titles[w.name])
   const [renaming, setRenaming] = useState(false)
-  useEffect(() => { setWindowTitle(title ?? t("app.name")) }, [title])
   useEffect(() => {
-    for (const [instance, set] of Object.entries(titles)) announceTitle({ instance, title: set })
+    setWindowTitle(title ?? t("app.name"))
+  }, [title])
+  useEffect(() => {
+    for (const [instance, set] of Object.entries(titles))
+      announceTitle({ instance, title: set })
   }, [titles])
   const rename = w.rename
   const renamed = (next: string | null): void => {
@@ -234,13 +318,18 @@ export function App(): JSX.Element {
     if (next === null || title === null || next.trim() === title) return
     rename(next)
       .then((why) => {
-        if (why !== null) setNotice({ tone: "error", title: t("rename.failed"), detail: why })
+        if (why !== null)
+          setNotice({ tone: "error", title: t("rename.failed"), detail: why })
       })
-      .catch((e: unknown) => { setNotice({ tone: "error", title: t("rename.failed"), detail: errorMessage(e) }) })
+      .catch((e: unknown) => {
+        setNotice({
+          tone: "error",
+          title: t("rename.failed"),
+          detail: errorMessage(e),
+        })
+      })
   }
 
-  // New Machine…: a name (and, under Advanced, the image and whether to start
-  // it), `winvm create`, then this window shows it, starting if asked.
   const [newOpen, setNewOpen] = useState(false)
   const [creating, setCreating] = useState(false)
   const [createError, setCreateError] = useState<string | null>(null)
@@ -251,8 +340,12 @@ export function App(): JSX.Element {
     setImages(null)
     setNewOpen(true)
     winvm("ls", "--json")
-      .then((out) => { setImages(parseImages(out.stdout)) })
-      .catch(() => { setImages([]) })
+      .then((out) => {
+        setImages(parseImages(out.stdout))
+      })
+      .catch(() => {
+        setImages([])
+      })
   }
   const createMachine = (m: NewMachine): void => {
     setCreating(true)
@@ -268,19 +361,26 @@ export function App(): JSX.Element {
         if (m.start) setStartNext(m.name)
         setNewOpen(false)
       })
-      .catch((e: unknown) => { setCreateError(errorMessage(e)) })
-      .finally(() => { setCreating(false) })
+      .catch((e: unknown) => {
+        setCreateError(errorMessage(e))
+      })
+      .finally(() => {
+        setCreating(false)
+      })
   }
-  // Start it once this window has read its (stopped) state.
   useEffect(() => {
-    if (startNext !== null && w.name === startNext && phase === "stopped" && !operating) {
+    if (
+      startNext !== null &&
+      w.name === startNext &&
+      phase === "stopped" &&
+      !operating
+    ) {
       setStartNext(null)
       setStartedFrom("missing")
       void w.act("start")
     }
   }, [startNext, w.name, phase, operating, w.act])
 
-  // Delete "<name>"…: what goes, Keep checkpoints, and a running machine turned off first.
   const [deleting, setDeleting] = useState<Deleting | null>(null)
   const [keepSaves, setKeepSaves] = useState(false)
   const [deleteBusy, setDeleteBusy] = useState(false)
@@ -290,23 +390,34 @@ export function App(): JSX.Element {
       if (d.live) await winvm("kill", "-i", d.name)
       const out = await winvm(...destroyArgs(d.name, keepSaves))
       if (out.code !== 0) {
-        setNotice({ tone: "error", title: t("machine.deleteFailed", { title: d.title }), detail: outputText(out) })
+        setNotice({
+          tone: "error",
+          title: t("machine.deleteFailed", { title: d.title }),
+          detail: outputText(out),
+        })
         return
       }
       const next = nextAfterDelete(w.names, d.name)
       await w.refresh()
       w.select(next ?? "default")
-      setNotice({ tone: "notice", title: t(keepSaves ? "machine.deletedKept" : "machine.deleted", { title: d.title }) })
+      setNotice({
+        tone: "notice",
+        title: t(keepSaves ? "machine.deletedKept" : "machine.deleted", {
+          title: d.title,
+        }),
+      })
     } catch (e) {
-      setNotice({ tone: "error", title: t("machine.deleteFailed", { title: d.title }), detail: errorMessage(e) })
+      setNotice({
+        tone: "error",
+        title: t("machine.deleteFailed", { title: d.title }),
+        detail: errorMessage(e),
+      })
     } finally {
       setDeleteBusy(false)
       setDeleting(null)
     }
   }
 
-  // Which shells the guest has: asked once Windows is ready, so the first tab
-  // already knows, and asked again after it stops, restarts or is busy.
   const shells = useMemo(() => shellCache(installedShells), [])
   useEffect(() => {
     if (w.name === null) return
@@ -314,7 +425,6 @@ export function App(): JSX.Element {
     else shells.forget(w.name)
   }, [shells, w.name, guestReady])
 
-  /** A tab of `launch`, or of the default shell (PowerShell 7 if the guest has it). */
   const terminal = useCallback(
     (launch: Launch | null): void => {
       const instance = w.name
@@ -324,12 +434,21 @@ export function App(): JSX.Element {
         .then((installed) =>
           openTerminal({
             instance,
-            ...runnable(launch ?? { shell: defaultShell(installed), cwd: null }, installed),
+            ...runnable(
+              launch ?? { shell: defaultShell(installed), cwd: null },
+              installed,
+            ),
             installed: installedList(installed),
             title: titles[instance] ?? null,
           }),
         )
-        .catch((e: unknown) => { setNotice({ tone: "error", title: t("terminal.failed"), detail: errorMessage(e) }) })
+        .catch((e: unknown) => {
+          setNotice({
+            tone: "error",
+            title: t("terminal.failed"),
+            detail: errorMessage(e),
+          })
+        })
     },
     [shells, w.name, c.terminal, titles],
   )
@@ -339,12 +458,22 @@ export function App(): JSX.Element {
     if (instance === null) return
     shells
       .get(instance)
-      .then((installed) => popupMenu(shellMenu(t, installed), (item) => { terminal(item.launch) }))
-      .catch((e: unknown) => { setNotice({ tone: "error", title: t("terminal.failed"), detail: errorMessage(e) }) })
+      .then((installed) =>
+        popupMenu(shellMenu(t, installed), (item) => {
+          terminal(item.launch)
+        }),
+      )
+      .catch((e: unknown) => {
+        setNotice({
+          tone: "error",
+          title: t("terminal.failed"),
+          detail: errorMessage(e),
+        })
+      })
   }
 
-  // Checkpoints: the clock, ⌘⇧T and File → Checkpoints… open it; the same keys close it.
-  const canCheckpoints = w.name !== null && phase !== null && phase !== "missing"
+  const canCheckpoints =
+    w.name !== null && phase !== null && phase !== "missing"
   const openCheckpoints = useCallback(() => {
     setOpen(null)
     if (canCheckpoints) setCheckpoints(true)
@@ -356,10 +485,28 @@ export function App(): JSX.Element {
   const canSave = (phase === "running" || phase === "paused") && !operating
   const checkpointsMenu = (): void => {
     popupActions([
-      { kind: "action", label: t("checkpoints.saveNow"), enabled: canSave, run: () => { run("save") } },
+      {
+        kind: "action",
+        label: t("checkpoints.saveNow"),
+        enabled: canSave,
+        run: () => {
+          run("save")
+        },
+      },
       { kind: "separator" },
-      { kind: "action", label: t("checkpoints.showAll"), accelerator: "CmdOrCtrl+Shift+T", run: openCheckpoints },
-    ]).catch((e: unknown) => { setNotice({ tone: "error", title: t("checkpoints.menuFailed"), detail: errorMessage(e) }) })
+      {
+        kind: "action",
+        label: t("checkpoints.showAll"),
+        accelerator: "CmdOrCtrl+Shift+T",
+        run: openCheckpoints,
+      },
+    ]).catch((e: unknown) => {
+      setNotice({
+        tone: "error",
+        title: t("checkpoints.menuFailed"),
+        detail: errorMessage(e),
+      })
+    })
   }
 
   const install = w.installCommand
@@ -367,34 +514,45 @@ export function App(): JSX.Element {
     () =>
       onMenu((id) => {
         if (id === "new-terminal") terminal(null)
-        if (id === "capture-keyboard" && showScreen && !frozen && !operating) setKeyboardCaptured(true)
+        if (id === "capture-keyboard" && showScreen && !frozen && !operating)
+          setKeyboardCaptured(true)
         if (id === "release-keyboard") setKeyboardCaptured(false)
-        if (id === "send-windows-key" && !operating) screen.current?.sendWindowsKey()
-        if (id === "send-ctrl-alt-delete" && !operating) screen.current?.sendCtrlAltDelete()
+        if (id === "send-windows-key" && !operating)
+          screen.current?.sendWindowsKey()
+        if (id === "send-ctrl-alt-delete" && !operating)
+          screen.current?.sendCtrlAltDelete()
         if (id === "rename-window") setRenaming(true)
         if (id === "checkpoints") toggleCheckpoints()
         if (id === "install-cli") void install()
         if (id === "reference") {
           setReference({ text: null })
           winvm("help")
-            .then((out) => { setReference({ text: outputText(out) }) })
-            .catch((e: unknown) => { setReference({ text: errorMessage(e) }) })
+            .then((out) => {
+              setReference({ text: outputText(out) })
+            })
+            .catch((e: unknown) => {
+              setReference({ text: errorMessage(e) })
+            })
         }
       }),
     [install, terminal, toggleCheckpoints, showScreen, frozen, operating],
   )
 
   useEffect(() => {
-    if (w.cliPath !== null) setNotice({ tone: "notice", title: t("cli.done", { path: w.cliPath }) })
+    if (w.cliPath !== null)
+      setNotice({ tone: "notice", title: t("cli.done", { path: w.cliPath }) })
   }, [w.cliPath])
 
   useEffect(() => {
     if (notice?.tone !== "notice") return
-    const timer = setTimeout(() => { setNotice(null) }, 8000)
-    return () => { clearTimeout(timer) }
+    const timer = setTimeout(() => {
+      setNotice(null)
+    }, 8000)
+    return () => {
+      clearTimeout(timer)
+    }
   }, [notice])
 
-  // Sharing ends with the guest.
   useEffect(() => {
     if (!live && share !== null) {
       void shareStop()
@@ -409,9 +567,14 @@ export function App(): JSX.Element {
       .then((out) => {
         const got = parseShare(out.stdout)
         setShare(got)
-        setSharing({ starting: false, error: got === null ? outputText(out) : null })
+        setSharing({
+          starting: false,
+          error: got === null ? outputText(out) : null,
+        })
       })
-      .catch((e: unknown) => { setSharing({ starting: false, error: errorMessage(e) }) })
+      .catch((e: unknown) => {
+        setSharing({ starting: false, error: errorMessage(e) })
+      })
   }
 
   const stopSharing = (): void => {
@@ -421,23 +584,42 @@ export function App(): JSX.Element {
 
   const filesWindow = (): void => {
     setOpen(null)
-    if (w.name !== null) openFiles(w.name, titles[w.name] ?? null).catch((e: unknown) => { setNotice({ tone: "error", title: t("files.openFailed"), detail: errorMessage(e) }) })
+    if (w.name !== null)
+      openFiles(w.name, titles[w.name] ?? null).catch((e: unknown) => {
+        setNotice({
+          tone: "error",
+          title: t("files.openFailed"),
+          detail: errorMessage(e),
+        })
+      })
   }
 
-  // The guest's home folder and C:\ in Finder (`winvm files open`). The first
-  // time sets Windows up to share, so it says what it is doing meanwhile.
   const filesMenu = (): void => {
     const instance = w.name
     if (instance === null) return
-    const finder = (label: string, place: string, share: GuestShare): Action => ({
+    const finder = (
+      label: string,
+      place: string,
+      share: GuestShare,
+    ): Action => ({
       kind: "action",
-      label: GUEST_FOLDERS_IN_FINDER ? label : t("files.finder.soon", { label }),
+      label: GUEST_FOLDERS_IN_FINDER
+        ? label
+        : t("files.finder.soon", { label }),
       enabled: GUEST_FOLDERS_IN_FINDER && finding === null,
       run: () => {
         setFinding(place)
         openShareInFinder(instance, share)
-          .catch((e: unknown) => { setNotice({ tone: "error", title: t("files.finder.failed"), detail: errorMessage(e) }) })
-          .finally(() => { setFinding(null) })
+          .catch((e: unknown) => {
+            setNotice({
+              tone: "error",
+              title: t("files.finder.failed"),
+              detail: errorMessage(e),
+            })
+          })
+          .finally(() => {
+            setFinding(null)
+          })
       },
     })
     popupActions([
@@ -445,14 +627,22 @@ export function App(): JSX.Element {
       { kind: "separator" },
       finder(t("files.finder.home"), t("files.finder.homePlace"), "home"),
       finder(t("files.finder.drive", { drive: "C:\\" }), "C:\\", "c"),
-    ]).catch((e: unknown) => { setNotice({ tone: "error", title: t("files.openFailed"), detail: errorMessage(e) }) })
+    ]).catch((e: unknown) => {
+      setNotice({
+        tone: "error",
+        title: t("files.openFailed"),
+        detail: errorMessage(e),
+      })
+    })
   }
 
   const togglePanel = (id: PanelId, anchor: HTMLElement): void => {
     if (id === "files") filesWindow()
     else setOpen((cur) => (cur?.id === id ? null : { id, anchor }))
   }
-  const closePanel = useCallback(() => { setOpen(null) }, [])
+  const closePanel = useCallback(() => {
+    setOpen(null)
+  }, [])
 
   const changeClosePolicy = (policy: ClosePolicy): void => {
     const target = w.name
@@ -484,7 +674,9 @@ export function App(): JSX.Element {
           onRenamed: renamed,
           onSelect: w.select,
           onNew: openNew,
-          onRename: () => { setRenaming(true) },
+          onRename: () => {
+            setRenaming(true)
+          },
           onDelete: () => {
             if (w.name === null || title === null) return
             setKeepSaves(false)
@@ -496,7 +688,9 @@ export function App(): JSX.Element {
         controls={c}
         guestReady={guestReady}
         terminalBlocked={blocked}
-        canCheckpoints={w.name !== null && phase !== null && phase !== "missing"}
+        canCheckpoints={
+          w.name !== null && phase !== null && phase !== "missing"
+        }
         checkpointsOpen={checkpoints}
         canShare={phase !== null && phase !== "missing"}
         sharing={share !== null}
@@ -506,34 +700,61 @@ export function App(): JSX.Element {
         detailsOpen={detailsOpen}
         keyboardCaptured={keyboardCaptured}
         inputBlocked={operating}
-        onStart={() => { run("start") }}
-        onShutDown={() => { setConfirm({ kind: "stop" }) }}
-        onRestart={() => { setConfirm({ kind: "reboot" }) }}
-        onPause={() => { run("pause") }}
-        onResume={() => { run(phase === "asleep" ? "wake" : "resume") }}
+        onStart={() => {
+          run("start")
+        }}
+        onShutDown={() => {
+          setConfirm({ kind: "stop" })
+        }}
+        onRestart={() => {
+          setConfirm({ kind: "reboot" })
+        }}
+        onPause={() => {
+          run("pause")
+        }}
+        onResume={() => {
+          run(phase === "asleep" ? "wake" : "resume")
+        }}
         onPauseMenu={openPauseMenu}
         onOpen={togglePanel}
-        onTerminal={() => { terminal(null) }}
+        onTerminal={() => {
+          terminal(null)
+        }}
         onTerminalMenu={terminalMenu}
         onFilesMenu={filesMenu}
         onCheckpoints={openCheckpoints}
         onCheckpointsMenu={checkpointsMenu}
-        onActualSize={() => { setActualSize((a) => !a) }}
+        onActualSize={() => {
+          setActualSize((a) => !a)
+        }}
         onScreenSharing={() => void w.openScreenSharing()}
-        onDetails={() => { setDetailsOpen((o) => !o) }}
-        onKeyboardCapture={() => { setKeyboardCaptured((captured) => !captured) }}
+        onDetails={() => {
+          setDetailsOpen((o) => !o)
+        }}
+        onKeyboardCapture={() => {
+          setKeyboardCaptured((captured) => !captured)
+        }}
       />
 
       <div className="stage">
         <div className="display-area">
-          {(w.failure !== null || closeFailed !== null || notice !== null || copyNotice || (w.checks !== null && !w.checks.ready) || w.statusError !== null) && (
+          {(w.failure !== null ||
+            closeFailed !== null ||
+            notice !== null ||
+            copyNotice ||
+            (w.checks !== null && !w.checks.ready) ||
+            w.statusError !== null) && (
             <div className="notices">
               {w.failure !== null && (
                 <Callout
                   tone="error"
                   title={t(`error.${w.failure.verb}`)}
                   action={
-                    <Button size="sm" variant="ghost" onClick={w.dismissFailure}>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      onClick={w.dismissFailure}
+                    >
                       {t("action.dismiss")}
                     </Button>
                   }
@@ -551,12 +772,16 @@ export function App(): JSX.Element {
                     </Button>
                   }
                 >
-                  {/* A stow or shutdown that failed already shows what it said, just above. */}
-                  {closeFailed.message !== w.failure?.output && <pre className="output">{closeFailed.message}</pre>}
+                  {closeFailed.message !== w.failure?.output && (
+                    <pre className="output">{closeFailed.message}</pre>
+                  )}
                 </Callout>
               )}
               {finding !== null && (
-                <Callout tone="notice" title={t("files.finder.opening", { place: finding })}>
+                <Callout
+                  tone="notice"
+                  title={t("files.finder.opening", { place: finding })}
+                >
                   <p>{t("files.finder.firstTime")}</p>
                 </Callout>
               )}
@@ -565,17 +790,35 @@ export function App(): JSX.Element {
                   tone={notice.tone}
                   title={notice.title}
                   action={
-                    <Button size="sm" variant="ghost" onClick={() => { setNotice(null) }}>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      onClick={() => {
+                        setNotice(null)
+                      }}
+                    >
                       {t("action.dismiss")}
                     </Button>
                   }
                 >
-                  {notice.detail !== undefined && <pre className="output">{notice.detail}</pre>}
+                  {notice.detail !== undefined && (
+                    <pre className="output">{notice.detail}</pre>
+                  )}
                 </Callout>
               )}
               {copyNotice && copies.job !== null && (
-                <Callout tone="notice" title={t("files.copying", { name: copies.job.name })}>
-                  {copies.job.total > 1 && <p>{t("files.ofTotal", { done: copies.job.done + 1, total: copies.job.total })}</p>}
+                <Callout
+                  tone="notice"
+                  title={t("files.copying", { name: copies.job.name })}
+                >
+                  {copies.job.total > 1 && (
+                    <p>
+                      {t("files.ofTotal", {
+                        done: copies.job.done + 1,
+                        total: copies.job.total,
+                      })}
+                    </p>
+                  )}
                 </Callout>
               )}
               {copyNotice && copies.job === null && copies.result !== null && (
@@ -584,17 +827,29 @@ export function App(): JSX.Element {
                   title={copies.result.title}
                   action={
                     copies.result.reveal !== undefined ? (
-                      <Button size="sm" variant="ghost" onClick={() => void revealInFinder(copies.result?.reveal ?? "")}>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        onClick={() =>
+                          void revealInFinder(copies.result?.reveal ?? "")
+                        }
+                      >
                         {t("files.reveal")}
                       </Button>
                     ) : (
-                      <Button size="sm" variant="ghost" onClick={copies.dismiss}>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        onClick={copies.dismiss}
+                      >
                         {t("action.dismiss")}
                       </Button>
                     )
                   }
                 >
-                  {copies.result.detail !== undefined && <pre className="output">{copies.result.detail}</pre>}
+                  {copies.result.detail !== undefined && (
+                    <pre className="output">{copies.result.detail}</pre>
+                  )}
                 </Callout>
               )}
               {w.checks !== null && !w.checks.ready && (
@@ -603,7 +858,14 @@ export function App(): JSX.Element {
                   title={t("host.notReady")}
                   action={
                     runtimeMissing ? (
-                      <Button size="sm" variant="primary" disabled={operating} onClick={() => { run("setup") }}>
+                      <Button
+                        size="sm"
+                        variant="primary"
+                        disabled={operating}
+                        onClick={() => {
+                          run("setup")
+                        }}
+                      >
                         {t("action.setup")}
                       </Button>
                     ) : undefined
@@ -656,14 +918,23 @@ export function App(): JSX.Element {
                   overlay={pauseOverlay}
                 />
               ) : (
-                <Overview phase={phase} status={w.status} steps={steps} canStart={c.start} onStart={() => { run("start") }} />
+                <Overview
+                  phase={phase}
+                  status={w.status}
+                  steps={steps}
+                  canStart={c.start}
+                  onStart={() => {
+                    run("start")
+                  }}
+                />
               )}
               {dropping && (
                 <div className="display__drop" aria-hidden="true">
-                  <p>{t("files.dropOn", { folder: t("files.place.desktop") })}</p>
+                  <p>
+                    {t("files.dropOn", { folder: t("files.place.desktop") })}
+                  </p>
                 </div>
               )}
-              {/* Last, over the screen or the Overview: while a command runs nothing under it is reachable. */}
               <OperationOverlay operation={w.operation} />
             </div>
           </div>
@@ -684,15 +955,25 @@ export function App(): JSX.Element {
             guestReady={guestReady}
             closePolicy={w.status?.closePolicy ?? "ask"}
             closePolicyBusy={operating || settingClosePolicy}
-            closePolicyError={closePolicyError !== null && closePolicyError.name === w.name ? closePolicyError.text : null}
+            closePolicyError={
+              closePolicyError !== null && closePolicyError.name === w.name
+                ? closePolicyError.text
+                : null
+            }
             onClosePolicy={changeClosePolicy}
-            onForceStop={() => { setConfirm({ kind: "kill" }) }}
+            onForceStop={() => {
+              setConfirm({ kind: "kill" })
+            }}
           />
         )}
       </div>
 
       {open !== null && w.name !== null && (
-        <Popover anchor={open.anchor} label={t(PANEL_LABEL[open.id])} onClose={closePanel}>
+        <Popover
+          anchor={open.anchor}
+          label={t(PANEL_LABEL[open.id])}
+          onClose={closePanel}
+        >
           {open.id === "share" && (
             <SharePanel
               instance={w.name}
@@ -707,7 +988,14 @@ export function App(): JSX.Element {
         </Popover>
       )}
 
-      {reference !== null && <ReferenceDialog text={reference.text} onClose={() => { setReference(null) }} />}
+      {reference !== null && (
+        <ReferenceDialog
+          text={reference.text}
+          onClose={() => {
+            setReference(null)
+          }}
+        />
+      )}
 
       {checkpoints && w.name !== null && (
         <CheckpointCanvas
@@ -720,18 +1008,28 @@ export function App(): JSX.Element {
           liveSource={liveSource}
           run={(verb, arg) => w.act(verb, arg)}
           closeRequest={closeCheckpoints}
-          onClosed={() => { setCheckpoints(false) }}
+          onClosed={() => {
+            setCheckpoints(false)
+          }}
         />
       )}
 
       <ConfirmDialog
         open={confirm !== null}
         title={confirm === null ? "" : t(`confirm.${confirm.kind}.title`)}
-        body={confirm === null ? "" : <p>{t(`confirm.${confirm.kind}.body`)}</p>}
+        body={
+          confirm === null ? "" : <p>{t(`confirm.${confirm.kind}.body`)}</p>
+        }
         confirmLabel={confirm === null ? "" : t(CONFIRM_ACTION[confirm.kind])}
         cancelLabel={t("confirm.cancel")}
-        tone={confirm?.kind === "stop" || confirm?.kind === "kill" ? "danger" : "default"}
-        onCancel={() => { setConfirm(null) }}
+        tone={
+          confirm?.kind === "stop" || confirm?.kind === "kill"
+            ? "danger"
+            : "default"
+        }
+        onCancel={() => {
+          setConfirm(null)
+        }}
         onConfirm={() => {
           const chosen = confirm
           setConfirm(null)
@@ -743,16 +1041,37 @@ export function App(): JSX.Element {
 
       <ConfirmDialog
         open={deleting !== null}
-        title={deleting === null ? "" : t("machine.deleteTitle", { title: deleting.title })}
-        body={
-          deleting === null ? "" : <DeleteMachineBody deleting={deleting} keepSaves={keepSaves} busy={deleteBusy} onKeepSaves={setKeepSaves} />
+        title={
+          deleting === null
+            ? ""
+            : t("machine.deleteTitle", { title: deleting.title })
         }
-        confirmLabel={deleting?.live === true ? t("machine.deleteLive") : t("machine.deleteConfirm")}
+        body={
+          deleting === null ? (
+            ""
+          ) : (
+            <DeleteMachineBody
+              deleting={deleting}
+              keepSaves={keepSaves}
+              busy={deleteBusy}
+              onKeepSaves={setKeepSaves}
+            />
+          )
+        }
+        confirmLabel={
+          deleting?.live === true
+            ? t("machine.deleteLive")
+            : t("machine.deleteConfirm")
+        }
         cancelLabel={t("confirm.cancel")}
         tone="danger"
         busy={deleteBusy}
-        onCancel={() => { setDeleting(null) }}
-        onConfirm={() => (deleting === null ? undefined : deleteMachine(deleting))}
+        onCancel={() => {
+          setDeleting(null)
+        }}
+        onConfirm={() =>
+          deleting === null ? undefined : deleteMachine(deleting)
+        }
       />
 
       <NewMachineDialog
@@ -762,10 +1081,17 @@ export function App(): JSX.Element {
         busy={creating}
         error={createError}
         onCreate={createMachine}
-        onCancel={() => { setNewOpen(false) }}
+        onCancel={() => {
+          setNewOpen(false)
+        }}
       />
 
-      <ClosePolicyDialog state={close.state} onChoose={close.choose} onRemember={close.setRemember} onCancel={close.cancel} />
+      <ClosePolicyDialog
+        state={close.state}
+        onChoose={close.choose}
+        onRemember={close.setRemember}
+        onCancel={close.cancel}
+      />
     </div>
   )
 }

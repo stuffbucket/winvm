@@ -1,7 +1,14 @@
 import { randomUUID } from "node:crypto"
-import { linkSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs"
+import {
+  linkSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs"
 
-const scratch = (file: string, kind: string): string => `${file}.${String(process.pid)}.${randomUUID()}.${kind}`
+const scratch = (file: string, kind: string): string =>
+  `${file}.${String(process.pid)}.${randomUUID()}.${kind}`
 
 function attempt(f: () => void): boolean {
   try {
@@ -42,9 +49,17 @@ export function replaceWhole(file: string, text: string): void {
 
 export function takeOver(file: string, judged: string): boolean {
   const aside = scratch(file, "stale")
-  if (!attempt(() => { renameSync(file, aside) })) return false
+  if (
+    !attempt(() => {
+      renameSync(file, aside)
+    })
+  )
+    return false
   const same = readOr(aside, null) === judged
-  if (!same) attempt(() => { linkSync(aside, file) })
+  if (!same)
+    attempt(() => {
+      linkSync(aside, file)
+    })
   rmSync(aside, { force: true })
   return same
 }

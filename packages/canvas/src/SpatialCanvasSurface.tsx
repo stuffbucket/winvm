@@ -1,34 +1,39 @@
-/**
- * Hosts a canvas edge to edge over the window, from monimal's
- * `spatial-canvas-surface.tsx`. monimal's version wraps its design system's
- * Dialog; here it is a portal of its own, so the app decides what Escape
- * means (step back out of a selection or a search before leaving), and so the
- * surface can ease in and out: `phase` drives the CSS.
- */
-import { type ComponentPropsWithoutRef, type JSX, type KeyboardEvent, type ReactNode, useEffect, useId, useRef } from "react"
+import {
+  type ComponentPropsWithoutRef,
+  type JSX,
+  type KeyboardEvent,
+  type ReactNode,
+  useEffect,
+  useId,
+  useRef,
+} from "react"
 import { createPortal } from "react-dom"
 
 export type SpatialCanvasSurfacePhase = "entering" | "open" | "leaving"
 
-export interface SpatialCanvasSurfaceProps extends Omit<ComponentPropsWithoutRef<"section">, "title" | "children"> {
+export interface SpatialCanvasSurfaceProps
+  extends Omit<ComponentPropsWithoutRef<"section">, "title" | "children"> {
   readonly open: boolean
   readonly title: string
   readonly description: string
   readonly children: ReactNode
-  /** In the page's flow, not over the window (tests, previews). */
   readonly embedded?: boolean
   readonly phase?: SpatialCanvasSurfacePhase
-  /** Where the portal goes; document.body by default. */
   readonly container?: Element | null
 }
 
-const FOCUSABLE = 'a[href], button:not([disabled]), input:not([disabled]), textarea:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])'
+const FOCUSABLE =
+  'a[href], button:not([disabled]), input:not([disabled]), textarea:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])'
 
-/** Keeps Tab inside the surface, as a modal does. */
 function trapTab(event: KeyboardEvent<HTMLElement>): void {
-  // A modal <dialog> inside keeps Tab to itself.
-  if (event.key !== "Tab" || (event.target instanceof Element && event.target.closest("dialog") !== null)) return
-  const items = [...event.currentTarget.querySelectorAll<HTMLElement>(FOCUSABLE)].filter((el) => el.offsetParent !== null || el === document.activeElement)
+  if (
+    event.key !== "Tab" ||
+    (event.target instanceof Element && event.target.closest("dialog") !== null)
+  )
+    return
+  const items = [
+    ...event.currentTarget.querySelectorAll<HTMLElement>(FOCUSABLE),
+  ].filter((el) => el.offsetParent !== null || el === document.activeElement)
   const first = items[0]
   const last = items.at(-1)
   if (first === undefined || last === undefined) return
@@ -57,11 +62,11 @@ export function SpatialCanvasSurface({
   const ref = useRef<HTMLElement>(null)
   const returnTo = useRef<Element | null>(null)
 
-  // Focus comes in with the surface and goes back where it was after.
   useEffect(() => {
     if (!open || embedded) return
     returnTo.current = document.activeElement
-    if (!ref.current?.contains(document.activeElement)) ref.current?.focus({ preventScroll: true })
+    if (!ref.current?.contains(document.activeElement))
+      ref.current?.focus({ preventScroll: true })
     return () => {
       const back = returnTo.current
       if (back instanceof HTMLElement) back.focus({ preventScroll: true })
@@ -79,7 +84,13 @@ export function SpatialCanvasSurface({
       aria-describedby={describedBy}
       tabIndex={-1}
       data-phase={phase}
-      className={["spatial-canvas-surface", embedded && "spatial-canvas-surface--embedded", className].filter(Boolean).join(" ")}
+      className={[
+        "spatial-canvas-surface",
+        embedded && "spatial-canvas-surface--embedded",
+        className,
+      ]
+        .filter(Boolean)
+        .join(" ")}
       onKeyDown={(event) => {
         if (!embedded) trapTab(event)
         onKeyDown?.(event)
@@ -92,6 +103,7 @@ export function SpatialCanvasSurface({
     </section>
   )
   if (embedded) return section
-  const target = container ?? (typeof document === "undefined" ? null : document.body)
+  const target =
+    container ?? (typeof document === "undefined" ? null : document.body)
   return target === null ? section : createPortal(section, target)
 }

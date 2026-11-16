@@ -1,4 +1,11 @@
-import { type JSX, type ReactNode, useEffect, useLayoutEffect, useRef, useState } from "react"
+import {
+  type JSX,
+  type ReactNode,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react"
 
 interface PopoverProps {
   readonly anchor: HTMLElement | null
@@ -7,23 +14,31 @@ interface PopoverProps {
   readonly children: ReactNode
 }
 
-/**
- * A panel under a toolbar button: layer 2, short-lived. Escape or a click
- * outside it (other than on its button) closes it.
- */
-export function Popover({ anchor, label, onClose, children }: PopoverProps): JSX.Element {
+export function Popover({
+  anchor,
+  label,
+  onClose,
+  children,
+}: PopoverProps): JSX.Element {
   const panel = useRef<HTMLDivElement | null>(null)
-  const [place, setPlace] = useState<{ top: number; right: number } | null>(null)
+  const [place, setPlace] = useState<{ top: number; right: number } | null>(
+    null,
+  )
 
   useLayoutEffect(() => {
     const measure = (): void => {
       if (anchor === null) return
       const r = anchor.getBoundingClientRect()
-      setPlace({ top: r.bottom + 6, right: Math.max(8, window.innerWidth - r.right - 8) })
+      setPlace({
+        top: r.bottom + 6,
+        right: Math.max(8, window.innerWidth - r.right - 8),
+      })
     }
     measure()
     window.addEventListener("resize", measure)
-    return () => { window.removeEventListener("resize", measure) }
+    return () => {
+      window.removeEventListener("resize", measure)
+    }
   }, [anchor])
 
   useEffect(() => {
@@ -32,7 +47,8 @@ export function Popover({ anchor, label, onClose, children }: PopoverProps): JSX
     }
     const down = (e: PointerEvent): void => {
       const t = e.target as Node
-      if (panel.current?.contains(t) === true || anchor?.contains(t) === true) return
+      if (panel.current?.contains(t) === true || anchor?.contains(t) === true)
+        return
       onClose()
     }
     window.addEventListener("keydown", key)
@@ -44,7 +60,9 @@ export function Popover({ anchor, label, onClose, children }: PopoverProps): JSX
   }, [anchor, onClose])
 
   useEffect(() => {
-    panel.current?.querySelector<HTMLElement>("input, button, textarea")?.focus()
+    panel.current
+      ?.querySelector<HTMLElement>("input, button, textarea")
+      ?.focus()
   }, [])
 
   return (
@@ -53,7 +71,11 @@ export function Popover({ anchor, label, onClose, children }: PopoverProps): JSX
       className="popover"
       role="dialog"
       aria-label={label}
-      style={place === null ? { visibility: "hidden" } : { top: place.top, right: place.right }}
+      style={
+        place === null
+          ? { visibility: "hidden" }
+          : { top: place.top, right: place.right }
+      }
     >
       {children}
     </div>

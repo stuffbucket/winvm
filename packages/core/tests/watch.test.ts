@@ -1,19 +1,36 @@
-/**
- * The watcher's decisions, driven by a fake clock and fake samples — no VM.
- *
- *   pnpm test   (or: bun test)
- */
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+} from "bun:test"
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs"
 import { tmpdir } from "node:os"
 import { resolve } from "node:path"
 
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "bun:test"
-
-import { CLOSE_POLICIES, DEFAULTS, configPath, effectiveConfig, parseAssignment, readOverrides, writeAssignments } from "../src/config"
+import {
+  CLOSE_POLICIES,
+  configPath,
+  DEFAULTS,
+  effectiveConfig,
+  parseAssignment,
+  readOverrides,
+  writeAssignments,
+} from "../src/config"
 import { buildIdentity } from "../src/identity"
-import { PACKAGE_DIR, instanceDir, pathsFor } from "../src/paths"
 import type { Decision, Sample, Settings, Timing } from "../src/idle"
-import { IdleMachine, autosaveName, savesToRotate } from "../src/idle"
+import { autosaveName, IdleMachine, savesToRotate } from "../src/idle"
+import { instanceDir, PACKAGE_DIR, pathsFor } from "../src/paths"
 import {
   ensureWatcher,
   parseCpuTime,
@@ -26,20 +43,24 @@ import {
 } from "../src/watch"
 
 const MIN = 60_000
-const TIMING: Timing = { tickMs: 15_000, wakeGapMs: 45_000, cpuWindowMs: 60_000, settleMs: 60_000, driftCheckMs: 30 * MIN }
+const TIMING: Timing = {
+  tickMs: 15_000,
+  wakeGapMs: 45_000,
+  cpuWindowMs: 60_000,
+  settleMs: 60_000,
+  driftCheckMs: 30 * MIN,
+}
 const SETTINGS: Settings = {
   idleCpuPercent: 5,
   autosave: { enabled: true, idleMinutes: 10 },
   stow: { enabled: true, idleMinutes: 60 },
 }
 
-/** Drives an IdleMachine tick by tick, like the watcher loop does. */
 class Harness {
   now = 1_700_000_000_000
   readonly machine = new IdleMachine(this.now, TIMING)
   activityAt: number | null = null
   vnc = 0
-  /** The guest is paused or asleep. */
   frozen = false
   readonly log: { readonly at: number; readonly d: Decision }[] = []
 
@@ -51,17 +72,21 @@ class Harness {
 
   tick(cpu: number | null, advanceMs = TIMING.tickMs): Decision[] {
     this.now += advanceMs
-    const s: Sample = { wallMs: this.now, cpu, activityAtMs: this.activityAt, vncClients: this.vnc, frozen: this.frozen }
+    const s: Sample = {
+      wallMs: this.now,
+      cpu,
+      activityAtMs: this.activityAt,
+      vncClients: this.vnc,
+      frozen: this.frozen,
+    }
     const ds = this.machine.tick(s, this.settings)
     for (const d of ds) {
       this.log.push({ at: this.now, d })
-      // The loop reports back after running an action, as watch.ts does.
       if (d.kind === "autosave") this.machine.actionDone(this.now)
     }
     return ds
   }
 
-  /** Tick `minutes` worth at a fixed CPU share. */
   run(minutes: number, cpu: number): void {
     for (let t = 0; t < (minutes * MIN) / TIMING.tickMs; t += 1) this.tick(cpu)
   }
@@ -71,8 +96,8 @@ class Harness {
   }
 }
 
-const IDLE = 0.004 // measured: an idle desktop is 0.3-1% of 4 vCPUs
-const BUSY = 0.25 // one busy thread
+const IDLE = 0.004
+const BUSY = 0.25
 
 describe("idle state machine", () => {
   it("autosaves once per idle stretch, and again only after real activity", () => {
@@ -82,18 +107,15 @@ describe("idle state machine", () => {
     h.run(1, IDLE)
     expect(h.kinds("autosave")).toHaveLength(1)
 
-    // Still idle, long past the threshold: no second save.
     h.run(30, IDLE)
     expect(h.kinds("autosave")).toHaveLength(1)
 
-    // Used, then idle again: a second save, idleMinutes after the activity stopped.
     h.run(2, BUSY)
     const busyEnded = h.now
     h.run(12, IDLE)
     const saves = h.kinds("autosave")
     expect(saves).toHaveLength(2)
     const second = saves[1] ?? 0
-    // The 1-minute CPU average is what delays it by up to a minute.
     expect(second - busyEnded).toBeGreaterThanOrEqual(10 * MIN)
     expect(second - busyEnded).toBeLessThanOrEqual(11 * MIN + TIMING.tickMs)
   })
@@ -102,7 +124,6 @@ describe("idle state machine", () => {
     const h = new Harness()
     h.run(10.25, IDLE)
     expect(h.kinds("autosave")).toHaveLength(1)
-    // The save made QEMU busy for a while; the samples right after say so.
     h.tick(0.9)
     h.tick(0.5)
     h.run(20, IDLE)
@@ -113,7 +134,7 @@ describe("idle state machine", () => {
   it("ignores a single background spike but not sustained load", () => {
     const h = new Harness()
     h.run(5, IDLE)
-    h.tick(0.167) // one Defender/indexer burst, as measured: 16.7% for one sample
+    h.tick(0.167)
     h.run(5.25, IDLE)
     expect(h.kinds("autosave")).toHaveLength(1)
 
@@ -154,18 +175,25 @@ describe("idle state machine", () => {
     expect(h.kinds("stow")).toHaveLength(1)
     h.run(30, IDLE)
     expect(h.kinds("stow")).toHaveLength(1)
-    expect(h.kinds("autosave")).toHaveLength(1) // the one at 10 min
+    expect(h.kinds("autosave")).toHaveLength(1)
   })
 
   it("stow supersedes an autosave due at the same moment", () => {
-    const h = new Harness({ ...SETTINGS, autosave: { enabled: true, idleMinutes: 5 }, stow: { enabled: true, idleMinutes: 5 } })
+    const h = new Harness({
+      ...SETTINGS,
+      autosave: { enabled: true, idleMinutes: 5 },
+      stow: { enabled: true, idleMinutes: 5 },
+    })
     h.run(6, IDLE)
     expect(h.kinds("stow")).toHaveLength(1)
     expect(h.kinds("autosave")).toHaveLength(0)
   })
 
   it("retries a failed stow only after another full idle period", () => {
-    const h = new Harness({ ...SETTINGS, autosave: { enabled: false, idleMinutes: 10 } })
+    const h = new Harness({
+      ...SETTINGS,
+      autosave: { enabled: false, idleMinutes: 10 },
+    })
     h.run(60.25, IDLE)
     expect(h.kinds("stow")).toHaveLength(1)
     h.machine.stowFailed(h.now)
@@ -176,7 +204,11 @@ describe("idle state machine", () => {
   })
 
   it("honours disabled autosave and stow", () => {
-    const h = new Harness({ ...SETTINGS, autosave: { enabled: false, idleMinutes: 10 }, stow: { enabled: false, idleMinutes: 60 } })
+    const h = new Harness({
+      ...SETTINGS,
+      autosave: { enabled: false, idleMinutes: 10 },
+      stow: { enabled: false, idleMinutes: 60 },
+    })
     h.run(120, IDLE)
     expect(h.log.filter((e) => e.d.kind !== "checkDrift")).toEqual([])
   })
@@ -184,10 +216,8 @@ describe("idle state machine", () => {
   it("syncs the clock after host sleep, and does not count the sleep as idle time", () => {
     const h = new Harness()
     h.run(8, IDLE)
-    // Lid shut for 8 hours: the next tick lands 8 h later on the wall clock.
     const ds = h.tick(IDLE, 8 * 60 * MIN)
     expect(ds).toEqual([{ kind: "syncClock", reason: "wake" }])
-    // Neither autosave (was 2 min away) nor stow fired on wake.
     expect(h.kinds("autosave")).toHaveLength(0)
     expect(h.kinds("stow")).toHaveLength(0)
     expect(h.machine.idleMs(h.now)).toBe(0)
@@ -199,9 +229,8 @@ describe("idle state machine", () => {
 
   it("does not mistake a late tick or a long action for sleep", () => {
     const h = new Harness()
-    h.tick(IDLE, TIMING.tickMs + 40_000) // a loaded host delays a timer by 40 s
+    h.tick(IDLE, TIMING.tickMs + 40_000)
     expect(h.kinds("syncClock")).toHaveLength(0)
-    // A five-minute save, reported through actionDone, is not a gap either.
     h.machine.actionDone(h.now + 5 * MIN)
     h.now += 5 * MIN
     h.tick(IDLE)
@@ -209,13 +238,16 @@ describe("idle state machine", () => {
   })
 
   it("asks for a drift check every 30 minutes", () => {
-    const h = new Harness({ ...SETTINGS, autosave: { enabled: false, idleMinutes: 10 }, stow: { enabled: false, idleMinutes: 60 } })
+    const h = new Harness({
+      ...SETTINGS,
+      autosave: { enabled: false, idleMinutes: 10 },
+      stow: { enabled: false, idleMinutes: 60 },
+    })
     h.run(95, IDLE)
     expect(h.kinds("checkDrift")).toHaveLength(3)
   })
 
   it("never autosaves or stows a paused guest, however long it is paused", () => {
-    // A paused guest's CPU reads as idle (0.1% measured on pause-test).
     const h = new Harness()
     h.frozen = true
     h.run(6 * 60, 0.001)
@@ -231,12 +263,10 @@ describe("idle state machine", () => {
     h.frozen = true
     h.run(120, 0.001)
     h.frozen = false
-    // Resumed after two hours: not stowed, not autosaved, on the spot.
     h.tick(IDLE)
     expect(h.kinds("stow")).toHaveLength(0)
     expect(h.kinds("autosave")).toHaveLength(0)
     expect(h.machine.idleMs(h.now)).toBeLessThanOrEqual(TIMING.tickMs)
-    // Left idle after resuming, it is treated like any idle guest.
     h.run(10.25, IDLE)
     expect(h.kinds("autosave")).toHaveLength(1)
     h.run(50, IDLE)
@@ -259,12 +289,15 @@ describe("idle state machine", () => {
   it("treats the wall clock going backwards as a jump to resync", () => {
     const h = new Harness()
     h.tick(IDLE)
-    expect(h.tick(IDLE, -10 * MIN)).toEqual([{ kind: "syncClock", reason: "clock-jump" }])
+    expect(h.tick(IDLE, -10 * MIN)).toEqual([
+      { kind: "syncClock", reason: "clock-jump" },
+    ])
   })
 })
 
 describe("autosave rotation", () => {
-  const at = (min: number): string => new Date(Date.UTC(2026, 9, 21, 12, min)).toISOString()
+  const at = (min: number): string =>
+    new Date(Date.UTC(2026, 9, 21, 12, min)).toISOString()
   const saves = [
     { name: "auto-1", kind: "auto", createdAt: at(1) },
     { name: "baseline", kind: "baseline", createdAt: at(0) },
@@ -278,7 +311,12 @@ describe("autosave rotation", () => {
 
   it("keeps the newest N auto saves and deletes the rest", () => {
     expect(savesToRotate(saves, 3)).toEqual(["auto-2", "auto-1"])
-    expect(savesToRotate(saves, 1)).toEqual(["auto-6", "auto-4", "auto-2", "auto-1"])
+    expect(savesToRotate(saves, 1)).toEqual([
+      "auto-6",
+      "auto-4",
+      "auto-2",
+      "auto-1",
+    ])
     expect(savesToRotate(saves, 10)).toEqual([])
   })
 
@@ -291,7 +329,9 @@ describe("autosave rotation", () => {
   })
 
   it("names autosaves sortably", () => {
-    expect(autosaveName(Date.UTC(2026, 9, 21, 16, 43, 7, 250))).toBe("auto-20261021T164307Z")
+    expect(autosaveName(Date.UTC(2026, 9, 21, 16, 43, 7, 250))).toBe(
+      "auto-20261021T164307Z",
+    )
   })
 })
 
@@ -307,19 +347,22 @@ describe("ps cpu time", () => {
 
 describe("instance config", () => {
   const home = mkdtempSync(resolve(tmpdir(), "winvm-config-"))
-  const before = process.env["WINVM_HOME"]
+  const before = process.env.WINVM_HOME
   beforeAll(() => {
-    process.env["WINVM_HOME"] = home
+    process.env.WINVM_HOME = home
   })
   afterAll(() => {
-    if (before === undefined) delete process.env["WINVM_HOME"]
-    else process.env["WINVM_HOME"] = before
+    if (before === undefined) delete process.env.WINVM_HOME
+    else process.env.WINVM_HOME = before
     rmSync(home, { recursive: true, force: true })
   })
 
   it("defaults, overrides, and back to default", () => {
     expect(effectiveConfig("t")).toEqual(DEFAULTS)
-    writeAssignments("t", [parseAssignment("autosave.idleMinutes=1"), parseAssignment("stow.enabled=off")])
+    writeAssignments("t", [
+      parseAssignment("autosave.idleMinutes=1"),
+      parseAssignment("stow.enabled=off"),
+    ])
     expect(effectiveConfig("t")["autosave.idleMinutes"]).toBe(1)
     expect(effectiveConfig("t")["stow.enabled"]).toBe(false)
     writeAssignments("t", [parseAssignment("stow.enabled=true")])
@@ -337,9 +380,15 @@ describe("instance config", () => {
 
   it("keeps a title for the Mac app, checked, and clears it when empty", () => {
     expect(effectiveConfig("titled").title).toBe("")
-    expect(parseAssignment("title=  Build box  ")).toEqual(["title", "Build box"])
+    expect(parseAssignment("title=  Build box  ")).toEqual([
+      "title",
+      "Build box",
+    ])
     expect(parseAssignment("title=a=b")).toEqual(["title", "a=b"])
-    writeAssignments("titled", [parseAssignment("title=Build box"), parseAssignment("stow.enabled=off")])
+    writeAssignments("titled", [
+      parseAssignment("title=Build box"),
+      parseAssignment("stow.enabled=off"),
+    ])
     expect(effectiveConfig("titled").title).toBe("Build box")
     writeAssignments("titled", [parseAssignment("title=")])
     expect(readOverrides("titled")).toEqual({ "stow.enabled": false })
@@ -349,7 +398,10 @@ describe("instance config", () => {
 
   it("ignores a title in config.json that would not pass the check", () => {
     mkdirSync(instanceDir("edited"), { recursive: true })
-    writeFileSync(configPath("edited"), JSON.stringify({ title: "bad\u0007bell", "stow.enabled": false }))
+    writeFileSync(
+      configPath("edited"),
+      JSON.stringify({ title: "bad\u0007bell", "stow.enabled": false }),
+    )
     expect(readOverrides("edited")).toEqual({ "stow.enabled": false })
     writeFileSync(configPath("edited"), JSON.stringify({ title: 42 }))
     expect(effectiveConfig("edited").title).toBe("")
@@ -358,13 +410,13 @@ describe("instance config", () => {
 
 describe("instance settings: close policy", () => {
   const home = mkdtempSync(resolve(tmpdir(), "winvm-closepolicy-"))
-  const before = process.env["WINVM_HOME"]
+  const before = process.env.WINVM_HOME
   beforeAll(() => {
-    process.env["WINVM_HOME"] = home
+    process.env.WINVM_HOME = home
   })
   afterAll(() => {
-    if (before === undefined) delete process.env["WINVM_HOME"]
-    else process.env["WINVM_HOME"] = before
+    if (before === undefined) delete process.env.WINVM_HOME
+    else process.env.WINVM_HOME = before
     rmSync(home, { recursive: true, force: true })
   })
 
@@ -374,23 +426,42 @@ describe("instance settings: close policy", () => {
   })
 
   it("accepts each policy exactly", () => {
-    for (const policy of CLOSE_POLICIES) expect(parseAssignment(`viewer.closePolicy=${policy}`)).toEqual(["viewer.closePolicy", policy])
+    for (const policy of CLOSE_POLICIES)
+      expect(parseAssignment(`viewer.closePolicy=${policy}`)).toEqual([
+        "viewer.closePolicy",
+        policy,
+      ])
   })
 
   it("rejects case variants and unknown values, listing what is allowed", () => {
-    for (const bad of ["Ask", "LEAVE", "Stow", "shutDown", "pause", "", "leave now"]) {
-      expect(() => parseAssignment(`viewer.closePolicy=${bad}`)).toThrow("ask, leave, stow, shutdown")
+    for (const bad of [
+      "Ask",
+      "LEAVE",
+      "Stow",
+      "shutDown",
+      "pause",
+      "",
+      "leave now",
+    ]) {
+      expect(() => parseAssignment(`viewer.closePolicy=${bad}`)).toThrow(
+        "ask, leave, stow, shutdown",
+      )
     }
   })
 
   it("does not apply title validation to it", () => {
-    expect(() => parseAssignment(`viewer.closePolicy=${"x".repeat(81)}`)).not.toThrow("80")
+    expect(() =>
+      parseAssignment(`viewer.closePolicy=${"x".repeat(81)}`),
+    ).not.toThrow("80")
   })
 
   it("falls back to ask for an invalid value on disk, keeping valid neighbours", () => {
     mkdirSync(instanceDir("badpolicy"), { recursive: true })
     for (const bad of ["Ask", "pause", "", 3, null, true]) {
-      writeFileSync(configPath("badpolicy"), JSON.stringify({ "viewer.closePolicy": bad, "stow.enabled": false }))
+      writeFileSync(
+        configPath("badpolicy"),
+        JSON.stringify({ "viewer.closePolicy": bad, "stow.enabled": false }),
+      )
       expect(readOverrides("badpolicy")).toEqual({ "stow.enabled": false })
       expect(effectiveConfig("badpolicy")["viewer.closePolicy"]).toBe("ask")
     }
@@ -398,15 +469,26 @@ describe("instance settings: close policy", () => {
 
   it("persists a non-default policy and reads it back", () => {
     writeAssignments("chosen", [parseAssignment("viewer.closePolicy=shutdown")])
-    expect(readOverrides("chosen")).toEqual({ "viewer.closePolicy": "shutdown" })
+    expect(readOverrides("chosen")).toEqual({
+      "viewer.closePolicy": "shutdown",
+    })
     expect(effectiveConfig("chosen")["viewer.closePolicy"]).toBe("shutdown")
   })
 
   it("writing ask removes the override and keeps unrelated settings", () => {
-    writeAssignments("reset", [parseAssignment("viewer.closePolicy=stow"), parseAssignment("title=Build box"), parseAssignment("stow.enabled=off")])
+    writeAssignments("reset", [
+      parseAssignment("viewer.closePolicy=stow"),
+      parseAssignment("title=Build box"),
+      parseAssignment("stow.enabled=off"),
+    ])
     writeAssignments("reset", [parseAssignment("viewer.closePolicy=ask")])
-    expect(readOverrides("reset")).toEqual({ title: "Build box", "stow.enabled": false })
-    expect(JSON.parse(readFileSync(configPath("reset"), "utf8"))).not.toHaveProperty("viewer.closePolicy")
+    expect(readOverrides("reset")).toEqual({
+      title: "Build box",
+      "stow.enabled": false,
+    })
+    expect(
+      JSON.parse(readFileSync(configPath("reset"), "utf8")),
+    ).not.toHaveProperty("viewer.closePolicy")
     expect(effectiveConfig("reset")["viewer.closePolicy"]).toBe("ask")
   })
 })
@@ -421,13 +503,13 @@ describe("watcher after a load or rewind", () => {
   })
 
   const home = mkdtempSync(resolve(tmpdir(), "winvm-rewatch-"))
-  const before = process.env["WINVM_HOME"]
+  const before = process.env.WINVM_HOME
   beforeAll(() => {
-    process.env["WINVM_HOME"] = home
+    process.env.WINVM_HOME = home
   })
   afterAll(() => {
-    if (before === undefined) delete process.env["WINVM_HOME"]
-    else process.env["WINVM_HOME"] = before
+    if (before === undefined) delete process.env.WINVM_HOME
+    else process.env.WINVM_HOME = before
     rmSync(home, { recursive: true, force: true })
   })
   it("never starts one with watch.enabled=false", () => {
@@ -443,22 +525,24 @@ describe("watcher generations", () => {
   const spawned: ReturnType<typeof Bun.spawn>[] = []
 
   beforeEach(() => {
-    savedHome = process.env["WINVM_HOME"]
+    savedHome = process.env.WINVM_HOME
     home = mkdtempSync(resolve(tmpdir(), "winvm-watchgen-"))
-    process.env["WINVM_HOME"] = home
+    process.env.WINVM_HOME = home
     mkdirSync(instanceDir("w"), { recursive: true })
   })
   afterEach(() => {
     for (const s of spawned.splice(0)) s.kill()
-    if (savedHome === undefined) delete process.env["WINVM_HOME"]
-    else process.env["WINVM_HOME"] = savedHome
+    if (savedHome === undefined) delete process.env.WINVM_HOME
+    else process.env.WINVM_HOME = savedHome
     rmSync(home, { recursive: true, force: true })
   })
 
-  /** A process of ours whose command line passes the watcher check without being one; a single process, so no orphan. */
   const fakeWatcher = (): ReturnType<typeof Bun.spawn> => {
     const holder = resolve(import.meta.dir, "fakes", "holder.ts")
-    const h = Bun.spawn([process.execPath, holder, "winvm", "watch", "-i", "w"], { stdout: "ignore", stderr: "ignore" })
+    const h = Bun.spawn(
+      [process.execPath, holder, "winvm", "watch", "-i", "w"],
+      { stdout: "ignore", stderr: "ignore" },
+    )
     spawned.push(h)
     return h
   }
@@ -470,12 +554,20 @@ describe("watcher generations", () => {
       return false
     }
   }
-  const lock = (pid: number): void => { writeFileSync(watchPathsFor("w").pid, `${String(pid)}\n`) }
-  const state = (o: Record<string, unknown>): void => { writeFileSync(watchPathsFor("w").state, JSON.stringify(o)) }
+  const lock = (pid: number): void => {
+    writeFileSync(watchPathsFor("w").pid, `${String(pid)}\n`)
+  }
+  const state = (o: Record<string, unknown>): void => {
+    writeFileSync(watchPathsFor("w").state, JSON.stringify(o))
+  }
 
   it("classifies a record by its build: current, stale, or legacy when it has none", () => {
-    expect(watcherFreshness({ pid: 1, build: CURRENT }, CURRENT)).toBe("current")
-    expect(watcherFreshness({ pid: 1, build: "sha256:old" }, CURRENT)).toBe("stale")
+    expect(watcherFreshness({ pid: 1, build: CURRENT }, CURRENT)).toBe(
+      "current",
+    )
+    expect(watcherFreshness({ pid: 1, build: "sha256:old" }, CURRENT)).toBe(
+      "stale",
+    )
     expect(watcherFreshness({ pid: 1 }, CURRENT)).toBe("legacy")
     expect(watcherFreshness({ pid: 1, build: buildIdentity() })).toBe("current")
   })
@@ -523,7 +615,6 @@ describe("watcher generations", () => {
     expect(ensureWatcher("w")).toBe(h.pid)
   })
 
-  /** A fake clock and process table: no real wait, no real signal. */
   const seams = (o: { readonly dies: "never" | "on-term" }) => {
     const calls: { sig: string; at: number }[] = []
     let t = 1_000
@@ -579,7 +670,6 @@ describe("watcher generations", () => {
 
   it("believes watch.json's autosaving only when it names the watcher being stopped", async () => {
     lock(424_242)
-    // Left by an earlier watcher: it says nothing about this one.
     state({ pid: 424_243, build: CURRENT, state: "autosaving" })
     const s = seams({ dies: "never" })
     expect(await stopWatcher("w", s.seams)).toBe(true)
@@ -592,7 +682,6 @@ describe("watcher generations", () => {
     state({ pid: 424_242, build: CURRENT, state: "watching" })
     let t = 1_000
     const kills: string[] = []
-    // A watcher through its whole 10 s, and then the pid is someone else's.
     const result = await stopWatcher("w", {
       kill: (_pid, sig) => void kills.push(sig),
       now: () => t,
@@ -611,29 +700,43 @@ describe("watcher generations", () => {
     spawned.push(stranger)
     lock(stranger.pid)
     const kills: string[] = []
-    // Real command validation, and a kill that records instead of signalling.
-    expect(await stopWatcher("w", { kill: (_p, sig) => void kills.push(sig) })).toBe(false)
+    expect(
+      await stopWatcher("w", { kill: (_p, sig) => void kills.push(sig) }),
+    ).toBe(false)
     expect(kills).toEqual([])
     expect(alive(stranger.pid)).toBe(true)
   })
 
-  /** A watcher of another instance, as a pid reused into this one's watch.pid would look. */
   for (const [label, argv] of [
     ["another instance's watcher", ["winvm", "watch", "-i", "other"]],
-    ["the watcher of an instance whose name starts with this one's", ["winvm", "watch", "-i", "wx"]],
-    ["a watcher named with --instance=", ["winvm", "watch", "--instance=other"]],
-    ["a `watch --stop` for this instance", ["winvm", "watch", "-i", "w", "--stop"]],
-    ["an unrelated executable whose name ends in winvm", ["evilwinvm", "watch", "-i", "w"]],
+    [
+      "the watcher of an instance whose name starts with this one's",
+      ["winvm", "watch", "-i", "wx"],
+    ],
+    [
+      "a watcher named with --instance=",
+      ["winvm", "watch", "--instance=other"],
+    ],
+    [
+      "a `watch --stop` for this instance",
+      ["winvm", "watch", "-i", "w", "--stop"],
+    ],
+    [
+      "an unrelated executable whose name ends in winvm",
+      ["evilwinvm", "watch", "-i", "w"],
+    ],
   ] as const) {
     it(`never takes ${label} for this instance's watcher, before SIGTERM or SIGKILL`, async () => {
       const holder = resolve(import.meta.dir, "fakes", "holder.ts")
-      const h = Bun.spawn([process.execPath, holder, ...argv], { stdout: "ignore", stderr: "ignore" })
+      const h = Bun.spawn([process.execPath, holder, ...argv], {
+        stdout: "ignore",
+        stderr: "ignore",
+      })
       spawned.push(h)
       lock(h.pid)
       state({ pid: h.pid, build: CURRENT, state: "watching" })
       const kills: string[] = []
       let t = 0
-      // Real command validation; a kill that records, and a clock that does not wait.
       const stopped = await stopWatcher("w", {
         kill: (_p, sig) => void kills.push(sig),
         now: () => t,
@@ -657,7 +760,10 @@ describe("watcher generations", () => {
       ["winvm", "watch", "--instance=w"],
       ["winvm-aarch64-apple-darwin", "watch", "-i", "w"],
     ]) {
-      const h = Bun.spawn([process.execPath, holder, ...argv], { stdout: "ignore", stderr: "ignore" })
+      const h = Bun.spawn([process.execPath, holder, ...argv], {
+        stdout: "ignore",
+        stderr: "ignore",
+      })
       spawned.push(h)
       lock(h.pid)
       expect(watcherRecord("w")?.pid).toBe(h.pid)
@@ -665,23 +771,47 @@ describe("watcher generations", () => {
   })
 
   it("publishes its build as soon as it holds the lock, and in every later state", async () => {
-    const cli = resolve(PACKAGE_DIR, "..", "..", "apps", "cli", "src", "winvm.ts")
+    const cli = resolve(
+      PACKAGE_DIR,
+      "..",
+      "..",
+      "apps",
+      "cli",
+      "src",
+      "winvm.ts",
+    )
     const p = pathsFor("w")
     writeFileSync(p.meta, JSON.stringify({ image: "x", vnc: 9, created: "" }))
-    // QEMU stand-in: the pidfile names this test process, which is alive.
     writeFileSync(p.pid, `${String(process.pid)}\n`)
-    const env: Record<string, string | undefined> = { ...process.env, WINVM_HOME: home }
-    delete env["WINVM_BUILD_ID"]
-    const child = Bun.spawn([process.execPath, cli, "watch", "-i", "w"], { env, stdout: "ignore", stderr: "ignore" })
+    const env: Record<string, string | undefined> = {
+      ...process.env,
+      WINVM_HOME: home,
+    }
+    delete env.WINVM_BUILD_ID
+    const child = Bun.spawn([process.execPath, cli, "watch", "-i", "w"], {
+      env,
+      stdout: "ignore",
+      stderr: "ignore",
+    })
     spawned.push(child)
     try {
       const deadline = Date.now() + 15_000
-      while (Date.now() < deadline && readWatchState("w")?.build === undefined) await new Promise((r) => setTimeout(r, 50))
-      expect(readWatchState("w")).toMatchObject({ pid: child.pid, build: buildIdentity() })
-      expect(watcherRecord("w")).toEqual({ pid: child.pid, build: buildIdentity(), cli })
+      while (Date.now() < deadline && readWatchState("w")?.build === undefined)
+        await new Promise((r) => setTimeout(r, 50))
+      expect(readWatchState("w")).toMatchObject({
+        pid: child.pid,
+        build: buildIdentity(),
+      })
+      expect(watcherRecord("w")).toEqual({
+        pid: child.pid,
+        build: buildIdentity(),
+        cli,
+      })
       child.kill("SIGTERM")
       await child.exited
-      expect(JSON.parse(readFileSync(watchPathsFor("w").state, "utf8"))).toMatchObject({ state: "stopped", build: buildIdentity() })
+      expect(
+        JSON.parse(readFileSync(watchPathsFor("w").state, "utf8")),
+      ).toMatchObject({ state: "stopped", build: buildIdentity() })
     } finally {
       child.kill("SIGKILL")
     }

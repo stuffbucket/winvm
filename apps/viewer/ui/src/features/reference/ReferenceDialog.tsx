@@ -4,13 +4,14 @@ import { Button } from "../../components/Button"
 import { t } from "../../i18n"
 
 interface ReferenceDialogProps {
-  /** The CLI's own usage text, from `winvm help`; null while it loads. */
   readonly text: string | null
   onClose: () => void
 }
 
-/** Help → winvm Command Reference: every command the CLI has, as it describes them. */
-export function ReferenceDialog({ text, onClose }: ReferenceDialogProps): JSX.Element {
+export function ReferenceDialog({
+  text,
+  onClose,
+}: ReferenceDialogProps): JSX.Element {
   const dialog = useRef<HTMLDialogElement | null>(null)
 
   useEffect(() => {
@@ -36,7 +37,9 @@ export function ReferenceDialog({ text, onClose }: ReferenceDialogProps): JSX.El
           {t("reference.title")}
         </h2>
         <p className="confirm-dialog__body">{t("reference.body")}</p>
-        <pre className="output reference__text">{text ?? t("state.loading")}</pre>
+        <pre className="output reference__text">
+          {text ?? t("state.loading")}
+        </pre>
         <div className="confirm-dialog__actions">
           <Button variant="primary" onClick={onClose}>
             {t("reference.close")}

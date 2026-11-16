@@ -2,9 +2,8 @@ import { AsyncLocalStorage } from "node:async_hooks"
 import { randomUUID } from "node:crypto"
 import { existsSync, mkdirSync, rmSync } from "node:fs"
 import { dirname } from "node:path"
-
-import { isValidInstanceName } from "./args"
 import type { Args } from "./args"
+import { isValidInstanceName } from "./args"
 import { linkNew, readOr, replaceWhole, takeOver } from "./exclusive"
 import { pathsFor } from "./paths"
 import { isSameProcess, ownStart, processStart } from "./proc"
@@ -70,31 +69,49 @@ export interface LeaseOptions extends LeaseSeams {
 export const AUTOMATIC_ENV = "WINVM_AUTOMATIC"
 export const AUTOMATIC_WAIT_MS = 10 * 60_000
 
-const isVmOperation = (v: unknown): v is VmOperation => typeof v === "string" && (VM_OPERATIONS as readonly string[]).includes(v)
+const isVmOperation = (v: unknown): v is VmOperation =>
+  typeof v === "string" && (VM_OPERATIONS as readonly string[]).includes(v)
 
-const GOLDEN_ACTION: Readonly<Record<string, VmOperation>> = { create: "golden-create", reset: "golden-reset" }
+const GOLDEN_ACTION: Readonly<Record<string, VmOperation>> = {
+  create: "golden-create",
+  reset: "golden-reset",
+}
 
-export function operationFor(sub: string | undefined, args: Args): LeaseOperation | null {
+export function operationFor(
+  sub: string | undefined,
+  args: Args,
+): LeaseOperation | null {
   const action = args.positional[0]
-  if (sub === "golden") return action === undefined ? null : (GOLDEN_ACTION[action] ?? null)
+  if (sub === "golden")
+    return action === undefined ? null : (GOLDEN_ACTION[action] ?? null)
   if (sub === "share") return action === "install" ? "setup" : null
   if (sub === "destroy") return "destroy"
-  if (sub === "setup" || sub === "golden-create" || sub === "golden-reset") return null
+  if (sub === "setup" || sub === "golden-create" || sub === "golden-reset")
+    return null
   return isVmOperation(sub) ? sub : null
 }
 
 const CREATES: readonly LeaseOperation[] = ["start", "load", "golden-create"]
 
-const isPlainName = (name: string): boolean => name !== "" && name !== "." && name !== ".." && !name.includes("/") && !name.includes("\0")
+const isPlainName = (name: string): boolean =>
+  name !== "" &&
+  name !== "." &&
+  name !== ".." &&
+  !name.includes("/") &&
+  !name.includes("\0")
 
 function leaseable(name: string, operation: LeaseOperation): boolean {
   if (!isPlainName(name)) return false
-  return existsSync(pathsFor(name).meta) || (CREATES.includes(operation) && isValidInstanceName(name))
+  return (
+    existsSync(pathsFor(name).meta) ||
+    (CREATES.includes(operation) && isValidInstanceName(name))
+  )
 }
 
 const held = new AsyncLocalStorage<ReadonlyMap<string, string>>()
 
-const heldHere = (name: string): string | undefined => held.getStore()?.get(name)
+const heldHere = (name: string): string | undefined =>
+  held.getStore()?.get(name)
 
 export class InstanceBusy extends Error {
   readonly holder: LeaseHolder
@@ -109,7 +126,8 @@ export class InstanceBusy extends Error {
   }
 }
 
-const text = (v: unknown, fallback: string): string => (typeof v === "string" ? v : fallback)
+const text = (v: unknown, fallback: string): string =>
+  typeof v === "string" ? v : fallback
 
 function parseRecord(json: string): LeaseRecord | null {
   let v: unknown
@@ -120,46 +138,72 @@ function parseRecord(json: string): LeaseRecord | null {
   }
   if (typeof v !== "object" || v === null || Array.isArray(v)) return null
   const r = v as Record<string, unknown>
-  const pid = r["pid"]
+  const pid = r.pid
   if (typeof pid !== "number" || !Number.isInteger(pid) || pid <= 0) return null
   return {
-    operation: text(r["operation"], "unknown"),
-    id: text(r["id"], ""),
+    operation: text(r.operation, "unknown"),
+    id: text(r.id, ""),
     pid,
-    pidStart: typeof r["pidStart"] === "string" ? r["pidStart"] : null,
-    startedAt: text(r["startedAt"], ""),
-    instance: text(r["instance"], ""),
-    automatic: r["automatic"] === true,
-    ...(r["savingRunning"] === true ? { savingRunning: true as const } : {}),
+    pidStart: typeof r.pidStart === "string" ? r.pidStart : null,
+    startedAt: text(r.startedAt, ""),
+    instance: text(r.instance, ""),
+    automatic: r.automatic === true,
+    ...(r.savingRunning === true ? { savingRunning: true as const } : {}),
   }
 }
 
-function readLease(name: string, seams: LeaseSeams = {}, recover = false): LeaseRecord | null {
+function readLease(
+  name: string,
+  seams: LeaseSeams = {},
+  recover = false,
+): LeaseRecord | null {
   if (!isPlainName(name)) return null
   const file = pathsFor(name).lease
   const json = readOr(file, null)
   if (json === null) return null
   const r = parseRecord(json)
-  if (r !== null && isSameProcess(r.pid, r.pidStart, seams.startOf ?? processStart)) return r
+  if (
+    r !== null &&
+    isSameProcess(r.pid, r.pidStart, seams.startOf ?? processStart)
+  )
+    return r
   if (recover) takeOver(file, json)
   return null
 }
 
-const holderOf = (r: LeaseRecord): LeaseHolder => ({ operation: r.operation, pid: r.pid, startedAt: r.startedAt, automatic: r.automatic })
+const holderOf = (r: LeaseRecord): LeaseHolder => ({
+  operation: r.operation,
+  pid: r.pid,
+  startedAt: r.startedAt,
+  automatic: r.automatic,
+})
 
-export function readOperation(name: string, seams: LeaseSeams = {}): OperationInfo | null {
+export function readOperation(
+  name: string,
+  seams: LeaseSeams = {},
+): OperationInfo | null {
   const r = readLease(name, seams)
-  return r === null || !isVmOperation(r.operation) ? null : { operation: r.operation, pid: r.pid, startedAt: r.startedAt }
+  return r === null || !isVmOperation(r.operation)
+    ? null
+    : { operation: r.operation, pid: r.pid, startedAt: r.startedAt }
 }
 
-export function leaseHolder(name: string, seams: LeaseSeams = {}, recover = false): LeaseHolder | null {
+export function leaseHolder(
+  name: string,
+  seams: LeaseSeams = {},
+  recover = false,
+): LeaseHolder | null {
   const r = readLease(name, seams, recover)
   return r === null || r.id === heldHere(name) ? null : holderOf(r)
 }
 
-export const savingRunning = (name: string, seams: LeaseSeams = {}): boolean => readLease(name, seams)?.savingRunning === true
+export const savingRunning = (name: string, seams: LeaseSeams = {}): boolean =>
+  readLease(name, seams)?.savingRunning === true
 
-function rewriteOwn(name: string, change: (r: LeaseRecord) => LeaseRecord): void {
+function rewriteOwn(
+  name: string,
+  change: (r: LeaseRecord) => LeaseRecord,
+): void {
   const id = heldHere(name)
   if (id === undefined) return
   const file = pathsFor(name).lease
@@ -167,26 +211,40 @@ function rewriteOwn(name: string, change: (r: LeaseRecord) => LeaseRecord): void
   if (current?.id === id) replaceWhole(file, JSON.stringify(change(current)))
 }
 
-export const markSavingRunning = (name: string): void => { rewriteOwn(name, (r) => ({ ...r, savingRunning: true })) }
+export const markSavingRunning = (name: string): void => {
+  rewriteOwn(name, (r) => ({ ...r, savingRunning: true }))
+}
 
-export const clearSavingRunning = (name: string): void =>
-  { rewriteOwn(name, ({ savingRunning: _, ...rest }) => rest) }
+export const clearSavingRunning = (name: string): void => {
+  rewriteOwn(name, ({ savingRunning: _, ...rest }) => rest)
+}
 
 function release(file: string, id: string): void {
   if (parseRecord(readOr(file, ""))?.id === id) rmSync(file, { force: true })
 }
 
-const sleep = async (ms: number): Promise<void> => { await new Promise((r) => setTimeout(r, ms)) }
+const sleep = async (ms: number): Promise<void> => {
+  await new Promise((r) => setTimeout(r, ms))
+}
 
-const waitsFor = (automatic: boolean, holder: LeaseHolder): boolean => !automatic && holder.automatic
+const waitsFor = (automatic: boolean, holder: LeaseHolder): boolean =>
+  !automatic && holder.automatic
 
 function announceWait(name: string): (holder: LeaseHolder) => void {
-  return (holder) => { console.error(`instance "${name}": waiting for the ${holder.operation} winvm started by itself (pid ${String(holder.pid)}) to finish`) }
+  return (holder) => {
+    console.error(
+      `instance "${name}": waiting for the ${holder.operation} winvm started by itself (pid ${String(holder.pid)}) to finish`,
+    )
+  }
 }
 
 const TAKE_ATTEMPTS = 50
 
-async function acquire(name: string, operation: LeaseOperation, o: LeaseOptions): Promise<LeaseRecord | InstanceBusy> {
+async function acquire(
+  name: string,
+  operation: LeaseOperation,
+  o: LeaseOptions,
+): Promise<LeaseRecord | InstanceBusy> {
   const file = pathsFor(name).lease
   const automatic = o.automatic ?? process.env[AUTOMATIC_ENV] === "1"
   const record: LeaseRecord = {
@@ -209,7 +267,8 @@ async function acquire(name: string, operation: LeaseOperation, o: LeaseOptions)
       vanished += 1
       continue
     }
-    if (!waitsFor(automatic, holder) || Date.now() >= deadline) return new InstanceBusy(name, holder)
+    if (!waitsFor(automatic, holder) || Date.now() >= deadline)
+      return new InstanceBusy(name, holder)
     if (!announced) onWait(holder)
     announced = true
     await sleep(o.pollMs ?? 200)
@@ -217,19 +276,36 @@ async function acquire(name: string, operation: LeaseOperation, o: LeaseOptions)
   throw new Error(`could not take ${file}: it kept changing under this command`)
 }
 
-export async function withOperation<T>(name: string, operation: LeaseOperation, run: () => T | Promise<T>, o: LeaseOptions = {}): Promise<T> {
-  if (heldHere(name) !== undefined || !leaseable(name, operation)) return await run()
-  const got = await acquire(name, operation, operation === "kill" ? { ...o, waitMs: 0 } : o)
+export async function withOperation<T>(
+  name: string,
+  operation: LeaseOperation,
+  run: () => T | Promise<T>,
+  o: LeaseOptions = {},
+): Promise<T> {
+  if (heldHere(name) !== undefined || !leaseable(name, operation))
+    return await run()
+  const got = await acquire(
+    name,
+    operation,
+    operation === "kill" ? { ...o, waitMs: 0 } : o,
+  )
   if (got instanceof InstanceBusy) {
     if (operation !== "kill") throw got
-    console.error(`note: ${got.holder.operation} (pid ${String(got.holder.pid)}) holds "${name}"; killing it anyway`)
+    console.error(
+      `note: ${got.holder.operation} (pid ${String(got.holder.pid)}) holds "${name}"; killing it anyway`,
+    )
     return await run()
   }
   const file = pathsFor(name).lease
-  const onExit = (): void => { release(file, got.id) }
+  const onExit = (): void => {
+    release(file, got.id)
+  }
   process.on("exit", onExit)
   try {
-    return await held.run(new Map([...(held.getStore() ?? []), [name, got.id]]), run)
+    return await held.run(
+      new Map([...(held.getStore() ?? []), [name, got.id]]),
+      run,
+    )
   } finally {
     process.off("exit", onExit)
     release(file, got.id)

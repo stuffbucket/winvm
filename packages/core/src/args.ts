@@ -1,12 +1,6 @@
-/**
- * Command-line parsing. Small, explicit, and separate so it can be tested
- * without a hypervisor: the `--` passthrough in particular is easy to get
- * subtly wrong, and `winvm exec -- <cmd>` depends on it entirely.
- */
 export interface Args {
   readonly flags: ReadonlyMap<string, string>
   readonly positional: readonly string[]
-  /** Everything after `--`, verbatim, so guest commands keep their own flags. */
   readonly rest: readonly string[]
 }
 
@@ -28,9 +22,6 @@ export function parseArgs(argv: readonly string[]): Args {
       continue
     }
     if (a.startsWith("--")) {
-      // `--key=value` carries any value, empty or starting with "-" (markdown's
-      // "- item"), which the two-word form cannot: the safe form for scripts
-      // and the app.
       const eq = a.indexOf("=")
       if (eq > 2) {
         flags.set(a.slice(2, eq), a.slice(eq + 1))
@@ -38,10 +29,6 @@ export function parseArgs(argv: readonly string[]): Args {
       }
       const key = a.slice(2)
       const next = argv[i + 1]
-      // A flag followed by a non-flag consumes it as a value; otherwise it is
-      // boolean. `--ephemeral` and `--image foo` therefore both work. A lone
-      // `-` is a value, as everywhere on a command line: "read standard input"
-      // (`saves note --text -`).
       if (next !== undefined && (next === "-" || !next.startsWith("-"))) {
         flags.set(key, next)
         i += 1
@@ -63,20 +50,10 @@ export function parseArgs(argv: readonly string[]): Args {
   return { flags, positional, rest }
 }
 
-/** Instance selection: `-i`, else WINVM_INSTANCE, else "default". */
 export function instanceName(args: Args): string {
-  return args.flags.get("instance") ?? process.env["WINVM_INSTANCE"] ?? "default"
+  return args.flags.get("instance") ?? process.env.WINVM_INSTANCE ?? "default"
 }
 
-/**
- * The instance a process's command line names, read from what follows its
- * verb (`ps -o command=` text): `-i X`, `--instance X` or `--instance=X`, as
- * parseArgs reads them; null when it names none. Splitting on whitespace is
- * exact here because an instance name holds none (isValidInstanceName).
- *
- * For telling one instance's service or watcher from another's before
- * signalling it — a prefix match would take `-i ab` for `-i a`.
- */
 export function commandInstance(afterVerb: string): string | null {
   const words = afterVerb.trim().split(/\s+/)
   for (let i = 0; i < words.length; i += 1) {
@@ -87,40 +64,27 @@ export function commandInstance(afterVerb: string): string | null {
   return null
 }
 
-/**
- * What follows `verb` when a process command line is a WinVM CLI invocation.
- * Recognises source (`winvm.ts`), installed (`winvm`) and Tauri's
- * target-suffixed sidecar (`winvm-aarch64-apple-darwin`) names. The boundary
- * before the basename is deliberate: an unrelated `evilwinvm` must never be
- * mistaken for a management process and signalled.
- */
-export function winvmCommandAfter(command: string, verb: string): string | null {
-  const target = "[A-Za-z0-9_]+-[A-Za-z0-9_]+-[A-Za-z0-9_.]+(?:-[A-Za-z0-9_.]+)?"
+export function winvmCommandAfter(
+  command: string,
+  verb: string,
+): string | null {
+  const target =
+    "[A-Za-z0-9_]+-[A-Za-z0-9_]+-[A-Za-z0-9_.]+(?:-[A-Za-z0-9_.]+)?"
   const escapedVerb = verb.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
-  const match = new RegExp(`(?:^|[\\s/])winvm(?:\\.ts|-${target})?\\s+${escapedVerb}(\\s.*)?$`).exec(command.trim())
+  const match = new RegExp(
+    `(?:^|[\\s/])winvm(?:\\.ts|-${target})?\\s+${escapedVerb}(\\s.*)?$`,
+  ).exec(command.trim())
   return match === null ? null : (match[1] ?? "")
 }
 
-/** Image selection: `--image`, else WINVM_IMAGE, else the conventional name. */
 export function imageName(args: Args): string {
-  return args.flags.get("image") ?? process.env["WINVM_IMAGE"] ?? "win11-arm64"
+  return args.flags.get("image") ?? process.env.WINVM_IMAGE ?? "win11-arm64"
 }
 
-/**
- * An image name is a single directory under images/, never a path. Without
- * this, `--image ../images/win11-arm64` resolves onto an existing image's
- * directory and walks straight past every "already exists" guard keyed on the
- * literal name.
- */
 export function isValidImageName(name: string): boolean {
   return /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(name)
 }
 
-/**
- * An instance name for a NEW instance: the same shape as an image name, a
- * single directory under instances/. Existing instances keep whatever name
- * they have; the Mac app checks names the same way (features/machines).
- */
 export function isValidInstanceName(name: string): boolean {
   return isValidImageName(name)
 }

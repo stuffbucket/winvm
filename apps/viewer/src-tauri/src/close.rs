@@ -1,40 +1,27 @@
-//! The one place that decides whether the viewer may close.
-
 use std::sync::Mutex;
 
-/// Where the one close transaction stands.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum CloseState {
-    /// Nothing asked to close.
     #[default]
     Idle,
-    /// Asked, and the window has been told once; it has not answered.
     Requested,
-    /// The window answered and is running its close flow.
     Running,
-    /// The window finished. Every callback of the terminating exit or restart passes.
     Authorized,
 }
 
-/// What a native request to close came to.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Request {
-    /// A new transaction: tell the main window, and keep the app open.
     Emit,
-    /// A transaction is already underway: keep the app open and say nothing.
     Coalesced,
-    /// The close is authorized: let it through.
     Allow,
 }
 
 impl Request {
-    /// Whether the window or exit that asked must be prevented.
     pub fn keeps_app_open(self) -> bool {
         self != Request::Allow
     }
 }
 
-/// Close state behind one lock, so a double-tap of Cmd-W and a Quit racing a window close are one request.
 #[derive(Default)]
 pub struct CloseCoordinator(Mutex<CloseState>);
 
@@ -50,7 +37,6 @@ impl CloseCoordinator {
         *self.lock()
     }
 
-    /// A native close, quit or exit asks to go ahead.
     pub fn request(&self) -> Request {
         let mut state = self.lock();
         match *state {
@@ -63,13 +49,10 @@ impl CloseCoordinator {
         }
     }
 
-    /// An update is about to restart the app. Updating never opens the close flow or touches a VM, so
-    /// this authorizes without asking, whatever the close was doing.
     pub fn authorize_bypass(&self) {
         *self.lock() = CloseState::Authorized;
     }
 
-    /// The window heard the request and is running its close flow.
     pub fn start(&self) -> Result<(), String> {
         let mut state = self.lock();
         match *state {
@@ -81,12 +64,10 @@ impl CloseCoordinator {
         }
     }
 
-    /// Whether a close was requested and the window has not acknowledged it. Reads only.
     pub fn pending(&self) -> bool {
         *self.lock() == CloseState::Requested
     }
 
-    /// The person backed out, or the flow could not begin: the app stays open and may be asked again.
     pub fn cancel(&self) -> Result<(), String> {
         let mut state = self.lock();
         match *state {
@@ -98,7 +79,6 @@ impl CloseCoordinator {
         }
     }
 
-    /// The flow finished: from here the app may exit.
     pub fn complete(&self) -> Result<(), String> {
         let mut state = self.lock();
         match *state {
@@ -115,14 +95,10 @@ fn out_of_order(what: &str, state: CloseState) -> String {
     format!("close {what} arrived while the close was {state:?}")
 }
 
-/// The window whose close is the viewer's close; the others close themselves.
 pub const MAIN: &str = "main";
-/// Told to the main window once per close transaction.
 pub const REQUESTED_EVENT: &str = "viewer-close-requested";
-/// The app menu's Quit, which replaces the predefined one so Cmd-Q joins the same transaction.
 pub const QUIT_ID: &str = "quit";
 
-/// Whether a window's close is the viewer's close.
 pub fn closes_viewer(label: &str) -> bool {
     label == MAIN
 }
@@ -131,16 +107,11 @@ pub fn is_quit(menu_id: &str) -> bool {
     menu_id == QUIT_ID
 }
 
-/// What File > Close (Cmd-W) does, by the window in front.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CloseRoute {
-    /// The Terminal window closes a tab.
     TerminalTab,
-    /// The main window asks the viewer to close.
     Viewer,
-    /// Any other window closes itself.
     Window,
-    /// No window of the app has focus.
     Nothing,
 }
 
@@ -153,7 +124,6 @@ pub fn route_close(focused: Option<&str>, terminal: &str) -> CloseRoute {
     }
 }
 
-/// Only the main window runs the close flow, so only it may answer it.
 pub fn caller_may_answer(label: &str) -> Result<(), String> {
     if closes_viewer(label) {
         Ok(())
@@ -162,13 +132,10 @@ pub fn caller_may_answer(label: &str) -> Result<(), String> {
     }
 }
 
-/// A native close, quit or exit asks to go ahead. Returns whether it must be prevented. The first
-/// request of a transaction brings the main window forward and tells it once.
 pub fn request<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> bool {
     use tauri::{Emitter, Manager};
     let close = app.state::<CloseCoordinator>();
     let Some(main) = app.get_webview_window(MAIN) else {
-        // Nothing left to ask: let the app go rather than hold it open with no one to answer.
         close.authorize_bypass();
         return false;
     };
@@ -178,16 +145,12 @@ pub fn request<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> bool {
         let _ = main.show();
         let _ = main.set_focus();
         if app.emit_to(MAIN, REQUESTED_EVENT, ()).is_err() {
-            // The window was never told, so no answer is coming: allow the next request to try again.
             let _ = close.cancel();
         }
     }
     request.keeps_app_open()
 }
 
-/// Whether a close request still waits for the main window. The event can be emitted before its
-/// listener exists, so the window asks right after registering one, and answers with `close_start`
-/// when this says true. It changes nothing.
 #[tauri::command]
 #[expect(
     clippy::needless_pass_by_value,
@@ -201,7 +164,6 @@ pub fn close_pending(
     Ok(close.pending())
 }
 
-/// The main window heard the request and is running its close flow.
 #[tauri::command]
 #[expect(
     clippy::needless_pass_by_value,
@@ -215,7 +177,6 @@ pub fn close_start(
     close.start()
 }
 
-/// The person backed out of closing.
 #[tauri::command]
 #[expect(
     clippy::needless_pass_by_value,
@@ -229,7 +190,6 @@ pub fn close_cancel(
     close.cancel()
 }
 
-/// The close flow finished: authorize, then exit. This never touches a VM; the flow already decided that.
 #[tauri::command]
 #[expect(
     clippy::needless_pass_by_value,
@@ -276,7 +236,6 @@ mod tests {
         assert_eq!(close.cancel(), Ok(()));
         assert_eq!(close.state(), CloseState::Idle);
         assert_eq!(close.request(), Request::Emit);
-        // A request the window never answered can be cancelled too.
         assert_eq!(close.cancel(), Ok(()));
         assert_eq!(close.state(), CloseState::Idle);
     }
@@ -315,7 +274,6 @@ mod tests {
         close.request();
         close.start().unwrap();
         close.complete().unwrap();
-        // Window close, ExitRequested(code), ExitRequested(None) after the last window goes...
         for _ in 0..5 {
             assert_eq!(close.request(), Request::Allow);
             assert!(!close.request().keeps_app_open());
@@ -391,11 +349,9 @@ mod tests {
         let close = CloseCoordinator::default();
         assert!(!close.pending(), "idle");
         close.request();
-        // A listener that mounts late asks as often as it likes: still pending, still Requested.
         assert!(close.pending());
         assert!(close.pending());
         assert_eq!(close.state(), CloseState::Requested);
-        // Later requests coalesce, and a close nobody answered stays pending.
         assert_eq!(close.request(), Request::Coalesced);
         assert!(close.pending());
         close.start().unwrap();

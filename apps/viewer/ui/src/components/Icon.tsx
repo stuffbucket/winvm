@@ -32,10 +32,6 @@ export type IconName =
   | "copy"
   | "keyboard"
 
-// Lucide glyphs: play, power, rotate-ccw, pause, maximize, screen-share, panel-right, check, x,
-// terminal, folder, history, bot, file, monitor, file-text, download, house, hard-drive,
-// chevron-left, chevron-right, arrow-up, refresh-cw, plus, minus; shield, quartered as Windows' elevation shield; chevron-down; copy;
-// moon (asleep); keyboard.
 const PATHS: Record<IconName, ReactNode> = {
   keyboard: (
     <>
@@ -56,7 +52,9 @@ const PATHS: Record<IconName, ReactNode> = {
       <line x1="12" x2="20" y1="19" y2="19" />
     </>
   ),
-  folder: <path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z" />,
+  folder: (
+    <path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z" />
+  ),
   history: (
     <>
       <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
@@ -206,10 +204,17 @@ const PATHS: Record<IconName, ReactNode> = {
   ),
 }
 
-/** A decorative glyph; the control it sits in carries the label. */
 export function Icon({ name }: { readonly name: IconName }): JSX.Element {
   return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
       {PATHS[name]}
     </svg>
   )

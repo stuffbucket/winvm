@@ -1,8 +1,13 @@
 import { describe, expect, it } from "bun:test"
 
-import { WAKE_MS, type WakeSock, type WakeTimers, keepRefreshing, sendWake } from "../ui/src/features/screen/wake"
+import {
+  keepRefreshing,
+  sendWake,
+  WAKE_MS,
+  type WakeSock,
+  type WakeTimers,
+} from "../ui/src/features/screen/wake"
 
-/** Records what noVNC's websocket wrapper would put on the wire. */
 class Wire implements WakeSock {
   readonly sent: number[][] = []
   private pending: number[] = []
@@ -13,7 +18,12 @@ class Wire implements WakeSock {
     this.pending.push((n >> 8) & 0xff, n & 0xff)
   }
   sQpush32(n: number): void {
-    this.pending.push((n >>> 24) & 0xff, (n >> 16) & 0xff, (n >> 8) & 0xff, n & 0xff)
+    this.pending.push(
+      (n >>> 24) & 0xff,
+      (n >> 16) & 0xff,
+      (n >> 8) & 0xff,
+      n & 0xff,
+    )
   }
   flush(): void {
     this.sent.push(this.pending)
@@ -41,7 +51,6 @@ describe("refresh wake-up", () => {
   it("is QEMU's extended key event releasing key 0, which the guest never sees", () => {
     const wire = new Wire()
     sendWake(wire)
-    // type 255 (QEMU), sub-type 0 (extended key event), down 0, keysym 0, keycode 0
     expect(wire.sent).toEqual([[255, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]])
   })
 

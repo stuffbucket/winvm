@@ -1,6 +1,22 @@
-import { afterEach, beforeEach, describe, expect, it, mock, spyOn } from "bun:test"
+import {
+  afterEach,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  mock,
+  spyOn,
+} from "bun:test"
 import { spawnSync } from "node:child_process"
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs"
 import { tmpdir } from "node:os"
 import { resolve } from "node:path"
 
@@ -10,7 +26,12 @@ import * as display from "../src/display"
 import { VIRTIO_GPU } from "../src/display"
 import * as host from "../src/host"
 import { withOperation } from "../src/operation"
-import { basePath, imageMetaPath, pathsFor, type InstanceMeta } from "../src/paths"
+import {
+  basePath,
+  type InstanceMeta,
+  imageMetaPath,
+  pathsFor,
+} from "../src/paths"
 import * as qemu from "../src/qemu"
 import * as qga from "../src/qga"
 import * as qmp from "../src/qmp"
@@ -22,14 +43,20 @@ import { realActions } from "../src/watch"
 
 const NAME = "race"
 const HOLDER = resolve(import.meta.dir, "fakes", "holder.ts")
-const meta: InstanceMeta = { image: "win11-arm64", vnc: 9, created: "2026-11-14T00:00:00Z" }
+const meta: InstanceMeta = {
+  image: "win11-arm64",
+  vnc: 9,
+  created: "2026-11-14T00:00:00Z",
+}
 
 let state = ""
 let previous: Record<string, string | undefined> = {}
 let previousProbe: share.Probe
 const spawned: ReturnType<typeof Bun.spawn>[] = []
 
-const sleep = async (ms: number): Promise<void> => { await new Promise((r) => setTimeout(r, ms)) }
+const sleep = async (ms: number): Promise<void> => {
+  await new Promise((r) => setTimeout(r, ms))
+}
 
 const alive = (pid: number): boolean => {
   try {
@@ -37,7 +64,11 @@ const alive = (pid: number): boolean => {
   } catch {
     return false
   }
-  return !spawnSync("ps", ["-o", "stat=", "-p", String(pid)], { encoding: "utf8" }).stdout.trim().startsWith("Z")
+  return !spawnSync("ps", ["-o", "stat=", "-p", String(pid)], {
+    encoding: "utf8",
+  })
+    .stdout.trim()
+    .startsWith("Z")
 }
 
 function script(name: string, body: string): void {
@@ -46,13 +77,20 @@ function script(name: string, body: string): void {
   chmodSync(path, 0o755)
 }
 
-const lines = (file: string): string[] => (existsSync(file) ? readFileSync(file, "utf8").split("\n").filter((l) => l !== "") : [])
+const lines = (file: string): string[] =>
+  existsSync(file)
+    ? readFileSync(file, "utf8")
+        .split("\n")
+        .filter((l) => l !== "")
+    : []
 const swtpmLog = (): string => resolve(state, "swtpm.log")
 const qemuLog = (): string => resolve(state, "qemu.log")
 
-/** A stand-in process whose command line carries `argv`; resolves once it is running. */
 async function hold(...argv: string[]): Promise<ReturnType<typeof Bun.spawn>> {
-  const h = Bun.spawn([process.execPath, HOLDER, ...argv], { stdout: "pipe", stderr: "ignore" })
+  const h = Bun.spawn([process.execPath, HOLDER, ...argv], {
+    stdout: "pipe",
+    stderr: "ignore",
+  })
   spawned.push(h)
   const reader = (h.stdout as ReadableStream<Uint8Array>).getReader()
   await reader.read()
@@ -60,7 +98,6 @@ async function hold(...argv: string[]): Promise<ReturnType<typeof Bun.spawn>> {
   return h
 }
 
-/** Settle `p` into "resolved:<value>" or "rejected:<message>", so a refusal and a result compare alike. */
 const outcome = async (p: Promise<unknown>): Promise<string> =>
   await p.then(
     (v) => `resolved:${String(v)}`,
@@ -68,21 +105,30 @@ const outcome = async (p: Promise<unknown>): Promise<string> =>
   )
 
 beforeEach(() => {
-  previous = Object.fromEntries(["WINVM_HOME", "WINVM_RUNTIME", "WINVM_TEST_SWTPM_LOG", "WINVM_TEST_QEMU_LOG"].map((k) => [k, process.env[k]]))
+  previous = Object.fromEntries(
+    [
+      "WINVM_HOME",
+      "WINVM_RUNTIME",
+      "WINVM_TEST_SWTPM_LOG",
+      "WINVM_TEST_QEMU_LOG",
+    ].map((k) => [k, process.env[k]]),
+  )
   state = mkdtempSync(resolve(tmpdir(), "winvm-race-"))
-  process.env["WINVM_HOME"] = state
-  process.env["WINVM_RUNTIME"] = resolve(state, "runtime")
-  process.env["WINVM_TEST_SWTPM_LOG"] = swtpmLog()
-  process.env["WINVM_TEST_QEMU_LOG"] = qemuLog()
+  process.env.WINVM_HOME = state
+  process.env.WINVM_RUNTIME = resolve(state, "runtime")
+  process.env.WINVM_TEST_SWTPM_LOG = swtpmLog()
+  process.env.WINVM_TEST_QEMU_LOG = qemuLog()
   mkdirSync(resolve(state, "runtime", "bin"), { recursive: true })
-  // swtpm binds its socket, says which process it is, and serves until killed.
   script(
     "swtpm",
     'while [ $# -gt 0 ]; do case "$1" in --ctrl) s="${2#*path=}"; s="${s%%,*}"; shift;; esac; shift; done; : > "$s"\n' +
       'echo $$ >> "$WINVM_TEST_SWTPM_LOG"\n' +
       "while :; do sleep 0.2; done",
   )
-  script("qemu-system-aarch64", 'printf "%s\\n" "$*" >> "$WINVM_TEST_QEMU_LOG"; exec sleep 3')
+  script(
+    "qemu-system-aarch64",
+    'printf "%s\\n" "$*" >> "$WINVM_TEST_QEMU_LOG"; exec sleep 3',
+  )
   previousProbe = share.setProbe(() => ({ ok: true, reason: null }))
 
   mkdirSync(resolve(state, "images", meta.image), { recursive: true })
@@ -98,9 +144,13 @@ beforeEach(() => {
   spyOn(host, "requireHost").mockImplementation(() => undefined)
   spyOn(host, "requireFirmware").mockReturnValue({ code, vars: code })
   spyOn(host, "tpmTisHasPpi").mockReturnValue(true)
-  spyOn(vnc, "ensureFreeDisplay").mockImplementation((_name, _p, m) => Promise.resolve(m))
+  spyOn(vnc, "ensureFreeDisplay").mockImplementation((_name, _p, m) =>
+    Promise.resolve(m),
+  )
   spyOn(vnc, "applyPassword").mockResolvedValue(null)
-  spyOn(share, "startVirtiofsd").mockImplementation(() => Promise.resolve({ dir: state, readonly: false, folder: null }))
+  spyOn(share, "startVirtiofsd").mockImplementation(() =>
+    Promise.resolve({ dir: state, readonly: false, folder: null }),
+  )
   spyOn(console, "log").mockImplementation(() => undefined)
   spyOn(console, "error").mockImplementation(() => undefined)
   spyOn(console, "warn").mockImplementation(() => undefined)
@@ -130,7 +180,6 @@ describe("two cold starts at once", () => {
       release = r
     })
     let calls = 0
-    // The first launch is mid-way (its swtpm up, its control service starting) when the second start runs.
     spyOn(servicectl, "ensureService").mockImplementation(async () => {
       calls += 1
       if (calls === 1) {
@@ -142,11 +191,15 @@ describe("two cold starts at once", () => {
     spyOn(qga, "untilReady").mockResolvedValue("timeout")
     const args = parseArgs(["-i", NAME])
 
-    const first = outcome(withOperation(NAME, "start", async () => await commands.start(args)))
+    const first = outcome(
+      withOperation(NAME, "start", async () => await commands.start(args)),
+    )
     await firstInLaunch
     const [firstSwtpm] = lines(swtpmLog())
     expect(firstSwtpm).toBeDefined()
-    const second = await outcome(withOperation(NAME, "start", async () => await commands.start(args)))
+    const second = await outcome(
+      withOperation(NAME, "start", async () => await commands.start(args)),
+    )
     const firstEmulatorSurvived = alive(Number(firstSwtpm))
     release()
     await first
@@ -154,7 +207,11 @@ describe("two cold starts at once", () => {
     expect(firstEmulatorSurvived).toBe(true)
     expect(lines(swtpmLog())).toHaveLength(1)
     expect(lines(qemuLog())).toHaveLength(1)
-    expect(second).toMatch(new RegExp(`^rejected:.*"${NAME}" is busy: start \\(pid ${String(process.pid)}\\)`))
+    expect(second).toMatch(
+      new RegExp(
+        `^rejected:.*"${NAME}" is busy: start \\(pid ${String(process.pid)}\\)`,
+      ),
+    )
   }, 20_000)
 })
 
@@ -171,16 +228,33 @@ describe("stop during a manual save", () => {
     spyOn(qemu, "pidOf").mockImplementation(() => FAKE_PID)
     spyOn(qemu, "isRunning").mockImplementation(() => true)
     spyOn(display, "runningCommand").mockImplementation(() =>
-      ["qemu-system-aarch64", ...qemu.qemuArgs(NAME, pathsFor(NAME), meta, { installMedia: false, ephemeral: false, virtioBoot: true, display: VIRTIO_GPU })].join(" "),
+      [
+        "qemu-system-aarch64",
+        ...qemu.qemuArgs(NAME, pathsFor(NAME), meta, {
+          installMedia: false,
+          ephemeral: false,
+          virtioBoot: true,
+          display: VIRTIO_GPU,
+        }),
+      ].join(" "),
     )
     spyOn(qmp, "status").mockImplementation(() => Promise.resolve(runState))
     spyOn(qmp, "execute").mockImplementation((_socket, cmd) => {
       sent.push(cmd)
       if (cmd === "stop") runState = "paused"
       if (cmd === "cont") runState = "running"
-      if (cmd === "query-status") return Promise.resolve({ status: runState, running: runState === "running" })
+      if (cmd === "query-status")
+        return Promise.resolve({
+          status: runState,
+          running: runState === "running",
+        })
       if (cmd === "migrate") migrating()
-      if (cmd === "query-migrate") return Promise.resolve(finished ? { status: "failed", "error-desc": "test over" } : { status: "active" })
+      if (cmd === "query-migrate")
+        return Promise.resolve(
+          finished
+            ? { status: "failed", "error-desc": "test over" }
+            : { status: "active" },
+        )
       return Promise.resolve({})
     })
     const shutdowns: string[] = []
@@ -204,16 +278,35 @@ describe("stop during a manual save", () => {
       },
     }
 
-    const save = outcome(withOperation(NAME, "save", async () => await savecmds.save(parseArgs(["-i", NAME, "--force", "checkpoint"]))))
+    const save = outcome(
+      withOperation(
+        NAME,
+        "save",
+        async () =>
+          await savecmds.save(parseArgs(["-i", NAME, "--force", "checkpoint"])),
+      ),
+    )
     await inMigration
-    const stop = await outcome(withOperation(NAME, "stop", async () => await commands.stopWith(parseArgs(["-i", NAME]), seams)))
+    const stop = await outcome(
+      withOperation(
+        NAME,
+        "stop",
+        async () => await commands.stopWith(parseArgs(["-i", NAME]), seams),
+      ),
+    )
     const sentDuringSave = [...sent]
     finished = true
     await save
 
-    expect(sentDuringSave.slice(sentDuringSave.indexOf("migrate"))).not.toContain("cont")
+    expect(
+      sentDuringSave.slice(sentDuringSave.indexOf("migrate")),
+    ).not.toContain("cont")
     expect(shutdowns).toEqual([])
-    expect(stop).toMatch(new RegExp(`^rejected:.*"${NAME}" is busy: save \\(pid ${String(process.pid)}\\)`))
+    expect(stop).toMatch(
+      new RegExp(
+        `^rejected:.*"${NAME}" is busy: save \\(pid ${String(process.pid)}\\)`,
+      ),
+    )
   }, 20_000)
 })
 
@@ -262,30 +355,40 @@ describe("the watcher's work", () => {
     )
     await sleep(20)
     let running = true
-    const stop = withOperation(NAME, "stop", async () =>
-      await commands.stopWith(parseArgs(["-i", NAME]), {
-        isRunning: () => running,
-        pidOf: () => 1_234_567,
-        frozenState: () => Promise.resolve(null),
-        stopWatcher: () => Promise.resolve(false),
-        watcherPid: () => null,
-        beforeDown: () => undefined,
-        stopSidecars: () => undefined,
-        waitFor: () => Promise.resolve(true),
-        shutdown: () => {
-          order.push("guest-shutdown")
-          running = false
-          return Promise.resolve()
-        },
-        sleep: async () => { await sleep(1) },
-      }),
+    const stop = withOperation(
+      NAME,
+      "stop",
+      async () =>
+        await commands.stopWith(parseArgs(["-i", NAME]), {
+          isRunning: () => running,
+          pidOf: () => 1_234_567,
+          frozenState: () => Promise.resolve(null),
+          stopWatcher: () => Promise.resolve(false),
+          watcherPid: () => null,
+          beforeDown: () => undefined,
+          stopSidecars: () => undefined,
+          waitFor: () => Promise.resolve(true),
+          shutdown: () => {
+            order.push("guest-shutdown")
+            running = false
+            return Promise.resolve()
+          },
+          sleep: async () => {
+            await sleep(1)
+          },
+        }),
     )
     await sleep(300)
     order.push("released")
     release()
     await autosave
     expect(await stop).toBe(0)
-    expect(order).toEqual(["autosave begins", "released", "autosave ends", "guest-shutdown"])
+    expect(order).toEqual([
+      "autosave begins",
+      "released",
+      "autosave ends",
+      "guest-shutdown",
+    ])
   })
 })
 
@@ -303,7 +406,13 @@ describe("kill", () => {
 
   it("does not take another instance's QEMU for this one's", async () => {
     const p = pathsFor(NAME)
-    const other = await hold("qemu-system-aarch64", "-name", "winvm-other", "-pidfile", pathsFor("other").pid)
+    const other = await hold(
+      "qemu-system-aarch64",
+      "-name",
+      "winvm-other",
+      "-pidfile",
+      pathsFor("other").pid,
+    )
     writeFileSync(p.pid, `${String(other.pid)}\n`)
     expect(commands.kill(parseArgs(["-i", NAME]))).toBe(1)
     await sleep(100)
@@ -312,13 +421,25 @@ describe("kill", () => {
 
   it("leaves a cold start's TPM emulator alone when that start holds the lease and has no QEMU yet", async () => {
     const p = pathsFor(NAME)
-    const emulator = Bun.spawn([resolve(state, "runtime", "bin", "swtpm"), "socket", "--tpmstate", `dir=${p.tpmDir}`, "--ctrl", `type=unixio,path=${p.tpmSock},terminate`, "--tpm2"], {
-      stdout: "ignore",
-      stderr: "ignore",
-      env: { ...process.env },
-    })
+    const emulator = Bun.spawn(
+      [
+        resolve(state, "runtime", "bin", "swtpm"),
+        "socket",
+        "--tpmstate",
+        `dir=${p.tpmDir}`,
+        "--ctrl",
+        `type=unixio,path=${p.tpmSock},terminate`,
+        "--tpm2",
+      ],
+      {
+        stdout: "ignore",
+        stderr: "ignore",
+        env: { ...process.env },
+      },
+    )
     spawned.push(emulator)
-    for (let i = 0; i < 100 && lines(swtpmLog()).length === 0; i += 1) await sleep(10)
+    for (let i = 0; i < 100 && lines(swtpmLog()).length === 0; i += 1)
+      await sleep(10)
     spyOn(servicectl, "stopService").mockImplementation(() => undefined)
     let release: () => void = () => undefined
     const starting = withOperation(NAME, "start", async () => {
@@ -328,7 +449,9 @@ describe("kill", () => {
       return 0
     })
     await sleep(20)
-    const killed = await outcome(withOperation(NAME, "kill", () => commands.kill(parseArgs(["-i", NAME]))))
+    const killed = await outcome(
+      withOperation(NAME, "kill", () => commands.kill(parseArgs(["-i", NAME]))),
+    )
     const survived = alive(Number(lines(swtpmLog())[0]))
     release()
     await starting
@@ -338,7 +461,13 @@ describe("kill", () => {
 
   it("refuses without blaming the pid file when it cannot read the process's command line", async () => {
     const p = pathsFor(NAME)
-    const own = await hold("qemu-system-aarch64", "-name", `winvm-${NAME}`, "-pidfile", p.pid)
+    const own = await hold(
+      "qemu-system-aarch64",
+      "-name",
+      `winvm-${NAME}`,
+      "-pidfile",
+      p.pid,
+    )
     writeFileSync(p.pid, `${String(own.pid)}\n`)
     spyOn(display, "runningCommand").mockReturnValue(null)
     const errors: string[] = []
@@ -354,7 +483,16 @@ describe("kill", () => {
   it("kills this instance's QEMU without waiting on a lease another command holds", async () => {
     const p = pathsFor(NAME)
     script("qemu-system-aarch64", "while :; do sleep 0.2; done")
-    const own = Bun.spawn([resolve(state, "runtime", "bin", "qemu-system-aarch64"), "-name", `winvm-${NAME}`, "-pidfile", p.pid], { stdout: "ignore", stderr: "ignore" })
+    const own = Bun.spawn(
+      [
+        resolve(state, "runtime", "bin", "qemu-system-aarch64"),
+        "-name",
+        `winvm-${NAME}`,
+        "-pidfile",
+        p.pid,
+      ],
+      { stdout: "ignore", stderr: "ignore" },
+    )
     spawned.push(own)
     writeFileSync(p.pid, `${String(own.pid)}\n`)
     spyOn(servicectl, "stopService").mockImplementation(() => undefined)
@@ -366,7 +504,9 @@ describe("kill", () => {
       return 0
     })
     await sleep(50)
-    const killed = await outcome(withOperation(NAME, "kill", () => commands.kill(parseArgs(["-i", NAME]))))
+    const killed = await outcome(
+      withOperation(NAME, "kill", () => commands.kill(parseArgs(["-i", NAME]))),
+    )
     release()
     await wedged
     await own.exited

@@ -1,11 +1,3 @@
-/* =========================================================
-   Checkpoints: the full-window view of a Windows machine's checkpoints
-   (features/checkpoints/), on @winvm/canvas (packages/canvas/src/canvas.css).
-   Every color, size and space comes from a token.
-   ========================================================= */
-
-/* ---- The surface: a dimmed, blurred window behind a transparent canvas ---- */
-
 .checkpoints {
   --checkpoints-timeline: calc(var(--size-2xl) * 3);
   --checkpoints-ease: cubic-bezier(0.65, 0, 0.35, 1);
@@ -23,7 +15,6 @@
   transition: opacity 480ms var(--checkpoints-ease);
 }
 
-/* The live screen, blurred and dimmed behind everything (a copy, a couple of times a second). */
 .checkpoints__backdrop-screen {
   position: absolute;
   inset: calc(-1 * var(--space-8));
@@ -49,7 +40,6 @@
   height: 100%;
 }
 
-/* In and out: the backdrop and the chrome fade while the camera flies. */
 .checkpoints[data-phase="entering"] .checkpoints__backdrop,
 .checkpoints[data-phase="leaving"] .checkpoints__backdrop {
   opacity: 0;
@@ -67,8 +57,28 @@
   transition: opacity 320ms var(--checkpoints-ease);
 }
 
-.checkpoints[data-phase="entering"] :is(.spatial-canvas__grid, .spatial-canvas__topbar, .timeline, .checkpoints__zoom, .checkpoints__status, .checkpoints__day, .checkpoint:not(.checkpoint--now)),
-.checkpoints[data-phase="leaving"] :is(.spatial-canvas__grid, .spatial-canvas__topbar, .timeline, .checkpoints__zoom, .checkpoints__status, .spatial-canvas__side-panel, .spatial-canvas__floating-panel, .checkpoints__day, .checkpoint:not(.checkpoint--now)) {
+.checkpoints[data-phase="entering"]
+  :is(
+    .spatial-canvas__grid,
+    .spatial-canvas__topbar,
+    .timeline,
+    .checkpoints__zoom,
+    .checkpoints__status,
+    .checkpoints__day,
+    .checkpoint:not(.checkpoint--now)
+  ),
+.checkpoints[data-phase="leaving"]
+  :is(
+    .spatial-canvas__grid,
+    .spatial-canvas__topbar,
+    .timeline,
+    .checkpoints__zoom,
+    .checkpoints__status,
+    .spatial-canvas__side-panel,
+    .spatial-canvas__floating-panel,
+    .checkpoints__day,
+    .checkpoint:not(.checkpoint--now)
+  ) {
   opacity: 0;
 }
 
@@ -76,7 +86,6 @@
   opacity: 0;
 }
 
-/* The window's title bar is under the view: this strip still moves the window. */
 .checkpoints__drag {
   position: absolute;
   z-index: 1;
@@ -86,19 +95,11 @@
   height: calc(var(--size-2xl) + var(--space-4));
 }
 
-/* ---- Top bar ---- */
-
 .checkpoints .spatial-canvas__topbar {
-  /* Clear of the traffic lights, which sit over the window's top left. */
   left: calc(var(--size-2xl) + var(--size-xl));
   right: var(--space-3);
 }
 
-/*
- * The chrome over the canvas is opaque. Cards pan and zoom under it, and
- * through the canvas package's translucent glass a card's title read through
- * the heading's own text. Opaque, it simply covers what passes under it.
- */
 .checkpoints :is(.spatial-canvas__corner, .spatial-canvas__zoom) {
   background: var(--surface-card);
   -webkit-backdrop-filter: none;
@@ -172,7 +173,10 @@
 .checkpoints__new {
   top: calc(var(--size-2xl) + var(--space-5));
   right: var(--space-3);
-  width: min(calc(var(--panel-width) + var(--space-6)), calc(100% - var(--space-5)));
+  width: min(
+    calc(var(--panel-width) + var(--space-6)),
+    calc(100% - var(--space-5))
+  );
 }
 
 .checkpoints__new form {
@@ -191,8 +195,6 @@
   justify-content: flex-end;
   gap: var(--space-2);
 }
-
-/* ---- Bottom: zoom and the status line ---- */
 
 .checkpoints__zoom {
   position: absolute;
@@ -218,7 +220,10 @@
   display: flex;
   align-items: center;
   gap: var(--space-2);
-  max-width: min(calc(var(--content-max) + var(--space-8)), calc(100% - var(--space-8) * 2));
+  max-width: min(
+    calc(var(--content-max) + var(--space-8)),
+    calc(100% - var(--space-8) * 2)
+  );
   padding: var(--space-2) var(--space-2) var(--space-2) var(--space-4);
   transform: translateX(-50%);
   border: var(--border-width-hairline) solid var(--border-subtle);
@@ -238,8 +243,6 @@
   color: var(--status-error);
 }
 
-/* ---- Day labels, in world space ---- */
-
 .checkpoints__day {
   color: var(--text-strong);
   font-weight: var(--weight-lg);
@@ -247,20 +250,16 @@
   line-height: var(--leading-2xl);
 }
 
-/* Sits on its block: the label's bottom is the point it is placed at, so it can grow upwards when zoomed out. */
 .checkpoints__day > span {
   display: block;
   transform: translateY(-100%);
 }
 
-/* Far away, a month's name sits beside the stack, right-aligned to it. */
 .checkpoints__day[data-far="true"] > span {
   color: var(--text-base-color);
   font-weight: var(--weight-md);
   transform: translate(-100%, -50%);
 }
-
-/* ---- A checkpoint card ---- */
 
 .checkpoint {
   --card-radius: var(--radius-card);
@@ -350,7 +349,8 @@
 .checkpoint__working {
   position: absolute;
   z-index: 1;
-  padding: calc(var(--space-2) * var(--card-scale, 1)) calc(var(--space-4) * var(--card-scale, 1));
+  padding: calc(var(--space-2) * var(--card-scale, 1))
+    calc(var(--space-4) * var(--card-scale, 1));
   border-radius: var(--radius-pill);
   background: var(--surface-card);
   box-shadow: var(--elevation-modal);
@@ -363,7 +363,8 @@
   align-content: start;
   gap: calc(var(--space-1) * var(--card-scale, 1) / 2);
   min-height: 0;
-  padding: calc(var(--space-3) * var(--card-scale, 1)) calc(var(--space-4) * var(--card-scale, 1));
+  padding: calc(var(--space-3) * var(--card-scale, 1))
+    calc(var(--space-4) * var(--card-scale, 1));
   font-size: calc(var(--text-sm) * var(--card-scale, 1));
   line-height: var(--leading-lg);
   transition: opacity 200ms ease-out;
@@ -420,14 +421,14 @@
   right: 0;
   bottom: 0;
   left: 0;
-  padding: calc(var(--space-2) * var(--card-scale, 1)) calc(var(--space-3) * var(--card-scale, 1));
+  padding: calc(var(--space-2) * var(--card-scale, 1))
+    calc(var(--space-3) * var(--card-scale, 1));
   background: color-mix(in srgb, var(--surface-card) 90%, transparent);
   color: var(--status-warning);
   font-size: calc(var(--text-sm) * var(--card-scale, 1));
   line-height: var(--leading-lg);
 }
 
-/* Can't load here: the picture steps back, the words say why. */
 .checkpoint[data-incompatible="true"] .checkpoint__frame > img {
   filter: grayscale(1);
   opacity: 0.45;
@@ -437,7 +438,6 @@
   border-style: dashed;
 }
 
-/* Not among the search's matches. */
 .checkpoint[data-dimmed="true"] {
   opacity: 0.28;
 }
@@ -447,7 +447,6 @@
   transform: scale(0.92);
 }
 
-/* Just taken: out of the Now card, into its place in the stack. */
 .checkpoint[data-arriving="true"] {
   z-index: 3;
 }
@@ -459,7 +458,8 @@
 
 @keyframes checkpoint-arrive {
   from {
-    transform: translate(var(--arrive-x), var(--arrive-y)) scale(var(--arrive-scale));
+    transform: translate(var(--arrive-x), var(--arrive-y))
+      scale(var(--arrive-scale));
     box-shadow: none;
   }
 }
@@ -468,12 +468,11 @@
   box-shadow: none;
 }
 
-/* Far away, a card is its picture: the words are too small to read. */
-.spatial-canvas__viewport[data-far="true"] .checkpoint:not(.checkpoint--now) .checkpoint__caption {
+.spatial-canvas__viewport[data-far="true"]
+  .checkpoint:not(.checkpoint--now)
+  .checkpoint__caption {
   opacity: 0;
 }
-
-/* ---- Now: the running machine ---- */
 
 .checkpoint--now .checkpoint__hit {
   --card-scale: 1.4;
@@ -494,8 +493,6 @@
 .checkpoint--now .checkpoint__name {
   color: var(--link);
 }
-
-/* ---- Timeline, down the right edge ---- */
 
 .timeline {
   position: absolute;
@@ -628,11 +625,12 @@
   font-size: var(--text-sm);
 }
 
-/* ---- The selected checkpoint, up close ---- */
-
 .checkpoints .checkpoint-details {
   right: calc(var(--checkpoints-timeline) + var(--space-4));
-  width: min(calc(var(--panel-width) + var(--space-7)), calc(100% - var(--checkpoints-timeline) - var(--space-7)));
+  width: min(
+    calc(var(--panel-width) + var(--space-7)),
+    calc(100% - var(--checkpoints-timeline) - var(--space-7))
+  );
 }
 
 .checkpoint-details .spatial-canvas__side-panel-body {
@@ -661,7 +659,6 @@
   outline-offset: var(--focus-ring-offset);
 }
 
-/* Quick Look: the screenshot as big as the window allows; a click or Space puts it away. */
 .checkpoints__look {
   position: absolute;
   z-index: 6;

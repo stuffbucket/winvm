@@ -5,10 +5,14 @@ import { resolve } from "node:path"
 import { releaseVersion, sourceBuildIdentity } from "@winvm/core/identity"
 
 const ROOT = resolve(import.meta.dir, "..", "..", "..")
-const out = resolve(import.meta.dir, "..", "src-tauri", "binaries", "winvm-aarch64-apple-darwin")
+const out = resolve(
+  import.meta.dir,
+  "..",
+  "src-tauri",
+  "binaries",
+  "winvm-aarch64-apple-darwin",
+)
 mkdirSync(resolve(out, ".."), { recursive: true })
-// Computed before compilation and embedded, so the executable reports the
-// identity of the sources it was built from without reading any file at run time.
 const identity = sourceBuildIdentity(ROOT)
 const r = spawnSync(
   "bun",
