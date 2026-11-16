@@ -135,9 +135,9 @@ impl<C: SidecarChild> Stream<C> {
         self.stopping.store(true, Ordering::SeqCst);
         match self.release() {
             Some(child) => {
-                let pid = child.pid();
+                let termed = terminate(child.pid());
                 drop(child);
-                terminate(pid)
+                termed
             }
             None => Ok(()),
         }
@@ -177,9 +177,8 @@ impl<C: SidecarChild> Stream<C> {
             let (terminated, error) = match runner.spawn(&args) {
                 Ok((rx, child)) => {
                     if let Some(late) = self.hold(child) {
-                        let pid = late.pid();
+                        let _ = runner.terminate(late.pid());
                         drop(late);
-                        let _ = runner.terminate(pid);
                         break;
                     }
                     self.up.store(true, Ordering::SeqCst);
@@ -476,12 +475,16 @@ mod tests {
         assert_eq!(stream.restarts(), 3);
         assert!(!stream.is_up());
         let log = fake.log.lock().unwrap().clone();
-        assert_eq!(log.last().map(String::as_str), Some("term 104"));
+        assert_eq!(
+            log[log.len().saturating_sub(2)..],
+            ["term 104".to_owned(), "drop 104".to_owned()]
+        );
         assert!(!log.iter().any(|l| l.starts_with("kill")), "{log:?}");
     }
 
     #[test]
-    fn stopping_terms_the_running_child_by_its_own_pid_and_closes_its_stdin() {
+    fn stopping_terms_the_running_child_by_its_own_pid_while_it_is_still_a_child_then_closes_its_stdin(
+    ) {
         let stream: Stream<FakeChild> = Stream::default();
         let log: Log = Arc::default();
         assert!(stream
@@ -497,7 +500,7 @@ mod tests {
                 Ok(())
             })
             .unwrap();
-        assert_eq!(*log.lock().unwrap(), ["drop 77", "term 77"]);
+        assert_eq!(*log.lock().unwrap(), ["term 77", "drop 77"]);
         assert!(stream.stopping());
         assert!(stream
             .hold(FakeChild {
