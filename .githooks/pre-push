@@ -6,6 +6,12 @@ stamps="$(cd "$(git rev-parse --git-common-dir)" && pwd)/winvm-verify"
 runner="${WINVM_VERIFY_RUNNER:-$(git config --get winvm.verifyRunner || true)}"
 runner="${runner:-local}"
 
+fail() {
+  echo "pre-push: $1, push blocked" >&2
+  echo "pre-push: fix the findings above, commit, and run 'pnpm verify' (or 'pnpm verify:fast --only <step>' for one step) until it passes, then push again" >&2
+  exit 1
+}
+
 while read -r _ local_sha _ _; do
   [[ $local_sha =~ ^0+$ ]] && continue
   tree="$(git rev-parse "${local_sha}^{tree}")"
@@ -16,12 +22,14 @@ while read -r _ local_sha _ _; do
       echo "pre-push: the local runner verifies the checked-out commit; check out $local_sha or set winvm.verifyRunner" >&2
       exit 1
     fi
-    bun scripts/verify.ts --runner local
+    gate=(bun scripts/verify.ts --runner local)
   else
-    "$runner" "$local_sha"
+    gate=("$runner" "$local_sha")
+  fi
+  if ! "${gate[@]}"; then
+    fail "the gate failed for $local_sha"
   fi
   if [ ! -f "$stamps/$tree.json" ]; then
-    echo "pre-push: the $runner runner did not write $stamps/$tree.json" >&2
-    exit 1
+    fail "the $runner runner did not write $stamps/$tree.json"
   fi
 done

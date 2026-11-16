@@ -7,6 +7,7 @@
   "type": "module",
   "scripts": {
     "build": "turbo run build",
+    "prepare": "sh scripts/install-hooks.sh",
     "typecheck": "turbo run typecheck",
     "test": "turbo run test",
     "check": "turbo run typecheck test && bun test scripts",
