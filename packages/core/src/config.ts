@@ -39,7 +39,7 @@ export function checkTitle(raw: string): string {
   const title = raw.trim()
   if (Array.from(title).length > TITLE_MAX)
     throw new Error(`title is at most ${String(TITLE_MAX)} characters`)
-  if (/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/.test(title))
+  if (/[\p{Cc}\u2028\u2029]/u.test(title))
     throw new Error("title is one line of text, without control characters")
   return title
 }

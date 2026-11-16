@@ -11,10 +11,11 @@ const cp = await import("../ui/src/features/checkpoints/checkpoints")
 const { loadSettings, parseSettings, saveSettings } = await import(
   "../ui/src/features/checkpoints/settings"
 )
-const { draftOf, tagsOf } = await import(
+const { CheckpointDetails, draftOf, tagsOf } = await import(
   "../ui/src/features/checkpoints/CheckpointDetails"
 )
 const { ConfirmDialog } = await import("../ui/src/components/ConfirmDialog")
+const { usePicture } = await import("../ui/src/features/checkpoints/pictures")
 const { parseNote, parseSaves } = await import("../ui/src/model")
 const { centreOf, clampCamera, fitRect } = await import("@winvm/canvas")
 
@@ -350,6 +351,185 @@ describe("going back", () => {
       body: "checkpoints.goBack.bodyLive",
       offerSaveFirst: true,
     })
+  })
+})
+
+type Draft =
+  import("../ui/src/features/checkpoints/CheckpointDetails").NoteDraft
+
+function Selected({
+  c,
+  writes,
+}: {
+  readonly c: Checkpoint
+  readonly writes: [string, Draft][]
+}): JSX.Element {
+  return (
+    <CheckpointDetails
+      c={c}
+      now={Date.now()}
+      busy={false}
+      saving="idle"
+      onClose={() => undefined}
+      onLook={() => undefined}
+      onNote={(name, d) => {
+        writes.push([name, d])
+      }}
+      onGoBack={() => undefined}
+      onDelete={() => undefined}
+    />
+  )
+}
+
+describe("a checkpoint's note", () => {
+  let root: ReturnType<typeof createRoot> | null = null
+  afterEach(() => {
+    act(() => root?.unmount())
+    root = null
+    document.body.replaceChildren()
+  })
+
+  it("saves an edit still waiting to be written to the checkpoint it was typed for, when another is selected", () => {
+    const writes: [string, Draft][] = []
+    const a = checkpoint("a", at(2026, 8, 9, 10))
+    const b = checkpoint("b", at(2026, 10, 20, 9))
+    const host = document.createElement("div")
+    document.body.append(host)
+    const r = createRoot(host)
+    root = r
+    act(() => {
+      r.render(<Selected c={a} writes={writes} />)
+    })
+    const title = host.querySelector<HTMLInputElement>("#checkpoint-title")
+    if (title === null) throw new Error("no title field")
+    act(() => {
+      const descriptor = Object.getOwnPropertyDescriptor(
+        window.HTMLInputElement.prototype,
+        "value",
+      )
+      descriptor?.set?.call(title, "Before the update")
+      title.dispatchEvent(new Event("input", { bubbles: true }))
+    })
+    expect(writes).toEqual([])
+    act(() => {
+      r.render(<Selected c={b} writes={writes} />)
+    })
+    expect(writes).toEqual([
+      ["a", { title: "Before the update", text: "", tags: "" }],
+    ])
+    expect(title.value).toBe("")
+  })
+
+  it("keeps what is being typed when the same checkpoint's notes are read again, and starts from a new checkpoint's notes", () => {
+    const writes: [string, Draft][] = []
+    const notes = (title: string) => ({ title, text: "", tags: [] })
+    const a = checkpoint("a", at(2026, 8, 9, 10), { notes: notes("Saved") })
+    const host = document.createElement("div")
+    document.body.append(host)
+    const r = createRoot(host)
+    root = r
+    act(() => {
+      r.render(<Selected c={a} writes={writes} />)
+    })
+    const title = host.querySelector<HTMLInputElement>("#checkpoint-title")
+    if (title === null) throw new Error("no title field")
+    expect(title.value).toBe("Saved")
+    act(() => {
+      const descriptor = Object.getOwnPropertyDescriptor(
+        window.HTMLInputElement.prototype,
+        "value",
+      )
+      descriptor?.set?.call(title, "Typing")
+      title.dispatchEvent(new Event("input", { bubbles: true }))
+    })
+    act(() => {
+      r.render(
+        <Selected c={{ ...a, notes: notes("Read again") }} writes={writes} />,
+      )
+    })
+    expect(title.value).toBe("Typing")
+    act(() => {
+      r.render(
+        <Selected
+          c={{ ...a, createdAt: at(2026, 8, 10, 10), notes: notes("Newer") }}
+          writes={writes}
+        />,
+      )
+    })
+    expect(title.value).toBe("Newer")
+  })
+})
+
+interface PictureProps {
+  readonly path: string | null
+  readonly version: string
+  readonly wanted: boolean
+  readonly seen: (string | null)[]
+}
+
+function PictureProbe({ path, version, wanted, seen }: PictureProps): null {
+  seen.push(usePicture(path, version, wanted))
+  return null
+}
+
+describe("a checkpoint's picture", () => {
+  let root: ReturnType<typeof createRoot> | null = null
+  afterEach(() => {
+    act(() => root?.unmount())
+    root = null
+    document.body.replaceChildren()
+    delete (window as { __TAURI__?: unknown }).__TAURI__
+  })
+  const settle = async (): Promise<void> => {
+    await act(async () => {
+      for (let i = 0; i < 10; i++) await Promise.resolve()
+    })
+  }
+
+  it("keeps its picture while it is not wanted, and drops it for another path or version", async () => {
+    const asked: string[] = []
+    const invoke = (cmd: string, a?: { path?: string }): Promise<unknown> => {
+      if (cmd !== "checkpoint_image") return Promise.resolve(null)
+      asked.push(a?.path ?? "")
+      if (a?.path === "/held.png") return new Promise(() => undefined)
+      return Promise.resolve(new ArrayBuffer(4))
+    }
+    Object.assign(window, { __TAURI__: { core: { invoke } } })
+    const seen: (string | null)[] = []
+    const host = document.createElement("div")
+    document.body.append(host)
+    const r = createRoot(host)
+    root = r
+    const show = (over: Partial<PictureProps> = {}): void => {
+      act(() => {
+        r.render(
+          <PictureProbe
+            path="/shown.png"
+            version="1"
+            wanted
+            seen={seen}
+            {...over}
+          />,
+        )
+      })
+    }
+    show()
+    await settle()
+    const first = seen.at(-1)
+    expect(typeof first).toBe("string")
+    show({ wanted: false })
+    await settle()
+    expect(seen.at(-1)).toBe(first ?? "")
+    show({ version: "2", wanted: false })
+    await settle()
+    expect(seen.at(-1)).toBeNull()
+    show({ version: "2" })
+    await settle()
+    expect(typeof seen.at(-1)).toBe("string")
+    show({ path: "/held.png", version: "2" })
+    await settle()
+    expect(seen.at(-1)).toBeNull()
+    expect(asked).toEqual(["/shown.png", "/shown.png", "/held.png"])
   })
 })
 

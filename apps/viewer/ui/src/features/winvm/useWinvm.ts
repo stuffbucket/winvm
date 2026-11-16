@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 
 import { errorMessage, installCli, outputText, winvm } from "../../backend"
 import type {
@@ -269,8 +269,13 @@ export function useWinvm(): Winvm {
   const live = isLivePhase(p)
   const pid = current?.pid ?? null
   const asking = useRef(false)
+  const polled = useMemo(
+    () => ({ live, pid, name, polls }),
+    [live, pid, name, polls],
+  )
   useEffect(() => {
-    if (!live || pid === null || name === null) {
+    const { pid, name } = polled
+    if (!polled.live || pid === null || name === null) {
       setConnection(null)
       return
     }
@@ -286,7 +291,7 @@ export function useWinvm(): Winvm {
       .finally(() => {
         asking.current = false
       })
-  }, [live, pid, name, connection, polls])
+  }, [polled, connection])
 
   const execute = useCallback(
     async (machine: string | null, verb: Verb, arg?: string): Promise<Ran> => {

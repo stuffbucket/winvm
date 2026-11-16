@@ -34,7 +34,7 @@ export function ClosePolicyDialog({
 
   useEffect(() => {
     const el = dialogRef.current
-    if (el === null || el.open) return
+    if (step === null || el === null || el.open) return
     try {
       el.showModal()
     } catch {}
@@ -48,6 +48,7 @@ export function ClosePolicyDialog({
   const { machine, index, total } = shown
 
   return (
+    // biome-ignore lint/a11y/useKeyWithClickEvents: a click on the backdrop mirrors Escape, which reaches this dialog as its cancel event
     <dialog
       ref={dialogRef}
       className="confirm-dialog close-dialog"

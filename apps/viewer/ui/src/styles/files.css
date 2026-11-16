@@ -251,10 +251,6 @@ body {
   container-type: inline-size;
 }
 
-.fw__body--target .files__list {
-  box-shadow: inset 0 0 0 var(--border-width-thick) var(--accent);
-}
-
 .files__table {
   display: flex;
   flex-direction: column;
@@ -272,14 +268,30 @@ body {
   padding-inline: var(--space-3);
 }
 
-.files__head {
+.files__head-table {
+  display: block;
   flex: 0 0 auto;
+}
+
+.files__head-table > thead {
+  display: block;
+}
+
+.files__head {
   border-block-end: var(--border-width-hairline) solid var(--border-subtle);
+}
+
+.files__head > th {
+  min-width: 0;
+  padding: 0;
+  font-weight: inherit;
+  text-align: start;
 }
 
 .files__heading {
   appearance: none;
   display: flex;
+  width: 100%;
   align-items: center;
   gap: var(--space-1);
   min-width: 0;
@@ -335,6 +347,10 @@ body {
   outline: none;
 }
 
+.fw__body--target .files__list {
+  box-shadow: inset 0 0 0 var(--border-width-thick) var(--accent);
+}
+
 .files__list:focus .files__row--active:not([aria-selected="true"]) {
   box-shadow: inset 0 0 0 var(--border-width-hairline) var(--border-strong);
 }
@@ -369,12 +385,6 @@ body {
   color: var(--accent-fg);
 }
 
-.files__list:focus .files__row[aria-selected="true"] .files__num,
-.files__list:focus .files__row[aria-selected="true"] .files__kind,
-.files__list:focus .files__row[aria-selected="true"] .files__glyph {
-  color: var(--accent-fg);
-}
-
 .files__row--target,
 .files__row--target.files__row--alt,
 .files__list:focus .files__row--target[aria-selected="true"] {
@@ -384,21 +394,8 @@ body {
   border-radius: var(--radius-input);
 }
 
-.files__row--target .files__num,
-.files__row--target .files__kind {
-  color: var(--text-base-color);
-}
-
-.files__row--target .files__glyph {
-  color: var(--link);
-}
-
 .files__row--carried {
   opacity: 0.5;
-}
-
-.files__row--hidden .files__label {
-  color: var(--text-muted);
 }
 
 .files__name {
@@ -458,6 +455,25 @@ body {
 
 .files__num {
   font-variant-numeric: tabular-nums;
+}
+
+.files__row--target .files__num,
+.files__row--target .files__kind {
+  color: var(--text-base-color);
+}
+
+.files__row--target .files__glyph {
+  color: var(--link);
+}
+
+.files__row--hidden .files__label {
+  color: var(--text-muted);
+}
+
+.files__list:focus .files__row[aria-selected="true"] .files__num,
+.files__list:focus .files__row[aria-selected="true"] .files__kind,
+.files__list:focus .files__row[aria-selected="true"] .files__glyph {
+  color: var(--accent-fg);
 }
 
 .files__c-size {

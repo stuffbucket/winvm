@@ -151,11 +151,6 @@ body {
   flex-wrap: wrap;
   margin-bottom: 8px;
 }
-.row input,
-.row select {
-  flex: 1;
-  min-width: 0;
-}
 button,
 input,
 select {
@@ -165,6 +160,11 @@ select {
   border: 1px solid var(--line);
   border-radius: 6px;
   padding: 5px 10px;
+}
+.row input,
+.row select {
+  flex: 1;
+  min-width: 0;
 }
 button {
   cursor: pointer;

@@ -242,9 +242,12 @@ export function formatPool(p: PoolStats): string[] {
   ]
 }
 
+const xmlForbidden = (c: string): boolean =>
+  c < " " && c !== "\t" && c !== "\n" && c !== "\r"
+
 const xmlEscape = (s: string): string =>
   s
-    .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g, "")
+    .replace(/\p{Cc}/gu, (c) => (xmlForbidden(c) ? "" : c))
     .replaceAll("&", "&amp;")
     .replaceAll("<", "&lt;")
     .replaceAll(">", "&gt;")

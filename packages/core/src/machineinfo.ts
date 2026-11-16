@@ -156,16 +156,14 @@ export function formatInfo(i: MachineInfo): string {
   } as const
   if (!i.running) lines.push("    forwards  none while it is not running")
   else if (n.forwards.length === 0) lines.push("    forwards  none")
-  n.forwards.forEach((f, k) =>
+  for (const [k, f] of n.forwards.entries())
     lines.push(
       `    ${k === 0 ? "forwards  " : "          "}${f.host}:${String(f.hostPort)} -> ${String(f.guestPort)}${f.kind === "other" ? "" : ` (${label[f.kind]})`}`,
-    ),
-  )
-  n.listeners.forEach((l, k) =>
+    )
+  for (const [k, l] of n.listeners.entries())
     lines.push(
       `    ${k === 0 ? "screen    " : "          "}${l.host}:${String(l.port)} (${l.kind === "vnc" ? "VNC" : "WebSocket"})`,
-    ),
-  )
+    )
   lines.push(
     `  Windows reaches the internet, and this Mac at ${n.gateway}. Nothing else reaches Windows except the forwards above, which listen on this Mac only.`,
   )

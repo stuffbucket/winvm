@@ -31,6 +31,7 @@ import { Button } from "../../components/Button"
 import { Callout } from "../../components/Callout"
 import { ConfirmDialog } from "../../components/ConfirmDialog"
 import { cx } from "../../components/cx"
+import { focusOnMount } from "../../components/focusOnMount"
 import { Icon, type IconName } from "../../components/Icon"
 import { t } from "../../i18n"
 import { defaultShell, installedList, runnable } from "../terminal/shells"
@@ -127,6 +128,27 @@ interface Press {
 
 const why = (code: OpCode): string => t(`files.why.${code}`)
 
+function targetAt(
+  l: Listing | null,
+  x: number,
+  y: number,
+  carried: ReadonlySet<string>,
+): Target | null {
+  if (l === null) return null
+  const el = document.elementFromPoint(x, y)
+  const place = el?.closest<HTMLElement>("[data-place]")
+  if (place != null) {
+    const path = place.dataset.place ?? ""
+    return samePath(path, l.path) ? null : { kind: "place", path }
+  }
+  const row = el?.closest<HTMLElement>(".files__row[data-dir]")
+  const name = row?.dataset.name
+  if (name !== undefined && !carried.has(name))
+    return { kind: "row", name, path: childPath(l.path, name) }
+  if (el?.closest(".files__list") != null) return { kind: "here", path: l.path }
+  return null
+}
+
 export function FilesWindow({
   instance,
   initialTitle,
@@ -186,7 +208,8 @@ export function FilesWindow({
       path: string | null,
       how: "go" | "back" | "forward" | "stay",
     ): Promise<void> => {
-      const id = (request.current += 1)
+      request.current += 1
+      const id = request.current
       setLoading(true)
       const got = await listFolder(instance, path)
       if (id !== request.current) return
@@ -238,9 +261,16 @@ export function FilesWindow({
     [instance],
   )
 
+  const reload = useMemo(
+    () => ({ instance, landed: copies.landed }),
+    [instance, copies.landed],
+  )
   useEffect(() => {
-    void load(shown.current ?? remember.get(`folder.${instance}`), "stay")
-  }, [load, instance, copies.landed])
+    void load(
+      shown.current ?? remember.get(`folder.${reload.instance}`),
+      "stay",
+    )
+  }, [load, reload])
 
   useEffect(() => {
     list.current?.focus()
@@ -710,28 +740,6 @@ export function FilesWindow({
     }, 0)
   }
 
-  const targetAt = (
-    x: number,
-    y: number,
-    carried: ReadonlySet<string>,
-  ): Target | null => {
-    const l = live.current.listing
-    if (l === null) return null
-    const el = document.elementFromPoint(x, y)
-    const place = el?.closest<HTMLElement>("[data-place]")
-    if (place != null) {
-      const path = place.dataset.place ?? ""
-      return samePath(path, l.path) ? null : { kind: "place", path }
-    }
-    const row = el?.closest<HTMLElement>(".files__row[data-dir]")
-    const name = row?.dataset.name
-    if (name !== undefined && !carried.has(name))
-      return { kind: "row", name, path: childPath(l.path, name) }
-    if (el?.closest(".files__list") != null)
-      return { kind: "here", path: l.path }
-    return null
-  }
-
   const onRowPointerDown = (
     e: PointerEvent<HTMLDivElement>,
     entry: Entry,
@@ -816,7 +824,12 @@ export function FilesWindow({
         ...d,
         x: e.clientX,
         y: e.clientY,
-        target: targetAt(e.clientX, e.clientY, new Set(d.names)),
+        target: targetAt(
+          live.current.listing,
+          e.clientX,
+          e.clientY,
+          new Set(d.names),
+        ),
         copy: e.altKey,
       })
     }
@@ -866,8 +879,8 @@ export function FilesWindow({
         }
         if (e.type === "enter" && e.paths.length === 0) return
         const at = e.at
-        const target = at === null ? null : targetAt(at.x, at.y, new Set())
         const l = live.current.listing
+        const target = at === null ? null : targetAt(l, at.x, at.y, new Set())
         const into =
           target ??
           (l === null ? null : { kind: "here" as const, path: l.path })
@@ -989,7 +1002,7 @@ export function FilesWindow({
       : folderName(dropTarget.path, listing.places)
 
   return (
-    <div className="fw" onKeyDown={onWindowKey}>
+    <div className="fw" role="none" onKeyDown={onWindowKey}>
       <aside className="fw__side">
         <div className="fw__lights" data-tauri-drag-region />
         <nav className="fw__places" aria-label={t("files.places")}>
@@ -1113,7 +1126,7 @@ export function FilesWindow({
                 className="input mono"
                 aria-label={t("files.goTo")}
                 value={draft}
-                autoFocus
+                ref={focusOnMount}
                 onFocus={(e) => {
                   e.currentTarget.select()
                 }}

@@ -208,11 +208,7 @@ export function SpatialCanvasZoomControls({
   onZoomIn: () => void
 }): JSX.Element {
   return (
-    <div
-      className="spatial-canvas__zoom"
-      role="group"
-      aria-label={labels.group}
-    >
+    <fieldset className="spatial-canvas__zoom" aria-label={labels.group}>
       <CanvasIconButton label={labels.zoomOut} onClick={onZoomOut}>
         <CanvasGlyph>{GLYPHS.minus}</CanvasGlyph>
       </CanvasIconButton>
@@ -227,6 +223,6 @@ export function SpatialCanvasZoomControls({
       <CanvasIconButton label={labels.zoomIn} onClick={onZoomIn}>
         <CanvasGlyph>{GLYPHS.plus}</CanvasGlyph>
       </CanvasIconButton>
-    </div>
+    </fieldset>
   )
 }

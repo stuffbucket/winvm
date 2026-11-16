@@ -47,7 +47,6 @@
 
 .checkpoints .spatial-canvas__grid,
 .checkpoints .spatial-canvas__topbar,
-.checkpoints .timeline,
 .checkpoints__zoom,
 .checkpoints__status,
 .checkpoints .spatial-canvas__side-panel,
@@ -79,10 +78,6 @@
     .checkpoints__day,
     .checkpoint:not(.checkpoint--now)
   ) {
-  opacity: 0;
-}
-
-.checkpoints[data-phase="leaving"] .checkpoint--now .checkpoint__caption {
   opacity: 0;
 }
 
@@ -301,6 +296,11 @@
   outline-offset: var(--focus-ring-offset);
 }
 
+.checkpoint--now .checkpoint__hit {
+  --card-scale: 1.4;
+  border-color: var(--border-strong);
+}
+
 .checkpoint[data-selected="true"] .checkpoint__hit {
   border-color: var(--accent);
   box-shadow:
@@ -318,6 +318,10 @@
   aspect-ratio: 16 / 10;
   overflow: hidden;
   background: var(--surface-base);
+}
+
+.checkpoint--now .checkpoint__frame {
+  aspect-ratio: auto;
 }
 
 .checkpoint__frame img,
@@ -370,6 +374,13 @@
   transition: opacity 200ms ease-out;
 }
 
+.checkpoint--now .checkpoint__caption {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-4);
+}
+
 .checkpoint__title {
   display: flex;
   align-items: center;
@@ -384,6 +395,10 @@
   font-weight: var(--weight-lg);
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.checkpoint--now .checkpoint__name {
+  color: var(--link);
 }
 
 .checkpoint__notes {
@@ -464,6 +479,10 @@
   }
 }
 
+.checkpoints[data-phase="leaving"] .checkpoint--now .checkpoint__caption {
+  opacity: 0;
+}
+
 .spatial-canvas__viewport[data-far="true"] .checkpoint__hit {
   box-shadow: none;
 }
@@ -472,26 +491,6 @@
   .checkpoint:not(.checkpoint--now)
   .checkpoint__caption {
   opacity: 0;
-}
-
-.checkpoint--now .checkpoint__hit {
-  --card-scale: 1.4;
-  border-color: var(--border-strong);
-}
-
-.checkpoint--now .checkpoint__frame {
-  aspect-ratio: auto;
-}
-
-.checkpoint--now .checkpoint__caption {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: var(--space-4);
-}
-
-.checkpoint--now .checkpoint__name {
-  color: var(--link);
 }
 
 .timeline {
@@ -504,6 +503,10 @@
   flex-direction: column;
   align-items: flex-end;
   width: var(--checkpoints-timeline);
+}
+
+.checkpoints .timeline {
+  transition: opacity 320ms var(--checkpoints-ease);
 }
 
 .timeline__step {

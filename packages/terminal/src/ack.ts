@@ -60,10 +60,10 @@ export class TerminalResizes {
     this.scheduled = true
     this.scheduler.schedule(() => {
       this.scheduled = false
-      if (this.disposed) return
-      const { cols, rows } = this.pending!
+      const next = this.pending
+      if (this.disposed || next === undefined) return
       this.pending = undefined
-      this.resize(cols, rows)
+      this.resize(next.cols, next.rows)
     })
   }
 

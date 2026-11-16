@@ -10,6 +10,9 @@ const { createRoot } = await import("react-dom/client")
 const { Hardware } = await import("../ui/src/features/hardware/Hardware")
 const { Network } = await import("../ui/src/features/hardware/Network")
 const info = await import("../ui/src/features/hardware/info")
+const { useMachineInfo } = await import(
+  "../ui/src/features/hardware/useMachineInfo"
+)
 type View = import("../ui/src/features/hardware/useMachineInfo").MachineInfoView
 type Info = import("../ui/src/features/hardware/info").MachineInfo
 
@@ -227,6 +230,37 @@ describe("the Hardware part", () => {
     expect(v.sizes).toEqual([{ cpus: 7, memoryMiB: 8192 }])
   })
 
+  it("shows a size set elsewhere, and keeps a press when the same size is read again", () => {
+    const field = (host: HTMLElement, label: string): string | undefined =>
+      host.querySelector<HTMLInputElement>(`input[aria-label="${label}"]`)
+        ?.value
+    const v = view(parsed())
+    const host = render(<Hardware view={v} />)
+    expect(field(host, "Processors")).toBe("6")
+    expect(field(host, "Memory in GB")).toBe("8")
+    const more = host.querySelector<HTMLButtonElement>(
+      'button[aria-label="More"]',
+    )
+    act(() => {
+      more?.dispatchEvent(
+        new PointerEvent("pointerdown", { bubbles: true, button: 0 }),
+      )
+      more?.dispatchEvent(
+        new PointerEvent("pointerup", { bubbles: true, button: 0 }),
+      )
+      more?.dispatchEvent(new MouseEvent("click", { bubbles: true, button: 0 }))
+    })
+    expect(field(host, "Processors")).toBe("7")
+    act(() => root?.render(<Hardware view={view(parsed())} />))
+    expect(field(host, "Processors")).toBe("7")
+    const elsewhere = parsed({
+      hardware: { ...RUNNING.hardware, next: { cpus: 4, memoryMiB: 6144 } },
+    })
+    act(() => root?.render(<Hardware view={view(elsewhere)} />))
+    expect(field(host, "Processors")).toBe("4")
+    expect(field(host, "Memory in GB")).toBe("6")
+  })
+
   it("shows what a failed change said", () => {
     const host = render(
       <Hardware
@@ -284,5 +318,96 @@ describe("the Network part", () => {
     )
     expect(host.textContent).toContain("These show while Windows is running.")
     expect(host.textContent).toContain("10.0.2.15")
+  })
+})
+
+type Phase = import("../ui/src/model").Phase
+
+interface InfoProps {
+  readonly instance: string | null
+  readonly phase: Phase | null
+  readonly guestReady: boolean
+  readonly active: boolean
+  readonly slot: { current: View | null }
+}
+
+function InfoProbe({
+  instance,
+  phase,
+  guestReady,
+  active,
+  slot,
+}: InfoProps): null {
+  slot.current = useMachineInfo(instance, phase, guestReady, active)
+  return null
+}
+
+describe("useMachineInfo", () => {
+  afterEach(() => {
+    delete (window as { __TAURI__?: unknown }).__TAURI__
+  })
+
+  const settle = async (): Promise<void> => {
+    await act(async () => {
+      for (let i = 0; i < 10; i++) await Promise.resolve()
+    })
+  }
+
+  it("reads while shown, again whenever the phase or Windows' readiness changes, and drops one machine's info for the next", async () => {
+    const asked: string[] = []
+    const invoke = (cmd: string, a?: { args?: string[] }): Promise<unknown> => {
+      const args = a?.args ?? []
+      if (cmd !== "winvm") return Promise.resolve(null)
+      asked.push(args.join(" "))
+      if (args[2] === "b") return new Promise(() => undefined)
+      return Promise.resolve({
+        code: 0,
+        stdout: JSON.stringify(RUNNING),
+        stderr: "",
+      })
+    }
+    Object.assign(window, { __TAURI__: { core: { invoke } } })
+    const slot: { current: View | null } = { current: null }
+    const shown = (over: Partial<InfoProps> = {}): JSX.Element => (
+      <InfoProbe
+        instance="a"
+        phase="running"
+        guestReady={false}
+        active={false}
+        slot={slot}
+        {...over}
+      />
+    )
+    render(shown())
+    await settle()
+    expect(asked).toEqual([])
+    act(() => root?.render(shown({ active: true })))
+    await settle()
+    expect(asked).toEqual(["info -i a --json"])
+    expect(slot.current?.info?.hardware.next.cpus).toBe(6)
+    act(() => root?.render(shown({ active: true })))
+    await settle()
+    expect(asked).toHaveLength(1)
+    act(() => root?.render(shown({ active: true, phase: "paused" })))
+    await settle()
+    expect(asked).toHaveLength(2)
+    act(() =>
+      root?.render(shown({ active: true, phase: "paused", guestReady: true })),
+    )
+    await settle()
+    expect(asked).toHaveLength(3)
+    act(() =>
+      root?.render(
+        shown({
+          active: true,
+          phase: "paused",
+          guestReady: true,
+          instance: "b",
+        }),
+      ),
+    )
+    await settle()
+    expect(asked.at(-1)).toBe("info -i b --json")
+    expect(slot.current?.info).toBeNull()
   })
 })

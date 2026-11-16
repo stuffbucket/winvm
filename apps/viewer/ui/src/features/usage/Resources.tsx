@@ -79,6 +79,7 @@ function Resource({
   children,
 }: ResourceProps): JSX.Element {
   return (
+    // biome-ignore lint/a11y/useSemanticElements: a <meter> renders none of its children, and this meter shows a label, a value, a chart and a note
     <div
       className="resource"
       role="meter"

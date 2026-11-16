@@ -220,7 +220,8 @@ for (const scheme of ["dark", "light"]) {
               cancelable: true,
             }),
           )
-          if ((i += 1) > 50) clearInterval(pan)
+          i += 1
+          if (i > 50) clearInterval(pan)
         }, 16)
       }),
   )

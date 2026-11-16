@@ -940,11 +940,6 @@ html[data-os="macos"] .toolbar {
   color: var(--text-muted);
 }
 
-.kv--stacked .kv__row {
-  grid-template-columns: 1fr;
-  gap: 0;
-}
-
 .checks {
   list-style: none;
   margin: 0;
@@ -1023,6 +1018,11 @@ html[data-os="macos"] .toolbar {
   font-size: var(--text-sm);
   color: var(--text-strong);
   overflow-wrap: anywhere;
+}
+
+.kv--stacked .kv__row {
+  grid-template-columns: 1fr;
+  gap: 0;
 }
 
 .resources {
@@ -1588,7 +1588,7 @@ html[data-os="macos"] .toolbar {
 
 @media (prefers-reduced-motion: reduce) {
   [data-busy="true"] .busybar::before {
-    animation: none !important;
+    animation: none;
     width: 100%;
     transform: none;
     opacity: 0.55;
@@ -1616,7 +1616,9 @@ html[data-os="macos"] .toolbar {
   *,
   *::before,
   *::after {
+    /* biome-ignore-start lint/complexity/noImportantStyles: the reduced-motion preference has to override every component and vendor transition and animation, whatever their specificity */
     transition-duration: 0.001ms !important;
     animation-duration: 0.001ms !important;
+    /* biome-ignore-end lint/complexity/noImportantStyles: end of the reduced-motion override */
   }
 }

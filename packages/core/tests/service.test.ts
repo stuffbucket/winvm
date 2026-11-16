@@ -634,7 +634,9 @@ describe("service generations", () => {
       ensureService("t", p, {
         current: CURRENT,
         timeoutMs: 300,
-        start: () => void (started += 1),
+        start: () => {
+          started += 1
+        },
       }),
     ).rejects.toThrow("did not start")
     expect(started).toBe(1)

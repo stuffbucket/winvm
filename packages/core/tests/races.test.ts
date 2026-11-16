@@ -121,7 +121,7 @@ beforeEach(() => {
   mkdirSync(resolve(state, "runtime", "bin"), { recursive: true })
   script(
     "swtpm",
-    'while [ $# -gt 0 ]; do case "$1" in --ctrl) s="${2#*path=}"; s="${s%%,*}"; shift;; esac; shift; done; : > "$s"\n' +
+    `while [ $# -gt 0 ]; do case "$1" in --ctrl) s="\${2#*path=}"; s="\${s%%,*}"; shift;; esac; shift; done; : > "$s"\n` +
       'echo $$ >> "$WINVM_TEST_SWTPM_LOG"\n' +
       "while :; do sleep 0.2; done",
   )

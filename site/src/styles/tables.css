@@ -63,6 +63,7 @@
     display: block;
     padding: 0.125rem 0;
     border: 0;
+    /* biome-ignore lint/complexity/noImportantStyles: Markdown column alignment arrives as an inline text-align style on each cell, which only !important overrides in the stacked layout */
     text-align: start !important;
     overflow-wrap: anywhere;
   }

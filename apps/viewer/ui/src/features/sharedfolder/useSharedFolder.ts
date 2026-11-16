@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 
 import { homeDir, pickFolder, winvm } from "../../backend"
 import { t } from "../../i18n"
@@ -44,7 +44,10 @@ export function useSharedFolder(
       })
   }, [])
 
+  const statusFor = useRef(instance)
   useEffect(() => {
+    if (statusFor.current === instance) return
+    statusFor.current = instance
     setStatus(null)
     setError(null)
   }, [instance])
@@ -68,10 +71,16 @@ export function useSharedFolder(
   }, [])
 
   const installing = work?.kind === "install" && work.instance === instance
+  const query = useMemo(
+    () =>
+      active && instance !== null && !installing
+        ? { instance, phase, guestReady }
+        : null,
+    [active, instance, phase, guestReady, installing],
+  )
   useEffect(() => {
-    if (!active || instance === null || installing) return
-    void read(instance)
-  }, [active, instance, phase, guestReady, installing, read])
+    if (query !== null) void read(query.instance)
+  }, [query, read])
 
   const change = useCallback(
     async (

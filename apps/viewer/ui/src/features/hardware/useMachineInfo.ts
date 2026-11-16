@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 
 import { winvm } from "../../backend"
 import { t } from "../../i18n"
@@ -31,8 +31,11 @@ export function useMachineInfo(
   const shown = useRef(instance)
   shown.current = instance
   const reads = useRef(0)
+  const infoFor = useRef(instance)
 
   useEffect(() => {
+    if (infoFor.current === instance) return
+    infoFor.current = instance
     setInfo(null)
     setError(null)
   }, [instance])
@@ -55,10 +58,14 @@ export function useMachineInfo(
     }
   }, [])
 
+  const query = useMemo(
+    () =>
+      active && instance !== null ? { instance, phase, guestReady } : null,
+    [active, instance, phase, guestReady],
+  )
   useEffect(() => {
-    if (!active || instance === null) return
-    void read(instance)
-  }, [active, instance, phase, guestReady, read])
+    if (query !== null) void read(query.instance)
+  }, [query, read])
 
   const setSize = useCallback(
     (change: Partial<Size>): void => {

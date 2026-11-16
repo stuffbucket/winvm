@@ -13,6 +13,7 @@ import {
   useEffect,
   useImperativeHandle,
   useLayoutEffect,
+  useMemo,
   useRef,
   useState,
 } from "react"
@@ -91,6 +92,10 @@ export const Screen = forwardRef<ScreenHandle, ScreenProps>(function Screen(
   const [phase, setPhase] = useState<ResizePhase>("settled")
   const [held, setHeld] = useState(false)
   const { websocketPort, password } = connection
+  const session = useMemo(
+    () => ({ websocketPort, password, attempt }),
+    [websocketPort, password, attempt],
+  )
   const guestSize = useRef(onGuestSize)
   guestSize.current = onGuestSize
   const live = useRef<LiveResize | null>(null)
@@ -191,8 +196,8 @@ export const Screen = forwardRef<ScreenHandle, ScreenProps>(function Screen(
     document.addEventListener("visibilitychange", onVisibility)
     keyboard.current = router
 
-    conn = new RFB(el, `ws://127.0.0.1:${String(websocketPort)}`, {
-      credentials: { password: password ?? "" },
+    conn = new RFB(el, `ws://127.0.0.1:${String(session.websocketPort)}`, {
+      credentials: { password: session.password ?? "" },
       wsProtocols: ["binary"],
     })
     rfb.current = conn
@@ -378,7 +383,7 @@ export const Screen = forwardRef<ScreenHandle, ScreenProps>(function Screen(
       }
     })
     conn.addEventListener("credentialsrequired", () => {
-      conn.sendCredentials({ password: password ?? "" })
+      conn.sendCredentials({ password: session.password ?? "" })
     })
     conn.addEventListener("securityfailure", () => {
       setView("refused")
@@ -418,7 +423,7 @@ export const Screen = forwardRef<ScreenHandle, ScreenProps>(function Screen(
       setHeld(false)
       setPhase("settled")
     }
-  }, [websocketPort, password, attempt, resizable])
+  }, [session, resizable])
 
   useEffect(() => {
     const conn = rfb.current
@@ -446,10 +451,12 @@ export const Screen = forwardRef<ScreenHandle, ScreenProps>(function Screen(
     drawn !== null && fb !== null && drawn.width > fb.width / ratio + 0.5
   const holding = resizable && phase === "resizing" && held
 
+  const exactSize =
+    exact === undefined ? null : `${exact.width} ${exact.height}`
   useLayoutEffect(() => {
     const conn = rfb.current
-    if (conn !== null && exact !== undefined) conn.scaleViewport = true
-  }, [exact?.width, exact?.height])
+    if (conn !== null && exactSize !== null) conn.scaleViewport = true
+  }, [exactSize])
 
   const message = view === "connected" ? null : t(`screen.${view}`)
   return (
@@ -465,6 +472,7 @@ export const Screen = forwardRef<ScreenHandle, ScreenProps>(function Screen(
         }
         style={exact}
       />
+      {/* biome-ignore lint/a11y/noAriaHiddenOnFocusable: a canvas without tabIndex is not focusable; this one only holds the last frame while the guest resizes */}
       <canvas
         ref={still}
         className="screen__still"

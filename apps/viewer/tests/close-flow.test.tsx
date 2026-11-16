@@ -10,6 +10,7 @@ const { act, StrictMode } = await import("react")
 const { createRoot } = await import("react-dom/client")
 const { orderCloseQueue } = await import("../ui/src/features/close/closeQueue")
 const { useCloseFlow } = await import("../ui/src/features/close/useCloseFlow")
+const { useWinvm } = await import("../ui/src/features/winvm/useWinvm")
 const { parseStatus, phase: phaseOf } = await import("../ui/src/model")
 const { copy } = await import("./copy")
 
@@ -265,6 +266,15 @@ function fakeWinvm(machines: Machine[], selected: string | null) {
 }
 
 type FakeWinvm = ReturnType<typeof fakeWinvm>
+
+function WinvmHost({
+  slot,
+}: {
+  readonly slot: { current: Winvm | null }
+}): null {
+  slot.current = useWinvm()
+  return null
+}
 
 let root: ReturnType<typeof createRoot> | null = null
 let flow: CloseFlow | null = null
@@ -1453,21 +1463,16 @@ describe("useWinvm's lastOn", () => {
       )
     }
     Object.assign(window, { __TAURI__: { core: { invoke } } })
-    const { useWinvm } = await import("../ui/src/features/winvm/useWinvm")
-    let latest: Winvm | null = null
-    function Host(): null {
-      latest = useWinvm()
-      return null
-    }
+    const slot: { current: Winvm | null } = { current: null }
     const host = document.createElement("div")
     document.body.append(host)
     const r = createRoot(host)
     root = r
     act(() => {
-      r.render(<Host />)
+      r.render(<WinvmHost slot={slot} />)
     })
     await flush()
-    const first = latest as Winvm | null
+    const first = slot.current
     if (first === null) throw new Error("not mounted")
     expect(first.name).toBe("a")
     expect(first.lastOn("a")).toBeNull()

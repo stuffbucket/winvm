@@ -78,8 +78,9 @@ export function SpatialCanvasSurface({
     <section
       {...props}
       ref={ref}
-      role={embedded ? "region" : "dialog"}
-      aria-modal={embedded ? undefined : true}
+      {...(embedded
+        ? { role: "region" }
+        : { role: "dialog", "aria-modal": true })}
       aria-label={title}
       aria-describedby={describedBy}
       tabIndex={-1}

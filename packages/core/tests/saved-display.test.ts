@@ -129,9 +129,10 @@ function fixture(
   name = "saved",
   kind: Manifest["kind"] = "manual",
 ): Manifest {
+  if (!profiled) writeDisplay(pathsFor("source"), shown)
   const compat = profiled
     ? currentCompat("source", meta, shown)
-    : (writeDisplay(pathsFor("source"), shown), currentCompat("source", meta))
+    : currentCompat("source", meta)
   const m: Manifest = {
     name,
     instance: "source",
@@ -162,7 +163,7 @@ beforeEach(() => {
   mkdirSync(resolve(state, "runtime", "bin"), { recursive: true })
   script(
     "swtpm",
-    'while [ $# -gt 0 ]; do case "$1" in --ctrl) s="${2#*path=}"; s="${s%%,*}"; shift;; esac; shift; done; : > "$s"',
+    `while [ $# -gt 0 ]; do case "$1" in --ctrl) s="\${2#*path=}"; s="\${s%%,*}"; shift;; esac; shift; done; : > "$s"`,
   )
   script(
     "qemu-system-aarch64",
@@ -467,7 +468,7 @@ describe("loading a profiled save", () => {
     fixture(VIRTIO_GPU, false)
     writeDisplay(pathsFor("source"), RAMFB)
     await expect(loadSave("source", "saved")).rejects.toThrow(
-      /no recorded display[^]*winvm display/,
+      /no recorded display[\s\S]*winvm display/,
     )
     expect(commands).toEqual([])
     expect(launches()).toEqual([])
@@ -479,9 +480,12 @@ describe("loading a profiled save", () => {
 
   it("rejects every unrelated mismatch before stopping the guest or replacing a disk", async () => {
     const saved = fixture(RAMFB)
+    const { compatParts } = saved
+    if (compatParts === undefined)
+      throw new Error("the fixture save records no compatParts")
     writeDisplay(pathsFor("source"), VIRTIO_GPU)
     for (const part of ["base", "hardware", "firmware", "qemu"] as const) {
-      const parts = { ...saved.compatParts!, [part]: "different" }
+      const parts = { ...compatParts, [part]: "different" }
       publish({ ...saved, compat: compatHash(parts), compatParts: parts })
       await expect(loadSave("source", "saved")).rejects.toThrow(
         /cannot be loaded/,

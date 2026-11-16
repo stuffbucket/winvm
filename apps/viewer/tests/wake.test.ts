@@ -34,7 +34,7 @@ class Wire implements WakeSock {
 class Ticker implements WakeTimers {
   fn: (() => void) | null = null
   ms = 0
-  every(fn: () => void, ms: number): unknown {
+  repeat(fn: () => void, ms: number): unknown {
     this.fn = fn
     this.ms = ms
     return 1

@@ -88,6 +88,7 @@ export function createTerminalTransport<C extends string, E extends string>({
   on,
   channels,
 }: TerminalTransportOptions<C, E>): DetachableTerminalTransport {
+  const ackChannel = channels.ack
   return {
     async spawn({ id, cwd, shell, cols, rows }) {
       await invoke(channels.spawn, { id, cols, rows, shell, cwd })
@@ -105,9 +106,9 @@ export function createTerminalTransport<C extends string, E extends string>({
       await invoke(channels.terminate, { id })
     },
 
-    ack: channels.ack
+    ack: ackChannel
       ? async function ack(id: string, sequence: number): Promise<void> {
-          await invoke(channels.ack!, { id, sequence })
+          await invoke(ackChannel, { id, sequence })
         }
       : undefined,
 

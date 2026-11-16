@@ -44,6 +44,7 @@ import {
 import { outputText, winvm } from "../../backend"
 import { Button } from "../../components/Button"
 import { ConfirmDialog } from "../../components/ConfirmDialog"
+import { focusOnMount } from "../../components/focusOnMount"
 import { t } from "../../i18n"
 import { type Phase, parseNote, parseSaves } from "../../model"
 import type { Ran } from "../winvm/useWinvm"
@@ -114,6 +115,15 @@ const viewSize = (): Size => ({
   width: window.innerWidth,
   height: window.innerHeight,
 })
+
+const centreIn = (
+  world: { x: number; y: number },
+  zoom: number,
+  reserve: number,
+): Camera => {
+  const c = centreOn(world, zoom, viewSize())
+  return { ...c, x: c.x - reserve / 2 }
+}
 
 export function CheckpointCanvas(p: CheckpointCanvasProps): JSX.Element {
   const live = p.phase === "running" || p.phase === "paused"
@@ -268,15 +278,6 @@ export function CheckpointCanvas(p: CheckpointCanvasProps): JSX.Element {
       ),
     [content, limits],
   )
-
-  const centreIn = (
-    world: { x: number; y: number },
-    zoom: number,
-    reserve: number,
-  ): Camera => {
-    const c = centreOn(world, zoom, viewSize())
-    return { ...c, x: c.x - reserve / 2 }
-  }
 
   const overview = useCallback((): Camera => {
     const view = openingView(layout)
@@ -1165,7 +1166,7 @@ export function CheckpointCanvas(p: CheckpointCanvasProps): JSX.Element {
               <input
                 id="checkpoint-new-title"
                 className="input"
-                autoFocus
+                ref={focusOnMount}
                 value={newTitle}
                 placeholder={t("checkpoints.newPlaceholder")}
                 autoComplete="off"
@@ -1288,8 +1289,8 @@ export function CheckpointCanvas(p: CheckpointCanvasProps): JSX.Element {
             onLook={() => {
               setLooking(true)
             }}
-            onNote={(d) => {
-              writeNote(selectedCheckpoint.name, d)
+            onNote={(name, d) => {
+              writeNote(name, d)
             }}
             onGoBack={() => {
               setConfirm({ kind: "go-back", name: selectedCheckpoint.name })
@@ -1302,6 +1303,7 @@ export function CheckpointCanvas(p: CheckpointCanvasProps): JSX.Element {
       </SpatialCanvas>
 
       {looking && selectedCheckpoint !== undefined && (
+        // biome-ignore lint/a11y/useKeyWithClickEvents: Escape closes the look from the canvas's window key handler, which keeps focus where it was
         <div
           className="checkpoints__look"
           role="dialog"

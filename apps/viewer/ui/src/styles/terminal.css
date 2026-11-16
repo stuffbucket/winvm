@@ -136,9 +136,9 @@ html[data-os="macos"] .term__bar {
   visibility: hidden;
 }
 
-.term__tab:hover .term__tab-close,
 .term__tab--active .term__tab-close,
-.term__tab-close:focus-visible {
+.term__tab-close:focus-visible,
+.term__tab:hover .term__tab-close {
   visibility: visible;
 }
 
