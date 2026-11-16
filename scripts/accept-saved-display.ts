@@ -366,7 +366,7 @@ exitOnSignals(process, {
 
 console.log(`disposable root: ${state}`)
 try {
-  const images = resolve(process.env.WINVM_HOME ?? "", "images", imageName)
+  const images = resolve(process.env.WINVM_HOME, "images", imageName)
   mkdirSync(images, { recursive: true })
   const cloned = spawnSync(
     "cp",
