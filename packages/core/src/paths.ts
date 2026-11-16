@@ -117,6 +117,7 @@ export interface Paths {
   readonly service: string
   readonly control: string
   readonly events: string
+  readonly eventsPrev: string
   readonly reconcile: string
   readonly lease: string
   readonly pid: string
@@ -146,6 +147,7 @@ export function pathsFor(name: string): Paths {
     service: resolve(dir, "service.json"),
     control: resolve(dir, "control.sock"),
     events: resolve(dir, "events.jsonl"),
+    eventsPrev: resolve(dir, "events.prev.jsonl"),
     reconcile: resolve(dir, "reconcile.lock"),
     lease: resolve(dir, "lease.json"),
     pid: resolve(dir, "qemu.pid"),
