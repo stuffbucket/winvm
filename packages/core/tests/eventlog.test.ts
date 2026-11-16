@@ -7,6 +7,7 @@ import {
   readFileSync,
   renameSync,
   rmSync,
+  statSync,
   writeFileSync,
 } from "node:fs"
 import { tmpdir } from "node:os"
@@ -59,6 +60,9 @@ const note = (
 })
 
 const all = (): readonly Entry[] => readSince(NAME, START).entries
+
+const whats = (entries: readonly Entry[]): readonly string[] =>
+  entries.map((e) => (e.kind === "service" ? e.what : e.kind))
 
 const legacyLine = (fields: Record<string, unknown>): string =>
   `${JSON.stringify({ t: "2026-11-01T00:00:00.000Z", instance: NAME, ...fields })}\n`
@@ -329,6 +333,70 @@ describe("bounding the event record", () => {
       "three",
     ])
   })
+
+  it("never reads from before its cursor when the record rotates between its two opens", () => {
+    appendEntry(NAME, note("archived"))
+    rotateEvents(NAME, 1)
+    appendEntry(NAME, note("one"))
+    const cursor = readSince(NAME, START).cursor
+    appendEntry(NAME, note("two"))
+    const r = readSince(NAME, cursor, {
+      betweenOpens: () => {
+        rotateEvents(NAME, 1)
+        appendEntry(NAME, note("three"))
+      },
+    })
+    expect(whats(r.entries)).toEqual(["two"])
+    expect(r.gap).toBe(false)
+    const next = readSince(NAME, r.cursor)
+    expect(whats(next.entries)).toEqual(["three"])
+    expect(next.gap).toBe(false)
+  })
+
+  it("reads every entry once and in order while another process appends and rotates under it", async () => {
+    const total = 3000
+    const token = resolve(home, "caught-up")
+    const script = resolve(home, "rotator.ts")
+    writeFileSync(
+      script,
+      [
+        `import { existsSync, rmSync, statSync } from "node:fs"`,
+        `import { appendEntry, rotateEvents } from ${JSON.stringify(resolve(import.meta.dir, "../src/eventlog.ts"))}`,
+        `import { pathsFor } from ${JSON.stringify(resolve(import.meta.dir, "../src/paths.ts"))}`,
+        `const file = pathsFor(${JSON.stringify(NAME)}).events`,
+        `const token = ${JSON.stringify(token)}`,
+        `for (let i = 0; i < ${String(total)}; i += 1) {`,
+        `  appendEntry(${JSON.stringify(NAME)}, { kind: "service", what: "seq", n: i })`,
+        `  if ((statSync(file, { throwIfNoEntry: false })?.size ?? 0) < 8192) continue`,
+        `  const until = Date.now() + 10_000`,
+        `  while (!existsSync(token) && Date.now() < until) Bun.sleepSync(1)`,
+        `  if (rotateEvents(${JSON.stringify(NAME)}, 8192)) rmSync(token, { force: true })`,
+        `}`,
+      ].join("\n"),
+    )
+    const writer = Bun.spawn([process.execPath, script], {
+      env: { ...process.env, WINVM_HOME: home },
+      stdout: "ignore",
+      stderr: "inherit",
+    })
+    const seen: number[] = []
+    let gaps = 0
+    let cursor = START
+    const until = Date.now() + 30_000
+    while (seen.length < total && Date.now() < until) {
+      const r = readSince(NAME, cursor)
+      cursor = r.cursor
+      if (r.gap) gaps += 1
+      for (const e of r.entries)
+        if (e.kind === "service" && typeof e.n === "number") seen.push(e.n)
+      if (statSync(p.events, { throwIfNoEntry: false })?.ino === cursor.ino)
+        writeFileSync(token, "")
+      await Bun.sleep(0)
+    }
+    await writer.exited
+    expect(gaps).toBe(0)
+    expect(seen).toEqual(Array.from({ length: total }, (_, i) => i))
+  }, 60_000)
 
   it("starts over when the record was replaced underneath a cursor", () => {
     appendEntry(NAME, note("one"))

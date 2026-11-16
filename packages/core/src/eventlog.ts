@@ -385,10 +385,25 @@ const closeAll = (...opened: readonly (Opened | null)[]): void => {
 const holds = (o: Opened | null, cursor: Cursor): boolean =>
   o !== null && cursor.ino !== 0 && o.ino === cursor.ino
 
-export function readSince(instance: string, cursor: Cursor): Batch {
+function archiveBeside(cur: Opened | null, prev: Opened | null): Opened | null {
+  if (prev === null || cur === null || prev.ino !== cur.ino) return prev
+  closeSync(prev.fd)
+  return null
+}
+
+export interface ReadSeams {
+  readonly betweenOpens?: () => void
+}
+
+export function readSince(
+  instance: string,
+  cursor: Cursor,
+  seams: ReadSeams = {},
+): Batch {
   const p = pathsFor(instance)
-  const prev = openRecord(p.eventsPrev)
   const cur = openRecord(p.events)
+  seams.betweenOpens?.()
+  const prev = archiveBeside(cur, openRecord(p.eventsPrev))
   try {
     if (cur !== null && holds(cur, cursor)) {
       const shrunk = cur.size < cursor.offset
