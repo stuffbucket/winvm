@@ -75,20 +75,38 @@ const legacyLine = (fields: Record<string, unknown>): string =>
   `${JSON.stringify({ t: "2026-11-01T00:00:00.000Z", instance: NAME, ...fields })}\n`
 
 describe("writing the event record", () => {
-  it("appends one JSON line per entry, its time and instance first", () => {
+  it("starts a new record with a line naming its generation, then appends one JSON line per entry, its time and instance first", () => {
     const line = appendEntry(NAME, shutdown)
     expect(line).not.toBeNull()
+    appendEntry(NAME, note("second"))
     const raw = readFileSync(p.events, "utf8")
     expect(raw.endsWith("\n")).toBe(true)
-    expect(raw.split("\n")).toHaveLength(2)
-    expect(raw.startsWith('{"t":"')).toBe(true)
-    expect(all()).toEqual([
-      {
-        t: expect.any(String) as string,
-        instance: NAME,
-        ...shutdown,
-      },
-    ])
+    const lines = raw.trimEnd().split("\n")
+    expect(lines).toHaveLength(3)
+    for (const l of lines) expect(l.startsWith('{"t":"')).toBe(true)
+    expect(JSON.parse(lines[0] ?? "")).toEqual({
+      t: expect.any(String) as string,
+      instance: NAME,
+      kind: "generation",
+      generation: expect.stringMatching(/^[0-9a-f-]{36}$/) as string,
+    })
+    expect(lines[1]).toBe(line ?? "")
+    rotateEvents(NAME, 1)
+    appendEntry(NAME, note("third"))
+    const next = JSON.parse(
+      readFileSync(p.events, "utf8").split("\n")[0] ?? "",
+    ) as { generation: string }
+    expect(next.generation).not.toBe(
+      (JSON.parse(lines[0] ?? "") as { generation: string }).generation,
+    )
+    expect(whats(all())).toEqual(["qmp", "second", "third"])
+  })
+
+  it("appends to a record without a generation line as it is", () => {
+    writeFileSync(p.events, legacyLine({ kind: "service", what: "old" }))
+    appendEntry(NAME, note("new"))
+    expect(readFileSync(p.events, "utf8").trimEnd().split("\n")).toHaveLength(2)
+    expect(whats(all())).toEqual(["old", "new"])
   })
 
   it("drops an entry it cannot serialize rather than failing its caller", () => {
@@ -142,9 +160,10 @@ describe("writing the event record", () => {
     )
     await Promise.all(writers.map(async (w) => await w.exited))
     const lines = readFileSync(p.events, "utf8").trimEnd().split("\n")
-    expect(lines).toHaveLength(600)
-    for (const line of lines)
-      expect(() => JSON.parse(line) as unknown).not.toThrow()
+    expect(lines).toHaveLength(601)
+    const parsed = lines.map((line) => JSON.parse(line) as { kind: string })
+    expect(parsed.filter((l) => l.kind === "generation")).toHaveLength(1)
+    expect(parsed[0]?.kind).toBe("generation")
     const seen = new Set(all().map((e) => (e.kind === "service" ? e.what : "")))
     expect(seen.size).toBe(600)
   }, 30_000)
@@ -466,6 +485,23 @@ describe("bounding the event record", () => {
         throw new Error("no lease answer")
       }),
     ).toBe(false)
+  })
+
+  it("tells a new record from the one it replaced even when the filesystem reuses the inode", () => {
+    appendEntry(NAME, note("one"))
+    const cursor = readSince(NAME, START).cursor
+    const first = statSync(p.events).ino
+    appendEntry(NAME, note("lost"))
+    rotateEvents(NAME, 1)
+    appendEntry(NAME, note("two"))
+    rotateEvents(NAME, 1)
+    appendEntry(NAME, note("three"))
+    const reused = statSync(p.events).ino
+    const r = readSince(NAME, cursor, {
+      inode: (real) => (real === reused ? first : real),
+    })
+    expect(r.gap).toBe(true)
+    expect(whats(r.entries)).toEqual(["two", "three"])
   })
 
   it("starts over when the record was replaced underneath a cursor", () => {

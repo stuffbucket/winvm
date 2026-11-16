@@ -1,5 +1,7 @@
+import { randomUUID } from "node:crypto"
 import {
   closeSync,
+  constants,
   fstatSync,
   openSync,
   readSync,
@@ -8,6 +10,7 @@ import {
   writeSync,
 } from "node:fs"
 
+import { linkNew } from "./exclusive"
 import { pathsFor } from "./paths"
 
 type Json = Record<string, unknown>
@@ -92,6 +95,7 @@ export type Entry = EntryFields & Stamp
 
 export interface Position {
   readonly ino: number
+  readonly generation: string | null
   readonly offset: number
 }
 
@@ -99,7 +103,12 @@ export interface Cursor extends Position {
   readonly archive: Position | null
 }
 
-export const START: Cursor = { ino: 0, offset: 0, archive: null }
+export const START: Cursor = {
+  ino: 0,
+  generation: null,
+  offset: 0,
+  archive: null,
+}
 
 export interface Batch {
   readonly entries: readonly Entry[]
@@ -113,6 +122,8 @@ const SHORT_FIELD = 256
 const TAIL_BYTES = 64 * 1024
 const READ_LIMIT = 2 * DEFAULT_MAX_BYTES
 const LINE_START = '{"t":"'
+const GENERATION = "generation"
+const HEADER_BYTES = 512
 
 const isObject = (v: unknown): v is Json =>
   typeof v === "object" && v !== null && !Array.isArray(v)
@@ -138,6 +149,27 @@ function lineFor(instance: string, fields: EntryFields): string {
     : JSON.stringify({ ...head, kind: fields.kind, truncated: bytes })
 }
 
+const APPEND = constants.O_WRONLY | constants.O_APPEND
+
+const headerFor = (instance: string): string =>
+  `${JSON.stringify({
+    t: new Date().toISOString(),
+    instance,
+    kind: GENERATION,
+    generation: randomUUID(),
+  })}\n`
+
+function openAppending(instance: string): number {
+  const file = pathsFor(instance).events
+  try {
+    return openSync(file, APPEND)
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code !== "ENOENT") throw e
+  }
+  linkNew(file, headerFor(instance))
+  return openSync(file, APPEND)
+}
+
 export function appendEntry(
   instance: string,
   fields: EntryFields,
@@ -146,7 +178,7 @@ export function appendEntry(
   let fd: number
   try {
     line = lineFor(instance, fields)
-    fd = openSync(pathsFor(instance).events, "a", 0o600)
+    fd = openAppending(instance)
   } catch {
     return null
   }
@@ -347,14 +379,33 @@ export function parseEntry(line: string): Entry | null {
 interface Opened {
   readonly fd: number
   readonly ino: number
+  readonly generation: string | null
   readonly size: number
 }
 
-function openRecord(file: string): Opened | null {
+function generationOf(fd: number, size: number): string | null {
+  const buf = Buffer.alloc(Math.min(size, HEADER_BYTES))
+  const n = readSync(fd, buf, 0, buf.length, 0)
+  const nl = buf.subarray(0, n).indexOf(0x0a)
+  if (nl < 0) return null
+  try {
+    const v: unknown = JSON.parse(buf.subarray(0, nl).toString("utf8"))
+    return isObject(v) && v.kind === GENERATION ? str(v.generation) : null
+  } catch {
+    return null
+  }
+}
+
+function openRecord(file: string, seams: ReadSeams = {}): Opened | null {
   try {
     const fd = openSync(file, "r")
     const s = fstatSync(fd)
-    return { fd, ino: s.ino, size: s.size }
+    return {
+      fd,
+      ino: seams.inode?.(s.ino) ?? s.ino,
+      generation: generationOf(fd, s.size),
+      size: s.size,
+    }
   } catch {
     return null
   }
@@ -421,8 +472,19 @@ const closeAll = (...opened: readonly (Opened | null)[]): void => {
   for (const o of opened) if (o !== null) closeSync(o.fd)
 }
 
+const sameFile = (o: Opened, at: Position): boolean =>
+  o.generation !== null || at.generation !== null
+    ? o.generation === at.generation
+    : at.ino !== 0 && o.ino === at.ino
+
 const holds = (o: Opened | null, at: Position | null): o is Opened =>
-  o !== null && at !== null && at.ino !== 0 && o.ino === at.ino
+  o !== null && at !== null && sameFile(o, at)
+
+const at = (o: Opened, offset: number): Position => ({
+  ino: o.ino,
+  generation: o.generation,
+  offset,
+})
 
 function archiveBeside(cur: Opened | null, prev: Opened | null): Opened | null {
   if (prev === null || cur === null || prev.ino !== cur.ino) return prev
@@ -432,6 +494,7 @@ function archiveBeside(cur: Opened | null, prev: Opened | null): Opened | null {
 
 export interface ReadSeams {
   readonly betweenOpens?: () => void
+  readonly inode?: (real: number) => number
 }
 
 function openBoth(
@@ -439,9 +502,9 @@ function openBoth(
   seams: ReadSeams,
 ): { readonly cur: Opened | null; readonly prev: Opened | null } {
   const p = pathsFor(instance)
-  const cur = openRecord(p.events)
+  const cur = openRecord(p.events, seams)
   seams.betweenOpens?.()
-  return { cur, prev: archiveBeside(cur, openRecord(p.eventsPrev)) }
+  return { cur, prev: archiveBeside(cur, openRecord(p.eventsPrev, seams)) }
 }
 
 function readCurrent(cur: Opened, prev: Opened | null, cursor: Cursor): Scan {
@@ -453,21 +516,18 @@ function readCurrent(cur: Opened, prev: Opened | null, cursor: Cursor): Scan {
   const base = shrunk ? 0 : cursor.offset
   const now = wholeLines(cur, base)
   const archive =
-    tracked === null || late === null
-      ? null
-      : { ino: tracked.ino, offset: late.end }
+    tracked === null || late === null ? null : at(tracked, late.end)
   return {
     items: [
       ...(tracked === null
         ? []
         : itemsOf(late, (end) => ({
-            ino: cur.ino,
-            offset: base,
-            archive: { ino: tracked.ino, offset: end },
+            ...at(cur, base),
+            archive: at(tracked, end),
           }))),
-      ...itemsOf(now, (end) => ({ ino: cur.ino, offset: end, archive })),
+      ...itemsOf(now, (end) => ({ ...at(cur, end), archive })),
     ],
-    cursor: { ino: cur.ino, offset: now.end, archive },
+    cursor: { ...at(cur, now.end), archive },
     gap: shrunk || now.skipped || late?.skipped === true,
   }
 }
@@ -483,35 +543,27 @@ function readAcross(
       ? null
       : wholeLines(prev, fromPrev ? Math.min(cursor.offset, prev.size) : 0)
   const now = cur === null ? null : wholeLines(cur, 0)
-  const left =
-    prev === null || older === null
-      ? null
-      : { ino: prev.ino, offset: older.end }
+  const left = prev === null || older === null ? null : at(prev, older.end)
   return {
     items: [
       ...(prev === null
         ? []
         : itemsOf(older, (end) => ({
-            ino: prev.ino,
-            offset: end,
+            ...at(prev, end),
             archive: null,
           }))),
       ...(cur === null
         ? []
-        : itemsOf(now, (end) => ({
-            ino: cur.ino,
-            offset: end,
-            archive: left,
-          }))),
+        : itemsOf(now, (end) => ({ ...at(cur, end), archive: left }))),
     ],
     cursor:
       cur !== null && now !== null
-        ? { ino: cur.ino, offset: now.end, archive: left }
+        ? { ...at(cur, now.end), archive: left }
         : left === null
           ? START
           : { ...left, archive: null },
     gap:
-      (cursor.ino !== 0 && !fromPrev) ||
+      ((cursor.ino !== 0 || cursor.generation !== null) && !fromPrev) ||
       older?.skipped === true ||
       now?.skipped === true,
   }
@@ -544,7 +596,7 @@ function lastLineEnd(o: Opened): number {
   return from === 0 ? 0 : o.size
 }
 
-const endOf = (o: Opened): Position => ({ ino: o.ino, offset: lastLineEnd(o) })
+const endOf = (o: Opened): Position => at(o, lastLineEnd(o))
 
 export function endCursor(instance: string): Cursor {
   const { cur, prev } = openBoth(instance, {})
