@@ -127,6 +127,27 @@ interface Press {
 
 const why = (code: OpCode): string => t(`files.why.${code}`)
 
+function targetAt(
+  l: Listing | null,
+  x: number,
+  y: number,
+  carried: ReadonlySet<string>,
+): Target | null {
+  if (l === null) return null
+  const el = document.elementFromPoint(x, y)
+  const place = el?.closest<HTMLElement>("[data-place]")
+  if (place != null) {
+    const path = place.dataset.place ?? ""
+    return samePath(path, l.path) ? null : { kind: "place", path }
+  }
+  const row = el?.closest<HTMLElement>(".files__row[data-dir]")
+  const name = row?.dataset.name
+  if (name !== undefined && !carried.has(name))
+    return { kind: "row", name, path: childPath(l.path, name) }
+  if (el?.closest(".files__list") != null) return { kind: "here", path: l.path }
+  return null
+}
+
 export function FilesWindow({
   instance,
   initialTitle,
@@ -239,9 +260,16 @@ export function FilesWindow({
     [instance],
   )
 
+  const reload = useMemo(
+    () => ({ instance, landed: copies.landed }),
+    [instance, copies.landed],
+  )
   useEffect(() => {
-    void load(shown.current ?? remember.get(`folder.${instance}`), "stay")
-  }, [load, instance, copies.landed])
+    void load(
+      shown.current ?? remember.get(`folder.${reload.instance}`),
+      "stay",
+    )
+  }, [load, reload])
 
   useEffect(() => {
     list.current?.focus()
@@ -711,28 +739,6 @@ export function FilesWindow({
     }, 0)
   }
 
-  const targetAt = (
-    x: number,
-    y: number,
-    carried: ReadonlySet<string>,
-  ): Target | null => {
-    const l = live.current.listing
-    if (l === null) return null
-    const el = document.elementFromPoint(x, y)
-    const place = el?.closest<HTMLElement>("[data-place]")
-    if (place != null) {
-      const path = place.dataset.place ?? ""
-      return samePath(path, l.path) ? null : { kind: "place", path }
-    }
-    const row = el?.closest<HTMLElement>(".files__row[data-dir]")
-    const name = row?.dataset.name
-    if (name !== undefined && !carried.has(name))
-      return { kind: "row", name, path: childPath(l.path, name) }
-    if (el?.closest(".files__list") != null)
-      return { kind: "here", path: l.path }
-    return null
-  }
-
   const onRowPointerDown = (
     e: PointerEvent<HTMLDivElement>,
     entry: Entry,
@@ -817,7 +823,12 @@ export function FilesWindow({
         ...d,
         x: e.clientX,
         y: e.clientY,
-        target: targetAt(e.clientX, e.clientY, new Set(d.names)),
+        target: targetAt(
+          live.current.listing,
+          e.clientX,
+          e.clientY,
+          new Set(d.names),
+        ),
         copy: e.altKey,
       })
     }
@@ -867,8 +878,8 @@ export function FilesWindow({
         }
         if (e.type === "enter" && e.paths.length === 0) return
         const at = e.at
-        const target = at === null ? null : targetAt(at.x, at.y, new Set())
         const l = live.current.listing
+        const target = at === null ? null : targetAt(l, at.x, at.y, new Set())
         const into =
           target ??
           (l === null ? null : { kind: "here" as const, path: l.path })
