@@ -15,6 +15,7 @@ const { CheckpointDetails, draftOf, tagsOf } = await import(
   "../ui/src/features/checkpoints/CheckpointDetails"
 )
 const { ConfirmDialog } = await import("../ui/src/components/ConfirmDialog")
+const { usePicture } = await import("../ui/src/features/checkpoints/pictures")
 const { parseNote, parseSaves } = await import("../ui/src/model")
 const { centreOf, clampCamera, fitRect } = await import("@winvm/canvas")
 
@@ -456,6 +457,79 @@ describe("a checkpoint's note", () => {
       )
     })
     expect(title.value).toBe("Newer")
+  })
+})
+
+interface PictureProps {
+  readonly path: string | null
+  readonly version: string
+  readonly wanted: boolean
+  readonly seen: (string | null)[]
+}
+
+function PictureProbe({ path, version, wanted, seen }: PictureProps): null {
+  seen.push(usePicture(path, version, wanted))
+  return null
+}
+
+describe("a checkpoint's picture", () => {
+  let root: ReturnType<typeof createRoot> | null = null
+  afterEach(() => {
+    act(() => root?.unmount())
+    root = null
+    document.body.replaceChildren()
+    delete (window as { __TAURI__?: unknown }).__TAURI__
+  })
+  const settle = async (): Promise<void> => {
+    await act(async () => {
+      for (let i = 0; i < 10; i++) await Promise.resolve()
+    })
+  }
+
+  it("keeps its picture while it is not wanted, and drops it for another path or version", async () => {
+    const asked: string[] = []
+    const invoke = (cmd: string, a?: { path?: string }): Promise<unknown> => {
+      if (cmd !== "checkpoint_image") return Promise.resolve(null)
+      asked.push(a?.path ?? "")
+      if (a?.path === "/held.png") return new Promise(() => undefined)
+      return Promise.resolve(new ArrayBuffer(4))
+    }
+    Object.assign(window, { __TAURI__: { core: { invoke } } })
+    const seen: (string | null)[] = []
+    const host = document.createElement("div")
+    document.body.append(host)
+    const r = createRoot(host)
+    root = r
+    const show = (over: Partial<PictureProps> = {}): void => {
+      act(() => {
+        r.render(
+          <PictureProbe
+            path="/shown.png"
+            version="1"
+            wanted
+            seen={seen}
+            {...over}
+          />,
+        )
+      })
+    }
+    show()
+    await settle()
+    const first = seen.at(-1)
+    expect(typeof first).toBe("string")
+    show({ wanted: false })
+    await settle()
+    expect(seen.at(-1)).toBe(first ?? "")
+    show({ version: "2", wanted: false })
+    await settle()
+    expect(seen.at(-1)).toBeNull()
+    show({ version: "2" })
+    await settle()
+    expect(typeof seen.at(-1)).toBe("string")
+    show({ path: "/held.png", version: "2" })
+    await settle()
+    expect(seen.at(-1)).toBeNull()
+    expect(asked).toEqual(["/shown.png", "/shown.png", "/held.png"])
   })
 })
 

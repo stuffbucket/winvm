@@ -11,6 +11,9 @@ const { SharedFolder } = await import(
   "../ui/src/features/sharedfolder/SharedFolder"
 )
 const folder = await import("../ui/src/features/sharedfolder/folder")
+const { useSharedFolder } = await import(
+  "../ui/src/features/sharedfolder/useSharedFolder"
+)
 const { parseSharedFolder } = await import("../ui/src/model")
 type View =
   import("../ui/src/features/sharedfolder/useSharedFolder").SharedFolderView
@@ -338,5 +341,112 @@ describe("the Shared folder section", () => {
       act(() => root?.unmount())
       root = null
     }
+  })
+})
+
+type Phase = import("../ui/src/model").Phase
+
+interface FolderProps {
+  readonly instance: string | null
+  readonly phase: Phase | null
+  readonly guestReady: boolean
+  readonly active: boolean
+  readonly slot: { current: View | null }
+}
+
+function FolderProbe({
+  instance,
+  phase,
+  guestReady,
+  active,
+  slot,
+}: FolderProps): null {
+  slot.current = useSharedFolder(instance, phase, guestReady, active)
+  return null
+}
+
+describe("useSharedFolder", () => {
+  afterEach(() => {
+    delete (window as { __TAURI__?: unknown }).__TAURI__
+  })
+
+  const settle = async (): Promise<void> => {
+    await act(async () => {
+      for (let i = 0; i < 10; i++) await Promise.resolve()
+    })
+  }
+
+  it("reads while shown, again whenever the phase or Windows' readiness changes, not while the setup runs, and drops one machine's status for the next", async () => {
+    const asked: string[] = []
+    let finishInstall: (() => void) | null = null
+    const answer = { code: 0, stdout: JSON.stringify(status()), stderr: "" }
+    const invoke = (cmd: string, a?: { args?: string[] }): Promise<unknown> => {
+      const args = a?.args ?? []
+      if (cmd !== "winvm") return Promise.resolve(null)
+      asked.push(args.slice(2, 4).join(" "))
+      if (args[2] === "b") return new Promise(() => undefined)
+      if (args[3] === "install")
+        return new Promise((resolve) => {
+          finishInstall = () => {
+            resolve(answer)
+          }
+        })
+      return Promise.resolve(answer)
+    }
+    Object.assign(window, { __TAURI__: { core: { invoke } } })
+    const slot: { current: View | null } = { current: null }
+    const shown = (over: Partial<FolderProps> = {}): JSX.Element => (
+      <FolderProbe
+        instance="a"
+        phase="running"
+        guestReady={false}
+        active={false}
+        slot={slot}
+        {...over}
+      />
+    )
+    render(shown())
+    await settle()
+    expect(asked).toEqual([])
+    act(() => root?.render(shown({ active: true })))
+    await settle()
+    expect(asked).toEqual(["a status"])
+    expect(slot.current?.status?.letter).toBe("Z")
+    act(() => root?.render(shown({ active: true })))
+    await settle()
+    expect(asked).toHaveLength(1)
+    act(() => root?.render(shown({ active: true, guestReady: true })))
+    await settle()
+    expect(asked).toEqual(["a status", "a status"])
+    act(() => {
+      slot.current?.install()
+    })
+    await settle()
+    expect(asked.at(-1)).toBe("a install")
+    act(() =>
+      root?.render(shown({ active: true, guestReady: true, phase: "paused" })),
+    )
+    await settle()
+    expect(asked.at(-1)).toBe("a install")
+    await act(async () => {
+      finishInstall?.()
+      await Promise.resolve()
+    })
+    await settle()
+    expect(asked.at(-1)).toBe("a status")
+    expect(asked).toHaveLength(4)
+    act(() =>
+      root?.render(
+        shown({
+          active: true,
+          guestReady: true,
+          phase: "paused",
+          instance: "b",
+        }),
+      ),
+    )
+    await settle()
+    expect(asked.at(-1)).toBe("b status")
+    expect(slot.current?.status).toBeNull()
   })
 })

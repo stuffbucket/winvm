@@ -70,6 +70,21 @@ function UsageProbe({
   return null
 }
 
+type UsageView = ReturnType<typeof useUsage>
+
+function UsageViewProbe({
+  pid,
+  read,
+  slot,
+}: {
+  readonly pid: number | null
+  readonly read: (pid: number, instance: string | null) => Promise<unknown>
+  readonly slot: Slot<UsageView>
+}): null {
+  slot.current = useUsage(pid, "demo", 4, 4096, read)
+  return null
+}
+
 function latest(slot: Slot<Winvm>): () => Winvm {
   return () => {
     if (slot.current === null) throw new Error("useWinvm has not rendered")
@@ -463,6 +478,34 @@ describe("the meters while held", () => {
     act(() => root?.render(<UsageProbe instance="demo" read={read} />))
     await flush()
     expect(asked.at(-1)).toBe("demo")
+  })
+
+  it("start over for another process: no history, and no CPU worked out against the last one's sample", async () => {
+    jest.useFakeTimers()
+    const read = (pid: number): Promise<unknown> =>
+      Promise.resolve({
+        atMs: Date.now(),
+        host: { cpuSeconds: pid * Date.now(), rssBytes: 1024 },
+        guest: null,
+        guestError: null,
+      })
+    const slot: Slot<UsageView> = { current: null }
+    render(<UsageViewProbe pid={1} read={read} slot={slot} />)
+    await flush()
+    act(() => {
+      jest.advanceTimersByTime(2500)
+    })
+    await flush()
+    expect(slot.current?.cpuHistory).toHaveLength(1)
+    expect(slot.current?.now?.macCpu).not.toBeNull()
+
+    act(() => {
+      jest.advanceTimersByTime(1000)
+    })
+    act(() => root?.render(<UsageViewProbe pid={2} read={read} slot={slot} />))
+    await flush()
+    expect(slot.current?.cpuHistory).toEqual([])
+    expect(slot.current?.now?.macCpu).toBeNull()
   })
 
   it("say Paused or Asleep instead of Windows' figures", () => {
