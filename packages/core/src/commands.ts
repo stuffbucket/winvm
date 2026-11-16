@@ -30,6 +30,7 @@ import {
   type Cursor,
   type Entry,
   endCursor,
+  type Found,
   qmpEvent,
   readSince,
   waitForEvent,
@@ -814,7 +815,7 @@ export interface StopCommandSeams {
     matches: (e: Entry) => boolean,
     since: Cursor,
     until: number,
-  ) => Promise<Entry | null>
+  ) => Promise<Found<Entry> | null>
   readonly waitFor?: (
     sockPath: string,
     timeoutMs: number,
@@ -836,6 +837,11 @@ const seconds = (ms: number): string => String(Math.round(ms / 1000))
 
 const shutdownEvent = qmpEvent("SHUTDOWN")
 
+const qemuClosed = (e: Entry): boolean =>
+  e.kind === "disconnected" && e.reason === "qemu-closed"
+
+const qemuGoing = (e: Entry): boolean => shutdownEvent(e) || qemuClosed(e)
+
 function sighting(e: Entry): string | null {
   switch (e.kind) {
     case "qmp": {
@@ -847,7 +853,7 @@ function sighting(e: Entry): string | null {
     case "sync":
       return `sync ${e.status ?? e.error ?? "?"}`
     case "disconnected":
-      return "monitor closed"
+      return `disconnected (${e.reason})`
     case "op":
     case "service":
     case "warning":
@@ -911,7 +917,7 @@ export async function stopWith(
       matches: (e: Entry) => boolean,
       since: Cursor,
       until: number,
-    ): Promise<Entry | null> =>
+    ): Promise<Found<Entry> | null> =>
       waitForEvent(n, matches, Date.now() + (until - now()), { since }))
   const afterUp = seams.afterUp ?? ((n: string) => finder.afterUp(n))
   const ensureWatcher = seams.ensureWatcher ?? watcher.ensureWatcher
@@ -1004,7 +1010,10 @@ export async function stopWith(
     }
   }
 
+  let at = since
   let seen: Entry | null = null
+  let closed = false
+  let gap = false
   let exitBy = deadline
   let forcing = false
   try {
@@ -1022,32 +1031,44 @@ export async function stopWith(
             : `system_powerdown (the ACPI power button), which QEMU did not confirm: ${unconfirmed}`,
         ]
         if (forced.note !== null) sent.push(forced.note)
+        const record = readSince(name, since)
+        const holes =
+          gap || record.gap
+            ? " (the record has a gap, so this may not be everything)"
+            : ""
         console.error(
           `::error::guest did not shut down within ${seconds(STOP_DEADLINE_MS)} s. ` +
             `Sent: ${sent.join("; ")}. ` +
-            `Seen since: ${sightings(readSince(name, since).entries)}. ` +
+            `Seen since: ${sightings(record.entries)}${holes}. ` +
             "Nothing was undone: Windows is left as it is and may still be shutting down — " +
             `\`winvm kill -i ${name}\` if it is wedged`,
         )
         return 1
       }
-      if (seen !== null) {
+      if (closed) {
         await sleep(Math.min(EXIT_POLL_MS, exitBy - now()))
         continue
       }
-      if (!forcing && now() >= forceAt) {
+      if (seen === null && !forcing && now() >= forceAt) {
         forcing = true
         void force().catch((error: unknown) => {
           forced.note = `guest-shutdown (forced) failed: ${errorText(error)}`
         })
       }
-      seen = await untilEvent(
+      const found = await untilEvent(
         name,
-        shutdownEvent,
-        since,
-        Math.min(deadline, now() + STOP_POLL_MS),
+        seen === null ? qemuGoing : qemuClosed,
+        at,
+        Math.min(exitBy, now() + STOP_POLL_MS),
       )
-      if (seen !== null) exitBy = Math.max(deadline, now() + EXIT_GRACE_MS)
+      if (found === null) continue
+      at = found.cursor
+      gap ||= found.gap
+      if (seen === null) {
+        seen = found.entry
+        exitBy = Math.max(deadline, now() + EXIT_GRACE_MS)
+      }
+      if (qemuClosed(found.entry)) closed = true
     }
   } finally {
     done.abort()

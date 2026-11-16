@@ -21,7 +21,12 @@ import * as agent from "../src/agent"
 import { parseArgs } from "../src/args"
 import { type StopCommandSeams, stopWith } from "../src/commands"
 import { configPath, parseAssignment, writeAssignments } from "../src/config"
-import { appendEntry, type Cursor, readSince } from "../src/eventlog"
+import {
+  appendEntry,
+  type Cursor,
+  readSince,
+  waitForEvent,
+} from "../src/eventlog"
 import { filesCmd } from "../src/finder"
 import {
   clearAsleep,
@@ -421,8 +426,9 @@ describe("graceful stop", () => {
     resumeFails?: boolean
     serviceFails?: boolean
     pidAfterResume?: number
-    unrecorded?: boolean
+    record?: "full" | "shutdown" | "closed" | "none"
     lingers?: boolean
+    replaceRecord?: boolean
   }): Rig {
     const p = pathsFor(NAME)
     const events: string[] = []
@@ -482,6 +488,7 @@ describe("graceful stop", () => {
           return Promise.reject(
             new QmpNotDelivered("qmp system_powerdown: not now"),
           )
+        if (o.replaceRecord === true) rmSync(p.events, { force: true })
         appendEntry(NAME, {
           kind: "qmp",
           event: "POWERDOWN",
@@ -495,29 +502,33 @@ describe("graceful stop", () => {
             )
           : Promise.resolve()
       },
-      untilEvent: (_name, matches, since, until) => {
+      untilEvent: async (_name, matches, since, until) => {
         sinces.push(since)
         for (;;) {
-          const hit = readSince(NAME, since).entries.find(matches)
-          if (hit !== undefined) return Promise.resolve(hit)
+          const found = await waitForEvent(NAME, matches, 0, { since })
+          if (found !== null) return found
+          const record = o.record ?? "full"
           if (
             exitAt !== null &&
             exitAt <= until &&
             !recorded &&
-            o.unrecorded !== true
+            record !== "none"
           ) {
             clock.t = Math.max(clock.t, exitAt)
             recorded = true
-            appendEntry(NAME, {
-              kind: "qmp",
-              event: "SHUTDOWN",
-              data: { guest: true, reason: "guest-shutdown" },
-              timestamp: null,
-            })
+            if (record !== "closed")
+              appendEntry(NAME, {
+                kind: "qmp",
+                event: "SHUTDOWN",
+                data: { guest: true, reason: "guest-shutdown" },
+                timestamp: null,
+              })
+            if (record !== "shutdown")
+              appendEntry(NAME, { kind: "disconnected", reason: "qemu-closed" })
             continue
           }
           clock.t = Math.max(clock.t, until)
-          return Promise.resolve(null)
+          return null
         }
       },
       waitFor: (_sock, ms) => {
@@ -631,13 +642,13 @@ describe("graceful stop", () => {
     expect(r.events).toContain("shutdown")
   })
 
-  it("does not take the monitor closing for QEMU exiting while its pid is still alive", async () => {
+  it("does not take a monitor drain timeout for QEMU exiting", async () => {
     const r = rig({ frozen: null, forcedExitAfterMs: 5000 })
     const seams: StopCommandSeams = {
       ...r.seams,
       powerdown: async (p) => {
         await r.seams.powerdown?.(p)
-        appendEntry(NAME, { kind: "disconnected" })
+        appendEntry(NAME, { kind: "disconnected", reason: "drain-timeout" })
       },
     }
     expect((await stopped(seams)).code).toBe(0)
@@ -762,13 +773,57 @@ describe("graceful stop", () => {
   })
 
   it("finishes when QEMU exits even if the record never sees it", async () => {
-    const r = rig({ frozen: null, acpiExitAfterMs: 7000, unrecorded: true })
+    const r = rig({ frozen: null, acpiExitAfterMs: 7000, record: "none" })
     expect((await stopped(r.seams)).code).toBe(0)
     expect(r.events).toContain("stopSidecars")
   })
 
+  it("ends the wait as soon as the service records QEMU closing the monitor, without SHUTDOWN", async () => {
+    const r = rig({ frozen: null, acpiExitAfterMs: 7500, record: "closed" })
+    expect((await stopped(r.seams)).code).toBe(0)
+    expect(r.clock.t - T0).toBe(7500)
+    expect(r.events).toContain("stopSidecars")
+  })
+
+  it("follows SHUTDOWN with the monitor closing from the cursor after it", async () => {
+    const r = rig({ frozen: null, acpiExitAfterMs: 4000, lingers: true })
+    await stopped(r.seams)
+    const last = r.sinces.at(-1)
+    expect(last).not.toEqual(r.sinces[0])
+    if (last === undefined) return
+    expect(readSince(NAME, last).entries.map((e) => e.kind)).toEqual([
+      "disconnected",
+    ])
+  })
+
+  it("still wants the QEMU pid gone after the monitor closed", async () => {
+    const r = rig({
+      frozen: null,
+      acpiExitAfterMs: 5000,
+      record: "closed",
+      lingers: true,
+    })
+    const o = await stopped(r.seams)
+    expect(o.code).toBe(1)
+    expect(o.err).toContain("disconnected (qemu-closed)")
+    expect(o.err).toContain("has not exited")
+  })
+
+  it("says the record has a gap rather than reporting its silence as fact", async () => {
+    appendEntry(NAME, { kind: "sync", status: "running", running: true })
+    const r = rig({ frozen: null, agent: false, replaceRecord: true })
+    const o = await stopped(r.seams)
+    expect(o.code).toBe(1)
+    expect(o.err).toContain("the record has a gap")
+  })
+
   it("waits for QEMU to exit after SHUTDOWN, and says so when it does not", async () => {
-    const r = rig({ frozen: null, acpiExitAfterMs: 5000, lingers: true })
+    const r = rig({
+      frozen: null,
+      acpiExitAfterMs: 5000,
+      record: "shutdown",
+      lingers: true,
+    })
     const o = await stopped(r.seams)
     expect(o.code).toBe(1)
     expect(r.events).not.toContain("stopSidecars")
