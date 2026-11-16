@@ -31,6 +31,7 @@ import { Button } from "../../components/Button"
 import { Callout } from "../../components/Callout"
 import { ConfirmDialog } from "../../components/ConfirmDialog"
 import { cx } from "../../components/cx"
+import { focusOnMount } from "../../components/focusOnMount"
 import { Icon, type IconName } from "../../components/Icon"
 import { t } from "../../i18n"
 import { defaultShell, installedList, runnable } from "../terminal/shells"
@@ -1125,7 +1126,7 @@ export function FilesWindow({
                 className="input mono"
                 aria-label={t("files.goTo")}
                 value={draft}
-                autoFocus
+                ref={focusOnMount}
                 onFocus={(e) => {
                   e.currentTarget.select()
                 }}

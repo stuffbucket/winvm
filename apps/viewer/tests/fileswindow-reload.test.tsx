@@ -63,6 +63,40 @@ describe("the Files window", () => {
     expect(sorts()).toEqual(["none", "none", "descending", "none"])
   })
 
+  it("opens Go To with its field focused and the path selected", async () => {
+    const invoke = (cmd: string): Promise<unknown> =>
+      Promise.resolve(
+        cmd === "agent_fetch" ? { status: 200, body: listing } : null,
+      )
+    Object.assign(window, { __TAURI__: { core: { invoke } } })
+    const host = document.createElement("div")
+    document.body.append(host)
+    const r = createRoot(host)
+    root = r
+    act(() => {
+      r.render(<FilesWindow instance="demo" initialTitle={null} />)
+    })
+    await settle()
+    const list = host.querySelector<HTMLElement>('[role="listbox"]')
+    if (list === null) throw new Error("no list")
+    act(() => {
+      list.dispatchEvent(
+        new KeyboardEvent("keydown", {
+          key: "l",
+          metaKey: true,
+          ctrlKey: true,
+          bubbles: true,
+        }),
+      )
+    })
+    const field = host.querySelector<HTMLInputElement>(".fw__goto input")
+    expect(field).not.toBeNull()
+    expect(document.activeElement).toBe(field)
+    expect(field?.value).toBe(listing.path)
+    expect(field?.selectionStart).toBe(0)
+    expect(field?.selectionEnd).toBe(listing.path.length)
+  })
+
   it("lists the folder again once a copy into it lands", async () => {
     const lists: string[] = []
     const puts: string[][] = []

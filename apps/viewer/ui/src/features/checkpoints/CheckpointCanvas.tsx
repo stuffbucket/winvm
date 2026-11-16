@@ -44,6 +44,7 @@ import {
 import { outputText, winvm } from "../../backend"
 import { Button } from "../../components/Button"
 import { ConfirmDialog } from "../../components/ConfirmDialog"
+import { focusOnMount } from "../../components/focusOnMount"
 import { t } from "../../i18n"
 import { type Phase, parseNote, parseSaves } from "../../model"
 import type { Ran } from "../winvm/useWinvm"
@@ -1165,7 +1166,7 @@ export function CheckpointCanvas(p: CheckpointCanvasProps): JSX.Element {
               <input
                 id="checkpoint-new-title"
                 className="input"
-                autoFocus
+                ref={focusOnMount}
                 value={newTitle}
                 placeholder={t("checkpoints.newPlaceholder")}
                 autoComplete="off"
