@@ -1,8 +1,11 @@
-import { createRenderer, defineEcConfig } from "@astrojs/starlight/expressive-code";
+import {
+  createRenderer,
+  defineEcConfig,
+} from "@astrojs/starlight/expressive-code"
 
-import codeFocus, { withoutTabindexScript } from "./scripts/code-focus.mjs";
+import codeFocus, { withoutTabindexScript } from "./scripts/code-focus.mjs"
 
-const WRAPPED = "text,txt,plaintext,plain,output,json,jsonc,log";
+const WRAPPED = "text,txt,plaintext,plain,output,json,jsonc,log"
 
 export default defineEcConfig({
   useStarlightUiThemeColors: true,
@@ -16,4 +19,4 @@ export default defineEcConfig({
   },
   plugins: [codeFocus()],
   customCreateRenderer: withoutTabindexScript(createRenderer),
-});
+})
