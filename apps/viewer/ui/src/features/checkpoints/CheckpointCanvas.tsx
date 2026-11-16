@@ -828,8 +828,7 @@ export function CheckpointCanvas(p: CheckpointCanvasProps): JSX.Element {
         setSearchOpen(false)
         return
       }
-      if (looking) setLooking(false)
-      else if (creating) setCreating(false)
+      if (creating) setCreating(false)
       else if (searchOpen) setSearchOpen(false)
       else if (selected !== null) select(null)
       else void leave()
@@ -878,8 +877,7 @@ export function CheckpointCanvas(p: CheckpointCanvasProps): JSX.Element {
         target.closest(".checkpoint__hit") !== null)
     ) {
       e.preventDefault()
-      if (looking) setLooking(false)
-      else openLook(document.activeElement)
+      openLook(document.activeElement)
     } else if (!cmd && (e.key === "+" || e.key === "=")) {
       zoomBy(ZOOM_STEP)
     } else if (!cmd && e.key === "-") {
