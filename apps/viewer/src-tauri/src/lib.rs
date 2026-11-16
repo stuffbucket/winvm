@@ -241,7 +241,7 @@ async fn files_open(
         query_value(title.as_deref().unwrap_or(""))
     );
     let mut builder = WebviewWindowBuilder::new(&app, &label, WebviewUrl::App(url.into()))
-        .title(format!("Files in Windows â {shown}"))
+        .title(format!("Files in Windows — {shown}"))
         .inner_size(920.0, 560.0)
         .min_inner_size(560.0, 340.0)
         .visible(false);
@@ -498,7 +498,7 @@ fn menu(app: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
             &close,
         ])?;
     }
-    let rename = MenuItem::with_id(app, "rename-window", "Rename Windowâ¦", true, None::<&str>)?;
+    let rename = MenuItem::with_id(app, "rename-window", "Rename Window…", true, None::<&str>)?;
     if let Some(window) = menu
         .get(WINDOW_SUBMENU_ID)
         .and_then(|i| i.as_submenu().cloned())
@@ -512,14 +512,14 @@ fn menu(app: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
     let updates = MenuItem::with_id(
         app,
         "check-updates",
-        "Check for Updatesâ¦",
+        "Check for Updates…",
         true,
         None::<&str>,
     )?;
     let install = MenuItem::with_id(
         app,
         "install-cli",
-        "Install Command Line Toolâ¦",
+        "Install Command Line Tool…",
         true,
         None::<&str>,
     )?;
