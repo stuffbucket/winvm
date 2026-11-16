@@ -1588,7 +1588,7 @@ html[data-os="macos"] .toolbar {
 
 @media (prefers-reduced-motion: reduce) {
   [data-busy="true"] .busybar::before {
-    animation: none;
+    animation: none !important;
     width: 100%;
     transform: none;
     opacity: 0.55;
@@ -1616,7 +1616,7 @@ html[data-os="macos"] .toolbar {
   *,
   *::before,
   *::after {
-    transition-duration: 0.001ms;
-    animation-duration: 0.001ms;
+    transition-duration: 0.001ms !important;
+    animation-duration: 0.001ms !important;
   }
 }

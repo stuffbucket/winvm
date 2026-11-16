@@ -23,7 +23,7 @@ export function Hardware({
     if (next === null) return
     setCpus(next.cpus)
     setGb(toGB(next.memoryMiB))
-  }, [next?.cpus, next?.memoryMiB, next])
+  }, [next?.cpus, next?.memoryMiB])
 
   useEffect(
     () => () => {

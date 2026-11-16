@@ -160,14 +160,14 @@ describe("pausing in the window", () => {
     await flush()
     tauri.reads()[0]?.resolve(status("running"))
     await flush()
-    expect(w?.phase).toBe("running")
+    expect(w!.phase).toBe("running")
 
     let acted: Promise<unknown> | null = null
     act(() => {
-      acted = w?.act("pause")
+      acted = w!.act("pause")
     })
     await flush()
-    expect(w?.busy).toBe("pause")
+    expect(w!.busy).toBe("pause")
     const raced = tauri.reads().filter((c) => !c.done)
     expect(raced.length).toBeGreaterThan(0)
 
@@ -175,21 +175,21 @@ describe("pausing in the window", () => {
       .verb("pause")
       .resolve({ code: 0, stdout: 'paused "demo"\n', stderr: "" })
     await flush()
-    expect(w?.busy).toBeNull()
-    expect(w?.phase).toBe("paused")
+    expect(w!.busy).toBeNull()
+    expect(w!.phase).toBe("paused")
 
     for (const c of raced) c.resolve(status("running"))
     await flush()
-    expect(w?.phase).toBe("paused")
+    expect(w!.phase).toBe("paused")
 
     const after = tauri.reads().filter((c) => !c.done)
     expect(after.length).toBeGreaterThanOrEqual(2)
     after.at(-1)?.resolve(status("paused", null))
     await flush()
-    expect(w?.phase).toBe("paused")
+    expect(w!.phase).toBe("paused")
     after[0]?.resolve(status("running"))
     await flush()
-    expect(w?.phase).toBe("paused")
+    expect(w!.phase).toBe("paused")
     await act(async () => {
       await acted
     })
@@ -215,19 +215,19 @@ describe("pausing in the window", () => {
     await flush()
     tauri.reads()[0]?.resolve(status("asleep", null))
     await flush()
-    expect(w?.phase).toBe("asleep")
+    expect(w!.phase).toBe("asleep")
 
     act(() => {
-      void w?.act("wake")
+      void w!.act("wake")
     })
     await flush()
     const raced = tauri.reads().filter((c) => !c.done)
     tauri.verb("wake").resolve({ code: 0, stdout: "", stderr: "" })
     await flush()
-    expect(w?.phase).toBe("running")
+    expect(w!.phase).toBe("running")
     for (const c of raced) c.resolve(status("asleep", null))
     await flush()
-    expect(w?.phase).toBe("running")
+    expect(w!.phase).toBe("running")
   })
 
   it("keeps the old phase when Pause fails", async () => {
@@ -251,13 +251,13 @@ describe("pausing in the window", () => {
     tauri.reads()[0]?.resolve(status("running"))
     await flush()
     act(() => {
-      void w?.act("pause")
+      void w!.act("pause")
     })
     await flush()
     tauri.verb("pause").resolve({ code: 1, stdout: "", stderr: "::error::no" })
     await flush()
-    expect(w?.phase).toBe("running")
-    expect(w?.failure?.verb).toBe("pause")
+    expect(w!.phase).toBe("running")
+    expect(w!.failure?.verb).toBe("pause")
   })
 })
 
@@ -290,7 +290,7 @@ describe("when the sidecar fails", () => {
       .find((c) => c.args[0] === "status" && !c.args.includes("-i"))
       ?.reject(sidecarFailure("missing", "status"))
     await flush()
-    expect(w?.statusError).toBe(copy("sidecar.missing"))
+    expect(w!.statusError).toBe(copy("sidecar.missing"))
   })
 
   it("explains a status timeout, keeps polling, and clears it when status answers again", async () => {
@@ -314,7 +314,7 @@ describe("when the sidecar fails", () => {
     await flush()
     tauri.reads()[0]?.reject(sidecarFailure("timeout", "status"))
     await flush()
-    expect(w?.statusError).toBe(
+    expect(w!.statusError).toBe(
       copy("sidecar.timeout", { operation: "status", seconds: 45 }),
     )
 
@@ -326,8 +326,8 @@ describe("when the sidecar fails", () => {
     expect(tauri.reads().length).toBe(before + 1)
     tauri.reads().at(-1)?.resolve(status("running"))
     await flush()
-    expect(w?.statusError).toBeNull()
-    expect(w?.phase).toBe("running")
+    expect(w!.statusError).toBeNull()
+    expect(w!.phase).toBe("running")
   })
 
   it("retries a startup status that timed out, one at a time, until it answers; then polls the instance", async () => {
@@ -350,7 +350,7 @@ describe("when the sidecar fails", () => {
     expect(host.textContent).toBe(
       copy("sidecar.timeout", { operation: "status", seconds: 45 }),
     )
-    expect(w?.name).toBeNull()
+    expect(w!.name).toBeNull()
     expect(bare()).toHaveLength(1)
 
     act(() => {
@@ -374,14 +374,14 @@ describe("when the sidecar fails", () => {
       }),
     })
     await flush()
-    expect(w?.name).toBe("demo")
-    expect(w?.statusError).toBeNull()
+    expect(w!.name).toBe("demo")
+    expect(w!.statusError).toBeNull()
     expect(host.textContent).toBe("")
 
     expect(tauri.reads()).toHaveLength(1)
     tauri.reads()[0]?.resolve(status("running"))
     await flush()
-    expect(w?.phase).toBe("running")
+    expect(w!.phase).toBe("running")
     act(() => {
       jest.advanceTimersByTime(4000)
     })
@@ -411,14 +411,14 @@ describe("when the sidecar fails", () => {
     tauri.reads()[0]?.resolve(status("running"))
     await flush()
     act(() => {
-      void w?.act("pause")
+      void w!.act("pause")
     })
     await flush()
     tauri.verb("pause").reject(sidecarFailure("missing", "pause"))
     await flush()
-    expect(w?.failure?.verb).toBe("pause")
-    expect(w?.failure?.output).toBe(copy("sidecar.missing"))
-    expect(w?.phase).toBe("running")
+    expect(w!.failure?.verb).toBe("pause")
+    expect(w!.failure?.output).toBe(copy("sidecar.missing"))
+    expect(w!.phase).toBe("running")
   })
 })
 

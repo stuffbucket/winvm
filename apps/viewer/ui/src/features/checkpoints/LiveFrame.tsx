@@ -48,6 +48,7 @@ export function LiveFrame({
     <canvas
       ref={ref}
       className={className}
+      aria-hidden="true"
       width={0}
       height={0}
     />

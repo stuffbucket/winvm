@@ -85,7 +85,7 @@ export const Screen = forwardRef<ScreenHandle, ScreenProps>(function Screen(
   const rfb = useRef<RFB | null>(null)
   const keyboard = useRef<GuestKeyboardRouter | null>(null)
   const [view, setView] = useState<View>("connecting")
-  const [_attempt, setAttempt] = useState(0)
+  const [attempt, setAttempt] = useState(0)
   const [fb, setFb] = useState<Size | null>(null)
   const [box, setBox] = useState<Size | null>(null)
   const [ratio, setRatio] = useState(dpr)
@@ -419,7 +419,7 @@ export const Screen = forwardRef<ScreenHandle, ScreenProps>(function Screen(
       setHeld(false)
       setPhase("settled")
     }
-  }, [websocketPort, password, resizable])
+  }, [websocketPort, password, attempt, resizable])
 
   useEffect(() => {
     const conn = rfb.current
@@ -450,7 +450,7 @@ export const Screen = forwardRef<ScreenHandle, ScreenProps>(function Screen(
   useLayoutEffect(() => {
     const conn = rfb.current
     if (conn !== null && exact !== undefined) conn.scaleViewport = true
-  }, [exact?.width, exact?.height, exact])
+  }, [exact?.width, exact?.height])
 
   const message = view === "connected" ? null : t(`screen.${view}`)
   return (
@@ -470,6 +470,7 @@ export const Screen = forwardRef<ScreenHandle, ScreenProps>(function Screen(
         ref={still}
         className="screen__still"
         hidden={!holding}
+        aria-hidden="true"
       />
       <div
         className={cx("screen__held", frozen && overlay && "screen__held--on")}

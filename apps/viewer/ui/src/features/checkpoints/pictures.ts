@@ -66,7 +66,7 @@ export function usePicture(
   const [url, setUrl] = useState<string | null>(null)
   useEffect(() => {
     setUrl(null)
-  }, [])
+  }, [path, version])
   useEffect(() => {
     if (path === null || !wanted) return
     let live = true

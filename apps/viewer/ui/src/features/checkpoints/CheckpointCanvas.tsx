@@ -296,7 +296,7 @@ export function CheckpointCanvas(p: CheckpointCanvasProps): JSX.Element {
       ),
       TIMELINE_SPACE,
     )
-  }, [layout, limits, settings.zoom, clamp, centreIn])
+  }, [layout, limits, settings.zoom, clamp])
 
   const focusOn = useCallback(
     (box: Rect): Camera => {
@@ -315,7 +315,7 @@ export function CheckpointCanvas(p: CheckpointCanvasProps): JSX.Element {
         PANEL_SPACE + TIMELINE_SPACE,
       )
     },
-    [limits, centreIn],
+    [limits],
   )
 
   const entered = useRef(false)
@@ -1166,6 +1166,7 @@ export function CheckpointCanvas(p: CheckpointCanvasProps): JSX.Element {
               <input
                 id="checkpoint-new-title"
                 className="input"
+                autoFocus
                 value={newTitle}
                 placeholder={t("checkpoints.newPlaceholder")}
                 autoComplete="off"

@@ -21,8 +21,8 @@ export interface SharedFolderView {
 
 export function useSharedFolder(
   instance: string | null,
-  _phase: Phase | null,
-  _guestReady: boolean,
+  phase: Phase | null,
+  guestReady: boolean,
   active: boolean,
 ): SharedFolderView {
   const [status, setStatus] = useState<SharedFolderStatus | null>(null)
@@ -47,7 +47,7 @@ export function useSharedFolder(
   useEffect(() => {
     setStatus(null)
     setError(null)
-  }, [])
+  }, [instance])
 
   const read = useCallback(async (name: string): Promise<void> => {
     const n = ++reads.current
@@ -71,7 +71,7 @@ export function useSharedFolder(
   useEffect(() => {
     if (!active || instance === null || installing) return
     void read(instance)
-  }, [active, instance, installing, read])
+  }, [active, instance, phase, guestReady, installing, read])
 
   const change = useCallback(
     async (

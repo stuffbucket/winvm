@@ -240,7 +240,7 @@ export function FilesWindow({
 
   useEffect(() => {
     void load(shown.current ?? remember.get(`folder.${instance}`), "stay")
-  }, [load, instance])
+  }, [load, instance, copies.landed])
 
   useEffect(() => {
     list.current?.focus()
@@ -880,7 +880,7 @@ export function FilesWindow({
           e.type === "over" && cur === null ? null : into,
         )
       }),
-    [copyInto, targetAt],
+    [copyInto],
   )
 
   const moveTo = (i: number, extend: boolean): void => {
@@ -1113,6 +1113,7 @@ export function FilesWindow({
                 className="input mono"
                 aria-label={t("files.goTo")}
                 value={draft}
+                autoFocus
                 onFocus={(e) => {
                   e.currentTarget.select()
                 }}

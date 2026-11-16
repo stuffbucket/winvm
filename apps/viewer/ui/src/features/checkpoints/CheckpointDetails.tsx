@@ -74,7 +74,7 @@ export function CheckpointDetails({
     const d = draftOf(c.notes)
     setDraft(d)
     written.current = d
-  }, [c.notes])
+  }, [c.name, c.createdAt])
 
   const flush = (): void => {
     if (timer.current !== null) clearTimeout(timer.current)
@@ -84,7 +84,7 @@ export function CheckpointDetails({
     written.current = d
     latest.current.onNote(d)
   }
-  useEffect(() => flush, [flush])
+  useEffect(() => flush, [c.name])
 
   const edit = (patch: Partial<NoteDraft>): void => {
     setDraft((d) => ({ ...d, ...patch }))
