@@ -7,7 +7,7 @@ function base(env: Env, variable: string, fallback: readonly string[]): string {
   const set = env[variable]
   if (set !== undefined && set !== "" && isAbsolute(set))
     return resolve(set, "winvm")
-  const h = env["HOME"]
+  const h = env.HOME
   return resolve(
     h !== undefined && h !== "" ? h : homedir(),
     ...fallback,

@@ -86,7 +86,7 @@ async function runAll(files: readonly string[], args: Args): Promise<number> {
     }
   }
   const instance =
-    args.flags.get("instance") ?? process.env["WINVM_INSTANCE"] ?? "ci"
+    args.flags.get("instance") ?? process.env.WINVM_INSTANCE ?? "ci"
   const goldenFlag = args.flags.get("golden") ?? null
   const artifactsDir = resolve(
     args.flags.get("artifacts") ??

@@ -114,10 +114,10 @@ beforeEach(() => {
     ].map((k) => [k, process.env[k]]),
   )
   state = mkdtempSync(resolve(tmpdir(), "winvm-race-"))
-  process.env["WINVM_HOME"] = state
-  process.env["WINVM_RUNTIME"] = resolve(state, "runtime")
-  process.env["WINVM_TEST_SWTPM_LOG"] = swtpmLog()
-  process.env["WINVM_TEST_QEMU_LOG"] = qemuLog()
+  process.env.WINVM_HOME = state
+  process.env.WINVM_RUNTIME = resolve(state, "runtime")
+  process.env.WINVM_TEST_SWTPM_LOG = swtpmLog()
+  process.env.WINVM_TEST_QEMU_LOG = qemuLog()
   mkdirSync(resolve(state, "runtime", "bin"), { recursive: true })
   script(
     "swtpm",

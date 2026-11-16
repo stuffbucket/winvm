@@ -13,9 +13,9 @@ const GREETING = {
 
 export class FakeQmp {
   handler: QmpHandler = (cmd) => {
-    if (cmd["execute"] === "query-status")
+    if (cmd.execute === "query-status")
       return { return: { status: "running", running: true } }
-    if (cmd["execute"] === "query-chardev")
+    if (cmd.execute === "query-chardev")
       return { return: [{ label: "qga0", "frontend-open": true }] }
     return { return: {} }
   }
@@ -87,8 +87,8 @@ export class FakeQmp {
         buf = buf.slice(nl + 1)
         if (line === "") continue
         const cmd = JSON.parse(line) as Json
-        const name = String(cmd["execute"])
-        const id = cmd["id"]
+        const name = String(cmd.execute)
+        const id = cmd.id
         this.commands.push(name)
         if (name === "qmp_capabilities") {
           negotiated = true

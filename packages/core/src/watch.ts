@@ -575,10 +575,10 @@ export async function watch(
     const s: WatchState = {
       pid: process.pid,
       build: buildIdentity(),
-      ...(process.env["WINVM_CLI"] === undefined ||
-      process.env["WINVM_CLI"] === ""
+      ...(process.env.WINVM_CLI === undefined ||
+      process.env.WINVM_CLI === ""
         ? {}
-        : { cli: process.env["WINVM_CLI"] }),
+        : { cli: process.env.WINVM_CLI }),
       startedAt,
       lastActivityAt: new Date(machine.idleSinceMs).toISOString(),
       idleSeconds: Math.round(machine.idleMs(Date.now()) / 1000),

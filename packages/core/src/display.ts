@@ -22,9 +22,9 @@ export function readDisplay(p: Paths): DisplayConfig {
       string,
       unknown
     >
-    if (raw["device"] !== "virtio-gpu") return RAMFB
-    const w = raw["width"]
-    const h = raw["height"]
+    if (raw.device !== "virtio-gpu") return RAMFB
+    const w = raw.width
+    const h = raw.height
     return typeof w === "number" && typeof h === "number"
       ? { device: "virtio-gpu", legacySize: { width: w, height: h } }
       : VIRTIO_GPU
@@ -71,19 +71,19 @@ export function parseDisplayConfig(value: unknown): DisplayConfig | null {
     return null
   const r = value as Record<string, unknown>
   const keys = Object.keys(r)
-  if (r["device"] === "ramfb") return keys.length === 1 ? RAMFB : null
+  if (r.device === "ramfb") return keys.length === 1 ? RAMFB : null
   if (
-    r["device"] !== "virtio-gpu" ||
+    r.device !== "virtio-gpu" ||
     keys.some((k) => k !== "device" && k !== "legacySize")
   )
     return null
-  const size = r["legacySize"]
+  const size = r.legacySize
   if (size === undefined) return keys.length === 1 ? VIRTIO_GPU : null
   if (typeof size !== "object" || size === null || Array.isArray(size))
     return null
   const s = size as Record<string, unknown>
-  const width = s["width"]
-  const height = s["height"]
+  const width = s.width
+  const height = s.height
   if (
     Object.keys(s).length !== 2 ||
     !inRange(width, LEGACY_WIDTH) ||

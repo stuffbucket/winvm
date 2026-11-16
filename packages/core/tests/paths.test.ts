@@ -10,10 +10,10 @@ import {
   recordCliEntry,
 } from "../src/paths"
 
-const saved = process.env["WINVM_CLI"]
+const saved = process.env.WINVM_CLI
 afterEach(() => {
-  if (saved === undefined) delete process.env["WINVM_CLI"]
-  else process.env["WINVM_CLI"] = saved
+  if (saved === undefined) delete process.env.WINVM_CLI
+  else process.env.WINVM_CLI = saved
 })
 
 it("finds the package's own files from any working directory", () => {
@@ -22,19 +22,19 @@ it("finds the package's own files from any working directory", () => {
 })
 
 it("spawns the CLI it was started through", () => {
-  process.env["WINVM_CLI"] = "/x/apps/cli/src/winvm.ts"
+  process.env.WINVM_CLI = "/x/apps/cli/src/winvm.ts"
   expect(cliEntry()).toBe("/x/apps/cli/src/winvm.ts")
 })
 
 it("says how to start winvm when it does not know its CLI", () => {
-  delete process.env["WINVM_CLI"]
+  delete process.env.WINVM_CLI
   expect(() => cliEntry()).toThrow(
     "WINVM_CLI is not set: start winvm through apps/cli",
   )
 })
 
 it("records the CLI actually running, over one inherited from a parent", () => {
-  process.env["WINVM_CLI"] = "/stale/checkout/apps/cli/src/winvm.ts"
+  process.env.WINVM_CLI = "/stale/checkout/apps/cli/src/winvm.ts"
   recordCliEntry("/this/checkout/apps/cli/src/winvm.ts")
   expect(cliEntry()).toBe("/this/checkout/apps/cli/src/winvm.ts")
 })

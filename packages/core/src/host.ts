@@ -17,7 +17,7 @@ let dataDirs: {
   readonly dirs: readonly string[]
 } | null = null
 export function qemuDataDirs(): readonly string[] {
-  const override = process.env["WINVM_QEMU_DATA"]
+  const override = process.env.WINVM_QEMU_DATA
   const key = `${override ?? ""}\n${home()}`
   if (dataDirs?.key === key) return dataDirs.dirs
   const found = ((): readonly string[] => {

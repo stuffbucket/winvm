@@ -16,9 +16,9 @@ let tmp = ""
 let saved: string | undefined
 
 beforeEach(() => {
-  saved = process.env["WINVM_HOME"]
+  saved = process.env.WINVM_HOME
   tmp = mkdtempSync(resolve(tmpdir(), "winvm-tm-"))
-  process.env["WINVM_HOME"] = resolve(tmp, "home")
+  process.env.WINVM_HOME = resolve(tmp, "home")
   mkdirSync(resolve(tmp, "home", "media"), { recursive: true })
   mkdirSync(resolve(tmp, "isos"))
   writeFileSync(resolve(tmp, "isos", "win.iso"), "")
@@ -27,8 +27,8 @@ beforeEach(() => {
 
 afterEach(() => {
   rmSync(tmp, { recursive: true, force: true })
-  if (saved === undefined) delete process.env["WINVM_HOME"]
-  else process.env["WINVM_HOME"] = saved
+  if (saved === undefined) delete process.env.WINVM_HOME
+  else process.env.WINVM_HOME = saved
 })
 
 describe("Time Machine targets", () => {

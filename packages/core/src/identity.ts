@@ -112,7 +112,7 @@ let memo: string | undefined
 export function buildIdentity(): string {
   memo ??= selectBuildIdentity({
     embedded: typeof WINVM_BUILD_ID === "string" ? WINVM_BUILD_ID : undefined,
-    env: process.env["WINVM_BUILD_ID"],
+    env: process.env.WINVM_BUILD_ID,
     source: () => sourceBuildIdentity(),
   })
   return memo

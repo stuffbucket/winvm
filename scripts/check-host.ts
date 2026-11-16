@@ -1,7 +1,7 @@
 import { hostChecks, printChecks } from "@winvm/core/host"
 import { ensureRuntime } from "@winvm/core/runtime"
 
-if ((process.env["WINVM_RUNTIME"] ?? "") === "") {
+if ((process.env.WINVM_RUNTIME ?? "") === "") {
   try {
     const rt = ensureRuntime()
     console.log(`runtime ${rt.manifest?.version ?? "?"} in ${rt.dir}`)

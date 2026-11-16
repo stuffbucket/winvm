@@ -38,7 +38,7 @@ export function ClosePolicyDialog({
     try {
       el.showModal()
     } catch {}
-  }, [step])
+  }, [])
 
   useEffect(() => {
     if (step !== null) cancelRef.current?.focus()

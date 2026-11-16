@@ -455,7 +455,7 @@ function num(
 }
 
 export function modifiers(params: Params): readonly string[] {
-  const t = params["text"]
+  const t = params.text
   if (t === undefined || t === null || t === "") return []
   if (typeof t !== "string")
     throw new ActionError("text (modifier keys) must be a string")
@@ -522,7 +522,7 @@ export class Computer {
       case "screenshot":
         return await this.screenshot(null)
       case "zoom": {
-        const r = params["region"]
+        const r = params.region
         if (
           !Array.isArray(r) ||
           r.length !== 4 ||
@@ -597,7 +597,7 @@ export class Computer {
         }
       }
       case "scroll": {
-        const dir = params["scroll_direction"]
+        const dir = params.scroll_direction
         if (
           dir !== "up" &&
           dir !== "down" &&
@@ -618,7 +618,7 @@ export class Computer {
         return ok({})
       }
       case "type": {
-        const text = params["text"]
+        const text = params.text
         if (typeof text !== "string")
           throw new ActionError("text must be a string")
         const { strokes, bad } = input.textToStrokes(text)

@@ -48,9 +48,9 @@ if (found === null)
 Object.assign(process.env, runtimePin(process.env, runtime.runtimeCache()))
 
 const state = mkdtempSync("/tmp/wd-")
-process.env["WINVM_HOME"] = resolve(state, "home")
-process.env["XDG_CONFIG_HOME"] = resolve(state, "xdg-config")
-process.env["XDG_DATA_HOME"] = resolve(state, "xdg-data")
+process.env.WINVM_HOME = resolve(state, "home")
+process.env.XDG_CONFIG_HOME = resolve(state, "xdg-config")
+process.env.XDG_DATA_HOME = resolve(state, "xdg-data")
 
 const { measureOffset } = await import("@winvm/core/clock")
 const { RAMFB, VIRTIO_GPU, describeDisplay, displayPath, readDisplay } =
@@ -366,7 +366,7 @@ exitOnSignals(process, {
 
 console.log(`disposable root: ${state}`)
 try {
-  const images = resolve(process.env["WINVM_HOME"] ?? "", "images", imageName)
+  const images = resolve(process.env.WINVM_HOME ?? "", "images", imageName)
   mkdirSync(images, { recursive: true })
   const cloned = spawnSync(
     "cp",

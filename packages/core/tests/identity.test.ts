@@ -181,7 +181,7 @@ describe("recordCliEntry exports the generation", () => {
     const env: Record<string, string> = {}
     for (const [k, v] of Object.entries(process.env))
       if (v !== undefined && k !== "WINVM_BUILD_ID") env[k] = v
-    if (buildId !== undefined) env["WINVM_BUILD_ID"] = buildId
+    if (buildId !== undefined) env.WINVM_BUILD_ID = buildId
     const r = spawnSync(process.execPath, ["-e", script], {
       env,
       encoding: "utf8",

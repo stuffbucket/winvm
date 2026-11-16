@@ -118,7 +118,7 @@ export async function gather(
 }
 
 const tilde = (path: string): string => {
-  const home = process.env["HOME"] ?? ""
+  const home = process.env.HOME ?? ""
   return home !== "" && (path === home || path.startsWith(`${home}/`))
     ? `~${path.slice(home.length)}`
     : path

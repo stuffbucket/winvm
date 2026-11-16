@@ -37,12 +37,12 @@ mkdirSync(out, { recursive: true })
 let xdg: string | null = null
 if (!args.flags.has("real-xdg")) {
   xdg = mkdtempSync(resolve(tmpdir(), "winvm-scen-xdg-"))
-  process.env["XDG_CONFIG_HOME"] = resolve(xdg, "config")
-  process.env["XDG_DATA_HOME"] = resolve(xdg, "data")
+  process.env.XDG_CONFIG_HOME = resolve(xdg, "config")
+  process.env.XDG_DATA_HOME = resolve(xdg, "data")
 }
 
 console.log(
-  `scenarios on "${name}" · WINVM_HOME=${process.env["WINVM_HOME"] ?? "(default)"} · WINVM_RUNTIME=${process.env["WINVM_RUNTIME"] ?? "(default)"}`,
+  `scenarios on "${name}" · WINVM_HOME=${process.env.WINVM_HOME ?? "(default)"} · WINVM_RUNTIME=${process.env.WINVM_RUNTIME ?? "(default)"}`,
 )
 console.log(`evidence in ${out}\n`)
 

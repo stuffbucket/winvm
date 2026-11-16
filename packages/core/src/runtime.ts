@@ -66,9 +66,9 @@ export const runtimePin = (): RuntimePin => pinned
 export function runtimeCache(
   env: Readonly<Record<string, string | undefined>> = process.env,
 ): string {
-  const own = env["WINVM_RUNTIME_CACHE"]
+  const own = env.WINVM_RUNTIME_CACHE
   if (own !== undefined && own !== "") return resolve(own)
-  const data = env["XDG_DATA_HOME"]
+  const data = env.XDG_DATA_HOME
   return resolve(
     data !== undefined && data !== ""
       ? data
@@ -97,7 +97,7 @@ function appRuntimeDir(execPath: string): string | null {
 
 export function findRuntime(o: FindOptions = {}): Runtime | null {
   const env = o.env ?? process.env
-  const override = env["WINVM_RUNTIME"]
+  const override = env.WINVM_RUNTIME
   if (override !== undefined && override !== "") {
     const dir = resolve(override)
     return { dir, source: "override", manifest: readManifest(dir) }

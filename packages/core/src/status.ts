@@ -130,12 +130,12 @@ export function readSaves(instance: string): readonly SaveInfo[] {
   for (const dir of names) {
     const m = readJson(resolve(savesDir(instance), dir, "manifest.json"))
     if (m === null) continue
-    const note = str(m["note"])
+    const note = str(m.note)
     out.push({
-      name: str(m["name"]) ?? dir,
-      kind: str(m["kind"]) ?? "manual",
-      createdAt: str(m["createdAt"]) ?? "",
-      bytes: num(m["bytes"]),
+      name: str(m.name) ?? dir,
+      kind: str(m.kind) ?? "manual",
+      createdAt: str(m.createdAt) ?? "",
+      bytes: num(m.bytes),
       ...(note === null ? {} : { note }),
     })
   }
@@ -168,30 +168,30 @@ export function parseWatch(
   alive: (pid: number | null) => boolean,
 ): WatchInfo | null {
   if (raw === null) return null
-  const pid = num(raw["pid"])
-  const a = rec(raw["autosave"])
-  const s = rec(raw["stow"])
+  const pid = num(raw.pid)
+  const a = rec(raw.autosave)
+  const s = rec(raw.stow)
   return {
     alive: alive(pid),
     pid,
-    state: str(raw["state"]) ?? "unknown",
-    idleSeconds: num(raw["idleSeconds"]),
-    lastActivityAt: str(raw["lastActivityAt"]),
+    state: str(raw.state) ?? "unknown",
+    idleSeconds: num(raw.idleSeconds),
+    lastActivityAt: str(raw.lastActivityAt),
     autosave:
       a !== null
         ? {
-            enabled: a["enabled"] === true,
-            idleMinutes: num(a["idleMinutes"]),
-            keep: num(a["keep"]),
-            lastAt: str(a["lastAt"]),
+            enabled: a.enabled === true,
+            idleMinutes: num(a.idleMinutes),
+            keep: num(a.keep),
+            lastAt: str(a.lastAt),
           }
         : null,
     stow:
       s !== null
         ? {
-            enabled: s["enabled"] === true,
-            idleMinutes: num(s["idleMinutes"]),
-            lastAt: str(s["lastAt"]),
+            enabled: s.enabled === true,
+            idleMinutes: num(s.idleMinutes),
+            lastAt: str(s.lastAt),
           }
         : null,
   }
@@ -341,7 +341,7 @@ export async function probeGuest(
         } catch {
           continue
         }
-        const ret = msg["return"]
+        const ret = msg.return
         if (step === 0) {
           if (ret !== syncId) continue
           step = 1
@@ -373,7 +373,7 @@ export async function probeGuest(
 
 export function osLabel(o: Record<string, unknown>): string | null {
   const build = str(o["kernel-release"])
-  let pretty = str(o["pretty-name"]) ?? str(o["name"])
+  let pretty = str(o["pretty-name"]) ?? str(o.name)
   if (pretty !== null && build !== null && Number(build) >= 22000)
     pretty = pretty.replace(/Windows 10\b/, "Windows 11")
   if (pretty === null) return build === null ? null : `build ${build}`

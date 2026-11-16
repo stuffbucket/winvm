@@ -257,14 +257,14 @@ describe("useCanvasCamera", () => {
     render(<Probe />)
     let arrived = null as boolean | null
     await act(async () => {
-      const flight = api!.fly({ x: -400, y: -300, zoom: 2 }, { duration: 160 })
+      const flight = api?.fly({ x: -400, y: -300, zoom: 2 }, { duration: 160 })
       await new Promise((r) => setTimeout(r, 60))
-      seen.push(api!.current().zoom)
+      seen.push(api?.current().zoom)
       arrived = await flight
       await new Promise((r) => setTimeout(r, 40))
     })
     expect(arrived).toBe(true)
-    expect(api!.camera).toEqual({ x: -400, y: -300, zoom: 2 })
+    expect(api?.camera).toEqual({ x: -400, y: -300, zoom: 2 })
     expect(seen.some((z) => z > 1 && z < 2)).toBe(true)
   })
 
@@ -280,12 +280,12 @@ describe("useCanvasCamera", () => {
     render(<Probe />)
     let arrived = null as boolean | null
     await act(async () => {
-      const flight = api!.fly({ x: -400, y: -300, zoom: 2 }, { duration: 500 })
-      api!.set({ x: 5, y: 5, zoom: 1 })
+      const flight = api?.fly({ x: -400, y: -300, zoom: 2 }, { duration: 500 })
+      api?.set({ x: 5, y: 5, zoom: 1 })
       arrived = await flight
       await new Promise((r) => setTimeout(r, 40))
     })
     expect(arrived).toBe(false)
-    expect(api!.camera).toEqual({ x: 5, y: 5, zoom: 1 })
+    expect(api?.camera).toEqual({ x: 5, y: 5, zoom: 1 })
   })
 })

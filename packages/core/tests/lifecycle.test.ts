@@ -232,7 +232,7 @@ const childEnv = (
     WINVM_CLI: CLI,
     ...extra,
   }
-  delete e["WINVM_NO_RECONCILE"]
+  delete e.WINVM_NO_RECONCILE
   return e
 }
 
@@ -244,9 +244,9 @@ beforeEach(async () => {
     ]),
   )
   home = mkdtempSync(resolve(tmpdir(), "winvm-lc-"))
-  process.env["WINVM_HOME"] = home
-  process.env["WINVM_CLI"] = CLI
-  delete process.env["WINVM_NO_RECONCILE"]
+  process.env.WINVM_HOME = home
+  process.env.WINVM_CLI = CLI
+  delete process.env.WINVM_NO_RECONCILE
   p = pathsFor("t")
   mkdirSync(p.dir, { recursive: true })
   writeFileSync(p.meta, JSON.stringify({ image: "x", vnc: 9, created: "" }))
@@ -472,9 +472,9 @@ describe("saves in progress", () => {
           held === null
             ? "no lease"
             : {
-                operation: held["operation"],
-                pid: held["pid"],
-                automatic: held["automatic"],
+                operation: held.operation,
+                pid: held.pid,
+                automatic: held.automatic,
               },
         )
         base.startService?.()
@@ -647,9 +647,9 @@ describe("one reconciliation at a time", () => {
     const deadline = Date.now() + 15_000
     while (!existsSync(marker) && Date.now() < deadline) await sleep(25)
     expect(existsSync(marker)).toBe(true)
-    const env = { TZ: process.env["TZ"], LC_ALL: process.env["LC_ALL"] }
-    process.env["TZ"] = "America/Los_Angeles"
-    process.env["LC_ALL"] = "C"
+    const env = { TZ: process.env.TZ, LC_ALL: process.env.LC_ALL }
+    process.env.TZ = "America/Los_Angeles"
+    process.env.LC_ALL = "C"
     try {
       const s = seams({ lockWaitMs: 500 })
       const r = await reconcileManagement("t", p, s.options)
@@ -959,13 +959,13 @@ describe("generations from another install", () => {
     const source = seams()
     const viewer = seams({ current: VIEWER_BUILD })
     for (let i = 0; i < 2; i += 1) {
-      process.env["WINVM_CLI"] = CLI
+      process.env.WINVM_CLI = CLI
       expect(await reconcileManagement("t", p, source.options)).toEqual({
         changed: false,
         servicePid: svc.pid,
         watcherPid: w.pid,
       })
-      process.env["WINVM_CLI"] = VIEWER
+      process.env.WINVM_CLI = VIEWER
       expect(await reconcileManagement("t", p, viewer.options)).toEqual({
         changed: false,
         servicePid: svc.pid,
@@ -1148,7 +1148,7 @@ describe("no recursion", () => {
       `import { writeFileSync } from "node:fs"\n` +
         `writeFileSync(${JSON.stringify(out)} + "." + process.argv[2], String(process.env["WINVM_NO_RECONCILE"] ?? "unset"))\n`,
     )
-    process.env["WINVM_CLI"] = cli
+    process.env.WINVM_CLI = cli
     const seen = async (verb: string): Promise<string> => {
       const deadline = Date.now() + 10_000
       while (Date.now() < deadline && !existsSync(`${out}.${verb}`))

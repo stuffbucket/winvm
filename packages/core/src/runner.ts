@@ -84,7 +84,7 @@ async function createMissingGolden(
       instance,
       readMeta(instance)?.image ??
         image ??
-        process.env["WINVM_IMAGE"] ??
+        process.env.WINVM_IMAGE ??
         "win11-arm64",
     )
     const meta = readMeta(instance)
@@ -317,7 +317,7 @@ async function stage(
     [
       CMD,
       "/c",
-      dirs.map((d) => `mkdir "${d}" 2>nul`).join(" & ") + " & exit /b 0",
+      `${dirs.map((d) => `mkdir "${d}" 2>nul`).join(" & ")} & exit /b 0`,
     ],
     60_000,
   )

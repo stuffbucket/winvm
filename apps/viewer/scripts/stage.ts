@@ -39,7 +39,7 @@ cpSync(
 )
 
 const rt =
-  (process.env["WINVM_RUNTIME"] ?? "") !== "" ? findRuntime() : ensureRuntime()
+  (process.env.WINVM_RUNTIME ?? "") !== "" ? findRuntime() : ensureRuntime()
 if (rt === null || rt.manifest === null) {
   console.error("no runtime with a manifest to bundle")
   process.exit(1)

@@ -31,7 +31,7 @@ export const VCPUS = NEW_DEFAULT.cpus
 export const MEMORY_BYTES = NEW_DEFAULT.memoryMiB * 1024 ** 2
 export const WATCHDOG_GRACE_MS = 5 * 60_000
 const watchdogGraceMs = (): number => {
-  const v = process.env["WINVM_POOL_GRACE"]
+  const v = process.env.WINVM_POOL_GRACE
   return v === undefined || v === "" ? WATCHDOG_GRACE_MS : parseDuration(v)
 }
 
@@ -416,7 +416,7 @@ export function poolOptions(
     size: Number(raw),
     prefix: args.flags.get("pool-prefix") ?? "ci",
     golden: args.flags.get("golden") ?? null,
-    image: args.flags.get("image") ?? process.env["WINVM_IMAGE"] ?? null,
+    image: args.flags.get("image") ?? process.env.WINVM_IMAGE ?? null,
     artifactsDir: args.flags.get("artifacts") ?? null,
     keep: args.flags.has("keep"),
   }

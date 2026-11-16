@@ -50,8 +50,8 @@ describe("running from source or compiled into the app", () => {
 
 describe("a compiled sidecar's generation", () => {
   const saved = {
-    cli: process.env["WINVM_CLI"],
-    id: process.env["WINVM_BUILD_ID"],
+    cli: process.env.WINVM_CLI,
+    id: process.env.WINVM_BUILD_ID,
   }
   const restore = (name: string, value: string | undefined): void => {
     if (value === undefined) delete process.env[name]
@@ -74,8 +74,8 @@ describe("a compiled sidecar's generation", () => {
 
   it("is exported with the compiled executable's own path for detached descendants", () => {
     recordCliEntry("/$bunfs/root/winvm")
-    expect(process.env["WINVM_CLI"]).toBe(process.execPath)
-    expect(process.env["WINVM_BUILD_ID"]).toBe(buildIdentity())
+    expect(process.env.WINVM_CLI).toBe(process.execPath)
+    expect(process.env.WINVM_BUILD_ID).toBe(buildIdentity())
     expect(buildIdentity()).toMatch(/^sha256:[0-9a-f]{64}$/)
   })
 })

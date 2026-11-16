@@ -443,7 +443,7 @@ export async function run(args: Args): Promise<number> {
   let boundPort = 0
   const handler = makeHandler(() => boundPort, token)
   const wanted = Number(
-    args.flags.get("port") ?? process.env["WINVM_WEB_PORT"] ?? DEFAULT_PORT,
+    args.flags.get("port") ?? process.env.WINVM_WEB_PORT ?? DEFAULT_PORT,
   )
   let server: ReturnType<typeof Bun.serve>
   try {

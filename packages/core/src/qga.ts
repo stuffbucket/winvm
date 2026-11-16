@@ -41,7 +41,7 @@ export async function call(
       sock.destroy()
       fn()
     }
-    const execute = payload["execute"]
+    const execute = payload.execute
     const timer = setTimeout(() => {
       settle(() => {
         rej(
@@ -252,10 +252,10 @@ export async function loggedOnUser(
 ): Promise<string | null> {
   try {
     const r = await call(sockPath, { execute: "guest-get-users" }, timeoutMs)
-    if (Array.isArray(r["return"]))
-      return pickUser(r["return"] as readonly GuestUser[])
+    if (Array.isArray(r.return))
+      return pickUser(r.return as readonly GuestUser[])
     if (
-      (r["error"] as { class?: string } | undefined)?.class !==
+      (r.error as { class?: string } | undefined)?.class !==
       "CommandNotFound"
     )
       return null
@@ -353,7 +353,7 @@ export async function exec(
     execute: "guest-exec",
     arguments: { path, arg: [...args], "capture-output": true },
   })
-  const pid = (started["return"] as { pid?: number } | undefined)?.pid
+  const pid = (started.return as { pid?: number } | undefined)?.pid
   if (pid === undefined)
     throw new Error(`guest-exec failed: ${JSON.stringify(started)}`)
 
@@ -362,7 +362,7 @@ export async function exec(
   while (Date.now() < deadline) {
     const st = (
       await call(sockPath, { execute: "guest-exec-status", arguments: { pid } })
-    )["return"] as
+    ).return as
       | {
           exited?: boolean
           exitcode?: number
@@ -465,7 +465,7 @@ export async function readFile(
     execute: "guest-file-open",
     arguments: { path: guestPath, mode: "rb" },
   })
-  const handle = open["return"]
+  const handle = open.return
   if (typeof handle !== "number") return null
   const parts: Buffer[] = []
   let offset = 0
@@ -486,19 +486,19 @@ export async function readFile(
           execute: "guest-file-seek",
           arguments: { handle, offset, whence: "set" },
         })
-        if (seek["error"] !== undefined)
+        if (seek.error !== undefined)
           throw new Error(
-            `guest-file-seek ${guestPath}: ${JSON.stringify(seek["error"])}`,
+            `guest-file-seek ${guestPath}: ${JSON.stringify(seek.error)}`,
           )
         count = Math.max(MIN_READ_CHUNK, Math.floor(count / 2))
         continue
       }
-      const ret = r["return"] as
+      const ret = r.return as
         | { "buf-b64"?: string; count?: number; eof?: boolean }
         | undefined
       if (ret === undefined)
         throw new Error(
-          `guest-file-read ${guestPath}: ${JSON.stringify(r["error"] ?? r)}`,
+          `guest-file-read ${guestPath}: ${JSON.stringify(r.error ?? r)}`,
         )
       const bytes = Buffer.from(ret["buf-b64"] ?? "", "base64")
       parts.push(bytes)

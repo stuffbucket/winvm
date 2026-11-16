@@ -48,7 +48,7 @@ function resolveLocale(): string {
 const lookup = (key: string, locale: string): string | undefined =>
   CATALOGS[locale]?.[key] ??
   CATALOGS[languageOf(locale)]?.[key] ??
-  CATALOGS["en"]?.[key]
+  CATALOGS.en?.[key]
 
 export function t(
   key: string,

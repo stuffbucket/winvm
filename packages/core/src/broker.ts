@@ -209,7 +209,7 @@ export class QmpChannel {
       if (this.active !== null && !this.draining) this.active.write(`${line}\n`)
       return
     }
-    const id = msg["id"]
+    const id = msg.id
     if (typeof id === "string" && id.startsWith(REQUEST_ID)) {
       this.requests.get(id)?.(msg)
       return
@@ -268,7 +268,7 @@ export class QmpChannel {
   private fromCaller(c: Socket, line: string): void {
     const msg = parse(line)
     if (msg === null) return
-    if (msg["execute"] === "qmp_capabilities") {
+    if (msg.execute === "qmp_capabilities") {
       c.write(`${JSON.stringify({ return: {} })}\n`)
       return
     }

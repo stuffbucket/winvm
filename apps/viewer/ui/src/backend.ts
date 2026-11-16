@@ -84,15 +84,15 @@ export function normalizeSidecarFailure(
   if (typeof raw === "object" && raw !== null) {
     const o = raw as Record<string, unknown>
     return {
-      kind: isKind(o["kind"]) ? o["kind"] : "launch",
-      operation: text(o["operation"]) || operation,
-      message: text(o["message"]) || described(raw),
-      stdout: text(o["stdout"]),
-      stderr: text(o["stderr"]),
-      code: count(o["code"]),
-      signal: count(o["signal"]),
-      timeoutMs: count(o["timeoutMs"]),
-      detail: typeof o["detail"] === "string" ? o["detail"] : null,
+      kind: isKind(o.kind) ? o.kind : "launch",
+      operation: text(o.operation) || operation,
+      message: text(o.message) || described(raw),
+      stdout: text(o.stdout),
+      stderr: text(o.stderr),
+      code: count(o.code),
+      signal: count(o.signal),
+      timeoutMs: count(o.timeoutMs),
+      detail: typeof o.detail === "string" ? o.detail : null,
     }
   }
   return { ...none, kind: "launch", message: String(raw), detail: null }

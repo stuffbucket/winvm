@@ -122,7 +122,7 @@ describe("Claude Desktop's config", () => {
     }
     expect(now.globalShortcut).toBe("Cmd+Space")
     expect(now.preferences).toEqual({ theme: "dark" })
-    expect(now.mcpServers["filesystem"]).toEqual(original.mcpServers.filesystem)
+    expect(now.mcpServers.filesystem).toEqual(original.mcpServers.filesystem)
     expect(now.mcpServers["winvm-demo"]).toEqual({
       command: APP,
       args: ["mcp", "-i", "demo"],

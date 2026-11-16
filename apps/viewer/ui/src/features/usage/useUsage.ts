@@ -49,7 +49,7 @@ export function useUsage(
   useEffect(() => {
     prev.current = null
     setView(EMPTY)
-  }, [pid])
+  }, [])
 
   useEffect(() => {
     if (pid === null || !shown) return

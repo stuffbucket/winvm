@@ -16,16 +16,16 @@ let home: string
 let savedHome: string | undefined
 
 beforeAll(() => {
-  savedHome = process.env["WINVM_HOME"]
+  savedHome = process.env.WINVM_HOME
   home = mkdtempSync("/tmp/wvpid-")
-  process.env["WINVM_HOME"] = home
+  process.env.WINVM_HOME = home
   mkdirSync(pathsFor(NAME).dir, { recursive: true })
 })
 
 afterAll(() => {
   rmSync(home, { recursive: true, force: true })
-  if (savedHome === undefined) delete process.env["WINVM_HOME"]
-  else process.env["WINVM_HOME"] = savedHome
+  if (savedHome === undefined) delete process.env.WINVM_HOME
+  else process.env.WINVM_HOME = savedHome
 })
 
 describe("pidOf", () => {

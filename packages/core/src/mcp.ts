@@ -896,19 +896,19 @@ export async function handle(
   if (msg === null || typeof msg !== "object" || Array.isArray(msg))
     return rpcError(null, -32600, "Invalid Request")
   const m = msg as Json
-  const method = m["method"]
+  const method = m.method
   const hasId = Object.hasOwn(m, "id")
-  const id = (hasId ? m["id"] : null) as Id
+  const id = (hasId ? m.id : null) as Id
   if (typeof method !== "string") {
     return hasId && (Object.hasOwn(m, "result") || Object.hasOwn(m, "error"))
       ? null
       : rpcError(id, -32600, "Invalid Request")
   }
   if (!hasId) return null
-  const params = (m["params"] ?? {}) as Json
+  const params = (m.params ?? {}) as Json
   switch (method) {
     case "initialize": {
-      const asked = params["protocolVersion"]
+      const asked = params.protocolVersion
       const protocolVersion =
         typeof asked === "string" &&
         (PROTOCOL_VERSIONS as readonly string[]).includes(asked)
@@ -934,10 +934,10 @@ export async function handle(
     case "tools/list":
       return { jsonrpc: "2.0", id, result: { tools: TOOLS } }
     case "tools/call": {
-      const name = params["name"]
+      const name = params.name
       if (typeof name !== "string" || !TOOLS.some((t) => t.name === name))
         return rpcError(id, -32602, `Unknown tool: ${String(name)}`)
-      const args = params["arguments"]
+      const args = params.arguments
       const input =
         args !== null && typeof args === "object" && !Array.isArray(args)
           ? (args as Json)

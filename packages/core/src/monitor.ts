@@ -75,12 +75,12 @@ export async function withQmp<T>(
     sock.write(`${JSON.stringify(o)}\n`)
     const msg = await Promise.race([reply, expiry])
     clearTimeout(timer)
-    const error = msg["error"] as { desc?: string } | undefined
+    const error = msg.error as { desc?: string } | undefined
     if (error !== undefined) {
       if ((error as { timeout?: boolean }).timeout === true) sock.destroy()
       throw new QmpError(`qmp ${label}: ${error.desc ?? JSON.stringify(error)}`)
     }
-    return msg["return"]
+    return msg.return
   }
 
   try {

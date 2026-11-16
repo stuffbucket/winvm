@@ -57,8 +57,8 @@ let prevProbe: share.Probe
 beforeAll(() => {
   for (const k of ["WINVM_HOME", "WINVM_RUNTIME"]) saved[k] = process.env[k]
   home = mkdtempSync(resolve(tmpdir(), "winvm-share-"))
-  process.env["WINVM_HOME"] = home
-  process.env["WINVM_RUNTIME"] = resolve(home, "runtime")
+  process.env.WINVM_HOME = home
+  process.env.WINVM_RUNTIME = resolve(home, "runtime")
   mkdirSync(resolve(home, "runtime", "bin"), { recursive: true })
   prevProbe = share.setProbe(() => ({ ok: true, reason: null }))
 })
@@ -332,7 +332,7 @@ describe("virtiofsd's lifecycle", () => {
   })
   afterEach(() => {
     share.stopVirtiofsd(p)
-    delete process.env["FAKE_FAIL"]
+    delete process.env.FAKE_FAIL
   })
 
   it("starts one, waits for its socket, records what it serves, and finds it by its socket", async () => {
@@ -370,7 +370,7 @@ describe("virtiofsd's lifecycle", () => {
   })
 
   it("says why when the daemon does not start", async () => {
-    process.env["FAKE_FAIL"] = "1"
+    process.env.FAKE_FAIL = "1"
     await expect(
       share.startVirtiofsd(p, { bin: fake, timeoutMs: 3000 }),
     ).rejects.toThrow(/cannot serve/)

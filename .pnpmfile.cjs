@@ -89,12 +89,12 @@ function readRules() {
 function afterAllResolved(lockfile) {
   const activeRules = readRules()
 
-  const packages = lockfile && lockfile.packages
+  const packages = lockfile?.packages
   if (!packages || typeof packages !== "object") return lockfile
 
   let removed = 0
   for (const entry of Object.values(packages)) {
-    const resolution = entry && entry.resolution
+    const resolution = entry?.resolution
     if (!resolution || typeof resolution.tarball !== "string") continue
 
     let tarball

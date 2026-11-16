@@ -3,9 +3,7 @@ export interface GuestKey {
   readonly code: string
 }
 
-export interface KeyboardSend {
-  (keysym: number, code: string, down: boolean): void
-}
+export type KeyboardSend = (keysym: number, code: string, down: boolean) => void
 
 export interface RoutedKeyEvent {
   readonly code: string

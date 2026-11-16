@@ -87,7 +87,7 @@ describe("parseJob", () => {
 
   it("resolves a relative src against the job file", () => {
     const j = parseJob(
-      "files:\n  - src: fixtures/x.bin\n" + minimal,
+      `files:\n  - src: fixtures/x.bin\n${minimal}`,
       "/jobs/a/job.yml",
     )
     expect(j.files[0]).toMatchObject({ src: "/jobs/a/fixtures/x.bin" })
@@ -102,10 +102,10 @@ describe("parseJob", () => {
       "steps:\n  - run: x\n    shell: bash",
       "steps:\n  - run: x\n    if: github.ref == 'main'",
       "steps:\n  - run: x\n    timeout: soon",
-      "files:\n  - dest: C:\\x\n" + minimal,
-      "files:\n  - src: a\n    url: https://x\n" + minimal,
-      "files:\n  - release: not-a-repo\n    pattern: '*'\n" + minimal,
-      "files:\n  - release: o/r\n" + minimal,
+      `files:\n  - dest: C:\\x\n${minimal}`,
+      `files:\n  - src: a\n    url: https://x\n${minimal}`,
+      `files:\n  - release: not-a-repo\n    pattern: '*'\n${minimal}`,
+      `files:\n  - release: o/r\n${minimal}`,
       "steps:\n  - run: echo ${{ env.WINVM_SURELY_UNSET_VAR }}",
       "steps: [\n",
     ]) {
@@ -116,7 +116,7 @@ describe("parseJob", () => {
 
 describe("interpolation", () => {
   it("takes job env, then host env, then a default", () => {
-    process.env["WINVM_TEST_HOST_VAR"] = "host"
+    process.env.WINVM_TEST_HOST_VAR = "host"
     const j = parseJob(
       "env: { A: job }\nsteps:\n  - run: ${{ env.A }} ${{ env.WINVM_TEST_HOST_VAR }} ${{ env.WINVM_UNSET_X || 'dflt' }} ${{env.A||'no'}}\n",
     )

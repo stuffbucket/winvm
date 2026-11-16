@@ -348,13 +348,13 @@ describe("ps cpu time", () => {
 
 describe("instance config", () => {
   const home = mkdtempSync(resolve(tmpdir(), "winvm-config-"))
-  const before = process.env["WINVM_HOME"]
+  const before = process.env.WINVM_HOME
   beforeAll(() => {
-    process.env["WINVM_HOME"] = home
+    process.env.WINVM_HOME = home
   })
   afterAll(() => {
-    if (before === undefined) delete process.env["WINVM_HOME"]
-    else process.env["WINVM_HOME"] = before
+    if (before === undefined) delete process.env.WINVM_HOME
+    else process.env.WINVM_HOME = before
     rmSync(home, { recursive: true, force: true })
   })
 
@@ -411,13 +411,13 @@ describe("instance config", () => {
 
 describe("instance settings: close policy", () => {
   const home = mkdtempSync(resolve(tmpdir(), "winvm-closepolicy-"))
-  const before = process.env["WINVM_HOME"]
+  const before = process.env.WINVM_HOME
   beforeAll(() => {
-    process.env["WINVM_HOME"] = home
+    process.env.WINVM_HOME = home
   })
   afterAll(() => {
-    if (before === undefined) delete process.env["WINVM_HOME"]
-    else process.env["WINVM_HOME"] = before
+    if (before === undefined) delete process.env.WINVM_HOME
+    else process.env.WINVM_HOME = before
     rmSync(home, { recursive: true, force: true })
   })
 
@@ -504,13 +504,13 @@ describe("watcher after a load or rewind", () => {
   })
 
   const home = mkdtempSync(resolve(tmpdir(), "winvm-rewatch-"))
-  const before = process.env["WINVM_HOME"]
+  const before = process.env.WINVM_HOME
   beforeAll(() => {
-    process.env["WINVM_HOME"] = home
+    process.env.WINVM_HOME = home
   })
   afterAll(() => {
-    if (before === undefined) delete process.env["WINVM_HOME"]
-    else process.env["WINVM_HOME"] = before
+    if (before === undefined) delete process.env.WINVM_HOME
+    else process.env.WINVM_HOME = before
     rmSync(home, { recursive: true, force: true })
   })
   it("never starts one with watch.enabled=false", () => {
@@ -526,15 +526,15 @@ describe("watcher generations", () => {
   const spawned: ReturnType<typeof Bun.spawn>[] = []
 
   beforeEach(() => {
-    savedHome = process.env["WINVM_HOME"]
+    savedHome = process.env.WINVM_HOME
     home = mkdtempSync(resolve(tmpdir(), "winvm-watchgen-"))
-    process.env["WINVM_HOME"] = home
+    process.env.WINVM_HOME = home
     mkdirSync(instanceDir("w"), { recursive: true })
   })
   afterEach(() => {
     for (const s of spawned.splice(0)) s.kill()
-    if (savedHome === undefined) delete process.env["WINVM_HOME"]
-    else process.env["WINVM_HOME"] = savedHome
+    if (savedHome === undefined) delete process.env.WINVM_HOME
+    else process.env.WINVM_HOME = savedHome
     rmSync(home, { recursive: true, force: true })
   })
 
@@ -788,7 +788,7 @@ describe("watcher generations", () => {
       ...process.env,
       WINVM_HOME: home,
     }
-    delete env["WINVM_BUILD_ID"]
+    delete env.WINVM_BUILD_ID
     const child = Bun.spawn([process.execPath, cli, "watch", "-i", "w"], {
       env,
       stdout: "ignore",

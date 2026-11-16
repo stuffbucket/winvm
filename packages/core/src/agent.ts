@@ -369,7 +369,7 @@ export async function qgaWriteFile(
     execute: "guest-file-open",
     arguments: { path: guestPath, mode: "wb" },
   })
-  const handle = open["return"]
+  const handle = open.return
   if (typeof handle !== "number")
     throw new Error(`guest-file-open ${guestPath}: ${JSON.stringify(open)}`)
   try {
@@ -380,9 +380,9 @@ export async function qgaWriteFile(
         execute: "guest-file-write",
         arguments: { handle, "buf-b64": Buffer.from(part).toString("base64") },
       })
-      if (r["error"] !== undefined)
+      if (r.error !== undefined)
         throw new Error(
-          `guest-file-write ${guestPath}: ${JSON.stringify(r["error"])}`,
+          `guest-file-write ${guestPath}: ${JSON.stringify(r.error)}`,
         )
       if (data.length === 0) break
     }

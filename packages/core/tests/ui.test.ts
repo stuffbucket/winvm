@@ -254,10 +254,10 @@ describe("status formatting", () => {
 
 describe("reading other commands' files", () => {
   let dir = ""
-  const prev = process.env["WINVM_HOME"]
+  const prev = process.env.WINVM_HOME
   beforeAll(() => {
     dir = mkdtempSync(resolve(tmpdir(), "winvm-ui-test-"))
-    process.env["WINVM_HOME"] = dir
+    process.env.WINVM_HOME = dir
     const save = (name: string, kind: string, createdAt: string): void => {
       mkdirSync(resolve(dir, "saves", "x", name), { recursive: true })
       writeFileSync(
@@ -282,8 +282,8 @@ describe("reading other commands' files", () => {
     )
   })
   afterAll(() => {
-    if (prev === undefined) delete process.env["WINVM_HOME"]
-    else process.env["WINVM_HOME"] = prev
+    if (prev === undefined) delete process.env.WINVM_HOME
+    else process.env.WINVM_HOME = prev
     rmSync(dir, { recursive: true, force: true })
   })
 

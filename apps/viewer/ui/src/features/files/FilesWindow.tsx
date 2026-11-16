@@ -240,7 +240,7 @@ export function FilesWindow({
 
   useEffect(() => {
     void load(shown.current ?? remember.get(`folder.${instance}`), "stay")
-  }, [load, instance, copies.landed])
+  }, [load, instance])
 
   useEffect(() => {
     list.current?.focus()
@@ -720,11 +720,11 @@ export function FilesWindow({
     const el = document.elementFromPoint(x, y)
     const place = el?.closest<HTMLElement>("[data-place]")
     if (place != null) {
-      const path = place.dataset["place"] ?? ""
+      const path = place.dataset.place ?? ""
       return samePath(path, l.path) ? null : { kind: "place", path }
     }
     const row = el?.closest<HTMLElement>(".files__row[data-dir]")
-    const name = row?.dataset["name"]
+    const name = row?.dataset.name
     if (name !== undefined && !carried.has(name))
       return { kind: "row", name, path: childPath(l.path, name) }
     if (el?.closest(".files__list") != null)
@@ -880,7 +880,7 @@ export function FilesWindow({
           e.type === "over" && cur === null ? null : into,
         )
       }),
-    [copyInto],
+    [copyInto, targetAt],
   )
 
   const moveTo = (i: number, extend: boolean): void => {
@@ -1113,7 +1113,6 @@ export function FilesWindow({
                 className="input mono"
                 aria-label={t("files.goTo")}
                 value={draft}
-                autoFocus
                 onFocus={(e) => {
                   e.currentTarget.select()
                 }}

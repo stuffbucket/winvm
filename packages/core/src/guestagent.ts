@@ -505,7 +505,7 @@ const isDir = (path: string): boolean => {
 }
 
 export function knownFolders(): Place[] {
-  const home = process.env["USERPROFILE"] ?? homedir()
+  const home = process.env.USERPROFILE ?? homedir()
   const places: Place[] = []
   const add = (kind: Place["kind"], path: string, name: string): void => {
     if (isDir(path)) places.push({ kind, name, path })
@@ -1031,7 +1031,7 @@ export class CpuMeter {
 const cpuMeter = new CpuMeter()
 
 export async function guestStats(): Promise<GuestStats> {
-  const path = isWin ? `${process.env["SystemDrive"] ?? "C:"}\\` : "/"
+  const path = isWin ? `${process.env.SystemDrive ?? "C:"}\\` : "/"
   let disk: GuestStats["disk"] = null
   try {
     const s = await statfs(path)
@@ -1314,7 +1314,7 @@ type Op =
     }
 
 const displayExe = (): string =>
-  process.env["WINVM_DISPLAY_EXE"] ?? join(import.meta.dir, "winvm-display.exe")
+  process.env.WINVM_DISPLAY_EXE ?? join(import.meta.dir, "winvm-display.exe")
 
 let pwshHost: PwshHost | null = null
 let uiHost: UiHost | null = null
@@ -1336,7 +1336,7 @@ async function runOp(o: Op): Promise<unknown> {
       return { ok: true }
     case "ui":
       uiHost ??= new UiHost(
-        process.env["WINVM_UI_EXE"] ?? join(import.meta.dir, "winvm-ui.exe"),
+        process.env.WINVM_UI_EXE ?? join(import.meta.dir, "winvm-ui.exe"),
       )
       return await uiHost.call(o.req)
     case "hidden":
@@ -1505,8 +1505,8 @@ export function parseTermControl(text: string): TermControl | null {
     const m = JSON.parse(text) as Record<string, unknown>
     const ok = (n: unknown): n is number =>
       typeof n === "number" && Number.isInteger(n) && n >= 1 && n <= 1000
-    if (m["type"] === "resize" && ok(m["cols"]) && ok(m["rows"]))
-      return { type: "resize", cols: m["cols"], rows: m["rows"] }
+    if (m.type === "resize" && ok(m.cols) && ok(m.rows))
+      return { type: "resize", cols: m.cols, rows: m.rows }
   } catch {}
   return null
 }
@@ -1564,8 +1564,8 @@ export function termShellArgv(
     return { argv: ["C:\\Windows\\System32\\cmd.exe"], note: null }
   const env = o.env ?? process.env
   const dirs = [
-    `${env["ProgramFiles"] ?? "C:\\Program Files"}\\PowerShell\\7`,
-    ...(env["PATH"] ?? "").split(";"),
+    `${env.ProgramFiles ?? "C:\\Program Files"}\\PowerShell\\7`,
+    ...(env.PATH ?? "").split(";"),
   ]
   const pwsh =
     shell === "pwsh"
@@ -1895,9 +1895,9 @@ export function startAgent(
     set: async (args) => {
       const body = await displayLine(args, 17_000)
       const outcome: DisplayOutcome =
-        body !== null && body["error"] === undefined
+        body !== null && body.error === undefined
           ? "ok"
-          : body?.["code"] === "fail"
+          : body?.code === "fail"
             ? "fail"
             : "error"
       log(`display ${args.join(" ")} after the lock screen: ${outcome}`)
@@ -2131,13 +2131,13 @@ export function startAgent(
                   500,
                   "winvm-display.exe said something that is not JSON",
                 )
-              if (body["error"] === undefined) {
+              if (body.error === undefined) {
                 if (r.op === "set") lockedDisplay.cancel()
                 return json(body)
               }
               if (
                 r.op === "set" &&
-                body["code"] === "fail" &&
+                body.code === "fail" &&
                 (await sessionLocked().catch(() => false))
               ) {
                 lockedDisplay.later(args)
@@ -2153,7 +2153,7 @@ export function startAgent(
               }
               const status =
                 { bad: 400, badmode: 409, toobig: 413, timeout: 408 }[
-                  String(body["code"])
+                  String(body.code)
                 ] ?? 500
               return json(body, status)
             }

@@ -60,17 +60,17 @@ function makeInstance(name: string, vnc: number): InstanceMeta {
 
 describe("VNC display in use on the host", () => {
   beforeEach(() => {
-    previousHome = process.env["WINVM_HOME"]
+    previousHome = process.env.WINVM_HOME
     state = mkdtempSync(resolve(tmpdir(), "winvm-vnc-"))
-    process.env["WINVM_HOME"] = state
+    process.env.WINVM_HOME = state
     spyOn(console, "log").mockImplementation(() => undefined)
   })
   afterEach(async () => {
     await Promise.all(
       held.splice(0).map((s) => new Promise((res) => s.close(res))),
     )
-    if (previousHome === undefined) delete process.env["WINVM_HOME"]
-    else process.env["WINVM_HOME"] = previousHome
+    if (previousHome === undefined) delete process.env.WINVM_HOME
+    else process.env.WINVM_HOME = previousHome
     rmSync(state, { recursive: true, force: true })
     mock.restore()
   })

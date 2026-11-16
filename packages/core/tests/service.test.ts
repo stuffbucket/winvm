@@ -45,9 +45,9 @@ let agent: FakeAgent
 let svc: ServiceHandle | null = null
 
 beforeEach(async () => {
-  savedHome = process.env["WINVM_HOME"]
+  savedHome = process.env.WINVM_HOME
   home = mkdtempSync(resolve(tmpdir(), "winvm-svc-"))
-  process.env["WINVM_HOME"] = home
+  process.env.WINVM_HOME = home
   p = pathsFor("t")
   mkdirSync(p.dir, { recursive: true })
   writeFileSync(p.pid, `${String(process.pid)}\n`)
@@ -62,8 +62,8 @@ afterEach(async () => {
   svc = null
   await fake.close().catch(() => undefined)
   await agent.close().catch(() => undefined)
-  if (savedHome === undefined) delete process.env["WINVM_HOME"]
-  else process.env["WINVM_HOME"] = savedHome
+  if (savedHome === undefined) delete process.env.WINVM_HOME
+  else process.env.WINVM_HOME = savedHome
   rmSync(home, { recursive: true, force: true })
 })
 
@@ -435,7 +435,7 @@ describe("one service per instance, continued", () => {
     const before = agent.connections
     const open = fake.handler
     fake.handler = (cmd) =>
-      cmd["execute"] === "query-chardev"
+      cmd.execute === "query-chardev"
         ? { return: [{ label: "qga0", "frontend-open": false }] }
         : open(cmd)
     await expect(
@@ -450,14 +450,14 @@ describe("starting the service", () => {
   let savedCli: string | undefined
 
   beforeEach(() => {
-    savedCli = process.env["WINVM_CLI"]
-    process.env["WINVM_CLI"] = cli
+    savedCli = process.env.WINVM_CLI
+    process.env.WINVM_CLI = cli
   })
 
   afterEach(() => {
     stopService(p)
-    if (savedCli === undefined) delete process.env["WINVM_CLI"]
-    else process.env["WINVM_CLI"] = savedCli
+    if (savedCli === undefined) delete process.env.WINVM_CLI
+    else process.env.WINVM_CLI = savedCli
   })
 
   it("starts the service once, detached, and reuses it", async () => {
@@ -536,8 +536,8 @@ describe("service generations", () => {
   }
 
   beforeEach(() => {
-    savedCli = process.env["WINVM_CLI"]
-    process.env["WINVM_CLI"] = CLI
+    savedCli = process.env.WINVM_CLI
+    process.env.WINVM_CLI = CLI
     control = Bun.serve({ unix: p.control, fetch: () => new Response("ok") })
   })
 
@@ -545,8 +545,8 @@ describe("service generations", () => {
     await control?.stop(true)
     control = null
     for (const s of spawned.splice(0)) s.kill()
-    if (savedCli === undefined) delete process.env["WINVM_CLI"]
-    else process.env["WINVM_CLI"] = savedCli
+    if (savedCli === undefined) delete process.env.WINVM_CLI
+    else process.env.WINVM_CLI = savedCli
   })
 
   it("classifies a record by its build: current, stale, or legacy when it has none", () => {

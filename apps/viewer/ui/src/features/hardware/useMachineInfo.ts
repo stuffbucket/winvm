@@ -21,8 +21,8 @@ export interface MachineInfoView {
 
 export function useMachineInfo(
   instance: string | null,
-  phase: Phase | null,
-  guestReady: boolean,
+  _phase: Phase | null,
+  _guestReady: boolean,
   active: boolean,
 ): MachineInfoView {
   const [info, setInfo] = useState<MachineInfo | null>(null)
@@ -35,7 +35,7 @@ export function useMachineInfo(
   useEffect(() => {
     setInfo(null)
     setError(null)
-  }, [instance])
+  }, [])
 
   const read = useCallback(async (name: string): Promise<void> => {
     const n = ++reads.current
@@ -58,7 +58,7 @@ export function useMachineInfo(
   useEffect(() => {
     if (!active || instance === null) return
     void read(instance)
-  }, [active, instance, phase, guestReady, read])
+  }, [active, instance, read])
 
   const setSize = useCallback(
     (change: Partial<Size>): void => {

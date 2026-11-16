@@ -70,14 +70,14 @@ export function readShare(p: Paths): ShareConfig | null {
   }
   if (typeof raw !== "object" || raw === null) return null
   const r = raw as Record<string, unknown>
-  const path = r["path"]
+  const path = r.path
   if (typeof path !== "string" || !path.startsWith("/")) return null
   const letter =
-    typeof r["letter"] === "string" ? parseLetter(r["letter"]) : null
+    typeof r.letter === "string" ? parseLetter(r.letter) : null
   return {
     path,
     letter: letter ?? DEFAULT_LETTER,
-    readonly: r["readonly"] === true,
+    readonly: r.readonly === true,
   }
 }
 
@@ -259,8 +259,8 @@ export function daemonArgs(p: Paths, s: Served): readonly string[] {
     "--migration-on-error",
     "guest-error",
     ...(s.readonly ? ["--readonly"] : []),
-    ...(process.env["WINVM_VIRTIOFSD_LOG"]
-      ? ["--log-level", process.env["WINVM_VIRTIOFSD_LOG"]]
+    ...(process.env.WINVM_VIRTIOFSD_LOG
+      ? ["--log-level", process.env.WINVM_VIRTIOFSD_LOG]
       : []),
   ]
 }

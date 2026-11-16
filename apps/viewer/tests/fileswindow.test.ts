@@ -28,7 +28,7 @@ describe("the Files window's model", () => {
     e("alpha", true, null, 5),
   ]
   const kind = (x: Entry): string =>
-    kindLabel(x.name, x.dir, (k, v) => `${k}:${v?.["ext"] ?? ""}`)
+    kindLabel(x.name, x.dir, (k, v) => `${k}:${v?.ext ?? ""}`)
 
   it("sorts by a column with folders always first, and reverses", () => {
     const names = (s: Sort): string[] =>
@@ -129,7 +129,7 @@ describe("the Files window's model", () => {
     expect(glyphOf("profile.ps1", false)).not.toBe(glyphOf("run.bat", false))
     expect(glyphOf("Projects", true)).toBe("\u{F4D3}")
     const label = (k: string, v?: Record<string, string>): string =>
-      `${k}:${v?.["ext"] ?? ""}`
+      `${k}:${v?.ext ?? ""}`
     expect(kindLabel("a.png", false, label)).toBe("files.kind.image:PNG")
     expect(kindLabel("a.xyz", false, label)).toBe("files.kind.other:XYZ")
     expect(kindLabel("README", false, label)).toBe("files.kind.plain:")

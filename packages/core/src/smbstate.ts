@@ -107,7 +107,7 @@ export const withMounted = (
 })
 
 export function mountsRoot(): string {
-  const own = process.env["WINVM_MOUNTS"]
+  const own = process.env.WINVM_MOUNTS
   return own !== undefined && own !== ""
     ? resolve(own)
     : resolve(homedir(), "winvm")

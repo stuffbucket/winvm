@@ -65,7 +65,7 @@ class FakeScreen implements ScreenLike {
         isError: false,
         ms: {},
       }
-    if (action === "key" && params["text"] === "nosuchkey")
+    if (action === "key" && params.text === "nosuchkey")
       return {
         content: [{ type: "text", text: 'unknown key "nosuchkey"' }],
         isError: true,
@@ -335,7 +335,7 @@ describe("the protocol", () => {
     ])
     for (const t of r.result.tools) {
       expect(t.inputSchema.type).toBe("object")
-      expect(t.inputSchema.properties["instance"]).toBeDefined()
+      expect(t.inputSchema.properties.instance).toBeDefined()
     }
     expect(TOOLS.every((t) => t.description.length > 20)).toBe(true)
   })
@@ -640,8 +640,8 @@ describe("the screen tools through the real executor", () => {
     qmp = new FakeQmp(join(dir, "qmp.sock"))
     sent.length = 0
     qmp.handler = (cmd) => {
-      const args = (cmd["arguments"] ?? {}) as Record<string, unknown>
-      if (cmd["execute"] === "screendump") {
+      const args = (cmd.arguments ?? {}) as Record<string, unknown>
+      if (cmd.execute === "screendump") {
         const w = 1920
         const h = 1080
         const head = Buffer.from(
@@ -649,11 +649,11 @@ describe("the screen tools through the real executor", () => {
           "latin1",
         )
         writeFileSync(
-          String(args["filename"]),
+          String(args.filename),
           Buffer.concat([head, Buffer.alloc(w * h * 3, 0x80)]),
         )
       }
-      if (cmd["execute"] === "input-send-event") sent.push(args["events"])
+      if (cmd.execute === "input-send-event") sent.push(args.events)
       return { return: {} }
     }
     await qmp.listen()
@@ -771,10 +771,10 @@ describe("the stdio server", () => {
         "3",
         "null",
       ])
-      expect((byId(1)?.result?.["serverInfo"] as { name: string }).name).toBe(
+      expect((byId(1)?.result?.serverInfo as { name: string }).name).toBe(
         "winvm-nothere",
       )
-      expect((byId(2)?.result?.["tools"] as unknown[]).length).toBe(16)
+      expect((byId(2)?.result?.tools as unknown[]).length).toBe(16)
       const call = byId(3)?.result as {
         isError: boolean
         content: { text: string }[]

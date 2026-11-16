@@ -180,12 +180,12 @@ export function entryMatches(e: Entry | undefined, l: Launch): boolean {
 }
 
 const servers = (o: Json): Json =>
-  isObject(o["mcpServers"]) ? o["mcpServers"] : {}
+  isObject(o.mcpServers) ? o.mcpServers : {}
 
 export const desktopConfigPath = (
   env: Readonly<Record<string, string | undefined>> = process.env,
 ): string =>
-  env["WINVM_CLAUDE_DESKTOP_CONFIG"] ??
+  env.WINVM_CLAUDE_DESKTOP_CONFIG ??
   join(
     homedir(),
     "Library",
@@ -215,7 +215,7 @@ export function desktopInstall(
         args: [...l.args],
         ...(Object.keys(l.env).length > 0 ? { env: { ...l.env } } : {}),
       }
-      o["mcpServers"] = s
+      o.mcpServers = s
       return true
     },
     now,
@@ -234,7 +234,7 @@ export function desktopUninstall(
       const s = servers(o)
       if (!Object.hasOwn(s, name)) return false
       delete s[name]
-      o["mcpServers"] = s
+      o.mcpServers = s
       return true
     },
     now,
@@ -244,21 +244,21 @@ export function desktopUninstall(
 export const codeConfigPath = (
   env: Readonly<Record<string, string | undefined>> = process.env,
 ): string => {
-  const dir = env["CLAUDE_CONFIG_DIR"]
+  const dir = env.CLAUDE_CONFIG_DIR
   return dir !== undefined && dir !== ""
     ? join(dir, ".claude.json")
-    : join(env["HOME"] ?? homedir(), ".claude.json")
+    : join(env.HOME ?? homedir(), ".claude.json")
 }
 
 export function findClaude(
   env: Readonly<Record<string, string | undefined>> = process.env,
   exists: (p: string) => boolean = isExecutable,
 ): string | null {
-  const own = env["WINVM_CLAUDE"]
+  const own = env.WINVM_CLAUDE
   if (own !== undefined && own !== "") return exists(own) ? own : null
-  const home = env["HOME"] ?? homedir()
+  const home = env.HOME ?? homedir()
   const dirs = [
-    ...(env["PATH"] ?? "").split(delimiter),
+    ...(env.PATH ?? "").split(delimiter),
     join(home, ".local", "bin"),
     join(home, ".claude", "local"),
     "/opt/homebrew/bin",
@@ -297,7 +297,7 @@ export function runnerFor(
 ): Runner {
   const path = [
     dirname(claude),
-    ...(env["PATH"] ?? "/usr/bin:/bin:/usr/sbin:/sbin").split(delimiter),
+    ...(env.PATH ?? "/usr/bin:/bin:/usr/sbin:/sbin").split(delimiter),
     "/opt/homebrew/bin",
     "/usr/local/bin",
   ].join(delimiter)

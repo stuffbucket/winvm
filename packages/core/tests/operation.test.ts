@@ -42,15 +42,15 @@ let savedHome: string | undefined
 const spawned: ReturnType<typeof Bun.spawn>[] = []
 
 beforeAll(() => {
-  savedHome = process.env["WINVM_HOME"]
+  savedHome = process.env.WINVM_HOME
   home = mkdtempSync("/tmp/wvop-")
-  process.env["WINVM_HOME"] = home
+  process.env.WINVM_HOME = home
 })
 
 afterAll(() => {
   rmSync(home, { recursive: true, force: true })
-  if (savedHome === undefined) delete process.env["WINVM_HOME"]
-  else process.env["WINVM_HOME"] = savedHome
+  if (savedHome === undefined) delete process.env.WINVM_HOME
+  else process.env.WINVM_HOME = savedHome
 })
 
 beforeEach(() => {
@@ -198,7 +198,7 @@ describe("the lease record", () => {
     expect(during.status).toEqual({
       operation: "start",
       pid: process.pid,
-      startedAt: during.record?.["startedAt"] as string,
+      startedAt: during.record?.startedAt as string,
     })
     expect(onDisk()).toBeNull()
 
@@ -221,13 +221,13 @@ describe("the lease record", () => {
 
     put(h.pid, { pidStart: "Thu Jan  1 00:00:00 1970" })
     expect(readOperation(NAME)).toBeNull()
-    expect(onDisk()?.["pid"]).toBe(h.pid)
+    expect(onDisk()?.pid).toBe(h.pid)
 
     const gone = Bun.spawn(["true"])
     await gone.exited
     put(gone.pid, { pidStart: "whenever" })
     expect(readOperation(NAME)).toBeNull()
-    expect(onDisk()?.["pid"]).toBe(gone.pid)
+    expect(onDisk()?.pid).toBe(gone.pid)
 
     for (const raw of [
       "not json",
@@ -280,19 +280,19 @@ describe("the lease record", () => {
     await expect(withOperation(NAME, "stop", () => "ran")).rejects.toThrow(
       `is busy: save (pid ${String(child.pid)})`,
     )
-    expect(onDisk()?.["pid"]).toBe(child.pid)
-    expect(onDisk()?.["instance"]).toBe(other)
+    expect(onDisk()?.pid).toBe(child.pid)
+    expect(onDisk()?.instance).toBe(other)
   })
 
   it("keeps a live holder's lease whose operation this build does not know, and shows it to no one", async () => {
     const h = await hold("winvm", "defragment", "-i", NAME)
     put(h.pid, { operation: "defragment" })
     expect(readOperation(NAME)).toBeNull()
-    expect(onDisk()?.["operation"]).toBe("defragment")
+    expect(onDisk()?.operation).toBe("defragment")
     await expect(withOperation(NAME, "stop", () => "ran")).rejects.toThrow(
       `is busy: defragment (pid ${String(h.pid)})`,
     )
-    expect(onDisk()?.["pid"]).toBe(h.pid)
+    expect(onDisk()?.pid).toBe(h.pid)
   })
 
   it("counts a live process whose start cannot be read as still holding, never as gone", () => {
@@ -310,19 +310,19 @@ describe("the lease record", () => {
   it("is taken over from a holder that died or whose pid was reused, or a record that names no process", async () => {
     const reused = await hold("unrelated")
     put(reused.pid, { pidStart: "Thu Jan  1 00:00:00 1970" })
-    expect(await withOperation(NAME, "pause", () => onDisk()?.["pid"])).toBe(
+    expect(await withOperation(NAME, "pause", () => onDisk()?.pid)).toBe(
       process.pid,
     )
 
     writeFileSync(leaseFile(), "not json")
-    expect(await withOperation(NAME, "pause", () => onDisk()?.["pid"])).toBe(
+    expect(await withOperation(NAME, "pause", () => onDisk()?.pid)).toBe(
       process.pid,
     )
 
     const gone = Bun.spawn(["true"])
     await gone.exited
     put(gone.pid)
-    expect(await withOperation(NAME, "pause", () => onDisk()?.["pid"])).toBe(
+    expect(await withOperation(NAME, "pause", () => onDisk()?.pid)).toBe(
       process.pid,
     )
     expect(onDisk()).toBeNull()
@@ -331,7 +331,7 @@ describe("the lease record", () => {
   it("shows an internal operation to no one: status reports operations the app knows", async () => {
     await withOperation(NAME, "reconcile", () => {
       expect(readOperation(NAME)).toBeNull()
-      expect(onDisk()?.["operation"]).toBe("reconcile")
+      expect(onDisk()?.operation).toBe("reconcile")
     })
   })
 
@@ -376,7 +376,7 @@ describe("exclusion", () => {
     await expect(withOperation(NAME, "save", () => "ran")).rejects.toThrow(
       `is busy: stop (pid ${String(h.pid)})`,
     )
-    expect(onDisk()?.["pid"]).toBe(h.pid)
+    expect(onDisk()?.pid).toBe(h.pid)
   })
 
   it("excludes across processes: a child's command is refused while this one holds it, and runs once it lets go", async () => {
@@ -413,7 +413,7 @@ describe("exclusion", () => {
           async () => await withOperation(NAME, "stop", () => onDisk()),
         ),
     )
-    expect(seen?.["operation"]).toBe("stow")
+    expect(seen?.operation).toBe("stow")
     expect(onDisk()).toBeNull()
   })
 
@@ -454,7 +454,7 @@ describe("waiting", () => {
       automatic: true,
     })
     expect(readOperation(NAME)?.operation).toBe("save")
-    const stop = withOperation(NAME, "stop", () => onDisk()?.["operation"], {
+    const stop = withOperation(NAME, "stop", () => onDisk()?.operation, {
       pollMs: 10,
       onWait: (h) => waited.push(h.pid),
     })
@@ -523,15 +523,15 @@ describe("waiting", () => {
   })
 
   it("marks every lease taken by a command winvm ran on its own", async () => {
-    const before = process.env["WINVM_AUTOMATIC"]
-    process.env["WINVM_AUTOMATIC"] = "1"
+    const before = process.env.WINVM_AUTOMATIC
+    process.env.WINVM_AUTOMATIC = "1"
     try {
       expect(
-        await withOperation(NAME, "stow", () => onDisk()?.["automatic"]),
+        await withOperation(NAME, "stow", () => onDisk()?.automatic),
       ).toBe(true)
     } finally {
-      if (before === undefined) delete process.env["WINVM_AUTOMATIC"]
-      else process.env["WINVM_AUTOMATIC"] = before
+      if (before === undefined) delete process.env.WINVM_AUTOMATIC
+      else process.env.WINVM_AUTOMATIC = before
     }
   })
 })
@@ -545,13 +545,13 @@ describe("kill", () => {
     await Bun.sleep(20)
     const t0 = Date.now()
     expect(
-      await withOperation(NAME, "kill", () => onDisk()?.["operation"]),
+      await withOperation(NAME, "kill", () => onDisk()?.operation),
     ).toBe("stop")
     expect(Date.now() - t0).toBeLessThan(500)
     g.open()
     await wedged
     expect(
-      await withOperation(NAME, "kill", () => onDisk()?.["operation"]),
+      await withOperation(NAME, "kill", () => onDisk()?.operation),
     ).toBe("kill")
   })
 })
@@ -670,7 +670,7 @@ describe("a command that exits inside its lease", () => {
       `await withOperation(${JSON.stringify(NAME)}, "start", () => { writeFileSync(leaseFile, ${JSON.stringify(foreign)}); process.exit(5) })`,
     )
     expect(r.code).toBe(5)
-    expect(onDisk()?.["id"]).toBe("newer-owner")
+    expect(onDisk()?.id).toBe("newer-owner")
   })
 
   it("does not leave an exit handler behind once the command settles", async () => {

@@ -243,7 +243,7 @@ async function pause(ctx: Context): Promise<Scenario> {
     const pausedAt = Date.now()
     await hold(sc, ctx, poller, "paused")
     const watchLog = resolve(
-      process.env["WINVM_HOME"] ?? "",
+      process.env.WINVM_HOME ?? "",
       "instances",
       ctx.name,
       "watch.log",
@@ -675,8 +675,8 @@ async function saveLoad(ctx: Context): Promise<Scenario> {
     await ready(ctx.name)
 
     const notesDir = resolve(
-      process.env["XDG_DATA_HOME"] ??
-        resolve(process.env["HOME"] ?? "", ".local", "share"),
+      process.env.XDG_DATA_HOME ??
+        resolve(process.env.HOME ?? "", ".local", "share"),
       "winvm",
       "notes",
       ctx.name,
@@ -792,10 +792,10 @@ async function terminalFiles(ctx: Context): Promise<Scenario> {
     ) as Record<string, boolean>
     sc.check(
       "terminal --shells",
-      shells["powershell"] === true && shells["cmd"] === true,
+      shells.powershell === true && shells.cmd === true,
       JSON.stringify(shells),
     )
-    const shell = shells["pwsh"] === true ? "pwsh" : "powershell"
+    const shell = shells.pwsh === true ? "pwsh" : "powershell"
     const ep = json(
       await must([
         "terminal",

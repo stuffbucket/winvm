@@ -96,7 +96,7 @@ if (
   shouldReconcileVerb(sub) &&
   !(sub === "files" && args.positional[0]?.startsWith("_") === true)
 ) {
-  const named = args.flags.get("instance") ?? process.env["WINVM_INSTANCE"]
+  const named = args.flags.get("instance") ?? process.env.WINVM_INSTANCE
   const every = sub === "status" && named === undefined
   const reconcileOne = async (name: string): Promise<void> => {
     try {
@@ -283,7 +283,7 @@ switch (sub ?? "") {
   case "status":
     exitCode = await status.run({
       instance:
-        args.flags.get("instance") ?? process.env["WINVM_INSTANCE"] ?? null,
+        args.flags.get("instance") ?? process.env.WINVM_INSTANCE ?? null,
       json: args.flags.has("json"),
     })
     break

@@ -5,7 +5,7 @@ import { dirname, resolve } from "node:path"
 import { buildIdentity } from "./identity"
 
 export function home(): string {
-  const override = process.env["WINVM_HOME"]
+  const override = process.env.WINVM_HOME
   if (override !== undefined && override !== "") return resolve(override)
   return resolve(homedir(), ".local/state/winvm")
 }
@@ -22,7 +22,7 @@ export function packageDirFor(o: {
   readonly execPath: string
   readonly env: Readonly<Record<string, string | undefined>>
 }): string {
-  const own = o.env["WINVM_PACKAGE_DIR"]
+  const own = o.env.WINVM_PACKAGE_DIR
   if (own !== undefined && own !== "") return resolve(own)
   if (isCompiled(o.modulePath))
     return resolve(
@@ -54,15 +54,15 @@ export const cliArgv = (...argv: string[]): readonly string[] =>
   )
 
 export function cliEntry(): string {
-  const cli = process.env["WINVM_CLI"]
+  const cli = process.env.WINVM_CLI
   if (cli === undefined || cli === "")
     throw new Error("WINVM_CLI is not set: start winvm through apps/cli")
   return cli
 }
 
 export function recordCliEntry(path: string): void {
-  process.env["WINVM_CLI"] = isCompiled(path) ? process.execPath : path
-  process.env["WINVM_BUILD_ID"] = buildIdentity()
+  process.env.WINVM_CLI = isCompiled(path) ? process.execPath : path
+  process.env.WINVM_BUILD_ID = buildIdentity()
 }
 
 export const NO_RECONCILE = "WINVM_NO_RECONCILE"

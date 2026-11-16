@@ -59,7 +59,7 @@ describe("diagnose against recorded traces", () => {
         readFileSync(resolve(dir, "expected.json"), "utf8"),
       ) as Expectation
 
-      process.env["WINVM_HOME"] = resolve(dir, "state")
+      process.env.WINVM_HOME = resolve(dir, "state")
       const answerFile =
         spec.answerFile === undefined
           ? resolve(import.meta.dir, "..", "assets", "autounattend.xml")

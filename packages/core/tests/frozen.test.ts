@@ -42,9 +42,9 @@ let fake: FakeQmp
 let runState = "running"
 
 beforeAll(async () => {
-  savedHome = process.env["WINVM_HOME"]
+  savedHome = process.env.WINVM_HOME
   home = mkdtempSync("/tmp/wvfz-")
-  process.env["WINVM_HOME"] = home
+  process.env.WINVM_HOME = home
   const p = pathsFor(NAME)
   mkdirSync(p.dir, { recursive: true })
   writeFileSync(
@@ -58,7 +58,7 @@ beforeAll(async () => {
   writeFileSync(p.pid, `${String(process.pid)}\n`)
   fake = new FakeQmp(p.qmp)
   fake.handler = (cmd) =>
-    cmd["execute"] === "query-status"
+    cmd.execute === "query-status"
       ? { return: { status: runState, running: runState === "running" } }
       : { return: {} }
   await fake.listen()
@@ -67,8 +67,8 @@ beforeAll(async () => {
 afterAll(async () => {
   await fake.close()
   rmSync(home, { recursive: true, force: true })
-  if (savedHome === undefined) delete process.env["WINVM_HOME"]
-  else process.env["WINVM_HOME"] = savedHome
+  if (savedHome === undefined) delete process.env.WINVM_HOME
+  else process.env.WINVM_HOME = savedHome
 })
 
 afterEach(() => {

@@ -139,17 +139,17 @@ function parseRecord(json: string): LeaseRecord | null {
   }
   if (typeof v !== "object" || v === null || Array.isArray(v)) return null
   const r = v as Record<string, unknown>
-  const pid = r["pid"]
+  const pid = r.pid
   if (typeof pid !== "number" || !Number.isInteger(pid) || pid <= 0) return null
   return {
-    operation: text(r["operation"], "unknown"),
-    id: text(r["id"], ""),
+    operation: text(r.operation, "unknown"),
+    id: text(r.id, ""),
     pid,
-    pidStart: typeof r["pidStart"] === "string" ? r["pidStart"] : null,
-    startedAt: text(r["startedAt"], ""),
-    instance: text(r["instance"], ""),
-    automatic: r["automatic"] === true,
-    ...(r["savingRunning"] === true ? { savingRunning: true as const } : {}),
+    pidStart: typeof r.pidStart === "string" ? r.pidStart : null,
+    startedAt: text(r.startedAt, ""),
+    instance: text(r.instance, ""),
+    automatic: r.automatic === true,
+    ...(r.savingRunning === true ? { savingRunning: true as const } : {}),
   }
 }
 

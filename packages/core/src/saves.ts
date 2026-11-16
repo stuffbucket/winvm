@@ -164,14 +164,14 @@ export function parseManifest(text: string): Manifest {
   const createdAt = str("createdAt")
   if (Number.isNaN(Date.parse(createdAt)))
     throw new Error(`manifest.createdAt is not a date: "${createdAt}"`)
-  const bytes = r["bytes"]
+  const bytes = r.bytes
   if (typeof bytes !== "number" || !Number.isFinite(bytes) || bytes < 0) {
     throw new Error("manifest.bytes must be a non-negative number")
   }
-  const note = r["note"]
+  const note = r.note
   if (note !== undefined && typeof note !== "string")
     throw new Error("manifest.note must be a string")
-  const format = r["format"]
+  const format = r.format
   if (
     format !== undefined &&
     !(RAM_FORMATS as readonly unknown[]).includes(format)
@@ -180,7 +180,7 @@ export function parseManifest(text: string): Manifest {
       `manifest.format must be one of ${RAM_FORMATS.join(", ")}, got ${JSON.stringify(format)}`,
     )
   }
-  const hw = r["hardware"]
+  const hw = r.hardware
   if (hw !== undefined) {
     const h = hw as Record<string, unknown> | null
     const whole = (v: unknown): boolean =>
@@ -188,8 +188,8 @@ export function parseManifest(text: string): Manifest {
     if (
       typeof hw !== "object" ||
       h === null ||
-      !whole(h["cpus"]) ||
-      !whole(h["memoryMiB"])
+      !whole(h.cpus) ||
+      !whole(h.memoryMiB)
     ) {
       throw new Error(
         "manifest.hardware must be { cpus, memoryMiB }, positive whole numbers",
@@ -198,7 +198,7 @@ export function parseManifest(text: string): Manifest {
   }
   let display: DisplayConfig | undefined
   if (Object.hasOwn(r, "display")) {
-    const parsed = parseDisplayConfig(r["display"])
+    const parsed = parseDisplayConfig(r.display)
     if (parsed === null)
       throw new Error(
         "manifest.display must be ramfb or virtio-gpu (optionally with a legacySize of whole numbers)",
@@ -800,7 +800,7 @@ async function waitMigration(
       string,
       unknown
     >
-    const s = r["status"]
+    const s = r.status
     if (s === "completed") return r
     if (s === "failed" || s === "cancelled") {
       const detail = r["error-desc"]
@@ -991,7 +991,7 @@ async function createSaveHeld(
   rmSync(old, { recursive: true, force: true })
   if (replaced) forgetNote(instance, o.name)
 
-  const ram = migrated["ram"] as
+  const ram = migrated.ram as
     | { transferred?: number; total?: number }
     | undefined
   return {

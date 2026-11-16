@@ -94,7 +94,7 @@ export function TerminalView({
   const programmaticFocus = useRef(false)
   const handledFocusRequest = useRef(0)
   const [startFailed, setStartFailed] = useState(false)
-  const [startAttempt, setStartAttempt] = useState(0)
+  const [_startAttempt, setStartAttempt] = useState(0)
   const [hasFocus, setHasFocus] = useState(false)
   callbacks.current = {
     onSplit,
@@ -336,7 +336,7 @@ export function TerminalView({
       if (terminal.current === term) terminal.current = undefined
       term?.dispose()
     }
-  }, [emulator, id, startAttempt])
+  }, [emulator, id, typography, transport.write, transport.terminate, transport.subscribe, transport.ack, transport.spawn, theme, focusEmulator, transport.resize, ghosttyWindow, shell, cwd])
 
   useEffect(() => {
     if (!terminal.current) return
@@ -349,7 +349,7 @@ export function TerminalView({
       handledFocusRequest.current = focusRequest
       focusEmulator(focused === true)
     }
-  }, [focusRequest, focused])
+  }, [focusRequest, focused, focusEmulator])
 
   useEffect(() => {
     const restoreWindowFocus = () => {
@@ -372,7 +372,7 @@ export function TerminalView({
       window.removeEventListener("focus", restoreWindowFocus)
       window.removeEventListener("blur", relinquishWindowFocus)
     }
-  }, [])
+  }, [focusEmulator])
 
   return (
     <div

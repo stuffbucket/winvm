@@ -91,7 +91,7 @@ function detachOrThrow(target: string, image: string): void {
 }
 
 export function resolveWindowsIso(explicit: string | undefined): string | null {
-  const fromFlag = explicit ?? process.env["WINVM_ISO"]
+  const fromFlag = explicit ?? process.env.WINVM_ISO
   if (fromFlag !== undefined && fromFlag !== "") {
     const path = resolve(fromFlag.replace(/^~(?=\/)/, homedir()))
     if (!existsSync(path)) {

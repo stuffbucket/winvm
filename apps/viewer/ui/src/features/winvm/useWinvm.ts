@@ -99,7 +99,7 @@ export function useWinvm(): Winvm {
   const [failure, setFailure] = useState<Ran | null>(null)
   const [last, setLast] = useState<Ran | null>(null)
   const [cliPath, setCliPath] = useState<string | null>(null)
-  const [polls, setPolls] = useState(0)
+  const [_polls, setPolls] = useState(0)
   const [held, setHeld] = useState<Phase | null>(null)
   const guard = useRef(new StatusGuard())
   const outcomes = useRef(new Map<string, RanOn>())
@@ -286,7 +286,7 @@ export function useWinvm(): Winvm {
       .finally(() => {
         asking.current = false
       })
-  }, [live, pid, name, connection, polls])
+  }, [live, pid, name, connection])
 
   const execute = useCallback(
     async (machine: string | null, verb: Verb, arg?: string): Promise<Ran> => {

@@ -39,10 +39,10 @@ export class FakeAgent {
   private file(
     req: Record<string, unknown>,
   ): Record<string, unknown> | null | undefined {
-    const a = (req["arguments"] ?? {}) as Record<string, unknown>
-    switch (req["execute"]) {
+    const a = (req.arguments ?? {}) as Record<string, unknown>
+    switch (req.execute) {
       case "guest-file-open": {
-        const data = this.files.get(a["path"] as string)
+        const data = this.files.get(a.path as string)
         if (data === undefined)
           return { error: { class: "GenericError", desc: "not found" } }
         this.nextHandle += 1
@@ -50,10 +50,10 @@ export class FakeAgent {
         return { return: this.nextHandle }
       }
       case "guest-file-read": {
-        const h = this.handles.get(a["handle"] as number)
+        const h = this.handles.get(a.handle as number)
         if (h === undefined)
           return { error: { class: "GenericError", desc: "bad handle" } }
-        const count = a["count"] as number
+        const count = a.count as number
         this.reads.push(count)
         const bytes = h.data.subarray(h.pos, h.pos + count)
         h.pos += bytes.length
@@ -67,14 +67,14 @@ export class FakeAgent {
         }
       }
       case "guest-file-seek": {
-        const h = this.handles.get(a["handle"] as number)
-        if (h === undefined || a["whence"] !== "set")
+        const h = this.handles.get(a.handle as number)
+        if (h === undefined || a.whence !== "set")
           return { error: { class: "GenericError", desc: "bad seek" } }
-        h.pos = a["offset"] as number
+        h.pos = a.offset as number
         return { return: { position: h.pos, eof: h.pos >= h.data.length } }
       }
       case "guest-file-close":
-        this.handles.delete(a["handle"] as number)
+        this.handles.delete(a.handle as number)
         return { return: {} }
       default:
         return undefined
@@ -106,8 +106,8 @@ export class FakeAgent {
           unknown
         >
         buf = buf.subarray(nl + 1)
-        if (req["execute"] === "guest-sync-delimited") {
-          const id = (req["arguments"] as { id: number }).id
+        if (req.execute === "guest-sync-delimited") {
+          const id = (req.arguments as { id: number }).id
           send(
             Buffer.concat([
               Buffer.from([0xff]),
@@ -125,7 +125,7 @@ export class FakeAgent {
         const reply = this.handler(req)
         if (reply === null) {
           const late = Buffer.from(
-            `${JSON.stringify({ return: `late reply to ${String(req["execute"])}` })}\n`,
+            `${JSON.stringify({ return: `late reply to ${String(req.execute)}` })}\n`,
           )
           setTimeout(() => {
             send(late)

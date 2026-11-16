@@ -7,7 +7,7 @@ import { ErrorBoundary } from "./components/ErrorBoundary"
 import { t } from "./i18n"
 import { osKind } from "./platform"
 
-document.documentElement.dataset["os"] = osKind()
+document.documentElement.dataset.os = osKind()
 
 const root = document.getElementById("root")
 if (root === null) throw new Error("index.html has no #root")

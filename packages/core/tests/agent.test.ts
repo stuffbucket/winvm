@@ -348,8 +348,8 @@ describe("folder listings", () => {
     const profile = resolve(dir, "profile")
     mkdirSync(resolve(profile, "Desktop"), { recursive: true })
     mkdirSync(resolve(profile, "Documents"))
-    const was = process.env["USERPROFILE"]
-    process.env["USERPROFILE"] = profile
+    const was = process.env.USERPROFILE
+    process.env.USERPROFILE = profile
     try {
       const l = await client.list()
       expect(l.path).toBe(resolve(profile, "Desktop"))
@@ -361,8 +361,8 @@ describe("folder listings", () => {
       ])
       expect(l.places.find((p) => p.kind === "home")?.name).toBe("profile")
     } finally {
-      if (was === undefined) delete process.env["USERPROFILE"]
-      else process.env["USERPROFILE"] = was
+      if (was === undefined) delete process.env.USERPROFILE
+      else process.env.USERPROFILE = was
     }
   })
 

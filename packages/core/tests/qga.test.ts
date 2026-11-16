@@ -31,7 +31,7 @@ afterAll(async () => {
 
 describe("qga.call", () => {
   it("answers a plain request", async () => {
-    agent.handler = (req) => ({ return: { echoed: req["execute"] } })
+    agent.handler = (req) => ({ return: { echoed: req.execute } })
     expect(await call(agent.path, { execute: "guest-ping" })).toEqual({
       return: { echoed: "guest-ping" },
     })
@@ -39,7 +39,7 @@ describe("qga.call", () => {
 
   it("does not hand a timed-out call's reply to the next call", async () => {
     agent.handler = (req) =>
-      req["execute"] === "slow" ? null : { return: "fresh" }
+      req.execute === "slow" ? null : { return: "fresh" }
     await expect(call(agent.path, { execute: "slow" }, 50)).rejects.toThrow(
       "guest agent timed out: slow after 0.05 s",
     )
@@ -209,8 +209,8 @@ describe("qga.loggedOnUser", () => {
   it("asks the agent who is logged on, without starting a command in the guest", async () => {
     const asked: unknown[] = []
     agent.handler = (req) => {
-      asked.push(req["execute"])
-      return req["execute"] === "guest-get-users"
+      asked.push(req.execute)
+      return req.execute === "guest-get-users"
         ? {
             return: [
               {
@@ -243,7 +243,7 @@ describe("qga.loggedOnUser", () => {
 
   it("does not let a guest command that never ends use up the wait", async () => {
     agent.handler = (req) => {
-      switch (req["execute"]) {
+      switch (req.execute) {
         case "guest-get-users":
           return {
             error: {

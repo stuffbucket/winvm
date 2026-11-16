@@ -14,11 +14,11 @@ export async function hmp(
       },
       timeoutMs,
     )
-    const error = reply["error"]
+    const error = reply.error
     if (error !== undefined)
       throw new Error(`qmp rejected "${command}": ${JSON.stringify(error)}`)
     const text =
-      typeof reply["return"] === "string" ? reply["return"].trim() : ""
+      typeof reply.return === "string" ? reply.return.trim() : ""
     if (/^Error/i.test(text))
       throw new Error(`${command}: ${text.replace(/\r/g, "")}`)
     void send
@@ -39,9 +39,9 @@ export async function execute(
         : { execute: command, arguments: args },
       timeoutMs,
     )
-    if (reply["error"] !== undefined)
-      throw new Error(`qmp ${command}: ${JSON.stringify(reply["error"])}`)
-    return reply["return"]
+    if (reply.error !== undefined)
+      throw new Error(`qmp ${command}: ${JSON.stringify(reply.error)}`)
+    return reply.return
   })
 }
 
@@ -177,8 +177,8 @@ export async function answerBootPrompt(
         execute: "screendump",
         arguments: { filename: frameFile },
       })
-      if (r["error"] !== undefined)
-        throw new Error(`screendump rejected: ${JSON.stringify(r["error"])}`)
+      if (r.error !== undefined)
+        throw new Error(`screendump rejected: ${JSON.stringify(r.error)}`)
       return classifyBootFrame(readFileSync(frameFile))
     }
     let keys = 0
@@ -205,8 +205,8 @@ export async function answerBootPrompt(
             execute: "human-monitor-command",
             arguments: { "command-line": "sendkey ret" },
           })
-          if (r["error"] !== undefined)
-            throw new Error(`sendkey rejected: ${JSON.stringify(r["error"])}`)
+          if (r.error !== undefined)
+            throw new Error(`sendkey rejected: ${JSON.stringify(r.error)}`)
           keys += 1
           sentAt = Date.now()
           changedAt = sentAt

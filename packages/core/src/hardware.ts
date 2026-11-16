@@ -89,8 +89,8 @@ export function hardwareFrom(raw: unknown): Hardware {
   if (typeof raw !== "object" || raw === null) return LEGACY
   const r = raw as Record<string, unknown>
   return {
-    cpus: posInt(r["cpus"]) ?? LEGACY.cpus,
-    memoryMiB: posInt(r["memoryMiB"]) ?? LEGACY.memoryMiB,
+    cpus: posInt(r.cpus) ?? LEGACY.cpus,
+    memoryMiB: posInt(r.memoryMiB) ?? LEGACY.memoryMiB,
   }
 }
 

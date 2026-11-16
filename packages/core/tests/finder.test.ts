@@ -52,15 +52,15 @@ import {
 let state: string
 let mounts: string
 const saved = {
-  home: process.env["WINVM_HOME"],
-  mounts: process.env["WINVM_MOUNTS"],
+  home: process.env.WINVM_HOME,
+  mounts: process.env.WINVM_MOUNTS,
 }
 
 beforeEach(() => {
   state = mkdtempSync(resolve(tmpdir(), "winvm-finder-"))
   mounts = resolve(state, "mnt")
-  process.env["WINVM_HOME"] = state
-  process.env["WINVM_MOUNTS"] = mounts
+  process.env.WINVM_HOME = state
+  process.env.WINVM_MOUNTS = mounts
   mkdirSync(pathsFor("vm").dir, { recursive: true })
 })
 afterEach(() => {
@@ -261,7 +261,7 @@ describe("the guest's setup", () => {
     expect(s).toContain("SpecialAccounts\\UserList")
     expect(s).toContain("-RemoteAddress 10.0.2.2")
     expect(s).toContain("-CachingMode None")
-    expect(s).toContain(`'Home' = '${SMB_SHARES["Home"] ?? ""}'`)
+    expect(s).toContain(`'Home' = '${SMB_SHARES.Home ?? ""}'`)
     expect(s).not.toMatch(/EncryptData|RequireSecuritySignature/)
   })
   it("is a route that takes the password in the body, checks it, and runs only in Windows", async () => {

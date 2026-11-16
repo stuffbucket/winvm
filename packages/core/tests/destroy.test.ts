@@ -46,19 +46,19 @@ function makeInstance(name: string, saveNames: readonly string[]): void {
 
 describe("destroy", () => {
   beforeEach(() => {
-    previousHome = process.env["WINVM_HOME"]
-    previousData = process.env["XDG_DATA_HOME"]
+    previousHome = process.env.WINVM_HOME
+    previousData = process.env.XDG_DATA_HOME
     state = mkdtempSync(resolve(tmpdir(), "winvm-destroy-"))
-    process.env["WINVM_HOME"] = state
-    process.env["XDG_DATA_HOME"] = resolve(state, "data")
+    process.env.WINVM_HOME = state
+    process.env.XDG_DATA_HOME = resolve(state, "data")
     spyOn(console, "log").mockImplementation(() => undefined)
     spyOn(console, "error").mockImplementation(() => undefined)
   })
   afterEach(() => {
-    if (previousHome === undefined) delete process.env["WINVM_HOME"]
-    else process.env["WINVM_HOME"] = previousHome
-    if (previousData === undefined) delete process.env["XDG_DATA_HOME"]
-    else process.env["XDG_DATA_HOME"] = previousData
+    if (previousHome === undefined) delete process.env.WINVM_HOME
+    else process.env.WINVM_HOME = previousHome
+    if (previousData === undefined) delete process.env.XDG_DATA_HOME
+    else process.env.XDG_DATA_HOME = previousData
     rmSync(state, { recursive: true, force: true })
     mock.restore()
   })

@@ -153,7 +153,7 @@ export class Ui {
     op: string,
     body: Readonly<Record<string, unknown>> = {},
   ): Promise<T> {
-    const t = typeof body["timeoutMs"] === "number" ? body["timeoutMs"] : 0
+    const t = typeof body.timeoutMs === "number" ? body.timeoutMs : 0
     try {
       return await this.agent.ui<T>({ ...body, op }, 2 * t + 60_000)
     } catch (error) {

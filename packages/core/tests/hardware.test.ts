@@ -47,8 +47,8 @@ let prevProbe: share.Probe
 beforeAll(() => {
   for (const k of ["WINVM_HOME", "WINVM_RUNTIME"]) saved[k] = process.env[k]
   home = mkdtempSync(resolve(tmpdir(), "winvm-hw-"))
-  process.env["WINVM_HOME"] = home
-  process.env["WINVM_RUNTIME"] = resolve(home, "runtime")
+  process.env.WINVM_HOME = home
+  process.env.WINVM_RUNTIME = resolve(home, "runtime")
   mkdirSync(resolve(home, "runtime", "bin"), { recursive: true })
   prevProbe = share.setProbe(() => ({ ok: true, reason: null }))
 })

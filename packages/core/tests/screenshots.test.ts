@@ -33,11 +33,11 @@ describe("save screenshots", () => {
     dir = mkdtempSync(resolve(tmpdir(), "winvm-shot-"))
     fake = new FakeQmp(resolve(dir, "qmp.sock"))
     fake.handler = (cmd) => {
-      if (cmd["execute"] !== "screendump") return { return: {} }
-      const args = cmd["arguments"] as Record<string, unknown>
-      if (args["format"] !== undefined)
+      if (cmd.execute !== "screendump") return { return: {} }
+      const args = cmd.arguments as Record<string, unknown>
+      if (args.format !== undefined)
         return { error: { class: "GenericError", desc: "expected a raw dump" } }
-      writeFileSync(String(args["filename"]), ppm(size.width, size.height))
+      writeFileSync(String(args.filename), ppm(size.width, size.height))
       return { return: {} }
     }
     await fake.listen()

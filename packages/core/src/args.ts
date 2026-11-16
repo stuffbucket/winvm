@@ -52,7 +52,7 @@ export function parseArgs(argv: readonly string[]): Args {
 
 export function instanceName(args: Args): string {
   return (
-    args.flags.get("instance") ?? process.env["WINVM_INSTANCE"] ?? "default"
+    args.flags.get("instance") ?? process.env.WINVM_INSTANCE ?? "default"
   )
 }
 
@@ -80,7 +80,7 @@ export function winvmCommandAfter(
 }
 
 export function imageName(args: Args): string {
-  return args.flags.get("image") ?? process.env["WINVM_IMAGE"] ?? "win11-arm64"
+  return args.flags.get("image") ?? process.env.WINVM_IMAGE ?? "win11-arm64"
 }
 
 export function isValidImageName(name: string): boolean {

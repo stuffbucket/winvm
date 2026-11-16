@@ -113,7 +113,7 @@ export function windowsAdapter(
       )
         continue
       return {
-        adapter: typeof r["name"] === "string" ? r["name"] : "",
+        adapter: typeof r.name === "string" ? r.name : "",
         ipv4: ip,
       }
     }
@@ -198,7 +198,7 @@ async function windowsSide(
       { execute: "guest-network-get-interfaces" },
       4000,
     )
-    return windowsAdapter(r["return"])
+    return windowsAdapter(r.return)
   } catch {
     return null
   }

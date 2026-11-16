@@ -609,7 +609,7 @@ export async function smbMounts(instance: string): Promise<string[]> {
   const out = await new Response(
     Bun.spawn(["mount"], { stdout: "pipe" }).stdout,
   ).text()
-  const dir = resolve(process.env["HOME"] ?? "", "winvm", instance)
+  const dir = resolve(process.env.HOME ?? "", "winvm", instance)
   return out
     .split("\n")
     .filter((l) => l.includes("(smbfs") && l.includes(` on ${dir}/`))

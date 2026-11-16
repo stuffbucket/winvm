@@ -40,9 +40,9 @@ let errs: string[] = []
 beforeEach(() => {
   saved = Object.fromEntries(VARS.map((v) => [v, process.env[v]]))
   root = mkdtempSync(resolve(tmpdir(), "winvm-notes-"))
-  process.env["WINVM_HOME"] = resolve(root, "state")
-  process.env["XDG_DATA_HOME"] = resolve(root, "data")
-  process.env["XDG_CONFIG_HOME"] = resolve(root, "config")
+  process.env.WINVM_HOME = resolve(root, "state")
+  process.env.XDG_DATA_HOME = resolve(root, "data")
+  process.env.XDG_CONFIG_HOME = resolve(root, "config")
   out = []
   errs = []
   spyOn(console, "log").mockImplementation(
@@ -332,7 +332,7 @@ describe("winvm saves note", () => {
       title: "Clean",
       screenshot: null,
     })
-    expect(e?.["thumbnail"]).toBe(resolve(saveDir("dev", "clean"), "thumb.png"))
-    expect((e?.["notes"] as Record<string, unknown>)["title"]).toBe("Clean")
+    expect(e?.thumbnail).toBe(resolve(saveDir("dev", "clean"), "thumb.png"))
+    expect((e?.notes as Record<string, unknown>).title).toBe("Clean")
   })
 })

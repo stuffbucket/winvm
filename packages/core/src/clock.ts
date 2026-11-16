@@ -10,7 +10,7 @@ export interface OffsetSample {
 
 async function guestNowNs(p: Paths): Promise<number> {
   const r = await qga.call(p.qga, { execute: "guest-get-time" }, 20_000)
-  const t = r["return"]
+  const t = r.return
   if (typeof t !== "number")
     throw new Error(`guest-get-time: ${JSON.stringify(r)}`)
   return t
@@ -45,8 +45,8 @@ export async function syncGuestClock(
       { execute: "guest-set-time", arguments: { time: Math.round(ns) } },
       20_000,
     )
-    if (r["error"] !== undefined)
-      throw new Error(`guest-set-time: ${JSON.stringify(r["error"])}`)
+    if (r.error !== undefined)
+      throw new Error(`guest-set-time: ${JSON.stringify(r.error)}`)
     after = await measureOffset(p)
     if (Math.abs(after.offsetMs) <= 50) break
     bias -= after.offsetMs

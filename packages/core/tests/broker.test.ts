@@ -56,8 +56,8 @@ describe("the QMP channel", () => {
 
   it("admits one client at a time, in order", async () => {
     fake.handler = async (cmd) => {
-      if (cmd["execute"] === "slow") await sleep(300)
-      return cmd["execute"] === "query-status"
+      if (cmd.execute === "slow") await sleep(300)
+      return cmd.execute === "query-status"
         ? { return: { status: "running" } }
         : { return: {} }
     }
@@ -72,7 +72,7 @@ describe("the QMP channel", () => {
 
   it("does not hand a late reply to the next client", async () => {
     fake.handler = async (cmd) => {
-      if (cmd["execute"] === "late") {
+      if (cmd.execute === "late") {
         await sleep(300)
         return { return: "the late reply" }
       }
@@ -91,7 +91,7 @@ describe("the QMP channel", () => {
       return await send("query-status")
     })
     expect(r).toEqual({ status: "running", running: true })
-    expect(events.map((e) => e["event"])).toEqual(["STOP"])
+    expect(events.map((e) => e.event)).toEqual(["STOP"])
   })
 
   it("keeps clients waiting while QEMU is away, and serves them when it is back", async () => {
@@ -163,7 +163,7 @@ describe("the QMP channel's own timeouts", () => {
   it("renegotiates rather than hand a reply owed past the drain timeout to the next caller", async () => {
     await channel.stop()
     fake.handler = async (cmd) => {
-      if (cmd["execute"] === "savevm") {
+      if (cmd.execute === "savevm") {
         await sleep(600)
         return { return: "savevm finished late" }
       }
@@ -220,7 +220,7 @@ describe("the qemu-ga channel", () => {
   })
 
   it("serves qga callers one at a time, each with its own sync", async () => {
-    agent.handler = (req) => ({ return: `reply to ${String(req["execute"])}` })
+    agent.handler = (req) => ({ return: `reply to ${String(req.execute)}` })
     const [a, b] = await Promise.all([
       qga.call(qgaListen, { execute: "guest-info" }),
       qga.call(qgaListen, { execute: "guest-get-time" }),
@@ -233,8 +233,8 @@ describe("the qemu-ga channel", () => {
   it("lets other callers in between the polls of a long exec", async () => {
     const t0 = Date.now()
     agent.handler = (req) => {
-      if (req["execute"] === "guest-exec") return { return: { pid: 42 } }
-      if (req["execute"] === "guest-exec-status")
+      if (req.execute === "guest-exec") return { return: { pid: 42 } }
+      if (req.execute === "guest-exec-status")
         return { return: { exited: Date.now() - t0 > 1000, exitcode: 0 } }
       return { return: "pong" }
     }

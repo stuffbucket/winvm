@@ -258,18 +258,18 @@ export class Extras {
             ).join("\n"),
           )
         }
-        const b = input["button"]
+        const b = input.button
         const button = b === "right" || b === "double" ? b : "left"
         const acted = await ui.click(sel, { timeoutMs: 5000, button })
         return text(`clicked ${await this.describe(acted.element)}`)
       }
       case "ocr_find": {
-        const needle = input["text"]
+        const needle = input.text
         if (typeof needle !== "string" || needle === "")
           return text("text must be a non-empty string", true)
         const wait =
-          typeof input["wait"] === "number"
-            ? Math.min(Math.max(input["wait"], 0), 30)
+          typeof input.wait === "number"
+            ? Math.min(Math.max(input.wait, 0), 30)
             : 0
         const { scale } = await this.computer.display()
         const { last } = await ocr.findOnScreen(this.computer.p, needle, {
@@ -487,7 +487,7 @@ export async function run(args: Args): Promise<number> {
 
   const { default: AnthropicSdk } = await import("@anthropic-ai/sdk")
   const direct =
-    (process.env["ANTHROPIC_API_KEY"] ?? "") !== "" &&
+    (process.env.ANTHROPIC_API_KEY ?? "") !== "" &&
     args.flags.get("base-url") === undefined
   const client: Anthropic = direct
     ? new AnthropicSdk()
@@ -496,7 +496,7 @@ export async function run(args: Args): Promise<number> {
         apiKey: "maximal",
       })
   const endpoint = direct
-    ? (process.env["ANTHROPIC_BASE_URL"] ?? "https://api.anthropic.com")
+    ? (process.env.ANTHROPIC_BASE_URL ?? "https://api.anthropic.com")
     : (args.flags.get("base-url") ?? MAXIMAL_URL)
 
   const computer = new Computer(r.p, box)
@@ -588,14 +588,14 @@ export async function run(args: Args): Promise<number> {
           : EXTRA_NAMES.includes(call.name) && useExtras
             ? await extras.run(call.name, input)
             : text(`unknown tool "${call.name}"`, true)
-        record(call.name, res.ms["total"] ?? 0)
-        if (res.ms["capture"] !== undefined)
-          record("screenshot:capture", res.ms["capture"])
-        if (res.ms["encode"] !== undefined)
-          record("screenshot:scale+encode", res.ms["encode"])
+        record(call.name, res.ms.total ?? 0)
+        if (res.ms.capture !== undefined)
+          record("screenshot:capture", res.ms.capture)
+        if (res.ms.encode !== undefined)
+          record("screenshot:scale+encode", res.ms.encode)
         const shown = JSON.stringify(input)
         console.log(
-          `  ${call.name}${shown === "{}" ? "" : ` ${shown}`} -> ${res.isError ? `ERROR ${blockText(res.content)}` : summarize(res.content)} (${(res.ms["total"] ?? 0).toFixed(0)} ms)`,
+          `  ${call.name}${shown === "{}" ? "" : ` ${shown}`} -> ${res.isError ? `ERROR ${blockText(res.content)}` : summarize(res.content)} (${(res.ms.total ?? 0).toFixed(0)} ms)`,
         )
         if (shots !== undefined) {
           for (const c of res.content) {

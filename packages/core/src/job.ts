@@ -206,7 +206,7 @@ function fileSpec(v: unknown, where: string, baseDir: string): FileSpec {
     )
   if (src !== null) {
     const expanded = src.startsWith("~/")
-      ? resolve(process.env["HOME"] ?? "", src.slice(2))
+      ? resolve(process.env.HOME ?? "", src.slice(2))
       : src
     return {
       kind: "path",
@@ -224,7 +224,7 @@ function fileSpec(v: unknown, where: string, baseDir: string): FileSpec {
   }
   if (repo === null || !/^[\w.-]+\/[\w.-]+$/.test(repo))
     throw new JobError(`${where}: release must be owner/repo`)
-  const pat = v["pattern"]
+  const pat = v.pattern
   const patterns =
     typeof pat === "string"
       ? [pat]
@@ -289,8 +289,8 @@ export function parseJob(text: string, file = ""): Job {
   const where = file || "job"
   if (!isObj(raw)) throw new JobError(`${where}: a job is a mapping`)
   const baseDir = file === "" ? "" : dirname(resolve(file))
-  const jobEnv = env(raw["env"], where)
-  const stepsRaw = raw["steps"]
+  const jobEnv = env(raw.env, where)
+  const stepsRaw = raw.steps
   if (!Array.isArray(stepsRaw) || stepsRaw.length === 0)
     throw new JobError(`${where}: "steps" must be a non-empty list`)
   const steps = stepsRaw.map((s, i): Step => {
@@ -311,15 +311,15 @@ export function parseJob(text: string, file = ""): Job {
       run: interpolate(run, jobEnv, sw),
       shell: sh,
       timeoutMs:
-        parseDuration(s["timeout"] ?? minutes(s["timeout-minutes"]), sw) ??
+        parseDuration(s.timeout ?? minutes(s["timeout-minutes"]), sw) ??
         DEFAULT_STEP_TIMEOUT_MS,
       continueOnError: bool(s, "continue-on-error", sw, false),
-      env: env(s["env"], sw),
+      env: env(s.env, sw),
       if: condition(str(s, "if", sw), sw),
       background: bool(s, "background", sw, false),
     }
   })
-  const filesRaw = raw["files"] ?? []
+  const filesRaw = raw.files ?? []
   if (!Array.isArray(filesRaw))
     throw new JobError(`${where}: "files" must be a list`)
   const files = filesRaw.map((f, i) => {
@@ -327,11 +327,11 @@ export function parseJob(text: string, file = ""): Job {
     return interpolateFile(fileSpec(f, fw, baseDir), jobEnv, fw)
   })
   let artifacts: Job["artifacts"] = { when: "failure", paths: [] }
-  const a = raw["artifacts"]
+  const a = raw.artifacts
   if (Array.isArray(a)) {
     artifacts = { when: "failure", paths: a.map(String) }
   } else if (isObj(a)) {
-    const paths = a["paths"]
+    const paths = a.paths
     if (!Array.isArray(paths))
       throw new JobError(`${where}: artifacts.paths must be a list`)
     artifacts = {
@@ -350,7 +350,7 @@ export function parseJob(text: string, file = ""): Job {
     file,
     golden: str(raw, "golden", where),
     reset: bool(raw, "reset", where, true),
-    timeoutMs: parseDuration(raw["timeout"], where) ?? DEFAULT_JOB_TIMEOUT_MS,
+    timeoutMs: parseDuration(raw.timeout, where) ?? DEFAULT_JOB_TIMEOUT_MS,
     env: jobEnv,
     files,
     steps,

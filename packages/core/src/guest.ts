@@ -33,9 +33,9 @@ const sleep = (ms: number): Promise<void> =>
 export function qgaGuest(p: Paths): Guest {
   const sock = p.qga
   const ret = (r: Record<string, unknown>, what: string): unknown => {
-    if (r["error"] !== undefined)
-      throw new Error(`${what}: ${JSON.stringify(r["error"])}`)
-    return r["return"]
+    if (r.error !== undefined)
+      throw new Error(`${what}: ${JSON.stringify(r.error)}`)
+    return r.return
   }
   const open = async (path: string, mode: string): Promise<number> =>
     ret(
@@ -200,7 +200,7 @@ export function agentGuest(client: AgentClient): Guest {
 
 export async function guestFor(instance: string): Promise<Guest> {
   const p = pathsFor(instance)
-  if (process.env["WINVM_CHANNEL"] !== "qga") {
+  if (process.env.WINVM_CHANNEL !== "qga") {
     const client = await connect(instance, { timeoutMs: 5000 })
     if (client !== null) return agentGuest(client)
   }

@@ -61,8 +61,8 @@ export function noticeTarget(
 export function stateEvent(
   e: Record<string, unknown>,
 ): Record<string, unknown> | null {
-  const name = String(e["event"])
-  const data = e["data"] as Record<string, unknown> | undefined
+  const name = String(e.event)
+  const data = e.data as Record<string, unknown> | undefined
   const state = STATES[name]
   if (state !== undefined)
     return data === undefined ? { state } : { state, data }
@@ -81,7 +81,7 @@ export async function runService(
   const p = pathsFor(name)
   claim(p, name, {
     pid: process.pid,
-    cli: process.env["WINVM_CLI"] ?? "",
+    cli: process.env.WINVM_CLI ?? "",
     version: coreVersion(),
     startedAt: new Date().toISOString(),
     build: buildIdentity(),
@@ -127,15 +127,13 @@ export async function runService(
     onEvent: (e) => {
       const s = stateEvent(e)
       if (s === null) return
-      state = String(s["state"])
+      state = String(s.state)
       record("state", s)
     },
   })
   const askPortOpen = async (): Promise<boolean | null> => {
     try {
-      const r = (await qmpChannel.request("query-chardev", undefined, 2000))[
-        "return"
-      ] as
+      const r = (await qmpChannel.request("query-chardev", undefined, 2000)).return as
         | { readonly label: string; readonly "frontend-open": boolean }[]
         | undefined
       return r?.find((c) => c.label === qga.CHARDEV)?.["frontend-open"] ?? null
@@ -238,10 +236,10 @@ export async function runService(
           if (client === null) return
           try {
             const r = await client.touch(`${want.letter}:\\`, paths)
-            if (process.env["WINVM_SHARE_DEBUG"])
+            if (process.env.WINVM_SHARE_DEBUG)
               record("service", { what: "share notices sent", paths, ...r })
           } catch (error) {
-            if (process.env["WINVM_SHARE_DEBUG"])
+            if (process.env.WINVM_SHARE_DEBUG)
               record("warning", { what: "share notices", error: String(error) })
             client = null
             throw error

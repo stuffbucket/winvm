@@ -7,7 +7,7 @@ import { FilesWindow } from "./features/files/FilesWindow"
 import { t } from "./i18n"
 import { osKind } from "./platform"
 
-document.documentElement.dataset["os"] = osKind()
+document.documentElement.dataset.os = osKind()
 
 const query = new URLSearchParams(window.location.search)
 const instance = query.get("instance") ?? ""

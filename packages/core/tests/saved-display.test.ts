@@ -151,14 +151,14 @@ function fixture(
 
 beforeEach(() => {
   previous = {
-    WINVM_HOME: process.env["WINVM_HOME"],
-    WINVM_RUNTIME: process.env["WINVM_RUNTIME"],
-    WINVM_TEST_QEMU_LOG: process.env["WINVM_TEST_QEMU_LOG"],
+    WINVM_HOME: process.env.WINVM_HOME,
+    WINVM_RUNTIME: process.env.WINVM_RUNTIME,
+    WINVM_TEST_QEMU_LOG: process.env.WINVM_TEST_QEMU_LOG,
   }
   state = mkdtempSync(resolve(tmpdir(), "winvm-saved-display-"))
-  process.env["WINVM_HOME"] = state
-  process.env["WINVM_RUNTIME"] = resolve(state, "runtime")
-  process.env["WINVM_TEST_QEMU_LOG"] = qemuLog()
+  process.env.WINVM_HOME = state
+  process.env.WINVM_RUNTIME = resolve(state, "runtime")
+  process.env.WINVM_TEST_QEMU_LOG = qemuLog()
   mkdirSync(resolve(state, "runtime", "bin"), { recursive: true })
   script(
     "swtpm",
