@@ -377,7 +377,7 @@ export function useCloseFlow(w: Winvm): CloseFlow {
         await new Promise<void>((wake) => {
           setTimeout(wake, WAIT_MS)
         })
-        snapshot = await closeState()
+        snapshot = await closeState().catch(() => snapshot)
         if (isCancelled(tx)) return
       }
       if (snapshot.state !== "running") {

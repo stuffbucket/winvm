@@ -126,6 +126,7 @@ function fakeBridge() {
     log,
     pending: false as boolean | Deferred<boolean>,
     snapshot: null as Snapshot | null,
+    stateFailures: 0,
     start: "ok" as "ok" | "out-of-order",
     config: { code: 0, stdout: "", stderr: "" },
     fire(name = "viewer-close-requested", payload: unknown = null): void {
@@ -149,6 +150,10 @@ function fakeBridge() {
     }
     log.push(a?.machine === undefined ? cmd : `${cmd} ${a.machine}`)
     if (cmd === "close_state") {
+      if (bridge.stateFailures > 0) {
+        bridge.stateFailures -= 1
+        return rejectLikeTauri("the window is reloading")
+      }
       if (bridge.snapshot !== null) return Promise.resolve(bridge.snapshot)
       const of = (pending: boolean): Snapshot =>
         snapshotOf({ state: pending ? "requested" : "idle" })
@@ -1533,6 +1538,31 @@ describe("useCloseFlow after the window reloads", () => {
     })
     await flush()
     expect(bridge.count("close_complete")).toBe(1)
+  })
+
+  it("keeps waiting for the stow the old page started when a read of the close fails, instead of dropping a close Rust still runs", async () => {
+    const bridge = fakeBridge()
+    bridge.snapshot = snapshotOf({
+      state: "running",
+      machine: "a",
+      command: { machine: "a", verb: "stow" },
+    })
+    const world = fakeWinvm([{ name: "a", state: "running" }], "a")
+    await mount(world)
+    expect(current().state.kind).toBe("acting")
+    bridge.stateFailures = 2
+    await tick(1500)
+    await tick(1500)
+    expect(current().state.kind).toBe("acting")
+    expect(bridge.count("close_cancel")).toBe(0)
+    world.set("a", { state: "stowed" })
+    bridge.snapshot = snapshotOf({
+      state: "running",
+      last: { machine: "a", verb: "stow", code: 0, output: "" },
+    })
+    await tick(1500)
+    expect(bridge.count("close_complete")).toBe(1)
+    expect(bridge.count("close_cancel")).toBe(0)
   })
 
   it("stays open with what the command said when the stow the old page started failed, and calls the close off", async () => {

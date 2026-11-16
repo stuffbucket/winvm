@@ -291,6 +291,14 @@ impl CloseCoordinator {
         })
     }
 
+    pub fn run_command(&self, args: &[String]) -> Result<CommandRun<'_>, String> {
+        let command = self.begin(args)?;
+        Ok(CommandRun {
+            close: self,
+            command: Some(command),
+        })
+    }
+
     pub fn end(&self, outcome: Outcome) {
         self.change(|i| {
             i.now.command = None;
@@ -355,6 +363,36 @@ impl CloseCoordinator {
         drop(inner);
         self.changed.notify_all();
         restart
+    }
+}
+
+pub struct CommandRun<'a> {
+    close: &'a CloseCoordinator,
+    command: Option<Command>,
+}
+
+impl CommandRun<'_> {
+    pub fn finish(mut self, ran: &Result<Output, Box<SidecarFailure>>) {
+        if let Some(command) = self.command.take() {
+            self.close.end(Outcome::of(command, ran));
+        }
+    }
+}
+
+impl Drop for CommandRun<'_> {
+    fn drop(&mut self) {
+        if let Some(command) = self.command.take() {
+            let output = format!(
+                "winvm {} on {} stopped without saying how it ended",
+                command.verb, command.machine
+            );
+            self.close.end(Outcome {
+                machine: command.machine,
+                verb: command.verb,
+                code: -1,
+                output,
+            });
+        }
     }
 }
 
@@ -644,13 +682,10 @@ pub async fn close_run(
     let operation = sidecar::operation_of(&args);
     let refuse = |why: String| Box::new(SidecarFailure::rejected(&operation, why));
     caller_may_answer(window.label()).map_err(refuse)?;
-    let command = app
-        .state::<CloseCoordinator>()
-        .begin(&args)
-        .map_err(refuse)?;
+    let close = app.state::<CloseCoordinator>();
+    let running = close.run_command(&args).map_err(refuse)?;
     let ran = sidecar::run_sidecar(&app, &args, None).await;
-    app.state::<CloseCoordinator>()
-        .end(Outcome::of(command, &ran));
+    running.finish(&ran);
     ran
 }
 
@@ -1067,6 +1102,45 @@ mod tests {
         assert_eq!(after.command, None);
         assert_eq!(after.last, Some(outcome("a", "stow", 0)));
         assert_eq!(close.state(), CloseState::Running);
+    }
+
+    #[test]
+    fn a_close_owned_command_whose_task_ends_without_an_outcome_still_ends() {
+        let close = running();
+        let run = close.run_command(&args(&["stow", "-i", "a"])).unwrap();
+        assert!(close.snapshot().command.is_some());
+        drop(run);
+        let after = close.snapshot();
+        assert_eq!(after.command, None);
+        let last = after.last.unwrap();
+        assert_eq!((last.machine.as_str(), last.verb.as_str()), ("a", "stow"));
+        assert_ne!(last.code, 0);
+        assert_eq!(
+            last.output,
+            "winvm stow on a stopped without saying how it ended"
+        );
+        assert_eq!(close.cancel(), Ok(None));
+    }
+
+    #[test]
+    fn a_close_owned_command_that_finishes_records_how_it_ended_once() {
+        let close = running();
+        let run = close.run_command(&args(&["stop", "-i", "a"])).unwrap();
+        run.finish(&Ok(Output {
+            code: 0,
+            stdout: "stopped\n".into(),
+            stderr: String::new(),
+        }));
+        assert_eq!(
+            close.snapshot().last,
+            Some(Outcome {
+                machine: "a".into(),
+                verb: "stop".into(),
+                code: 0,
+                output: "stopped".into(),
+            })
+        );
+        assert!(close.run_command(&args(&["kill", "-i", "a"])).is_err());
     }
 
     #[test]
