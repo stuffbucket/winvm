@@ -20,6 +20,7 @@ import { resolve } from "node:path"
 
 import {
   CLOSE_POLICIES,
+  checkTitle,
   configPath,
   DEFAULTS,
   effectiveConfig,
@@ -394,6 +395,19 @@ describe("instance config", () => {
     expect(readOverrides("titled")).toEqual({ "stow.enabled": false })
     expect(() => parseAssignment(`title=${"x".repeat(81)}`)).toThrow("80")
     expect(() => parseAssignment("title=two\nlines")).toThrow("control")
+  })
+
+  it("rejects exactly the C0 and C1 controls and the line separators in a title", () => {
+    const rejected = [0x00, 0x09, 0x1f, 0x7f, 0x85, 0x9f, 0x2028, 0x2029]
+    for (const c of rejected)
+      expect(() => checkTitle(`a${String.fromCharCode(c)}b`)).toThrow("control")
+    const accepted = [0x20, 0x7e, 0xa0, 0x2027, 0x202a, 0xfeff]
+    for (const c of accepted) {
+      const title = `a${String.fromCharCode(c)}b`
+      expect(checkTitle(title)).toBe(title)
+    }
+    expect(checkTitle("a\u{1f600}b")).toBe("a\u{1f600}b")
+    expect(checkTitle("a\ud800b")).toBe("a\ud800b")
   })
 
   it("ignores a title in config.json that would not pass the check", () => {

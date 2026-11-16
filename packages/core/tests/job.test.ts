@@ -213,4 +213,22 @@ describe("report", () => {
     expect(x).toContain("<system-out>out &amp; </system-out>")
     expect(x).toContain('<testsuites name="winvm" tests="3" failures="1"')
   })
+
+  it("junit drops exactly the control characters XML 1.0 forbids", () => {
+    const codes = Array.from({ length: 0xa0 }, (_, c) => c)
+    const all = String.fromCharCode(...codes)
+    const kept = codes
+      .filter((c) => c >= 0x20 || c === 0x09 || c === 0x0a || c === 0x0d)
+      .map((c) => String.fromCharCode(c))
+      .join("")
+      .replaceAll("&", "&amp;")
+      .replaceAll("<", "&lt;")
+      .replaceAll(">", "&gt;")
+      .replaceAll('"', "&quot;")
+    const x = toJunit({
+      ...s,
+      jobs: [{ ...job, steps: [{ ...step, stdout: `${all}\u{1f600}` }] }],
+    })
+    expect(x).toContain(`<system-out>${kept}\u{1f600}</system-out>`)
+  })
 })

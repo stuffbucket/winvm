@@ -107,6 +107,15 @@ describe("the Files window's model", () => {
     expect(nameProblem("space ")).toBe("ends")
   })
 
+  it("refuses exactly the characters below space and Windows' reserved ones", () => {
+    for (let c = 0; c < 0x20; c += 1)
+      expect(nameProblem(`a${String.fromCharCode(c)}b`)).toBe("chars")
+    for (const ch of '<>:"/\\|?*') expect(nameProblem(`a${ch}b`)).toBe("chars")
+    for (const c of [0x20, 0x7e, 0x7f, 0x85, 0x9f, 0xa0, 0x2028])
+      expect(nameProblem(`a${String.fromCharCode(c)}b`)).toBeNull()
+    expect(nameProblem("a\u{1f600}b")).toBeNull()
+  })
+
   it("knows when a folder would go inside itself", () => {
     expect(
       isWithin("C:\\Users\\me\\Desktop\\x", "C:\\Users\\me\\Desktop"),
