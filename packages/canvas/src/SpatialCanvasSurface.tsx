@@ -1,9 +1,18 @@
-import { type ComponentPropsWithoutRef, type JSX, type KeyboardEvent, type ReactNode, useEffect, useId, useRef } from "react"
+import {
+  type ComponentPropsWithoutRef,
+  type JSX,
+  type KeyboardEvent,
+  type ReactNode,
+  useEffect,
+  useId,
+  useRef,
+} from "react"
 import { createPortal } from "react-dom"
 
 export type SpatialCanvasSurfacePhase = "entering" | "open" | "leaving"
 
-export interface SpatialCanvasSurfaceProps extends Omit<ComponentPropsWithoutRef<"section">, "title" | "children"> {
+export interface SpatialCanvasSurfaceProps
+  extends Omit<ComponentPropsWithoutRef<"section">, "title" | "children"> {
   readonly open: boolean
   readonly title: string
   readonly description: string
@@ -13,11 +22,18 @@ export interface SpatialCanvasSurfaceProps extends Omit<ComponentPropsWithoutRef
   readonly container?: Element | null
 }
 
-const FOCUSABLE = 'a[href], button:not([disabled]), input:not([disabled]), textarea:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])'
+const FOCUSABLE =
+  'a[href], button:not([disabled]), input:not([disabled]), textarea:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])'
 
 function trapTab(event: KeyboardEvent<HTMLElement>): void {
-  if (event.key !== "Tab" || (event.target instanceof Element && event.target.closest("dialog") !== null)) return
-  const items = [...event.currentTarget.querySelectorAll<HTMLElement>(FOCUSABLE)].filter((el) => el.offsetParent !== null || el === document.activeElement)
+  if (
+    event.key !== "Tab" ||
+    (event.target instanceof Element && event.target.closest("dialog") !== null)
+  )
+    return
+  const items = [
+    ...event.currentTarget.querySelectorAll<HTMLElement>(FOCUSABLE),
+  ].filter((el) => el.offsetParent !== null || el === document.activeElement)
   const first = items[0]
   const last = items.at(-1)
   if (first === undefined || last === undefined) return
@@ -49,7 +65,8 @@ export function SpatialCanvasSurface({
   useEffect(() => {
     if (!open || embedded) return
     returnTo.current = document.activeElement
-    if (!ref.current?.contains(document.activeElement)) ref.current?.focus({ preventScroll: true })
+    if (!ref.current?.contains(document.activeElement))
+      ref.current?.focus({ preventScroll: true })
     return () => {
       const back = returnTo.current
       if (back instanceof HTMLElement) back.focus({ preventScroll: true })
@@ -67,7 +84,13 @@ export function SpatialCanvasSurface({
       aria-describedby={describedBy}
       tabIndex={-1}
       data-phase={phase}
-      className={["spatial-canvas-surface", embedded && "spatial-canvas-surface--embedded", className].filter(Boolean).join(" ")}
+      className={[
+        "spatial-canvas-surface",
+        embedded && "spatial-canvas-surface--embedded",
+        className,
+      ]
+        .filter(Boolean)
+        .join(" ")}
       onKeyDown={(event) => {
         if (!embedded) trapTab(event)
         onKeyDown?.(event)
@@ -80,6 +103,7 @@ export function SpatialCanvasSurface({
     </section>
   )
   if (embedded) return section
-  const target = container ?? (typeof document === "undefined" ? null : document.body)
+  const target =
+    container ?? (typeof document === "undefined" ? null : document.body)
   return target === null ? section : createPortal(section, target)
 }

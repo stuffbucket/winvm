@@ -10,8 +10,16 @@ export function SpatialCanvasSearchResults({
   readonly label: string
 }): JSX.Element {
   return (
-    <div className="spatial-canvas__search-results" role="listbox" aria-label={label}>
-      {Children.count(children) > 0 ? children : <span className="spatial-canvas__search-empty">{emptyMessage}</span>}
+    <div
+      className="spatial-canvas__search-results"
+      role="listbox"
+      aria-label={label}
+    >
+      {Children.count(children) > 0 ? (
+        children
+      ) : (
+        <span className="spatial-canvas__search-empty">{emptyMessage}</span>
+      )}
     </div>
   )
 }

@@ -1,6 +1,17 @@
-import { forwardRef, type ComponentPropsWithoutRef, type ReactNode, type JSX } from "react"
+import {
+  forwardRef,
+  type ComponentPropsWithoutRef,
+  type ReactNode,
+  type JSX,
+} from "react"
 
-export function CanvasGlyph({ children, size = 16 }: { readonly children: ReactNode; readonly size?: number }): JSX.Element {
+export function CanvasGlyph({
+  children,
+  size = 16,
+}: {
+  readonly children: ReactNode
+  readonly size?: number
+}): JSX.Element {
   return (
     <svg
       width={size}
@@ -41,12 +52,18 @@ export const GLYPHS = {
   ),
 } as const
 
-export type CanvasButtonProps = Omit<ComponentPropsWithoutRef<"button">, "aria-label"> & {
+export type CanvasButtonProps = Omit<
+  ComponentPropsWithoutRef<"button">,
+  "aria-label"
+> & {
   readonly label: string
   readonly selected?: boolean
 }
 
-export const CanvasIconButton = forwardRef<HTMLButtonElement, CanvasButtonProps>(function CanvasIconButton(
+export const CanvasIconButton = forwardRef<
+  HTMLButtonElement,
+  CanvasButtonProps
+>(function CanvasIconButton(
   { label, selected, className, children, type = "button", ...props },
   ref,
 ) {
@@ -58,22 +75,52 @@ export const CanvasIconButton = forwardRef<HTMLButtonElement, CanvasButtonProps>
       aria-label={label}
       title={props.title ?? label}
       aria-pressed={selected}
-      className={["spatial-canvas__button", "spatial-canvas__button--icon", className].filter(Boolean).join(" ")}
+      className={[
+        "spatial-canvas__button",
+        "spatial-canvas__button--icon",
+        className,
+      ]
+        .filter(Boolean)
+        .join(" ")}
     >
       {children}
     </button>
   )
 })
 
-export function SpatialCanvasTopBar({ children }: { readonly children: ReactNode }): JSX.Element {
+export function SpatialCanvasTopBar({
+  children,
+}: {
+  readonly children: ReactNode
+}): JSX.Element {
   return <header className="spatial-canvas__topbar">{children}</header>
 }
 
-export function SpatialCanvasCorner({ children, className }: { readonly children: ReactNode; readonly className?: string }): JSX.Element {
-  return <div className={["spatial-canvas__corner", className].filter(Boolean).join(" ")}>{children}</div>
+export function SpatialCanvasCorner({
+  children,
+  className,
+}: {
+  readonly children: ReactNode
+  readonly className?: string
+}): JSX.Element {
+  return (
+    <div
+      className={["spatial-canvas__corner", className]
+        .filter(Boolean)
+        .join(" ")}
+    >
+      {children}
+    </div>
+  )
 }
 
-export function SpatialCanvasControlGroup({ label, children }: { readonly label: string; readonly children: ReactNode }): JSX.Element {
+export function SpatialCanvasControlGroup({
+  label,
+  children,
+}: {
+  readonly label: string
+  readonly children: ReactNode
+}): JSX.Element {
   return (
     <nav className="spatial-canvas__controls" aria-label={label}>
       {children}
@@ -81,9 +128,22 @@ export function SpatialCanvasControlGroup({ label, children }: { readonly label:
   )
 }
 
-export function SpatialCanvasFloatingPanel({ label, children, className }: { readonly label: string; readonly children: ReactNode; readonly className?: string }): JSX.Element {
+export function SpatialCanvasFloatingPanel({
+  label,
+  children,
+  className,
+}: {
+  readonly label: string
+  readonly children: ReactNode
+  readonly className?: string
+}): JSX.Element {
   return (
-    <aside className={["spatial-canvas__floating-panel", className].filter(Boolean).join(" ")} aria-label={label}>
+    <aside
+      className={["spatial-canvas__floating-panel", className]
+        .filter(Boolean)
+        .join(" ")}
+      aria-label={label}
+    >
       {children}
     </aside>
   )
@@ -109,7 +169,12 @@ export function SpatialCanvasSidePanel({
   readonly className?: string
 }): JSX.Element {
   return (
-    <aside className={["spatial-canvas__side-panel", className].filter(Boolean).join(" ")} aria-label={label}>
+    <aside
+      className={["spatial-canvas__side-panel", className]
+        .filter(Boolean)
+        .join(" ")}
+      aria-label={label}
+    >
       <header>
         {header ?? <strong>{title}</strong>}
         <CanvasIconButton label={closeLabel} onClick={onClose}>
@@ -143,11 +208,20 @@ export function SpatialCanvasZoomControls({
   onZoomIn: () => void
 }): JSX.Element {
   return (
-    <div className="spatial-canvas__zoom" role="group" aria-label={labels.group}>
+    <div
+      className="spatial-canvas__zoom"
+      role="group"
+      aria-label={labels.group}
+    >
       <CanvasIconButton label={labels.zoomOut} onClick={onZoomOut}>
         <CanvasGlyph>{GLYPHS.minus}</CanvasGlyph>
       </CanvasIconButton>
-      <button type="button" className="spatial-canvas__button spatial-canvas__zoom-value" title={labels.reset} onClick={onReset}>
+      <button
+        type="button"
+        className="spatial-canvas__button spatial-canvas__zoom-value"
+        title={labels.reset}
+        onClick={onReset}
+      >
         {Math.round(zoom * 100)}%
       </button>
       <CanvasIconButton label={labels.zoomIn} onClick={onZoomIn}>

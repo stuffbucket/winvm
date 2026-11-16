@@ -19,12 +19,17 @@ import {
 } from "../src/camera"
 
 const view = { width: 1000, height: 800 }
-const close = (a: number, b: number, digits = 6): void => { expect(a).toBeCloseTo(b, digits) }
+const close = (a: number, b: number, digits = 6): void => {
+  expect(a).toBeCloseTo(b, digits)
+}
 
 describe("camera maths", () => {
   it("round-trips screen and world points", () => {
     const camera = { x: 120, y: -40, zoom: 2.5 }
-    const world = screenToWorld({ x: 620, y: 360 }, camera, { left: 100, top: 0 })
+    const world = screenToWorld({ x: 620, y: 360 }, camera, {
+      left: 100,
+      top: 0,
+    })
     const back = worldToScreen(world, camera)
     close(back.x, 520)
     close(back.y, 360)
@@ -54,7 +59,11 @@ describe("camera maths", () => {
   })
 
   it("fits a rectangle in the middle, clear of the padding", () => {
-    const camera = fitRect({ x: 100, y: 100, width: 400, height: 200 }, view, 100)
+    const camera = fitRect(
+      { x: 100, y: 100, width: 400, height: 200 },
+      view,
+      100,
+    )
     close(camera.zoom, 2)
     const centre = centreOf(camera, view)
     close(centre.x, 300)
@@ -62,7 +71,10 @@ describe("camera maths", () => {
   })
 
   it("lays a world rectangle exactly over a screen rectangle", () => {
-    const camera = cameraForScreenRect({ x: 10, y: 20, width: 320, height: 200 }, { x: 100, y: 60, width: 800, height: 500 })
+    const camera = cameraForScreenRect(
+      { x: 10, y: 20, width: 320, height: 200 },
+      { x: 100, y: 60, width: 800, height: 500 },
+    )
     close(camera.zoom, 2.5)
     const topLeft = worldToScreen({ x: 10, y: 20 }, camera)
     close(topLeft.x, 100)
@@ -79,12 +91,19 @@ describe("camera maths", () => {
     const lost = clampPan({ x: -900, y: 2000, zoom: 1 }, small, view, 20)
     close(lost.x, 20)
     close(lost.y, view.height - 20 - 100)
-    expect(clampPan({ x: 300, y: 200, zoom: 1 }, small, view, 20)).toEqual({ x: 300, y: 200, zoom: 1 })
+    expect(clampPan({ x: 300, y: 200, zoom: 1 }, small, view, 20)).toEqual({
+      x: 300,
+      y: 200,
+      zoom: 1,
+    })
   })
 
   it("clamps zoom about the middle of the view, then pans back within reach", () => {
     const content = { x: 0, y: 0, width: 1000, height: 800 }
-    const camera = clampCamera({ x: 0, y: 0, zoom: 10 }, content, view, 0, { min: 0.2, max: 2 })
+    const camera = clampCamera({ x: 0, y: 0, zoom: 10 }, content, view, 0, {
+      min: 0.2,
+      max: 2,
+    })
     expect(camera.zoom).toBe(2)
     const centre = centreOf(camera, view)
     close(centre.x, 250)
@@ -93,10 +112,30 @@ describe("camera maths", () => {
 
   it("reports the world the viewport shows, with overscan", () => {
     const camera = { x: -200, y: -100, zoom: 2 }
-    expect(visibleWorld(camera, view)).toEqual({ x: 100, y: 50, width: 500, height: 400 })
-    expect(visibleWorld(camera, view, 100)).toEqual({ x: 50, y: 0, width: 600, height: 500 })
-    expect(rectsIntersect({ x: 0, y: 0, width: 10, height: 10 }, { x: 10, y: 0, width: 5, height: 5 })).toBe(false)
-    expect(rectsIntersect({ x: 0, y: 0, width: 10, height: 10 }, { x: 9, y: 9, width: 5, height: 5 })).toBe(true)
+    expect(visibleWorld(camera, view)).toEqual({
+      x: 100,
+      y: 50,
+      width: 500,
+      height: 400,
+    })
+    expect(visibleWorld(camera, view, 100)).toEqual({
+      x: 50,
+      y: 0,
+      width: 600,
+      height: 500,
+    })
+    expect(
+      rectsIntersect(
+        { x: 0, y: 0, width: 10, height: 10 },
+        { x: 10, y: 0, width: 5, height: 5 },
+      ),
+    ).toBe(false)
+    expect(
+      rectsIntersect(
+        { x: 0, y: 0, width: 10, height: 10 },
+        { x: 9, y: 9, width: 5, height: 5 },
+      ),
+    ).toBe(true)
   })
 })
 
@@ -119,7 +158,12 @@ describe("flights", () => {
   })
 
   it("moves the zoom evenly in log space", () => {
-    const mid = interpolateCamera({ x: 0, y: 0, zoom: 0.5 }, { x: 0, y: 0, zoom: 2 }, 0.5, view)
+    const mid = interpolateCamera(
+      { x: 0, y: 0, zoom: 0.5 },
+      { x: 0, y: 0, zoom: 2 },
+      0.5,
+      view,
+    )
     close(mid.zoom, 1)
   })
 
@@ -130,7 +174,10 @@ describe("flights", () => {
       const c0 = centreOf(from, view)
       const c1 = centreOf(to, view)
       const c = centreOf(interpolateCamera(from, to, t, view), view)
-      return Math.hypot(c.x - c0.x, c.y - c0.y) / Math.hypot(c1.x - c0.x, c1.y - c0.y)
+      return (
+        Math.hypot(c.x - c0.x, c.y - c0.y) /
+        Math.hypot(c1.x - c0.x, c1.y - c0.y)
+      )
     }
     expect(travelled(0.3)).toBeGreaterThan(0.5)
     expect(travelled(0.3, near, wide)).toBeLessThan(0.2)
