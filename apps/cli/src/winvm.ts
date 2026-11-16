@@ -22,10 +22,10 @@ import {
 } from "@winvm/core/operation"
 import {
   bunVersionWarning,
-  listInstances,
   pinnedBunVersion,
   recordCliEntry,
 } from "@winvm/core/paths"
+import * as reconcile from "@winvm/core/reconcile"
 import * as runcmds from "@winvm/core/runcmds"
 import * as savecmds from "@winvm/core/savecmds"
 import * as screen from "@winvm/core/screen"
@@ -69,9 +69,10 @@ const NO_SWEEP = [
   "watch",
   "serve",
   "events",
+  "status",
+  "reconcile",
 ]
 const LOOK_ONLY = [
-  "status",
   "info",
   "saves",
   "snapshots",
@@ -98,27 +99,20 @@ if (
   shouldReconcileVerb(sub) &&
   !(sub === "files" && args.positional[0]?.startsWith("_") === true)
 ) {
-  const named = args.flags.get("instance") ?? process.env.WINVM_INSTANCE
-  const every = sub === "status" && named === undefined
-  const reconcileOne = async (name: string): Promise<void> => {
-    try {
-      const note = reconcileNote(
-        name,
-        await reconcileManagement(name, undefined, {
-          waitForBusyWatcher: false,
-        }),
-      )
-      if (note !== null) console.error(note)
-    } catch (error) {
-      if (!(error instanceof ManagementError) && !every) throw error
-      console.error(
-        `::error::${error instanceof Error ? error.message : String(error)}`,
-      )
-      if (!every) process.exit(1)
-    }
+  const name = instanceName(args)
+  try {
+    const note = reconcileNote(
+      name,
+      await reconcileManagement(name, undefined, {
+        waitForBusyWatcher: false,
+      }),
+    )
+    if (note !== null) console.error(note)
+  } catch (error) {
+    if (!(error instanceof ManagementError)) throw error
+    console.error(`::error::${error.message}`)
+    process.exit(1)
   }
-  if (every) await Promise.all(listInstances().map(reconcileOne))
-  else await reconcileOne(instanceName(args))
 }
 
 let exitCode: number
@@ -261,6 +255,9 @@ switch (sub ?? "") {
     exitCode = 0
     break
   }
+  case "reconcile":
+    exitCode = await reconcile.reconcileCmd(args)
+    break
   case "events":
     exitCode = await follow.eventsCmd(args)
     break

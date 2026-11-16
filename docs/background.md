@@ -33,6 +33,27 @@ file to `events.prev.jsonl` and starts a new one, so the two files together
 hold the recent history.
 `winvm status` shows the service. `winvm kill` and `winvm destroy` stop it.
 
+`winvm events` prints the records of every instance (or one, with `-i`), and
+`--follow` keeps following them. With `--json`, each line is one JSON object
+whose `type` is `hello`, `entry` (the record's line, whole), `gap` (lines were
+rotated away before they were read), `instances` (an instance appeared or
+went) or `end`. Every line carries a `cursor`; pass it back with `--since` to
+carry on from that line without losing one. The app follows the records this
+way, with one long-lived `winvm events --follow --json`, instead of asking for
+the status every few seconds.
+
+## Keeping them current
+
+`winvm status` only reads. When the service or watcher is missing or was
+started by another build of winvm, or a guest that is gone left its drives
+mounted, it says so (`"management": "repair"` in `--json`) and leaves them be.
+`winvm reconcile [-i name]` repairs them and leaves Windows running. So do
+`winvm start` on a running instance, and the other commands that use the guest
+(`exec`, `info`, `save` and the rest). The app runs `winvm reconcile -i NAME`
+when a status it reads says a repair is due, at most once a minute per
+instance. If a repair is cut short after it stopped the watcher, the service
+restarts the watcher within about 30 seconds.
+
 ## The idle watcher
 
 `start` also starts an idle watcher, unless you pass `--no-watch`. `load` and
