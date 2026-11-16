@@ -511,7 +511,7 @@ describe("waiting for an entry with no service running", () => {
   it("matches an entry already recorded after its cursor at once", async () => {
     const since = endCursor(NAME)
     appendEntry(NAME, note("x"))
-    appendEntry(NAME, { kind: "disconnected" })
+    appendEntry(NAME, { kind: "disconnected", reason: "drain-timeout" })
     const t0 = Date.now()
     const got = await waitForEvent(
       NAME,
@@ -522,7 +522,10 @@ describe("waiting for an entry with no service running", () => {
         pollMs: 10_000,
       },
     )
-    expect(got?.entry.kind).toBe("disconnected")
+    expect(got?.entry).toMatchObject({
+      kind: "disconnected",
+      reason: "drain-timeout",
+    })
     expect(Date.now() - t0).toBeLessThan(500)
   })
 
@@ -541,7 +544,7 @@ describe("waiting for an entry with no service running", () => {
   it("hands back the cursor just after its match, so the next wait sees what followed in the same read", async () => {
     const since = endCursor(NAME)
     appendEntry(NAME, shutdown)
-    appendEntry(NAME, { kind: "disconnected" })
+    appendEntry(NAME, { kind: "disconnected", reason: "qemu-closed" })
     const first = await waitForEvent(
       NAME,
       qmpEvent("SHUTDOWN"),
@@ -569,7 +572,7 @@ describe("waiting for an entry with no service running", () => {
     const since = endCursor(NAME)
     appendEntry(NAME, shutdown)
     rotateEvents(NAME, 1)
-    appendEntry(NAME, { kind: "disconnected" })
+    appendEntry(NAME, { kind: "disconnected", reason: "qemu-closed" })
     const first = await waitForEvent(
       NAME,
       qmpEvent("SHUTDOWN"),

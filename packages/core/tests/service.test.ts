@@ -219,6 +219,9 @@ describe("the service", () => {
         .filter((e) => e.kind === "sync" || e.kind === "disconnected")
         .map((e) => (e.kind === "sync" ? e.status : e.kind)),
     ).toEqual(["running", "disconnected", "suspended"])
+    expect(entries().find((e) => e.kind === "disconnected")).toMatchObject({
+      reason: "qemu-closed",
+    })
     expect(await serviceState()).toBe("suspended")
   })
 

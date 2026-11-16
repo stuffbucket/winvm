@@ -37,8 +37,11 @@ export interface SyncFields {
   readonly error?: string
 }
 
+export type DisconnectReason = "qemu-closed" | "drain-timeout"
+
 export interface DisconnectedFields {
   readonly kind: "disconnected"
+  readonly reason: DisconnectReason
 }
 
 export interface OpIdentity {
@@ -308,7 +311,11 @@ function entryOf(r: Json): Entry | null {
       }
     }
     case "disconnected":
-      return { ...stamp, kind: "disconnected" }
+      return {
+        ...stamp,
+        kind: "disconnected",
+        reason: r.reason === "drain-timeout" ? "drain-timeout" : "qemu-closed",
+      }
     case "op":
       return opEntry(stamp, r)
     case "service":
