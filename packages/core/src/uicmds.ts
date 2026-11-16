@@ -4,7 +4,7 @@ import { parseDuration } from "./job"
 import { pathsFor } from "./paths"
 import * as qemu from "./qemu"
 import type { Action, Selector } from "./ui"
-import { ACTIONS, UiError, forInstance, formatElement, formatTree } from "./ui"
+import { ACTIONS, forInstance, formatElement, formatTree, UiError } from "./ui"
 
 const USAGE = `usage: winvm ui [-i name] <verb> [selector] [options]
   verbs:    windows | tree | find | wait | click | rightclick | doubleclick | invoke | toggle

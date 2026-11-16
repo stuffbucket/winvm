@@ -1,11 +1,12 @@
 import { spawn as nodeSpawn } from "node:child_process"
+import { randomBytes, timingSafeEqual } from "node:crypto"
 import {
   appendFileSync,
   existsSync,
+  type Stats as FileStats,
   mkdirSync,
   readFileSync,
   statSync,
-  type Stats as FileStats,
 } from "node:fs"
 import {
   cp,
@@ -20,7 +21,6 @@ import {
 } from "node:fs/promises"
 import { cpus, freemem, homedir, totalmem } from "node:os"
 import { dirname, isAbsolute, join, relative, resolve } from "node:path"
-import { randomBytes, timingSafeEqual } from "node:crypto"
 import type {
   Server,
   ServerWebSocket,

@@ -1,6 +1,6 @@
 import { randomBytes } from "node:crypto"
-import { createWriteStream, readFileSync } from "node:fs"
 import { once } from "node:events"
+import { createWriteStream, readFileSync } from "node:fs"
 import { resolve } from "node:path"
 
 import type { AgentState } from "./agentfwd"
@@ -10,14 +10,15 @@ import {
   readState,
   restoreForward,
 } from "./agentfwd"
+import { refuseFrozen } from "./frozen"
 import type {
   DirListing,
   DisplayRequest,
   ExecRequest,
   ExecResponse,
   FsDeleteResult,
-  FsTouchResult,
   FsPathResult,
+  FsTouchResult,
   GuestStats,
   Health,
   LaunchRequest,
@@ -25,7 +26,6 @@ import type {
   PwshResponse,
   SmbSetupRequest,
 } from "./guestagent"
-import { refuseFrozen } from "./frozen"
 import { AGENT_VERSION, GUEST_PORT, WINDOWS_DIR } from "./guestagent"
 import { bunZip } from "./media"
 import { PACKAGE_DIR, pathsFor } from "./paths"
@@ -40,8 +40,8 @@ export type {
   ExecResponse,
   FsCode,
   FsDeleteResult,
-  FsTouchResult,
   FsPathResult,
+  FsTouchResult,
   GuestStats,
   Health,
   Place,

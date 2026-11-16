@@ -5,11 +5,11 @@ import { resolve } from "node:path"
 
 import { VIRTIO_GPU, writeDisplay } from "../src/display"
 import {
-  LEGACY,
-  NEW_DEFAULT,
   hardwareError,
   hardwareFromArgv,
+  LEGACY,
   limitsFor,
+  NEW_DEFAULT,
   parseMemory,
   readHardware,
   writeHardware,
@@ -22,7 +22,7 @@ import {
   pendingNote,
   windowsAdapter,
 } from "../src/machineinfo"
-import { pathsFor, type InstanceMeta, type Paths } from "../src/paths"
+import { type InstanceMeta, type Paths, pathsFor } from "../src/paths"
 import { qemuArgs } from "../src/qemu"
 import {
   hardwareArgs,

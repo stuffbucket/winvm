@@ -14,25 +14,25 @@ import { resolve } from "node:path"
 
 import {
   ManagementError,
+  type ReconcileOptions,
   reconcileManagement,
   reconcileNote,
   shouldReconcileVerb,
-  type ReconcileOptions,
 } from "../src/lifecycle"
-import { PACKAGE_DIR, pathsFor, type Paths } from "../src/paths"
+import { PACKAGE_DIR, type Paths, pathsFor } from "../src/paths"
 import { processStart } from "../src/proc"
 import {
   ensureService,
   readService,
-  stopService,
   type ServiceInfo,
+  stopService,
 } from "../src/servicectl"
 import {
   ensureWatcher,
   realActions,
   stopWatcher,
-  watchPathsFor,
   watcherRecord,
+  watchPathsFor,
 } from "../src/watch"
 import { FakeAgent } from "./fakes/agent"
 import { FakeQmp } from "./fakes/qmp"

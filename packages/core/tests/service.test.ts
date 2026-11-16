@@ -13,22 +13,22 @@ import { tmpdir } from "node:os"
 import { resolve } from "node:path"
 
 import { QmpChannel } from "../src/broker"
+import { buildIdentity } from "../src/identity"
 import * as monitor from "../src/monitor"
-import { PACKAGE_DIR, pathsFor, type Paths } from "../src/paths"
-import * as qga from "../src/qga"
+import { PACKAGE_DIR, type Paths, pathsFor } from "../src/paths"
 import { processStart } from "../src/proc"
 import { qemuArgs } from "../src/qemu"
+import * as qga from "../src/qga"
 import * as qmp from "../src/qmp"
-import { buildIdentity } from "../src/identity"
 import { runService, type ServiceHandle } from "../src/service"
 import {
   dropServiceRecord,
   ensureService,
   keepService,
   readService,
+  type ServiceInfo,
   serviceFreshness,
   stopService,
-  type ServiceInfo,
 } from "../src/servicectl"
 import { FakeAgent } from "./fakes/agent"
 import { FakeQmp } from "./fakes/qmp"

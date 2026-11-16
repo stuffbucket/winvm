@@ -24,47 +24,47 @@ import { parseArgs } from "../src/args"
 import * as clock from "../src/clock"
 import * as display from "../src/display"
 import {
-  RAMFB,
-  VIRTIO_GPU,
+  type DisplayConfig,
   displayFromCommandLine,
   displayPath,
+  RAMFB,
   readDisplay,
+  VIRTIO_GPU,
   writeDisplay,
-  type DisplayConfig,
 } from "../src/display"
 import * as host from "../src/host"
 import * as media from "../src/media"
 import {
   basePath,
+  type InstanceMeta,
   imageMetaPath,
   pathsFor,
   readMeta,
-  type InstanceMeta,
 } from "../src/paths"
 import * as qemu from "../src/qemu"
 import * as qga from "../src/qga"
 import * as qmp from "../src/qmp"
 import * as savecmds from "../src/savecmds"
+import {
+  cloneSave,
+  compatHash,
+  createSave,
+  currentCompat,
+  FILES,
+  isPristine,
+  loadSave,
+  type Manifest,
+  markPristine,
+  readSave,
+  saveDir,
+  savesDir,
+} from "../src/saves"
 import * as screen from "../src/screen"
 import * as servicectl from "../src/servicectl"
 import * as share from "../src/share"
 import * as shell from "../src/shell"
 import { gather } from "../src/status"
 import * as vnc from "../src/vnc"
-import {
-  FILES,
-  cloneSave,
-  compatHash,
-  createSave,
-  currentCompat,
-  isPristine,
-  loadSave,
-  markPristine,
-  readSave,
-  saveDir,
-  savesDir,
-  type Manifest,
-} from "../src/saves"
 
 const SIZED: DisplayConfig = {
   device: "virtio-gpu",

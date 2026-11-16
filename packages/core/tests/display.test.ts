@@ -5,42 +5,42 @@ import { tmpdir } from "node:os"
 import { resolve } from "node:path"
 
 import {
-  MAX_FRAMEBUFFER_BYTES,
-  MAX_HEIGHT,
-  MAX_WIDTH,
-  SizeDebouncer,
   clampSize,
   drawSize,
   guestSizeFor,
+  MAX_FRAMEBUFFER_BYTES,
+  MAX_HEIGHT,
+  MAX_WIDTH,
   parseSize,
-  scaleFor,
   type Size,
+  SizeDebouncer,
+  scaleFor,
 } from "@winvm/displayfit"
 
 import { setDesktopSizeMessage, vncAuthResponse } from "../src/desktopsize"
 import {
-  RAMFB,
-  VIRTIO_GPU,
   describeDisplay,
   displayArgs,
-  LEGACY_SIZE_BOUNDS,
   displayFromCommandLine,
+  LEGACY_SIZE_BOUNDS,
   parseDevice,
   parseDisplayConfig,
+  RAMFB,
   readDisplay,
   rejectedLegacySize,
   runningDisplay,
   sameDevice,
   sharesFolderFromCommandLine,
+  VIRTIO_GPU,
   writeDisplay,
 } from "../src/display"
-import { deviceFromCommandLine } from "../src/guestdisplay"
 import {
   type DisplayOutcome,
+  displayArgv,
   LockedDisplay,
   lockScreenUp,
 } from "../src/guestagent"
-import { displayArgv } from "../src/guestagent"
+import { deviceFromCommandLine } from "../src/guestdisplay"
 import type { Paths } from "../src/paths"
 import { compatHash, hardwareArgs } from "../src/saves"
 

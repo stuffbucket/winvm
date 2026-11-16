@@ -5,10 +5,10 @@ import { t } from "../../i18n"
 import type { Phase } from "../../model"
 import { cliError } from "../sharedfolder/folder"
 import {
-  type MachineInfo,
-  type Size,
   infoArgs,
+  type MachineInfo,
   parseMachineInfo,
+  type Size,
   sizeArgs,
 } from "./info"
 

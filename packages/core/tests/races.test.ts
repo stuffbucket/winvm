@@ -28,9 +28,9 @@ import * as host from "../src/host"
 import { withOperation } from "../src/operation"
 import {
   basePath,
+  type InstanceMeta,
   imageMetaPath,
   pathsFor,
-  type InstanceMeta,
 } from "../src/paths"
 import * as qemu from "../src/qemu"
 import * as qga from "../src/qga"

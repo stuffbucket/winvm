@@ -1,4 +1,4 @@
-import { FFIType, dlopen, ptr } from "bun:ffi"
+import { dlopen, FFIType, ptr } from "bun:ffi"
 
 import type { Paths } from "./paths"
 import * as qga from "./qga"

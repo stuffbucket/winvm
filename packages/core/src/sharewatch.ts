@@ -1,4 +1,4 @@
-import { type FSWatcher, statSync, watch as fsWatch } from "node:fs"
+import { type FSWatcher, watch as fsWatch, statSync } from "node:fs"
 import { resolve, sep } from "node:path"
 
 import { TOUCH_LIMIT } from "./guestagent"

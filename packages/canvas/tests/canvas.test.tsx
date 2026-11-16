@@ -1,6 +1,6 @@
-import type { JSX } from "react"
-import { GlobalRegistrator } from "@happy-dom/global-registrator"
 import { afterAll, afterEach, describe, expect, it, mock } from "bun:test"
+import { GlobalRegistrator } from "@happy-dom/global-registrator"
+import type { JSX } from "react"
 
 GlobalRegistrator.register()
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true })

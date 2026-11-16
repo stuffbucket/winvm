@@ -9,11 +9,11 @@ import {
 import { tmpdir } from "node:os"
 import { resolve } from "node:path"
 import {
-  RELEASE_PR_BRANCH,
+  type CommandRunner,
   dispatchReleasePrCi,
   parseRemoteHead,
+  RELEASE_PR_BRANCH,
   validateReleasePleaseTrigger,
-  type CommandRunner,
 } from "./release-please-ci.ts"
 
 const sha = (digit: string): string => digit.repeat(40)

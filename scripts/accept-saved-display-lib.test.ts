@@ -2,11 +2,11 @@ import { describe, expect, test } from "bun:test"
 import { EventEmitter } from "node:events"
 
 import {
-  SOCKET_PATH_LIMIT,
   exitOnSignals,
   finish,
   once,
   runtimePin,
+  SOCKET_PATH_LIMIT,
   signalExitCode,
   socketPathProblem,
 } from "./accept-saved-display-lib.ts"

@@ -1,9 +1,8 @@
 import { existsSync } from "node:fs"
-
-import { capture } from "./shell"
-import { runtimeBin } from "./runtime"
 import type { Paths } from "./paths"
 import * as qmp from "./qmp"
+import { runtimeBin } from "./runtime"
+import { capture } from "./shell"
 
 export const DEFAULT_TAG = "fresh"
 

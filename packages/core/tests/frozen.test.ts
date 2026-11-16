@@ -1,3 +1,4 @@
+import { afterAll, afterEach, beforeAll, describe, expect, it } from "bun:test"
 import {
   existsSync,
   mkdirSync,
@@ -8,20 +9,18 @@ import {
 import { createServer, type Server } from "node:net"
 import { resolve } from "node:path"
 
-import { afterAll, afterEach, beforeAll, describe, expect, it } from "bun:test"
-
 import * as agent from "../src/agent"
 import { parseArgs } from "../src/args"
-import { stopWith, type StopCommandSeams } from "../src/commands"
+import { type StopCommandSeams, stopWith } from "../src/commands"
 import { configPath, parseAssignment, writeAssignments } from "../src/config"
 import { filesCmd } from "../src/finder"
 import {
-  GuestFrozen,
+  clearAsleep,
   frozenFrom,
   frozenState,
+  GuestFrozen,
   isFrozenRunState,
   markAsleep,
-  clearAsleep,
   markedAsleep,
   refuseFrozen,
 } from "../src/frozen"
@@ -30,8 +29,8 @@ import {
   savingRunning,
   withOperation,
 } from "../src/operation"
-import { processStart } from "../src/proc"
 import { pathsFor } from "../src/paths"
+import { processStart } from "../src/proc"
 import { deriveState, gather } from "../src/status"
 import { FakeQmp } from "./fakes/qmp"
 

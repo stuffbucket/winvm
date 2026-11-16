@@ -1,15 +1,4 @@
 import {
-  existsSync,
-  mkdirSync,
-  mkdtempSync,
-  readFileSync,
-  readdirSync,
-  rmSync,
-  writeFileSync,
-} from "node:fs"
-import { resolve } from "node:path"
-
-import {
   afterAll,
   afterEach,
   beforeAll,
@@ -18,13 +7,22 @@ import {
   expect,
   it,
 } from "bun:test"
-
-import { parseArgs } from "../src/args"
-import type { Args } from "../src/args"
-import { pathsFor } from "../src/paths"
 import {
-  InstanceBusy,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs"
+import { resolve } from "node:path"
+import type { Args } from "../src/args"
+import { parseArgs } from "../src/args"
+import type { LeaseOperation, VmOperation } from "../src/operation"
+import {
   clearSavingRunning,
+  InstanceBusy,
   leaseHolder,
   markSavingRunning,
   operationFor,
@@ -32,7 +30,7 @@ import {
   savingRunning,
   withOperation,
 } from "../src/operation"
-import type { LeaseOperation, VmOperation } from "../src/operation"
+import { pathsFor } from "../src/paths"
 import { isSameProcess, processStart } from "../src/proc"
 
 const NAME = "op-test"

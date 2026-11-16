@@ -1,17 +1,16 @@
-import { useEffect, useRef, useState, type JSX } from "react"
-
 import { SpatialCanvasSidePanel } from "@winvm/canvas"
+import { type JSX, useEffect, useRef, useState } from "react"
 
 import { Button } from "../../components/Button"
 import { t } from "../../i18n"
 import { formatSize, type SaveNotes } from "../../model"
+import { kindLabel, Picture, takenAt } from "./CheckpointCard"
 import {
   type Checkpoint,
   deleteBlocked,
   incompatibleReason,
   shownName,
 } from "./checkpoints"
-import { kindLabel, Picture, takenAt } from "./CheckpointCard"
 
 export interface NoteDraft {
   readonly title: string

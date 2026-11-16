@@ -1,3 +1,4 @@
+import { afterAll, beforeAll, describe, expect, it, spyOn } from "bun:test"
 import {
   chmodSync,
   mkdirSync,
@@ -14,15 +15,13 @@ import {
 import { tmpdir } from "node:os"
 import { resolve } from "node:path"
 
-import { afterAll, beforeAll, describe, expect, it, spyOn } from "bun:test"
-
 import { AgentClient, AgentError } from "../src/agent"
 import {
-  TIMED_OUT,
   destination,
   execResult,
   execTimeoutMs,
   formatListing,
+  TIMED_OUT,
 } from "../src/agentcmds"
 import {
   ensureState,
@@ -31,13 +30,12 @@ import {
   readState,
 } from "../src/agentfwd"
 import { parseArgs } from "../src/args"
-import type { Paths } from "../src/paths"
 import {
   AGENT_VERSION,
   CPU_WINDOW_MS,
   CpuMeter,
-  DisplayHost,
   cpuTimes,
+  DisplayHost,
   isWithin,
   launcherArgv,
   normalizeDir,
@@ -48,6 +46,7 @@ import {
   recycleScript,
   startAgent,
 } from "../src/guestagent"
+import type { Paths } from "../src/paths"
 
 let dir: string
 let tokenFile: string

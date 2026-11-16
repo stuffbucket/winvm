@@ -1,29 +1,29 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test"
+import { spawnSync } from "node:child_process"
 import { createHash } from "node:crypto"
 import {
   chmodSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
-  readFileSync,
   readdirSync,
+  readFileSync,
   rmSync,
   writeFileSync,
 } from "node:fs"
 import { tmpdir } from "node:os"
 import { resolve } from "node:path"
-import { spawnSync } from "node:child_process"
 
 import {
-  RuntimeMissing,
   currentQemuCompat,
   ensureRuntime,
   findRuntime,
   qemuCompat,
+  type RuntimeManifest,
+  RuntimeMissing,
+  type RuntimePin,
   runtimeBin,
   verifyRuntime,
-  type RuntimeManifest,
-  type RuntimePin,
 } from "../src/runtime"
 
 let tmp = ""

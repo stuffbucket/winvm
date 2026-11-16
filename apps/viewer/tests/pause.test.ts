@@ -1,13 +1,6 @@
 import { describe, expect, it } from "bun:test"
 
 import type { Output } from "../ui/src/backend"
-import {
-  controls,
-  isFrozen,
-  isLivePhase,
-  type Phase,
-  terminalBlocked,
-} from "../ui/src/model"
 import { HeldSizes, keyVerdict } from "../ui/src/features/screen/held"
 import {
   DEFAULT_SETTINGS,
@@ -19,9 +12,16 @@ import {
 import { pauseMenu } from "../ui/src/features/winvm/pauseMenu"
 import {
   phaseAfter,
-  shownPhase,
   StatusGuard,
+  shownPhase,
 } from "../ui/src/features/winvm/statusGuard"
+import {
+  controls,
+  isFrozen,
+  isLivePhase,
+  type Phase,
+  terminalBlocked,
+} from "../ui/src/model"
 
 describe("running, paused and asleep", () => {
   it("are all live, and only paused and asleep are held", () => {

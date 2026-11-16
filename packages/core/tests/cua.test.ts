@@ -1,11 +1,10 @@
-import { inflateSync } from "node:zlib"
-
 import { describe, expect, it } from "bun:test"
-
+import { inflateSync } from "node:zlib"
+import type { Rgb } from "../src/cua"
 import {
   ACTIONS,
-  DEFAULT_BOX,
   crop,
+  DEFAULT_BOX,
   encodePng,
   fitScale,
   isAction,
@@ -20,10 +19,9 @@ import {
   toModel,
   toNative,
 } from "../src/cua"
-import type { Rgb } from "../src/cua"
 import {
-  EXTRA_TOOLS,
   authorized,
+  EXTRA_TOOLS,
   parseSize,
   selectorFrom,
   systemPrompt,

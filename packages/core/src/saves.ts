@@ -3,8 +3,8 @@ import { createHash } from "node:crypto"
 import {
   existsSync,
   mkdirSync,
-  readFileSync,
   readdirSync,
+  readFileSync,
   renameSync,
   rmSync,
   statSync,
@@ -16,26 +16,30 @@ import type { Size } from "./cua"
 import { encodePng, fitScale, parsePpm, resize, scaled } from "./cua"
 import type { DisplayConfig } from "./display"
 import {
-  LEGACY_SIZE_BOUNDS,
-  RAMFB,
-  VIRTIO_GPU,
   displayArgs,
   displayFromCommandLine,
+  LEGACY_SIZE_BOUNDS,
   parseDisplayConfig,
+  RAMFB,
   readDisplay,
   rejectedLegacySize,
   runningCommand,
   sameDevice,
   sharesFolderFromCommandLine,
+  VIRTIO_GPU,
 } from "./display"
+import * as finder from "./finder"
 import type { Hardware } from "./hardware"
-import { LEGACY, hardwareFrom, readHardware, runningHardware } from "./hardware"
+import { hardwareFrom, LEGACY, readHardware, runningHardware } from "./hardware"
 import { requireFirmware } from "./host"
-import { currentQemuCompat, runtimeBin } from "./runtime"
-import { capture } from "./shell"
 import { ensureInstance } from "./instance"
 import type { Note } from "./notes"
 import { copyNote, readNote, removeNote, removeNotes } from "./notes"
+import {
+  clearSavingRunning,
+  markSavingRunning,
+  withOperation,
+} from "./operation"
 import type { InstanceMeta, Paths } from "./paths"
 import {
   basePath,
@@ -48,13 +52,9 @@ import {
 } from "./paths"
 import * as qemu from "./qemu"
 import * as qmp from "./qmp"
+import { currentQemuCompat, runtimeBin } from "./runtime"
 import { nameError } from "./savename"
-import * as finder from "./finder"
-import {
-  clearSavingRunning,
-  markSavingRunning,
-  withOperation,
-} from "./operation"
+import { capture } from "./shell"
 import { instanceOf } from "./smbstate"
 
 export const SAVE_KINDS = [

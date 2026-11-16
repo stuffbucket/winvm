@@ -1,25 +1,24 @@
 import { useEffect, useRef, useState } from "react"
-
-import type { TerminalSplitDirection } from "./pane.js"
-
-import {
-  createTerminalEmulator,
-  type GhosttyWindowAdjustment,
-  type TerminalTypography,
-  type TerminalEmulator,
-  type TerminalEmulatorKind,
-  type TerminalTheme,
-} from "./emulator.js"
-import type {
-  DetachableTerminalTransport,
-  TerminalDescriptor,
-  TerminalTransport,
-} from "./transport.js"
 import {
   animationFrameScheduler,
   TerminalAcknowledgements,
   TerminalResizes,
 } from "./ack.js"
+
+import {
+  createTerminalEmulator,
+  type GhosttyWindowAdjustment,
+  type TerminalEmulator,
+  type TerminalEmulatorKind,
+  type TerminalTheme,
+  type TerminalTypography,
+} from "./emulator.js"
+import type { TerminalSplitDirection } from "./pane.js"
+import type {
+  DetachableTerminalTransport,
+  TerminalDescriptor,
+  TerminalTransport,
+} from "./transport.js"
 
 export type TerminalHost = HTMLDivElement & { __terminal?: TerminalEmulator }
 

@@ -15,10 +15,10 @@ import { AgentClient, AgentError } from "../src/agent"
 import { forwardedPorts, hostfwdRule } from "../src/agentfwd"
 import type { Sys } from "../src/finder"
 import {
-  EAUTH,
   afterUp,
   beforeDown,
   cleanStale,
+  EAUTH,
   mountShares,
   staleMounts,
   status,
@@ -34,7 +34,6 @@ import {
 import { pathsFor } from "../src/paths"
 import type { MountEntry, SmbState } from "../src/smbstate"
 import {
-  SHARES,
   ensureSmb,
   findOurMount,
   isOurMount,
@@ -43,6 +42,7 @@ import {
   parseMountTable,
   parseSmb,
   readSmb,
+  SHARES,
   shareFor,
   smbPath,
   withMounted,

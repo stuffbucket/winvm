@@ -3,7 +3,6 @@ import { afterAll, beforeAll, describe, expect, it } from "bun:test"
 import type { TerminalEvent } from "@winvm/terminal"
 
 import { errorMessage, terminalEndpoint } from "../ui/src/backend"
-import en from "../ui/src/i18n/en.json"
 import {
   connectArgs,
   defaultShell,
@@ -15,11 +14,11 @@ import {
   parseEndpoint,
   parseInstalled,
   runnable,
+  START_IN,
   shellCache,
   shellMenu,
   shellsArgs,
   shellTitle,
-  START_IN,
 } from "../ui/src/features/terminal/shells"
 import {
   createSocketTransport,
@@ -28,10 +27,11 @@ import {
 } from "../ui/src/features/terminal/socket"
 import {
   noTabs,
-  tabName,
   type Tabs,
+  tabName,
   tabsReducer,
 } from "../ui/src/features/terminal/tabs"
+import en from "../ui/src/i18n/en.json"
 import { copy } from "./copy"
 import { type FakeTermServer, startFakeTermServer } from "./fake-term-server"
 import { rejectLikeTauri } from "./reject-like-tauri"

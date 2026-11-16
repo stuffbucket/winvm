@@ -1,43 +1,43 @@
 #!/usr/bin/env bun
+import * as agentcmds from "@winvm/core/agentcmds"
 import { instanceName, parseArgs } from "@winvm/core/args"
-import {
-  bunVersionWarning,
-  listInstances,
-  pinnedBunVersion,
-  recordCliEntry,
-} from "@winvm/core/paths"
+import * as commands from "@winvm/core/commands"
+import * as cuacmds from "@winvm/core/cuacmds"
+import * as finder from "@winvm/core/finder"
+import * as goldens from "@winvm/core/golden"
 import {
   ManagementError,
   reconcileManagement,
   reconcileNote,
   shouldReconcileVerb,
 } from "@winvm/core/lifecycle"
+import * as machineinfo from "@winvm/core/machineinfo"
+import * as mcpcmds from "@winvm/core/mcpcmds"
+import * as ocr from "@winvm/core/ocr"
 import {
   InstanceBusy,
   operationFor,
   withOperation,
 } from "@winvm/core/operation"
-import * as agentcmds from "@winvm/core/agentcmds"
-import * as termcmds from "@winvm/core/termcmds"
-import * as uicmds from "@winvm/core/uicmds"
-import * as commands from "@winvm/core/commands"
-import * as cuacmds from "@winvm/core/cuacmds"
-import * as finder from "@winvm/core/finder"
-import * as mcpcmds from "@winvm/core/mcpcmds"
-import * as goldens from "@winvm/core/golden"
-import * as machineinfo from "@winvm/core/machineinfo"
-import * as ocr from "@winvm/core/ocr"
+import {
+  bunVersionWarning,
+  listInstances,
+  pinnedBunVersion,
+  recordCliEntry,
+} from "@winvm/core/paths"
 import * as runcmds from "@winvm/core/runcmds"
 import * as savecmds from "@winvm/core/savecmds"
-import * as sharecmds from "@winvm/core/sharecmds"
 import * as screen from "@winvm/core/screen"
 import * as service from "@winvm/core/service"
 import * as settings from "@winvm/core/settings"
+import * as sharecmds from "@winvm/core/sharecmds"
 import * as status from "@winvm/core/status"
-import * as web from "@winvm/core/web"
-import * as webview from "@winvm/core/webview"
+import * as termcmds from "@winvm/core/termcmds"
 import * as timemachine from "@winvm/core/timemachine"
 import * as toasts from "@winvm/core/toasts"
+import * as uicmds from "@winvm/core/uicmds"
+import * as web from "@winvm/core/web"
+import * as webview from "@winvm/core/webview"
 
 recordCliEntry(import.meta.path)
 const bunWarning = bunVersionWarning(Bun.version, pinnedBunVersion())

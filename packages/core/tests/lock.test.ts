@@ -1,8 +1,7 @@
+import { afterAll, describe, expect, it } from "bun:test"
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { resolve } from "node:path"
-
-import { afterAll, describe, expect, it } from "bun:test"
 
 import type { Proc, PwshResponse } from "../src/guestagent"
 import {
@@ -12,10 +11,10 @@ import {
   lockWindows,
 } from "../src/lock"
 import {
-  SETTING_DEFAULTS,
   parseSetting,
   readSection,
   readSettings,
+  SETTING_DEFAULTS,
   sectionError,
   settingsPath,
   writeSection,

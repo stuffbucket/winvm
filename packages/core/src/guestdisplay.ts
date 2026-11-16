@@ -1,12 +1,12 @@
 import type { Size } from "@winvm/displayfit"
 
 import * as agent from "./agent"
-import { requestDesktopSize, RESIZE_STATUS } from "./desktopsize"
+import { RESIZE_STATUS, requestDesktopSize } from "./desktopsize"
 import { displayFromCommandLine, runningDisplay } from "./display"
+import { screenSize } from "./input"
 import { withQmp } from "./monitor"
 import type { InstanceMeta, Paths } from "./paths"
 import * as qemu from "./qemu"
-import { screenSize } from "./input"
 import { passwordFor, vncPort } from "./vnc"
 
 export function liveDevice(p: Paths): string | null {

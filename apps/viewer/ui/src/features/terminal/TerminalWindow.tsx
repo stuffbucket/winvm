@@ -1,14 +1,13 @@
+import { TerminalView, terminalProcessTitle } from "@winvm/terminal"
 import {
+  type JSX,
   useCallback,
   useEffect,
   useMemo,
   useReducer,
   useRef,
   useState,
-  type JSX,
 } from "react"
-
-import { TerminalView, terminalProcessTitle } from "@winvm/terminal"
 
 import {
   closeWindow,
@@ -25,9 +24,9 @@ import {
   terminalEndpoint,
 } from "../../backend"
 import { Button } from "../../components/Button"
+import { cx } from "../../components/cx"
 import { Icon } from "../../components/Icon"
 import { InlineRename } from "../../components/InlineRename"
-import { cx } from "../../components/cx"
 import { t } from "../../i18n"
 import { TITLE_MAX } from "../../model"
 import { terminalTheme, terminalTypography, useDark } from "./appearance"
@@ -45,8 +44,8 @@ import {
   activeTab,
   noTabs,
   type Tab,
-  tabName,
   type TabState,
+  tabName,
   tabsReducer,
 } from "./tabs"
 

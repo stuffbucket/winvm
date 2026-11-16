@@ -1,14 +1,4 @@
 import {
-  type PointerEvent,
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-  type JSX,
-} from "react"
-
-import {
   type Camera,
   CanvasGlyph,
   CanvasIconButton,
@@ -21,6 +11,7 @@ import {
   fitRect,
   GLYPHS,
   type Rect,
+  rectsIntersect,
   type Size,
   SpatialCanvas,
   SpatialCanvasCorner,
@@ -30,17 +21,25 @@ import {
   SpatialCanvasScene,
   SpatialCanvasSearchResult,
   SpatialCanvasSearchResults,
-  type SpatialCanvasSurfacePhase,
   SpatialCanvasSurface,
+  type SpatialCanvasSurfacePhase,
   SpatialCanvasTopBar,
   SpatialCanvasViewport,
   SpatialCanvasZoomControls,
-  rectsIntersect,
   useCanvasCamera,
   visibleWorld,
   wheelZoomFactor,
   zoomAround,
 } from "@winvm/canvas"
+import {
+  type JSX,
+  type PointerEvent,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react"
 
 import { outputText, winvm } from "../../backend"
 import { Button } from "../../components/Button"
@@ -48,9 +47,11 @@ import { ConfirmDialog } from "../../components/ConfirmDialog"
 import { t } from "../../i18n"
 import { type Phase, parseNote, parseSaves } from "../../model"
 import type { Ran } from "../winvm/useWinvm"
+import { CheckpointCard, MONITOR, Picture, takenAt } from "./CheckpointCard"
+import { CheckpointDetails, type NoteDraft, tagsOf } from "./CheckpointDetails"
 import {
-  type Checkpoint,
   type CardBox,
+  type Checkpoint,
   DAY_GAP,
   dayKey,
   dayNearest,
@@ -71,8 +72,6 @@ import {
   union,
   withLabel,
 } from "./checkpoints"
-import { CheckpointCard, MONITOR, Picture, takenAt } from "./CheckpointCard"
-import { CheckpointDetails, type NoteDraft, tagsOf } from "./CheckpointDetails"
 import { LiveFrame } from "./LiveFrame"
 import { forgetPictures } from "./pictures"
 import {

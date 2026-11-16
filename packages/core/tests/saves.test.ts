@@ -1,6 +1,7 @@
 import { describe, expect, it } from "bun:test"
 
 import { formatOffset, parseGuestTz } from "../src/clock"
+import { nameError } from "../src/savename"
 import {
   baseIdentity,
   compatDiff,
@@ -14,10 +15,9 @@ import {
   ramFileFor,
   ramFormatOf,
   savesReport,
-  thumbSize,
   shQuote,
+  thumbSize,
 } from "../src/saves"
-import { nameError } from "../src/savename"
 
 describe("save names", () => {
   it("accepts ordinary names and the default timestamp", () => {

@@ -1,4 +1,4 @@
-import { dlopen, FFIType, ptr, type Pointer } from "bun:ffi"
+import { dlopen, FFIType, type Pointer, ptr } from "bun:ffi"
 
 const CF = "/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation"
 const NETFS = "/System/Library/Frameworks/NetFS.framework/NetFS"

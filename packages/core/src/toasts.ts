@@ -1,7 +1,7 @@
+import { Database } from "bun:sqlite"
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { resolve } from "node:path"
-import { Database } from "bun:sqlite"
 
 import * as agent from "./agent"
 import { AgentError } from "./agent"

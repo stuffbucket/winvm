@@ -3,9 +3,9 @@ import { existsSync, readFileSync } from "node:fs"
 import { resolve } from "node:path"
 import { agentBunVersion } from "../src/media"
 import {
-  PACKAGE_DIR,
   bunVersionWarning,
   cliEntry,
+  PACKAGE_DIR,
   pinnedBunVersion,
   recordCliEntry,
 } from "../src/paths"

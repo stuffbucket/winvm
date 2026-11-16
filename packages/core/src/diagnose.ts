@@ -1,12 +1,12 @@
-import { existsSync, readFileSync, readdirSync, statSync } from "node:fs"
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs"
 import { resolve } from "node:path"
 
 import { readResult } from "./media"
 import {
-  PACKAGE_DIR,
   basePath,
   imageMetaPath,
   instancesDir,
+  PACKAGE_DIR,
   pathsFor,
   readImageMeta,
   readMeta,

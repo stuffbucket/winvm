@@ -1,18 +1,17 @@
+import { afterAll, beforeAll, describe, expect, it } from "bun:test"
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { resolve } from "node:path"
-
-import { afterAll, beforeAll, describe, expect, it } from "bun:test"
 
 import { AgentClient } from "../src/agent"
 import { parseArgs } from "../src/args"
 import { startAgent } from "../src/guestagent"
 import {
+  formatElement,
+  formatTree,
   UI_HELPER_VERSION,
   Ui,
   UiError,
-  formatElement,
-  formatTree,
 } from "../src/ui"
 import { selectorFrom } from "../src/uicmds"
 

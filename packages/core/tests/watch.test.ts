@@ -1,4 +1,13 @@
 import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+} from "bun:test"
+import {
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -10,28 +19,18 @@ import { tmpdir } from "node:os"
 import { resolve } from "node:path"
 
 import {
-  afterAll,
-  afterEach,
-  beforeAll,
-  beforeEach,
-  describe,
-  expect,
-  it,
-} from "bun:test"
-
-import {
   CLOSE_POLICIES,
-  DEFAULTS,
   configPath,
+  DEFAULTS,
   effectiveConfig,
   parseAssignment,
   readOverrides,
   writeAssignments,
 } from "../src/config"
 import { buildIdentity } from "../src/identity"
-import { PACKAGE_DIR, instanceDir, pathsFor } from "../src/paths"
 import type { Decision, Sample, Settings, Timing } from "../src/idle"
-import { IdleMachine, autosaveName, savesToRotate } from "../src/idle"
+import { autosaveName, IdleMachine, savesToRotate } from "../src/idle"
+import { instanceDir, PACKAGE_DIR, pathsFor } from "../src/paths"
 import {
   ensureWatcher,
   parseCpuTime,

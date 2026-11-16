@@ -1,9 +1,9 @@
 import { describe, expect, it } from "bun:test"
 
 import {
-  SHELL_TERMINAL_PROPERTIES,
   createTerminalTransport,
   readTerminalTheme,
+  SHELL_TERMINAL_PROPERTIES,
   type TerminalChannels,
   type TerminalEvent,
 } from "../src/transport.js"

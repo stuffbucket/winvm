@@ -9,7 +9,7 @@ import { passwordFor, vncPort } from "@winvm/core/vnc"
 import type { Size } from "@winvm/displayfit"
 import { HeldSizes } from "@winvm/viewer/held"
 import { parseStatus, phase } from "@winvm/viewer/model"
-import { StatusGuard, type Verb, phaseAfter } from "@winvm/viewer/statusGuard"
+import { phaseAfter, StatusGuard, type Verb } from "@winvm/viewer/statusGuard"
 
 const REPO = resolve(import.meta.dir, "..", "..")
 const CLI = resolve(REPO, "apps", "cli", "src", "winvm.ts")

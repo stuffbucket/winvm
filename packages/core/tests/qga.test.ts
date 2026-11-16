@@ -1,13 +1,12 @@
+import { afterAll, beforeAll, describe, expect, it } from "bun:test"
 import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { resolve } from "node:path"
 
-import { afterAll, beforeAll, describe, expect, it } from "bun:test"
-
 import {
-  READ_CHUNK,
   call,
   loggedOnUser,
+  READ_CHUNK,
   readFile,
   untilNewBoot,
   untilReady,

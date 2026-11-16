@@ -1,3 +1,4 @@
+import { afterAll, beforeAll, describe, expect, it } from "bun:test"
 import {
   existsSync,
   mkdirSync,
@@ -5,8 +6,6 @@ import {
   rmSync,
   writeFileSync,
 } from "node:fs"
-
-import { afterAll, beforeAll, describe, expect, it } from "bun:test"
 
 import { pathsFor } from "../src/paths"
 import { isRunning, pidOf } from "../src/qemu"

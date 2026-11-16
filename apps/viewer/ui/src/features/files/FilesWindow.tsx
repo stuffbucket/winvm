@@ -1,4 +1,5 @@
 import {
+  type JSX,
   type KeyboardEvent,
   type MouseEvent,
   type PointerEvent,
@@ -7,10 +8,10 @@ import {
   useMemo,
   useRef,
   useState,
-  type JSX,
 } from "react"
 
 import {
+  type Action,
   copyText,
   dragOut,
   GUEST_FOLDERS_IN_FINDER,
@@ -25,7 +26,6 @@ import {
   revealInFinder,
   setWindowTitle,
   showWindow,
-  type Action,
 } from "../../backend"
 import { Button } from "../../components/Button"
 import { Callout } from "../../components/Callout"

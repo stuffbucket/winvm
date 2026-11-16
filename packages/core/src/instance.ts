@@ -12,11 +12,11 @@ import { VIRTIO_GPU, writeDisplay } from "./display"
 import type { Hardware } from "./hardware"
 import { NEW_DEFAULT, writeHardware } from "./hardware"
 import { requireFirmware } from "./host"
-import { runtimeBin } from "./runtime"
-import { run } from "./shell"
 import { makeResultVolume } from "./media"
 import type { InstanceMeta, Paths } from "./paths"
 import { allocateVnc, basePath, pathsFor, readMeta } from "./paths"
+import { runtimeBin } from "./runtime"
+import { run } from "./shell"
 
 export function makeVars(dest: string): void {
   rmSync(dest, { force: true })

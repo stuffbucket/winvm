@@ -16,11 +16,11 @@ import { extname, resolve, sep } from "node:path"
 import type { Args } from "./args"
 import * as input from "./input"
 import {
-  PACKAGE_DIR,
   cliArgv,
   cliEntry,
   home,
   listInstances,
+  PACKAGE_DIR,
   pathsFor,
   readMeta,
 } from "./paths"

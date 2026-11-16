@@ -1,8 +1,9 @@
+import { afterEach, beforeEach, describe, expect, it } from "bun:test"
 import {
   existsSync,
   mkdtempSync,
-  readFileSync,
   readdirSync,
+  readFileSync,
   realpathSync,
   rmSync,
   statSync,
@@ -11,8 +12,6 @@ import {
 } from "node:fs"
 import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
-
-import { afterEach, beforeEach, describe, expect, it } from "bun:test"
 
 import type { Launch, Ran } from "../src/mcpcmds"
 import {

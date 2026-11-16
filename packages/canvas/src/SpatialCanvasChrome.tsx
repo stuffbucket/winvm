@@ -1,8 +1,8 @@
 import {
-  forwardRef,
   type ComponentPropsWithoutRef,
-  type ReactNode,
+  forwardRef,
   type JSX,
+  type ReactNode,
 } from "react"
 
 export function CanvasGlyph({

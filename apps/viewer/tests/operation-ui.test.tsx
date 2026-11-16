@@ -1,8 +1,8 @@
-import type { JSX } from "react"
-import { GlobalRegistrator } from "@happy-dom/global-registrator"
 import { afterAll, afterEach, describe, expect, it, jest } from "bun:test"
 import { readFileSync } from "node:fs"
 import { resolve } from "node:path"
+import { GlobalRegistrator } from "@happy-dom/global-registrator"
+import type { JSX } from "react"
 
 GlobalRegistrator.register()
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true })

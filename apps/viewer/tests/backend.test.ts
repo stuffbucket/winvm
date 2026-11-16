@@ -4,8 +4,8 @@ import {
   errorMessage,
   isSidecarError,
   normalizeSidecarFailure,
-  type SidecarFailure,
   SidecarError,
+  type SidecarFailure,
   shareStart,
   winvm,
 } from "../ui/src/backend"

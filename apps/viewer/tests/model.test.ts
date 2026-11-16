@@ -5,7 +5,6 @@ import { VM_OPERATIONS as CORE_VM_OPERATIONS } from "@winvm/core/operation"
 
 import {
   CLOSE_POLICIES,
-  VM_OPERATIONS,
   closePolicyAssignment,
   controls,
   detailRows,
@@ -23,6 +22,7 @@ import {
   startSteps,
   terminalBlocked,
   titleAssignment,
+  VM_OPERATIONS,
 } from "../ui/src/model"
 
 const base = {

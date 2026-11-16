@@ -8,8 +8,8 @@ import {
 import { resolve } from "node:path"
 import { gunzipSync } from "node:zlib"
 
-import { PACKAGE_DIR, home } from "./paths"
-import { findRuntime, runtimeBin, verifyRuntime, type Runtime } from "./runtime"
+import { home, PACKAGE_DIR } from "./paths"
+import { findRuntime, type Runtime, runtimeBin, verifyRuntime } from "./runtime"
 import { capture, have, spawnText } from "./shell"
 
 let dataDirs: {

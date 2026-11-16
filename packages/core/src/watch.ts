@@ -17,22 +17,22 @@ import { formatOffset, measureOffset, syncGuestClock } from "./clock"
 import type { InstanceConfig } from "./config"
 import { effectiveConfig } from "./config"
 import * as finder from "./finder"
+import { isFrozenRunState } from "./frozen"
+import { buildIdentity } from "./identity"
 import type { Decision, SaveInfo, Settings, Timing } from "./idle"
 import {
+  autosaveName,
   DEFAULT_TIMING,
   DRIFT_TOLERANCE_MS,
   IdleMachine,
-  autosaveName,
   savesToRotate,
 } from "./idle"
-import { isFrozenRunState } from "./frozen"
 import {
   AUTOMATIC_ENV,
   InstanceBusy,
   leaseHolder,
   withOperation,
 } from "./operation"
-import { buildIdentity } from "./identity"
 import type { Paths } from "./paths"
 import { cliArgv, instanceDir, managedEnv, pathsFor } from "./paths"
 import * as qemu from "./qemu"

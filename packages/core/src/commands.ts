@@ -7,7 +7,8 @@ import {
   writeFileSync,
 } from "node:fs"
 import { resolve } from "node:path"
-
+import * as agent from "./agent"
+import * as agentcmds from "./agentcmds"
 import type { Args } from "./args"
 import {
   imageName,
@@ -16,26 +17,40 @@ import {
   isValidInstanceName,
 } from "./args"
 import {
-  PWSH_SHA256,
-  PWSH_URL,
-  TOOLS_SHA256,
-  TOOLS_URL,
-  checksReport,
-  hostChecks,
-  printChecks,
-  requireHost,
-} from "./host"
+  CONFIG_KEYS,
+  DEFAULTS,
+  effectiveConfig,
+  parseAssignment,
+  readOverrides,
+  writeAssignments,
+} from "./config"
 import { diagnose, formatFindings } from "./diagnose"
 import { runningCommand } from "./display"
-import { ensureInstance, makeVars, resetInstance, sealBase } from "./instance"
+import * as finder from "./finder"
+import * as frozen from "./frozen"
 import {
-  ISO_SOURCE,
+  checksReport,
+  hostChecks,
+  PWSH_SHA256,
+  PWSH_URL,
+  printChecks,
+  requireHost,
+  TOOLS_SHA256,
+  TOOLS_URL,
+} from "./host"
+import * as input from "./input"
+import { ensureInstance, makeVars, resetInstance, sealBase } from "./instance"
+import { ManagementError, reconcileManagement } from "./lifecycle"
+import * as machineinfo from "./machineinfo"
+import {
   buildSeed,
   checkIsoIsArm64,
+  ISO_SOURCE,
   makeResultVolume,
   readResult,
   resolveWindowsIso,
 } from "./media"
+import { leaseHolder } from "./operation"
 import type { InstanceMeta, Paths } from "./paths"
 import {
   allocateVnc,
@@ -47,41 +62,25 @@ import {
   listImages,
   listInstances,
   media,
-  newImageMeta,
   mediaDir,
+  newImageMeta,
   pathsFor,
   readImageMeta,
   readMeta,
 } from "./paths"
-import * as agent from "./agent"
-import * as agentcmds from "./agentcmds"
-import * as finder from "./finder"
-import * as frozen from "./frozen"
-import * as input from "./input"
 import * as qemu from "./qemu"
-import * as qmp from "./qmp"
 import * as qga from "./qga"
-import * as saves from "./saves"
-import * as savecmds from "./savecmds"
-import * as snapshot from "./snapshot"
-import * as timemachine from "./timemachine"
-import { ManagementError, reconcileManagement } from "./lifecycle"
-import { leaseHolder } from "./operation"
-import { stopService } from "./servicectl"
+import * as qmp from "./qmp"
 import { ensureRuntime, findRuntime, runtimeBin } from "./runtime"
+import * as savecmds from "./savecmds"
+import * as saves from "./saves"
+import { stopService } from "./servicectl"
 import * as share from "./share"
 import { ensureShareMedia } from "./sharemedia"
 import { download, du, run, sha256Of } from "./shell"
+import * as snapshot from "./snapshot"
+import * as timemachine from "./timemachine"
 import * as watcher from "./watch"
-import {
-  CONFIG_KEYS,
-  DEFAULTS,
-  effectiveConfig,
-  parseAssignment,
-  readOverrides,
-  writeAssignments,
-} from "./config"
-import * as machineinfo from "./machineinfo"
 
 const virtioBootFor = (meta: InstanceMeta): boolean =>
   readImageMeta(meta.image)?.virtioBoot === true

@@ -12,7 +12,7 @@ import { effectiveConfig } from "./config"
 import { linkNew, takeOver } from "./exclusive"
 import { buildIdentity } from "./identity"
 import { InstanceBusy, leaseHolder, withOperation } from "./operation"
-import { NO_RECONCILE, cliEntry, pathsFor, type Paths } from "./paths"
+import { cliEntry, NO_RECONCILE, type Paths, pathsFor } from "./paths"
 import { isSameProcess, ownStart } from "./proc"
 import { pidOf as qemuPid } from "./qemu"
 import { ensureService, readService, type ServiceInfo } from "./servicectl"
@@ -20,10 +20,10 @@ import {
   ensureWatcher,
   readWatchState,
   stopWatcher,
-  watchPathsFor,
+  type WatcherRecord,
   watcherFreshness,
   watcherRecord,
-  type WatcherRecord,
+  watchPathsFor,
 } from "./watch"
 
 export type ManagementFailureKind =

@@ -1,8 +1,7 @@
+import { afterAll, beforeAll, describe, expect, it } from "bun:test"
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { resolve } from "node:path"
-
-import { afterAll, beforeAll, describe, expect, it } from "bun:test"
 
 import { parseArgs } from "../src/args"
 import {

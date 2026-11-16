@@ -7,13 +7,12 @@ import { ensureSmbForward } from "./agentfwd"
 import type { Args } from "./args"
 import { instanceName } from "./args"
 import { refuseFrozen } from "./frozen"
-import { cliArgv, pathsFor, readMeta } from "./paths"
 import { netfsMount } from "./netfs"
+import { cliArgv, pathsFor, readMeta } from "./paths"
 import * as qemu from "./qemu"
+import { spawnText } from "./shell"
 import type { MountEntry, ShareKey, SmbState } from "./smbstate"
 import {
-  SHARES,
-  SHARE_KEYS,
   ensureSmb,
   findOurMount,
   instanceMountDir,
@@ -21,11 +20,12 @@ import {
   mountDir,
   parseMountTable,
   readSmb,
+  SHARE_KEYS,
+  SHARES,
   shareFor,
   withMounted,
   writeSmb,
 } from "./smbstate"
-import { spawnText } from "./shell"
 
 const errMsg = (e: unknown): string =>
   e instanceof Error ? e.message : String(e)

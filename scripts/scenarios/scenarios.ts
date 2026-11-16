@@ -15,13 +15,13 @@ import {
 
 import {
   AppPoller,
-  Scenario,
-  type Status,
   heldThroughout,
   json,
   must,
   path,
   pngSize,
+  Scenario,
+  type Status,
   sleep,
   smbMounts,
   virtiofsds,

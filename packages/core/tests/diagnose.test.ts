@@ -1,15 +1,14 @@
+import { afterAll, describe, expect, it } from "bun:test"
 import { spawnSync } from "node:child_process"
 import {
   existsSync,
   mkdtempSync,
-  readFileSync,
   readdirSync,
+  readFileSync,
   rmSync,
 } from "node:fs"
 import { tmpdir } from "node:os"
 import { resolve } from "node:path"
-
-import { afterAll, describe, expect, it } from "bun:test"
 
 import { diagnose } from "../src/diagnose"
 

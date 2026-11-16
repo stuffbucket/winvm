@@ -1,8 +1,7 @@
 // @ts-check
 import { fileURLToPath } from "node:url"
-
-import { defineConfig } from "astro/config"
 import starlight from "@astrojs/starlight"
+import { defineConfig } from "astro/config"
 
 import { docOrder, MAINTAINER_DOCS } from "./scripts/generate.mjs"
 import tableFocus from "./scripts/table-focus.mjs"

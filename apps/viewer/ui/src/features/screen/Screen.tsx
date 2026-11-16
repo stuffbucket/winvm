@@ -1,26 +1,25 @@
-import RFB from "@winvm/novnc/core/rfb.js"
+import {
+  drawSize,
+  guestSizeFor,
+  type Size,
+  sameSize,
+  scaleFor,
+} from "@winvm/displayfit"
 import * as KeyboardUtil from "@winvm/novnc/core/input/util.js"
+import RFB from "@winvm/novnc/core/rfb.js"
 import {
   forwardRef,
+  type JSX,
   useEffect,
   useImperativeHandle,
   useLayoutEffect,
   useRef,
   useState,
-  type JSX,
 } from "react"
 
-import {
-  type Size,
-  drawSize,
-  guestSizeFor,
-  sameSize,
-  scaleFor,
-} from "@winvm/displayfit"
-
 import { copyText, onLiveResize, readText, trace } from "../../backend"
-import { Icon } from "../../components/Icon"
 import { cx } from "../../components/cx"
+import { Icon } from "../../components/Icon"
 import { t } from "../../i18n"
 import type { Connection } from "../../model"
 import { ClipboardSync } from "./clipboard"
@@ -31,7 +30,7 @@ import {
   sendWindowsKey,
 } from "./keyboard"
 import { LiveResize, type ResizePhase } from "./resize"
-import { type WakeSock, keepRefreshing } from "./wake"
+import { keepRefreshing, type WakeSock } from "./wake"
 
 interface ScreenProps {
   readonly connection: Connection

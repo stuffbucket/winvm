@@ -13,7 +13,7 @@ import type { Args } from "./args"
 import { instanceName } from "./args"
 import * as input from "./input"
 import type { Paths } from "./paths"
-import { PACKAGE_DIR, home, pathsFor } from "./paths"
+import { home, PACKAGE_DIR, pathsFor } from "./paths"
 import * as qemu from "./qemu"
 
 export interface TextBox {

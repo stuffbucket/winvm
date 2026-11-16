@@ -1,7 +1,7 @@
 import type { JSX } from "react"
 import { Button } from "../../components/Button"
-import { Icon, type IconName } from "../../components/Icon"
 import { cx } from "../../components/cx"
+import { Icon, type IconName } from "../../components/Icon"
 import { t } from "../../i18n"
 import type { Phase, Status, Step } from "../../model"
 import { facts } from "../../model"

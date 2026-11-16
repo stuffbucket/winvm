@@ -1,8 +1,8 @@
 import {
+  closeSync,
   copyFileSync,
   existsSync,
   fsyncSync,
-  closeSync,
   openSync,
   readFileSync,
   realpathSync,

@@ -1,11 +1,11 @@
 import { describe, expect, it } from "bun:test"
 
 import {
+  keepRefreshing,
+  sendWake,
   WAKE_MS,
   type WakeSock,
   type WakeTimers,
-  keepRefreshing,
-  sendWake,
 } from "../ui/src/features/screen/wake"
 
 class Wire implements WakeSock {

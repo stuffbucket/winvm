@@ -2,9 +2,9 @@ import { describe, expect, it } from "bun:test"
 
 import {
   GuestKeyboardRouter,
+  type RoutedKeyEvent,
   sendCtrlAltDelete,
   sendWindowsKey,
-  type RoutedKeyEvent,
 } from "../ui/src/features/screen/keyboard"
 
 interface FakeEvent extends RoutedKeyEvent {

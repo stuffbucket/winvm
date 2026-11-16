@@ -1,12 +1,11 @@
+import { CanvasGlyph } from "@winvm/canvas"
 import {
+  type JSX,
   type KeyboardEvent,
   type PointerEvent,
   useRef,
   useState,
-  type JSX,
 } from "react"
-
-import { CanvasGlyph } from "@winvm/canvas"
 
 import { t } from "../../i18n"
 import { type Tick, tickAt } from "./checkpoints"

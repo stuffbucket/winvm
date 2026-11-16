@@ -1,6 +1,6 @@
+import * as agent from "./agent"
 import type { Args } from "./args"
 import { instanceName, parseArgs } from "./args"
-import * as agent from "./agent"
 import * as commands from "./commands"
 import { RAMFB, readDisplay, writeDisplay } from "./display"
 import type { Paths } from "./paths"
@@ -10,8 +10,8 @@ import * as qga from "./qga"
 import * as saves from "./saves"
 import * as share from "./share"
 import {
-  INSTALL_SCRIPT,
   ensureShareMedia,
+  INSTALL_SCRIPT,
   installScript,
   VIOFS_FILES,
   WINFSP_FILE,

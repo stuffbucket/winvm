@@ -4,8 +4,8 @@ import { resolve } from "node:path"
 import { deflateSync } from "node:zlib"
 
 import * as input from "./input"
-import { withQmp } from "./monitor"
 import type { QmpSend } from "./monitor"
+import { withQmp } from "./monitor"
 import type { Paths } from "./paths"
 
 export interface Size {

@@ -1,5 +1,5 @@
-import { GlobalRegistrator } from "@happy-dom/global-registrator"
 import { afterAll, afterEach, describe, expect, it, jest } from "bun:test"
+import { GlobalRegistrator } from "@happy-dom/global-registrator"
 
 import { rejectLikeTauri } from "./reject-like-tauri"
 

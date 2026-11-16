@@ -6,7 +6,7 @@ import { resolve } from "node:path"
 import { GUEST_PORT } from "./guestagent"
 import type { Paths } from "./paths"
 import * as qmp from "./qmp"
-import { SMB_GUEST_PORT, readSmb, writeSmb } from "./smbstate"
+import { readSmb, SMB_GUEST_PORT, writeSmb } from "./smbstate"
 
 export interface AgentState {
   readonly token: string

@@ -1,5 +1,6 @@
 import { spawnSync } from "node:child_process"
-
+import type { Args } from "./args"
+import { instanceName } from "./args"
 import { GUEST_PORT } from "./guestagent"
 import type { Hardware, Limits } from "./hardware"
 import {
@@ -12,15 +13,13 @@ import {
   sameHardware,
   writeHardware,
 } from "./hardware"
-import type { Args } from "./args"
-import { instanceName } from "./args"
-import { pathsFor, readMeta } from "./paths"
 import type { Paths } from "./paths"
+import { pathsFor, readMeta } from "./paths"
 import * as qemu from "./qemu"
 import * as qga from "./qga"
 import * as qmp from "./qmp"
 import { runtimeBin } from "./runtime"
-import { STOW, hasSave } from "./saves"
+import { hasSave, STOW } from "./saves"
 import { SMB_GUEST_PORT } from "./smbstate"
 import { vncPort, websocketPort } from "./vnc"
 

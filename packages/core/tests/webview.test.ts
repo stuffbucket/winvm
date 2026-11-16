@@ -1,15 +1,14 @@
+import { Database } from "bun:sqlite"
+import { describe, expect, it } from "bun:test"
 import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { resolve } from "node:path"
-import { Database } from "bun:sqlite"
-import { describe, expect, it } from "bun:test"
-
-import { pickTarget } from "../src/cdp"
 import type { Target } from "../src/cdp"
+import { pickTarget } from "../src/cdp"
 import { commands, splitWords } from "../src/hoststep"
 import { JobError, parseJob } from "../src/job"
-import { centre, parseBoxes, rank } from "../src/ocr"
 import type { TextBox } from "../src/ocr"
+import { centre, parseBoxes, rank } from "../src/ocr"
 import {
   fileTimeToIso,
   filterToasts,

@@ -1,9 +1,9 @@
 import {
   closeSync,
   openSync,
+  readdirSync,
   readFileSync,
   readSync,
-  readdirSync,
   statSync,
   writeFileSync,
 } from "node:fs"

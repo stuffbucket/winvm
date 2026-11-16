@@ -1,9 +1,8 @@
 import { mkdirSync, readFileSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { dirname, resolve } from "node:path"
-
-import { withQmp } from "./monitor"
 import type { QmpSend } from "./monitor"
+import { withQmp } from "./monitor"
 import type { Paths } from "./paths"
 
 export const ABS_MAX = 0x7fff

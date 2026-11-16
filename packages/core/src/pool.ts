@@ -4,11 +4,11 @@ import { dirname, resolve } from "node:path"
 
 import { ensureState, readState, writeState } from "./agentfwd"
 import type { Args } from "./args"
+import { parseDuration } from "./golden"
 import { NEW_DEFAULT } from "./hardware"
 import type { Job } from "./job"
 import { withOperation } from "./operation"
 import { home, pathsFor, readMeta } from "./paths"
-import { parseDuration } from "./golden"
 import * as qemu from "./qemu"
 import type { JobResult } from "./report"
 import {

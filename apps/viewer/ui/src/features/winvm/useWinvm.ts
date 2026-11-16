@@ -21,8 +21,8 @@ import {
 import {
   operationFor,
   phaseAfter,
-  shownPhase,
   StatusGuard,
+  shownPhase,
   type Verb,
 } from "./statusGuard"
 

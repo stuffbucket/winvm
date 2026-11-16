@@ -1,11 +1,10 @@
-import { useEffect, useState } from "react"
-
 import {
   DEFAULT_TERMINAL_PALETTE_SETTINGS,
   resolveTerminalAppearance,
   type TerminalTheme,
   type TerminalTypography,
 } from "@winvm/terminal"
+import { useEffect, useState } from "react"
 
 import { fontStacks, text, themes } from "../../styles/theme"
 

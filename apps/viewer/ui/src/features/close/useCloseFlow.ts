@@ -18,8 +18,8 @@ import {
   phase,
   shownTitle,
 } from "../../model"
-import type { ActiveOperation, Verb, Winvm } from "../winvm/useWinvm"
 import { operationFor } from "../winvm/statusGuard"
+import type { ActiveOperation, Verb, Winvm } from "../winvm/useWinvm"
 import { orderCloseQueue } from "./closeQueue"
 
 export type CloseFlowState =

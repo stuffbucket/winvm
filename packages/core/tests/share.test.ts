@@ -10,13 +10,13 @@ import {
 import { spawnSync } from "node:child_process"
 import {
   chmodSync,
+  closeSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
   openSync,
   readFileSync,
   readSync,
-  closeSync,
   rmSync,
   statSync,
   utimesSync,
@@ -29,7 +29,7 @@ import { parseArgs } from "../src/args"
 import { RAMFB, VIRTIO_GPU, writeDisplay } from "../src/display"
 import { touchPaths } from "../src/guestagent"
 import { LEGACY } from "../src/hardware"
-import { pathsFor, type InstanceMeta, type Paths } from "../src/paths"
+import { type InstanceMeta, type Paths, pathsFor } from "../src/paths"
 import { qemuArgs } from "../src/qemu"
 import {
   hardwareArgs,

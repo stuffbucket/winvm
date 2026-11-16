@@ -1,3 +1,4 @@
+import { afterEach, beforeEach, describe, expect, it } from "bun:test"
 import {
   mkdirSync,
   mkdtempSync,
@@ -7,8 +8,6 @@ import {
 } from "node:fs"
 import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
-
-import { afterEach, beforeEach, describe, expect, it } from "bun:test"
 
 import type { DirListing, ExecResponse } from "../src/agent"
 import { AgentError } from "../src/agent"
@@ -23,14 +22,14 @@ import type {
   ToolResult,
 } from "../src/mcp"
 import {
-  PROTOCOL_VERSIONS,
-  TOOLS,
-  Tools,
   clip,
   handle,
   macPath,
   normalizeKeys,
+  PROTOCOL_VERSIONS,
   shellArgv,
+  TOOLS,
+  Tools,
   whyNot,
 } from "../src/mcp"
 import type { Paths } from "../src/paths"

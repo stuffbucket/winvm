@@ -1,13 +1,12 @@
+import type { Size } from "@winvm/displayfit"
 import type { CSSProperties, JSX } from "react"
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
-
-import type { Size } from "@winvm/displayfit"
 
 import {
   type Action,
   agentFetch,
-  errorMessage,
   announceTitle,
+  errorMessage,
   GUEST_FOLDERS_IN_FINDER,
   type GuestShare,
   installedShells,
@@ -30,42 +29,14 @@ import {
 import { Button } from "./components/Button"
 import { Callout } from "./components/Callout"
 import { ConfirmDialog } from "./components/ConfirmDialog"
-import { Popover } from "./components/Popover"
 import { cx } from "./components/cx"
-import { t } from "./i18n"
-import type { ClosePolicy, Phase, Share } from "./model"
-import {
-  controls,
-  displaySize,
-  isFrozen,
-  isLivePhase,
-  parseShare,
-  shownTitle,
-  startSteps,
-  terminalBlocked,
-} from "./model"
+import { Popover } from "./components/Popover"
 import { SharePanel } from "./features/actions/SharePanel"
 import { CheckpointCanvas } from "./features/checkpoints/CheckpointCanvas"
-import { useCopies } from "./features/files/useCopies"
-import { Overview } from "./features/overview/Overview"
-import { OperationOverlay } from "./features/operation/OperationOverlay"
-import { Panel } from "./features/panel/Panel"
-import { ReferenceDialog } from "./features/reference/ReferenceDialog"
 import { ClosePolicyDialog } from "./features/close/ClosePolicyDialog"
 import { useCloseFlow } from "./features/close/useCloseFlow"
-import { Screen, type ScreenHandle } from "./features/screen/Screen"
-import {
-  defaultShell,
-  installedList,
-  type Launch,
-  runnable,
-  shellCache,
-  shellMenu,
-} from "./features/terminal/shells"
-import { type PanelId, Toolbar } from "./features/toolbar/Toolbar"
-import type { Verb } from "./features/winvm/useWinvm"
-import { useWinvm } from "./features/winvm/useWinvm"
-import type { UsageContext } from "./features/usage/Resources"
+import { useCopies } from "./features/files/useCopies"
+import { useMachineInfo } from "./features/hardware/useMachineInfo"
 import {
   DeleteMachineBody,
   type Deleting,
@@ -81,15 +52,43 @@ import {
   type NewMachine,
   NewMachineDialog,
 } from "./features/machines/NewMachineDialog"
-import { useUsage } from "./features/usage/useUsage"
+import { OperationOverlay } from "./features/operation/OperationOverlay"
+import { Overview } from "./features/overview/Overview"
+import { Panel } from "./features/panel/Panel"
+import { ReferenceDialog } from "./features/reference/ReferenceDialog"
+import { Screen, type ScreenHandle } from "./features/screen/Screen"
 import {
   DEFAULT_SETTINGS,
   loadSettings,
   savePauseOverlay,
 } from "./features/settings/settings"
-import { pauseMenu } from "./features/winvm/pauseMenu"
 import { useSharedFolder } from "./features/sharedfolder/useSharedFolder"
-import { useMachineInfo } from "./features/hardware/useMachineInfo"
+import {
+  defaultShell,
+  installedList,
+  type Launch,
+  runnable,
+  shellCache,
+  shellMenu,
+} from "./features/terminal/shells"
+import { type PanelId, Toolbar } from "./features/toolbar/Toolbar"
+import type { UsageContext } from "./features/usage/Resources"
+import { useUsage } from "./features/usage/useUsage"
+import { pauseMenu } from "./features/winvm/pauseMenu"
+import type { Verb } from "./features/winvm/useWinvm"
+import { useWinvm } from "./features/winvm/useWinvm"
+import { t } from "./i18n"
+import type { ClosePolicy, Phase, Share } from "./model"
+import {
+  controls,
+  displaySize,
+  isFrozen,
+  isLivePhase,
+  parseShare,
+  shownTitle,
+  startSteps,
+  terminalBlocked,
+} from "./model"
 
 type Confirm = { kind: "stop" | "reboot" | "kill" }
 

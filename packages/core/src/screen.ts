@@ -1,7 +1,7 @@
 import { spawnSync } from "node:child_process"
 import { resolve } from "node:path"
 
-import { SCALES, clampSize, parseSize, sameSize } from "@winvm/displayfit"
+import { clampSize, parseSize, SCALES, sameSize } from "@winvm/displayfit"
 
 import * as agent from "./agent"
 import type { Args } from "./args"

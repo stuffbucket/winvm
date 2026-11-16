@@ -1,14 +1,14 @@
-import { existsSync, readFileSync, readdirSync, statSync } from "node:fs"
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs"
 import { connect } from "node:net"
 import { resolve } from "node:path"
-
-import { effectiveConfig } from "./config"
 import type { ClosePolicy } from "./config"
+import { effectiveConfig } from "./config"
 import { describeDisplay, readDisplay, runningDisplay } from "./display"
 import { frozenFrom, markedAsleep } from "./frozen"
 import { qmpCommand } from "./monitor"
-import { readOperation, savingRunning } from "./operation"
 import type { OperationInfo } from "./operation"
+import { readOperation, savingRunning } from "./operation"
+import type { Paths } from "./paths"
 import {
   home,
   instanceDir,
@@ -17,12 +17,11 @@ import {
   readImageMeta,
   readMeta,
 } from "./paths"
-import type { Paths } from "./paths"
 import * as qemu from "./qemu"
 import { readService } from "./servicectl"
+import { spawnText } from "./shell"
 import * as timemachine from "./timemachine"
 import { vncPort, websocketPort } from "./vnc"
-import { spawnText } from "./shell"
 
 export type State =
   | "running"

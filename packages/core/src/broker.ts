@@ -1,6 +1,6 @@
 import { readlinkSync, renameSync, rmSync, symlinkSync } from "node:fs"
-import { basename } from "node:path"
 import { connect, createServer, type Server, type Socket } from "node:net"
+import { basename } from "node:path"
 
 type Json = Record<string, unknown>
 

@@ -2,8 +2,8 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test"
 import {
   existsSync,
   mkdtempSync,
-  readFileSync,
   readdirSync,
+  readFileSync,
   rmSync,
   writeFileSync,
 } from "node:fs"
@@ -11,7 +11,7 @@ import { tmpdir } from "node:os"
 import { resolve } from "node:path"
 
 import { pngSize } from "../src/input"
-import { FILES, captureScreen, writeScreenshots } from "../src/saves"
+import { captureScreen, FILES, writeScreenshots } from "../src/saves"
 import { FakeQmp } from "./fakes/qmp"
 
 function ppm(w: number, h: number): Buffer {

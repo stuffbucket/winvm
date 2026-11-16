@@ -8,9 +8,8 @@ import {
   writeFileSync,
 } from "node:fs"
 import { resolve } from "node:path"
-
+import { mediaDir, PACKAGE_DIR } from "./paths"
 import { download } from "./shell"
-import { PACKAGE_DIR, mediaDir } from "./paths"
 
 export const VIRTIO_WIN_VERSION = "0.1.302"
 export const VIRTIO_WIN_ISO = `https://fedorapeople.org/groups/virt/virtio-win/direct-downloads/archive-virtio/virtio-win-${VIRTIO_WIN_VERSION}-1/virtio-win-${VIRTIO_WIN_VERSION}.iso`

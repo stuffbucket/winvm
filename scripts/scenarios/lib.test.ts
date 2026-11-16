@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test"
 
-import { type Sample, heldThroughout, path, rfbKeycode } from "./lib"
+import { heldThroughout, path, rfbKeycode, type Sample } from "./lib"
 
 const s = (
   at: number,

@@ -1,8 +1,7 @@
 import { readFileSync } from "node:fs"
-
+import * as agent from "./agent"
 import type { Args } from "./args"
 import { instanceName } from "./args"
-import * as agent from "./agent"
 import {
   alignGuestTimeZone,
   formatOffset,
