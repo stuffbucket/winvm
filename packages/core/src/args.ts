@@ -51,9 +51,7 @@ export function parseArgs(argv: readonly string[]): Args {
 }
 
 export function instanceName(args: Args): string {
-  return (
-    args.flags.get("instance") ?? process.env.WINVM_INSTANCE ?? "default"
-  )
+  return args.flags.get("instance") ?? process.env.WINVM_INSTANCE ?? "default"
 }
 
 export function commandInstance(afterVerb: string): string | null {

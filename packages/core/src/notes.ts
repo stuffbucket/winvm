@@ -81,9 +81,7 @@ export function readNote(
   if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return null
   const r = raw as Record<string, unknown>
   const title =
-    typeof r.title === "string" && r.title.trim() !== ""
-      ? r.title
-      : null
+    typeof r.title === "string" && r.title.trim() !== "" ? r.title : null
   const text = typeof r.text === "string" ? r.text : ""
   const tags = Array.isArray(r.tags)
     ? cleanTags(r.tags.filter((t): t is string => typeof t === "string"))

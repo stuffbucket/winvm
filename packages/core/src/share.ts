@@ -72,8 +72,7 @@ export function readShare(p: Paths): ShareConfig | null {
   const r = raw as Record<string, unknown>
   const path = r.path
   if (typeof path !== "string" || !path.startsWith("/")) return null
-  const letter =
-    typeof r.letter === "string" ? parseLetter(r.letter) : null
+  const letter = typeof r.letter === "string" ? parseLetter(r.letter) : null
   return {
     path,
     letter: letter ?? DEFAULT_LETTER,

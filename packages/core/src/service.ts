@@ -133,7 +133,8 @@ export async function runService(
   })
   const askPortOpen = async (): Promise<boolean | null> => {
     try {
-      const r = (await qmpChannel.request("query-chardev", undefined, 2000)).return as
+      const r = (await qmpChannel.request("query-chardev", undefined, 2000))
+        .return as
         | { readonly label: string; readonly "frontend-open": boolean }[]
         | undefined
       return r?.find((c) => c.label === qga.CHARDEV)?.["frontend-open"] ?? null

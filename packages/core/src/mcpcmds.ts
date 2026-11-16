@@ -179,8 +179,7 @@ export function entryMatches(e: Entry | undefined, l: Launch): boolean {
   )
 }
 
-const servers = (o: Json): Json =>
-  isObject(o.mcpServers) ? o.mcpServers : {}
+const servers = (o: Json): Json => (isObject(o.mcpServers) ? o.mcpServers : {})
 
 export const desktopConfigPath = (
   env: Readonly<Record<string, string | undefined>> = process.env,

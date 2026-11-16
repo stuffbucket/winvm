@@ -575,8 +575,7 @@ export async function watch(
     const s: WatchState = {
       pid: process.pid,
       build: buildIdentity(),
-      ...(process.env.WINVM_CLI === undefined ||
-      process.env.WINVM_CLI === ""
+      ...(process.env.WINVM_CLI === undefined || process.env.WINVM_CLI === ""
         ? {}
         : { cli: process.env.WINVM_CLI }),
       startedAt,

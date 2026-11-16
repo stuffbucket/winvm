@@ -255,8 +255,7 @@ export async function loggedOnUser(
     if (Array.isArray(r.return))
       return pickUser(r.return as readonly GuestUser[])
     if (
-      (r.error as { class?: string } | undefined)?.class !==
-      "CommandNotFound"
+      (r.error as { class?: string } | undefined)?.class !== "CommandNotFound"
     )
       return null
   } catch {

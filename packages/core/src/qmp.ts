@@ -17,8 +17,7 @@ export async function hmp(
     const error = reply.error
     if (error !== undefined)
       throw new Error(`qmp rejected "${command}": ${JSON.stringify(error)}`)
-    const text =
-      typeof reply.return === "string" ? reply.return.trim() : ""
+    const text = typeof reply.return === "string" ? reply.return.trim() : ""
     if (/^Error/i.test(text))
       throw new Error(`${command}: ${text.replace(/\r/g, "")}`)
     void send

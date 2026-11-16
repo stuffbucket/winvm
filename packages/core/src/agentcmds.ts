@@ -22,8 +22,7 @@ async function preferred(
   name: string,
   args: Args,
 ): Promise<agent.AgentClient | null> {
-  if (args.flags.has("qga") || process.env.WINVM_NO_AGENT === "1")
-    return null
+  if (args.flags.has("qga") || process.env.WINVM_NO_AGENT === "1") return null
   return await agent.connect(name, { timeoutMs: 1500 })
 }
 

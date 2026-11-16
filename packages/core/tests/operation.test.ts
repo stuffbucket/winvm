@@ -526,9 +526,9 @@ describe("waiting", () => {
     const before = process.env.WINVM_AUTOMATIC
     process.env.WINVM_AUTOMATIC = "1"
     try {
-      expect(
-        await withOperation(NAME, "stow", () => onDisk()?.automatic),
-      ).toBe(true)
+      expect(await withOperation(NAME, "stow", () => onDisk()?.automatic)).toBe(
+        true,
+      )
     } finally {
       if (before === undefined) delete process.env.WINVM_AUTOMATIC
       else process.env.WINVM_AUTOMATIC = before
@@ -544,15 +544,15 @@ describe("kill", () => {
     })
     await Bun.sleep(20)
     const t0 = Date.now()
-    expect(
-      await withOperation(NAME, "kill", () => onDisk()?.operation),
-    ).toBe("stop")
+    expect(await withOperation(NAME, "kill", () => onDisk()?.operation)).toBe(
+      "stop",
+    )
     expect(Date.now() - t0).toBeLessThan(500)
     g.open()
     await wedged
-    expect(
-      await withOperation(NAME, "kill", () => onDisk()?.operation),
-    ).toBe("kill")
+    expect(await withOperation(NAME, "kill", () => onDisk()?.operation)).toBe(
+      "kill",
+    )
   })
 })
 
