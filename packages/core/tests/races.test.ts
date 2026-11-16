@@ -281,7 +281,10 @@ describe("stop during a manual save", () => {
         shutdowns.push("system_powerdown")
         return Promise.resolve()
       },
-      untilEvent: () => Promise.resolve(null),
+      untilEvent: (_name, _matches, _since, until) => {
+        clock = Math.max(clock, until)
+        return Promise.resolve(null)
+      },
     }
 
     const save = outcome(
@@ -361,6 +364,7 @@ describe("the watcher's work", () => {
     )
     await sleep(20)
     let running = true
+    let clock = 0
     const stop = withOperation(
       NAME,
       "stop",
@@ -379,8 +383,13 @@ describe("the watcher's work", () => {
             running = false
             return Promise.resolve()
           },
-          untilEvent: () => Promise.resolve(null),
-          sleep: async () => {
+          untilEvent: (_name, _matches, _since, until) => {
+            clock = Math.max(clock, until)
+            return Promise.resolve(null)
+          },
+          now: () => clock,
+          sleep: async (ms) => {
+            clock += ms
             await sleep(1)
           },
         }),
