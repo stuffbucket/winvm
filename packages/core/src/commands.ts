@@ -494,7 +494,13 @@ export async function build(args: Args): Promise<number> {
   const virtioBoot = virtioAnswer === "yes"
 
   console.log("provisioning finished; shutting the guest down")
-  await qga.shutdown(p.qga)
+  try {
+    await qga.shutdown(p.qga)
+  } catch (error) {
+    return guestFailed(
+      `the guest could not be asked to shut down after provisioning: ${error instanceof Error ? error.message : String(error)}`,
+    )
+  }
   const stopDeadline = Date.now() + 10 * 60_000
   while (Date.now() < stopDeadline) {
     if (!qemu.isRunning(p)) {
