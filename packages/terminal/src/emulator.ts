@@ -1,7 +1,6 @@
 /// <reference path="./css.d.ts" />
 import { FitAddon } from '@xterm/addon-fit';
 import { Terminal } from '@xterm/xterm';
-// winvm: the adapter brings xterm's own stylesheet; Bun bundles it into the page's CSS.
 import '@xterm/xterm/css/xterm.css';
 import type { ITheme } from '@xterm/xterm';
 
@@ -80,7 +79,6 @@ export interface TerminalEmulator {
   readonly buffer: { readonly active: TerminalBuffer };
   open(element: HTMLElement): Promise<void>;
   fit(): void;
-  /** Sets the grid directly, bypassing container measurement. See `fit()`. */
   resize(cols: number, rows: number): void;
   focus(): void;
   blur(): void;
@@ -101,12 +99,6 @@ export interface TerminalEmulator {
 const SYSTEM_MONOSPACE =
   'ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace';
 
-/**
- * winvm: the family, point size and leading of `TerminalTypography`, as xterm
- * options. monimal's xterm adapter ignored typography (only its Ghostty
- * adapter applied it); the point-to-pixel and leading arithmetic is that
- * adapter's.
- */
 function xtermTypography(typography: TerminalTypography | undefined) {
   if (!typography) return { fontFamily: SYSTEM_MONOSPACE, fontSize: 13 };
   return {
@@ -123,9 +115,6 @@ function createXtermEmulator(theme?: TerminalTheme, typography?: TerminalTypogra
     cursorBlink: true,
     ...xtermTypography(typography),
     minimumContrastRatio: 4.5,
-    // Lets a shell-side diagnostic (`CSI 18 t`) confirm the emulator's own
-    // rendered grid matches what the OS and the PTY report for it. The other
-    // window-report queries stay off; they read or move the OS window itself.
     windowOptions: { getWinSizeChars: true },
     ...(theme ? { theme } : {}),
   });
@@ -145,7 +134,6 @@ function createXtermEmulator(theme?: TerminalTheme, typography?: TerminalTypogra
     },
     fit: () => {
       const proposed = fitAddon.proposeDimensions();
-      // winvm: a hidden host (display: none) measures as NaN; keep the grid.
       if (!proposed || !Number.isFinite(proposed.cols) || !Number.isFinite(proposed.rows)) return;
       const { cols, rows } = clampTerminalGrid(proposed.cols, proposed.rows);
       if (cols !== terminal.cols || rows !== terminal.rows) terminal.resize(cols, rows);
@@ -186,11 +174,6 @@ function clampTerminalGrid(cols: number, rows: number): { cols: number; rows: nu
   return { cols: clamp(cols, 256), rows: clamp(rows, 128) };
 }
 
-/**
- * winvm: only the xterm.js adapter is vendored. `ghostty` (monimal's
- * @wterm/ghostty WebAssembly adapter) is left out, so asking for it gets the
- * xterm adapter; `ghosttyWindow` is accepted and ignored for the same reason.
- */
 export function createTerminalEmulator(
   _kind: TerminalEmulatorKind = 'xterm',
   theme?: TerminalTheme,

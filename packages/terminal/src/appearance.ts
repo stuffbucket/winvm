@@ -1,23 +1,14 @@
 import type { ITheme } from '@xterm/xterm';
 
 export interface GhosttyWindowAdjustment {
-  /** Horizontal content padding in CSS pixels. */
   paddingX?: number;
-  /** Vertical content padding in CSS pixels. */
   paddingY?: number;
-  /** Keep the configured padding equal on opposing edges. */
   balance?: boolean;
-  /** Terminal background opacity from 0 through 1. Text remains opaque. */
   opacity?: number;
-  /** Backdrop blur radius in CSS pixels. Zero disables blur. */
   blur?: number;
-  /** Optional composited colour layer when effects are not stamped into the palette. */
   tint?: string | undefined;
-  /** Tint layer opacity from 0 through 1. */
   tintAmount?: number;
-  /** Tone adjustment from -1 (black) through 1 (white). */
   tone?: number;
-  /** CSS blend mode used by the tint layer. */
   blendMode?: 'normal' | 'multiply' | 'screen' | 'overlay' | 'darken' | 'lighten';
 }
 

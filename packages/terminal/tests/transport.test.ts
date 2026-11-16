@@ -8,14 +8,6 @@ import {
   type TerminalEvent,
 } from '../src/transport.js';
 
-/**
- * The colours the emulator is handed.
- *
- * A property that resolves to nothing must be left out rather than passed
- * through empty, so the emulator retains its legible default. That is the
- * behaviour these tests exist for.
- */
-
 const properties = SHELL_TERMINAL_PROPERTIES;
 
 function reader(values: Record<string, string>) {
@@ -44,7 +36,6 @@ describe('readTerminalTheme', () => {
   });
 
   it('omits a property that resolves to whitespace', () => {
-    // getComputedStyle returns a leading space for a custom property.
     const theme = readTerminalTheme(
       reader({
         [properties.background]: '   ',
@@ -113,8 +104,6 @@ describe('readTerminalTheme', () => {
 
 describe('SHELL_TERMINAL_PROPERTIES', () => {
   it('names the three properties a consumer sets', () => {
-    // `docs/shell-variables.md` documents these names, and a consumer's
-    // stylesheet is the only place they are set.
     expect(SHELL_TERMINAL_PROPERTIES).toEqual({
       background: '--shell-terminal-background',
       foreground: '--shell-terminal-foreground',
@@ -122,14 +111,6 @@ describe('SHELL_TERMINAL_PROPERTIES', () => {
     });
   });
 });
-
-/**
- * The transport a consumer builds from their own channels.
- *
- * Nothing here names a channel of this repository's. The names arrive as an
- * argument, so the assertions use names no contract holds and a hard-coded one
- * would fail them.
- */
 
 const CHANNELS = {
   spawn: 'consumer/open',
@@ -141,7 +122,6 @@ const CHANNELS = {
   exit: 'consumer/ended',
 } satisfies TerminalChannels;
 
-/** A transport over recorded calls, plus the recordings. */
 function wired(answer: unknown = []) {
   const invoked: { channel: string; request: unknown }[] = [];
   const listeners = new Map<string, (payload: unknown) => void>();
@@ -261,8 +241,6 @@ describe('createTerminalTransport', () => {
   });
 
   it('uses each legacy name exactly once when acknowledgement is unavailable', () => {
-    // The floor. A transport that called nothing would satisfy every
-    // assertion above by never reaching a channel.
     const { transport, invoked, listeners } = wired();
     void transport.spawn({ id: 'one', cols: 1, rows: 1 });
     void transport.write('one', 'x');
@@ -284,8 +262,6 @@ describe('createTerminalTransport', () => {
     send('consumer/output', { id: 'two', data: 'not mine' });
     send('consumer/output', { id: 'one', data: 'mine' });
 
-    // The events are per host, not per session, so every subscription sees
-    // every payload and the filter is the whole of the routing.
     expect(received).toEqual([{ type: 'data', data: 'mine' }]);
   });
 
@@ -301,8 +277,6 @@ describe('createTerminalTransport', () => {
   });
 
   it('unsubscribes from both events at once', () => {
-    // A caller never has to pair two calls, so a stop that dropped one would
-    // leave a dead view receiving output.
     const { transport, unsubscribed } = wired();
     const stop = transport.subscribe('one', () => undefined);
 

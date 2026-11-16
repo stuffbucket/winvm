@@ -8,7 +8,6 @@ export type TerminalPane =
       second: TerminalPane;
     };
 
-/** Recognizes a serialized terminal pane tree received across a process boundary. */
 export function isTerminalPane(value: unknown): value is TerminalPane {
   if (typeof value !== 'object' || value === null) return false;
   if ('sessionId' in value) {
@@ -20,7 +19,6 @@ export function isTerminalPane(value: unknown): value is TerminalPane {
     && isTerminalPane(value.second);
 }
 
-  /** Replaces one terminal leaf with an ordered split. */
 export function splitTerminalPane(
   pane: TerminalPane,
   targetId: string,
@@ -39,14 +37,12 @@ export function splitTerminalPane(
   };
 }
 
-/** Lists terminal sessions in the pane tree's visual order. */
 export function terminalPaneSessionIds(pane: TerminalPane): string[] {
   return 'sessionId' in pane
     ? [pane.sessionId]
     : [...terminalPaneSessionIds(pane.first), ...terminalPaneSessionIds(pane.second)];
 }
 
-/** Removes one terminal leaf and collapses its empty parent branch. */
 export function removeTerminalPane(
   pane: TerminalPane,
   sessionId: string,

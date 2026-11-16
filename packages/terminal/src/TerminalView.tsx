@@ -21,34 +21,17 @@ import {
   TerminalResizes,
 } from './ack.js';
 
-/**
- * A real terminal, driven by an injected transport.
- *
- * Theme and window effects update through the emulator adapter without
- * replacing terminal state or scrollback.
- *
- * **Unmounting terminates the session, unless the caller says otherwise.** See
- * `disposition`.
- */
-
-/** The host element carries the terminal instance, for end-to-end tests. */
 export type TerminalHost = HTMLDivElement & { __terminal?: TerminalEmulator };
 
 interface TerminalViewCommonProps extends TerminalDescriptor {
-  /** Terminal engine. The default is `xterm`. */
   emulator?: TerminalEmulatorKind;
-  /** Window geometry and background effects applied only by the Ghostty adapter. */
   ghosttyWindow?: GhosttyWindowAdjustment;
   typography?: TerminalTypography;
-  /** Literal colours. Resolve with `readTerminalTheme`. */
   theme?: TerminalTheme;
   testId?: string;
-  /** Increasing token for explicit split-navigation focus requests. */
   focusRequest?: number;
-  /** Parent-owned focus identity when this view is one leaf of a split. */
   focused?: boolean;
   focusIndicator?: boolean;
-  /** User pointer activation, distinct from emulator-driven focus changes. */
   onActivate?: () => void;
   onFocus?: () => void;
   onSplit?: (direction: TerminalSplitDirection) => void;
@@ -56,20 +39,11 @@ interface TerminalViewCommonProps extends TerminalDescriptor {
   onExit?: (exitCode: number) => void;
   onError?: (error: unknown) => void;
   onTitleChange?: (title: string) => void;
-  /** winvm: the start-failure notice's words, for a caller with its own catalog. */
   labels?: { startFailed: string; retry: string };
 }
 
 const mounted = (ref: { readonly current: HTMLDivElement | null }): HTMLDivElement | null => ref.current;
 
-/**
- * The view's own lifetime, and the session's, as two decisions.
- *
- * `detach` needs a transport that can list its sessions, because a shell that
- * outlives every view and that nothing can enumerate is a process the user
- * cannot see and cannot stop. Requiring `list` here is what stops half the
- * feature shipping.
- */
 export type TerminalViewProps = TerminalViewCommonProps &
   (
     | { disposition?: 'terminate'; transport: TerminalTransport }
@@ -77,15 +51,6 @@ export type TerminalViewProps = TerminalViewCommonProps &
     | { disposition: 'preserve'; transport: TerminalTransport }
   );
 
-/**
- * One terminal, drawn by the configured emulator.
- *
- * It takes a transport rather than reaching for a bridge, which is what keeps
- * this package free of any particular IPC contract: build one with
- * `createTerminalTransport` and name your own channels. The emulator inherits
- * nothing from CSS, so `theme` carries literal colours — `readTerminalTheme`
- * with `SHELL_TERMINAL_PROPERTIES` resolves them from the shell contract.
- */
 export function TerminalView({
   id,
   cwd,
@@ -135,8 +100,6 @@ export function TerminalView({
     terminal.current?.setAppearance(theme, ghosttyWindow);
   }, [ghosttyWindow, theme]);
 
-  // The disposition is read at cleanup rather than at mount, so a caller that
-  // changes it while a session runs gets the current answer.
   const onUnmount = useRef(disposition);
   onUnmount.current = disposition;
   const focusTransport = (): void => {
@@ -156,9 +119,6 @@ export function TerminalView({
     if (renewLease) focusTransport();
   };
 
-  // `id` identifies the session for this view's lifetime. Re-running this
-  // effect would orphan a shell, so the descriptor fields read at spawn time
-  // are deliberately not dependencies.
   useEffect(() => {
     const element = host.current;
     if (!element) return;
@@ -172,11 +132,6 @@ export function TerminalView({
     let term: TerminalEmulator | undefined;
     let unsubscribe: (() => void) | undefined;
     let cleanupObserver: (() => void) | undefined;
-    // Set right before a `pty:size` event clamps the local grid, and cleared
-    // once consumed. `TerminalResizes` coalesces every `onResize`, including
-    // the one that clamp causes, so this tells that callback the resize was
-    // an echo of a size the host already knows about rather than a fresh
-    // measurement to send back.
     let clampedRemoteSize: { cols: number; rows: number } | undefined;
     const reportFailure = (error?: unknown): void => {
       if (disposed || failed) return;
@@ -254,7 +209,6 @@ export function TerminalView({
         focusEmulator(requestedFocus.current === true);
       }
 
-      // The buffer is the stable assertion surface across canvas and DOM renderers.
       (host.current as TerminalHost).__terminal = term;
 
       term.onData((data) => {
@@ -311,10 +265,6 @@ export function TerminalView({
           });
         }
         else if (event.type === 'size') {
-          // The host resized the real PTY to the smallest live viewer of a
-          // shared session. Clamping the local grid to match keeps this view
-          // from rendering a byte stream that now assumes different
-          // dimensions than the ones its own container fit to.
           if (term && (term.cols !== event.cols || term.rows !== event.rows)) {
             clampedRemoteSize = { cols: event.cols, rows: event.rows };
             term.resize(event.cols, event.rows);
@@ -333,8 +283,6 @@ export function TerminalView({
       spawnAttempted = true;
       await transport.spawn({ id, cwd, shell, cols: term.cols, rows: term.rows });
 
-      // The panel group resizes the host without a window resize, so a
-      // ResizeObserver is the only reliable trigger.
       const observer = new ResizeObserver(() => {
         if (!disposed) term?.fit();
       });

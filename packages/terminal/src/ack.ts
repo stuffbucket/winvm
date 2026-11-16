@@ -2,7 +2,6 @@ export interface TerminalAckScheduler {
   schedule(callback: () => void): void;
 }
 
-/** Coalesces completed terminal writes into cumulative acknowledgements. */
 export class TerminalAcknowledgements {
   private sequence = 0;
   private acknowledgedSequence = 0;
@@ -39,7 +38,6 @@ export class TerminalAcknowledgements {
   }
 }
 
-/** Coalesces emulator resizes to the latest dimensions once per frame. */
 export class TerminalResizes {
   private pending: { cols: number; rows: number } | undefined;
   private scheduled = false;
@@ -75,7 +73,6 @@ export class TerminalResizes {
   }
 }
 
-/** Use browser frames when available, with a Node-safe microtask fallback. */
 class AnimationFrameScheduler implements TerminalAckScheduler {
   schedule(callback: () => void): void {
     if (typeof requestAnimationFrame === 'function') {

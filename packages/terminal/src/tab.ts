@@ -37,7 +37,6 @@ function nextTitle(existing: readonly ExistingTab[], label: string): string {
   return highest === 0 ? label : `${label} ${String(highest + 1)}`;
 }
 
-/** Returns the final directory segment for an idle terminal title. */
 export function terminalDirectoryTitle(cwd: string): string {
   let end = cwd.length;
   while (end > 0 && (cwd[end - 1] === '/' || cwd[end - 1] === '\\')) end -= 1;
@@ -46,7 +45,6 @@ export function terminalDirectoryTitle(cwd: string): string {
   return segments.at(-1) || cwd;
 }
 
-/** Removes controls and bounds a process-supplied terminal title. */
 export function terminalProcessTitle(title: string): string {
   const printable = Array.from(title)
     .filter((character) => {
@@ -58,7 +56,6 @@ export function terminalProcessTitle(title: string): string {
   return Array.from(printable).slice(0, 160).join('');
 }
 
-/** Creates the next numbered reference tab without reusing closed identities. */
 export function newTerminalTab(
   existing: readonly ExistingTab[],
   sessionId?: string,
