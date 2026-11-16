@@ -139,8 +139,9 @@ describe("SpatialCanvas", () => {
           open={false}
           title="Checkpoints"
           description="d"
-          children={null}
-        />,
+        >
+          {null}
+        </canvas.SpatialCanvasSurface>,
       ),
     )
     expect(document.querySelector('[role="dialog"]')).toBeNull()
@@ -232,8 +233,9 @@ describe("SpatialCanvas", () => {
         <canvas.SpatialCanvasSearchResults
           label="Matches"
           emptyMessage="No checkpoints match"
-          children={[]}
-        />,
+        >
+          {[]}
+        </canvas.SpatialCanvasSearchResults>,
       ),
     )
     expect(
@@ -242,50 +244,61 @@ describe("SpatialCanvas", () => {
   })
 })
 
+type CameraApi = ReturnType<typeof canvas.useCanvasCamera>
+
+function CameraProbe({
+  slot,
+  seen,
+}: {
+  readonly slot: { current: CameraApi | null }
+  readonly seen?: number[] | undefined
+}): JSX.Element {
+  const api = canvas.useCanvasCamera({ x: 0, y: 0, zoom: 1 }, () => ({
+    width: 800,
+    height: 600,
+  }))
+  slot.current = api
+  seen?.push(api.camera.zoom)
+  return <span>{api.camera.zoom}</span>
+}
+
+function renderCamera(seen?: number[]): () => CameraApi {
+  const slot: { current: CameraApi | null } = { current: null }
+  render(<CameraProbe slot={slot} seen={seen} />)
+  return () => {
+    if (slot.current === null)
+      throw new Error("useCanvasCamera has not rendered")
+    return slot.current
+  }
+}
+
 describe("useCanvasCamera", () => {
   it("flies to a camera through eased steps and lands exactly", async () => {
     const seen: number[] = []
-    let api: ReturnType<typeof canvas.useCanvasCamera> | null = null
-    function Probe(): JSX.Element {
-      api = canvas.useCanvasCamera({ x: 0, y: 0, zoom: 1 }, () => ({
-        width: 800,
-        height: 600,
-      }))
-      seen.push(api.camera.zoom)
-      return <span>{api.camera.zoom}</span>
-    }
-    render(<Probe />)
+    const api = renderCamera(seen)
     let arrived = null as boolean | null
     await act(async () => {
-      const flight = api!.fly({ x: -400, y: -300, zoom: 2 }, { duration: 160 })
+      const flight = api().fly({ x: -400, y: -300, zoom: 2 }, { duration: 160 })
       await new Promise((r) => setTimeout(r, 60))
-      seen.push(api!.current().zoom)
+      seen.push(api().current().zoom)
       arrived = await flight
       await new Promise((r) => setTimeout(r, 40))
     })
     expect(arrived).toBe(true)
-    expect(api!.camera).toEqual({ x: -400, y: -300, zoom: 2 })
+    expect(api().camera).toEqual({ x: -400, y: -300, zoom: 2 })
     expect(seen.some((z) => z > 1 && z < 2)).toBe(true)
   })
 
   it("stops a flight when the camera is set directly", async () => {
-    let api: ReturnType<typeof canvas.useCanvasCamera> | null = null
-    function Probe(): JSX.Element {
-      api = canvas.useCanvasCamera({ x: 0, y: 0, zoom: 1 }, () => ({
-        width: 800,
-        height: 600,
-      }))
-      return <span />
-    }
-    render(<Probe />)
+    const api = renderCamera()
     let arrived = null as boolean | null
     await act(async () => {
-      const flight = api!.fly({ x: -400, y: -300, zoom: 2 }, { duration: 500 })
-      api!.set({ x: 5, y: 5, zoom: 1 })
+      const flight = api().fly({ x: -400, y: -300, zoom: 2 }, { duration: 500 })
+      api().set({ x: 5, y: 5, zoom: 1 })
       arrived = await flight
       await new Promise((r) => setTimeout(r, 40))
     })
     expect(arrived).toBe(false)
-    expect(api!.camera).toEqual({ x: 5, y: 5, zoom: 1 })
+    expect(api().camera).toEqual({ x: 5, y: 5, zoom: 1 })
   })
 })
