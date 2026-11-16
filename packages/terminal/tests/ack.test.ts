@@ -6,6 +6,13 @@ import {
   TerminalResizes,
 } from "../src/ack.js"
 
+function runFrame(frames: ReadonlyArray<() => void>, index: number): void {
+  const frame = frames[index]
+  if (frame === undefined)
+    throw new Error(`no frame ${String(index)} was scheduled`)
+  frame()
+}
+
 describe("TerminalAcknowledgements", () => {
   it("acknowledges the greatest completed sequence once per scheduled frame", () => {
     const frames: Array<() => void> = []
@@ -20,7 +27,7 @@ describe("TerminalAcknowledgements", () => {
     acks.consume(5)
     acks.consume(4)
     expect(frames).toHaveLength(1)
-    frames[0]!()
+    runFrame(frames, 0)
 
     expect(acknowledged).toEqual([5])
   })
@@ -35,7 +42,7 @@ describe("TerminalAcknowledgements", () => {
 
     acks.consume(1)
     acks.dispose()
-    frames[0]!()
+    runFrame(frames, 0)
     acks.consume(2)
 
     expect(acknowledged).toEqual([])
@@ -51,13 +58,13 @@ describe("TerminalAcknowledgements", () => {
     )
 
     acks.consume(3)
-    frames[0]!()
+    runFrame(frames, 0)
     acks.consume(3)
     acks.consume(2)
     expect(frames).toHaveLength(1)
     acks.consume(4)
     expect(frames).toHaveLength(2)
-    frames[1]!()
+    runFrame(frames, 1)
 
     expect(acknowledged).toEqual([3, 4])
   })
@@ -104,7 +111,7 @@ describe("TerminalResizes", () => {
 
     expect(frames).toHaveLength(1)
     expect(resize).not.toHaveBeenCalled()
-    frames[0]!()
+    runFrame(frames, 0)
     expect(resize).toHaveBeenCalledTimes(1)
     expect(resize).toHaveBeenCalledWith(120, 40)
   })
@@ -117,9 +124,9 @@ describe("TerminalResizes", () => {
     })
 
     resizes.update(80, 24)
-    frames[0]!()
+    runFrame(frames, 0)
     resizes.update(100, 30)
-    frames[1]!()
+    runFrame(frames, 1)
 
     expect(resize.mock.calls).toEqual([
       [80, 24],
@@ -136,7 +143,7 @@ describe("TerminalResizes", () => {
 
     resizes.update(80, 24)
     resizes.dispose()
-    frames[0]!()
+    runFrame(frames, 0)
     resizes.update(100, 30)
 
     expect(resize).not.toHaveBeenCalled()
