@@ -186,7 +186,7 @@ describe("the service", () => {
     expect(await serviceState()).toBe("shutdown")
   })
 
-  it("reads QEMU's run state as soon as it connects, before any event", async () => {
+  it("reads QEMU's run state on every connect, so a sync always follows the connection", async () => {
     fake.handler = (cmd) =>
       cmd.execute === "query-status"
         ? { return: { status: "paused", running: false } }
