@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test"
 import {
   appendFileSync,
+  chmodSync,
   closeSync,
   existsSync,
   mkdirSync,
@@ -429,6 +430,42 @@ describe("bounding the event record", () => {
     writeSync(late, lateLine("late"))
     closeSync(late)
     expect(whats(readSince(NAME, cursor).entries)).toEqual(["late"])
+  })
+
+  for (const which of ["archive", "current file"] as const) {
+    it(`reads only the newest stretch of a huge legacy ${which}, and says it skipped the rest`, () => {
+      const lines = Array.from({ length: 40_000 }, (_, i) =>
+        legacyLine({ kind: "service", what: `old-${String(i)}` }),
+      ).join("")
+      expect(Buffer.byteLength(lines)).toBeGreaterThan(3 << 20)
+      writeFileSync(which === "archive" ? p.eventsPrev : p.events, lines)
+      const r = readSince(NAME, START)
+      expect(r.gap).toBe(true)
+      expect(r.entries.length).toBeGreaterThan(1000)
+      expect(r.entries.length).toBeLessThan(40_000)
+      expect(whats(r.entries).at(-1)).toBe("old-39999")
+      expect(whats(r.entries).every((w) => w.startsWith("old-"))).toBe(true)
+    })
+  }
+
+  it("never throws from a rotation check it cannot make", () => {
+    appendEntry(NAME, note("one"))
+    chmodSync(p.dir, 0o000)
+    try {
+      expect(rotateEvents(NAME, 1)).toBe(false)
+      expect(
+        rotateEvents(NAME, 1, () => {
+          throw new Error("no lease answer")
+        }),
+      ).toBe(false)
+    } finally {
+      chmodSync(p.dir, 0o755)
+    }
+    expect(
+      rotateEvents(NAME, 1, () => {
+        throw new Error("no lease answer")
+      }),
+    ).toBe(false)
   })
 
   it("starts over when the record was replaced underneath a cursor", () => {

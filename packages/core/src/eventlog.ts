@@ -108,6 +108,7 @@ export const MAX_LINE_BYTES = 8192
 export const DEFAULT_MAX_BYTES = 1 << 20
 const SHORT_FIELD = 256
 const TAIL_BYTES = 64 * 1024
+const READ_LIMIT = 2 * DEFAULT_MAX_BYTES
 const LINE_START = '{"t":"'
 
 const isObject = (v: unknown): v is Json =>
@@ -162,9 +163,9 @@ export function rotateEvents(
   allowed: () => boolean = () => true,
 ): boolean {
   const p = pathsFor(instance)
-  const size = statSync(p.events, { throwIfNoEntry: false })?.size
-  if (size === undefined || size < maxBytes || !allowed()) return false
   try {
+    const size = statSync(p.events, { throwIfNoEntry: false })?.size
+    if (size === undefined || size < maxBytes || !allowed()) return false
     renameSync(p.events, p.eventsPrev)
     return true
   } catch {
@@ -374,12 +375,19 @@ function readFrom(o: Opened, from: number): Buffer {
 interface Lines {
   readonly text: string
   readonly end: number
+  readonly skipped: boolean
 }
 
 function wholeLines(o: Opened, from: number): Lines {
-  const buf = readFrom(o, from)
+  const bounded = Math.max(from, o.size - READ_LIMIT)
+  const buf = readFrom(o, bounded)
+  const begin = bounded > from ? buf.indexOf(0x0a) + 1 : 0
   const used = buf.lastIndexOf(0x0a) + 1
-  return { text: buf.subarray(0, used).toString("utf8"), end: from + used }
+  return {
+    text: buf.subarray(begin, Math.max(begin, used)).toString("utf8"),
+    end: bounded + used,
+    skipped: bounded > from,
+  }
 }
 
 const closeAll = (...opened: readonly (Opened | null)[]): void => {
@@ -426,7 +434,7 @@ function readCurrent(cur: Opened, prev: Opened | null, cursor: Cursor): Batch {
           ? null
           : { ino: tracked.ino, offset: late.end },
     },
-    gap: shrunk,
+    gap: shrunk || now.skipped || late?.skipped === true,
   }
 }
 
@@ -453,7 +461,10 @@ function readAcross(
         : left === null
           ? START
           : { ...left, archive: null },
-    gap: cursor.ino !== 0 && !fromPrev,
+    gap:
+      (cursor.ino !== 0 && !fromPrev) ||
+      older?.skipped === true ||
+      now?.skipped === true,
   }
 }
 
