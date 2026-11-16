@@ -1,8 +1,3 @@
-/**
- * Pause, Sleep and Lock: the pure rules under them. Which status answers may
- * land (and what shows meanwhile), what a key does in a held screen, sizes
- * kept while held, the Pause button's menu and the overlay setting.
- */
 import { describe, expect, it } from "bun:test"
 
 import type { Output } from "../ui/src/backend"
@@ -23,7 +18,6 @@ describe("running, paused and asleep", () => {
     const c = controls("running", false)
     expect([c.pause, c.sleep, c.lock, c.resume]).toEqual([true, true, true, false])
     const s = controls("starting", false)
-    // Starting can be paused, but Sleep and Lock need Windows' agent answering.
     expect([s.pause, s.sleep, s.lock]).toEqual([true, false, false])
   })
 
@@ -75,13 +69,11 @@ describe("the status guard", () => {
 
   it("drops a read started before Pause ended, and shows paused until a read started after it lands", () => {
     const g = new StatusGuard()
-    // The poll is out when Pause is clicked; QEMU still says running to it.
     const pollDuringPause = g.begin()
     g.settle(phaseAfter("pause"))
     expect(g.held).toBe("paused")
     expect(g.land(pollDuringPause)).toBe(false)
     expect(g.held).toBe("paused")
-    // The verb's own read, started after it returned.
     const after = g.begin()
     expect(g.land(after)).toBe(true)
     expect(g.held).toBeNull()
@@ -147,7 +139,6 @@ describe("sizes while held", () => {
     expect(h.offer(b)).toBe(false)
     expect(h.setFrozen(true)).toBeNull()
     expect(h.setFrozen(false)).toEqual(b)
-    // Asked for once only.
     expect(h.setFrozen(false)).toBeNull()
     expect(h.offer(a)).toBe(true)
   })
@@ -157,7 +148,6 @@ describe("sizes while held", () => {
     expect(h.setFrozen(false)).toBeNull()
   })})
 
-/** Timers that fire only when the test says so. */
 class Timers {
   private next = 1
   readonly due = new Map<number, { ms: number; fn: () => void }>()
@@ -169,11 +159,9 @@ class Timers {
   clear(t: unknown): void {
     this.due.delete(t as number)
   }
-  /** The waits armed now, in ms. */
   get waits(): number[] {
     return [...this.due.values()].map((d) => d.ms)
   }
-  /** Fire every timer armed now. */
   fire(): void {
     const now = [...this.due.entries()]
     this.due.clear()
@@ -209,11 +197,9 @@ describe("sizes Windows is not ready for, or misses", () => {
     timers.fire()
     expect(retried).toEqual([a])
     expect(h.pending).toBeNull()
-    // Asked again (offer) and missed again: the next wait doubles.
     expect(h.offer(a)).toBe(true)
     h.missed(a)
     expect(timers.waits).toEqual([4000])
-    // Taken at last: the waits start over.
     timers.fire()
     expect(h.offer(a)).toBe(true)
     h.took()
@@ -233,7 +219,6 @@ describe("sizes Windows is not ready for, or misses", () => {
     h.missed(a)
     expect(timers.due.size).toBe(0)
     expect(h.pending).toEqual(a)
-    // Windows restarts (not ready), then is ready: the size is asked for.
     expect(h.setFrozen(true)).toBeNull()
     expect(h.setFrozen(false)).toEqual(a)
   })
@@ -241,7 +226,6 @@ describe("sizes Windows is not ready for, or misses", () => {
   it("a miss while not ready waits for ready, with no timer", () => {
     const { h, timers } = setup(false)
     expect(h.offer(a)).toBe(true)
-    // The restart began while the size was out.
     expect(h.setFrozen(true)).toBeNull()
     h.missed(a)
     expect(timers.due.size).toBe(0)
@@ -265,7 +249,6 @@ describe("sizes Windows is not ready for, or misses", () => {
     h.missed(a)
     expect(h.pending).toEqual(b)
     expect(h.setFrozen(false)).toEqual(b)
-    // A size asked for now replaces a missed one waiting, and its retry.
     h.missed(a)
     expect(h.offer(b)).toBe(true)
     expect(h.pending).toBeNull()
@@ -345,7 +328,6 @@ describe("the overlay setting", () => {
   })
 
   it("is stored with winvm settings viewer.pauseOverlay=…, and says why it wasn't", async () => {
-    // A store that persists, as winvm's settings.json does: what is saved is what loads next time.
     let stored = "{}"
     const run = (...a: string[]): Promise<Output> => {
       if (a[1] === "--json") return Promise.resolve(ok(stored))

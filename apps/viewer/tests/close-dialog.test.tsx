@@ -1,8 +1,3 @@
-/**
- * The close dialog: what it asks about one machine (its words, its progress, the three choices,
- * Remember, Cancel), how it is dismissed, and what it shows while the close waits on a command
- * it did not start. Rendered in happy-dom.
- */
 import { GlobalRegistrator } from "@happy-dom/global-registrator"
 import { afterAll, afterEach, describe, expect, it } from "bun:test"
 
@@ -135,7 +130,6 @@ describe("ClosePolicyDialog", () => {
     expect(heard.remember).toEqual([true])
     show({ ...first, remember: true })
     expect(box().checked).toBe(true)
-    // The next machine's ask starts unchecked.
     show({ kind: "asking", machine: machine("b"), index: 2, total: 2, remember: false })
     expect(box().checked).toBe(false)
   })
@@ -153,7 +147,6 @@ describe("ClosePolicyDialog", () => {
     const { host, heard } = render({ kind: "asking", machine: machine("a"), index: 1, total: 1, remember: false })
     const el = dialog(host)
     if (el === null) throw new Error("no dialog")
-    // Escape: the dialog's own cancel event, kept from closing it behind the flow's back.
     const escape = new Event("cancel", { cancelable: true })
     act(() => {
       el.dispatchEvent(escape)
@@ -163,7 +156,6 @@ describe("ClosePolicyDialog", () => {
     expect(el.open).toBe(true)
     act(() => { el.click() })
     expect(heard.cancels).toBe(2)
-    // A click inside the panel is not the backdrop.
     act(() => el.querySelector<HTMLElement>(".close-dialog__machine")?.click())
     expect(heard.cancels).toBe(2)
     expect(heard.chose).toEqual([])
@@ -183,7 +175,6 @@ describe("ClosePolicyDialog", () => {
     expect(el?.textContent).toContain(copy("close.waiting"))
     expect(el?.textContent).toContain("Lab")
     expect(el?.textContent).toContain("Machine 1 of 2")
-    // Nothing to choose until it ends.
     expect(el?.querySelectorAll(".close-dialog__choice")).toHaveLength(0)
     expect(el?.querySelector('input[type="checkbox"]')).toBeNull()
     const cancel = buttonNamed(host, copy("confirm.cancel"))
@@ -213,7 +204,6 @@ describe("ClosePolicyDialog", () => {
   })
 })
 
-/** A VNC socket that never connects: the real Screen mounts, and nothing reaches a network. */
 class QuietSocket {
   static readonly CONNECTING = 0
   static readonly OPEN = 1
@@ -257,7 +247,6 @@ const statusJson = (w: World): Record<string, unknown> => ({
   notes: [],
 })
 
-/** The app's bridge for the whole window: status from `world`, a stow the test finishes, the close commands recorded. */
 function fakeApp(world: World) {
   const log: string[] = []
   const stows: ((o: { code: number; stdout: string; stderr: string }) => void)[] = []
@@ -323,7 +312,6 @@ describe("closing the window", () => {
     act(() => { buttonNamed(host, copy("close.stow")).click() })
     await flush()
     expect(app.log).toContain("winvm stow -i demo")
-    // The dialog has gone; the display's own overlay, the only one, says what is happening.
     expect(dialog(host)).toBeNull()
     const overlays = host.querySelectorAll(".display__operation")
     expect(overlays).toHaveLength(1)

@@ -11,15 +11,9 @@ import type { SharedFolderView } from "./useSharedFolder"
 
 interface SharedFolderProps {
   readonly view: SharedFolderView
-  /** Windows is up and its agent answers: the one-time setup can run. */
   readonly guestReady: boolean
 }
 
-/**
- * The panel's Shared folder: which Mac folder Windows sees, as which drive,
- * Choose folder… and Stop sharing; Windows' one-time setup when it lacks the
- * driver. A change made while Windows runs waits for its next start, and says so.
- */
 export function SharedFolder({ view, guestReady }: SharedFolderProps): JSX.Element {
   const [confirming, setConfirming] = useState(false)
   const s = view.status

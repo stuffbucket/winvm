@@ -1,8 +1,3 @@
-/**
- * A Windows machine's hardware and network (`winvm info --json`), and the
- * `winvm config` assignments that change its processors and memory. Pure, so
- * the rules are tested without the app.
- */
 import { z } from "zod"
 
 const Size = z.object({ cpus: z.number(), memoryMiB: z.number() })
@@ -58,7 +53,6 @@ export function parseMachineInfo(stdout: string): MachineInfo | null {
 
 export const infoArgs = (instance: string): string[] => ["info", "-i", instance, "--json"]
 
-/** `winvm config` with the processors and/or memory to use from the next start. */
 export function sizeArgs(instance: string, change: Partial<Size>): string[] {
   return [
     "config",
@@ -74,13 +68,11 @@ const MIB_PER_GB = 1024
 export const toGB = (mib: number): number => mib / MIB_PER_GB
 export const fromGB = (gb: number): number => Math.round(gb * MIB_PER_GB)
 
-/** "8 GB": memory in whole GB where it is whole. */
 export const formatMemory = (mib: number): string => {
   const gb = toGB(mib)
   return `${Number.isInteger(gb) ? String(gb) : gb.toFixed(1)} GB`
 }
 
-/** Running, and set to start next time with something else. */
 export const pendingRestart = (info: MachineInfo): boolean => {
   const r = info.hardware.running
   const n = info.hardware.next
@@ -89,11 +81,8 @@ export const pendingRestart = (info: MachineInfo): boolean => {
 
 export const endpoint = (host: string, port: number): string => `${host}:${String(port)}`
 
-/** The i18n key naming a forward, by what it is for. */
 export const forwardKey = (kind: string): string => (kind === "finder" || kind === "agent" ? `network.forward.${kind}` : "network.forward.other")
 
-/** The i18n key naming a listener on the Mac. */
 export const listenerKey = (kind: string): string => (kind === "vnc" || kind === "websocket" ? `network.listener.${kind}` : "network.listener.other")
 
-/** Windows' own IPv4 when it said, else the address QEMU's NAT hands it. */
 export const windowsAddress = (info: MachineInfo): string => info.network.windows?.ipv4 ?? info.network.guest

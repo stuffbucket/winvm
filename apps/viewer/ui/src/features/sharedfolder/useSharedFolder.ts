@@ -8,12 +8,9 @@ import { clearArgs, cliError, installArgs, setArgs, statusArgs } from "./folder"
 
 type SharedFolderWork = "set" | "clear" | "install"
 
-/** The shared Mac folder of the machine shown, and what the panel can do with it. */
 export interface SharedFolderView {
   readonly status: SharedFolderStatus | null
-  /** What the last read or change said when it failed. */
   readonly error: string | null
-  /** A change running for this machine (the setup takes minutes). */
   readonly working: SharedFolderWork | null
   readonly home: string | null
   choose: () => void
@@ -22,12 +19,6 @@ export interface SharedFolderView {
   install(): void
 }
 
-/**
- * Reads `winvm share status` while the panel shows (`active`), again when the
- * machine starts, stops or its agent comes up, and after each change. The
- * setup runs for minutes and outlives the panel being closed; while it runs no
- * other read replaces what it will print.
- */
 export function useSharedFolder(instance: string | null, phase: Phase | null, guestReady: boolean, active: boolean): SharedFolderView {
   const [status, setStatus] = useState<SharedFolderStatus | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -43,7 +34,6 @@ export function useSharedFolder(instance: string | null, phase: Phase | null, gu
       .catch(() => { setHome(null) })
   }, [])
 
-  // Another machine: nothing known about it yet.
   useEffect(() => {
     setStatus(null)
     setError(null)
@@ -73,7 +63,6 @@ export function useSharedFolder(instance: string | null, phase: Phase | null, gu
     async (name: string, kind: SharedFolderWork, args: string[]): Promise<void> => {
       setWork({ instance: name, kind })
       setError(null)
-      // A read already on its way would answer for the state before this change.
       reads.current++
       try {
         const out = await winvm(...args)

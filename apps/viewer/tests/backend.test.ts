@@ -1,9 +1,3 @@
-/**
- * The backend funnel: how a sidecar failure from the app (a structured object
- * from the Rust side, or an older plain string) reaches the UI. Normal exits
- * come back as Output, as callers expect; a missing helper, one that would not
- * start, or one stopped at its deadline is a SidecarError with copy to act on.
- */
 import { afterEach, beforeEach, describe, expect, it } from "bun:test"
 
 import {

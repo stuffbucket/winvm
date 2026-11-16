@@ -166,7 +166,6 @@ describe("a tab whose connect fails", () => {
   it("fails the tab with the timeout copy, and its Try again connects once the CLI answers", async () => {
     const transport = createSocketTransport({ connect: () => terminalEndpoint(req) })
     reply = () => rejectLikeTauri(timedOut)
-    // TerminalView's spawn: a rejection is its failed state, whose message the window shows.
     const error: unknown = await transport.spawn({ id: "x1", cols: 80, rows: 24 }).catch((e: unknown) => e)
     const failed = tabsReducer(tabsReducer(noTabs, { type: "open", id: "x1", request: req }), {
       type: "state",
@@ -175,7 +174,6 @@ describe("a tab whose connect fails", () => {
     })
     expect(failed.tabs[0]?.state).toEqual({ kind: "failed", message: copy("sidecar.timeout", { operation: "terminal", seconds: 120 }) })
 
-    // Try again: TerminalView spawns again; now the CLI says where to connect.
     reply = () => Promise.resolve({ code: 0, stdout: `${JSON.stringify(fake.endpoint())}\n`, stderr: "" })
     const statuses: SessionStatus[] = []
     const again = createSocketTransport({ connect: () => terminalEndpoint(req), onStatus: (_, s) => statuses.push(s) })
@@ -344,13 +342,10 @@ describe("tabs", () => {
     expect(t3(titled) && tabName(t3(titled)!, shellName)).toBe("vim notes.txt")
     const renamed = tabsReducer(titled, { type: "rename", id: "t3", title: "  build  " })
     expect(t3(renamed) && tabName(t3(renamed)!, shellName)).toBe("build")
-    // The shell setting its title again doesn't take the user's name away.
     const retitled = tabsReducer(renamed, { type: "title", id: "t3", title: "less log.txt" })
     expect(tabName(t3(retitled)!, shellName)).toBe("build")
-    // Nor does reopening it.
     const reopened = tabsReducer(retitled, { type: "reopen", id: "t3", newId: "t9" })
     expect(tabName(t3(reopened)!, shellName)).toBe("build")
-    // An empty name goes back to automatic.
     const cleared = tabsReducer(retitled, { type: "rename", id: "t3", title: "   " })
     expect(t3(cleared)?.customTitle).toBeNull()
     expect(tabName(t3(cleared)!, shellName)).toBe("less log.txt")

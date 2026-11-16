@@ -16,7 +16,6 @@ export interface NoteDraft {
 
 export const draftOf = (n: SaveNotes | null): NoteDraft => ({ title: n?.title ?? "", text: n?.text ?? "", tags: (n?.tags ?? []).join(", ") })
 
-/** A draft as `winvm saves note` takes it: tags split at commas. */
 export const tagsOf = (s: string): string[] => [...new Set(s.split(",").map((x) => x.trim()).filter((x) => x !== ""))]
 
 const sameDraft = (a: NoteDraft, b: NoteDraft): boolean => a.title.trim() === b.title.trim() && a.text === b.text && tagsOf(a.tags).join(",") === tagsOf(b.tags).join(",")
@@ -24,25 +23,17 @@ const sameDraft = (a: NoteDraft, b: NoteDraft): boolean => a.title.trim() === b.
 interface DetailsProps {
   readonly c: Checkpoint
   readonly now: number
-  /** Something is running (a save, a load, a start…): the actions wait. */
   readonly busy: boolean
   readonly saving: "idle" | "saving" | "saved" | "failed"
   onClose: () => void
-  /** Show the screenshot as big as the window allows. */
   onLook: () => void
   onNote: (draft: NoteDraft) => void
   onGoBack: () => void
   onDelete: () => void
 }
 
-/** How long typing has to pause before a note is written. */
 const NOTE_DEBOUNCE_MS = 700
 
-/**
- * The selected checkpoint, up close: a larger screenshot, its notes (a
- * title, markdown text and tags, written as they are typed), what it is, and
- * the two things to do with it.
- */
 export function CheckpointDetails({ c, now, busy, saving, onClose, onLook, onNote, onGoBack, onDelete }: DetailsProps): JSX.Element {
   const [draft, setDraft] = useState(() => draftOf(c.notes))
   const written = useRef(draftOf(c.notes))
@@ -50,7 +41,6 @@ export function CheckpointDetails({ c, now, busy, saving, onClose, onLook, onNot
   const latest = useRef({ draft, onNote })
   latest.current = { draft, onNote }
 
-  // Another checkpoint: start from its notes.
   useEffect(() => {
     const d = draftOf(c.notes)
     setDraft(d)
@@ -65,7 +55,6 @@ export function CheckpointDetails({ c, now, busy, saving, onClose, onLook, onNot
     written.current = d
     latest.current.onNote(d)
   }
-  // Leaving the checkpoint (or the view) keeps what was typed.
   useEffect(() => flush, [c.name])
 
   const edit = (patch: Partial<NoteDraft>): void => {

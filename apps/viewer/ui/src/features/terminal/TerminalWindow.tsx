@@ -1,11 +1,3 @@
-/**
- * The Terminal window: tabs of shells in Windows, beside the screen.
- *
- * Tabs arrive from the app (`terminal_open` queues them; this window takes
- * them when it opens and whenever it is rung) and from inside the window
- * (Cmd-T, the + button and its menu). Each tab is a TerminalView on the
- * guest's terminal WebSocket. Closing the last tab closes the window.
- */
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState, type JSX } from "react"
 
 import { TerminalView, terminalProcessTitle } from "@winvm/terminal"
@@ -66,12 +58,9 @@ export function TerminalWindow(): JSX.Element {
   const dark = useDark()
   const theme = useMemo(() => terminalTheme(dark), [dark])
   const active = activeTab(s)
-  /** The tab whose name is being edited. */
   const [editing, setEditing] = useState<string | null>(null)
-  /** Each instance's title, from the app (null: its name). */
   const [titles, setTitles] = useState<Readonly<Record<string, string | null>>>({})
   useEffect(() => onInstanceTitle(({ instance, title }) => { setTitles((was) => ({ ...was, [instance]: title })) }), [])
-  // Which shells each instance has: from the app with its first tab, or asked here.
   const shells = useMemo(() => shellCache(installedShells), [])
 
   const transport = useMemo(
@@ -80,13 +69,11 @@ export function TerminalWindow(): JSX.Element {
         async connect({ id }) {
           const tab = current.current.tabs.find((x) => x.id === id)
           if (tab === undefined) throw new Error("that tab has closed")
-          // Bounded in the app: a CLI that never answers is stopped, and the tab shows why with Try again.
           return await terminalEndpoint(tab)
         },
         onStatus(id, status) {
           const state = stateOf(status)
           if (state !== null) dispatch({ type: "state", id, state })
-          // Lost: Windows may have restarted, and may have other shells now.
           const tab = current.current.tabs.find((x) => x.id === id)
           if (status.kind === "lost" && tab !== undefined) shells.forget(tab.instance)
         },
@@ -94,7 +81,6 @@ export function TerminalWindow(): JSX.Element {
     [shells],
   )
 
-  // A hidden window gets no animation frames, so show it straight after the first commit.
   useEffect(() => { showWindow() }, [])
 
   useEffect(() => {
@@ -113,7 +99,6 @@ export function TerminalWindow(): JSX.Element {
     return onTerminalOpen(take)
   }, [shells])
 
-  /** A new tab on the active tab's instance: `launch`, or the default shell. */
   const open = useCallback(
     (launch: Launch | null): void => {
       const from = activeTab(current.current) ?? current.current.tabs.at(-1)
@@ -147,7 +132,6 @@ export function TerminalWindow(): JSX.Element {
     [openDefault],
   )
 
-  /** Right-click on a tab: rename it, close it, or close the others. */
   const tabMenu = (tab: Tab): void => {
     void popupActions([
       { kind: "action", label: t("terminal.renameTab"), run: () => { setEditing(tab.id) } },
@@ -164,12 +148,10 @@ export function TerminalWindow(): JSX.Element {
 
   const rename = (tab: Tab, next: string | null): void => {
     setEditing(null)
-    // Unchanged is no rename: an automatic name stays automatic.
     if (next === null || next.trim() === tabTitle(tab)) return
     dispatch({ type: "rename", id: tab.id, title: next })
   }
 
-  // Tab switching the way Terminal and Safari do it.
   useEffect(() => {
     const keys = (e: KeyboardEvent): void => {
       const step = (by: 1 | -1): void => {
@@ -193,13 +175,10 @@ export function TerminalWindow(): JSX.Element {
     return () => { window.removeEventListener("keydown", keys, { capture: true }) }
   }, [])
 
-  // The title bar shows tabs, not this; it names the window in the Window menu and Mission Control:
-  // the active tab's instance and the tab.
   const title =
     active === null ? t("terminal.title") : t("terminal.windowTitle", { instance: titles[active.instance] ?? active.instance, tab: tabTitle(active) })
   useEffect(() => { setWindowTitle(title) }, [title])
 
-  // The last tab closing closes the window, as in Terminal.
   const hadTabs = useRef(false)
   useEffect(() => {
     if (s.tabs.length > 0) hadTabs.current = true
@@ -210,13 +189,11 @@ export function TerminalWindow(): JSX.Element {
 
   return (
     <div className="term">
-      {/* The title bar: an overlay, so the strip and the space around its tabs move the window. */}
       <div className="term__bar" data-tauri-drag-region>
         <div className="term__tabs" role="tablist" aria-label={t("terminal.tabs")} data-tauri-drag-region>
           {s.tabs.map((tab) => {
             const name = tabTitle(tab)
             const done = tab.state.kind === "exited" || tab.state.kind === "lost" || tab.state.kind === "failed"
-            // Windows' sign for elevated; after the name in the accessible name, before it on screen.
             const shield = (
               <span className="term__tab-admin" role="img" aria-label={t("terminal.runsAsAdmin")} title={t("terminal.runsAsAdmin")}>
                 <Icon name="shield" />

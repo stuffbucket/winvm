@@ -4,7 +4,6 @@ import type { Size, Timers } from "@winvm/displayfit"
 
 import { LiveResize, type ResizePhase, type Settled } from "../ui/src/features/screen/resize"
 
-/** A virtual clock: timers fire only when the test moves time on. */
 class Clock implements Timers {
   now = 0
   private next = 1
@@ -17,7 +16,6 @@ class Clock implements Timers {
   clear(t: unknown): void {
     this.due.delete(t as number)
   }
-  /** Move on `ms`, running what falls due in order. */
   async tick(ms: number): Promise<void> {
     const end = this.now + ms
     for (;;) {
@@ -54,7 +52,6 @@ function setup(o: { stillMs?: number; idleMs?: number; settleMs?: number } = {})
     now: () => clock.now,
     ...o,
   })
-  /** The guest answers the oldest request. */
   const answer = async (): Promise<void> => {
     answers.shift()?.()
     await flushPromises()
@@ -121,7 +118,7 @@ describe("LiveResize", () => {
     await clock.tick(30)
     r.liveEnd()
     await clock.tick(40)
-    r.drawnAt(S(1024, 768)) // the driver's mode list flashing by
+    r.drawnAt(S(1024, 768))
     await answer()
     expect(phases.map((p) => p.phase)).toEqual(["resizing"])
     await clock.tick(50)

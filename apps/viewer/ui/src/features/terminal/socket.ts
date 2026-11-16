@@ -1,21 +1,3 @@
-/**
- * A TerminalTransport over the guest's terminal WebSocket.
- *
- * `connect` resolves a session's endpoint (the app runs `winvm terminal …
- * --connect --json`); the socket is then opened from the webview as
- * `new WebSocket(url + "&cols=N&rows=M", protocols)`. On it:
- *
- *   binary frames   raw terminal bytes, both ways
- *   text frames     JSON control: we send {"type":"resize","cols","rows"};
- *                   the guest sends {"type":"exit","code"} (then closes) and
- *                   {"type":"error","message"}
- *
- * Output reaches the view as `data` events (decoded as UTF-8, a frame split
- * mid-character is held for the next) and the shell's end as an `exit` event.
- * An error the guest reports is written into the terminal, in red, as well.
- * Everything else that happens to a session, opening, errors, a connection
- * lost without an exit, is reported through `onStatus`.
- */
 import type { TerminalDescriptor, TerminalEvent, TerminalTransport } from "@winvm/terminal"
 
 import type { Endpoint } from "./shells"
@@ -26,7 +8,6 @@ export type SessionStatus =
   | { readonly kind: "error"; readonly message: string }
   | { readonly kind: "lost"; readonly message: string | null }
 
-/** The parts of the WebSocket constructor this uses; tests pass their own. */
 type SocketConstructor = new (url: string, protocols: string[]) => WebSocket
 
 export interface SocketTransportOptions {
@@ -40,7 +21,6 @@ interface Session {
   readonly decoder: TextDecoder
   socket: WebSocket | null
   size: { cols: number; rows: number } | null
-  /** The size the guest was last told, so a repeat is not sent. */
   sent: { cols: number; rows: number } | null
   lastError: string | null
   exited: boolean
@@ -49,7 +29,6 @@ interface Session {
 
 const OPEN = 1
 
-/** The endpoint with the terminal's first size, which the guest starts the shell at. */
 export function sizedUrl(url: string, cols: number, rows: number): string {
   const u = new URL(url)
   u.searchParams.set("cols", String(cols))
@@ -65,7 +44,6 @@ function control(text: string): Control | null {
     if (m.type === "exit" && typeof m.code === "number") return { type: "exit", code: m.code }
     if (m.type === "error" && typeof m.message === "string") return { type: "error", message: m.message }
   } catch {
-    // not JSON: ignored, as an unknown control message is
   }
   return null
 }

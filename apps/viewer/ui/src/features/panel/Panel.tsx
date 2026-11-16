@@ -24,19 +24,13 @@ interface PanelProps {
   readonly last: Ran | null
   readonly usage: UsageView
   readonly usageContext: UsageContext
-  /** Paused or asleep: the meters say so instead of Windows' figures. */
   readonly held?: "paused" | "asleep" | null
   readonly canForceStop: boolean
   readonly sharedFolder: SharedFolderView
-  /** Processors, memory and disk, and the network (`winvm info`). */
   readonly machineInfo: MachineInfoView
-  /** Windows is up and its agent answers. */
   readonly guestReady: boolean
-  /** What closing the window does to this machine: the CLI's effective policy, as last read. */
   readonly closePolicy: ClosePolicy
-  /** Any operation on the machine, or the setting's own write, is under way: the select waits. */
   readonly closePolicyBusy: boolean
-  /** Why the last write failed (the CLI's words); the select keeps the value it had. */
   readonly closePolicyError: string | null
   onClosePolicy(policy: ClosePolicy): void
   onForceStop: () => void
@@ -54,7 +48,6 @@ function Section({ title, hint, open, children }: { title: string; hint?: string
   )
 }
 
-/** Details on demand, over the display: resources, status, the shared folder, this Mac and troubleshooting. */
 export function Panel(p: PanelProps): JSX.Element {
   const rows = p.status === null ? [] : detailRows(p.status)
   const macReady = p.checks?.ready ?? false

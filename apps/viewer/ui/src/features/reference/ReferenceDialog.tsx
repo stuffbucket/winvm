@@ -4,12 +4,10 @@ import { Button } from "../../components/Button"
 import { t } from "../../i18n"
 
 interface ReferenceDialogProps {
-  /** The CLI's own usage text, from `winvm help`; null while it loads. */
   readonly text: string | null
   onClose: () => void
 }
 
-/** Help → winvm Command Reference: every command the CLI has, as it describes them. */
 export function ReferenceDialog({ text, onClose }: ReferenceDialogProps): JSX.Element {
   const dialog = useRef<HTMLDialogElement | null>(null)
 

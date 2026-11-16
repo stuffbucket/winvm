@@ -1,8 +1,3 @@
-/**
- * The Files window's list: column headings that sort, and the folder's
- * entries as rows. Only the rows in view (and a few either side) are in the
- * DOM, so a folder of thousands scrolls as smoothly as one of ten.
- */
 import { type JSX, type KeyboardEvent, type MouseEvent, type PointerEvent, type RefObject, useEffect, useLayoutEffect, useRef, useState } from "react"
 
 import { cx } from "../../components/cx"
@@ -24,9 +19,7 @@ interface FileListProps {
   readonly selected: ReadonlySet<string>
   readonly active: string | null
   readonly renaming: Renaming | null
-  /** A folder row something is being dragged onto. */
   readonly target: string | null
-  /** Being dragged: drawn dimmed. */
   readonly carried: ReadonlySet<string>
   readonly now: number
   readonly empty: boolean
@@ -49,12 +42,10 @@ const COLUMNS: readonly { key: SortKey; label: string; className: string }[] = [
   { key: "kind", label: "files.kind", className: "files__c-kind" },
 ]
 
-/** Rows drawn beyond the visible ones, above and below. */
 const OVERSCAN = 8
 
 const rowId = (name: string): string => `files-row-${encodeURIComponent(name)}`
 
-/** The row height the stylesheet sets, in CSS pixels. */
 export function rowHeight(el: HTMLElement | null): number {
   if (el === null) return 24
   const px = Number.parseFloat(getComputedStyle(el).getPropertyValue("--files-row"))
@@ -72,7 +63,6 @@ function When({ ms, now }: { readonly ms: number; readonly now: number }): JSX.E
   )
 }
 
-/** The editable name: the stem selected, as Finder does, so typing keeps the extension. */
 function NameField({ draft, onDraft, onDone }: { readonly draft: string; onDraft: (d: string) => void; onDone: (commit: boolean) => void }): JSX.Element {
   const input = useRef<HTMLInputElement | null>(null)
   const cancelled = useRef(false)
@@ -142,7 +132,6 @@ export function FileList(p: FileListProps): JSX.Element {
               role="columnheader"
               aria-sort={on ? (p.sort.descending ? "descending" : "ascending") : "none"}
               className={cx("files__heading", c.className, on && "files__heading--on")}
-              // A heading sorts without taking the keyboard from the list, as in Finder.
               tabIndex={-1}
               onMouseDown={(e) => { e.preventDefault() }}
               onClick={() => { p.onSort(c.key) }}

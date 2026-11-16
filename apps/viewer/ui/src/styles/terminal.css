@@ -1,16 +1,5 @@
 @import url("./styles.css");
 
-/* =========================================================
-   The Terminal window: tabs in the title bar over the terminals, and a
-   status line when the active tab's shell has ended. The terminal's own
-   colours are xterm's theme, from the same tokens
-   (features/terminal/appearance.ts); these rules are the frame around it.
-   The title bar is an overlay (TitleBarStyle::Overlay, traffic lights where
-   the main window has them), so the tab strip is the title bar: as tall as
-   the main window's toolbar, clear of the traffic lights, and a drag region
-   wherever there is no tab.
-   ========================================================= */
-
 .term {
   display: flex;
   flex-direction: column;
@@ -19,12 +8,10 @@
   background: var(--surface-base);
 }
 
-/* ---- Title bar: the tabs ---- */
 .term__bar {
   display: flex;
   align-items: center;
   flex-shrink: 0;
-  /* The main toolbar's height: its padding around a toolbar button. */
   min-height: calc(var(--size-xl) + var(--space-2) * 2 + var(--border-width-hairline));
   padding-inline: var(--space-2) var(--space-3);
   background: var(--surface-card);
@@ -100,8 +87,6 @@ html[data-os="macos"] .term__bar {
   text-overflow: ellipsis;
 }
 
-/* Windows' elevation shield: every shell here runs as Administrator. Shown
-   before the name, read after it. */
 .term__tab-admin {
   display: inline-flex;
   flex: 0 0 auto;
@@ -167,7 +152,6 @@ html[data-os="macos"] .term__bar {
   margin-inline-start: var(--space-1);
 }
 
-/* ---- Terminals ---- */
 .term__panes {
   position: relative;
   flex: 1 1 auto;
@@ -184,7 +168,6 @@ html[data-os="macos"] .term__bar {
   display: none;
 }
 
-/* TerminalView's host; xterm's own element inside it is .terminal.xterm. */
 .term__pane > .terminal {
   position: relative;
   height: 100%;
@@ -223,7 +206,6 @@ html[data-os="macos"] .term__bar {
   color: var(--text-muted);
 }
 
-/* ---- The active tab's shell has ended ---- */
 .term__status {
   display: flex;
   align-items: center;

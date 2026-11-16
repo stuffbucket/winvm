@@ -1,9 +1,3 @@
-/**
- * The per-machine close-policy setting in Details: a labelled select that shows the
- * CLI's effective policy, writes it with `winvm config -i <stable-name> viewer.closePolicy=…`,
- * and keeps the old value when the write fails. Rendered in happy-dom with the app's
- * Tauri bridge faked; no real machine is touched.
- */
 import type { JSX } from "react"
 import { GlobalRegistrator } from "@happy-dom/global-registrator"
 import { afterAll, afterEach, describe, expect, it, jest } from "bun:test"
@@ -19,7 +13,6 @@ const { useWinvm } = await import("../ui/src/features/winvm/useWinvm")
 type Root = ReturnType<typeof createRoot>
 let root: Root | null = null
 
-/** A VNC socket that never connects: the real Screen mounts, and nothing reaches a network. */
 class QuietSocket {
   static readonly CONNECTING = 0
   static readonly OPEN = 1
@@ -77,12 +70,9 @@ interface Answer {
 }
 
 interface World {
-  /** What `winvm status` reports as the effective policy. */
   closePolicy: string
   operation: string | null
-  /** What a config write answers. */
   config: Answer
-  /** Hold config writes until the test finishes them. */
   hold: boolean
   configs: string[][]
   pending: (() => void)[]
@@ -101,7 +91,6 @@ const newWorld = (): World => ({
 
 const statusOf = (w: World): Record<string, unknown> => ({
   name: "demo",
-  // A display title unlike the stable name: the setting must never be keyed by it.
   title: "Build box",
   closePolicy: w.closePolicy,
   operation: w.operation === null ? null : { operation: w.operation, pid: 777, startedAt: "2026-11-12T10:00:00.000Z" },
@@ -133,7 +122,6 @@ function fakeApp(world: World): void {
       world.configs.push(args)
       const answer = world.config
       const apply = (): Answer => {
-        // The CLI validates and stores; status then reports what it stored.
         if (answer.code === 0) world.closePolicy = (args.find((x) => x.startsWith("viewer.closePolicy=")) ?? "").split("=")[1] ?? world.closePolicy
         return answer
       }
@@ -168,7 +156,6 @@ const policySelect = (host: HTMLElement): HTMLSelectElement => {
 }
 
 async function choose(select: HTMLSelectElement, value: string): Promise<void> {
-  // React tracks the value: set it through the native setter, then fire the change it listens for.
   const descriptor = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value")
   act(() => {
     descriptor?.set?.call(select, value)
@@ -217,7 +204,6 @@ describe("changing the policy", () => {
     await choose(policySelect(host), "shutdown")
     expect(world.configs).toEqual([["config", "-i", "demo", "viewer.closePolicy=shutdown"]])
     const select = policySelect(host)
-    // Not mirrored: the select still shows what status reported.
     expect(select.value).toBe("stow")
     expect(world.statusReads).toBe(reads)
     const described = select.getAttribute("aria-describedby")
@@ -225,7 +211,6 @@ describe("changing the policy", () => {
     expect(message?.textContent).toContain("viewer.closePolicy is read-only on this machine")
     expect(message?.getAttribute("role")).toBe("alert")
 
-    // A later success clears it.
     world.config = { code: 0, stdout: "", stderr: "" }
     await choose(policySelect(host), "leave")
     expect(policySelect(host).value).toBe("leave")
@@ -264,7 +249,6 @@ describe("changing the policy", () => {
 describe("useWinvm.setClosePolicy", () => {
   const machine = (name: string, closePolicy: string): Record<string, unknown> => ({ ...statusOf(newWorld()), name, title: null, closePolicy, state: "stopped", vmStatus: null, pid: null, guest: null })
 
-  /** Two machines, `a` first; config writes and `a`'s status reads can be held. */
   function twoMachines(): {
     policies: Record<string, string>
     configs: string[][]
@@ -336,7 +320,6 @@ describe("useWinvm.setClosePolicy", () => {
     await flush()
     expect(world.configs).toEqual([["config", "-i", "a", "viewer.closePolicy=leave"]])
 
-    // The person moves to machine b while a's write is out; a's refresh read is held too.
     act(() => { app.latest().select("b") })
     await flush()
     await tick(0)
@@ -344,19 +327,16 @@ describe("useWinvm.setClosePolicy", () => {
     world.holdReadsOf.name = "a"
     world.held.shift()?.()
     await flush()
-    // The write finished and a's read is out; b is still what is shown.
     expect(world.reads).toContain("a")
     for (const release of world.held.splice(0)) release()
     expect(await writing).toBeNull()
     await flush()
     expect(app.latest().status?.name).toBe("b")
     expect(app.latest().status?.closePolicy).toBe("stow")
-    // a's own value did change, and the picker knows that machine's state without showing its status.
     expect(world.policies.a).toBe("leave")
   })
 
   it("does nothing, and never falls back to default, when no machine is selected", async () => {
-    // No machine answers: the list read never lands.
     const calls: string[][] = []
     Object.assign(window, {
       __TAURI__: {

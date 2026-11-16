@@ -1,8 +1,3 @@
-/**
- * An operation under way, in the window: the one overlay that covers the display
- * for it, the copy for each operation, and what the rest of the window stops
- * doing meanwhile. Rendered in happy-dom with the app's Tauri bridge faked.
- */
 import type { JSX } from "react"
 import { GlobalRegistrator } from "@happy-dom/global-registrator"
 import { afterAll, afterEach, describe, expect, it, jest } from "bun:test"
@@ -21,7 +16,6 @@ const { VM_OPERATIONS } = await import("../ui/src/model")
 type Root = ReturnType<typeof createRoot>
 let root: Root | null = null
 
-/** A VNC socket that never connects: the real Screen mounts, and nothing reaches a network. */
 class QuietSocket {
   static readonly CONNECTING = 0
   static readonly OPEN = 1
@@ -66,7 +60,6 @@ const flush = async (): Promise<void> => {
   })
 }
 
-/** What each operation says over the display, word for word. */
 const COPY: Record<(typeof VM_OPERATIONS)[number], string> = {
   start: "Starting Windows",
   stop: "Shutting Down",
@@ -145,7 +138,6 @@ const statusOf = (w: World): Record<string, unknown> => ({
   notes: [],
 })
 
-/** The app's bridge: `winvm status` answers from `world`, `open` hands out a screen, `pause` waits for the test. */
 function fakeApp(world: World): { capture: boolean[]; pending: { args: readonly string[]; finish(): void }[] } {
   const capture: boolean[] = []
   const pending: { args: readonly string[]; finish(): void }[] = []
@@ -201,12 +193,10 @@ describe("the display while an operation runs", () => {
     expect(shown?.textContent).toBe("Starting Windows")
     expect(shown?.getAttribute("role")).toBe("status")
     expect(shown?.getAttribute("aria-live")).toBe("polite")
-    // After the Overview, so nothing under it is reachable.
     expect(display(host).lastElementChild).toBe(shown)
     expect(display(host).querySelector(".overview")).not.toBeNull()
     expect(host.querySelectorAll(".display [role=\"status\"]")).toHaveLength(1)
 
-    // Another process's lease ends: the next read says none (reads come every 1.5 s meanwhile).
     world.operation = null
     await tick(1500)
     expect(overlay(host)).toBeNull()
@@ -221,24 +211,20 @@ describe("the display while an operation runs", () => {
     expect(button(host, "Pause").disabled).toBe(false)
     expect(button(host, "Terminal").disabled).toBe(false)
 
-    // The person captures the keyboard for the guest.
     act(() => { button(host, "Capture Keyboard (Control-Option)").click() })
     await flush()
     expect(app.capture.at(-1)).toBe(true)
 
-    // Another viewer begins closing it.
     world.operation = "stow"
     await tick(4000)
     const shown = overlay(host)
     expect(shown?.textContent).toBe("Stowing Windows")
-    // After the screen, so it cannot be reached.
     expect(display(host).lastElementChild).toBe(shown)
     expect(display(host).querySelector(".screen")).not.toBeNull()
     expect(host.querySelector(".viewer")?.getAttribute("data-busy")).toBe("true")
     for (const label of ["Shut down", "Restart", "Pause", "Terminal", "Files in Windows", "Capture Keyboard (Control-Option)"]) {
       expect(button(host, label).disabled).toBe(true)
     }
-    // The system keyboard capture went back to the Mac when it began.
     expect(app.capture.at(-1)).toBe(false)
 
     world.operation = null
@@ -254,7 +240,6 @@ describe("the display while an operation runs", () => {
     await flush()
     expect(overlay(host)?.textContent).toBe("Pausing Windows")
     expect(display(host).lastElementChild).toBe(overlay(host))
-    // The other process's lease does not rename it.
     world.operation = "stop"
     await tick(1500)
     expect(overlay(host)?.textContent).toBe("Pausing Windows")
@@ -273,7 +258,6 @@ describe("the display while an operation runs", () => {
     expect(display(host).querySelector(".screen__held--on")).not.toBeNull()
     expect(host.querySelector(".display > .display__operation")).toBeNull()
 
-    // With one under way the screen stays as it was under it, and the operation is the last thing in the display.
     world.operation = "resume"
     await tick(4000)
     expect(overlay(host)?.textContent).toBe("Resuming Windows")

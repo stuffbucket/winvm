@@ -17,7 +17,6 @@ function sources(dir: string): string[] {
 
 const catalog = new Set(Object.keys(en))
 
-// Keys built at run time, from the values they are built from.
 const built = [
   ...["loading", "starting", "running", "paused", "asleep", "stopped", "stowed", "missing"].map((s) => `state.${s}`),
   ...["start", "stop", "reboot", "pause", "resume", "sleep", "wake", "lock", "kill", "setup", "save", "load", "stow"].map((v) => `busy.${v}`),
@@ -102,7 +101,6 @@ describe("the en catalog", () => {
     expect(catalogOf["sidecar.launch"]).toContain("{detail}")
     expect(catalogOf["sidecar.timeout"]).toContain("{seconds}")
     expect(catalogOf["sidecar.timeout"]).toContain("{operation")
-    // Stopping the helper never stops Windows: the copy says so.
     expect(catalogOf["sidecar.timeout"]).toContain("Windows wasn't touched")
   })
 

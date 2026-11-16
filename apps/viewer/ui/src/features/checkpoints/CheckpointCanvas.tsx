@@ -1,19 +1,3 @@
-/**
- * Checkpoints: every checkpoint of a Windows machine on an infinite canvas,
- * as Time Machine shows backups. The window's own screen shrinks into the
- * "Now" card at the front, the checkpoints recede up the canvas a day at a
- * time, and the timeline on the right flies through them. Pinch, ⌘-scroll or
- * ⌘+ / ⌘− zoom; dragging, two-finger scrolling or the arrow keys pan; every
- * camera move eases in and out (and jumps, with reduced motion).
- *
- * A card selected comes up close with its notes, Go Back to This and
- * Delete…. New Checkpoint takes one and flies it out of Now into the stack.
- * Done (Esc) flies back into the live screen. Going back flies the chosen
- * checkpoint into the screen once Windows is back at that moment.
- *
- * The rules (layout, timeline, search, confirmations) are in checkpoints.ts;
- * the canvas and its camera are @winvm/canvas.
- */
 import { type PointerEvent, useCallback, useEffect, useMemo, useRef, useState, type JSX } from "react"
 
 import {
@@ -88,39 +72,28 @@ import { Timeline } from "./Timeline"
 
 export interface CheckpointCanvasProps {
   readonly instance: string
-  /** What the person calls this Windows machine. */
   readonly machine: string
   readonly phase: Phase | null
-  /** Something the main window started is running. */
   readonly busy: boolean
-  /** The live screen's width over its height. */
   readonly aspect: number
-  /** Where the live screen is in the window, to fly into and out of. */
   displayRect(): Rect | null
-  /** noVNC's canvas, to show live in the Now card. */
   liveSource: () => HTMLCanvasElement | null
-  /** Runs `save` or `load` the way the main window does (its busy state, its failure callout). */
   run(verb: "save" | "load", arg: string): Promise<Ran | null>
-  /** Bumped by the main window (⌘⇧T, the menu) to leave. */
   readonly closeRequest: number
   onClosed(): void
 }
 
-/** Room the details panel and the timeline take at the right, so a selected card centres in what is left. */
 const PANEL_SPACE = 400
 const TIMELINE_SPACE = 132
 const PAN_STEP = 80
 const ZOOM_STEP = 1.25
 const ENTER_WAIT_MS = 450
-/** Below this zoom, captions are too small to read: cards draw pictures only. */
 const FAR_ZOOM = 0.42
 
 type Confirm = { readonly kind: "go-back"; readonly name: string } | { readonly kind: "delete"; readonly name: string }
 
-/** A day's date, in world units, smaller for older days, never under DAY_LABEL_MIN on screen. */
 const DAY_LABEL = 24
 const DAY_LABEL_MIN = 12
-/** When the gap above a day is less than this on screen, there is no room for dates: only months are named. */
 const DAY_LABEL_ROOM = 30
 
 const viewSize = (): Size => ({ width: window.innerWidth, height: window.innerHeight })
@@ -146,7 +119,6 @@ export function CheckpointCanvas(p: CheckpointCanvasProps): JSX.Element {
   const [size, setSize] = useState(viewSize)
   const [panning, setPanning] = useState(false)
   const [nowMs, setNowMs] = useState(() => Date.now())
-  // Quick Look: the selected checkpoint's screenshot over everything.
   const [looking, setLooking] = useState(false)
 
   const viewport = useRef<HTMLDivElement>(null)
@@ -154,9 +126,6 @@ export function CheckpointCanvas(p: CheckpointCanvasProps): JSX.Element {
   const props = useRef(p)
   props.current = p
 
-  // ---- Data -------------------------------------------------------------
-
-  /** Read the list again; `landing` sees it first, so what it sets is drawn in the same frame as the list. */
   const reload = useCallback(async (landing?: (got: Checkpoint[]) => void): Promise<Checkpoint[] | null> => {
     try {
       const out = await winvm("saves", "-i", props.current.instance, "--json")
@@ -194,15 +163,12 @@ export function CheckpointCanvas(p: CheckpointCanvasProps): JSX.Element {
   const shown = useMemo(() => (list ?? []).filter((c) => settings.showAutomatic || !isAutomatic(c) || c.name === selected), [list, settings.showAutomatic, selected])
   const byName = useMemo(() => new Map((list ?? []).map((c) => [c.name, c])), [list])
   const layout = useMemo(() => layoutTimeline(shown, p.aspect), [shown, p.aspect])
-  // For work that finishes later (a load), to find a card where it is then, not where it was.
   const layoutNow = useRef(layout)
   layoutNow.current = layout
   const ticks = useMemo(
     () => timelineTicks(layout.days, new Date(nowMs), { now: t("checkpoints.now"), today: t("checkpoints.today"), yesterday: t("checkpoints.yesterday") }),
     [layout.days, nowMs],
   )
-
-  // ---- Camera -----------------------------------------------------------
 
   const content = useMemo<Rect>(() => {
     const b = layout.bounds
@@ -222,7 +188,6 @@ export function CheckpointCanvas(p: CheckpointCanvasProps): JSX.Element {
   const cam = useCanvasCamera(nowCamera(), viewSize)
   const { fly: flyCamera, set: setCamera, current: cameraNow } = cam
   const camera = cam.camera
-  // What the timeline (and, with a card selected, the details panel) cover on the right: the stack is kept in reach of the rest.
   const reserve = useRef(TIMELINE_SPACE)
   reserve.current = selected === null ? TIMELINE_SPACE : PANEL_SPACE + TIMELINE_SPACE
   const clamp = useCallback(
@@ -231,7 +196,6 @@ export function CheckpointCanvas(p: CheckpointCanvasProps): JSX.Element {
     [content, limits],
   )
 
-  /** Centred in the part of the window the panel and timeline leave free. */
   const centreIn = (world: { x: number; y: number }, zoom: number, reserve: number): Camera => {
     const c = centreOn(world, zoom, viewSize())
     return { ...c, x: c.x - reserve / 2 }
@@ -248,14 +212,12 @@ export function CheckpointCanvas(p: CheckpointCanvasProps): JSX.Element {
     (box: Rect): Camera => {
       const v = viewSize()
       const free = Math.max(320, v.width - PANEL_SPACE - TIMELINE_SPACE)
-      // Up close, but with its neighbours still in sight: about 380 px wide on screen.
       const zoom = clampZoom(Math.min(Math.min(free * 0.55, 380) / box.width, (v.height * 0.55) / box.height), limits)
       return centreIn({ x: box.x + box.width / 2, y: box.y + box.height / 2 }, zoom, PANEL_SPACE + TIMELINE_SPACE)
     },
     [limits],
   )
 
-  // In: the screen becomes the Now card, the view pulls back to show the newest checkpoints.
   const entered = useRef(false)
   useEffect(() => {
     const frame = requestAnimationFrame(() => { setPhase("open") })
@@ -276,7 +238,6 @@ export function CheckpointCanvas(p: CheckpointCanvasProps): JSX.Element {
     return () => { clearTimeout(timer) }
   }, [list, overview, flyCamera])
 
-  // Out: back into the live screen, or the chosen checkpoint into it.
   const leavingNow = useRef(false)
   const leave = useCallback(
     async (into?: Rect): Promise<void> => {
@@ -324,8 +285,6 @@ export function CheckpointCanvas(p: CheckpointCanvasProps): JSX.Element {
   }
   const fitAll = (): void => { fly(fitRect(layout.bounds, { width: viewSize().width - TIMELINE_SPACE, height: viewSize().height }, 72, limits)) }
 
-  // ---- Pointer, wheel and pinch -----------------------------------------
-
   const press = useRef<{ id: number; x: number; y: number; from: Camera; moved: boolean } | null>(null)
   const suppressClick = useRef(false)
 
@@ -357,7 +316,6 @@ export function CheckpointCanvas(p: CheckpointCanvasProps): JSX.Element {
         suppressClick.current = false
       }, 0)
     } else if (e.target === e.currentTarget) {
-      // A click on empty canvas lets go of the selection.
       select(null)
     }
   }
@@ -370,7 +328,6 @@ export function CheckpointCanvas(p: CheckpointCanvasProps): JSX.Element {
     [select],
   )
 
-  // Wheel and pinch need non-passive listeners to keep the page from scrolling or zooming itself.
   const wheelState = useRef({ clamp, limits })
   wheelState.current = { clamp, limits }
   useEffect(() => {
@@ -390,7 +347,6 @@ export function CheckpointCanvas(p: CheckpointCanvasProps): JSX.Element {
       const dy = e.shiftKey && e.deltaX === 0 ? 0 : e.deltaY
       setCamera(c({ ...now, x: now.x - dx * lines, y: now.y - dy * lines }))
     }
-    // WebKit's own pinch: gesture events, with the scale since the pinch began.
     let pinchFrom: Camera | null = null
     const gestureStart = (e: Event): void => {
       e.preventDefault()
@@ -414,23 +370,17 @@ export function CheckpointCanvas(p: CheckpointCanvasProps): JSX.Element {
     }
   }, [setCamera, cameraNow])
 
-  // ---- Search -----------------------------------------------------------
-
   const dateWords = useCallback((c: Checkpoint) => takenAt(c, nowMs), [nowMs])
   const results = useMemo(() => searchCheckpoints(list ?? [], query, dateWords), [list, query, dateWords])
   const matches = useMemo(() => (query.trim() === "" ? null : new Set(results.map((c) => c.name))), [results, query])
   const pickResult = (c: Checkpoint): void => {
     searchInput.current?.blur()
     if (!settings.showAutomatic && isAutomatic(c)) {
-      // A hidden autosave found by search: show automatic ones so it has a place to fly to.
       setSettings((s) => ({ ...s, showAutomatic: true }))
     }
     setSearchOpen(false)
-    // The layout may change with the setting; select once it has.
     setTimeout(() => { select(c.name) }, 0)
   }
-
-  // ---- Timeline ---------------------------------------------------------
 
   const centre = centreOf(camera, size)
   const nearest = dayNearest(layout, { x: centre.x, y: centre.y })
@@ -452,8 +402,6 @@ export function CheckpointCanvas(p: CheckpointCanvasProps): JSX.Element {
     } else select(next)
   }
 
-  // ---- Actions ----------------------------------------------------------
-
   const taken = useMemo(() => new Set((list ?? []).map((c) => c.name)), [list])
 
   const writeTitle = async (name: string, title: string): Promise<void> => {
@@ -461,11 +409,9 @@ export function CheckpointCanvas(p: CheckpointCanvasProps): JSX.Element {
     await winvm("saves", "note", "-i", props.current.instance, name, `--title=${title.trim()}`, "--json").catch(() => undefined)
   }
 
-  /** Take a checkpoint of now; resolves with its name, or null when it failed (and says why). */
   const takeCheckpoint = async (title: string, label: string): Promise<string | null> => {
     const name = saveNameFor(title, taken, new Date())
     setWorking({ on: "now", label })
-    // Watch it happen: Now, and today's checkpoints above it, where the new one will land.
     setSelected(null)
     const today = layout.days.at(-1)
     const isToday = today !== undefined && today.key === dayKey(new Date())
@@ -479,7 +425,6 @@ export function CheckpointCanvas(p: CheckpointCanvasProps): JSX.Element {
       }
       await writeTitle(name, title)
       const before = new Set(taken)
-      // The new card flies out of Now into its place: set up in the same frame it first appears.
       let landed: TimelineLayout | null = null
       await reload((got) => {
         if (!got.some((c) => c.name === name) || before.has(name)) return
@@ -562,11 +507,9 @@ export function CheckpointCanvas(p: CheckpointCanvasProps): JSX.Element {
     }
   }
 
-  // Notes are written one at a time, in order, so a fast typist's last word wins.
   const noteQueue = useRef<Promise<void>>(Promise.resolve())
   const writeNote = (name: string, d: NoteDraft): void => {
     setNoteState("saving")
-    // A note that is just "-" would read standard input; nobody means that.
     const text = d.text.trim() === "-" ? `${d.text} ` : d.text
     noteQueue.current = noteQueue.current.then(async () => {
       try {
@@ -592,9 +535,6 @@ export function CheckpointCanvas(p: CheckpointCanvasProps): JSX.Element {
     })
   }
 
-  // ---- Keys -------------------------------------------------------------
-
-  // On the window, not the surface: keys still work when focus has fallen to the page (after a confirmation closes).
   const onKeyDown = (e: KeyboardEvent): void => {
     const target = e.target instanceof Element ? e.target : document.body
     if (target.closest("dialog") !== null || e.defaultPrevented) return
@@ -649,7 +589,6 @@ export function CheckpointCanvas(p: CheckpointCanvasProps): JSX.Element {
       const dy = e.key === "ArrowUp" ? d : e.key === "ArrowDown" ? -d : 0
       fly({ ...now, x: now.x + dx, y: now.y + dy }, 180)
     } else if (!cmd && e.key === " " && selected !== null && (target.closest("button, a, [role=slider]") === null || target.closest(".checkpoint__hit") !== null)) {
-      // Quick Look, as in Finder: the screenshot, as big as the window allows.
       e.preventDefault()
       setLooking((l) => !l)
     } else if (!cmd && (e.key === "+" || e.key === "=")) {
@@ -666,8 +605,6 @@ export function CheckpointCanvas(p: CheckpointCanvasProps): JSX.Element {
     window.addEventListener("keydown", handle)
     return () => { window.removeEventListener("keydown", handle) }
   }, [])
-
-  // ---- Drawing ----------------------------------------------------------
 
   const seen = visibleWorld(camera, size, 360)
   const far = camera.zoom < FAR_ZOOM
@@ -707,7 +644,6 @@ export function CheckpointCanvas(p: CheckpointCanvasProps): JSX.Element {
             {layout.days.map((d, i) => {
               if (!rectsIntersect(withLabel(d), seen)) return null
               const tick = ticks[i]
-              // Too far away for a date over every day: the months, beside the stack, are enough.
               const near = DAY_GAP * d.scale * camera.zoom >= DAY_LABEL_ROOM
               if (!near && tick?.month == null) return null
               return (

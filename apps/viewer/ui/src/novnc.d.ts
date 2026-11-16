@@ -10,28 +10,15 @@ declare module "@winvm/novnc/core/rfb.js" {
     resizeSession: boolean
     background: string
     focusOnClick: boolean
-    /** No keys or pointer sent to the server (the screen still updates). */
     viewOnly: boolean
     disconnect(): void
     sendKey(keysym: number, code: string, down?: boolean): void
     sendCredentials(credentials: { readonly password: string }): void
-    /** Sends text to the server's clipboard: extended clipboard (UTF-8) once the server has said it can, else Latin-1. */
     clipboardPasteFrom(text: string): void
-    /**
-     * Private in noVNC: the extended-clipboard formats the server announced
-     * (1 is text), empty until its caps arrive just after connecting; read so
-     * the first paste goes as UTF-8 (see Screen.tsx).
-     */
     readonly _clipboardServerCapabilitiesFormats?: Readonly<Record<number, boolean>>
-    /** Private in noVNC, read to send SetDesktopSize ourselves (see Screen.tsx). */
     readonly _sock: unknown
     readonly _screenID?: number
     readonly _screenFlags?: number
-    /**
-     * Private in noVNC: the framebuffer's drawing. `flip` ends each update
-     * (queued while images decode, then called again with `fromQueue`); the
-     * viewer wraps it to know when a new size has been drawn in full.
-     */
     readonly _display: {
       flip(fromQueue?: boolean): void
       readonly _renderQ: readonly unknown[]

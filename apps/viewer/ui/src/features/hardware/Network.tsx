@@ -7,7 +7,6 @@ import { t } from "../../i18n"
 import { endpoint, forwardKey, listenerKey, windowsAddress } from "./info"
 import type { MachineInfoView } from "./useMachineInfo"
 
-/** A value and a button that copies `copy` (default: the value itself). */
 function CopyRow({ label, value, copy }: { readonly label: string; readonly value: string; readonly copy?: string | undefined }): JSX.Element {
   const [copied, setCopied] = useState(false)
   const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
@@ -36,11 +35,6 @@ function CopyRow({ label, value, copy }: { readonly label: string; readonly valu
   )
 }
 
-/**
- * The panel's Network, read-only: QEMU's NAT, the addresses Windows sees, and
- * the ports on this Mac that reach into Windows (forwards) or show its screen
- * (listeners). Forwards and listeners exist only while the machine runs.
- */
 export function Network({ view }: { readonly view: MachineInfoView }): JSX.Element {
   const info = view.info
   if (info === null)

@@ -1,30 +1,10 @@
-/**
- * A stand-in for the guest's terminal WebSocket, for tests and for looking
- * at the Terminal window without a VM. It speaks the guest's interface:
- *
- *   ws://127.0.0.1:<port>/term?shell=..&cwd=..&cols=N&rows=M
- *   subprotocols  "winvm-term" and "winvm-token.<token>"; the server picks winvm-term
- *   binary frames raw terminal bytes, both ways
- *   text frames   {"type":"resize","cols","rows"} in; {"type":"exit","code"} and
- *                 {"type":"error","message"} out
- *
- * As a shell it is a line echo: it echoes what is typed, and on Return runs
- * the line: `exit [code]` exits, `error <text>` reports an error, `title
- * <text>` sets the title (OSC 2), `size` prints the size it was last told,
- * `split` prints "é✓" with its bytes split across frames mid-character,
- * `colors` prints the ANSI colours, anything else is printed back.
- *
- *   bun tests/fake-term-server.ts [port]   serve until killed, and print the endpoint
- */
 import type { Server, ServerWebSocket } from "bun"
 
 interface FakeSession {
   readonly shell: string | null
   readonly cwd: string | null
   readonly protocols: readonly string[]
-  /** The sizes the shell was given, the first from the URL. */
   readonly sizes: { cols: number; rows: number }[]
-  /** Everything typed, as text. */
   input: string
 }
 
@@ -37,7 +17,6 @@ export interface FakeTermServer {
   readonly port: number
   readonly token: string
   readonly sessions: FakeSession[]
-  /** What `winvm terminal --connect --json` would print for this server. */
   endpoint(shell?: string, cwd?: string | null): { url: string; protocols: string[] }
   stop(): void
 }

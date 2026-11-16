@@ -2,7 +2,6 @@ export const fontStacks = {
   display: '"Fraunces", Georgia, "Times New Roman", serif',
   body: '"Commissioner", "Segoe UI", Helvetica, Arial, sans-serif',
   mono: 'ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace',
-  /** File-type glyphs and sort chevrons (a vendored subset of Symbols Nerd Font Mono); never text. */
   symbols: '"Symbols Nerd Font Mono"',
 } as const;
 
@@ -78,27 +77,16 @@ export const elevation = {
   tooltip: "0 2px 6px rgb(0 0 0 / 0.1)",
 } as const;
 
-/** Identity only (brand mark, requirement icon) — never a control, link or text. */
 export const brand = {
   color: "#c8334a",
 } as const;
 
-/**
- * Theme-independent interaction colors. The accent fill itself is per theme
- * (`themes.*.accent`); its label stays white in both. `destructive` is the
- * destructive *button fill* only — error text and icons use `statusError`.
- */
 export const accent = {
   fg: "#ffffff",
   destructive: "#b32d3f",
   destructiveFg: "#ffffff",
 } as const;
 
-/**
- * Behind a modal dialog, in both themes. `paused` dims the guest's screen while
- * the machine is paused or asleep: a light grey veil, so the picture stays
- * readable (and the glyph over it says why it doesn't move).
- */
 export const scrim = {
   color: "rgb(0 0 0 / 0.5)",
   paused: "rgb(143 143 143 / 0.2)",
@@ -116,24 +104,6 @@ export const layout = {
   panelWidth: "320px",
 } as const;
 
-/**
- * Theme-dependent colors. Every key must exist in both themes. The
- * generator (apps/viewer/scripts/generate-css-tokens.ts) emits dark as the default,
- * switches to light when the OS appearance is light, and lets a
- * `data-theme="dark" | "light"` attribute on <html> pin either one.
- *
- * Each value is chosen against all three surfaces of its own theme
- * (maximal's packages/storybook contrast audit checked them):
- *   text-*, link*, status-*   ≥ 4.5:1 — usable as text, so also as icons
- *   accent, border-strong     ≥ 3:1   — controls, focus ring, input borders
- *   accent behind white text  ≥ 4.5:1 — primary button labels
- * `link` doubles as the accent family's text color: anything teal that is
- * text (links, "Copied", accent figures) uses `link`, never `accent`.
- * `backdrop*` (winvm) is the ground the display sits on: a base and two soft
- * glows, accent and brand. Never behind text; text sits on a surface over it.
- * `terminalSelection` (winvm) is selected text's ground in the Terminal
- * window; the terminal's own text on it stays ≥ 4.5:1.
- */
 export const themes = {
   dark: {
     surfaceBase: "#0a0a0a",

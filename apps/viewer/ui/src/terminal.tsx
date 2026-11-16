@@ -18,5 +18,4 @@ createRoot(root).render(
     </ErrorBoundary>
   </StrictMode>,
 )
-// Shown even if the window never commits, so a failure is visible rather than a missing window.
 setTimeout(showWindow, 1000)

@@ -262,7 +262,6 @@ describe("parseShare", () => {
 })
 
 describe("parseClaudeStatus", () => {
-  // As `winvm mcp status -i mcp-test --json` printed it, from a source checkout.
   const out = JSON.stringify({
     instance: "mcp-test",
     server: "winvm-mcp-test",

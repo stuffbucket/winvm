@@ -21,7 +21,6 @@ describe("the Files window's model", () => {
   })
 
   it("words dates as Finder does, at three widths", () => {
-    // ICU puts a narrow no-break space before AM/PM in some versions; either reads the same.
     const label = (k: string, v?: Record<string, string>): string => `${k}|${Object.values(v ?? {}).join("|")}`.replace(/\u202f/g, " ")
     const now = new Date(2026, 9, 28, 15, 0).getTime()
     const today = finderDate(new Date(2026, 9, 28, 13, 33).getTime(), now, label, "en-US")
@@ -78,7 +77,6 @@ describe("the agent's answers", () => {
     })
     expect(parseReply({ status: 400, body: { error: "odd", code: "weird" } }, Path)).toMatchObject({ ok: false, code: "other" })
     expect(parseReply({ status: 500, body: "boom" }, Path)).toEqual({ ok: false, code: "other", detail: "500 boom" })
-    // A success that isn't the shape asked for is a failure, not a lie.
     expect(parseReply({ status: 200, body: { nope: 1 } }, Path)).toMatchObject({ ok: false, code: "other" })
   })
 

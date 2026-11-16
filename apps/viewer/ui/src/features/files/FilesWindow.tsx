@@ -1,17 +1,3 @@
-/**
- * The Files window: one instance's files in Windows, as Finder shows a Mac's.
- *
- * The title bar is an overlay: the traffic lights sit over the sidebar (the
- * known folders, then the drives), and back, forward, up, the path and
- * refresh make the toolbar beside them, which is also the drag region. Below,
- * the folder's entries in sortable columns, and a status bar saying how many
- * there are, what is selected and what a copy is doing.
- *
- * Items move by dragging them onto a folder row or a place (copied with
- * Option held), leave for the Mac by dragging them out of the window (file
- * promises, written only when Finder asks), and arrive by dropping Mac files
- * anywhere on the window. A right-click or Option-click shows a native menu.
- */
 import { type KeyboardEvent, type MouseEvent, type PointerEvent, useCallback, useEffect, useMemo, useRef, useState, type JSX } from "react"
 
 import {
@@ -55,10 +41,8 @@ const PLACE_ICON: Record<Place["kind"], IconName> = {
   drive: "hardDrive",
 }
 
-/** Desktop, Documents and Downloads in the reader's words; the profile, C:\work and drives by their own names. */
 const placeName = (p: Place): string => (p.kind === "desktop" || p.kind === "documents" || p.kind === "downloads" ? t(`files.place.${p.kind}`) : p.name)
 
-/** What to call a folder: a known folder's name, else its own. */
 function folderName(path: string, places: readonly Place[]): string {
   const place = places.find((p) => samePath(p.path, path) && p.kind !== "home")
   return place === undefined ? leafName(path) : placeName(place)
@@ -67,12 +51,9 @@ function folderName(path: string, places: readonly Place[]): string {
 const isMac = (): boolean => typeof navigator === "undefined" || !/win|linux/i.test(navigator.platform)
 const mod = (e: { metaKey: boolean; ctrlKey: boolean }): boolean => (isMac() ? e.metaKey : e.ctrlKey)
 
-/** Asking for confirmation from this many items on: fewer go straight to the Recycle Bin, which can undo. */
 const CONFIRM_FROM = 10
-/** How far the pointer moves before a press becomes a drag, in CSS pixels. */
 const DRAG_SLOP = 4
 
-/** Per-viewer conveniences: the sort and the last folder. Losing them loses nothing. */
 const remember = {
   get(key: string): string | null {
     try {
@@ -85,7 +66,6 @@ const remember = {
     try {
       localStorage.setItem(`winvm.files.${key}`, value)
     } catch {
-      // private mode or blocked storage: not remembered
     }
   },
 }
@@ -97,7 +77,6 @@ function savedSort(): Sort {
   return SORT_KEYS.includes(key as SortKey) ? { key: key as SortKey, descending: dir === "desc" } : { key: "name", descending: false }
 }
 
-/** Where a drag would land: a folder row, a place, or the folder shown. */
 type Target = { readonly kind: "row"; readonly name: string; readonly path: string } | { readonly kind: "place"; readonly path: string } | { readonly kind: "here"; readonly path: string }
 
 interface Drag {
@@ -113,14 +92,12 @@ interface Press {
   readonly y: number
   readonly name: string
   readonly alt: boolean
-  /** Pressed on a selected row with no modifier: it becomes the only selection on release, unless dragged. */
   readonly collapse: boolean
 }
 
 const why = (code: OpCode): string => t(`files.why.${code}`)
 
 export function FilesWindow({ instance, initialTitle }: { readonly instance: string; readonly initialTitle: string | null }): JSX.Element {
-  // What the instance is called: given when the window opened, then kept up to date by the main window.
   const [title, setTitle] = useState<string | null>(initialTitle)
   useEffect(
     () =>
@@ -154,7 +131,6 @@ export function FilesWindow({ instance, initialTitle }: { readonly instance: str
 
   useEffect(() => { showWindow() }, [])
 
-  // The webview's own menu (Reload, Inspect) is no use here; text fields keep theirs for cut and paste.
   useEffect(() => {
     const quiet = (e: globalThis.MouseEvent): void => {
       if (!(e.target instanceof HTMLInputElement)) e.preventDefault()
@@ -163,7 +139,6 @@ export function FilesWindow({ instance, initialTitle }: { readonly instance: str
     return () => { window.removeEventListener("contextmenu", quiet) }
   }, [])
 
-  /** Open `path` (null: the Desktop). `how` says what it does to back and forward. */
   const load = useCallback(
     async (path: string | null, how: "go" | "back" | "forward" | "stay"): Promise<void> => {
       const id = (request.current += 1)
@@ -173,7 +148,6 @@ export function FilesWindow({ instance, initialTitle }: { readonly instance: str
       setLoading(false)
       if (!isListing(got)) {
         setFailure(got)
-        // A remembered folder that has gone: the Desktop instead.
         if (how === "stay" && shown.current === null && path !== null && got.code !== "notrunning") void load(null, "stay")
         return
       }
@@ -203,7 +177,6 @@ export function FilesWindow({ instance, initialTitle }: { readonly instance: str
         setRenaming(null)
         list.current?.scrollTo({ top: 0 })
       } else {
-        // The same folder read again: keep what is still there selected.
         setSelected((s) => new Set([...s].filter((n) => names.has(n))))
         setActive((a) => (a !== null && names.has(a) ? a : null))
       }
@@ -214,7 +187,6 @@ export function FilesWindow({ instance, initialTitle }: { readonly instance: str
     [instance],
   )
 
-  // First the folder it was left in (else the Desktop); again whenever files land in Windows.
   useEffect(() => {
     void load(shown.current ?? remember.get(`folder.${instance}`), "stay")
   }, [load, instance, copies.landed])
@@ -236,11 +208,9 @@ export function FilesWindow({ instance, initialTitle }: { readonly instance: str
   const index = useMemo(() => new Map(entries.map((e, i) => [e.name, i])), [entries])
   const chosen = useMemo(() => entries.filter((e) => selected.has(e.name)), [entries, selected])
 
-  // Live values for handlers that outlive a render (window listeners, menus).
   const live = useRef({ listing, entries, index, selected, chosen, renaming, drag })
   live.current = { listing, entries, index, selected, chosen, renaming, drag }
 
-  // Keep the active row in view.
   useEffect(() => {
     const el = list.current
     const i = active === null ? undefined : index.get(active)
@@ -276,15 +246,12 @@ export function FilesWindow({ instance, initialTitle }: { readonly instance: str
     if (e?.dir === true && listing !== null) go(childPath(listing.path, e.name))
   }
 
-  /** One operation at a time, in the order asked for; the folder is read again after each. */
   const enqueue = (work: () => Promise<void>): void => {
     queue.current = queue.current.then(work).catch((error: unknown) => { copies.report({ ok: false, title: t("files.failed"), detail: String(error) }) })
   }
 
   const fail = (title: string, code: OpCode, detail: string): void =>
     { copies.report({ ok: false, title, detail: code === "other" ? detail : why(code) }) }
-
-  // ---- Operations ----
 
   const newFolder = (): void => {
     const l = live.current.listing
@@ -314,7 +281,6 @@ export function FilesWindow({ instance, initialTitle }: { readonly instance: str
   const finishRename = (commit: boolean): void => {
     const r = live.current.renaming
     if (r === null) return
-    // Return ends the field, whose blur then asks again: answer once.
     live.current = { ...live.current, renaming: null }
     setRenaming(null)
     list.current?.focus()
@@ -358,7 +324,6 @@ export function FilesWindow({ instance, initialTitle }: { readonly instance: str
     })
   }
 
-  /** Move (or copy) items of the folder shown into `to`, under names free there. */
   const transfer = (names: readonly string[], to: string, asCopy: boolean): void => {
     const l = live.current.listing
     if (l === null || names.length === 0) return
@@ -414,7 +379,6 @@ export function FilesWindow({ instance, initialTitle }: { readonly instance: str
       .catch((e: unknown) => { copies.report({ ok: false, title: t("terminal.failed"), detail: String(e) }) })
   }
 
-  /** The folder in Finder, through the guest's C:\ or home folder mounted on the Mac (`winvm files open --path`). */
   const finderAt = (folder: string): void => {
     copies.report({ ok: true, title: t("files.finder.opening", { place: leafName(folder) || folder }) })
     revealGuestPath(instance, folder)
@@ -437,8 +401,6 @@ export function FilesWindow({ instance, initialTitle }: { readonly instance: str
       })
       .catch(() => undefined)
   }
-
-  // ---- Menus ----
 
   const itemMenu = (): Action[] => {
     const sel = live.current.chosen
@@ -488,13 +450,9 @@ export function FilesWindow({ instance, initialTitle }: { readonly instance: str
       return
     }
     if (!live.current.selected.has(entry.name)) select([entry.name])
-    // The selection above lands before the menu reads it.
     setTimeout(() => { showMenu(itemMenu()) }, 0)
   }
 
-  // ---- Pointer: selection, drags inside the window, and handing a drag to the Mac ----
-
-  /** What is under the pointer that a drag could land on, leaving out what is being dragged. */
   const targetAt = (x: number, y: number, carried: ReadonlySet<string>): Target | null => {
     const l = live.current.listing
     if (l === null) return null
@@ -551,14 +509,12 @@ export function FilesWindow({ instance, initialTitle }: { readonly instance: str
       }
       const outside = e.clientX < 0 || e.clientY < 0 || e.clientX >= window.innerWidth || e.clientY >= window.innerHeight
       if (outside) {
-        // Out of the window: macOS carries it on, as promises Finder redeems on drop.
         const l = live.current.listing
         press.current = null
         setDrag(null)
         if (l === null) return
         const items = d.names.flatMap((n) => l.entries.filter((x) => x.name === n)).map((x) => ({ path: childPath(l.path, x.name), name: x.name, dir: x.dir }))
         copies.expectPromises(items.length)
-        // A rejection means macOS never started the drag (the button was already up): nothing to say.
         dragOut(instance, items).catch((error: unknown) => { console.warn("the drag out of the window did not start", error) })
         return
       }
@@ -575,7 +531,6 @@ export function FilesWindow({ instance, initialTitle }: { readonly instance: str
       }
       if (p === null) return
       if (p.alt) {
-        // Option-click: the item's menu, as a right-click.
         showMenu(itemMenu())
         return
       }
@@ -601,8 +556,6 @@ export function FilesWindow({ instance, initialTitle }: { readonly instance: str
     }
   })
 
-  // ---- Mac files dragged in: copied into the folder under the pointer, else the one shown ----
-
   const copyInto = copies.copyIn
   useEffect(
     () =>
@@ -611,7 +564,6 @@ export function FilesWindow({ instance, initialTitle }: { readonly instance: str
           setHostTarget(null)
           return
         }
-        // A drag of our own coming back carries promises, not paths: not a drop here.
         if (e.type === "enter" && e.paths.length === 0) return
         const at = e.at
         const target = at === null ? null : targetAt(at.x, at.y, new Set())
@@ -624,11 +576,8 @@ export function FilesWindow({ instance, initialTitle }: { readonly instance: str
         }
         setHostTarget((cur) => (e.type === "over" && cur === null ? null : into))
       }),
-    // targetAt reads live values only.
     [copyInto],
   )
-
-  // ---- Keys ----
 
   const moveTo = (i: number, extend: boolean): void => {
     const all = live.current.entries
@@ -678,7 +627,6 @@ export function FilesWindow({ instance, initialTitle }: { readonly instance: str
   }
 
   const onWindowKey = (e: KeyboardEvent<HTMLDivElement>): void => {
-    // The list has answered it already (⌘↑ there is the enclosing folder too).
     if (e.defaultPrevented || !mod(e)) return
     const k = e.key.toLowerCase()
     if (k === "[") goBack()
@@ -693,14 +641,11 @@ export function FilesWindow({ instance, initialTitle }: { readonly instance: str
 
   const onSort = (key: SortKey): void => {
     setSort((s) => {
-      // A new column starts the way Finder starts it: names A to Z, dates and sizes biggest first.
       const next = s.key === key ? { key, descending: !s.descending } : { key, descending: key === "modified" || key === "size" }
       remember.set("sort", `${next.key}:${next.descending ? "desc" : "asc"}`)
       return next
     })
   }
-
-  // ---- What the status bar says ----
 
   const job = copies.job
   const result = copies.result

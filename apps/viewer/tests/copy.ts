@@ -1,4 +1,3 @@
-/** The en catalog's copy for `key`, formatted with `values`; a sentinel when the key is missing, so a missing key never matches. */
 import { IntlMessageFormat } from "intl-messageformat"
 
 import en from "../ui/src/i18n/en.json"

@@ -1,8 +1,3 @@
-/**
- * The guest file browser's model: `winvm dir --json` parsed, and the
- * Windows-path and display helpers the browser and the copies share. No React,
- * no backend, so tests run it as is.
- */
 import { z } from "zod"
 
 const Entry = z.object({
@@ -31,19 +26,16 @@ const Listing = z.object({
 
 export type Listing = z.infer<typeof Listing>
 
-/** Why a folder didn't open; `other` covers anything the agent gave no code for. */
 export type ListFailure = { readonly code: "notfound" | "denied" | "notdir" | "notrunning" | "other"; readonly detail: string }
 
 const Failure = z.object({ error: z.string(), code: z.string().nullable() })
 const CODES = new Set(["notfound", "denied", "notdir", "notrunning"])
 
-/** `winvm dir --json`'s output: the listing, or why there is none (it prints `{error, code}` then). */
 export function parseListing(stdout: string, stderr = ""): Listing | ListFailure {
   let raw: unknown = null
   try {
     raw = JSON.parse(stdout)
   } catch {
-    // not JSON: whatever it said is the detail
   }
   const ok = Listing.safeParse(raw)
   if (ok.success) return ok.data
@@ -57,13 +49,11 @@ export function parseListing(stdout: string, stderr = ""): Listing | ListFailure
 
 export const isListing = (r: Listing | ListFailure): r is Listing => "entries" in r
 
-/** A Windows path's last part: the folder or file name, or `C:` for a drive's root. */
 export function leafName(path: string): string {
   const parts = path.split("\\").filter((p) => p !== "")
   return parts[parts.length - 1] ?? path
 }
 
-/** `C:\Users\me` → C:\, C:\Users, C:\Users\me, each with the name to show for it. */
 export function crumbs(path: string): { readonly name: string; readonly path: string }[] {
   const parts = path.split("\\").filter((p) => p !== "")
   return parts.map((name, i) => ({ name, path: i === 0 ? `${name}\\` : parts.slice(0, i + 1).join("\\") }))
@@ -71,7 +61,6 @@ export function crumbs(path: string): { readonly name: string; readonly path: st
 
 export const childPath = (folder: string, name: string): string => (folder.endsWith("\\") ? `${folder}${name}` : `${folder}\\${name}`)
 
-/** The folder a Windows path is in; a drive's root is its own. */
 export function parentPath(path: string): string {
   const parts = path.split("\\").filter((p) => p !== "")
   return parts.length <= 1 ? `${parts[0] ?? path}\\` : parts.length === 2 ? `${parts[0] ?? ""}\\` : parts.slice(0, -1).join("\\")
@@ -79,23 +68,16 @@ export function parentPath(path: string): string {
 
 const tidy = (path: string): string => path.replace(/\\+$/, "").toLowerCase()
 
-/** Whether `path` is `folder` or somewhere inside it (Windows paths don't differ by case). */
 export const isWithin = (path: string, folder: string): boolean => {
   const p = tidy(path)
   const f = tidy(folder)
   return p === f || p.startsWith(`${f}\\`)
 }
 
-/** Whether two Windows paths name the same place. */
 export const samePath = (a: string, b: string): boolean => tidy(a) === tidy(b)
 
-/** Mac paths: the name after the last slash. */
 export const hostName = (path: string): string => path.split("/").filter((p) => p !== "").pop() ?? path
 
-/**
- * A free name in a Windows folder, as Explorer makes one: `report.txt`, else
- * `report (2).txt`, `report (3).txt`… Windows names don't differ by case.
- */
 export function freeName(name: string, taken: ReadonlySet<string>, folder = false): string {
   const lower = new Set([...taken].map((n) => n.toLowerCase()))
   if (!lower.has(name.toLowerCase())) return name
@@ -107,7 +89,6 @@ export function freeName(name: string, taken: ReadonlySet<string>, folder = fals
   }
 }
 
-/** Sizes as Finder shows them, in powers of 1000: 812 bytes, 12 kB, 3.4 MB. */
 export function formatBytes(bytes: number, locale?: string): string {
   const units = ["byte", "kilobyte", "megabyte", "gigabyte", "terabyte"] as const
   let value = bytes
@@ -122,13 +103,9 @@ export function formatBytes(bytes: number, locale?: string): string {
 
 type Label = (key: string, values?: Record<string, string>) => string
 
-/** A last-written time as Finder words it, at three widths: the list shows the widest that fits. */
 export interface FinderDate {
-  /** "Today at 1:33 PM", "Yesterday at 9:02 AM", "Oct 19, 2026 at 2:02 PM" */
   readonly long: string
-  /** "Today, 1:33 PM", "10/19/26, 2:02 PM" */
   readonly medium: string
-  /** "Today", "Yesterday", "10/19/26" */
   readonly short: string
 }
 
@@ -163,14 +140,8 @@ export interface Sort {
 
 const byName = new Intl.Collator(undefined, { numeric: true, sensitivity: "base" })
 
-/**
- * Entries in the order the list shows them: folders first whatever the
- * column, then by the column (ties by name), reversed when descending. An
- * entry with no size or time sorts after those that have one.
- */
 export function sortEntries(entries: readonly Entry[], sort: Sort, kind: (e: Entry) => string): Entry[] {
   const sign = sort.descending ? -1 : 1
-  // Missing values go last whichever way the column runs; only real values reverse.
   const numbers = (a: number | null, b: number | null): number => (a === b ? 0 : a === null ? 1 : b === null ? -1 : sign * (a - b))
   const column = (a: Entry, b: Entry): number => {
     switch (sort.key) {
@@ -187,12 +158,10 @@ export function sortEntries(entries: readonly Entry[], sort: Sort, kind: (e: Ent
   return [...entries].sort((a, b) => {
     if (a.dir !== b.dir) return a.dir ? -1 : 1
     const c = column(a, b)
-    // Ties go by name, A to Z, unless the names are what is reversed.
     return c !== 0 ? c : (sort.key === "name" ? sign : 1) * byName.compare(a.name, b.name)
   })
 }
 
-/** Why Windows would refuse `name` for a file or folder, or null when it is fine. */
 export function nameProblem(name: string): "empty" | "chars" | "reserved" | "ends" | null {
   if (name.trim() === "" || name === "." || name === "..") return "empty"
   if (/[<>:"/\\|?*\u0000-\u001f]/.test(name)) return "chars"
@@ -201,10 +170,6 @@ export function nameProblem(name: string): "empty" | "chars" | "reserved" | "end
   return null
 }
 
-/**
- * The selection after a click on row `i`: plain picks it alone, ⌘ toggles it,
- * ⇧ takes the range from the anchor. Returns the new selection and anchor.
- */
 export function clickSelect(
   selected: ReadonlySet<number>,
   anchor: number | null,
@@ -226,7 +191,6 @@ export function clickSelect(
   return { selected: new Set([i]), anchor: i }
 }
 
-/** Type-to-select: the first row at or after `from` whose name starts with `prefix`, wrapping; else null. */
 export function findByPrefix(names: readonly string[], prefix: string, from: number): number | null {
   const p = prefix.toLowerCase()
   for (let k = 0; k < names.length; k += 1) {

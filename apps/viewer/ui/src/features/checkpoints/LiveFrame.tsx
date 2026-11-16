@@ -1,16 +1,8 @@
 import { type JSX, useEffect, useRef } from "react"
 
-/** A few times a second: enough to read as live without costing the guest's screen anything noticeable. */
 const INTERVAL_MS = 125
-/** Sharp enough for the largest the Now card is drawn before the view hands back to the real screen. */
 const MAX_WIDTH = 1280
 
-/**
- * The live screen, copied into the Now card: noVNC draws Windows' screen on
- * its canvas under the view, and this copies that canvas a few times a second
- * while the view is open. When there is nothing to copy it shows nothing, and
- * the card's own placeholder shows through.
- */
 export function LiveFrame({
   source,
   className,
@@ -19,9 +11,7 @@ export function LiveFrame({
 }: {
   source: () => HTMLCanvasElement | null
   readonly className?: string
-  /** How often to copy, in ms. */
   readonly interval?: number
-  /** The widest copy kept, in pixels. */
   readonly maxWidth?: number
 }): JSX.Element {
   const ref = useRef<HTMLCanvasElement>(null)
@@ -45,7 +35,6 @@ export function LiveFrame({
           target.getContext("2d")?.drawImage(src, 0, 0, w, h)
           target.dataset["live"] = "true"
         } catch {
-          // a canvas that can't be read (or a test DOM): keep the placeholder
         }
       }
       timer = setTimeout(copy, interval)

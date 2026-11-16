@@ -17,21 +17,10 @@ const CHOICES = [
   { policy: "shutdown", key: "close.shutdown" },
 ] as const satisfies readonly { policy: CloseChoice; key: string }[]
 
-/**
- * What closing the viewer does to one live machine: Leave Running, Stow Windows or Shut Down,
- * each explained, Remember for this machine (unchecked on every ask), and Cancel, which calls
- * off the whole close. While the close waits on a command it did not start, it says what that
- * command is and keeps only Cancel, which leaves that command running.
- *
- * Shown for `asking` and `waiting` only. While the close runs its own stow or shutdown there is
- * no dialog, so nothing can cancel it; the display's operation overlay says what is happening.
- * A native <dialog>: the top layer, a focus trap, and Escape, which is Cancel here.
- */
 export function ClosePolicyDialog({ state, onChoose, onRemember, onCancel }: ClosePolicyDialogProps): JSX.Element | null {
   const dialogRef = useRef<HTMLDialogElement | null>(null)
   const cancelRef = useRef<HTMLButtonElement | null>(null)
   const shown = state.kind === "asking" || state.kind === "waiting" ? state : null
-  // Each ask, or wait, is its own: a new machine or step is announced and focused afresh.
   const step = shown === null ? null : `${shown.kind}:${shown.machine.name}:${String(shown.index)}`
 
   useEffect(() => {
@@ -40,11 +29,9 @@ export function ClosePolicyDialog({ state, onChoose, onRemember, onCancel }: Clo
     try {
       el.showModal()
     } catch {
-      // already open (StrictMode's doubled effect)
     }
   }, [step])
 
-  // Cancel, the choice that changes nothing, has focus when each step begins.
   useEffect(() => {
     if (step !== null) cancelRef.current?.focus()
   }, [step])
@@ -52,8 +39,6 @@ export function ClosePolicyDialog({ state, onChoose, onRemember, onCancel }: Clo
   if (shown === null) return null
   const { machine, index, total } = shown
 
-  // Escape (the dialog's cancel event) and a click on the backdrop are Cancel. The dialog never
-  // closes itself: it goes when the flow moves on.
   return (
     <dialog
       ref={dialogRef}

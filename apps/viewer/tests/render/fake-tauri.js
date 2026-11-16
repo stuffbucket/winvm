@@ -1,12 +1,3 @@
-/*
- * A stand-in for the app's Tauri side, so the viewer's own pages render in
- * a plain browser (Playwright's WebKit, the engine Tauri uses on macOS) with
- * a running Windows machine and a history of checkpoints. Loaded before the
- * page's scripts by scripts/render-checkpoints.mjs. Nothing here ships.
- *
- * Checkpoint pictures are drawn on the fly: a made-up Windows desktop per
- * checkpoint, so cards differ the way real ones do.
- */
 ;(() => {
   const DAY = 86_400_000
   const now = new Date()
@@ -102,10 +93,7 @@
     return out("", 0)
   }
 
-  // ---- Pictures -------------------------------------------------------------
-
   const hash = (s) => [...s].reduce((h, c) => (h * 31 + c.charCodeAt(0)) >>> 0, 7)
-  // ?real=a.png,b.png: real screenshots (served by the harness) stand in for the drawn ones.
   const real = (new URLSearchParams(location.search).get("real") ?? "").split(",").filter(Boolean)
   async function picture(path) {
     if (real.length > 0) {
@@ -132,17 +120,14 @@
     bg.addColorStop(1, `hsl(${(hue + 230) % 360} 70% 14%)`)
     g.fillStyle = bg
     g.fillRect(0, 0, w, h)
-    // a bloom
     g.fillStyle = `hsl(${(hue + 190) % 360} 90% 80% / 0.35)`
     g.beginPath()
     g.ellipse(w * 0.62, h * 0.5, 260 * k, 160 * k, -0.5, 0, Math.PI * 2)
     g.fill()
-    // icons
     for (let i = 0; i < 4; i += 1) {
       g.fillStyle = "hsl(0 0% 100% / 0.85)"
       g.fillRect(28 * k, (36 + i * 120) * k, 64 * k, 56 * k)
     }
-    // windows
     const n = 1 + (hash(name) % 3)
     for (let i = 0; i < n; i += 1) {
       const x = (300 + i * 210 + (hash(name + i) % 120)) * k
@@ -161,7 +146,6 @@
       g.fillStyle = "hsl(0 0% 86%)"
       for (let r = 0; r < 8; r += 1) g.fillRect(x + 24 * k, y + (80 + r * 52) * k, ww * (0.4 + ((hash(name + r) % 50) / 100)), 18 * k)
     }
-    // taskbar
     g.fillStyle = "hsl(220 20% 12% / 0.88)"
     g.fillRect(0, h - 64 * k, w, 64 * k)
     for (let i = 0; i < 7; i += 1) {
@@ -172,8 +156,6 @@
     g.font = `${String(Math.round(18 * k))}px -apple-system, Segoe UI, sans-serif`
     g.fillText("13:33", w - 90 * k, h - 26 * k)
   }
-
-  // ---- The Tauri global -------------------------------------------------------
 
   const listeners = new Map()
   window.__TAURI__ = {
@@ -198,10 +180,8 @@
     },
     webview: { getCurrentWebview: () => ({ onDragDropEvent: async () => () => undefined }) },
   }
-  // The harness rings menu items the way the app's menu would.
   window.__fakeMenu = (id) => listeners.get("menu")?.({ payload: id })
 
-  // A made-up live screen in the display, for the view to shrink and copy.
   window.__fakeScreen = () => {
     const display = document.querySelector(".display")
     if (display === null) return false

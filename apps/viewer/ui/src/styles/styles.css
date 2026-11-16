@@ -3,13 +3,6 @@
 @import url("../../../../../packages/canvas/src/canvas.css");
 @import url("./checkpoints.css");
 
-/* =========================================================
-   The winvm window. Base, buttons, callout, empty state, key/value,
-   disclosure, dialog and busy bar come from maximal v0.4.48's
-   shell/src/ui/styles/styles.css; the toolbar, stage, screen and panel
-   are winvm's. Every color, size and space comes from a token.
-   ========================================================= */
-
 *,
 *::before,
 *::after {
@@ -42,9 +35,6 @@ a:hover {
   color: var(--link-hover);
 }
 
-/* ---- Window skeleton ----
-   Layer 0 is the screen; layer 1 is the toolbar and the panel, which take
-   space and push the screen; layer 2 is the dialog (top layer). */
 .viewer {
   display: flex;
   flex-direction: column;
@@ -52,9 +42,6 @@ a:hover {
   overflow: hidden;
 }
 
-/* ---- Toolbar ----
-   The title bar is an overlay (TitleBarStyle::Overlay), so the toolbar is
-   the drag region and leaves room on the left for the traffic lights. */
 .toolbar {
   display: flex;
   align-items: center;
@@ -90,9 +77,6 @@ html[data-os="macos"] .toolbar {
   text-overflow: ellipsis;
 }
 
-/* Which Windows machine: one trigger, a computer, its name or title and a
-   chevron, opening the Windows machines menu (features/machines). Not a drag
-   region: a click opens the menu. */
 .machine-picker {
   display: inline-flex;
   align-items: center;
@@ -147,7 +131,6 @@ html[data-os="macos"] .toolbar {
   min-width: 0;
 }
 
-/* ---- Menu (components/Menu.tsx): Base UI's Menu, in the window's style ---- */
 .menu-positioner {
   z-index: 30;
 }
@@ -239,7 +222,6 @@ html[data-os="macos"] .toolbar {
   color: inherit;
 }
 
-/* A name edited in place (components/InlineRename): the title, a tab. */
 .rename {
   font-family: var(--font-body);
   font-size: var(--text-sm);
@@ -277,7 +259,6 @@ html[data-os="macos"] .toolbar {
   text-overflow: ellipsis;
 }
 
-/* ---- Stage: the display on its backdrop; the panel over it ---- */
 .stage {
   position: relative;
   display: flex;
@@ -303,7 +284,6 @@ html[data-os="macos"] .toolbar {
   padding: var(--space-3) var(--space-4) 0;
 }
 
-/* Sized by the space left, so the display can fit itself into it. */
 .display-fit {
   flex: 1 1 auto;
   min-height: 0;
@@ -312,9 +292,6 @@ html[data-os="macos"] .toolbar {
   container-type: size;
 }
 
-/* Where the guest's screen is, in the guest display's shape, as large as the
-   window allows. "Actual size" caps it at one guest pixel per point, which is
-   sharper but smaller; it then sits on the backdrop. */
 .display {
   position: relative;
   width: min(100cqw, calc(100cqh * var(--display-ratio)));
@@ -333,8 +310,6 @@ html[data-os="macos"] .toolbar {
   background: var(--surface-base);
 }
 
-/* A resizable (virtio-gpu) guest: its screen is the window's size, so the
-   frame fills the area edge to edge and there is no shape to keep. */
 .display--live {
   width: 100cqw;
   height: 100cqh;
@@ -363,10 +338,6 @@ html[data-os="macos"] .toolbar {
   color: var(--text-strong);
 }
 
-/* A command is running on the machine, from this window or another process:
-   the last thing in the display, over the screen or the Overview. Unlike the
-   held dimming (.screen__held), it takes the pointer, so nothing under it can
-   be clicked while the machine changes state. */
 .display__operation {
   position: absolute;
   inset: 0;
@@ -413,10 +384,6 @@ html[data-os="macos"] .toolbar {
   inset: 0;
 }
 
-/* One guest pixel per device pixel: Screen.tsx sizes this box to the
-   framebuffer in CSS pixels, from the top-left corner so it starts on a whole
-   device pixel, and noVNC's scale comes out at exactly 1/devicePixelRatio.
-   Nearest-neighbour guards against any rounding left over. */
 .screen__canvas--exact {
   inset: 0 auto auto 0;
 }
@@ -425,13 +392,10 @@ html[data-os="macos"] .toolbar {
   image-rendering: pixelated;
 }
 
-/* Past the guest's limits the picture is scaled up; smooth it. */
 .screen__canvas--scaled canvas {
   image-rendering: auto;
 }
 
-/* The machine is paused or asleep: the picture dims under a large glyph, and
-   fades in and out quickly. Off with "Show Pause Overlay" (clean screenshots). */
 .screen__held {
   position: absolute;
   inset: 0;
@@ -499,7 +463,6 @@ html[data-os="macos"] .toolbar {
   color: var(--text-muted);
 }
 
-/* ---- Overview: inside the display while there is no screen ---- */
 .overview {
   position: absolute;
   inset: 0;
@@ -509,7 +472,6 @@ html[data-os="macos"] .toolbar {
   overflow-y: auto;
 }
 
-/* Centered while it fits, scrolling from the top when it doesn't. */
 .overview__content {
   display: flex;
   flex-direction: column;
@@ -540,7 +502,6 @@ html[data-os="macos"] .toolbar {
   color: var(--text-muted);
 }
 
-/* What the instance is: a label over each value. */
 .facts {
   display: flex;
   flex-wrap: wrap;
@@ -567,7 +528,6 @@ html[data-os="macos"] .toolbar {
   color: var(--text-strong);
 }
 
-/* ---- Start progress ---- */
 .steps {
   list-style: none;
   margin: 0;
@@ -630,8 +590,6 @@ html[data-os="macos"] .toolbar {
   }
 }
 
-/* ---- What else it does ---- */
-
 .abilities {
   display: flex;
   flex-direction: column;
@@ -677,7 +635,6 @@ html[data-os="macos"] .toolbar {
   height: var(--size-sm);
 }
 
-/* Only when the display has room for it. */
 @container (max-height: 36rem) {
   .abilities {
     display: none;
@@ -688,7 +645,6 @@ html[data-os="macos"] .toolbar {
   padding: var(--space-6);
 }
 
-/* ---- Panel: over the display, at the right ---- */
 .panel {
   position: absolute;
   inset-block: 0;
@@ -712,7 +668,6 @@ html[data-os="macos"] .toolbar {
   color: var(--text-muted);
 }
 
-/* ---- Popover: layer 2, under its toolbar button ---- */
 .popover {
   position: fixed;
   z-index: 20;
@@ -778,7 +733,6 @@ html[data-os="macos"] .toolbar {
   overflow-wrap: anywhere;
 }
 
-/* A value and its copy button on one line. */
 .copyable {
   display: flex;
   align-items: center;
@@ -790,7 +744,6 @@ html[data-os="macos"] .toolbar {
   align-items: center;
 }
 
-/* One line, never wrapped; when it doesn't fit, the middle gives way and both ends stay. */
 .oneline {
   display: flex;
   flex: 0 1 auto;
@@ -810,7 +763,6 @@ html[data-os="macos"] .toolbar {
   flex: 0 0 auto;
 }
 
-/* ---- Use with Claude: one row per Claude app ---- */
 .clients {
   list-style: none;
   margin: 0;
@@ -871,7 +823,6 @@ html[data-os="macos"] .toolbar {
   justify-content: flex-end;
 }
 
-/* ---- A quiet disclosure inside a panel: no card, just the summary line ---- */
 .disclosure {
   padding-block-start: var(--space-3);
   border-block-start: var(--border-width-hairline) solid var(--border-subtle);
@@ -928,7 +879,6 @@ html[data-os="macos"] .toolbar {
   max-height: 60vh;
 }
 
-/* ---- Inputs ---- */
 .input {
   appearance: none;
   background: var(--surface-control);
@@ -958,8 +908,6 @@ html[data-os="macos"] .toolbar {
   cursor: not-allowed;
 }
 
-/* A number between steppers (components/NumberField.tsx): the input as narrow
-   as a few digits, a unit after it. */
 .number-field {
   display: inline-flex;
   align-items: center;
@@ -984,13 +932,11 @@ html[data-os="macos"] .toolbar {
   color: var(--text-muted);
 }
 
-/* A list whose values are too long for the label column: each label above its value. */
 .kv--stacked .kv__row {
   grid-template-columns: 1fr;
   gap: 0;
 }
 
-/* ---- Host checks ---- */
 .checks {
   list-style: none;
   margin: 0;
@@ -1030,7 +976,6 @@ html[data-os="macos"] .toolbar {
   color: var(--text-muted);
 }
 
-/* ---- Command output ---- */
 .output {
   margin: 0;
   padding: var(--space-3);
@@ -1046,7 +991,6 @@ html[data-os="macos"] .toolbar {
   overflow-wrap: anywhere;
 }
 
-/* ---- Key/value list ---- */
 .kv {
   margin: 0;
   display: flex;
@@ -1073,8 +1017,6 @@ html[data-os="macos"] .toolbar {
   overflow-wrap: anywhere;
 }
 
-/* The panel's Resources: each a label and its value, then the last minute
-   and a half as a line (CPU, memory) or a hairline bar (disk), and a note. */
 .resources {
   display: flex;
   flex-direction: column;
@@ -1139,7 +1081,6 @@ html[data-os="macos"] .toolbar {
   background: var(--accent);
 }
 
-/* New Machine…: labelled fields, the advanced ones folded away. */
 .new-machine__body {
   display: flex;
   flex-direction: column;
@@ -1192,7 +1133,6 @@ html[data-os="macos"] .toolbar {
   accent-color: var(--accent);
 }
 
-/* ---- Disclosure (native <details>) ---- */
 .advanced-section {
   background: var(--surface-card);
   border: var(--border-width-hairline) solid var(--border-subtle);
@@ -1250,7 +1190,6 @@ html[data-os="macos"] .toolbar {
   border-block-start: var(--border-width-hairline) solid var(--border-subtle);
 }
 
-/* ---- Buttons ---- */
 .btn {
   display: inline-flex;
   align-items: center;
@@ -1338,7 +1277,6 @@ html[data-os="macos"] .toolbar {
   color: var(--text-base-color);
 }
 
-/* ---- Empty states ---- */
 .empty {
   display: flex;
   flex-direction: column;
@@ -1378,7 +1316,6 @@ html[data-os="macos"] .toolbar {
   gap: var(--space-2);
 }
 
-/* ---- Callout ---- */
 .callout {
   display: flex;
   align-items: flex-start;
@@ -1459,7 +1396,6 @@ html[data-os="macos"] .toolbar {
   outline-offset: var(--focus-ring-offset);
 }
 
-/* ---- Confirm dialog ---- */
 .confirm-dialog {
   padding: 0;
   border: var(--border-width-hairline) solid var(--border-subtle);
@@ -1513,7 +1449,6 @@ html[data-os="macos"] .toolbar {
   gap: var(--space-2);
 }
 
-/* ---- Close dialog: what closing WinVM does to one machine ---- */
 .close-dialog__machine {
   font-weight: var(--weight-md);
   color: var(--text-strong);
@@ -1534,7 +1469,6 @@ html[data-os="macos"] .toolbar {
   gap: var(--space-2);
 }
 
-/* Each choice is its label and what it does, so color is never the only difference. */
 .close-dialog__choice {
   display: flex;
   flex-direction: column;
@@ -1598,7 +1532,6 @@ html[data-os="macos"] .toolbar {
   }
 }
 
-/* ---- Busy bar: a command is running ---- */
 .busybar {
   position: fixed;
   inset-block-start: 0;
@@ -1649,7 +1582,6 @@ html[data-os="macos"] .toolbar {
   }
 }
 
-/* ---- Utilities ---- */
 .mono {
   font-family: var(--font-mono);
   font-variant-numeric: tabular-nums;
@@ -1666,7 +1598,6 @@ html[data-os="macos"] .toolbar {
   gap: var(--space-3);
 }
 
-/* ---- Motion ---- */
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,

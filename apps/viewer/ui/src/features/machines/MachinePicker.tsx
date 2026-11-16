@@ -8,14 +8,10 @@ import { stateKey } from "./machines"
 
 export interface MachinePickerProps {
   readonly names: readonly string[]
-  /** This machine; null before any is known. */
   readonly name: string | null
-  /** Each machine's title; null or absent: its name. */
   readonly titles: Readonly<Record<string, string | null>>
-  /** Each machine's state as last read; this one's is `phase`. */
   readonly phases: Readonly<Record<string, Phase>>
   readonly phase: Phase | null
-  /** The title is being edited, in place of the picker. */
   readonly renaming: boolean
   onRenamed: (next: string | null) => void
   onSelect(name: string): void
@@ -24,13 +20,6 @@ export interface MachinePickerProps {
   onDelete: () => void
 }
 
-/**
- * Which Windows machine this window shows, and the others: one trigger (a
- * computer, the machine's name or title, a chevron) opening the Windows
- * machines menu, each with its state and a check on this one, then New
- * Machine…, Rename… and Delete…. It opens with one machine too, so New
- * Machine… is always there.
- */
 export function MachinePicker(p: MachinePickerProps): JSX.Element {
   const title = p.name === null ? null : shownTitle(p.name, p.titles[p.name])
   if (p.renaming && title !== null) {

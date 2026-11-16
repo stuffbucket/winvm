@@ -1,8 +1,3 @@
-/**
- * The clipboard between the Mac and Windows (features/screen/clipboard.ts):
- * text only, while the window is in front, and nothing sent back to the side
- * it came from.
- */
 import { describe, expect, it } from "bun:test"
 
 import { ClipboardSync } from "../ui/src/features/screen/clipboard"

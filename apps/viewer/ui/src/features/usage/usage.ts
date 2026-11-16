@@ -1,20 +1,3 @@
-/**
- * The title bar's meters, from samples the app takes every few seconds
- * (src-tauri/src/guest.rs `instance_usage`): QEMU's CPU time and memory from
- * `ps`, and Windows' own CPU, memory and C: from the agent's GET /stats. Pure.
- *
- * - CPU: how busy Windows' processors are, as Windows counts it (the agent's
- *   `cpu`), out of all of them (100% is every one busy). Beside it, what QEMU
- *   spends on the Mac: its CPU time between two samples over the time between
- *   them, out of as many of the Mac's processors. That is more than Windows'
- *   figure (the screen, the disk and the network are QEMU's work, not
- *   Windows'), so it alone read as "Windows is busy" when it was not. Without
- *   the agent, or one older than 11, QEMU's figure is the headline, said so.
- * - Memory: what Windows has in use (total less available, as Task Manager
- *   counts it) out of what it has. Without the agent, what QEMU holds on the
- *   Mac instead, said so.
- * - Disk: C:'s used space out of its size, from the agent.
- */
 import { z } from "zod"
 
 const GuestStats = z.object({
@@ -40,14 +23,10 @@ export interface Amount {
 }
 
 export interface Usage {
-  /** Percent of all the machine's processors busy, 0-100: Windows' own figure, or (cpuSource "mac") QEMU's; null until there is one. */
   readonly cpu: number | null
   readonly cpuSource: "windows" | "mac"
-  /** What QEMU spends on the Mac, as a percent of as many of its processors, 0-100; null until two samples. */
   readonly macCpu: number | null
-  /** Windows' memory in use, or (source "mac") QEMU's resident memory on the Mac. */
   readonly memory: (Amount & { readonly source: "windows" | "mac" }) | null
-  /** C: in Windows. */
   readonly disk: Amount | null
 }
 
@@ -74,22 +53,18 @@ export function usageFrom(prev: Sample | null, cur: Sample, cpus: number | null,
     : { cpu: macCpu, cpuSource: "mac", macCpu, memory, disk }
 }
 
-/** How much of `a` is used, 0-1. */
 export const fraction = (a: Amount): number => (a.total > 0 ? Math.min(1, a.used / a.total) : 0)
 
-/** The last `max` values, `v` added. */
 export const pushHistory = (h: readonly number[], v: number | null, max = 40): number[] => (v === null ? [...h] : [...h, v].slice(-max))
 
 const GB = 1024 ** 3
 
-/** Bytes as Windows shows them, in binary units as Task Manager and Explorer count: "2.1 GB", "4 GB", "63 GB". */
 export function formatGB(bytes: number): string {
   const gb = bytes / GB
   const n = gb >= 10 ? String(Math.round(gb)) : gb.toFixed(1).replace(/\.0$/, "")
   return `${n} GB`
 }
 
-/** "2.1/4.0 GB": both in one unit, the unit once. */
 export function formatPair(a: Amount): string {
   const used = formatGB(a.used).replace(/ GB$/, "")
   return `${used}/${formatGB(a.total)}`

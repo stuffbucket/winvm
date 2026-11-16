@@ -1,11 +1,3 @@
-/**
- * Writes ui/src/styles/tokens.css from ui/src/styles/theme.ts, the one
- * source of the viewer's design values. Adapted from maximal v0.4.48's
- * scripts/generate-css-tokens.ts, without its dashboard output.
- *
- *   bun scripts/generate-css-tokens.ts          write tokens.css
- *   bun scripts/generate-css-tokens.ts --check  fail if tokens.css is stale
- */
 import { readFileSync, writeFileSync } from "node:fs"
 import { resolve } from "node:path"
 

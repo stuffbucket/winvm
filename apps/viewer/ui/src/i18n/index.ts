@@ -1,13 +1,3 @@
-/**
- * The viewer's i18n runtime: ICU MessageFormat rendered by intl-messageformat,
- * from maximal v0.4.48's shell/src/i18n/index.ts.
- *
- * `en` is the base catalog and the source of every key. Other locales, when
- * added, are override catalogs holding only the keys they translate, looked up
- * region → language → en. A key missing everywhere renders as the key itself.
- * Terms are passed as arguments (`{command}`), never concatenated, so word
- * order stays translatable.
- */
 import { IntlMessageFormat } from "intl-messageformat"
 
 import { osKind } from "../platform"
@@ -44,7 +34,6 @@ function bestFitFromNavigator(available: string[]): string | null {
   return null
 }
 
-/** An explicit override if it is shipped, else the best fit of the browser's languages, else en. */
 function resolveLocale(): string {
   const available = availableLocales()
   const override = readOverride()
@@ -55,7 +44,6 @@ function resolveLocale(): string {
 const lookup = (key: string, locale: string): string | undefined =>
   CATALOGS[locale]?.[key] ?? CATALOGS[languageOf(locale)]?.[key] ?? CATALOGS["en"]?.[key]
 
-/** A localized UI string. The current `os` is passed to every message. */
 export function t(key: string, values: Record<string, string | number> = {}): string {
   const locale = resolveLocale()
   const message = lookup(key, locale)

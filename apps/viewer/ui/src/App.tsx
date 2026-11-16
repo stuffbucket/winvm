@@ -80,7 +80,6 @@ const PANEL_LABEL: Record<PanelId, string> = {
 
 export function App(): JSX.Element {
   const w = useWinvm()
-  // The viewer's close: every live machine resolved before the app exits (one flow, one dialog).
   const close = useCloseFlow(w)
   const closeFailed = close.state.kind === "failed" ? close.state : null
   const [actualSize, setActualSize] = useState(false)
@@ -91,20 +90,16 @@ export function App(): JSX.Element {
   const [share, setShare] = useState<Share | null>(null)
   const [sharing, setSharing] = useState<{ starting: boolean; error: string | null }>({ starting: false, error: null })
   const [notice, setNotice] = useState<Notice | null>(null)
-  /** The share being opened in Finder (its menu label), while `winvm files open` runs. */
   const [finding, setFinding] = useState<string | null>(null)
   const [reference, setReference] = useState<{ text: string | null } | null>(null)
   const [dropping, setDropping] = useState(false)
-  // Checkpoints, the full-window view: open, and a count the menu bumps to ask it to leave.
   const [checkpoints, setCheckpoints] = useState(false)
   const [closeCheckpoints, setCloseCheckpoints] = useState(0)
   const [keyboardCaptured, setKeyboardCaptured] = useState(false)
-  // The close-policy setting's own write, and why the last one failed (for the machine it was for).
   const [settingClosePolicy, setSettingClosePolicy] = useState(false)
   const [closePolicyError, setClosePolicyError] = useState<{ name: string; text: string } | null>(null)
   const screen = useRef<ScreenHandle | null>(null)
 
-  // A hidden window gets no animation frames, so show it straight after the first commit.
   useEffect(() => { showWindow() }, [])
   useEffect(() => {
     setSystemKeyboardCapture(keyboardCaptured).catch((error: unknown) => {
@@ -118,13 +113,9 @@ export function App(): JSX.Element {
 
   const phase = w.phase
   const live = isLivePhase(phase)
-  // Paused or asleep: no input, no resize, no agent calls until it runs again.
   const frozen = isFrozen(phase)
   const held = phase === "paused" || phase === "asleep" ? phase : null
-  // A machine busy with a command, this window's or another process's (a close in another viewer,
-  // `winvm` in a terminal): no controls, no readiness, no input, no keyboard capture, no drop.
   const operating = w.operation !== null
-  // A held machine takes no keys: the Mac gets its own shortcuts (Cmd-Tab) back. So does one changing state.
   useEffect(() => {
     if (frozen || operating) setKeyboardCaptured(false)
   }, [frozen, operating])
@@ -135,35 +126,26 @@ export function App(): JSX.Element {
   const missing = w.checks?.checks.filter((x) => !x.ok) ?? []
   const runtimeMissing = missing.some((x) => x.hint === "winvm setup")
   const display = displaySize(w.status?.screen ?? null)
-  // Where Windows' screen is, and its picture, for Checkpoints to fly into and show live.
   const displayRect = useCallback(() => {
     const r = document.querySelector(".display")?.getBoundingClientRect()
     return r === undefined ? null : { x: r.left, y: r.top, width: r.width, height: r.height }
   }, [])
   const liveSource = useCallback(() => document.querySelector<HTMLCanvasElement>(".screen__canvas canvas"), [])
   const showScreen = live && w.connection !== null
-  // virtio-gpu: the guest's screen follows the window, one guest pixel per
-  // device pixel, so there is nothing to fit. ramfb stays a fixed 800x600.
   const resizable = display.device === "virtio-gpu"
   const steps = w.busy === "start" && !showScreen ? startSteps(startedFrom === "missing", w.status) : null
   const activity =
     w.busy !== null ? t(`busy.${w.busy}`) : phase === "starting" ? t("state.starting") : held !== null ? t(`state.${held}`) : null
 
-  // The guest switches to the viewer's size through its agent, called
-  // directly (a few ms, not a CLI start per size), once it is up. The screen
-  // keeps a size asked for before that, or one this refuses, and asks again,
-  // both steps, once Windows can take it (held.ts).
   const resizeGuest = useCallback(
     async (size: Size, scale: number): Promise<void> => {
       if (w.name === null) return
       if (!guestReady) throw new Error("Windows is not ready for a new size yet")
       const reply = await agentFetch(w.name, "POST", "/display", { op: "set", width: size.width, height: size.height, waitMs: 2000, scale }, 22_000)
-      // 202: Windows is at its lock screen (after a wake, say); the agent sets the size at sign-in.
       if (reply.status !== 200 && reply.status !== 202) throw new Error(`the agent answered ${String(reply.status)}: ${JSON.stringify(reply.body)}`)
     },
     [w.name, guestReady],
   )
-  // `ps` keeps reading while held (the history stays); the agent only while Windows is up.
   const metered = live ? (w.status?.pid ?? null) : null
   const usage = useUsage(metered, guestReady ? w.name : null, w.status?.cpus ?? null, w.status?.memoryMiB ?? null)
   const usageContext: UsageContext = { cpus: w.status?.cpus ?? null, overlayBytes: w.status?.overlayBytes ?? null }
@@ -175,7 +157,6 @@ export function App(): JSX.Element {
     void w.act(verb, arg)
   }
 
-  // The person's own settings (`winvm settings`): whether a held screen is dimmed.
   const [pauseOverlay, setPauseOverlay] = useState(DEFAULT_SETTINGS.pauseOverlay)
   useEffect(() => {
     let gone = false
@@ -197,12 +178,10 @@ export function App(): JSX.Element {
       pauseMenu({ t, overlay: pauseOverlay, controls: c, setOverlay: changePauseOverlay, sleep: () => { run("sleep") }, lock: () => { run("lock") } }),
     ).catch(() => undefined)
   }
-  // A key in an asleep machine's screen wakes it, once.
   const wake = (): void => {
     if (!operating && phase === "asleep") run("wake")
   }
 
-  // Files dropped on the main window go to the Desktop in Windows; the Files window takes them anywhere.
   const copies = useCopies(w.name)
   const copyIn = copies.copyIn
   const copyNotice = copies.job !== null || copies.result !== null
@@ -219,8 +198,6 @@ export function App(): JSX.Element {
     [guestReady, copyIn],
   )
 
-  // The instance's title: the toolbar shows it, the window is named by it, and
-  // every window hears it (the Terminal names itself by its tab's instance).
   const titles = w.titles
   const title = w.name === null ? null : shownTitle(w.name, titles[w.name])
   const [renaming, setRenaming] = useState(false)
@@ -239,8 +216,6 @@ export function App(): JSX.Element {
       .catch((e: unknown) => { setNotice({ tone: "error", title: t("rename.failed"), detail: errorMessage(e) }) })
   }
 
-  // New Machine…: a name (and, under Advanced, the image and whether to start
-  // it), `winvm create`, then this window shows it, starting if asked.
   const [newOpen, setNewOpen] = useState(false)
   const [creating, setCreating] = useState(false)
   const [createError, setCreateError] = useState<string | null>(null)
@@ -271,7 +246,6 @@ export function App(): JSX.Element {
       .catch((e: unknown) => { setCreateError(errorMessage(e)) })
       .finally(() => { setCreating(false) })
   }
-  // Start it once this window has read its (stopped) state.
   useEffect(() => {
     if (startNext !== null && w.name === startNext && phase === "stopped" && !operating) {
       setStartNext(null)
@@ -280,7 +254,6 @@ export function App(): JSX.Element {
     }
   }, [startNext, w.name, phase, operating, w.act])
 
-  // Delete "<name>"…: what goes, Keep checkpoints, and a running machine turned off first.
   const [deleting, setDeleting] = useState<Deleting | null>(null)
   const [keepSaves, setKeepSaves] = useState(false)
   const [deleteBusy, setDeleteBusy] = useState(false)
@@ -305,8 +278,6 @@ export function App(): JSX.Element {
     }
   }
 
-  // Which shells the guest has: asked once Windows is ready, so the first tab
-  // already knows, and asked again after it stops, restarts or is busy.
   const shells = useMemo(() => shellCache(installedShells), [])
   useEffect(() => {
     if (w.name === null) return
@@ -314,7 +285,6 @@ export function App(): JSX.Element {
     else shells.forget(w.name)
   }, [shells, w.name, guestReady])
 
-  /** A tab of `launch`, or of the default shell (PowerShell 7 if the guest has it). */
   const terminal = useCallback(
     (launch: Launch | null): void => {
       const instance = w.name
@@ -343,7 +313,6 @@ export function App(): JSX.Element {
       .catch((e: unknown) => { setNotice({ tone: "error", title: t("terminal.failed"), detail: errorMessage(e) }) })
   }
 
-  // Checkpoints: the clock, ⌘⇧T and File → Checkpoints… open it; the same keys close it.
   const canCheckpoints = w.name !== null && phase !== null && phase !== "missing"
   const openCheckpoints = useCallback(() => {
     setOpen(null)
@@ -394,7 +363,6 @@ export function App(): JSX.Element {
     return () => { clearTimeout(timer) }
   }, [notice])
 
-  // Sharing ends with the guest.
   useEffect(() => {
     if (!live && share !== null) {
       void shareStop()
@@ -424,8 +392,6 @@ export function App(): JSX.Element {
     if (w.name !== null) openFiles(w.name, titles[w.name] ?? null).catch((e: unknown) => { setNotice({ tone: "error", title: t("files.openFailed"), detail: errorMessage(e) }) })
   }
 
-  // The guest's home folder and C:\ in Finder (`winvm files open`). The first
-  // time sets Windows up to share, so it says what it is doing meanwhile.
   const filesMenu = (): void => {
     const instance = w.name
     if (instance === null) return
@@ -551,7 +517,6 @@ export function App(): JSX.Element {
                     </Button>
                   }
                 >
-                  {/* A stow or shutdown that failed already shows what it said, just above. */}
                   {closeFailed.message !== w.failure?.output && <pre className="output">{closeFailed.message}</pre>}
                 </Callout>
               )}
@@ -663,7 +628,6 @@ export function App(): JSX.Element {
                   <p>{t("files.dropOn", { folder: t("files.place.desktop") })}</p>
                 </div>
               )}
-              {/* Last, over the screen or the Overview: while a command runs nothing under it is reachable. */}
               <OperationOverlay operation={w.operation} />
             </div>
           </div>

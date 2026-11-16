@@ -32,10 +32,6 @@ export type IconName =
   | "copy"
   | "keyboard"
 
-// Lucide glyphs: play, power, rotate-ccw, pause, maximize, screen-share, panel-right, check, x,
-// terminal, folder, history, bot, file, monitor, file-text, download, house, hard-drive,
-// chevron-left, chevron-right, arrow-up, refresh-cw, plus, minus; shield, quartered as Windows' elevation shield; chevron-down; copy;
-// moon (asleep); keyboard.
 const PATHS: Record<IconName, ReactNode> = {
   keyboard: (
     <>
@@ -206,7 +202,6 @@ const PATHS: Record<IconName, ReactNode> = {
   ),
 }
 
-/** A decorative glyph; the control it sits in carries the label. */
 export function Icon({ name }: { readonly name: IconName }): JSX.Element {
   return (
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">

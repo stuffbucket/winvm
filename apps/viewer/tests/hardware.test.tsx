@@ -1,8 +1,3 @@
-/**
- * The panel's Hardware and Network: reading `winvm info --json`, the
- * `winvm config` it runs to change the size, and what each part shows
- * (rendered in happy-dom).
- */
 import type { JSX } from "react"
 import { GlobalRegistrator } from "@happy-dom/global-registrator"
 import { afterAll, afterEach, describe, expect, it } from "bun:test"

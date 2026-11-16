@@ -7,36 +7,27 @@ import { MachinePicker, type MachinePickerProps } from "../machines/MachinePicke
 export type PanelId = "files" | "share"
 
 interface ToolbarProps {
-  /** The Windows machine picker, at the left. */
   readonly picker: MachinePickerProps
   readonly phase: Phase | null
-  /** What is happening right now, in a word or two; null when nothing is. */
   readonly activity: string | null
   readonly controls: Controls
   readonly guestReady: boolean
-  /** Why the terminal can't open (an i18n key), or null when it can. */
   readonly terminalBlocked: string | null
-  /** Whether Checkpoints can open: there is a machine (its checkpoints show even while it is off). */
   readonly canCheckpoints: boolean
   readonly checkpointsOpen: boolean
-  /** Whether "Use with Claude" can open: there is an instance to add (its HTTP endpoint also needs Windows up). */
   readonly canShare: boolean
   readonly sharing: boolean
   readonly actualSize: boolean
-  /** Whether "Actual size" means anything: not when the guest's screen follows the window (virtio-gpu). */
   readonly canActualSize: boolean
   readonly open: PanelId | null
   readonly detailsOpen: boolean
   readonly keyboardCaptured: boolean
-  /** A command is running on the machine: keyboard capture is off until it ends. */
   readonly inputBlocked: boolean
   onStart: () => void
   onShutDown: () => void
   onRestart: () => void
   onPause: () => void
-  /** Resume a paused machine, or wake one asleep. */
   onResume: () => void
-  /** Option-click or right-click on Pause / Resume: Show Pause Overlay, Sleep, Lock. */
   onPauseMenu: () => void
   onOpen(id: PanelId, button: HTMLElement): void
   onTerminal: () => void
@@ -76,11 +67,6 @@ function ToolButton({ icon, label, enabled, pressed, expanded, onClick }: ToolBu
   )
 }
 
-/**
- * >_ opens a PowerShell 7 tab in the Terminal window; Option-click or
- * right-click offers the other shells and places in a native menu. Disabled,
- * its tooltip says why.
- */
 function TerminalButton({ blocked, onOpen, onMenu }: { readonly blocked: string | null; onOpen: () => void; onMenu: () => void }): JSX.Element {
   const label = t("action.terminal")
   return (
@@ -105,12 +91,6 @@ function TerminalButton({ blocked, onOpen, onMenu }: { readonly blocked: string 
   )
 }
 
-/**
- * Pause, or Resume (Wake when asleep) while held. Option-click or right-click
- * offers Show Pause Overlay, Sleep and Lock in a native menu. Pause and Resume
- * are different buttons to React (their parent keys them), so the one focused
- * when Pause is clicked never turns into Resume under a key press.
- */
 function PauseButton({ phase, c, onPause, onResume, onMenu }: { readonly phase: Phase | null; readonly c: Controls; onPause: () => void; onResume: () => void; onMenu: () => void }): JSX.Element {
   const frozen = isFrozen(phase)
   const label = t(phase === "asleep" ? "action.wake" : frozen ? "action.resume" : "action.pause")
@@ -138,7 +118,6 @@ function PauseButton({ phase, c, onPause, onResume, onMenu }: { readonly phase: 
   )
 }
 
-/** The folder opens the Files window; Option-click or right-click offers a menu of places, as >_ does. */
 function FilesButton({ enabled, onOpen, onMenu }: { readonly enabled: boolean; onOpen: () => void; onMenu: () => void }): JSX.Element {
   const label = t("action.files")
   return (
@@ -163,11 +142,6 @@ function FilesButton({ enabled, onOpen, onMenu }: { readonly enabled: boolean; o
   )
 }
 
-/**
- * The clock opens Checkpoints, the full-window view of every checkpoint
- * (⌘⇧T, File → Checkpoints…, too); Option-click or right-click offers a
- * native menu with Take a Checkpoint Now, as >_ and the folder do.
- */
 function CheckpointsButton({ enabled, open, onOpen, onMenu }: { readonly enabled: boolean; readonly open: boolean; onOpen: () => void; onMenu: () => void }): JSX.Element {
   const label = t("action.checkpoints")
   return (
@@ -193,10 +167,6 @@ function CheckpointsButton({ enabled, open, onOpen, onMenu }: { readonly enabled
   )
 }
 
-/**
- * The title bar: which Windows machine (a menu of them all), what is
- * happening, then power, things to do in Windows, and view.
- */
 export function Toolbar(p: ToolbarProps): JSX.Element {
   const c = p.controls
   const live = isLivePhase(p.phase)

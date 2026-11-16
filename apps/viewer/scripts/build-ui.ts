@@ -1,15 +1,3 @@
-/**
- * Bundles the viewer UI into dist/, which Tauri serves as the app's frontend:
- * index.html (the main window), terminal.html (the Terminal window) and
- * files.html (a Files window).
- * Bun's bundler takes the HTML entry, its stylesheet and script, as maximal's
- * scripts/build-ui.ts does for its Settings window. Always a production build:
- * NODE_ENV is defined so the bundle carries React's production build, not its
- * development one (larger, slower, and noisy in the console).
- *
- *   bun scripts/build-ui.ts           one build
- *   bun scripts/build-ui.ts --watch   rebuild on change
- */
 import { watch } from "node:fs"
 import { mkdir, rm } from "node:fs/promises"
 import { resolve } from "node:path"

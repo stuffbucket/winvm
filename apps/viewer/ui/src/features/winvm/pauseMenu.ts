@@ -1,8 +1,3 @@
-/**
- * The Pause button's menu (Option-click or right-click): whether a held
- * machine's screen is dimmed, then Sleep and Lock. Pure: the rows, which the
- * app hands to a native menu.
- */
 import type { Action } from "../../backend"
 import type { Controls } from "../../model"
 

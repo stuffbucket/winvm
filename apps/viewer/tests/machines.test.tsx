@@ -1,8 +1,3 @@
-/**
- * The Windows machines menu and its flows, rendered in happy-dom: the Menu
- * wrapper over Base UI, the picker's states, New Machine…'s checks and
- * Delete…'s text and Keep checkpoints. And the pure rules under them.
- */
 import type { JSX } from "react"
 import { GlobalRegistrator } from "@happy-dom/global-registrator"
 import { afterAll, afterEach, describe, expect, it } from "bun:test"
@@ -43,7 +38,6 @@ const flush = async (): Promise<void> => {
   })
 }
 
-/** Open a Base UI menu from its trigger, as the keyboard does. */
 async function open(trigger: HTMLElement): Promise<HTMLElement> {
   act(() => { trigger.focus() })
   act(() => {

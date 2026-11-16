@@ -7,11 +7,8 @@ import { type Tick, tickAt } from "./checkpoints"
 
 interface TimelineProps {
   readonly ticks: readonly Tick[]
-  /** The tick the view is on. */
   readonly active: string
-  /** Fly there (a click, a key, the end of a drag). */
   onPick: (tick: Tick) => void
-  /** Follow the pointer while it drags. */
   onScrub: (tick: Tick) => void
   onOlder: () => void
   onNewer: () => void
@@ -19,16 +16,9 @@ interface TimelineProps {
   readonly canNewer: boolean
 }
 
-// lucide: chevron-up, chevron-down
 const UP = <path d="m18 15-6-6-6 6" />
 const DOWN = <path d="m6 9 6 6 6-6" />
 
-/**
- * Time Machine's timeline, down the right edge: a tick per day with
- * checkpoints, Now at the bottom, months named where they start. Hover names
- * the day; click, drag or the arrow keys go there. The chevrons above and
- * below step one checkpoint older or newer.
- */
 export function Timeline({ ticks, active, onPick, onScrub, onOlder, onNewer, canOlder, canNewer }: TimelineProps): JSX.Element {
   const track = useRef<HTMLDivElement>(null)
   const [hover, setHover] = useState<Tick | null>(null)

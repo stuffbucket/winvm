@@ -1,13 +1,3 @@
-/**
- * Checkpoint pictures, fetched as they come into view.
- *
- * A picture is a file in its save's directory; the app reads it as bytes
- * (`checkpoint_image`) and the page shows it as a blob: URL. Each is fetched
- * once per save (keyed by path and when the save was taken, so a save
- * replaced under the same name is fetched again) and at most a few at a time,
- * so opening a view of hundreds of checkpoints stays smooth: only the cards on
- * screen ask, and the ones scrolled past wait their turn.
- */
 import { useEffect, useState } from "react"
 
 import { checkpointImage } from "../../backend"
@@ -34,7 +24,6 @@ function done(): void {
 
 const keyOf = (path: string, version: string): string => `${path}#${version}`
 
-/** A blob: URL for a checkpoint picture; rejects when it can't be read. */
 function pictureUrl(path: string, version: string, read: (path: string) => Promise<ArrayBuffer> = checkpointImage): Promise<string> {
   const key = keyOf(path, version)
   const had = cache.get(key)
@@ -53,7 +42,6 @@ function pictureUrl(path: string, version: string, read: (path: string) => Promi
   return made
 }
 
-/** Let go of a save's pictures (it was deleted, or replaced). */
 export function forgetPictures(paths: readonly (string | null)[]): void {
   for (const [key, url] of cache) {
     if (!paths.some((p) => p !== null && key.startsWith(`${p}#`))) continue
@@ -62,7 +50,6 @@ export function forgetPictures(paths: readonly (string | null)[]): void {
   }
 }
 
-/** The picture at `path` once it has loaded, or null; nothing is fetched until `wanted`. */
 export function usePicture(path: string | null, version: string, wanted: boolean): string | null {
   const [url, setUrl] = useState<string | null>(null)
   useEffect(() => {

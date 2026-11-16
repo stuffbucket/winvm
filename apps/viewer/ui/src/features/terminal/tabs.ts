@@ -1,12 +1,3 @@
-/**
- * The Terminal window's tabs, as a reducer. A tab is one shell session; its
- * id is the session's id, so reopening a tab gives it a new id and a new
- * shell. A shell that exits with 0 closes its tab, as `exit` does in
- * Terminal; any other end keeps the tab, and its scrollback, marked.
- *
- * A tab's name is the one the user gave it, else what its shell set (OSC 0
- * or 2), else the shell's own name: `tabName`.
- */
 import type { OpenRequest } from "./shells"
 
 export type TabState =
@@ -18,9 +9,7 @@ export type TabState =
 
 export interface Tab extends OpenRequest {
   readonly id: string
-  /** What the shell set as its title, already made presentable; null uses the shell's name. */
   readonly title: string | null
-  /** The name the user gave the tab, which wins over the shell's until cleared; null when none. */
   readonly customTitle: string | null
   readonly state: TabState
 }
@@ -38,7 +27,6 @@ export type TabAction =
   | { readonly type: "title"; readonly id: string; readonly title: string | null }
   | { readonly type: "state"; readonly id: string; readonly state: TabState }
   | { readonly type: "reopen"; readonly id: string; readonly newId: string }
-  /** The user's name for a tab; empty (or only spaces) goes back to the automatic one. */
   | { readonly type: "rename"; readonly id: string; readonly title: string }
   | { readonly type: "closeOthers"; readonly id: string }
 
@@ -84,7 +72,6 @@ export function tabsReducer(s: Tabs, a: TabAction): Tabs {
     case "state":
       if (a.state.kind === "exited" && a.state.code === 0) return close(s, a.id)
       return update(s, a.id, (t) => {
-        // An exit is final: the lost connection that follows it says nothing new.
         if (t.state.kind === "exited") return t
         return { ...t, state: a.state }
       })
@@ -96,8 +83,6 @@ export function tabsReducer(s: Tabs, a: TabAction): Tabs {
   }
 }
 
-/** A tab's name: the user's, else the shell's title, else `shellName` (the shell's own name). */
 export const tabName = (tab: Tab, shellName: string): string => tab.customTitle ?? tab.title ?? shellName
 
-/** The instance a new tab from inside the window opens on: the active tab's. */
 export const activeTab = (s: Tabs): Tab | null => s.tabs.find((t) => t.id === s.active) ?? null

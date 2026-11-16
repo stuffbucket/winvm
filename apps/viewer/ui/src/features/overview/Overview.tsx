@@ -14,7 +14,6 @@ interface OverviewProps {
   onStart: () => void
 }
 
-// The same glyphs as their toolbar buttons, so each reads as "that button".
 const ABILITIES: readonly { icon: IconName; key: string }[] = [
   { icon: "terminal", key: "ability.exec" },
   { icon: "folder", key: "ability.files" },
@@ -37,7 +36,6 @@ function Steps({ steps }: { readonly steps: readonly Step[] }): JSX.Element {
   )
 }
 
-/** What fills the display while there is no screen: the state, what the instance is, Start, and what it does once on. */
 export function Overview(p: OverviewProps): JSX.Element {
   if (p.steps !== null) {
     return (

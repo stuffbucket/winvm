@@ -5,11 +5,9 @@ import type { UsageView } from "./useUsage"
 
 export interface UsageContext {
   readonly cpus: number | null
-  /** What the machine's changes take on the Mac (status' overlay), for the disk's note. */
   readonly overlayBytes: number | null
 }
 
-/** Recent values (0-1) as a line, oldest at the left, filled beneath. */
 function Sparkline({ values }: { readonly values: readonly number[] }): JSX.Element {
   const w = 100
   const h = 24
@@ -28,7 +26,6 @@ function Sparkline({ values }: { readonly values: readonly number[] }): JSX.Elem
   )
 }
 
-/** A hairline bar, filled to `fill` (0-1). */
 function Bar({ fill }: { readonly fill: number }): JSX.Element {
   return (
     <span className="resource__bar" aria-hidden="true">
@@ -40,7 +37,6 @@ function Bar({ fill }: { readonly fill: number }): JSX.Element {
 interface ResourceProps {
   readonly label: string
   readonly value: string
-  /** 0-1, for assistive tech and the bar. */
   readonly fill: number
   readonly note?: string | undefined
   readonly children: JSX.Element
@@ -59,18 +55,12 @@ function Resource({ label, value, fill, note, children }: ResourceProps): JSX.El
   )
 }
 
-/** Windows' own figure with QEMU's on the Mac beside it, so a busy Mac isn't read as a busy Windows. */
 const cpuNote = (u: Usage, cpus: number): string =>
   u.cpuSource === "windows" ? t("usage.cpuWindowsNote", { mac: u.macCpu === null ? "…" : formatPercent(u.macCpu) }) : t("usage.cpuNote", { cpus })
 
 const memoryValue = (m: Amount & { readonly source: "windows" | "mac" }): string =>
   m.source === "windows" ? t("usage.memoryValue", { used: formatGB(m.used), total: formatGB(m.total) }) : t("usage.memoryMacValue", { used: formatGB(m.used) })
 
-/**
- * The details panel's Resources: CPU and memory with the last minute and a
- * half as a line, C: as a bar, each with its value in words. Read every 2.5 s
- * while the machine runs (useUsage); nothing while it is off.
- */
 export function Resources({
   usage,
   context,
@@ -78,7 +68,6 @@ export function Resources({
 }: {
   readonly usage: UsageView
   readonly context: UsageContext
-  /** The machine is paused or asleep: Windows can't answer, so its figures wait. */
   readonly held?: "paused" | "asleep" | null
 }): JSX.Element {
   if (held !== null) return <p className="panel__note">{t(held === "asleep" ? "usage.asleep" : "usage.paused")}</p>

@@ -1,11 +1,3 @@
-/**
- * Design-token rules that a selector-blind linter can't express, from
- * maximal v0.4.48's scripts/check-design-tokens.ts:
- *
- *   --text-xs is for glyph-only contexts (docs/design/type.md); --text-sm is
- *   the floor for text. Only `.kbd` may use it.
- *   No raw colors in component CSS: hex, rgb() and hsl() belong in theme.ts.
- */
 import { readFileSync } from "node:fs"
 import { resolve } from "node:path"
 

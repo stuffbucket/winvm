@@ -10,7 +10,6 @@ import { parseClaudeChange, parseClaudeStatus } from "../../model"
 
 interface SharePanelProps {
   readonly instance: string
-  /** Windows is up, so the HTTP endpoint can start. */
   readonly guestReady: boolean
   readonly share: Share | null
   readonly starting: boolean
@@ -21,7 +20,6 @@ interface SharePanelProps {
 
 type Busy = { readonly id: ClaudeClientId; readonly verb: "install" | "uninstall" }
 
-/** What to tell the person after a change, by client. */
 const AFTER: Record<ClaudeClientId, string> = {
   "claude-code": "claude.newSession",
   "claude-desktop": "claude.restartDesktop",
@@ -62,7 +60,6 @@ interface ClientRowProps {
   onCancel: () => void
 }
 
-/** One Claude app: Add, or a quiet Added and Remove; Claude Desktop's Add asks first. */
 function ClientRow({ client: c, busy, confirming, onAdd, onRemove, onConfirm, onCancel }: ClientRowProps): JSX.Element {
   const disabled = busy !== null
   const vars = { client: c.name }
@@ -116,11 +113,6 @@ function ClientRow({ client: c, busy, confirming, onAdd, onRemove, onConfirm, on
   )
 }
 
-/**
- * Use this Windows from Claude: add its MCP server (`winvm mcp`) to Claude Code
- * and Claude Desktop. Under "Other agents", the HTTP endpoint (`winvm cua serve`)
- * for an agent loop of one's own.
- */
 export function SharePanel({ instance, guestReady, share, starting, error, onStart, onStop }: SharePanelProps): JSX.Element {
   const [clients, setClients] = useState<readonly ClaudeClient[] | null>(null)
   const [problem, setProblem] = useState<string | null>(null)

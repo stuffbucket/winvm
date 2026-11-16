@@ -7,10 +7,6 @@ interface PopoverProps {
   readonly children: ReactNode
 }
 
-/**
- * A panel under a toolbar button: layer 2, short-lived. Escape or a click
- * outside it (other than on its button) closes it.
- */
 export function Popover({ anchor, label, onClose, children }: PopoverProps): JSX.Element {
   const panel = useRef<HTMLDivElement | null>(null)
   const [place, setPlace] = useState<{ top: number; right: number } | null>(null)

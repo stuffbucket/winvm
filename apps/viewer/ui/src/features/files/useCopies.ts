@@ -6,7 +6,6 @@ import type { Entry } from "./files"
 import { childPath, freeName, hostName, isListing, leafName } from "./files"
 import { listFolder } from "./ops"
 
-/** A copy under way: which way, how far, and what it's on. */
 interface CopyJob {
   readonly way: "in" | "out"
   readonly done: number
@@ -18,29 +17,22 @@ interface CopyResult {
   readonly ok: boolean
   readonly title: string
   readonly detail?: string
-  /** Out: the Mac file or folder to show in Finder. */
   readonly reveal?: string
 }
 
 export interface Copies {
   readonly job: CopyJob | null
   readonly result: CopyResult | null
-  /** Bumped each time files land in Windows, so a browser showing that folder reads it again. */
   readonly landed: number
-  /** Copy Mac files and folders into a Windows folder; null is the Desktop. */
   copyIn: (paths: readonly string[], folder: string | null) => void
-  /** Copy Windows files and folders to the Mac, asking where with the native panels. */
   copyOut(folder: string, entries: readonly Entry[]): void
-  /** A drag carrying `count` items left for the Mac: their promises' progress and result are this hook's. */
   expectPromises(count: number): void
-  /** Say something in the copies' place: what an operation did, or why it failed. */
   report(result: CopyResult): void
   dismiss: () => void
 }
 
 const dirOf = (path: string): string => path.slice(0, Math.max(1, path.lastIndexOf("/")))
 
-/** Copies in and out of one instance, one at a time, in the order asked for. */
 export function useCopies(instance: string | null): Copies {
   const [job, setJob] = useState<CopyJob | null>(null)
   const [result, setResult] = useState<CopyResult | null>(null)
@@ -66,7 +58,6 @@ export function useCopies(instance: string | null): Copies {
       enqueue(async () => {
         setResult(null)
         setJob({ way: "in", done: 0, total: paths.length, name: hostName(paths[0] ?? "") })
-        // The folder as it is now: where "Desktop" is, and the names a copy must not replace.
         const listing = await listFolder(instance, folder, { hidden: true })
         if (!isListing(listing)) return { ok: false, title: t("files.copyFailed"), detail: listing.detail }
         const taken = new Set(listing.entries.map((e) => e.name))
@@ -97,7 +88,6 @@ export function useCopies(instance: string | null): Copies {
         const downloads = await downloadsDir()
         const first = entries[0]
         if (first === undefined) return null
-        // One file: the save panel, which asks before replacing. Otherwise a folder, and names that replace nothing.
         let targets: string[]
         if (entries.length === 1 && !first.dir) {
           const to = await pickSavePath(t("files.saveTitle"), `${downloads}/${first.name}`)
@@ -130,7 +120,6 @@ export function useCopies(instance: string | null): Copies {
   const dismiss = useCallback(() => { setResult(null) }, [])
   const report = useCallback((r: CopyResult) => { setResult(r) }, [])
 
-  // Files promised to Finder by a drag out of the window, written as Finder asks for them.
   const promised = useRef<{ total: number; done: number; failed: string[]; dest: string | null; name: string } | null>(null)
   const expectPromises = useCallback((count: number): void => {
     promised.current = { total: count, done: 0, failed: [], dest: null, name: "" }
@@ -171,13 +160,11 @@ export function useCopies(instance: string | null): Copies {
   useEffect(
     () =>
       onDragOutEnd((e) => {
-        // Dropped nowhere that takes files: nothing will be asked for.
         if (e.operation === "none") promised.current = null
       }),
     [],
   )
 
-  // A copy that worked is said for a while; one that didn't stays until dismissed.
   useEffect(() => {
     if (result?.ok !== true) return
     const timer = setTimeout(() => { setResult(null) }, 10_000)

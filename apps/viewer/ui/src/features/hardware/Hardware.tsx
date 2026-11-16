@@ -6,14 +6,8 @@ import { formatGB } from "../usage/usage"
 import { formatMemory, fromGB, pendingRestart, toGB } from "./info"
 import type { MachineInfoView } from "./useMachineInfo"
 
-/** How long a run of stepper presses or arrow keys settles before it is written. */
 const SETTLE_MS = 500
 
-/**
- * The panel's Hardware: processors and memory for the next start, and the
- * disk's size. A running machine keeps its size; a change waits for the next
- * start, and says so while the two differ.
- */
 export function Hardware({ view }: { readonly view: MachineInfoView }): JSX.Element {
   const info = view.info
   const next = info?.hardware.next ?? null
@@ -21,7 +15,6 @@ export function Hardware({ view }: { readonly view: MachineInfoView }): JSX.Elem
   const [gb, setGb] = useState(next === null ? 0 : toGB(next.memoryMiB))
   const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
 
-  // What winvm says is set wins over what was typed, once it answers.
   useEffect(() => {
     if (next === null) return
     setCpus(next.cpus)
@@ -34,8 +27,6 @@ export function Hardware({ view }: { readonly view: MachineInfoView }): JSX.Elem
     return view.error === null ? <p className="panel__note">{t("state.loading")}</p> : <p className="action__error">{view.error}</p>
 
   const { limits, running, diskBytes } = info.hardware
-  // Both values each time, so a processors change and a memory change made
-  // within the settling time are written together rather than one replacing the other.
   const commit = (size: { cpus: number; memoryMiB: number }): void => {
     clearTimeout(timer.current)
     const set = info.hardware.next

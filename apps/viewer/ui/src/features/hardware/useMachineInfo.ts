@@ -6,21 +6,13 @@ import type { Phase } from "../../model"
 import { cliError } from "../sharedfolder/folder"
 import { type MachineInfo, type Size, infoArgs, parseMachineInfo, sizeArgs } from "./info"
 
-/** The machine's hardware and network, and the change to its size. */
 export interface MachineInfoView {
   readonly info: MachineInfo | null
-  /** What the last read or change said when it failed. */
   readonly error: string | null
-  /** A change is being written. */
   readonly working: boolean
   setSize(change: Partial<Size>): void
 }
 
-/**
- * Reads `winvm info` while the panel shows (`active`), again when the machine
- * starts, stops or its agent comes up (Windows' own address, the forwards),
- * and after each change. A reply for a machine no longer shown is dropped.
- */
 export function useMachineInfo(instance: string | null, phase: Phase | null, guestReady: boolean, active: boolean): MachineInfoView {
   const [info, setInfo] = useState<MachineInfo | null>(null)
   const [error, setError] = useState<string | null>(null)

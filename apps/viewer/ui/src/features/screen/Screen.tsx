@@ -19,36 +19,14 @@ interface ScreenProps {
   readonly connection: Connection
   readonly keyboardCaptured: boolean
   onKeyboardCaptured: (captured: boolean) => void
-  /**
-   * The guest's screen can follow the view (virtio-gpu). Then the viewer asks
-   * QEMU for the view's size in device pixels and `onGuestSize` has the guest
-   * switch to it (through its agent), and the picture is drawn one guest pixel
-   * per device pixel.
-   */
   readonly resizable: boolean
   readonly onGuestSize?: (size: Size, scale: number) => Promise<void>
-  /**
-   * The machine is held (paused or asleep): the screen takes no input (it would
-   * queue in QEMU and land on resume), and sizes wait until it runs (held.ts).
-   */
   readonly frozen?: boolean
-  /**
-   * A command is running on the machine (this window's or another process's): the screen takes no
-   * input, as while frozen, but is not dimmed as a held screen is.
-   */
   readonly inputBlocked?: boolean
-  /**
-   * Windows can take a size now (the app's guestReady: it runs, its agent
-   * answers, no verb under way). Until then sizes wait, as while frozen, and
-   * the window's size is asked for, both steps, once it can.
-   */
   readonly ready?: boolean
-  /** Asleep: the first key pressed in the screen wakes it (`onWake`), and isn't typed. */
   readonly asleep?: boolean
-  /** A wake is under way: keys are dropped until the machine runs. */
   readonly waking?: boolean
   onWake?: () => void
-  /** Dim the held screen and mark it with a glyph (the "Show Pause Overlay" setting). */
   readonly overlay?: boolean
 }
 
@@ -59,30 +37,13 @@ export interface ScreenHandle {
 
 type View = "connecting" | "connected" | "lost" | "refused"
 
-/** A new size's first frame is the old picture redrawn; the second is the guest's. Without one, this long. */
 const FRAME_WAIT_MS = 150
 
-/** How long after connecting to wait for the server to say its clipboard takes UTF-8 before pasting anyway (as Latin-1). */
 const CLIPBOARD_CAPS_MS = 2000
-/** noVNC's extended-clipboard text format. */
 const CLIPBOARD_TEXT = 1
 
 const dpr = (): number => window.devicePixelRatio || 1
 
-/**
- * The guest's screen through QEMU's VNC websocket, interactive.
- *
- * WHILE A RESIZABLE GUEST IS RESIZED (resize.ts decides when): the last
- * picture is copied to a canvas laid over the screen and stretched to fill the
- * view, so the window's edge never shows a blank, a corner or a jump. The live
- * screen underneath carries on (sizes the guest passes through, the redraw of a
- * new size), out of sight, and the copy goes once the guest's picture is drawn
- * in full at the size asked for, one guest pixel per device pixel.
- *
- * THE CLIPBOARD (clipboard.ts), text only, while the window is in front: what
- * Windows copies goes on the Mac's clipboard; the Mac's goes to Windows when
- * the window comes forward, and once on connecting.
- */
 export const Screen = forwardRef<ScreenHandle, ScreenProps>(function Screen(
   { connection, keyboardCaptured, onKeyboardCaptured, resizable, onGuestSize, frozen = false, inputBlocked = false, ready = true, asleep = false, waking = false, onWake, overlay = true },
   ref,
@@ -94,7 +55,6 @@ export const Screen = forwardRef<ScreenHandle, ScreenProps>(function Screen(
   const keyboard = useRef<GuestKeyboardRouter | null>(null)
   const [view, setView] = useState<View>("connecting")
   const [attempt, setAttempt] = useState(0)
-  // The framebuffer drawn, and the view's size in CSS pixels, for the 1:1 box.
   const [fb, setFb] = useState<Size | null>(null)
   const [box, setBox] = useState<Size | null>(null)
   const [ratio, setRatio] = useState(dpr)
@@ -104,7 +64,6 @@ export const Screen = forwardRef<ScreenHandle, ScreenProps>(function Screen(
   const guestSize = useRef(onGuestSize)
   guestSize.current = onGuestSize
   const live = useRef<LiveResize | null>(null)
-  // Ask again for the size the window wants now, both steps: after a hold, or a size the guest missed.
   const askAgain = (): void => {
     const resize = live.current
     const outer = area.current
@@ -186,8 +145,6 @@ export const Screen = forwardRef<ScreenHandle, ScreenProps>(function Screen(
     rfb.current = conn
     conn.background = "transparent"
     conn.scaleViewport = true
-    // We send SetDesktopSize ourselves: noVNC asks in CSS pixels, and treats
-    // QEMU's immediate "forwarded" reply as done, dropping later sizes.
     conn.resizeSession = false
     conn.focusOnClick = true
     conn.viewOnly = keys.current.frozen || keys.current.blocked
@@ -197,7 +154,6 @@ export const Screen = forwardRef<ScreenHandle, ScreenProps>(function Screen(
       return { width: r.width, height: r.height }
     }
 
-    // The picture as it is, held over the screen while the guest changes size.
     const hold = (): void => {
       const from = el.querySelector("canvas")
       const to = still.current
@@ -213,15 +169,12 @@ export const Screen = forwardRef<ScreenHandle, ScreenProps>(function Screen(
           request: async (size) => {
             if (!connected || closing) return
             const sizes = heldSizes.current
-            // Held, or Windows not ready: kept, and asked for once it can take it.
             if (sizes === null || !sizes.offer(size)) return
             RFB.messages.setDesktopSize(conn._sock, size.width, size.height, conn._screenID ?? 0, conn._screenFlags ?? 0)
             try {
               await guestSize.current?.(size, scaleFor(dpr()))
               sizes.took()
             } catch (error) {
-              // Not taken (its display driver or agent not up yet, a restart begun):
-              // kept, and asked for again, both steps, never dropped.
               console.warn("resizing the guest failed; asking again", error)
               sizes.missed(size)
             }
@@ -244,8 +197,6 @@ export const Screen = forwardRef<ScreenHandle, ScreenProps>(function Screen(
       : null
     live.current = resize
 
-    // Asleep: the first key in the screen wakes the machine and goes no further
-    // (capture, so it is caught before noVNC's own handler takes it).
     const onKey = (e: KeyboardEvent): void => {
       const k = keys.current
       const verdict = keyVerdict(k, e)
@@ -256,8 +207,6 @@ export const Screen = forwardRef<ScreenHandle, ScreenProps>(function Screen(
     }
     outer.addEventListener("keydown", onKey, true)
 
-    // Each update ends in a flip. After a new size, the first is the old
-    // picture redrawn at it; the second is the guest's own.
     const display = conn._display
     const flip = display.flip.bind(display)
     let flipped: Size | null = null
@@ -267,7 +216,6 @@ export const Screen = forwardRef<ScreenHandle, ScreenProps>(function Screen(
       clearTimeout(frameWait)
       setFb((cur) => (sameSize(cur, size) ? cur : size))
       if (resize === null) return
-      // Mid-drag, the held picture becomes the newest one the guest has drawn.
       if (resize.resizing) hold()
       resize.drawnAt(size)
     }
@@ -292,7 +240,6 @@ export const Screen = forwardRef<ScreenHandle, ScreenProps>(function Screen(
         return
       }
       resize.want(guestSizeFor(measure(), dpr()))
-      // Still settled: the guest keeps its size (a change under a device pixel); follow the view.
       if (!resize.resizing) {
         setBox(measure())
         setRatio(dpr())
@@ -302,7 +249,6 @@ export const Screen = forwardRef<ScreenHandle, ScreenProps>(function Screen(
     observer.observe(outer)
     const unlisten = onLiveResize((live) => (live ? resize?.liveStart() : resize?.liveEnd()))
 
-    // Moving the window to a display with another pixel ratio.
     let media: MediaQueryList | null = null
     const onRatio = (): void => {
       watchRatio()
@@ -331,8 +277,6 @@ export const Screen = forwardRef<ScreenHandle, ScreenProps>(function Screen(
       if (clipboardReady && connected && !closing) void clipboard.fromMac()
     }
     window.addEventListener("focus", onFocus)
-    // The server says what its clipboard takes just after the connection is up;
-    // the first paste waits for that, so it goes as UTF-8.
     const startClipboard = (since: number): void => {
       if (closing || !connected) return
       if (conn._clipboardServerCapabilitiesFormats?.[CLIPBOARD_TEXT] !== true && performance.now() - since < CLIPBOARD_CAPS_MS) {
@@ -346,10 +290,8 @@ export const Screen = forwardRef<ScreenHandle, ScreenProps>(function Screen(
     conn.addEventListener("connect", () => {
       connected = true
       setView("connected")
-      // Keep QEMU checking for changes every 30 ms, not backing off (wake.ts).
       stopWake ??= keepRefreshing(conn._sock as WakeSock, () => connected && !closing && document.visibilityState === "visible")
       startClipboard(performance.now())
-      // A new connection may be a different guest state (a save loaded, a restart): ask again.
       if (resize !== null) {
         resize.reset()
         resize.want(guestSizeFor(measure(), dpr()))
@@ -393,33 +335,21 @@ export const Screen = forwardRef<ScreenHandle, ScreenProps>(function Screen(
     }
   }, [websocketPort, password, attempt, resizable])
 
-  // Held: no input reaches QEMU. Running again: ask for the size the window
-  // wanted meanwhile, if it wanted one.
   useEffect(() => {
     const conn = rfb.current
     if (conn !== null) conn.viewOnly = frozen || inputBlocked
   }, [frozen, inputBlocked])
-  // Held or not ready: sizes wait. Able to take one again: ask for the size the
-  // window wants now, both steps, if one was kept.
   useEffect(() => {
     const kept = heldSizes.current?.setFrozen(frozen || !ready) ?? null
     if (kept !== null) askAgainRef.current()
   }, [frozen, ready])
 
-  // One guest pixel per device pixel once the guest is the size this view
-  // wants: the box noVNC scales into is the framebuffer's size in CSS pixels,
-  // so its scale comes out at exactly 1/devicePixelRatio. Past the limits the
-  // box is the view, up to 5K, and noVNC scales the capped guest up to fill it.
-  // Any other size (the guest not there yet, or refusing) is scaled to fit,
-  // never pinned to a corner.
   const fits = resizable && fb !== null && box !== null && sameSize(fb, guestSizeFor(box, ratio))
   const drawn = fits ? drawSize(fb, box, ratio) : null
   const exact = drawn === null ? undefined : { width: `${String(drawn.width)}px`, height: `${String(drawn.height)}px` }
   const scaled = drawn !== null && fb !== null && drawn.width > fb.width / ratio + 0.5
   const holding = resizable && phase === "resizing" && held
 
-  // noVNC rescales into a new box by itself a frame later; do it before this
-  // paint, so the held picture gives way to one already in place.
   useLayoutEffect(() => {
     const conn = rfb.current
     if (conn !== null && exact !== undefined) conn.scaleViewport = true

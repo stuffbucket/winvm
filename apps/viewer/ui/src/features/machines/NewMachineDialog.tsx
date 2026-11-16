@@ -5,29 +5,20 @@ import { nameProblem } from "./machines"
 
 export interface NewMachine {
   readonly name: string
-  /** The Windows image; null: the CLI's default. */
   readonly image: string | null
   readonly start: boolean
 }
 
 interface NewMachineDialogProps {
   readonly open: boolean
-  /** The machines there are, so a taken name is caught before the CLI. */
   readonly names: readonly string[]
-  /** The Windows images there are; null while they are being read. */
   readonly images: readonly string[] | null
   readonly busy: boolean
-  /** What went wrong creating it, in the CLI's words. */
   readonly error: string | null
   onCreate(m: NewMachine): void
   onCancel(): void
 }
 
-/**
- * New Machine…: a name, checked as the CLI checks it; under Advanced, the
- * Windows image and whether to start it now (on). A native modal <dialog>,
- * like the confirmation dialog: top layer, focus kept inside, Esc cancels.
- */
 export function NewMachineDialog(p: NewMachineDialogProps): JSX.Element | null {
   const dialog = useRef<HTMLDialogElement | null>(null)
   const [name, setName] = useState("")
@@ -42,12 +33,10 @@ export function NewMachineDialog(p: NewMachineDialogProps): JSX.Element | null {
       try {
         el.showModal()
       } catch {
-        // already open
       }
     } else if (!p.open && el.open) el.close()
   }, [p.open])
 
-  // A fresh form each time it opens.
   useEffect(() => {
     if (!p.open) return
     setName("")

@@ -1,8 +1,3 @@
-/**
- * Pausing, in the window: the status answers that race a Pause, the meters
- * while held, and the Resources panel. Rendered in happy-dom, with the app's
- * Tauri bridge faked (window.__TAURI__) and winvm's answers handed out by hand.
- */
 import type { JSX } from "react"
 import { GlobalRegistrator } from "@happy-dom/global-registrator"
 import { afterAll, afterEach, describe, expect, it, jest } from "bun:test"
@@ -55,12 +50,10 @@ interface Output {
 interface Call {
   readonly args: readonly string[]
   readonly resolve: (o: Output) => void
-  /** Rejects as the app does when the sidecar is missing, won't start, or ran past its deadline. */
   readonly reject: (failure: unknown) => void
   done: boolean
 }
 
-/** The app's bridge, with `status` and the power verbs answered by the test; the rest answered at once. */
 function fakeTauri(): { calls: Call[]; reads(): Call[]; verb(v: string): Call } {
   const calls: Call[] = []
   const held = new Set(["status", "pause", "resume", "sleep", "wake", "stop", "stow", "setup"])
@@ -128,7 +121,6 @@ describe("pausing in the window", () => {
     }
     render(<Probe />)
     await flush()
-    // The list of machines, then this one's first read.
     const list = tauri.calls.find((c) => c.args[0] === "status" && !c.args.includes("-i"))
     list?.resolve({ ...status("running"), stdout: JSON.stringify({ instances: [JSON.parse(status("running").stdout)] }) })
     await flush()
@@ -136,7 +128,6 @@ describe("pausing in the window", () => {
     await flush()
     expect(w!.phase).toBe("running")
 
-    // Pause: while it runs, the poll (now fast) reads again; QEMU still says running to it.
     let acted: Promise<unknown> | null = null
     act(() => {
       acted = w!.act("pause")
@@ -148,16 +139,13 @@ describe("pausing in the window", () => {
 
     tauri.verb("pause").resolve({ code: 0, stdout: 'paused "demo"\n', stderr: "" })
     await flush()
-    // At once, without waiting for a read.
     expect(w!.busy).toBeNull()
     expect(w!.phase).toBe("paused")
 
-    // The reads that were out when Pause ended answer "running": stale, dropped.
     for (const c of raced) c.resolve(status("running"))
     await flush()
     expect(w!.phase).toBe("paused")
 
-    // Reads started after it: the newest lands first; the older one, answering later, is dropped.
     const after = tauri.reads().filter((c) => !c.done)
     expect(after.length).toBeGreaterThanOrEqual(2)
     after.at(-1)?.resolve(status("paused", null))
@@ -275,7 +263,6 @@ describe("when the sidecar fails", () => {
     await flush()
     expect(w!.statusError).toBe(copy("sidecar.timeout", { operation: "status", seconds: 45 }))
 
-    // The poll is rescheduled after the failure: the next read goes out.
     const before = tauri.reads().length
     act(() => {
       jest.advanceTimersByTime(4000)
@@ -302,10 +289,8 @@ describe("when the sidecar fails", () => {
     expect(bare()).toHaveLength(1)
     bare()[0]?.reject(sidecarFailure("timeout", "status"))
     await flush()
-    // The callout says why, and no machine is chosen yet.
     expect(host.textContent).toBe(copy("sidecar.timeout", { operation: "status", seconds: 45 }))
     expect(w!.name).toBeNull()
-    // No tight loop: nothing more until the polling interval.
     expect(bare()).toHaveLength(1)
 
     act(() => {
@@ -313,7 +298,6 @@ describe("when the sidecar fails", () => {
     })
     await flush()
     expect(bare()).toHaveLength(2)
-    // Never two at once: while the retry is out, time passing asks nothing more.
     act(() => {
       jest.advanceTimersByTime(12_000)
     })
@@ -327,7 +311,6 @@ describe("when the sidecar fails", () => {
     expect(w!.statusError).toBeNull()
     expect(host.textContent).toBe("")
 
-    // Normal polling of the instance carries on.
     expect(tauri.reads()).toHaveLength(1)
     tauri.reads()[0]?.resolve(status("running"))
     await flush()
@@ -380,7 +363,6 @@ describe("the meters while held", () => {
       useUsage(4242, instance, 4, 4096, read)
       return null
     }
-    // Paused: App passes no instance (the agent can't answer).
     render(<Probe instance={null} />)
     await flush()
     act(() => {
@@ -394,7 +376,6 @@ describe("the meters while held", () => {
     expect(asked.length).toBeGreaterThanOrEqual(3)
     expect(asked.every((i) => i === null)).toBe(true)
 
-    // Running again.
     act(() => root?.render(<Probe instance="demo" />))
     await flush()
     expect(asked.at(-1)).toBe("demo")
@@ -415,13 +396,11 @@ describe("the meters while held", () => {
     act(() => root?.unmount())
     const running = render(<Resources usage={usage} context={ctx} />)
     expect(running.textContent).toContain(en["usage.cpu"] ?? "?")
-    // Windows' own figure leads; what the Mac spends is beside it, so the two aren't confused.
     expect(running.textContent).toContain("3%")
     expect(running.textContent).toContain("On the Mac, with the screen and disk: 12%")
   })
 })
 
-/** Renders `useWinvm`, answers the list of machines (`names`, in `state`) and the first read of the first one. */
 async function boot(tauri: ReturnType<typeof fakeTauri>, state = "running", names: readonly string[] = ["demo"]): Promise<{ w: () => ReturnType<typeof useWinvm> }> {
   let w: ReturnType<typeof useWinvm> | null = null
   function Probe(): null {
@@ -445,7 +424,6 @@ describe("operations in the window", () => {
     const { w } = await boot(tauri)
     expect(w().operation).toBeNull()
 
-    // A close in another viewer, or `winvm stow` in a terminal: status says so.
     const before = tauri.reads().length
     act(() => {
       jest.advanceTimersByTime(4000)
@@ -457,7 +435,6 @@ describe("operations in the window", () => {
     expect(w().operation).toEqual({ operation: "stow", source: "external" })
     expect(w().busy).toBeNull()
 
-    // Fast polling: a read goes out at once, then every 1.5 s, not every 4 s.
     const reads = (): number => tauri.reads().length
     tauri.reads().at(-1)?.resolve(status("running", "ok", "stow"))
     await flush()
@@ -470,7 +447,6 @@ describe("operations in the window", () => {
     tauri.reads().at(-1)?.resolve(status("running", "ok", "stow"))
     await flush()
 
-    // Gone: the next read says none, and the window goes back to 4 s.
     act(() => {
       jest.advanceTimersByTime(1500)
     })
@@ -499,7 +475,6 @@ describe("operations in the window", () => {
     expect(w().busy).toBe("stow")
     expect(w().operation).toEqual({ operation: "stow", source: "local" })
 
-    // Another process's lease on the same machine does not rename the viewer's own command.
     tauri.reads().filter((c) => !c.done).at(-1)?.resolve(status("running", "ok", "stop"))
     await flush()
     expect(w().operation).toEqual({ operation: "stow", source: "local" })
@@ -507,7 +482,6 @@ describe("operations in the window", () => {
     tauri.verb("stow").resolve({ code: 0, stdout: "", stderr: "" })
     await flush()
     expect(w().busy).toBeNull()
-    // Reads started after the verb ended say what is left: the other process's operation.
     tauri.reads().filter((c) => !c.done).at(-1)?.resolve(status("running", "ok", "stop"))
     await flush()
     expect(w().operation).toEqual({ operation: "stop", source: "external" })
@@ -517,7 +491,6 @@ describe("operations in the window", () => {
     const tauri = fakeTauri()
     const { w } = await boot(tauri, "running", ["demo", "other"])
     expect(w().name).toBe("demo")
-    // Taken now, and used after the selection moves: it names its machine, it does not follow the selection.
     const runOn = w().runOn
 
     let ran: Promise<unknown> | null = null
@@ -526,11 +499,9 @@ describe("operations in the window", () => {
     })
     await flush()
     expect(tauri.verb("pause").args).toEqual(["pause", "-i", "other"])
-    // Not the selected machine's operation.
     expect(w().busy).toBeNull()
     expect(w().operation).toBeNull()
 
-    // Selecting it shows the command this viewer is running on it.
     act(() => { w().select("other") })
     await flush()
     expect(w().busy).toBe("pause")
@@ -542,14 +513,12 @@ describe("operations in the window", () => {
     const readsOfOther = tauri.reads().filter((c) => c.args.includes("other")).length
     tauri.verb("pause").resolve({ code: 0, stdout: "", stderr: "" })
     await flush()
-    // It reads the machine it ran on once more, so the picker and the close flow see what is left.
     expect(tauri.reads().filter((c) => c.args.includes("other")).length).toBe(readsOfOther + 1)
     tauri.reads().filter((c) => !c.done && c.args.includes("other")).at(-1)?.resolve(status("paused", null, null, "other"))
     await flush()
     await act(async () => {
       await ran
     })
-    // What it did to "other" is not shown as what the selected "demo" is.
     expect(w().phase).not.toBe("paused")
     expect(w().phases.other).toBe("paused")
     expect(w().last?.verb).toBe("pause")
@@ -581,7 +550,6 @@ describe("operations in the window", () => {
     const tauri = fakeTauri()
     const { w } = await boot(tauri, "running", ["demo", "other"])
 
-    // One machine other than the selected one: its answer is returned and the picker's state updated, not the toolbar's.
     let one = null as Promise<unknown> | null
     act(() => {
       one = w().refreshOne("other")
@@ -596,7 +564,6 @@ describe("operations in the window", () => {
     expect(w().status?.name).toBe("demo")
     expect(w().operation).toBeNull()
 
-    // The selected one lands as usual.
     act(() => {
       one = w().refreshOne("demo")
     })
@@ -606,7 +573,6 @@ describe("operations in the window", () => {
     expect(await one).toMatchObject({ name: "demo", state: "paused" })
     expect(w().operation).toEqual({ operation: "pause", source: "external" })
 
-    // All of them, in one read.
     let all = null as Promise<unknown> | null
     act(() => {
       all = w().refreshAll()
@@ -626,7 +592,6 @@ describe("operations in the window", () => {
     ])
     expect(w().phases.other).toBe("stopped")
 
-    // Unreadable: null, never a made-up status.
     act(() => {
       one = w().refreshOne("other")
     })

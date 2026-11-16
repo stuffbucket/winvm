@@ -1,8 +1,3 @@
-/**
- * The Checkpoints view's rules: where cards sit, the timeline, search, names,
- * settings, and what Go Back and Delete ask and do. And the confirmation
- * dialog's third button, rendered in happy-dom.
- */
 import type { JSX } from "react"
 import { GlobalRegistrator } from "@happy-dom/global-registrator"
 import { afterAll, afterEach, describe, expect, it, mock } from "bun:test"
@@ -88,7 +83,6 @@ describe("the timeline layout", () => {
     expect((day?.x ?? 0) + (day?.width ?? 0) / 2).toBeCloseTo(0, 6)
     const lines = new Set(busy.map((c) => l.cards.get(c.name)?.y))
     expect(lines.size).toBe(3)
-    // The last, short line is centred under the full ones.
     const last = ["x6", "x7"].map((n) => l.cards.get(n))
     const mid = ((last[0]?.x ?? 0) + (last[1]?.x ?? 0) + (last[1]?.width ?? 0)) / 2
     expect(mid).toBeCloseTo(0, 6)

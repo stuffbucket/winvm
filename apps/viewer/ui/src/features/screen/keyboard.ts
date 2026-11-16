@@ -37,13 +37,6 @@ const stopAll = (event: RoutedKeyEvent): void => {
 const isMeta = (code: string): boolean => code === "MetaLeft" || code === "MetaRight"
 const isCaptureModifier = (code: string): boolean => code.startsWith("Control") || code.startsWith("Alt")
 
-/**
- * Keeps Mac shortcuts on the Mac until keyboard capture is explicit.
- *
- * noVNC remains the normal keyboard implementation. This router runs in the
- * capture phase and only intercepts host Command keys, the capture chord, and
- * focus loss. Right Command is the deliberate uncaptured Windows modifier.
- */
 export class GuestKeyboardRouter {
   private captured = false
   private captureChord = false
@@ -146,11 +139,6 @@ export class GuestKeyboardRouter {
     if (event.metaKey) stopGuest(event)
   }
 
-  /**
-   * Releases everything before noVNC's own blur handler. If Windows is down,
-   * Ctrl is pressed and released first, so the subsequent Windows-key release
-   * cannot be interpreted as a lone press that opens Start.
-   */
   releaseAll(): void {
     if (this.capturedWindows.size > 0 || this.rightWindowsDown) {
       this.options.send(CONTROL, "ControlLeft", true)
