@@ -37,7 +37,9 @@ window for all machines, not just the machine currently shown.
 
 - Force-killing Windows when graceful shutdown fails.
 - Guaranteeing a dialog or completed operation after Force Quit, SIGKILL, a
-  process crash, macOS logout, or host power loss.
+  process crash, or host power loss, or a logout, restart or shutdown close
+  that needs longer than macOS waits for an app (see Logout, restart and
+  shutdown).
 - Storing close preferences in a save, internal snapshot, save note, hardware
   profile, display profile, or provisioning metadata.
 - Applying one machine's remembered preference to another machine.
@@ -65,6 +67,9 @@ The following actions start the same transaction:
 - clicking the main window's red close control;
 - Cmd-W or File > Close while the main window is the target;
 - Cmd-Q or the app-menu Quit item;
+- Quit from the Dock, an AppleScript `quit`, or any other AppKit
+  `terminate:`;
+- a macOS logout, restart or shutdown (see below);
 - an otherwise unapproved last-window/application exit request.
 
 The Rust host synchronously prevents the close or exit before any window is
@@ -73,9 +78,27 @@ the transaction either completes or is cancelled. Repeated close requests while
 one transaction is pending are coalesced; they do not create duplicate dialogs
 or duplicate VM operations.
 
-Update installation/restart is an explicit bypass: it preserves the current
-release behavior and leaves all VMs running. A crash, Force Quit, or process
-kill also leaves detached VMs running.
+An installed update restarts the app only when no close transaction is
+requested or running: it waits for a close under way to finish or be
+cancelled, so it never restarts in the middle of a close-owned stow or
+shutdown. If that close completes, the app exits and the update takes effect
+at the next launch; if it is cancelled, the update restarts the app, leaving
+every machine as it is. A failed update changes nothing. A crash, Force Quit,
+or process kill leaves detached VMs running.
+
+### Logout, restart and shutdown
+
+macOS asks the app to quit with a `quit` Apple Event whose `why?` attribute
+names a logout, restart or shutdown. The viewer then reads every machine
+first: when none is live, or every live one is remembered as `Leave Running`
+and no operation is under way, it lets macOS go on at once. Otherwise it
+holds macOS (`NSTerminateLater`), runs the same transaction with a visible
+40-second countdown (macOS gives up on an app after about 45 seconds), and
+lets macOS go on when the transaction completes. Cancelling or a failure tells
+macOS not to go on, so the logout stops and macOS says the viewer prevented it.
+When the countdown runs out the viewer tells macOS not to go on, says so, and
+keeps closing; the person logs out again once it has closed. A logout that
+arrives during a close joins it instead of starting another.
 
 ### Machine queue
 
@@ -234,16 +257,30 @@ The coordinator is idempotent and coalesces repeated requests. The main
 window's `WindowEvent::CloseRequested` calls `prevent_close()` unless state is
 `Authorized`, then emits a targeted close request. A custom app-menu Quit item
 replaces the predefined macOS Quit item and enters the same coordinator before
-AppKit termination. `RunEvent::ExitRequested` prevents any otherwise
-unapproved exit as a backstop.
+AppKit termination. Every other AppKit termination reaches the coordinator
+through `applicationShouldTerminate:`, which the viewer adds at startup to
+tao's app delegate class (`TaoAppDelegateParent`); startup fails loudly if
+that class is missing, renamed, or already answers the selector.
+`RunEvent::ExitRequested` prevents any otherwise unapproved exit as a
+backstop.
 
 Frontend commands acknowledge/start the transaction, cancel it, and complete
 it. Completion transitions to `Authorized` and exits the application, closing
-all main, Terminal, and Files windows. Cancellation returns to `Idle`. A later
-close request starts from a fresh machine/status list.
+all main, Terminal, and Files windows, or, when macOS is waiting on a logout,
+tells macOS to go on. Cancellation returns to `Idle`. A later close request
+starts from a fresh machine/status list.
 
-Updater restart sets the one-shot authorized bypass before relaunching, so an
-update never unexpectedly stows or shuts down machines.
+The coordinator keeps the transaction, not only its state: the machine it has
+reached, the machines already resolved, the close-owned stow or stop in flight
+(run by Rust, so it outlives the page that asked for it) and how the last one
+ended, and any logout deadline. The window reads this on load, so a page that
+reloads mid-close picks the transaction up: it shows a stow or stop still in
+flight and waits for it, reports one that failed and calls the close off, and
+otherwise goes on from where the close had reached. Neither cancel nor
+complete is accepted while a close-owned command runs.
+
+The updater waits on the coordinator rather than bypassing it, so an update
+never restarts during a close or unexpectedly stows or shuts down machines.
 
 ### Core profile and status
 
