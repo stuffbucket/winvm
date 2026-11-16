@@ -276,6 +276,12 @@ describe("stop during a manual save", () => {
         shutdowns.push("guest-shutdown")
         return Promise.resolve()
       },
+      ensureService: () => Promise.resolve(),
+      powerdown: () => {
+        shutdowns.push("system_powerdown")
+        return Promise.resolve()
+      },
+      untilEvent: () => Promise.resolve(null),
     }
 
     const save = outcome(
@@ -367,12 +373,13 @@ describe("the watcher's work", () => {
           watcherPid: () => null,
           beforeDown: () => undefined,
           stopSidecars: () => undefined,
-          waitFor: () => Promise.resolve(true),
-          shutdown: () => {
-            order.push("guest-shutdown")
+          ensureService: () => Promise.resolve(),
+          powerdown: () => {
+            order.push("system_powerdown")
             running = false
             return Promise.resolve()
           },
+          untilEvent: () => Promise.resolve(null),
           sleep: async () => {
             await sleep(1)
           },
@@ -387,7 +394,7 @@ describe("the watcher's work", () => {
       "autosave begins",
       "released",
       "autosave ends",
-      "guest-shutdown",
+      "system_powerdown",
     ])
   })
 })

@@ -26,6 +26,14 @@ import {
 } from "./config"
 import { diagnose, formatFindings } from "./diagnose"
 import { runningCommand } from "./display"
+import {
+  type Cursor,
+  type Entry,
+  endCursor,
+  qmpEvent,
+  readSince,
+  waitForEvent,
+} from "./eventlog"
 import * as finder from "./finder"
 import * as frozen from "./frozen"
 import {
@@ -50,6 +58,7 @@ import {
   readResult,
   resolveWindowsIso,
 } from "./media"
+import * as monitor from "./monitor"
 import { leaseHolder } from "./operation"
 import type { InstanceMeta, Paths } from "./paths"
 import {
@@ -74,7 +83,7 @@ import * as qmp from "./qmp"
 import { ensureRuntime, findRuntime, runtimeBin } from "./runtime"
 import * as savecmds from "./savecmds"
 import * as saves from "./saves"
-import { stopService } from "./servicectl"
+import { ensureService, stopService } from "./servicectl"
 import * as share from "./share"
 import { ensureShareMedia } from "./sharemedia"
 import { download, du, run, sha256Of } from "./shell"
@@ -784,6 +793,11 @@ export async function snapshots(args: Args): Promise<number> {
 
 const STOP_DEADLINE_MS = 180_000
 const STOP_POLL_MS = 3000
+const FORCE_AFTER_MS = 60_000
+const EXIT_GRACE_MS = 15_000
+const EXIT_POLL_MS = 250
+const POWERDOWN_TIMEOUT_MS = 10_000
+const MAX_SIGHTINGS = 12
 
 export interface StopCommandSeams {
   readonly now?: () => number
@@ -793,7 +807,19 @@ export interface StopCommandSeams {
   readonly frozenState?: (p: Paths) => Promise<frozen.Frozen | null>
   readonly resume?: (p: Paths) => Promise<void>
   readonly hold?: (p: Paths) => Promise<void>
-  readonly waitFor?: (sockPath: string, timeoutMs: number) => Promise<boolean>
+  readonly ensureService?: (name: string, p: Paths) => Promise<unknown>
+  readonly powerdown?: (p: Paths) => Promise<void>
+  readonly untilEvent?: (
+    name: string,
+    matches: (e: Entry) => boolean,
+    since: Cursor,
+    until: number,
+  ) => Promise<Entry | null>
+  readonly waitFor?: (
+    sockPath: string,
+    timeoutMs: number,
+    o?: qga.WaitOptions,
+  ) => Promise<boolean>
   readonly shutdown?: (sockPath: string) => Promise<void>
   readonly watcherPid?: (name: string) => number | null
   readonly stopWatcher?: (name: string) => Promise<boolean>
@@ -801,6 +827,41 @@ export interface StopCommandSeams {
   readonly beforeDown?: (name: string) => void
   readonly afterUp?: (name: string) => Promise<void>
   readonly stopSidecars?: (p: Paths) => void
+}
+
+const errorText = (error: unknown): string =>
+  error instanceof Error ? error.message : String(error)
+
+const seconds = (ms: number): string => String(Math.round(ms / 1000))
+
+const shutdownEvent = qmpEvent("SHUTDOWN")
+
+function sighting(e: Entry): string | null {
+  switch (e.kind) {
+    case "qmp": {
+      const d = e.data ?? {}
+      if (e.event === "VSERPORT_CHANGE")
+        return `VSERPORT_CHANGE ${typeof d.id === "string" ? d.id : "?"} ${d.open === true ? "opened" : "closed"}`
+      return typeof d.reason === "string" ? `${e.event} (${d.reason})` : e.event
+    }
+    case "sync":
+      return `sync ${e.status ?? e.error ?? "?"}`
+    case "disconnected":
+      return "monitor closed"
+    case "op":
+    case "service":
+    case "warning":
+      return null
+  }
+}
+
+function sightings(entries: readonly Entry[]): string {
+  const seen = entries.map(sighting).filter((s): s is string => s !== null)
+  if (seen.length === 0) return "nothing from QEMU"
+  const shown = seen.slice(0, MAX_SIGHTINGS).join(", ")
+  return seen.length > MAX_SIGHTINGS
+    ? `${shown} and ${String(seen.length - MAX_SIGHTINGS)} more`
+    : shown
 }
 
 export const stop = (args: Args): Promise<number> => stopWith(args)
@@ -816,7 +877,7 @@ export async function stopWith(
   const isRunning = seams.isRunning ?? qemu.isRunning
   const pidOf = seams.pidOf ?? qemu.pidOf
   const waitFor = seams.waitFor ?? qga.waitFor
-  const shutdown = seams.shutdown ?? qga.shutdown
+  const shutdown = seams.shutdown ?? ((sock: string) => qga.shutdown(sock))
   const stopWatcher =
     seams.stopWatcher ?? ((n: string) => watcher.stopWatcher(n))
   const beforeDown =
@@ -832,6 +893,26 @@ export async function stopWith(
   const hold =
     seams.hold ??
     (async (p: Paths): Promise<void> => void (await qmp.execute(p.qmp, "stop")))
+  const service =
+    seams.ensureService ?? ((n: string, p: Paths) => ensureService(n, p))
+  const powerdown =
+    seams.powerdown ??
+    (async (p: Paths): Promise<void> =>
+      void (await monitor.qmpCommand(
+        p.qmp,
+        "system_powerdown",
+        undefined,
+        POWERDOWN_TIMEOUT_MS,
+      )))
+  const untilEvent =
+    seams.untilEvent ??
+    ((
+      n: string,
+      matches: (e: Entry) => boolean,
+      since: Cursor,
+      until: number,
+    ): Promise<Entry | null> =>
+      waitForEvent(n, matches, Date.now() + (until - now()), { since }))
   const afterUp = seams.afterUp ?? ((n: string) => finder.afterUp(n))
   const ensureWatcher = seams.ensureWatcher ?? watcher.ensureWatcher
   const watcherPid = seams.watcherPid ?? ((n: string) => watcher.watcherPid(n))
@@ -849,9 +930,7 @@ export async function stopWith(
     try {
       await f()
     } catch (error) {
-      console.warn(
-        `warning: could not ${what}: ${error instanceof Error ? error.message : String(error)}`,
-      )
+      console.warn(`warning: could not ${what}: ${errorText(error)}`)
     }
   }
   const rollback = async (): Promise<void> => {
@@ -864,37 +943,118 @@ export async function stopWith(
     if (hadWatcher)
       await attempt("restart the watcher", () => ensureWatcher(name))
   }
-  let why: string
+
+  let deadline: number
+  let since: Cursor
+  let unconfirmed: string | null = null
   try {
     await stopWatcher(name)
     beforeDown(name)
-    const deadline = now() + STOP_DEADLINE_MS
+    deadline = now() + STOP_DEADLINE_MS
+    await service(name, p)
+    since = endCursor(name)
     if (original !== null) {
       await resume(p)
       resumed = true
       frozen.clearAsleep(p)
     }
-    if (await waitFor(p.qga, deadline - now())) {
-      await shutdown(p.qga)
-      while (now() < deadline) {
-        if (!isRunning(p)) {
-          stopSidecars(p)
-          console.log(`instance "${name}" stopped`)
-          return 0
-        }
-        await sleep(Math.min(STOP_POLL_MS, deadline - now()))
-      }
-      why = "guest did not shut down — `winvm kill` if it is wedged"
-    } else {
-      why =
-        "the guest agent did not answer, so shutdown cannot be asked for — `winvm kill` if it is wedged"
+    try {
+      await powerdown(p)
+    } catch (error) {
+      if (error instanceof monitor.QmpNotDelivered) throw error
+      unconfirmed = errorText(error)
     }
   } catch (error) {
-    why = error instanceof Error ? error.message : String(error)
+    await rollback()
+    console.error(`::error::${errorText(error)}`)
+    return 1
   }
-  await rollback()
-  console.error(`::error::${why}`)
-  return 1
+
+  const requestedAt = now()
+  const forceAt = requestedAt + FORCE_AFTER_MS
+  const forced: { note: string | null } = { note: null }
+  const done = new AbortController()
+  const warn = (line: string): void => {
+    if (!done.signal.aborted) console.warn(`warning: ${line}`)
+  }
+  const force = async (): Promise<void> => {
+    console.log(
+      `Windows has not shut down ${seconds(now() - requestedAt)} s after the power-button request; ` +
+        "asking its guest agent to force the shutdown, which closes open apps without saving",
+    )
+    forced.note =
+      "guest-shutdown (forced) was still waiting for the guest agent"
+    const ready = await waitFor(p.qga, deadline - now(), {
+      signal: done.signal,
+    })
+    if (done.signal.aborted) return
+    if (!ready) {
+      forced.note =
+        "guest-shutdown (forced) was not sent: the guest agent did not answer"
+      warn(forced.note)
+      return
+    }
+    const at = seconds(now() - requestedAt)
+    try {
+      await shutdown(p.qga)
+      forced.note = `guest-shutdown (forced) at ${at} s`
+    } catch (error) {
+      forced.note = `guest-shutdown (forced) at ${at} s failed: ${errorText(error)}`
+      warn(forced.note)
+    }
+  }
+
+  let seen: Entry | null = null
+  let exitBy = deadline
+  let forcing = false
+  try {
+    while (isRunning(p)) {
+      if (now() >= exitBy) {
+        if (seen !== null) {
+          console.error(
+            `::error::QEMU recorded ${sighting(seen) ?? "SHUTDOWN"} but has not exited — \`winvm kill -i ${name}\` if it is wedged`,
+          )
+          return 1
+        }
+        const sent = [
+          unconfirmed === null
+            ? "system_powerdown (the ACPI power button)"
+            : `system_powerdown (the ACPI power button), which QEMU did not confirm: ${unconfirmed}`,
+        ]
+        if (forced.note !== null) sent.push(forced.note)
+        console.error(
+          `::error::guest did not shut down within ${seconds(STOP_DEADLINE_MS)} s. ` +
+            `Sent: ${sent.join("; ")}. ` +
+            `Seen since: ${sightings(readSince(name, since).entries)}. ` +
+            "Nothing was undone: Windows is left as it is and may still be shutting down — " +
+            `\`winvm kill -i ${name}\` if it is wedged`,
+        )
+        return 1
+      }
+      if (seen !== null) {
+        await sleep(Math.min(EXIT_POLL_MS, exitBy - now()))
+        continue
+      }
+      if (!forcing && now() >= forceAt) {
+        forcing = true
+        void force().catch((error: unknown) => {
+          forced.note = `guest-shutdown (forced) failed: ${errorText(error)}`
+        })
+      }
+      seen = await untilEvent(
+        name,
+        shutdownEvent,
+        since,
+        Math.min(deadline, now() + STOP_POLL_MS),
+      )
+      if (seen !== null) exitBy = Math.max(deadline, now() + EXIT_GRACE_MS)
+    }
+  } finally {
+    done.abort()
+  }
+  stopSidecars(p)
+  console.log(`instance "${name}" stopped`)
+  return 0
 }
 
 export async function reboot(args: Args): Promise<number> {

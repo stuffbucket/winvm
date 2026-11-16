@@ -1,4 +1,12 @@
-import { afterAll, afterEach, beforeAll, describe, expect, it } from "bun:test"
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+} from "bun:test"
 import {
   existsSync,
   mkdirSync,
@@ -13,6 +21,7 @@ import * as agent from "../src/agent"
 import { parseArgs } from "../src/args"
 import { type StopCommandSeams, stopWith } from "../src/commands"
 import { configPath, parseAssignment, writeAssignments } from "../src/config"
+import { appendEntry, type Cursor, readSince } from "../src/eventlog"
 import { filesCmd } from "../src/finder"
 import {
   clearAsleep,
@@ -24,6 +33,7 @@ import {
   markedAsleep,
   refuseFrozen,
 } from "../src/frozen"
+import { QmpError, QmpNotDelivered } from "../src/monitor"
 import {
   markSavingRunning,
   savingRunning,
@@ -386,31 +396,53 @@ describe("status reports the effective close policy", () => {
 describe("graceful stop", () => {
   const OWN_PID = 4242
   const DEADLINE = 180_000
+  const FORCE_AFTER = 60_000
+  const SLICE = 3000
+  const T0 = 1_000_000
 
   interface Rig {
     readonly events: string[]
+    readonly at: Record<string, number>
     readonly waitForMs: number[]
+    readonly sinces: Cursor[]
+    readonly asleepAtRequest: boolean[]
     readonly seams: StopCommandSeams
     readonly clock: { t: number }
-    readonly exit: () => void
-    readonly asleepAtWait: boolean[]
   }
 
   function rig(o: {
     frozen: "paused" | "asleep" | null
     watcher?: boolean
-    readyAfterMs?: number | "never"
-    exitsAfterMs?: number
-    pidAfterShutdown?: number
+    acpiExitAfterMs?: number
+    forcedExitAfterMs?: number
+    agent?: boolean
+    refuse?: string
+    request?: "refused" | "unanswered"
     resumeFails?: boolean
+    serviceFails?: boolean
+    pidAfterResume?: number
+    unrecorded?: boolean
+    lingers?: boolean
   }): Rig {
     const p = pathsFor(NAME)
     const events: string[] = []
+    const at: Record<string, number> = {}
     const waitForMs: number[] = []
-    const asleepAtWait: boolean[] = []
-    const clock = { t: 1_000_000 }
-    let alive = true
-    let shutdownAt: number | null = null
+    const sinces: Cursor[] = []
+    const asleepAtRequest: boolean[] = []
+    const clock = { t: T0 }
+    let exitAt: number | null = null
+    let recorded = false
+    let resumed = false
+    const note = (e: string): void => {
+      events.push(e)
+      at[e] ??= clock.t
+    }
+    const exitIn = (ms: number | undefined): void => {
+      if (ms !== undefined && exitAt === null) exitAt = clock.t + ms
+    }
+    const alive = (): boolean =>
+      (o.lingers === true && recorded) || exitAt === null || clock.t < exitAt
     if (o.frozen === "asleep") markAsleep(p, OWN_PID)
     const seams: StopCommandSeams = {
       now: () => clock.t,
@@ -419,114 +451,201 @@ describe("graceful stop", () => {
         return Promise.resolve()
       },
       pidOf: () =>
-        !alive
+        !alive()
           ? null
-          : shutdownAt !== null && o.pidAfterShutdown !== undefined
-            ? o.pidAfterShutdown
+          : resumed && o.pidAfterResume !== undefined
+            ? o.pidAfterResume
             : OWN_PID,
-      isRunning: () => {
-        if (
-          shutdownAt !== null &&
-          o.exitsAfterMs !== undefined &&
-          clock.t - shutdownAt >= o.exitsAfterMs
-        )
-          alive = false
-        return alive
-      },
+      isRunning: alive,
       frozenState: () => Promise.resolve(o.frozen),
-      resume: () => {
-        events.push("resume")
-        return o.resumeFails === true
-          ? Promise.reject(new Error("qmp refused cont"))
+      ensureService: () => {
+        note("ensureService")
+        return o.serviceFails === true
+          ? Promise.reject(new Error("the control service did not start"))
           : Promise.resolve()
       },
-      hold: () => {
-        events.push("hold")
+      resume: () => {
+        note("resume")
+        if (o.resumeFails === true)
+          return Promise.reject(new Error("qmp refused cont"))
+        resumed = true
         return Promise.resolve()
       },
-      waitFor: (_sock, ms) => {
-        events.push("waitFor")
-        waitForMs.push(ms)
-        asleepAtWait.push(markedAsleep(p, OWN_PID))
-        if (o.readyAfterMs === "never") {
-          clock.t += ms
-          return Promise.resolve(false)
+      hold: () => {
+        note("hold")
+        return Promise.resolve()
+      },
+      powerdown: () => {
+        note("powerdown")
+        asleepAtRequest.push(markedAsleep(p, OWN_PID))
+        if (o.request === "refused")
+          return Promise.reject(
+            new QmpNotDelivered("qmp system_powerdown: not now"),
+          )
+        appendEntry(NAME, {
+          kind: "qmp",
+          event: "POWERDOWN",
+          data: null,
+          timestamp: null,
+        })
+        exitIn(o.acpiExitAfterMs)
+        return o.request === "unanswered"
+          ? Promise.reject(
+              new QmpError("qmp system_powerdown: no answer in 10000 ms"),
+            )
+          : Promise.resolve()
+      },
+      untilEvent: (_name, matches, since, until) => {
+        sinces.push(since)
+        for (;;) {
+          const hit = readSince(NAME, since).entries.find(matches)
+          if (hit !== undefined) return Promise.resolve(hit)
+          if (
+            exitAt !== null &&
+            exitAt <= until &&
+            !recorded &&
+            o.unrecorded !== true
+          ) {
+            clock.t = Math.max(clock.t, exitAt)
+            recorded = true
+            appendEntry(NAME, {
+              kind: "qmp",
+              event: "SHUTDOWN",
+              data: { guest: true, reason: "guest-shutdown" },
+              timestamp: null,
+            })
+            continue
+          }
+          clock.t = Math.max(clock.t, until)
+          return Promise.resolve(null)
         }
-        clock.t += o.readyAfterMs ?? 0
-        return Promise.resolve(true)
+      },
+      waitFor: (_sock, ms) => {
+        note("waitFor")
+        waitForMs.push(ms)
+        return Promise.resolve(o.agent !== false)
       },
       shutdown: () => {
-        events.push("shutdown")
-        shutdownAt = clock.t
+        note("shutdown")
+        if (o.refuse !== undefined) return Promise.reject(new Error(o.refuse))
+        exitIn(o.forcedExitAfterMs)
         return Promise.resolve()
       },
       watcherPid: () => (o.watcher === true ? 7 : null),
       stopWatcher: () => {
-        events.push("stopWatcher")
+        note("stopWatcher")
         return Promise.resolve(o.watcher === true)
       },
       ensureWatcher: () => {
-        events.push("ensureWatcher")
+        note("ensureWatcher")
         return null
       },
       beforeDown: () => {
-        events.push("beforeDown")
+        note("beforeDown")
       },
       afterUp: () => {
-        events.push("afterUp")
+        note("afterUp")
         return Promise.resolve()
       },
       stopSidecars: () => {
-        events.push("stopSidecars")
+        note("stopSidecars")
       },
     }
-    return {
-      events,
-      waitForMs,
-      seams,
-      clock,
-      asleepAtWait,
-      exit: () => {
-        alive = false
-      },
-    }
+    return { events, at, waitForMs, sinces, asleepAtRequest, seams, clock }
   }
 
-  const quiet = async <T>(f: () => Promise<T>): Promise<T> => {
-    const log = console.log
-    const err = console.error
-    console.log = () => undefined
-    console.error = () => undefined
+  interface Outcome {
+    readonly code: number
+    readonly out: string
+    readonly err: string
+  }
+
+  const stopped = async (seams: StopCommandSeams): Promise<Outcome> => {
+    const out: string[] = []
+    const err: string[] = []
+    const saved = { log: console.log, error: console.error, warn: console.warn }
+    console.log = (...a: unknown[]) => {
+      out.push(a.map(String).join(" "))
+    }
+    console.error = (...a: unknown[]) => {
+      err.push(a.map(String).join(" "))
+    }
+    console.warn = console.error
     try {
-      return await f()
+      const code = await stopWith(parseArgs(["stop", "-i", NAME]), seams)
+      return { code, out: out.join("\n"), err: err.join("\n") }
     } finally {
-      console.log = log
-      console.error = err
+      console.log = saved.log
+      console.error = saved.error
+      console.warn = saved.warn
     }
   }
-  const stopped = (seams: StopCommandSeams): Promise<number> =>
-    quiet(() => stopWith(parseArgs(["stop", "-i", NAME]), seams))
 
-  it("waits for the agent of a starting guest, asks for shutdown, and leaves nothing to restore on success", async () => {
+  beforeEach(() => {
+    const p = pathsFor(NAME)
+    rmSync(p.events, { force: true })
+    rmSync(p.eventsPrev, { force: true })
+  })
+
+  it("presses the ACPI power button of a running guest without needing its agent, and restores nothing on success", async () => {
     const r = rig({
       frozen: null,
       watcher: true,
-      readyAfterMs: 20_000,
-      exitsAfterMs: 6000,
+      agent: false,
+      acpiExitAfterMs: 20_000,
     })
-    expect(await stopped(r.seams)).toBe(0)
+    const o = await stopped(r.seams)
+    expect(o.code).toBe(0)
     expect(r.events).toEqual([
       "stopWatcher",
       "beforeDown",
-      "waitFor",
-      "shutdown",
+      "ensureService",
+      "powerdown",
       "stopSidecars",
     ])
-    expect(r.waitForMs).toEqual([DEADLINE])
+    expect(o.out).toContain('instance "frozen-test" stopped')
+  })
+
+  it("takes its place in the record before the request, so a SHUTDOWN that comes at once is not missed", async () => {
+    const r = rig({ frozen: null, acpiExitAfterMs: 1000 })
+    expect((await stopped(r.seams)).code).toBe(0)
+    const since = r.sinces[0]
+    expect(since).toBeDefined()
+    if (since === undefined) return
+    expect(
+      readSince(NAME, since).entries.some(
+        (e) => e.kind === "qmp" && e.event === "POWERDOWN",
+      ),
+    ).toBe(true)
+  })
+
+  it("does not count a SHUTDOWN recorded before the request", async () => {
+    appendEntry(NAME, {
+      kind: "qmp",
+      event: "SHUTDOWN",
+      data: { guest: true, reason: "guest-shutdown" },
+      timestamp: null,
+    })
+    const r = rig({ frozen: null, forcedExitAfterMs: 5000 })
+    expect((await stopped(r.seams)).code).toBe(0)
+    expect(r.events).toContain("shutdown")
+  })
+
+  it("does not take the monitor closing for QEMU exiting while its pid is still alive", async () => {
+    const r = rig({ frozen: null, forcedExitAfterMs: 5000 })
+    const seams: StopCommandSeams = {
+      ...r.seams,
+      powerdown: async (p) => {
+        await r.seams.powerdown?.(p)
+        appendEntry(NAME, { kind: "disconnected" })
+      },
+    }
+    expect((await stopped(seams)).code).toBe(0)
+    expect(r.events).toContain("shutdown")
   })
 
   it("starts the shutdown deadline only after a busy watcher has drained", async () => {
-    const r = rig({ frozen: null, watcher: true, exitsAfterMs: 0 })
+    const r = rig({ frozen: null, watcher: true, acpiExitAfterMs: 10_000 })
     const seams: StopCommandSeams = {
       ...r.seams,
       stopWatcher: () => {
@@ -535,145 +654,219 @@ describe("graceful stop", () => {
         return Promise.resolve(true)
       },
     }
-    expect(await stopped(seams)).toBe(0)
-    expect(r.waitForMs).toEqual([DEADLINE])
+    expect((await stopped(seams)).code).toBe(0)
     expect(r.events).toEqual([
       "stopWatcher",
       "beforeDown",
-      "waitFor",
-      "shutdown",
+      "ensureService",
+      "powerdown",
       "stopSidecars",
     ])
   })
 
-  it("fails a guest that never becomes agent-ready without sending shutdown", async () => {
-    const r = rig({ frozen: null, readyAfterMs: "never" })
-    expect(await stopped(r.seams)).toBe(1)
+  it("resumes a paused guest right before the request, and restores nothing on success", async () => {
+    const r = rig({ frozen: "paused", watcher: true, acpiExitAfterMs: 3000 })
+    expect((await stopped(r.seams)).code).toBe(0)
+    expect(r.events).toEqual([
+      "stopWatcher",
+      "beforeDown",
+      "ensureService",
+      "resume",
+      "powerdown",
+      "stopSidecars",
+    ])
+  })
+
+  it("clears the asleep mark before the request of an asleep guest, and leaves it cleared on success", async () => {
+    const r = rig({ frozen: "asleep", acpiExitAfterMs: 3000 })
+    expect(markedAsleep(pathsFor(NAME), OWN_PID)).toBe(true)
+    expect((await stopped(r.seams)).code).toBe(0)
+    expect(r.events).toEqual([
+      "stopWatcher",
+      "beforeDown",
+      "ensureService",
+      "resume",
+      "powerdown",
+      "stopSidecars",
+    ])
+    expect(r.asleepAtRequest).toEqual([false])
+    expect(markedAsleep(pathsFor(NAME), OWN_PID)).toBe(false)
+  })
+
+  it("escalates to the agent's forced shutdown only after 60 s without SHUTDOWN, and says it closes apps", async () => {
+    const r = rig({ frozen: null, forcedExitAfterMs: 5000 })
+    const o = await stopped(r.seams)
+    expect(o.code).toBe(0)
+    expect(r.events).toEqual([
+      "stopWatcher",
+      "beforeDown",
+      "ensureService",
+      "powerdown",
+      "waitFor",
+      "shutdown",
+      "stopSidecars",
+    ])
+    const waited = (r.at.waitFor ?? 0) - (r.at.powerdown ?? 0)
+    expect(waited).toBeGreaterThanOrEqual(FORCE_AFTER)
+    expect(waited).toBeLessThanOrEqual(FORCE_AFTER + SLICE)
+    expect(r.waitForMs[0]).toBeLessThanOrEqual(DEADLINE - FORCE_AFTER)
+    expect(o.out).toContain("closes open apps without saving")
+  })
+
+  it("when Windows does not shut down in time, undoes nothing after the request and says what was sent and seen", async () => {
+    const r = rig({ frozen: "paused", watcher: true })
+    const o = await stopped(r.seams)
+    expect(o.code).toBe(1)
+    expect(r.events).toEqual([
+      "stopWatcher",
+      "beforeDown",
+      "ensureService",
+      "resume",
+      "powerdown",
+      "waitFor",
+      "shutdown",
+    ])
+    expect(r.clock.t - T0).toBe(DEADLINE)
+    expect(o.err).toContain("system_powerdown")
+    expect(o.err).toContain("guest-shutdown")
+    expect(o.err).toContain("POWERDOWN")
+    expect(o.err).toContain("Nothing was undone")
+    expect(o.err).toContain("winvm kill -i frozen-test")
+  })
+
+  it("does not put an asleep guest back to sleep once shutdown was requested", async () => {
+    const r = rig({ frozen: "asleep" })
+    expect((await stopped(r.seams)).code).toBe(1)
+    expect(r.events).not.toContain("hold")
+    expect(r.events).not.toContain("afterUp")
+    expect(markedAsleep(pathsFor(NAME), OWN_PID)).toBe(false)
+  })
+
+  it("reports a refused forced shutdown and keeps waiting for the power button", async () => {
+    const r = rig({
+      frozen: null,
+      refuse: "guest-shutdown: A required privilege is not held by the client.",
+      acpiExitAfterMs: 100_000,
+    })
+    const o = await stopped(r.seams)
+    expect(o.code).toBe(0)
+    expect(o.err).toContain("A required privilege is not held by the client.")
+  })
+
+  it("says the forced shutdown was never sent when the agent does not answer", async () => {
+    const r = rig({ frozen: null, agent: false })
+    const o = await stopped(r.seams)
+    expect(o.code).toBe(1)
     expect(r.events).not.toContain("shutdown")
-    expect(r.waitForMs).toEqual([DEADLINE])
-    expect(r.clock.t - 1_000_000).toBeLessThanOrEqual(DEADLINE)
+    expect(o.err).toContain("the guest agent did not answer")
   })
 
-  it("on failure brings Finder back, then the watcher that was running", async () => {
-    const r = rig({ frozen: null, watcher: true, readyAfterMs: "never" })
-    expect(await stopped(r.seams)).toBe(1)
-    expect(r.events).toEqual([
-      "stopWatcher",
-      "beforeDown",
-      "waitFor",
-      "afterUp",
-      "ensureWatcher",
-    ])
+  it("finishes when QEMU exits even if the record never sees it", async () => {
+    const r = rig({ frozen: null, acpiExitAfterMs: 7000, unrecorded: true })
+    expect((await stopped(r.seams)).code).toBe(0)
+    expect(r.events).toContain("stopSidecars")
   })
 
-  it("on failure leaves alone a watcher that was not running", async () => {
-    const r = rig({ frozen: null, readyAfterMs: "never" })
-    expect(await stopped(r.seams)).toBe(1)
-    expect(r.events).toEqual([
-      "stopWatcher",
-      "beforeDown",
-      "waitFor",
-      "afterUp",
-    ])
+  it("waits for QEMU to exit after SHUTDOWN, and says so when it does not", async () => {
+    const r = rig({ frozen: null, acpiExitAfterMs: 5000, lingers: true })
+    const o = await stopped(r.seams)
+    expect(o.code).toBe(1)
+    expect(r.events).not.toContain("stopSidecars")
+    expect(r.events).not.toContain("afterUp")
+    expect(o.err).toContain("has not exited")
+    expect(o.err).toContain("winvm kill -i frozen-test")
   })
 
-  it("resumes a paused guest before asking it to shut down, and restores nothing on success", async () => {
+  it("a request QEMU may have acted on without answering is past the point of no return", async () => {
     const r = rig({
       frozen: "paused",
       watcher: true,
-      readyAfterMs: 2000,
-      exitsAfterMs: 3000,
+      request: "unanswered",
+      acpiExitAfterMs: 4000,
     })
-    expect(await stopped(r.seams)).toBe(0)
+    expect((await stopped(r.seams)).code).toBe(0)
     expect(r.events).toEqual([
       "stopWatcher",
       "beforeDown",
+      "ensureService",
       "resume",
-      "waitFor",
-      "shutdown",
+      "powerdown",
       "stopSidecars",
     ])
   })
 
-  it("clears the asleep mark for the shutdown-only resume of an asleep guest, and leaves it cleared on success", async () => {
-    const r = rig({ frozen: "asleep", readyAfterMs: 1000, exitsAfterMs: 3000 })
-    expect(markedAsleep(pathsFor(NAME), OWN_PID)).toBe(true)
-    expect(await stopped(r.seams)).toBe(0)
+  it("when QEMU refuses the request, brings Finder back while resumed, then the pause, then the watcher", async () => {
+    const r = rig({ frozen: "paused", watcher: true, request: "refused" })
+    const o = await stopped(r.seams)
+    expect(o.code).toBe(1)
     expect(r.events).toEqual([
       "stopWatcher",
       "beforeDown",
+      "ensureService",
       "resume",
-      "waitFor",
-      "shutdown",
-      "stopSidecars",
-    ])
-    expect(r.asleepAtWait).toEqual([false])
-    expect(markedAsleep(pathsFor(NAME), OWN_PID)).toBe(false)
-  })
-
-  it("when a paused guest does not shut down in time, restores Finder while resumed, then the pause, then the watcher", async () => {
-    const r = rig({ frozen: "paused", watcher: true, readyAfterMs: 5000 })
-    expect(await stopped(r.seams)).toBe(1)
-    expect(r.events).toEqual([
-      "stopWatcher",
-      "beforeDown",
-      "resume",
-      "waitFor",
-      "shutdown",
+      "powerdown",
       "afterUp",
       "hold",
       "ensureWatcher",
     ])
-    expect(r.waitForMs).toEqual([DEADLINE])
-    expect(r.clock.t - 1_000_000).toBe(DEADLINE)
-    expect(markedAsleep(pathsFor(NAME), OWN_PID)).toBe(false)
+    expect(o.err).toContain("not now")
   })
 
-  it("when an asleep guest does not become agent-ready, puts it back to sleep against the same QEMU", async () => {
-    const r = rig({ frozen: "asleep", readyAfterMs: "never" })
-    expect(await stopped(r.seams)).toBe(1)
+  it("when QEMU refuses the request of an asleep guest, puts it back to sleep against the same QEMU", async () => {
+    const r = rig({ frozen: "asleep", request: "refused" })
+    expect((await stopped(r.seams)).code).toBe(1)
+    expect(r.asleepAtRequest).toEqual([false])
+    expect(r.events).toContain("hold")
+    expect(markedAsleep(pathsFor(NAME), OWN_PID)).toBe(true)
+  })
+
+  it("on a refused request leaves alone a watcher that was not running", async () => {
+    const r = rig({ frozen: null, request: "refused" })
+    expect((await stopped(r.seams)).code).toBe(1)
     expect(r.events).toEqual([
       "stopWatcher",
       "beforeDown",
-      "resume",
-      "waitFor",
+      "ensureService",
+      "powerdown",
       "afterUp",
-      "hold",
     ])
-    expect(r.asleepAtWait).toEqual([false])
-    expect(markedAsleep(pathsFor(NAME), OWN_PID)).toBe(true)
   })
 
   it("never holds or marks a QEMU other than the one it resumed", async () => {
     const r = rig({
       frozen: "asleep",
-      readyAfterMs: 1000,
-      pidAfterShutdown: OWN_PID + 1,
+      request: "refused",
+      pidAfterResume: OWN_PID + 1,
     })
-    expect(await stopped(r.seams)).toBe(1)
+    expect((await stopped(r.seams)).code).toBe(1)
     expect(r.events).not.toContain("hold")
     expect(markedAsleep(pathsFor(NAME), OWN_PID)).toBe(false)
     expect(markedAsleep(pathsFor(NAME), OWN_PID + 1)).toBe(false)
   })
 
-  it("gives readiness and power-off one shared deadline, not 180 seconds each", async () => {
-    const r = rig({ frozen: null, readyAfterMs: 170_000, exitsAfterMs: 15_000 })
-    expect(await stopped(r.seams)).toBe(1)
-    expect(r.waitForMs).toEqual([DEADLINE])
-    expect(r.events).toContain("shutdown")
-    expect(r.clock.t - 1_000_000).toBe(DEADLINE)
-  })
-
   it("when the resume itself fails, asks for nothing, keeps the asleep mark, and does not remount into a frozen guest", async () => {
     const r = rig({ frozen: "asleep", watcher: true, resumeFails: true })
-    expect(await stopped(r.seams)).toBe(1)
+    expect((await stopped(r.seams)).code).toBe(1)
     expect(r.events).toEqual([
       "stopWatcher",
       "beforeDown",
+      "ensureService",
       "resume",
       "hold",
       "ensureWatcher",
     ])
     expect(markedAsleep(pathsFor(NAME), OWN_PID)).toBe(true)
+  })
+
+  it("when the control service cannot start, sends nothing and puts everything back", async () => {
+    const r = rig({ frozen: null, watcher: true, serviceFails: true })
+    expect((await stopped(r.seams)).code).toBe(1)
+    expect(r.events).toEqual([
+      "stopWatcher",
+      "beforeDown",
+      "ensureService",
+      "afterUp",
+      "ensureWatcher",
+    ])
   })
 })
