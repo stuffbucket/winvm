@@ -16,6 +16,7 @@ import {
   winvm,
 } from "../ui/src/backend"
 import { copy } from "./copy"
+import { rejectLikeTauri } from "./reject-like-tauri"
 
 const timeout: SidecarFailure = {
   kind: "timeout",
@@ -40,8 +41,7 @@ beforeEach(() => {
   asked.length = 0
   const invoke = (cmd: string, args?: unknown): Promise<unknown> => {
     asked.push({ cmd, args })
-    // oxlint-disable-next-line typescript/prefer-promise-reject-errors -- Tauri rejects invoke with a bare string, not an Error; the test fake must do the same
-    return rejection === null ? Promise.resolve(answer) : Promise.reject(rejection)
+    return rejection === null ? Promise.resolve(answer) : rejectLikeTauri(rejection)
   }
   if (!hadWindow) Object.assign(globalThis, { window: {} })
   Object.assign(globalThis.window, { __TAURI__: { core: { invoke } } })

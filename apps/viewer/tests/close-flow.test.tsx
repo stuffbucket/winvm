@@ -7,6 +7,8 @@
 import { GlobalRegistrator } from "@happy-dom/global-registrator"
 import { afterAll, afterEach, describe, expect, it, jest } from "bun:test"
 
+import { rejectLikeTauri } from "./reject-like-tauri"
+
 GlobalRegistrator.register()
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true })
 
@@ -123,8 +125,7 @@ function fakeBridge() {
     }
     log.push(cmd)
     if (cmd === "close_pending") return typeof bridge.pending === "boolean" ? Promise.resolve(bridge.pending) : bridge.pending.promise
-    // oxlint-disable-next-line typescript/prefer-promise-reject-errors -- Tauri rejects invoke with a bare string, not an Error; the test fake must do the same
-    if (cmd === "close_start") return bridge.start === "ok" ? Promise.resolve(null) : Promise.reject("close start arrived while the close was Idle")
+    if (cmd === "close_start") return bridge.start === "ok" ? Promise.resolve(null) : rejectLikeTauri("close start arrived while the close was Idle")
     return Promise.resolve(null)
   }
   const listen = (name: string, cb: (e: { payload: unknown }) => void): Promise<() => void> => {
@@ -1090,8 +1091,7 @@ describe("useCloseFlow", () => {
     await mount(world)
     const invoke = (window as unknown as { __TAURI__: { core: { invoke: (cmd: string, a?: unknown) => Promise<unknown> } } }).__TAURI__.core
     const answer = invoke.invoke
-    // oxlint-disable-next-line typescript/prefer-promise-reject-errors -- Tauri rejects invoke with a bare string, not an Error; the test fake must do the same
-    invoke.invoke = (cmd, a) => (cmd === "close_complete" ? Promise.reject("close complete arrived while the close was Idle") : answer(cmd, a))
+    invoke.invoke = (cmd, a) => (cmd === "close_complete" ? rejectLikeTauri("close complete arrived while the close was Idle") : answer(cmd, a))
     act(() => { bridge.fire() })
     await flush()
     const failed = current().state
