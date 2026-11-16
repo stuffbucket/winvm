@@ -2,6 +2,8 @@ import { readlinkSync, renameSync, rmSync, symlinkSync } from "node:fs"
 import { connect, createServer, type Server, type Socket } from "node:net"
 import { basename } from "node:path"
 
+import type { DisconnectReason } from "./eventlog"
+
 type Json = Record<string, unknown>
 
 function lineReader(onLine: (line: string) => void): (chunk: Buffer) => void {
@@ -75,6 +77,8 @@ export interface QmpChannelOptions {
   readonly listen: string
   readonly upstream: string
   readonly onEvent?: (event: Json) => void
+  readonly onSync?: (reply: Json) => void
+  readonly onLost?: (reason: DisconnectReason) => void
   readonly drainTimeoutMs?: number
   readonly negotiateTimeoutMs?: number
 }
@@ -96,6 +100,8 @@ export class QmpChannel {
   private stopped = false
   private nextId = 0
   private readonly requests = new Map<string, (reply: Json) => void>()
+  private syncId: string | null = null
+  private dropped: DisconnectReason | null = null
 
   constructor(o: QmpChannelOptions) {
     this.o = o
@@ -124,11 +130,15 @@ export class QmpChannel {
     await this.listener.stop()
   }
 
+  private newId(): string {
+    this.nextId += 1
+    return `${REQUEST_ID}${String(this.nextId)}`
+  }
+
   async request(execute: string, args?: Json, timeoutMs = 5000): Promise<Json> {
     const up = this.upstream
     if (up === null || !this.ready) throw new Error("not connected to QEMU")
-    this.nextId += 1
-    const id = `${REQUEST_ID}${String(this.nextId)}`
+    const id = this.newId()
     let timer: ReturnType<typeof setTimeout> | undefined
     try {
       return await new Promise<Json>((res, rej) => {
@@ -185,6 +195,7 @@ export class QmpChannel {
           this.connecting = null
           this.upstream = s
           this.ready = true
+          this.sync(s)
           this.pump()
           return
         }
@@ -193,7 +204,23 @@ export class QmpChannel {
     )
   }
 
+  private sync(up: Socket): void {
+    const onSync = this.o.onSync
+    if (onSync === undefined) return
+    const id = this.newId()
+    this.syncId = id
+    this.requests.set(id, (reply) => {
+      this.requests.delete(id)
+      if (this.syncId === id) this.syncId = null
+      const { id: _id, ...rest } = reply
+      onSync(rest)
+    })
+    up.write(`${JSON.stringify({ execute: "query-status", id })}\n`)
+  }
+
   private upstreamLost(): void {
+    if (this.syncId !== null) this.requests.delete(this.syncId)
+    this.syncId = null
     this.upstream = null
     this.ready = false
     this.active?.destroy()
@@ -201,6 +228,9 @@ export class QmpChannel {
     this.owed = 0
     this.draining = false
     clearTimeout(this.drainTimer)
+    const reason = this.dropped ?? "qemu-closed"
+    this.dropped = null
+    if (!this.stopped) this.o.onLost?.(reason)
   }
 
   private fromUpstream(line: string, msg: Json): void {
@@ -281,10 +311,10 @@ export class QmpChannel {
     this.active = null
     if (this.owed > 0 && this.upstream !== null) {
       this.draining = true
-      this.drainTimer = setTimeout(
-        () => this.upstream?.destroy(),
-        this.o.drainTimeoutMs ?? 200_000,
-      )
+      this.drainTimer = setTimeout(() => {
+        this.dropped = "drain-timeout"
+        this.upstream?.destroy()
+      }, this.o.drainTimeoutMs ?? 200_000)
       return
     }
     this.owed = 0

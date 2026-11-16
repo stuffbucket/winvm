@@ -14,17 +14,23 @@ Connect to `qmp.sock` and `qga.sock`, never to the `-qemu` ones.
 The service also answers HTTP on `control.sock` in the instance folder. The
 socket is readable only by your account, so there is no port or token.
 
-- `GET /events` streams server-sent events: QEMU state changes (`paused`,
-  `running`, `stopped`, `reset`, `migration`) and the service starting and
-  stopping.
-- `GET /status` returns the last known state, QEMU's process ID, and whether
-  the service is connected to QEMU.
+- `GET /events` streams server-sent events: every QMP event QEMU sends, with
+  its data and timestamp; QEMU's run state, read with `query-status` each time
+  the service connects to QEMU; the connection to QEMU being lost; and the
+  service starting and stopping.
+- `GET /status` returns the last known run state, QEMU's process ID, and
+  whether the service is connected to QEMU.
 
 ```sh
 curl -N --unix-socket ~/.local/state/winvm/instances/NAME/control.sock http://localhost/events
 ```
 
-The same events are appended to `events.jsonl` in the instance folder.
+The same events are appended to `events.jsonl` in the instance folder, one
+JSON object per line. Every command that changes the machine (`start`, `stop`,
+`save`, `stow` and the rest) also appends a line when it begins and another
+when it ends, with its exit code or error. Past 1 MiB the service moves the
+file to `events.prev.jsonl` and starts a new one, so the two files together
+hold the recent history.
 `winvm status` shows the service. `winvm kill` and `winvm destroy` stop it.
 
 ## The idle watcher

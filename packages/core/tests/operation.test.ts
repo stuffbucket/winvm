@@ -19,6 +19,7 @@ import {
 import { resolve } from "node:path"
 import type { Args } from "../src/args"
 import { parseArgs } from "../src/args"
+import { type Entry, readSince, START } from "../src/eventlog"
 import type { LeaseOperation, VmOperation } from "../src/operation"
 import {
   clearSavingRunning,
@@ -554,6 +555,146 @@ describe("kill", () => {
   })
 })
 
+describe("the event record of operations", () => {
+  const ops = (): readonly Entry[] =>
+    readSince(NAME, START).entries.filter((e) => e.kind === "op")
+
+  it("records when the lease is taken and when it is let go, with the command's exit code", async () => {
+    const code = await withOperation(NAME, "stop", () => {
+      expect(ops()).toEqual([
+        {
+          t: expect.any(String) as string,
+          instance: NAME,
+          kind: "op",
+          phase: "begin",
+          id: onDisk()?.id as string,
+          operation: "stop",
+          pid: process.pid,
+          startedAt: onDisk()?.startedAt as string,
+          automatic: false,
+          leased: true,
+        },
+      ])
+      return 3
+    })
+    expect(code).toBe(3)
+    const [begin, end] = ops()
+    expect(end).toEqual({
+      t: expect.any(String) as string,
+      instance: NAME,
+      kind: "op",
+      phase: "end",
+      id: begin?.kind === "op" ? begin.id : "",
+      operation: "stop",
+      pid: process.pid,
+      startedAt: begin?.kind === "op" ? begin.startedAt : "",
+      endedAt: expect.any(String) as string,
+      automatic: false,
+      leased: true,
+      ok: false,
+      exitCode: 3,
+    })
+    await withOperation(NAME, "pause", () => 0)
+    await withOperation(NAME, "pause", () => "done")
+    expect(
+      ops()
+        .filter((e) => e.kind === "op" && e.phase === "end")
+        .map((e) => [e.ok, e.exitCode]),
+    ).toEqual([
+      [false, 3],
+      [true, 0],
+      [true, undefined],
+    ])
+  })
+
+  it("records the error a command failed with", async () => {
+    await expect(
+      withOperation(NAME, "start", () => {
+        throw new Error("no firmware")
+      }),
+    ).rejects.toThrow("no firmware")
+    expect(ops().at(-1)).toMatchObject({
+      phase: "end",
+      operation: "start",
+      ok: false,
+      error: "no firmware",
+    })
+  })
+
+  it("records the outcome its caller reads from a result that is not an exit code", async () => {
+    const result = await withOperation(
+      NAME,
+      "reconcile",
+      () => ({ failed: "service would not start" }),
+      { outcome: (r) => ({ ok: false, error: r.failed }) },
+    )
+    expect(result.failed).toBe("service would not start")
+    expect(ops().at(-1)).toMatchObject({
+      phase: "end",
+      operation: "reconcile",
+      ok: false,
+      error: "service would not start",
+    })
+  })
+
+  it("records nested steps once, as the operation that took the lease", async () => {
+    await withOperation(NAME, "stow", async () => {
+      await withOperation(NAME, "save", () => 0)
+      await withOperation(NAME, "stop", () => 0)
+      return 0
+    })
+    expect(
+      ops().map((e) => (e.kind === "op" ? `${e.phase}:${e.operation}` : "")),
+    ).toEqual(["begin:stow", "end:stow"])
+  })
+
+  it("records a kill that ran beside a wedged holder, without the lease", async () => {
+    const g = gate()
+    const wedged = withOperation(NAME, "stop", async () => {
+      await g.opened
+    })
+    await Bun.sleep(20)
+    await withOperation(NAME, "kill", () => 0)
+    g.open()
+    await wedged
+    expect(
+      ops().map((e) =>
+        e.kind === "op" ? `${e.phase}:${e.operation}:${String(e.leased)}` : "",
+      ),
+    ).toEqual([
+      "begin:stop:true",
+      "begin:kill:false",
+      "end:kill:false",
+      "end:stop:true",
+    ])
+  })
+
+  it("records a lease whose holder went away as abandoned, when the next operation takes it over", async () => {
+    const gone = Bun.spawn(["true"])
+    await gone.exited
+    put(gone.pid, { operation: "save", id: "dead-save" })
+    await withOperation(NAME, "pause", () => 0)
+    expect(ops()[0]).toMatchObject({
+      phase: "end",
+      id: "dead-save",
+      operation: "save",
+      pid: gone.pid,
+      ok: false,
+      abandoned: true,
+    })
+    expect(
+      ops()
+        .slice(1)
+        .map((e) => (e.kind === "op" ? e.phase : "")),
+    ).toEqual(["begin", "end"])
+  })
+
+  it("records nothing for a name that is not an instance", async () => {
+    expect(await withOperation("op-nothing", "stop", () => "ran")).toBe("ran")
+    expect(existsSync(pathsFor("op-nothing").dir)).toBe(false)
+  })
+})
+
 describe("which instances get a lease", () => {
   const instance = (name: string): void => {
     mkdirSync(pathsFor(name).dir, { recursive: true })
@@ -642,6 +783,11 @@ describe("a command that exits inside its lease", () => {
     expect(r.code).toBe(3)
     expect(r.out).toBe(leaseFile())
     expect(onDisk()).toBeNull()
+    expect(
+      readSince(NAME, START)
+        .entries.filter((e) => e.kind === "op")
+        .at(-1),
+    ).toMatchObject({ phase: "end", operation: "stop", ok: false, exitCode: 3 })
   })
 
   it("clears the record when exit comes from a step nested inside the command", () => {

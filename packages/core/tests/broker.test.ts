@@ -182,6 +182,37 @@ describe("the QMP channel's own timeouts", () => {
     ).rejects.toThrow("no answer")
     expect(await qmp.status(otherListen)).toBe("running")
   })
+
+  it("says whether QEMU closed the monitor or the channel dropped it after a drain timeout", async () => {
+    await channel.stop()
+    const lost: string[] = []
+    fake.handler = async (cmd) => {
+      if (cmd.execute === "savevm") {
+        await sleep(600)
+        return { return: "late" }
+      }
+      return { return: { status: "running" } }
+    }
+    const otherListen = resolve(dir, "other.sock")
+    other = new QmpChannel({
+      listen: otherListen,
+      upstream: fake.path,
+      drainTimeoutMs: 200,
+      onLost: (reason) => lost.push(reason),
+    })
+    await other.start()
+    while (!other.connected) await sleep(20)
+    await expect(
+      monitor.qmpCommand(otherListen, "savevm", undefined, 100),
+    ).rejects.toThrow("no answer")
+    while (lost.length < 1) await sleep(20)
+    expect(lost).toEqual(["drain-timeout"])
+    const reconnected = (c: QmpChannel): boolean => c.connected
+    while (!reconnected(other)) await sleep(20)
+    await fake.close()
+    while (lost.length < 2) await sleep(20)
+    expect(lost).toEqual(["drain-timeout", "qemu-closed"])
+  })
 })
 
 describe("the qemu-ga channel", () => {
