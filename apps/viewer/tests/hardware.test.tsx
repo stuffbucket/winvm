@@ -230,6 +230,37 @@ describe("the Hardware part", () => {
     expect(v.sizes).toEqual([{ cpus: 7, memoryMiB: 8192 }])
   })
 
+  it("shows a size set elsewhere, and keeps a press when the same size is read again", () => {
+    const field = (host: HTMLElement, label: string): string | undefined =>
+      host.querySelector<HTMLInputElement>(`input[aria-label="${label}"]`)
+        ?.value
+    const v = view(parsed())
+    const host = render(<Hardware view={v} />)
+    expect(field(host, "Processors")).toBe("6")
+    expect(field(host, "Memory in GB")).toBe("8")
+    const more = host.querySelector<HTMLButtonElement>(
+      'button[aria-label="More"]',
+    )
+    act(() => {
+      more?.dispatchEvent(
+        new PointerEvent("pointerdown", { bubbles: true, button: 0 }),
+      )
+      more?.dispatchEvent(
+        new PointerEvent("pointerup", { bubbles: true, button: 0 }),
+      )
+      more?.dispatchEvent(new MouseEvent("click", { bubbles: true, button: 0 }))
+    })
+    expect(field(host, "Processors")).toBe("7")
+    act(() => root?.render(<Hardware view={view(parsed())} />))
+    expect(field(host, "Processors")).toBe("7")
+    const elsewhere = parsed({
+      hardware: { ...RUNNING.hardware, next: { cpus: 4, memoryMiB: 6144 } },
+    })
+    act(() => root?.render(<Hardware view={view(elsewhere)} />))
+    expect(field(host, "Processors")).toBe("4")
+    expect(field(host, "Memory in GB")).toBe("6")
+  })
+
   it("shows what a failed change said", () => {
     const host = render(
       <Hardware
