@@ -408,6 +408,7 @@ export function TerminalView({
   }, [focusEmulator])
 
   return (
+    // biome-ignore lint/a11y/useSemanticElements: a terminal emulator's host is not a set of form controls, so <fieldset> is the wrong element for this group
     <div
       className="terminal"
       data-testid={testId}

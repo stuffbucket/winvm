@@ -1303,6 +1303,7 @@ export function CheckpointCanvas(p: CheckpointCanvasProps): JSX.Element {
       </SpatialCanvas>
 
       {looking && selectedCheckpoint !== undefined && (
+        // biome-ignore lint/a11y/useKeyWithClickEvents: Escape and Space close the look from the canvas's window key handler, which keeps focus where it was
         <div
           className="checkpoints__look"
           role="dialog"

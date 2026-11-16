@@ -472,6 +472,7 @@ export const Screen = forwardRef<ScreenHandle, ScreenProps>(function Screen(
         }
         style={exact}
       />
+      {/* biome-ignore lint/a11y/noAriaHiddenOnFocusable: a canvas without tabIndex is not focusable; this one only holds the last frame while the guest resizes */}
       <canvas
         ref={still}
         className="screen__still"

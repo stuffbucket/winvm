@@ -20,6 +20,7 @@ export function ReferenceDialog({
   }, [])
 
   return (
+    // biome-ignore lint/a11y/useKeyWithClickEvents: a click on the backdrop mirrors Escape, which reaches this dialog as its cancel event
     <dialog
       ref={dialog}
       className="confirm-dialog reference"

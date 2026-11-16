@@ -45,6 +45,7 @@ export function LiveFrame({
   }, [interval, maxWidth])
 
   return (
+    // biome-ignore lint/a11y/noAriaHiddenOnFocusable: a canvas without tabIndex is not focusable; this one only shows a copied frame
     <canvas
       ref={ref}
       className={className}

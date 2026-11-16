@@ -252,6 +252,7 @@ export function FileList(p: FileListProps): JSX.Element {
             const i = first + k
             const renaming = p.renaming?.name === e.name ? p.renaming : null
             return (
+              // biome-ignore lint/a11y/useFocusableInteractive: the listbox keeps focus and points at its options with aria-activedescendant, so the options must not take focus themselves
               <div
                 key={e.name}
                 id={rowId(e.name)}
