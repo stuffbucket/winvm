@@ -545,6 +545,52 @@ describe("the meters while held", () => {
       "On the Mac, with the screen and disk: 12%",
     )
   })
+
+  it("exposes each meter's label, value and note without nesting the note in the meter", () => {
+    const GB = 1024 ** 3
+    const usage = {
+      now: {
+        cpu: 3,
+        cpuSource: "windows" as const,
+        macCpu: 12,
+        memory: { used: 2 * GB, total: 4 * GB, source: "windows" as const },
+        disk: { used: 10 * GB, total: 40 * GB },
+      },
+      cpuHistory: [0.1, 0.2],
+      memoryHistory: [0.4, 0.5],
+    }
+    const host = render(
+      <Resources usage={usage} context={{ cpus: 4, overlayBytes: 5 * GB }} />,
+    )
+    const meters = [...host.querySelectorAll<HTMLElement>('[role="meter"]')]
+    expect(meters.map((m) => m.getAttribute("aria-label"))).toEqual([
+      en["usage.cpu"] ?? "?",
+      en["usage.memory"] ?? "?",
+      en["usage.disk"] ?? "?",
+    ])
+    expect(meters.map((m) => m.getAttribute("aria-valuenow"))).toEqual([
+      "3",
+      "50",
+      "25",
+    ])
+    expect(meters[0]?.getAttribute("aria-valuetext")).toBe("3%")
+    const noteOf = (m: HTMLElement | undefined): HTMLElement | null => {
+      const id = m?.getAttribute("aria-describedby")
+      return id === null || id === undefined
+        ? null
+        : document.getElementById(id)
+    }
+    const cpuNote = noteOf(meters[0])
+    expect(cpuNote?.textContent).toContain(
+      "On the Mac, with the screen and disk: 12%",
+    )
+    expect(meters[0]?.contains(cpuNote ?? null)).toBe(false)
+    expect(noteOf(meters[1])).toBeNull()
+    const diskNote = noteOf(meters[2])
+    expect(diskNote?.textContent).toBe("Its changes take 5 GB on this Mac")
+    expect(meters[2]?.contains(diskNote ?? null)).toBe(false)
+    for (const m of meters) expect(m.textContent).toBe("")
+  })
 })
 
 async function boot(
