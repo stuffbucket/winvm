@@ -35,6 +35,7 @@ export function useUsage(
   const [view, setView] = useState<UsageView>(EMPTY)
   const [shown, setShown] = useState(visible)
   const prev = useRef<Sample | null>(null)
+  const sampledFor = useRef(pid)
 
   useEffect(() => {
     const on = (): void => {
@@ -47,6 +48,8 @@ export function useUsage(
   }, [])
 
   useEffect(() => {
+    if (sampledFor.current === pid) return
+    sampledFor.current = pid
     prev.current = null
     setView(EMPTY)
   }, [pid])

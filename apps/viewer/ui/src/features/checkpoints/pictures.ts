@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react"
+import { useEffect, useRef, useState } from "react"
 
 import { checkpointImage } from "../../backend"
 
@@ -64,7 +64,11 @@ export function usePicture(
   wanted: boolean,
 ): string | null {
   const [url, setUrl] = useState<string | null>(null)
+  const urlFor = useRef({ path, version })
   useEffect(() => {
+    const shown = urlFor.current
+    if (shown.path === path && shown.version === version) return
+    urlFor.current = { path, version }
     setUrl(null)
   }, [path, version])
   useEffect(() => {

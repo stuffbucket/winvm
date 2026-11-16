@@ -34,7 +34,7 @@ export function ClosePolicyDialog({
 
   useEffect(() => {
     const el = dialogRef.current
-    if (el === null || el.open) return
+    if (step === null || el === null || el.open) return
     try {
       el.showModal()
     } catch {}
