@@ -114,6 +114,12 @@ const STEPS: Step[] = [
     findings: sumOf(/^check-comments: (\d+) disallowed/gm),
   },
   {
+    name: "encoding",
+    group: "fast",
+    commands: [npmScript("encoding")],
+    findings: sumOf(/^check-text-encoding: (\d+) encoding/gm),
+  },
+  {
     name: "shellcheck",
     group: "fast",
     commands: [{ argv: mise("shellcheck", "--format=gcc", ...shellFiles()) }],

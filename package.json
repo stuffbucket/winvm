@@ -16,6 +16,7 @@
     "lint": "biome ci --error-on-warnings .",
     "lint:types": "oxlint --type-aware -f default",
     "comments": "bun scripts/check-comments.ts",
+    "encoding": "bun scripts/check-text-encoding.ts",
     "boundaries": "turbo boundaries",
     "knip": "knip",
     "deps": "depcruise --config .dependency-cruiser.cjs apps packages scripts"
