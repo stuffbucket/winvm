@@ -1,4 +1,4 @@
-import type { JSX } from "react"
+import { type JSX, useId } from "react"
 import { t } from "../../i18n"
 import {
   type Amount,
@@ -78,23 +78,30 @@ function Resource({
   note,
   children,
 }: ResourceProps): JSX.Element {
+  const noteId = useId()
   return (
-    // biome-ignore lint/a11y/useSemanticElements: a <meter> renders none of its children, and this meter shows a label, a value, a chart and a note
-    <div
-      className="resource"
-      role="meter"
-      aria-label={label}
-      aria-valuemin={0}
-      aria-valuemax={100}
-      aria-valuenow={Math.round(fill * 100)}
-      aria-valuetext={value}
-    >
-      <div className="resource__head">
+    <div className="resource">
+      <div className="resource__head" aria-hidden="true">
         <span className="resource__label">{label}</span>
         <span className="resource__value">{value}</span>
       </div>
-      {children}
-      {note !== undefined && <p className="resource__note">{note}</p>}
+      {/* biome-ignore lint/a11y/useSemanticElements: a <meter> cannot hold the sparkline or the custom bar */}
+      <div
+        role="meter"
+        aria-label={label}
+        aria-valuemin={0}
+        aria-valuemax={100}
+        aria-valuenow={Math.round(fill * 100)}
+        aria-valuetext={value}
+        aria-describedby={note === undefined ? undefined : noteId}
+      >
+        {children}
+      </div>
+      {note !== undefined && (
+        <p id={noteId} className="resource__note">
+          {note}
+        </p>
+      )}
     </div>
   )
 }
