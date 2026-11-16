@@ -1,11 +1,14 @@
 import { type JSX, useEffect, useRef } from "react"
 
+import type { CloseSession } from "../../backend"
 import { t } from "../../i18n"
 import { shownTitle } from "../../model"
+import { SessionEndNote } from "./SessionEndNote"
 import type { CloseChoice, CloseFlowState } from "./useCloseFlow"
 
 interface ClosePolicyDialogProps {
   readonly state: CloseFlowState
+  readonly session: CloseSession | null
   onChoose: (policy: CloseChoice) => void
   onRemember: (value: boolean) => void
   onCancel: () => void
@@ -19,6 +22,7 @@ const CHOICES = [
 
 export function ClosePolicyDialog({
   state,
+  session,
   onChoose,
   onRemember,
   onCancel,
@@ -74,6 +78,7 @@ export function ClosePolicyDialog({
               {t("close.progress", { index, total })}
             </p>
           )}
+          <SessionEndNote session={session} />
         </div>
         {shown.kind === "waiting" ? (
           <div className="confirm-dialog__body">

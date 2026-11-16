@@ -10,6 +10,10 @@ license = "MIT"
 name = "winvm_viewer_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
+[[test]]
+name = "quit_hook"
+harness = false
+
 [build-dependencies]
 tauri-build = { version = "=2.7.4", features = [] }
 
@@ -26,14 +30,17 @@ reqwest = { version = "=0.13.3", default-features = false, features = ["json"] }
 # reqwest comes with rustls but no crypto provider (the updater's features); agent.rs installs this one, as the updater does.
 rustls = { version = "=0.23.46", default-features = false, features = ["ring"] }
 
-# AppKit from Rust: the live-resize notifications (src/lib.rs) and native
-# drag-out of guest files to Finder (src/dragout.rs).
+# AppKit from Rust: the live-resize notifications (src/lib.rs), native
+# drag-out of guest files to Finder (src/dragout.rs), and the quit hook that
+# routes Dock Quit and logout through the close flow (src/terminate.rs).
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "=0.6.4"
 block2 = "=0.6.2"
 objc2-foundation = { version = "=0.3.2", default-features = false, features = [
     "std",
     "block2",
+    "NSAppleEventDescriptor",
+    "NSAppleEventManager",
     "NSArray",
     "NSDate",
     "NSDictionary",
@@ -50,6 +57,7 @@ objc2-app-kit = { version = "=0.3.2", default-features = false, features = [
     "std",
     "block2",
     "objc2-uniform-type-identifiers",
+    "NSApplication",
     "NSDragging",
     "NSDraggingItem",
     "NSDraggingSession",

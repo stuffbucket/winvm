@@ -1,4 +1,12 @@
-import { afterAll, afterEach, describe, expect, it } from "bun:test"
+import {
+  afterAll,
+  afterEach,
+  describe,
+  expect,
+  it,
+  jest,
+  setSystemTime,
+} from "bun:test"
 import { GlobalRegistrator } from "@happy-dom/global-registrator"
 
 GlobalRegistrator.register()
@@ -15,6 +23,7 @@ const { copy } = await import("./copy")
 type CloseFlowState =
   import("../ui/src/features/close/useCloseFlow").CloseFlowState
 type CloseChoice = import("../ui/src/features/close/useCloseFlow").CloseChoice
+type CloseSession = import("../ui/src/backend").CloseSession
 type Status = import("../ui/src/model").Status
 
 let root: ReturnType<typeof createRoot> | null = null
@@ -23,6 +32,8 @@ afterEach(() => {
   act(() => root?.unmount())
   root = null
   document.body.replaceChildren()
+  jest.useRealTimers()
+  setSystemTime()
 })
 afterAll(() => GlobalRegistrator.unregister())
 
@@ -60,6 +71,7 @@ interface Heard {
 function render(
   state: CloseFlowState,
   heard: Heard = { chose: [], remember: [], cancels: 0 },
+  session: CloseSession | null = null,
 ): { host: HTMLElement; heard: Heard; show: (next: CloseFlowState) => void } {
   const host = document.createElement("div")
   document.body.append(host)
@@ -70,6 +82,7 @@ function render(
       r.render(
         <ClosePolicyDialog
           state={next}
+          session={session}
           onChoose={(p) => heard.chose.push(p)}
           onRemember={(v) => heard.remember.push(v)}
           onCancel={() => {
@@ -94,6 +107,51 @@ const buttonNamed = (host: HTMLElement, label: string): HTMLButtonElement => {
   if (found === undefined) throw new Error(`no ${label} button`)
   return found
 }
+
+describe("ClosePolicyDialog at logout, restart and shutdown", () => {
+  const asking: CloseFlowState = {
+    kind: "asking",
+    machine: machine("a"),
+    index: 1,
+    total: 1,
+    remember: false,
+  }
+
+  it("counts down the time macOS waits for WinVM to close", () => {
+    jest.useFakeTimers()
+    const start = 1_800_000_000_000
+    setSystemTime(new Date(start))
+    const { host } = render(asking, undefined, {
+      kind: "waiting",
+      deadline: start + 40_000,
+    })
+    const note = (): string =>
+      host.querySelector(".close-dialog__session")?.textContent ?? ""
+    expect(note()).toBe(copy("close.sessionEnd", { seconds: 40 }))
+    expect(note()).toContain("40 seconds")
+    act(() => {
+      jest.advanceTimersByTime(39_000)
+    })
+    expect(note()).toBe(copy("close.sessionEnd", { seconds: 1 }))
+    expect(note()).toContain("1 second")
+    act(() => {
+      jest.advanceTimersByTime(6000)
+    })
+    expect(note()).toBe(copy("close.sessionEnd", { seconds: 0 }))
+  })
+
+  it("says macOS stopped waiting, and that WinVM goes on closing", () => {
+    const { host } = render(asking, undefined, { kind: "missed" })
+    expect(
+      host.querySelector(".close-dialog__session")?.textContent ?? "",
+    ).toBe(copy("close.sessionMissed"))
+  })
+
+  it("says nothing about logging out for an ordinary close", () => {
+    const { host } = render(asking)
+    expect(host.querySelector(".close-dialog__session")).toBeNull()
+  })
+})
 
 describe("ClosePolicyDialog", () => {
   it("asks what should happen to one machine, named by its title, with its place in the queue and the three choices explained", () => {
@@ -344,18 +402,33 @@ function fakeApp(world: World) {
     stdout: string
     stderr: string
   }) => void)[] = []
-  const listeners: ((e: { payload: unknown }) => void)[] = []
+  const listeners = new Map<string, ((e: { payload: unknown }) => void)[]>()
   const ok = (stdout: unknown) => ({
     code: 0,
     stdout: JSON.stringify(stdout),
     stderr: "",
   })
   const invoke = (cmd: string, a?: { args?: string[] }): Promise<unknown> => {
+    const args = a?.args ?? []
+    if (cmd === "close_run") {
+      log.push(`close_run ${args.join(" ")}`)
+      return new Promise((resolve) => stows.push(resolve))
+    }
     if (cmd !== "winvm") {
       log.push(cmd)
-      return Promise.resolve(cmd === "close_pending" ? false : null)
+      return Promise.resolve(
+        cmd === "close_state"
+          ? {
+              state: "idle",
+              machine: null,
+              command: null,
+              last: null,
+              resolved: [],
+              session: null,
+            }
+          : null,
+      )
     }
-    const args = a?.args ?? []
     if (args[0] === "status")
       return Promise.resolve(
         ok(
@@ -376,7 +449,7 @@ function fakeApp(world: World) {
     name: string,
     cb: (e: { payload: unknown }) => void,
   ): Promise<() => void> => {
-    if (name === "viewer-close-requested") listeners.push(cb)
+    listeners.set(name, [...(listeners.get(name) ?? []), cb])
     return Promise.resolve(() => undefined)
   }
   Object.assign(window, {
@@ -389,7 +462,12 @@ function fakeApp(world: World) {
     log,
     stows,
     requestClose: (): void => {
-      for (const cb of listeners) cb({ payload: null })
+      for (const cb of listeners.get("viewer-close-requested") ?? [])
+        cb({ payload: null })
+    },
+    sessionEnds: (session: CloseSession): void => {
+      for (const cb of listeners.get("viewer-close-session") ?? [])
+        cb({ payload: session })
     },
   }
 }
@@ -435,7 +513,8 @@ describe("closing the window", () => {
       buttonNamed(host, copy("close.stow")).click()
     })
     await flush()
-    expect(app.log).toContain("winvm stow -i demo")
+    expect(app.log).toContain("close_run stow -i demo")
+    expect(app.log).not.toContain("winvm stow -i demo")
     expect(dialog(host)).toBeNull()
     const overlays = host.querySelectorAll(".display__operation")
     expect(overlays).toHaveLength(1)
@@ -448,6 +527,32 @@ describe("closing the window", () => {
     await flush()
     expect(app.log.filter((l) => l === "close_complete")).toHaveLength(1)
     expect(app.log).not.toContain("close_cancel")
+  })
+
+  it("keeps the logout deadline in sight while Windows stows for a logout", async () => {
+    const world: World = { state: "running" }
+    const { host, app } = await mountApp(world)
+    act(() => {
+      app.sessionEnds({ kind: "waiting", deadline: Date.now() + 40_000 })
+      app.requestClose()
+    })
+    await flush()
+    expect(dialog(host)?.querySelector(".close-dialog__session")).not.toBeNull()
+    act(() => {
+      buttonNamed(host, copy("close.stow")).click()
+    })
+    await flush()
+    expect(dialog(host)).toBeNull()
+    expect(host.querySelector(".notices")?.textContent).toContain(
+      copy("close.sessionTitle"),
+    )
+    act(() => {
+      app.sessionEnds({ kind: "missed" })
+    })
+    await flush()
+    expect(host.querySelector(".notices")?.textContent).toContain(
+      copy("close.sessionMissed"),
+    )
   })
 
   it("stays open with what the stow said when it fails, and calls the close off", async () => {

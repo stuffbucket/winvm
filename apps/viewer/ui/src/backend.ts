@@ -328,8 +328,52 @@ export const onViewerCloseRequested = (
     listening,
   )
 
-export const closePending = (): Promise<boolean> =>
-  tauri().core.invoke<boolean>("close_pending")
+export type CloseSession =
+  | { readonly kind: "waiting"; readonly deadline: number }
+  | { readonly kind: "missed" }
+
+export interface CloseSnapshot {
+  readonly state: "idle" | "requested" | "running" | "authorized"
+  readonly machine: string | null
+  readonly command: { readonly machine: string; readonly verb: string } | null
+  readonly last: {
+    readonly machine: string
+    readonly verb: string
+    readonly code: number
+    readonly output: string
+  } | null
+  readonly resolved: readonly string[]
+  readonly session: CloseSession | null
+}
+
+function closeSessionOf(raw: unknown): CloseSession | null {
+  if (typeof raw !== "object" || raw === null) return null
+  const { kind, deadline } = raw as { kind?: unknown; deadline?: unknown }
+  if (kind === "missed") return { kind }
+  if (kind === "waiting" && typeof deadline === "number")
+    return { kind, deadline }
+  return null
+}
+
+export const onViewerCloseSession = (
+  cb: (session: CloseSession | null) => void,
+): Unlisten =>
+  listen("viewer-close-session", (payload) => {
+    const session = closeSessionOf(payload)
+    if (session !== null || payload === null) cb(session)
+  })
+
+export const closeState = (): Promise<CloseSnapshot> =>
+  tauri().core.invoke<CloseSnapshot>("close_state")
+
+export const closeAt = (machine: string): Promise<void> =>
+  tauri().core.invoke<void>("close_at", { machine })
+
+export const closeResolved = (machine: string): Promise<void> =>
+  tauri().core.invoke<void>("close_resolved", { machine })
+
+export const closeRun = (...args: string[]): Promise<Output> =>
+  sidecar("close_run", { args }, args[0] ?? "winvm")
 
 export const closeStart = (): Promise<void> =>
   tauri().core.invoke<void>("close_start")
