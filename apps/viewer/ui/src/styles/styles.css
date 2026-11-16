@@ -940,11 +940,6 @@ html[data-os="macos"] .toolbar {
   color: var(--text-muted);
 }
 
-.kv--stacked .kv__row {
-  grid-template-columns: 1fr;
-  gap: 0;
-}
-
 .checks {
   list-style: none;
   margin: 0;
@@ -1023,6 +1018,11 @@ html[data-os="macos"] .toolbar {
   font-size: var(--text-sm);
   color: var(--text-strong);
   overflow-wrap: anywhere;
+}
+
+.kv--stacked .kv__row {
+  grid-template-columns: 1fr;
+  gap: 0;
 }
 
 .resources {
