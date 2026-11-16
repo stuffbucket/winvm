@@ -117,12 +117,14 @@ interface Call {
   done: boolean
 }
 
-function fakeTauri(): {
+function fakeTauri(open?: () => Output): {
+  opens: string[][]
   calls: Call[]
   reads(): Call[]
   verb(v: string): Call
 } {
   const calls: Call[] = []
+  const opens: string[][] = []
   const held = new Set([
     "status",
     "pause",
@@ -136,6 +138,10 @@ function fakeTauri(): {
   const invoke = (cmd: string, a?: { args?: string[] }): Promise<unknown> => {
     const args = a?.args ?? []
     if (cmd !== "winvm") return Promise.resolve(null)
+    if (args[0] === "open" && open !== undefined) {
+      opens.push(args)
+      return Promise.resolve(open())
+    }
     if (!held.has(args[0] ?? ""))
       return Promise.resolve({ code: 1, stdout: "", stderr: "" })
     return new Promise<Output>((resolve) => {
@@ -156,6 +162,7 @@ function fakeTauri(): {
   }
   Object.assign(window, { __TAURI__: { core: { invoke } } })
   return {
+    opens,
     calls,
     reads: () =>
       calls.filter((c) => c.args[0] === "status" && c.args.includes("-i")),
@@ -565,6 +572,49 @@ async function boot(
   await flush()
   return { w: latest(slot) }
 }
+
+describe("the screen's address", () => {
+  it("is asked for once the machine runs, again after each status poll until it comes, and then no more", async () => {
+    jest.useFakeTimers()
+    const failed: Output = { code: 1, stdout: "", stderr: "no screen yet" }
+    const found: Output = {
+      code: 0,
+      stdout: JSON.stringify({
+        display: 1,
+        vncPort: 5901,
+        websocketPort: 5701,
+        password: null,
+      }),
+      stderr: "",
+    }
+    let answer = failed
+    const tauri = fakeTauri(() => answer)
+    const { w } = await boot(tauri)
+    const first = tauri.opens.length
+    expect(first).toBeGreaterThan(0)
+    expect(tauri.opens[0]).toEqual(["open", "--json", "-i", "demo"])
+    expect(w().connection).toBeNull()
+
+    answer = found
+    act(() => {
+      jest.advanceTimersByTime(4000)
+    })
+    await flush()
+    expect(tauri.opens).toHaveLength(first)
+    tauri.reads().at(-1)?.resolve(status("running"))
+    await flush()
+    expect(tauri.opens).toHaveLength(first + 1)
+    expect(w().connection?.websocketPort).toBe(5701)
+
+    act(() => {
+      jest.advanceTimersByTime(4000)
+    })
+    await flush()
+    tauri.reads().at(-1)?.resolve(status("running"))
+    await flush()
+    expect(tauri.opens).toHaveLength(first + 1)
+  })
+})
 
 describe("operations in the window", () => {
   it("shows an operation another command is running as external, polls fast while it runs, and clears it when status says none", async () => {
