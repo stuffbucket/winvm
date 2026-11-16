@@ -732,3 +732,22 @@ describe("state", () => {
     expect(readState(p)?.hostPort).toBeNull()
   })
 })
+
+describe("the guest's power button", () => {
+  const asset = (file: string): string =>
+    readFileSync(resolve(import.meta.dir, "../assets", file), "utf8")
+
+  for (const file of ["provision.ps1", "agent-install.ps1"])
+    it(`is set to shut down, on battery and on mains, by ${file}`, () => {
+      const script = asset(file)
+      for (const line of [
+        "powercfg.exe /setacvalueindex SCHEME_CURRENT SUB_BUTTONS PBUTTONACTION 3",
+        "powercfg.exe /setdcvalueindex SCHEME_CURRENT SUB_BUTTONS PBUTTONACTION 3",
+        "powercfg.exe /setactive SCHEME_CURRENT",
+      ])
+        expect(script).toContain(line)
+      expect(script.indexOf("PBUTTONACTION 3")).toBeLessThan(
+        script.indexOf("powercfg.exe /setactive SCHEME_CURRENT"),
+      )
+    })
+})

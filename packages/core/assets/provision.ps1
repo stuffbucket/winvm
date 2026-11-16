@@ -160,6 +160,14 @@ try {
         powercfg.exe /setactive 8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c
         powercfg.exe /change hibernate-timeout-ac 0
     }
+    Step "power button: shut down" {
+        powercfg.exe /setacvalueindex SCHEME_CURRENT SUB_BUTTONS PBUTTONACTION 3
+        if ($LASTEXITCODE -ne 0) { throw "powercfg setacvalueindex exit $LASTEXITCODE" }
+        powercfg.exe /setdcvalueindex SCHEME_CURRENT SUB_BUTTONS PBUTTONACTION 3
+        if ($LASTEXITCODE -ne 0) { throw "powercfg setdcvalueindex exit $LASTEXITCODE" }
+        powercfg.exe /setactive SCHEME_CURRENT
+        if ($LASTEXITCODE -ne 0) { throw "powercfg setactive exit $LASTEXITCODE" }
+    }
     Step "boot: no recovery environment after a failed boot" {
         bcdedit.exe /set "{default}" recoveryenabled No
         if ($LASTEXITCODE -ne 0) { throw "bcdedit recoveryenabled exit $LASTEXITCODE" }
