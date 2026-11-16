@@ -1,16 +1,3 @@
-/**
- * `winvm info [-i name] [--json]`: the machine's virtual hardware and network,
- * as it runs and as it is set for the next start. And the `cpus=` / `memory=`
- * keys of `winvm config`, which set the size (hardware.ts).
- *
- * The network is QEMU's user-mode networking (`-netdev user`, qemu.ts): a NAT
- * inside the QEMU process. Windows gets 10.0.2.15 from QEMU's DHCP, its gateway
- * 10.0.2.2 is this Mac, and 10.0.2.3 forwards DNS to the Mac's resolver.
- * Windows reaches the internet, and the Mac's own services at 10.0.2.2.
- * Nothing reaches Windows from outside except the forwards winvm adds at run
- * time (agentfwd.ts), each from 127.0.0.1 on the Mac. The VNC and WebSocket
- * ports are QEMU's own listeners for the screen, also on 127.0.0.1 (vnc.ts).
- */
 import { spawnSync } from "node:child_process"
 
 import { GUEST_PORT } from "./guestagent"
@@ -55,12 +42,9 @@ export interface MachineInfo {
   readonly name: string
   readonly running: boolean
   readonly hardware: {
-    /** What QEMU runs with now; null when it is not running. */
     readonly running: Hardware | null
-    /** The setting: what the next start that boots Windows uses. */
     readonly next: Hardware
     readonly limits: Limits
-    /** The virtual disk's size; null when it could not be read. */
     readonly diskBytes: number | null
   }
   readonly network: {
@@ -69,26 +53,18 @@ export interface MachineInfo {
     readonly guest: string
     readonly gateway: string
     readonly dns: string
-    /** Windows' own view of its adapter, from the guest agent; null when it cannot be asked. */
     readonly windows: { readonly adapter: string; readonly ipv4: string } | null
-    /** Live, from QEMU (`info usernet`); empty while stopped. */
     readonly forwards: readonly Forward[]
-    /** QEMU's screen listeners on the Mac; empty while stopped. */
     readonly listeners: readonly Listener[]
   }
 }
 
-// ---------------------------------------------------------------------------
-// Pure
-
 export const forwardKind = (guestPort: number): ForwardKind =>
   guestPort === SMB_GUEST_PORT ? "finder" : guestPort === GUEST_PORT ? "agent" : "other"
 
-/** Every host forward in `info usernet`'s table. */
 export function parseUsernet(text: string): Forward[] {
   const out: Forward[] = []
   for (const line of text.split(/\r?\n/)) {
-    // TCP[HOST_FORWARD]  12       127.0.0.1 47801       10.0.2.15  7801     0     0
     const m = /^\s*TCP\[HOST_FORWARD\]\s+\d+\s+(\S+)\s+(\d+)\s+\S+\s+(\d+)\s/.exec(line)
     if (m === null) continue
     const guestPort = Number(m[3])
@@ -97,7 +73,6 @@ export function parseUsernet(text: string): Forward[] {
   return out.sort((a, b) => a.guestPort - b.guestPort)
 }
 
-/** The adapter Windows routes through: the first with an IPv4 address that is not loopback or link-local. */
 export function windowsAdapter(reply: unknown): { adapter: string; ipv4: string } | null {
   if (!Array.isArray(reply)) return null
   for (const i of reply as unknown[]) {
@@ -116,7 +91,6 @@ export function windowsAdapter(reply: unknown): { adapter: string; ipv4: string 
 
 const fmtHw = (h: Hardware): string => `${String(h.cpus)} processors, ${formatMiB(h.memoryMiB)}`
 
-/** The note for a size that differs from what runs; null when it doesn't. */
 export const pendingNote = (running: Hardware | null, next: Hardware): string | null =>
   running === null || sameHardware(running, next) ? null : `running with ${fmtHw(running)}; ${fmtHw(next)} applies the next time Windows starts`
 
@@ -153,11 +127,7 @@ export function formatInfo(i: MachineInfo): string {
   return lines.join("\n")
 }
 
-// ---------------------------------------------------------------------------
-// Gathering
-
 function diskBytes(p: Paths): number | null {
-  // -U: the running QEMU holds the image's lock.
   const r = spawnSync(runtimeBin("qemu-img"), ["info", "-U", "--output=json", p.overlay], { encoding: "utf8" })
   if (r.status !== 0) return null
   try {
@@ -169,7 +139,6 @@ function diskBytes(p: Paths): number | null {
 }
 
 async function windowsSide(p: Paths): Promise<MachineInfo["network"]["windows"]> {
-  // Not while paused or asleep: the agent cannot answer, and the call would wait.
   try {
     if ((await qmp.status(p.qmp)) !== "running") return null
     const r = await qga.call(p.qga, { execute: "guest-network-get-interfaces" }, 4000)
@@ -190,7 +159,6 @@ export async function gatherInfo(name: string): Promise<MachineInfo | null> {
     try {
       forwards = parseUsernet(await qmp.hmp(p.qmp, "info usernet", 5000))
     } catch {
-      // the monitor is busy (a save or load); none shown
     }
   }
   return {
@@ -222,14 +190,10 @@ export async function infoCmd(args: Args): Promise<number> {
   return 0
 }
 
-// ---------------------------------------------------------------------------
-// `winvm config cpus=N memory=8G`
-
 export const HARDWARE_KEYS = ["cpus", "memory"] as const
 
 export const isHardwareKey = (assignment: string): boolean => HARDWARE_KEYS.some((k) => assignment.trim().startsWith(`${k}=`))
 
-/** The size after applying `cpus=` / `memory=` assignments to `current`. Throws with a message fit for the user. */
 export function applyAssignments(current: Hardware, assignments: readonly string[], limits: Limits): Hardware {
   let next = current
   for (const a of assignments) {
@@ -250,7 +214,6 @@ export function applyAssignments(current: Hardware, assignments: readonly string
   return next
 }
 
-/** Set the machine's size; returns what to print. */
 export function setHardware(name: string, assignments: readonly string[]): string {
   const p = pathsFor(name)
   const next = applyAssignments(readHardware(p), assignments, hostLimits())
@@ -258,11 +221,9 @@ export function setHardware(name: string, assignments: readonly string[]): strin
   const pid = qemu.pidOf(p)
   const running = pid === null ? null : runningHardware(pid)
   const said = pendingNote(running, next) ?? (running === null ? `${fmtHw(next)}; applies the next time Windows starts` : fmtHw(next))
-  // A stow is recalled at the size it was taken at (saves.ts), so the new size waits for a boot after it.
   return hasSave(name, STOW) ? `${said} (the stowed session resumes at its own size first)` : said
 }
 
-/** The size lines `winvm config` prints. */
 export function hardwareLines(name: string): string[] {
   const p = pathsFor(name)
   const next = readHardware(p)

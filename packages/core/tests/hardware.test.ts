@@ -1,8 +1,3 @@
-/**
- * The machine's processors and memory (hardware.ts), how saves keep loading
- * when they change (saves.ts), and `winvm info` / `config cpus= memory=`
- * (machineinfo.ts).
- */
 import { afterAll, beforeAll, describe, expect, it } from "bun:test"
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
@@ -63,7 +58,6 @@ describe("limits", () => {
     const l = limitsFor(16, 64 * GIB)
     expect(l).toEqual({ cpus: { min: 2, max: 16 }, memoryMiB: { min: 4096, max: 32768, step: 1024 } })
     expect(limitsFor(4, 15 * GIB).memoryMiB.max).toBe(7168)
-    // A small Mac still allows the minimum.
     expect(limitsFor(1, 6 * GIB)).toEqual({ cpus: { min: 2, max: 2 }, memoryMiB: { min: 4096, max: 4096, step: 1024 } })
   })
 
@@ -106,7 +100,6 @@ describe("the setting", () => {
 
   it("gives a machine without it exactly the command line every machine had before (so its saves' hash holds)", () => {
     const a = hardwareArgs(qemuArgs("old", instance("old"), META, LAUNCH))
-    // What qemu.ts hard-coded before the setting: `-smp 4`, `-m 4096`, a 4096M backend.
     expect(a.slice(a.indexOf("-smp"), a.indexOf("-smp") + 4)).toEqual(["-smp", "4", "-m", "4096"])
     expect(a).toContain("memory-backend-shm,id=mem,size=4096M,share=on")
   })
@@ -130,7 +123,6 @@ describe("saves and the size", () => {
   })
 
   it("loads at the save's size: the command line at the save's size hashes as it did when it was taken", () => {
-    // Taken at 4 / 4096 (no record), then the machine was set to 6 / 8 GB.
     const p = instance("moved")
     const taken = hardwareArgs(qemuArgs("moved", p, META, LAUNCH))
     writeHardware(p, { cpus: 6, memoryMiB: 8192 })
@@ -138,7 +130,6 @@ describe("saves and the size", () => {
     expect(now).not.toEqual(taken)
     const atSave = hardwareArgs(qemuArgs("moved", p, META, { ...LAUNCH, hardware: saveHardware(parseManifest(JSON.stringify(m))) }))
     expect(atSave).toEqual(taken)
-    // And a save taken at 6 / 8 GB, after the machine went back to 4 / 6 GB.
     const at6 = hardwareArgs(qemuArgs("moved", p, META, LAUNCH))
     writeHardware(p, { cpus: 4, memoryMiB: 6144 })
     const rec = saveHardware(parseManifest(JSON.stringify({ ...m, hardware: { cpus: 6, memoryMiB: 8192 } })))

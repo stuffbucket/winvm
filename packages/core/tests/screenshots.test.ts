@@ -1,7 +1,3 @@
-/**
- * A save's screenshots: the raw screendump taken while the guest is stopped,
- * and the PNGs written from it after — against a fake QEMU monitor.
- */
 import { afterEach, beforeEach, describe, expect, it } from "bun:test"
 import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
@@ -11,7 +7,6 @@ import { pngSize } from "../src/input"
 import { FILES, captureScreen, writeScreenshots } from "../src/saves"
 import { FakeQmp } from "./fakes/qmp"
 
-/** A P6 frame with a gradient, so a broken resample would show up as wrong bytes, not just a wrong size. */
 function ppm(w: number, h: number): Buffer {
   const data = Buffer.alloc(w * h * 3)
   for (let i = 0; i < w * h; i += 1) data.set([i % 256, (i >> 8) % 256, 128], i * 3)
@@ -29,7 +24,6 @@ describe("save screenshots", () => {
     fake.handler = (cmd) => {
       if (cmd["execute"] !== "screendump") return { return: {} }
       const args = cmd["arguments"] as Record<string, unknown>
-      // QEMU writes the raw PPM when no format is asked for; that is the cheap dump.
       if (args["format"] !== undefined) return { error: { class: "GenericError", desc: "expected a raw dump" } }
       writeFileSync(String(args["filename"]), ppm(size.width, size.height))
       return { return: {} }
@@ -48,7 +42,6 @@ describe("save screenshots", () => {
     expect(writeScreenshots(shot ?? "", dir)).toEqual({ width: 1024, height: 768 })
     expect(pngSize(readFileSync(resolve(dir, FILES.screen)))).toEqual({ width: 1024, height: 768 })
     expect(pngSize(readFileSync(resolve(dir, FILES.thumb)))).toEqual({ width: 400, height: 300 })
-    // The raw dump is gone; only the PNGs (and the socket) are left.
     expect(existsSync(shot ?? "")).toBe(false)
     expect(readdirSync(dir).sort()).toEqual([FILES.screen, "qmp.sock", FILES.thumb].sort())
   })

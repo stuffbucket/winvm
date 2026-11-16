@@ -1,37 +1,10 @@
-/**
- * Keep the guest's clock on the host's.
- *
- * WHY A RESTORED GUEST IS IN THE PAST. Windows keeps time from the CPU's
- * virtual counter once it is running and reads the RTC only at boot. Anything
- * that freezes the machine — `pause`, a save (the guest is stopped while its
- * RAM is written), `stow`, `load`, `rewind` — stops that counter too, so the
- * guest resumes believing no time passed: a save loaded an hour later is an
- * hour slow, and a guest paused for two minutes is two minutes slow. The RTC
- * device does not help: QEMU's PL031 is driven by the host clock and is correct
- * after a restore, but Windows never looks at it again.
- *
- * So the fix is to TELL the guest the time, through the guest agent:
- * `guest-set-time` with UTC nanoseconds (qemu-ga on Windows requires the
- * argument — it has no RTC-reading mode there — and calls SetSystemTime as
- * SYSTEM). The guest's time zone is irrelevant to this: the agent's clock is
- * UTC on both ends.
- *
- * A COLD BOOT WAS WRONG TOO, for a different reason: the answer file pins the
- * guest's time zone to UTC, while QEMU was started with `-rtc base=localtime`,
- * so a Pacific host handed it Pacific wall time labelled as UTC — seven hours
- * slow. qemu.ts now uses `base=utc`, which matches what the guest assumes; the
- * boot path syncs as well, so a host or guest with other ideas is corrected
- * either way.
- */
 import { FFIType, dlopen, ptr } from "bun:ffi"
 
 import type { Paths } from "./paths"
 import * as qga from "./qga"
 
 export interface OffsetSample {
-  /** guest − host, in ms. Negative: the guest is behind. */
   readonly offsetMs: number
-  /** Round trip of the probe; the offset is uncertain by about half of it. */
   readonly rttMs: number
 }
 
@@ -42,11 +15,6 @@ async function guestNowNs(p: Paths): Promise<number> {
   return t
 }
 
-/**
- * One offset measurement, taken as the best of a few probes: the guest's answer
- * is compared with the host time at the MIDPOINT of the round trip, and the
- * probe with the shortest round trip is the least uncertain.
- */
 export async function measureOffset(p: Paths, probes = 3): Promise<OffsetSample> {
   let best: OffsetSample | null = null
   for (let i = 0; i < probes; i += 1) {
@@ -60,14 +28,6 @@ export async function measureOffset(p: Paths, probes = 3): Promise<OffsetSample>
   return best
 }
 
-/**
- * Set the guest's clock to the host's, and report the offset before and after.
- * The guest must be running and its agent answering (see qga.waitResponsive).
- *
- * The set is aimed at the moment the guest will apply it — host time plus half
- * the measured round trip — and corrected once more if it still misses by more
- * than 50 ms, which removes most of the agent's (emulated x86) processing lag.
- */
 export async function syncGuestClock(p: Paths): Promise<{ beforeOffsetMs: number; afterOffsetMs: number }> {
   const before = await measureOffset(p)
   let after = before
@@ -83,7 +43,6 @@ export async function syncGuestClock(p: Paths): Promise<{ beforeOffsetMs: number
   return { beforeOffsetMs: before.offsetMs, afterOffsetMs: after.offsetMs }
 }
 
-/** "-27583.1 s", "+12 ms" — offsets span milliseconds to hours. */
 export function formatOffset(ms: number): string {
   const sign = ms < 0 ? "-" : "+"
   const a = Math.abs(ms)
@@ -95,24 +54,9 @@ export function formatOffset(ms: number): string {
   return `${sign}${h > 0 ? `${String(h)}h ` : ""}${String(m)}m ${String(s)}s`
 }
 
-// ---------------------------------------------------------------------------
-// Time zone: the guest's DISPLAYED time should read like the host's.
-//
-// Correct UTC is not enough on its own: the answer file pins the guest to UTC,
-// so its taskbar reads seven hours off a Pacific host even when its clock is
-// exact. The host's IANA zone is mapped to a Windows zone id by the host's own
-// ICU (`ucal_getWindowsTimeZoneID` in macOS's libicucore — the CLDR
-// windowsZones table, with no copy of it kept here), then set with `tzutil`.
-//
-// Once the zone is not UTC, the RTC's meaning must not depend on it: Windows
-// reads the RTC as LOCAL time unless RealTimeIsUniversal=1, and qemu.ts feeds
-// it UTC. So the same step sets that key; from then on a cold boot is right in
-// any zone, and every boot is resynced anyway.
-
 const TZ_KEY = "HKLM\\SYSTEM\\CurrentControlSet\\Control\\TimeZoneInformation"
 const SYS32 = "C:\\Windows\\System32"
 
-/** The host's zone as a Windows zone id ("Pacific Standard Time"), or null if it cannot be mapped. */
 export function hostWindowsTimeZone(): string | null {
   const iana = Intl.DateTimeFormat().resolvedOptions().timeZone
   try {
@@ -137,18 +81,12 @@ export function hostWindowsTimeZone(): string | null {
   }
 }
 
-/** Parse `tzutil /g` + `reg query … RealTimeIsUniversal` output (one cmd.exe run). */
 export function parseGuestTz(out: string): { zone: string; rtcUtc: boolean } {
   const zone = out.split(/\r?\n/).map((l) => l.trim()).find((l) => l !== "") ?? ""
   const m = /RealTimeIsUniversal\s+REG_\w+\s+0x([0-9a-f]+)/i.exec(out)
   return { zone, rtcUtc: m?.[1] !== undefined && Number.parseInt(m[1], 16) === 1 }
 }
 
-/**
- * Put the guest in the host's time zone, with its RTC read as UTC. Costs one
- * guest command when nothing needs changing. Returns null when the host zone
- * cannot be mapped (the guest is left alone).
- */
 export async function alignGuestTimeZone(p: Paths): Promise<{ from: string; to: string; changed: boolean } | null> {
   const want = hostWindowsTimeZone()
   if (want === null) return null
@@ -163,8 +101,6 @@ export async function alignGuestTimeZone(p: Paths): Promise<{ from: string; to: 
     if (r.exitcode !== 0) throw new Error(`could not set RealTimeIsUniversal: ${r.stderr.trim() || r.stdout.trim()}`)
   }
   if (now.zone !== want) {
-    // Called directly, not through cmd: qemu-ga quotes an argument with spaces
-    // correctly, and cmd.exe would mangle the nested quotes.
     const r = await qga.exec(p.qga, `${SYS32}\\tzutil.exe`, ["/s", want])
     if (r.exitcode !== 0) throw new Error(`tzutil /s "${want}" failed: ${r.stderr.trim() || r.stdout.trim()}`)
   }

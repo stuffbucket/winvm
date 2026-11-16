@@ -1,8 +1,3 @@
-/**
- * The pure parts of the computer-use executor (cua.ts): coordinate scaling,
- * xdotool key names -> qcodes, PPM decoding, resampling, PNG encoding, and the
- * request normalization. No VM needed.
- */
 import { inflateSync } from "node:zlib"
 
 import { describe, expect, it } from "bun:test"
@@ -162,7 +157,6 @@ describe("images", () => {
   })
 
   it("area-averages when shrinking", () => {
-    // 2x1: black | white -> 1x1 mid grey
     const img: Rgb = { width: 2, height: 1, data: new Uint8Array([0, 0, 0, 255, 255, 255]) }
     expect([...resize(img, 1, 1).data]).toEqual([128, 128, 128])
     const big = resize(solid(1920, 1080, [10, 20, 30]), 1280, 720)
@@ -198,7 +192,6 @@ describe("images", () => {
     const png = encodePng(img)
     expect(png.subarray(0, 8)).toEqual(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))
     expect(pngSize(png)).toEqual({ width: 3, height: 2 })
-    // IDAT: filter 1 (Sub) per row; undo it.
     const idatAt = png.indexOf("IDAT")
     const len = png.readUInt32BE(idatAt - 4)
     const raw = inflateSync(png.subarray(idatAt + 4, idatAt + 4 + len))

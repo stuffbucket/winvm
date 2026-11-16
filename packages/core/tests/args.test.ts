@@ -18,7 +18,6 @@ describe("parseArgs", () => {
     const a = parseArgs(["note", "x", "--text", "-", "--json"])
     expect(a.flags.get("text")).toBe("-")
     expect(a.positional).toEqual(["note", "x"])
-    // Anything else starting with - is still the next flag.
     expect(parseArgs(["--force", "-i", "dev"]).flags.get("force")).toBe("true")
   })
   it("leaves the two-word form, single-dash words and the -- passthrough alone", () => {

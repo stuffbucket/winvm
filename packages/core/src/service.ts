@@ -35,12 +35,6 @@ const coreVersion = (): string =>
 
 const STATES: Readonly<Record<string, string>> = { STOP: "paused", RESUME: "running", SHUTDOWN: "stopped", RESET: "reset" }
 
-/**
- * What the shared folder's change notices (sharewatch.ts) should watch now: the
- * folder the running daemon serves, and the drive it is in Windows. null while
- * no QEMU runs, nothing is shared, or the share is read-only (the guest cannot
- * touch anything there).
- */
 export function noticeTarget(p: Paths, qemuRunning: boolean): { readonly root: string; readonly letter: string } | null {
   if (!qemuRunning) return null
   const serving = share.readServing(p)
@@ -168,7 +162,6 @@ export async function runService(name: string, o: ServiceOptions = {}): Promise<
   let stopping = false
   let goneMs = 0
 
-  // The shared folder's change notices, for as long as a guest with one runs.
   let notices: { readonly key: string; readonly n: ChangeNotices } | null = null
   let syncing = false
   const syncNotices = async (): Promise<void> => {
@@ -234,7 +227,6 @@ export async function runService(name: string, o: ServiceOptions = {}): Promise<
       try {
         c.close()
       } catch {
-        // already closed
       }
     }
     subs.clear()

@@ -1,9 +1,3 @@
-/**
- * A stand-in for conpty.exe (assets/conpty.cs) on the host: the same arguments
- * and the same frames, with no pseudo-console. It echoes keystrokes, reports a
- * resize in its output, and on a typed line `exit N` exits with N; `fail` sends
- * an error instead. It ends when its connection does, as the real one does.
- */
 import { FrameReader, termFrame } from "../../src/guestagent"
 
 const args = process.argv.slice(2)

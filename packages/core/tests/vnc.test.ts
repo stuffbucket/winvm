@@ -1,7 +1,3 @@
-/**
- * VNC displays across homes: a display something else on the host listens on
- * is moved off at launch. Real sockets on loopback, no VM.
- */
 import { afterEach, beforeEach, describe, expect, it, mock, spyOn } from "bun:test"
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { createServer, type Server } from "node:net"
@@ -22,7 +18,6 @@ async function hold(port: number): Promise<void> {
   held.push(s)
 }
 
-/** A display (above the ones people use) whose two ports are free right now. */
 async function someFreeDisplay(from: number): Promise<number> {
   for (let d = from; d < 100; d += 1) if (await displayFree(d)) return d
   throw new Error("no free display to test with")
@@ -70,8 +65,6 @@ describe("VNC display in use on the host", () => {
     const busy = await someFreeDisplay(60)
     await hold(vncPort(busy))
     const meta = makeInstance("a", busy)
-    // Every display below `busy` is claimed by another instance in this home,
-    // so the only acceptable answers are free displays above it.
     for (let d = 1; d < busy; d += 1) makeInstance(`other-${String(d)}`, d)
     const moved = await ensureFreeDisplay("a", pathsFor("a"), meta)
     expect(moved.vnc).toBeGreaterThan(busy)

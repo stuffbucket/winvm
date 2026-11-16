@@ -1,12 +1,3 @@
-/**
- * The channel a job runs over: run a program, move a file, start something
- * detached, kill it. One small interface so the runner does not care whether
- * it is talking to qemu-ga (always there, runs as SYSTEM in session 0) or the
- * in-guest HTTP agent (faster, runs in the logged-on user's session).
- *
- * qgaGuest is the fallback and today's default. Swapping the runner to the
- * agent is one line in `guestFor`.
- */
 import { readFileSync } from "node:fs"
 
 import type { AgentClient } from "./agent"
@@ -23,19 +14,14 @@ export interface RunResult {
 }
 
 export interface Guest {
-  /** What it is, for the report: "qga" or "agent". */
   readonly kind: string
-  /** Whose session a step runs in, for the report. */
   readonly session: "system" | "user"
-  /** True when `putFile` is fast enough for installers (otherwise stage over HTTP). */
   readonly fastFiles: boolean
   run(argv: readonly string[], timeoutMs: number): Promise<RunResult>
-  /** Start a program and do not wait for it. Its output goes nowhere. */
   launch(argv: readonly string[]): Promise<number>
   kill(pid: number): Promise<void>
   put(guestPath: string, data: Uint8Array | string): Promise<void>
   putFile(hostPath: string, guestPath: string): Promise<void>
-  /** A guest file's bytes, or null when it is not there. */
   get(guestPath: string): Promise<Uint8Array | null>
 }
 
@@ -43,7 +29,6 @@ const CMD = "C:\\Windows\\System32\\cmd.exe"
 const CHUNK = 1024 * 1024
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms))
 
-/** The QEMU guest agent. Runs everything as NT AUTHORITY\SYSTEM in session 0. */
 export function qgaGuest(p: Paths): Guest {
   const sock = p.qga
   const ret = (r: Record<string, unknown>, what: string): unknown => {
@@ -90,7 +75,6 @@ export function qgaGuest(p: Paths): Guest {
     async launch(argv) {
       const [path, ...arg] = argv
       if (path === undefined) throw new Error("empty argv")
-      // No capture: qga would otherwise hold pipes the child inherits.
       const r = ret(await qga.call(sock, { execute: "guest-exec", arguments: { path, arg, "capture-output": false } }), "guest-exec") as {
         pid: number
       }
@@ -121,7 +105,6 @@ export function qgaGuest(p: Paths): Guest {
       await g.put(guestPath, readFileSync(hostPath))
     },
     async get(guestPath) {
-      // Chunked to fit what the agent can answer — see qga.READ_CHUNK.
       const bytes = await qga.readFile(sock, guestPath)
       return bytes === null ? null : new Uint8Array(bytes)
     },
@@ -129,19 +112,12 @@ export function qgaGuest(p: Paths): Guest {
   return g
 }
 
-/**
- * The in-guest agent (agent.ts): runs in the logged-on user's session, so
- * %LOCALAPPDATA% and HKCU are that user's and a launched GUI program is on the
- * desktop. Exec is ~10 ms rather than qemu-ga's ~80, and files move over HTTP.
- */
 export function agentGuest(client: AgentClient): Guest {
   return {
     kind: "agent",
     session: "user",
     fastFiles: true,
     async run(argv, timeoutMs) {
-      // cmd.exe parses its own command line and does not understand the
-      // MSVCRT quoting Bun would add; hand it the words as written.
       const verbatim = /\\cmd\.exe$/i.test(argv[0] ?? "")
       const r = await client.exec(argv, { timeoutMs, verbatim })
       return { exitcode: r.timedOut ? -1 : r.code, stdout: r.stdout, stderr: r.stderr, timedOut: r.timedOut }
@@ -169,10 +145,6 @@ export function agentGuest(client: AgentClient): Guest {
   }
 }
 
-/**
- * The channel for an instance: its agent when one answers, else qemu-ga.
- * WINVM_CHANNEL=qga forces the fallback (to compare, or to run as SYSTEM).
- */
 export async function guestFor(instance: string): Promise<Guest> {
   const p = pathsFor(instance)
   if (process.env["WINVM_CHANNEL"] !== "qga") {

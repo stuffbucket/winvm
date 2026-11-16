@@ -62,11 +62,6 @@ const lastEvent = (): Record<string, unknown> => {
   return JSON.parse(lines[lines.length - 1] ?? "{}") as Record<string, unknown>
 }
 
-/**
- * The record as written. These tests run the service in this very process,
- * which readService rightly never takes for a service (its command line is
- * `bun test`), so they read what it claimed directly.
- */
 const recorded = (): ServiceInfo | null => {
   try {
     return JSON.parse(readFileSync(p.service, "utf8")) as ServiceInfo
@@ -269,7 +264,6 @@ describe("which process is the default instance's service", () => {
     return dp
   }
 
-  // A pid reused by any of these must never be signalled as a winvm service.
   for (const argv of [["ollama", "serve"], ["hugo", "serve"], ["node", "server.js", "serve"], ["winvm", "serve"], ["evilwinvm", "serve", "-i", "default"], ["ollama", "serve", "-i", "default"]]) {
     it(`is never \`${argv.join(" ")}\``, () => {
       const dp = d()
@@ -286,7 +280,6 @@ describe("which process is the default instance's service", () => {
     })
   }
 
-  // What winvm spawns: from source, an installed CLI, and Tauri's target-suffixed sidecar.
   for (const argv of [
     ["/repo/apps/cli/src/winvm.ts", "serve", "-i", "default"],
     ["/Applications/winvm.app/Contents/MacOS/winvm", "serve", "--instance=default"],
@@ -364,11 +357,6 @@ describe("starting the service", () => {
   }, 30_000)
 })
 
-/**
- * A stand-in service: a process of ours whose command line passes the service
- * check (` serve -i <name>`) without being one. A single process (fakes/holder.ts),
- * so killing it leaves no orphan behind.
- */
 const fakeService = (name: string): ReturnType<typeof Bun.spawn> =>
   Bun.spawn([process.execPath, resolve(import.meta.dir, "fakes", "holder.ts"), "winvm", "serve", "-i", name], { stdout: "ignore", stderr: "ignore" })
 
@@ -469,7 +457,6 @@ describe("service generations", () => {
       ensureService("t", p, {
         current: CURRENT,
         timeoutMs: 400,
-        // A replacement that answers, but that is still the old generation.
         start: () => { record(holder().pid, "sha256:old") },
       }),
     ).rejects.toThrow("did not start")
@@ -506,7 +493,6 @@ describe("service generations", () => {
 })
 
 describe("stopping a service", () => {
-  /** A fake clock and process table: no real wait, no real signal. */
   const run = (o: { readonly isService: (t: number) => boolean }): { kills: string[]; elapsed: number } => {
     writeFileSync(p.service, JSON.stringify({ pid: 424_242, cli: "", version: "", startedAt: "" }))
     let t = 0
@@ -531,7 +517,6 @@ describe("stopping a service", () => {
   })
 
   it("re-checks the pid is still this instance's service just before SIGKILL", () => {
-    // It ignores SIGTERM for its 5 s, and by then the pid belongs to something else.
     const r = run({ isService: (t) => t < 5000 })
     expect(r.kills).toEqual(["SIGTERM"])
   })

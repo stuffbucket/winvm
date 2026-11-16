@@ -1,29 +1,3 @@
-/**
- * `winvm mcp …`: serve the guest over MCP (mcp.ts), and add that server to
- * Claude Code and Claude Desktop.
- *
- *   winvm mcp [-i name]                                       the stdio server
- *   winvm mcp install   claude-code|claude-desktop [-i name] [--json]
- *   winvm mcp uninstall claude-code|claude-desktop [-i name] [--json]
- *   winvm mcp status    [-i name] [--json]
- *
- * The server is named `winvm-<instance>` in both clients.
- *
- * CLAUDE CODE: `claude mcp add -s user winvm-<instance> -- <winvm> mcp -i <instance>`,
- * so it is there in every project. Its user-scope servers live in ~/.claude.json
- * (or $CLAUDE_CONFIG_DIR/.claude.json), which `status` reads rather than asking
- * `claude mcp get`, which starts the server to check it.
- *
- * CLAUDE DESKTOP: its `mcpServers` in ~/Library/Application Support/Claude/
- * claude_desktop_config.json (WINVM_CLAUDE_DESKTOP_CONFIG overrides, for tests).
- * Edited in place: a timestamped backup first, every other key kept, written
- * to a temporary file and renamed over it. Desktop reads it at launch.
- *
- * THE COMMAND written is one that keeps working: the app's bundled CLI
- * (…/winvm.app/Contents/MacOS/winvm) when this runs from the app, else the
- * resolved path of the CLI that is running (with Bun, from a source checkout).
- * WINVM_HOME and WINVM_RUNTIME go along when they are set.
- */
 import { copyFileSync, existsSync, fsyncSync, closeSync, openSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeSync } from "node:fs"
 import { homedir } from "node:os"
 import { basename, delimiter, dirname, join, resolve } from "node:path"
@@ -45,9 +19,6 @@ const CLIENT_NAMES: Readonly<Record<ClientId, string>> = { "claude-code": "Claud
 
 export const serverName = (instance: string): string => `winvm-${instance}`
 
-// ---------------------------------------------------------------------------
-// The command the clients run
-
 export type From = "app" | "cli" | "source"
 
 export interface Launch {
@@ -65,10 +36,6 @@ const realpath = (p: string): string => {
   }
 }
 
-/**
- * The command line a client should run for `instance`. Compiled: the binary
- * itself (inside an app bundle, "app"). From source: Bun and the CLI script.
- */
 export function launchFor(o: {
   readonly compiled: boolean
   readonly execPath: string
@@ -101,14 +68,10 @@ const FROM_NOTE: Readonly<Record<From, string>> = {
 
 const commandLine = (l: Launch): string => [l.command, ...l.args].map((a) => (/[\s"'\\$]/.test(a) ? JSON.stringify(a) : a)).join(" ")
 
-// ---------------------------------------------------------------------------
-// JSON files: read, edit, write safely
-
 type Json = Record<string, unknown>
 
 const isObject = (v: unknown): v is Json => v !== null && typeof v === "object" && !Array.isArray(v)
 
-/** A JSON object file; {} when it is missing. Throws on anything that isn't a JSON object. */
 export function readJsonObject(file: string): Json {
   if (!existsSync(file)) return {}
   const text = readFileSync(file, "utf8")
@@ -127,11 +90,6 @@ const pad = (x: number): string => String(x).padStart(2, "0")
 const stamp = (d: Date): string =>
   `${String(d.getFullYear())}${pad(d.getMonth() + 1)}${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`
 
-/**
- * Change a JSON object file through `edit`, which returns false when there is
- * nothing to change. A changed file is backed up first (beside it, timestamped)
- * and replaced atomically; a symlinked file is written through to its target.
- */
 export function editJsonFile(file: string, edit: (o: Json) => boolean, now = new Date()): { changed: boolean; backup: string | null } {
   const target = existsSync(file) ? realpath(file) : file
   const o = readJsonObject(target)
@@ -161,14 +119,12 @@ export function editJsonFile(file: string, edit: (o: Json) => boolean, now = new
   return { changed: true, backup }
 }
 
-/** What a client's config holds for one server. */
 export interface Entry {
   readonly command?: unknown
   readonly args?: unknown
   readonly env?: unknown
 }
 
-/** Does a client's entry run exactly `l`? */
 export function entryMatches(e: Entry | undefined, l: Launch): boolean {
   if (e === undefined) return false
   const env = isObject(e.env) ? e.env : {}
@@ -181,16 +137,12 @@ export function entryMatches(e: Entry | undefined, l: Launch): boolean {
 
 const servers = (o: Json): Json => (isObject(o["mcpServers"]) ? o["mcpServers"] : {})
 
-// ---------------------------------------------------------------------------
-// Claude Desktop
-
 export const desktopConfigPath = (env: Readonly<Record<string, string | undefined>> = process.env): string =>
   env["WINVM_CLAUDE_DESKTOP_CONFIG"] ?? join(homedir(), "Library", "Application Support", "Claude", "claude_desktop_config.json")
 
 const desktopAvailable = (config: string): boolean =>
   existsSync(dirname(config)) || existsSync("/Applications/Claude.app") || existsSync(join(homedir(), "Applications", "Claude.app"))
 
-/** Add (or update) the server in Claude Desktop's config file. */
 export function desktopInstall(config: string, name: string, l: Launch, now = new Date()): { changed: boolean; backup: string | null } {
   return editJsonFile(
     config,
@@ -220,18 +172,11 @@ export function desktopUninstall(config: string, name: string, now = new Date())
   )
 }
 
-// ---------------------------------------------------------------------------
-// Claude Code
-
 export const codeConfigPath = (env: Readonly<Record<string, string | undefined>> = process.env): string => {
   const dir = env["CLAUDE_CONFIG_DIR"]
   return dir !== undefined && dir !== "" ? join(dir, ".claude.json") : join(env["HOME"] ?? homedir(), ".claude.json")
 }
 
-/**
- * The `claude` command: WINVM_CLAUDE, else on PATH, else where its installers
- * put it. The app's CLI runs with launchd's bare PATH, hence the list.
- */
 export function findClaude(env: Readonly<Record<string, string | undefined>> = process.env, exists: (p: string) => boolean = isExecutable): string | null {
   const own = env["WINVM_CLAUDE"]
   if (own !== undefined && own !== "") return exists(own) ? own : null
@@ -270,7 +215,6 @@ export interface Ran {
 
 export type Runner = (argv: readonly string[]) => Ran
 
-/** Run `claude …`, with its own folder and the usual tool folders on PATH (an npm install is a node script). */
 export function runnerFor(claude: string, env: Readonly<Record<string, string | undefined>> = process.env): Runner {
   const path = [dirname(claude), ...(env["PATH"] ?? "/usr/bin:/bin:/usr/sbin:/sbin").split(delimiter), "/opt/homebrew/bin", "/usr/local/bin"].join(delimiter)
   return (argv) => {
@@ -287,7 +231,6 @@ export const entryIn = (config: string, name: string): Entry | undefined => {
   }
 }
 
-/** `claude mcp add` for the user scope; an entry that runs something else is replaced. */
 export function codeInstall(run: Runner, config: string, name: string, l: Launch): { changed: boolean } {
   const have = entryIn(config, name)
   if (entryMatches(have, l)) return { changed: false }
@@ -308,17 +251,11 @@ export function codeUninstall(run: Runner, config: string, name: string): { chan
   return { changed: true }
 }
 
-// ---------------------------------------------------------------------------
-// Commands
-
 export interface ClientStatus {
   readonly id: ClientId
   readonly name: string
-  /** The client is on this Mac. */
   readonly available: boolean
-  /** It has a server named winvm-<instance>. */
   readonly added: boolean
-  /** …and that server runs what install would write now. */
   readonly current: boolean
   readonly config: string
 }
@@ -335,7 +272,6 @@ export function clientStatus(id: ClientId, instance: string, l: Launch, env: Rea
   return { id, name: CLIENT_NAMES[id], available: desktopAvailable(config), added: e !== undefined, current: entryMatches(e, l), config }
 }
 
-/** Positional arguments, giving back one `--json` swallowed as its value. */
 function positionals(args: Args): readonly string[] {
   const v = args.flags.get("json")
   return v !== undefined && v !== "true" ? [...args.positional, v] : args.positional

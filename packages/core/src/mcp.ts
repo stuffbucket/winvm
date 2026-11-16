@@ -1,27 +1,3 @@
-/**
- * `winvm mcp [-i name]`: the guest as an MCP server on stdio, for Claude Code,
- * Claude Desktop and any other MCP client. mcpcmds.ts adds it to those clients.
- *
- * Tools: screenshot, click, double_click, right_click, move, drag, scroll,
- * type, key, find_and_click (UI Automation), find_text (OCR), run, list_files,
- * copy_to_windows, copy_from_windows, status. Every tool takes an optional
- * `instance`; the default is `-i`, else WINVM_INSTANCE, else "default".
- *
- * The screen tools are cua.ts's executor (QMP screendump and input events,
- * screenshots scaled into 1280x800, coordinates in screenshot pixels); the
- * UIA and OCR tools are cuacmds.ts's extras; run and the copies go through the
- * in-guest agent (agent.ts), installed on first use if need be.
- *
- * PROTOCOL. JSON-RPC 2.0, one message per line on stdin/stdout (the MCP stdio
- * transport). Handled: initialize, ping, tools/list, tools/call; notifications
- * are read and ignored. stdout carries protocol messages only: the server
- * sends console.log and friends to stderr while it runs, so nothing a module
- * prints can corrupt the stream.
- *
- * The server stays up whatever the guest does. A tool called on a stopped or
- * missing instance answers with a tool error that says how to start it, and
- * per-instance state is dropped when the instance's QEMU process changes.
- */
 import { existsSync, readFileSync, statSync } from "node:fs"
 import { homedir } from "node:os"
 import { isAbsolute, resolve } from "node:path"
@@ -39,44 +15,32 @@ import { listInstances, pathsFor, readMeta } from "./paths"
 import * as qemu from "./qemu"
 import * as watcher from "./watch"
 
-// ---------------------------------------------------------------------------
-// What the tools need from a guest: real ones below, fakes in tests.
-
-/** The executor's surface the tools use (cua.ts's Computer). */
 export interface ScreenLike {
   run(action: string, params: Readonly<Record<string, unknown>>): Promise<Result>
   display(): Promise<{ native: { width: number; height: number }; scale: number; size: { width: number; height: number } }>
   close(): void
 }
 
-/** The extras' surface (cuacmds.ts's Extras): ui_click and ocr_find. */
 export interface ExtrasLike {
   run(action: string, input: Readonly<Record<string, unknown>>): Promise<Result>
 }
 
-/** The agent client calls the tools make. */
 export type AgentLike = Pick<agent.AgentClient, "exec" | "list" | "putFile" | "getFile" | "pwsh">
 
 export interface Guest {
   readonly name: string
   readonly screen: ScreenLike
   readonly extras: ExtrasLike
-  /** The in-guest agent, installed or started if need be. */
   agent(): Promise<AgentLike>
-  /** The agent if one answers quickly, else null; never installs. */
   agentIfUp(): Promise<AgentLike | null>
 }
 
 export interface Deps {
-  /** Why `name` can't be used right now (missing, stopped), or null when it is running. */
   check(name: string): string | null
-  /** The guest's tools. Called only after check() said yes. */
   guest(name: string): Guest
-  /** Tell the idle watcher the guest is in use for as long as `work` runs. */
   active<T>(name: string, work: Promise<T>): Promise<T>
 }
 
-/** Why an instance can't be used, as a sentence that says what to do. */
 export function whyNot(name: string, o: { readonly exists: boolean; readonly running: boolean; readonly others: readonly string[] }): string | null {
   if (!o.exists) {
     const have = o.others.length === 0 ? "There are no instances yet." : `Instances: ${o.others.join(", ")}.`
@@ -86,7 +50,6 @@ export function whyNot(name: string, o: { readonly exists: boolean; readonly run
   return null
 }
 
-/** The real thing: QMP for the screen, the agent for the rest, one set per QEMU process. */
 export function realDeps(): Deps {
   const guests = new Map<string, { pid: string; guest: Guest }>()
   const qemuPid = (name: string): string => {
@@ -117,9 +80,6 @@ export function realDeps(): Deps {
     active: async (name, work) => await watcher.whileActive(name, work),
   }
 }
-
-// ---------------------------------------------------------------------------
-// Tools
 
 export type Content = { readonly type: "text"; readonly text: string } | { readonly type: "image"; readonly data: string; readonly mimeType: string }
 
@@ -354,14 +314,12 @@ function need(input: Input, key: string, type: "string" | "number" | "boolean", 
   return v
 }
 
-/** "ctrl-alt-delete" as "ctrl+alt+delete"; anything with a + (or a lone "-") as given. */
 export function normalizeKeys(keys: string): string {
   const k = keys.trim()
   if (k.includes("+") || k.length < 3 || !/[^-]-[^-]/.test(k)) return k
   return k.replace(/(?<=[^-])-(?=[^-])/g, "+")
 }
 
-/** Long output kept to its start and end, with a note of what was left out. */
 export function clip(s: string, max = 40_000): string {
   if (s.length <= max) return s
   const head = Math.floor(max * 0.25)
@@ -369,7 +327,6 @@ export function clip(s: string, max = 40_000): string {
   return `${s.slice(0, head)}\n… [${String(s.length - max)} characters left out] …\n${s.slice(s.length - tail)}`
 }
 
-/** A Mac path from a tool: absolute, `~` expanded. */
 export function macPath(p: string): string {
   const expanded = p === "~" ? homedir() : p.startsWith("~/") ? resolve(homedir(), p.slice(2)) : p
   if (!isAbsolute(expanded)) throw new ToolInputError(`mac_path must be an absolute path (or start with ~), got "${p}"`)
@@ -380,12 +337,6 @@ const POWERSHELL = "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.e
 const PWSH = "C:\\Program Files\\PowerShell\\7\\pwsh.exe"
 const CMD = "C:\\Windows\\System32\\cmd.exe"
 
-/**
- * The script `run` hands PowerShell. Errors come back as plain text on stderr:
- * with -EncodedCommand and redirected output, Windows PowerShell would write
- * them as CLIXML. A native command's exit code is the run's; an error the
- * script wrote, or threw, makes it 1.
- */
 export function psScript(command: string): string {
   return [
     "$ProgressPreference = 'SilentlyContinue'",
@@ -405,15 +356,12 @@ export function psScript(command: string): string {
   ].join("\n")
 }
 
-/** The argv for `run`, and whether it must reach the program verbatim (cmd's quoting is its own). */
 export function shellArgv(shell: string, command: string, pwsh = PWSH): { argv: string[]; verbatim: boolean } {
   if (shell === "cmd") return { argv: [CMD, "/d", "/s", "/c", `"${command}"`], verbatim: true }
-  // Encoded, so no quoting can break it.
   const encoded = Buffer.from(psScript(command), "utf16le").toString("base64")
   return { argv: [shell === "pwsh" ? pwsh : POWERSHELL, "-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-EncodedCommand", encoded], verbatim: false }
 }
 
-/** cua.ts's content blocks as MCP content. */
 export function toContent(blocks: readonly Block[]): Content[] {
   return blocks.map((b) => (b.type === "text" ? { type: "text", text: b.text } : { type: "image", data: b.source.data, mimeType: b.source.media_type }))
 }
@@ -422,14 +370,9 @@ const fromResult = (r: Result): ToolResult => ({ content: toContent(r.content), 
 
 const n = (v: number): string => String(Math.round(v))
 
-/**
- * The tools. One instance of this per server; `call` never throws: bad input,
- * a stopped guest and failures all come back as tool errors.
- */
 export class Tools {
   private readonly deps: Deps
   private readonly defaultInstance: string
-  /** The screen tools one at a time: QMP takes one client, and the pointer is shared. */
   private tail: Promise<unknown> = Promise.resolve()
 
   constructor(deps: Deps, defaultInstance: string) {
@@ -583,7 +526,6 @@ export class Tools {
     const opts = { timeoutMs: seconds * 1000, ...(cwd === undefined || cwd === "" ? {} : { cwd }) }
     const missing = (e: unknown): boolean => e instanceof agent.AgentError && /ENOENT|not found|cannot find|no such file/i.test(e.message)
     let r: agent.ExecResponse | null = null
-    // pwsh: where its installer puts it, else wherever PATH has it.
     for (const exe of shell === "pwsh" ? [PWSH, "pwsh.exe"] : [""]) {
       const { argv, verbatim } = shellArgv(shell, command, exe)
       try {
@@ -623,7 +565,6 @@ export class Tools {
   }
 }
 
-/** "Windows 11 Pro 24H2 (10.0.26100.4349)", from the guest's registry, or null. */
 async function windowsVersion(c: AgentLike): Promise<string | null> {
   const script =
     "$k = Get-ItemProperty 'HKLM:\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion'; " +
@@ -638,10 +579,6 @@ async function windowsVersion(c: AgentLike): Promise<string | null> {
   }
 }
 
-// ---------------------------------------------------------------------------
-// JSON-RPC over stdio
-
-/** Protocol revisions this server speaks, newest first. */
 export const PROTOCOL_VERSIONS = ["2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05"] as const
 
 const INSTRUCTIONS =
@@ -660,10 +597,6 @@ export interface ServerInfo {
   readonly version: string
 }
 
-/**
- * One message in, the response out (null for a notification). Exported for
- * tests; `serve` wires it to stdin and stdout.
- */
 export async function handle(tools: Tools, info: ServerInfo, msg: unknown): Promise<Json | null> {
   if (msg === null || typeof msg !== "object" || Array.isArray(msg)) return rpcError(null, -32600, "Invalid Request")
   const m = msg as Json
@@ -671,10 +604,9 @@ export async function handle(tools: Tools, info: ServerInfo, msg: unknown): Prom
   const hasId = Object.hasOwn(m, "id")
   const id = (hasId ? m["id"] : null) as Id
   if (typeof method !== "string") {
-    // A response to something we never send, or junk.
     return hasId && (Object.hasOwn(m, "result") || Object.hasOwn(m, "error")) ? null : rpcError(id, -32600, "Invalid Request")
   }
-  if (!hasId) return null // notifications: initialized, cancelled, roots changed…
+  if (!hasId) return null
   const params = (m["params"] ?? {}) as Json
   switch (method) {
     case "initialize": {
@@ -707,10 +639,7 @@ export async function handle(tools: Tools, info: ServerInfo, msg: unknown): Prom
   }
 }
 
-
-/** `winvm mcp [-i name]`: serve until stdin closes. */
 export async function serve(args: Args, deps: Deps = realDeps()): Promise<number> {
-  // Protocol messages only on stdout, whatever any module prints.
   const toStderr = (...a: unknown[]): void => {
     console.error(...a)
   }
@@ -741,7 +670,6 @@ export async function serve(args: Args, deps: Deps = realDeps()): Promise<number
       out(rpcError(null, -32700, "Parse error"))
       continue
     }
-    // Each request on its own, so a ping is answered while a long `run` goes on.
     for (const m of Array.isArray(msg) ? msg : [msg]) {
       const p = one(m).finally(() => pending.delete(p))
       pending.add(p)

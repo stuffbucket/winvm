@@ -1,7 +1,3 @@
-/**
- * The pure half of file saves: names, manifests, and the compatibility hash.
- * No VM needed.
- */
 import { describe, expect, it } from "bun:test"
 
 import { formatOffset, parseGuestTz } from "../src/clock"
@@ -277,7 +273,6 @@ describe("savesReport", () => {
     const file = (save: string, f: string): string | null => (f === FILES.screen ? `/saves/${save}/${f}` : null)
     const [e] = savesReport([{ name: m.name, manifest: shot }], { compat: null, file })
     expect(e?.screenshot).toBe("/saves/before-update/screen.png")
-    // The file decides, not the manifest: thumb.png is not there.
     expect(e?.thumbnail).toBeNull()
     expect(e?.screenSize).toEqual({ width: 1920, height: 1080 })
   })
@@ -299,7 +294,6 @@ describe("savesReport", () => {
         ?.incompatible
     expect(why({ ...parts, qemu: "11.0.0", base: "old" })).toEqual(["base", "qemu"])
     expect(why({ ...parts, hardware: "other" })).toEqual(["hardware"])
-    // The save's hardware is what this instance would be with the other display device.
     expect(why({ ...parts, hardware: "ramfb-h" }, ["ramfb-h"])).toEqual(["display"])
     expect(why({ ...parts, hardware: "ramfb-h", firmware: "old" }, ["ramfb-h"])).toEqual(["display", "firmware"])
   })
@@ -329,7 +323,6 @@ describe("savesReport", () => {
     expect(savesReport([{ name: m.name, manifest: { ...m, compatParts: parts } }], { compat: now })[0]).not.toHaveProperty("incompatible")
     const unknown = { ...m, compat: "x", compatParts: { ...parts, base: "o" } }
     expect(savesReport([{ name: m.name, manifest: unknown }], { compat: null })[0]).not.toHaveProperty("incompatible")
-    // An old save with no recorded parts: incompatible, but no way to say why.
     const [old] = savesReport([{ name: m.name, manifest: { ...m, compat: "x" } }], { compat: now })
     expect(old?.compatible).toBe(false)
     expect(old).not.toHaveProperty("incompatible")

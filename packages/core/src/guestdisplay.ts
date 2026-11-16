@@ -1,20 +1,3 @@
-/**
- * The running guest's screen: what QEMU shows now, and resizing it live on
- * virtio-gpu (display.ts explains the device; displayfit.ts the limits).
- *
- * A LIVE RESIZE IS TWO STEPS, in this order:
- *   1. `requestSize`: VNC SetDesktopSize (desktopsize.ts). QEMU passes the size
- *      to virtio-gpu, and the guest's viogpudo driver adds it to its modes.
- *      The app's viewer sends this itself, over its own noVNC connection.
- *   2. `setGuestSize`: the in-guest agent's display helper waits for that mode
- *      and sets it with ChangeDisplaySettingsEx in the logged-on session, then
- *      the display scale if asked. Without step 1 the size is not a mode and
- *      the helper times out; without step 2 nothing changes.
- * Measured on win11-arm64: ~80 ms from the request to QEMU's new framebuffer.
- *
- * WHY NOT qemu-ga. qemu-ga runs in session 0: ChangeDisplaySettingsEx there
- * returns success and changes nothing on the user's desktop.
- */
 import type { Size } from "@winvm/displayfit"
 
 import * as agent from "./agent"
@@ -26,18 +9,15 @@ import * as qemu from "./qemu"
 import { screenSize } from "./input"
 import { passwordFor, vncPort } from "./vnc"
 
-/** The device the RUNNING QEMU was started with, read off its command line (display.ts runningDisplay). */
 export function liveDevice(p: Paths): string | null {
   const pid = qemu.pidOf(p)
   return pid === null ? null : (runningDisplay(pid)?.device ?? null)
 }
 
-/** The same parser a save's recorded display uses, so a command line is judged one way everywhere. */
 export function deviceFromCommandLine(cmd: string): string | null {
   return displayFromCommandLine(cmd)?.device ?? null
 }
 
-/** The framebuffer's current size, or null if the monitor didn't answer. */
 export async function liveSize(p: Paths): Promise<Size | null> {
   try {
     return await withQmp(p.qmp, async (q) => await screenSize(q), 5000)
@@ -46,7 +26,6 @@ export async function liveSize(p: Paths): Promise<Size | null> {
   }
 }
 
-/** Step 1: ask QEMU, over VNC, for `size`. Throws unless QEMU forwarded it to the device. */
 export async function requestSize(p: Paths, meta: InstanceMeta, size: Size): Promise<void> {
   const answer = await requestDesktopSize(vncPort(meta.vnc), passwordFor(p), size.width, size.height)
   if (answer.status !== 4 && answer.status !== 0) {
@@ -55,33 +34,22 @@ export async function requestSize(p: Paths, meta: InstanceMeta, size: Size): Pro
   }
 }
 
-/** What the guest's display helper reports. */
 export interface GuestDisplay {
   readonly width: number
   readonly height: number
-  /** Windows' display scale, percent. */
   readonly scale: number
-  /** The largest scale Windows allows at this size. */
   readonly maxScale: number
-  /** Effective DPI of the screen (96 at 100%). */
   readonly dpi: number
   readonly changed?: boolean
   readonly scaled?: boolean
   readonly ms?: number
-  /** Windows is at its lock screen: the agent sets the size once someone signs in (guestagent.ts LockedDisplay). */
   readonly deferred?: boolean
 }
 
-/** The guest's size and scale, from the helper. */
 export async function guestState(name: string): Promise<GuestDisplay> {
   return await (await agent.requireAgent(name)).display<GuestDisplay>({ op: "get" })
 }
 
-/**
- * Step 2: set the size in the guest (waiting up to `waitMs` for the driver to
- * offer it), and the scale if given and different. Ensures an agent new enough
- * to have the helper: an older one is reinstalled, once.
- */
 export async function setGuestSize(name: string, size: Size, o: { readonly scale?: number; readonly waitMs?: number } = {}): Promise<GuestDisplay> {
   const c = await agent.ensure(name)
   return await c.display<GuestDisplay>({
@@ -93,7 +61,6 @@ export async function setGuestSize(name: string, size: Size, o: { readonly scale
   })
 }
 
-/** Set only the scale (percent). */
 export async function setGuestScale(name: string, scale: number): Promise<GuestDisplay> {
   return await (await agent.ensure(name)).display<GuestDisplay>({ op: "scale", scale })
 }

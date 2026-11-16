@@ -4,19 +4,13 @@ import { createServer } from "node:net"
 export type Handler = (req: Record<string, unknown>) => Record<string, unknown> | null
 
 export class FakeAgent {
-  /** Replies owed to callers that hung up first; the next connection receives them. */
   owed: Buffer[] = []
   handler: Handler = () => ({ return: {} })
   readonly files = new Map<string, Buffer>()
-  /**
-   * The largest guest-file-read the agent will answer. Above it the real one
-   * sends nothing at all, though its file position still moves on.
-   */
   readCeiling = 1_900_000
   readonly reads: number[] = []
   private readonly handles = new Map<number, { data: Buffer; pos: number }>()
   private nextHandle = 1000
-  /** Connections accepted so far: what waitFor must not make too early. */
   connections = 0
   readonly path: string
   private readonly server: Server
@@ -36,7 +30,6 @@ export class FakeAgent {
     await new Promise<void>((r) => this.server.close(() => { r() }))
   }
 
-  /** The guest-file-* commands; undefined for anything else, null for "no reply". */
   private file(req: Record<string, unknown>): Record<string, unknown> | null | undefined {
     const a = (req["arguments"] ?? {}) as Record<string, unknown>
     switch (req["execute"]) {
@@ -87,7 +80,6 @@ export class FakeAgent {
     sock.on("data", (chunk: Buffer) => {
       buf = Buffer.concat([buf, chunk])
       for (;;) {
-        // 0xFF resets the agent's parser, as qemu-ga's does.
         const ff = buf.lastIndexOf(0xff)
         if (ff >= 0) buf = buf.subarray(ff + 1)
         const nl = buf.indexOf(0x0a)
@@ -106,14 +98,12 @@ export class FakeAgent {
         }
         const reply = this.handler(req)
         if (reply === null) {
-          // Slow: answer only after the caller has given up.
           const late = Buffer.from(`${JSON.stringify({ return: `late reply to ${String(req["execute"])}` })}\n`)
           setTimeout(() => {
             send(late)
           }, 150)
           continue
         }
-        // Written in pieces, as a large reply arrives over the real channel.
         const bytes = Buffer.from(`${JSON.stringify(reply)}\n`)
         for (let off = 0; off < bytes.length; off += 7) send(bytes.subarray(off, off + 7))
       }

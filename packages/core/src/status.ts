@@ -1,19 +1,3 @@
-/**
- * `winvm status` — what an instance is doing, in one screen, quickly.
- *
- * FAST BY CONSTRUCTION. Everything here is a file read, a `ps`, one QMP query,
- * or one guest-agent connection carrying three cheap built-in commands
- * (guest-info, guest-get-osinfo, guest-get-time). Nothing launches a process in
- * the guest: a PowerShell probe costs ~20 s on this ARM64 guest, which is the
- * difference between a status line and a coffee break.
- *
- * Gathering (impure) and formatting (pure) are separate so the formatting can
- * be tested without a VM, and so the web page and `--json` share one report.
- *
- * Saves and the idle watcher are other commands' files. They may not exist,
- * and may be from a newer or older version of those commands, so they are read
- * defensively: anything unreadable is reported as absent, never thrown.
- */
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs"
 import { connect } from "node:net"
 import { resolve } from "node:path"
@@ -33,9 +17,6 @@ import * as timemachine from "./timemachine"
 import { vncPort, websocketPort } from "./vnc"
 import { spawnText } from "./shell"
 
-// ---------------------------------------------------------------------------
-// The report
-
 export type State = "running" | "paused" | "asleep" | "stopped" | "stowed" | "missing"
 
 export interface SaveInfo {
@@ -47,7 +28,6 @@ export interface SaveInfo {
 }
 
 export interface WatchInfo {
-  /** The watcher process is alive. A file left by a dead one says nothing current. */
   readonly alive: boolean
   readonly pid: number | null
   readonly state: string
@@ -58,22 +38,17 @@ export interface WatchInfo {
 }
 
 export interface GuestInfo {
-  /** "ok": the agent answered; "silent": it did not (booting, wedged, or busy). */
   readonly agent: "ok" | "silent"
   readonly agentVersion: string | null
   readonly os: string | null
-  /** guest clock minus host clock, in ms; positive means the guest is ahead. */
   readonly clockOffsetMs: number | null
 }
 
 export interface InstanceStatus {
   readonly name: string
-  /** What the Mac app calls it (`winvm config title=…`); null: its name. */
   readonly title: string | null
-  /** What closing the viewer window does here (`winvm config viewer.closePolicy=…`); `ask` unless chosen. */
   readonly closePolicy: ClosePolicy
   readonly state: State
-  /** QEMU's own run state (`query-status`), when the monitor answered. */
   readonly vmStatus: string | null
   readonly image: string | null
   readonly snapshotsCapable: boolean | null
@@ -82,11 +57,6 @@ export interface InstanceStatus {
   readonly cpus: number | null
   readonly memoryMiB: number | null
   readonly display: number | null
-  /**
-   * The display device: the one a running QEMU was launched with (a restored
-   * save brings its own), the cold-boot preference of a stopped instance
-   * (display.ts); null when a running one's cannot be read.
-   */
   readonly screen: string | null
   readonly vncPort: number | null
   readonly websocketPort: number | null
@@ -96,18 +66,9 @@ export interface InstanceStatus {
   readonly watcher: WatchInfo | null
   readonly service: { readonly pid: number } | null
   readonly serviceExpected: boolean
-  /**
-   * The machine-impacting command running against this instance right now
-   * (operation.ts), validated against its live process; null when none is, or
-   * when its owner has died. Never waits for the command or its save lock.
-   */
   readonly operation: OperationInfo | null
-  /** Things that could not be determined, in words. */
   readonly notes: readonly string[]
 }
-
-// ---------------------------------------------------------------------------
-// Reading other commands' files
 
 export const savesDir = (instance: string): string => resolve(home(), "saves", instance)
 export const watchPath = (instance: string): string => resolve(instanceDir(instance), "watch.json")
@@ -125,7 +86,6 @@ function readJson(path: string): Record<string, unknown> | null {
   }
 }
 
-/** Newest first. A save whose manifest can't be read is skipped, not fatal. */
 export function readSaves(instance: string): readonly SaveInfo[] {
   let names: string[]
   try {
@@ -192,10 +152,6 @@ export function parseWatch(raw: Record<string, unknown> | null, alive: (pid: num
 
 export const readWatch = (instance: string): WatchInfo | null => parseWatch(readJson(watchPath(instance)), pidAlive)
 
-// ---------------------------------------------------------------------------
-// Probing the host process and the guest
-
-/** `ps -o etime` is `[[dd-]hh:]mm:ss`. */
 export function parseEtime(s: string): number | null {
   const m = /^\s*(?:(\d+)-)?(?:(\d+):)?(\d+):(\d+)\s*$/.exec(s)
   if (m === null) return null
@@ -203,7 +159,6 @@ export function parseEtime(s: string): number | null {
   return Number(d ?? 0) * 86400 + Number(h ?? 0) * 3600 + Number(mm) * 60 + Number(ss)
 }
 
-/** `-smp N` and `-m MiB` from a QEMU command line. */
 export function parseHardware(argv: readonly string[]): { cpus: number | null; memoryMiB: number | null } {
   let cpus: number | null = null
   let memoryMiB: number | null = null
@@ -218,17 +173,9 @@ export function parseHardware(argv: readonly string[]): { cpus: number | null; m
   return { cpus, memoryMiB }
 }
 
-// -ww: never cut to the terminal's width, or the arguments read below could be cut off.
 const psField = (pid: number, field: string): string =>
   spawnText("ps", ["-ww", "-o", `${field}=`, "-p", String(pid)]).stdout.trim()
 
-/**
- * Processors, memory and display. A running guest reports what its QEMU was
- * actually launched with, off its own command line. For the display that can
- * differ from display.json (a restored save brings its own), so a process whose
- * display cannot be read is reported unknown, never as the preference. A
- * stopped one reports what its next start would use.
- */
 function hardwareFor(name: string, p: Paths, pid: number | null): Pick<InstanceStatus, "cpus" | "memoryMiB" | "screen"> {
   if (pid !== null) {
     const cmd = psField(pid, "command")
@@ -256,15 +203,6 @@ function allocatedBytes(path: string): number | null {
   }
 }
 
-/**
- * One guest-agent connection, three built-in commands.
- *
- * ONE CONNECTION, SYNCED FIRST, on purpose. The agent's channel is a single
- * byte stream into the guest: a reply to a request whose caller gave up can
- * arrive on the NEXT connection and be read as the answer to something else.
- * `guest-sync-delimited` with a fresh id flushes that, and every reply is also
- * checked for the shape its command returns.
- */
 export async function probeGuest(sockPath: string, timeoutMs = 4000): Promise<GuestInfo> {
   const silent: GuestInfo = { agent: "silent", agentVersion: null, os: null, clockOffsetMs: null }
   if (!existsSync(sockPath)) return silent
@@ -296,7 +234,6 @@ export async function probeGuest(sockPath: string, timeoutMs = 4000): Promise<Gu
     sock.on("error", () => { finish(silent) })
     sock.on("connect", () => { send({ execute: "guest-sync-delimited", arguments: { id: syncId } }) })
     sock.on("data", (chunk) => {
-      // The sync reply is preceded by a 0xFF sentinel byte; drop it.
       buf += chunk.toString("latin1").replaceAll("\xff", "")
       for (;;) {
         const nl = buf.indexOf("\n")
@@ -311,7 +248,7 @@ export async function probeGuest(sockPath: string, timeoutMs = 4000): Promise<Gu
         }
         const ret = msg["return"]
         if (step === 0) {
-          if (ret !== syncId) continue // a stale reply from someone else's request
+          if (ret !== syncId) continue
           step = 1
           send({ execute: "guest-info" })
         } else if (step === 1) {
@@ -336,19 +273,14 @@ export async function probeGuest(sockPath: string, timeoutMs = 4000): Promise<Gu
   })
 }
 
-/** "Windows 11 Pro (build 26100)" from guest-get-osinfo. */
 export function osLabel(o: Record<string, unknown>): string | null {
   const build = str(o["kernel-release"])
   let pretty = str(o["pretty-name"]) ?? str(o["name"])
-  // Windows 11 still calls itself "Windows 10" in the registry value the agent
-  // reads (ProductName). The build number is what tells them apart: 11 starts
-  // at 22000.
   if (pretty !== null && build !== null && Number(build) >= 22000) pretty = pretty.replace(/Windows 10\b/, "Windows 11")
   if (pretty === null) return build === null ? null : `build ${build}`
   return build === null ? pretty : `${pretty} (build ${build})`
 }
 
-/** QEMU's run state, or null if the monitor didn't answer in time. */
 async function queryStatus(p: Paths): Promise<string | null> {
   try {
     const r = (await qmpCommand(p.qmp, "query-status", undefined, 2000)) as { status?: unknown } | undefined
@@ -359,21 +291,10 @@ async function queryStatus(p: Paths): Promise<string | null> {
 }
 
 export function deriveState(running: boolean, vmStatus: string | null, saves: readonly SaveInfo[], asleep = false, saving = false): State {
-  // PAUSED or ASLEEP while the vCPUs are stopped (frozen.ts), including the
-  // "postmigrate" a save of a paused guest leaves behind. A monitor that did
-  // not answer (null) is a save or load at work: running, as before. So is a
-  // save of a running guest, which stops it only to save it (`saving`).
   if (running) return saving ? "running" : (frozenFrom(vmStatus, asleep) ?? "running")
-  // STOWED: stopped with its running state put away. `winvm stow` writes a save
-  // of kind "stow" and the next `winvm start` recalls and consumes it, so while
-  // one exists the instance is stowed rather than merely stopped.
   return saves.some((s) => s.kind === "stow") ? "stowed" : "stopped"
 }
 
-/**
- * Everything about one instance. `deep` adds the guest-agent probe, which is
- * what `status -i` shows; the multi-instance table skips it to stay quick.
- */
 export async function gather(name: string, deep = true): Promise<InstanceStatus> {
   const p = pathsFor(name)
   const meta = readMeta(name)
@@ -385,7 +306,6 @@ export async function gather(name: string, deep = true): Promise<InstanceStatus>
   const config = effectiveConfig(name)
   const title = config.title || null
   const closePolicy = config["viewer.closePolicy"]
-  // Read once, before anything awaits, so every shape below reports the same one.
   const operation = readOperation(name)
 
   if (meta === null) {
@@ -421,9 +341,6 @@ export async function gather(name: string, deep = true): Promise<InstanceStatus>
   const vmStatus = running ? await queryStatus(p) : null
   const saving = running && savingRunning(name)
   const state = deriveState(running, vmStatus, saves, markedAsleep(p, pid), saving)
-  // A paused or asleep guest cannot answer its agent: asking only waits out
-  // the probe's timeout (~4 s), and leaves calls queued for when it resumes.
-  // Nor can one stopped for a save, for those seconds.
   const guest = running && deep && state === "running" && !saving ? await probeGuest(p.qga) : null
   if (running && vmStatus === null) notes.push("QEMU's monitor did not answer (busy with a save or load?)")
   if (guest?.agent === "silent" && state === "running") notes.push("the guest agent did not answer — still booting, or busy")
@@ -456,9 +373,6 @@ export async function gather(name: string, deep = true): Promise<InstanceStatus>
 export const gatherAll = async (deep = false): Promise<readonly InstanceStatus[]> =>
   await Promise.all([...listInstances()].sort().map(async (n) => await gather(n, deep)))
 
-// ---------------------------------------------------------------------------
-// Formatting (pure)
-
 export function formatDuration(seconds: number): string {
   const s = Math.max(0, Math.round(seconds))
   const d = Math.floor(s / 86400)
@@ -470,12 +384,10 @@ export function formatDuration(seconds: number): string {
   return `${String(s)}s`
 }
 
-/** RAM in the binary units QEMU's -m uses: 4096 -> "4 GiB". */
 export function formatMemory(mib: number): string {
   return mib % 1024 === 0 ? `${String(mib / 1024)} GiB` : mib >= 1024 ? `${(mib / 1024).toFixed(1)} GiB` : `${String(mib)} MiB`
 }
 
-/** Binary units with the short labels `du -h` and `winvm saves` use: 1 GB = 1024³ bytes. */
 export function formatBytes(n: number): string {
   const units = ["B", "KB", "MB", "GB", "TB"]
   let v = n
@@ -487,7 +399,6 @@ export function formatBytes(n: number): string {
   return `${i === 0 ? String(v) : v.toFixed(v < 10 ? 1 : 0)} ${units[i] ?? "B"}`
 }
 
-/** "3h ago", from an ISO time. */
 export function formatAge(iso: string, now: number): string {
   const t = Date.parse(iso)
   if (!Number.isFinite(t)) return "unknown time"
@@ -495,7 +406,6 @@ export function formatAge(iso: string, now: number): string {
   return s < 0 ? `in ${formatDuration(-s)}` : `${formatDuration(s)} ago`
 }
 
-/** Under a second is within what one agent round trip can resolve. */
 export function formatOffset(ms: number): string {
   const abs = Math.abs(ms)
   if (abs < 1000) return "in sync with the host (within 1 s)"
@@ -542,7 +452,6 @@ export interface Report {
   readonly notes: readonly string[]
 }
 
-/** The single-instance report as labelled rows: the CLI prints them, the web page lays them out. */
 export function statusReport(s: InstanceStatus, timeMachine: string, now: number): Report {
   const rows: [string, string][] = []
   const flag = s.name === "default" ? "" : ` -i ${s.name}`
@@ -615,7 +524,6 @@ export function formatStatus(s: InstanceStatus, timeMachine: string, now: number
   return [r.title, ...r.rows.map(([k, v]) => `  ${k.padEnd(width)}  ${v}`), ...r.notes.map((n) => `  note: ${n}`)].join("\n")
 }
 
-/** The several-instances table. */
 export function formatTable(all: readonly InstanceStatus[], timeMachine: string, now: number): string {
   const head = ["NAME", "STATE", "UPTIME", "VNC", "DISK", "SAVES", "WATCHER"]
   const body = all.map((s) => [
@@ -631,9 +539,6 @@ export function formatTable(all: readonly InstanceStatus[], timeMachine: string,
   const line = (r: readonly string[]): string => r.map((c, i) => c.padEnd(widths[i] ?? 0)).join("  ").trimEnd()
   return [line(head), ...body.map(line), "", timeMachine, "details: winvm status -i <name>"].join("\n")
 }
-
-// ---------------------------------------------------------------------------
-// The command
 
 export interface StatusArgs {
   readonly instance: string | null

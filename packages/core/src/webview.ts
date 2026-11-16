@@ -1,37 +1,3 @@
-/**
- * `winvm webview …` — drive the web UI inside a Windows app's WebView2 windows
- * (Tauri, WinUI/WPF hosts, Electron-alikes on Edge) from the host, over the
- * Chrome DevTools Protocol (cdp.ts).
- *
- *   winvm webview enable <exe> [--port 9222]   once per instance; restart the app after
- *   winvm webview targets [--json]
- *   winvm webview eval  <js>        [--target T]
- *   winvm webview click <selector>  [--target T]
- *   winvm webview wait  <selector>  [--target T] [--timeout S] [--visible]
- *   winvm webview text  <selector>  [--target T] [--expect TEXT]
- *   winvm webview disable <exe> [--port 9222]
- *
- * HOW THE PORT GETS OUT. Three hops, each forced by something:
- *
- *   1. WebView2 opens a DevTools port only when told to by its browser
- *      arguments. Tauri ignores WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS, so the
- *      one switch that works for any app is the machine policy
- *      HKLM\SOFTWARE\Policies\Microsoft\Edge\WebView2\AdditionalBrowserArguments,
- *      value name = the host exe's file name, data `--remote-debugging-port=N`.
- *      Read when the app creates its WebView2 environment — so at app start.
- *   2. Chromium binds that port to 127.0.0.1 only, and a slirp forward lands on
- *      the guest's own address (10.0.2.15), never its loopback. A Windows
- *      portproxy (`netsh interface portproxy`, iphlpsvc) relays 0.0.0.0:N+10000
- *      to 127.0.0.1:N, with a firewall rule letting in 10.0.2.2 (slirp) only.
- *   3. A host port is forwarded to that relay at RUNTIME over the monitor
- *      (`hostfwd_add`), like the agent's (agentfwd.ts) and for the same reason:
- *      on the QEMU command line it would change every save's compatibility
- *      hash. Every command re-checks it (`info usernet`, ~ms), so a fresh QEMU
- *      process (load, stow recall) gets it back on first use.
- *
- * Steps 1-2 live in the guest's registry, so a save or golden taken after
- * `enable` carries them. State: <instance>/webview.json { port, hostPort }.
- */
 import { existsSync, readFileSync, writeFileSync } from "node:fs"
 import { resolve } from "node:path"
 
@@ -47,7 +13,6 @@ import * as qemu from "./qemu"
 import * as qmp from "./qmp"
 
 export const DEFAULT_PORT = 9222
-/** The guest-side relay port for DevTools port `port`. */
 export const relayPort = (port: number): number => port + 10_000
 
 const errMsg = (e: unknown): string => (e instanceof Error ? e.message : String(e))
@@ -56,12 +21,8 @@ const fail = (msg: string): number => {
   return 1
 }
 
-// --- state ------------------------------------------------------------------
-
 export interface WebviewState {
-  /** The DevTools port inside the guest (the policy's). */
   readonly port: number
-  /** The host end of the forward to its relay, or null before one was added. */
   readonly hostPort: number | null
 }
 
@@ -81,12 +42,9 @@ export function readState(p: Paths): WebviewState | null {
 
 const writeState = (p: Paths, s: WebviewState): void => { writeFileSync(statePath(p), `${JSON.stringify(s, null, 2)}\n`) }
 
-// --- the guest side -----------------------------------------------------------
-
 const POLICY = "HKLM:\\SOFTWARE\\Policies\\Microsoft\\Edge\\WebView2\\AdditionalBrowserArguments"
 const psq = (s: string): string => `'${s.replaceAll("'", "''")}'`
 
-/** The PowerShell that sets (or, with `on` false, removes) the policy, relay and firewall rule. */
 export function guestScript(exe: string, port: number, on: boolean): string {
   const relay = relayPort(port)
   const rule = `winvm-cdp-${String(relay)}`
@@ -103,21 +61,15 @@ export function guestScript(exe: string, port: number, on: boolean): string {
       `if ($LASTEXITCODE -ne 0) { throw 'netsh interface portproxy add failed' }`,
       `netsh advfirewall firewall add rule name=${rule} dir=in action=allow protocol=TCP localport=${String(relay)} remoteip=10.0.2.2 | Out-Null`,
       `if ($LASTEXITCODE -ne 0) { throw 'netsh advfirewall firewall add rule failed' }`,
-      // iphlpsvc carries the portproxy; it is automatic, but make sure.
       "Set-Service iphlpsvc -StartupType Automatic; Start-Service iphlpsvc",
     )
   } else {
     lines.push(`Remove-ItemProperty -Path ${psq(POLICY)} -Name ${psq(exe)} -ErrorAction SilentlyContinue`)
   }
-  // Never `exit`: the agent's warm PowerShell runs this in-process, and exit
-  // would end it. Its exit code is the last native command's, so reset that.
   lines.push("$global:LASTEXITCODE = 0")
   return lines.join("\n")
 }
 
-// --- the host side: the forward --------------------------------------------------
-
-/** Host ports that `info usernet` shows forwarded to guest port `guestPort`. */
 export function forwardsTo(usernet: string, guestPort: number): readonly number[] {
   const ports: number[] = []
   for (const line of usernet.split(/\r?\n/)) {
@@ -127,7 +79,6 @@ export function forwardsTo(usernet: string, guestPort: number): readonly number[
   return ports
 }
 
-/** Make sure a host port forwards to the relay for `port`; return it. Idempotent. */
 export async function ensureForward(p: Paths, port: number): Promise<number> {
   const relay = relayPort(port)
   const s = readState(p)
@@ -150,8 +101,6 @@ export async function ensureForward(p: Paths, port: number): Promise<number> {
   throw new Error(`could not forward a host port to the guest's DevTools relay: ${lastError}`)
 }
 
-// --- the library ---------------------------------------------------------------------
-
 /** `http://127.0.0.1:<hostPort>` for an instance's WebView2 DevTools port. */
 export async function baseUrl(name: string, port?: number): Promise<string> {
   const p = pathsFor(name)
@@ -160,7 +109,6 @@ export async function baseUrl(name: string, port?: number): Promise<string> {
   return `http://127.0.0.1:${String(await ensureForward(p, want))}`
 }
 
-/** Set the policy and relay in the guest, and the forward. The app picks it up at its next start. */
 export async function enable(name: string, exe: string, port = DEFAULT_PORT): Promise<number> {
   const p = pathsFor(name)
   const c = await agent.ensure(name)
@@ -175,10 +123,6 @@ export async function disable(name: string, exe: string, port = DEFAULT_PORT): P
   if (r.code !== 0) throw new Error(`disabling in the guest failed: ${r.output.trim()}`)
 }
 
-/**
- * A session with the page whose URL or title contains `match` (else the first
- * page), waiting up to `timeoutMs` for the app to open its port and the page.
- */
 export async function session(name: string, match: string | null, o: { readonly port?: number; readonly timeoutMs?: number } = {}): Promise<{ s: CdpSession; target: Target }> {
   const base = await baseUrl(name, o.port)
   const deadline = Date.now() + (o.timeoutMs ?? 10_000)
@@ -198,8 +142,6 @@ export async function session(name: string, match: string | null, o: { readonly 
   }
 }
 
-// --- the verb -------------------------------------------------------------------------
-
 export const USAGE =
   "winvm webview [-i name] <command>   drive WebView2 windows over DevTools\n" +
   "  enable  <exe> [--port 9222]     policy + relay in the guest; restart the app after\n" +
@@ -214,7 +156,6 @@ export const USAGE =
 
 export async function webview(args: Args): Promise<number> {
   const name = instanceName(args)
-  // A boolean flag before a positional eats it (`wait --visible "#x"`); take it back.
   const eaten = ["visible", "json"].map((f) => args.flags.get(f)).filter((v): v is string => v !== undefined && v !== "true")
   const [first, ...pos] = [...args.positional, ...eaten, ...args.rest]
   const verb = first ?? ""

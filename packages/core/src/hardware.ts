@@ -1,22 +1,3 @@
-/**
- * The processors and memory a Windows machine gets: `-smp` and `-m` (and the
- * shared memory backend's size, which must equal `-m`; share.ts).
- *
- * Stored in `instances/<name>/hardware.json`, like display.json and
- * share.json. A machine without the file is one made before the setting
- * existed and keeps what every machine had then, LEGACY (4 processors,
- * 4096 MiB); a new machine is written NEW_DEFAULT (8 GiB, because 4 GiB is
- * below comfortable for Windows 11). A change takes effect the next time QEMU
- * boots the machine; a running guest is never resized.
- *
- * ## Saves
- *
- * The size is part of the virtual hardware, so it is in a save's
- * compatibility hash (saves.ts hardwareArgs). A save records the size it was
- * taken at (Manifest.hardware; absent means LEGACY), and `load` and the stow
- * recall launch QEMU at THAT size, so changing the setting never makes a save
- * unloadable. The setting applies again at the next cold boot.
- */
 import { readFileSync, writeFileSync } from "node:fs"
 import { cpus as osCpus, totalmem } from "node:os"
 import { resolve } from "node:path"
@@ -29,9 +10,7 @@ export interface Hardware {
   readonly memoryMiB: number
 }
 
-/** What every machine had before the setting existed, and what a save without `hardware` was taken at. */
 export const LEGACY: Hardware = { cpus: 4, memoryMiB: 4096 }
-/** What a new machine gets. */
 export const NEW_DEFAULT: Hardware = { cpus: 4, memoryMiB: 8192 }
 
 export const GIB_MIB = 1024
@@ -41,11 +20,6 @@ export interface Limits {
   readonly memoryMiB: { readonly min: number; readonly max: number; readonly step: number }
 }
 
-/**
- * Processors: 2 up to the host's performance cores (efficiency cores would
- * make a vCPU run slower than its siblings). Memory: 4 GiB up to half the
- * host's RAM, in whole GiB.
- */
 export function limitsFor(performanceCores: number, hostBytes: number): Limits {
   const halfGiB = Math.floor(hostBytes / 2 / 1024 ** 3)
   return {
@@ -54,7 +28,6 @@ export function limitsFor(performanceCores: number, hostBytes: number): Limits {
   }
 }
 
-/** Performance cores on Apple silicon (`hw.perflevel0.physicalcpu`), else every core. */
 export function performanceCores(): number {
   const r = spawnText("sysctl", ["-n", "hw.perflevel0.physicalcpu"])
   const n = Number.parseInt(r.stdout.trim(), 10)
@@ -63,7 +36,6 @@ export function performanceCores(): number {
 
 export const hostLimits = (): Limits => limitsFor(performanceCores(), totalmem())
 
-/** Why `hw` is out of `limits`, in words, or null. */
 export function hardwareError(hw: Hardware, limits: Limits): string | null {
   const c = limits.cpus
   const m = limits.memoryMiB
@@ -79,7 +51,6 @@ export function hardwareError(hw: Hardware, limits: Limits): string | null {
   return null
 }
 
-/** "8G", "8 GB", "8GiB", "8192M" or a plain number of MiB ("8192"); null when it is none of those. */
 export function parseMemory(raw: string): number | null {
   const m = /^\s*(\d+(?:\.\d+)?)\s*(g|gb|gib|m|mb|mib)?\s*$/i.exec(raw)
   if (m === null) return null
@@ -96,14 +67,12 @@ export const hardwarePath = (p: Paths): string => resolve(p.dir, "hardware.json"
 
 const posInt = (v: unknown): number | null => (typeof v === "number" && Number.isInteger(v) && v > 0 ? v : null)
 
-/** A recorded size (hardware.json, a save's manifest), each missing or bad field taken from LEGACY. */
 export function hardwareFrom(raw: unknown): Hardware {
   if (typeof raw !== "object" || raw === null) return LEGACY
   const r = raw as Record<string, unknown>
   return { cpus: posInt(r["cpus"]) ?? LEGACY.cpus, memoryMiB: posInt(r["memoryMiB"]) ?? LEGACY.memoryMiB }
 }
 
-/** The machine's setting: what its next boot uses. LEGACY for a machine that has never had one. */
 export function readHardware(p: Paths): Hardware {
   try {
     return hardwareFrom(JSON.parse(readFileSync(hardwarePath(p), "utf8")))
@@ -116,7 +85,6 @@ export function writeHardware(p: Paths, hw: Hardware): void {
   writeFileSync(hardwarePath(p), `${JSON.stringify({ cpus: hw.cpus, memoryMiB: hw.memoryMiB }, null, 2)}\n`)
 }
 
-/** `-smp N` and `-m MiB` off a QEMU command line; null when either is missing. */
 export function hardwareFromArgv(argv: readonly string[]): Hardware | null {
   let cpus: number | null = null
   let memoryMiB: number | null = null
@@ -131,7 +99,6 @@ export function hardwareFromArgv(argv: readonly string[]): Hardware | null {
   return cpus === null || memoryMiB === null ? null : { cpus, memoryMiB }
 }
 
-/** What a running QEMU was started with, off its own command line; null when that cannot be read. */
 export function runningHardware(pid: number): Hardware | null {
   const r = spawnText("ps", ["-o", "command=", "-p", String(pid)])
   const cmd = r.stdout.trim()

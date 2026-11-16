@@ -1,27 +1,5 @@
-/**
- * `shell: winvm` job steps: lines of winvm commands run ON THE HOST against
- * the job's instance — for what the guest cannot do from inside itself, or
- * does better from outside: drive a WebView2 window over DevTools, read the
- * screen, check toasts, click.
- *
- *   - name: Settings shows the account section
- *     shell: winvm
- *     run: |
- *       webview wait 'a[href="#account"]' --timeout 30
- *       webview click 'a[href="#apps"]'
- *       ocr --find "MCP servers"
- *       ui tray Maximal --menu "Quit Maximal"
- *       toasts --app maximal --find "Sign in" --since 5m --wait 30
- *
- * Each non-empty line not starting with `#` is one command (a leading `winvm`
- * is optional), split like a POSIX shell would split it — whitespace, '…' and
- * "…" quoting, no expansion — and run as `bun winvm.ts <cmd> -i <instance>`
- * with the job's and the step's env. The step stops at the first line that
- * exits non-zero, with that line's code. No `background`.
- */
 import { cliEntry } from "./paths"
 
-/** Shell-like word splitting: whitespace separates; '…' is literal; "…" honours \" and \\. */
 export function splitWords(line: string): string[] {
   const words: string[] = []
   let cur = ""
@@ -56,7 +34,6 @@ export function splitWords(line: string): string[] {
   return words
 }
 
-/** The commands in a step's `run`, each as argv for winvm.ts (instance inserted after the verb). */
 export function commands(run: string, instance: string): string[][] {
   const out: string[][] = []
   for (const raw of run.split(/\r?\n/)) {
@@ -78,7 +55,6 @@ export interface HostStepResult {
   readonly timedOut: boolean
 }
 
-/** A word as it would be typed: quoted when it needs to be. */
 export const quote = (w: string): string => (/^[\w@%+=:,./#-]+$/.test(w) ? w : `'${w.replaceAll("'", `'"'"'`)}'`)
 
 export async function runHostStep(

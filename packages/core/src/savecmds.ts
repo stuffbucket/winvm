@@ -1,28 +1,3 @@
-/**
- * The save verbs: save, load, saves, pause, resume, stow, clock — plus the
- * hooks `start` and `rewind` call. The mechanics live in saves.ts and clock.ts;
- * this file decides when they run and what is printed.
- *
- *   save [name]        RAM + disk + NVRAM to files (default name: a timestamp);
- *                      --fast (= --format mapped) for a save loaded over and over
- *   load [name]        back to a save, running or stopped (default: the newest);
- *                      the save's manifest says which RAM format to read
- *   saves [rm <name>]  list them, with compatibility; or delete one (and its note)
- *   saves note <name>  a person's note on a save — title, text, tags (notes.ts);
- *                      shown with none of --title/--text/--tags/--clear, else written
- *   pause / resume     freeze / unfreeze the vCPUs (resume fixes the clock)
- *   sleep / wake       lock Windows, then freeze it marked asleep / resume it
- *   lock               Windows back to its lock screen
- *   stow               save as "stow" and shut QEMU down; `start` recalls it
- *   clock [--check]    guest-vs-host clock offset, and fix it
- *
- * HOW `rewind` RELATES. `rewind [tag]` keeps meaning "go back to your
- * checkpoint, no reboot". An internal snapshot of that tag wins when one exists
- * (default tag "fresh", the old behaviour, untouched); otherwise it loads the
- * save of that name, and with no tag the automatic "baseline". So on a new
- * instance, where no one has taken "fresh", `rewind` goes back to the baseline
- * taken at its first boot — the state you most often want back.
- */
 import { readFileSync } from "node:fs"
 
 import type { Args } from "./args"
@@ -50,14 +25,8 @@ const fail = (msg: string): number => {
 const msg = (e: unknown): string => (e instanceof Error ? e.message : String(e))
 const secs = (ms: number): string => `${(ms / 1000).toFixed(1)} s`
 
-/** Generous: the host this runs on may be heavily loaded. */
 const RESPONSIVE_MS = 300_000
 
-/**
- * Wait for the agent, then put the guest's clock right. Never fatal: a guest
- * that answers late still loaded fine, and the clock can be fixed with
- * `winvm clock`.
- */
 async function settle(p: Paths, label: string): Promise<boolean> {
   if (!(await qga.waitResponsive(p.qga, RESPONSIVE_MS))) {
     console.error(`::error::guest did not answer after ${label} — see ${p.serial}`)
@@ -83,11 +52,6 @@ function requireSaveable(name: string): { p: Paths; meta: InstanceMeta } | strin
   return { p, meta }
 }
 
-/**
- * Save, then resume and fix the clock. Shared by `save`, the automatic
- * baseline and `stow`. `ready` is skipped for a guest that is already paused —
- * it cannot answer, and it was ready when it was paused or it would not be here.
- */
 async function doSave(
   name: string,
   o: saves.CreateOptions & { readonly checkReady: boolean },
@@ -96,8 +60,6 @@ async function doSave(
   if (typeof s === "string") return fail(s)
   const { p } = s
   const state = await qmp.status(p.qmp)
-  // REFUSE TO FREEZE A GUEST THAT IS STILL STARTING: restoring a Windows
-  // caught mid-boot or mid-OOBE livelocks it (see qga.waitReady).
   if (o.checkReady && state === "running") {
     process.stdout.write("checking the guest has finished starting… ")
     const ready = await qga.waitReady(p.qga, RESPONSIVE_MS)
@@ -120,7 +82,6 @@ async function doSave(
   return 0
 }
 
-/** `--fast` is `--format mapped`; otherwise `--format zstd|mapped|raw`, default zstd. */
 export function formatFlag(args: Args): { readonly format: saves.RamFormat } | { readonly error: string } {
   const f = args.flags.get("format") ?? (args.flags.has("fast") ? "mapped" : "zstd")
   const format = saves.RAM_FORMATS.find((known) => known === f)
@@ -146,12 +107,10 @@ export async function save(args: Args): Promise<number> {
   })
 }
 
-/** Load `saveName` into instance `name`, wait for it, fix the clock. Shared with rewind and start. */
 async function doLoad(name: string, saveName: string, verb: string): Promise<number> {
   const p = pathsFor(name)
   const wasRunning = qemu.isRunning(p)
   const started = Date.now()
-  // The guest's drives in Finder go before the guest does; they come back below.
   finder.beforeDown(name)
   let m: saves.Manifest
   try {
@@ -161,9 +120,6 @@ async function doLoad(name: string, saveName: string, verb: string): Promise<num
   }
   const restoredMs = Date.now() - started
   if (!(await settle(p, verb))) return 1
-  // A stow is a one-shot: once recalled it is spent. Loading anything else
-  // supersedes it — otherwise the next `start` would silently replace what
-  // was just loaded with an older stow.
   if (m.kind === "stow") saves.removeSave(name, m.name)
   else if (saves.hasSave(name, saves.STOW)) {
     saves.removeSave(name, saves.STOW)
@@ -185,8 +141,6 @@ export async function load(args: Args): Promise<number> {
     if (newest === undefined) return fail(`instance "${name}" has no saves`)
     saveName = newest.name
   }
-  // A load is someone using the guest: the watcher's idle clock restarts. (A
-  // save is not — the watcher's own autosaves go through the same code.)
   watcher.touchActivity(name)
   const rewatch = watcher.rewatchAfterRestore(name, args)
   const code = await doLoad(name, saveName, "loaded")
@@ -215,8 +169,6 @@ export function list(args: Args): number {
   }
   if (args.positional[0] === "note") return note(args)
   const rows = saves.listSaves(name)
-  // One decision for the JSON and the table: each save judged at its own size
-  // and with its own display (saves.savesReport), even when the instance is gone.
   const report = saves.savesReport(rows, rows.length > 0 ? saves.reportContext(name) : { compat: null })
   if (args.flags.has("json")) {
     console.log(JSON.stringify(report, null, 2))
@@ -248,14 +200,8 @@ export function list(args: Args): number {
 
 const NOTE_USAGE = "usage: winvm saves note [-i name] <save> [--title T] [--text TEXT|-] [--tags a,b,c] [--clear] [--json]"
 
-/** Standard input, whole: `--text -`. */
 const readStdin = (): string => readFileSync(0, "utf8")
 
-/**
- * `saves note <save>`: with none of --title/--text/--tags/--clear, show the
- * note; otherwise change it — --clear first (so `--clear --title T` replaces
- * the whole note), then the fields given, merged into what is there.
- */
 export function note(args: Args, stdin: () => string = readStdin): number {
   const name = instanceName(args)
   const target = args.positional[1]
@@ -302,16 +248,10 @@ function printNote(n: notes.Note): void {
   if (n.text !== "") console.log(`\n${n.text}`)
 }
 
-/**
- * Stops the vCPUs until `resume`. Nothing else in winvm resumes a paused guest
- * (frozen.ts): the watcher holds off, and the agent is not called. An asleep
- * guest paused this way becomes plainly paused: it no longer wakes on a key.
- */
 export async function pause(args: Args): Promise<number> {
   const name = instanceName(args)
   const p = pathsFor(name)
   if (!qemu.isRunning(p)) return fail(`instance "${name}" is not running`)
-  // A paused guest's file server cannot answer, and a mount waiting on it hangs whatever touches it.
   finder.beforeDown(name)
   await qmp.execute(p.qmp, "stop")
   frozen.clearAsleep(p)
@@ -319,7 +259,6 @@ export async function pause(args: Args): Promise<number> {
   return 0
 }
 
-/** Starts a paused or asleep guest's vCPUs again, then fixes its clock. `wake` is the same verb. */
 export async function resume(args: Args): Promise<number> {
   const name = instanceName(args)
   const p = pathsFor(name)
@@ -335,7 +274,6 @@ export async function resume(args: Args): Promise<number> {
   return 0
 }
 
-/** Locks Windows through its agent (lock.ts), returning it to the lock screen. */
 async function lockGuest(name: string): Promise<boolean> {
   try {
     const c = await agent.ensure(name)
@@ -349,7 +287,6 @@ async function lockGuest(name: string): Promise<boolean> {
   }
 }
 
-/** `lock`: Windows back to its lock screen (sign in again with Enter). */
 export async function lock(args: Args): Promise<number> {
   const name = instanceName(args)
   const p = pathsFor(name)
@@ -359,11 +296,6 @@ export async function lock(args: Args): Promise<number> {
   return 0
 }
 
-/**
- * `sleep`: there is no ACPI sleep to use (frozen.ts), so: lock Windows, stop
- * the vCPUs, and mark the guest asleep. `wake` (or `resume`) undoes it; the app
- * wakes it on a key press in its screen.
- */
 export async function sleep(args: Args): Promise<number> {
   const name = instanceName(args)
   const p = pathsFor(name)
@@ -372,7 +304,6 @@ export async function sleep(args: Args): Promise<number> {
   const already = await frozen.frozenState(p)
   if (already !== null) return fail(`instance "${name}" is already ${already}`)
   if (!(await lockGuest(name))) return 1
-  // As for pause: a frozen guest's file server cannot answer a mount.
   finder.beforeDown(name)
   await qmp.execute(p.qmp, "stop")
   frozen.markAsleep(p, pid)
@@ -382,10 +313,7 @@ export async function sleep(args: Args): Promise<number> {
 
 export async function stow(args: Args): Promise<number> {
   const name = instanceName(args)
-  // Like `stop`: end the watcher first (waiting out an autosave in progress).
-  // A no-op when the watcher itself is the one running this stow.
   await watcher.stopWatcher(name)
-  // Unmount while the guest still runs; the save freezes it.
   finder.beforeDown(name)
   const started = Date.now()
   const code = await doSave(name, {
@@ -395,7 +323,6 @@ export async function stow(args: Args): Promise<number> {
     checkReady: !args.flags.has("force"),
   })
   if (code !== 0) {
-    // Not stowed, so still running: put back what was mounted.
     await finder.afterUp(name)
     return code
   }
@@ -419,7 +346,6 @@ export async function clock(args: Args): Promise<number> {
   return 0
 }
 
-/** Guest time zone = host's, RTC read as UTC. Never fatal. */
 async function alignZone(p: Paths): Promise<void> {
   try {
     const z = await alignGuestTimeZone(p)
@@ -430,14 +356,6 @@ async function alignZone(p: Paths): Promise<void> {
   }
 }
 
-// ---------------------------------------------------------------------------
-// Hooks for commands.ts
-
-/**
- * `start` with a stow present: recall it instead of booting. Returns null when
- * there is nothing to recall (or it cannot be), so `start` boots as usual.
- * `--boot` discards the stow and boots cold.
- */
 export async function recallStow(name: string, args: Args): Promise<number | null> {
   if (!saves.hasSave(name, saves.STOW) || args.flags.has("ephemeral")) return null
   if (args.flags.has("boot")) {
@@ -462,14 +380,8 @@ export async function recallStow(name: string, args: Args): Promise<number | nul
   return await doLoad(name, saves.STOW, "recalled")
 }
 
-/** Remember that this instance has never booted, so its first ready moment is captured. */
 export const markPristine = saves.markPristine
 
-/**
- * After `start` saw the guest ready: fix the clock, and on an instance's first
- * boot take the "baseline" save — unless `--no-autosave`, `--ephemeral`, or a
- * compatible baseline already exists (a reset instance keeps its baseline).
- */
 export async function afterBoot(name: string, args: Args): Promise<void> {
   const p = pathsFor(name)
   await alignZone(p)
@@ -495,16 +407,10 @@ export async function afterBoot(name: string, args: Args): Promise<void> {
     return
   }
   console.log("taking the automatic baseline save (--no-autosave skips this)")
-  // `start` has just waited for waitReady, so the guest is past OOBE.
   const code = await doSave(name, { name: saves.BASELINE, kind: "baseline", checkReady: false })
   if (code === 0) saves.clearPristine(name)
 }
 
-/**
- * `rewind [tag]`: an internal snapshot of that tag wins when one exists (the
- * old behaviour); otherwise load the save of that name, or "baseline" when no
- * tag is given. Returns null to let the snapshot path run.
- */
 export async function rewindViaSave(name: string, tag: string | undefined): Promise<number | null> {
   const p = pathsFor(name)
   const snapTag = tag ?? snapshot.DEFAULT_TAG
@@ -520,7 +426,6 @@ export async function rewindViaSave(name: string, tag: string | undefined): Prom
   return await doLoad(name, saveName, "rewound")
 }
 
-/** After a snapshot rewind: the guest's clock stood still since the snapshot. */
 export async function afterRewind(name: string): Promise<void> {
   const p = pathsFor(name)
   try {
@@ -529,11 +434,9 @@ export async function afterRewind(name: string): Promise<void> {
   } catch (error) {
     console.warn(`warning: could not set the guest clock (${msg(error)})`)
   }
-  // A rewind supersedes a stow, exactly as a load does.
   if (saves.hasSave(name, saves.STOW)) saves.removeSave(name, saves.STOW)
 }
 
-/** `reset` puts the instance back to its base, so a stow would bring back what was discarded. */
 export function afterReset(name: string): void {
   if (saves.hasSave(name, saves.STOW)) saves.removeSave(name, saves.STOW)
   saves.markPristine(name)

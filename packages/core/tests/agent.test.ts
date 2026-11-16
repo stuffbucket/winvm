@@ -1,8 +1,3 @@
-/**
- * The in-guest agent and its host client, with the REAL agent served on the
- * host (it is plain Bun) — no VM. Windows-only parts (PowerShell, tasklist,
- * sessions) are covered by their parsers.
- */
 import { chmodSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { resolve } from "node:path"
@@ -36,7 +31,6 @@ let tokenFile: string
 let server: ReturnType<typeof startAgent>
 let client: AgentClient
 const TOKEN = "t0k3n-for-tests"
-/** Per-test timeout for what spawns processes: a loaded host is slow, not broken. */
 const SLOW_HOST_MS = 300_000
 
 beforeAll(() => {
@@ -90,22 +84,12 @@ describe("agent over HTTP", () => {
     expect(r.timedOut).toBe(false)
   }, SLOW_HOST_MS)
 
-  // NO WALL-CLOCK BOUNDS IN HERE. On a host loaded with guests this file has
-  // stalled for minutes (measured: this test at 183 s, in one `check` of six),
-  // so a "< 3 s" or a fixed 100 ms sleep is a coin toss. What is asserted is
-  // the outcome; how long it may take is the test timeout's job, generous
-  // because a slow host is not a failure.
   it("kills a command that overruns its timeout", async () => {
-    // Ten minutes: it only ever ends early by being killed.
     const r = await client.exec(["sleep", "600"], { timeoutMs: 200 })
     expect(r.timedOut).toBe(true)
     expect(r.code).not.toBe(0)
   }, SLOW_HOST_MS)
 
-  // Bun's fetch drops a connection idle for 5 minutes, and /exec sends nothing
-  // until the command ends: every exec over 300 s failed, whatever its deadline
-  // (measured, Bun 1.3.14). Waiting that out here would take five minutes, so
-  // this checks that every request turns the idle timer off.
   it("turns off Bun's idle timeout, so only the request's own deadline applies", async () => {
     const seen: unknown[] = []
     const real = globalThis.fetch
@@ -116,7 +100,7 @@ describe("agent over HTTP", () => {
     try {
       await client.health()
       await client.exec(["true"])
-      await client.pwsh("1").catch(() => undefined) // no PowerShell here; the request is what counts
+      await client.pwsh("1").catch(() => undefined)
     } finally {
       spy.mockRestore()
     }
@@ -140,8 +124,6 @@ describe("agent over HTTP", () => {
     expect(pid).toBeGreaterThan(0)
     expect((await client.procs()).some((p) => p.pid === pid)).toBe(true)
     await client.kill(pid)
-    // Gone once the kill is delivered and the zombie reaped: asked until it
-    // is, not after a fixed pause.
     const alive = async (): Promise<boolean> => (await client.procs()).some((p) => p.pid === pid && !p.name.includes("defunct"))
     while (await alive()) await Bun.sleep(50)
   }, SLOW_HOST_MS)
@@ -158,7 +140,6 @@ describe("agent over HTTP", () => {
     expect(s.memory.available).toBeLessThanOrEqual(s.memory.total)
     expect(s.disk?.path).toBe("/")
     expect(s.disk?.free).toBeLessThanOrEqual(s.disk?.total ?? 0)
-    // How busy the processors were since the last ask: a fraction once there was one.
     await Bun.sleep(CPU_WINDOW_MS + 50)
     const cpu = (await client.stats()).cpu
     expect(cpu).toBeGreaterThanOrEqual(0)
@@ -167,7 +148,6 @@ describe("agent over HTTP", () => {
 })
 
 describe("the display helper, kept running", () => {
-  // A stand-in for `winvm-display.exe serve`: echoes each request's words; "hang" never answers; "die" exits.
   const fake = (): string => {
     const f = resolve(dir, "fake-display.ts")
     writeFileSync(
@@ -259,7 +239,6 @@ describe("folder listings", () => {
   })
 
   it("lists the Desktop when given no path, with the known folders that exist", async () => {
-    // The agent's user's profile; not the host's own, whose Desktop macOS may refuse.
     const profile = resolve(dir, "profile")
     mkdirSync(resolve(profile, "Desktop"), { recursive: true })
     mkdirSync(resolve(profile, "Documents"))
@@ -297,7 +276,6 @@ describe("folder listings", () => {
     const locked = resolve(dir, "locked")
     mkdirSync(locked, { mode: 0o000 })
     try {
-      // root reads anything, so only for anyone else does this mean something.
       if (process.getuid?.() !== 0) expect(await code(locked)).toEqual([403, "denied"])
     } finally {
       chmodSync(locked, 0o700)
@@ -400,7 +378,6 @@ describe("changing files", () => {
   })
 
   it("has no Recycle Bin outside Windows", async () => {
-    // The Recycle Bin is the default; here it is unavailable and nothing goes.
     expect(await code(client.remove([at("stays.txt")]))).toEqual([501, "unavailable"])
     expect(readdirSync(root)).toContain("stays.txt")
   })
@@ -410,7 +387,6 @@ describe("changing files", () => {
     expect(await destination(client, at("taken.txt"), `${at("folder")}/`)).toBe(at("folder", "taken.txt"))
     expect(await destination(client, at("taken.txt"), at("fresh.txt"))).toBe(at("fresh.txt"))
     expect(await destination(client, at("taken.txt"), at("copy.txt"))).toBe(at("copy.txt"))
-    // A folder that is `from` itself, in another case, is a rename.
     expect(await destination(client, at("folder"), at("FOLDER"))).toBe(at("FOLDER"))
   })
 })
@@ -423,7 +399,6 @@ describe("the Recycle Bin's PowerShell", () => {
     expect(script).not.toContain("Remove-Item")
     expect(script).toContain(Buffer.from(evil, "utf8").toString("base64"))
     expect(script).toContain("SHFileOperation")
-    // The here-string's closing '@ must start its own line.
     expect(script).toMatch(/\n'@ }\n/)
   })
 
@@ -455,7 +430,6 @@ describe("how busy Windows' processors are", () => {
   it("is the busy share of the time between two readings, null until there are two", () => {
     const m = new CpuMeter()
     expect(m.read({ busy: 100, total: 1000 }, 0)).toBeNull()
-    // 4 processors over 2.5 s: 10 s in all, 3 s of it busy.
     expect(m.read({ busy: 3100, total: 11_000 }, 2500)).toBeCloseTo(0.3)
     expect(m.read({ busy: 3100, total: 21_000 }, 5000)).toBe(0)
   })
@@ -465,15 +439,12 @@ describe("how busy Windows' processors are", () => {
     m.read({ busy: 0, total: 0 }, 0)
     expect(m.read({ busy: 500, total: 1000 }, 2000)).toBe(0.5)
     expect(m.read({ busy: 510, total: 1010 }, 2000 + CPU_WINDOW_MS - 1)).toBe(0.5)
-    // ...and the next window still starts from the last full one.
     expect(m.read({ busy: 1500, total: 2000 }, 4000)).toBe(1)
   })
 })
 
 describe("parsers", () => {
   it("launches on Windows through the session launcher, hidden, as itself", () => {
-    // Not node's `detached` (DETACHED_PROCESS): Windows PowerShell started that
-    // way exits 0 at once and runs nothing. The launcher gives it a console.
     const ris = "C:\\ProgramData\\winvm\\agent\\runinsession.exe"
     const argv = ["powershell.exe", "-NoProfile", "-File", "C:\\a b\\s.ps1"]
     expect(launcherArgv(ris, argv)).toEqual([ris, "--self", "--hidden", ...argv])

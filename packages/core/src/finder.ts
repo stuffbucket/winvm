@@ -1,45 +1,3 @@
-/**
- * The guest's drives in Finder: Windows' own file server, reached through a
- * forwarded port and mounted on the Mac.
- *
- *   winvm files open    [-i name] [c|home] [--path GUEST_PATH]   mount if needed, then show it in Finder
- *   winvm files mount   [-i name] [c|home]   (both when neither is named)
- *   winvm files unmount [-i name] [c|home]
- *   winvm files status  [-i name] [--json]
- *
- * HOW. The first mount has the agent set the guest up (POST /smb/setup, see
- * guestagent.smbSetupScript): an account, SMB_USER, that can log on over the
- * network and nowhere else, with a random password kept in smb.json
- * (smbstate.ts); two shares, C (C:\) and Home (the profile); and a firewall
- * rule letting in 10.0.2.2 alone — where slirp's forwarded connections come
- * from. agentfwd.ts forwards a stable host port to the guest's 445. Each share
- * is mounted on ~/winvm/<instance>/{C,Home}: soft, not browsable, no UI, no
- * keychain, and the password never on a command line (NetFS through bun:ffi,
- * in a child process so a stuck mount can be abandoned; netfs.ts).
- *
- * The setup runs again whenever a mount is refused: a guest loaded from
- * another machine's save holds that machine's password, and one loaded from
- * before the setup has no account at all.
- *
- * LIFECYCLE. A mount whose server goes away hangs whatever touches it, so
- * mounts never outlive the guest's QEMU, nor a guest that stops answering:
- *   beforeDown   stop, kill, stow (the watcher's idle stow too), load, rewind,
- *                reset, golden reset, destroy, pause, reboot: unmount first,
- *                remembering what was mounted (smb.json `mounted`)
- *   afterUp      start/recall, load, resume, reboot, rewind: mount it again
- *   cleanStale   a QEMU that died: the watcher, the next command and
- *                `diagnose` unmount what it left
- * An autosave keeps the mounts; the guest pauses for seconds and the mount is soft.
- *
- * UNMOUNTING SAFELY. Only a folder the mount table shows as THIS instance's
- * share (smbfs, from 127.0.0.1:<its port>, mounted exactly there) is ever
- * unmounted: `diskutil unmount force` given a folder that is not a mount point
- * unmounts the volume holding it — the Mac's Data volume, for a folder in the
- * home directory. Nothing here reads through a mount to check it, either:
- * macOS's privacy controls stop a process doing so until someone allows it,
- * and a dead server would hang it. The mount table is read without touching
- * any mount.
- */
 import { spawn } from "node:child_process"
 import { existsSync, mkdirSync, readdirSync, rmdirSync } from "node:fs"
 import { resolve } from "node:path"
@@ -71,22 +29,14 @@ import { spawnText } from "./shell"
 
 const errMsg = (e: unknown): string => (e instanceof Error ? e.message : String(e))
 
-/** NetFS's EAUTH: the server refused the user or the password. */
 export const EAUTH = 80
-/** What a mount attempt that never finished reports. */
 export const ETIMEDOUT = 60
 
-/** What the mechanics need from the Mac; tests pass fakes. */
 export interface Sys {
-  /** The kernel's mount table (`mount`), read without touching any mount. */
   mountTable(): readonly MountEntry[]
-  /** Run a program, killed after `timeoutMs`. */
   run(cmd: string, args: readonly string[], timeoutMs: number): { readonly code: number | null; readonly out: string }
-  /** Mount `url` on `dir`, signing in as user/password, giving up after `timeoutMs`: 0, or an errno. */
   mount(req: { readonly url: string; readonly dir: string; readonly user: string; readonly password: string }, timeoutMs: number): Promise<number>
-  /** Set the guest up to share (agent POST /smb/setup); throws when it fails. */
   setup(instance: string, s: SmbState, log: (line: string) => void): Promise<void>
-  /** Forward a host port to the guest's 445 (recorded in smb.json); returns it. */
   forward(instance: string): Promise<number>
   running(instance: string): boolean
   sleep(ms: number): Promise<void>
@@ -98,12 +48,6 @@ function runSync(cmd: string, args: readonly string[], timeoutMs: number): { cod
   return { code: r.status, out: `${r.stdout}${r.stderr}${r.error === undefined ? "" : String(r.error)}` }
 }
 
-/**
- * One mount, through NetFS in a child process (`winvm files _netfs`, the
- * request on stdin): NetFSMountURLSync cannot be interrupted, so a server that
- * accepts the connection and then says nothing would otherwise hang this
- * process. The child is abandoned after `timeoutMs`.
- */
 async function mountInChild(req: { url: string; dir: string; user: string; password: string }, timeoutMs: number): Promise<number> {
   const limit = Math.min(timeoutMs, 25_000)
   const child = Bun.spawn([process.execPath, ...cliArgv("files", "_netfs")], { stdin: "pipe", stdout: "pipe", stderr: "inherit" })
@@ -142,17 +86,8 @@ export const realSys: Sys = {
   log: (line) => { console.log(line) },
 }
 
-// --- unmounting ----------------------------------------------------------------
-
 export type UnmountOutcome = "not-mounted" | "unmounted" | "failed"
 
-/**
- * Unmount one share, only if the mount table shows it mounted exactly on
- * `want.dir` from 127.0.0.1:`want.port`: `umount`, then, if it is still there
- * — checked again, so still our mount point — `diskutil unmount force`. Each
- * in a child process with a deadline. A folder that is not our mount point is
- * never handed to either.
- */
 export function unmountShare(
   want: { readonly dir: string; readonly port: number; readonly share: string },
   sys: Sys = realSys,
@@ -165,7 +100,6 @@ export function unmountShare(
   return findOurMount(sys.mountTable(), want) === null ? "unmounted" : "failed"
 }
 
-/** Remove an empty mount folder, and the instance's folder if that is left empty. Never a mount point, never anything with files in it. */
 function tidy(instance: string, dir: string, sys: Sys): void {
   const table = sys.mountTable()
   for (const d of [dir, instanceMountDir(instance)]) {
@@ -178,11 +112,6 @@ function tidy(instance: string, dir: string, sys: Sys): void {
   }
 }
 
-/**
- * Unmount every share of `instance` that is mounted. Never throws. With the
- * guest gone (`dead`) a plain umount only waits on a server that will never
- * answer, so it gets a moment before the forced unmount.
- */
 function unmountAll(
   instance: string,
   keys: readonly ShareKey[],
@@ -211,15 +140,11 @@ function unmountAll(
   return { unmounted, failed, failedKeys }
 }
 
-// --- mounting --------------------------------------------------------------------
-
 export interface MountOptions {
-  /** How long to keep trying while the guest's file server is not answering yet. */
   readonly waitMs?: number
   readonly sys?: Sys
 }
 
-/** Keep trying every 0.5 s until `deadline`; a refused sign-in is final. */
 async function tryMount(
   req: { url: string; dir: string; user: string; password: string },
   want: { readonly dir: string; readonly port: number; readonly share: string },
@@ -227,11 +152,8 @@ async function tryMount(
   sys: Sys,
 ): Promise<number> {
   for (;;) {
-    // No attempt outlives the deadline: a guest whose firewall drops the
-    // connection leaves NetFS waiting far longer.
     const code = await sys.mount(req, Math.max(3000, deadline - Date.now()))
     if (code === 0) return 0
-    // An attempt abandoned just as it finished may have mounted after all.
     if (findOurMount(sys.mountTable(), want) !== null) return 0
     if (code === EAUTH || Date.now() + 500 >= deadline) return code
     await sys.sleep(500)
@@ -245,11 +167,6 @@ const describeCode = (code: number): string =>
       ? "the guest's file server did not answer"
       : `error ${String(code)}`
 
-/**
- * Mount `keys` of a running instance, setting the guest up first when it never
- * was, and again when a mount is refused. Records them in smb.json `mounted`.
- * Returns where each one is mounted.
- */
 export async function mountShares(instance: string, keys: readonly ShareKey[], o: MountOptions = {}): Promise<readonly string[]> {
   const sys = o.sys ?? realSys
   const p = pathsFor(instance)
@@ -295,7 +212,6 @@ export async function mountShares(instance: string, keys: readonly ShareKey[], o
   return dirs
 }
 
-/** Unmount `keys` and forget them: they are not mounted again when the guest comes back. */
 export function unmountShares(
   instance: string,
   keys: readonly ShareKey[],
@@ -312,14 +228,6 @@ export function unmountShares(
   return r
 }
 
-// --- lifecycle hooks ---------------------------------------------------------------
-
-/**
- * Before the guest goes away or stops answering (stop, kill, stow, load,
- * rewind, pause, reboot…): unmount its shares, keeping `mounted` so they come
- * back with it. A no-op for an instance that never shared. Never throws: what
- * it could not unmount it says, and cleanStale tries again.
- */
 export function beforeDown(instance: string, sys: Sys = realSys): void {
   try {
     if (readSmb(pathsFor(instance)) === null) return
@@ -331,11 +239,6 @@ export function beforeDown(instance: string, sys: Sys = realSys): void {
   }
 }
 
-/**
- * After the guest is back and answering (start, recall, load, resume, reboot,
- * rewind): mount again what was mounted, waiting up to 30 s for the file
- * server. Never throws.
- */
 export async function afterUp(instance: string, sys: Sys = realSys): Promise<void> {
   const s = readSmb(pathsFor(instance))
   if (s === null || s.mounted.length === 0 || !sys.running(instance)) return
@@ -346,16 +249,6 @@ export async function afterUp(instance: string, sys: Sys = realSys): Promise<voi
   }
 }
 
-/**
- * Mounts left behind by a QEMU that is gone (killed, crashed): unmount them.
- * The watcher calls it when QEMU exits, the CLI before each command, and
- * `diagnose`. Returns what it unmounted. Never throws.
- *
- * SLOW, AND IT CANNOT BE HURRIED. With its server gone, macOS's SMB client
- * holds an unmount until the dead connection times out — about a minute,
- * measured, for `umount` and `diskutil unmount force` alike, and a process in
- * that wait does not die when killed. So it says so first.
- */
 export function cleanStale(instance: string, sys: Sys = realSys): readonly string[] {
   try {
     const stale = staleMounts(instance, sys)
@@ -369,7 +262,6 @@ export function cleanStale(instance: string, sys: Sys = realSys): readonly strin
   }
 }
 
-/** Our mounts of an instance whose QEMU is gone: what cleanStale would unmount. */
 export function staleMounts(instance: string, sys: Sys = realSys): readonly string[] {
   const s = readSmb(pathsFor(instance))
   if (s === null || s.hostPort === null || sys.running(instance)) return []
@@ -381,21 +273,13 @@ export function staleMounts(instance: string, sys: Sys = realSys): readonly stri
   })
 }
 
-/**
- * cleanStale in a detached `winvm files _clean`, for a command that only looks
- * (status, which the app asks for every few seconds) and should not wait the
- * minute it can take. Never throws.
- */
 export function cleanStaleLater(instance: string, sys: Sys = realSys): void {
   try {
     if (staleMounts(instance, sys).length === 0) return
     spawn(process.execPath, [...cliArgv("files", "_clean", "-i", instance)], { detached: true, stdio: "ignore" }).unref()
   } catch {
-    // The next command that changes anything cleans up instead.
   }
 }
-
-// --- the CLI ---------------------------------------------------------------------------
 
 export interface ShareStatus {
   readonly key: ShareKey
@@ -403,7 +287,6 @@ export interface ShareStatus {
   readonly guest: string
   readonly dir: string
   readonly mounted: boolean
-  /** Mounted again whenever the guest comes back. */
   readonly remembered: boolean
 }
 
@@ -449,7 +332,6 @@ function keysOf(arg: string | undefined, fallback: readonly ShareKey[]): readonl
   return isShareKey(k) ? [k] : `"${arg}" is not a share: c or home`
 }
 
-/** The NetFS helper `mountInChild` runs: the request on stdin, `{"code":N}` on stdout. */
 async function netfsHelper(): Promise<number> {
   const req = JSON.parse(await Bun.stdin.text()) as { url: string; dir: string; user: string; password: string }
   let code: number
@@ -472,7 +354,6 @@ export async function filesCmd(args: Args): Promise<number> {
     return 0
   }
   const json = args.flags.has("json")
-  // With --json, stdout is the JSON alone; what happens on the way goes to stderr.
   const sys: Sys = json ? { ...realSys, log: (line) => { console.error(line) } } : realSys
   if (sub === undefined || !["open", "mount", "unmount", "status"].includes(sub)) {
     console.error(USAGE)
@@ -505,8 +386,6 @@ export async function filesCmd(args: Args): Promise<number> {
     return r.failed.length === 0 ? 0 : 1
   }
 
-  // mount, open. A paused or asleep guest's file server cannot answer: a mount
-  // would wait on it, and one abandoned could land once it runs again.
   try {
     await refuseFrozen(instance)
   } catch (error) {
@@ -532,7 +411,6 @@ export async function filesCmd(args: Args): Promise<number> {
   }
   if (sub === "open") {
     const target = resolve(dirs[0] ?? mountDir(instance, keys[0] ?? "home"), ...rel)
-    // Finder shows it; this process never reads through the mount (see the top).
     const r = runSync("/usr/bin/open", [target], 15_000)
     if (r.code !== 0) return fail(`could not show ${target} in Finder: ${r.out.trim()}`)
     if (!json) console.log(`opened ${target} in Finder`)

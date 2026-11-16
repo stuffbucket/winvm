@@ -1,13 +1,3 @@
-/**
- * A file save restores with the display QEMU was RUNNING when it was taken,
- * whatever display.json (the cold-boot preference) says now: captured at save,
- * validated and replayed at load, kept through clone, retained-save
- * recreation, stow, baseline and listing, and reported by status.
- *
- * QEMU, swtpm and the monitor are faked at their edges (scripts in a fake
- * runtime, a scripted qmp), so `launch` itself runs and its real command line
- * and virtiofsd decision are what the assertions see.
- */
 import { afterEach, beforeEach, describe, expect, it, mock, spyOn } from "bun:test"
 import { spawn } from "node:child_process"
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
@@ -53,11 +43,8 @@ const meta: InstanceMeta = { image: "win11-arm64", vnc: 9, created: "2026-11-02T
 let state = ""
 let previous: Record<string, string | undefined> = {}
 let previousProbe: share.Probe
-/** What the QEMU already running when a test starts was launched with. */
 let initialRunning: DisplayConfig | null = VIRTIO_GPU
-/** The shared folder devices that QEMU launched with; undefined: whatever winvm launches for its display. */
 let initialDevices: share.DeviceSet | undefined
-/** When set, the running command line spells the home with this (a path with a space) instead. */
 let spacedHome: string | null = null
 let runningPid: number | null = FAKE_PID
 let commands: string[] = []
@@ -67,7 +54,6 @@ let answered = 0
 const realRunningCommand = display.runningCommand
 
 const qemuLog = (): string => resolve(state, "qemu.log")
-/** Each QEMU launch's command line, in order. */
 const launches = (): readonly string[] => (existsSync(qemuLog()) ? readFileSync(qemuLog(), "utf8").split("\n").filter((l) => l !== "") : [])
 const lastLaunch = (): string => launches().at(-1) ?? ""
 
@@ -95,7 +81,6 @@ function publish(m: Manifest): void {
   writeFileSync(resolve(dir, FILES.vars), "saved vars")
 }
 
-/** A save of "source" taken with `shown` running; legacy (no profile) when `profiled` is false, hashed under the preference then. */
 function fixture(shown: DisplayConfig, profiled = true, name = "saved", kind: Manifest["kind"] = "manual"): Manifest {
   const compat = profiled ? currentCompat("source", meta, shown) : (writeDisplay(pathsFor("source"), shown), currentCompat("source", meta))
   const m: Manifest = {
@@ -122,7 +107,6 @@ beforeEach(() => {
   process.env["WINVM_RUNTIME"] = resolve(state, "runtime")
   process.env["WINVM_TEST_QEMU_LOG"] = qemuLog()
   mkdirSync(resolve(state, "runtime", "bin"), { recursive: true })
-  // `launch` runs for real against these: swtpm binds its socket, QEMU records its arguments and stays up.
   script("swtpm", 'while [ $# -gt 0 ]; do case "$1" in --ctrl) s="${2#*path=}"; s="${s%%,*}"; shift;; esac; shift; done; : > "$s"')
   script("qemu-system-aarch64", 'printf "%s\\n" "$*" >> "$WINVM_TEST_QEMU_LOG"; exec sleep 3')
   previousProbe = share.setProbe(() => ({ ok: true, reason: null }))
@@ -151,7 +135,6 @@ beforeEach(() => {
   spyOn(media, "makeResultVolume").mockImplementation((path) => {
     writeFileSync(path, "result")
   })
-  // The control service is what answers on p.qmp; a new instance has no socket until it starts.
   spyOn(servicectl, "ensureService").mockImplementation((_name, p) => {
     writeFileSync(p.qmp, "")
     return Promise.resolve({} as never)
@@ -171,7 +154,6 @@ beforeEach(() => {
   spyOn(qmp, "execute").mockImplementation(async (_socket, cmd, args) => {
     commands.push(cmd)
     if (cmd === "quit") runningPid = null
-    // The new QEMU's monitor answering means it is up: wait for the fake to have recorded its command line.
     if (cmd === "query-status") {
       answered += 1
       for (let i = 0; i < 300 && launches().length < answered; i += 1) await new Promise((r) => setTimeout(r, 10))
@@ -186,7 +168,6 @@ beforeEach(() => {
     }
     return {}
   })
-  // What the running QEMU was launched with: a real command line for the fixture's profile until something launches one.
   spyOn(display, "runningCommand").mockImplementation((pid) => {
     if (pid !== FAKE_PID) return realRunningCommand(pid)
     if (launches().length > 0) return lastLaunch()
@@ -239,7 +220,6 @@ describe("capturing the running display", () => {
   })
 
   it("refuses the temporary ramfb-plus-share-devices boot of `share install`, before anything is stopped or written", async () => {
-    // What installGuest launches: display.json is ramfb and the devices are forced on.
     writeDisplay(pathsFor("source"), RAMFB)
     initialRunning = RAMFB
     initialDevices = "all"
@@ -247,7 +227,6 @@ describe("capturing the running display", () => {
     expect(command).toContain("-device ramfb")
     expect(command).toContain("memory-backend-shm")
     expect(command).toContain("vhost-user-fs-pci")
-    // It parses as plain ramfb, which is why the display alone cannot be trusted.
     expect(displayFromCommandLine(command)).toEqual(RAMFB)
     await expect(createSave("source", { name: "during-install", kind: "manual", format: "raw" })).rejects.toThrow(/share install.*Save after it finishes/)
     expect(commands).toEqual([])
@@ -265,7 +244,6 @@ describe("capturing the running display", () => {
   })
 
   it("is not fooled by a space in a path, and still saves each ordinary configuration", async () => {
-    // WINVM_HOME is in the arguments; a space there must not change what the devices say.
     spacedHome = resolve(state, "with space")
     for (const shown of [RAMFB, VIRTIO_GPU, SIZED]) {
       initialRunning = shown
@@ -353,7 +331,6 @@ describe("loading a profiled save", () => {
     await loadSave("source", "saved")
     expect(lastLaunch()).toContain("-device ramfb")
     expect(virtiofsd).toBe(0)
-    // The new instance keeps the cold-boot preference a new instance gets, not the save's display.
     expect(readDisplay(pathsFor("source"))).toEqual(VIRTIO_GPU)
   })
 
@@ -405,7 +382,6 @@ describe("cloning", () => {
     expect(clone.display).toEqual(RAMFB)
     expect(clone.clonedFrom?.instance).toBe("source")
     expect(readSave("target", "saved")?.display).toEqual(RAMFB)
-    // A new instance is seeded with the source's preference, as before: the save's display is not written to it.
     expect(readDisplay(pathsFor("target"))).toEqual(VIRTIO_GPU)
     await loadSave("target", "saved")
     expect(lastLaunch()).toContain("-device ramfb")
@@ -471,7 +447,6 @@ describe("the display a launch resolves", () => {
     writeDisplay(p, RAMFB)
     expect(qemu.launchDevices(p, { ...options, display: SIZED })).toEqual({ display: SIZED, devices: "all" })
     expect(qemu.launchDevices(p, { ...options, installMedia: true, display: SIZED })).toEqual({ display: RAMFB, devices: "fs" })
-    // `share install` boots ramfb WITH the devices: an explicit set still wins.
     expect(qemu.launchDevices(p, { ...options, shareDevices: "fs" })).toEqual({ display: RAMFB, devices: "fs" })
     writeDisplay(p, VIRTIO_GPU)
     expect(readFileSync(displayPath(p), "utf8")).toBe(preference)
@@ -485,7 +460,6 @@ describe("the display a launch resolves", () => {
       const { devices } = qemu.launchDevices(p, { ...options, display })
       expect(args.includes("vhost-user-fs-pci")).toBe(devices !== "none")
       expect(args.includes("memory-backend-shm")).toBe(devices !== "none")
-      // And a save's capture reads the display straight back off a real command line, share devices and all.
       expect(displayFromCommandLine(args)).toEqual(display)
     }
   })
@@ -494,7 +468,6 @@ describe("the display a launch resolves", () => {
 describe("launch resolves the display once", () => {
   it("passes one resolution to the sidecar decision and the command line, even if the preference changes between", async () => {
     const p = pathsFor("source")
-    // display.json read twice would see virtio-gpu first, then (a concurrent `winvm display ramfb`) ramfb.
     const reads = [VIRTIO_GPU, RAMFB, RAMFB]
     spyOn(display, "readDisplay").mockImplementation(() => reads.shift() ?? RAMFB)
     await qemu.launch("source", p, meta, { installMedia: false, ephemeral: false, virtioBoot: true })

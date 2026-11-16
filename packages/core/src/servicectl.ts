@@ -12,17 +12,11 @@ export interface ServiceInfo {
   readonly cli: string
   readonly version: string
   readonly startedAt: string
-  /** The build that started it (identity.ts). Absent in a record written before generations were recorded. */
   readonly build?: string
 }
 
 export type Freshness = "current" | "stale" | "legacy"
 
-/**
- * Whether a record was written by the build running now. A record with no
- * build predates generations and is "legacy": it may be live, but nothing says
- * which code it runs. Callers decide what to do with each; readService does not.
- */
 export const serviceFreshness = (info: ServiceInfo, current: string = buildIdentity()): Freshness =>
   info.build === undefined || info.build === "" ? "legacy" : info.build === current ? "current" : "stale"
 
@@ -48,7 +42,6 @@ export function recordedPid(p: Paths): number | null {
   return pidIn(readRecord(p))
 }
 
-/** The record's text exactly as it is on disk, or null. */
 function readRecord(p: Paths): string | null {
   try {
     return readFileSync(p.service, "utf8")
@@ -67,14 +60,6 @@ function pidIn(text: string | null): number | null {
   }
 }
 
-/**
- * Whether the pid is `name`'s service: a `serve` run by the winvm CLI — its
- * entry, `winvm.ts` from source or the compiled `winvm`, right before the verb
- * — naming exactly this instance with `-i`/`--instance`. winvm always spawns it
- * so. A bare `… serve` (ollama's, hugo's, or a `serve` with no instance) is
- * never taken for one: a reused pid must not be signalled. Nor is this very
- * process, whatever a stale record says (only claim() may recognise itself).
- */
 function isServiceFor(pid: number, name: string): boolean {
   if (pid === process.pid) return false
   const r = spawnText("ps", ["-o", "command=", "-p", String(pid)])
@@ -91,12 +76,6 @@ export function readService(p: Paths): ServiceInfo | null {
   }
 }
 
-/**
- * Remove a record judged rejected (or a service's, once stopped) — only while it
- * is still that same record. A service starting meanwhile may have claimed the
- * file with its own; that claim is put back, not lost. The record is moved
- * aside, compared, and linked back if it is not the one judged.
- */
 export function dropServiceRecord(p: Paths, judged: string): boolean {
   const aside = `${p.service}.${String(process.pid)}.${String(Date.now())}.drop`
   try {
@@ -108,13 +87,11 @@ export function dropServiceRecord(p: Paths, judged: string): boolean {
   try {
     moved = readFileSync(aside, "utf8")
   } catch {
-    // vanished
   }
   if (moved !== judged) {
     try {
       linkSync(aside, p.service)
     } catch {
-      // A newer claim is in place already.
     }
     rmSync(aside, { force: true })
     return false
@@ -150,8 +127,6 @@ export function claim(p: Paths, name: string, info: ServiceInfo): void {
         if ((e as NodeJS.ErrnoException).code !== "EEXIST") throw e
       }
       const seen = readRecord(p)
-      // Another service of this very process (tests run several in one) holds
-      // it: that is the one place this process is recognised as a service.
       const holderPid = pidIn(seen)
       if (holderPid === process.pid) throw new Error(`another winvm service (pid ${String(holderPid)}) holds instance "${name}"`)
       const holder = readService(p)
@@ -172,14 +147,11 @@ async function answers(control: string): Promise<boolean> {
   }
 }
 
-/** Process and clock access for stopService, so tests need neither real signals nor real waiting. */
 export interface StopServiceSeams {
   readonly kill?: (pid: number, signal: NodeJS.Signals) => void
   readonly now?: () => number
   readonly sleep?: (ms: number) => void
-  /** Whether the pid is still running at all (a zombie is not). */
   readonly running?: (pid: number) => boolean
-  /** Whether the pid is still this instance's service (alive, and ` serve -i <name>`). */
   readonly isService?: (pid: number) => boolean
 }
 
@@ -190,7 +162,6 @@ export function stopService(p: Paths, seams: StopServiceSeams = {}): void {
   const sleep = seams.sleep ?? ((ms: number): void => { Bun.sleepSync(ms) })
   const running = seams.running ?? ((pid: number): boolean => alive(pid) && !exited(pid))
   const isService = seams.isService ?? ((pid: number): boolean => alive(pid) && isServiceFor(pid, name))
-  // Only a pid the record names AND that is still this instance's service is ever signalled.
   const seen = readRecord(p)
   const pid = pidIn(seen)
   if (seen === null || pid === null || !isService(pid)) return
@@ -201,16 +172,12 @@ export function stopService(p: Paths, seams: StopServiceSeams = {}): void {
   }
   const deadline = now() + 5000
   while (running(pid) && now() < deadline) sleep(50)
-  // Checked again at the last moment: five seconds is long enough for the
-  // service to have exited and its pid to belong to something else.
   if (running(pid) && isService(pid)) {
     try {
       kill(pid, "SIGKILL")
     } catch {
-      // gone
     }
   }
-  // Its record, unless a service started since has claimed the file with its own.
   dropServiceRecord(p, seen)
 }
 
@@ -221,11 +188,8 @@ function exited(pid: number): boolean {
 }
 
 export interface EnsureServiceOptions {
-  /** Launches the service. Defaults to a detached `winvm serve`. */
   readonly start?: () => void
-  /** How long to wait for the replacement to be current and answering. */
   readonly timeoutMs?: number
-  /** The generation that counts as current. Defaults to this process's build. */
   readonly current?: string
 }
 
@@ -237,9 +201,6 @@ export async function ensureService(name: string, p: Paths, o: EnsureServiceOpti
     keepService(p)
     return running
   }
-  // readService vouches for the pid (alive, and a service for this instance), so a
-  // stop signals only a real service. A record it rejects names a gone process or a
-  // reused pid: drop that very record (not a newer claim) and signal nobody.
   if (running !== null) stopService(p)
   else if (seen !== null) dropServiceRecord(p, seen)
   keepService(p)

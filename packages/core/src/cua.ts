@@ -1,31 +1,3 @@
-/**
- * Claude's computer-use tool, executed against a guest: every action of the
- * computer toolset (`computer_toolset_20260801`, and the earlier
- * `computer_20251124` tool's `{action, ...}` form) mapped onto the QMP
- * primitives in input.ts.
- *
- *   screenshot              QMP screendump -> PNG, scaled to fit the model's box
- *   zoom {region}           a region at full resolution, scaled to the same box
- *   left/right/middle/double/triple_click {coordinate?, text?}
- *   left_click_drag {start_coordinate, coordinate, text?}
- *   mouse_move {coordinate}, left_mouse_down, left_mouse_up, cursor_position
- *   scroll {scroll_direction, scroll_amount, coordinate?, text?}
- *   type {text}, key {text, repeat?}, hold_key {text, duration}, wait {duration}
- *
- * COORDINATES. The model sees screenshots no larger than the box (default
- * 1280x800; the toolset takes no display size, so the screenshots ARE the
- * coordinate space) and answers in their pixels. `scale` is screenshot pixels
- * per framebuffer pixel (<= 1); a coordinate goes back to the framebuffer as
- * x / scale. Screenshots that already fit are sent as QEMU encodes them.
- *
- * KEYS are xdotool keysym names ("Return", "ctrl+s", "alt+Tab", "Page_Down",
- * "super"), case-insensitive, `+`-joined, mapped to QMP qcodes. Typing goes
- * through input.ts's US-layout table and refuses characters it can't type.
- *
- * The pure parts (scaling, key names, resampling, PNG encoding) are exported
- * for tests; `Computer` is the stateful executor that cuacmds.ts serves and
- * drives.
- */
 import { mkdirSync, readFileSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { resolve } from "node:path"
@@ -41,41 +13,28 @@ export interface Size {
   readonly height: number
 }
 
-/** The box screenshots are fitted into by default: a recommended computer-use size. */
 export const DEFAULT_BOX: Size = { width: 1280, height: 800 }
 
-// ---------------------------------------------------------------------------
-// Scaling
-
-/** Screenshot pixels per framebuffer pixel: the largest scale <= 1 that fits `native` in `box`. */
 export function fitScale(native: Size, box: Size): number {
   return Math.min(1, box.width / native.width, box.height / native.height)
 }
 
-/** The screenshot size for a framebuffer at `scale`. */
 export const scaled = (native: Size, scale: number): Size =>
   scale >= 1 ? native : { width: Math.max(1, Math.round(native.width * scale)), height: Math.max(1, Math.round(native.height * scale)) }
 
-/** A model coordinate -> the framebuffer pixel it names, clamped onto the screen. */
 export function toNative(x: number, y: number, scale: number, native: Size): { x: number; y: number } {
   const clamp = (v: number, n: number): number => Math.min(Math.max(Math.round(v), 0), n - 1)
   return { x: clamp(x / scale, native.width), y: clamp(y / scale, native.height) }
 }
 
-/** A framebuffer pixel -> model coordinates. */
 export const toModel = (x: number, y: number, scale: number): { x: number; y: number } => ({ x: Math.round(x * scale), y: Math.round(y * scale) })
 
-// ---------------------------------------------------------------------------
-// Keys: xdotool keysym names -> QMP qcodes
-
 const KEYSYMS: Readonly<Record<string, string>> = {
-  // modifiers
   ctrl: "ctrl", control: "ctrl", control_l: "ctrl", control_r: "ctrl_r", ctrl_l: "ctrl", ctrl_r: "ctrl_r",
   shift: "shift", shift_l: "shift", shift_r: "shift_r",
   alt: "alt", alt_l: "alt", alt_r: "alt_r", option: "alt", altgr: "alt_r", iso_level3_shift: "alt_r",
   super: "meta_l", super_l: "meta_l", super_r: "meta_r", meta: "meta_l", meta_l: "meta_l", meta_r: "meta_r",
   win: "meta_l", windows: "meta_l", cmd: "meta_l", command: "meta_l", hyper_l: "meta_l",
-  // editing and navigation
   return: "ret", enter: "ret", ret: "ret", kp_enter: "kp_enter", linefeed: "ret",
   tab: "tab", escape: "esc", esc: "esc", backspace: "backspace", delete: "delete", del: "delete",
   insert: "insert", ins: "insert", home: "home", end: "end",
@@ -85,26 +44,21 @@ const KEYSYMS: Readonly<Record<string, string>> = {
   space: "spc", spc: "spc",
   menu: "menu", apps: "menu", print: "print", sys_req: "sysrq", pause: "pause", break: "pause",
   caps_lock: "caps_lock", num_lock: "num_lock", scroll_lock: "scroll_lock",
-  // punctuation by keysym name (unshifted)
   minus: "minus", equal: "equal", bracketleft: "bracket_left", bracketright: "bracket_right",
   backslash: "backslash", semicolon: "semicolon", apostrophe: "apostrophe", quoteright: "apostrophe",
   grave: "grave_accent", quoteleft: "grave_accent", comma: "comma", period: "dot", slash: "slash",
-  // keypad
   kp_add: "kp_add", kp_subtract: "kp_subtract", kp_multiply: "kp_multiply", kp_divide: "kp_divide",
   kp_decimal: "kp_decimal", kp_equal: "kp_equals",
-  // media
   xf86audiomute: "audiomute", xf86audiolowervolume: "volumedown", xf86audioraisevolume: "volumeup",
   xf86audioplay: "audioplay", xf86audionext: "audionext", xf86audioprev: "audioprev", xf86audiostop: "audiostop",
 }
 
-/** Keysym names of shifted characters: the key they share, pressed with shift. */
 const SHIFTED_KEYSYMS: Readonly<Record<string, string>> = {
   exclam: "!", at: "@", numbersign: "#", dollar: "$", percent: "%", asciicircum: "^", ampersand: "&",
   asterisk: "*", parenleft: "(", parenright: ")", underscore: "_", plus: "+", braceleft: "{", braceright: "}",
   bar: "|", colon: ":", quotedbl: '"', less: "<", greater: ">", question: "?", asciitilde: "~",
 }
 
-/** One key name -> its qcodes (shifted characters bring their shift). Null if unknown. */
 export function keysymToQcodes(name: string): readonly string[] | null {
   const lower = name.toLowerCase()
   const named = KEYSYMS[lower]
@@ -117,13 +71,11 @@ export function keysymToQcodes(name: string): readonly string[] | null {
   const shiftedChar = SHIFTED_KEYSYMS[lower]
   const ch = shiftedChar ?? (name.length === 1 ? name : null)
   if (ch === null) return null
-  // A letter names its key whatever its case ("ctrl+S" is ctrl+s, as in xdotool).
   const stroke = input.charToStroke(/^[A-Za-z]$/.test(ch) ? ch.toLowerCase() : ch)
   if (stroke === null || stroke.qcode === "ret" || stroke.qcode === "tab") return null
   return stroke.shift ? ["shift", stroke.qcode] : [stroke.qcode]
 }
 
-/** "ctrl+shift+Escape" -> qcodes in press order (duplicates dropped). The unknown part names itself. */
 export function parseKeys(combo: string): { qcodes: readonly string[]; unknown: string | null } {
   const parts = combo.trim().split(/(?<=.)\+(?=.)/).map((x) => x.trim()).filter((x) => x !== "")
   if (parts.length === 0) return { qcodes: [], unknown: combo }
@@ -136,15 +88,10 @@ export function parseKeys(combo: string): { qcodes: readonly string[]; unknown: 
   return { qcodes, unknown: null }
 }
 
-// ---------------------------------------------------------------------------
-// Images: raw PPM in, resampled RGB, PNG out
-
 export interface Rgb extends Size {
-  /** width * height * 3 bytes, rows top to bottom. */
   readonly data: Uint8Array
 }
 
-/** Decode a binary P6 PPM (maxval 255), as QEMU's screendump writes it. */
 export function parsePpm(buf: Uint8Array): Rgb {
   const head = Buffer.from(buf.subarray(0, 64)).toString("latin1")
   const m = /^P6\s+(\d+)\s+(\d+)\s+(\d+)\s/.exec(head)
@@ -156,7 +103,6 @@ export function parsePpm(buf: Uint8Array): Rgb {
   return { width, height, data: buf.subarray(off, off + width * height * 3) }
 }
 
-/** Crop to [x0, y0, x1, y1) (clamped). */
 export function crop(img: Rgb, x0: number, y0: number, x1: number, y1: number): Rgb {
   const ax = Math.max(0, Math.min(img.width - 1, Math.floor(Math.min(x0, x1))))
   const ay = Math.max(0, Math.min(img.height - 1, Math.floor(Math.min(y0, y1))))
@@ -172,10 +118,6 @@ export function crop(img: Rgb, x0: number, y0: number, x1: number, y1: number): 
   return { width: w, height: h, data: out }
 }
 
-/**
- * Resample to `w` x `h`: an area average when shrinking (text stays legible
- * rather than aliasing), bilinear when growing (a zoomed region).
- */
 export function resize(img: Rgb, w: number, h: number): Rgb {
   if (w === img.width && h === img.height) return img
   const src = img.data
@@ -260,7 +202,6 @@ function chunk(type: string, data: Uint8Array): Uint8Array {
   return Buffer.concat([head, data, tail])
 }
 
-/** An RGB image as an 8-bit truecolor PNG (the Sub filter on every row). */
 export function encodePng(img: Rgb): Buffer {
   const { width: w, height: h, data } = img
   const stride = w * 3
@@ -287,10 +228,6 @@ export function encodePng(img: Rgb): Buffer {
   ])
 }
 
-// ---------------------------------------------------------------------------
-// Actions
-
-/** A tool_result content block, as the Messages API takes it. */
 export type Block =
   | { readonly type: "text"; readonly text: string }
   | { readonly type: "image"; readonly source: { readonly type: "base64"; readonly media_type: "image/png"; readonly data: string } }
@@ -298,7 +235,6 @@ export type Block =
 export interface Result {
   readonly content: readonly Block[]
   readonly isError: boolean
-  /** Milliseconds: `total`, and for screenshots `capture` and `encode`. */
   readonly ms: Readonly<Record<string, number>>
 }
 
@@ -315,18 +251,12 @@ export const isAction = (s: string): s is ActionName => (ACTIONS as readonly str
 
 type Params = Readonly<Record<string, unknown>>
 
-/**
- * A request in either shape — `{action: "left_click", coordinate: [..]}` (the
- * earlier tool, and this server's wire format) or a toolset member's name plus
- * its input — as one action.
- */
 export function normalize(nameOrBody: string | Params, maybeInput?: Params): { action: string; params: Params } {
   if (typeof nameOrBody === "string") return { action: nameOrBody, params: maybeInput ?? {} }
   const { action, ...params } = nameOrBody
   return { action: typeof action === "string" ? action : "", params }
 }
 
-/** [x, y] from a parameter, or an ActionError naming it. */
 export function point(params: Params, key: string): { x: number; y: number } {
   const v = params[key]
   if (!Array.isArray(v) || v.length !== 2 || !v.every((n) => typeof n === "number" && Number.isFinite(n))) {
@@ -351,7 +281,6 @@ function num(params: Params, key: string, lo: number, hi: number, fallback?: num
   return v
 }
 
-/** Modifier keys from a click/scroll's `text` ("shift", "ctrl+shift"), as qcodes. */
 export function modifiers(params: Params): readonly string[] {
   const t = params["text"]
   if (t === undefined || t === null || t === "") return []
@@ -364,17 +293,10 @@ export function modifiers(params: Params): readonly string[] {
 const ok = (ms: Record<string, number>): Result => ({ content: [{ type: "text", text: "OK" }], isError: false, ms })
 const sleep = async (ms: number): Promise<void> => { await new Promise((r) => setTimeout(r, ms)) }
 
-/**
- * The executor. Holds what QMP can't be asked for — where the pointer is —
- * and the framebuffer size from the last screenshot, so an action after a
- * screenshot needs no extra screendump to scale its coordinates. Not
- * reentrant: callers run one action at a time (QMP takes one client anyway).
- */
 export class Computer {
   readonly p: Paths
   readonly box: Size
   private nativeSize: Size | null = null
-  /** The pointer, in framebuffer pixels; null until something moves it. */
   private cursor: { x: number; y: number } | null = null
   private readonly scratch: string
 
@@ -384,7 +306,6 @@ export class Computer {
     this.scratch = resolve(tmpdir(), `winvm-cua-${String(process.pid)}`)
   }
 
-  /** The framebuffer size, the scale, and the screenshot size the model works in. */
   async display(): Promise<{ native: Size; scale: number; size: Size }> {
     const native = this.nativeSize ?? (await withQmp(this.p.qmp, async (q) => await input.screenSize(q), 10_000))
     this.nativeSize = native
@@ -392,7 +313,6 @@ export class Computer {
     return { native, scale, size: scaled(native, scale) }
   }
 
-  /** Run one action. Bad input and failures come back as `isError` results, never thrown. */
   async run(nameOrBody: string | Params, maybeInput?: Params): Promise<Result> {
     const t0 = performance.now()
     const { action, params } = normalize(nameOrBody, maybeInput)
@@ -489,14 +409,9 @@ export class Computer {
     }
   }
 
-  /**
-   * The screen (or, with a region in model coordinates, part of it at full
-   * resolution) as a PNG no larger than the model's screenshot size.
-   */
   private async screenshot(region: readonly [number, number, number, number] | null): Promise<Result> {
     mkdirSync(this.scratch, { recursive: true })
     const t0 = performance.now()
-    // When nothing needs scaling, QEMU's own PNG is the cheapest path.
     const known = this.nativeSize
     const direct = region === null && known !== null && fitScale(known, this.box) === 1
     const file = resolve(this.scratch, direct ? "shot.png" : "shot.ppm")
@@ -509,7 +424,7 @@ export class Computer {
         const size = input.pngSize(raw)
         if (size === null) throw new Error("QEMU's screendump isn't a PNG")
         this.nativeSize = size
-        if (fitScale(size, this.box) !== 1) return await this.screenshot(null) // the screen grew
+        if (fitScale(size, this.box) !== 1) return await this.screenshot(null)
         png = raw
       } else {
         const img = parsePpm(raw)
@@ -522,7 +437,6 @@ export class Computer {
           const a = toNative(region[0], region[1], scale, img)
           const b = toNative(region[2], region[3], scale, img)
           const part = crop(img, a.x, a.y, b.x + 1, b.y + 1)
-          // Fit the region into the screenshot size, aspect ratio kept.
           const f = Math.min(out.width / part.width, out.height / part.height)
           png = encodePng(resize(part, Math.max(1, Math.round(part.width * f)), Math.max(1, Math.round(part.height * f))))
         }
@@ -538,7 +452,6 @@ export class Computer {
     }
   }
 
-  /** Move the tablet to a model coordinate, and remember where it went. */
   private async moveWith(q: QmpSend, at: { x: number; y: number }): Promise<void> {
     const { native, scale } = await this.display()
     const n = toNative(at.x, at.y, scale, native)
@@ -589,7 +502,6 @@ export class Computer {
       await this.withModifiers(q, mods, async () => {
         await input.send(q, [input.btnEv("left", true)])
         await sleep(input.GAP_MS * 2)
-        // A few steps on the way, so the app sees a drag rather than a jump.
         const steps = 8
         for (let i = 1; i <= steps; i += 1) {
           await this.moveWith(q, { x: from.x + ((to.x - from.x) * i) / steps, y: from.y + ((to.y - from.y) * i) / steps })
@@ -601,7 +513,6 @@ export class Computer {
     }, 10_000)
   }
 
-  /** Wheel notches. Left/right is shift+wheel: the USB tablet has no horizontal wheel. */
   private async scroll(at: { x: number; y: number } | null, dir: "up" | "down" | "left" | "right", amount: number, mods: readonly string[]): Promise<void> {
     await this.display()
     const horizontal = dir === "left" || dir === "right"
@@ -623,7 +534,6 @@ export class Computer {
     }, 10_000)
   }
 
-  /** Drop the scratch directory. */
   close(): void {
     rmSync(this.scratch, { recursive: true, force: true })
   }

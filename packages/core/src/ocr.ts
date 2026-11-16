@@ -1,22 +1,3 @@
-/**
- * Read the guest's screen as text — the fallback when there is no DOM
- * (webview.ts) or accessibility tree to ask: native dialogs, the tray menu,
- * toasts, an app that won't expose either.
- *
- *   winvm ocr [-i name] [--find TEXT] [--wait S] [--fast] [--json] [--image f.png]
- *   winvm click [-i name] --text "Quit" [--wait S] [--right|--middle] [--double]
- *
- * A QMP screendump (PNG, framebuffer pixels) goes through macOS Vision
- * (VNRecognizeTextRequest) in a small Swift helper, assets/ocr.swift. The
- * helper is compiled with `swiftc -O` on first use and cached under
- * <WINVM_HOME>/cache/bin, keyed by a hash of its source, so an edit rebuilds
- * it and nothing else ever does. Boxes come back in screenshot pixels — the
- * same coordinates `winvm click` takes — so a match's centre is a click.
- *
- * Matching is case- and diacritic-insensitive. A line that IS the text beats a
- * line that contains it; ties go top to bottom, then left to right. A match
- * inside a longer line is boxed on its own (Vision boxes substrings).
- */
 import { createHash } from "node:crypto"
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
@@ -32,16 +13,13 @@ import * as qemu from "./qemu"
 export interface TextBox {
   readonly text: string
   readonly confidence: number
-  /** [x, y, w, h] in image pixels, origin top left. */
   readonly box: readonly [number, number, number, number]
-  /** With a needle: the box of just the matched part of the line. */
   readonly match?: readonly [number, number, number, number]
 }
 
 const errMsg = (e: unknown): string => (e instanceof Error ? e.message : String(e))
 const SOURCE = resolve(PACKAGE_DIR, "assets", "ocr.swift")
 
-/** The compiled helper, building it if this source has not been built yet. */
 export function helper(): string {
   const src = readFileSync(SOURCE)
   const hash = createHash("sha256").update(src).digest("hex").slice(0, 12)
@@ -60,7 +38,6 @@ export function helper(): string {
   return bin
 }
 
-/** Parse the helper's JSON lines. */
 export function parseBoxes(out: string): TextBox[] {
   return out
     .split("\n")
@@ -68,7 +45,6 @@ export function parseBoxes(out: string): TextBox[] {
     .map((l) => JSON.parse(l) as TextBox)
 }
 
-/** Recognise the text in an image file. With `find`, only lines containing it (each with a `match` box). */
 export async function recognize(image: string, o: { readonly find?: string; readonly fast?: boolean } = {}): Promise<TextBox[]> {
   const argv = [helper(), image, ...(o.find === undefined ? [] : ["--find", o.find]), ...(o.fast === true ? ["--fast"] : [])]
   const p = Bun.spawn(argv, { stdout: "pipe", stderr: "pipe" })
@@ -79,7 +55,6 @@ export async function recognize(image: string, o: { readonly find?: string; read
 
 const fold = (s: string): string => s.normalize("NFKD").replace(/\p{M}/gu, "").toLowerCase().trim()
 
-/** Lines matching `needle`: whole-line matches first, then reading order. */
 export function rank(boxes: readonly TextBox[], needle: string): TextBox[] {
   const n = fold(needle)
   return boxes
@@ -89,7 +64,6 @@ export function rank(boxes: readonly TextBox[], needle: string): TextBox[] {
     .map((x) => x.b)
 }
 
-/** The centre of a match (its own box when Vision gave one, else its line's). */
 export function centre(b: TextBox): { readonly x: number; readonly y: number } {
   const [x, y, w, h] = b.match ?? b.box
   return { x: Math.round(x + w / 2), y: Math.round(y + h / 2) }
@@ -103,7 +77,6 @@ export interface ScreenText {
   readonly ocrMs: number
 }
 
-/** Screendump the guest and read it. */
 export async function readScreen(p: Paths, o: { readonly find?: string; readonly fast?: boolean } = {}): Promise<ScreenText> {
   const file = resolve(tmpdir(), `winvm-ocr-${String(process.pid)}-${String(Date.now())}.png`)
   try {
@@ -118,7 +91,6 @@ export async function readScreen(p: Paths, o: { readonly find?: string; readonly
   }
 }
 
-/** Re-read the screen until `text` shows (or `waitMs` passes); the best match, or null. */
 export async function findOnScreen(p: Paths, text: string, o: { readonly waitMs?: number; readonly fast?: boolean } = {}): Promise<{ hit: TextBox | null; last: ScreenText }> {
   const deadline = Date.now() + (o.waitMs ?? 0)
   for (;;) {
@@ -133,8 +105,6 @@ const fmt = (b: TextBox): string => {
   const [x, y, w, h] = b.match ?? b.box
   return `${String(x)},${String(y)} ${String(w)}x${String(h)}  ${(b.confidence * 100).toFixed(0)}%  ${b.text}`
 }
-
-// --- verbs ------------------------------------------------------------------------------
 
 export async function ocr(args: Args): Promise<number> {
   const find = args.flags.get("find")
@@ -169,7 +139,6 @@ export async function ocr(args: Args): Promise<number> {
   }
 }
 
-/** `winvm click --text T`: find T on the screen and click the middle of it. */
 export async function clickText(args: Args, text: string): Promise<number> {
   const name = instanceName(args)
   const p = pathsFor(name)

@@ -1,11 +1,3 @@
-/**
- * The screen verbs: `open`, `screenshot`, `type`, `key`, `click`, `move`,
- * `scroll`, `display`.
- *
- * `open` is for a person (Screen Sharing or the browser). The rest need no
- * window at all and are for scripts and agents: take a screenshot, read it,
- * click a pixel in it, type, take another. See input.ts.
- */
 import { spawnSync } from "node:child_process"
 import { resolve } from "node:path"
 
@@ -28,7 +20,6 @@ import * as web from "./web"
 
 const errMsg = (e: unknown): string => (e instanceof Error ? e.message : String(e))
 
-/** The instance, running — or a message saying why not and what to do. */
 function running(args: Args): { name: string; p: Paths; meta: InstanceMeta } | null {
   const name = instanceName(args)
   const meta = readMeta(name)
@@ -45,7 +36,6 @@ function running(args: Args): { name: string; p: Paths; meta: InstanceMeta } | n
   return { name, p, meta }
 }
 
-/** Hand a URL to macOS, unless the caller asked for the URL only. */
 function launch(url: string, printOnly: boolean): number {
   if (printOnly) return 0
   const r = spawnSync("open", [url], { stdio: "inherit" })
@@ -55,8 +45,6 @@ function launch(url: string, printOnly: boolean): number {
 export async function open(args: Args): Promise<number> {
   const printOnly = args.flags.has("print")
 
-  // The browser view opens for a stopped instance too — its Start button is
-  // one way to start it — but says so first.
   if (args.flags.has("web")) {
     const name = instanceName(args)
     const flag = name === "default" ? "" : ` -i ${name}`
@@ -75,7 +63,6 @@ export async function open(args: Args): Promise<number> {
       return 1
     }
     const url = web.pageUrl(server.port, name, server.token)
-    // The URL carries the access token, so print it only when asked to.
     console.log(printOnly ? url : `opening the browser view of "${name}" (server on 127.0.0.1:${String(server.port)})`)
     return launch(url, printOnly)
   }
@@ -83,14 +70,10 @@ export async function open(args: Args): Promise<number> {
   const r = running(args)
   if (r === null) return 1
 
-  // Set the password again before connecting: cheap, and it covers a guest that
-  // an older copy of this tool started without one.
   let password: string | null
   try {
     password = await applyPassword(r.p)
   } catch (error) {
-    // The monitor is busy (a save in progress?). launch() set the password
-    // already, so the stored one is the best guess.
     console.warn(`warning: could not confirm the VNC password (${errMsg(error)}); using the stored one`)
     password = passwordFor(r.p)
   }
@@ -111,7 +94,6 @@ export async function open(args: Args): Promise<number> {
   return launch(url, printOnly)
 }
 
-/** `winvm screenshot [file.png]` — defaults to the instance's screenshots/ folder. */
 export async function screenshot(args: Args): Promise<number> {
   const r = running(args)
   if (r === null) return 1
@@ -173,8 +155,6 @@ export async function key(args: Args): Promise<number> {
 }
 
 function coords(args: Args, usage: string): { x: number; y: number } | null {
-  // The parser reads `--right 10` as --right=10, so a boolean flag written
-  // before the coordinates has eaten one. Take it back.
   const eaten = ["right", "middle", "double"].map((f) => args.flags.get(f)).filter((v) => v !== undefined && v !== "true")
   const [xs, ys] = [...eaten, ...args.positional]
   const x = Number(xs)
@@ -221,7 +201,6 @@ export async function move(args: Args): Promise<number> {
 }
 
 export async function scroll(args: Args): Promise<number> {
-  // "-3" would be read as a flag by the parser, so `scroll -- -3` and `scroll up 3` both work.
   const raw = [...args.positional, ...args.rest]
   let n = Number(raw[0])
   if (raw[0] === "up" || raw[0] === "down") n = Number(raw[1] ?? 1) * (raw[0] === "up" ? -1 : 1)
@@ -240,23 +219,6 @@ export async function scroll(args: Args): Promise<number> {
   }
 }
 
-/**
- * `winvm display [-i name] [WxH | virtio-gpu | ramfb] [--scale PCT] [--json]`
- *
- *   (nothing)        the device, and the screen's size and scale now
- *   WxH              resize a running virtio-gpu guest live: a VNC
- *                    SetDesktopSize request, then the guest agent sets the
- *                    mode (guestdisplay.ts). Clamped to what the driver and
- *                    VNC can show (displayfit.ts). `--no-request` skips the
- *                    VNC step, for a viewer that already sent it (the app).
- *   --scale PCT      Windows' display scale (100, 125, 150, 200, …), live
- *   virtio-gpu|ramfb switch the display device of a STOPPED instance; saves
- *                    taken on the other device stop loading (display.ts)
- *
- * A viewer that resizes on every window drag calls the agent's POST /display
- * itself (`winvm agent connect --json` says where), as this does with
- * `--no-request`: that costs a few ms, this command a process start.
- */
 export async function display(args: Args): Promise<number> {
   const name = instanceName(args)
   const meta = readMeta(name)
@@ -296,11 +258,9 @@ export async function display(args: Args): Promise<number> {
     return 0
   }
 
-  // Switching the device.
   const device = wantRaw === undefined ? null : parseDevice(wantRaw)
   if (device !== null) return switchDevice(name, meta, p, configured, device, live, flag)
 
-  // Resizing (and/or scaling) the running guest.
   const asked = wantRaw === undefined ? null : parseSize(wantRaw)
   if (wantRaw !== undefined && asked === null) {
     console.error(`::error::"${wantRaw}" is not a size or a device — use WIDTHxHEIGHT (e.g. 2560x1600), virtio-gpu or ramfb`)
@@ -337,7 +297,6 @@ export async function display(args: Args): Promise<number> {
   }
 }
 
-/** `winvm display virtio-gpu|ramfb`: only while stopped, and says which saves stop (or start) loading. */
 function switchDevice(name: string, meta: InstanceMeta, p: Paths, from: DisplayConfig, to: DisplayConfig, live: boolean, flag: string): number {
   if (sameDevice(from, to)) {
     console.log(`"${name}" already uses ${describeDisplay(to)}`)
@@ -347,7 +306,6 @@ function switchDevice(name: string, meta: InstanceMeta, p: Paths, from: DisplayC
     console.error(`::error::"${name}" is running; the display device changes only while it is stopped — \`winvm stop${flag}\` first`)
     return 1
   }
-  // A stowed guest's disk is mid-session; on another device it could only boot cold from it, like pulling the plug.
   if (saves.hasSave(name, saves.STOW)) {
     console.error(
       `::error::"${name}" is stowed (saved mid-session). Start it and shut it down cleanly first: ` +
@@ -355,8 +313,6 @@ function switchDevice(name: string, meta: InstanceMeta, p: Paths, from: DisplayC
     )
     return 1
   }
-  // Each save judged at its own size and display (saves.compatFor), before and after the switch: a save
-  // that recorded its display loads on it whatever the preference, so only a legacy save can be stranded.
   const listed = saves.listSaves(name).flatMap((s) => (s.manifest === null ? [] : [s.manifest]))
   const loads = (): ReadonlySet<string> => new Set(listed.filter((m) => m.compat === saves.compatFor(name, meta, m).hash).map((m) => m.name))
   const before = loads()

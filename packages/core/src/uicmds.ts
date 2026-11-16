@@ -1,26 +1,3 @@
-/**
- * `winvm ui …`: drive the guest's GUI by UI Automation element names (ui.ts).
- *
- *   winvm ui [-i name] windows                          top-level windows
- *   winvm ui tree   [selector] [--depth N] [--max N]    the element tree
- *   winvm ui find   [selector] [--all]                  the matching element(s)
- *   winvm ui wait   [selector] [--gone]                 until it appears (or goes)
- *   winvm ui click | rightclick | doubleclick | invoke | toggle | expand
- *          | collapse | select | focus  [selector] [--settle ms]
- *   winvm ui set    [selector] --value text             ValuePattern.SetValue
- *   winvm ui type   [selector] --value text             focus, then key events
- *   winvm ui settle [selector] [--quiet ms]             until the UI is idle
- *   winvm ui tray   <tooltip> [--menu item] [--button left|right|double]
- *   winvm ui menu   <item>                              click an open menu's item
- *   winvm ui at     <x> <y>                             what a click there would hit
- *   winvm ui ping                                       the helper's arch, DPI, screen
- *
- * Selector flags: --window <title part|class> --process <name> --hwnd <n>
- * --name <exact> --contains <part> --id <automationId> --type <controlType>
- * --class <className> --index <n>. A bare positional is --name. --timeout
- * (seconds, or "500ms") is how long to wait for the element; --json prints the
- * helper's answer as is.
- */
 import type { Args } from "./args"
 import { instanceName } from "./args"
 import { parseDuration } from "./job"
@@ -43,7 +20,6 @@ const fail = (msg: string): number => {
   return 1
 }
 
-/** A duration flag: a bare number is in `unit`; "500ms", "2s" are explicit. */
 const dur = (args: Args, flag: string, unit: "s" | "ms"): number | undefined => {
   const v = args.flags.get(flag)
   if (v === undefined) return undefined

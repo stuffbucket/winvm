@@ -1,9 +1,3 @@
-/**
- * Host-side prerequisite checks.
- *
- * The prerequisite list is the one thing a new user hits first, so it is kept
- * where it can be read without following any other code path.
- */
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs"
 import { resolve } from "node:path"
 import { gunzipSync } from "node:zlib"
@@ -12,11 +6,6 @@ import { PACKAGE_DIR, home } from "./paths"
 import { findRuntime, runtimeBin, verifyRuntime, type Runtime } from "./runtime"
 import { capture, have, spawnText } from "./shell"
 
-/**
- * Where to look for UEFI firmware: `WINVM_QEMU_DATA`, else the vendored copy,
- * else the directories the runtime's QEMU reports with `-L help`. Worked out
- * once per state directory (the vendored copy is expanded into it).
- */
 let dataDirs: { readonly key: string; readonly dirs: readonly string[] } | null = null
 export function qemuDataDirs(): readonly string[] {
   const override = process.env["WINVM_QEMU_DATA"]
@@ -24,10 +13,6 @@ export function qemuDataDirs(): readonly string[] {
   if (dataDirs?.key === key) return dataDirs.dirs
   const found = ((): readonly string[] => {
     if (override !== undefined && override !== "") return [resolve(override)]
-    // The vendored copy comes first, so the harness does not depend on how a
-    // particular QEMU packaging laid out its data files. Expanded once into the
-    // state directory: the images are ~99% zero padding, which is why 128 MiB of
-    // firmware is 1.6 MB in the repository. See THIRD-PARTY-LICENSE.md.
     const vendored = expandVendoredFirmware()
     if (vendored !== null) return [vendored]
     const asked = spawnText(runtimeBin("qemu-system-aarch64"), ["-L", "help"])
@@ -41,15 +26,6 @@ export function qemuDataDirs(): readonly string[] {
   return found
 }
 
-/**
- * Whether this QEMU's tpm-tis-device has a `ppi` property — ASKED, NOT ASSUMED.
- *
- * QEMU 11.1 added the Physical Presence Interface to that device, and on macOS
- * 26 its RAM region makes HVF fail, so qemu.ts turns it off. QEMU before 11.1
- * has no PPI there and rejects `ppi=off` as an unknown property ("Property
- * 'tpm-tis-device.ppi' not found"), so the guest never starts. Leaving the
- * option out on those versions gives the same device.
- */
 let tpmPpi: boolean | null = null
 export function tpmTisHasPpi(): boolean {
   if (tpmPpi !== null) return tpmPpi
@@ -60,14 +36,8 @@ export function tpmTisHasPpi(): boolean {
   return tpmPpi
 }
 
-/** `-device tpm-tis-device,help` lists one property per line: `  ppi=<bool> ...`. */
 export const parseHasPpi = (help: string): boolean => /^\s*ppi=/m.test(help)
 
-/**
- * Expand `firmware/*.fd.gz` into the state directory, once, and return the
- * directory holding them. Returns null when this copy of the tool has no
- * vendored firmware, so discovery still runs.
- */
 function expandVendoredFirmware(): string | null {
   const src = resolve(PACKAGE_DIR, "firmware")
   const gz = [`${CODE_NAMES[0]}.gz`, `${VARS_NAMES[0]}.gz`]
@@ -77,17 +47,12 @@ function expandVendoredFirmware(): string | null {
   mkdirSync(dest, { recursive: true })
   for (const f of gz) {
     const out = resolve(dest, f.replace(/\.gz$/, ""))
-    // Size is the cheap integrity check: a truncated expansion would otherwise
-    // reach QEMU as a corrupt pflash and fail somewhere far less obvious.
-    // Stat and handle absence rather than asking whether it exists first — the
-    // two-step form races anything else writing here.
     if (sizeOrZero(out) === EXPECTED_FIRMWARE_BYTES) continue
     writeFileSync(out, gunzipSync(readFileSync(resolve(src, f))))
   }
   return dest
 }
 
-/** Both EDK2 images are exactly 64 MiB; pflash requires the size to match the device. */
 const EXPECTED_FIRMWARE_BYTES = 64 * 1024 * 1024
 
 const sizeOrZero = (path: string): number => {
@@ -98,10 +63,6 @@ const sizeOrZero = (path: string): number => {
   }
 }
 
-/**
- * First match wins. QEMU's own names come first; the others are what Debian and
- * Linaro ship, cheap to look for and harmless when absent.
- */
 function findFirmware(names: readonly string[]): string | null {
   for (const dir of qemuDataDirs()) {
     for (const name of names) {
@@ -115,15 +76,9 @@ function findFirmware(names: readonly string[]): string | null {
 const CODE_NAMES = ["edk2-aarch64-code.fd", "AAVMF_CODE.fd", "QEMU_EFI.fd"] as const
 const VARS_NAMES = ["edk2-arm-vars.fd", "AAVMF_VARS.fd", "QEMU_VARS.fd"] as const
 
-/** The AArch64 UEFI code image. Non-secure — see the docs for why that matters. */
 export const firmwareCode = (): string | null => findFirmware(CODE_NAMES)
-/** The matching variables template, copied per instance and converted to qcow2. */
 export const firmwareVars = (): string | null => findFirmware(VARS_NAMES)
 
-/**
- * Both images or a clear error. Without this the missing case reaches QEMU as
- * the literal string "null" and comes back as `Could not open 'null'`.
- */
 export function requireFirmware(): { readonly code: string; readonly vars: string } {
   const code = firmwareCode()
   const vars = firmwareVars()
@@ -131,7 +86,6 @@ export function requireFirmware(): { readonly code: string; readonly vars: strin
   return { code, vars }
 }
 
-/** Names what was looked for and where, because "firmware not found" alone is useless. */
 export function firmwareHint(): string {
   const dirs = qemuDataDirs()
   return (
@@ -140,28 +94,9 @@ export function firmwareHint(): string {
   )
 }
 
-/**
- * WHQL-signed ARM64 virtio drivers plus qemu-ga. The practical source of both.
- *
- * DOWNLOADED, NOT VENDORED, and that is a licence decision rather than a size
- * one: the installer on this ISO bundles `qemu-ga`, which is GPL-2.0, and
- * shipping it would oblige this project to keep corresponding source available
- * for as long as it did. See THIRD-PARTY-LICENSE.md.
- *
- * Pinned by digest because the URL says "latest" — upstream can change what it
- * serves at any moment, and a test fixture that silently changes underneath a
- * harness is exactly the kind of variable this tool exists to remove.
- */
 export const TOOLS_URL = "https://github.com/utmapp/qemu/releases/download/v10.0.2-utm/utm-guest-tools-0.1.271.iso"
 export const TOOLS_SHA256 = "65b6a69b392ee01dd314c10f3dad9ebbf9c4160be43f5f0dd6bb715944d9095b"
 
-/**
- * PowerShell 7, installed into every image. Native ARM64 and .NET 8+, so it
- * starts several times faster than the in-box Windows PowerShell 5.1 and is
- * what test harnesses should script the guest with. Pinned by version and
- * digest for the same reason as the guest tools; shipped on the seed rather
- * than downloaded in the guest, so the build never depends on the guest NIC.
- */
 export const PWSH_VERSION = "7.6.7"
 export const PWSH_URL =
   `https://github.com/PowerShell/PowerShell/releases/download/v${PWSH_VERSION}/PowerShell-${PWSH_VERSION}-win-arm64.msi`
@@ -199,16 +134,11 @@ export function hostChecks(): readonly Check[] {
   return [
     macosCheck(capture("sw_vers", ["-productVersion"]), process.arch),
     runtimeCheck(rt, rt === null ? [] : verifyRuntime(rt)),
-    // Reported with the path that was actually found, so a mismatched QEMU
-    // install is obvious rather than a bare "missing".
     {
       label: `UEFI firmware${firmwareCode() === null ? "" : ` (${String(firmwareCode())})`}`,
       ok: firmwareCode() !== null && firmwareVars() !== null,
       hint: firmwareHint(),
     },
-    // Builds the seed ISO and the FAT result volume. macOS-only, which is the
-    // tool's platform limit and worth surfacing as a named check rather than a
-    // confusing failure deep inside `build`.
     { label: "hdiutil", ok: have("hdiutil"), hint: "macOS built-in" },
   ]
 }

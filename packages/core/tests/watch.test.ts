@@ -1,8 +1,3 @@
-/**
- * The watcher's decisions, driven by a fake clock and fake samples — no VM.
- *
- *   pnpm test   (or: bun test)
- */
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { resolve } from "node:path"
@@ -33,13 +28,11 @@ const SETTINGS: Settings = {
   stow: { enabled: true, idleMinutes: 60 },
 }
 
-/** Drives an IdleMachine tick by tick, like the watcher loop does. */
 class Harness {
   now = 1_700_000_000_000
   readonly machine = new IdleMachine(this.now, TIMING)
   activityAt: number | null = null
   vnc = 0
-  /** The guest is paused or asleep. */
   frozen = false
   readonly log: { readonly at: number; readonly d: Decision }[] = []
 
@@ -55,13 +48,11 @@ class Harness {
     const ds = this.machine.tick(s, this.settings)
     for (const d of ds) {
       this.log.push({ at: this.now, d })
-      // The loop reports back after running an action, as watch.ts does.
       if (d.kind === "autosave") this.machine.actionDone(this.now)
     }
     return ds
   }
 
-  /** Tick `minutes` worth at a fixed CPU share. */
   run(minutes: number, cpu: number): void {
     for (let t = 0; t < (minutes * MIN) / TIMING.tickMs; t += 1) this.tick(cpu)
   }
@@ -71,8 +62,8 @@ class Harness {
   }
 }
 
-const IDLE = 0.004 // measured: an idle desktop is 0.3-1% of 4 vCPUs
-const BUSY = 0.25 // one busy thread
+const IDLE = 0.004
+const BUSY = 0.25
 
 describe("idle state machine", () => {
   it("autosaves once per idle stretch, and again only after real activity", () => {
@@ -82,18 +73,15 @@ describe("idle state machine", () => {
     h.run(1, IDLE)
     expect(h.kinds("autosave")).toHaveLength(1)
 
-    // Still idle, long past the threshold: no second save.
     h.run(30, IDLE)
     expect(h.kinds("autosave")).toHaveLength(1)
 
-    // Used, then idle again: a second save, idleMinutes after the activity stopped.
     h.run(2, BUSY)
     const busyEnded = h.now
     h.run(12, IDLE)
     const saves = h.kinds("autosave")
     expect(saves).toHaveLength(2)
     const second = saves[1] ?? 0
-    // The 1-minute CPU average is what delays it by up to a minute.
     expect(second - busyEnded).toBeGreaterThanOrEqual(10 * MIN)
     expect(second - busyEnded).toBeLessThanOrEqual(11 * MIN + TIMING.tickMs)
   })
@@ -102,7 +90,6 @@ describe("idle state machine", () => {
     const h = new Harness()
     h.run(10.25, IDLE)
     expect(h.kinds("autosave")).toHaveLength(1)
-    // The save made QEMU busy for a while; the samples right after say so.
     h.tick(0.9)
     h.tick(0.5)
     h.run(20, IDLE)
@@ -113,7 +100,7 @@ describe("idle state machine", () => {
   it("ignores a single background spike but not sustained load", () => {
     const h = new Harness()
     h.run(5, IDLE)
-    h.tick(0.167) // one Defender/indexer burst, as measured: 16.7% for one sample
+    h.tick(0.167)
     h.run(5.25, IDLE)
     expect(h.kinds("autosave")).toHaveLength(1)
 
@@ -154,7 +141,7 @@ describe("idle state machine", () => {
     expect(h.kinds("stow")).toHaveLength(1)
     h.run(30, IDLE)
     expect(h.kinds("stow")).toHaveLength(1)
-    expect(h.kinds("autosave")).toHaveLength(1) // the one at 10 min
+    expect(h.kinds("autosave")).toHaveLength(1)
   })
 
   it("stow supersedes an autosave due at the same moment", () => {
@@ -184,10 +171,8 @@ describe("idle state machine", () => {
   it("syncs the clock after host sleep, and does not count the sleep as idle time", () => {
     const h = new Harness()
     h.run(8, IDLE)
-    // Lid shut for 8 hours: the next tick lands 8 h later on the wall clock.
     const ds = h.tick(IDLE, 8 * 60 * MIN)
     expect(ds).toEqual([{ kind: "syncClock", reason: "wake" }])
-    // Neither autosave (was 2 min away) nor stow fired on wake.
     expect(h.kinds("autosave")).toHaveLength(0)
     expect(h.kinds("stow")).toHaveLength(0)
     expect(h.machine.idleMs(h.now)).toBe(0)
@@ -199,9 +184,8 @@ describe("idle state machine", () => {
 
   it("does not mistake a late tick or a long action for sleep", () => {
     const h = new Harness()
-    h.tick(IDLE, TIMING.tickMs + 40_000) // a loaded host delays a timer by 40 s
+    h.tick(IDLE, TIMING.tickMs + 40_000)
     expect(h.kinds("syncClock")).toHaveLength(0)
-    // A five-minute save, reported through actionDone, is not a gap either.
     h.machine.actionDone(h.now + 5 * MIN)
     h.now += 5 * MIN
     h.tick(IDLE)
@@ -215,7 +199,6 @@ describe("idle state machine", () => {
   })
 
   it("never autosaves or stows a paused guest, however long it is paused", () => {
-    // A paused guest's CPU reads as idle (0.1% measured on pause-test).
     const h = new Harness()
     h.frozen = true
     h.run(6 * 60, 0.001)
@@ -231,12 +214,10 @@ describe("idle state machine", () => {
     h.frozen = true
     h.run(120, 0.001)
     h.frozen = false
-    // Resumed after two hours: not stowed, not autosaved, on the spot.
     h.tick(IDLE)
     expect(h.kinds("stow")).toHaveLength(0)
     expect(h.kinds("autosave")).toHaveLength(0)
     expect(h.machine.idleMs(h.now)).toBeLessThanOrEqual(TIMING.tickMs)
-    // Left idle after resuming, it is treated like any idle guest.
     h.run(10.25, IDLE)
     expect(h.kinds("autosave")).toHaveLength(1)
     h.run(50, IDLE)
@@ -455,7 +436,6 @@ describe("watcher generations", () => {
     rmSync(home, { recursive: true, force: true })
   })
 
-  /** A process of ours whose command line passes the watcher check without being one; a single process, so no orphan. */
   const fakeWatcher = (): ReturnType<typeof Bun.spawn> => {
     const holder = resolve(import.meta.dir, "fakes", "holder.ts")
     const h = Bun.spawn([process.execPath, holder, "winvm", "watch", "-i", "w"], { stdout: "ignore", stderr: "ignore" })
@@ -523,7 +503,6 @@ describe("watcher generations", () => {
     expect(ensureWatcher("w")).toBe(h.pid)
   })
 
-  /** A fake clock and process table: no real wait, no real signal. */
   const seams = (o: { readonly dies: "never" | "on-term" }) => {
     const calls: { sig: string; at: number }[] = []
     let t = 1_000
@@ -579,7 +558,6 @@ describe("watcher generations", () => {
 
   it("believes watch.json's autosaving only when it names the watcher being stopped", async () => {
     lock(424_242)
-    // Left by an earlier watcher: it says nothing about this one.
     state({ pid: 424_243, build: CURRENT, state: "autosaving" })
     const s = seams({ dies: "never" })
     expect(await stopWatcher("w", s.seams)).toBe(true)
@@ -592,7 +570,6 @@ describe("watcher generations", () => {
     state({ pid: 424_242, build: CURRENT, state: "watching" })
     let t = 1_000
     const kills: string[] = []
-    // A watcher through its whole 10 s, and then the pid is someone else's.
     const result = await stopWatcher("w", {
       kill: (_pid, sig) => void kills.push(sig),
       now: () => t,
@@ -611,13 +588,11 @@ describe("watcher generations", () => {
     spawned.push(stranger)
     lock(stranger.pid)
     const kills: string[] = []
-    // Real command validation, and a kill that records instead of signalling.
     expect(await stopWatcher("w", { kill: (_p, sig) => void kills.push(sig) })).toBe(false)
     expect(kills).toEqual([])
     expect(alive(stranger.pid)).toBe(true)
   })
 
-  /** A watcher of another instance, as a pid reused into this one's watch.pid would look. */
   for (const [label, argv] of [
     ["another instance's watcher", ["winvm", "watch", "-i", "other"]],
     ["the watcher of an instance whose name starts with this one's", ["winvm", "watch", "-i", "wx"]],
@@ -633,7 +608,6 @@ describe("watcher generations", () => {
       state({ pid: h.pid, build: CURRENT, state: "watching" })
       const kills: string[] = []
       let t = 0
-      // Real command validation; a kill that records, and a clock that does not wait.
       const stopped = await stopWatcher("w", {
         kill: (_p, sig) => void kills.push(sig),
         now: () => t,
@@ -668,7 +642,6 @@ describe("watcher generations", () => {
     const cli = resolve(PACKAGE_DIR, "..", "..", "apps", "cli", "src", "winvm.ts")
     const p = pathsFor("w")
     writeFileSync(p.meta, JSON.stringify({ image: "x", vnc: 9, created: "" }))
-    // QEMU stand-in: the pidfile names this test process, which is alive.
     writeFileSync(p.pid, `${String(process.pid)}\n`)
     const env: Record<string, string | undefined> = { ...process.env, WINVM_HOME: home }
     delete env["WINVM_BUILD_ID"]

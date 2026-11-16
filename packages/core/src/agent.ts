@@ -1,19 +1,3 @@
-/**
- * The host side of the in-guest agent (guestagent.ts): its client, `connect`,
- * and `install` into a running guest over qemu-ga. The per-instance state and
- * the port forward it is reached through live in agentfwd.ts.
- *
- *   const c = await agent.ensure(name)         // connect, else adopt, else install
- *   const c = await agent.connect(name)        // null: no agent answering
- *   const c = await agent.install(name)        // (re)install, start, connect
- *   await c.exec([...]); await c.pwsh("..."); await c.putFile(host, guest)
- *   await c.getFile(guest, host); await c.launch([exe]); await c.kill(pid)
- *   await c.list(dir); await c.mkdir(dir); await c.rename(a, b); await c.copy(a, b); await c.remove([a])
- *
- * The token is generated once per instance and kept: a guest restored from a
- * save still holds the token it had, and the guest agent re-reads its token
- * file, so writing it again over qemu-ga is all a rewrite ever needs.
- */
 import { randomBytes } from "node:crypto"
 import { createWriteStream, readFileSync } from "node:fs"
 import { once } from "node:events"
@@ -63,7 +47,6 @@ export { AGENT_VERSION, GUEST_PORT } from "./guestagent"
 
 export class AgentError extends Error {
   readonly status: number
-  /** What the agent said went wrong, when it says: an FsCode from a listing or a file operation (notfound, denied, exists…). */
   readonly code: string | null
   constructor(message: string, status: number, code: string | null = null) {
     super(message)
@@ -76,7 +59,6 @@ export interface ExecOptions {
   readonly cwd?: string
   readonly env?: Readonly<Record<string, string>>
   readonly stdin?: string
-  /** Killed (with its whole tree) after this long; default 10 minutes. */
   readonly timeoutMs?: number
   readonly verbatim?: boolean
 }
@@ -88,7 +70,6 @@ export interface LaunchOptions {
 
 type Body = string | Uint8Array | Blob | ReadableStream<Uint8Array>
 
-/** A connection to one guest's agent. Every call is one HTTP request. */
 export class AgentClient {
   readonly base: string
   private readonly token: string
@@ -103,11 +84,6 @@ export class AgentClient {
       headers: { authorization: `Bearer ${this.token}` },
       ...(body === undefined ? {} : { body }),
       signal: AbortSignal.timeout(timeoutMs),
-      // The signal is the deadline. Bun's fetch also drops a connection idle
-      // for 5 minutes (BUN_CONFIG_HTTP_IDLE_TIMEOUT), and /exec and /pwsh send
-      // nothing until the command ends, so without this every guest command
-      // longer than 300 s failed with "The operation timed out" and its output
-      // was lost, whatever timeoutMs said (measured, Bun 1.3.14).
       timeout: false,
     })
     if (!r.ok) {
@@ -119,7 +95,6 @@ export class AgentClient {
         msg = body.error ?? text
         code = body.code ?? null
       } catch {
-        // not JSON
       }
       throw new AgentError(`agent ${method} ${path.split("?")[0] ?? path}: ${String(r.status)} ${msg}`, r.status, code)
     }
@@ -134,21 +109,17 @@ export class AgentClient {
     return (await (await this.req("GET", "/health", undefined, timeoutMs)).json()) as Health
   }
 
-  /** Run a program (no shell) and wait for it. Exit code, stdout and stderr as text. */
   async exec(argv: readonly string[], o: ExecOptions = {}): Promise<ExecResponse> {
     const timeoutMs = o.timeoutMs ?? 600_000
     const body: ExecRequest = { argv, ...o, timeoutMs }
-    // The HTTP deadline outlives the guest-side one, so a timeout comes back as a result.
     return await this.post<ExecResponse>("/exec", body, timeoutMs + 30_000)
   }
 
-  /** A script in the agent's warm Windows PowerShell; output merges both streams. */
   async pwsh(script: string, o: { readonly timeoutMs?: number } = {}): Promise<PwshResponse> {
     const timeoutMs = o.timeoutMs ?? 600_000
     return await this.post<PwshResponse>("/pwsh", { script, timeoutMs }, timeoutMs + 30_000)
   }
 
-  /** Write `data` to a guest file, creating its directory. */
   async put(guestPath: string, data: Body, timeoutMs = 600_000): Promise<{ readonly bytes: number; readonly ms: number }> {
     const r = await this.req("PUT", `/file?path=${encodeURIComponent(guestPath)}`, data as RequestInit["body"], timeoutMs)
     return (await r.json()) as { bytes: number; ms: number }
@@ -158,17 +129,13 @@ export class AgentClient {
     return await this.put(guestPath, Bun.file(hostPath))
   }
 
-  /** A guest file's bytes. Throws AgentError 404 if it is not there. */
   async get(guestPath: string, timeoutMs = 600_000): Promise<Uint8Array> {
     const r = await this.req("GET", `/file?path=${encodeURIComponent(guestPath)}`, undefined, timeoutMs)
     return new Uint8Array(await r.arrayBuffer())
   }
 
-  /** Stream a guest file to a host file; returns the byte count. */
   async getFile(guestPath: string, hostPath: string, timeoutMs = 600_000): Promise<number> {
     const r = await this.req("GET", `/file?path=${encodeURIComponent(guestPath)}`, undefined, timeoutMs)
-    // Chunk by chunk, not `Bun.write(hostPath, r)`: that spins at 100% CPU and
-    // never finishes on a response arriving through slirp (Bun 1.3.14).
     const out = createWriteStream(hostPath)
     let n = 0
     try {
@@ -184,18 +151,11 @@ export class AgentClient {
     return n
   }
 
-  /** Start a program detached in the logged-on user's session — GUI programs show on the desktop. */
   async launch(argv: readonly string[], o: LaunchOptions = {}): Promise<{ readonly pid: number }> {
     const body: LaunchRequest = { argv, ...o }
     return await this.post<{ pid: number }>("/launch", body)
   }
 
-  /**
-   * A guest folder's entries, folders first, and the known folders (Desktop,
-   * Documents, Downloads, the profile, C:\work, the drives). No path: the
-   * Desktop. Hidden and system entries only with `hidden`. Throws AgentError
-   * with code notfound (404), denied (403) or notdir (400).
-   */
   async list(guestPath = "", o: { readonly hidden?: boolean; readonly limit?: number } = {}): Promise<DirListing> {
     const q = new URLSearchParams({ path: guestPath })
     if (o.hidden === true) q.set("hidden", "1")
@@ -203,39 +163,22 @@ export class AgentClient {
     return (await (await this.req("GET", `/fs/list?${q.toString()}`)).json()) as DirListing
   }
 
-  /** A new folder; its parent must exist. Throws AgentError with an FsCode (exists, notfound, notdir…). */
   async mkdir(guestPath: string): Promise<FsPathResult> {
     return await this.post<FsPathResult>("/fs/mkdir", { path: guestPath })
   }
 
-  /**
-   * Rename or move to `to`, a full path. Never replaces anything (code exists),
-   * but a change of case alone renames. Onto another drive it copies, so it
-   * may take a while.
-   */
   async rename(from: string, to: string, timeoutMs = 600_000): Promise<FsPathResult> {
     return await this.post<FsPathResult>("/fs/rename", { from, to }, timeoutMs)
   }
 
-  /** Copy a file, or a folder and all in it, to `to`, a full path. Never replaces anything (code exists). */
   async copy(from: string, to: string, timeoutMs = 600_000): Promise<FsPathResult> {
     return await this.post<FsPathResult>("/fs/copy", { from, to }, timeoutMs)
   }
 
-  /**
-   * Delete files and folders: to the Recycle Bin unless `recycle` is false,
-   * then for good. A missing path deletes nothing (code notfound); with no
-   * Recycle Bin (not Windows) the code is unavailable.
-   */
   async remove(paths: readonly string[], o: { readonly recycle?: boolean } = {}): Promise<FsDeleteResult> {
     return await this.post<FsDeleteResult>("/fs/delete", { paths, recycle: o.recycle ?? true }, 630_000)
   }
 
-  /**
-   * Fire Windows' change notifications for paths under `root` (a shared
-   * folder's drive) that changed on the Mac: each gets its own times back, or
-   * its nearest existing folder when it is gone. See sharewatch.ts.
-   */
   async touch(root: string, paths: readonly string[]): Promise<FsTouchResult> {
     return await this.post<FsTouchResult>("/fs/touch", { root, paths }, 60_000)
   }
@@ -244,51 +187,31 @@ export class AgentClient {
     return (await (await this.req("GET", "/procs")).json()) as Proc[]
   }
 
-  /** Windows' memory and the system drive's space, cheaply (no process started). */
   async stats(timeoutMs = 5000): Promise<GuestStats> {
     return (await (await this.req("GET", "/stats", undefined, timeoutMs)).json()) as GuestStats
   }
 
-  /**
-   * Share C:\ and the profile with the Mac, signing in as `user` (finder.ts).
-   * The password travels in the request body only, never on a command line.
-   */
   async smbSetup(r: SmbSetupRequest, timeoutMs = 150_000): Promise<PwshResponse> {
     return await this.post<PwshResponse>("/smb/setup", r, timeoutMs)
   }
 
-  /** Kill a process; by default its whole tree. */
   async kill(pid: number, o: { readonly tree?: boolean } = {}): Promise<void> {
     await this.post("/kill", { pid, tree: o.tree ?? true })
   }
 
-  /**
-   * One UI Automation request (`op` plus fields) to the guest's winvm-ui helper;
-   * ui.ts wraps it. Throws AgentError: 404 not found, 408 timed out, 400 bad request.
-   */
   async ui<T>(req: { readonly op: string } & Readonly<Record<string, unknown>>, timeoutMs = 30_000): Promise<T> {
     return await this.post<T>("/ui", req, timeoutMs)
   }
 
-  /**
-   * The guest's screen size and display scaling, through winvm-display.exe
-   * (guestdisplay.ts wraps it). Throws AgentError: 408 the size never became a
-   * mode, 409 the driver refused it, 413 too big for the driver, 400 bad request.
-   */
   async display<T>(req: DisplayRequest, timeoutMs?: number): Promise<T> {
     return await this.post<T>("/display", req, timeoutMs ?? (req.waitMs ?? 2000) + 20_000)
   }
 
-  /** Ask the agent to exit (the Run key starts it again at the next logon). */
   async exit(): Promise<void> {
     await this.post("/exit", {})
   }
 }
 
-/**
- * The agent of a running instance, or null when it has none (never installed,
- * not running, not answering within `timeoutMs`). Adds the forward if needed.
- */
 export async function connect(name: string, o: { readonly timeoutMs?: number } = {}): Promise<AgentClient | null> {
   const p = pathsFor(name)
   if (readState(p) === null || !qemu.isRunning(p)) return null
@@ -311,7 +234,6 @@ export async function connect(name: string, o: { readonly timeoutMs?: number } =
   }
 }
 
-/** Like `connect`, but throws with a hint when there is no agent (or GuestFrozen when the guest is paused or asleep). */
 export async function requireAgent(name: string, timeoutMs = 2000): Promise<AgentClient> {
   await refuseFrozen(name)
   const c = await connect(name, { timeoutMs })
@@ -319,10 +241,6 @@ export async function requireAgent(name: string, timeoutMs = 2000): Promise<Agen
   return c
 }
 
-/**
- * Put the forward back after something started a new QEMU process. qemu.launch
- * already does this; exported for callers that want to be explicit. Never throws.
- */
 export async function reattach(name: string): Promise<void> {
   const p = pathsFor(name)
   if (qemu.isRunning(p)) await restoreForward(p)
@@ -331,16 +249,12 @@ export async function reattach(name: string): Promise<void> {
 export const clientFor = (s: AgentState & { readonly hostPort: number }): AgentClient =>
   new AgentClient(`http://127.0.0.1:${String(s.hostPort)}`, s.token)
 
-// --- install ----------------------------------------------------------------
-
 const ASSETS = resolve(PACKAGE_DIR, "assets")
 const STAGE_DIR = "C:\\ProgramData\\winvm\\stage"
 const CMD = "C:\\Windows\\System32\\cmd.exe"
 const POWERSHELL = "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe"
-/** Where the session launcher lands; usable over qemu-ga once the agent is installed. */
 export const RUNINSESSION = `${WINDOWS_DIR}\\runinsession.exe`
 
-/** Write a guest file over qemu-ga: slow (base64 over a serial channel), so for small files. */
 export async function qgaWriteFile(sock: string, guestPath: string, data: Uint8Array): Promise<void> {
   const open = await qga.call(sock, { execute: "guest-file-open", arguments: { path: guestPath, mode: "wb" } })
   const handle = open["return"]
@@ -378,26 +292,15 @@ async function serveToGuest<T>(file: string, fn: (url: string) => Promise<T>): P
 
 export interface InstallOptions {
   readonly log?: (line: string) => void
-  /** How long to wait for the freshly started agent to answer. */
   readonly timeoutMs?: number
 }
 
-/**
- * Install (or reinstall) the agent into a running guest over qemu-ga, start it
- * in the logged-on session, forward a host port to it, and return a client.
- */
 export async function install(name: string, o: InstallOptions = {}): Promise<AgentClient> {
   const log = o.log ?? ((): void => {})
   const p = pathsFor(name)
   if (!qemu.isRunning(p)) throw new Error(`instance "${name}" is not running`)
   const s = ensureState(p)
   const t0 = performance.now()
-  // A FOLDER OF ITS OWN PER ATTEMPT. When a qemu-ga call times out on the host,
-  // qemu-ga can still carry it out: a guest-file-open the host gave up on leaves
-  // that file open in the guest, with a handle the host never learned, and every
-  // later open of the same path fails ("being used by another process"). So a
-  // retried install, writing the same paths, could never succeed. What earlier
-  // attempts left is cleared first, as far as nothing holds it.
   const stage = `${STAGE_DIR}\\${randomBytes(4).toString("hex")}`
   const mk = await qga.exec(p.qga, CMD, ["/d", "/c", `rmdir /s /q ${STAGE_DIR} 2>nul & mkdir ${stage} 2>nul & mkdir ${WINDOWS_DIR} 2>nul & exit 0`])
   if (mk.exitcode !== 0) throw new Error(`could not create the agent's directories: ${mk.stderr}`)
@@ -453,25 +356,8 @@ export async function install(name: string, o: InstallOptions = {}): Promise<Age
   }
 }
 
-/**
- * The one call a harness needs: a working agent for a running instance, by the
- * cheapest route that works.
- *
- *   1. already answering with this version             ~ms
- *   2. present in the guest but holding another token  ~100 ms: write ours over
- *      qemu-ga (an image with the agent baked in, or a guest restored from a
- *      save another instance took), add the forward, and wait for it to answer
- *      — up to `waitMs`, for one still starting at logon
- *   3. otherwise a full install                         ~7 s
- */
 export async function ensure(name: string, o: InstallOptions & { readonly waitMs?: number } = {}): Promise<AgentClient> {
-  // NEVER ON A PAUSED OR ASLEEP GUEST. It cannot answer, so every step below
-  // would wait out its timeout and fall through to a reinstall — whose qemu-ga
-  // calls then sit queued and run the moment the user resumes.
   await refuseFrozen(name)
-  // An instance that has had an agent most likely still has one that is just
-  // starting: right after `start` returns the Run key has fired but the agent
-  // takes a few seconds to listen. Waiting is far cheaper than reinstalling.
   const c = await connect(name, { timeoutMs: readState(pathsFor(name)) === null ? 2000 : (o.waitMs ?? 15_000) })
   if (c !== null && (await c.health()).version === AGENT_VERSION) return c
   const p = pathsFor(name)
@@ -481,10 +367,6 @@ export async function ensure(name: string, o: InstallOptions & { readonly waitMs
       const s = ensureState(p)
       await qgaWriteFile(p.qga, `${WINDOWS_DIR}\\token`, new TextEncoder().encode(s.token))
       const client = clientFor({ ...s, hostPort: await ensureForward(p) })
-      // The token landed, so the agent's directory exists: an image with the
-      // agent baked in, or an earlier install. Its Run key fires at logon, so
-      // right after a cold start it may still be seconds from listening — and
-      // waiting is far cheaper than reinstalling.
       const deadline = Date.now() + (o.waitMs ?? 15_000)
       for (;;) {
         const h = await client.health(1000).catch(() => null)
@@ -493,16 +375,11 @@ export async function ensure(name: string, o: InstallOptions & { readonly waitMs
         await Bun.sleep(100)
       }
     } catch {
-      // not there (no directory to write the token into): install
     }
   }
   return await install(name, o)
 }
 
-/**
- * Start a program on the logged-on desktop over qemu-ga, for when the agent is
- * not answering — through the session launcher the install left behind.
- */
 export async function qgaLaunch(name: string, argv: readonly string[]): Promise<qga.ExecResult> {
   return await qga.exec(pathsFor(name).qga, RUNINSESSION, argv)
 }

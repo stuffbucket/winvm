@@ -1,8 +1,3 @@
-// The winvm web page: the guest's screen (noVNC over QEMU's websocket), its
-// status, and buttons that run the CLI through the local server.
-//
-// The access token arrives in the URL fragment (#token=...), which the browser
-// never sends anywhere; every API call carries it in a header.
 import RFB from "./novnc/core/rfb.js"
 
 const $ = (id) => document.getElementById(id)
@@ -10,7 +5,7 @@ const token = new URLSearchParams(location.hash.slice(1)).get("token") ?? ""
 let instance = new URLSearchParams(location.search).get("i") ?? ""
 
 let rfb = null
-let rfbTarget = "" // "port|password" the current connection was made with
+let rfbTarget = ""
 let pollTimer = null
 
 async function api(path, opts = {}) {
@@ -26,8 +21,6 @@ async function apiJson(path, opts) {
   return { ok: r.ok, status: r.status, body }
 }
 
-// --- the screen ------------------------------------------------------------
-
 function screenMessage(text) {
   const el = $("screen-msg")
   el.textContent = text
@@ -39,7 +32,7 @@ function disconnectScreen() {
     const old = rfb
     rfb = null
     rfbTarget = ""
-    try { old.disconnect() } catch { /* already gone */ }
+    try { old.disconnect() } catch { }
   }
 }
 
@@ -50,7 +43,6 @@ function connectScreen(vnc) {
   screenMessage("connecting to the screen…")
   const conn = new RFB($("screen"), `ws://127.0.0.1:${vnc.websocketPort}`, {
     credentials: { password: vnc.password },
-    // QEMU's websocket server only speaks the "binary" subprotocol.
     wsProtocols: ["binary"],
   })
   conn.scaleViewport = true
@@ -69,13 +61,10 @@ function connectScreen(vnc) {
     rfbTarget = ""
     $("screen-state").textContent = "screen: disconnected"
     screenMessage("screen disconnected — reconnecting…")
-    // The next status poll reconnects if the guest is still up.
   })
   rfb = conn
   rfbTarget = target
 }
-
-// --- status ----------------------------------------------------------------
 
 function renderStatus(data) {
   const s = data.status
@@ -141,8 +130,6 @@ function schedule() {
   }, 5000)
 }
 
-// --- actions ---------------------------------------------------------------
-
 function setBusy(busy) {
   for (const b of document.querySelectorAll("aside button")) b.disabled = busy
 }
@@ -174,7 +161,6 @@ async function act(verb, arg) {
     head.className = job.exitCode === 0 ? "done" : "fail"
     head.textContent = `winvm ${job.argv.join(" ")} — ${job.exitCode === 0 ? "done" : `failed (exit ${job.exitCode})`}`
     out.textContent = job.output
-    // An unknown verb prints the usage and exits 2: say that plainly instead.
     if (job.exitCode === 2 && job.output.startsWith("winvm <command>")) {
       head.textContent = `"${verb}" isn't a command in this copy of winvm yet`
       out.textContent = ""
@@ -207,8 +193,6 @@ async function screenshot() {
     head.textContent = `screenshot: ${error.message}`
   }
 }
-
-// --- wiring ----------------------------------------------------------------
 
 async function loadInstances() {
   const { ok, body } = await apiJson("/api/instances")

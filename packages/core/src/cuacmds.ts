@@ -56,7 +56,6 @@ export const USAGE =
 export const DEFAULT_MODEL = "claude-opus-5-5"
 export const MAXIMAL_URL = "http://localhost:4141"
 
-/** "1280x800" -> a size; null if it isn't one. */
 export function parseSize(s: string | undefined): Size | null {
   if (s === undefined) return DEFAULT_BOX
   const m = /^(\d{2,5})x(\d{2,5})$/i.exec(s.trim())
@@ -80,9 +79,6 @@ function running(args: Args): { name: string; p: Paths } | null {
   return { name, p }
 }
 
-// ---------------------------------------------------------------------------
-// Extra, non-standard actions: UI Automation by name, OCR by text
-
 export const selectorSchema = {
   name: { type: "string", description: "The element's exact accessible name" },
   nameContains: { type: "string", description: "Part of the element's accessible name" },
@@ -91,7 +87,6 @@ export const selectorSchema = {
   automationId: { type: "string", description: "The element's AutomationId" },
 } as const
 
-/** Custom tool definitions a harness can declare beside the computer toolset. */
 export const EXTRA_TOOLS = [
   {
     name: "ui_find",
@@ -125,7 +120,6 @@ export const EXTRA_TOOLS = [
 
 export const EXTRA_NAMES: readonly string[] = EXTRA_TOOLS.map((t) => t.name)
 
-/** A UIA selector from tool input: only the known string keys. */
 export function selectorFrom(input: Readonly<Record<string, unknown>>): Selector {
   const sel: Record<string, string> = {}
   for (const k of ["name", "nameContains", "window", "controlType", "automationId"] as const) {
@@ -151,7 +145,6 @@ export class Extras {
     return this.ui
   }
 
-  /** An element as one line, its bounds and centre in the model's coordinates. */
   private async describe(e: Element): Promise<string> {
     const { scale } = await this.computer.display()
     let where = "no bounds"
@@ -219,7 +212,6 @@ export class Extras {
   }
 }
 
-/** Calls in arrival order, one at a time. */
 function serializer(): <T>(fn: () => Promise<T>) => Promise<T> {
   let tail: Promise<unknown> = Promise.resolve()
   return async <T>(fn: () => Promise<T>): Promise<T> => {
@@ -229,10 +221,6 @@ function serializer(): <T>(fn: () => Promise<T>) => Promise<T> {
   }
 }
 
-// ---------------------------------------------------------------------------
-// serve
-
-/** Constant-time bearer check. */
 export function authorized(header: string | null, token: string): boolean {
   if (header === null) return false
   const m = /^Bearer\s+(\S+)$/.exec(header)
@@ -329,9 +317,6 @@ export async function serve(args: Args): Promise<number> {
   return 0
 }
 
-// ---------------------------------------------------------------------------
-// run
-
 export function systemPrompt(size: Size, extras: boolean): string {
   return [
     `You are operating a Windows 11 (ARM64) desktop through the computer tools. Screenshots are ${String(size.width)}x${String(size.height)}; give coordinates in their pixels.`,
@@ -374,7 +359,6 @@ export async function run(args: Args): Promise<number> {
   const shots = args.flags.get("shots")
   if (shots !== undefined) mkdirSync(shots, { recursive: true })
 
-  // The SDK only when a model loop runs, so the rest of the tool needs no install.
   const { default: AnthropicSdk } = await import("@anthropic-ai/sdk")
   const direct = (process.env["ANTHROPIC_API_KEY"] ?? "") !== "" && args.flags.get("base-url") === undefined
   const client: Anthropic = direct
@@ -404,7 +388,6 @@ export async function run(args: Args): Promise<number> {
   try {
     for (let step = 1; step <= maxSteps; step += 1) {
       const t0 = performance.now()
-      // Server-side refusal fallback where the API offers it (not through a proxy).
       const body = {
         model,
         max_tokens: 16000,
@@ -419,7 +402,6 @@ export async function run(args: Args): Promise<number> {
       modelMs.push(took)
       usageIn += msg.usage.input_tokens + (msg.usage.cache_read_input_tokens ?? 0) + (msg.usage.cache_creation_input_tokens ?? 0)
       usageOut += msg.usage.output_tokens
-      // The whole content goes back unchanged: thinking blocks included.
       messages.push({ role: "assistant", content: msg.content })
 
       for (const b of msg.content) if (b.type === "text" && b.text.trim() !== "") console.log(`\n${b.text.trim()}\n`)

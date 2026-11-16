@@ -50,7 +50,6 @@ const lines = (file: string): string[] => (existsSync(file) ? readFileSync(file,
 const swtpmLog = (): string => resolve(state, "swtpm.log")
 const qemuLog = (): string => resolve(state, "qemu.log")
 
-/** A stand-in process whose command line carries `argv`; resolves once it is running. */
 async function hold(...argv: string[]): Promise<ReturnType<typeof Bun.spawn>> {
   const h = Bun.spawn([process.execPath, HOLDER, ...argv], { stdout: "pipe", stderr: "ignore" })
   spawned.push(h)
@@ -60,7 +59,6 @@ async function hold(...argv: string[]): Promise<ReturnType<typeof Bun.spawn>> {
   return h
 }
 
-/** Settle `p` into "resolved:<value>" or "rejected:<message>", so a refusal and a result compare alike. */
 const outcome = async (p: Promise<unknown>): Promise<string> =>
   await p.then(
     (v) => `resolved:${String(v)}`,
@@ -75,7 +73,6 @@ beforeEach(() => {
   process.env["WINVM_TEST_SWTPM_LOG"] = swtpmLog()
   process.env["WINVM_TEST_QEMU_LOG"] = qemuLog()
   mkdirSync(resolve(state, "runtime", "bin"), { recursive: true })
-  // swtpm binds its socket, says which process it is, and serves until killed.
   script(
     "swtpm",
     'while [ $# -gt 0 ]; do case "$1" in --ctrl) s="${2#*path=}"; s="${s%%,*}"; shift;; esac; shift; done; : > "$s"\n' +
@@ -130,7 +127,6 @@ describe("two cold starts at once", () => {
       release = r
     })
     let calls = 0
-    // The first launch is mid-way (its swtpm up, its control service starting) when the second start runs.
     spyOn(servicectl, "ensureService").mockImplementation(async () => {
       calls += 1
       if (calls === 1) {

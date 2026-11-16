@@ -1,8 +1,3 @@
-/**
- * The pure parts of `status`, `open`, `web` and the input verbs: formatting,
- * the web server's access checks, URL building, and the keyboard/pointer maths.
- * No VM needed. State-reading helpers run against a temporary WINVM_HOME.
- */
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { resolve } from "node:path"

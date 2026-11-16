@@ -1,7 +1,3 @@
-/**
- * `winvm destroy` against a state directory laid out by hand: no VM needed,
- * since destroy refuses a running instance and only ever deletes files.
- */
 import { afterEach, beforeEach, describe, expect, it, mock, spyOn } from "bun:test"
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
@@ -33,7 +29,6 @@ describe("destroy", () => {
     previousData = process.env["XDG_DATA_HOME"]
     state = mkdtempSync(resolve(tmpdir(), "winvm-destroy-"))
     process.env["WINVM_HOME"] = state
-    // Notes live in the XDG data dir: never the real one.
     process.env["XDG_DATA_HOME"] = resolve(state, "data")
     spyOn(console, "log").mockImplementation(() => undefined)
     spyOn(console, "error").mockImplementation(() => undefined)
@@ -56,7 +51,6 @@ describe("destroy", () => {
     expect(readNote("gone", "baseline")).toBeNull()
     expect(readNote("other", "baseline")?.title).toBe("other's")
     expect(existsSync(instanceDir("gone"))).toBe(false)
-    // Left behind, a new "gone" would recall the old stow on its first start.
     expect(existsSync(savesDir("gone"))).toBe(false)
     expect(existsSync(saveDir("other", "baseline"))).toBe(true)
     expect(existsSync(instanceDir("other"))).toBe(true)
@@ -68,7 +62,6 @@ describe("destroy", () => {
     expect(destroy(parseArgs(["-i", "kept", "--keep-saves"]))).toBe(0)
     expect(existsSync(instanceDir("kept"))).toBe(false)
     expect(existsSync(saveDir("kept", "baseline"))).toBe(true)
-    // The kept saves keep their notes.
     expect(readNote("kept", "baseline")?.title).toBe("first boot")
   })
 

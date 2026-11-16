@@ -1,7 +1,3 @@
-/**
- * Locking Windows (lock.ts) against a fake agent, and the user's settings in
- * the XDG config directory (xdg.ts, settings.ts).
- */
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { resolve } from "node:path"
@@ -19,7 +15,6 @@ class FakeAgent implements LockAgent {
   procList: Proc[] = [{ pid: 4, name: "System", session: 0 }]
   pwshOutput = ""
   pwshCode = 0
-  /** LogonUI appears this many procs() calls after the lock is launched; null: never. */
   appearsAfter: number | null = 1
   private sinceLaunch = 0
 
@@ -130,7 +125,6 @@ describe("the user's settings", () => {
       "viewer.pauseOverlay": false,
       checkpoints: { showAutomatic: true, zoom: null },
     })
-    // Unknown keys someone else wrote survive a flat write too.
     writeFileSync(settingsPath(env), JSON.stringify({ later: { a: 1 }, "viewer.pauseOverlay": true }))
     writeSettings({ "viewer.pauseOverlay": false }, env)
     expect(JSON.parse(readFileSync(settingsPath(env), "utf8"))).toEqual({ later: { a: 1 }, "viewer.pauseOverlay": false })

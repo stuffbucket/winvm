@@ -1,7 +1,3 @@
-/**
- * `winvm test --pool`: the scheduler with fake jobs and instances, and the
- * timing figures (report.ts). No VM needed.
- */
 import { describe, expect, it } from "bun:test"
 
 import type { ScheduleDeps } from "../src/pool"
@@ -32,7 +28,6 @@ function result(name: string, instance: string, o: Partial<JobResult> = {}): Job
   }
 }
 
-/** A job starting `at` ms after T0, resetting for `reset` and working for `work`. */
 const timed = (name: string, instance: string, at: number, reset: number, work: number): JobResult =>
   result(name, instance, { startedAt: new Date(T0 + at).toISOString(), resetMs: reset, stepsMs: work, totalMs: reset + work })
 
@@ -68,8 +63,8 @@ describe("pool sizing", () => {
   it("warns only when the host would be oversubscribed", () => {
     const gib = 1024 ** 3
     expect(resourceWarnings(4, 18, 128 * gib)).toEqual([])
-    expect(resourceWarnings(5, 18, 128 * gib)).toHaveLength(1) // 20 vCPUs
-    expect(resourceWarnings(4, 18, 16 * gib)).toHaveLength(1) // 16 GiB > half of 16
+    expect(resourceWarnings(5, 18, 128 * gib)).toHaveLength(1)
+    expect(resourceWarnings(4, 18, 16 * gib)).toHaveLength(1)
   })
 })
 
@@ -94,7 +89,6 @@ describe("schedule", () => {
     const rs = await schedule(["a", "b", "c", "d", "e"], ["ci-1", "ci-2", "ci-3"], deps)
     expect(rs.map((r) => r.name)).toEqual(["a", "b", "c", "d", "e"])
     expect(peak).toBe(3)
-    // "a" is slow, so ci-1 runs only it while the others share the rest.
     expect(rs[0]?.instance).toBe("ci-1")
     expect(rs.filter((r) => r.instance === "ci-1")).toHaveLength(1)
   })
@@ -159,11 +153,11 @@ describe("pool timing", () => {
     const jobs = [
       timed("a", "ci-1", 0, 1000, 9000),
       timed("b", "ci-2", 0, 1000, 4000),
-      timed("c", "ci-2", 5000, 1000, 9000), // its reset overlaps a's work
+      timed("c", "ci-2", 5000, 1000, 9000),
     ]
     const s = poolStats(jobs, ["ci-1", "ci-2"])
     expect(s.runMs).toBe(15_000)
-    expect(s.exposedResetMs).toBe(1000) // only the first, parallel resets
+    expect(s.exposedResetMs).toBe(1000)
     expect(s.initialResetMs).toBe(1000)
     expect(s.perInstance).toEqual([
       { instance: "ci-1", jobs: 1, busyMs: 10_000 },

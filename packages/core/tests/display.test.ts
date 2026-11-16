@@ -1,8 +1,3 @@
-/**
- * The resizable display: size math and limits, the debounce, the device's
- * QEMU arguments and what they do to the save hash, and the wire formats of
- * the VNC resize request and the agent's /display route. No VM needed.
- */
 import { afterAll, beforeAll, describe, expect, it } from "bun:test"
 import { spawn } from "node:child_process"
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
@@ -54,14 +49,12 @@ describe("clampSize", () => {
   })
 
   it("shrinks a size over the framebuffer limit, keeping its shape", () => {
-    // The measured edge: exactly 30 MiB shows, two rows more goes dark.
     expect(clampSize({ width: 3840, height: 2048 })).toEqual({ width: 3840, height: 2048 })
     expect(bytes(clampSize({ width: 3840, height: 2050 }))).toBeLessThanOrEqual(MAX_FRAMEBUFFER_BYTES)
-    const s = clampSize({ width: 3840, height: 2160 }) // 33.2 MB: over 30 MiB
+    const s = clampSize({ width: 3840, height: 2160 })
     expect(bytes(s)).toBeLessThanOrEqual(MAX_FRAMEBUFFER_BYTES)
     expect(s.width % 16).toBe(0)
     expect(Math.abs(s.width / s.height - 3840 / 2160)).toBeLessThan(0.01)
-    // A 16" MacBook Pro full screen at 2x (30.9 MB): over 30 MiB and taller than VNC allows.
     const mbp = clampSize({ width: 3456, height: 2234 })
     expect(mbp.height).toBeLessThanOrEqual(MAX_HEIGHT)
     expect(Math.abs(mbp.width / mbp.height - 3456 / 2234)).toBeLessThan(0.01)
@@ -157,7 +150,7 @@ describe("SizeDebouncer", () => {
     d.push({ width: 1000, height: 800 })
     d.flush()
     expect(sent).toEqual([{ width: 1000, height: 800 }])
-    fire() // the cleared timer does nothing
+    fire()
     expect(sent).toHaveLength(1)
   })
 
@@ -188,7 +181,6 @@ describe("display device", () => {
   it("never puts a size on virtio-gpu's command line", () => {
     expect(displayArgs(VIRTIO_GPU)).toEqual(["-device", "virtio-gpu-pci"])
     expect(displayArgs(RAMFB)).toEqual(["-device", "ramfb"])
-    // An instance switched by an earlier winvm keeps its size, so its saves still load.
     expect(displayArgs({ device: "virtio-gpu", legacySize: { width: 1920, height: 1080 } })).toEqual([
       "-device",
       "virtio-gpu-pci,xres=1920,yres=1080",
@@ -209,7 +201,6 @@ describe("display device", () => {
     expect(deviceFromCommandLine("qemu -device virtio-gpu-pci,xres=1920,yres=1080 -display none")).toBe("virtio-gpu")
     expect(deviceFromCommandLine("qemu -device ramfb -display none")).toBe("ramfb")
     expect(deviceFromCommandLine("qemu -display none")).toBeNull()
-    // The same strict parser as a save's profile: ambiguous or unrelated matches are not a device.
     expect(deviceFromCommandLine("qemu -name virtio-gpu-pci -device ramfb")).toBe("ramfb")
     expect(deviceFromCommandLine("qemu -device ramfb -device virtio-gpu-pci")).toBeNull()
     expect(deviceFromCommandLine("qemu -device virtio-gpu-pci,xres=1920,yres=1080,extra=on")).toBeNull()
@@ -222,7 +213,6 @@ describe("display device", () => {
       device: "virtio-gpu",
       legacySize: { width: 1920, height: 1080 },
     })
-    // Exactly one display device: none, two, or extra properties are not a profile.
     expect(displayFromCommandLine("qemu -display none")).toBeNull()
     expect(displayFromCommandLine("qemu -device ramfb -device virtio-gpu-pci")).toBeNull()
     expect(displayFromCommandLine("qemu -device virtio-gpu-pci -device virtio-gpu-pci")).toBeNull()
@@ -231,19 +221,15 @@ describe("display device", () => {
     expect(displayFromCommandLine("qemu -device virtio-gpu-pci,xres=10,yres=10")).toBeNull()
     expect(displayFromCommandLine("qemu -device virtio-gpu-gl-pci")).toBeNull()
     expect(displayFromCommandLine("qemu -device ramfb-extra")).toBeNull()
-    // Only -device arguments count: a name or path that mentions one is not a display.
     expect(displayFromCommandLine("qemu -name virtio-gpu-pci,xres=1920,yres=1080 -device ramfb")).toEqual(RAMFB)
     expect(displayFromCommandLine("qemu -name ramfb -display none")).toBeNull()
   })
 
   it("names a legacy size the strict parser refuses, and nothing else", () => {
-    // Strict rejection is unchanged...
     for (const size of ["xres=8000,yres=600", "xres=10,yres=10", "xres=1920.5,yres=1080", "xres=abc,yres=600", "xres=1920,yres=9999"]) {
       expect(displayFromCommandLine(`qemu -device virtio-gpu-pci,${size} -display none`)).toBeNull()
-      // ...but the refusal can say which profile it was.
       expect(rejectedLegacySize(`qemu -device virtio-gpu-pci,${size} -display none`)).toBe(size)
     }
-    // Valid profiles, plain devices, partial or extra properties, two devices and no device are not "a rejected size".
     expect(rejectedLegacySize("qemu -device virtio-gpu-pci,xres=1920,yres=1080")).toBeNull()
     expect(rejectedLegacySize("qemu -device virtio-gpu-pci")).toBeNull()
     expect(rejectedLegacySize("qemu -device ramfb")).toBeNull()
@@ -261,7 +247,6 @@ describe("display device", () => {
     expect(sharesFolderFromCommandLine("qemu -device vhost-user-fs-pci")).toBe(true)
     expect(sharesFolderFromCommandLine("qemu -device ramfb -display none")).toBe(false)
     expect(sharesFolderFromCommandLine("qemu -device vhost-user-fs-pci-extra")).toBe(false)
-    // A path with spaces, or one that only mentions the device, changes nothing.
     expect(sharesFolderFromCommandLine("qemu -drive file=/Users/a b/vhost-user-fs-pci/x.qcow2 -device ramfb")).toBe(false)
     expect(sharesFolderFromCommandLine("qemu -name vhost-user-fs-pci -device ramfb")).toBe(false)
     expect(sharesFolderFromCommandLine(`qemu -drive file=/Users/a b/c.qcow2 -device ramfb ${share}`)).toBe(true)
@@ -274,7 +259,6 @@ describe("display device", () => {
       [["-device", "virtio-gpu-pci,xres=1600,yres=900"], { device: "virtio-gpu", legacySize: { width: 1600, height: 900 } }],
       [["-display", "none"], null],
     ] as const) {
-      // Padded far past a terminal's width: the device must survive `ps` truncation.
       const pad = ["-name", "x".repeat(400)]
       const child = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)", "--", ...pad, ...argv], { stdio: "ignore" })
       try {
@@ -354,9 +338,6 @@ describe("display device", () => {
 })
 
 describe("the save hash and the guest's resolution", () => {
-  // qemu.ts takes the display device's arguments from displayArgs(readDisplay(p))
-  // and nothing else; saves.ts hashes hardwareArgs() of the whole command line.
-  // The guest's own resolution is not an input to either, so only the device is.
   let dir = ""
   beforeAll(() => {
     dir = mkdtempSync(resolve(tmpdir(), "winvm-hash-"))
@@ -379,12 +360,10 @@ describe("the save hash and the guest's resolution", () => {
 
   it("changes with the device: switching makes the other device's saves unloadable", () => {
     expect(compatHash(parts(hardwareFor(VIRTIO_GPU)))).not.toBe(compatHash(parts(hardwareFor(RAMFB))))
-    expect(hardwareFor(null)).toEqual(hardwareFor(RAMFB)) // an instance older than the default is ramfb
+    expect(hardwareFor(null)).toEqual(hardwareFor(RAMFB))
   })
 
   it("qemu.ts builds the display arguments from display.json alone", () => {
-    // `o.display` is a device, never a size: saves.currentCompat passes one to
-    // ask "what if this instance had the other device?" without writing it.
     const src = readFileSync(resolve(import.meta.dir, "../src/qemu.ts"), "utf8")
     expect(src).toContain("const display = o.installMedia ? RAMFB : (o.display ?? readDisplay(p))")
     expect(src).toContain("...displayArgs(display),")
@@ -409,7 +388,6 @@ describe("wire formats", () => {
 
   it("answers VNC's DES challenge as noVNC does (bit-reversed password key)", () => {
     const challenge = Uint8Array.from({ length: 16 }, (_, i) => i * 17)
-    // Computed with noVNC's own core/crypto/des.js (packages/novnc).
     expect(vncAuthResponse("password", challenge).toString("hex")).toBe("b7b9c87777661a7a2299733209bfdfce")
     expect(vncAuthResponse("passwordTOOLONG", challenge).toString("hex")).toBe("b7b9c87777661a7a2299733209bfdfce")
   })
@@ -435,7 +413,6 @@ describe("drawSize", () => {
   })
 
   it("scales a capped guest up to fill a view past the limits", () => {
-    // A full-screen Studio Display window: 2560x1440 points at 2x.
     const view = { width: 2560, height: 1380 }
     const guest = guestSizeFor(view, 2)
     expect(guest.height).toBeLessThanOrEqual(MAX_HEIGHT)
@@ -443,7 +420,6 @@ describe("drawSize", () => {
   })
 
   it("stops at 5K device pixels", () => {
-    // A 6K display's full-screen window at 2x is 3008x1692 points.
     const view = { width: 3008, height: 1692 }
     expect(drawSize(guestSizeFor(view, 2), view, 2)).toEqual({ width: 2560, height: 1440 })
   })

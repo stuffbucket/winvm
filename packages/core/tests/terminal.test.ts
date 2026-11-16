@@ -1,10 +1,3 @@
-/**
- * Terminals: the protocol pieces (auth from a subprotocol, the query, control
- * messages, the frames to conpty.exe, the client URL), and GET /term end to end
- * with the REAL agent on the host and a stand-in for conpty.exe
- * (fakes/conpty.ts) that speaks the same frames. The pseudo-console itself only
- * exists in the guest.
- */
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { resolve } from "node:path"
@@ -121,8 +114,6 @@ describe("winvm terminal's arguments", () => {
   })
 })
 
-// --- over a real WebSocket ---------------------------------------------------
-
 let dir: string
 let server: ReturnType<typeof startAgent>
 let base: string
@@ -145,7 +136,6 @@ afterAll(() => {
   rmSync(dir, { recursive: true, force: true })
 })
 
-/** A client that keeps everything it is sent. */
 class Client {
   readonly ws: WebSocket
   out = ""

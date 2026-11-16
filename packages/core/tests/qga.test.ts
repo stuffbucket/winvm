@@ -1,10 +1,3 @@
-/**
- * The guest-agent client against a fake agent on a Unix socket — no VM.
- *
- * The fake reproduces the property that matters: the agent answers every
- * request it was sent, and a reply nobody waited for is delivered to whoever
- * connects next.
- */
 import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { resolve } from "node:path"
@@ -37,7 +30,6 @@ describe("qga.call", () => {
   it("does not hand a timed-out call's reply to the next call", async () => {
     agent.handler = (req) => (req["execute"] === "slow" ? null : { return: "fresh" })
     await expect(call(agent.path, { execute: "slow" }, 50)).rejects.toThrow("guest agent timed out: slow after 0.05 s")
-    // Let the late reply land, so the next connection is handed it first.
     await new Promise((r) => setTimeout(r, 250))
     expect(agent.owed.length).toBeGreaterThan(0)
     expect(await call(agent.path, { execute: "guest-ping" })).toEqual({ return: "fresh" })
@@ -84,7 +76,6 @@ describe("qga.waitFor", () => {
     agent.handler = () => ({ return: {} })
     const before = agent.connections
     let asked = 0
-    // QEMU reports the port closed three times, then open.
     const portOpen = (): Promise<boolean> => {
       asked += 1
       if (asked <= 3) expect(agent.connections).toBe(before)
@@ -114,7 +105,6 @@ describe("qga.untilReady", () => {
   it("repairs an interrupted audit-mode logon once, then waits for the logon", async () => {
     let repaired = 0
     const logs: string[] = []
-    // No one logged on until the repair's restart; then Administrator.
     const loggedOnUser = (): Promise<string | null> => Promise.resolve(repaired === 0 ? "" : "WINVM\\Administrator")
     const repairAudit = (): Promise<boolean> => {
       repaired += 1
@@ -134,7 +124,6 @@ describe("qga.untilReady", () => {
     const t0 = Date.now()
     expect(await untilReady("unused", 5000, { ...fast, loggedOnUser: () => Promise.resolve(""), repairAudit, noLogonMs: 120 })).toBe("no-logon")
     expect(Date.now() - t0).toBeLessThan(2000)
-    // Asked once per spell of no one logged on, not on every poll.
     expect(checks).toBe(1)
   })
 
@@ -174,8 +163,6 @@ describe("qga.loggedOnUser", () => {
   })
 
   it("does not let a guest command that never ends use up the wait", async () => {
-    // An agent without guest-get-users, whose PowerShell fallback never exits:
-    // what both missed reboots looked like from winvm's side (#10).
     agent.handler = (req) => {
       switch (req["execute"]) {
         case "guest-get-users":
@@ -200,7 +187,6 @@ describe("qga.untilNewBoot", () => {
   const ready = (): Promise<"ready"> => Promise.resolve("ready")
 
   it("waits out the old boot, which stays ready for a while, until a new one is ready", async () => {
-    // Old boot, old boot, unreachable on the way down, then the new boot.
     const seen = [BEFORE, BEFORE, null, AFTER]
     let asked = 0
     const bootTime = (): Promise<string | null> => Promise.resolve(seen[Math.min(asked++, seen.length - 1)] ?? null)

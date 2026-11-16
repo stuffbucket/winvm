@@ -1,42 +1,3 @@
-/**
- * `winvm test <dir> --pool N [--pool-prefix ci]`: the same jobs as `winvm
- * test`, spread over N instances (ci-1 … ci-N) that run them side by side.
- *
- * SCHEDULING. One worker per instance pulls the next job off a shared queue,
- * resets its instance to the job's golden, runs it, and pulls again. A reset
- * (~1.2 s, mapped-ram) only blocks its own instance; the others keep running
- * jobs, so after the first round almost no wall-clock time goes to resetting.
- * The summary measures exactly that — "exposed reset", time when an instance
- * was resetting and none was running a job (report.ts, PoolStats).
- *
- * The queue is longest job first, by each job's time in the previous pool run
- * ($WINVM_HOME/runs/job-times.json; unknown jobs first): started last, the
- * one long job would be the whole tail of the run. Results are reported in
- * file order regardless.
- *
- * GOLDENS. The golden is created once, on the first member (runner.ts,
- * ensureGolden: boot, agent, settle, mapped-ram save — minutes), and the others
- * get an APFS-clone copy of it (saves.cloneSave): no boot, no settling, no
- * disk. A save holds no per-instance identity a load depends on — QEMU's
- * paths, sockets and VNC port are excluded from its compatibility hash, the
- * agent's port forward is added at runtime — except the agent's token, which
- * lives in the guest and so is copied across into each member's agent.json
- * (with that member's own host port). A member whose virtual hardware differs
- * (cloneSave refuses) gets its own golden made independently, in parallel.
- * A clone records where it came from, so a rebuilt first golden is re-cloned.
- *
- * FAILURE ISOLATION. Each job runs under a watchdog (its timeout + 5 min).
- * A job that outlives it — wedged guest, hung monitor — is recorded as an
- * error, cancelled (runner.ts stops between steps), and its instance's QEMU is
- * killed; the next reset starts a fresh one from the golden. A reset that fails
- * is retried once after killing QEMU; if it fails again the instance is retired
- * and its job goes back on the queue for another member. Other instances never
- * notice.
- *
- * RESOURCES. Every instance is the image's fixed 4 vCPUs / 4 GiB (part of a
- * save's compatibility hash, so not tunable per pool); a pool that would
- * oversubscribe the host's cores or half its memory is warned about.
- */
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs"
 import { availableParallelism, totalmem } from "node:os"
 import { dirname, resolve } from "node:path"
@@ -57,22 +18,16 @@ import * as watcher from "./watch"
 const errMsg = (e: unknown): string => (e instanceof Error ? e.message : String(e))
 const sleep = async (ms: number): Promise<void> => { await new Promise((r) => setTimeout(r, ms)) }
 
-/** Per instance, as a new machine is made (hardware.ts NEW_DEFAULT). */
 export const VCPUS = NEW_DEFAULT.cpus
 export const MEMORY_BYTES = NEW_DEFAULT.memoryMiB * 1024 ** 2
-/** A job gets this long past its own timeout before the watchdog gives up on it. WINVM_POOL_GRACE overrides. */
 export const WATCHDOG_GRACE_MS = 5 * 60_000
 const watchdogGraceMs = (): number => {
   const v = process.env["WINVM_POOL_GRACE"]
   return v === undefined || v === "" ? WATCHDOG_GRACE_MS : parseDuration(v)
 }
 
-// ---------------------------------------------------------------------------
-// Pure logic (unit-tested)
-
 export const poolMembers = (prefix: string, n: number): string[] => Array.from({ length: n }, (_, i) => `${prefix}-${String(i + 1)}`)
 
-/** Why a pool size is unusable, or null. */
 export function poolSizeError(raw: string): string | null {
   if (!/^\d+$/.test(raw)) return `--pool takes a number of instances, got "${raw}"`
   const n = Number(raw)
@@ -80,7 +35,6 @@ export function poolSizeError(raw: string): string | null {
   return null
 }
 
-/** What a pool of `n` would oversubscribe on a host with `cpus` cores and `memBytes` of RAM. */
 export function resourceWarnings(n: number, cpus: number, memBytes: number): string[] {
   const out: string[] = []
   if (n * VCPUS > cpus) out.push(`${String(n)} instances x ${String(VCPUS)} vCPUs is more than the host's ${String(cpus)} cores; jobs will contend`)
@@ -90,34 +44,20 @@ export function resourceWarnings(n: number, cpus: number, memBytes: number): str
   return out
 }
 
-/** A result whose reset failed: the instance, not the job, is what is broken. */
 export const isResetFailure = (r: JobResult): boolean => r.status === "error" && (r.error ?? "").startsWith("reset to ")
 
-/**
- * Indexes of `keys` in the order to queue them: longest last-known time first,
- * jobs never timed before all of those (they might be the long ones), ties in
- * file order.
- */
 export function longestFirst(keys: readonly string[], lastMs: Readonly<Record<string, number>>): number[] {
   const t = (i: number): number => lastMs[keys[i] ?? ""] ?? Number.POSITIVE_INFINITY
   return keys.map((_, i) => i).sort((a, b) => (t(a) === t(b) ? a - b : t(b) - t(a)))
 }
 
 export interface ScheduleDeps<J> {
-  /** Run one job on one instance (reset included). Never throws. */
   readonly run: (job: J, instance: string) => Promise<JobResult>
-  /** Bring a misbehaving instance back to "can be reset": kill its QEMU. */
   readonly recover: (instance: string) => Promise<void>
   readonly log: (instance: string, line: string) => void
-  /** Stands in for a job no instance was left to run. */
   readonly abandoned: (job: J, why: string) => JobResult
 }
 
-/**
- * Run `jobs` over `instances`, a worker per instance pulling from one queue.
- * Results come back in job order. See the top of this file for the failure
- * rules; pure apart from what `deps` does, so it is tested with fakes.
- */
 export async function schedule<J>(jobs: readonly J[], instances: readonly string[], deps: ScheduleDeps<J>): Promise<JobResult[]> {
   const results: (JobResult | undefined)[] = jobs.map(() => undefined)
   const queue: { readonly index: number; readonly requeued: boolean }[] = jobs.map((_, index) => ({ index, requeued: false }))
@@ -147,14 +87,9 @@ export async function schedule<J>(jobs: readonly J[], instances: readonly string
     }
   }
 
-  // A job requeued after the other workers had already found the queue empty
-  // needs another round.
   while (queue.length > 0 && alive.size > 0) await Promise.all([...alive].map(worker))
   return results.map((r, i) => r ?? deps.abandoned(jobs[i] as J, "no instance in the pool could be reset"))
 }
-
-// ---------------------------------------------------------------------------
-// Job times, for the queue order
 
 const timesPath = (): string => resolve(home(), "runs", "job-times.json")
 
@@ -174,21 +109,15 @@ function writeTimes(results: readonly JobResult[]): void {
     mkdirSync(dirname(timesPath()), { recursive: true })
     writeFileSync(timesPath(), `${JSON.stringify(t, null, 2)}\n`)
   } catch {
-    // Only an ordering hint.
   }
 }
 
-// ---------------------------------------------------------------------------
-// Goldens for every member
-
-/** Give `to` a golden `name` cloned from `from`'s, unless it already has a current one. */
 async function cloneGolden(from: string, to: string, name: string, log: (s: string) => void): Promise<boolean> {
   const src = saves.readSave(from, name)
   if (src === null) throw new Error(`"${from}" has no golden "${name}"`)
   const have = saves.readSave(to, name)
   if (have !== null) {
     const c = have.clonedFrom
-    // Current clone, or a golden made on the member itself: keep it.
     if (c === undefined || (c.instance === from && c.createdAt === src.createdAt)) return true
   }
   try {
@@ -200,7 +129,6 @@ async function cloneGolden(from: string, to: string, name: string, log: (s: stri
     }
     throw error
   }
-  // The guest in the clone answers to `from`'s token; the host port stays `to`'s own.
   const token = readState(pathsFor(from))?.token
   if (token !== undefined) {
     const own = ensureState(pathsFor(to))
@@ -226,10 +154,6 @@ async function ensurePoolGoldens(
   }
 }
 
-// ---------------------------------------------------------------------------
-// Running
-
-/** Kill an instance's QEMU outright; the next reset launches a fresh one. */
 async function hardStop(instance: string): Promise<void> {
   const p = pathsFor(instance)
   const pid = qemu.pidOf(p)
@@ -237,13 +161,10 @@ async function hardStop(instance: string): Promise<void> {
     try {
       process.kill(pid, "SIGKILL")
     } catch {
-      // Gone already.
     }
     for (let i = 0; i < 100 && qemu.pidOf(p) !== null; i += 1) await sleep(100)
   }
   qemu.stopSidecars(p)
-  // A reset the watchdog abandoned may still hold the save lock; give it a
-  // moment to fail and let go now that its QEMU is gone.
   await sleep(2000)
 }
 
@@ -282,7 +203,6 @@ export interface PoolRun {
   readonly instances: readonly string[]
 }
 
-/** Lines from concurrent jobs, each tagged with its instance. */
 const tagged =
   (instance: string) =>
   (line: string): void => {
@@ -303,8 +223,6 @@ export async function runPool(jobs: readonly Job[], o: PoolOptions): Promise<Poo
   console.log(`winvm test: ${String(jobs.length)} job(s) over ${String(o.size)} instance(s) (${members.join(", ")}); artifacts in ${artifactsDir}`)
   for (const m of members) if (await watcher.stopWatcher(m)) console.log(`  stopped the idle watcher of "${m}"`)
 
-  // Fetch every job's files once, up front: two jobs downloading the same
-  // release into the same cache directory at once would race.
   for (const job of jobs) for (const f of job.files) await resolveHostFiles(f)
 
   const image = o.image ?? readMeta(members[0] ?? "")?.image ?? null
@@ -376,7 +294,6 @@ export async function runPool(jobs: readonly Job[], o: PoolOptions): Promise<Poo
   return { results, setupMs, instances: members }
 }
 
-/** The pool flags, or null when `--pool` is absent. */
 export function poolOptions(args: Args): PoolOptions | { readonly error: string } | null {
   const raw = args.flags.get("pool")
   if (raw === undefined) return null

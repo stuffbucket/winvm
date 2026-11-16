@@ -1,8 +1,3 @@
-/**
- * The boot-prompt gate's frame classifier, on synthetic frames shaped like the
- * ones the build VM actually shows: cdboot's prompt (one line at the top of a
- * black screen), the UEFI shell (text further down), Windows Setup (all lit).
- */
 import { describe, expect, it } from "bun:test"
 
 import { classifyBootFrame } from "../src/qmp"
@@ -10,7 +5,6 @@ import { classifyBootFrame } from "../src/qmp"
 const W = 800
 const H = 600
 
-/** An 800x600 P6 frame with rows [top, bottom) lit in their first `cols` columns. */
 function frame(rows: [number, number][], cols = 400, rgb: [number, number, number] = [170, 170, 170]): Buffer {
   const header = Buffer.from(`P6\n${String(W)} ${String(H)}\n255\n`, "latin1")
   const data = Buffer.alloc(W * H * 3)

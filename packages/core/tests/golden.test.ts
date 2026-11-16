@@ -1,7 +1,3 @@
-/**
- * The pure half of goldens: reading QEMU's CPU time and deciding the guest has
- * settled. No VM needed.
- */
 import { describe, expect, it } from "bun:test"
 
 import type { CpuSample } from "../src/golden"
@@ -23,7 +19,6 @@ describe("reading QEMU from ps", () => {
 })
 
 describe("settling", () => {
-  // 4 vCPUs; `pcts` are per 5 s interval, as a share of all four.
   const series = (pcts: readonly number[]): CpuSample[] => {
     const out: CpuSample[] = [{ atMs: 0, cpuSec: 0 }]
     for (const pct of pcts) {

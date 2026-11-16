@@ -1,30 +1,6 @@
-/**
- * Driving the guest's GUI by UI Automation element names — the host side of
- * the agent's `/ui` route, which hands each request to winvm-ui.exe
- * (assets/winvm-ui.cs), a long-lived UIA helper in the logged-on session.
- *
- *   const ui = await forInstance(name)                // agent.ensure + helper warm-up
- *   await ui.tray("Maximal", { menu: "Settings" })     // tray icon, then its menu item
- *   await ui.wait({ window: "Maximal", name: "Account" })
- *   await ui.click({ window: "Maximal", name: "Models" }, { settleMs: 200 })
- *   await ui.settle({ process: "maximal-shell" })
- *   const t = await ui.tree({ window: "Maximal" }, { depth: 3 })
- *
- * A Selector scopes to top-level windows (`window`: title contains or class
- * equals; `process`: process name; `hwnd`), then picks an element by `name`
- * (exact, case-insensitive), `nameContains`, `automationId`, `controlType`,
- * `className` and `index`. Without a scope the whole desktop is searched,
- * which is correct but slower. Element-finding ops take `timeoutMs` and keep
- * looking until then. Clicks are real input (SendInput) at the element's
- * centre; `invoke` and friends use UIA patterns and need nothing on screen.
- *
- * Errors are UiError with a `code`: notfound, timeout, covered (another window
- * is on top of the element where it would be clicked), bad, unavailable, fail.
- */
 import type { AgentClient } from "./agent"
 import { AgentError, ensure, install } from "./agent"
 
-/** assets/winvm-ui.cs VERSION: an older helper in the guest is replaced by reinstalling the agent. */
 export const UI_HELPER_VERSION = 7
 
 export interface Selector {
@@ -47,7 +23,6 @@ export interface Element {
   readonly automationId?: string
   readonly className?: string
   readonly framework?: string
-  /** [x, y, width, height] in physical screen pixels; null when it has none. */
   readonly bounds: readonly [number, number, number, number] | null
   readonly enabled?: false
   readonly offscreen?: true
@@ -58,7 +33,6 @@ export interface Element {
   readonly toggle?: string
   readonly expanded?: string
   readonly selected?: boolean
-  /** Top-level windows only (`windows()`). */
   readonly process?: string | null
 }
 
@@ -66,7 +40,6 @@ export interface TreeNode extends Element {
   readonly children?: readonly TreeNode[]
 }
 
-/** Every answer carries the helper's own time for it. */
 interface Timed {
   readonly ms: number
 }
@@ -114,7 +87,6 @@ export interface TrayClicked extends Timed {
   readonly at: readonly [number, number]
   readonly clickedMs: number
   readonly menuItem?: Element
-  /** The overflow flyout was closed again after the menu item. */
   readonly closedOverflow?: true
 }
 
@@ -128,7 +100,6 @@ export class UiError extends Error {
 
 const CODES: Readonly<Record<number, string>> = { 400: "bad", 404: "notfound", 408: "timeout", 409: "covered", 501: "unavailable" }
 
-/** Defaults: element ops wait this long for their element to appear. */
 export const DEFAULT_TIMEOUT_MS = 10_000
 
 export class Ui {
@@ -137,11 +108,9 @@ export class Ui {
     this.agent = agent
   }
 
-  /** One raw request. */
   async call<T>(op: string, body: Readonly<Record<string, unknown>> = {}): Promise<T> {
     const t = typeof body["timeoutMs"] === "number" ? body["timeoutMs"] : 0
     try {
-      // Past the helper's own watchdog (2 x timeout + 25 s), so a hang comes back as a UiError.
       return await this.agent.ui<T>({ ...body, op }, 2 * t + 60_000)
     } catch (error) {
       if (error instanceof AgentError) {
@@ -156,39 +125,26 @@ export class Ui {
     return await this.call<Ping>("ping")
   }
 
-  /** Top-level windows, with their process names. */
   async windows(): Promise<readonly Element[]> {
     return (await this.call<{ windows: Element[] }>("windows")).windows
   }
 
-  /**
-   * The element tree under a selector: its windows (to `depth`, default all),
-   * one element and its subtree, or with an empty selector the desktop's
-   * windows (depth 1 unless given). Capped at `max` nodes (5000).
-   */
   async tree(sel: Selector = {}, o: { readonly depth?: number; readonly max?: number; readonly timeoutMs?: number } = {}): Promise<Tree> {
     return await this.call<Tree>("tree", { ...sel, ...o })
   }
 
-  /** The first match (or `index`th), waiting up to `timeoutMs` (default: no wait). */
   async find(sel: Selector, o: { readonly timeoutMs?: number } = {}): Promise<Element> {
     return (await this.call<Found>("find", { ...sel, timeoutMs: o.timeoutMs ?? 0 })).element
   }
 
-  /** Every match; empty when none appears within `timeoutMs`. */
   async findAll(sel: Selector, o: { readonly timeoutMs?: number } = {}): Promise<readonly Element[]> {
     return (await this.call<{ elements: Element[] }>("find", { ...sel, all: true, timeoutMs: o.timeoutMs ?? 0 })).elements
   }
 
-  /** Until it exists (or, `gone`, until it does not). UiError notfound/timeout after `timeoutMs`. */
   async wait(sel: Selector, o: { readonly timeoutMs?: number; readonly gone?: boolean } = {}): Promise<Waited> {
     return await this.call<Waited>("wait", { ...sel, timeoutMs: o.timeoutMs ?? DEFAULT_TIMEOUT_MS, gone: o.gone === true })
   }
 
-  /**
-   * Do something to an element, waiting up to `timeoutMs` for it to appear.
-   * `settleMs`: first wait until its window has not changed for that long.
-   */
   async act(
     action: Action,
     sel: Selector,
@@ -210,31 +166,18 @@ export class Ui {
     return await this.act("setvalue", sel, { ...o, value })
   }
 
-  /** Focus the element, then type `text` as Unicode key events. */
   async type(sel: Selector, text: string, o: { readonly timeoutMs?: number } = {}): Promise<Acted> {
     return await this.act("type", sel, { ...o, value: text })
   }
 
-  /** Bring a top-level window to the foreground. */
   async focus(sel: Selector, o: { readonly timeoutMs?: number } = {}): Promise<{ readonly foreground: boolean; readonly window: Element }> {
     return await this.call("focus", { ...sel, timeoutMs: o.timeoutMs ?? DEFAULT_TIMEOUT_MS })
   }
 
-  /**
-   * Wait until the UI is idle: no change in the element tree (names, types,
-   * bounds, states) for `quietMs` (300). Scope: the selector's windows, else
-   * every top-level window plus the foreground window's subtree. Returns
-   * `settled: false` (does not throw) at `timeoutMs` (10 s).
-   */
   async settle(sel: Selector = {}, o: { readonly quietMs?: number; readonly timeoutMs?: number; readonly intervalMs?: number } = {}): Promise<Settled> {
     return await this.call<Settled>("settle", { ...sel, ...o })
   }
 
-  /**
-   * Click a notification-area icon by tooltip (substring), opening the
-   * overflow flyout if it is hidden there — right-click by default — and then,
-   * with `menu`, the context-menu item of that name.
-   */
   async tray(
     tooltip: string,
     o: { readonly menu?: string; readonly button?: "left" | "right" | "double"; readonly timeoutMs?: number } = {},
@@ -247,21 +190,15 @@ export class Ui {
     })
   }
 
-  /** What is at a screen point: the top-level window a click there would reach, and the UIA element. */
   async at(x: number, y: number): Promise<{ readonly window: string; readonly element?: Element }> {
     return await this.call("at", { x, y })
   }
 
-  /** Click an item of an open context menu (exact text, else prefix; "…" and accelerators ignored). */
   async menu(item: string, o: { readonly timeoutMs?: number; readonly invoke?: boolean } = {}): Promise<Found> {
     return await this.call<Found>("menu", { name: item, timeoutMs: o.timeoutMs ?? 5000, action: o.invoke === true ? "invoke" : "click" })
   }
 }
 
-/**
- * A Ui for a running instance: its agent (installed or upgraded if need be,
- * and again if its helper is older than this host's), helper warmed up.
- */
 export async function forInstance(name: string, o: { readonly log?: (line: string) => void } = {}): Promise<Ui> {
   const opts = o.log === undefined ? {} : { log: o.log }
   const ui = new Ui(await ensure(name, opts))
@@ -276,11 +213,8 @@ export async function forInstance(name: string, o: { readonly log?: (line: strin
   return fresh
 }
 
-// --- formatting, for the CLI and job logs -----------------------------------
-
 const q = (s: string): string => JSON.stringify(s.replace(/\s+/g, " "))
 
-/** One line: `Button "Settings…" id=Item 1008 [569,490 228x22] pid 2800`. */
 export function formatElement(e: Omit<Element, "bounds" | "pid"> & Partial<Pick<Element, "bounds" | "pid">>): string {
   const parts = [e.controlType, q(e.name)]
   if (e.automationId !== undefined) parts.push(`id=${q(e.automationId)}`)

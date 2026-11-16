@@ -1,12 +1,3 @@
-/**
- * Results of `winvm run` / `winvm test`, and their three renderings: the
- * console summary, JUnit XML (what every CI system ingests), and JSON. Pure.
- *
- * THE NUMBER THAT MATTERS is the reset share: of the wall clock, how much went
- * to putting the guest back to its golden state rather than testing. Fast
- * resets are the whole premise of running installers in a VM per job; if the
- * share creeps toward half, the harness is measuring itself.
- */
 export type StepStatus = "passed" | "failed" | "timed-out" | "skipped"
 export type JobStatus = "passed" | "failed" | "error"
 
@@ -25,7 +16,6 @@ export interface JobResult {
   readonly name: string
   readonly file: string
   readonly status: JobStatus
-  /** Set when the job could not run at all (bad file, reset failed, staging failed). */
   readonly error: string | null
   readonly instance: string
   readonly golden: string | null
@@ -36,37 +26,23 @@ export interface JobResult {
   readonly collectMs: number
   readonly totalMs: number
   readonly steps: readonly StepResult[]
-  /** Host paths of collected artifacts and screenshots. */
   readonly artifacts: readonly string[]
   readonly startedAt: string
 }
 
 export interface RunSummary {
   readonly jobs: readonly JobResult[]
-  /** Wall clock for the whole run, including any boot and golden creation. */
   readonly wallMs: number
-  /** One-off setup before the first job (boot, golden creation), already in wallMs. */
   readonly setupMs: number
-  /** Set by `winvm test --pool` (pool.ts). */
   readonly pool?: PoolStats
 }
 
-/**
- * A pool's timing. With jobs running side by side, summed reset time says
- * little — a reset on one instance while others run jobs costs nothing — so
- * the figure that matters is EXPOSED reset: wall-clock time when some
- * instance was resetting and none was running a job.
- */
 export interface PoolStats {
   readonly instances: readonly string[]
-  /** From the first job's reset starting to the last job finishing (setup excluded). */
   readonly runMs: number
-  /** Sum over jobs of stage + steps + collect. */
   readonly jobMs: number
-  /** Sum over jobs of their resets. */
   readonly resetMs: number
   readonly exposedResetMs: number
-  /** Of that, the first round: from the run starting to the first job's work starting. The rest is mid-run and tail. */
   readonly initialResetMs: number
   readonly perInstance: readonly { readonly instance: string; readonly jobs: number; readonly busyMs: number }[]
 }
@@ -76,7 +52,6 @@ export interface Interval {
   readonly end: number
 }
 
-/** Merge overlapping intervals; the result is sorted and disjoint. */
 export function merge(xs: readonly Interval[]): Interval[] {
   const sorted = xs.filter((x) => x.end > x.start).sort((a, b) => a.start - b.start)
   const out: Interval[] = []
@@ -90,7 +65,6 @@ export function merge(xs: readonly Interval[]): Interval[] {
 
 const length = (xs: readonly Interval[]): number => xs.reduce((a, x) => a + x.end - x.start, 0)
 
-/** Time covered by `a` and not by `b`. */
 export function uncoveredMs(a: readonly Interval[], b: readonly Interval[]): number {
   const bs = merge(b)
   let out = 0
@@ -102,7 +76,6 @@ export function uncoveredMs(a: readonly Interval[], b: readonly Interval[]): num
   return out
 }
 
-/** A job's reset, then its work (stage, steps, collect), as wall-clock intervals. */
 export function jobIntervals(j: JobResult): { readonly reset: Interval; readonly work: Interval } {
   const start = Date.parse(j.startedAt)
   return { reset: { start, end: start + j.resetMs }, work: { start: start + j.resetMs, end: start + j.totalMs } }
@@ -152,14 +125,12 @@ export function totals(s: RunSummary): {
 const mark = (st: StepStatus | JobStatus): string =>
   st === "passed" ? "ok  " : st === "skipped" ? "skip" : st === "timed-out" ? "TIME" : st === "error" ? "ERR " : "FAIL"
 
-/** One line per step as it finishes. */
 export function formatStep(r: StepResult): string {
   const tail = r.status === "failed" && r.continueOnError ? " (continue-on-error)" : r.background ? " (background)" : ""
   const code = r.exitcode === null || r.exitcode === 0 ? "" : ` exit ${String(r.exitcode)}`
   return `  [${mark(r.status)}] ${r.name} — ${secs(r.ms)}${code}${tail}`
 }
 
-/** The last lines of a failed step's output, indented. */
 export function outputTail(r: StepResult, lines = 15): string {
   const text = `${r.stdout}${r.stderr === "" ? "" : `\n${r.stderr}`}`.trim()
   if (text === "") return ""
@@ -207,7 +178,6 @@ export function formatPool(p: PoolStats): string[] {
 
 const xmlEscape = (s: string): string =>
   s
-    // XML 1.0 forbids most control characters outright, even escaped.
     .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g, "")
     .replaceAll("&", "&amp;")
     .replaceAll("<", "&lt;")
@@ -216,7 +186,6 @@ const xmlEscape = (s: string): string =>
 
 const sec = (ms: number): string => (ms / 1000).toFixed(3)
 
-/** JUnit XML: a testsuite per job, a testcase per step; reset and staging as their own cases. */
 export function toJunit(s: RunSummary): string {
   const out = ['<?xml version="1.0" encoding="UTF-8"?>']
   const t = totals(s)

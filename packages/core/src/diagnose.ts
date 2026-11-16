@@ -1,17 +1,3 @@
-/**
- * Post-mortem for a guest that misbehaved, from its files alone.
- *
- * WHY THIS EXISTS. Every failure this tool has ever had looked the same from
- * outside: a QEMU process that is running, a pidfile that is valid, and a
- * monitor that answers "VM status: running". The difference between "installing
- * normally", "wedged in firmware", "provisioning never started" and "the answer
- * file silently skipped a pass" is only ever visible in the artifacts each one
- * leaves behind — and knowing which artifact to read took a long time to learn.
- *
- * So each check below encodes ONE incident that actually happened here, with the
- * evidence that identified it and the way out. Reading files only, never the
- * guest: this has to work on an instance that is dead, wedged, or long stopped.
- */
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs"
 import { resolve } from "node:path"
 
@@ -23,17 +9,11 @@ export type Severity = "error" | "warning" | "note"
 
 export interface Finding {
   readonly severity: Severity
-  /** What went wrong, in the words someone would search for. */
   readonly title: string
-  /** The observation that identifies it — quoted from the artifact, not paraphrased. */
   readonly evidence: string
   readonly remedy: string
 }
 
-/**
- * Firmware output is ANSI escapes and NUL padding; latin1 keeps the bytes
- * intact where a UTF-8 decode would mangle the very lines being matched.
- */
 function readText(path: string): string {
   if (!existsSync(path)) return ""
   return readFileSync(path, "latin1").replaceAll("\0", "")
@@ -47,7 +27,6 @@ const sizeOf = (path: string): number => {
   }
 }
 
-/** Everything the firmware printed after its most recent power-on banner. */
 function lastBoot(serial: string): string {
   const marker = "UEFI firmware"
   const at = serial.lastIndexOf(marker)
@@ -62,7 +41,6 @@ const tail = (text: string, lines: number): string =>
     .slice(-lines)
     .join("\n")
 
-/** Where the answer file lives; overridable so traces can carry their own. */
 export const defaultAnswerFile = (): string => resolve(PACKAGE_DIR, "assets", "autounattend.xml")
 
 export function diagnose(name: string, answerFile: string = defaultAnswerFile()): readonly Finding[] {
@@ -84,15 +62,6 @@ export function diagnose(name: string, answerFile: string = defaultAnswerFile())
   const boot = lastBoot(serial)
   const running = qemu.isRunning(p)
 
-  // "STOPPED PROGRESSING" IS A CLAIM ABOUT TIME, SO MEASURE IT.
-  //
-  // Several signatures below are only failures because nothing happened NEXT: a
-  // console that ends at a USB command, a keypress marker with an empty disk.
-  // Both are also exactly what a healthy guest looks like ten seconds into a
-  // build. Without this, `diagnose` on a running build reports a hang while the
-  // installer is working perfectly — and a diagnostic that cries wolf is worse
-  // than none. A stopped guest is stalled by definition; a running one has to
-  // have gone quiet on both its console and its disk to qualify.
   const mtimeOf = (path: string): number => {
     try {
       return statSync(path).mtimeMs
@@ -105,10 +74,6 @@ export function diagnose(name: string, answerFile: string = defaultAnswerFile())
   const stalled = !running || quietSeconds > 90
   const quietNote = running ? ` after ${String(quietSeconds)}s with no console or disk activity` : ""
 
-  // ---- QEMU never got off the ground ---------------------------------------
-  // It reports a bad command line or an unreachable socket on stderr and then
-  // exits ZERO, so nothing downstream notices. Everything after this point
-  // would be reading artifacts from a guest that was never started.
   const qemuLog = readText(p.qemuLog).trim()
   if (qemuLog !== "") {
     findings.push({
@@ -119,10 +84,6 @@ export function diagnose(name: string, answerFile: string = defaultAnswerFile())
     })
   }
 
-  // ---- EDK2 hung enumerating USB -------------------------------------------
-  // The firmware spins a core, serial output stops mid-line, and no boot target
-  // is ever chosen. Distinctive because the LAST boot produced firmware output
-  // and then simply stopped, with no loader ever starting.
   if (
     stalled &&
     boot.includes("UsbBootExecCmd") &&
@@ -139,10 +100,6 @@ export function diagnose(name: string, answerFile: string = defaultAnswerFile())
     })
   }
 
-  // ---- The install media's boot prompt went unanswered ----------------------
-  // startup.nsh announces `winvm-keypress-needed` immediately before launching
-  // the one image that waits for a key. If that is the last thing on the console
-  // and the disk never grew, nothing answered it.
   const overlayBytes = sizeOf(p.overlay)
   if (
     stalled &&
@@ -158,7 +115,6 @@ export function diagnose(name: string, answerFile: string = defaultAnswerFile())
     })
   }
 
-  // ---- The TPM came back in a bad state ------------------------------------
   if (/Tpm2Startup: Response Code error/i.test(boot)) {
     findings.push({
       severity: "warning",
@@ -168,15 +124,6 @@ export function diagnose(name: string, answerFile: string = defaultAnswerFile())
     })
   }
 
-  // ---- Provisioning's own verdict ------------------------------------------
-  //
-  // ONLY MEANINGFUL FOR A BUILD. Provisioning runs once, in the scratch instance
-  // a build creates; ordinary instances inherit its results in the base image and
-  // do not even attach the result volume. Checking them would report "provisioning
-  // left no transcript" against a perfectly healthy guest — which is how a
-  // diagnostic teaches people to ignore it.
-  //
-  // Readable only when nothing holds the image open.
   if (!running && name.startsWith("build-")) {
     const result = readResult(p.result)
     if (result.status === null && result.log.trim() === "") {
@@ -206,7 +153,6 @@ export function diagnose(name: string, answerFile: string = defaultAnswerFile())
     }
   }
 
-  // ---- Configuration drift that silently removes capability ----------------
   if (readImageMeta(meta.image) === null) {
     findings.push({
       severity: "warning",
@@ -224,9 +170,6 @@ export function diagnose(name: string, answerFile: string = defaultAnswerFile())
     })
   }
 
-  // ---- Leftovers from a previous run ---------------------------------------
-  // A build detaches its guest, so an interrupted one leaves both the scratch
-  // instance and, often, a live QEMU that the next build would collide with.
   if (existsSync(instancesDir())) {
     for (const other of listScratch()) {
       const sp = pathsFor(other)
@@ -255,31 +198,10 @@ export function diagnose(name: string, answerFile: string = defaultAnswerFile())
   return findings
 }
 
-/**
- * The answer file, checked for the conflict that produces NO error anywhere.
- *
- * Requesting audit mode while leaving OOBE's account settings in place is
- * accepted by Windows and half-honoured: `audit.exe` runs and enables the
- * built-in Administrator, then AutoLogon signs in the answer file's account
- * instead. The audit logon that `audit.exe /user` was arranged for never
- * happens, so the auditUser pass never runs and provisioning never runs. The
- * guest reaches a working desktop and simply has no agent. Nothing in any log
- * says why; it took reading audit.exe's own log inside the guest disk to find.
- *
- * A static check costs nothing and catches it before a build is spent.
- */
 function checkAnswerFile(file: string): readonly Finding[] {
   const xml = readText(file)
   if (xml === "") return []
   const oobe = /<settings pass="oobeSystem">([\s\S]*?)<\/settings>/.exec(xml)?.[1] ?? ""
-  // Comments discuss these settings by name, so the check must match ELEMENTS
-  // rather than mentions — and this file's comments do exactly that at length.
-  //
-  // Stripped REPEATEDLY, not once: removing `<!-- … -->` in a single pass can
-  // splice the surrounding text into a fresh `<!--`, leaving a comment behind
-  // that then reads as live configuration. Repeating until nothing changes is
-  // the fix CodeQL recommends for this class, and it terminates because every
-  // pass strictly shortens the string.
   let withoutComments = oobe
   for (;;) {
     const stripped = withoutComments.replace(/<!--[\s\S]*?-->/g, "")
@@ -303,7 +225,6 @@ function checkAnswerFile(file: string): readonly Finding[] {
   ]
 }
 
-/** Scratch instances a build creates, which only survive a run that did not finish. */
 function listScratch(): readonly string[] {
   try {
     return readdirSync(instancesDir()).filter((d) => d.startsWith("build-"))

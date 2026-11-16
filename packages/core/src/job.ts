@@ -78,7 +78,6 @@ export interface Step {
 
 export interface Job {
   readonly name: string
-  /** The file it came from (for messages and relative paths); "" when parsed from text. */
   readonly file: string
   readonly golden: string | null
   readonly reset: boolean
@@ -113,7 +112,6 @@ function bool(o: Obj, key: string, where: string, dflt: boolean): boolean {
   throw new JobError(`${where}: "${key}" must be true or false`)
 }
 
-/** Seconds (a number, or "90s" / "5m"), returned as milliseconds. */
 export function parseDuration(v: unknown, where: string): number | null {
   if (v === undefined || v === null) return null
   if (typeof v === "number" && v > 0) return Math.round(v * 1000)
@@ -129,7 +127,6 @@ export function parseDuration(v: unknown, where: string): number | null {
   throw new JobError(`${where}: a duration is a number of seconds, or like "90s", "5m"`)
 }
 
-/** GitHub's `timeout-minutes`, as seconds for parseDuration. */
 const minutes = (v: unknown): number | undefined => (typeof v === "number" ? v * 60 : undefined)
 
 function env(v: unknown, where: string): Record<string, string> {
@@ -152,7 +149,6 @@ function shell(v: string | null, where: string): Shell {
   throw new JobError(`${where}: shell must be pwsh, powershell, cmd or winvm (got "${v}")`)
 }
 
-/** `always()`, `failure()`, `success()` — the three conditions a runner can decide alone. */
 function condition(v: string | null, where: string): Condition {
   if (v === null) return "success"
   const m = /^\s*(?:\$\{\{\s*)?(success|failure|always)\(\)(?:\s*\}\})?\s*$/.exec(v)
@@ -191,10 +187,6 @@ function fileSpec(v: unknown, where: string, baseDir: string): FileSpec {
   return { kind: "release", repo, tag: str(v, "tag", where) ?? "latest", patterns, dest }
 }
 
-/**
- * `${{ env.NAME }}` → the job's env, else the host's; unknown names are an
- * error unless a default is given: `${{ env.NAME || 'fallback' }}`.
- */
 export function interpolate(text: string, vars: Readonly<Record<string, string>>, where: string): string {
   return text.replace(
     /\$\{\{\s*env\.([A-Za-z_][A-Za-z0-9_]*)\s*(?:\|\|\s*'([^']*)'\s*)?\}\}/g,
@@ -284,13 +276,6 @@ export function parseJob(text: string, file = ""): Job {
 
 export const readJob = (file: string): Job => parseJob(readFileSync(file, "utf8"), file)
 
-/**
- * The script a step runs, as the file the shell is given. Like GitHub Actions:
- * the body goes in a file, never on a command line (cmd.exe does not understand
- * the MSVCRT quoting a command line gets), env is set at the top, and a
- * PowerShell script fails on the first error and exits with the last native
- * program's code.
- */
 export function stepScript(step: Step, env: Readonly<Record<string, string>>): { readonly ext: ".cmd" | ".ps1"; readonly text: string } {
   const all = { ...env, ...step.env }
   if (step.shell === "cmd") {
@@ -307,6 +292,5 @@ export function stepScript(step: Step, env: Readonly<Record<string, string>>): {
     "if ((Test-Path -LiteralPath variable:\\LASTEXITCODE)) { exit $LASTEXITCODE }",
     "",
   ].join("\r\n")
-  // A BOM, or Windows PowerShell 5.1 reads the file as the ANSI code page.
   return { ext: ".ps1", text: `\uFEFF${body.replace(/\r?\n/g, "\r\n")}` }
 }

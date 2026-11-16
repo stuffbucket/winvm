@@ -1,19 +1,6 @@
-/**
- * Ask QEMU's VNC server for a new desktop size (RFB SetDesktopSize), the first
- * half of a live resize (display.ts). A short-lived, SHARED connection, so the
- * viewer and Screen Sharing stay connected.
- *
- * QEMU 11.1 (ui/vnc.c, VNC_MSG_CLIENT_SET_DESKTOP_SIZE) hands the width and
- * height to the display device (qemu_console_set_ui_info, no delay) and
- * answers at once with an ExtendedDesktopSize rect: reason 1 (this client's
- * request), status 4 "request forwarded" when the device can resize
- * (virtio-gpu), 3 "invalid screen layout" when it cannot (ramfb). Forwarded is
- * not done: the guest's driver then offers the size, and the agent sets it.
- */
 import { createCipheriv } from "node:crypto"
 import { connect } from "node:net"
 
-/** RFB ExtendedDesktopSize status codes. */
 export const RESIZE_STATUS: Readonly<Record<number, string>> = {
   0: "ok",
   1: "prohibited",
@@ -23,13 +10,10 @@ export const RESIZE_STATUS: Readonly<Record<number, string>> = {
 }
 
 export interface ResizeAnswer {
-  /** The ExtendedDesktopSize status QEMU answered the request with. */
   readonly status: number
-  /** The framebuffer's size when connecting. */
   readonly before: { readonly width: number; readonly height: number }
 }
 
-/** VNC authentication's DES: the password, 8 bytes, each byte bit-reversed, encrypts the challenge. */
 export function vncAuthResponse(password: string, challenge: Uint8Array): Buffer {
   const key = Buffer.alloc(8)
   for (let i = 0; i < 8; i += 1) {
@@ -43,13 +27,12 @@ export function vncAuthResponse(password: string, challenge: Uint8Array): Buffer
   return Buffer.concat([cipher.update(challenge), cipher.final()])
 }
 
-/** The SetDesktopSize message (type 251) for one screen. */
 export function setDesktopSizeMessage(width: number, height: number, screenId = 0, flags = 0): Buffer {
   const b = Buffer.alloc(24)
   b[0] = 251
   b.writeUInt16BE(width, 2)
   b.writeUInt16BE(height, 4)
-  b[6] = 1 // screens
+  b[6] = 1
   b.writeUInt32BE(screenId, 8)
   b.writeUInt16BE(width, 16)
   b.writeUInt16BE(height, 18)
@@ -57,10 +40,6 @@ export function setDesktopSizeMessage(width: number, height: number, screenId = 
   return b
 }
 
-/**
- * Connect to the VNC server on 127.0.0.1:`port`, ask for `width`x`height`, and
- * return QEMU's answer. Throws on authentication failure or timeout.
- */
 export async function requestDesktopSize(
   port: number,
   password: string | null,
@@ -99,7 +78,7 @@ export async function requestDesktopSize(
   }, timeoutMs)
 
   try {
-    await need(12) // "RFB 003.008\n"
+    await need(12)
     sock.write("RFB 003.008\n")
     const nTypes = (await need(1))[0] ?? 0
     if (nTypes === 0) throw new Error("the VNC server refused the connection")
@@ -114,14 +93,12 @@ export async function requestDesktopSize(
       throw new Error(`no VNC security type winvm speaks (offered ${types.join(",")})`)
     }
     if ((await need(4)).readUInt32BE(0) !== 0) throw new Error("VNC authentication failed")
-    sock.write(Buffer.from([1])) // ClientInit: shared
+    sock.write(Buffer.from([1]))
     const init = await need(24)
     const before = { width: init.readUInt16BE(0), height: init.readUInt16BE(2) }
     const bpp = (init[4] ?? 32) / 8
-    await need(init.readUInt32BE(20)) // desktop name
+    await need(init.readUInt32BE(20))
 
-    // SetEncodings: ExtendedDesktopSize only. A non-incremental update request
-    // makes QEMU send the current layout (with the screen id to resize).
     const enc = Buffer.alloc(8)
     enc[0] = 2
     enc.writeUInt16BE(1, 2)
@@ -154,7 +131,7 @@ export async function requestDesktopSize(
               sent = true
             }
           } else if (encoding === 0) {
-            await need(w * h * bpp) // raw pixels; not asked for, but legal
+            await need(w * h * bpp)
           } else if (encoding !== -223) {
             throw new Error(`unexpected VNC encoding ${String(encoding)}`)
           }
@@ -162,7 +139,6 @@ export async function requestDesktopSize(
       } else if (type === 1) {
         await need(6 * (await need(5)).readUInt16BE(3))
       } else if (type === 2) {
-        // bell
       } else if (type === 3) {
         await need((await need(7)).readUInt32BE(3))
       } else {

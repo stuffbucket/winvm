@@ -1,9 +1,3 @@
-/**
- * The guest's drives in Finder (finder.ts, smbstate.ts): smb.json, the mount
- * table and the "is it really our mount" check, and the lifecycle hooks —
- * against a fake Mac (Sys) and a state directory laid out by hand. No VM, no
- * mounts, nothing run.
- */
 import { afterEach, beforeEach, describe, expect, it, spyOn } from "bun:test"
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
@@ -126,7 +120,6 @@ describe("the mount table", () => {
 
   it("refuses a folder that is not a mount point, even inside one", () => {
     const t = parseMountTable(TABLE)
-    // Inside the Data volume, and inside our own mount: neither is a mount point itself.
     expect(findOurMount(t, { dir: "/Users/me/winvm/vm", port: PORT, share: "C" })).toBeNull()
     expect(findOurMount(t, { dir: "/Users/me/winvm/vm/C/Windows", port: PORT, share: "C" })).toBeNull()
     expect(findOurMount(t, { dir: "/System/Volumes/Data", port: PORT, share: "C" })).toBeNull()
@@ -200,14 +193,11 @@ describe("the forward to 445", () => {
   })
 })
 
-// --- the fake Mac --------------------------------------------------------------
-
 interface Fake extends Sys {
   table: MountEntry[]
   ran: string[]
   mounts: string[]
   setups: number
-  /** What the next mounts answer, in turn; then 0. */
   answers: number[]
   isRunning: boolean
   umountWorks: boolean
@@ -256,7 +246,6 @@ const mountedAt = (f: Fake, key: "c" | "home"): boolean =>
 describe("unmounting", () => {
   it("does nothing at all to a folder that is not our mount point", () => {
     const f = fakeSys()
-    // The Data volume is in the table; the folder is merely inside it.
     expect(unmountShare({ dir: mountDir("vm", "c"), port: PORT, share: "C" }, f)).toBe("not-mounted")
     expect(unmountShare({ dir: "/System/Volumes/Data", port: PORT, share: "C" }, f)).toBe("not-mounted")
     expect(f.ran).toEqual([])
@@ -294,7 +283,6 @@ describe("mounting", () => {
     expect(readSmb(pathsFor("vm"))?.mounted).toEqual(["home", "c"])
     expect(readSmb(pathsFor("vm"))?.hostPort).toBe(PORT)
     expect(existsSync(mountDir("vm", "c"))).toBe(true)
-    // Again: already mounted, nothing to do.
     await mountShares("vm", ["c"], { sys: f })
     expect(f.mounts).toHaveLength(2)
   })
@@ -354,7 +342,6 @@ describe("the lifecycle hooks", () => {
     expect(mountedAt(f, "home") || mountedAt(f, "c")).toBe(false)
     expect(f.ran).toEqual([`/sbin/umount ${mountDir("vm", "home")}`, `/sbin/umount ${mountDir("vm", "c")}`])
     expect(readSmb(pathsFor("vm"))?.mounted).toEqual(["home", "c"])
-    // The empty mount folders go.
     expect(existsSync(mountDir("vm", "c"))).toBe(false)
   })
 

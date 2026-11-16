@@ -1,21 +1,3 @@
-/**
- * `winvm toasts` — the notifications (toasts) apps raised in the guest, read
- * from Windows' own record of them rather than from the screen.
- *
- *   winvm toasts [-i name] [--since T] [--app A] [--find TEXT] [--wait S] [--json]
- *
- * Windows keeps every toast it accepts in the logged-on user's Windows Push
- * Notification database, %LOCALAPPDATA%\Microsoft\Windows\Notifications\
- * wpndatabase.db (SQLite, WAL mode, held open by WpnUserService). The in-guest
- * agent runs as that user, so it copies the database and its -wal/-shm out
- * over HTTP and bun:sqlite reads the copy on the host. The record exists
- * whether or not the toast popped up: the image switches popups and the
- * notification centre off (assets/logon.ps1), and toasts are recorded anyway.
- *
- * A toast stays in the table until it is dismissed or expires (days), so a
- * "did it fire?" check wants `--since` (an ISO time, or "90s"/"5m"/"2h" ago).
- * Times are the guest's clock, which winvm keeps on the host's.
- */
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { resolve } from "node:path"
@@ -30,18 +12,15 @@ import * as qemu from "./qemu"
 
 export interface Toast {
   readonly id: number
-  /** The app's id: an AppUserModelID (e.g. co.stuffbucket.maximal) or a package's. */
   readonly app: string
   readonly arrived: string
   readonly expires: string | null
-  /** The <text> elements, in order; the first is the title. Empty ones dropped. */
   readonly texts: readonly string[]
   readonly tag: string | null
   readonly group: string | null
   readonly payload: string
 }
 
-/** Windows FILETIME (100 ns ticks since 1601) -> ISO time. */
 export function fileTimeToIso(ft: number | bigint | null): string | null {
   if (ft === null) return null
   const ms = Number(BigInt(ft) / 10_000n) - 11_644_473_600_000
@@ -59,12 +38,10 @@ const decode = (s: string): string =>
         : (ENTITIES[e] ?? m),
   )
 
-/** The text lines of a toast's XML payload. */
 export function toastTexts(xml: string): string[] {
   return [...xml.matchAll(/<text\b[^>]*>([\s\S]*?)<\/text>/g)].map((m) => decode(m[1] ?? "").trim()).filter((t) => t !== "")
 }
 
-/** "90s" / "5m" / "2h" / "1d" ago, or an ISO date/time. */
 export function parseSince(v: string, now = Date.now()): Date | null {
   const m = /^(\d+(?:\.\d+)?)\s*(ms|s|m|h|d)$/.exec(v.trim())
   if (m !== null) {
@@ -75,7 +52,6 @@ export function parseSince(v: string, now = Date.now()): Date | null {
   return Number.isNaN(d.getTime()) ? null : d
 }
 
-/** Every toast in a copy of wpndatabase.db, oldest first. */
 export function readDb(file: string): Toast[] {
   const db = new Database(file)
   try {
@@ -122,7 +98,6 @@ export function filterToasts(all: readonly Toast[], f: Filter): Toast[] {
   )
 }
 
-/** Copy the guest's notification database out and read it. */
 export async function readToasts(name: string): Promise<{ toasts: Toast[]; ms: number }> {
   const t0 = performance.now()
   const c = await agent.connect(name, { timeoutMs: 5000 })

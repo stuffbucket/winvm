@@ -1,31 +1,3 @@
-/**
- * `winvm web` — the guest's screen and status in a browser, with buttons.
- *
- * A small HTTP server on 127.0.0.1 that serves one page: noVNC showing the
- * screen (straight from QEMU's own websocket listener, see vnc.ts) beside the
- * status report, plus buttons for the lifecycle verbs. The buttons don't call
- * into this process's copy of the code: each one RUNS THE CLI (`bun winvm.ts
- * <verb> -i <name>`), so the page does exactly what the command line does,
- * including verbs added after this file was written, and shows its output.
- *
- * ## Who can use it
- *
- * Loopback only, and that is not enough on its own: any page open in a local
- * browser can send requests to 127.0.0.1. So:
- *
- *   - Every /api request needs the server's TOKEN, random per server start, in
- *     an `X-Winvm-Token` header. A custom header can't be sent cross-origin
- *     without a CORS preflight, which this server never approves, so another
- *     page can't even attempt it. The token reaches the browser in the URL's
- *     #fragment, which browsers never send to any server or put in a Referer.
- *   - The Host header must name this server, which shuts out DNS rebinding.
- *   - The VNC password (needed by the websocket) is only handed out by the
- *     token-protected API.
- *
- * `winvm open --web` starts this in the background when it isn't running and
- * records { pid, port, token } in $WINVM_HOME/web.json (mode 0600), which is
- * how a later `open --web` finds it again.
- */
 import { spawn } from "node:child_process"
 import { randomBytes, timingSafeEqual } from "node:crypto"
 import { chmodSync, closeSync, mkdirSync, openSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs"
@@ -48,7 +20,6 @@ export interface ServerInfo {
   readonly port: number
   readonly token: string
   readonly startedAt: string
-  /** The CLI entry the server runs from; absent in records from before it was kept. */
   readonly cli?: string
 }
 
@@ -57,12 +28,8 @@ export const logPath = (): string => resolve(home(), "web.log")
 const webRoot = resolve(PACKAGE_DIR, "web")
 const novncRoot = resolve(PACKAGE_DIR, "..", "novnc")
 
-// ---------------------------------------------------------------------------
-// Pure pieces
-
 export const newToken = (): string => randomBytes(24).toString("base64url")
 
-/** Constant-time, and false for anything missing or the wrong length. */
 export function tokenMatches(expected: string, provided: string | null | undefined): boolean {
   if (provided === null || provided === undefined || expected === "") return false
   const a = Buffer.from(expected)
@@ -70,21 +37,15 @@ export function tokenMatches(expected: string, provided: string | null | undefin
   return a.length === b.length && timingSafeEqual(a, b)
 }
 
-/** The Host header must be this server by a loopback name; anything else is a rebinding attempt. */
 export function hostAllowed(host: string | null, port: number): boolean {
   if (host === null) return false
   return host === `127.0.0.1:${String(port)}` || host === `localhost:${String(port)}`
 }
 
-/** The page for an instance. The token rides in the #fragment, never sent over the wire. */
 export function pageUrl(port: number, instance: string, token: string): string {
   return `http://127.0.0.1:${String(port)}/?i=${encodeURIComponent(instance)}#token=${encodeURIComponent(token)}`
 }
 
-/**
- * The verbs the page may run, and what argument each takes. `save` and `load`
- * name a save; `key` takes a combo like ctrl-alt-delete.
- */
 export const ACTIONS: Readonly<Record<string, "none" | "optional" | "required">> = {
   start: "none",
   stop: "none",
@@ -99,11 +60,6 @@ export const ACTIONS: Readonly<Record<string, "none" | "optional" | "required">>
 const SAFE_ARG = /^[A-Za-z0-9][A-Za-z0-9._+-]{0,63}$/
 export const SAFE_INSTANCE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/
 
-/**
- * argv for `bun winvm.ts <verb> -i <instance> [arg]`, or the reason not.
- * Nothing goes through a shell, but an argument starting with `-` would still be
- * read as a flag, so arguments are restricted to plain names.
- */
 export function actionArgv(verb: string, instance: string, arg?: string): readonly string[] | string {
   const kind = ACTIONS[verb]
   if (kind === undefined) return `"${verb}" is not an action this page runs`
@@ -114,9 +70,6 @@ export function actionArgv(verb: string, instance: string, arg?: string): readon
   if (a !== undefined && !SAFE_ARG.test(a)) return `bad argument "${a}"`
   return [verb, "-i", instance, ...(a === undefined ? [] : [a])]
 }
-
-// ---------------------------------------------------------------------------
-// The server's record
 
 export function readState(): ServerInfo | null {
   try {
@@ -131,16 +84,10 @@ export function readState(): ServerInfo | null {
       }
     }
   } catch {
-    // absent or unreadable
   }
   return null
 }
 
-/**
- * Whether a running server is this CLI's. One started by another CLI (another
- * checkout, or the layout before winvm became a monorepo) serves that CLI's
- * page and spawns that CLI's commands, which may no longer exist.
- */
 export const serverServesCli = (s: ServerInfo, cli: string): boolean => s.cli === cli
 
 const alive = (pid: number): boolean => {
@@ -164,12 +111,10 @@ async function ping(s: ServerInfo): Promise<boolean> {
   }
 }
 
-/** The running server, starting one in the background if needed. */
 export async function ensureServer(): Promise<ServerInfo> {
   const cur = readState()
   if (cur !== null && alive(cur.pid) && (await ping(cur))) {
     if (serverServesCli(cur, cliEntry())) return cur
-    // Another CLI's server: stop it, so this home has one server, this CLI's.
     process.kill(cur.pid, "SIGTERM")
     for (let i = 0; i < 20 && alive(cur.pid); i += 1) await new Promise((r) => setTimeout(r, 100))
   }
@@ -184,7 +129,6 @@ export async function ensureServer(): Promise<ServerInfo> {
     gone = true
   })
 
-  // Generous: on a heavily loaded host Bun alone can take seconds to start.
   const deadline = Date.now() + 30_000
   while (Date.now() < deadline && !gone) {
     const s = readState()
@@ -193,9 +137,6 @@ export async function ensureServer(): Promise<ServerInfo> {
   }
   throw new Error(`the web server did not come up — see ${logPath()}`)
 }
-
-// ---------------------------------------------------------------------------
-// Jobs: one CLI run per button press
 
 interface Job {
   readonly id: string
@@ -223,7 +164,6 @@ function startJob(instance: string, verb: string, argv: readonly string[]): Job 
     output: "",
   }
   jobs.set(job.id, job)
-  // Keep the last 50.
   for (const id of [...jobs.keys()].slice(0, Math.max(0, jobs.size - 50))) jobs.delete(id)
 
   const child = spawn(process.execPath, [...cliArgv(...argv)], {
@@ -246,9 +186,6 @@ function startJob(instance: string, verb: string, argv: readonly string[]): Job 
 
 const busy = (instance: string): Job | undefined =>
   [...jobs.values()].find((j) => j.instance === instance && j.exitCode === null)
-
-// ---------------------------------------------------------------------------
-// HTTP
 
 const TYPES: Readonly<Record<string, string>> = {
   ".html": "text/html; charset=utf-8",
@@ -275,7 +212,6 @@ const notFound = (): Response => new Response("not found", { status: 404 })
 
 function staticFile(rel: string, root: string = webRoot): Response {
   const path = resolve(root, rel)
-  // No escaping the web/ directory, whatever the URL says.
   if (!path.startsWith(root + sep)) return notFound()
   const type = TYPES[extname(path)]
   try {
@@ -382,11 +318,7 @@ export function makeHandler(port: () => number, token: string): (req: Request) =
   }
 }
 
-// ---------------------------------------------------------------------------
-// The command
-
 function listen(port: number, handler: (req: Request) => Promise<Response>): ReturnType<typeof Bun.serve> {
-  // A screenshot or a status probe takes a second or two; nothing is long-lived.
   return Bun.serve({ hostname: "127.0.0.1", port, idleTimeout: 60, fetch: handler })
 }
 
@@ -415,7 +347,6 @@ export async function run(args: Args): Promise<number> {
   try {
     server = listen(wanted, handler)
   } catch {
-    // Taken by something else: any free port will do, and web.json says which.
     server = listen(0, handler)
   }
   boundPort = server.port ?? 0
@@ -433,7 +364,6 @@ export async function run(args: Args): Promise<number> {
 
   for (const sig of ["SIGINT", "SIGTERM", "SIGHUP"] as const) {
     process.on(sig, () => {
-      // Only remove the record if it is still ours.
       if (readState()?.pid === process.pid) rmSync(statePath(), { force: true })
       process.exit(0)
     })
@@ -443,6 +373,5 @@ export async function run(args: Args): Promise<number> {
   console.log(`winvm web: listening on http://127.0.0.1:${String(boundPort)}/ (pid ${String(process.pid)})`)
   console.log(`  ${pageUrl(boundPort, first, token)}`)
   console.log("  `winvm open --web [-i name]` opens a page; Ctrl-C or `winvm web --stop` stops the server")
-  // Serve until a signal arrives.
   return await new Promise<number>(() => undefined)
 }

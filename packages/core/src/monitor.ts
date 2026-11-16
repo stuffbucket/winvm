@@ -1,25 +1,9 @@
-/**
- * QMP commands with a short deadline — for status, display and input.
- *
- * qmp.ts is built for long operations (`savevm` can take minutes, and its
- * connect loop retries for 30 s so a launch race can't drop the boot-prompt
- * keypress). A status probe needs the opposite: answer in a second or say it
- * couldn't. QEMU's QMP socket also takes ONE client at a time, so a probe that
- * waited politely behind a long `savevm` would make `winvm status` hang for as
- * long as the save runs. This gives up instead, and the caller reports
- * "monitor busy".
- */
 import { connect } from "node:net"
 
 export class QmpError extends Error {}
 
 export type QmpSend = (execute: string, args?: Record<string, unknown>) => Promise<unknown>
 
-/**
- * Open one QMP connection, negotiate, and run `fn` with a command sender.
- * Each command must answer within `timeoutMs`; the whole session is bounded by
- * nothing else, so a long typing run is fine.
- */
 export async function withQmp<T>(sockPath: string, fn: (send: QmpSend) => Promise<T>, timeoutMs = 3000): Promise<T> {
   const sock = connect(sockPath)
   let buf = ""
@@ -55,7 +39,6 @@ export async function withQmp<T>(sockPath: string, fn: (send: QmpSend) => Promis
       } catch {
         continue
       }
-      // Asynchronous events interleave with replies; they are never one.
       if ("event" in msg) continue
       if ("QMP" in msg) {
         greeted?.()
@@ -77,8 +60,6 @@ export async function withQmp<T>(sockPath: string, fn: (send: QmpSend) => Promis
     clearTimeout(timer)
     const error = msg["error"] as { desc?: string } | undefined
     if (error !== undefined) {
-      // A timed-out request leaves its reply in flight, which would be read as
-      // the answer to the next one. The connection is no longer usable.
       if ((error as { timeout?: boolean }).timeout === true) sock.destroy()
       throw new QmpError(`qmp ${label}: ${error.desc ?? JSON.stringify(error)}`)
     }

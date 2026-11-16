@@ -1,13 +1,9 @@
-/**
- * Host probes that read QEMU's own answers.
- */
 import { describe, expect, it } from "bun:test"
 
 import { checksReport, macosCheck, parseHasPpi, runtimeCheck } from "../src/host"
 
 describe("parseHasPpi", () => {
   it("is false for QEMU 11.0, whose tpm-tis-device has no ppi property", () => {
-    // `qemu-system-aarch64 -M virt -device tpm-tis-device,help`, QEMU 11.0.3
     const help = [
       "tpm-tis-device options:",
       "  irq=<uint32>           -  (default: 5)",

@@ -1,8 +1,3 @@
-/**
- * `winvm mcp`: the JSON-RPC handling, every tool against fake guests, the
- * screen tools through the real executor against a fake QMP, and the stdio
- * server itself (stdout carries protocol messages and nothing else).
- */
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
@@ -164,7 +159,6 @@ describe("the tools", () => {
     expect(text(missing)).toContain('no winvm instance named "ghost"')
     expect(text(missing)).toContain("demo, ui")
     expect(f.screen.calls).toEqual([])
-    // status is not an error: it is the answer.
     const st = await tools.call("status", { instance: "ui" })
     expect(st.isError).toBeUndefined()
     expect(text(st)).toContain("winvm start -i ui")
@@ -345,7 +339,6 @@ describe("the screen tools through the real executor", () => {
     qmp.handler = (cmd) => {
       const args = (cmd["arguments"] ?? {}) as Record<string, unknown>
       if (cmd["execute"] === "screendump") {
-        // A 1920x1080 grey screen, as a PPM.
         const w = 1920
         const h = 1080
         const head = Buffer.from(`P6\n${String(w)} ${String(h)}\n255\n`, "latin1")
@@ -386,7 +379,6 @@ describe("the screen tools through the real executor", () => {
       expect(text(shot)).toContain("scale 0.6667")
 
       expect(text(await tools.call("click", { x: 640, y: 360 }))).toBe("Clicked at 640,360.")
-      // The pointer went to the middle of the screen: 960,540 of 1920x1080 on the 0..32767 axis.
       const abs = sent.flat() as { type: string; data: { axis?: string; value?: number } }[]
       expect(abs.find((e) => e.data.axis === "x")?.data.value).toBe(Math.round((960 * 32767) / 1919))
       expect(abs.some((e) => e.type === "btn")).toBe(true)
@@ -423,7 +415,6 @@ describe("the stdio server", () => {
       expect(await proc.exited).toBe(0)
       const lines = out.trim().split("\n")
       const parsed = lines.map((l) => JSON.parse(l) as { id: unknown; result?: Record<string, unknown>; error?: { code: number } })
-      // Requests are answered as they finish, so in no promised order.
       const byId = (id: unknown): (typeof parsed)[number] | undefined => parsed.find((m) => m.id === id)
       expect(parsed.map((m) => String(m.id)).sort()).toEqual(["1", "2", "3", "null"])
       expect((byId(1)?.result?.["serverInfo"] as { name: string }).name).toBe("winvm-nothere")

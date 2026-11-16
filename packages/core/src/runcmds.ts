@@ -1,15 +1,3 @@
-/**
- * The job verbs (see runner.ts):
- *
- *   winvm run  <job.yml>... [-i name] [--golden NAME] [--keep]
- *              [--junit out.xml] [--json out.json] [--artifacts dir]
- *   winvm test <dir>        [same flags]   every *.yml / *.yaml in it, in name order
- *   winvm test <dir> --pool N [--pool-prefix ci] [--image IMG]
- *                           the same jobs side by side on N instances ci-1..ci-N (pool.ts)
- *
- * The instance defaults to "ci", not "default": every job resets the instance
- * it runs on, so it should never be one someone is working in.
- */
 import { readdirSync, statSync, writeFileSync } from "node:fs"
 import { resolve } from "node:path"
 
@@ -36,7 +24,6 @@ const fail = (msg: string): number => {
 
 const stamp = (d: Date): string => d.toISOString().replace(/[:]/g, "").replace(/\..*$/, "")
 
-/** Job files named on the command line, directories expanded to their *.yml. */
 export function jobFiles(paths: readonly string[]): string[] {
   const out: string[] = []
   for (const p of paths) {
@@ -103,7 +90,6 @@ async function runAll(files: readonly string[], args: Args): Promise<number> {
   if (jobs.length === 0) return fail("no jobs to run")
 
   console.log(`winvm run: ${String(jobs.length)} job(s) on instance "${instance}"; artifacts in ${artifactsDir}`)
-  // A watcher would autosave or stow the guest between steps.
   if (await watcher.stopWatcher(instance)) console.log(`  stopped the idle watcher of "${instance}"`)
 
   const boot = async (name: string): Promise<number> =>
@@ -119,7 +105,6 @@ async function runAll(files: readonly string[], args: Args): Promise<number> {
   } catch (error) {
     return fail(errMsg(error))
   }
-  // Jobs that do not reset need a running guest.
   if (!qemu.isRunning(pathsFor(instance)) && jobs.some((j) => !j.reset) && (await boot(instance)) !== 0) {
     return fail(`could not start instance "${instance}"`)
   }
@@ -136,7 +121,6 @@ async function runAll(files: readonly string[], args: Args): Promise<number> {
   if (args.flags.has("keep")) {
     console.log(`\n--keep: instance "${instance}" left running in the last job's state (\`winvm open -i ${instance}\`)`)
   } else if (qemu.isRunning(p)) {
-    // Nothing is lost: every job starts from the golden save anyway.
     await withOperation(instance, "stop", async () => { await saves.quitQemu(p) }).catch((error: unknown) => {
       if (!(error instanceof InstanceBusy)) throw error
       console.warn(`warning: left "${instance}" running: ${error.message}`)

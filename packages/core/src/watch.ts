@@ -1,39 +1,3 @@
-/**
- * The per-instance watcher: notices when a guest is idle and saves it, stows it
- * after longer, and keeps its clock honest across host sleep.
- *
- *   winvm watch [-i name]        run in the foreground (what `start` launches, detached)
- *   winvm watch --stop           end it
- *
- * One process per instance, guarded by `watch.pid` (taken with O_EXCL, and
- * recognised as stale when its process is gone).
- *
- * The decisions are in idle.ts and are pure; this file only samples the world,
- * runs what was decided, and reports through two files in the instance dir:
- *
- *   watch.json   current state, rewritten atomically every tick (read by `status`/UI)
- *   watch.log    a timeline, one line per tick and per action
- *
- * ## Saving is saves.ts's job
- *
- * An autosave is `saves.createSave(kind "auto")` under `saves.withLock`, the
- * same path as `winvm save`; a lock held by another save or load means "skip
- * this round". Stow runs `winvm stow` as a child (argv in CLI, nowhere else).
- * Rotation deletes only kind "auto" saves.
- *
- * It follows QEMU being replaced (a `load` restarts it) rather than exiting,
- * and exits once QEMU is gone with no save/load holding the instance.
- *
- * ## A paused or asleep guest is left alone
- *
- * Its CPU reads as idle, but it is not idle: the user stopped it and only the
- * user resumes it. So while the vCPUs are stopped the watcher neither
- * autosaves nor stows it (a stow would quit QEMU under a paused guest, and
- * the next `start` would bring it back running), skips the clock (it cannot
- * answer), and does not count the time as idle: the idle clock starts over
- * when it is resumed, so a guest paused for hours is not stowed the moment it
- * runs again.
- */
 import { spawn, spawnSync } from "node:child_process"
 import { closeSync, existsSync, openSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs"
 import { resolve } from "node:path"
@@ -57,14 +21,10 @@ import * as qmp from "./qmp"
 import * as saves from "./saves"
 import { spawnText } from "./shell"
 
-// ---------------------------------------------------------------------------
-// Files
-
 export interface WatchPaths {
   readonly pid: string
   readonly state: string
   readonly log: string
-  /** Touched by `winvm exec` and friends; its mtime is the last command activity. */
   readonly activity: string
 }
 
@@ -78,19 +38,13 @@ export function watchPathsFor(name: string): WatchPaths {
   }
 }
 
-/** Record command activity, so the watcher does not call a guest in use idle. */
 export function touchActivity(name: string): void {
   try {
     writeFileSync(watchPathsFor(name).activity, `${new Date().toISOString()}\n`)
   } catch {
-    // An instance dir that does not exist has no watcher to tell.
   }
 }
 
-/**
- * Touch now and every 15 s until `work` settles — a long `exec` is activity for
- * its whole duration, not just its first tick.
- */
 export async function whileActive<T>(name: string, work: Promise<T>): Promise<T> {
   touchActivity(name)
   const timer = setInterval(() => { touchActivity(name) }, 15_000)
@@ -102,12 +56,9 @@ export async function whileActive<T>(name: string, work: Promise<T>): Promise<T>
   }
 }
 
-/** What `watch.json` holds. Consumed by `status` and the web UI; keep the shape stable. */
 export interface WatchState {
   readonly pid: number
-  /** The build running this watcher (identity.ts). Absent in a file written before generations were recorded. */
   readonly build?: string
-  /** The CLI that started it (WINVM_CLI). Absent in a file written before it was recorded. */
   readonly cli?: string
   readonly startedAt: string
   readonly lastActivityAt: string
@@ -131,12 +82,6 @@ export function readWatchState(name: string): WatchState | null {
   }
 }
 
-// ---------------------------------------------------------------------------
-// What the watcher does. Saving goes through saves.ts, exactly as `winvm save`
-// does; stow is the `winvm stow` command, run as a child, whose argv lives in
-// CLI below and nowhere else.
-
-
 export const CLI = {
   stow: (instance: string): readonly string[] => ["stow", "-i", instance],
 } as const
@@ -145,11 +90,9 @@ export type SaveOutcome = "saved" | "busy" | "failed"
 
 export interface Actions {
   save(name: string): Promise<SaveOutcome>
-  /** Delete these auto saves; false if the instance was busy and nothing was deleted. */
   deleteSaves(names: readonly string[]): Promise<boolean>
   stow(): Promise<boolean>
   syncClock(): Promise<string>
-  /** Guest clock minus host clock, in ms; null if the agent did not answer. */
   drift(): Promise<number | null>
 }
 
@@ -164,9 +107,7 @@ async function runWinvm(argv: readonly string[], log: (s: string) => void): Prom
   log(`run: winvm ${argv.join(" ")}`)
   const started = Date.now()
   const code = await new Promise<number>((res) => {
-    // Marked so the stow it runs never turns round and reconciles this watcher (lifecycle.ts).
     const child = spawn(process.execPath, [...cliArgv(...argv)], { stdio: ["ignore", "pipe", "pipe"], env: { ...managedEnv(), [AUTOMATIC_ENV]: "1" } })
-    // Bounded, so a command that prints its usage (or worse) every time cannot grow the log without limit.
     let lines = 0
     const relay = (chunk: Buffer): void => {
       for (const line of chunk.toString("utf8").split("\n")) {
@@ -185,7 +126,6 @@ async function runWinvm(argv: readonly string[], log: (s: string) => void): Prom
   return code === 0
 }
 
-/** Clock sync, only for a guest that is running (a paused one cannot answer). */
 async function syncIfRunning(p: Paths): Promise<string> {
   try {
     if ((await qmp.status(p.qmp)) !== "running") return "skipped: guest is paused"
@@ -197,9 +137,6 @@ async function syncIfRunning(p: Paths): Promise<string> {
 }
 
 export function realActions(instance: string, p: Paths, log: (s: string) => void): Actions {
-  // Confirmed once per watcher: saving a guest that is still starting wedges it
-  // on restore (see qga.waitReady). `start` launches the watcher only after the
-  // guest is ready, but `winvm watch` can be run by hand at any time.
   let ready = false
   return {
     save: async (name) => {
@@ -219,7 +156,6 @@ export function realActions(instance: string, p: Paths, log: (s: string) => void
             `${saves.formatBytes(m.bytes)} on disk`,
         )
         if (r.resumed) {
-          // The guest was stopped for the save; its clock stood still with it.
           if (await qga.waitResponsive(p.qga, 120_000)) log(`clock: after the save — ${await syncIfRunning(p)}`)
           else log("clock: the guest agent did not answer after the save; clock not synced")
         }
@@ -258,7 +194,6 @@ export function realActions(instance: string, p: Paths, log: (s: string) => void
   }
 }
 
-/** Saves of this instance, as rotation needs them. Unreadable ones are left alone. */
 function currentSaves(instance: string): readonly SaveInfo[] {
   return saves
     .listSaves(instance)
@@ -274,10 +209,6 @@ const newestOfKind = (list: readonly SaveInfo[], kind: string): string | undefin
 
 const leaseHeld = (instance: string): boolean => leaseHolder(instance) !== null
 
-// ---------------------------------------------------------------------------
-// Sampling
-
-/** `ps` TIME — `[[dd-]hh:]mm:ss[.ss]` — in seconds. */
 export function parseCpuTime(s: string): number | null {
   const m = /^\s*(?:(\d+)-)?(?:(\d+):)?(\d+):(\d+(?:\.\d+)?)\s*$/.exec(s)
   if (m === null) return null
@@ -285,20 +216,17 @@ export function parseCpuTime(s: string): number | null {
   return Number(d ?? 0) * 86_400 + Number(h ?? 0) * 3600 + Number(min) * 60 + Number(sec)
 }
 
-/** Total CPU seconds QEMU has used — guest vCPUs plus its own overhead. */
 export function cpuSeconds(pid: number): number | null {
   const r = spawnSync("ps", ["-o", "time=", "-p", String(pid)], { encoding: "utf8" })
   return r.status === 0 ? parseCpuTime(r.stdout) : null
 }
 
-/** vCPU count, read off QEMU's own command line (`-smp N`). */
 export function vcpusOf(pid: number): number {
   const r = spawnSync("ps", ["-o", "command=", "-p", String(pid)], { encoding: "utf8" })
   const m = /-smp\s+(?:cpus=)?(\d+)/.exec(r.stdout)
   return m?.[1] === undefined ? 4 : Number(m[1])
 }
 
-/** Whether the vCPUs are stopped (paused or asleep); false when the monitor does not answer. */
 async function isFrozen(p: Paths): Promise<boolean> {
   try {
     const r = (await qmp.execute(p.qmp, "query-status", undefined, 5000)) as { status?: unknown } | undefined
@@ -325,15 +253,6 @@ function activityAt(path: string): number | null {
   }
 }
 
-// ---------------------------------------------------------------------------
-// The single-instance lock
-
-/**
- * Whether the pid is `name`'s watcher. Guards against pid reuse after a crash:
- * the pid must still be OUR kind of process — a `winvm watch` for exactly this
- * instance (one naming no instance is "default"'s), and not a `watch --stop`
- * or `--status` that only asks about one.
- */
 function isWatcherProcess(pid: number, name: string): boolean {
   try {
     process.kill(pid, 0)
@@ -347,7 +266,6 @@ function isWatcherProcess(pid: number, name: string): boolean {
   return (commandInstance(rest) ?? "default") === name
 }
 
-/** The live watcher's pid, or null. Removes a stale pidfile. */
 export function watcherPid(name: string, isWatcher: (pid: number) => boolean = (pid) => isWatcherProcess(pid, name)): number | null {
   const f = watchPathsFor(name).pid
   let pid: number
@@ -372,7 +290,6 @@ function acquireLock(name: string): number | null {
     } catch {
       const other = watcherPid(name)
       if (other !== null) return other
-      // stale — watcherPid removed it; try once more
     }
   }
   return -1
@@ -383,27 +300,17 @@ function releaseLock(name: string): void {
   try {
     if (readFileSync(f, "utf8").trim() === String(process.pid)) rmSync(f, { force: true })
   } catch {
-    // already gone
   }
 }
 
-// ---------------------------------------------------------------------------
-// Launch and stop
-
-/**
- * Start a detached watcher for an instance unless one is running or it is
- * disabled. Logs to `watch.log`. Returns its pid, or null if none was started.
- */
 export function ensureWatcher(name: string): number | null {
   if (!effectiveConfig(name)["watch.enabled"]) return null
   const running = watcherPid(name)
   if (running !== null) return running
   const w = watchPathsFor(name)
   try {
-    // One generation is plenty: the log is a timeline for whoever is debugging now.
     if (statSync(w.log).size > 1_000_000) renameSync(w.log, `${w.log}.1`)
   } catch {
-    // no log yet
   }
   const log = openSync(w.log, "a")
   const child = spawn(process.execPath, [...cliArgv("watch", "-i", name)], {
@@ -416,30 +323,14 @@ export function ensureWatcher(name: string): number | null {
   return child.pid ?? null
 }
 
-/** After a start/load/recall: launch the watcher unless `--no-watch` or `watch.enabled=false`. */
 export function startWatcherFor(name: string, args: Args): void {
   if (args.flags.has("no-watch")) return
   const pid = ensureWatcher(name)
   if (pid !== null) console.log(`watcher: pid ${String(pid)} · ${watchPathsFor(name).log}`)
 }
 
-/**
- * Whether a load or rewind should start the watcher once it is done, from the
- * state before it touched QEMU.
- *
- * Restoring a STOPPED instance is a start by another route, so it gets a
- * watcher the way `start` does. Restoring a RUNNING one leaves things as they
- * were: a guest running without a watcher is one somebody chose to run that way
- * — `start --no-watch`, or `watch --stop` — and starting one behind their back
- * is how it came to be autosaved and stowed anyway. A watcher that was running
- * needs nothing either way; it follows QEMU across the restore.
- */
 export const watchAfterRestore = (wasRunning: boolean, hadWatcher: boolean): boolean => !wasRunning || hadWatcher
 
-/**
- * Sample before a load or rewind; call the result once it has succeeded. Still
- * subject to `--no-watch` and `watch.enabled`, like any start.
- */
 export function rewatchAfterRestore(name: string, args: Args): () => void {
   const again = watchAfterRestore(qemu.isRunning(pathsFor(name)), watcherPid(name) !== null)
   return () => {
@@ -450,17 +341,9 @@ export function rewatchAfterRestore(name: string, args: Args): () => void {
 export interface WatcherRecord {
   readonly pid: number
   readonly build?: string
-  /** The CLI that started it, as its watch.json says; absent when unknown. */
   readonly cli?: string
 }
 
-/**
- * The live watcher and the build it reports, or null when none is running. The
- * pid comes from `watch.pid`, validated as a watcher's (see watcherPid);
- * `watch.json` is believed only when it names that same pid, so a state file
- * left by an earlier watcher cannot vouch for this one. Without a trusted
- * build the record is just `{ pid }`: a live watcher of unknown generation.
- */
 export function watcherRecord(
   name: string,
   isWatcher: (pid: number) => boolean = (pid) => isWatcherProcess(pid, name),
@@ -476,11 +359,9 @@ export function watcherRecord(
   }
 }
 
-/** Whether a watcher was started by the build running now; an absent build is "legacy". */
 export const watcherFreshness = (record: WatcherRecord, current: string = buildIdentity()): "current" | "stale" | "legacy" =>
   record.build === undefined || record.build === "" ? "legacy" : record.build === current ? "current" : "stale"
 
-/** Process and clock access for stopWatcher, so tests need neither real signals nor real waiting. */
 export interface StopSeams {
   readonly kill?: (pid: number, signal: NodeJS.Signals) => void
   readonly now?: () => number
@@ -488,17 +369,11 @@ export interface StopSeams {
   readonly isWatcher?: (pid: number) => boolean
 }
 
-/**
- * End an instance's watcher, if any. A no-op when called from the watcher's own
- * child — that is the watcher running `winvm stow`, which must not kill the
- * process waiting on it.
- */
 export async function stopWatcher(name: string, seams: StopSeams = {}): Promise<boolean> {
   const kill = seams.kill ?? ((pid: number, signal: NodeJS.Signals): void => void process.kill(pid, signal))
   const now = seams.now ?? Date.now
   const wait = seams.sleep ?? sleep
   const isWatcher = seams.isWatcher ?? ((p: number): boolean => isWatcherProcess(p, name))
-  // Only a pid that is still a watcher's is ever signalled; a reused one is dropped by watcherPid.
   const pid = watcherPid(name, isWatcher)
   if (pid === null || pid === process.ppid || pid === process.pid) return false
   try {
@@ -506,10 +381,6 @@ export async function stopWatcher(name: string, seams: StopSeams = {}): Promise<
   } catch {
     return false
   }
-  // A watcher mid-save finishes the save before it exits (see watch()); give it
-  // the time a save takes rather than killing it halfway through one. Only
-  // watch.json written by THIS watcher says so: one left by an earlier watcher
-  // describes a process that is gone.
   const st = readWatchState(name)
   const saving = st?.pid === pid && (st.state === "autosaving" || st.state === "stowing")
   const deadline = now() + (saving ? 10 * 60_000 : 10_000)
@@ -517,26 +388,19 @@ export async function stopWatcher(name: string, seams: StopSeams = {}): Promise<
     if (!isWatcher(pid)) return true
     await wait(200)
   }
-  // Checked again at the last moment: by now the pid may belong to something else.
   if (isWatcher(pid)) {
     try {
       kill(pid, "SIGKILL")
     } catch {
-      // gone
     }
   }
-  // Its pidfile, unless a watcher started since has already taken it.
   const f = watchPathsFor(name).pid
   try {
     if (readFileSync(f, "utf8").trim() === String(pid)) rmSync(f, { force: true })
   } catch {
-    // already gone
   }
   return true
 }
-
-// ---------------------------------------------------------------------------
-// The loop
 
 export interface WatchOptions {
   readonly timing?: Partial<Timing>
@@ -571,13 +435,6 @@ export async function watch(name: string, o: WatchOptions = {}): Promise<number>
     console.error(`::error::watching is off for "${name}" — \`winvm config -i ${name} watch.enabled=true\``)
     return 1
   }
-  // Everything the first watch.json needs is read BEFORE taking the lock, so
-  // the build is published the moment watch.pid names this process: between
-  // the two, a reconciler (lifecycle.ts) would see a watcher with no build and
-  // take a current one for a legacy one.
-  //
-  // An --ephemeral guest's disk writes go nowhere durable, so it cannot be saved:
-  // watch it for the clock only.
   const ephemeral = saves.isEphemeral(p)
   const startedAt = new Date().toISOString()
   const machine = new IdleMachine(Date.now(), timing)
@@ -608,7 +465,6 @@ export async function watch(name: string, o: WatchOptions = {}): Promise<number>
     try {
       writeAtomic(w.state, `${JSON.stringify(s, null, 2)}\n`)
     } catch {
-      // The instance dir went away (destroy); the loop will notice QEMU is gone.
     }
   }
 
@@ -619,14 +475,12 @@ export async function watch(name: string, o: WatchOptions = {}): Promise<number>
     )
     return 1
   }
-  // Say which build this is before anything else: whoever replaces a stale watcher reads it.
   publish()
 
   let qemuPid = firstPid
   const actions = o.actions ?? realActions(name, p, log)
   let vcpus = vcpusOf(qemuPid)
 
-  /** The action in flight, if any. A signal waits for it rather than abandon a save halfway. */
   let busy: Promise<unknown> | null = null
   let exiting = false
   const finish = (why: string): void => {
@@ -725,7 +579,6 @@ export async function watch(name: string, o: WatchOptions = {}): Promise<number>
     }
   }
 
-  // Ticks are logged while the guest is active, on every change, and otherwise every 5 min.
   let lastSummary = ""
   let lastTickLogAt = 0
   for (;;) {
@@ -733,10 +586,7 @@ export async function watch(name: string, o: WatchOptions = {}): Promise<number>
     const livePid = qemu.pidOf(p)
     if (livePid !== qemuPid) {
       if (livePid === null) {
-        // A load quits QEMU and starts another; only a QEMU gone with nobody
-        // holding the instance means it has stopped for good.
         if (leaseHeld(name)) continue
-        // Its drives in Finder would hang whatever touches them now.
         finder.cleanStale(name)
         finish("qemu exited")
         return 0

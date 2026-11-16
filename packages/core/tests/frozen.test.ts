@@ -1,7 +1,3 @@
-/**
- * A paused or asleep guest (frozen.ts): what status reports, that nothing calls
- * into it, and the asleep mark. QEMU is a FakeQmp; the "QEMU process" is this one.
- */
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { createServer, type Server } from "node:net"
 import { resolve } from "node:path"
@@ -28,7 +24,6 @@ let runState = "running"
 
 beforeAll(async () => {
   savedHome = process.env["WINVM_HOME"]
-  // Short: unix socket paths are limited to ~104 bytes.
   home = mkdtempSync("/tmp/wvfz-")
   process.env["WINVM_HOME"] = home
   const p = pathsFor(NAME)
@@ -67,12 +62,9 @@ describe("run states", () => {
   })
 
   it("reports a save of a paused guest (postmigrate) as paused, not running", () => {
-    // The bug: after an autosave of a paused guest QEMU says "postmigrate",
-    // status said "running", and the app flipped Resume back to Pause.
     expect(deriveState(true, "postmigrate", [])).toBe("paused")
     expect(deriveState(true, "paused", [], true)).toBe("asleep")
     expect(deriveState(true, "running", [], true)).toBe("running")
-    // A monitor too busy to answer is a save or load at work, not a pause.
     expect(deriveState(true, null, [])).toBe("running")
     expect(deriveState(false, "paused", [], true)).toBe("stopped")
   })
@@ -180,7 +172,6 @@ describe("status of a frozen guest", () => {
   let qga: Server
   let probes = 0
   beforeAll(async () => {
-    // A guest agent that never answers, as a paused guest's does not.
     qga = createServer((s) => {
       probes += 1
       s.on("error", () => undefined)
@@ -226,7 +217,6 @@ describe("status exposes the operation in flight", () => {
 
   beforeAll(() => {
     dir = mkdtempSync("/tmp/wvfzop-")
-    // `ps` shows `bun <dir>/winvm.ts start -i frozen-test`: a WinVM CLI process.
     writeFileSync(resolve(dir, "winvm.ts"), "setInterval(() => undefined, 1000)\n")
   })
   afterAll(() => {
@@ -319,26 +309,16 @@ describe("graceful stop", () => {
     readonly waitForMs: number[]
     readonly seams: StopCommandSeams
     readonly clock: { t: number }
-    /** QEMU stays alive until this is called (a guest that finished shutting down). */
     readonly exit: () => void
     readonly asleepAtWait: boolean[]
   }
 
-  /**
-   * A stop with every outside call replaced: a fake clock that only `sleep` and
-   * `waitFor` advance, a QEMU that exits when told to, and an event log. The
-   * asleep mark is the real one, in the temp home, naming OWN_PID.
-   */
   function rig(o: {
     frozen: "paused" | "asleep" | null
     watcher?: boolean
-    /** How long the readiness wait takes (it answers true after that), or "never". */
     readyAfterMs?: number | "never"
-    /** The guest powers off this long after shutdown was requested; unset: it never does. */
     exitsAfterMs?: number
-    /** QEMU is a different process by the time of a failure (its pid was reused or it was restarted). */
     pidAfterShutdown?: number
-    /** QMP `cont` is refused. */
     resumeFails?: boolean
   }): Rig {
     const p = pathsFor(NAME)

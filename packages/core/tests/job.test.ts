@@ -1,7 +1,3 @@
-/**
- * Job files and reports for `winvm run`: parsing, validation, the step
- * scripts, and the JUnit/summary renderings. No VM needed.
- */
 import { describe, expect, it } from "bun:test"
 
 import { JobError, parseDuration, parseJob, stepScript } from "../src/job"

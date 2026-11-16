@@ -1,10 +1,3 @@
-/**
- * The shared folder and clipboard: the QEMU arguments and what they do to the
- * save hash (sharing or not, the same), the share settings, virtiofsd's
- * lifecycle (with a fake daemon), `share status`'s logic, the change notices,
- * the guest agent's /fs/touch, and reading files out of an ISO by ranges.
- * No VM needed.
- */
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "bun:test"
 import { spawnSync } from "node:child_process"
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, openSync, readFileSync, readSync, closeSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs"
@@ -36,7 +29,6 @@ beforeAll(() => {
   for (const k of ["WINVM_HOME", "WINVM_RUNTIME"]) saved[k] = process.env[k]
   home = mkdtempSync(resolve(tmpdir(), "winvm-share-"))
   process.env["WINVM_HOME"] = home
-  // A runtime directory to find; what it supports is the probe's answer.
   process.env["WINVM_RUNTIME"] = resolve(home, "runtime")
   mkdirSync(resolve(home, "runtime", "bin"), { recursive: true })
   prevProbe = share.setProbe(() => ({ ok: true, reason: null }))
@@ -207,7 +199,6 @@ describe("virtiofsd's lifecycle", () => {
   let fake = ""
   beforeEach(() => {
     p = instance("life")
-    // A stand-in that binds nothing but makes the socket path appear, as virtiofsd does, then waits.
     fake = resolve(home, "fakebin", "virtiofsd")
     mkdirSync(resolve(home, "fakebin"), { recursive: true })
     writeFileSync(
@@ -343,12 +334,12 @@ describe("change notices", () => {
     const n = make(state, sent)
     n.changed("a.txt")
     await Bun.sleep(40)
-    n.changed("a.txt") // the guest's touch, reported back by FSEvents
-    await Bun.sleep(40)
-    state.set("/r/a.txt", "5:9") // a real change on the Mac
     n.changed("a.txt")
     await Bun.sleep(40)
-    state.delete("/r/a.txt") // deleted
+    state.set("/r/a.txt", "5:9")
+    n.changed("a.txt")
+    await Bun.sleep(40)
+    state.delete("/r/a.txt")
     n.changed("a.txt")
     await Bun.sleep(40)
     await n.stop()
@@ -407,7 +398,6 @@ describe("the agent's /fs/touch", () => {
   })
 })
 
-// The fixture ISO is made with hdiutil, which only macOS has.
 describe.skipIf(process.platform !== "darwin")("reading an ISO by ranges", () => {
   let dir = ""
   let iso = ""

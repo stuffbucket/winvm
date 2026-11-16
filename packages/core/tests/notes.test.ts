@@ -1,7 +1,3 @@
-/**
- * Notes on saves, and `winvm saves note`, against temporary state and data
- * directories: no VM, and never the real home.
- */
 import { afterEach, beforeEach, describe, expect, it, mock, spyOn } from "bun:test"
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
@@ -39,7 +35,6 @@ afterEach(() => {
   mock.restore()
 })
 
-/** A save directory with a valid manifest and nothing else: enough for everything here. */
 function makeSave(instance: string, name: string): void {
   mkdirSync(saveDir(instance, name), { recursive: true })
   const m = { name, instance, kind: "manual", createdAt: "2026-10-28T10:00:00.000Z", bytes: 1, compat: "abc", image: "win11-arm64" }

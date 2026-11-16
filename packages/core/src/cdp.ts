@@ -18,17 +18,12 @@ export interface Target {
 
 export class CdpError extends Error {}
 
-/** The DevTools targets (pages, iframes, workers) behind a debugging port. */
 export async function targets(base: string, timeoutMs = 3000): Promise<readonly Target[]> {
   const r = await fetch(`${base}/json/list`, { signal: AbortSignal.timeout(timeoutMs) })
   if (!r.ok) throw new CdpError(`${base}/json/list: ${String(r.status)}`)
   return (await r.json()) as Target[]
 }
 
-/**
- * The target to drive: the first page whose URL or title contains `match`
- * (case-insensitive), else the first page. null when there is none.
- */
 export function pickTarget(list: readonly Target[], match: string | null): Target | null {
   const pages = list.filter((t) => t.type === "page" && t.webSocketDebuggerUrl !== undefined)
   if (match === null || match === "") return pages[0] ?? null
@@ -48,7 +43,6 @@ interface EvalResult {
   readonly exceptionDetails?: { readonly text: string; readonly exception?: RemoteObject }
 }
 
-/** One WebSocket session with one target. Commands are matched to replies by id. */
 export class CdpSession {
   private readonly ws: WebSocket
   private nextId = 0
@@ -112,7 +106,6 @@ export class CdpSession {
     })
   }
 
-  /** Evaluate an expression in the page (promises awaited) and return its value as JSON. */
   async eval(expression: string, timeoutMs = 30_000): Promise<unknown> {
     const r = await this.send<EvalResult>(
       "Runtime.evaluate",
@@ -129,10 +122,6 @@ export class CdpSession {
     return o.value
   }
 
-  /**
-   * Wait until `selector` matches an element (and, with `visible`, one that
-   * has a box). Returns the time it took. Polls; throws on timeout.
-   */
   async waitFor(selector: string, o: { readonly timeoutMs?: number; readonly visible?: boolean } = {}): Promise<number> {
     const t0 = performance.now()
     const deadline = t0 + (o.timeoutMs ?? 10_000)
@@ -146,7 +135,6 @@ export class CdpSession {
     }
   }
 
-  /** The element's innerText (textContent for non-HTML elements). Throws if nothing matches. */
   async text(selector: string): Promise<string> {
     const v = await this.eval(
       `(() => { const e = document.querySelector(${JSON.stringify(selector)}); return e ? (e.innerText ?? e.textContent ?? "") : null })()`,
@@ -155,11 +143,6 @@ export class CdpSession {
     return v
   }
 
-  /**
-   * Click the element as a user would: scroll it into view, then a real mouse
-   * press and release at its centre (Input.dispatchMouseEvent), so pointer,
-   * mouse and click handlers all run and whatever is on top gets the click.
-   */
   async click(selector: string): Promise<{ readonly x: number; readonly y: number }> {
     const at = (await this.eval(
       `(() => { const e = document.querySelector(${JSON.stringify(selector)}); if (!e) return null; e.scrollIntoView({ block: "center", inline: "center" }); const r = e.getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2, w: r.width, h: r.height } })()`,
@@ -177,7 +160,6 @@ export class CdpSession {
     try {
       this.ws.close()
     } catch {
-      // already closed
     }
   }
 }

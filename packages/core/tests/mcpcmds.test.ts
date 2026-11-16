@@ -1,7 +1,3 @@
-/**
- * `winvm mcp install|uninstall|status`: the command written, Claude Desktop's
- * config edited safely, and Claude Code driven through its CLI (a fake here).
- */
 import { existsSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
@@ -65,7 +61,6 @@ describe("Claude Desktop's config", () => {
     expect(now.preferences).toEqual({ theme: "dark" })
     expect(now.mcpServers["filesystem"]).toEqual(original.mcpServers.filesystem)
     expect(now.mcpServers["winvm-demo"]).toEqual({ command: APP, args: ["mcp", "-i", "demo"] })
-    // Atomic replace leaves no temporary file behind.
     expect(readdirSync(dir).filter((x) => x.endsWith(".tmp"))).toEqual([])
   })
 
@@ -130,7 +125,6 @@ describe("Claude Desktop's config", () => {
 })
 
 describe("Claude Code", () => {
-  /** A stand-in `claude` that edits the config file as the real one does. */
   function fakeClaude(config: string): { run: (argv: readonly string[]) => Ran; calls: string[][] } {
     const calls: string[][] = []
     const run = (argv: readonly string[]): Ran => {

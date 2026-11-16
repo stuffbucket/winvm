@@ -1,19 +1,3 @@
-/**
- * The user's own settings, the same for every instance: `settings.json` in
- * winvm's XDG config directory (xdg.ts). Per-instance settings are config.ts.
- *
- *   winvm settings [--json]                      print them
- *   winvm settings key=value [...]               set some
- *   winvm settings --section NAME                one part the app owns, as JSON (null: none)
- *   winvm settings --section NAME --set JSON     replace that part (null removes it)
- *
- * THE ONE WRITER OF settings.json. The flat keys ("viewer.pauseOverlay") and
- * the app's sections ("checkpoints", an object the Checkpoints view owns)
- * share the file. Every write reads the whole file, changes only its own keys
- * and keeps the rest, so the pause overlay toggle and the Checkpoints view
- * never undo each other. Reading, only known flat keys count, each with a
- * default; a file that cannot be read is the defaults.
- */
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs"
 import { resolve } from "node:path"
 
@@ -21,7 +5,6 @@ import type { Args } from "./args"
 import { configDir } from "./xdg"
 
 export interface Settings {
-  /** The app dims a paused or asleep guest's screen and shows a pause glyph over it. */
   readonly "viewer.pauseOverlay": boolean
 }
 
@@ -37,7 +20,6 @@ type Env = Readonly<Record<string, string | undefined>>
 
 export const settingsPath = (env: Env = process.env): string => resolve(configDir(env), "settings.json")
 
-/** The whole file as an object, every key kept; {} when there is none or it cannot be read. */
 function readAll(env: Env): Record<string, unknown> {
   let raw: unknown
   try {
@@ -48,7 +30,6 @@ function readAll(env: Env): Record<string, unknown> {
   return typeof raw === "object" && raw !== null && !Array.isArray(raw) ? (raw as Record<string, unknown>) : {}
 }
 
-/** Writes the whole file at once (a temporary file, renamed), with `change` applied to what is in it now. */
 function update(env: Env, change: (all: Record<string, unknown>) => void): void {
   const all = readAll(env)
   change(all)
@@ -66,7 +47,6 @@ export function readSettings(env: Env = process.env): Settings {
   return out as unknown as Settings
 }
 
-/** `key=value` checked against the key's type; a string says what is wrong. */
 export function parseSetting(assignment: string): { key: SettingKey; value: Settings[SettingKey] } | string {
   const eq = assignment.indexOf("=")
   if (eq <= 0) return `expected key=value, got "${assignment}"`
@@ -77,24 +57,20 @@ export function parseSetting(assignment: string): { key: SettingKey; value: Sett
   return { key, value: value === "true" }
 }
 
-/** Sets flat keys, keeping everything else in the file (the app's sections too). */
 export function writeSettings(changes: Partial<Settings>, env: Env = process.env): Settings {
   update(env, (all) => Object.assign(all, changes))
   return readSettings(env)
 }
 
-/** Why `name` cannot be a section (a plain word, never a flat key), or null. */
 export function sectionError(name: string): string | null {
   if (!/^[a-z][a-zA-Z0-9-]{0,63}$/.test(name)) return `a settings section is a plain word, got "${name}"`
   return null
 }
 
-/** One part of the settings the app owns (e.g. "checkpoints"), or null when it has none. */
 export function readSection(name: string, env: Env = process.env): unknown {
   return readAll(env)[name] ?? null
 }
 
-/** Replaces one part, keeping the others and the flat keys; null removes it. */
 export function writeSection(name: string, value: unknown, env: Env = process.env): void {
   const err = sectionError(name)
   if (err !== null) throw new Error(err)
@@ -104,7 +80,6 @@ export function writeSection(name: string, value: unknown, env: Env = process.en
   })
 }
 
-/** `--section NAME [--set JSON]`: print one part as JSON, after replacing it if asked. */
 function sectionCmd(name: string, set: string | undefined): number {
   const err = sectionError(name)
   if (err !== null) {
@@ -125,7 +100,6 @@ function sectionCmd(name: string, set: string | undefined): number {
   return 0
 }
 
-/** `winvm settings [--json] [key=value ...]`, or `winvm settings --section NAME [--set JSON]`. */
 export function settingsCmd(args: Args): number {
   const section = args.flags.get("section")
   if (section !== undefined) return sectionCmd(section, args.flags.get("set"))

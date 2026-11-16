@@ -1,9 +1,3 @@
-/**
- * The host side of GUI driving (ui.ts, uicmds.ts) and the agent's /ui route,
- * with the real agent served on the host — where there is no UI Automation,
- * so the route must say so cleanly. The helper itself (assets/winvm-ui.cs)
- * runs only in the guest; docs/gui.md has its measurements.
- */
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { resolve } from "node:path"

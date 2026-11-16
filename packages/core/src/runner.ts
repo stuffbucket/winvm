@@ -1,30 +1,3 @@
-/**
- * `winvm run` / `winvm test`: run job files (job.ts) against an instance, the
- * way a CI runner would — reset to a golden save, stage files, run steps,
- * collect artifacts — and time every part.
- *
- * THE LIFECYCLE OF ONE JOB
- *
- *   reset     load the golden save (RAM + disk), wait for the guest to answer,
- *             put its clock right. Every job starts from the identical machine.
- *   stage     fetch `files` on the host (a cache under the state dir, so a
- *             release asset is downloaded once), serve them over HTTP on the
- *             host's loopback, and pull them into the guest with one curl.exe
- *             call (10.0.2.2 is the host under QEMU user networking).
- *   steps     each step's body is written to a script file in the guest and
- *             run by its shell, with a timeout and its own env.
- *   collect   on failure (or always): a screenshot and the artifact paths.
- *
- * GOLDEN SAVES (golden.ts): a mapped-ram save taken once the guest has gone
- * quiet, so it restores in about a second. `ensureGolden` creates one on first
- * use — with the in-guest agent installed and a few CI chores done (no sysprep
- * dialog, C:\work exists); `winvm saves -i <instance> rm <golden>` to rebuild.
- *
- * THE CHANNEL (guest.ts): the in-guest agent when it answers — steps run as the
- * logged-on user, in their session, so a tray app shows on the desktop — else
- * qemu-ga, where every step runs as SYSTEM in session 0 (%LOCALAPPDATA% and
- * HKCU are SYSTEM's, nothing launched is visible). WINVM_CHANNEL=qga forces it.
- */
 import { createHash, randomBytes } from "node:crypto"
 import { existsSync, mkdirSync, readdirSync, renameSync, statSync, writeFileSync } from "node:fs"
 import { basename, resolve } from "node:path"
@@ -54,7 +27,6 @@ const CMD = "C:\\Windows\\System32\\cmd.exe"
 const POWERSHELL = "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe"
 const PWSH = "C:\\Program Files\\PowerShell\\7\\pwsh.exe"
 const CURL = "C:\\Windows\\System32\\curl.exe"
-/** The host, as the guest sees it under QEMU user networking. */
 const HOST_FROM_GUEST = "10.0.2.2"
 
 export const cacheDir = (): string => resolve(home(), "cache")
@@ -63,29 +35,12 @@ const slug = (s: string): string => s.replace(/[^A-Za-z0-9._-]+/g, "-").replace(
 
 export interface RunOptions {
   readonly instance: string
-  /** Overrides the job's own `golden`. */
   readonly golden: string | null
-  /** Where artifacts and screenshots go: <dir>/<job>/… */
   readonly artifactsDir: string
   readonly log: (line: string) => void
-  /**
-   * Polled between steps: once true, the rest of the job is skipped and nothing
-   * more is collected. For a pool's watchdog (pool.ts), which gives up on a
-   * wedged job and restarts its instance — a step still in flight must not go
-   * on to run its successors against the next job's guest.
-   */
   readonly cancelled?: () => boolean
 }
 
-// ---------------------------------------------------------------------------
-// Instance and golden
-
-/**
- * Make sure `golden` exists as a save of `instance`; if not, create it: boot
- * (or use the running guest), do the CI chores, install the in-guest agent,
- * and let golden.ts wait for the guest to settle and take a mapped-ram save.
- * Returns the time spent (0 when it already existed).
- */
 export async function ensureGolden(
   instance: string,
   goldenName: string,
@@ -101,20 +56,14 @@ async function createMissingGolden(instance: string, goldenName: string, log: (s
   const p = pathsFor(instance)
   log(`golden "${goldenName}" not found on "${instance}": creating it (boot, agent, settle — a few minutes, once)`)
   if (!qemu.isRunning(p)) {
-    // A new instance takes WINVM_IMAGE, as `start` would; an existing one keeps its own.
     ensureInstance(instance, readMeta(instance)?.image ?? image ?? process.env["WINVM_IMAGE"] ?? "win11-arm64")
     const meta = readMeta(instance)
     if (meta === null) throw new Error(`could not create instance "${instance}"`)
     await qemu.launch(instance, p, meta, { installMedia: false, ephemeral: false, virtioBoot: readImageMeta(meta.image)?.virtioBoot === true })
   }
   if (!(await qga.waitReady(p.qga, 600_000))) throw new Error(`guest "${instance}" never became ready`)
-  // CI chores, frozen into the golden: no audit-mode sysprep dialog on top of
-  // every screenshot, and the work dir.
   await qga.exec(p.qga, CMD, ["/c", `taskkill /f /im sysprep.exe >nul 2>&1 & mkdir ${SCRIPTS} 2>nul & exit /b 0`])
   try {
-    // ensure, not install: an image with the agent baked in, or an instance
-    // that already has one, only needs the token written (~100 ms instead of
-    // a ~7 s reinstall).
     await agent.ensure(instance, { log: (l) => { log(`  agent: ${l}`) } })
   } catch (error) {
     log(`  (no agent — jobs will run over qemu-ga as SYSTEM: ${errMsg(error)})`)
@@ -124,9 +73,6 @@ async function createMissingGolden(instance: string, goldenName: string, log: (s
   return Date.now() - t0
 }
 
-// ---------------------------------------------------------------------------
-// Files on the host
-
 const sha1 = (s: string): string => createHash("sha1").update(s).digest("hex").slice(0, 16)
 
 function globToRegExp(glob: string): RegExp {
@@ -134,7 +80,6 @@ function globToRegExp(glob: string): RegExp {
   return new RegExp(`^${esc}$`)
 }
 
-/** Latest release tag of a repo, asked once per run. */
 const latestTags = new Map<string, string>()
 function releaseTag(repo: string, tag: string): string {
   if (tag !== "latest") return tag
@@ -146,7 +91,6 @@ function releaseTag(repo: string, tag: string): string {
   return t
 }
 
-/** Host paths for a file entry, downloading into the cache if needed. */
 export async function resolveHostFiles(f: FileSpec): Promise<readonly string[]> {
   switch (f.kind) {
     case "path": {
@@ -171,7 +115,6 @@ export async function resolveHostFiles(f: FileSpec): Promise<readonly string[]> 
       mkdirSync(dir, { recursive: true })
       const want = f.patterns.map(globToRegExp)
       const have = (): string[] => readdirSync(dir).filter((n) => !n.startsWith(".") && want.some((re) => re.test(n)))
-      // Each pattern must match something already cached, or we ask GitHub.
       if (!f.patterns.every((_, i) => have().some((n) => want[i]?.test(n) === true))) {
         const pats = f.patterns.flatMap((p) => ["-p", p])
         const r = Bun.spawnSync(["gh", "release", "download", tag, "-R", f.repo, ...pats, "-D", dir, "--skip-existing"], {
@@ -187,9 +130,6 @@ export async function resolveHostFiles(f: FileSpec): Promise<readonly string[]> 
   }
 }
 
-// ---------------------------------------------------------------------------
-// The host's file server
-
 interface FileServer {
   readonly base: string
   readonly filesUrl: string
@@ -198,7 +138,6 @@ interface FileServer {
   stop(): void
 }
 
-/** Loopback only; a random token in every path, since anything on the host can reach loopback. */
 function startServer(uploadDir: string): FileServer {
   const token = randomBytes(16).toString("hex")
   const served = new Map<string, string>()
@@ -236,9 +175,6 @@ function startServer(uploadDir: string): FileServer {
   }
 }
 
-// ---------------------------------------------------------------------------
-// One job
-
 const guestDir = (path: string): string => path.slice(0, Math.max(0, path.lastIndexOf("\\")))
 
 async function stage(job: Job, guest: Guest, server: FileServer, log: (s: string) => void): Promise<void> {
@@ -260,8 +196,6 @@ async function stage(job: Job, guest: Guest, server: FileServer, log: (s: string
   if (guest.fastFiles) {
     for (const c of copies) await guest.putFile(c.host, c.dest)
   } else {
-    // One curl for every file: a guest exec costs ~100 ms, a big file over
-    // qga's base64 JSON costs far more than over HTTP.
     const args = copies.flatMap((c) => ["-o", c.dest, c.url])
     const r = await guest.run([CURL, "-sSf", "--retry", "3", "--retry-all-errors", ...args], 600_000)
     if (r.exitcode !== 0) throw new Error(`staging files with curl.exe failed (${String(r.exitcode)}): ${r.stderr.trim()}`)
@@ -276,7 +210,6 @@ async function shellArgv(step: Step, guest: Guest, script: string): Promise<read
   let exe = POWERSHELL
   if (step.shell === "pwsh") {
     pwshPresent ??= (await guest.run([CMD, "/c", `if exist "${PWSH}" (exit /b 0) else (exit /b 1)`], 30_000)).exitcode === 0
-    // The golden image has only Windows PowerShell 5.1; pwsh falls back to it.
     if (pwshPresent) exe = PWSH
   }
   return [exe, "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", script]
@@ -292,7 +225,6 @@ async function runStep(
 ): Promise<StepResult> {
   const t0 = Date.now()
   if (step.shell === "winvm") {
-    // On the host, against the instance: see hoststep.ts.
     const r = await runHostStep(step.run, instance, { ...env, ...step.env }, Math.min(step.timeoutMs, Math.max(1000, remainingMs)))
     const status = r.timedOut ? "timed-out" : r.exitcode === 0 ? "passed" : "failed"
     return { name: step.name, continueOnError: step.continueOnError, background: false, status, exitcode: r.timedOut ? null : r.exitcode, ms: Date.now() - t0, stdout: r.stdout, stderr: r.stderr }
@@ -303,9 +235,6 @@ async function runStep(
   const argv = await shellArgv(step, guest, script)
   const base = { name: step.name, continueOnError: step.continueOnError, background: step.background }
   if (step.background) {
-    // Started and left running (a server, a tray app); its output to a log
-    // the artifacts can collect. A wrapper, because qga passes argv through
-    // MSVCRT quoting, which cmd.exe redirection does not survive.
     const log = `${SCRIPTS}\\${String(index + 1)}.log`
     const wrapper = `${SCRIPTS}\\${String(index + 1)}-bg.cmd`
     const line = argv.map((a) => (a.includes(" ") ? `"${a}"` : a)).join(" ")
@@ -324,7 +253,6 @@ async function runStep(
   }
 }
 
-/** Guest paths matching `pattern` (wildcards in the last part; %VARS% expanded by cmd). */
 async function expand(guest: Guest, pattern: string): Promise<readonly string[]> {
   const r = await guest.run([CMD, "/c", `for %f in ("${pattern}") do @if exist "%~ff" echo %~ff`], 60_000)
   return r.stdout
@@ -473,10 +401,9 @@ export async function runJob(job: Job, o: RunOptions): Promise<JobResult> {
   }
 }
 
-/** Is `instance` usable for jobs at all? null when yes, else why not. */
 export function instanceProblem(instance: string): string | null {
   const meta = readMeta(instance)
-  if (meta === null) return null // created on demand
+  if (meta === null) return null
   if (saves.isEphemeral(pathsFor(instance))) return `instance "${instance}" is --ephemeral and cannot hold a golden save`
   return null
 }

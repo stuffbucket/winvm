@@ -1,8 +1,3 @@
-/**
- * Whether QEMU runs, from its pidfile (qemu.ts pidOf): no pidfile, a stale one
- * and a live one. QEMU removes its pidfile as it exits, so a missing file is
- * "not running", never an error.
- */
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
 
 import { afterAll, beforeAll, describe, expect, it } from "bun:test"
@@ -44,7 +39,6 @@ describe("pidOf", () => {
 
   it("is null for a stale pidfile, and removes it", () => {
     const p = pathsFor(NAME)
-    // Far above any pid macOS hands out.
     writeFileSync(p.pid, "99999999\n")
     expect(pidOf(p)).toBeNull()
     expect(existsSync(p.pid)).toBe(false)
