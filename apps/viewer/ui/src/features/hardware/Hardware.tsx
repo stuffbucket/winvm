@@ -19,11 +19,13 @@ export function Hardware({
   const [gb, setGb] = useState(next === null ? 0 : toGB(next.memoryMiB))
   const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
 
+  const nextCpus = next?.cpus ?? null
+  const nextMemoryMiB = next?.memoryMiB ?? null
   useEffect(() => {
-    if (next === null) return
-    setCpus(next.cpus)
-    setGb(toGB(next.memoryMiB))
-  }, [next?.cpus, next?.memoryMiB])
+    if (nextCpus === null || nextMemoryMiB === null) return
+    setCpus(nextCpus)
+    setGb(toGB(nextMemoryMiB))
+  }, [nextCpus, nextMemoryMiB])
 
   useEffect(
     () => () => {
