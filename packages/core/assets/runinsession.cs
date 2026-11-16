@@ -1,24 +1,3 @@
-// Start a program on the interactive desktop of the active console session,
-// from session 0 (qemu-ga runs as SYSTEM there, where nothing it starts can
-// show a window). Compiled in the guest by agent-install.ps1 via Add-Type.
-//
-//   runinsession.exe [--wait] [--hidden] [--self] <exe> [args...]
-//
-//   --wait    wait for it and exit with its exit code
-//   --hidden  no console window (CREATE_NO_WINDOW) instead of a new visible one
-//   --self    as THIS process's user, in its session, with its environment and
-//             working directory: the agent's launcher (it already runs on the
-//             desktop; only SYSTEM may call WTSQueryUserToken).
-//
-// WHY THE AGENT NEEDS THIS AT ALL. A program the agent starts must outlive the
-// agent, so it cannot be an ordinary libuv child (those sit in a kill-on-close
-// job). Node/Bun's `detached` is the only other way, and that is
-// DETACHED_PROCESS: no console. Windows PowerShell started like that exits 0 at
-// once without running anything, and `conhost --headless` does too. Started
-// from here instead, a console program gets a console of its own (hidden with
-// --hidden), and this process's job lets its children break away silently.
-//
-// Prints "session <id> pid <pid>". Exit 2-4: no user token / no logon / spawn failed.
 using System;
 using System.Runtime.InteropServices;
 using System.Text;
@@ -41,7 +20,6 @@ class RunInSession {
     [DllImport("kernel32.dll")] static extern bool GetExitCodeProcess(IntPtr h, out uint c);
     [DllImport("kernel32.dll")] static extern bool CloseHandle(IntPtr h);
 
-    // MSVCRT quoting, which is what a program's argv parser undoes.
     static string Q(string a) {
         if (a.Length > 0 && a.IndexOfAny(new[] { ' ', '\t', '"' }) < 0) return a;
         var sb = new StringBuilder("\"");
@@ -68,11 +46,9 @@ class RunInSession {
         for (int k = i; k < argv.Length; k++) { if (k > i) cmd.Append(' '); cmd.Append(Q(argv[k])); }
         var si = new SI(); si.cb = Marshal.SizeOf(si);
         PI pi;
-        uint window = hidden ? 0x08000000u /* CREATE_NO_WINDOW */ : 0x00000010u /* CREATE_NEW_CONSOLE */;
+        uint window = hidden ? 0x08000000u : 0x00000010u;
         uint sid;
         if (self) {
-            // Handles NOT inherited: nothing of this process's (its stdout pipe
-            // to the agent) may outlive it in the program.
             if (!CreateProcess(null, cmd, IntPtr.Zero, IntPtr.Zero, false, window, IntPtr.Zero, null, ref si, out pi)) {
                 Console.Error.WriteLine("CreateProcess " + Marshal.GetLastWin32Error()); return 4;
             }
@@ -84,7 +60,7 @@ class RunInSession {
             if (!DuplicateTokenEx(ut, 0x02000000, IntPtr.Zero, 2, 1, out pt)) { Console.Error.WriteLine("DuplicateTokenEx " + Marshal.GetLastWin32Error()); return 3; }
             CreateEnvironmentBlock(out env, pt, false);
             si.desk = "winsta0\\default";
-            uint flags = 0x00000400 /* UNICODE_ENVIRONMENT */ | window;
+            uint flags = 0x00000400 | window;
             if (!CreateProcessAsUser(pt, null, cmd, IntPtr.Zero, IntPtr.Zero, false, flags, env, null, ref si, out pi)) {
                 Console.Error.WriteLine("CreateProcessAsUser " + Marshal.GetLastWin32Error()); return 4;
             }

@@ -1,28 +1,3 @@
-// conpty: one terminal session for the in-guest agent's GET /term. Starts a
-// shell in a pseudo-console (ConPTY) and relays it over a loopback TCP
-// connection to the agent's HTTP server, which carries it on to a WebSocket.
-//
-//   conpty.exe --port <p> --key <k> [--cols N] [--rows N] [--cwd DIR] -- <exe> [args...]
-//
-// It CONNECTS to 127.0.0.1:<p> (the agent listens; nothing listens here) and
-// says who it is with the session's one-time key. Then frames both ways, each
-// [type: 1 byte][length: uint32 LE][payload]:
-//
-//   agent -> conpty   'i' keystrokes, raw     'r' resize: cols, rows (uint16 LE each)
-//   conpty -> agent   'H' the key (first)     'o' shell output, raw
-//                     'x' exit code (int32 LE), then it closes
-//                     'e' an error message (UTF-8), then it closes
-//
-// Why a socket and not stdio: the agent's spawner starts this through
-// runinsession.exe, which gives it a console of its own and no inherited
-// handles, so it cannot hold the agent's listening socket. And the HTTP server
-// that owns the WebSocket must not spawn anything itself (see guestagent.ts).
-//
-// No orphans: the shell and everything it starts sit in a kill-on-close job
-// object that only this process holds. When the connection ends (the WebSocket
-// closed, or the agent died) this process ends, and the job takes the tree with
-// it. Compiled in the guest by agent-install.ps1 with Add-Type (C# 5). A change
-// here needs AGENT_VERSION bumped in guestagent.ts, so installs pick it up.
 using System;
 using System.IO;
 using System.Net.Sockets;
@@ -95,7 +70,6 @@ static class ConPty {
     }
   }
 
-  // MSVCRT quoting, which is what a program's argv parser undoes.
   static string Q(string a) {
     if (a.Length > 0 && a.IndexOfAny(new[] { ' ', '\t', '"' }) < 0) return a;
     var sb = new StringBuilder("\"");
@@ -115,7 +89,6 @@ static class ConPty {
     return s != null && int.TryParse(s, out v) ? Clamp(v) : dflt;
   }
 
-  /** Kill the shell's whole tree and leave. Closing the job handle at exit would too; this does not wait for it. */
   static void Die(int code) {
     if (job != IntPtr.Zero) TerminateJobObject(job, 1);
     Environment.Exit(code);
@@ -174,8 +147,6 @@ static class ConPty {
     var si = new STARTUPINFOEX();
     si.si.cb = Marshal.SizeOf(typeof(STARTUPINFOEX));
     si.attrs = attrs;
-    // Explicitly no standard handles: otherwise a shell can end up writing to
-    // this process's own stdout instead of the pseudo-console.
     si.si.flags = STARTF_USESTDHANDLES;
     si.si.i = si.si.o = si.si.e = new IntPtr(-1);
 
@@ -187,21 +158,18 @@ static class ConPty {
     job = CreateJobObject(IntPtr.Zero, null);
     var lim = new JOBOBJECT_EXTENDED_LIMIT_INFORMATION();
     lim.Basic.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
-    if (job == IntPtr.Zero || !SetInformationJobObject(job, 9 /* JobObjectExtendedLimitInformation */, ref lim, Marshal.SizeOf(typeof(JOBOBJECT_EXTENDED_LIMIT_INFORMATION))))
+    if (job == IntPtr.Zero || !SetInformationJobObject(job, 9, ref lim, Marshal.SizeOf(typeof(JOBOBJECT_EXTENDED_LIMIT_INFORMATION))))
       throw new Exception("job object: " + Marshal.GetLastWin32Error());
 
     PROCESS_INFORMATION pi;
     if (!CreateProcess(null, cmd, IntPtr.Zero, IntPtr.Zero, false, EXTENDED_STARTUPINFO_PRESENT | CREATE_SUSPENDED, IntPtr.Zero, cwd, ref si, out pi))
       throw new Exception("could not start " + argv[first] + ": error " + Marshal.GetLastWin32Error());
-    // In the job before it runs a single instruction, so nothing it starts escapes.
     if (!AssignProcessToJobObject(job, pi.hp)) { int err = Marshal.GetLastWin32Error(); TerminateJobObject(job, 1); throw new Exception("AssignProcessToJobObject: " + err); }
     ResumeThread(pi.ht);
     CloseHandle(pi.ht);
-    // The pseudo-console holds its own copies now.
     inRead.Dispose();
     outWrite.Dispose();
 
-    // Shell output -> the agent. Ends at EOF, which comes once the pseudo-console is closed.
     var output = new Thread(delegate () {
       var buf = new byte[16384];
       try {
@@ -213,7 +181,6 @@ static class ConPty {
     output.IsBackground = true;
     output.Start();
 
-    // The agent -> keystrokes and resizes. The connection ending ends everything.
     var input = new Thread(delegate () {
       try {
         using (var w = new FileStream(inWrite, FileAccess.Write, 1)) {
@@ -240,9 +207,6 @@ static class ConPty {
     uint code;
     GetExitCodeProcess(pi.hp, out code);
     CloseHandle(pi.hp);
-    // What the shell printed last is still in the pseudo-console: closing it
-    // flushes that and ends the output pipe. On older Windows ClosePseudoConsole
-    // blocks until the output is read, which the output thread is doing.
     var closer = new Thread(delegate () { ClosePseudoConsole(hpc); });
     closer.IsBackground = true;
     closer.Start();
