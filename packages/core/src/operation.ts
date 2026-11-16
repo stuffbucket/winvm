@@ -56,6 +56,7 @@ interface LeaseRecord extends LeaseHolder {
   readonly pidStart: string | null
   readonly instance: string
   readonly savingRunning?: true
+  readonly irreversibleAt?: string
 }
 
 export interface LeaseSeams {
@@ -152,6 +153,9 @@ function parseRecord(json: string): LeaseRecord | null {
     instance: text(r.instance, ""),
     automatic: r.automatic === true,
     ...(r.savingRunning === true ? { savingRunning: true as const } : {}),
+    ...(typeof r.irreversibleAt === "string"
+      ? { irreversibleAt: r.irreversibleAt }
+      : {}),
   }
 }
 
@@ -190,19 +194,22 @@ const failed = (error: unknown): OpOutcome => ({
   error: error instanceof Error ? error.message : String(error),
 })
 
+const noMark = (): Pick<OpOutcome, "irreversibleAt"> => ({})
+
 async function recorded<T>(
   name: string,
   who: OpIdentity,
   run: () => T | Promise<T>,
   outcome: (result: T) => OpOutcome = settled,
+  markOf: () => Pick<OpOutcome, "irreversibleAt"> = noMark,
 ): Promise<T> {
   recordBegin(name, who)
   try {
     const result = await run()
-    recordEnd(name, who, outcome(result))
+    recordEnd(name, who, { ...outcome(result), ...markOf() })
     return result
   } catch (error) {
-    recordEnd(name, who, failed(error))
+    recordEnd(name, who, { ...failed(error), ...markOf() })
     throw error
   }
 }
@@ -227,6 +234,9 @@ function readLease(
       ok: false,
       abandoned: true,
       error: `pid ${String(r.pid)} went away without letting go of the instance`,
+      ...(r.irreversibleAt === undefined
+        ? {}
+        : { irreversibleAt: r.irreversibleAt }),
     })
   return null
 }
@@ -278,6 +288,28 @@ export const markSavingRunning = (name: string): void => {
 export const clearSavingRunning = (name: string): void => {
   rewriteOwn(name, ({ savingRunning: _, ...rest }) => rest)
 }
+
+interface Mark {
+  readonly at: string
+  readonly recovery: readonly string[]
+}
+
+const marks = new Map<string, Mark>()
+
+export function irreversible(name: string, recovery: readonly string[]): void {
+  if (heldHere(name) === undefined) return
+  const at = new Date().toISOString()
+  marks.set(name, { at, recovery })
+  rewriteOwn(name, (r) => ({ ...r, irreversibleAt: at }))
+}
+
+const markOf = (name: string): Pick<OpOutcome, "irreversibleAt"> => {
+  const mark = marks.get(name)
+  return mark === undefined ? {} : { irreversibleAt: mark.at }
+}
+
+const INTERRUPTS = ["SIGINT", "SIGTERM", "SIGHUP"] as const
+export const INTERRUPTED = 130
 
 function release(file: string, id: string): void {
   if (parseRecord(readOr(file, ""))?.id === id) rmSync(file, { force: true })
@@ -347,6 +379,7 @@ async function acquire(
 
 export interface OperationOptions<T> extends LeaseOptions {
   readonly outcome?: (result: T) => OpOutcome
+  readonly interruptible?: true
 }
 
 export async function withOperation<T>(
@@ -373,12 +406,38 @@ export async function withOperation<T>(
   const file = pathsFor(name).lease
   const who = identityOf(got, true)
   let ended = false
-  const onExit = (code: number): void => {
-    if (!ended) recordEnd(name, who, exited(code))
+  const end = (outcome: OpOutcome): void => {
+    if (!ended) recordEnd(name, who, { ...outcome, ...markOf(name) })
     ended = true
     release(file, got.id)
   }
+  const onExit = (code: number): void => {
+    end(exited(code))
+  }
+  const handlers = INTERRUPTS.map((signal) => {
+    const handler = (): void => {
+      const mark = marks.get(name)
+      if (mark === undefined) {
+        if (process.listenerCount(signal) > 1) return
+        leaveInterrupts()
+        process.kill(process.pid, signal)
+        return
+      }
+      console.error(
+        `::error::${who.operation} interrupted by ${signal} after it asked Windows to shut down, and did not finish.`,
+      )
+      for (const line of mark.recovery) console.error(`  ${line}`)
+      end(exited(STOP_UNFINISHED))
+      process.exit(INTERRUPTED)
+    }
+    return [signal, handler] as const
+  })
+  const leaveInterrupts = (): void => {
+    for (const [signal, handler] of handlers) process.off(signal, handler)
+  }
   process.on("exit", onExit)
+  if (o.interruptible === true)
+    for (const [signal, handler] of handlers) process.on(signal, handler)
   try {
     return await recorded(
       name,
@@ -394,9 +453,12 @@ export async function withOperation<T>(
         }
       },
       o.outcome,
+      () => markOf(name),
     )
   } finally {
+    leaveInterrupts()
     process.off("exit", onExit)
+    marks.delete(name)
     release(file, got.id)
   }
 }

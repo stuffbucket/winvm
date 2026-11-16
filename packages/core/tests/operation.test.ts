@@ -24,10 +24,12 @@ import type { LeaseOperation, VmOperation } from "../src/operation"
 import {
   clearSavingRunning,
   InstanceBusy,
+  irreversible,
   leaseHolder,
   markSavingRunning,
   operationFor,
   readOperation,
+  STOP_UNFINISHED,
   savingRunning,
   withOperation,
 } from "../src/operation"
@@ -826,5 +828,112 @@ describe("a command that exits inside its lease", () => {
       }),
     ).rejects.toThrow("boom")
     expect(process.listenerCount("exit")).toBe(before)
+  })
+})
+
+describe("a stop interrupted after its point of no return", () => {
+  const SRC = resolve(import.meta.dir, "../src/operation.ts")
+  const RECOVERY = ["Nothing was undone after the request.", "Stuck? kill it."]
+
+  async function runUntil(
+    mark: boolean,
+  ): Promise<{ child: ReturnType<typeof Bun.spawn>; err: Promise<string> }> {
+    const script = resolve(home, `irrev-${String(Math.random()).slice(2)}.ts`)
+    writeFileSync(
+      script,
+      [
+        `import { irreversible, withOperation } from ${JSON.stringify(SRC)}`,
+        `await withOperation(${JSON.stringify(NAME)}, "stop", async () => {`,
+        mark
+          ? `  irreversible(${JSON.stringify(NAME)}, ${JSON.stringify(RECOVERY)})`
+          : "",
+        `  console.log("ready")`,
+        `  await Bun.sleep(30000)`,
+        `}, { interruptible: true })`,
+      ].join("\n"),
+    )
+    const child = Bun.spawn([process.execPath, script], {
+      env: { ...process.env, WINVM_HOME: home },
+      stdout: "pipe",
+      stderr: "pipe",
+    })
+    spawned.push(child)
+    const reader = (child.stdout as ReadableStream<Uint8Array>).getReader()
+    await reader.read()
+    reader.releaseLock()
+    rmSync(script, { force: true })
+    return { child, err: new Response(child.stderr as ReadableStream).text() }
+  }
+
+  const stopEnd = (): Record<string, unknown> | undefined =>
+    readSince(NAME, START).entries.find(
+      (e) => e.kind === "op" && e.phase === "end" && e.operation === "stop",
+    ) as Record<string, unknown> | undefined
+
+  for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"] as const) {
+    it(`ends the stop with exit code 3, says what was left, and exits 130 on ${signal}`, async () => {
+      const { child, err } = await runUntil(true)
+      expect(onDisk()?.irreversibleAt).toEqual(expect.any(String))
+      child.kill(signal)
+      expect(await child.exited).toBe(130)
+      expect(stopEnd()).toMatchObject({
+        ok: false,
+        exitCode: STOP_UNFINISHED,
+        irreversibleAt: expect.any(String) as string,
+      })
+      expect(stopEnd()?.abandoned).toBeUndefined()
+      expect(onDisk()).toBeNull()
+      const text = await err
+      expect(text).toContain(signal)
+      expect(text).toContain("Nothing was undone after the request.")
+      expect(text).toContain("Stuck? kill it.")
+    })
+  }
+
+  it("is taken over as abandoned, still marked, when the process is killed outright", async () => {
+    const { child } = await runUntil(true)
+    child.kill("SIGKILL")
+    await child.exited
+    expect(leaseHolder(NAME, {}, true)).toBeNull()
+    expect(stopEnd()).toMatchObject({
+      ok: false,
+      abandoned: true,
+      irreversibleAt: expect.any(String) as string,
+    })
+  })
+
+  it("leaves an interrupt before the mark as it was: the signal ends the process and nothing is claimed", async () => {
+    const { child, err } = await runUntil(false)
+    child.kill("SIGINT")
+    await child.exited
+    expect(child.signalCode).toBe("SIGINT")
+    expect(await err).not.toContain("Nothing was undone")
+    expect(leaseHolder(NAME, {}, true)).toBeNull()
+    expect(stopEnd()?.irreversibleAt).toBeUndefined()
+    expect(stopEnd()?.exitCode).toBeUndefined()
+  })
+
+  it("marks nothing, and does not throw, outside a lease", () => {
+    expect(() => {
+      irreversible("op-nothing", RECOVERY)
+    }).not.toThrow()
+  })
+
+  it("carries the mark into the end of a stop that returns after it", async () => {
+    await withOperation(
+      NAME,
+      "stop",
+      () => {
+        irreversible(NAME, RECOVERY)
+        return STOP_UNFINISHED
+      },
+      { interruptible: true },
+    )
+    expect(stopEnd()).toMatchObject({
+      ok: false,
+      exitCode: STOP_UNFINISHED,
+      irreversibleAt: expect.any(String) as string,
+    })
+    expect(process.listenerCount("SIGINT")).toBe(0)
   })
 })

@@ -6,6 +6,7 @@ import { effectiveConfig } from "./config"
 import { describeDisplay, readDisplay, runningDisplay } from "./display"
 import { readSince, START } from "./eventlog"
 import { frozenFrom, markedAsleep } from "./frozen"
+import { type HostPoweredOff, hostPoweredOff } from "./hostoff"
 import { qmpCommand } from "./monitor"
 import type { OperationInfo } from "./operation"
 import { readOperation, STOP_UNFINISHED, savingRunning } from "./operation"
@@ -95,6 +96,7 @@ export interface InstanceStatus {
   readonly serviceExpected: boolean
   readonly operation: OperationInfo | null
   readonly stopUnfinished: StopUnfinished | null
+  readonly hostPoweredOff: HostPoweredOff | null
   readonly notes: readonly string[]
 }
 
@@ -117,7 +119,11 @@ export function unfinishedStop(name: string): StopUnfinished | null {
   let found: StopUnfinished | null = null
   for (const e of readSince(name, START).entries) {
     if (e.kind === "op" && e.phase === "end") {
-      if (e.operation === "stop" && e.exitCode === STOP_UNFINISHED)
+      if (
+        e.operation === "stop" &&
+        !e.ok &&
+        (e.exitCode === STOP_UNFINISHED || e.irreversibleAt !== undefined)
+      )
         found = { at: e.endedAt }
       else if (e.ok && RESTORING.has(e.operation)) found = null
     } else if (
@@ -127,6 +133,21 @@ export function unfinishedStop(name: string): StopUnfinished | null {
       found = null
   }
   return found
+}
+
+function hostPowerNote(name: string, off: HostPoweredOff): string {
+  const again = `\`winvm start -i ${name}\` starts it again`
+  if (off.cause === "qemu-gone")
+    return (
+      `QEMU is gone (last seen ${off.at}) without recording a shutdown, and no winvm stop or kill ended it: ` +
+      "the host (a restart or logout), a crash or another tool ended it, and anything unsaved in Windows is lost; " +
+      again
+    )
+  const who = off.detail === null ? "" : ` (${off.detail})`
+  return (
+    `the host powered Windows off at ${off.at}: QEMU was signalled${who}, ` +
+    `so Windows did not shut down by itself and anything unsaved in it is lost; ${again}`
+  )
 }
 
 export const savesDir = (instance: string): string =>
@@ -481,6 +502,7 @@ export async function gather(
       serviceExpected: false,
       operation,
       stopUnfinished: null,
+      hostPoweredOff: null,
       notes: [`no instance "${name}" — \`winvm start -i ${name}\` creates it`],
     }
   }
@@ -511,6 +533,8 @@ export async function gather(
         "the watcher and the guest's Finder drives are down until " +
         `\`winvm start -i ${name}\` brings them back — \`winvm kill -i ${name}\` if Windows is stuck`,
     )
+  const poweredOff = running ? null : hostPoweredOff(name)
+  if (poweredOff !== null) notes.push(hostPowerNote(name, poweredOff))
 
   return {
     name,
@@ -534,6 +558,7 @@ export async function gather(
     serviceExpected: running && existsSync(p.qmpQemu),
     operation,
     stopUnfinished,
+    hostPoweredOff: poweredOff,
     notes,
   }
 }

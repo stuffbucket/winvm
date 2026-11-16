@@ -181,6 +181,7 @@ describe("status formatting", () => {
     serviceExpected: false,
     operation: null,
     stopUnfinished: null,
+    hostPoweredOff: null,
     notes: [],
   }
 

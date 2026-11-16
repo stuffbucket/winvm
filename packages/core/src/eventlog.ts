@@ -66,6 +66,7 @@ export interface OpOutcome {
   readonly exitCode?: number
   readonly error?: string
   readonly abandoned?: true
+  readonly irreversibleAt?: string
 }
 
 export interface OpEndFields extends OpIdentity, OpOutcome {
@@ -299,6 +300,7 @@ function opEntry(stamp: Stamp, r: Json): Entry | null {
   if (r.phase !== "end" || endedAt === null || typeof r.ok !== "boolean")
     return null
   const error = str(r.error)
+  const irreversibleAt = str(r.irreversibleAt)
   return {
     ...stamp,
     kind: "op",
@@ -309,6 +311,7 @@ function opEntry(stamp: Stamp, r: Json): Entry | null {
     ...(typeof r.exitCode === "number" ? { exitCode: r.exitCode } : {}),
     ...(error === null ? {} : { error }),
     ...(r.abandoned === true ? { abandoned: true as const } : {}),
+    ...(irreversibleAt === null ? {} : { irreversibleAt }),
   }
 }
 

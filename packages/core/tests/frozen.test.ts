@@ -418,6 +418,7 @@ describe("graceful stop", () => {
     readonly waitForMs: number[]
     readonly sinces: Cursor[]
     readonly asleepAtRequest: boolean[]
+    readonly marks: { readonly after: string[]; readonly lines: string[] }[]
     readonly seams: StopCommandSeams
     readonly clock: { t: number }
   }
@@ -444,6 +445,7 @@ describe("graceful stop", () => {
     const waitForMs: number[] = []
     const sinces: Cursor[] = []
     const asleepAtRequest: boolean[] = []
+    const marks: { after: string[]; lines: string[] }[] = []
     const clock = { t: T0 }
     let exitAt: number | null = null
     let recorded = false
@@ -571,8 +573,20 @@ describe("graceful stop", () => {
       stopSidecars: () => {
         note("stopSidecars")
       },
+      irreversible: (_name, lines) => {
+        marks.push({ after: [...events], lines: [...lines] })
+      },
     }
-    return { events, at, waitForMs, sinces, asleepAtRequest, seams, clock }
+    return {
+      events,
+      at,
+      waitForMs,
+      sinces,
+      asleepAtRequest,
+      marks,
+      seams,
+      clock,
+    }
   }
 
   interface Outcome {
@@ -683,6 +697,38 @@ describe("graceful stop", () => {
       "powerdown",
       "stopSidecars",
     ])
+  })
+
+  it("marks the point of no return right after the request, with what to say if it is interrupted", async () => {
+    const r = rig({ frozen: "paused", acpiExitAfterMs: 3000 })
+    expect((await stopped(r.seams)).code).toBe(0)
+    expect(r.marks).toHaveLength(1)
+    expect(r.marks[0]?.after.at(-1)).toBe("powerdown")
+    const lines = r.marks[0]?.lines.join("\n") ?? ""
+    expect(lines).toContain("Nothing was undone after the request.")
+    expect(lines).toContain("QEMU is still running (pid 4242)")
+    expect(lines).toContain("winvm start -i frozen-test")
+    expect(lines).toContain("winvm pause -i frozen-test")
+  })
+
+  it("marks it too when QEMU never confirmed a request that may have been delivered", async () => {
+    const r = rig({ frozen: null, request: "unanswered" })
+    await stopped(r.seams)
+    expect(r.marks).toHaveLength(1)
+    expect(r.marks[0]?.after.at(-1)).toBe("powerdown")
+  })
+
+  it("never marks it for a stop that fails before the request, which rolls back", async () => {
+    for (const o of [
+      { request: "refused" as const },
+      { serviceFails: true },
+      { resumeFails: true },
+    ]) {
+      const r = rig({ frozen: "paused", watcher: true, ...o })
+      expect((await stopped(r.seams)).code).toBe(1)
+      expect(r.marks).toEqual([])
+      expect(r.events).toContain("ensureWatcher")
+    }
   })
 
   it("resumes a paused guest right before the request, and restores nothing on success", async () => {
@@ -1089,9 +1135,213 @@ describe("status after a stop that did not finish", () => {
     expect((await gather(NAME, false)).stopUnfinished).toBeNull()
   })
 
+  it("reports a stop that was interrupted after the request, whatever the end says", async () => {
+    n += 1
+    appendEntry(NAME, {
+      kind: "op",
+      phase: "end",
+      id: "op-abandoned",
+      operation: "stop",
+      pid: 4242,
+      startedAt: "2026-11-16T18:00:00.000Z",
+      endedAt: "2026-11-16T18:04:00.000Z",
+      automatic: false,
+      leased: true,
+      ok: false,
+      abandoned: true,
+      error: "pid 4242 went away without letting go of the instance",
+      irreversibleAt: "2026-11-16T18:01:00.000Z",
+    })
+    const s = await gather(NAME, false)
+    expect(s.stopUnfinished).toEqual({ at: "2026-11-16T18:04:00.000Z" })
+    expect(s.notes.find((x) => x.includes("did not finish"))).toContain(
+      "winvm start -i frozen-test",
+    )
+  })
+
+  it("does not report an abandoned stop that never reached the request", async () => {
+    appendEntry(NAME, {
+      kind: "op",
+      phase: "end",
+      id: "op-early",
+      operation: "stop",
+      pid: 4242,
+      startedAt: "2026-11-16T18:00:00.000Z",
+      endedAt: "2026-11-16T18:04:00.000Z",
+      automatic: false,
+      leased: true,
+      ok: false,
+      abandoned: true,
+    })
+    expect((await gather(NAME, false)).stopUnfinished).toBeNull()
+  })
+
+  it("clears an interrupted stop when a later start succeeds", async () => {
+    appendEntry(NAME, {
+      kind: "op",
+      phase: "end",
+      id: "op-int",
+      operation: "stop",
+      pid: 4242,
+      startedAt: "2026-11-16T18:00:00.000Z",
+      endedAt: "2026-11-16T18:04:00.000Z",
+      automatic: false,
+      leased: true,
+      ok: false,
+      exitCode: STOP_UNFINISHED,
+      irreversibleAt: "2026-11-16T18:01:00.000Z",
+    })
+    opEnd("start", true, 0)
+    expect((await gather(NAME, false)).stopUnfinished).toBeNull()
+  })
+
   it("is not reported for a machine that is not running", async () => {
     opEnd("stop", false, STOP_UNFINISHED)
     const s = await gather("frozen-nostop", false)
     expect(s.stopUnfinished).toBeNull()
+  })
+})
+
+describe("status when the host powered Windows off", () => {
+  const HOST = "frozen-hostoff"
+  const LOG =
+    "qemu-system-aarch64: terminating on signal 15 from pid 412 (launchd)\n"
+
+  const shutdown = (reason: string): void => {
+    appendEntry(HOST, {
+      kind: "qmp",
+      event: "SHUTDOWN",
+      data: { guest: false, reason },
+      timestamp: null,
+    })
+  }
+  const closed = (): void => {
+    appendEntry(HOST, { kind: "disconnected", reason: "qemu-closed" })
+  }
+  const op = (
+    phase: "begin" | "end",
+    operation: string,
+    ok = true,
+    id = `${operation}-${phase}`,
+  ): void => {
+    const who = {
+      id,
+      operation,
+      pid: 4242,
+      startedAt: "2026-11-16T18:00:00.000Z",
+      automatic: false,
+      leased: true,
+    }
+    appendEntry(
+      HOST,
+      phase === "begin"
+        ? { kind: "op", phase, ...who }
+        : {
+            kind: "op",
+            phase,
+            ...who,
+            endedAt: "2026-11-16T18:00:05.000Z",
+            ok,
+            exitCode: ok ? 0 : 1,
+          },
+    )
+  }
+
+  beforeEach(() => {
+    const p = pathsFor(HOST)
+    rmSync(p.dir, { recursive: true, force: true })
+    mkdirSync(p.dir, { recursive: true })
+    writeFileSync(
+      p.meta,
+      JSON.stringify({
+        image: "win11-arm64",
+        vnc: 8,
+        created: new Date().toISOString(),
+      }),
+    )
+  })
+  afterAll(() => {
+    rmSync(pathsFor(HOST).dir, { recursive: true, force: true })
+  })
+
+  it("says so, and quotes who signalled QEMU, when QEMU recorded SHUTDOWN host-signal", async () => {
+    writeFileSync(pathsFor(HOST).qemuLog, `boot noise\n${LOG}`)
+    shutdown("host-signal")
+    closed()
+    const s = await gather(HOST, false)
+    expect(s.state).toBe("stopped")
+    expect(s.hostPoweredOff).toEqual({
+      at: expect.any(String) as string,
+      cause: "host-signal",
+      detail: "terminating on signal 15 from pid 412 (launchd)",
+    })
+    const note = s.notes.find((x) => x.includes("host"))
+    expect(note).toContain("launchd")
+    expect(note).toContain("winvm start -i frozen-hostoff")
+  })
+
+  it("still says so when qemu.log has no signal line", async () => {
+    shutdown("host-signal")
+    closed()
+    const s = await gather(HOST, false)
+    expect(s.hostPoweredOff).toMatchObject({
+      cause: "host-signal",
+      detail: null,
+    })
+    expect(s.notes.some((x) => x.includes("host"))).toBe(true)
+  })
+
+  it("says QEMU is gone when its monitor closed with no SHUTDOWN and no winvm command ended it", async () => {
+    closed()
+    const s = await gather(HOST, false)
+    expect(s.hostPoweredOff).toMatchObject({
+      cause: "qemu-gone",
+      detail: null,
+    })
+    expect(s.notes.join("\n")).toContain("without recording a shutdown")
+  })
+
+  it("is silent about a guest that shut itself down", async () => {
+    shutdown("guest-shutdown")
+    closed()
+    expect((await gather(HOST, false)).hostPoweredOff).toBeNull()
+  })
+
+  it("is silent when winvm kill ended QEMU, whichever way the record orders the end", async () => {
+    op("begin", "kill")
+    closed()
+    op("end", "kill")
+    expect((await gather(HOST, false)).hostPoweredOff).toBeNull()
+  })
+
+  it("is silent about QEMU closing during a kill that has not ended yet", async () => {
+    op("begin", "kill")
+    closed()
+    expect((await gather(HOST, false)).hostPoweredOff).toBeNull()
+  })
+
+  it("clears once a later start succeeds", async () => {
+    shutdown("host-signal")
+    closed()
+    op("begin", "start")
+    op("end", "start")
+    expect((await gather(HOST, false)).hostPoweredOff).toBeNull()
+  })
+
+  it("is null when nothing has happened, and for a machine that is running", async () => {
+    expect((await gather(HOST, false)).hostPoweredOff).toBeNull()
+    appendEntry(NAME, {
+      kind: "qmp",
+      event: "SHUTDOWN",
+      data: { guest: false, reason: "host-signal" },
+      timestamp: null,
+    })
+    expect((await gather(NAME, false)).hostPoweredOff).toBeNull()
+  })
+
+  it("is null for an instance that does not exist", async () => {
+    expect(
+      (await gather("frozen-hostoff-gone", false)).hostPoweredOff,
+    ).toBeNull()
   })
 })

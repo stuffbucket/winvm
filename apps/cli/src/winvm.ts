@@ -50,7 +50,9 @@ const operation = operationFor(sub, args)
 const leased = async (run: () => number | Promise<number>): Promise<number> => {
   if (operation === null) return await run()
   try {
-    return await withOperation(instanceName(args), operation, run)
+    return await withOperation(instanceName(args), operation, run, {
+      interruptible: true,
+    })
   } catch (error) {
     if (!(error instanceof InstanceBusy)) throw error
     console.error(`::error::${error.message}`)

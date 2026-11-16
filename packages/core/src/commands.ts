@@ -61,7 +61,7 @@ import {
   resolveWindowsIso,
 } from "./media"
 import * as monitor from "./monitor"
-import { leaseHolder, STOP_UNFINISHED } from "./operation"
+import { irreversible, leaseHolder, STOP_UNFINISHED } from "./operation"
 import type { InstanceMeta, Paths } from "./paths"
 import {
   allocateVnc,
@@ -849,6 +849,7 @@ export interface StopCommandSeams {
   readonly beforeDown?: (name: string) => void
   readonly afterUp?: (name: string) => Promise<void>
   readonly stopSidecars?: (p: Paths) => void
+  readonly irreversible?: (name: string, recovery: readonly string[]) => void
 }
 
 const errorText = (error: unknown): string =>
@@ -934,6 +935,7 @@ export async function stopWith(
       finder.beforeDown(n)
     })
   const stopSidecars = seams.stopSidecars ?? qemu.stopSidecars
+  const markIrreversible = seams.irreversible ?? irreversible
   const frozenState = seams.frozenState ?? ((p: Paths) => frozen.frozenState(p))
   const resume =
     seams.resume ??
@@ -1018,6 +1020,7 @@ export async function stopWith(
     return 1
   }
 
+  markIrreversible(name, leftRunning(name, pidOf(p), original))
   const requestedAt = now()
   const forceAt = requestedAt + FORCE_AFTER_MS
   const forced: { note: string | null } = { note: null }
