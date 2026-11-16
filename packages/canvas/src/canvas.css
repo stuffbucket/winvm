@@ -138,6 +138,8 @@
   display: inline-flex;
   align-items: center;
   gap: var(--space-1);
+  min-inline-size: auto;
+  margin: 0;
   padding: var(--space-1);
   border: var(--border-width-hairline) solid var(--border-subtle);
   border-radius: var(--radius-card);

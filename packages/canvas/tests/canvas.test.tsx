@@ -183,9 +183,9 @@ describe("SpatialCanvas", () => {
     )
     expect(search?.getAttribute("aria-pressed")).toBe("true")
     expect(search?.querySelector("svg")).not.toBeNull()
-    expect(
-      host.querySelector('[role="group"]')?.getAttribute("aria-label"),
-    ).toBe("Zoom")
+    expect(host.querySelector("fieldset")?.getAttribute("aria-label")).toBe(
+      "Zoom",
+    )
     const value = host.querySelector<HTMLButtonElement>(
       ".spatial-canvas__zoom-value",
     )
