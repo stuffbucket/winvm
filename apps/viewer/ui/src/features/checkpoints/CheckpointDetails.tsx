@@ -69,11 +69,15 @@ export function CheckpointDetails({
   const latest = useRef({ draft, onNote })
   latest.current = { draft, onNote }
 
+  const draftFor = useRef<{ name: string; createdAt: string } | null>(null)
   useEffect(() => {
+    const shown = draftFor.current
+    if (shown?.name === c.name && shown.createdAt === c.createdAt) return
+    draftFor.current = { name: c.name, createdAt: c.createdAt }
     const d = draftOf(c.notes)
     setDraft(d)
     written.current = d
-  }, [c.name, c.createdAt])
+  }, [c.name, c.createdAt, c.notes])
 
   const flushTo = useCallback((checkpoint: string): void => {
     if (timer.current !== null) clearTimeout(timer.current)

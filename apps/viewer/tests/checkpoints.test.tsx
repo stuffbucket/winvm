@@ -418,6 +418,45 @@ describe("a checkpoint's note", () => {
     ])
     expect(title.value).toBe("")
   })
+
+  it("keeps what is being typed when the same checkpoint's notes are read again, and starts from a new checkpoint's notes", () => {
+    const writes: [string, Draft][] = []
+    const notes = (title: string) => ({ title, text: "", tags: [] })
+    const a = checkpoint("a", at(2026, 8, 9, 10), { notes: notes("Saved") })
+    const host = document.createElement("div")
+    document.body.append(host)
+    const r = createRoot(host)
+    root = r
+    act(() => {
+      r.render(<Selected c={a} writes={writes} />)
+    })
+    const title = host.querySelector<HTMLInputElement>("#checkpoint-title")
+    if (title === null) throw new Error("no title field")
+    expect(title.value).toBe("Saved")
+    act(() => {
+      const descriptor = Object.getOwnPropertyDescriptor(
+        window.HTMLInputElement.prototype,
+        "value",
+      )
+      descriptor?.set?.call(title, "Typing")
+      title.dispatchEvent(new Event("input", { bubbles: true }))
+    })
+    act(() => {
+      r.render(
+        <Selected c={{ ...a, notes: notes("Read again") }} writes={writes} />,
+      )
+    })
+    expect(title.value).toBe("Typing")
+    act(() => {
+      r.render(
+        <Selected
+          c={{ ...a, createdAt: at(2026, 8, 10, 10), notes: notes("Newer") }}
+          writes={writes}
+        />,
+      )
+    })
+    expect(title.value).toBe("Newer")
+  })
 })
 
 describe("the confirmation's three choices", () => {
