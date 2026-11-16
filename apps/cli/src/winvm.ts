@@ -4,6 +4,7 @@ import { instanceName, parseArgs } from "@winvm/core/args"
 import * as commands from "@winvm/core/commands"
 import * as cuacmds from "@winvm/core/cuacmds"
 import * as finder from "@winvm/core/finder"
+import * as follow from "@winvm/core/follow"
 import * as goldens from "@winvm/core/golden"
 import {
   ManagementError,
@@ -67,6 +68,7 @@ const NO_SWEEP = [
   "tm",
   "watch",
   "serve",
+  "events",
 ]
 const LOOK_ONLY = [
   "status",
@@ -259,6 +261,9 @@ switch (sub ?? "") {
     exitCode = 0
     break
   }
+  case "events":
+    exitCode = await follow.eventsCmd(args)
+    break
   case "run":
     exitCode = await runcmds.run(args)
     break

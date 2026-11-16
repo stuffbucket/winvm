@@ -1536,7 +1536,12 @@ export const USAGE =
   "  lock    [-i name]             Windows back to its lock screen (sign in again with Enter)\n" +
   "  stow    [-i name]             save and shut QEMU down; the next start recalls it\n" +
   "  clock   [-i name] [--check]   guest-vs-host clock offset, and fix it\n" +
-  "  status  [-i name] [--json]    what it's doing; with no -i and several instances, a table\n" +
+  "  status  [-i name] [--json]    what it's doing; with no -i and several instances, a table.\n" +
+  "                                Only reads: it never stops, starts or replaces anything\n" +
+  "  reconcile [-i name]           bring the control service and watcher up to this build, restart\n" +
+  "                                missing ones and unmount drives a gone guest left; no -i: all\n" +
+  "  events  [-i name] [--json]    the instances' event records (QEMU events, operations);\n" +
+  "          [--follow] [--since c]  keep following / resume after a line's cursor (or `start`)\n" +
   "  info    [-i name] [--json]    processors, memory and disk (running, and set for the next start),\n" +
   "                                and the network: addresses and the ports forwarded into Windows\n" +
   "  open    [-i name] [--web]     show the screen in Screen Sharing, or (--web) the browser;\n" +
