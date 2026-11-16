@@ -1,17 +1,5 @@
-/**
- * The controls that float over a canvas, from monimal's
- * `spatial-canvas-chrome.tsx`: the top bar and its corners, a control group,
- * a floating panel, a side panel and the zoom controls.
- *
- * Changed here: icons are inline Lucide paths (monimal imports lucide-react),
- * every word comes in as a prop so the app's catalog supplies it, and the
- * buttons are the canvas's own (`spatial-canvas__button`), not monimal's
- * design-system IconButton. Left out: monimal's page tabs and project
- * switcher, presence avatars and tool buttons (its whiteboard's tools).
- */
 import { forwardRef, type ComponentPropsWithoutRef, type ReactNode, type JSX } from "react"
 
-/** A 16 px Lucide glyph, stroked in the current color. */
 export function CanvasGlyph({ children, size = 16 }: { readonly children: ReactNode; readonly size?: number }): JSX.Element {
   return (
     <svg
@@ -31,7 +19,6 @@ export function CanvasGlyph({ children, size = 16 }: { readonly children: ReactN
   )
 }
 
-// lucide: minus, plus, x, search
 export const GLYPHS = {
   minus: <path d="M5 12h14" />,
   plus: (
@@ -55,12 +42,10 @@ export const GLYPHS = {
 } as const
 
 export type CanvasButtonProps = Omit<ComponentPropsWithoutRef<"button">, "aria-label"> & {
-  /** The accessible name, and the tooltip. */
   readonly label: string
   readonly selected?: boolean
 }
 
-/** A compact icon button for canvas chrome. */
 export const CanvasIconButton = forwardRef<HTMLButtonElement, CanvasButtonProps>(function CanvasIconButton(
   { label, selected, className, children, type = "button", ...props },
   ref,
@@ -80,17 +65,14 @@ export const CanvasIconButton = forwardRef<HTMLButtonElement, CanvasButtonProps>
   )
 })
 
-/** Positions the canvas's primary actions across the top edge. */
 export function SpatialCanvasTopBar({ children }: { readonly children: ReactNode }): JSX.Element {
   return <header className="spatial-canvas__topbar">{children}</header>
 }
 
-/** Groups controls within a top bar corner. */
 export function SpatialCanvasCorner({ children, className }: { readonly children: ReactNode; readonly className?: string }): JSX.Element {
   return <div className={["spatial-canvas__corner", className].filter(Boolean).join(" ")}>{children}</div>
 }
 
-/** A labelled group of controls, centred on the bottom edge. */
 export function SpatialCanvasControlGroup({ label, children }: { readonly label: string; readonly children: ReactNode }): JSX.Element {
   return (
     <nav className="spatial-canvas__controls" aria-label={label}>
@@ -99,7 +81,6 @@ export function SpatialCanvasControlGroup({ label, children }: { readonly label:
   )
 }
 
-/** A compact floating inspector over the canvas. */
 export function SpatialCanvasFloatingPanel({ label, children, className }: { readonly label: string; readonly children: ReactNode; readonly className?: string }): JSX.Element {
   return (
     <aside className={["spatial-canvas__floating-panel", className].filter(Boolean).join(" ")} aria-label={label}>
@@ -108,7 +89,6 @@ export function SpatialCanvasFloatingPanel({ label, children, className }: { rea
   )
 }
 
-/** A dismissible panel along the canvas's right edge. */
 export function SpatialCanvasSidePanel({
   label,
   title,
@@ -121,7 +101,6 @@ export function SpatialCanvasSidePanel({
 }: {
   readonly label: string
   readonly title: string
-  /** "Close <title>", in the app's words. */
   readonly closeLabel: string
   onClose: () => void
   readonly children: ReactNode
@@ -147,11 +126,9 @@ export interface ZoomLabels {
   readonly group: string
   readonly zoomOut: string
   readonly zoomIn: string
-  /** The reset button's tooltip; its face is the zoom as a percentage. */
   readonly reset: string
 }
 
-/** Zoom out, the zoom (resets), zoom in. */
 export function SpatialCanvasZoomControls({
   zoom,
   labels,

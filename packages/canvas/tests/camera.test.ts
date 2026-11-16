@@ -55,7 +55,7 @@ describe("camera maths", () => {
 
   it("fits a rectangle in the middle, clear of the padding", () => {
     const camera = fitRect({ x: 100, y: 100, width: 400, height: 200 }, view, 100)
-    close(camera.zoom, 2) // (1000 - 200) / 400 wins over (800 - 200) / 200
+    close(camera.zoom, 2)
     const centre = centreOf(camera, view)
     close(centre.x, 300)
     close(centre.y, 200)
@@ -71,18 +71,14 @@ describe("camera maths", () => {
 
   it("never pans the content out of reach", () => {
     const content = { x: 0, y: 0, width: 4000, height: 3000 }
-    // Far past the right edge: the content's right side comes back to the margin.
     const right = clampPan({ x: -10_000, y: 0, zoom: 1 }, content, view, 80)
     close(right.x, view.width - 80 - 4000)
-    // Far past the left: its left side stops at the margin.
     const left = clampPan({ x: 5000, y: 0, zoom: 1 }, content, view, 80)
     close(left.x, 80)
-    // Small content stays inside the viewport, wherever it was dragged.
     const small = { x: 0, y: 0, width: 100, height: 100 }
     const lost = clampPan({ x: -900, y: 2000, zoom: 1 }, small, view, 20)
     close(lost.x, 20)
     close(lost.y, view.height - 20 - 100)
-    // Within reach it is left alone.
     expect(clampPan({ x: 300, y: 200, zoom: 1 }, small, view, 20)).toEqual({ x: 300, y: 200, zoom: 1 })
   })
 
@@ -91,7 +87,6 @@ describe("camera maths", () => {
     const camera = clampCamera({ x: 0, y: 0, zoom: 10 }, content, view, 0, { min: 0.2, max: 2 })
     expect(camera.zoom).toBe(2)
     const centre = centreOf(camera, view)
-    // The middle (50, 40) at 2x would show past the content's top left, so it pans back.
     close(centre.x, 250)
     close(centre.y, 200)
   })

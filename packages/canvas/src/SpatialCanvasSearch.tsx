@@ -1,12 +1,5 @@
-/**
- * Search results within canvas chrome, from monimal's
- * `spatial-canvas-search.tsx`. Changed here: the leading icon and a second
- * line are the caller's (monimal draws a repository folder), and the active
- * result is marked for arrow-key travel.
- */
 import { Children, type JSX, type ReactNode } from "react"
 
-/** A list of matches, or what to say when there are none. */
 export function SpatialCanvasSearchResults({
   children,
   emptyMessage,
@@ -23,7 +16,6 @@ export function SpatialCanvasSearchResults({
   )
 }
 
-/** One match: a title, a line under it, and what happens when it is chosen. */
 export function SpatialCanvasSearchResult({
   id,
   title,

@@ -1,13 +1,3 @@
-/**
- * The canvas's layers, from monimal's
- * `packages/maximal-design-system/src/components/spatial-canvas/spatial-canvas.tsx`:
- * the root, the viewport with its dot grid, the scene that carries the
- * camera's transform, positioned nodes and the selection marquee.
- *
- * Left out: monimal's project cards, sticky notes, connectors, comment pins
- * and collaborators' cursors (its project map's own things). A node here is
- * any positioned content (`SpatialCanvasNode`), and the app draws its own.
- */
 import { forwardRef, type ComponentPropsWithoutRef, type CSSProperties, type ReactNode, type JSX } from "react"
 
 import type { Camera, Point, Rect } from "./camera"
@@ -26,7 +16,6 @@ export interface SpatialCanvasProps extends Omit<ComponentPropsWithoutRef<"div">
   readonly children: ReactNode
 }
 
-/** The canvas's root: it clips, and isolates its stacking and layout from the page. */
 export function SpatialCanvas({ children, className, ...props }: SpatialCanvasProps): JSX.Element {
   return (
     <div {...props} className={join("spatial-canvas", className)}>
@@ -35,11 +24,6 @@ export function SpatialCanvas({ children, className, ...props }: SpatialCanvasPr
   )
 }
 
-/**
- * The dot grid's spacing and offset for a camera. It drifts with a pan and
- * breathes a little with the zoom (16 to 20 px), rather than scaling with
- * it, so it reads as a surface at every zoom.
- */
 export function gridStyle({ x, y, zoom }: Camera): CSSProperties {
   const spacing = 16 + 4 * Math.tanh(Math.log(Math.max(zoom, Number.EPSILON)) * 0.35)
   const offset = (translation: number): number => ((translation % spacing) + spacing) % spacing
@@ -50,16 +34,12 @@ export function gridStyle({ x, y, zoom }: Camera): CSSProperties {
 }
 
 export type SpatialCanvasViewportProps = ComponentPropsWithoutRef<"div"> & {
-  /** What a press on empty canvas does, for the cursor: "select" or "hand" (pans). */
   readonly tool?: string
   readonly camera?: Camera
-  /** The grid's own camera, when it should lag or lead the scene's. */
   readonly gridCamera?: Camera
-  /** No dot grid. */
   readonly plain?: boolean
 }
 
-/** Takes the pointer, wheel and keys; keeps the dot grid anchored to the camera. */
 export const SpatialCanvasViewport = forwardRef<HTMLDivElement, SpatialCanvasViewportProps>(function SpatialCanvasViewport(
   { tool = "select", camera = { x: 0, y: 0, zoom: 1 }, gridCamera, plain = false, className, children, ...props },
   ref,
@@ -72,7 +52,6 @@ export const SpatialCanvasViewport = forwardRef<HTMLDivElement, SpatialCanvasVie
   )
 })
 
-/** Applies the camera's translation and zoom to world-space children. */
 export function SpatialCanvasScene({ x, y, zoom, children }: Camera & { readonly children: ReactNode }): JSX.Element {
   return (
     <div className="spatial-canvas__scene" style={{ transform: `translate3d(${String(x)}px, ${String(y)}px, 0) scale(${String(zoom)})` }}>
@@ -87,7 +66,6 @@ export type SpatialCanvasNodeProps = Rect &
     readonly children: ReactNode
   }
 
-/** Positions content at world-space bounds. */
 export function SpatialCanvasNode({ x, y, width, height, selected = false, className, children, ...props }: SpatialCanvasNodeProps): JSX.Element {
   return (
     <div {...props} className={join("spatial-canvas__node", className)} data-selected={selected} style={sizedStyle({ x, y, width, height })}>
@@ -96,7 +74,6 @@ export function SpatialCanvasNode({ x, y, width, height, selected = false, class
   )
 }
 
-/** A world-space label, positioned at its top left. */
 export function SpatialCanvasLabel({
   x,
   y,
@@ -111,7 +88,6 @@ export function SpatialCanvasLabel({
   )
 }
 
-/** A world-space rectangular selection marquee. */
 export function SpatialCanvasMarquee(bounds: Rect): JSX.Element {
   return <div className="spatial-canvas__marquee" style={sizedStyle(bounds)} />
 }

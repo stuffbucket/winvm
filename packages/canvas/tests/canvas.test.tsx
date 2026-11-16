@@ -1,8 +1,3 @@
-/**
- * monimal's spatial-canvas.test.tsx, moved to bun:test and happy-dom and cut
- * to what this package keeps: the layers' geometry and class names, the
- * chrome's semantics, search, the surface, and the camera hook's flights.
- */
 import type { JSX } from "react"
 import { GlobalRegistrator } from "@happy-dom/global-registrator"
 import { afterAll, afterEach, describe, expect, it, mock } from "bun:test"
