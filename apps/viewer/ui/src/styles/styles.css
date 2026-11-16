@@ -272,8 +272,16 @@ html[data-os="macos"] .toolbar {
   flex: 1 1 auto;
   min-width: 0;
   background:
-    radial-gradient(120% 90% at 12% 8%, var(--backdrop-glow-accent) 0%, transparent 62%),
-    radial-gradient(90% 80% at 92% 96%, var(--backdrop-glow-brand) 0%, transparent 58%),
+    radial-gradient(
+      120% 90% at 12% 8%,
+      var(--backdrop-glow-accent) 0%,
+      transparent 62%
+    ),
+    radial-gradient(
+      90% 80% at 92% 96%,
+      var(--backdrop-glow-brand) 0%,
+      transparent 58%
+    ),
     var(--backdrop-base);
 }
 
@@ -1549,7 +1557,13 @@ html[data-os="macos"] .toolbar {
   inset-block: 0;
   inset-inline-start: 0;
   width: 30%;
-  background: linear-gradient(90deg, transparent 0%, var(--accent) 25%, var(--accent) 75%, transparent 100%);
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    var(--accent) 25%,
+    var(--accent) 75%,
+    transparent 100%
+  );
   opacity: 0.85;
   transform: translateX(-120%);
 }

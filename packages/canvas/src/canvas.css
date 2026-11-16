@@ -60,7 +60,11 @@
   position: absolute;
   inset: 0;
   color: color-mix(in srgb, var(--text-muted) 38%, transparent);
-  background-image: radial-gradient(circle, currentColor 0.75px, transparent 1.25px);
+  background-image: radial-gradient(
+    circle,
+    currentColor 0.75px,
+    transparent 1.25px
+  );
   background-size: var(--space-4) var(--space-4);
   pointer-events: none;
 }
@@ -214,7 +218,10 @@
   bottom: var(--space-3);
   display: grid;
   grid-template-rows: auto minmax(0, 1fr) auto;
-  width: min(calc(var(--panel-width) + var(--space-7)), calc(100% - var(--space-5)));
+  width: min(
+    calc(var(--panel-width) + var(--space-7)),
+    calc(100% - var(--space-5))
+  );
   overflow: hidden;
   border: var(--border-width-hairline) solid var(--border-subtle);
   border-radius: var(--radius-card);

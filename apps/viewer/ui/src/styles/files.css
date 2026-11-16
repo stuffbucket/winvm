@@ -9,7 +9,12 @@
 }
 
 :root {
-  --fw-bar: calc(var(--size-xl) + var(--space-2) * 2 + var(--border-width-hairline));
+  --fw-bar: calc(
+    var(--size-xl) +
+    var(--space-2) *
+    2 +
+    var(--border-width-hairline)
+  );
   --files-row: var(--size-lg);
 }
 

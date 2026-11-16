@@ -2,13 +2,19 @@
   overflow-wrap: anywhere;
 }
 
-.sl-markdown-content table:has(th:nth-child(6)):not(:where(.not-content *)) :is(th, td) {
+.sl-markdown-content
+  table:has(th:nth-child(6)):not(:where(.not-content *))
+  :is(th, td) {
   padding-inline: 0.625rem;
 }
-.sl-markdown-content table:has(th:nth-child(6)):not(:where(.not-content *)) :is(th, td):first-child {
+.sl-markdown-content
+  table:has(th:nth-child(6)):not(:where(.not-content *))
+  :is(th, td):first-child {
   padding-inline-start: 0;
 }
-.sl-markdown-content table:has(th:nth-child(6)):not(:where(.not-content *)) :is(th, td):last-child {
+.sl-markdown-content
+  table:has(th:nth-child(6)):not(:where(.not-content *))
+  :is(th, td):last-child {
   padding-inline-end: 0;
 }
 
@@ -20,10 +26,14 @@
     display: block;
     overflow: visible;
   }
-  .sl-markdown-content table:has(td[data-label]):not(:where(.not-content *)) :is(tbody, tr) {
+  .sl-markdown-content
+    table:has(td[data-label]):not(:where(.not-content *))
+    :is(tbody, tr) {
     display: block;
   }
-  .sl-markdown-content table:has(td[data-label]):not(:where(.not-content *)) thead {
+  .sl-markdown-content
+    table:has(td[data-label]):not(:where(.not-content *))
+    thead {
     position: absolute;
     width: 1px;
     height: 1px;
@@ -31,29 +41,41 @@
     clip-path: inset(50%);
     white-space: nowrap;
   }
-  .sl-markdown-content table:has(td[data-label]):not(:where(.not-content *)) :is(tr, td) {
+  .sl-markdown-content
+    table:has(td[data-label]):not(:where(.not-content *))
+    :is(tr, td) {
     margin-top: 0;
   }
-  .sl-markdown-content table:has(td[data-label]):not(:where(.not-content *)) tr {
+  .sl-markdown-content
+    table:has(td[data-label]):not(:where(.not-content *))
+    tr {
     padding-block: 0.625rem;
     border-bottom: 1px solid var(--sl-color-gray-5);
   }
-  .sl-markdown-content table:has(td[data-label]):not(:where(.not-content *)) tr:first-child {
+  .sl-markdown-content
+    table:has(td[data-label]):not(:where(.not-content *))
+    tr:first-child {
     border-top: 1px solid var(--sl-color-gray-5);
   }
-  .sl-markdown-content table:has(td[data-label]):not(:where(.not-content *)) td {
+  .sl-markdown-content
+    table:has(td[data-label]):not(:where(.not-content *))
+    td {
     display: block;
     padding: 0.125rem 0;
     border: 0;
     text-align: start !important;
     overflow-wrap: anywhere;
   }
-  .sl-markdown-content table:has(td[data-label]):not(:where(.not-content *)) td::before {
+  .sl-markdown-content
+    table:has(td[data-label]):not(:where(.not-content *))
+    td::before {
     content: attr(data-label) ": ";
     color: var(--sl-color-white);
     font-weight: 600;
   }
-  .sl-markdown-content table:has(td[data-label]):not(:where(.not-content *)) td:not([data-label])::before {
+  .sl-markdown-content
+    table:has(td[data-label]):not(:where(.not-content *))
+    td:not([data-label])::before {
     content: none;
   }
 }

@@ -1,5 +1,5 @@
 :root,
-:root[data-theme='light'] {
+:root[data-theme="light"] {
   --sl-color-white: var(--text-strong);
   --sl-color-gray-1: var(--text-strong);
   --sl-color-gray-2: var(--text-base-color);

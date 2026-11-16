@@ -57,8 +57,28 @@
   transition: opacity 320ms var(--checkpoints-ease);
 }
 
-.checkpoints[data-phase="entering"] :is(.spatial-canvas__grid, .spatial-canvas__topbar, .timeline, .checkpoints__zoom, .checkpoints__status, .checkpoints__day, .checkpoint:not(.checkpoint--now)),
-.checkpoints[data-phase="leaving"] :is(.spatial-canvas__grid, .spatial-canvas__topbar, .timeline, .checkpoints__zoom, .checkpoints__status, .spatial-canvas__side-panel, .spatial-canvas__floating-panel, .checkpoints__day, .checkpoint:not(.checkpoint--now)) {
+.checkpoints[data-phase="entering"]
+  :is(
+    .spatial-canvas__grid,
+    .spatial-canvas__topbar,
+    .timeline,
+    .checkpoints__zoom,
+    .checkpoints__status,
+    .checkpoints__day,
+    .checkpoint:not(.checkpoint--now)
+  ),
+.checkpoints[data-phase="leaving"]
+  :is(
+    .spatial-canvas__grid,
+    .spatial-canvas__topbar,
+    .timeline,
+    .checkpoints__zoom,
+    .checkpoints__status,
+    .spatial-canvas__side-panel,
+    .spatial-canvas__floating-panel,
+    .checkpoints__day,
+    .checkpoint:not(.checkpoint--now)
+  ) {
   opacity: 0;
 }
 
@@ -153,7 +173,10 @@
 .checkpoints__new {
   top: calc(var(--size-2xl) + var(--space-5));
   right: var(--space-3);
-  width: min(calc(var(--panel-width) + var(--space-6)), calc(100% - var(--space-5)));
+  width: min(
+    calc(var(--panel-width) + var(--space-6)),
+    calc(100% - var(--space-5))
+  );
 }
 
 .checkpoints__new form {
@@ -197,7 +220,10 @@
   display: flex;
   align-items: center;
   gap: var(--space-2);
-  max-width: min(calc(var(--content-max) + var(--space-8)), calc(100% - var(--space-8) * 2));
+  max-width: min(
+    calc(var(--content-max) + var(--space-8)),
+    calc(100% - var(--space-8) * 2)
+  );
   padding: var(--space-2) var(--space-2) var(--space-2) var(--space-4);
   transform: translateX(-50%);
   border: var(--border-width-hairline) solid var(--border-subtle);
@@ -323,7 +349,8 @@
 .checkpoint__working {
   position: absolute;
   z-index: 1;
-  padding: calc(var(--space-2) * var(--card-scale, 1)) calc(var(--space-4) * var(--card-scale, 1));
+  padding: calc(var(--space-2) * var(--card-scale, 1))
+    calc(var(--space-4) * var(--card-scale, 1));
   border-radius: var(--radius-pill);
   background: var(--surface-card);
   box-shadow: var(--elevation-modal);
@@ -336,7 +363,8 @@
   align-content: start;
   gap: calc(var(--space-1) * var(--card-scale, 1) / 2);
   min-height: 0;
-  padding: calc(var(--space-3) * var(--card-scale, 1)) calc(var(--space-4) * var(--card-scale, 1));
+  padding: calc(var(--space-3) * var(--card-scale, 1))
+    calc(var(--space-4) * var(--card-scale, 1));
   font-size: calc(var(--text-sm) * var(--card-scale, 1));
   line-height: var(--leading-lg);
   transition: opacity 200ms ease-out;
@@ -393,7 +421,8 @@
   right: 0;
   bottom: 0;
   left: 0;
-  padding: calc(var(--space-2) * var(--card-scale, 1)) calc(var(--space-3) * var(--card-scale, 1));
+  padding: calc(var(--space-2) * var(--card-scale, 1))
+    calc(var(--space-3) * var(--card-scale, 1));
   background: color-mix(in srgb, var(--surface-card) 90%, transparent);
   color: var(--status-warning);
   font-size: calc(var(--text-sm) * var(--card-scale, 1));
@@ -429,7 +458,8 @@
 
 @keyframes checkpoint-arrive {
   from {
-    transform: translate(var(--arrive-x), var(--arrive-y)) scale(var(--arrive-scale));
+    transform: translate(var(--arrive-x), var(--arrive-y))
+      scale(var(--arrive-scale));
     box-shadow: none;
   }
 }
@@ -438,7 +468,9 @@
   box-shadow: none;
 }
 
-.spatial-canvas__viewport[data-far="true"] .checkpoint:not(.checkpoint--now) .checkpoint__caption {
+.spatial-canvas__viewport[data-far="true"]
+  .checkpoint:not(.checkpoint--now)
+  .checkpoint__caption {
   opacity: 0;
 }
 
@@ -595,7 +627,10 @@
 
 .checkpoints .checkpoint-details {
   right: calc(var(--checkpoints-timeline) + var(--space-4));
-  width: min(calc(var(--panel-width) + var(--space-7)), calc(100% - var(--checkpoints-timeline) - var(--space-7)));
+  width: min(
+    calc(var(--panel-width) + var(--space-7)),
+    calc(100% - var(--checkpoints-timeline) - var(--space-7))
+  );
 }
 
 .checkpoint-details .spatial-canvas__side-panel-body {

@@ -5,7 +5,7 @@
   --header-icon-size: 1.125rem;
   --sl-menu-button-size: var(--header-control-height);
 }
-:root[data-theme='light'] {
+:root[data-theme="light"] {
   --header-control-hover: var(--sl-color-gray-6);
 }
 
