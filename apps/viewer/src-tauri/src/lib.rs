@@ -345,7 +345,7 @@ fn install_cli() -> Result<String, String> {
     let link = bin.join("winvm");
     match std::fs::symlink_metadata(&link) {
         Ok(m) if m.file_type().is_symlink() => {
-            std::fs::remove_file(&link).map_err(|e| e.to_string())?
+            std::fs::remove_file(&link).map_err(|e| e.to_string())?;
         }
         Ok(_) => {
             return Err(format!(
@@ -421,6 +421,50 @@ fn check_for_update(app: tauri::AppHandle, asked: bool) {
     });
 }
 
+fn input_menu(app: &tauri::AppHandle) -> tauri::Result<Submenu<tauri::Wry>> {
+    let capture = MenuItem::with_id(
+        app,
+        "capture-keyboard",
+        "Capture Keyboard",
+        true,
+        None::<&str>,
+    )?;
+    let windows_key = MenuItem::with_id(
+        app,
+        "send-windows-key",
+        "Send Windows Key",
+        true,
+        None::<&str>,
+    )?;
+    let ctrl_alt_delete = MenuItem::with_id(
+        app,
+        "send-ctrl-alt-delete",
+        "Send Ctrl-Alt-Delete",
+        true,
+        None::<&str>,
+    )?;
+    let release = MenuItem::with_id(
+        app,
+        "release-keyboard",
+        "Release Keyboard",
+        true,
+        None::<&str>,
+    )?;
+    Submenu::with_items(
+        app,
+        "Input",
+        true,
+        &[
+            &capture,
+            &PredefinedMenuItem::separator(app)?,
+            &windows_key,
+            &ctrl_alt_delete,
+            &PredefinedMenuItem::separator(app)?,
+            &release,
+        ],
+    )
+}
+
 fn menu(app: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
     let menu = Menu::default(app)?;
     let new_tab = MenuItem::with_id(
@@ -486,47 +530,7 @@ fn menu(app: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
         true,
         Some("CmdOrCtrl+Shift+/"),
     )?;
-    let capture = MenuItem::with_id(
-        app,
-        "capture-keyboard",
-        "Capture Keyboard",
-        true,
-        None::<&str>,
-    )?;
-    let windows_key = MenuItem::with_id(
-        app,
-        "send-windows-key",
-        "Send Windows Key",
-        true,
-        None::<&str>,
-    )?;
-    let ctrl_alt_delete = MenuItem::with_id(
-        app,
-        "send-ctrl-alt-delete",
-        "Send Ctrl-Alt-Delete",
-        true,
-        None::<&str>,
-    )?;
-    let release = MenuItem::with_id(
-        app,
-        "release-keyboard",
-        "Release Keyboard",
-        true,
-        None::<&str>,
-    )?;
-    let input = Submenu::with_items(
-        app,
-        "Input",
-        true,
-        &[
-            &capture,
-            &PredefinedMenuItem::separator(app)?,
-            &windows_key,
-            &ctrl_alt_delete,
-            &PredefinedMenuItem::separator(app)?,
-            &release,
-        ],
-    )?;
+    let input = input_menu(app)?;
     let input_index = menu.items()?.len().saturating_sub(2);
     menu.insert(&input, input_index)?;
     if let Some(app_menu) = menu.items()?.first().and_then(|i| i.as_submenu().cloned()) {
