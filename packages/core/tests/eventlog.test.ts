@@ -503,8 +503,9 @@ describe("waiting for an entry with no service running", () => {
       data: { guest: false, reason: "host-signal" },
     })
     const got = await waiting
-    expect(got?.event).toBe("SHUTDOWN")
-    expect(got?.data).toEqual({ guest: false, reason: "host-signal" })
+    expect(got?.entry.event).toBe("SHUTDOWN")
+    expect(got?.entry.data).toEqual({ guest: false, reason: "host-signal" })
+    expect(got?.gap).toBe(false)
   })
 
   it("matches an entry already recorded after its cursor at once", async () => {
@@ -521,7 +522,7 @@ describe("waiting for an entry with no service running", () => {
         pollMs: 10_000,
       },
     )
-    expect(got?.kind).toBe("disconnected")
+    expect(got?.entry.kind).toBe("disconnected")
     expect(Date.now() - t0).toBeLessThan(500)
   })
 
@@ -535,6 +536,83 @@ describe("waiting for an entry with no service running", () => {
     ).toBeNull()
     expect(Date.now() - t0).toBeGreaterThanOrEqual(190)
     expect(Date.now() - t0).toBeLessThan(1000)
+  })
+
+  it("hands back the cursor just after its match, so the next wait sees what followed in the same read", async () => {
+    const since = endCursor(NAME)
+    appendEntry(NAME, shutdown)
+    appendEntry(NAME, { kind: "disconnected" })
+    const first = await waitForEvent(
+      NAME,
+      qmpEvent("SHUTDOWN"),
+      Date.now() + 2000,
+      { since },
+    )
+    expect(first?.entry.event).toBe("SHUTDOWN")
+    const second = await waitForEvent(
+      NAME,
+      (e) => e.kind === "disconnected" || e.kind === "qmp",
+      Date.now() + 2000,
+      { since: first?.cursor ?? START, pollMs: 10_000 },
+    )
+    expect(second?.entry.kind).toBe("disconnected")
+    expect(
+      await waitForEvent(NAME, () => true, Date.now() + 100, {
+        since: second?.cursor ?? START,
+        pollMs: 20,
+      }),
+    ).toBeNull()
+  })
+
+  it("hands back a cursor that resumes correctly from a match found in the archive", async () => {
+    appendEntry(NAME, note("one"))
+    const since = endCursor(NAME)
+    appendEntry(NAME, shutdown)
+    rotateEvents(NAME, 1)
+    appendEntry(NAME, { kind: "disconnected" })
+    const first = await waitForEvent(
+      NAME,
+      qmpEvent("SHUTDOWN"),
+      Date.now() + 2000,
+      { since },
+    )
+    const second = await waitForEvent(NAME, () => true, Date.now() + 2000, {
+      since: first?.cursor ?? START,
+    })
+    expect(second?.entry.kind).toBe("disconnected")
+    expect(
+      await waitForEvent(NAME, () => true, Date.now() + 100, {
+        since: second?.cursor ?? START,
+        pollMs: 20,
+      }),
+    ).toBeNull()
+  })
+
+  it("says when entries were rotated away during the wait", async () => {
+    appendEntry(NAME, note("one"))
+    const since = endCursor(NAME)
+    appendEntry(NAME, note("lost"))
+    rotateEvents(NAME, 1)
+    appendEntry(NAME, note("lost too"))
+    rotateEvents(NAME, 1)
+    appendEntry(NAME, shutdown)
+    const got = await waitForEvent(
+      NAME,
+      qmpEvent("SHUTDOWN"),
+      Date.now() + 2000,
+      { since },
+    )
+    expect(got?.entry.event).toBe("SHUTDOWN")
+    expect(got?.gap).toBe(true)
+  })
+
+  it("refuses a deadline that is not a time instead of spinning", async () => {
+    const t0 = Date.now()
+    for (const deadline of [Number.NaN, Number.POSITIVE_INFINITY])
+      await expect(
+        waitForEvent(NAME, qmpEvent("SHUTDOWN"), deadline, { pollMs: 10 }),
+      ).rejects.toThrow(RangeError)
+    expect(Date.now() - t0).toBeLessThan(500)
   })
 
   it("stops when its signal aborts", async () => {

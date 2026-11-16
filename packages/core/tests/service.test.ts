@@ -605,7 +605,7 @@ describe("waiting for an entry while the service runs", () => {
     })
     const got = await waiting
     expect(Date.now() - t0).toBeLessThan(1000)
-    expect(got).toMatchObject({
+    expect(got?.entry).toMatchObject({
       kind: "qmp",
       event: "SHUTDOWN",
       data: { guest: true, reason: "guest-shutdown" },
@@ -636,7 +636,7 @@ describe("waiting for an entry while the service runs", () => {
       data: { guest: false, reason: "host-signal" },
       timestamp: { seconds: 8, microseconds: 0 },
     })
-    expect(await waiting).toMatchObject({
+    expect((await waiting)?.entry).toMatchObject({
       event: "SHUTDOWN",
       data: { guest: false, reason: "host-signal" },
     })
