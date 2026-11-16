@@ -35,8 +35,15 @@ impl Default for Agents {
         if rustls::crypto::CryptoProvider::get_default().is_none() {
             let _ = rustls::crypto::ring::default_provider().install_default();
         }
-        let http = reqwest::Client::builder().no_proxy().build().map_err(|e| e.to_string());
-        Agents { http, cache: Mutex::default(), connecting: AsyncMutex::new(()) }
+        let http = reqwest::Client::builder()
+            .no_proxy()
+            .build()
+            .map_err(|e| e.to_string());
+        Agents {
+            http,
+            cache: Mutex::default(),
+            connecting: AsyncMutex::new(()),
+        }
     }
 }
 
@@ -47,19 +54,29 @@ pub struct Reply {
 }
 
 fn valid_instance(name: &str) -> bool {
-    !name.is_empty() && name.len() <= 64 && name.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_' || b == b'.') && !name.starts_with(['.', '-'])
+    !name.is_empty()
+        && name.len() <= 64
+        && name
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_' || b == b'.')
+        && !name.starts_with(['.', '-'])
 }
 
 fn valid_path(path: &str) -> bool {
-    path.starts_with('/') && !path.starts_with("//") && !path.contains("://") && !path.contains(char::is_whitespace)
+    path.starts_with('/')
+        && !path.starts_with("//")
+        && !path.contains("://")
+        && !path.contains(char::is_whitespace)
 }
 
 fn valid_url(url: &str) -> bool {
-    url.strip_prefix("http://127.0.0.1:").is_some_and(|port| !port.is_empty() && port.bytes().all(|b| b.is_ascii_digit()))
+    url.strip_prefix("http://127.0.0.1:")
+        .is_some_and(|port| !port.is_empty() && port.bytes().all(|b| b.is_ascii_digit()))
 }
 
 fn parse_link(stdout: &str) -> Result<Link, String> {
-    let link: Link = serde_json::from_str(stdout.trim()).map_err(|e| format!("winvm agent connect said: {e}"))?;
+    let link: Link = serde_json::from_str(stdout.trim())
+        .map_err(|e| format!("winvm agent connect said: {e}"))?;
     if !valid_url(&link.url) || link.token.is_empty() {
         return Err(format!("not an agent address: {}", link.url));
     }
@@ -73,7 +90,9 @@ enum Failure {
 
 impl Agents {
     fn client(&self) -> Result<&reqwest::Client, String> {
-        self.http.as_ref().map_err(|e| format!("no HTTP client: {e}"))
+        self.http
+            .as_ref()
+            .map_err(|e| format!("no HTTP client: {e}"))
     }
 
     fn forget(&self, instance: &str) {
@@ -111,28 +130,58 @@ impl Agents {
             }
             Err(ConnectFailure::Paused(why)) => Err(why),
             Err(ConnectFailure::Other(why)) => {
-                c.failed.insert(instance.to_owned(), (Instant::now(), why.clone()));
+                c.failed
+                    .insert(instance.to_owned(), (Instant::now(), why.clone()));
                 Err(why)
             }
         }
     }
 
-    async fn send(&self, link: &Link, method: &reqwest::Method, path: &str, body: Option<&Value>, timeout: Duration) -> Result<Reply, Failure> {
-        let mut req = self.client().map_err(Failure::Other)?.request(method.clone(), format!("{}{}", link.url, path)).bearer_auth(&link.token).timeout(timeout);
+    async fn send(
+        &self,
+        link: &Link,
+        method: &reqwest::Method,
+        path: &str,
+        body: Option<&Value>,
+        timeout: Duration,
+    ) -> Result<Reply, Failure> {
+        let mut req = self
+            .client()
+            .map_err(Failure::Other)?
+            .request(method.clone(), format!("{}{}", link.url, path))
+            .bearer_auth(&link.token)
+            .timeout(timeout);
         if let Some(b) = body {
             req = req.json(b);
         }
-        let res = req.send().await.map_err(|e| if e.is_timeout() { Failure::Other(e.to_string()) } else { Failure::Unreachable(e.to_string()) })?;
+        let res = req.send().await.map_err(|e| {
+            if e.is_timeout() {
+                Failure::Other(e.to_string())
+            } else {
+                Failure::Unreachable(e.to_string())
+            }
+        })?;
         let status = res.status().as_u16();
         if status == 401 {
             return Err(Failure::Unreachable("the agent refused the token".into()));
         }
-        let text = res.text().await.map_err(|e| Failure::Other(e.to_string()))?;
+        let text = res
+            .text()
+            .await
+            .map_err(|e| Failure::Other(e.to_string()))?;
         let body = serde_json::from_str(&text).unwrap_or(Value::String(text));
         Ok(Reply { status, body })
     }
 
-    pub async fn fetch(&self, app: &tauri::AppHandle, instance: &str, method: &str, path: &str, body: Option<&Value>, timeout: Duration) -> Result<Reply, String> {
+    pub async fn fetch(
+        &self,
+        app: &tauri::AppHandle,
+        instance: &str,
+        method: &str,
+        path: &str,
+        body: Option<&Value>,
+        timeout: Duration,
+    ) -> Result<Reply, String> {
         if !valid_instance(instance) {
             return Err(format!("not a machine name: {instance}"));
         }
@@ -153,12 +202,14 @@ impl Agents {
             Err(Failure::Unreachable(_)) => {
                 self.forget(instance);
                 let link = self.link(app, instance).await?;
-                self.send(&link, &method, path, body, timeout).await.map_err(|f| {
-                    self.forget(instance);
-                    match f {
-                        Failure::Unreachable(why) | Failure::Other(why) => why,
-                    }
-                })
+                self.send(&link, &method, path, body, timeout)
+                    .await
+                    .map_err(|f| {
+                        self.forget(instance);
+                        match f {
+                            Failure::Unreachable(why) | Failure::Other(why) => why,
+                        }
+                    })
             }
         }
     }
@@ -171,23 +222,42 @@ enum ConnectFailure {
 }
 
 fn connect_failure(code: Option<i32>, stderr: &str) -> ConnectFailure {
-    let said = stderr.trim().trim_start_matches("::error::").trim().to_owned();
+    let said = stderr
+        .trim()
+        .trim_start_matches("::error::")
+        .trim()
+        .to_owned();
     if code == Some(EXIT_PAUSED) {
-        return ConnectFailure::Paused(format!("{PAUSED_PREFIX} {}", if said.is_empty() { "the machine is paused" } else { &said }));
+        return ConnectFailure::Paused(format!(
+            "{PAUSED_PREFIX} {}",
+            if said.is_empty() {
+                "the machine is paused"
+            } else {
+                &said
+            }
+        ));
     }
-    ConnectFailure::Other(if said.is_empty() { format!("winvm agent connect exited {code:?}") } else { said })
+    ConnectFailure::Other(if said.is_empty() {
+        format!("winvm agent connect exited {code:?}")
+    } else {
+        said
+    })
 }
 
 fn connect_failed(f: SidecarFailure) -> ConnectFailure {
     match f.kind {
         FailureKind::Exit => connect_failure(f.code, &f.stderr),
-        FailureKind::Missing | FailureKind::Launch | FailureKind::Timeout => ConnectFailure::Other(f.message),
+        FailureKind::Missing | FailureKind::Launch | FailureKind::Timeout => {
+            ConnectFailure::Other(f.message)
+        }
     }
 }
 
 async fn connect(app: &tauri::AppHandle, instance: &str) -> Result<Link, ConnectFailure> {
     let args = ["agent", "-i", instance, "connect", "--json"].map(String::from);
-    let out = sidecar::run_sidecar(app, &args, Some(sidecar::AGENT_CONNECT_TIMEOUT)).await.map_err(|f| connect_failed(*f))?;
+    let out = sidecar::run_sidecar(app, &args, Some(sidecar::AGENT_CONNECT_TIMEOUT))
+        .await
+        .map_err(|f| connect_failed(*f))?;
     parse_link(&out.stdout).map_err(ConnectFailure::Other)
 }
 
@@ -202,7 +272,9 @@ pub async fn agent_fetch(
     timeout_ms: Option<u64>,
 ) -> Result<Reply, String> {
     let timeout = timeout_ms.map_or(DEFAULT_TIMEOUT, Duration::from_millis);
-    agents.fetch(&app, &instance, &method, &path, body.as_ref(), timeout).await
+    agents
+        .fetch(&app, &instance, &method, &path, body.as_ref(), timeout)
+        .await
 }
 
 #[cfg(test)]
@@ -211,8 +283,13 @@ mod tests {
 
     #[test]
     fn takes_only_the_loopback_forward_from_connect() {
-        let link = parse_link("{\"url\":\"http://127.0.0.1:59949\",\"token\":\"abc\",\"version\":7}\n").unwrap();
-        assert_eq!((link.url.as_str(), link.token.as_str()), ("http://127.0.0.1:59949", "abc"));
+        let link =
+            parse_link("{\"url\":\"http://127.0.0.1:59949\",\"token\":\"abc\",\"version\":7}\n")
+                .unwrap();
+        assert_eq!(
+            (link.url.as_str(), link.token.as_str()),
+            ("http://127.0.0.1:59949", "abc")
+        );
         assert!(parse_link("{\"url\":\"http://example.com:80\",\"token\":\"abc\"}").is_err());
         assert!(parse_link("{\"url\":\"http://127.0.0.1:80/x\",\"token\":\"abc\"}").is_err());
         assert!(parse_link("{\"url\":\"http://127.0.0.1:80\",\"token\":\"\"}").is_err());
@@ -222,32 +299,83 @@ mod tests {
     #[test]
     fn tells_a_paused_machine_from_other_failures() {
         assert_eq!(
-            connect_failure(Some(3), "::error::instance \"demo\" is paused — resume it first\n"),
+            connect_failure(
+                Some(3),
+                "::error::instance \"demo\" is paused — resume it first\n"
+            ),
             ConnectFailure::Paused("paused: instance \"demo\" is paused — resume it first".into())
         );
-        assert_eq!(connect_failure(Some(3), ""), ConnectFailure::Paused("paused: the machine is paused".into()));
-        assert_eq!(connect_failure(Some(1), "::error::instance \"demo\" is not running\n"), ConnectFailure::Other("instance \"demo\" is not running".into()));
-        assert_eq!(connect_failure(None, ""), ConnectFailure::Other("winvm agent connect exited None".into()));
+        assert_eq!(
+            connect_failure(Some(3), ""),
+            ConnectFailure::Paused("paused: the machine is paused".into())
+        );
+        assert_eq!(
+            connect_failure(Some(1), "::error::instance \"demo\" is not running\n"),
+            ConnectFailure::Other("instance \"demo\" is not running".into())
+        );
+        assert_eq!(
+            connect_failure(None, ""),
+            ConnectFailure::Other("winvm agent connect exited None".into())
+        );
     }
 
     #[test]
     fn a_bounded_connect_keeps_paused_apart_from_timeouts_and_missing_helpers() {
-        let paused = SidecarFailure::exit("agent connect", Some(3), None, String::new(), "::error::instance \"demo\" is paused\n".into());
-        assert_eq!(connect_failed(paused), ConnectFailure::Paused("paused: instance \"demo\" is paused".into()));
-        let broken = SidecarFailure::exit("agent connect", Some(1), None, String::new(), "::error::not running\n".into());
-        assert_eq!(connect_failed(broken), ConnectFailure::Other("not running".into()));
-        let late = SidecarFailure::timeout("agent connect", sidecar::AGENT_CONNECT_TIMEOUT, String::new(), String::new());
+        let paused = SidecarFailure::exit(
+            "agent connect",
+            Some(3),
+            None,
+            String::new(),
+            "::error::instance \"demo\" is paused\n".into(),
+        );
+        assert_eq!(
+            connect_failed(paused),
+            ConnectFailure::Paused("paused: instance \"demo\" is paused".into())
+        );
+        let broken = SidecarFailure::exit(
+            "agent connect",
+            Some(1),
+            None,
+            String::new(),
+            "::error::not running\n".into(),
+        );
+        assert_eq!(
+            connect_failed(broken),
+            ConnectFailure::Other("not running".into())
+        );
+        let late = SidecarFailure::timeout(
+            "agent connect",
+            sidecar::AGENT_CONNECT_TIMEOUT,
+            String::new(),
+            String::new(),
+        );
         let message = late.message.clone();
         assert_eq!(connect_failed(late), ConnectFailure::Other(message));
-        let missing = SidecarFailure::missing("agent connect", "No such file or directory (os error 2)".into());
-        assert!(matches!(connect_failed(missing), ConnectFailure::Other(m) if m.contains("Reinstall")));
+        let missing = SidecarFailure::missing(
+            "agent connect",
+            "No such file or directory (os error 2)".into(),
+        );
+        assert!(
+            matches!(connect_failed(missing), ConnectFailure::Other(m) if m.contains("Reinstall"))
+        );
     }
 
     #[test]
     fn checks_names_and_paths_before_anything_runs() {
         assert!(valid_instance("polish-test") && valid_instance("demo_2") && valid_instance("a.b"));
-        assert!(!valid_instance("") && !valid_instance("-i") && !valid_instance("a b") && !valid_instance("../x") && !valid_instance(".hidden"));
+        assert!(
+            !valid_instance("")
+                && !valid_instance("-i")
+                && !valid_instance("a b")
+                && !valid_instance("../x")
+                && !valid_instance(".hidden")
+        );
         assert!(valid_path("/display") && valid_path("/fs/list?path=C%3A%5C"));
-        assert!(!valid_path("display") && !valid_path("//evil/x") && !valid_path("/x://y") && !valid_path("/a b"));
+        assert!(
+            !valid_path("display")
+                && !valid_path("//evil/x")
+                && !valid_path("/x://y")
+                && !valid_path("/a b")
+        );
     }
 }

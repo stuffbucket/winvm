@@ -7,20 +7,23 @@ mod sidecar;
 mod usage;
 
 use serde::{Deserialize, Serialize};
+use sidecar::{Finished, Output, SidecarFailure};
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
-use tauri::menu::{Menu, MenuItem, PredefinedMenuItem, Submenu, HELP_SUBMENU_ID, WINDOW_SUBMENU_ID};
+use tauri::menu::{
+    Menu, MenuItem, PredefinedMenuItem, Submenu, HELP_SUBMENU_ID, WINDOW_SUBMENU_ID,
+};
 use tauri::{Emitter, Manager, RunEvent, WebviewUrl, WebviewWindowBuilder, WindowEvent};
 use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
-use sidecar::{Finished, Output, SidecarFailure};
 use tauri_plugin_shell::process::CommandChild;
 use tauri_plugin_updater::UpdaterExt;
 
 const VERBS: &[&str] = &[
-    "status", "info", "doctor", "start", "stop", "stow", "reboot", "pause", "resume", "kill", "open", "setup", "exec", "put", "get",
-    "dir", "mkdir", "mv", "cp", "rm", "save", "load", "saves", "help", "terminal", "config", "display", "create",
-    "destroy", "ls", "mcp", "sleep", "wake", "lock", "settings", "files", "share",
+    "status", "info", "doctor", "start", "stop", "stow", "reboot", "pause", "resume", "kill",
+    "open", "setup", "exec", "put", "get", "dir", "mkdir", "mv", "cp", "rm", "save", "load",
+    "saves", "help", "terminal", "config", "display", "create", "destroy", "ls", "mcp", "sleep",
+    "wake", "lock", "settings", "files", "share",
 ];
 
 #[cfg(test)]
@@ -71,7 +74,10 @@ fn stop_sharing(sharing: &Sharing) {
 }
 
 #[tauri::command]
-async fn share_start(app: tauri::AppHandle, instance: String) -> Result<Output, Box<SidecarFailure>> {
+async fn share_start(
+    app: tauri::AppHandle,
+    instance: String,
+) -> Result<Output, Box<SidecarFailure>> {
     let sharing = app.state::<Sharing>();
     stop_sharing(&sharing);
     let args = ["cua", "serve", "-i", instance.as_str()].map(String::from);
@@ -79,7 +85,10 @@ async fn share_start(app: tauri::AppHandle, instance: String) -> Result<Output, 
     match sidecar::start_sidecar(&app, &args, sidecar::SHARE_HANDSHAKE_TIMEOUT, &ready).await? {
         Finished::Exited(out) => Ok(out),
         Finished::Ready { output, child } => {
-            *sharing.0.lock().map_err(|e| SidecarFailure::rejected("cua serve", e.to_string()))? = Some(child);
+            *sharing
+                .0
+                .lock()
+                .map_err(|e| SidecarFailure::rejected("cua serve", e.to_string()))? = Some(child);
             Ok(output)
         }
     }
@@ -116,13 +125,16 @@ fn show_terminal(app: &tauri::AppHandle) -> Result<(), String> {
         let _ = window.unminimize();
         let _ = window.show();
         let _ = window.set_focus();
-        return app.emit_to(TERMINAL, "terminal-open", ()).map_err(|e| e.to_string());
+        return app
+            .emit_to(TERMINAL, "terminal-open", ())
+            .map_err(|e| e.to_string());
     }
-    let mut builder = WebviewWindowBuilder::new(app, TERMINAL, WebviewUrl::App("terminal.html".into()))
-        .title("Terminal")
-        .inner_size(820.0, 520.0)
-        .min_inner_size(420.0, 240.0)
-        .visible(false);
+    let mut builder =
+        WebviewWindowBuilder::new(app, TERMINAL, WebviewUrl::App("terminal.html".into()))
+            .title("Terminal")
+            .inner_size(820.0, 520.0)
+            .min_inner_size(420.0, 240.0)
+            .visible(false);
     #[cfg(target_os = "macos")]
     {
         builder = builder
@@ -153,7 +165,11 @@ async fn terminal_open(app: tauri::AppHandle, request: TerminalRequest) -> Resul
     if !SHELLS.contains(&request.shell.as_str()) {
         return Err(format!("not a shell this app opens: {}", request.shell));
     }
-    app.state::<TerminalRequests>().0.lock().map_err(|e| e.to_string())?.push(request);
+    app.state::<TerminalRequests>()
+        .0
+        .lock()
+        .map_err(|e| e.to_string())?
+        .push(request);
     show_terminal(&app)
 }
 
@@ -163,26 +179,51 @@ async fn terminal_open(app: tauri::AppHandle, request: TerminalRequest) -> Resul
     reason = "tauri injects the AppHandle by value; a command cannot take a reference to it"
 )]
 fn terminal_take(app: tauri::AppHandle) -> Vec<TerminalRequest> {
-    app.state::<TerminalRequests>().0.lock().map(|mut q| std::mem::take(&mut *q)).unwrap_or_default()
+    app.state::<TerminalRequests>()
+        .0
+        .lock()
+        .map(|mut q| std::mem::take(&mut *q))
+        .unwrap_or_default()
 }
 
 fn focused_window(app: &tauri::AppHandle) -> Option<tauri::WebviewWindow> {
-    app.webview_windows().into_values().find(|w| w.is_focused().unwrap_or(false))
+    app.webview_windows()
+        .into_values()
+        .find(|w| w.is_focused().unwrap_or(false))
 }
 
 fn files_label(instance: &str) -> String {
-    let safe: String = instance.chars().map(|c| if c.is_ascii_alphanumeric() || c == '-' || c == '_' { c } else { '_' }).collect();
+    let safe: String = instance
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect();
     format!("files-{safe}")
 }
 
 fn query_value(s: &str) -> String {
     s.bytes()
-        .map(|b| if b.is_ascii_alphanumeric() || b"-_.~".contains(&b) { (b as char).to_string() } else { format!("%{b:02X}") })
+        .map(|b| {
+            if b.is_ascii_alphanumeric() || b"-_.~".contains(&b) {
+                (b as char).to_string()
+            } else {
+                format!("%{b:02X}")
+            }
+        })
         .collect()
 }
 
 #[tauri::command]
-async fn files_open(app: tauri::AppHandle, instance: String, title: Option<String>) -> Result<(), String> {
+async fn files_open(
+    app: tauri::AppHandle,
+    instance: String,
+    title: Option<String>,
+) -> Result<(), String> {
     if instance.is_empty() || instance.len() > 64 {
         return Err("no instance named".into());
     }
@@ -194,7 +235,11 @@ async fn files_open(app: tauri::AppHandle, instance: String, title: Option<Strin
         return Ok(());
     }
     let shown = title.clone().unwrap_or_else(|| instance.clone());
-    let url = format!("files.html?instance={}&title={}", query_value(&instance), query_value(title.as_deref().unwrap_or("")));
+    let url = format!(
+        "files.html?instance={}&title={}",
+        query_value(&instance),
+        query_value(title.as_deref().unwrap_or(""))
+    );
     let mut builder = WebviewWindowBuilder::new(&app, &label, WebviewUrl::App(url.into()))
         .title(format!("Files in Windows â {shown}"))
         .inner_size(920.0, 560.0)
@@ -223,7 +268,12 @@ fn copy_text(text: &str) -> Result<(), String> {
         .stdin(std::process::Stdio::piped())
         .spawn()
         .map_err(|e| e.to_string())?;
-    child.stdin.take().ok_or("pbcopy has no stdin")?.write_all(text.as_bytes()).map_err(|e| e.to_string())?;
+    child
+        .stdin
+        .take()
+        .ok_or("pbcopy has no stdin")?
+        .write_all(text.as_bytes())
+        .map_err(|e| e.to_string())?;
     child.wait().map_err(|e| e.to_string())?;
     Ok(())
 }
@@ -274,21 +324,35 @@ fn unused_path(dir: &str, name: &str, folder: bool) -> String {
 
 #[tauri::command]
 fn reveal(path: &str) -> Result<(), String> {
-    std::process::Command::new("/usr/bin/open").arg("-R").arg(path).status().map_err(|e| e.to_string())?;
+    std::process::Command::new("/usr/bin/open")
+        .arg("-R")
+        .arg(path)
+        .status()
+        .map_err(|e| e.to_string())?;
     Ok(())
 }
 
 #[tauri::command]
 fn install_cli() -> Result<String, String> {
     let exe = std::env::current_exe().map_err(|e| e.to_string())?;
-    let cli = exe.parent().ok_or("the app has no Contents/MacOS directory")?.join("winvm");
+    let cli = exe
+        .parent()
+        .ok_or("the app has no Contents/MacOS directory")?
+        .join("winvm");
     let home = std::env::var("HOME").map_err(|e| e.to_string())?;
     let bin = Path::new(&home).join(".local").join("bin");
     std::fs::create_dir_all(&bin).map_err(|e| e.to_string())?;
     let link = bin.join("winvm");
     match std::fs::symlink_metadata(&link) {
-        Ok(m) if m.file_type().is_symlink() => std::fs::remove_file(&link).map_err(|e| e.to_string())?,
-        Ok(_) => return Err(format!("{} exists and is not a link, so it was left alone", link.display())),
+        Ok(m) if m.file_type().is_symlink() => {
+            std::fs::remove_file(&link).map_err(|e| e.to_string())?
+        }
+        Ok(_) => {
+            return Err(format!(
+                "{} exists and is not a link, so it was left alone",
+                link.display()
+            ))
+        }
         Err(_) => {}
     }
     std::os::unix::fs::symlink(&cli, &link).map_err(|e| e.to_string())?;
@@ -316,7 +380,9 @@ fn check_for_update(app: tauri::AppHandle, asked: bool) {
                     .buttons(MessageDialogButtons::OkCancelCustom("Install and Restart".into(), "Later".into()))
                     .blocking_show();
                 if install {
-                    let done = tauri::async_runtime::block_on(update.download_and_install(|_, _| {}, || {}));
+                    let done = tauri::async_runtime::block_on(
+                        update.download_and_install(|_, _| {}, || {}),
+                    );
                     match done {
                         Ok(()) => {
                             stop_sharing(&app.state::<Sharing>());
@@ -335,7 +401,10 @@ fn check_for_update(app: tauri::AppHandle, asked: bool) {
             }
             Ok(None) if asked => {
                 app.dialog()
-                    .message(format!("winvm {} is the latest version.", app.package_info().version))
+                    .message(format!(
+                        "winvm {} is the latest version.",
+                        app.package_info().version
+                    ))
                     .title("No update")
                     .blocking_show();
             }
@@ -354,8 +423,20 @@ fn check_for_update(app: tauri::AppHandle, asked: bool) {
 
 fn menu(app: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
     let menu = Menu::default(app)?;
-    let new_tab = MenuItem::with_id(app, "new-tab", "New Terminal Tab", true, Some("CmdOrCtrl+T"))?;
-    let checkpoints = MenuItem::with_id(app, "checkpoints", "Checkpoints…", true, Some("CmdOrCtrl+Shift+T"))?;
+    let new_tab = MenuItem::with_id(
+        app,
+        "new-tab",
+        "New Terminal Tab",
+        true,
+        Some("CmdOrCtrl+T"),
+    )?;
+    let checkpoints = MenuItem::with_id(
+        app,
+        "checkpoints",
+        "Checkpoints…",
+        true,
+        Some("CmdOrCtrl+Shift+T"),
+    )?;
     let close = MenuItem::with_id(app, "close", "Close", true, Some("CmdOrCtrl+W"))?;
     let file = menu
         .items()?
@@ -366,23 +447,73 @@ fn menu(app: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
         for item in file.items()? {
             file.remove(&item)?;
         }
-        file.append_items(&[&new_tab, &checkpoints, &PredefinedMenuItem::separator(app)?, &close])?;
+        file.append_items(&[
+            &new_tab,
+            &checkpoints,
+            &PredefinedMenuItem::separator(app)?,
+            &close,
+        ])?;
     }
     let rename = MenuItem::with_id(app, "rename-window", "Rename Windowâ¦", true, None::<&str>)?;
-    if let Some(window) = menu.get(WINDOW_SUBMENU_ID).and_then(|i| i.as_submenu().cloned()) {
+    if let Some(window) = menu
+        .get(WINDOW_SUBMENU_ID)
+        .and_then(|i| i.as_submenu().cloned())
+    {
         if window.items()?.len() == 4 {
             window.remove_at(3)?;
             window.remove_at(2)?;
         }
         window.append_items(&[&PredefinedMenuItem::separator(app)?, &rename])?;
     }
-    let updates = MenuItem::with_id(app, "check-updates", "Check for Updatesâ¦", true, None::<&str>)?;
-    let install = MenuItem::with_id(app, "install-cli", "Install Command Line Toolâ¦", true, None::<&str>)?;
-    let reference = MenuItem::with_id(app, "reference", "winvm Command Reference", true, Some("CmdOrCtrl+Shift+/"))?;
-    let capture = MenuItem::with_id(app, "capture-keyboard", "Capture Keyboard", true, None::<&str>)?;
-    let windows_key = MenuItem::with_id(app, "send-windows-key", "Send Windows Key", true, None::<&str>)?;
-    let ctrl_alt_delete = MenuItem::with_id(app, "send-ctrl-alt-delete", "Send Ctrl-Alt-Delete", true, None::<&str>)?;
-    let release = MenuItem::with_id(app, "release-keyboard", "Release Keyboard", true, None::<&str>)?;
+    let updates = MenuItem::with_id(
+        app,
+        "check-updates",
+        "Check for Updatesâ¦",
+        true,
+        None::<&str>,
+    )?;
+    let install = MenuItem::with_id(
+        app,
+        "install-cli",
+        "Install Command Line Toolâ¦",
+        true,
+        None::<&str>,
+    )?;
+    let reference = MenuItem::with_id(
+        app,
+        "reference",
+        "winvm Command Reference",
+        true,
+        Some("CmdOrCtrl+Shift+/"),
+    )?;
+    let capture = MenuItem::with_id(
+        app,
+        "capture-keyboard",
+        "Capture Keyboard",
+        true,
+        None::<&str>,
+    )?;
+    let windows_key = MenuItem::with_id(
+        app,
+        "send-windows-key",
+        "Send Windows Key",
+        true,
+        None::<&str>,
+    )?;
+    let ctrl_alt_delete = MenuItem::with_id(
+        app,
+        "send-ctrl-alt-delete",
+        "Send Ctrl-Alt-Delete",
+        true,
+        None::<&str>,
+    )?;
+    let release = MenuItem::with_id(
+        app,
+        "release-keyboard",
+        "Release Keyboard",
+        true,
+        None::<&str>,
+    )?;
     let input = Submenu::with_items(
         app,
         "Input",
@@ -400,18 +531,28 @@ fn menu(app: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
     menu.insert(&input, input_index)?;
     if let Some(app_menu) = menu.items()?.first().and_then(|i| i.as_submenu().cloned()) {
         let items = app_menu.items()?;
-        let predefined_quit = items
-            .last()
-            .filter(|i| i.as_predefined_menuitem().is_some_and(|q| q.text().is_ok_and(|t| t.starts_with("Quit"))));
+        let predefined_quit = items.last().filter(|i| {
+            i.as_predefined_menuitem()
+                .is_some_and(|q| q.text().is_ok_and(|t| t.starts_with("Quit")))
+        });
         if let Some(quit) = predefined_quit {
             app_menu.remove(quit)?;
             let name = app.package_info().name.clone();
-            app_menu.append(&MenuItem::with_id(app, close::QUIT_ID, format!("Quit {name}"), true, Some("CmdOrCtrl+Q"))?)?;
+            app_menu.append(&MenuItem::with_id(
+                app,
+                close::QUIT_ID,
+                format!("Quit {name}"),
+                true,
+                Some("CmdOrCtrl+Q"),
+            )?)?;
         }
         app_menu.insert_items(&[&install, &PredefinedMenuItem::separator(app)?], 2)?;
         app_menu.insert(&updates, 1)?;
     }
-    if let Some(help) = menu.get(HELP_SUBMENU_ID).and_then(|i| i.as_submenu().cloned()) {
+    if let Some(help) = menu
+        .get(HELP_SUBMENU_ID)
+        .and_then(|i| i.as_submenu().cloned())
+    {
         help.append(&reference)?;
     }
     Ok(menu)
@@ -437,7 +578,8 @@ fn system_keyboard_capture(captured: bool) -> Result<(), String> {
             fn CGSSetGlobalHotKeyOperatingMode(connection: Connection, mode: u32) -> i32;
         }
         // SAFETY: both functions take and return plain integers and have no preconditions.
-        let result = unsafe { CGSSetGlobalHotKeyOperatingMode(CGSMainConnectionID(), u32::from(captured)) };
+        let result =
+            unsafe { CGSSetGlobalHotKeyOperatingMode(CGSMainConnectionID(), u32::from(captured)) };
         if result != 0 {
             return Err(format!("CoreGraphics rejected keyboard capture ({result})"));
         }
@@ -461,9 +603,20 @@ fn handle_menu(app: &tauri::AppHandle, event: &tauri::menu::MenuEvent) {
         close::request(app);
     } else if id == "new-tab" || id == "close" {
         let focused = focused_window(app);
-        match (id, close::route_close(focused.as_ref().map(tauri::WebviewWindow::label), TERMINAL)) {
+        match (
+            id,
+            close::route_close(focused.as_ref().map(tauri::WebviewWindow::label), TERMINAL),
+        ) {
             (_, close::CloseRoute::TerminalTab) => {
-                let _ = app.emit_to(TERMINAL, "terminal-menu", if id == "new-tab" { "new-tab" } else { "close-tab" });
+                let _ = app.emit_to(
+                    TERMINAL,
+                    "terminal-menu",
+                    if id == "new-tab" {
+                        "new-tab"
+                    } else {
+                        "close-tab"
+                    },
+                );
             }
             ("close", close::CloseRoute::Viewer) => {
                 close::request(app);

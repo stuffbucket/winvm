@@ -38,12 +38,20 @@ pub async fn files_drag_out(
 }
 
 #[cfg(not(target_os = "macos"))]
-async fn start(_window: tauri::WebviewWindow, _instance: String, _items: Vec<DragItem>) -> Result<(), String> {
+async fn start(
+    _window: tauri::WebviewWindow,
+    _instance: String,
+    _items: Vec<DragItem>,
+) -> Result<(), String> {
     Err("dragging files out is only on macOS".into())
 }
 
 #[cfg(target_os = "macos")]
-async fn start(window: tauri::WebviewWindow, instance: String, items: Vec<DragItem>) -> Result<(), String> {
+async fn start(
+    window: tauri::WebviewWindow,
+    instance: String,
+    items: Vec<DragItem>,
+) -> Result<(), String> {
     let (tx, rx) = std::sync::mpsc::channel();
     let app = window.app_handle().clone();
     let label = window.label().to_string();
@@ -67,15 +75,18 @@ mod mac {
     use block2::DynBlock;
     use objc2::rc::Retained;
     use objc2::runtime::{AnyObject, ProtocolObject};
-    use objc2::{define_class, msg_send, AllocAnyThread, DefinedClass, MainThreadMarker, MainThreadOnly, Message};
+    use objc2::{
+        define_class, msg_send, AllocAnyThread, DefinedClass, MainThreadMarker, MainThreadOnly,
+        Message,
+    };
     use objc2_app_kit::{
-        NSDragOperation, NSDraggingContext, NSDraggingItem, NSDraggingSession, NSDraggingSource, NSEvent,
-        NSEventModifierFlags, NSEventType, NSFilePromiseProvider, NSFilePromiseProviderDelegate, NSView, NSWindow,
-        NSWorkspace,
+        NSDragOperation, NSDraggingContext, NSDraggingItem, NSDraggingSession, NSDraggingSource,
+        NSEvent, NSEventModifierFlags, NSEventType, NSFilePromiseProvider,
+        NSFilePromiseProviderDelegate, NSView, NSWindow, NSWorkspace,
     };
     use objc2_foundation::{
-        NSArray, NSError, NSObject, NSObjectProtocol, NSOperationQueue, NSPoint, NSProcessInfo, NSRect, NSSize,
-        NSString, NSURL,
+        NSArray, NSError, NSObject, NSObjectProtocol, NSOperationQueue, NSPoint, NSProcessInfo,
+        NSRect, NSSize, NSString, NSURL,
     };
     use objc2_uniform_type_identifiers::UTType;
     use std::cell::RefCell;
@@ -148,12 +159,21 @@ mod mac {
 
         unsafe impl NSFilePromiseProviderDelegate for PromiseDelegate {
             #[unsafe(method_id(filePromiseProvider:fileNameForType:))]
-            fn file_name(&self, _provider: &NSFilePromiseProvider, _file_type: &NSString) -> Retained<NSString> {
+            fn file_name(
+                &self,
+                _provider: &NSFilePromiseProvider,
+                _file_type: &NSString,
+            ) -> Retained<NSString> {
                 NSString::from_str(&self.ivars().item.name)
             }
 
             #[unsafe(method(filePromiseProvider:writePromiseToURL:completionHandler:))]
-            fn write(&self, _provider: &NSFilePromiseProvider, url: &NSURL, done: &DynBlock<dyn Fn(*mut NSError)>) {
+            fn write(
+                &self,
+                _provider: &NSFilePromiseProvider,
+                url: &NSURL,
+                done: &DynBlock<dyn Fn(*mut NSError)>,
+            ) {
                 let failure = self.fetch(url).err();
                 match failure {
                     None => done.call((std::ptr::null_mut(),)),
@@ -167,7 +187,10 @@ mod mac {
             }
 
             #[unsafe(method_id(operationQueueForFilePromiseProvider:))]
-            fn operation_queue(&self, _provider: &NSFilePromiseProvider) -> Retained<NSOperationQueue> {
+            fn operation_queue(
+                &self,
+                _provider: &NSFilePromiseProvider,
+            ) -> Retained<NSOperationQueue> {
                 queue().retain()
             }
         }
@@ -199,7 +222,10 @@ mod mac {
                 .ok_or("Finder gave no place to copy to")?;
             let asked = Path::new(&asked);
             let dest = if asked.symlink_metadata().is_ok() {
-                let dir = asked.parent().map(|d| d.display().to_string()).unwrap_or_default();
+                let dir = asked
+                    .parent()
+                    .map(|d| d.display().to_string())
+                    .unwrap_or_default();
                 crate::unused_path(&dir, &i.item.name, i.item.dir)
             } else {
                 asked.display().to_string()
@@ -210,7 +236,13 @@ mod mac {
                     .shell()
                     .sidecar("winvm")
                     .map_err(|e| e.to_string())?
-                    .args(["get", "-i", i.instance.as_str(), i.item.path.as_str(), dest.as_str()])
+                    .args([
+                        "get",
+                        "-i",
+                        i.instance.as_str(),
+                        i.item.path.as_str(),
+                        dest.as_str(),
+                    ])
                     .output()
                     .await
                     .map_err(|e| e.to_string())
@@ -240,9 +272,18 @@ mod mac {
         // SAFETY: a Foundation string constant that is never mutated.
         let key = unsafe { objc2_foundation::NSLocalizedDescriptionKey };
         let text = NSString::from_str(message);
-        let info = objc2_foundation::NSDictionary::<NSString, AnyObject>::from_slices(&[key], &[&*text as &AnyObject]);
+        let info = objc2_foundation::NSDictionary::<NSString, AnyObject>::from_slices(
+            &[key],
+            &[&*text as &AnyObject],
+        );
         // SAFETY: a userInfo of NSString values under NSLocalizedDescriptionKey.
-        unsafe { NSError::errorWithDomain_code_userInfo(&NSString::from_str("co.stuffbucket.winvm"), 1, Some(&info)) }
+        unsafe {
+            NSError::errorWithDomain_code_userInfo(
+                &NSString::from_str("co.stuffbucket.winvm"),
+                1,
+                Some(&info),
+            )
+        }
     }
 
     pub struct SourceIvars {
@@ -264,7 +305,11 @@ mod mac {
 
         unsafe impl NSDraggingSource for DragSource {
             #[unsafe(method(draggingSession:sourceOperationMaskForDraggingContext:))]
-            fn operation_mask(&self, _session: &NSDraggingSession, context: NSDraggingContext) -> NSDragOperation {
+            fn operation_mask(
+                &self,
+                _session: &NSDraggingSession,
+                context: NSDraggingContext,
+            ) -> NSDragOperation {
                 if context == NSDraggingContext::OutsideApplication {
                     NSDragOperation::Copy
                 } else {
@@ -273,7 +318,12 @@ mod mac {
             }
 
             #[unsafe(method(draggingSession:endedAtPoint:operation:))]
-            fn ended(&self, _session: &NSDraggingSession, _at: NSPoint, operation: NSDragOperation) {
+            fn ended(
+                &self,
+                _session: &NSDraggingSession,
+                _at: NSPoint,
+                operation: NSDragOperation,
+            ) {
                 let i = self.ivars();
                 let copied = operation.contains(NSDragOperation::Copy);
                 if let Some(window) = i.webview.window() {
@@ -282,7 +332,9 @@ mod mac {
                     }
                 }
                 let operation = if copied { "copy" } else { "none" };
-                let _ = i.app.emit_to(i.label.as_str(), "files-drag-end", DragEnd { operation });
+                let _ = i
+                    .app
+                    .emit_to(i.label.as_str(), "files-drag-end", DragEnd { operation });
                 let drag = i.drag;
                 mark(drag, |l| l.ended = Some(copied));
             }
@@ -314,10 +366,13 @@ mod mac {
     }
 
     fn content_type(item: &DragItem) -> Retained<UTType> {
-        let data =
-            || UTType::typeWithIdentifier(&NSString::from_str("public.data")).expect("public.data is a system type");
+        let data = || {
+            UTType::typeWithIdentifier(&NSString::from_str("public.data"))
+                .expect("public.data is a system type")
+        };
         if item.dir {
-            return UTType::typeWithIdentifier(&NSString::from_str("public.folder")).unwrap_or_else(data);
+            return UTType::typeWithIdentifier(&NSString::from_str("public.folder"))
+                .unwrap_or_else(data);
         }
         match item.name.rsplit_once('.') {
             Some((stem, ext)) if !stem.is_empty() && !ext.is_empty() => {
@@ -342,7 +397,8 @@ mod mac {
         let (webview, window) = unsafe {
             (
                 Retained::retain(webview.cast::<NSView>()).ok_or("the window has no webview")?,
-                Retained::retain(ns_window.cast::<NSWindow>()).ok_or("the window has no NSWindow")?,
+                Retained::retain(ns_window.cast::<NSWindow>())
+                    .ok_or("the window has no NSWindow")?,
             )
         };
         if NSEvent::pressedMouseButtons() & 1 == 0 {
@@ -374,8 +430,10 @@ mod mac {
                 &kind.identifier(),
                 ProtocolObject::from_ref(&*delegate),
             );
-            let entry =
-                NSDraggingItem::initWithPasteboardWriter(NSDraggingItem::alloc(), ProtocolObject::from_ref(&*provider));
+            let entry = NSDraggingItem::initWithPasteboardWriter(
+                NSDraggingItem::alloc(),
+                ProtocolObject::from_ref(&*provider),
+            );
             let icon = workspace.iconForContentType(&kind);
             let shift = f64::from(u8::try_from(k).unwrap_or(u8::MAX).min(4)) * 4.0;
             let frame = NSRect::new(
@@ -410,8 +468,11 @@ mod mac {
             });
         });
         let items = NSArray::from_retained_slice(&dragging);
-        let _session =
-            webview.beginDraggingSessionWithItems_event_source(&items, &event, ProtocolObject::from_ref(&*source));
+        let _session = webview.beginDraggingSessionWithItems_event_source(
+            &items,
+            &event,
+            ProtocolObject::from_ref(&*source),
+        );
         Ok(())
     }
 
@@ -422,8 +483,14 @@ mod mac {
 
         #[test]
         fn classes_register() {
-            assert_eq!(PromiseDelegate::class().name().to_str(), Ok("WinvmFilePromiseDelegate"));
-            assert_eq!(DragSource::class().name().to_str(), Ok("WinvmDragOutSource"));
+            assert_eq!(
+                PromiseDelegate::class().name().to_str(),
+                Ok("WinvmFilePromiseDelegate")
+            );
+            assert_eq!(
+                DragSource::class().name().to_str(),
+                Ok("WinvmDragOutSource")
+            );
         }
 
         #[test]

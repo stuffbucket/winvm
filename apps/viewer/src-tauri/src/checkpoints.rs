@@ -14,7 +14,9 @@ fn is_checkpoint_image(path: &Path) -> bool {
     };
     let named = |p: &Path| p.file_name().and_then(|n| n.to_str()).map(str::to_owned);
     match (named(save), named(instance), named(saves)) {
-        (Some(s), Some(i), Some(root)) => root == "saves" && !s.starts_with('.') && !i.starts_with('.'),
+        (Some(s), Some(i), Some(root)) => {
+            root == "saves" && !s.starts_with('.') && !i.starts_with('.')
+        }
         _ => false,
     }
 }
@@ -29,7 +31,9 @@ pub async fn checkpoint_image(path: String) -> Result<tauri::ipc::Response, Stri
     if !meta.is_file() || meta.len() > MAX_IMAGE_BYTES {
         return Err(format!("not a checkpoint image: {path}"));
     }
-    std::fs::read(&real).map(tauri::ipc::Response::new).map_err(|e| e.to_string())
+    std::fs::read(&real)
+        .map(tauri::ipc::Response::new)
+        .map_err(|e| e.to_string())
 }
 
 #[cfg(test)]
@@ -38,13 +42,27 @@ mod tests {
 
     #[test]
     fn serves_only_checkpoint_images() {
-        assert!(is_checkpoint_image(Path::new("/h/saves/canvas-test/before/thumb.png")));
-        assert!(is_checkpoint_image(Path::new("/h/saves/canvas-test/before/screen.png")));
-        assert!(!is_checkpoint_image(Path::new("/h/saves/canvas-test/before/manifest.json")));
-        assert!(!is_checkpoint_image(Path::new("/h/saves/canvas-test/before/vmstate.zst")));
-        assert!(!is_checkpoint_image(Path::new("/h/instances/canvas-test/before/thumb.png")));
-        assert!(!is_checkpoint_image(Path::new("/h/saves/canvas-test/.before.partial-1/thumb.png")));
+        assert!(is_checkpoint_image(Path::new(
+            "/h/saves/canvas-test/before/thumb.png"
+        )));
+        assert!(is_checkpoint_image(Path::new(
+            "/h/saves/canvas-test/before/screen.png"
+        )));
+        assert!(!is_checkpoint_image(Path::new(
+            "/h/saves/canvas-test/before/manifest.json"
+        )));
+        assert!(!is_checkpoint_image(Path::new(
+            "/h/saves/canvas-test/before/vmstate.zst"
+        )));
+        assert!(!is_checkpoint_image(Path::new(
+            "/h/instances/canvas-test/before/thumb.png"
+        )));
+        assert!(!is_checkpoint_image(Path::new(
+            "/h/saves/canvas-test/.before.partial-1/thumb.png"
+        )));
         assert!(!is_checkpoint_image(Path::new("/thumb.png")));
-        assert!(!is_checkpoint_image(Path::new("/Users/x/Pictures/thumb.png")));
+        assert!(!is_checkpoint_image(Path::new(
+            "/Users/x/Pictures/thumb.png"
+        )));
     }
 }
