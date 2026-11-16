@@ -27,6 +27,7 @@ import {
 } from "../ui/src/features/terminal/socket"
 import {
   noTabs,
+  type Tab,
   type Tabs,
   tabName,
   tabsReducer,
@@ -506,41 +507,44 @@ describe("tabs", () => {
   })
 
   it("names a tab by the user's name, else the shell's title, else the shell", () => {
-    const t3 = (x: Tabs) => x.tabs[2]
+    const t3 = (x: Tabs): Tab => {
+      const tab = x.tabs[2]
+      if (tab === undefined) throw new Error("no third tab")
+      return tab
+    }
     const shellName = "PowerShell 7"
-    const plain = t3(three)
-    expect(plain && tabName(plain, shellName)).toBe("PowerShell 7")
+    expect(tabName(t3(three), shellName)).toBe("PowerShell 7")
     const titled = tabsReducer(three, {
       type: "title",
       id: "t3",
       title: "vim notes.txt",
     })
-    expect(t3(titled) && tabName(t3(titled)!, shellName)).toBe("vim notes.txt")
+    expect(tabName(t3(titled), shellName)).toBe("vim notes.txt")
     const renamed = tabsReducer(titled, {
       type: "rename",
       id: "t3",
       title: "  build  ",
     })
-    expect(t3(renamed) && tabName(t3(renamed)!, shellName)).toBe("build")
+    expect(tabName(t3(renamed), shellName)).toBe("build")
     const retitled = tabsReducer(renamed, {
       type: "title",
       id: "t3",
       title: "less log.txt",
     })
-    expect(tabName(t3(retitled)!, shellName)).toBe("build")
+    expect(tabName(t3(retitled), shellName)).toBe("build")
     const reopened = tabsReducer(retitled, {
       type: "reopen",
       id: "t3",
       newId: "t9",
     })
-    expect(tabName(t3(reopened)!, shellName)).toBe("build")
+    expect(tabName(t3(reopened), shellName)).toBe("build")
     const cleared = tabsReducer(retitled, {
       type: "rename",
       id: "t3",
       title: "   ",
     })
-    expect(t3(cleared)?.customTitle).toBeNull()
-    expect(tabName(t3(cleared)!, shellName)).toBe("less log.txt")
+    expect(t3(cleared).customTitle).toBeNull()
+    expect(tabName(t3(cleared), shellName)).toBe("less log.txt")
   })
 
   it("closes the other tabs", () => {

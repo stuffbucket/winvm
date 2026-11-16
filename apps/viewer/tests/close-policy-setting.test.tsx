@@ -292,6 +292,17 @@ describe("changing the policy", () => {
   })
 })
 
+type Seen = ReturnType<typeof useWinvm>
+
+function SeenProbe({
+  slot,
+}: {
+  readonly slot: { current: Seen | null }
+}): null {
+  slot.current = useWinvm()
+  return null
+}
+
 describe("useWinvm.setClosePolicy", () => {
   const machine = (
     name: string,
@@ -366,18 +377,13 @@ describe("useWinvm.setClosePolicy", () => {
     return { policies, configs, held, holdReadsOf, reads }
   }
 
-  type Seen = ReturnType<typeof useWinvm>
   function harness(): { latest: () => Seen } {
-    let seen: Seen | null = null
-    const Probe = (): null => {
-      seen = useWinvm()
-      return null
-    }
-    render(<Probe />)
+    const slot: { current: Seen | null } = { current: null }
+    render(<SeenProbe slot={slot} />)
     return {
       latest: () => {
-        if (seen === null) throw new Error("not rendered")
-        return seen
+        if (slot.current === null) throw new Error("not rendered")
+        return slot.current
       },
     }
   }

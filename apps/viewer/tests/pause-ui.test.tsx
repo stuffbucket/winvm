@@ -38,6 +38,51 @@ function render(node: JSX.Element): HTMLElement {
   return host
 }
 
+type Winvm = ReturnType<typeof useWinvm>
+
+interface Slot<T> {
+  current: T | null
+}
+
+function WinvmProbe({ slot }: { readonly slot: Slot<Winvm> }): null {
+  slot.current = useWinvm()
+  return null
+}
+
+function WinvmAlertProbe({
+  slot,
+}: {
+  readonly slot: Slot<Winvm>
+}): JSX.Element {
+  const w = useWinvm()
+  slot.current = w
+  return <p role="alert">{w.statusError}</p>
+}
+
+function UsageProbe({
+  instance,
+  read,
+}: {
+  readonly instance: string | null
+  readonly read: (pid: number, instance: string | null) => Promise<unknown>
+}): null {
+  useUsage(4242, instance, 4, 4096, read)
+  return null
+}
+
+function latest(slot: Slot<Winvm>): () => Winvm {
+  return () => {
+    if (slot.current === null) throw new Error("useWinvm has not rendered")
+    return slot.current
+  }
+}
+
+function renderWinvm(): () => Winvm {
+  const slot: Slot<Winvm> = { current: null }
+  render(<WinvmProbe slot={slot} />)
+  return latest(slot)
+}
+
 const flush = async (): Promise<void> => {
   await act(async () => {
     for (let i = 0; i < 10; i++) await Promise.resolve()
@@ -141,12 +186,7 @@ const status = (
 describe("pausing in the window", () => {
   it("shows paused the moment Pause returns, and a status read that raced it never puts running back", async () => {
     const tauri = fakeTauri()
-    let w: ReturnType<typeof useWinvm> | null = null
-    function Probe(): null {
-      w = useWinvm()
-      return null
-    }
-    render(<Probe />)
+    const w = renderWinvm()
     await flush()
     const list = tauri.calls.find(
       (c) => c.args[0] === "status" && !c.args.includes("-i"),
@@ -160,14 +200,14 @@ describe("pausing in the window", () => {
     await flush()
     tauri.reads()[0]?.resolve(status("running"))
     await flush()
-    expect(w!.phase).toBe("running")
+    expect(w().phase).toBe("running")
 
     let acted: Promise<unknown> | null = null
     act(() => {
-      acted = w!.act("pause")
+      acted = w().act("pause")
     })
     await flush()
-    expect(w!.busy).toBe("pause")
+    expect(w().busy).toBe("pause")
     const raced = tauri.reads().filter((c) => !c.done)
     expect(raced.length).toBeGreaterThan(0)
 
@@ -175,21 +215,21 @@ describe("pausing in the window", () => {
       .verb("pause")
       .resolve({ code: 0, stdout: 'paused "demo"\n', stderr: "" })
     await flush()
-    expect(w!.busy).toBeNull()
-    expect(w!.phase).toBe("paused")
+    expect(w().busy).toBeNull()
+    expect(w().phase).toBe("paused")
 
     for (const c of raced) c.resolve(status("running"))
     await flush()
-    expect(w!.phase).toBe("paused")
+    expect(w().phase).toBe("paused")
 
     const after = tauri.reads().filter((c) => !c.done)
     expect(after.length).toBeGreaterThanOrEqual(2)
     after.at(-1)?.resolve(status("paused", null))
     await flush()
-    expect(w!.phase).toBe("paused")
+    expect(w().phase).toBe("paused")
     after[0]?.resolve(status("running"))
     await flush()
-    expect(w!.phase).toBe("paused")
+    expect(w().phase).toBe("paused")
     await act(async () => {
       await acted
     })
@@ -197,12 +237,7 @@ describe("pausing in the window", () => {
 
   it("shows running the moment Wake returns, and asleep until then", async () => {
     const tauri = fakeTauri()
-    let w: ReturnType<typeof useWinvm> | null = null
-    function Probe(): null {
-      w = useWinvm()
-      return null
-    }
-    render(<Probe />)
+    const w = renderWinvm()
     await flush()
     tauri.calls
       .find((c) => c.args[0] === "status" && !c.args.includes("-i"))
@@ -215,29 +250,24 @@ describe("pausing in the window", () => {
     await flush()
     tauri.reads()[0]?.resolve(status("asleep", null))
     await flush()
-    expect(w!.phase).toBe("asleep")
+    expect(w().phase).toBe("asleep")
 
     act(() => {
-      void w!.act("wake")
+      void w().act("wake")
     })
     await flush()
     const raced = tauri.reads().filter((c) => !c.done)
     tauri.verb("wake").resolve({ code: 0, stdout: "", stderr: "" })
     await flush()
-    expect(w!.phase).toBe("running")
+    expect(w().phase).toBe("running")
     for (const c of raced) c.resolve(status("asleep", null))
     await flush()
-    expect(w!.phase).toBe("running")
+    expect(w().phase).toBe("running")
   })
 
   it("keeps the old phase when Pause fails", async () => {
     const tauri = fakeTauri()
-    let w: ReturnType<typeof useWinvm> | null = null
-    function Probe(): null {
-      w = useWinvm()
-      return null
-    }
-    render(<Probe />)
+    const w = renderWinvm()
     await flush()
     tauri.calls
       .find((c) => c.args[0] === "status" && !c.args.includes("-i"))
@@ -251,13 +281,13 @@ describe("pausing in the window", () => {
     tauri.reads()[0]?.resolve(status("running"))
     await flush()
     act(() => {
-      void w!.act("pause")
+      void w().act("pause")
     })
     await flush()
     tauri.verb("pause").resolve({ code: 1, stdout: "", stderr: "::error::no" })
     await flush()
-    expect(w!.phase).toBe("running")
-    expect(w!.failure?.verb).toBe("pause")
+    expect(w().phase).toBe("running")
+    expect(w().failure?.verb).toBe("pause")
   })
 })
 
@@ -279,29 +309,19 @@ const sidecarFailure = (
 describe("when the sidecar fails", () => {
   it("says the helper is missing when the first status can't run", async () => {
     const tauri = fakeTauri()
-    let w: ReturnType<typeof useWinvm> | null = null
-    function Probe(): null {
-      w = useWinvm()
-      return null
-    }
-    render(<Probe />)
+    const w = renderWinvm()
     await flush()
     tauri.calls
       .find((c) => c.args[0] === "status" && !c.args.includes("-i"))
       ?.reject(sidecarFailure("missing", "status"))
     await flush()
-    expect(w!.statusError).toBe(copy("sidecar.missing"))
+    expect(w().statusError).toBe(copy("sidecar.missing"))
   })
 
   it("explains a status timeout, keeps polling, and clears it when status answers again", async () => {
     jest.useFakeTimers()
     const tauri = fakeTauri()
-    let w: ReturnType<typeof useWinvm> | null = null
-    function Probe(): null {
-      w = useWinvm()
-      return null
-    }
-    render(<Probe />)
+    const w = renderWinvm()
     await flush()
     tauri.calls
       .find((c) => c.args[0] === "status" && !c.args.includes("-i"))
@@ -314,7 +334,7 @@ describe("when the sidecar fails", () => {
     await flush()
     tauri.reads()[0]?.reject(sidecarFailure("timeout", "status"))
     await flush()
-    expect(w!.statusError).toBe(
+    expect(w().statusError).toBe(
       copy("sidecar.timeout", { operation: "status", seconds: 45 }),
     )
 
@@ -326,19 +346,16 @@ describe("when the sidecar fails", () => {
     expect(tauri.reads().length).toBe(before + 1)
     tauri.reads().at(-1)?.resolve(status("running"))
     await flush()
-    expect(w!.statusError).toBeNull()
-    expect(w!.phase).toBe("running")
+    expect(w().statusError).toBeNull()
+    expect(w().phase).toBe("running")
   })
 
   it("retries a startup status that timed out, one at a time, until it answers; then polls the instance", async () => {
     jest.useFakeTimers()
     const tauri = fakeTauri()
-    let w: ReturnType<typeof useWinvm> | null = null
-    function Probe(): JSX.Element {
-      w = useWinvm()
-      return <p role="alert">{w.statusError}</p>
-    }
-    const host = render(<Probe />)
+    const slot: Slot<Winvm> = { current: null }
+    const host = render(<WinvmAlertProbe slot={slot} />)
+    const w = latest(slot)
     await flush()
     const bare = (): Call[] =>
       tauri.calls.filter(
@@ -350,7 +367,7 @@ describe("when the sidecar fails", () => {
     expect(host.textContent).toBe(
       copy("sidecar.timeout", { operation: "status", seconds: 45 }),
     )
-    expect(w!.name).toBeNull()
+    expect(w().name).toBeNull()
     expect(bare()).toHaveLength(1)
 
     act(() => {
@@ -374,14 +391,14 @@ describe("when the sidecar fails", () => {
       }),
     })
     await flush()
-    expect(w!.name).toBe("demo")
-    expect(w!.statusError).toBeNull()
+    expect(w().name).toBe("demo")
+    expect(w().statusError).toBeNull()
     expect(host.textContent).toBe("")
 
     expect(tauri.reads()).toHaveLength(1)
     tauri.reads()[0]?.resolve(status("running"))
     await flush()
-    expect(w!.phase).toBe("running")
+    expect(w().phase).toBe("running")
     act(() => {
       jest.advanceTimersByTime(4000)
     })
@@ -392,12 +409,7 @@ describe("when the sidecar fails", () => {
 
   it("shows a verb whose helper is missing as that verb's failure, with the same copy", async () => {
     const tauri = fakeTauri()
-    let w: ReturnType<typeof useWinvm> | null = null
-    function Probe(): null {
-      w = useWinvm()
-      return null
-    }
-    render(<Probe />)
+    const w = renderWinvm()
     await flush()
     tauri.calls
       .find((c) => c.args[0] === "status" && !c.args.includes("-i"))
@@ -411,14 +423,14 @@ describe("when the sidecar fails", () => {
     tauri.reads()[0]?.resolve(status("running"))
     await flush()
     act(() => {
-      void w!.act("pause")
+      void w().act("pause")
     })
     await flush()
     tauri.verb("pause").reject(sidecarFailure("missing", "pause"))
     await flush()
-    expect(w!.failure?.verb).toBe("pause")
-    expect(w!.failure?.output).toBe(copy("sidecar.missing"))
-    expect(w!.phase).toBe("running")
+    expect(w().failure?.verb).toBe("pause")
+    expect(w().failure?.output).toBe(copy("sidecar.missing"))
+    expect(w().phase).toBe("running")
   })
 })
 
@@ -435,11 +447,7 @@ describe("the meters while held", () => {
         guestError: null,
       })
     }
-    function Probe({ instance }: { readonly instance: string | null }): null {
-      useUsage(4242, instance, 4, 4096, read)
-      return null
-    }
-    render(<Probe instance={null} />)
+    render(<UsageProbe instance={null} read={read} />)
     await flush()
     act(() => {
       jest.advanceTimersByTime(2500)
@@ -452,7 +460,7 @@ describe("the meters while held", () => {
     expect(asked.length).toBeGreaterThanOrEqual(3)
     expect(asked.every((i) => i === null)).toBe(true)
 
-    act(() => root?.render(<Probe instance="demo" />))
+    act(() => root?.render(<UsageProbe instance="demo" read={read} />))
     await flush()
     expect(asked.at(-1)).toBe("demo")
   })
@@ -494,12 +502,8 @@ async function boot(
   state = "running",
   names: readonly string[] = ["demo"],
 ): Promise<{ w: () => ReturnType<typeof useWinvm> }> {
-  let w: ReturnType<typeof useWinvm> | null = null
-  function Probe(): null {
-    w = useWinvm()
-    return null
-  }
-  render(<Probe />)
+  const slot: Slot<Winvm> = { current: null }
+  render(<WinvmProbe slot={slot} />)
   await flush()
   const list = tauri.calls.find(
     (c) => c.args[0] === "status" && !c.args.includes("-i"),
@@ -516,7 +520,7 @@ async function boot(
   await flush()
   tauri.reads()[0]?.resolve(status(state))
   await flush()
-  return { w: () => w! }
+  return { w: latest(slot) }
 }
 
 describe("operations in the window", () => {
