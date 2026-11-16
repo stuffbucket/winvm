@@ -4,10 +4,11 @@ import { resolve } from "node:path"
 import type { ClosePolicy } from "./config"
 import { effectiveConfig } from "./config"
 import { describeDisplay, readDisplay, runningDisplay } from "./display"
+import { readSince, START } from "./eventlog"
 import { frozenFrom, markedAsleep } from "./frozen"
 import { qmpCommand } from "./monitor"
 import type { OperationInfo } from "./operation"
-import { readOperation, savingRunning } from "./operation"
+import { readOperation, STOP_UNFINISHED, savingRunning } from "./operation"
 import type { Paths } from "./paths"
 import {
   home,
@@ -93,7 +94,39 @@ export interface InstanceStatus {
   readonly service: { readonly pid: number } | null
   readonly serviceExpected: boolean
   readonly operation: OperationInfo | null
+  readonly stopUnfinished: StopUnfinished | null
   readonly notes: readonly string[]
+}
+
+export interface StopUnfinished {
+  readonly at: string
+}
+
+const RESTORING: ReadonlySet<string> = new Set([
+  "start",
+  "stop",
+  "kill",
+  "reset",
+  "rewind",
+  "load",
+  "stow",
+  "golden-reset",
+])
+
+export function unfinishedStop(name: string): StopUnfinished | null {
+  let found: StopUnfinished | null = null
+  for (const e of readSince(name, START).entries) {
+    if (e.kind === "op" && e.phase === "end") {
+      if (e.operation === "stop" && e.exitCode === STOP_UNFINISHED)
+        found = { at: e.endedAt }
+      else if (e.ok && RESTORING.has(e.operation)) found = null
+    } else if (
+      (e.kind === "qmp" && e.event === "SHUTDOWN") ||
+      (e.kind === "disconnected" && e.reason === "qemu-closed")
+    )
+      found = null
+  }
+  return found
 }
 
 export const savesDir = (instance: string): string =>
@@ -447,6 +480,7 @@ export async function gather(
       service: null,
       serviceExpected: false,
       operation,
+      stopUnfinished: null,
       notes: [`no instance "${name}" — \`winvm start -i ${name}\` creates it`],
     }
   }
@@ -470,6 +504,13 @@ export async function gather(
     notes.push("QEMU's monitor did not answer (busy with a save or load?)")
   if (guest?.agent === "silent" && state === "running")
     notes.push("the guest agent did not answer — still booting, or busy")
+  const stopUnfinished = running ? unfinishedStop(name) : null
+  if (stopUnfinished !== null)
+    notes.push(
+      `the last \`winvm stop\` (${stopUnfinished.at}) asked Windows to shut down and did not finish; ` +
+        "the watcher and the guest's Finder drives are down until " +
+        `\`winvm start -i ${name}\` brings them back — \`winvm kill -i ${name}\` if Windows is stuck`,
+    )
 
   return {
     name,
@@ -492,6 +533,7 @@ export async function gather(
     service: serviceOf(p),
     serviceExpected: running && existsSync(p.qmpQemu),
     operation,
+    stopUnfinished,
     notes,
   }
 }

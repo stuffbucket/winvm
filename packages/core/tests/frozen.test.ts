@@ -1032,3 +1032,66 @@ describe("winvm start on a running instance", () => {
       expect((await run(f)).events).toEqual(["reconcile", "startWatcher"])
   })
 })
+
+describe("status after a stop that did not finish", () => {
+  let n = 0
+  const opEnd = (operation: string, ok: boolean, exitCode: number): void => {
+    n += 1
+    appendEntry(NAME, {
+      kind: "op",
+      phase: "end",
+      id: `op-${String(n)}`,
+      operation,
+      pid: 4242,
+      startedAt: "2026-11-16T18:00:00.000Z",
+      endedAt: `2026-11-16T18:03:${String(n).padStart(2, "0")}.000Z`,
+      automatic: false,
+      leased: true,
+      ok,
+      exitCode,
+    })
+  }
+
+  beforeEach(() => {
+    rmSync(pathsFor(NAME).events, { force: true })
+    rmSync(pathsFor(NAME).eventsPrev, { force: true })
+  })
+
+  it("says so, with what to do, while the same QEMU runs on", async () => {
+    opEnd("stop", false, STOP_UNFINISHED)
+    const s = await gather(NAME, false)
+    expect(s.stopUnfinished).toEqual({ at: "2026-11-16T18:03:01.000Z" })
+    const note = s.notes.find((x) => x.includes("did not finish"))
+    expect(note).toBeDefined()
+    expect(note).toContain("winvm start -i frozen-test")
+    expect(note).toContain("winvm kill -i frozen-test")
+  })
+
+  it("does not count a stop that failed before asking, which put everything back", async () => {
+    opEnd("stop", false, 1)
+    expect((await gather(NAME, false)).stopUnfinished).toBeNull()
+  })
+
+  it("clears once a later start brings it back", async () => {
+    opEnd("stop", false, STOP_UNFINISHED)
+    opEnd("start", true, 0)
+    expect((await gather(NAME, false)).stopUnfinished).toBeNull()
+  })
+
+  it("clears once QEMU records the shutdown", async () => {
+    opEnd("stop", false, STOP_UNFINISHED)
+    appendEntry(NAME, {
+      kind: "qmp",
+      event: "SHUTDOWN",
+      data: { guest: true, reason: "guest-shutdown" },
+      timestamp: null,
+    })
+    expect((await gather(NAME, false)).stopUnfinished).toBeNull()
+  })
+
+  it("is not reported for a machine that is not running", async () => {
+    opEnd("stop", false, STOP_UNFINISHED)
+    const s = await gather("frozen-nostop", false)
+    expect(s.stopUnfinished).toBeNull()
+  })
+})

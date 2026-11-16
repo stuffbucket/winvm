@@ -180,6 +180,7 @@ describe("status formatting", () => {
     service: { pid: 77 },
     serviceExpected: false,
     operation: null,
+    stopUnfinished: null,
     notes: [],
   }
 
