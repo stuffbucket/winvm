@@ -12,6 +12,7 @@ import {
   syncFields,
 } from "./eventlog"
 import { buildIdentity } from "./identity"
+import { type ReconcileOptions, settleWatcherDebt } from "./lifecycle"
 import { leaseHolder } from "./operation"
 import { PACKAGE_DIR, type Paths, pathsFor } from "./paths"
 import * as qga from "./qga"
@@ -24,6 +25,10 @@ export interface ServiceOptions {
   readonly heartbeatMs?: number
   readonly checkMs?: number
   readonly eventsMaxBytes?: number
+  readonly settle?: {
+    readonly everyMs?: number
+    readonly options?: ReconcileOptions
+  }
 }
 
 export interface ServiceHandle {
@@ -206,6 +211,30 @@ export async function runService(
   })
   let stopping = false
   let goneMs = 0
+  let settling = false
+  let settleAt = 0
+  const settleEveryMs = o.settle?.everyMs ?? 30_000
+  const settle = (): void => {
+    if (settling || stopping || Date.now() < settleAt) return
+    settling = true
+    settleWatcherDebt(name, p, o.settle?.options)
+      .then(
+        (r) => {
+          if (r !== null) settleAt = Date.now() + settleEveryMs
+        },
+        (error: unknown) => {
+          settleAt = Date.now() + settleEveryMs
+          record({
+            kind: "warning",
+            what: "watcher owed",
+            error: error instanceof Error ? error.message : String(error),
+          })
+        },
+      )
+      .finally(() => {
+        settling = false
+      })
+  }
 
   let notices: { readonly key: string; readonly n: ChangeNotices } | null = null
   let syncing = false
@@ -273,6 +302,7 @@ export async function runService(
     }
     void syncNotices()
     rotate()
+    settle()
     if (
       livePidIn(p.pid) !== null ||
       leaseHolder(name) !== null ||

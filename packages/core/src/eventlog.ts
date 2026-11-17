@@ -454,10 +454,7 @@ function wholeLines(o: Opened, from: number): Lines {
   return { lines, end: bounded + at, skipped: bounded > from }
 }
 
-interface Item {
-  readonly entry: Entry
-  readonly after: Cursor
-}
+type Item = Placed
 
 interface Scan {
   readonly items: readonly Item[]
@@ -590,6 +587,26 @@ export function readSince(
 ): Batch {
   const s = scan(instance, cursor, seams)
   return { entries: s.items.map((i) => i.entry), cursor: s.cursor, gap: s.gap }
+}
+
+export interface Placed {
+  readonly entry: Entry
+  readonly after: Cursor
+}
+
+export interface PlacedBatch {
+  readonly placed: readonly Placed[]
+  readonly cursor: Cursor
+  readonly gap: boolean
+}
+
+export function readSinceEach(
+  instance: string,
+  cursor: Cursor,
+  seams: ReadSeams = {},
+): PlacedBatch {
+  const s = scan(instance, cursor, seams)
+  return { placed: s.items, cursor: s.cursor, gap: s.gap }
 }
 
 function lastLineEnd(o: Opened): number {

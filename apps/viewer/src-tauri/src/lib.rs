@@ -2,6 +2,7 @@ mod agent;
 mod checkpoints;
 mod close;
 mod dragout;
+mod events;
 mod liveresize;
 mod sidecar;
 pub mod terminate;
@@ -21,15 +22,66 @@ use tauri_plugin_shell::process::CommandChild;
 use tauri_plugin_updater::UpdaterExt;
 
 const VERBS: &[&str] = &[
-    "status", "info", "doctor", "start", "stop", "stow", "reboot", "pause", "resume", "kill",
-    "open", "setup", "exec", "put", "get", "dir", "mkdir", "mv", "cp", "rm", "save", "load",
-    "saves", "help", "terminal", "config", "display", "create", "destroy", "ls", "mcp", "sleep",
-    "wake", "lock", "settings", "files", "share",
+    "status",
+    "info",
+    "doctor",
+    "start",
+    "stop",
+    "stow",
+    "reboot",
+    "pause",
+    "resume",
+    "kill",
+    "open",
+    "setup",
+    "exec",
+    "put",
+    "get",
+    "dir",
+    "mkdir",
+    "mv",
+    "cp",
+    "rm",
+    "save",
+    "load",
+    "saves",
+    "help",
+    "terminal",
+    "config",
+    "display",
+    "create",
+    "destroy",
+    "ls",
+    "mcp",
+    "sleep",
+    "wake",
+    "lock",
+    "settings",
+    "files",
+    "share",
+    "events",
+    "reconcile",
 ];
+
+fn permitted(args: &[String]) -> Result<(), String> {
+    match args.first() {
+        Some(verb) if VERBS.contains(&verb.as_str()) => {}
+        _ => {
+            return Err(format!(
+                "not a winvm command this app runs: {:?}",
+                args.first()
+            ))
+        }
+    }
+    if events::follows(args) {
+        return Err("`winvm events --follow` never ends, so the app runs it once, as its event stream, not as a command".into());
+    }
+    Ok(())
+}
 
 #[cfg(test)]
 mod command_allowlist_tests {
-    use super::{sidecar, VERBS};
+    use super::{events, permitted, sidecar, VERBS};
 
     #[test]
     fn permits_every_close_policy_command_without_timing_out_vm_mutations() {
@@ -49,19 +101,39 @@ mod command_allowlist_tests {
             "remembering a close policy needs config"
         );
     }
+
+    #[test]
+    fn runs_the_event_stream_only_as_the_stream_and_reconcile_without_a_deadline() {
+        let args = |a: &[&str]| a.iter().map(ToString::to_string).collect::<Vec<_>>();
+        assert!(permitted(&args(&["events", "--json", "--since=eyJ2IjoxfQ"])).is_ok());
+        assert_eq!(
+            sidecar::timeout_for(&args(&["events", "--json"])),
+            Some(sidecar::READ_TIMEOUT)
+        );
+        let stream = events::stream_args(None);
+        assert!(
+            permitted(&stream).is_err(),
+            "a follow through `winvm` would never return"
+        );
+        assert_eq!(
+            sidecar::timeout_for(&stream),
+            None,
+            "the stream has no deadline"
+        );
+        assert!(permitted(&args(&["reconcile", "-i", "demo"])).is_ok());
+        assert_eq!(
+            sidecar::timeout_for(&args(&["reconcile", "-i", "demo"])),
+            None
+        );
+        assert!(permitted(&args(&["serve", "-i", "demo"])).is_err());
+        assert!(permitted(&[]).is_err());
+    }
 }
 
 #[tauri::command]
 async fn winvm(app: tauri::AppHandle, args: Vec<String>) -> Result<Output, Box<SidecarFailure>> {
-    match args.first() {
-        Some(verb) if VERBS.contains(&verb.as_str()) => {}
-        _ => {
-            return Err(Box::new(SidecarFailure::rejected(
-                &sidecar::operation_of(&args),
-                format!("not a winvm command this app runs: {:?}", args.first()),
-            )))
-        }
-    }
+    permitted(&args)
+        .map_err(|why| Box::new(SidecarFailure::rejected(&sidecar::operation_of(&args), why)))?;
     sidecar::run_sidecar(&app, &args, sidecar::timeout_for(&args)).await
 }
 
@@ -388,6 +460,7 @@ fn check_for_update(app: tauri::AppHandle, asked: bool) {
                         Ok(()) => {
                             if app.state::<close::CloseCoordinator>().wait_to_restart() {
                                 stop_sharing(&app.state::<Sharing>());
+                                events::stop(&app);
                                 app.restart();
                             }
                         }
@@ -677,6 +750,7 @@ pub fn run() {
         .manage(close::CloseCoordinator::default())
         .manage(TerminalRequests::default())
         .manage(agent::Agents::default())
+        .manage(events::AppStream::default())
         .menu(menu)
         .on_window_event(|window, event| {
             if let WindowEvent::CloseRequested { api, .. } = event {
@@ -700,6 +774,7 @@ pub fn run() {
             if let Some(main) = app.get_webview_window("main") {
                 liveresize::watch(&main);
             }
+            events::start(app.handle());
             if !cfg!(debug_assertions) {
                 check_for_update(app.handle().clone(), false);
             }
@@ -731,7 +806,8 @@ pub fn run() {
             close::close_resolved,
             close::close_run,
             close::close_cancel,
-            close::close_complete
+            close::close_complete,
+            events::events_state
         ])
         .build(tauri::generate_context!())
         .expect("winvm could not start")
@@ -744,6 +820,7 @@ pub fn run() {
             RunEvent::Exit => {
                 let _ = system_keyboard_capture(false);
                 stop_sharing(&app.state::<Sharing>());
+                events::stop(app);
             }
             _ => {}
         });

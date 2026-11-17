@@ -107,6 +107,32 @@ function ranBefore(w: Winvm): (name: string) => number {
 }
 
 const WAIT_MS = 1500
+const STREAM_WAIT_MS = 20_000
+
+async function pause(
+  tx: Transaction,
+  w: Winvm,
+  name: string,
+): Promise<Status | null> {
+  const got = await new Promise<Status | null>((wake) => {
+    if (w.streaming) {
+      tx.wake = () => {
+        wake(null)
+      }
+      void w.nextStatus(name, STREAM_WAIT_MS).then(wake)
+      return
+    }
+    const timer = setTimeout(() => {
+      wake(null)
+    }, WAIT_MS)
+    tx.wake = () => {
+      clearTimeout(timer)
+      wake(null)
+    }
+  })
+  tx.wake = null
+  return got
+}
 
 function busyWith(w: Winvm, s: Status): ActiveOperation | null {
   if (w.name === s.name && w.busy !== null)
@@ -206,8 +232,9 @@ export function useCloseFlow(w: Winvm): CloseFlow {
       const before = tx.ranBefore(name)
       let external: VmOperation | null = null
       let s: Status | null
+      let read: Status | null = null
       for (;;) {
-        s = await wRef.current.refreshOne(name)
+        s = read ?? (await wRef.current.refreshOne(name))
         if (isCancelled(tx)) return "stopped"
         if (s === null) {
           fail(tx, known, t("close.statusFailed"))
@@ -217,14 +244,7 @@ export function useCloseFlow(w: Winvm): CloseFlow {
         if (operation === null) break
         if (operation.source === "external") external = operation.operation
         show({ kind: "waiting", machine: s, operation, index, total })
-        await new Promise<void>((wake) => {
-          const timer = setTimeout(wake, WAIT_MS)
-          tx.wake = () => {
-            clearTimeout(timer)
-            wake()
-          }
-        })
-        tx.wake = null
+        read = await pause(tx, wRef.current, name)
         if (isCancelled(tx)) return "stopped"
       }
       const own = wRef.current.lastOn(name)
@@ -364,7 +384,12 @@ export function useCloseFlow(w: Winvm): CloseFlow {
       ) {
         if (wRef.current.name !== command.machine)
           wRef.current.select(command.machine)
-        const s = await wRef.current.refreshOne(command.machine)
+        const w = wRef.current
+        const known = w.status?.name === command.machine ? w.status : null
+        const s =
+          w.streaming && known !== null
+            ? known
+            : await w.refreshOne(command.machine)
         if (isCancelled(tx)) return
         if (s !== null)
           show({

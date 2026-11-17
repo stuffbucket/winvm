@@ -71,6 +71,23 @@ fonttools' `pyftsubset`; the code points it keeps are the ones named in
 
 ---
 
+### pstack and cursor-team-kit agent skills — `vendor/poteto-plugins/`
+
+`vendor/poteto-plugins/pstack/` and `vendor/poteto-plugins/cursor-team-kit/` are
+unmodified copies of two plugins from <https://github.com/poteto/plugins> at
+commit `74dd2291e8e37b12fd6dc49b2acbd655c6bdaf12`. We took them from the
+stuffbucket pstack repo, which vendors that commit. `.claude/skills/` and
+`.claude/agents/` hold symlinks to the 51 skills and the one agent that pstack
+loads in Claude Code. Claude Code reads them when you work in this repo. The app
+build never includes them.
+
+- pstack: Copyright (c) 2026 Lauren Tan. **MIT**. Full text:
+  [`vendor/poteto-plugins/pstack/LICENSE`](vendor/poteto-plugins/pstack/LICENSE)
+- cursor-team-kit: Copyright (c) 2026 Cursor. **MIT**. Full text:
+  [`vendor/poteto-plugins/cursor-team-kit/LICENSE`](vendor/poteto-plugins/cursor-team-kit/LICENSE)
+
+---
+
 ## Downloaded at run time, NOT redistributed here
 
 ### UTM guest tools — `utm-guest-tools-latest.iso`
