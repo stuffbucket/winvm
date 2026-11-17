@@ -16,6 +16,7 @@ import { commandInstance, winvmCommandAfter } from "./args"
 import { formatOffset, measureOffset, syncGuestClock } from "./clock"
 import type { InstanceConfig } from "./config"
 import { effectiveConfig } from "./config"
+import { appendEntry } from "./eventlog"
 import * as finder from "./finder"
 import { isFrozenRunState } from "./frozen"
 import { buildIdentity } from "./identity"
@@ -126,7 +127,7 @@ export type SaveOutcome = "saved" | "busy" | "failed"
 export interface Actions {
   save(name: string): Promise<SaveOutcome>
   deleteSaves(names: readonly string[]): Promise<boolean>
-  stow(): Promise<boolean>
+  stow(): Promise<StowOutcome>
   syncClock(): Promise<string>
   drift(): Promise<number | null>
 }
@@ -144,7 +145,7 @@ const automatically = async <T>(
 async function runWinvm(
   argv: readonly string[],
   log: (s: string) => void,
-): Promise<boolean> {
+): Promise<number> {
   log(`run: winvm ${argv.join(" ")}`)
   const started = Date.now()
   const code = await new Promise<number>((res) => {
@@ -173,7 +174,40 @@ async function runWinvm(
   log(
     `  -> exit ${String(code)} after ${String(Math.round((Date.now() - started) / 1000))} s`,
   )
-  return code === 0
+  return code
+}
+
+export type StowOutcome = "stowed" | "refused" | "failed"
+
+export const stowOutcome = (code: number): StowOutcome =>
+  code === 0 ? "stowed" : code === saves.STOW_REFUSED ? "refused" : "failed"
+
+export function idleSettings(
+  settings: Settings,
+  o: { readonly ephemeral: boolean; readonly stowRefused: boolean },
+): Settings {
+  if (o.ephemeral)
+    return {
+      ...settings,
+      autosave: { ...settings.autosave, enabled: false },
+      stow: { ...settings.stow, enabled: false },
+    }
+  return o.stowRefused
+    ? { ...settings, stow: { ...settings.stow, enabled: false } }
+    : settings
+}
+
+export function noteStowRefused(
+  name: string,
+  already: boolean,
+  log: (s: string) => void,
+): true {
+  if (already) return true
+  log(
+    "stow: refused, because this winvm could not recall a stow of the QEMU that runs Windows; idle stows are off until QEMU restarts, and Windows keeps running",
+  )
+  appendEntry(name, { kind: "warning", what: "stow refused", by: "watcher" })
+  return true
 }
 
 async function syncIfRunning(p: Paths): Promise<string> {
@@ -245,7 +279,7 @@ export function realActions(
         return false
       }
     },
-    stow: async () => await runWinvm(CLI.stow(instance), log),
+    stow: async () => stowOutcome(await runWinvm(CLI.stow(instance), log)),
     syncClock: async () => await syncIfRunning(p),
     drift: async () => {
       try {
@@ -566,6 +600,7 @@ export async function watch(
   const startedAt = new Date().toISOString()
   const machine = new IdleMachine(Date.now(), timing)
   let state: WatchState["state"] = "watching"
+  let stowRefused = false
   const lastAt = {
     autosave: newestOfKind(currentSaves(name), "auto"),
     stow: newestOfKind(currentSaves(name), "stow"),
@@ -714,11 +749,14 @@ export async function watch(
         log(
           `stow: idle ${String(Math.round(machine.idleMs(Date.now()) / 1000))} s — stowing`,
         )
-        if (await actions.stow()) {
+        const outcome = await actions.stow()
+        if (outcome === "stowed") {
           lastAt.stow = new Date().toISOString()
           return "stowed"
         }
-        log("stow: failed; back to watching")
+        if (outcome === "refused")
+          stowRefused = noteStowRefused(name, stowRefused, log)
+        else log("stow: failed; back to watching")
         machine.stowFailed(Date.now())
         machine.actionDone(Date.now())
         rebaseCpu()
@@ -774,13 +812,7 @@ export async function watch(
         vncClients: await vncClients(p),
         frozen: await isFrozen(p),
       },
-      ephemeral
-        ? {
-            ...settings,
-            autosave: { ...settings.autosave, enabled: false },
-            stow: { ...settings.stow, enabled: false },
-          }
-        : settings,
+      idleSettings(settings, { ephemeral, stowRefused }),
     )
     const v = machine.lastVerdict
     const summary = `${v.quiet ? "quiet" : "active"} ${String(machine.autosaveArmed)}`

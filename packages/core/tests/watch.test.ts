@@ -28,15 +28,20 @@ import {
   readOverrides,
   writeAssignments,
 } from "../src/config"
+import { readSince, START } from "../src/eventlog"
 import { buildIdentity } from "../src/identity"
 import type { Decision, Sample, Settings, Timing } from "../src/idle"
 import { autosaveName, IdleMachine, savesToRotate } from "../src/idle"
 import { instanceDir, PACKAGE_DIR, pathsFor } from "../src/paths"
+import { STOW_REFUSED } from "../src/saves"
 import {
   ensureWatcher,
+  idleSettings,
+  noteStowRefused,
   parseCpuTime,
   readWatchState,
   stopWatcher,
+  stowOutcome,
   watchAfterRestore,
   watcherFreshness,
   watcherRecord,
@@ -838,4 +843,45 @@ describe("watcher generations", () => {
       await releasePidfiles()
     }
   }, 30_000)
+})
+
+describe("an idle stow that winvm refuses", () => {
+  it("is told apart from a failed stow by winvm stow's exit code", () => {
+    expect(stowOutcome(0)).toBe("stowed")
+    expect(stowOutcome(STOW_REFUSED)).toBe("refused")
+    expect(stowOutcome(1)).toBe("failed")
+  })
+
+  it("turns idle stows off for the rest of this QEMU, leaving autosave alone", () => {
+    expect(
+      idleSettings(SETTINGS, { ephemeral: false, stowRefused: true }),
+    ).toEqual({
+      ...SETTINGS,
+      stow: { ...SETTINGS.stow, enabled: false },
+    })
+    expect(
+      idleSettings(SETTINGS, { ephemeral: false, stowRefused: false }),
+    ).toEqual(SETTINGS)
+    expect(
+      idleSettings(SETTINGS, { ephemeral: true, stowRefused: false }).autosave
+        .enabled,
+    ).toBe(false)
+  })
+
+  it("is recorded once, however often it comes back", () => {
+    rmSync(instanceDir("refused"), { recursive: true, force: true })
+    mkdirSync(instanceDir("refused"), { recursive: true })
+    const logged: string[] = []
+    const log = (line: string): void => {
+      logged.push(line)
+    }
+    expect(noteStowRefused("refused", false, log)).toBe(true)
+    expect(noteStowRefused("refused", true, log)).toBe(true)
+    const refusals = readSince("refused", START).entries.filter(
+      (e) => e.kind === "warning" && e.what === "stow refused",
+    )
+    expect(refusals).toHaveLength(1)
+    expect(logged).toHaveLength(1)
+    expect(logged[0]).toContain("idle stows are off")
+  })
 })
