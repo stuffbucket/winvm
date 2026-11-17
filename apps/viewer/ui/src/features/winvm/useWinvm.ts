@@ -2,8 +2,10 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 
 import {
   errorMessage,
+  eventStreamUp,
   installCli,
   type Output,
+  onWinvmEvent,
   outputText,
   winvm,
 } from "../../backend"
@@ -25,6 +27,7 @@ import {
   titleAssignment,
 } from "../../model"
 import { type AgentSeen, agentSeen, UNSEEN } from "./agentSeen"
+import { Refresher } from "./refresher"
 import {
   operationFor,
   phaseAfter,
@@ -32,6 +35,7 @@ import {
   shownPhase,
   type Verb,
 } from "./statusGuard"
+import { signalOf } from "./stream"
 
 export type { Verb } from "./statusGuard"
 
@@ -73,6 +77,7 @@ export interface Winvm {
   readonly failure: Ran | null
   readonly last: Ran | null
   readonly cliPath: string | null
+  readonly streaming: boolean
   select: (name: string) => void
   act: (verb: Verb, arg?: string, options?: RunOptions) => Promise<Ran | null>
   runOn: (
@@ -90,6 +95,7 @@ export interface Winvm {
   refresh(): Promise<void>
   refreshAll(): Promise<readonly Status[] | null>
   refreshOne(name: string): Promise<Status | null>
+  nextStatus(name: string, ms: number): Promise<Status | null>
 }
 
 interface Local {
@@ -98,6 +104,28 @@ interface Local {
 }
 
 const errorText = (e: unknown): string => errorMessage(e)
+
+const POLL_MS = 4000
+const FAST_POLL_MS = 1500
+const SAFETY_MS = 60_000
+const NAMES_EVERY = 10
+const SETTLE_MS = 150
+const REPAIR_EVERY_MS = 60_000
+const REPAIR_LONGEST_MS = 30 * 60_000
+const SCREEN_RETRY_FIRST_MS = 1500
+const SCREEN_RETRY_LONGEST_MS = 15_000
+
+const transient = (s: Status): boolean =>
+  s.operation !== null || phase(s) === "starting"
+
+interface Repair {
+  readonly at: number
+  readonly failures: number
+  readonly running: boolean
+}
+
+const repairWait = (failures: number): number =>
+  Math.min(REPAIR_EVERY_MS * 2 ** Math.max(0, failures - 1), REPAIR_LONGEST_MS)
 
 export function useWinvm(): Winvm {
   const [names, setNames] = useState<readonly string[]>([])
@@ -121,18 +149,68 @@ export function useWinvm(): Winvm {
   const [polls, setPolls] = useState(0)
   const [seen, setSeen] = useState<AgentSeen>(UNSEEN)
   const [held, setHeld] = useState<Phase | null>(null)
+  const [streaming, setStreaming] = useState(false)
+  const streamingRef = useRef(false)
+  streamingRef.current = streaming
+  const heard = useRef(false)
+  const reader = useRef<(name: string) => void>(() => undefined)
+  const refresher = useRef(
+    new Refresher((n) => {
+      reader.current(n)
+    }),
+  )
+  const waiters = useRef(new Map<string, Set<(s: Status | null) => void>>())
+  const repairs = useRef(new Map<string, Repair>())
   const guard = useRef(new StatusGuard())
   const outcomes = useRef(new Map<string, RanOn>())
   const ranCount = useRef(0)
   const tick = useRef(0)
+  const looped = useRef<string | null>(null)
   const nameRef = useRef<string | null>(null)
   nameRef.current = name
 
-  const showList = useCallback((list: readonly Status[]): void => {
-    setNames(list.map((s) => s.name))
-    setTitles(Object.fromEntries(list.map((s) => [s.name, s.title])))
-    setPhases(Object.fromEntries(list.map((s) => [s.name, phase(s)])))
+  const repairDue = useCallback((list: readonly Status[]): void => {
+    const now = Date.now()
+    for (const s of list) {
+      if (s.management !== "repair") {
+        repairs.current.delete(s.name)
+        continue
+      }
+      if (s.operation !== null) continue
+      const last = repairs.current.get(s.name)
+      if (last?.running === true) continue
+      if (last !== undefined && now < last.at + repairWait(last.failures))
+        continue
+      const failures = last?.failures ?? 0
+      repairs.current.set(s.name, { at: now, failures, running: true })
+      const settle = (failed: boolean): void => {
+        repairs.current.set(s.name, {
+          at: now,
+          failures: failed ? failures + 1 : 0,
+          running: false,
+        })
+        refresher.current.changed(s.name, 0)
+      }
+      winvm("reconcile", "-i", s.name).then(
+        (out) => {
+          settle(out.code !== 0)
+        },
+        () => {
+          settle(true)
+        },
+      )
+    }
   }, [])
+
+  const showList = useCallback(
+    (list: readonly Status[]): void => {
+      setNames(list.map((s) => s.name))
+      setTitles(Object.fromEntries(list.map((s) => [s.name, s.title])))
+      setPhases(Object.fromEntries(list.map((s) => [s.name, phase(s)])))
+      repairDue(list)
+    },
+    [repairDue],
+  )
 
   const loadNames = useCallback(async (): Promise<string | null> => {
     const out = await winvm("status", "--json")
@@ -150,30 +228,63 @@ export function useWinvm(): Winvm {
   const loadStatus = useCallback(
     async (target: string): Promise<Status | null> => {
       const ticket = guard.current.begin()
-      const out = await winvm("status", "--json", "-i", target)
-      const s = parseStatus(out.stdout)?.[0]
-      if (s === undefined) {
-        if (target === nameRef.current)
-          setStatusError(
-            outputText(out) || `winvm status exited ${String(out.code)}`,
-          )
-        return null
+      refresher.current.begin(target)
+      let s: Status | undefined
+      try {
+        const out = await winvm("status", "--json", "-i", target)
+        s = parseStatus(out.stdout)?.[0]
+        if (s === undefined) {
+          if (target === nameRef.current)
+            setStatusError(
+              outputText(out) || `winvm status exited ${String(out.code)}`,
+            )
+          return null
+        }
+      } finally {
+        refresher.current.end(
+          target,
+          s === undefined || !streamingRef.current ? null : transient(s),
+        )
       }
+      const got = s
+      for (const wake of [...(waiters.current.get(target) ?? [])]) wake(got)
+      repairDue([got])
       if (target === nameRef.current) {
-        if (!guard.current.land(ticket)) return s
+        if (!guard.current.land(ticket)) return got
         setHeld(null)
         setStatusError(null)
-        setStatus(s)
-        setSeen((was) => agentSeen(was, s))
+        setStatus(got)
+        setSeen((was) => agentSeen(was, got))
       }
       setTitles((was) =>
-        was[s.name] === s.title ? was : { ...was, [s.name]: s.title },
+        was[got.name] === got.title ? was : { ...was, [got.name]: got.title },
       )
       setPhases((was) =>
-        was[s.name] === phase(s) ? was : { ...was, [s.name]: phase(s) },
+        was[got.name] === phase(got) ? was : { ...was, [got.name]: phase(got) },
       )
-      return s
+      return got
     },
+    [repairDue],
+  )
+  reader.current = (n) => {
+    loadStatus(n).catch(() => undefined)
+  }
+
+  const nextStatus = useCallback(
+    (target: string, ms: number): Promise<Status | null> =>
+      new Promise((resolve) => {
+        const set = waiters.current.get(target) ?? new Set()
+        waiters.current.set(target, set)
+        const done = (s: Status | null): void => {
+          clearTimeout(timer)
+          set.delete(done)
+          resolve(s)
+        }
+        const timer = setTimeout(() => {
+          done(null)
+        }, ms)
+        set.add(done)
+      }),
     [],
   )
 
@@ -229,6 +340,40 @@ export function useWinvm(): Winvm {
   }, [loadChecks])
 
   useEffect(() => {
+    const r = refresher.current
+    r.start()
+    let gone = false
+    const resync = (): void => {
+      loadNames().catch(() => undefined)
+      const shown = nameRef.current
+      if (shown !== null) r.changed(shown, 0)
+    }
+    const unlisten = onWinvmEvent((raw) => {
+      const signal = signalOf(raw)
+      if (signal === null || gone) return
+      heard.current = true
+      if (signal.kind === "down") {
+        setStreaming(false)
+        return
+      }
+      setStreaming(true)
+      if (signal.kind === "changed") r.changed(signal.instance, SETTLE_MS)
+      else resync()
+    })
+    eventStreamUp().then(
+      (up) => {
+        if (!gone && !heard.current) setStreaming(up)
+      },
+      () => undefined,
+    )
+    return () => {
+      gone = true
+      unlisten()
+      r.stop()
+    }
+  }, [loadNames])
+
+  useEffect(() => {
     if (name !== null) return
     let stopped = false
     let timer: ReturnType<typeof setTimeout> | undefined
@@ -264,7 +409,11 @@ export function useWinvm(): Winvm {
       : current?.operation == null
         ? null
         : { operation: current.operation.operation, source: "external" }
-  const fast = operation !== null || p === "starting"
+  const every = streaming
+    ? SAFETY_MS
+    : operation !== null || p === "starting"
+      ? FAST_POLL_MS
+      : POLL_MS
 
   useEffect(() => {
     if (name === null) return
@@ -273,45 +422,76 @@ export function useWinvm(): Winvm {
     const loop = async (): Promise<void> => {
       tick.current += 1
       try {
-        if (tick.current % 10 === 0) await loadNames()
+        if (tick.current % NAMES_EVERY === 0) await loadNames()
         await loadStatus(name)
       } catch (e) {
         setStatusError(errorText(e))
       }
       setPolls((n) => n + 1)
-      if (!stopped) timer = setTimeout(() => void loop(), fast ? 1500 : 4000)
+      if (!stopped) timer = setTimeout(() => void loop(), every)
     }
-    void loop()
+    const known = looped.current === name
+    looped.current = name
+    if (known && every === SAFETY_MS)
+      timer = setTimeout(() => void loop(), every)
+    else void loop()
     return () => {
       stopped = true
       if (timer !== undefined) clearTimeout(timer)
     }
-  }, [name, fast, loadNames, loadStatus])
+  }, [name, every, loadNames, loadStatus])
 
   const live = isLivePhase(p)
   const pid = current?.pid ?? null
   const asking = useRef(false)
+  const [retries, setRetries] = useState(0)
+  const misses = useRef(0)
+  const retry = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
+  useEffect(
+    () => () => {
+      clearTimeout(retry.current)
+    },
+    [],
+  )
   const polled = useMemo(
-    () => ({ live, pid, name, polls }),
-    [live, pid, name, polls],
+    () => ({ live, pid, name, polls, retries }),
+    [live, pid, name, polls, retries],
   )
   useEffect(() => {
     const { pid, name } = polled
     if (!polled.live || pid === null || name === null) {
       setConnection(null)
+      misses.current = 0
       return
     }
     if ((connection !== null && connection.pid === pid) || asking.current)
       return
     asking.current = true
+    let reached = false
     winvm("open", "--json", "-i", name)
       .then((out) => {
         const conn = parseConnection(out.stdout)
-        if (conn !== null) setConnection({ pid, conn })
+        if (conn === null) return
+        reached = true
+        setConnection({ pid, conn })
       })
       .catch(() => undefined)
       .finally(() => {
         asking.current = false
+        if (reached) {
+          misses.current = 0
+          return
+        }
+        if (!streamingRef.current) return
+        const wait = Math.min(
+          SCREEN_RETRY_FIRST_MS * 2 ** misses.current,
+          SCREEN_RETRY_LONGEST_MS,
+        )
+        misses.current += 1
+        clearTimeout(retry.current)
+        retry.current = setTimeout(() => {
+          setRetries((n) => n + 1)
+        }, wait)
       })
   }, [polled, connection])
 
@@ -476,6 +656,8 @@ export function useWinvm(): Winvm {
     },
     refreshAll,
     refreshOne,
+    nextStatus,
+    streaming,
     status: current,
     phase: p,
     agentSeen: seen,

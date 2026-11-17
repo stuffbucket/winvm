@@ -3,8 +3,10 @@ import { spawnSync } from "node:child_process"
 import {
   chmodSync,
   existsSync,
+  lstatSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   rmSync,
   writeFileSync,
@@ -14,9 +16,11 @@ import { resolve } from "node:path"
 import { readSince, START } from "../src/eventlog"
 import {
   ManagementError,
+  needsRepair,
   type ReconcileOptions,
   reconcileManagement,
   reconcileNote,
+  settleWatcherDebt,
   shouldReconcileVerb,
 } from "../src/lifecycle"
 import { PACKAGE_DIR, type Paths, pathsFor } from "../src/paths"
@@ -621,6 +625,24 @@ describe("one reconciliation at a time", () => {
         ),
       ).toEqual([])
     })
+    it(`takes over a lock left by ${label} however little of the wait is left`, async () => {
+      await service(OLD)
+      writeFileSync(
+        resolve(p.dir, "reconcile.lock"),
+        JSON.stringify({
+          ...(await stale()),
+          token: "dead",
+          restoreWatcher: true,
+          qemu: qemu.pid,
+        }),
+      )
+      owe(qemu.pid)
+      const s = seams({ lockWaitMs: 0 })
+      const r = await reconcileManagement("t", p, s.options)
+      expect(s.starts).toEqual({ service: 1, watcher: 1 })
+      expect(r.changed).toBe(true)
+      expect(existsSync(resolve(p.dir, "reconcile.lock"))).toBe(false)
+    })
   }
 
   it("never takes over from a live holder whose ps prints its start in another locale and time zone", async () => {
@@ -895,6 +917,83 @@ describe("a watcher owed after a failure", () => {
   })
 })
 
+describe("reading whether a repair is due, and settling a debt", () => {
+  function snapshot(): string {
+    return readdirSync(p.dir)
+      .toSorted()
+      .map((f) => {
+        const s = lstatSync(resolve(p.dir, f))
+        return `${f}:${String(s.mtimeMs)}:${s.isFile() ? readFileSync(resolve(p.dir, f), "utf8") : ""}`
+      })
+      .join("\n")
+  }
+
+  it("says a repair is due for a stale or missing service and an owed watcher, and changes nothing by saying so", async () => {
+    const before = snapshot()
+    expect(needsRepair("t", p, CURRENT)).toBe(true)
+    expect(snapshot()).toBe(before)
+    const svc = await service(OLD)
+    await watcher(CURRENT)
+    expect(needsRepair("t", p, CURRENT)).toBe(true)
+    recordService(svc.pid, CURRENT)
+    expect(needsRepair("t", p, CURRENT)).toBe(false)
+    owe(qemu.pid)
+    const owing = snapshot()
+    expect(needsRepair("t", p, CURRENT)).toBe(true)
+    expect(snapshot()).toBe(owing)
+    expect(signals).toEqual([])
+    rmSync(owedPath())
+    rmSync(p.pid)
+    expect(needsRepair("t", p, CURRENT)).toBe(false)
+  })
+
+  it("leaves another install's management alone", async () => {
+    await service(OLD, "/elsewhere/winvm.ts")
+    expect(needsRepair("t", p, CURRENT)).toBe(false)
+  })
+
+  it("settles nothing when nothing is owed", async () => {
+    await service(CURRENT)
+    const s = seams()
+    expect(await settleWatcherDebt("t", p, s.options)).toBeNull()
+    expect(s.starts).toEqual({ service: 0, watcher: 0 })
+  })
+
+  it("restores a watcher owed to this QEMU", async () => {
+    await service(CURRENT)
+    owe(qemu.pid)
+    const s = seams()
+    expect(await settleWatcherDebt("t", p, s.options)).toMatchObject({
+      changed: true,
+    })
+    expect(s.starts).toEqual({ service: 0, watcher: 1 })
+    expect(existsSync(owedPath())).toBe(false)
+    expectQemuUntouched()
+  })
+
+  it("does not wait for a reconcile another live process holds", async () => {
+    await service(CURRENT)
+    owe(qemu.pid)
+    const other = await hold("winvm", "reconcile")
+    writeFileSync(
+      p.reconcile,
+      JSON.stringify({
+        pid: other.pid,
+        start: processStart(other.pid),
+        token: "theirs",
+      }),
+    )
+    const s = seams()
+    const t0 = Date.now()
+    expect(await settleWatcherDebt("t", p, s.options)).toMatchObject({
+      changed: false,
+    })
+    expect(Date.now() - t0).toBeLessThan(1000)
+    expect(s.starts).toEqual({ service: 0, watcher: 0 })
+    expect(existsSync(owedPath())).toBe(true)
+  })
+})
+
 describe("a watcher busy saving, for a command that must not wait", () => {
   for (const state of ["autosaving", "stowing"] as const) {
     it(`defers at once while it is ${state}, never signals it, and repairs once that is over`, async () => {
@@ -1103,7 +1202,6 @@ describe("races", () => {
 describe("no recursion", () => {
   it("reconciles before instance read and management verbs", () => {
     for (const verb of [
-      "status",
       "info",
       "exec",
       "put",
@@ -1119,8 +1217,11 @@ describe("no recursion", () => {
     }
   })
 
-  it("never inside the service or the watcher, nor for teardown, build or test verbs", () => {
+  it("never inside the service or the watcher, nor for teardown, build or test verbs, nor for status, which only reads", () => {
     for (const verb of [
+      "status",
+      "events",
+      "reconcile",
       "serve",
       "watch",
       "stop",
@@ -1145,10 +1246,8 @@ describe("no recursion", () => {
   })
 
   it("never in a process started with WINVM_NO_RECONCILE=1", () => {
-    expect(shouldReconcileVerb("status", { WINVM_NO_RECONCILE: "1" })).toBe(
-      false,
-    )
-    expect(shouldReconcileVerb("status", { WINVM_NO_RECONCILE: "" })).toBe(true)
+    expect(shouldReconcileVerb("info", { WINVM_NO_RECONCILE: "1" })).toBe(false)
+    expect(shouldReconcileVerb("info", { WINVM_NO_RECONCILE: "" })).toBe(true)
   })
 
   it("marks the detached service, the watcher and the watcher's stow child", async () => {
@@ -1211,15 +1310,27 @@ describe("the CLI", () => {
     return e
   }
 
+  const winvm = (
+    verb: readonly string[],
+    extra: Record<string, string> = {},
+    timeout = 60_000,
+  ): ReturnType<typeof spawnSync> =>
+    spawnSync(process.execPath, [cli, ...verb], {
+      env: env(extra),
+      encoding: "utf8",
+      timeout,
+    })
+
   const status = (
     extra: Record<string, string> = {},
     instance: readonly string[] = ["-i", "t"],
   ): ReturnType<typeof spawnSync> =>
-    spawnSync(process.execPath, [cli, "status", "--json", ...instance], {
-      env: env(extra),
-      encoding: "utf8",
-      timeout: 60_000,
-    })
+    winvm(["status", "--json", ...instance], extra)
+
+  const reconcile = (
+    extra: Record<string, string> = {},
+    instance: readonly string[] = ["-i", "t"],
+  ): ReturnType<typeof spawnSync> => winvm(["reconcile", ...instance], extra)
 
   async function staleFromSameCli(): Promise<Proc> {
     const h = await hold("winvm", "serve", "-i", "t")
@@ -1234,25 +1345,71 @@ describe("the CLI", () => {
     return h
   }
 
-  it("status --json repairs a service whose build alone is stale, and leaves QEMU running", async () => {
+  function tree(): Record<string, string> {
+    const out: Record<string, string> = {}
+    const walk = (dir: string): void => {
+      for (const name of readdirSync(dir)) {
+        const path = resolve(dir, name)
+        const s = lstatSync(path)
+        if (s.isDirectory()) {
+          out[path] = "dir"
+          walk(path)
+        } else if (s.isFile())
+          out[path] =
+            `${String(s.mtimeMs)}:${readFileSync(path).toString("base64")}`
+        else out[path] = "other"
+      }
+    }
+    walk(home)
+    return out
+  }
+
+  it("status --json changes nothing, though the service is stale and a watcher is owed", async () => {
     const old = await staleFromSameCli()
-    const r = status()
+    owe(qemu.pid)
+    const before = tree()
+    const one = status()
+    const all = status({}, [])
+    expect(one.status).toBe(0)
+    expect(all.status).toBe(0)
+    expect(tree()).toEqual(before)
+    expect(live(old.pid)).toBe(true)
+    expect(readService(p)?.build).toBe(OLD)
+    expect(watcherRecord("t")).toBeNull()
+    expect(live(qemu.pid)).toBe(true)
+    expect(JSON.parse(String(one.stdout))).toMatchObject({
+      name: "t",
+      management: "repair",
+    })
+    expect(String(one.stderr)).not.toContain("now runs this build")
+  }, 60_000)
+
+  it("status names the repair it leaves to reconcile, and reconcile repairs a stale service and leaves QEMU running", async () => {
+    const old = await staleFromSameCli()
+    expect(String(winvm(["status", "-i", "t"]).stdout)).toContain(
+      "winvm reconcile -i t",
+    )
+    const r = reconcile()
     expect(r.status).toBe(0)
+    expect(String(r.stderr)).toContain("now runs this build")
     expect(live(old.pid)).toBe(false)
     expect(readService(p)?.build).toBe("sha256:cli-test")
     expect(readService(p)?.cli).toBe(cli)
     expect(live(qemu.pid)).toBe(true)
-    expect(JSON.parse(String(r.stdout))).toMatchObject({ name: "t" })
+    expect(JSON.parse(String(status().stdout))).toMatchObject({
+      name: "t",
+      management: "current",
+    })
   }, 60_000)
 
   it("does not reconcile with WINVM_NO_RECONCILE=1", async () => {
     const old = await staleFromSameCli()
-    status({ WINVM_NO_RECONCILE: "1" })
+    expect(reconcile({ WINVM_NO_RECONCILE: "1" }).status).toBe(0)
     expect(live(old.pid)).toBe(true)
     expect(readService(p)?.build).toBe(OLD)
   }, 60_000)
 
-  it("status --json of every instance reports them all, though one could not be repaired", async () => {
+  it("reconcile with no -i repairs every instance, though one could not be repaired", async () => {
     const a = pathsFor("a")
     mkdirSync(a.dir, { recursive: true })
     writeFileSync(a.meta, JSON.stringify({ image: "x", vnc: 8, created: "" }))
@@ -1260,20 +1417,17 @@ describe("the CLI", () => {
     writeFileSync(a.qmpQemu, "")
     mkdirSync(resolve(a.dir, "service.log"))
     const old = await staleFromSameCli()
-    const r = status({}, [])
+    const r = reconcile({}, [])
+    expect(r.status).toBe(1)
     expect(String(r.stderr)).toContain(
       `::error::could not start a current control service for "a"`,
     )
-    const out = JSON.parse(String(r.stdout)) as {
-      instances: { name: string }[]
-    }
-    expect(out.instances.map((i) => i.name).toSorted()).toEqual(["a", "t"])
     expect(live(old.pid)).toBe(false)
     expect(readService(p)?.build).toBe("sha256:cli-test")
     expect(live(qemu.pid)).toBe(true)
   }, 60_000)
 
-  it("status --json answers at once while a stale watcher is autosaving, signals it never, and repairs once it is done", async () => {
+  it("reconcile answers at once while a stale watcher is autosaving, signals it never, and repairs once it is done", async () => {
     const a = pathsFor("a")
     mkdirSync(a.dir, { recursive: true })
     writeFileSync(a.meta, JSON.stringify({ image: "x", vnc: 8, created: "" }))
@@ -1290,28 +1444,17 @@ describe("the CLI", () => {
     busy("autosaving")
     const old = await staleFromSameCli()
     const quick = (instance: readonly string[]): ReturnType<typeof spawnSync> =>
-      spawnSync(process.execPath, [cli, "status", "--json", ...instance], {
-        env: env({}),
-        encoding: "utf8",
-        timeout: 30_000,
-      })
+      winvm(["reconcile", ...instance], {}, 30_000)
     try {
       let t0 = Date.now()
       const one = quick(["-i", "a"])
       expect(one.signal).toBeNull()
       expect(Date.now() - t0).toBeLessThan(20_000)
-      expect(JSON.parse(String(one.stdout))).toMatchObject({ name: "a" })
+      expect(String(one.stderr)).toContain("autosaving")
       t0 = Date.now()
       const all = quick([])
       expect(all.signal).toBeNull()
       expect(Date.now() - t0).toBeLessThan(20_000)
-      expect(
-        (
-          JSON.parse(String(all.stdout)) as { instances: { name: string }[] }
-        ).instances
-          .map((i) => i.name)
-          .toSorted(),
-      ).toEqual(["a", "t"])
       expect(live(old.pid)).toBe(false)
       expect(readService(p)?.build).toBe("sha256:cli-test")
       expect(existsSync(got)).toBe(false)

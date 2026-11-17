@@ -341,6 +341,22 @@ export const onMenu = (cb: (id: string) => void): Unlisten =>
     cb(id as string)
   })
 
+export const onWinvmEvent = (cb: (line: unknown) => void): Unlisten =>
+  listen("winvm-event", cb)
+
+export async function eventStreamUp(): Promise<boolean> {
+  try {
+    const state = await tauri().core.invoke<unknown>("events_state")
+    return (
+      typeof state === "object" &&
+      state !== null &&
+      (state as { up?: unknown }).up === true
+    )
+  } catch {
+    return false
+  }
+}
+
 export const onViewerCloseRequested = (
   cb: () => void,
   listening?: () => void,

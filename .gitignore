@@ -17,3 +17,6 @@ apps/viewer/src-tauri/gen/
 
 # Claude Code agent worktrees
 .claude/worktrees/
+
+# The keeper crate's Rust target.
+native/keeper/target/

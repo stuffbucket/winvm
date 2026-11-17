@@ -8,6 +8,7 @@ import {
   it,
 } from "bun:test"
 import {
+  chmodSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -22,12 +23,15 @@ import { parseArgs } from "../src/args"
 import { type Entry, readSince, START } from "../src/eventlog"
 import type { LeaseOperation, VmOperation } from "../src/operation"
 import {
+  abandonedStop,
   clearSavingRunning,
   InstanceBusy,
+  irreversible,
   leaseHolder,
   markSavingRunning,
   operationFor,
   readOperation,
+  STOP_UNFINISHED,
   savingRunning,
   withOperation,
 } from "../src/operation"
@@ -826,5 +830,275 @@ describe("a command that exits inside its lease", () => {
       }),
     ).rejects.toThrow("boom")
     expect(process.listenerCount("exit")).toBe(before)
+  })
+})
+
+describe("a stop interrupted after its point of no return", () => {
+  const SRC = resolve(import.meta.dir, "../src/operation.ts")
+  const RECOVERY = ["Nothing was undone after the request.", "Stuck? kill it."]
+
+  async function runUntil(
+    mark: boolean,
+  ): Promise<{ child: ReturnType<typeof Bun.spawn>; err: Promise<string> }> {
+    const script = resolve(home, `irrev-${String(Math.random()).slice(2)}.ts`)
+    writeFileSync(
+      script,
+      [
+        `import { irreversible, withOperation } from ${JSON.stringify(SRC)}`,
+        `await withOperation(${JSON.stringify(NAME)}, "stop", async () => {`,
+        mark
+          ? `  irreversible(${JSON.stringify(NAME)}, ${JSON.stringify(RECOVERY)})`
+          : "",
+        `  console.log("ready")`,
+        `  await Bun.sleep(30000)`,
+        `}, { interruptible: true })`,
+      ].join("\n"),
+    )
+    const child = Bun.spawn([process.execPath, script], {
+      env: { ...process.env, WINVM_HOME: home },
+      stdout: "pipe",
+      stderr: "pipe",
+    })
+    spawned.push(child)
+    const reader = (child.stdout as ReadableStream<Uint8Array>).getReader()
+    await reader.read()
+    reader.releaseLock()
+    rmSync(script, { force: true })
+    return { child, err: new Response(child.stderr as ReadableStream).text() }
+  }
+
+  const stopEnd = (): Record<string, unknown> | undefined =>
+    readSince(NAME, START).entries.find(
+      (e) => e.kind === "op" && e.phase === "end" && e.operation === "stop",
+    ) as Record<string, unknown> | undefined
+
+  for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"] as const) {
+    it(`ends the stop with exit code 3, says what was left, and exits 130 on ${signal}`, async () => {
+      const { child, err } = await runUntil(true)
+      expect(onDisk()?.irreversibleAt).toEqual(expect.any(String))
+      child.kill(signal)
+      expect(await child.exited).toBe(130)
+      expect(stopEnd()).toMatchObject({
+        ok: false,
+        exitCode: STOP_UNFINISHED,
+        irreversibleAt: expect.any(String) as string,
+      })
+      expect(stopEnd()?.abandoned).toBeUndefined()
+      expect(onDisk()).toBeNull()
+      const text = await err
+      expect(text).toContain(signal)
+      expect(text).toContain("Nothing was undone after the request.")
+      expect(text).toContain("Stuck? kill it.")
+    })
+  }
+
+  it("is seen without taking the lease over, then recorded as abandoned and still marked when something does", async () => {
+    const { child } = await runUntil(true)
+    child.kill("SIGKILL")
+    await child.exited
+    const before = readFileSync(leaseFile(), "utf8")
+    expect(abandonedStop(NAME)).toEqual({ at: expect.any(String) as string })
+    expect(readFileSync(leaseFile(), "utf8")).toBe(before)
+    expect(stopEnd()).toBeUndefined()
+    expect(leaseHolder(NAME, {}, true)).toBeNull()
+    expect(stopEnd()).toMatchObject({
+      ok: false,
+      abandoned: true,
+      irreversibleAt: expect.any(String) as string,
+    })
+  })
+
+  it("leaves an interrupt before the mark as it was: the signal ends the process and nothing is claimed", async () => {
+    const { child, err } = await runUntil(false)
+    child.kill("SIGINT")
+    await child.exited
+    expect(child.signalCode).toBe("SIGINT")
+    expect(await err).not.toContain("Nothing was undone")
+    expect(leaseHolder(NAME, {}, true)).toBeNull()
+    expect(stopEnd()?.irreversibleAt).toBeUndefined()
+    expect(stopEnd()?.exitCode).toBeUndefined()
+  })
+
+  it("marks nothing, and does not throw, outside a lease", () => {
+    expect(() => {
+      irreversible("op-nothing", RECOVERY)
+    }).not.toThrow()
+  })
+
+  it("carries the mark into the end of a stop that returns after it", async () => {
+    await withOperation(
+      NAME,
+      "stop",
+      () => {
+        irreversible(NAME, RECOVERY)
+        return STOP_UNFINISHED
+      },
+      { interruptible: true },
+    )
+    expect(stopEnd()).toMatchObject({
+      ok: false,
+      exitCode: STOP_UNFINISHED,
+      irreversibleAt: expect.any(String) as string,
+    })
+    expect(process.listenerCount("SIGINT")).toBe(0)
+  })
+})
+
+describe("a stop that settled, or was interrupted before its request", () => {
+  const SRC = resolve(import.meta.dir, "../src/operation.ts")
+
+  async function launch(
+    body: string,
+    operation = "stop",
+  ): Promise<{
+    child: ReturnType<typeof Bun.spawn>
+    err: Promise<string>
+    next: () => Promise<string>
+  }> {
+    const script = resolve(home, `gate-${String(Math.random()).slice(2)}.ts`)
+    writeFileSync(
+      script,
+      [
+        `import { irreversible, takeInterrupts, withOperation } from ${JSON.stringify(SRC)}`,
+        `const NAME = ${JSON.stringify(NAME)}`,
+        `await withOperation(NAME, ${JSON.stringify(operation)}, async () => {`,
+        body,
+        `}, { interruptible: true })`,
+      ].join("\n"),
+    )
+    const child = Bun.spawn([process.execPath, script], {
+      env: { ...process.env, WINVM_HOME: home },
+      stdout: "pipe",
+      stderr: "pipe",
+    })
+    spawned.push(child)
+    const reader = (child.stdout as ReadableStream<Uint8Array>).getReader()
+    const next = async (): Promise<string> =>
+      new TextDecoder().decode((await reader.read()).value).trim()
+    await next()
+    rmSync(script, { force: true })
+    return {
+      child,
+      err: new Response(child.stderr as ReadableStream).text(),
+      next,
+    }
+  }
+
+  const opEnd = (operation: string): Record<string, unknown> | undefined =>
+    readSince(NAME, START).entries.find(
+      (e) => e.kind === "op" && e.phase === "end" && e.operation === operation,
+    ) as Record<string, unknown> | undefined
+
+  it("forgets the mark when the stop disarms it, so a later interrupt of the enclosing operation claims nothing", async () => {
+    const { child, err } = await launch(
+      `const disarm = irreversible(NAME, ["Nothing was undone"]); disarm(); console.log("ready"); await Bun.sleep(30000)`,
+      "setup",
+    )
+    expect(onDisk()?.irreversibleAt).toBeUndefined()
+    child.kill("SIGINT")
+    await child.exited
+    expect(child.signalCode).toBe("SIGINT")
+    expect(await err).not.toContain("Nothing was undone")
+    leaseHolder(NAME, {}, true)
+    expect(opEnd("setup")?.irreversibleAt).toBeUndefined()
+  })
+
+  it("does not put a disarmed mark in the end of the operation that returns", async () => {
+    await withOperation(
+      NAME,
+      "setup",
+      () => {
+        irreversible(NAME, ["x"])()
+        return 0
+      },
+      { interruptible: true },
+    )
+    expect(opEnd("setup")).toMatchObject({ ok: true })
+    expect(opEnd("setup")?.irreversibleAt).toBeUndefined()
+  })
+
+  it("records the end before it prints, and still exits, when printing fails", async () => {
+    const { child } = await launch(
+      `irreversible(NAME, ["Nothing was undone"]); console.error = () => { throw new Error("tty gone") }; console.log("ready"); await Bun.sleep(30000)`,
+    )
+    child.kill("SIGHUP")
+    expect(await child.exited).toBe(130)
+    expect(opEnd("stop")).toMatchObject({
+      ok: false,
+      exitCode: STOP_UNFINISHED,
+      irreversibleAt: expect.any(String) as string,
+    })
+    expect(onDisk()).toBeNull()
+  })
+
+  it("keeps a failure to rewrite the lease from escaping once the request has gone out", async () => {
+    const dir = pathsFor(NAME).dir
+    await withOperation(NAME, "stop", () => {
+      chmodSync(dir, 0o500)
+      try {
+        expect(() => {
+          irreversible(NAME, ["x"])()
+        }).not.toThrow()
+      } finally {
+        chmodSync(dir, 0o700)
+      }
+      return 0
+    })
+  })
+
+  it("takes a signal before the request as an abort for the stop to roll back on, and exits at once on the second", async () => {
+    const { child, next, err } = await launch(
+      `const t = takeInterrupts(NAME, "stop"); t.signal.addEventListener("abort", () => console.log("aborted:" + String(t.signal.reason))); console.log("ready"); await Bun.sleep(30000)`,
+    )
+    child.kill("SIGINT")
+    expect(await next()).toBe("aborted:SIGINT")
+    expect(child.exitCode).toBeNull()
+    child.kill("SIGINT")
+    expect(await child.exited).toBe(130)
+    expect(opEnd("stop")).toMatchObject({ ok: false, exitCode: 130 })
+    expect(opEnd("stop")?.irreversibleAt).toBeUndefined()
+    expect(await err).toContain("interrupted by SIGINT")
+    expect(onDisk()).toBeNull()
+  })
+
+  it("does not take signals once the stop releases them", async () => {
+    const { child } = await launch(
+      `const t = takeInterrupts(NAME, "stop"); t.release(); console.log("ready"); await Bun.sleep(30000)`,
+    )
+    child.kill("SIGINT")
+    await child.exited
+    expect(child.signalCode).toBe("SIGINT")
+  })
+
+  it("hands out nothing to abort on for an operation it was not asked about", async () => {
+    const { child } = await launch(
+      `const t = takeInterrupts(NAME, "stop"); t.signal.addEventListener("abort", () => console.log("aborted")); console.log("ready"); await Bun.sleep(30000)`,
+      "setup",
+    )
+    child.kill("SIGINT")
+    await child.exited
+    expect(child.signalCode).toBe("SIGINT")
+  })
+
+  for (const [signal, code] of [
+    ["SIGTERM", "SIGTERM"],
+    ["SIGHUP", "SIGHUP"],
+  ] as const)
+    it(`leaves ${signal} before the mark as it was`, async () => {
+      const { child } = await launch(
+        `console.log("ready"); await Bun.sleep(30000)`,
+      )
+      child.kill(signal)
+      await child.exited
+      expect(child.signalCode).toBe(code)
+    })
+
+  it("defers to another listener for the signal before the mark", async () => {
+    const { child, next } = await launch(
+      `process.on("SIGINT", () => console.log("theirs")); console.log("ready"); await Bun.sleep(30000)`,
+    )
+    child.kill("SIGINT")
+    expect(await next()).toBe("theirs")
+    expect(child.exitCode).toBeNull()
   })
 })

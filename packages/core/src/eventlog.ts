@@ -66,6 +66,7 @@ export interface OpOutcome {
   readonly exitCode?: number
   readonly error?: string
   readonly abandoned?: true
+  readonly irreversibleAt?: string
 }
 
 export interface OpEndFields extends OpIdentity, OpOutcome {
@@ -75,7 +76,7 @@ export interface OpEndFields extends OpIdentity, OpOutcome {
 }
 
 export interface NoteFields {
-  readonly kind: "service" | "warning"
+  readonly kind: "service" | "warning" | "keeper"
   readonly what: string
   readonly [field: string]: unknown
 }
@@ -299,6 +300,7 @@ function opEntry(stamp: Stamp, r: Json): Entry | null {
   if (r.phase !== "end" || endedAt === null || typeof r.ok !== "boolean")
     return null
   const error = str(r.error)
+  const irreversibleAt = str(r.irreversibleAt)
   return {
     ...stamp,
     kind: "op",
@@ -309,6 +311,7 @@ function opEntry(stamp: Stamp, r: Json): Entry | null {
     ...(typeof r.exitCode === "number" ? { exitCode: r.exitCode } : {}),
     ...(error === null ? {} : { error }),
     ...(r.abandoned === true ? { abandoned: true as const } : {}),
+    ...(irreversibleAt === null ? {} : { irreversibleAt }),
   }
 }
 
@@ -351,7 +354,8 @@ function entryOf(r: Json): Entry | null {
     case "op":
       return opEntry(stamp, r)
     case "service":
-    case "warning": {
+    case "warning":
+    case "keeper": {
       const what = str(r.what)
       return what === null ? null : { ...r, ...stamp, kind: r.kind, what }
     }
@@ -451,10 +455,7 @@ function wholeLines(o: Opened, from: number): Lines {
   return { lines, end: bounded + at, skipped: bounded > from }
 }
 
-interface Item {
-  readonly entry: Entry
-  readonly after: Cursor
-}
+type Item = Placed
 
 interface Scan {
   readonly items: readonly Item[]
@@ -587,6 +588,26 @@ export function readSince(
 ): Batch {
   const s = scan(instance, cursor, seams)
   return { entries: s.items.map((i) => i.entry), cursor: s.cursor, gap: s.gap }
+}
+
+export interface Placed {
+  readonly entry: Entry
+  readonly after: Cursor
+}
+
+export interface PlacedBatch {
+  readonly placed: readonly Placed[]
+  readonly cursor: Cursor
+  readonly gap: boolean
+}
+
+export function readSinceEach(
+  instance: string,
+  cursor: Cursor,
+  seams: ReadSeams = {},
+): PlacedBatch {
+  const s = scan(instance, cursor, seams)
+  return { placed: s.items, cursor: s.cursor, gap: s.gap }
 }
 
 function lastLineEnd(o: Opened): number {

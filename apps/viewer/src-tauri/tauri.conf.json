@@ -50,7 +50,7 @@
       "icons/128x128@2x.png",
       "icons/icon.icns"
     ],
-    "externalBin": ["binaries/winvm"],
+    "externalBin": ["binaries/winvm", "binaries/winvm-keeper"],
     "macOS": {
       "minimumSystemVersion": "15.0"
     }

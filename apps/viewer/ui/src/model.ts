@@ -69,6 +69,7 @@ const Status = z.object({
   overlayBytes: z.number().nullable(),
   guest: Guest.nullable(),
   saves: z.object({ count: z.number(), bytes: z.number() }),
+  management: z.string().nullable().optional(),
   notes: z.array(z.string()),
 })
 
