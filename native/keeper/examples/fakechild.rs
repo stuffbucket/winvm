@@ -9,6 +9,15 @@ use std::time::{Duration, Instant};
 static HANDLED: AtomicI32 = AtomicI32::new(0);
 static QUIT: AtomicBool = AtomicBool::new(false);
 static POWERED_DOWN: AtomicBool = AtomicBool::new(false);
+static STOPPED: AtomicBool = AtomicBool::new(false);
+
+struct Control {
+    path: PathBuf,
+    report: PathBuf,
+    on_host_end: String,
+    quit_qmp: Option<PathBuf>,
+    keeper: Option<PathBuf>,
+}
 
 struct Monitor {
     path: PathBuf,
@@ -79,9 +88,118 @@ fn serve_qmp(monitor: &Monitor) {
     }
 }
 
+fn send_line(socket: &Path, lines: &[String]) -> String {
+    let Ok(stream) = UnixStream::connect(socket) else {
+        return "unreachable".to_owned();
+    };
+    let _ = stream.set_read_timeout(Some(Duration::from_secs(2)));
+    let mut writer = stream.try_clone().expect("clone the stream");
+    let mut reader = BufReader::new(stream);
+    let mut last = String::new();
+    for line in lines {
+        if writeln!(writer, "{line}").is_err() {
+            return "closed".to_owned();
+        }
+        last.clear();
+        let _ = reader.read_line(&mut last);
+    }
+    last.trim().to_owned()
+}
+
+fn quit_through(qmp: &Path) {
+    let Ok(stream) = UnixStream::connect(qmp) else {
+        return;
+    };
+    let mut writer = stream.try_clone().expect("clone the stream");
+    let mut reader = BufReader::new(stream);
+    let mut greeting = String::new();
+    let _ = reader.read_line(&mut greeting);
+    for command in ["qmp_capabilities", "quit"] {
+        let _ = writeln!(writer, r#"{{"execute":"{command}"}}"#);
+        let mut answer = String::new();
+        let _ = reader.read_line(&mut answer);
+    }
+}
+
+fn act_on_host_end(control: &Control) {
+    if control.on_host_end == "quit" {
+        if let Some(qmp) = &control.quit_qmp {
+            quit_through(qmp);
+        }
+    } else if let Some(then) = control.on_host_end.strip_prefix("fallback-") {
+        if let Some(dir) = &control.keeper {
+            let answer = send_line(
+                &dir.join("keeper.sock"),
+                &[format!(
+                    r#"{{"op":"host-end","then":"{then}","reason":"test"}}"#
+                )],
+            );
+            let mut report = OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&control.report)
+                .expect("open the report");
+            writeln!(report, "handed back {answer}").expect("write the report");
+        }
+    }
+}
+
+fn serve_http(control: &Control, stream: UnixStream) {
+    let mut writer = stream.try_clone().expect("clone the stream");
+    let mut reader = BufReader::new(stream);
+    let mut first = String::new();
+    if reader.read_line(&mut first).unwrap_or(0) == 0 {
+        return;
+    }
+    let mut length = 0usize;
+    loop {
+        let mut header = String::new();
+        if reader.read_line(&mut header).unwrap_or(0) == 0 || header.trim().is_empty() {
+            break;
+        }
+        if let Some(n) = header.to_ascii_lowercase().strip_prefix("content-length:") {
+            length = n.trim().parse().unwrap_or(0);
+        }
+    }
+    let mut body = vec![0u8; length];
+    let _ = std::io::Read::read_exact(&mut reader, &mut body);
+    let mut report = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&control.report)
+        .expect("open the report");
+    writeln!(
+        report,
+        "{} {}",
+        first.split_whitespace().nth(1).unwrap_or(""),
+        String::from_utf8_lossy(&body)
+    )
+    .expect("write the report");
+    let refused = control.on_host_end == "refuse";
+    let status = if refused { "503 Busy" } else { "202 Accepted" };
+    let _ = write!(
+        writer,
+        "HTTP/1.1 {status}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+    );
+    drop(writer);
+    if !refused {
+        act_on_host_end(control);
+    }
+}
+
+fn serve_control(control: &Control) {
+    let _ = std::fs::remove_file(&control.path);
+    let listener = UnixListener::bind(&control.path).expect("bind the control socket");
+    for stream in listener.incoming().flatten() {
+        serve_http(control, stream);
+    }
+}
+
 extern "C" fn on_signal(signal: libc::c_int) {
     if signal == libc::SIGUSR1 {
         QUIT.store(true, Ordering::SeqCst);
+    } else if signal == libc::SIGUSR2 {
+        STOPPED.store(true, Ordering::SeqCst);
     } else {
         HANDLED.store(signal, Ordering::SeqCst);
     }
@@ -154,7 +272,13 @@ fn main() {
             .and_then(|i| args.get(i + 1))
             .cloned()
     };
-    for signal in [libc::SIGTERM, libc::SIGHUP, libc::SIGINT, libc::SIGUSR1] {
+    for signal in [
+        libc::SIGTERM,
+        libc::SIGHUP,
+        libc::SIGINT,
+        libc::SIGUSR1,
+        libc::SIGUSR2,
+    ] {
         install(signal);
     }
     let _held = value("--pidfile").map(|p| lock(Path::new(&p)));
@@ -172,6 +296,16 @@ fn main() {
         };
         std::thread::spawn(move || serve_qmp(&monitor));
     }
+    if let Some(path) = value("--control") {
+        let control = Control {
+            path: PathBuf::from(path),
+            report: PathBuf::from(report_path),
+            on_host_end: value("--on-host-end").unwrap_or_else(|| "accept".to_owned()),
+            quit_qmp: value("--quit-qmp").map(PathBuf::from),
+            keeper: value("--keeper").map(PathBuf::from),
+        };
+        std::thread::spawn(move || serve_control(&control));
+    }
     let mask = blocked();
     let member = |signal| {
         // SAFETY: sigismember only reads the set returned by blocked().
@@ -179,11 +313,12 @@ fn main() {
     };
     writeln!(
         report,
-        "blocked TERM={} HUP={} INT={} pid={}",
+        "blocked TERM={} HUP={} INT={} pid={} keeper={}",
         member(libc::SIGTERM),
         member(libc::SIGHUP),
         member(libc::SIGINT),
-        std::process::id()
+        std::process::id(),
+        std::env::var("WINVM_KEEPER_PID").unwrap_or_default()
     )
     .expect("write the report");
     let exit_code: Option<i32> = value("--exit").map(|c| c.parse().expect("--exit CODE"));
@@ -199,6 +334,10 @@ fn main() {
         if !said_pending && pending_term() {
             said_pending = true;
             writeln!(report, "pending TERM").expect("write the report");
+        }
+        if STOPPED.load(Ordering::SeqCst) {
+            writeln!(report, "stopped").expect("write the report");
+            std::process::exit(0);
         }
         if QUIT.load(Ordering::SeqCst) {
             writeln!(report, "quit").expect("write the report");

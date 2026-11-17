@@ -144,6 +144,8 @@ mod tests {
                 start_us: start_time_us(pid).unwrap_or(1),
                 pidfile: None,
                 qmp: None,
+                runtime: None,
+                legacy: false,
             };
             assert_eq!(identify(&kept), None, "{pid}");
         }
@@ -157,6 +159,8 @@ mod tests {
             start_us: 1,
             pidfile: None,
             qmp: None,
+            runtime: None,
+            legacy: false,
         };
         assert_eq!(identify(&kept), None);
     }
