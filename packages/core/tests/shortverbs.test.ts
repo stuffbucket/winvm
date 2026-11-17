@@ -517,6 +517,24 @@ describe("the short verbs, with a service that runs no ops", () => {
     expect(guest.status).toBe("running")
   }, 30_000)
 
+  it("never follow an op whose service names a pid that can't be it", async () => {
+    await replace(() =>
+      Response.json(
+        {
+          protocol: 1,
+          id: "op-1",
+          cursor: { ino: 0, generation: null, offset: 0, archive: null },
+          pid: 1,
+          queued: null,
+        },
+        { status: 202 },
+      ),
+    )
+    const r = await winvm("pause", "-i", "t")
+    expect(r.code).toBe(1)
+    expect(r.stderr).toContain(`winvm's service for "t" did not answer`)
+  }, 30_000)
+
   it("kill from the CLI itself when the service takes the kill but never answers", async () => {
     await replace(async () => {
       await new Promise(() => undefined)

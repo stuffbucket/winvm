@@ -51,7 +51,13 @@ function holderOf(v: unknown): LeaseHolder | null {
 
 function acceptedOf(v: Json): Accepted | null {
   const cursor = cursorOf(v.cursor)
-  if (typeof v.id !== "string" || typeof v.pid !== "number" || cursor === null)
+  if (
+    typeof v.id !== "string" ||
+    typeof v.pid !== "number" ||
+    !Number.isInteger(v.pid) ||
+    v.pid <= 1 ||
+    cursor === null
+  )
     return null
   return {
     id: v.id,
