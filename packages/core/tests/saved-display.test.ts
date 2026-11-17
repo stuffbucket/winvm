@@ -1227,30 +1227,117 @@ describe("a stow whose QEMU will not quit", () => {
     expect(aside?.note).toContain("did not quit")
   })
 
-  it("is deleted, never left where start recalls it, when it can't be moved aside, and both errors are told", async () => {
-    spyOn(saves, "quitQemu").mockRejectedValue(
-      new Error("QEMU (pid 1234567) did not quit and could not be killed"),
+  const stuck = (before: () => void = () => undefined): Promise<string> => {
+    spyOn(saves, "quitQemu").mockImplementation(() => {
+      before()
+      return Promise.reject(
+        new Error("QEMU (pid 1234567) did not quit and could not be killed"),
+      )
+    })
+    return createSave("source", {
+      name: "stow",
+      kind: "stow",
+      format: "raw",
+      quitAfter: true,
+    }).then(
+      () => "",
+      (e: unknown) => (e as Error).message,
     )
+  }
+
+  it("keeps an earlier unfinished stow it can't remove, and sets this one aside under a free name", async () => {
     const blocked = saveDir("source", "stow-unfinished")
     mkdirSync(blocked, { recursive: true })
     writeFileSync(resolve(blocked, "pinned"), "x")
     chmodSync(blocked, 0o500)
     try {
-      let error: unknown = null
-      await createSave("source", {
-        name: "stow",
-        kind: "stow",
-        format: "raw",
-        quitAfter: true,
-      }).catch((e: unknown) => {
-        error = e
-      })
-      const text = (error as Error).message
+      const text = await stuck()
       expect(text).toContain("did not quit")
-      expect(text).toContain("could not be moved aside")
+      expect(text).toContain('"stow-unfinished-2"')
       expect(readSave("source", "stow")).toBeNull()
+      expect(readSave("source", "stow-unfinished-2")?.kind).toBe("manual")
+      expect(existsSync(resolve(blocked, "pinned"))).toBe(true)
     } finally {
       chmodSync(blocked, 0o700)
+    }
+  })
+
+  it("is kept where it is, marked so that start does not recall it, when it can't be moved, and an explicit load still can", async () => {
+    const dir = savesDir("source")
+    try {
+      const text = await stuck(() => {
+        chmodSync(dir, 0o500)
+      })
+      expect(text).toContain("did not quit")
+      expect(text).toContain("could not be moved aside")
+      expect(text).toContain("winvm load -i source stow")
+      chmodSync(dir, 0o700)
+      const marked = readSave("source", "stow")
+      expect(marked?.unfinished).toBe(true)
+      expect(marked?.kind).toBe("stow")
+      const errors = spyOn(console, "error").mockImplementation(() => undefined)
+      expect(
+        await savecmds.recallStow("source", parseArgs(["-i", "source"])),
+      ).toBe(1)
+      const said = errors.mock.calls.map((c) => String(c[0])).join("\n")
+      expect(said).toContain("winvm load -i source stow")
+      expect(said).toContain("--boot")
+      expect(commands).not.toContain("migrate-incoming")
+      expect(readSave("source", "stow")).not.toBeNull()
+    } finally {
+      chmodSync(dir, 0o700)
+    }
+  })
+
+  it("is still set aside, never deleted, when its manifest can't be rewritten there", async () => {
+    const stow = saveDir("source", "stow")
+    const aside = saveDir("source", "stow-unfinished")
+    try {
+      const text = await stuck(() => {
+        chmodSync(stow, 0o500)
+      })
+      expect(text).toContain('"stow-unfinished"')
+      expect(text).toContain("still calls it the stow")
+      expect(existsSync(stow)).toBe(false)
+      expect(readSave("source", "stow-unfinished")?.kind).toBe("stow")
+    } finally {
+      if (existsSync(aside)) chmodSync(aside, 0o700)
+      if (existsSync(stow)) chmodSync(stow, 0o700)
+    }
+  })
+
+  it("removes only the folder it loaded when that folder's manifest still calls it the stow", async () => {
+    fixture(VIRTIO_GPU, true, "stow", "stow")
+    renameSync(saveDir("source", "stow"), saveDir("source", "stow-unfinished"))
+    fixture(VIRTIO_GPU, true, "stow", "stow")
+    spyOn(qga, "waitResponsive").mockResolvedValue(true)
+    spyOn(clock, "syncGuestClock").mockResolvedValue({
+      beforeOffsetMs: 0,
+      afterOffsetMs: 0,
+    })
+    expect(
+      await savecmds.load(parseArgs(["-i", "source", "stow-unfinished"])),
+    ).toBe(0)
+    expect(existsSync(saveDir("source", "stow-unfinished"))).toBe(false)
+    expect(readSave("source", "stow")).not.toBeNull()
+  })
+
+  it("is kept as it is when it can be neither moved nor marked", async () => {
+    const dir = savesDir("source")
+    const stow = saveDir("source", "stow")
+    try {
+      const text = await stuck(() => {
+        chmodSync(stow, 0o500)
+        chmodSync(dir, 0o500)
+      })
+      expect(text).toContain("could not be moved aside")
+      expect(text).toContain("--boot")
+      chmodSync(dir, 0o700)
+      chmodSync(stow, 0o700)
+      expect(readSave("source", "stow")?.kind).toBe("stow")
+    } finally {
+      chmodSync(dir, 0o700)
+      chmodSync(stow, 0o700)
     }
   })
 })

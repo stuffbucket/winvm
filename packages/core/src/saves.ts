@@ -115,6 +115,7 @@ export interface Manifest {
   readonly screenSize?: { readonly width: number; readonly height: number }
   readonly hardware?: Hardware
   readonly display?: DisplayConfig
+  readonly unfinished?: true
 }
 
 export const FILES = {
@@ -181,6 +182,8 @@ export function parseManifest(text: string): Manifest {
   const note = r.note
   if (note !== undefined && typeof note !== "string")
     throw new Error("manifest.note must be a string")
+  if (r.unfinished !== undefined && r.unfinished !== true)
+    throw new Error("manifest.unfinished must be true when present")
   const format = r.format
   if (
     format !== undefined &&
@@ -1007,27 +1010,72 @@ export async function quitQemu(
   qemu.stopSidecars(p)
 }
 
-function setAside(instance: string, name: string, m: Manifest): string {
-  const aside = `${name}-unfinished`
-  const from = saveDir(instance, name)
-  const to = saveDir(instance, aside)
+const errText = (e: unknown): string =>
+  e instanceof Error ? e.message : String(e)
+
+function freeAside(instance: string, name: string): string {
+  for (let n = 1; ; n += 1) {
+    const aside =
+      n === 1 ? `${name}-unfinished` : `${name}-unfinished-${String(n)}`
+    if (!existsSync(saveDir(instance, aside))) return aside
+  }
+}
+
+function rewriteManifest(dir: string, m: Manifest): void {
+  const file = resolve(dir, FILES.manifest)
+  const tmp = `${file}.${String(process.pid)}.tmp`
   try {
-    rmSync(to, { recursive: true, force: true })
-    const kept: Manifest = {
+    writeFileSync(tmp, `${JSON.stringify(m, null, 2)}\n`)
+    renameSync(tmp, file)
+  } catch (error) {
+    rmSync(tmp, { force: true })
+    throw error
+  }
+}
+
+const unfinishedNote = (name: string): string =>
+  `a ${name} whose QEMU did not quit afterwards, so it may not match the disk that QEMU went on writing`
+
+function markUnfinished(
+  instance: string,
+  name: string,
+  m: Manifest,
+  moved: unknown,
+): string {
+  const why = `could not be moved aside (${errText(moved)})`
+  try {
+    rewriteManifest(saveDir(instance, name), {
+      ...m,
+      unfinished: true,
+      note: unfinishedNote(name),
+    })
+    return `the ${name} it had written ${why}, so it is kept where it is, marked so that start does not recall it; \`winvm load -i ${instance} ${name}\` brings it back`
+  } catch (marked) {
+    return (
+      `the ${name} it had written ${why} or marked (${errText(marked)}), so it is kept as it is: start refuses while that QEMU holds "${instance}", ` +
+      `and once it is gone, \`winvm start -i ${instance} --boot\` discards the ${name} if Windows went on after it`
+    )
+  }
+}
+
+function setAside(instance: string, name: string, m: Manifest): string {
+  const aside = freeAside(instance, name)
+  try {
+    renameSync(saveDir(instance, name), saveDir(instance, aside))
+  } catch (moved) {
+    return markUnfinished(instance, name, m, moved)
+  }
+  const kept = `the ${name} it had written is kept as "${aside}", where start does not recall it`
+  try {
+    rewriteManifest(saveDir(instance, aside), {
       ...m,
       name: aside,
       kind: "manual",
-      note: `a ${name} whose QEMU did not quit afterwards, so it may not match the disk that QEMU went on writing`,
-    }
-    writeFileSync(
-      resolve(from, FILES.manifest),
-      `${JSON.stringify(kept, null, 2)}\n`,
-    )
-    renameSync(from, to)
-    return `the ${name} it had written is kept as "${aside}", where start does not recall it`
+      note: unfinishedNote(name),
+    })
+    return kept
   } catch (error) {
-    rmSync(from, { recursive: true, force: true })
-    return `the ${name} it had written could not be moved aside (${error instanceof Error ? error.message : String(error)}), so it was deleted rather than left where start would recall it`
+    return `${kept} (its manifest still calls it the ${name}: ${errText(error)})`
   }
 }
 
@@ -1208,7 +1256,7 @@ async function createSaveHeld(
       await quitQemu(p, undefined, o.leaveMounts === true ? o : {})
     } catch (error) {
       throw new Error(
-        `${error instanceof Error ? error.message : String(error)}; ${setAside(instance, o.name, manifest)}`,
+        `${errText(error)}; ${setAside(instance, o.name, manifest)}`,
         { cause: error },
       )
     } finally {

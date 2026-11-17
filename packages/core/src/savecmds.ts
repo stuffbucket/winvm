@@ -152,7 +152,7 @@ async function doLoad(
   }
   const restoredMs = Date.now() - started
   if (!(await settle(p, verb))) return 1
-  if (m.kind === "stow") saves.removeSave(name, m.name)
+  if (m.kind === "stow") saves.removeSave(name, saveName)
   else if (saves.hasSave(name, saves.STOW)) {
     saves.removeSave(name, saves.STOW)
     console.log(`  (discarded the stow save; "${m.name}" supersedes it)`)
@@ -506,6 +506,13 @@ export async function recallStow(
     saves.removeSave(name, saves.STOW)
     console.log("discarded the stow save (--boot)")
     return null
+  }
+  if (saves.readSave(name, saves.STOW)?.unfinished === true) {
+    console.error(
+      `::error::the stow of "${name}" was written by a QEMU that did not quit afterwards, so Windows may have gone on past it, and it was not recalled. ` +
+        `\`winvm load -i ${name} ${saves.STOW}\` brings it back anyway; \`winvm start -i ${name} --boot\` discards it and starts Windows afresh from its disk`,
+    )
+    return 1
   }
   const meta = readMeta(name)
   if (meta !== null) {
