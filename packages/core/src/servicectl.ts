@@ -291,16 +291,14 @@ async function keptService(
   timeoutMs: number,
 ): Promise<ServiceInfo> {
   const running = readService(p)
-  const ours = running !== null && hello.service?.pid === running.pid
-  if (
-    ours &&
-    hello.service?.adopted !== true &&
-    serviceFreshness(running, current) === "current"
-  ) {
+  const kept = hello.service
+  const ours = running !== null && kept?.pid === running.pid
+  const orphaned = kept?.adopted ?? false
+  if (ours && !orphaned && serviceFreshness(running, current) === "current") {
     keepService(p)
     return running
   }
-  if (ours && hello.service?.adopted === true)
+  if (ours && orphaned)
     await keeperRequest(keeperSocket(p), { op: "service-stop" })
   if (running !== null && !ours) stopService(p)
   else if (running === null && hello.service === null) {
