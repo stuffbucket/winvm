@@ -323,6 +323,20 @@ async function until(what: string, probe: () => boolean): Promise<void> {
   throw new Error(`timed out waiting for ${what}`)
 }
 
+describe("a build's installer", () => {
+  it("takes its scratch instance's lease to launch through the keeper", async () => {
+    await commands.launchInstaller(NAME, pathsFor(NAME), meta)
+    expect(ops()).toContain("launch")
+    const ops_ = readFileSync(pathsFor(NAME).events, "utf8")
+      .trim()
+      .split("\n")
+      .map((l) => JSON.parse(l) as Record<string, unknown>)
+      .filter((e) => e.kind === "op")
+      .map((e) => `${String(e.operation)}:${String(e.phase)}`)
+    expect(ops_).toEqual(["build:begin", "build:end"])
+  })
+})
+
 describe("ending a kept QEMU", () => {
   it("kill asks the keeper, which SIGKILLs its child and ends the sidecars", async () => {
     await leasedLaunch()

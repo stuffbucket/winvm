@@ -70,6 +70,7 @@ import {
   leaseHolder,
   STOP_UNFINISHED,
   takeInterrupts,
+  withOperation,
 } from "./operation"
 import type { InstanceMeta, Paths } from "./paths"
 import {
@@ -408,11 +409,7 @@ export async function build(args: Args): Promise<number> {
     `installing Windows (unattended, ~20 min) · watch: winvm open -i ${scratch}`,
   )
   try {
-    await qemu.launch(scratch, p, meta, {
-      installMedia: true,
-      ephemeral: false,
-      virtioBoot: false,
-    })
+    await launchInstaller(scratch, p, meta)
   } catch (error) {
     qemu.stopSidecars(p)
     console.error(
@@ -574,6 +571,23 @@ export async function build(args: Args): Promise<number> {
     await new Promise((r) => setTimeout(r, 5000))
   }
   return guestFailed("the guest did not shut down after provisioning")
+}
+
+export const launchInstaller = async (
+  scratch: string,
+  p: Paths,
+  meta: InstanceMeta,
+): Promise<void> => {
+  await withOperation(
+    scratch,
+    "build",
+    async () =>
+      await qemu.launch(scratch, p, meta, {
+        installMedia: true,
+        ephemeral: false,
+        virtioBoot: false,
+      }),
+  )
 }
 
 const NO_LOGON_MS = 120_000
