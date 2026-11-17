@@ -12,7 +12,6 @@ import { irreversibleSince, leaseHolder, withOperation } from "./operation"
 import { pathsFor, readImageMeta, readMeta } from "./paths"
 import * as qemu from "./qemu"
 import * as qmp from "./qmp"
-import { currentQemuCompat } from "./runtime"
 import * as saves from "./saves"
 import { spawnText } from "./shell"
 
@@ -190,16 +189,12 @@ function residentBytes(pid: number): number | null {
 }
 
 async function foreignRuntime(
-  p: ReturnType<typeof pathsFor>,
+  name: string,
   pid: number | null,
   command: string | null,
 ): Promise<string | null> {
   if (pid === null) return null
-  const by = await saves.producedBy(p, pid, command)
-  const installed = currentQemuCompat()
-  return saves.recallable(by, installed)
-    ? null
-    : saves.notRecallableReason(by, installed)
+  return (await saves.stowRuntime(name, pid, command)).refusal?.reason ?? null
 }
 
 export async function hostEndFacts(name: string): Promise<HostEndFacts> {
@@ -207,7 +202,7 @@ export async function hostEndFacts(name: string): Promise<HostEndFacts> {
   const pid = qemu.pidOf(p)
   const command = pid === null ? null : runningCommand(pid)
   const meta = readMeta(name)
-  const foreign = await foreignRuntime(p, pid, command).catch(() => null)
+  const foreign = await foreignRuntime(name, pid, command).catch(() => null)
   const virtio = meta !== null && readImageMeta(meta.image)?.virtioBoot === true
   const resident = pid === null ? null : residentBytes(pid)
   const holder = leaseHolder(name)

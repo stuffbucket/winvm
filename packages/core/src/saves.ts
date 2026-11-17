@@ -416,7 +416,7 @@ const qemuOf = (label: string): string =>
     ? "an unidentified QEMU"
     : `QEMU ${versionOfRuntime(label)}`
 
-export const notRecallableReason = (label: string, installed: string): string =>
+const notRecallableReason = (label: string, installed: string): string =>
   `${FOREIGN_RUNTIME}${label === UNKNOWN_RUNTIME ? "(unidentified)" : versionOfRuntime(label)} is not this winvm's QEMU ${versionOfRuntime(installed)}, so no recall could take its stow`
 
 export class StowNotRecallable extends Error {
@@ -437,6 +437,29 @@ export const recallable = (
   label: string,
   installed: string = currentQemuCompat(),
 ): boolean => sameQemu(label, installed)
+
+export interface StowRuntime {
+  readonly label: string
+  readonly refusal: StowNotRecallable | null
+}
+
+export async function stowRuntime(
+  instance: string,
+  pid: number | null,
+  command: string | null,
+): Promise<StowRuntime> {
+  const label =
+    pid === null
+      ? UNKNOWN_RUNTIME
+      : await producedBy(pathsFor(instance), pid, command)
+  const installed = currentQemuCompat()
+  return {
+    label,
+    refusal: recallable(label, installed)
+      ? null
+      : new StowNotRecallable(instance, label, installed),
+  }
+}
 
 function reportedVersion(answer: unknown): string | null {
   const q = (answer as { qemu?: Record<string, unknown> } | null)?.qemu
@@ -1078,12 +1101,9 @@ async function createSaveHeld(
         "so a save could not be restored; nothing was saved. Save after it finishes",
     )
   }
-  const label =
-    pid === null ? UNKNOWN_RUNTIME : await producedBy(p, pid, command)
-  const installed = currentQemuCompat()
-  if (o.kind === "stow" && !recallable(label, installed))
-    throw new StowNotRecallable(instance, label, installed)
-  const compat = currentCompat(instance, meta, display, hardware, label)
+  const runtime = await stowRuntime(instance, pid, command)
+  if (o.kind === "stow" && runtime.refusal !== null) throw runtime.refusal
+  const compat = currentCompat(instance, meta, display, hardware, runtime.label)
 
   clearAbandonedPartials(instance)
   const tmp = resolve(

@@ -36,7 +36,7 @@ import {
   VIRTIO_GPU,
   writeDisplay,
 } from "../src/display"
-import { type QuickUnmount, unmountWithin } from "../src/finder"
+import * as finder from "../src/finder"
 import * as host from "../src/host"
 import { hostEndFacts, hostEndSeams } from "../src/hostend"
 import * as kept from "../src/kept"
@@ -87,6 +87,7 @@ import {
 } from "../src/smbstate"
 import { gather } from "../src/status"
 import * as vnc from "../src/vnc"
+import * as watcher from "../src/watch"
 
 const SIZED: DisplayConfig = {
   device: "virtio-gpu",
@@ -941,7 +942,7 @@ describe("status", () => {
 
 describe("the host-end stow", () => {
   const hanging = (): {
-    readonly sys: QuickUnmount
+    readonly sys: finder.QuickUnmount
     readonly killed: () => number
   } => {
     let killed = 0
@@ -1007,7 +1008,7 @@ describe("the host-end stow", () => {
     })
     let killed = 0
     const started = Date.now()
-    const r = await unmountWithin("source", 200, {
+    const r = await finder.unmountWithin("source", 200, {
       mountTable: () => ({
         done: new Promise<readonly MountEntry[]>(() => undefined),
         kill: () => {
@@ -1314,5 +1315,65 @@ describe("a stow the installed runtime could not recall", () => {
     expect(said).toContain("winvm stop -i source")
     expect(commands).not.toContain("stop")
     expect(runningPid).toBe(FAKE_PID)
+  })
+
+  it("is decided before winvm stow stops the watcher or takes the Finder drives down, so both stay up", async () => {
+    spyOn(console, "error").mockImplementation(() => undefined)
+    const stopped = spyOn(watcher, "stopWatcher").mockResolvedValue(true)
+    const restarted = spyOn(watcher, "startWatcherFor").mockImplementation(
+      () => undefined,
+    )
+    const down = spyOn(finder, "beforeDown").mockImplementation(() => undefined)
+    expect(await savecmds.stow(parseArgs(["-i", "source", "--force"]))).toBe(
+      STOW_REFUSED,
+    )
+    expect(stopped).not.toHaveBeenCalled()
+    expect(restarted).not.toHaveBeenCalled()
+    expect(down).not.toHaveBeenCalled()
+  })
+})
+
+describe("a winvm stow that fails while QEMU still runs Windows", () => {
+  beforeEach(() => {
+    spyOn(console, "error").mockImplementation(() => undefined)
+    spyOn(saves, "captureScreen").mockRejectedValue(
+      new Error("screendump failed"),
+    )
+  })
+
+  it("starts the watcher it stopped again", async () => {
+    spyOn(watcher, "stopWatcher").mockResolvedValue(true)
+    const restarted = spyOn(watcher, "startWatcherFor").mockImplementation(
+      () => undefined,
+    )
+    expect(await savecmds.stow(parseArgs(["-i", "source", "--force"]))).toBe(1)
+    expect(runningPid).toBe(FAKE_PID)
+    expect(commands).toContain("cont")
+    expect(restarted).toHaveBeenCalledTimes(1)
+  })
+
+  it("starts no watcher it did not stop", async () => {
+    spyOn(watcher, "stopWatcher").mockResolvedValue(false)
+    const restarted = spyOn(watcher, "startWatcherFor").mockImplementation(
+      () => undefined,
+    )
+    expect(await savecmds.stow(parseArgs(["-i", "source", "--force"]))).toBe(1)
+    expect(restarted).not.toHaveBeenCalled()
+  })
+
+  it("starts no watcher beside a QEMU that kept the guest stopped after writing the stow", async () => {
+    spyOn(saves, "captureScreen").mockResolvedValue(null)
+    spyOn(saves, "quitQemu").mockRejectedValue(
+      new Error("QEMU (pid 1234567) did not quit and could not be killed"),
+    )
+    spyOn(qmp, "status").mockImplementation(() =>
+      Promise.resolve(commands.includes("migrate") ? "postmigrate" : "running"),
+    )
+    spyOn(watcher, "stopWatcher").mockResolvedValue(true)
+    const restarted = spyOn(watcher, "startWatcherFor").mockImplementation(
+      () => undefined,
+    )
+    expect(await savecmds.stow(parseArgs(["-i", "source", "--force"]))).toBe(1)
+    expect(restarted).not.toHaveBeenCalled()
   })
 })

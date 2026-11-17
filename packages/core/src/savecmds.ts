@@ -8,6 +8,7 @@ import {
   measureOffset,
   syncGuestClock,
 } from "./clock"
+import { runningCommand } from "./display"
 import * as finder from "./finder"
 import * as frozen from "./frozen"
 import { lockWindows } from "./lock"
@@ -385,19 +386,45 @@ export async function sleep(args: Args): Promise<number> {
   return 0
 }
 
+async function stowRefusal(
+  name: string,
+): Promise<saves.StowNotRecallable | null> {
+  const pid = qemu.pidOf(pathsFor(name))
+  if (pid === null) return null
+  return (await saves.stowRuntime(name, pid, runningCommand(pid))).refusal
+}
+
+async function runsGuest(p: Paths): Promise<boolean> {
+  if (!qemu.isRunning(p)) return false
+  return (await qmp.status(p.qmp).catch(() => null)) !== "postmigrate"
+}
+
 export async function stow(args: Args): Promise<number> {
   const name = instanceName(args)
-  if (process.env[AUTOMATIC_ENV] !== "1") await watcher.stopWatcher(name)
+  const refusal = await stowRefusal(name)
+  if (refusal !== null) {
+    fail(refusal.message)
+    return saves.STOW_REFUSED
+  }
+  const stopped =
+    process.env[AUTOMATIC_ENV] !== "1" && (await watcher.stopWatcher(name))
   finder.beforeDown(name)
   const started = Date.now()
-  const code = await doSave(name, {
-    name: saves.STOW,
-    kind: "stow",
-    quitAfter: true,
-    checkReady: !args.flags.has("force"),
-  })
+  let code: number
+  try {
+    code = await doSave(name, {
+      name: saves.STOW,
+      kind: "stow",
+      quitAfter: true,
+      checkReady: !args.flags.has("force"),
+    })
+  } catch (error) {
+    code = fail(msg(error))
+  }
   if (code !== 0) {
     await finder.afterUp(name)
+    if (stopped && (await runsGuest(pathsFor(name))))
+      watcher.startWatcherFor(name, args)
     return code
   }
   console.log(
