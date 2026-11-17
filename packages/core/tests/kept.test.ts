@@ -353,6 +353,7 @@ describe("launching QEMU through the keeper", () => {
   })
 
   it("raises an immediate exit with qemu.log's words, and the keeper ends the TPM emulator", async () => {
+    qemu.setSettle(() => () => undefined)
     script(
       "qemu-system-aarch64",
       'echo "qemu-system-aarch64: -drive: Could not open overlay" >&2\nexit 1',
