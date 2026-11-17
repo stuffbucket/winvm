@@ -806,7 +806,7 @@ export interface StatusArgs {
 }
 
 export async function run(a: StatusArgs): Promise<number> {
-  const tm = timemachine.summary()
+  const tm = timemachine.localSummary()
   const now = Date.now()
   const names = listInstances()
   if (a.instance === null && names.length !== 1) {
