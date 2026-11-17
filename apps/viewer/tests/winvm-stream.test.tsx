@@ -349,4 +349,35 @@ describe("useWinvm following the event stream", () => {
     expect(opens).toBeGreaterThanOrEqual(5)
     expect(opens).toBeLessThanOrEqual(8)
   })
+
+  it("does not start a second repair while one is still running", async () => {
+    const app = fakeApp({ demo: { ...idle(), management: "repair" } })
+    app.reconcile = () => new Promise(() => undefined)
+    await mount()
+    await tick(180_000)
+    expect(app.ran("reconcile")).toHaveLength(1)
+  })
+
+  it("asks again a minute after a repair that was only put off, and backs off only after one that failed", async () => {
+    const deferred = fakeApp({ demo: { ...idle(), management: "repair" } })
+    deferred.reconcile = () =>
+      Promise.resolve({
+        code: 0,
+        stdout: "",
+        stderr:
+          'note: "demo" is autosaving, so its control service and watcher were left as they are',
+      })
+    await mount()
+    await tick(181_000)
+    expect(deferred.ran("reconcile")).toHaveLength(4)
+    act(() => root?.unmount())
+    root = null
+
+    const failing = fakeApp({ demo: { ...idle(), management: "repair" } })
+    failing.reconcile = () =>
+      Promise.resolve({ code: 1, stdout: "", stderr: "::error::no" })
+    await mount()
+    await tick(181_000)
+    expect(failing.ran("reconcile")).toHaveLength(3)
+  })
 })

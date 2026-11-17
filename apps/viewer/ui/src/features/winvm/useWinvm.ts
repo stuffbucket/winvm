@@ -114,8 +114,12 @@ const transient = (s: Status): boolean =>
 
 interface Repair {
   readonly at: number
-  readonly wait: number
+  readonly failures: number
+  readonly running: boolean
 }
+
+const repairWait = (failures: number): number =>
+  Math.min(REPAIR_EVERY_MS * 2 ** Math.max(0, failures - 1), REPAIR_LONGEST_MS)
 
 export function useWinvm(): Winvm {
   const [names, setNames] = useState<readonly string[]>([])
@@ -167,19 +171,26 @@ export function useWinvm(): Winvm {
       }
       if (s.operation !== null) continue
       const last = repairs.current.get(s.name)
-      if (last !== undefined && now < last.at + last.wait) continue
-      repairs.current.set(s.name, {
-        at: now,
-        wait:
-          last === undefined
-            ? REPAIR_EVERY_MS
-            : Math.min(last.wait * 2, REPAIR_LONGEST_MS),
-      })
+      if (last?.running === true) continue
+      if (last !== undefined && now < last.at + repairWait(last.failures))
+        continue
+      const failures = last?.failures ?? 0
+      repairs.current.set(s.name, { at: now, failures, running: true })
+      const settle = (failed: boolean): void => {
+        repairs.current.set(s.name, {
+          at: now,
+          failures: failed ? failures + 1 : 0,
+          running: false,
+        })
+        refresher.current.changed(s.name, 0)
+      }
       winvm("reconcile", "-i", s.name).then(
-        () => {
-          refresher.current.changed(s.name, 0)
+        (out) => {
+          settle(out.code !== 0)
         },
-        () => undefined,
+        () => {
+          settle(true)
+        },
       )
     }
   }, [])
