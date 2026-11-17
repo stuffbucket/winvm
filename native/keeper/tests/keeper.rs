@@ -640,3 +640,41 @@ fn version_prints_the_version_and_protocol() {
         format!("winvm-keeper {} protocol 1", env!("CARGO_PKG_VERSION"))
     );
 }
+
+fn hello_child_pid(scratch: &Scratch) -> i32 {
+    wait_until("the child", Duration::from_secs(5), || {
+        request(scratch, &json!({ "op": "hello" }))["child"]["pid"].is_i64()
+    });
+    let hello = request(scratch, &json!({ "op": "hello" }));
+    i32::try_from(hello["child"]["pid"].as_i64().expect("a child pid")).expect("a pid")
+}
+
+#[test]
+fn an_unshielded_child_starts_with_an_empty_mask_and_dies_on_sigterm() {
+    let scratch = Scratch::new();
+    let mut child = scratch.fake(&[]);
+    child["shield"] = json!(false);
+    scratch.write_spec(&spec(&scratch, &child, None));
+    let mut keeper = start(&scratch, 10_000);
+    child_pid(&scratch);
+    assert!(
+        scratch.report().contains("blocked TERM=0 HUP=0 INT=0"),
+        "{}",
+        scratch.report()
+    );
+    assert_eq!(request(&scratch, &json!({ "op": "kill" }))["ok"], true);
+    assert!(wait_exit(&mut keeper, Duration::from_secs(5)).success());
+
+    let plain = Scratch::new();
+    let child = json!({ "name": "plain", "argv": ["/bin/sleep", "600"], "shield": false });
+    plain.write_spec(&spec(&plain, &child, None));
+    let mut keeper = start(&plain, 10_000);
+    let pid = hello_child_pid(&plain);
+    signal(pid, libc::SIGTERM);
+    let exited = wait_exit(&mut keeper, Duration::from_secs(5));
+    if alive(pid) {
+        signal(pid, libc::SIGKILL);
+    }
+    assert!(exited.success());
+    assert_eq!(find(&records(&plain), "exited")["signal"], libc::SIGTERM);
+}

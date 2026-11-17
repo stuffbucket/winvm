@@ -10,6 +10,15 @@ use crate::state::CommandSpec;
 
 pub const SHIELDED: [libc::c_int; 3] = [libc::SIGTERM, libc::SIGHUP, libc::SIGINT];
 
+fn empty_set() -> libc::sigset_t {
+    // SAFETY: sigset_t is plain data, and sigemptyset initialises it.
+    unsafe {
+        let mut set: libc::sigset_t = std::mem::zeroed();
+        libc::sigemptyset(&raw mut set);
+        set
+    }
+}
+
 pub fn shield_set() -> libc::sigset_t {
     // SAFETY: sigset_t is plain data; sigemptyset initialises it and sigaddset only adds valid signals.
     unsafe {
@@ -64,17 +73,19 @@ pub fn spawn(
     if own_group {
         command.process_group(0);
     }
-    if spec.shield {
-        let set = shield_set();
-        // SAFETY: the hook runs between fork and exec and calls only pthread_sigmask, which is async-signal-safe, on a set built before the fork.
-        unsafe {
-            command.pre_exec(move || {
-                match libc::pthread_sigmask(libc::SIG_BLOCK, &raw const set, std::ptr::null_mut()) {
-                    0 => Ok(()),
-                    error => Err(io::Error::from_raw_os_error(error)),
-                }
-            });
-        }
+    let mask = if spec.shield {
+        shield_set()
+    } else {
+        empty_set()
+    };
+    // SAFETY: the hook runs between fork and exec and calls only pthread_sigmask, which is async-signal-safe, on a set built before the fork.
+    unsafe {
+        command.pre_exec(move || {
+            match libc::pthread_sigmask(libc::SIG_SETMASK, &raw const mask, std::ptr::null_mut()) {
+                0 => Ok(()),
+                error => Err(io::Error::from_raw_os_error(error)),
+            }
+        });
     }
     command.spawn()
 }
@@ -110,6 +121,44 @@ mod tests {
             spawn(&spec, &[], false).map(|_| ()).map_err(|e| e.kind()),
             Err(io::ErrorKind::InvalidInput)
         );
+    }
+
+    fn self_term(shield: bool) -> ExitStatus {
+        let spec = CommandSpec {
+            argv: ["/bin/sh", "-c", "kill -TERM $$; sleep 0.2; exit 0"]
+                .map(str::to_owned)
+                .to_vec(),
+            env: std::collections::BTreeMap::new(),
+            log: None,
+            shield,
+        };
+        spawn(&spec, &[], false)
+            .expect("spawn")
+            .wait()
+            .expect("wait")
+    }
+
+    fn set_thread_mask(how: libc::c_int) {
+        let set = shield_set();
+        // SAFETY: changes only this test thread's mask, with an initialised set.
+        unsafe { libc::pthread_sigmask(how, &raw const set, std::ptr::null_mut()) };
+    }
+
+    #[test]
+    fn a_shielded_child_keeps_term_blocked_even_from_an_unblocked_parent() {
+        set_thread_mask(libc::SIG_UNBLOCK);
+        assert_eq!(self_term(true).code(), Some(0));
+        assert_eq!(self_term(false).signal(), Some(libc::SIGTERM));
+    }
+
+    #[test]
+    fn an_unshielded_child_starts_unblocked_even_from_a_blocked_parent() {
+        set_thread_mask(libc::SIG_BLOCK);
+        let unshielded = self_term(false);
+        let shielded = self_term(true);
+        set_thread_mask(libc::SIG_UNBLOCK);
+        assert_eq!(unshielded.signal(), Some(libc::SIGTERM));
+        assert_eq!(shielded.code(), Some(0));
     }
 
     #[test]
