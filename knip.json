@@ -29,7 +29,7 @@
         "tests/fakes/{conpty,holder}.ts"
       ],
       "project": ["src/**/*.ts", "tests/**/*.ts"],
-      "ignoreBinaries": ["hdiutil"]
+      "ignoreBinaries": ["hdiutil", "plutil"]
     },
     "packages/terminal": {
       "entry": ["tests/**/*.test.{ts,tsx}"],

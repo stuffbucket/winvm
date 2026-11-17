@@ -112,6 +112,7 @@ function describe(e: Entry): string {
       return `${e.operation} ${e.ok ? "succeeded" : "failed"}${e.error === undefined ? "" : `: ${e.error}`}`
     case "service":
     case "warning":
+    case "keeper":
       return `${e.kind}: ${e.what}`
   }
 }

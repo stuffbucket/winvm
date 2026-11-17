@@ -3,7 +3,8 @@ set -euo pipefail
 
 # winvm's producer for stuffbucket/macos-builder. It builds the unsigned
 # winvm.app at the config's app_path: the Tauri shell, the compiled winvm CLI
-# (Contents/MacOS/winvm), winvm's data files and the pinned runtime
+# (Contents/MacOS/winvm), the keeper built from native/keeper
+# (Contents/MacOS/winvm-keeper), winvm's data files and the pinned runtime
 # (Contents/Resources/winvm, Contents/Resources/runtime). The builder signs every
 # file in the config's sign_nested, then the app, then packages, notarizes,
 # staples and checksums.

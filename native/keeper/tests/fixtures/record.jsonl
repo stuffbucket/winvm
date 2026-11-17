@@ -1,0 +1,10 @@
+{"t":"2026-11-17T06:53:00.123Z","instance":"default","kind":"keeper","what":"started","pid":4242,"version":"0.1.0"}
+{"t":"2026-11-17T06:53:00.123Z","instance":"default","kind":"keeper","what":"launched","child":"qemu","pid":4243,"program":"/x/qemu-system-aarch64"}
+{"t":"2026-11-17T06:53:00.123Z","instance":"default","kind":"keeper","what":"adopted","child":"qemu","pid":4243,"by":"pidfile"}
+{"t":"2026-11-17T06:53:00.123Z","instance":"default","kind":"keeper","what":"host-ending","signal":"SIGTERM","budgetMs":55000}
+{"t":"2026-11-17T06:53:00.123Z","instance":"default","kind":"keeper","what":"host-end","step":"stop-action","ok":true,"status":0,"ms":4012}
+{"t":"2026-11-17T06:53:00.123Z","instance":"default","kind":"keeper","what":"host-end","step":"kill","pid":4243}
+{"t":"2026-11-17T06:53:00.123Z","instance":"default","kind":"keeper","what":"exited","child":"qemu","pid":4243,"signal":9,"core":false}
+{"t":"2026-11-17T06:53:00.123Z","instance":"default","kind":"keeper","what":"exited-unknown","child":"qemu","pid":4243}
+{"t":"2026-11-17T06:53:00.123Z","instance":"default","kind":"keeper","what":"host-end","step":"done"}
+{"t":"2026-11-17T06:53:00.123Z","instance":"default","kind":"keeper","what":"exiting","reason":"host-end"}

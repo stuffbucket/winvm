@@ -38,14 +38,15 @@ otherwise produce patch releases.
 | Job | Expected result |
 |---|---|
 | `release` | `pnpm check`, the draft release, notes (changelogithub, or generated notes for the first release), a link to the pinned winvm-runtime release, and `SBOM.cdx.json` with a license scan |
-| `macos-dmg` | Prints the command that starts the signed build. Once the builder uploads them, attaches `winvm-vX.Y.Z-darwin-arm64.dmg` and its `.sha256`, keeps the builder's `winvm-vX.Y.Z-darwin-arm64.app.tar.gz` with its `.sig` and `.sha256`, checks that signature, and attaches `latest.json` |
+| `macos-dmg` | Prints the command that starts the signed build. Once the builder uploads them, attaches `winvm-vX.Y.Z-darwin-arm64.dmg` and its `.sha256`, keeps the builder's `winvm-vX.Y.Z-darwin-arm64.app.tar.gz` with its `.sig` and `.sha256`, checks that signature, and attaches `latest.json` and the signed keeper from inside the bundle as `winvm-keeper-vX.Y.Z-darwin-arm64` with its `.sha256` |
 | `publish` | Publishes only after `release` and `macos-dmg` succeed |
 
 The app contains the Tauri shell (`Contents/MacOS/winvm-viewer`), the compiled
-CLI (`Contents/MacOS/winvm`), winvm's data files (`Contents/Resources/winvm`)
-and the pinned runtime (`Contents/Resources/runtime`). The builder signs every
-file in `.macos-builder/config`'s `sign_nested`: the CLI with `bun-runtime`,
-QEMU with `qemu-hvf`, and every other runtime binary and library with
+CLI (`Contents/MacOS/winvm`), the keeper (`Contents/MacOS/winvm-keeper`, built
+from `native/keeper`), winvm's data files (`Contents/Resources/winvm`) and the
+pinned runtime (`Contents/Resources/runtime`). The builder signs every file in
+`.macos-builder/config`'s `sign_nested`: the CLI with `bun-runtime`, QEMU with
+`qemu-hvf`, and the keeper and every other runtime binary and library with
 `default`. `build.sh` fails when that list no longer matches the bundle; run
 `bun apps/viewer/scripts/sign-list.ts --write <winvm.app>` after a runtime pin
 change and commit the result.
@@ -87,6 +88,25 @@ records that release's acceptance and the Mac it ran on:
 
 A new QEMU version or patch set makes existing saves refuse to load, so golden
 and baseline saves need rebuilding.
+
+## Pinning the keeper
+
+CLI-only installs get the keeper from `packages/core/keeper.json`, which pins
+one release's `winvm-keeper-vX.Y.Z-darwin-arm64` by SHA-256. A release can't
+pin its own keeper, because the signed bytes exist only after macos-builder
+runs. So after a release whose keeper changed (any change under
+`native/keeper`), open a PR that sets:
+
+- `version` to the tag, for example `v0.2.0`;
+- `url` to
+  `https://github.com/stuffbucket/winvm/releases/download/v0.2.0/winvm-keeper-v0.2.0-darwin-arm64`;
+- `sha256` to the hash in that asset's `.sha256`.
+
+Then, from a source checkout without the app and without `WINVM_KEEPER`, check
+that `winvm setup` downloads it and `winvm doctor` reports
+`keeper … (cache)`. While all three fields are `null`, nothing is downloaded,
+and `doctor` reports the keeper as not installed. The app always uses its own
+`Contents/MacOS/winvm-keeper`, whatever the pin says.
 
 ## Recovery
 

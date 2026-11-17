@@ -1,0 +1,37 @@
+[package]
+name = "winvm-keeper"
+version = "0.1.0"
+description = "winvm's per-instance process keeper: a launchd job that owns a VM's processes"
+authors = ["stuffbucket"]
+edition = "2021"
+license = "MIT"
+publish = false
+
+# libc for the kqueue loop, signal masks and pidfile locks; serde and
+# serde_json for spec.json, state.json, the record and the control socket.
+[dependencies]
+libc = "=0.2.186"
+serde = { version = "=1.0.228", features = ["derive"] }
+serde_json = "=1.0.150"
+
+[lints.rust]
+unsafe_op_in_unsafe_fn = "deny"
+unused_must_use = "deny"
+
+[lints.clippy]
+pedantic = { level = "warn", priority = -1 }
+dbg_macro = "warn"
+todo = "warn"
+unimplemented = "warn"
+undocumented_unsafe_blocks = "warn"
+allow_attributes_without_reason = "warn"
+
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = "s"
+strip = true
+panic = "abort"
+
+[profile.dev]
+panic = "abort"

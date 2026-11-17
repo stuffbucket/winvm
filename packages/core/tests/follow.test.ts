@@ -366,3 +366,20 @@ describe("winvm events", () => {
     }
   }, 30_000)
 })
+
+describe("plain lines for the keeper's entries", () => {
+  it("print the keeper's what like the service's notes", async () => {
+    instance("a")
+    appendEntry("a", { kind: "keeper", what: "launched", pid: 7 })
+    const lines: string[] = []
+    const code = await followEvents({
+      follow: false,
+      json: false,
+      instance: "a",
+      since: "start",
+      write: (line) => lines.push(line),
+    })
+    expect(code).toBe(0)
+    expect(lines.some((l) => l.endsWith("a  keeper: launched"))).toBe(true)
+  })
+})
