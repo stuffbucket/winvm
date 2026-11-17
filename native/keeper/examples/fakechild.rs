@@ -336,6 +336,8 @@ fn main() {
             writeln!(report, "pending TERM").expect("write the report");
         }
         if STOPPED.load(Ordering::SeqCst) {
+            let lag = value("--stop-ms").map_or(0, |m| m.parse().expect("--stop-ms N"));
+            std::thread::sleep(Duration::from_millis(lag));
             writeln!(report, "stopped").expect("write the report");
             std::process::exit(0);
         }

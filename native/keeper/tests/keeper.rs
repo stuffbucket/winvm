@@ -2143,3 +2143,28 @@ fn a_hand_back_after_the_keeper_has_taken_over_changes_nothing() {
     assert_eq!(request(&scratch, &json!({ "op": "kill" }))["ok"], true);
     assert!(wait_exit(&mut keeper, Duration::from_secs(5)).success());
 }
+
+#[test]
+fn a_service_still_writing_its_stow_after_qemu_quits_gets_time_to_finish() {
+    let scratch = Scratch::new();
+    let qmp = scratch.path("qmp.sock");
+    let (mut keeper, _, service) = served_host_end(
+        &scratch,
+        20_000,
+        &[],
+        &[
+            "--on-host-end",
+            "quit",
+            "--quit-qmp",
+            &qmp,
+            "--stop-ms",
+            "3500",
+        ],
+    );
+    signal(pid_of(&keeper), libc::SIGTERM);
+    assert!(wait_exit(&mut keeper, Duration::from_secs(12)).success());
+    assert!(!alive(service));
+    assert!(service_report(&scratch).contains("stopped"));
+    let exited = whats_of(&scratch, "service-exited");
+    assert_eq!(exited[0]["status"], 0, "{exited:?}");
+}

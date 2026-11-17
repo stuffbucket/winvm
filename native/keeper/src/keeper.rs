@@ -27,7 +27,7 @@ const QMP_TIMEOUT: Duration = Duration::from_secs(1);
 const SERVICE_MARGIN: Duration = Duration::from_secs(8);
 const SERVICE_ANSWER: Duration = Duration::from_millis(1500);
 const SERVICE_STOP: Duration = Duration::from_secs(5);
-const SERVICE_GRACE: Duration = Duration::from_secs(2);
+const SERVICE_GRACE: Duration = Duration::from_secs(5);
 const SERVICE_BACKOFF_MAX: Duration = Duration::from_secs(30);
 const SERVICE_STEADY: Duration = Duration::from_secs(60);
 
