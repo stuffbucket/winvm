@@ -43,7 +43,7 @@ const LANGUAGES: Record<string, Language> = {
   ".cs": "csharp",
 }
 
-const VENDORED = /(^|\/)novnc(\/|$)/
+const VENDORED = /(^|\/)novnc(\/|$)|^vendor\//
 const URL_PATTERN = /https?:\/\/\S+/
 const BIOME_IGNORE = /^biome-ignore(?:-all|-start)?\s+\S+:\s*\S/
 const BIOME_IGNORE_END = /^biome-ignore-end\s+\S+/

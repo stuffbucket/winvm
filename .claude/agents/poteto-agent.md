@@ -1,0 +1,1 @@
+../../vendor/poteto-plugins/pstack/agents/poteto-agent.md
