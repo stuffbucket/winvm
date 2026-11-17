@@ -237,6 +237,8 @@ describe("launching QEMU through the keeper", () => {
     expect(child.log).toBe(p.qemuLog)
     expect(child.qmp).toBe(keeperMonitor(p))
     expect(child.shield).toBeUndefined()
+    expect(child.umask).toBe(process.umask())
+    expect(tpmChild.umask).toBe(process.umask())
     const argv = child.argv as string[]
     expect(String(argv[0])).toEndWith("/bin/qemu-system-aarch64")
     expect(argv.join(" ")).toContain(

@@ -276,6 +276,7 @@ export interface KeeperCommand {
   readonly env?: Readonly<Record<string, string>>
   readonly log?: string
   readonly shield?: boolean
+  readonly umask?: number
 }
 
 export interface KeeperChild extends KeeperCommand {

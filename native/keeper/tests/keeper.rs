@@ -1545,3 +1545,44 @@ fn a_migration_still_running_at_the_budget_less_twelve_seconds_is_cancelled() {
         ["migration-wait", "migrate-cancel", "powerdown", "done"]
     );
 }
+
+#[test]
+fn a_child_and_a_sidecar_create_files_with_the_umask_the_client_asked_for() {
+    let scratch = Scratch::new();
+    let mut keeper = idle_keeper(&scratch, 60_000);
+    let touch = |name: &str, umask: Option<u32>| {
+        let mut child = json!({
+            "name": name,
+            "argv": ["/bin/sh", "-c", format!("touch {}; exec sleep 30", scratch.path(name))],
+        });
+        if let Some(umask) = umask {
+            child["umask"] = json!(umask);
+        }
+        child
+    };
+    let made = |name: &str| {
+        let path = scratch.path(name);
+        wait_until("the file", Duration::from_secs(5), || {
+            Path::new(&path).exists()
+        });
+        fs::metadata(&path).expect("the file").permissions().mode() & 0o777
+    };
+    let sidecar = request(
+        &scratch,
+        &json!({ "op": "launch-sidecar", "child": touch("virtiofsd", Some(0o022)) }),
+    );
+    assert_eq!(sidecar["ok"], true, "{sidecar}");
+    assert_eq!(made("virtiofsd"), 0o644);
+    let main = request(
+        &scratch,
+        &json!({ "op": "launch", "child": touch("qemu", Some(0o027)) }),
+    );
+    assert_eq!(main["ok"], true, "{main}");
+    assert_eq!(made("qemu"), 0o640);
+    assert_eq!(request(&scratch, &json!({ "op": "kill" }))["ok"], true);
+    assert_eq!(
+        request(&scratch, &json!({ "op": "exit-when-idle" }))["ok"],
+        true
+    );
+    assert!(wait_exit(&mut keeper, Duration::from_secs(5)).success());
+}

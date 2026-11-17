@@ -91,9 +91,15 @@ pub fn spawn(
     } else {
         empty_set()
     };
-    // SAFETY: the hook runs between fork and exec and calls only pthread_sigmask, which is async-signal-safe, on a set built before the fork.
+    let umask = spec
+        .umask
+        .map(|bits| libc::mode_t::try_from(bits & 0o777).unwrap_or(0o077));
+    // SAFETY: the hook runs between fork and exec and calls only pthread_sigmask and umask, which are async-signal-safe, on values built before the fork.
     unsafe {
         command.pre_exec(move || {
+            if let Some(bits) = umask {
+                libc::umask(bits);
+            }
             match libc::pthread_sigmask(libc::SIG_SETMASK, &raw const mask, std::ptr::null_mut()) {
                 0 => Ok(()),
                 error => Err(io::Error::from_raw_os_error(error)),
@@ -129,6 +135,7 @@ mod tests {
             env: std::collections::BTreeMap::new(),
             log: None,
             shield: true,
+            umask: None,
         };
         assert_eq!(
             spawn(&spec, &[], false).map(|_| ()).map_err(|e| e.kind()),
@@ -144,6 +151,7 @@ mod tests {
             env: std::collections::BTreeMap::new(),
             log: None,
             shield,
+            umask: None,
         };
         spawn(&spec, &[], false)
             .expect("spawn")

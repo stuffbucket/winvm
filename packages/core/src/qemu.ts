@@ -329,15 +329,17 @@ async function launchKept(
   await kept.openKeeper(name, p, keeper)
   stopSidecars(p)
   const env = keptEnv()
+  const umask = process.umask()
   const sidecar = async (
     child: KeeperChild & { readonly name: string },
   ): Promise<number> => {
+    const spec = { ...child, umask }
     try {
-      return await kept.launchSidecar(p, child)
+      return await kept.launchSidecar(p, spec)
     } catch (error) {
       if (error instanceof kept.KeeperRefused) throw error
       await kept.openKeeper(name, p, keeper)
-      return await kept.launchSidecar(p, child)
+      return await kept.launchSidecar(p, spec)
     }
   }
   try {
@@ -382,6 +384,7 @@ async function launchKept(
     log: p.qemuLog,
     pidfile: p.pid,
     qmp: monitor,
+    umask,
   })
   let gone = false
   const exited = (async (): Promise<"exited"> => {

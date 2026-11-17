@@ -28,6 +28,8 @@ pub struct CommandSpec {
     pub log: Option<PathBuf>,
     #[serde(default = "shielded")]
     pub shield: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub umask: Option<u32>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -43,6 +45,7 @@ pub struct ChildSpec {
     pub shield: bool,
     pub pidfile: Option<PathBuf>,
     pub qmp: Option<PathBuf>,
+    pub umask: Option<u32>,
 }
 
 impl ChildSpec {
@@ -52,6 +55,7 @@ impl ChildSpec {
             env: self.env.clone(),
             log: self.log.clone(),
             shield: self.shield,
+            umask: self.umask,
         }
     }
 }
