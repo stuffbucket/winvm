@@ -10,6 +10,8 @@ import {
 import { tmpdir } from "node:os"
 import { resolve } from "node:path"
 
+import { QmpChannel } from "../src/broker"
+import { type Entry, readSince, START } from "../src/eventlog"
 import { PACKAGE_DIR, type Paths, pathsFor } from "../src/paths"
 import { stopService } from "../src/servicectl"
 import { FakeAgent } from "./fakes/agent"
@@ -52,18 +54,35 @@ interface Ran {
   readonly stderr: string
 }
 
-async function winvm(...argv: readonly string[]): Promise<Ran> {
+interface Running {
+  readonly proc: ReturnType<typeof Bun.spawn>
+  readonly done: Promise<Ran>
+  readonly stdout: () => string
+}
+
+function launch(...argv: readonly string[]): Running {
   const proc = Bun.spawn([process.execPath, CLI, ...argv], {
     env: env(),
     stdout: "pipe",
     stderr: "pipe",
   })
-  const [stdout, stderr, code] = await Promise.all([
-    new Response(proc.stdout).text(),
-    new Response(proc.stderr).text(),
+  let out = ""
+  const dec = new TextDecoder()
+  const reading = (async (): Promise<string> => {
+    for await (const chunk of proc.stdout as ReadableStream<Uint8Array>)
+      out += dec.decode(chunk)
+    return out
+  })()
+  const done = Promise.all([
+    reading,
+    new Response(proc.stderr as ReadableStream<Uint8Array>).text(),
     proc.exited,
-  ])
-  return { code, stdout, stderr }
+  ]).then(([stdout, stderr, code]) => ({ code, stdout, stderr }))
+  return { proc, done, stdout: () => out }
+}
+
+async function winvm(...argv: readonly string[]): Promise<Ran> {
+  return await launch(...argv).done
 }
 
 const answers = async (): Promise<boolean> => {
@@ -263,5 +282,198 @@ describe("the short verbs, as the CLI prints and exits with them", () => {
     expect(JSON.parse(readFileSync(p.lease, "utf8"))).toMatchObject({
       id: "held-by-test",
     })
+  }, 30_000)
+})
+
+const ops = (): readonly Entry[] =>
+  readSince("t", START).entries.filter((e) => e.kind === "op")
+
+const endOf = (operation: string): Entry | undefined =>
+  ops().find(
+    (e) => e.kind === "op" && e.phase === "end" && e.operation === operation,
+  )
+
+const until = async (ok: () => boolean, ms = 15_000): Promise<void> => {
+  const end = Date.now() + ms
+  while (!ok()) {
+    if (Date.now() > end) throw new Error("timed out waiting")
+    await Bun.sleep(20)
+  }
+}
+
+describe("the short verbs, run by winvm's service", () => {
+  it("run in the service, which records what they printed under the op's id", async () => {
+    expect((await winvm("pause", "-i", "t")).code).toBe(0)
+    const begin = ops().find((e) => e.kind === "op" && e.phase === "begin")
+    expect(begin).toMatchObject({ operation: "pause", pid: service?.pid })
+    const id = begin?.kind === "op" ? begin.id : ""
+    expect(
+      ops().filter(
+        (e) => e.kind === "op" && e.id === id && e.phase === "output",
+      ),
+    ).toEqual([
+      expect.objectContaining({
+        stream: "out",
+        text: 'paused "t" — `winvm resume -i t` to continue\n',
+      }) as Entry,
+    ])
+  }, 30_000)
+
+  it("leave the op running when the CLI is interrupted, and say how to follow it", async () => {
+    guest.bootDelayMs = 2000
+    const r = launch("reboot", "-i", "t")
+    await until(() => r.stdout().includes("rebooting"))
+    r.proc.kill("SIGINT")
+    expect(await r.done).toEqual({
+      code: 130,
+      stdout: "rebooting",
+      stderr:
+        "reboot continues in winvm's service; follow it with `winvm events -i t --follow`\n",
+    })
+    expect(endOf("reboot")).toBeUndefined()
+    await until(() => endOf("reboot") !== undefined)
+    expect(endOf("reboot")).toMatchObject({ ok: true, exitCode: 0 })
+  }, 30_000)
+
+  it("finish and are recorded when the CLI is killed outright", async () => {
+    guest.bootDelayMs = 1500
+    const r = launch("reboot", "-i", "t")
+    await until(() => r.stdout().includes("rebooting"))
+    r.proc.kill("SIGKILL")
+    expect((await r.done).code).not.toBe(0)
+    await until(() => endOf("reboot") !== undefined)
+    expect(endOf("reboot")).toMatchObject({ ok: true, exitCode: 0 })
+    expect(guest.shutdownRequests).toEqual(["reboot"])
+  }, 30_000)
+
+  it("are refused as busy while another op runs, and queue behind it with --wait", async () => {
+    guest.bootDelayMs = 1500
+    const first = launch("reboot", "-i", "t")
+    await until(() => first.stdout().includes("rebooting"))
+    const busy = await winvm("pause", "-i", "t")
+    expect(busy.code).toBe(1)
+    expect(busy.stderr).toStartWith(
+      `::error::instance "t" is busy: reboot (pid ${String(service?.pid)}) since `,
+    )
+    const waited = await winvm("pause", "-i", "t", "--wait")
+    expect(waited).toEqual({
+      code: 0,
+      stdout: 'paused "t" — `winvm resume -i t` to continue\n',
+      stderr: `instance "t": waiting for the reboot (pid ${String(service?.pid)}) to finish\n`,
+    })
+    expect((await first.done).code).toBe(0)
+    expect(guest.status).toBe("paused")
+  }, 30_000)
+
+  it("can be cancelled before their point of no return, and not after it", async () => {
+    guest.holdBootQuery = true
+    const r = launch("reboot", "-i", "t")
+    await until(() => ops().some((e) => e.kind === "op" && e.phase === "begin"))
+    expect(await winvm("cancel", "-i", "t")).toEqual({
+      code: 0,
+      stdout: 'cancelled reboot on "t"\n',
+      stderr: "",
+    })
+    const cancelled = await r.done
+    expect(cancelled.code).toBe(130)
+    expect(cancelled.stderr).toContain("reboot was cancelled")
+    guest.holdBootQuery = false
+    await Bun.sleep(300)
+    expect(guest.shutdownRequests).toEqual([])
+
+    guest.bootDelayMs = 1500
+    const again = launch("reboot", "-i", "t")
+    await until(() => again.stdout().includes("rebooting"))
+    const refused = await winvm("cancel", "-i", "t")
+    expect(refused.code).toBe(1)
+    expect(refused.stderr).toContain("point of no return")
+    expect((await again.done).code).toBe(0)
+  }, 30_000)
+
+  it("say there is nothing to cancel when no op runs", async () => {
+    expect(await winvm("cancel", "-i", "t")).toEqual({
+      code: 1,
+      stdout: "",
+      stderr: `::error::nothing is running in winvm's service for "t", so nothing was cancelled\n`,
+    })
+  }, 30_000)
+
+  it("end the op in flight when kill runs beside it", async () => {
+    guest.bootDelayMs = 60_000
+    const r = launch("reboot", "-i", "t")
+    await until(() => r.stdout().includes("rebooting"))
+    expect(await winvm("kill", "-i", "t")).toEqual({
+      code: 0,
+      stdout: 'killed instance "t"\n',
+      stderr: `note: reboot (pid ${String(service?.pid)}) holds "t"; killing it anyway\n`,
+    })
+    expect(await r.done).toEqual({
+      code: 1,
+      stdout: "rebooting",
+      stderr: "::error::reboot was ended by `winvm kill` while it ran\n",
+    })
+    expect(endOf("reboot")).toMatchObject({ ok: false, error: "killed" })
+  }, 30_000)
+})
+
+describe("the short verbs, with a service that runs no ops", () => {
+  let broker: QmpChannel | null = null
+  let control: ReturnType<typeof Bun.serve> | null = null
+
+  const replace = async (
+    fetch: (req: Request) => Response | Promise<Response>,
+  ): Promise<void> => {
+    stopService(p)
+    service?.kill("SIGKILL")
+    await service?.exited
+    service = null
+    rmSync(p.control, { force: true })
+    broker = new QmpChannel({ listen: p.qmp, upstream: p.qmpQemu })
+    await broker.start()
+    control = Bun.serve({ unix: p.control, fetch })
+  }
+
+  afterEach(async () => {
+    await control?.stop(true)
+    control = null
+    await broker?.stop()
+    broker = null
+  })
+
+  it("run in the CLI itself when the service is older and has no ops, with the same output", async () => {
+    await replace(() => new Response("not found", { status: 404 }))
+    const r = launch("pause", "-i", "t")
+    expect(await r.done).toEqual({
+      code: 0,
+      stdout: 'paused "t" — `winvm resume -i t` to continue\n',
+      stderr: "",
+    })
+    expect(
+      ops().find((e) => e.kind === "op" && e.phase === "begin"),
+    ).toMatchObject({ operation: "pause", pid: r.proc.pid })
+    expect(guest.status).toBe("paused")
+  }, 30_000)
+
+  it("say so, and change nothing, when the service takes the op but never answers", async () => {
+    await replace(async () => {
+      await new Promise(() => undefined)
+      return new Response(null)
+    })
+    const r = await winvm("pause", "-i", "t")
+    expect(r.code).toBe(1)
+    expect(r.stderr).toContain(`winvm's service for "t" did not answer`)
+    expect(r.stderr).toContain("winvm events -i t")
+    expect(guest.status).toBe("running")
+  }, 30_000)
+
+  it("kill from the CLI itself when the service takes the kill but never answers", async () => {
+    await replace(async () => {
+      await new Promise(() => undefined)
+      return new Response(null)
+    })
+    const r = await winvm("kill", "-i", "t")
+    expect(r.code).toBe(0)
+    expect(r.stdout).toBe('killed instance "t"\n')
+    expect(await qemu.proc.exited).not.toBe(0)
   }, 30_000)
 })

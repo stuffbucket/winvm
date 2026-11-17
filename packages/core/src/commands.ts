@@ -63,6 +63,7 @@ import {
   resolveWindowsIso,
 } from "./media"
 import * as monitor from "./monitor"
+import { pointOfNoReturn } from "./opcontext"
 import {
   INTERRUPTED,
   InstanceBusy,
@@ -1255,6 +1256,7 @@ export async function reboot(args: Args): Promise<number> {
   }
   const t0 = Date.now()
   const deadline = t0 + s * 1000
+  pointOfNoReturn()
   finder.beforeDown(name)
   const outcome = await watcher.whileActive(
     name,
@@ -1671,6 +1673,11 @@ export const USAGE =
   "  pause | resume [-i name]      freeze / unfreeze the guest (resume fixes its clock)\n" +
   "  sleep | wake [-i name]        lock Windows, then freeze it as asleep / resume it\n" +
   "  lock    [-i name]             Windows back to its lock screen (sign in again with Enter)\n" +
+  "  reboot  [-i name] [--timeout S]  restart Windows and wait until someone is logged on again\n" +
+  "                                pause, resume, sleep, wake, lock, reboot and kill run in winvm's\n" +
+  "                                service: Ctrl-C leaves them running there; --wait queues one\n" +
+  "                                behind another operation instead of refusing it as busy\n" +
+  "  cancel  [-i name] [--id ID]   end the operation winvm's service runs, before its point of no return\n" +
   "  stow    [-i name]             save and shut QEMU down; the next start recalls it\n" +
   "  clock   [-i name] [--check]   guest-vs-host clock offset, and fix it\n" +
   "  status  [-i name] [--json]    what it's doing; with no -i and several instances, a table.\n" +

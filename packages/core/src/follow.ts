@@ -62,7 +62,7 @@ function positionOf(v: unknown): Position | null {
   return { ino, generation, offset }
 }
 
-function cursorOf(v: unknown): Cursor | null {
+export function cursorOf(v: unknown): Cursor | null {
   const here = positionOf(v)
   if (here === null || !isObject(v)) return null
   if (v.archive === null) return { ...here, archive: null }

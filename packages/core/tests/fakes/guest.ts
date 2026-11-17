@@ -5,6 +5,7 @@ type Json = Record<string, unknown>
 
 interface Ran {
   readonly stdout: string
+  readonly bootQuery: boolean
 }
 
 export class FakeGuest {
@@ -13,6 +14,8 @@ export class FakeGuest {
   offsetMs = 0
   reboots = 0
   resetDelayMs = 0
+  bootDelayMs = 0
+  holdBootQuery = false
   shutdownRequests: string[] = []
   private readonly runs = new Map<number, Ran>()
   private nextPid = 4000
@@ -61,13 +64,21 @@ export class FakeGuest {
     else if (script.includes("LastBootUpTime")) stdout = `${this.bootTime}\r\n`
     else if (script.includes("UserName")) stdout = "PC\\winvm\r\n"
     this.nextPid += 1
-    this.runs.set(this.nextPid, { stdout })
+    this.runs.set(this.nextPid, {
+      stdout,
+      bootQuery: script.includes("LastBootUpTime"),
+    })
     return { return: { pid: this.nextPid } }
   }
 
   private reboot(): void {
     this.reboots += 1
-    this.bootTime = `2026-11-17T09:00:${String(this.reboots).padStart(2, "0")}.0000000+00:00`
+    const next = `2026-11-17T09:00:${String(this.reboots).padStart(2, "0")}.0000000+00:00`
+    if (this.bootDelayMs === 0) this.bootTime = next
+    else
+      setTimeout(() => {
+        this.bootTime = next
+      }, this.bootDelayMs)
     setTimeout(() => {
       this.qmp.emit({
         event: "RESET",
@@ -86,6 +97,8 @@ export class FakeGuest {
         return this.exec(a)
       case "guest-exec-status": {
         const ran = this.runs.get(Number(a.pid))
+        if (ran?.bootQuery === true && this.holdBootQuery)
+          return { return: { exited: false } }
         return {
           return: {
             exited: true,
