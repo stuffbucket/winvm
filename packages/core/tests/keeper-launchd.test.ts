@@ -16,7 +16,7 @@ import { heldLease, withOperation } from "../src/operation"
 const enabled =
   process.platform === "darwin" && process.env.WINVM_TEST_LAUNCHD === "1"
 const keeper =
-  process.env.WINVM_KEEPER ??
+  process.env.WINVM_TEST_KEEPER ??
   resolve(
     import.meta.dir,
     "..",
