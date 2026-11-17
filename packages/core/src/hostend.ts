@@ -1,8 +1,10 @@
-import { statfsSync } from "node:fs"
+import { existsSync, statfsSync } from "node:fs"
+import { dirname } from "node:path"
 
 import { effectiveConfig, type HostEndAction } from "./config"
 import { runningCommand } from "./display"
 import { appendEntry } from "./eventlog"
+import { type QuickUnmount, unmountWithin } from "./finder"
 import { CHOSEN_SHUTDOWN } from "./hostoff"
 import { keeperRequest } from "./keeper"
 import { keeperSocket } from "./kept"
@@ -158,6 +160,12 @@ export async function runHostEnd(
   return finish("stowed")
 }
 
+function existingParent(dir: string): string {
+  let at = dir
+  while (!existsSync(at) && dirname(at) !== at) at = dirname(at)
+  return at
+}
+
 function freeBytes(dir: string): number | null {
   try {
     const st = statfsSync(dir)
@@ -190,7 +198,7 @@ export function hostEndFacts(name: string): HostEndFacts {
     unsaveable: virtio
       ? null
       : "the image predates virtio boot, so its disk cannot be saved",
-    freeBytes: freeBytes(saves.savesRoot()),
+    freeBytes: freeBytes(existingParent(saves.savesRoot())),
     needBytes: resident === null ? null : resident + GIB,
     busy:
       holder === null
@@ -203,8 +211,16 @@ export function hostEndFacts(name: string): HostEndFacts {
   }
 }
 
-export function hostEndSeams(name: string): HostEndSeams {
+export const HOST_END_UNMOUNT_MS = 3000
+
+export function hostEndSeams(
+  name: string,
+  o: { readonly unmount?: QuickUnmount; readonly unmountMs?: number } = {},
+): HostEndSeams {
   const p = pathsFor(name)
+  const note = (fields: Readonly<Record<string, unknown>>): void => {
+    appendEntry(name, { ...fields, kind: "service", what: "host-end" })
+  }
   return {
     facts: () => hostEndFacts(name),
     running: () => qemu.isRunning(p),
@@ -225,21 +241,27 @@ export function hostEndSeams(name: string): HostEndSeams {
       await withOperation(
         name,
         "stow",
-        async () =>
-          await saves.createSave(name, {
+        async () => {
+          const drives = await unmountWithin(
+            name,
+            o.unmountMs ?? HOST_END_UNMOUNT_MS,
+            o.unmount,
+          )
+          note({ step: "unmount", ...drives })
+          return await saves.createSave(name, {
             name: saves.STOW,
             kind: "stow",
             quitAfter: true,
-          }),
+            leaveMounts: true,
+          })
+        },
         { automatic: true, waitMs: 0 },
       )
     },
     handBack: async (end, reason) => {
       await keeperRequest(keeperSocket(p), { op: "host-end", end, reason })
     },
-    note: (fields) => {
-      appendEntry(name, { ...fields, kind: "service", what: "host-end" })
-    },
+    note,
     now: Date.now,
     sleep: async (ms) => {
       await new Promise((r) => setTimeout(r, ms))

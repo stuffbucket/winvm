@@ -33,7 +33,9 @@ import {
   VIRTIO_GPU,
   writeDisplay,
 } from "../src/display"
+import type { QuickUnmount } from "../src/finder"
 import * as host from "../src/host"
+import { hostEndFacts, hostEndSeams } from "../src/hostend"
 import * as kept from "../src/kept"
 import * as media from "../src/media"
 import {
@@ -65,6 +67,7 @@ import * as screen from "../src/screen"
 import * as servicectl from "../src/servicectl"
 import * as share from "../src/share"
 import * as shell from "../src/shell"
+import { mountDir, SHARE_KEYS, SHARES, writeSmb } from "../src/smbstate"
 import { gather } from "../src/status"
 import * as vnc from "../src/vnc"
 
@@ -94,6 +97,7 @@ let virtiofsd = 0
 let statusCalls = 0
 let answered = 0
 let settled = 0
+let quitSawStow: boolean | null = null
 const realRunningCommand = display.runningCommand
 
 const qemuLog = (): string => resolve(state, "qemu.log")
@@ -212,6 +216,7 @@ beforeEach(() => {
   virtiofsd = 0
   statusCalls = 0
   answered = 0
+  quitSawStow = null
 
   mkdirSync(resolve(state, "images", meta.image), { recursive: true })
   writeFileSync(basePath(meta.image), "immutable base")
@@ -249,7 +254,12 @@ beforeEach(() => {
   })
   spyOn(qmp, "execute").mockImplementation(async (_socket, cmd, args) => {
     commands.push(cmd)
-    if (cmd === "quit") runningPid = null
+    if (cmd === "quit") {
+      quitSawStow = existsSync(
+        resolve(saveDir("source", "stow"), FILES.manifest),
+      )
+      runningPid = null
+    }
     if (cmd === "query-status") {
       answered += 1
       for (let i = 0; i < 300 && launches().length < answered; i += 1)
@@ -896,6 +906,102 @@ describe("status", () => {
       const exited = new Promise((done) => child.once("exit", done))
       child.kill()
       await exited
+    }
+  })
+})
+
+describe("the host-end stow", () => {
+  const hanging = (): {
+    readonly sys: QuickUnmount
+    readonly killed: () => number
+  } => {
+    let killed = 0
+    return {
+      sys: {
+        mountTable: async () =>
+          await Promise.resolve(
+            SHARE_KEYS.map((key) => ({
+              source: `//winvm-share@127.0.0.1:4455/${SHARES[key].share}`,
+              dir: mountDir("source", key),
+              type: "smbfs",
+            })),
+          ),
+        unmount: (dir) => {
+          commands.push(`unmount ${dir}`)
+          return {
+            done: new Promise<unknown>(() => undefined),
+            kill: () => {
+              killed += 1
+            },
+          }
+        },
+      },
+      killed: () => killed,
+    }
+  }
+
+  it("unmounts the guest's drives before pausing it, within its budget even when an unmount hangs, and writes the stow before quitting", async () => {
+    writeSmb(pathsFor("source"), {
+      user: "winvm-share",
+      password: "Wv1-aaaaaaaaaaaaaaaaaaaaaaaa",
+      hostPort: 4455,
+      mounted: ["home", "c"],
+    })
+    const u = hanging()
+    let ticks = 0
+    const timer = setInterval(() => {
+      ticks += 1
+    }, 20)
+    const started = Date.now()
+    try {
+      await hostEndSeams("source", { unmount: u.sys, unmountMs: 300 }).stow()
+    } finally {
+      clearInterval(timer)
+    }
+    expect(u.killed()).toBe(2)
+    expect(commands.indexOf(`unmount ${mountDir("source", "home")}`)).toBe(0)
+    expect(commands.indexOf("stop")).toBeGreaterThan(1)
+    expect(Date.now() - started).toBeLessThan(3000)
+    expect(ticks).toBeGreaterThan(5)
+    expect(quitSawStow).toBe(true)
+    expect(readSave("source", "stow")?.kind).toBe("stow")
+  })
+
+  it("reads the running QEMU's facts: -snapshot, install media and the free space", () => {
+    spyOn(display, "runningCommand").mockReturnValue(
+      "qemu-system-aarch64 -snapshot -drive if=none,media=cdrom,id=cd0",
+    )
+    const f = hostEndFacts("source")
+    expect(f.ephemeral).toBe(true)
+    expect(f.installMedia).toBe(true)
+    expect(f.unsaveable).toBeNull()
+    expect(f.freeBytes).toBeGreaterThan(0)
+    expect(f.action).toBe("stow")
+  })
+})
+
+describe("partial saves left behind", () => {
+  it("are cleared at the next save when their writer has gone, never while it runs", async () => {
+    mkdirSync(savesDir("source"), { recursive: true })
+    const dead = resolve(savesDir("source"), ".stow.partial-99999999")
+    mkdirSync(dead)
+    const writer = Bun.spawn(["sleep", "30"])
+    const live = resolve(
+      savesDir("source"),
+      `.stow.partial-${String(writer.pid)}`,
+    )
+    mkdirSync(live)
+    try {
+      await createSave("source", {
+        name: "later",
+        kind: "manual",
+        format: "raw",
+      })
+      expect(existsSync(dead)).toBe(false)
+      expect(existsSync(live)).toBe(true)
+    } finally {
+      writer.kill("SIGKILL")
+      await writer.exited
     }
   })
 })

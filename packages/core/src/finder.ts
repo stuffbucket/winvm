@@ -329,6 +329,81 @@ export function beforeDown(instance: string, sys: Sys = realSys): void {
   }
 }
 
+export interface QuickUnmount {
+  mountTable(): Promise<readonly MountEntry[]>
+  unmount(dir: string): {
+    readonly done: Promise<unknown>
+    kill(): void
+  }
+}
+
+export const quickUnmount: QuickUnmount = {
+  mountTable: async () => {
+    const proc = Bun.spawn(["/sbin/mount"], {
+      stdout: "pipe",
+      stderr: "ignore",
+    })
+    return parseMountTable(await new Response(proc.stdout).text())
+  },
+  unmount: (dir) => {
+    const proc = Bun.spawn(["/sbin/umount", "-f", dir], {
+      stdout: "ignore",
+      stderr: "ignore",
+    })
+    return {
+      done: proc.exited,
+      kill: () => {
+        proc.kill("SIGKILL")
+      },
+    }
+  },
+}
+
+export async function unmountWithin(
+  instance: string,
+  budgetMs: number,
+  sys: QuickUnmount = quickUnmount,
+): Promise<{ readonly unmounted: number; readonly left: number }> {
+  const s = readSmb(pathsFor(instance))
+  if (s === null || s.hostPort === null) return { unmounted: 0, left: 0 }
+  const port = s.hostPort
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const late = new Promise<"late">((done) => {
+    timer = setTimeout(() => {
+      done("late")
+    }, budgetMs)
+  })
+  try {
+    const table = await Promise.race([
+      sys.mountTable().catch(() => [] as readonly MountEntry[]),
+      late,
+    ])
+    if (table === "late") return { unmounted: 0, left: SHARE_KEYS.length }
+    const ours = SHARE_KEYS.map((key) => ({
+      dir: mountDir(instance, key),
+      port,
+      share: SHARES[key].share,
+    })).filter((want) => findOurMount(table, want) !== null)
+    const runs = ours.map((want) => {
+      const run = sys.unmount(want.dir)
+      let finished = false
+      void run.done.then(() => {
+        finished = true
+      })
+      return { run, finished: (): boolean => finished }
+    })
+    await Promise.race([
+      Promise.all(runs.map(async (r) => await r.run.done)),
+      late,
+    ])
+    const left = runs.filter((r) => !r.finished())
+    for (const r of left) r.run.kill()
+    return { unmounted: runs.length - left.length, left: left.length }
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
 export async function afterUp(
   instance: string,
   sys: Sys = realSys,

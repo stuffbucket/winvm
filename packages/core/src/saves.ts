@@ -815,10 +815,14 @@ async function waitMigration(
   throw new Error("the save did not finish in time")
 }
 
-export async function quitQemu(p: Paths, timeoutMs = 120_000): Promise<void> {
+export async function quitQemu(
+  p: Paths,
+  timeoutMs = 120_000,
+  o: { readonly leaveMounts?: true } = {},
+): Promise<void> {
   const pid = qemu.pidOf(p)
   if (pid === null) return
-  finder.beforeDown(instanceOf(p))
+  if (o.leaveMounts !== true) finder.beforeDown(instanceOf(p))
   try {
     await qmp.execute(p.qmp, "quit", undefined, 20_000)
   } catch {}
@@ -842,6 +846,21 @@ export async function quitQemu(p: Paths, timeoutMs = 120_000): Promise<void> {
   qemu.stopSidecars(p)
 }
 
+function clearAbandonedPartials(instance: string): void {
+  const dir = savesDir(instance)
+  if (!existsSync(dir)) return
+  for (const entry of readdirSync(dir)) {
+    const pid = Number(/^\..+\.partial-(\d+)$/.exec(entry)?.[1])
+    if (!Number.isInteger(pid) || pid <= 1 || pid === process.pid) continue
+    try {
+      process.kill(pid, 0)
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ESRCH")
+        rmSync(resolve(dir, entry), { recursive: true, force: true })
+    }
+  }
+}
+
 export interface CreateOptions {
   readonly name: string
   readonly kind: SaveKind
@@ -849,6 +868,7 @@ export interface CreateOptions {
   readonly format?: RamFormat
   readonly compress?: boolean
   readonly quitAfter?: boolean
+  readonly leaveMounts?: true
 }
 
 export interface CreateResult {
@@ -917,6 +937,7 @@ async function createSaveHeld(
     launched ?? undefined,
   )
 
+  clearAbandonedPartials(instance)
   const tmp = resolve(
     savesDir(instance),
     `.${o.name}.partial-${String(process.pid)}`,
@@ -951,14 +972,12 @@ async function createSaveHeld(
     clearSavingRunning(instance)
     throw error
   }
-  try {
-    if (o.quitAfter === true) {
-      await quitQemu(p)
-    } else if (wasRunning) {
-      await qmp.execute(p.qmp, "cont")
+  if (o.quitAfter !== true) {
+    try {
+      if (wasRunning) await qmp.execute(p.qmp, "cont")
+    } finally {
+      clearSavingRunning(instance)
     }
-  } finally {
-    clearSavingRunning(instance)
   }
   const saveMs = Date.now() - started
   const screen = ppm === null ? null : writeScreenshots(ppm, tmp)
@@ -1005,6 +1024,13 @@ async function createSaveHeld(
   const replaced = existsSync(final)
   if (replaced) renameSync(final, old)
   renameSync(tmp, final)
+  if (o.quitAfter === true) {
+    try {
+      await quitQemu(p, undefined, o.leaveMounts === true ? o : {})
+    } finally {
+      clearSavingRunning(instance)
+    }
+  }
   rmSync(old, { recursive: true, force: true })
   if (replaced) forgetNote(instance, o.name)
 
