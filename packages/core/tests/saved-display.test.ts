@@ -36,12 +36,15 @@ import {
   VIRTIO_GPU,
   writeDisplay,
 } from "../src/display"
+import { appendEntry, readSince, START } from "../src/eventlog"
 import * as finder from "../src/finder"
 import * as host from "../src/host"
 import { hostEndFacts, hostEndSeams } from "../src/hostend"
+import { hostPoweredOff } from "../src/hostoff"
 import * as kept from "../src/kept"
 import * as media from "../src/media"
 import * as monitor from "../src/monitor"
+import { withOperation } from "../src/operation"
 import {
   basePath,
   type InstanceMeta,
@@ -1330,6 +1333,22 @@ describe("a stow the installed runtime could not recall", () => {
     expect(stopped).not.toHaveBeenCalled()
     expect(restarted).not.toHaveBeenCalled()
     expect(down).not.toHaveBeenCalled()
+  })
+
+  it("is recorded as a refusal and not as a stow, so a later unexplained end of QEMU is still told", async () => {
+    spyOn(console, "error").mockImplementation(() => undefined)
+    const leased = async (run: () => Promise<number>): Promise<number> =>
+      await withOperation("source", "stow", run)
+    expect(
+      await savecmds.stow(parseArgs(["-i", "source", "--force"]), leased),
+    ).toBe(STOW_REFUSED)
+    const entries = readSince("source", START).entries
+    expect(entries.filter((e) => e.kind === "op")).toEqual([])
+    expect(
+      entries.filter((e) => e.kind === "warning" && e.what === "stow refused"),
+    ).toHaveLength(1)
+    appendEntry("source", { kind: "disconnected", reason: "qemu-closed" })
+    expect(hostPoweredOff("source")?.cause).toBe("qemu-gone")
   })
 })
 

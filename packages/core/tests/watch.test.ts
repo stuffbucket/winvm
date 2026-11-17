@@ -868,19 +868,16 @@ describe("an idle stow that winvm refuses", () => {
     ).toBe(false)
   })
 
-  it("is recorded once, however often it comes back", () => {
+  it("is logged once, however often it comes back, and leaves the record to winvm stow", () => {
     rmSync(instanceDir("refused"), { recursive: true, force: true })
     mkdirSync(instanceDir("refused"), { recursive: true })
     const logged: string[] = []
     const log = (line: string): void => {
       logged.push(line)
     }
-    expect(noteStowRefused("refused", false, log)).toBe(true)
-    expect(noteStowRefused("refused", true, log)).toBe(true)
-    const refusals = readSince("refused", START).entries.filter(
-      (e) => e.kind === "warning" && e.what === "stow refused",
-    )
-    expect(refusals).toHaveLength(1)
+    expect(noteStowRefused(false, log)).toBe(true)
+    expect(noteStowRefused(true, log)).toBe(true)
+    expect(readSince("refused", START).entries).toEqual([])
     expect(logged).toHaveLength(1)
     expect(logged[0]).toContain("idle stows are off")
   })

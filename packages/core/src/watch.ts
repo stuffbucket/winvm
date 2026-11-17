@@ -16,7 +16,6 @@ import { commandInstance, winvmCommandAfter } from "./args"
 import { formatOffset, measureOffset, syncGuestClock } from "./clock"
 import type { InstanceConfig } from "./config"
 import { effectiveConfig } from "./config"
-import { appendEntry } from "./eventlog"
 import * as finder from "./finder"
 import { isFrozenRunState } from "./frozen"
 import { buildIdentity } from "./identity"
@@ -203,7 +202,6 @@ export function idleSettings(
 }
 
 export function noteStowRefused(
-  name: string,
   already: boolean,
   log: (s: string) => void,
 ): true {
@@ -211,7 +209,6 @@ export function noteStowRefused(
   log(
     "stow: refused, because this winvm could not recall a stow of the QEMU that runs Windows; idle stows are off until QEMU restarts, and Windows keeps running",
   )
-  appendEntry(name, { kind: "warning", what: "stow refused", by: "watcher" })
   return true
 }
 
@@ -760,7 +757,7 @@ export async function watch(
           return "stowed"
         }
         if (outcome === "refused")
-          stowRefused = noteStowRefused(name, stowRefused, log)
+          stowRefused = noteStowRefused(stowRefused, log)
         else log("stow: failed; back to watching")
         machine.stowFailed(Date.now())
         machine.actionDone(Date.now())

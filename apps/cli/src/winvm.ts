@@ -243,7 +243,7 @@ switch (sub ?? "") {
     exitCode = settings.settingsCmd(args)
     break
   case "stow":
-    exitCode = await leased(() => savecmds.stow(args))
+    exitCode = await savecmds.stow(args, leased)
     break
   case "clock":
     exitCode = await savecmds.clock(args)

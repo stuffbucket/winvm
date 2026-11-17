@@ -9,10 +9,12 @@ import {
   syncGuestClock,
 } from "./clock"
 import { runningCommand } from "./display"
+import { appendEntry } from "./eventlog"
 import * as finder from "./finder"
 import * as frozen from "./frozen"
 import { lockWindows } from "./lock"
 import * as notes from "./notes"
+import { automaticFrom } from "./operation"
 import type { InstanceMeta, Paths } from "./paths"
 import { pathsFor, readImageMeta, readMeta } from "./paths"
 import * as qemu from "./qemu"
@@ -398,13 +400,36 @@ async function runsGuest(p: Paths): Promise<boolean> {
   return (await qmp.status(p.qmp).catch(() => null)) !== "postmigrate"
 }
 
-export async function stow(args: Args): Promise<number> {
+type Leased = (run: () => Promise<number>) => Promise<number>
+
+const unleased: Leased = async (run) => await run()
+
+function refuse(
+  name: string,
+  refusal: saves.StowNotRecallable,
+  automatic: boolean,
+): number {
+  appendEntry(name, {
+    kind: "warning",
+    what: "stow refused",
+    reason: refusal.reason,
+    automatic,
+  })
+  fail(refusal.message)
+  return saves.STOW_REFUSED
+}
+
+export async function stow(
+  args: Args,
+  leased: Leased = unleased,
+): Promise<number> {
   const name = instanceName(args)
   const refusal = await stowRefusal(name)
-  if (refusal !== null) {
-    fail(refusal.message)
-    return saves.STOW_REFUSED
-  }
+  if (refusal !== null) return refuse(name, refusal, automaticFrom(args))
+  return await leased(async () => await stowHeld(name, args))
+}
+
+async function stowHeld(name: string, args: Args): Promise<number> {
   const stopped = await watcher.stopWatcher(name)
   finder.beforeDown(name)
   const started = Date.now()
