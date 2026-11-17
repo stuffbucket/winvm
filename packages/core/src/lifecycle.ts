@@ -231,14 +231,16 @@ async function acquire(file: string, waitMs: number): Promise<Acquired> {
   const deadline = Date.now() + waitMs
   let live: LockBody | null = null
   let problem = "it kept changing under this command"
+  let tookOver = false
   for (let attempt = 0; ; attempt += 1) {
-    if (attempt > 0) {
+    if (attempt > 0 && !tookOver) {
       if (Date.now() >= deadline) {
         if (live !== null) return { busy: live }
         throw lockError(file, problem)
       }
       await sleep(Math.min(25 * attempt, 200))
     }
+    tookOver = false
     let linked: boolean
     try {
       linked = linkNew(file, JSON.stringify(body))
@@ -261,7 +263,8 @@ async function acquire(file: string, waitMs: number): Promise<Acquired> {
       live = holder
       continue
     }
-    if (!takeOver(file, seen))
+    tookOver = takeOver(file, seen)
+    if (!tookOver)
       problem =
         "it was left by a winvm that has gone, and could not be taken over"
   }
