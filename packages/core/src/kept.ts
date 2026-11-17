@@ -294,8 +294,7 @@ export async function killKept(p: Paths, pid: number | null): Promise<boolean> {
   const answer = await keeperRequest(keeperSocket(p), { op: "kill" }).catch(
     () => null,
   )
-  if (answer === null) return false
-  return pid !== null || answer.ok === true
+  return answer?.ok === true
 }
 
 export const UNAVAILABLE = "keeper-unavailable"

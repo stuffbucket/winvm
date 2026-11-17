@@ -831,7 +831,14 @@ export async function quitQemu(p: Paths, timeoutMs = 120_000): Promise<void> {
     await sleep(20)
   }
   await qemu.killQemu(p, pid)
-  while (qemu.pidOf(p) !== null) await sleep(250)
+  const killedBy = Date.now() + 10_000
+  while (qemu.pidOf(p) === pid) {
+    if (Date.now() > killedBy)
+      throw new Error(
+        `QEMU (pid ${String(pid)}) did not quit and could not be killed; it still holds ${p.pid}`,
+      )
+    await sleep(250)
+  }
   qemu.stopSidecars(p)
 }
 

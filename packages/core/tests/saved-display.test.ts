@@ -119,6 +119,7 @@ function fakeSpawner(
     writeFileSync(sock, "")
   } else if (binary === "qemu-system-aarch64") {
     appendFileSync(qemuLog(), `${args.join(" ")}\n`)
+    runningPid = FAKE_PID
     const output = qemuOutput
     if (output !== null) {
       const fd = Array.isArray(options.stdio) ? options.stdio[1] : undefined
@@ -703,6 +704,7 @@ describe("launch resolves the display once", () => {
     spyOn(display, "readDisplay").mockImplementation(
       () => reads.shift() ?? RAMFB,
     )
+    runningPid = null
     await qemu.launch("source", p, meta, {
       installMedia: false,
       ephemeral: false,
@@ -717,6 +719,7 @@ describe("launch resolves the display once", () => {
   it("keeps a build on ramfb with the filesystem device, and an explicit share set as given", async () => {
     const p = pathsFor("source")
     writeDisplay(p, VIRTIO_GPU)
+    runningPid = null
     await qemu.launch("source", p, meta, {
       installMedia: true,
       ephemeral: false,
@@ -726,6 +729,7 @@ describe("launch resolves the display once", () => {
     expect(lastLaunch()).toContain("-device ramfb")
     expect(lastLaunch()).toContain("vhost-user-fs-pci")
     expect(lastLaunch()).not.toContain("qemu-vdagent")
+    runningPid = null
     await qemu.launch("source", p, meta, {
       installMedia: false,
       ephemeral: false,
@@ -744,6 +748,7 @@ describe("launch outcome", () => {
   it("reports a qemu that exits at once, with its output, under the real settle window", async () => {
     qemu.setSettle()
     qemuOutput = "boom\n"
+    runningPid = null
     await expect(
       qemu.launch("source", pathsFor("source"), meta, {
         installMedia: false,

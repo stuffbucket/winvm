@@ -590,6 +590,38 @@ describe("keeperRequest", () => {
     rmSync(short, { recursive: true, force: true })
   })
 
+  it("asks for each op with the oldest protocol that has it, so a protocol 2 keeper still kills", async () => {
+    const got: Record<string, unknown>[] = []
+    const path = resolve(short, "k2.sock")
+    const server = await answering(path, (line) => {
+      got.push(JSON.parse(line) as Record<string, unknown>)
+      return JSON.stringify({ ok: true })
+    })
+    try {
+      for (const op of [
+        "kill",
+        "launch",
+        "launch-sidecar",
+        "exit-when-idle",
+        "service",
+        "service-stop",
+        "host-end",
+      ])
+        await keeperRequest(path, { op })
+      expect(got.map((r) => [r.op, r.protocol])).toEqual([
+        ["kill", 2],
+        ["launch", 2],
+        ["launch-sidecar", 2],
+        ["exit-when-idle", 2],
+        ["service", 3],
+        ["service-stop", 3],
+        ["host-end", 3],
+      ])
+    } finally {
+      await closing(server)
+    }
+  })
+
   it("sends the protocol it speaks with every request", async () => {
     let got = ""
     const path = resolve(short, "k.sock")

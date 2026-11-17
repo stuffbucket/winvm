@@ -1302,6 +1302,21 @@ export async function reboot(args: Args): Promise<number> {
   return 0
 }
 
+const KILL_WAIT_MS = 5000
+
+async function untilUnlocked(
+  p: Paths,
+  pid: number,
+  ms: number,
+): Promise<boolean> {
+  const deadline = Date.now() + ms
+  while (qemu.pidOf(p) === pid) {
+    if (Date.now() > deadline) return false
+    await new Promise((r) => setTimeout(r, 50))
+  }
+  return true
+}
+
 export async function kill(args: Args): Promise<number> {
   const name = instanceName(args)
   const p = pathsFor(name)
@@ -1342,6 +1357,13 @@ export async function kill(args: Args): Promise<number> {
   if (!(await killKept(p, pid))) {
     if (qemu.pidOf(p) === pid) signalProcess(pid, "SIGKILL")
     await killKept(p, null)
+  }
+  if (!(await untilUnlocked(p, pid, KILL_WAIT_MS))) {
+    console.error(
+      `::error::QEMU (pid ${String(pid)}) still holds its pidfile lock after winvm's kill, so "${name}" is still running; ` +
+        `nothing else was stopped and ${p.pid} is kept. Try again, or end pid ${String(pid)} in Activity Monitor (Force Quit)`,
+    )
+    return 1
   }
   rmSync(p.pid, { force: true })
   qemu.stopSidecars(p)

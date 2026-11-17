@@ -51,6 +51,7 @@ import { adoptLegacy } from "../src/legacy"
 import { reconcileManagement, reconcileNote } from "../src/lifecycle"
 import { InstanceBusy, LeaseNotHeld, withOperation } from "../src/operation"
 import { type InstanceMeta, pathsFor } from "../src/paths"
+import * as proc from "../src/proc"
 import * as qemu from "../src/qemu"
 import * as qmp from "../src/qmp"
 import { currentQemuCompat } from "../src/runtime"
@@ -386,7 +387,7 @@ describe("launching QEMU through the keeper", () => {
     const tpm = before?.sidecars[0]?.pid ?? 0
     await until("the pidfile", () => qemu.isRunning(p))
     rmSync(p.pid, { force: true })
-    await expect(leasedLaunch()).rejects.toThrow("still runs QEMU")
+    await expect(leasedLaunch()).rejects.toThrow("still runs")
     expect(alive(tpm)).toBe(true)
     expect(ops()).toEqual(["launch-sidecar", "launch"])
   }, 15_000)
@@ -654,7 +655,7 @@ describe("fix round 1", () => {
     })
   })
 
-  it("trusts the keeper once it has named the child, even when its kill answer is lost", async () => {
+  it("never counts the keeper's refusal as a kill, even once it has named the child", async () => {
     const p = pathsFor(NAME)
     mkdirSync(keeperDir(p), { recursive: true })
     const server = createServer((socket) => {
@@ -674,7 +675,7 @@ describe("fix round 1", () => {
       })
     })
     try {
-      expect(await killKept(p, 4242)).toBe(true)
+      expect(await killKept(p, 4242)).toBe(false)
       expect(await killKept(p, 4243)).toBe(false)
     } finally {
       await new Promise<void>((done) => {
@@ -755,6 +756,9 @@ describe("fix round 1", () => {
   it("names keeper.log, not a restart, when the VM runs unprotected because the keeper could not start", async () => {
     bootstrapFails = true
     spyOn(console, "warn").mockImplementation(() => undefined)
+    await withOperation(NAME, "start", async () => {
+      await qemu.launch(NAME, pathsFor(NAME), meta, launchOptions)
+    }).catch(() => undefined)
     const legacy = Bun.spawn(
       [
         resolve(state, "runtime", "bin", "qemu-system-aarch64"),
@@ -764,9 +768,6 @@ describe("fix round 1", () => {
       { stdout: "ignore", stderr: "ignore" },
     )
     try {
-      await withOperation(NAME, "start", async () => {
-        await qemu.launch(NAME, pathsFor(NAME), meta, launchOptions)
-      }).catch(() => undefined)
       await until("the pidfile", () => qemu.isRunning(pathsFor(NAME)))
       const notes = (await gather(NAME, false)).notes.join("\n")
       expect(notes).toContain("could not start")
@@ -989,4 +990,117 @@ describe("adopting a VM an older winvm started", () => {
       await releasePidfiles()
     }
   })
+})
+
+describe("a keeper from phase 3, which speaks protocol 2", () => {
+  const oldKeeper = async (
+    p: ReturnType<typeof pathsFor>,
+    child: number | null,
+    kill: (request: Record<string, unknown>) => Record<string, unknown>,
+  ): Promise<ReturnType<typeof createServer>> => {
+    mkdirSync(keeperDir(p), { recursive: true })
+    const server = createServer((socket) => {
+      socket.setEncoding("utf8")
+      socket.on("data", (line: string) => {
+        const request = JSON.parse(line) as Record<string, unknown>
+        const answer =
+          request.op === "hello"
+            ? {
+                ok: true,
+                pid: 9,
+                protocol: 2,
+                child: child === null ? null : { name: "qemu", pid: child },
+              }
+            : typeof request.protocol === "number" && request.protocol > 2
+              ? {
+                  ok: false,
+                  error: `protocol ${String(request.protocol)} is newer than this keeper's`,
+                  protocol: 2,
+                }
+              : kill(request)
+        socket.end(`${JSON.stringify(answer)}\n`)
+      })
+    })
+    await new Promise<void>((ready) => {
+      server.listen(keeperSocket(p), () => {
+        ready()
+      })
+    })
+    return server
+  }
+  const closing = async (
+    server: ReturnType<typeof createServer>,
+  ): Promise<void> => {
+    await new Promise<void>((done) => {
+      server.close(() => {
+        done()
+      })
+    })
+  }
+  const held = async (): Promise<number> =>
+    (
+      await lockPidfile(
+        pathsFor(NAME).pid,
+        "qemu-system-aarch64",
+        "-pidfile",
+        pathsFor(NAME).pid,
+      )
+    ).pid
+
+  it("kills its QEMU with a protocol 2 request, never counting a refusal as a kill", async () => {
+    const p = pathsFor(NAME)
+    const pid = await held()
+    const server = await oldKeeper(p, pid, (request) => {
+      if (request.op !== "kill") return { ok: false, error: "unknown op" }
+      process.kill(pid, "SIGKILL")
+      return { ok: true, pid }
+    })
+    spyOn(console, "log").mockImplementation(() => undefined)
+    try {
+      expect(await commands.kill(parseArgs(["-i", NAME]))).toBe(0)
+      await until("the QEMU to go", () => !alive(pid))
+    } finally {
+      await closing(server)
+      await releasePidfiles()
+    }
+  })
+
+  it("says kill failed and keeps qemu.pid while QEMU still holds its lock", async () => {
+    const p = pathsFor(NAME)
+    const pid = await held()
+    const server = await oldKeeper(p, pid, () => ({
+      ok: false,
+      error: "no child",
+    }))
+    spyOn(proc, "signalProcess").mockReturnValue(true)
+    spyOn(console, "log").mockImplementation(() => undefined)
+    const errors = spyOn(console, "error").mockImplementation(() => undefined)
+    try {
+      expect(await commands.kill(parseArgs(["-i", NAME]))).toBe(1)
+      expect(alive(pid)).toBe(true)
+      expect(existsSync(p.pid)).toBe(true)
+      expect(String(errors.mock.calls.at(-1)?.[0])).toContain(
+        "still holds its pidfile lock",
+      )
+    } finally {
+      await closing(server)
+      await releasePidfiles()
+    }
+  }, 15_000)
+
+  it("leaves the start refused while a QEMU of the instance runs, whatever qemu.pid says", async () => {
+    const p = pathsFor(NAME)
+    const pid = await held()
+    rmSync(p.pid)
+    try {
+      await expect(leasedLaunch()).rejects.toThrow(
+        `QEMU (pid ${String(pid)}) still runs for "${NAME}"`,
+      )
+      expect(launchdCalls).toEqual([])
+      expect(detached).toEqual([])
+      expect(alive(pid)).toBe(true)
+    } finally {
+      await releasePidfiles()
+    }
+  }, 15_000)
 })

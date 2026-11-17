@@ -439,6 +439,16 @@ export function launchctl(uid: number = process.getuid?.() ?? 0): Launchd {
   }
 }
 
+const OP_PROTOCOL: Readonly<Record<string, number>> = {
+  launch: 2,
+  "launch-sidecar": 2,
+  kill: 2,
+  "exit-when-idle": 2,
+}
+
+export const protocolFor = (op: unknown): number =>
+  (typeof op === "string" ? OP_PROTOCOL[op] : undefined) ?? KEEPER_PROTOCOL
+
 export function keeperRequest(
   socket: string,
   message: Readonly<Record<string, unknown>>,
@@ -454,7 +464,7 @@ export function keeperRequest(
     stream.setEncoding("utf8")
     stream.on("connect", () =>
       stream.write(
-        `${JSON.stringify({ ...message, protocol: KEEPER_PROTOCOL })}\n`,
+        `${JSON.stringify({ ...message, protocol: protocolFor(message.op) })}\n`,
       ),
     )
     stream.on("close", () => {

@@ -256,12 +256,41 @@ export function setSettle(next: Settle = settleByClock): Settle {
   return previous
 }
 
+function qemuPids(p: Paths): readonly number[] {
+  const pidfile = p.pid.replace(/[.*+?^$()|[\]{}\\]/g, "\\$&")
+  const r = spawnSync(
+    "pgrep",
+    ["-f", `qemu-system-[A-Za-z0-9_]+ .*-pidfile ${pidfile}( |$)`],
+    { encoding: "utf8" },
+  )
+  if (r.status !== 0) return []
+  return r.stdout
+    .split("\n")
+    .map((l) => Number.parseInt(l, 10))
+    .filter((n) => Number.isInteger(n) && n > 1 && n !== process.pid)
+    .filter((n) => isInstanceQemu(n, p))
+}
+
+async function stillRunning(p: Paths): Promise<number | null> {
+  const deadline = Date.now() + REAPED_MS
+  for (;;) {
+    const pid = pidOf(p) ?? qemuPids(p)[0] ?? null
+    if (pid === null || Date.now() > deadline) return pid
+    await new Promise((r) => setTimeout(r, 100))
+  }
+}
+
 export async function launch(
   name: string,
   p: Paths,
   meta: InstanceMeta,
   o: LaunchOptions,
 ): Promise<void> {
+  const running = await stillRunning(p)
+  if (running !== null)
+    throw new Error(
+      `QEMU (pid ${String(running)}) still runs for "${name}", so nothing was started; \`winvm kill -i ${name}\` ends it`,
+    )
   const use = kept.keeperUse()
   if (use.kind === "keeper") {
     const failed = await kept.openKeeper(name, p, use.keeper).then(
