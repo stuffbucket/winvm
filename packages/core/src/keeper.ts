@@ -309,6 +309,14 @@ export type StartedKeeper =
 
 export class KeeperBusy extends Error {}
 
+export class KeeperOfAnother extends LeaseNotHeld {
+  constructor(job: KeeperJob, instance: string) {
+    super(instance, `starting ${job.Label}`)
+    this.message = `${job.Label} in ${job.WorkingDirectory} is not the keeper of "${instance}", whose lease this command holds`
+    this.name = "KeeperOfAnother"
+  }
+}
+
 function writePrivate(path: string, text: string): void {
   writeFileSync(path, text, { mode: 0o600 })
   chmodSync(path, 0o600)
@@ -327,9 +335,7 @@ export async function startKeeper(o: {
     o.job.WorkingDirectory !==
       resolve(pathsFor(o.lease.instance).dir, KEEPER_DIR)
   )
-    throw new Error(
-      `${o.job.Label} in ${o.job.WorkingDirectory} is not the keeper of "${o.lease.instance}", whose lease this command holds`,
-    )
+    throw new KeeperOfAnother(o.job, o.lease.instance)
   const dir = o.job.WorkingDirectory
   const hello = await keeperRequest(
     resolve(dir, "keeper.sock"),

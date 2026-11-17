@@ -471,6 +471,12 @@ describe("starting a keeper job", () => {
           await startKeeper({ launchd, job: testJob(other), lease }),
       ),
     ).rejects.toThrow('is not the keeper of "default"')
+    await expect(
+      leased(
+        async (lease) =>
+          await startKeeper({ launchd, job: testJob(other), lease }),
+      ),
+    ).rejects.toThrow(LeaseNotHeld)
     expect(launchd.calls).toEqual([])
     expect(existsSync(other)).toBe(false)
   })
