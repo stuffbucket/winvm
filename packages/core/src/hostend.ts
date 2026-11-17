@@ -5,7 +5,7 @@ import { effectiveConfig, type HostEndAction } from "./config"
 import { runningCommand } from "./display"
 import { appendEntry } from "./eventlog"
 import { type QuickUnmount, unmountWithin } from "./finder"
-import { CHOSEN_SHUTDOWN, FOREIGN_RUNTIME } from "./hostoff"
+import { CHOSEN_SHUTDOWN } from "./hostoff"
 import { keeperRequest } from "./keeper"
 import { keeperSocket } from "./kept"
 import { irreversibleSince, leaseHolder, withOperation } from "./operation"
@@ -155,7 +155,12 @@ export async function runHostEnd(
   try {
     await s.stow()
   } catch (error) {
-    await s.handBack("shutdown", `stow failed: ${errText(error)}`)
+    await s.handBack(
+      "shutdown",
+      error instanceof saves.StowNotRecallable
+        ? error.reason
+        : `stow failed: ${errText(error)}`,
+    )
     return finish("handed-back")
   }
   return finish("stowed")
@@ -192,8 +197,9 @@ async function foreignRuntime(
   if (pid === null) return null
   const by = await saves.producedBy(p, pid, command)
   const installed = currentQemuCompat()
-  if (saves.recallable(by, installed)) return null
-  return `${FOREIGN_RUNTIME}${saves.versionOfRuntime(by)} is not this winvm's QEMU ${saves.versionOfRuntime(installed)}, so no recall could take its stow`
+  return saves.recallable(by, installed)
+    ? null
+    : saves.notRecallableReason(by, installed)
 }
 
 export async function hostEndFacts(name: string): Promise<HostEndFacts> {

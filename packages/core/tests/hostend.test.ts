@@ -15,6 +15,7 @@ import {
   hostEndPlan,
   runHostEnd,
 } from "../src/hostend"
+import { StowNotRecallable } from "../src/saves"
 
 const GIB = 1024 ** 3
 
@@ -220,6 +221,24 @@ describe("running the host end", () => {
     expect(r.calls).toEqual([
       "stow",
       "hand back shutdown: stow failed: migration failed: disk full",
+    ])
+  })
+
+  it("hands back a shutdown, as a decision, when createSave refuses a stow no recall could take", async () => {
+    const r = run(idle, {
+      stow: async () => {
+        await Promise.resolve()
+        throw new StowNotRecallable(
+          "source",
+          "11.0.0+patches:p1",
+          "11.1.2+patches:p2",
+        )
+      },
+    })
+    expect(await runHostEnd(60_000, r.seams)).toBe("handed-back")
+    expect(r.calls).toEqual([
+      "stow",
+      "hand back shutdown: the running QEMU 11.0.0 is not this winvm's QEMU 11.1.2, so no recall could take its stow",
     ])
   })
 

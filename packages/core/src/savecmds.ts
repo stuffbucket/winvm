@@ -12,6 +12,7 @@ import * as finder from "./finder"
 import * as frozen from "./frozen"
 import { lockWindows } from "./lock"
 import * as notes from "./notes"
+import { AUTOMATIC_ENV } from "./operation"
 import type { InstanceMeta, Paths } from "./paths"
 import { pathsFor, readImageMeta, readMeta } from "./paths"
 import * as qemu from "./qemu"
@@ -87,7 +88,8 @@ async function doSave(
   try {
     r = await saves.createSave(name, o)
   } catch (error) {
-    return fail(msg(error))
+    fail(msg(error))
+    return error instanceof saves.StowNotRecallable ? saves.STOW_REFUSED : 1
   }
   const m = r.manifest
   console.log(
@@ -385,7 +387,7 @@ export async function sleep(args: Args): Promise<number> {
 
 export async function stow(args: Args): Promise<number> {
   const name = instanceName(args)
-  await watcher.stopWatcher(name)
+  if (process.env[AUTOMATIC_ENV] !== "1") await watcher.stopWatcher(name)
   finder.beforeDown(name)
   const started = Date.now()
   const code = await doSave(name, {

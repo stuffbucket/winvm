@@ -32,6 +32,7 @@ import * as finder from "./finder"
 import type { Hardware } from "./hardware"
 import { hardwareFrom, LEGACY, readHardware, runningHardware } from "./hardware"
 import { requireFirmware } from "./host"
+import { FOREIGN_RUNTIME } from "./hostoff"
 import { ensureInstance } from "./instance"
 import { launchedRuntime } from "./kept"
 import { qmpCommand } from "./monitor"
@@ -406,6 +407,30 @@ export function sameQemu(saved: string, installed: string): boolean {
   if (saved === installed) return true
   if (!saved.endsWith(UNKNOWN_PATCHES)) return false
   return installed.startsWith(saved.slice(0, -"unknown".length))
+}
+
+export const STOW_REFUSED = 4
+
+const qemuOf = (label: string): string =>
+  label === UNKNOWN_RUNTIME
+    ? "an unidentified QEMU"
+    : `QEMU ${versionOfRuntime(label)}`
+
+export const notRecallableReason = (label: string, installed: string): string =>
+  `${FOREIGN_RUNTIME}${label === UNKNOWN_RUNTIME ? "(unidentified)" : versionOfRuntime(label)} is not this winvm's QEMU ${versionOfRuntime(installed)}, so no recall could take its stow`
+
+export class StowNotRecallable extends Error {
+  readonly reason: string
+
+  constructor(instance: string, label: string, installed: string) {
+    super(
+      `Windows on "${instance}" runs ${qemuOf(label)}, and this winvm runs QEMU ${versionOfRuntime(installed)}, so a stow of it could not be brought back; ` +
+        "nothing was saved and Windows keeps running. " +
+        `Shut it down (\`winvm stop -i ${instance}\`) and start it again (\`winvm start -i ${instance}\`) to move it to this winvm's QEMU`,
+    )
+    this.name = "StowNotRecallable"
+    this.reason = notRecallableReason(label, installed)
+  }
 }
 
 export const recallable = (
@@ -1029,13 +1054,12 @@ async function createSaveHeld(
         "so a save could not be restored; nothing was saved. Save after it finishes",
     )
   }
-  const compat = currentCompat(
-    instance,
-    meta,
-    display,
-    hardware,
-    pid === null ? UNKNOWN_RUNTIME : await producedBy(p, pid, command),
-  )
+  const label =
+    pid === null ? UNKNOWN_RUNTIME : await producedBy(p, pid, command)
+  const installed = currentQemuCompat()
+  if (o.kind === "stow" && !recallable(label, installed))
+    throw new StowNotRecallable(instance, label, installed)
+  const compat = currentCompat(instance, meta, display, hardware, label)
 
   clearAbandonedPartials(instance)
   const tmp = resolve(

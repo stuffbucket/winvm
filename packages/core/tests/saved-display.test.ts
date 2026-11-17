@@ -14,6 +14,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  renameSync,
   rmSync,
   utimesSync,
   writeFileSync,
@@ -67,6 +68,8 @@ import {
   markPristine,
   readSave,
   recallable,
+  STOW_REFUSED,
+  StowNotRecallable,
   saveDir,
   savesDir,
 } from "../src/saves"
@@ -1087,12 +1090,23 @@ describe("the runtime a stow is labelled with", () => {
       })
     ).manifest
 
-  it("is the version QEMU itself reports, runtime-unknown, for an adopted QEMU that is not the installed runtime's, and its recall refuses naming --boot", async () => {
+  it("is the version QEMU itself reports, runtime-unknown, for an adopted QEMU that is not the installed runtime's; no stow is written, and an older build's stow is refused naming --boot", async () => {
     installed()
     program = resolve(state, "runtime", "bin", "qemu-system-aarch64")
     reported = { major: 10, minor: 0, micro: 0 }
-    const m = await stow()
-    expect(m.compatParts?.qemu).toBe("10.0.0+patches:unknown")
+    await expect(stow()).rejects.toBeInstanceOf(StowNotRecallable)
+    const named = await createSave("source", {
+      name: "older",
+      kind: "manual",
+      format: "raw",
+    })
+    expect(named.manifest.compatParts?.qemu).toBe("10.0.0+patches:unknown")
+    renameSync(saveDir("source", "older"), saveDir("source", "stow"))
+    const manifest = resolve(saveDir("source", "stow"), FILES.manifest)
+    writeFileSync(
+      manifest,
+      JSON.stringify({ ...named.manifest, name: "stow", kind: "stow" }),
+    )
     const errors = spyOn(console, "error").mockImplementation(() => undefined)
     expect(
       await savecmds.recallStow("source", parseArgs(["-i", "source"])),
@@ -1203,5 +1217,71 @@ describe("a stow whose QEMU will not quit", () => {
     ).rejects.toThrow("stow-unfinished")
     expect(readSave("source", "stow")).toBeNull()
     expect(readSave("source", "stow-unfinished")?.kind).toBe("stow")
+  })
+})
+
+describe("a stow the installed runtime could not recall", () => {
+  const installedR11 = (): void => {
+    const manifest = resolve(state, "runtime", "manifest.json")
+    writeFileSync(
+      manifest,
+      JSON.stringify({
+        name: "winvm-runtime",
+        version: "11.1.2-2",
+        qemu: "11.1.2",
+        qemuPatches: "p2",
+        components: {},
+        macho: [],
+        files: {},
+      }),
+    )
+  }
+  beforeEach(() => {
+    installedR11()
+    spyOn(kept, "launchedRuntime").mockResolvedValue("11.0.0+patches:p1")
+  })
+
+  it("is refused by createSave before the guest is paused, and nothing is written", async () => {
+    let refusal: unknown = null
+    await createSave("source", {
+      name: "stow",
+      kind: "stow",
+      format: "raw",
+      quitAfter: true,
+    }).catch((e: unknown) => {
+      refusal = e
+    })
+    expect(refusal).toBeInstanceOf(StowNotRecallable)
+    const text = (refusal as Error).message
+    expect(text).toContain("QEMU 11.0.0")
+    expect(text).toContain("QEMU 11.1.2")
+    expect(text).toContain("winvm stop -i source")
+    expect(commands).not.toContain("stop")
+    expect(commands).not.toContain("quit")
+    expect(readSave("source", "stow")).toBeNull()
+    expect(runningPid).toBe(FAKE_PID)
+  })
+
+  it("still lets a named save be written under its true label, and a load of it says why it can't", async () => {
+    const r = await createSave("source", {
+      name: "kept-r10",
+      kind: "manual",
+      format: "raw",
+    })
+    expect(r.manifest.compatParts?.qemu).toBe("11.0.0+patches:p1")
+    await expect(loadSave("source", "kept-r10")).rejects.toThrow(
+      "QEMU changed (11.0.0+patches:p1 -> 11.1.2+patches:p2)",
+    )
+  })
+
+  it("makes winvm stow exit with its own code and the restart guidance, leaving Windows running", async () => {
+    const errors = spyOn(console, "error").mockImplementation(() => undefined)
+    expect(await savecmds.stow(parseArgs(["-i", "source", "--force"]))).toBe(
+      STOW_REFUSED,
+    )
+    const said = errors.mock.calls.map((c) => String(c[0])).join("\n")
+    expect(said).toContain("winvm stop -i source")
+    expect(commands).not.toContain("stop")
+    expect(runningPid).toBe(FAKE_PID)
   })
 })
