@@ -8,7 +8,7 @@ import {
 import { resolve } from "node:path"
 import { gunzipSync } from "node:zlib"
 
-import { type FoundKeeper, findKeeper } from "./keeper"
+import { type KeeperUse, keeperUse } from "./kept"
 import { home, PACKAGE_DIR } from "./paths"
 import { findRuntime, type Runtime, runtimeBin, verifyRuntime } from "./runtime"
 import { capture, have, spawnText } from "./shell"
@@ -165,10 +165,30 @@ export function runtimeCheck(
   }
 }
 
-export const keeperCheck = (found: FoundKeeper | null): Check =>
-  found === null
-    ? { label: "keeper not installed (not used yet)", ok: true, hint: "" }
-    : { label: `keeper ${found.path} (${found.source})`, ok: true, hint: "" }
+const UNPROTECTED = "VMs start without it, unprotected if the Mac shuts down"
+
+export function keeperCheck(use: KeeperUse): Check {
+  switch (use.kind) {
+    case "keeper":
+      return {
+        label: `keeper ${use.keeper.path} (${use.keeper.source})`,
+        ok: true,
+        hint: "",
+      }
+    case "off":
+      return {
+        label: `keeper off (WINVM_KEEPER=off): ${UNPROTECTED}`,
+        ok: true,
+        hint: "",
+      }
+    case "missing":
+      return {
+        label: `keeper not installed: ${UNPROTECTED}`,
+        ok: true,
+        hint: "",
+      }
+  }
+}
 
 export function macosCheck(productVersion: string, arch: string): Check {
   const label = `macOS ${productVersion} on ${arch === "arm64" ? "Apple Silicon" : arch}`
@@ -185,7 +205,7 @@ export function hostChecks(): readonly Check[] {
   return [
     macosCheck(capture("sw_vers", ["-productVersion"]), process.arch),
     runtimeCheck(rt, rt === null ? [] : verifyRuntime(rt)),
-    keeperCheck(findKeeper()),
+    keeperCheck(keeperUse()),
     {
       label: `UEFI firmware${firmwareCode() === null ? "" : ` (${String(firmwareCode())})`}`,
       ok: firmwareCode() !== null && firmwareVars() !== null,

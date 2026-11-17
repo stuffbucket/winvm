@@ -218,3 +218,28 @@ export function retireKeeper(name: string, p: Paths): void {
   if (!existsSync(keeperPlist(p))) return
   launchdOf().bootout(keeperLabel(home(), name))
 }
+
+export type Protection = "kept" | "legacy" | "broken" | "off" | "missing"
+
+export interface KeeperStanding {
+  readonly protection: Protection
+  readonly version: string | null
+  readonly pid: number | null
+}
+
+export function keeperStanding(
+  qemuPid: number | null,
+  hello: KeeperHello | null,
+  use: KeeperUse["kind"],
+): KeeperStanding | null {
+  const child = hello?.child ?? null
+  const of = (protection: Protection): KeeperStanding => ({
+    protection,
+    version: hello?.version ?? null,
+    pid: hello?.pid ?? null,
+  })
+  if (qemuPid === null) return child === null ? null : of("broken")
+  if (child?.pid === qemuPid) return of("kept")
+  if (child !== null) return of("broken")
+  return of(use === "keeper" ? "legacy" : use)
+}

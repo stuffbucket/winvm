@@ -25,9 +25,11 @@ import * as host from "../src/host"
 import { type JobInfo, keeperLabel, type Launchd } from "../src/keeper"
 import {
   KEEPER_OFF,
+  type KeeperHello,
   keeperDir,
   keeperHello,
   keeperMonitor,
+  keeperStanding,
   keeperUse,
   setLaunchd,
 } from "../src/kept"
@@ -38,6 +40,7 @@ import * as qmp from "../src/qmp"
 import * as saves from "../src/saves"
 import * as servicectl from "../src/servicectl"
 import * as share from "../src/share"
+import { gather } from "../src/status"
 import * as vnc from "../src/vnc"
 
 const NAME = "kept"
@@ -394,6 +397,74 @@ describe("a QEMU started detached, before the keeper", () => {
     expect(legacy.signalCode).toBe("SIGKILL")
     expect(launchdCalls).toEqual([])
     expect(existsSync(keeperDir(p))).toBe(false)
+  })
+})
+
+describe("whether the keeper protects a VM", () => {
+  const hello = (child: number | null): KeeperHello => ({
+    pid: 9,
+    protocol: 2,
+    version: "0.1.0",
+    child: child === null ? null : { name: "qemu", pid: child, adopted: false },
+    sidecars: [],
+    hostEnding: false,
+  })
+
+  it("is kept when the keeper's child is the QEMU qemu.pid names", () => {
+    expect(keeperStanding(10, hello(10), "keeper")).toEqual({
+      protection: "kept",
+      version: "0.1.0",
+      pid: 9,
+    })
+  })
+
+  it("is legacy, off or missing for a QEMU no keeper runs", () => {
+    expect(keeperStanding(10, null, "keeper")?.protection).toBe("legacy")
+    expect(keeperStanding(10, hello(null), "keeper")?.protection).toBe("legacy")
+    expect(keeperStanding(10, null, "off")?.protection).toBe("off")
+    expect(keeperStanding(10, null, "missing")?.protection).toBe("missing")
+  })
+
+  it("is broken when the keeper and qemu.pid disagree", () => {
+    expect(keeperStanding(10, hello(11), "keeper")?.protection).toBe("broken")
+    expect(keeperStanding(null, hello(11), "keeper")?.protection).toBe("broken")
+  })
+
+  it("says nothing for a stopped VM with no kept QEMU", () => {
+    expect(keeperStanding(null, hello(null), "keeper")).toBeNull()
+    expect(keeperStanding(null, null, "off")).toBeNull()
+  })
+
+  it("is reported by status for a kept VM, and a note says how to protect a legacy one", async () => {
+    await leasedLaunch()
+    await until("the pidfile", () => existsSync(pathsFor(NAME).pid))
+    const keptStatus = await gather(NAME, false)
+    expect(keptStatus.keeper?.protection).toBe("kept")
+    expect(keptStatus.notes.join("\n")).not.toContain("keeper")
+    expect(await commands.kill(parseArgs(["-i", NAME]))).toBe(0)
+    await until("QEMU to go", () => !qemu.isRunning(pathsFor(NAME)))
+
+    const legacy = Bun.spawn(
+      [
+        resolve(state, "runtime", "bin", "qemu-system-aarch64"),
+        "-pidfile",
+        pathsFor(NAME).pid,
+      ],
+      { stdout: "ignore", stderr: "ignore" },
+    )
+    try {
+      await until("the pidfile", () => qemu.isRunning(pathsFor(NAME)))
+      const legacyStatus = await gather(NAME, false)
+      expect(legacyStatus.keeper?.protection).toBe("legacy")
+      expect(legacyStatus.notes.join("\n")).toContain(
+        `not protected if the Mac shuts down`,
+      )
+      expect(legacyStatus.notes.join("\n")).toContain(
+        `winvm stow -i ${NAME} && winvm start -i ${NAME}`,
+      )
+    } finally {
+      legacy.kill("SIGKILL")
+    }
   })
 })
 

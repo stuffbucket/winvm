@@ -611,13 +611,25 @@ describe("parseJobPrint", () => {
 
 describe("keeperCheck", () => {
   it("names where the keeper comes from, and is never a missing prerequisite", () => {
-    expect(keeperCheck({ path: "/a/winvm-keeper", source: "app" })).toEqual({
+    expect(
+      keeperCheck({
+        kind: "keeper",
+        keeper: { path: "/a/winvm-keeper", source: "app" },
+      }),
+    ).toEqual({
       label: "keeper /a/winvm-keeper (app)",
       ok: true,
       hint: "",
     })
-    expect(keeperCheck(null)).toMatchObject({
-      label: "keeper not installed (not used yet)",
+    expect(keeperCheck({ kind: "missing" })).toEqual({
+      label:
+        "keeper not installed: VMs start without it, unprotected if the Mac shuts down",
+      ok: true,
+      hint: "",
+    })
+    expect(keeperCheck({ kind: "off" })).toMatchObject({
+      label:
+        "keeper off (WINVM_KEEPER=off): VMs start without it, unprotected if the Mac shuts down",
       ok: true,
     })
   })
