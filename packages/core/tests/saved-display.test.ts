@@ -34,7 +34,7 @@ import {
   VIRTIO_GPU,
   writeDisplay,
 } from "../src/display"
-import type { QuickUnmount } from "../src/finder"
+import { type QuickUnmount, unmountWithin } from "../src/finder"
 import * as host from "../src/host"
 import { hostEndFacts, hostEndSeams } from "../src/hostend"
 import * as kept from "../src/kept"
@@ -74,7 +74,13 @@ import * as screen from "../src/screen"
 import * as servicectl from "../src/servicectl"
 import * as share from "../src/share"
 import * as shell from "../src/shell"
-import { mountDir, SHARE_KEYS, SHARES, writeSmb } from "../src/smbstate"
+import {
+  type MountEntry,
+  mountDir,
+  SHARE_KEYS,
+  SHARES,
+  writeSmb,
+} from "../src/smbstate"
 import { gather } from "../src/status"
 import * as vnc from "../src/vnc"
 
@@ -937,14 +943,16 @@ describe("the host-end stow", () => {
     let killed = 0
     return {
       sys: {
-        mountTable: async () =>
-          await Promise.resolve(
+        mountTable: () => ({
+          done: Promise.resolve(
             SHARE_KEYS.map((key) => ({
               source: `//winvm-share@127.0.0.1:4455/${SHARES[key].share}`,
               dir: mountDir("source", key),
               type: "smbfs",
             })),
           ),
+          kill: () => undefined,
+        }),
         unmount: (dir) => {
           commands.push(`unmount ${dir}`)
           return {
@@ -984,6 +992,29 @@ describe("the host-end stow", () => {
     expect(ticks).toBeGreaterThan(5)
     expect(quitSawStow).toBe(true)
     expect(readSave("source", "stow")?.kind).toBe("stow")
+  })
+
+  it("kills the mount listing too when it outlasts the budget", async () => {
+    writeSmb(pathsFor("source"), {
+      user: "winvm-share",
+      password: "Wv1-aaaaaaaaaaaaaaaaaaaaaaaa",
+      hostPort: 4455,
+      mounted: ["home"],
+    })
+    let killed = 0
+    const started = Date.now()
+    const r = await unmountWithin("source", 200, {
+      mountTable: () => ({
+        done: new Promise<readonly MountEntry[]>(() => undefined),
+        kill: () => {
+          killed += 1
+        },
+      }),
+      unmount: () => ({ done: Promise.resolve(0), kill: () => undefined }),
+    })
+    expect(Date.now() - started).toBeLessThan(2000)
+    expect(killed).toBe(1)
+    expect(r).toEqual({ unmounted: 0, left: 2 })
   })
 
   it("reads the running QEMU's facts: -snapshot, install media and the free space", async () => {

@@ -330,7 +330,10 @@ export function beforeDown(instance: string, sys: Sys = realSys): void {
 }
 
 export interface QuickUnmount {
-  mountTable(): Promise<readonly MountEntry[]>
+  mountTable(): {
+    readonly done: Promise<readonly MountEntry[]>
+    kill(): void
+  }
   unmount(dir: string): {
     readonly done: Promise<unknown>
     kill(): void
@@ -338,12 +341,17 @@ export interface QuickUnmount {
 }
 
 export const quickUnmount: QuickUnmount = {
-  mountTable: async () => {
+  mountTable: () => {
     const proc = Bun.spawn(["/sbin/mount"], {
       stdout: "pipe",
       stderr: "ignore",
     })
-    return parseMountTable(await new Response(proc.stdout).text())
+    return {
+      done: new Response(proc.stdout).text().then(parseMountTable),
+      kill: () => {
+        proc.kill("SIGKILL")
+      },
+    }
   },
   unmount: (dir) => {
     const proc = Bun.spawn(["/sbin/umount", "-f", dir], {
@@ -374,11 +382,15 @@ export async function unmountWithin(
     }, budgetMs)
   })
   try {
+    const listing = sys.mountTable()
     const table = await Promise.race([
-      sys.mountTable().catch(() => [] as readonly MountEntry[]),
+      listing.done.catch(() => [] as readonly MountEntry[]),
       late,
     ])
-    if (table === "late") return { unmounted: 0, left: SHARE_KEYS.length }
+    if (table === "late") {
+      listing.kill()
+      return { unmounted: 0, left: SHARE_KEYS.length }
+    }
     const ours = SHARE_KEYS.map((key) => ({
       dir: mountDir(instance, key),
       port,
