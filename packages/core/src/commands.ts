@@ -89,6 +89,7 @@ import {
   readImageMeta,
   readMeta,
 } from "./paths"
+import { signalProcess } from "./proc"
 import * as qemu from "./qemu"
 import * as qga from "./qga"
 import * as qmp from "./qmp"
@@ -391,7 +392,7 @@ export async function build(args: Args): Promise<number> {
 
   const reap = (): void => {
     const pid = qemu.pidOf(p)
-    if (pid !== null) process.kill(pid, "SIGKILL")
+    if (pid !== null) signalProcess(pid, "SIGKILL")
     qemu.stopSidecars(p)
   }
   for (const sig of ["SIGINT", "SIGTERM"] as const) {
@@ -1336,7 +1337,7 @@ export async function kill(args: Args): Promise<number> {
   }
   finder.beforeDown(name)
   if (!(await killKept(p, pid))) {
-    process.kill(pid, "SIGKILL")
+    signalProcess(pid, "SIGKILL")
     await killKept(p, null)
   }
   rmSync(p.pid, { force: true })

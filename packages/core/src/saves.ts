@@ -51,6 +51,7 @@ import {
   readImageMeta,
   readMeta,
 } from "./paths"
+import { signalProcess } from "./proc"
 import * as qemu from "./qemu"
 import * as qmp from "./qmp"
 import { currentQemuCompat, runtimeBin } from "./runtime"
@@ -829,7 +830,7 @@ export async function quitQemu(p: Paths, timeoutMs = 120_000): Promise<void> {
     }
     await sleep(20)
   }
-  if (!(await killKept(p, pid))) process.kill(pid, "SIGKILL")
+  if (!(await killKept(p, pid))) signalProcess(pid, "SIGKILL")
   while (qemu.pidOf(p) !== null) await sleep(250)
   qemu.stopSidecars(p)
 }

@@ -1,7 +1,7 @@
 import { dlopen, FFIType, ptr } from "bun:ffi"
-import { closeSync, openSync, writeSync } from "node:fs"
+import { closeSync, openSync } from "node:fs"
 
-interface Fcntl {
+export interface Fcntl {
   readonly library: string
   readonly symbol: string
   readonly getLock: number
@@ -45,7 +45,7 @@ export type LockState =
 
 type Call = (fd: number, cmd: number, arg: ReturnType<typeof ptr>) => number
 
-interface Bound {
+export interface Bound {
   readonly abi: Fcntl
   readonly call: Call
 }
@@ -58,7 +58,7 @@ function abiFor(platform: string): Fcntl | null {
   return null
 }
 
-function bind(): Bound | null {
+export function bindFcntl(): Bound | null {
   if (bound !== undefined) return bound
   const abi = abiFor(process.platform)
   try {
@@ -78,7 +78,7 @@ function bind(): Bound | null {
   return bound
 }
 
-function writeLockOf(abi: Fcntl): DataView {
+export function writeLockOf(abi: Fcntl): DataView {
   const lock = new DataView(new ArrayBuffer(abi.bytes))
   lock.setInt16(abi.typeAt, abi.writeLock, true)
   return lock
@@ -94,25 +94,21 @@ export function lockState(path: string): LockState {
       : "unknown"
   }
   try {
-    const fcntl = bind()
+    const fcntl = bindFcntl()
     if (fcntl === null) return "unknown"
     const lock = writeLockOf(fcntl.abi)
     if (fcntl.call(fd, fcntl.abi.getLock, ptr(lock.buffer)) !== 0)
       return "unknown"
-    return lock.getInt16(fcntl.abi.typeAt, true) === fcntl.abi.unlocked
-      ? "free"
-      : { held: lock.getInt32(fcntl.abi.pidAt, true) }
+    return lockFrom(lock, process.platform)
   } finally {
     closeSync(fd)
   }
 }
 
-export function lockPidfile(path: string): void {
-  const fcntl = bind()
-  if (fcntl === null) throw new Error(`no fcntl on ${process.platform}`)
-  const fd = openSync(path, "w")
-  const lock = writeLockOf(fcntl.abi)
-  if (fcntl.call(fd, fcntl.abi.setLock, ptr(lock.buffer)) !== 0)
-    throw new Error(`could not lock ${path}`)
-  writeSync(fd, `${String(process.pid)}\n`)
+export function lockFrom(lock: DataView, platform: string): LockState {
+  const abi = abiFor(platform)
+  if (abi === null) return "unknown"
+  if (lock.getInt16(abi.typeAt, true) === abi.unlocked) return "free"
+  const held = lock.getInt32(abi.pidAt, true)
+  return held > 0 ? { held } : "unknown"
 }

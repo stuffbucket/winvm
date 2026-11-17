@@ -99,6 +99,15 @@ describe("pidOf", () => {
     expect(existsSync(p.pid)).toBe(false)
   })
 
+  it("is null for a pidfile that names no single process (-1, 0 or 1)", () => {
+    const p = pathsFor(NAME)
+    for (const pid of ["-1", "0", "1"]) {
+      writeFileSync(p.pid, `${pid}\n`)
+      expect(pidOf(p)).toBeNull()
+      expect(isRunning(p)).toBe(false)
+    }
+  })
+
   it("is null for an unlocked pidfile that does not hold a number", () => {
     const p = pathsFor(NAME)
     writeFileSync(p.pid, "\n")

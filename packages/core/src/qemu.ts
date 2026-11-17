@@ -26,6 +26,7 @@ import { LeaseNotHeld } from "./operation"
 import type { InstanceMeta, Paths } from "./paths"
 import { media } from "./paths"
 import { lockState } from "./pidlock"
+import { signalProcess } from "./proc"
 import * as qga from "./qga"
 import * as qmp from "./qmp"
 import { runtimeBin } from "./runtime"
@@ -194,7 +195,7 @@ function swtpmPids(p: Paths): readonly number[] {
 export function stopSwtpm(p: Paths): void {
   for (const pid of swtpmPids(p)) {
     try {
-      process.kill(pid, "SIGKILL")
+      signalProcess(pid, "SIGKILL")
     } catch {}
   }
   rmSync(p.tpmSock, { force: true })
@@ -545,7 +546,7 @@ export function pidOf(p: Paths): number | null {
   if (typeof lock === "object") return lock.held
   if (lock === "missing") return null
   const pid = Number.parseInt(text.trim(), 10)
-  if (!Number.isFinite(pid)) return null
+  if (!Number.isInteger(pid) || pid <= 1) return null
   try {
     process.kill(pid, 0)
   } catch {

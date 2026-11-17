@@ -14,6 +14,7 @@ import { resolve } from "node:path"
 
 import type { DisplayConfig } from "./display"
 import type { Paths } from "./paths"
+import { signalProcess } from "./proc"
 import { findRuntime, type Runtime } from "./runtime"
 import { spawnText } from "./shell"
 
@@ -285,7 +286,7 @@ export function virtiofsdPids(p: Paths): readonly number[] {
 export function stopVirtiofsd(p: Paths): void {
   for (const pid of virtiofsdPids(p)) {
     try {
-      process.kill(pid, "SIGKILL")
+      signalProcess(pid, "SIGKILL")
     } catch {}
   }
   rmSync(virtiofsdSocket(p), { force: true })
