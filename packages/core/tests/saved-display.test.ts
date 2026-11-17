@@ -1156,3 +1156,21 @@ describe("a recall that fails", () => {
     expect(readSave("source", "stow")).not.toBeNull()
   })
 })
+
+describe("a stow whose QEMU will not quit", () => {
+  it("is moved aside, so a later start never recalls it over newer disk writes", async () => {
+    spyOn(saves, "quitQemu").mockRejectedValue(
+      new Error("QEMU (pid 1234567) did not quit and could not be killed"),
+    )
+    await expect(
+      createSave("source", {
+        name: "stow",
+        kind: "stow",
+        format: "raw",
+        quitAfter: true,
+      }),
+    ).rejects.toThrow("stow-unfinished")
+    expect(readSave("source", "stow")).toBeNull()
+    expect(readSave("source", "stow-unfinished")?.kind).toBe("stow")
+  })
+})

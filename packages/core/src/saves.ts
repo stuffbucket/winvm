@@ -1127,6 +1127,14 @@ async function createSaveHeld(
   if (o.quitAfter === true) {
     try {
       await quitQemu(p, undefined, o.leaveMounts === true ? o : {})
+    } catch (error) {
+      const aside = `${o.name}-unfinished`
+      rmSync(saveDir(instance, aside), { recursive: true, force: true })
+      renameSync(final, saveDir(instance, aside))
+      throw new Error(
+        `${error instanceof Error ? error.message : String(error)}; the ${o.name} it had written is kept as "${aside}", where start does not recall it`,
+        { cause: error },
+      )
     } finally {
       clearSavingRunning(instance)
     }
