@@ -16,6 +16,7 @@ import * as machineinfo from "@winvm/core/machineinfo"
 import * as mcpcmds from "@winvm/core/mcpcmds"
 import * as ocr from "@winvm/core/ocr"
 import {
+  automaticFrom,
   InstanceBusy,
   operationFor,
   withOperation,
@@ -53,6 +54,7 @@ const leased = async (run: () => number | Promise<number>): Promise<number> => {
   try {
     return await withOperation(instanceName(args), operation, run, {
       interruptible: true,
+      automatic: automaticFrom(args),
     })
   } catch (error) {
     if (!(error instanceof InstanceBusy)) throw error

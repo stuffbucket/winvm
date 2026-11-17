@@ -13,7 +13,6 @@ import * as finder from "./finder"
 import * as frozen from "./frozen"
 import { lockWindows } from "./lock"
 import * as notes from "./notes"
-import { AUTOMATIC_ENV } from "./operation"
 import type { InstanceMeta, Paths } from "./paths"
 import { pathsFor, readImageMeta, readMeta } from "./paths"
 import * as qemu from "./qemu"
@@ -406,8 +405,7 @@ export async function stow(args: Args): Promise<number> {
     fail(refusal.message)
     return saves.STOW_REFUSED
   }
-  const stopped =
-    process.env[AUTOMATIC_ENV] !== "1" && (await watcher.stopWatcher(name))
+  const stopped = await watcher.stopWatcher(name)
   finder.beforeDown(name)
   const started = Date.now()
   let code: number

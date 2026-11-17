@@ -1352,6 +1352,25 @@ describe("a winvm stow that fails while QEMU still runs Windows", () => {
     expect(restarted).toHaveBeenCalledTimes(1)
   })
 
+  it("stops and restarts the watcher even when it inherited WINVM_AUTOMATIC", async () => {
+    const before = process.env.WINVM_AUTOMATIC
+    process.env.WINVM_AUTOMATIC = "1"
+    try {
+      const stopped = spyOn(watcher, "stopWatcher").mockResolvedValue(true)
+      const restarted = spyOn(watcher, "startWatcherFor").mockImplementation(
+        () => undefined,
+      )
+      expect(await savecmds.stow(parseArgs(["-i", "source", "--force"]))).toBe(
+        1,
+      )
+      expect(stopped).toHaveBeenCalledTimes(1)
+      expect(restarted).toHaveBeenCalledTimes(1)
+    } finally {
+      if (before === undefined) delete process.env.WINVM_AUTOMATIC
+      else process.env.WINVM_AUTOMATIC = before
+    }
+  })
+
   it("starts no watcher it did not stop", async () => {
     spyOn(watcher, "stopWatcher").mockResolvedValue(false)
     const restarted = spyOn(watcher, "startWatcherFor").mockImplementation(

@@ -29,7 +29,7 @@ import {
   savesToRotate,
 } from "./idle"
 import {
-  AUTOMATIC_ENV,
+  AUTOMATIC_FLAG,
   InstanceBusy,
   leaseHolder,
   withOperation,
@@ -119,7 +119,12 @@ export function readWatchState(name: string): WatchState | null {
 }
 
 export const CLI = {
-  stow: (instance: string): readonly string[] => ["stow", "-i", instance],
+  stow: (instance: string): readonly string[] => [
+    "stow",
+    "-i",
+    instance,
+    `--${AUTOMATIC_FLAG}`,
+  ],
 } as const
 
 export type SaveOutcome = "saved" | "busy" | "failed"
@@ -151,7 +156,7 @@ async function runWinvm(
   const code = await new Promise<number>((res) => {
     const child = spawn(process.execPath, [...cliArgv(...argv)], {
       stdio: ["ignore", "pipe", "pipe"],
-      env: { ...managedEnv(), [AUTOMATIC_ENV]: "1" },
+      env: managedEnv(),
     })
     let lines = 0
     const relay = (chunk: Buffer): void => {
