@@ -103,8 +103,11 @@ export class GuestPointerRouter {
   private enabled = true
   private focused = true
   private resizing = false
+  private readonly release: (point: PointerPoint | null) => void
 
-  constructor(private readonly release: (point: PointerPoint | null) => void) {}
+  constructor(release: (point: PointerPoint | null) => void) {
+    this.release = release
+  }
 
   setEnabled(enabled: boolean): void {
     if (this.enabled === enabled) return

@@ -214,10 +214,10 @@ mismatch and names the part that changed.
 **Protection.** `protected: true` is additive retention metadata, not part of
 `compat`. Old manifests without it remain unprotected. `saves protect` and
 `unprotect` atomically update only the manifest, under the same per-instance
-lock as migration and rotation, with no guest calls. Reclamation excludes
-protected saves and never counts them against `autosave.keep`. Rotation
-rechecks sampled victims after acquiring the lock, so a save protected in the
-meantime is retained. Deletion requires unprotecting first or the explicit
+lifecycle lease as save, load and rotation, with no guest calls. Reclamation
+excludes protected saves and never counts them against `autosave.keep`.
+Rotation rechecks sampled victims after acquiring the lease, so a save protected
+in the meantime is retained. Deletion requires unprotecting first or the explicit
 `saves rm --force`; replacement by save or clone always refuses a protected
 target. An unreadable manifest fails closed. Bulk destroy keeps all saves when
 any is protected or unreadable; prune skips such scratch instances. Stow cannot
@@ -334,18 +334,20 @@ rules, and why:
   autosaves nor stows it, and the time does not count as idle. The idle clock
   starts again on resume, so a guest paused for hours is not stowed the moment
   it runs again.
-- **Autosave is an in-process `saves.createSave`** (kind `auto`) under
-  `saves.withLock`, followed by a clock sync, because the guest was stopped
-  while it was saved. If another save or load holds the lock, the round is
-  skipped. Rotation deletes only unprotected kind `auto`, keeping the newest
-  `autosave.keep` unprotected saves plus every protected save. It rechecks each
-  victim under the lock before deletion.
-- **Stow runs `winvm stow`** as a child process. `stow` and `stop` end the
-  watcher first, except when the watcher is the caller.
+- **Autosave is an in-process `saves.createSave`** (kind `auto`) under the
+  instance's lifecycle lease (`operation.ts`, `lease.json`), taken as winvm's own
+  work, followed by a clock sync, because the guest was stopped while it was
+  saved. If any other command holds the lease, the round is skipped. Rotation
+  deletes only unprotected kind `auto`, keeping the newest `autosave.keep`
+  unprotected saves plus every protected save. It rechecks each victim under the
+  lease before deletion.
+- **Stow runs `winvm stow`** as a child process, whose lease is marked as
+  winvm's own work too. `stow` and `stop` end the watcher first, except when the
+  watcher is the caller.
 - **A `load` replaces QEMU.** The watcher follows the new process and restarts
-  its idle clock instead of exiting. It exits only once QEMU is gone and no save
-  or load holds the instance. `load` and `rewind` count as activity. A save does
-  not, or every autosave would trigger the next.
+  its idle clock instead of exiting. It exits only once QEMU is gone and no
+  command holds the instance's lease. `load` and `rewind` count as activity. A
+  save does not, or every autosave would trigger the next.
 - **`start` launches the watcher after the first-boot baseline save**, so that
   save is not counted as use. An `--ephemeral` guest cannot be saved, so its
   watcher only keeps the clock.

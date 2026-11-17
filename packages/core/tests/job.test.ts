@@ -1,7 +1,3 @@
-/**
- * Job files and reports for `winvm run`: parsing, validation, the step
- * scripts, and the JUnit/summary renderings. No VM needed.
- */
 import { describe, expect, it } from "bun:test"
 
 import { JobError, parseDuration, parseJob, stepScript } from "../src/job"
@@ -34,17 +30,17 @@ describe("parseJob", () => {
         "    dest: C:\\work\\",
         "  - url: https://example.com/b.zip",
         "  - release: owner/repo",
-        "    tag: ${{ env.A }}",
+        `    tag: \${{ env.A }}`,
         "    pattern: ['*.msi', '*.zip']",
         "    dest: C:\\work\\",
         "steps:",
         "  - name: s",
         "    shell: cmd",
-        "    run: echo ${{ env.A }}",
+        `    run: echo \${{ env.A }}`,
         "    timeout: 30",
         "    continue-on-error: true",
         "    env: { B: y }",
-        "    if: ${{ always() }}",
+        `    if: \${{ always() }}`,
         "    background: true",
         "  - run: x",
         "    timeout-minutes: 2",
@@ -57,18 +53,43 @@ describe("parseJob", () => {
     expect(j.golden).toBe("g1")
     expect(j.timeoutMs).toBe(300_000)
     expect(j.env).toEqual({ A: "x", N: "3" })
-    expect(j.files[0]).toEqual({ kind: "path", src: "/tmp/a.msi", dest: "C:\\work\\" })
-    expect(j.files[1]).toEqual({ kind: "url", url: "https://example.com/b.zip", dest: null })
-    expect(j.files[2]).toEqual({ kind: "release", repo: "owner/repo", tag: "x", patterns: ["*.msi", "*.zip"], dest: "C:\\work\\" })
+    expect(j.files[0]).toEqual({
+      kind: "path",
+      src: "/tmp/a.msi",
+      dest: "C:\\work\\",
+    })
+    expect(j.files[1]).toEqual({
+      kind: "url",
+      url: "https://example.com/b.zip",
+      dest: null,
+    })
+    expect(j.files[2]).toEqual({
+      kind: "release",
+      repo: "owner/repo",
+      tag: "x",
+      patterns: ["*.msi", "*.zip"],
+      dest: "C:\\work\\",
+    })
     const s = j.steps[0]
-    expect(s).toMatchObject({ shell: "cmd", run: "echo x", timeoutMs: 30_000, continueOnError: true, env: { B: "y" }, if: "always", background: true })
+    expect(s).toMatchObject({
+      shell: "cmd",
+      run: "echo x",
+      timeoutMs: 30_000,
+      continueOnError: true,
+      env: { B: "y" },
+      if: "always",
+      background: true,
+    })
     expect(j.steps[1]?.timeoutMs).toBe(120_000)
     expect(j.artifacts).toEqual({ when: "always", paths: ["C:\\work\\*.log"] })
     expect(j.screenshot).toBe("never")
   })
 
   it("resolves a relative src against the job file", () => {
-    const j = parseJob("files:\n  - src: fixtures/x.bin\n" + minimal, "/jobs/a/job.yml")
+    const j = parseJob(
+      `files:\n  - src: fixtures/x.bin\n${minimal}`,
+      "/jobs/a/job.yml",
+    )
     expect(j.files[0]).toMatchObject({ src: "/jobs/a/fixtures/x.bin" })
     expect(j.name).toBe("job")
   })
@@ -81,11 +102,11 @@ describe("parseJob", () => {
       "steps:\n  - run: x\n    shell: bash",
       "steps:\n  - run: x\n    if: github.ref == 'main'",
       "steps:\n  - run: x\n    timeout: soon",
-      "files:\n  - dest: C:\\x\n" + minimal,
-      "files:\n  - src: a\n    url: https://x\n" + minimal,
-      "files:\n  - release: not-a-repo\n    pattern: '*'\n" + minimal,
-      "files:\n  - release: o/r\n" + minimal,
-      "steps:\n  - run: echo ${{ env.WINVM_SURELY_UNSET_VAR }}",
+      `files:\n  - dest: C:\\x\n${minimal}`,
+      `files:\n  - src: a\n    url: https://x\n${minimal}`,
+      `files:\n  - release: not-a-repo\n    pattern: '*'\n${minimal}`,
+      `files:\n  - release: o/r\n${minimal}`,
+      `steps:\n  - run: echo \${{ env.WINVM_SURELY_UNSET_VAR }}`,
       "steps: [\n",
     ]) {
       expect(() => parseJob(bad)).toThrow(JobError)
@@ -95,9 +116,9 @@ describe("parseJob", () => {
 
 describe("interpolation", () => {
   it("takes job env, then host env, then a default", () => {
-    process.env["WINVM_TEST_HOST_VAR"] = "host"
+    process.env.WINVM_TEST_HOST_VAR = "host"
     const j = parseJob(
-      "env: { A: job }\nsteps:\n  - run: ${{ env.A }} ${{ env.WINVM_TEST_HOST_VAR }} ${{ env.WINVM_UNSET_X || 'dflt' }} ${{env.A||'no'}}\n",
+      `env: { A: job }\nsteps:\n  - run: \${{ env.A }} \${{ env.WINVM_TEST_HOST_VAR }} \${{ env.WINVM_UNSET_X || 'dflt' }} \${{env.A||'no'}}\n`,
     )
     expect(j.steps[0]?.run).toBe("job host dflt job")
   })
@@ -114,26 +135,41 @@ describe("parseDuration", () => {
 })
 
 describe("stepScript", () => {
-  const step = parseJob("steps:\n  - run: |\n      echo 100%\n      exit 3\n    shell: cmd\n").steps[0]
+  const step = parseJob(
+    "steps:\n  - run: |\n      echo 100%\n      exit 3\n    shell: cmd\n",
+  ).steps[0]
   it("cmd: CRLF, env set at the top, % escaped in values", () => {
     if (step === undefined) throw new Error("no step")
     const s = stepScript(step, { P: "50%" })
     expect(s.ext).toBe(".cmd")
-    expect(s.text).toBe('@echo off\r\nset "P=50%%"\r\necho 100%\r\nexit 3\r\n\r\n')
+    expect(s.text).toBe(
+      '@echo off\r\nset "P=50%%"\r\necho 100%\r\nexit 3\r\n\r\n',
+    )
   })
   it("powershell: BOM, stop on error, quoted env, exit with the native code", () => {
     const ps = parseJob("steps:\n  - run: Write-Output 1\n").steps[0]
     if (ps === undefined) throw new Error("no step")
     const s = stepScript(ps, { Q: "it's" })
     expect(s.ext).toBe(".ps1")
-    expect(s.text.startsWith("\uFEFF$ErrorActionPreference = 'Stop'\r\n")).toBe(true)
+    expect(s.text.startsWith("\uFEFF$ErrorActionPreference = 'Stop'\r\n")).toBe(
+      true,
+    )
     expect(s.text).toContain("$env:Q = 'it''s'\r\n")
     expect(s.text).toContain("exit $LASTEXITCODE")
   })
 })
 
 describe("report", () => {
-  const step = { name: "a<b", status: "failed" as const, exitcode: 2, ms: 1500, stdout: "out & \u0001", stderr: "", continueOnError: false, background: false }
+  const step = {
+    name: "a<b",
+    status: "failed" as const,
+    exitcode: 2,
+    ms: 1500,
+    stdout: "out & \u0001",
+    stderr: "",
+    continueOnError: false,
+    background: false,
+  }
   const job = {
     name: "j",
     file: "/x.yml",
@@ -151,11 +187,23 @@ describe("report", () => {
     artifacts: [],
     startedAt: "2026-01-01T00:00:00.000Z",
   }
-  const s: RunSummary = { jobs: [job, { ...job, status: "passed", steps: [] }], wallMs: 25_000, setupMs: 5000 }
+  const s: RunSummary = {
+    jobs: [job, { ...job, status: "passed", steps: [] }],
+    wallMs: 25_000,
+    setupMs: 5000,
+  }
 
   it("totals reset against test time", () => {
-    expect(totals(s)).toEqual({ passed: 1, failed: 1, resetMs: 6000, testMs: 14_000, overheadMs: 5000 })
-    expect(formatSummary(s)).toContain("resets were 24% of the wall clock (30% excluding setup)")
+    expect(totals(s)).toEqual({
+      passed: 1,
+      failed: 1,
+      resetMs: 6000,
+      testMs: 14_000,
+      overheadMs: 5000,
+    })
+    expect(formatSummary(s)).toContain(
+      "resets were 24% of the wall clock (30% excluding setup)",
+    )
   })
 
   it("junit escapes and marks failures", () => {
@@ -164,5 +212,23 @@ describe("report", () => {
     expect(x).toContain('<failure message="exit code 2"/>')
     expect(x).toContain("<system-out>out &amp; </system-out>")
     expect(x).toContain('<testsuites name="winvm" tests="3" failures="1"')
+  })
+
+  it("junit drops exactly the control characters XML 1.0 forbids", () => {
+    const codes = Array.from({ length: 0xa0 }, (_, c) => c)
+    const all = String.fromCharCode(...codes)
+    const kept = codes
+      .filter((c) => c >= 0x20 || c === 0x09 || c === 0x0a || c === 0x0d)
+      .map((c) => String.fromCharCode(c))
+      .join("")
+      .replaceAll("&", "&amp;")
+      .replaceAll("<", "&lt;")
+      .replaceAll(">", "&gt;")
+      .replaceAll('"', "&quot;")
+    const x = toJunit({
+      ...s,
+      jobs: [{ ...job, steps: [{ ...step, stdout: `${all}\u{1f600}` }] }],
+    })
+    expect(x).toContain(`<system-out>${kept}\u{1f600}</system-out>`)
   })
 })

@@ -1,79 +1,133 @@
-/**
- * A file save restores with the display QEMU was RUNNING when it was taken,
- * whatever display.json (the cold-boot preference) says now: captured at save,
- * validated and replayed at load, kept through clone, retained-save
- * recreation, stow, baseline and listing, and reported by status.
- *
- * QEMU, swtpm and the monitor are faked at their edges (scripts in a fake
- * runtime, a scripted qmp), so `launch` itself runs and its real command line
- * and virtiofsd decision are what the assertions see.
- */
-import { afterEach, beforeEach, describe, expect, it, mock, spyOn } from "bun:test"
-import { spawn } from "node:child_process"
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
+import {
+  afterEach,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  mock,
+  spyOn,
+} from "bun:test"
+import { ChildProcess, type SpawnOptions, spawn } from "node:child_process"
+import {
+  appendFileSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+  writeSync,
+} from "node:fs"
 import { tmpdir } from "node:os"
-import { resolve } from "node:path"
+import { basename, resolve } from "node:path"
 
 import { parseArgs } from "../src/args"
 import * as clock from "../src/clock"
 import * as display from "../src/display"
-import { RAMFB, VIRTIO_GPU, displayFromCommandLine, displayPath, readDisplay, writeDisplay, type DisplayConfig } from "../src/display"
+import {
+  type DisplayConfig,
+  displayFromCommandLine,
+  displayPath,
+  RAMFB,
+  readDisplay,
+  VIRTIO_GPU,
+  writeDisplay,
+} from "../src/display"
 import * as host from "../src/host"
 import * as media from "../src/media"
-import { basePath, imageMetaPath, pathsFor, readMeta, type InstanceMeta } from "../src/paths"
+import {
+  basePath,
+  type InstanceMeta,
+  imageMetaPath,
+  pathsFor,
+  readMeta,
+} from "../src/paths"
 import * as qemu from "../src/qemu"
 import * as qga from "../src/qga"
 import * as qmp from "../src/qmp"
 import * as savecmds from "../src/savecmds"
-import * as screen from "../src/screen"
-import * as service from "../src/service"
-import * as share from "../src/share"
-import { gather } from "../src/status"
-import * as vnc from "../src/vnc"
 import {
-  FILES,
   cloneSave,
   compatHash,
   createSave,
   currentCompat,
+  FILES,
   isPristine,
   loadSave,
+  type Manifest,
   markPristine,
   readSave,
   saveDir,
   savesDir,
-  type Manifest,
 } from "../src/saves"
+import * as screen from "../src/screen"
+import * as servicectl from "../src/servicectl"
+import * as share from "../src/share"
+import * as shell from "../src/shell"
+import { gather } from "../src/status"
+import * as vnc from "../src/vnc"
 
-const SIZED: DisplayConfig = { device: "virtio-gpu", legacySize: { width: 1920, height: 1080 } }
+const SIZED: DisplayConfig = {
+  device: "virtio-gpu",
+  legacySize: { width: 1920, height: 1080 },
+}
 const FAKE_PID = 1_234_567
-const meta: InstanceMeta = { image: "win11-arm64", vnc: 9, created: "2026-11-02T00:00:00Z" }
+const meta: InstanceMeta = {
+  image: "win11-arm64",
+  vnc: 9,
+  created: "2026-11-02T00:00:00Z",
+}
 
 let state = ""
 let previous: Record<string, string | undefined> = {}
 let previousProbe: share.Probe
-/** What the QEMU already running when a test starts was launched with. */
+let previousSettle: qemu.Settle
+let previousSpawner: qemu.Spawner
+let qemuOutput: string | null = null
 let initialRunning: DisplayConfig | null = VIRTIO_GPU
-/** The shared folder devices that QEMU launched with; undefined: whatever winvm launches for its display. */
 let initialDevices: share.DeviceSet | undefined
-/** When set, the running command line spells the home with this (a path with a space) instead. */
 let spacedHome: string | null = null
 let runningPid: number | null = FAKE_PID
 let commands: string[] = []
 let virtiofsd = 0
 let statusCalls = 0
 let answered = 0
+let settled = 0
 const realRunningCommand = display.runningCommand
 
 const qemuLog = (): string => resolve(state, "qemu.log")
-/** Each QEMU launch's command line, in order. */
-const launches = (): readonly string[] => (existsSync(qemuLog()) ? readFileSync(qemuLog(), "utf8").split("\n").filter((l) => l !== "") : [])
+const launches = (): readonly string[] =>
+  existsSync(qemuLog())
+    ? readFileSync(qemuLog(), "utf8")
+        .split("\n")
+        .filter((l) => l !== "")
+    : []
 const lastLaunch = (): string => launches().at(-1) ?? ""
 
-function script(name: string, body: string): void {
-  const path = resolve(state, "runtime", "bin", name)
-  writeFileSync(path, `#!/bin/sh\n${body}\n`)
-  chmodSync(path, 0o755)
+function fakeSpawner(
+  command: string,
+  args: readonly string[],
+  options: SpawnOptions,
+): ChildProcess {
+  const child = new ChildProcess()
+  const binary = basename(command)
+  if (binary === "swtpm") {
+    const sock = /path=([^,]+)/.exec(args.join(" "))?.[1]
+    if (sock === undefined)
+      throw new Error(`swtpm without a socket: ${args.join(" ")}`)
+    writeFileSync(sock, "")
+  } else if (binary === "qemu-system-aarch64") {
+    appendFileSync(qemuLog(), `${args.join(" ")}\n`)
+    const output = qemuOutput
+    if (output !== null) {
+      const fd = Array.isArray(options.stdio) ? options.stdio[1] : undefined
+      if (typeof fd === "number") writeSync(fd, output)
+      setImmediate(() => child.emit("exit", 1, null))
+    }
+  } else {
+    throw new Error(`unexpected spawn: ${command}`)
+  }
+  return child
 }
 
 function makeInstance(name: string): void {
@@ -94,9 +148,16 @@ function publish(m: Manifest): void {
   writeFileSync(resolve(dir, FILES.vars), "saved vars")
 }
 
-/** A save of "source" taken with `shown` running; legacy (no profile) when `profiled` is false, hashed under the preference then. */
-function fixture(shown: DisplayConfig, profiled = true, name = "saved", kind: Manifest["kind"] = "manual"): Manifest {
-  const compat = profiled ? currentCompat("source", meta, shown) : (writeDisplay(pathsFor("source"), shown), currentCompat("source", meta))
+function fixture(
+  shown: DisplayConfig,
+  profiled = true,
+  name = "saved",
+  kind: Manifest["kind"] = "manual",
+): Manifest {
+  if (!profiled) writeDisplay(pathsFor("source"), shown)
+  const compat = profiled
+    ? currentCompat("source", meta, shown)
+    : currentCompat("source", meta)
   const m: Manifest = {
     name,
     instance: "source",
@@ -115,16 +176,32 @@ function fixture(shown: DisplayConfig, profiled = true, name = "saved", kind: Ma
 }
 
 beforeEach(() => {
-  previous = { WINVM_HOME: process.env["WINVM_HOME"], WINVM_RUNTIME: process.env["WINVM_RUNTIME"], WINVM_TEST_QEMU_LOG: process.env["WINVM_TEST_QEMU_LOG"] }
+  previous = {
+    WINVM_HOME: process.env.WINVM_HOME,
+    WINVM_RUNTIME: process.env.WINVM_RUNTIME,
+  }
   state = mkdtempSync(resolve(tmpdir(), "winvm-saved-display-"))
-  process.env["WINVM_HOME"] = state
-  process.env["WINVM_RUNTIME"] = resolve(state, "runtime")
-  process.env["WINVM_TEST_QEMU_LOG"] = qemuLog()
+  process.env.WINVM_HOME = state
+  process.env.WINVM_RUNTIME = resolve(state, "runtime")
   mkdirSync(resolve(state, "runtime", "bin"), { recursive: true })
-  // `launch` runs for real against these: swtpm binds its socket, QEMU records its arguments and stays up.
-  script("swtpm", 'while [ $# -gt 0 ]; do case "$1" in --ctrl) s="${2#*path=}"; s="${s%%,*}"; shift;; esac; shift; done; : > "$s"')
-  script("qemu-system-aarch64", 'printf "%s\\n" "$*" >> "$WINVM_TEST_QEMU_LOG"; exec sleep 3')
+  qemuOutput = null
+  previousSpawner = qemu.setSpawner(fakeSpawner)
   previousProbe = share.setProbe(() => ({ ok: true, reason: null }))
+  settled = 0
+  previousSettle = qemu.setSettle((survived) => {
+    let cancelled = false
+    settled += 1
+    const target = settled
+    const poll = (): void => {
+      if (cancelled) return
+      if (launches().length >= target && runningPid !== null) survived()
+      else setTimeout(poll, 5)
+    }
+    poll()
+    return () => {
+      cancelled = true
+    }
+  })
   initialRunning = VIRTIO_GPU
   initialDevices = undefined
   spacedHome = null
@@ -143,55 +220,71 @@ beforeEach(() => {
   writeFileSync(vars, "variables")
   spyOn(host, "requireFirmware").mockReturnValue({ code, vars })
   spyOn(host, "tpmTisHasPpi").mockReturnValue(true)
-  spyOn(host, "run").mockImplementation((_cmd, args) => {
+  spyOn(shell, "run").mockImplementation((_cmd, args) => {
     writeFileSync(args.at(-1) ?? "", "created disk")
     return 0
   })
   spyOn(media, "makeResultVolume").mockImplementation((path) => {
     writeFileSync(path, "result")
   })
-  // The control service is what answers on p.qmp; a new instance has no socket until it starts.
-  spyOn(service, "ensureService").mockImplementation(async (_name, p) => {
+  spyOn(servicectl, "ensureService").mockImplementation((_name, p) => {
     writeFileSync(p.qmp, "")
-    return {} as never
+    return Promise.resolve({} as never)
   })
-  spyOn(vnc, "ensureFreeDisplay").mockImplementation(async (_name, _p, m) => m)
+  spyOn(vnc, "ensureFreeDisplay").mockImplementation((_name, _p, m) =>
+    Promise.resolve(m),
+  )
   spyOn(vnc, "applyPassword").mockResolvedValue(null)
-  spyOn(share, "startVirtiofsd").mockImplementation(async () => {
+  spyOn(share, "startVirtiofsd").mockImplementation(() => {
     virtiofsd += 1
-    return { dir: state, readonly: false, folder: null }
+    return Promise.resolve({ dir: state, readonly: false, folder: null })
   })
   spyOn(qemu, "pidOf").mockImplementation(() => runningPid)
   spyOn(qemu, "isRunning").mockImplementation(() => runningPid !== null)
-  spyOn(qmp, "status").mockImplementation(async () => {
+  spyOn(qmp, "status").mockImplementation(() => {
     statusCalls += 1
-    return "running"
+    return Promise.resolve("running")
   })
   spyOn(qmp, "execute").mockImplementation(async (_socket, cmd, args) => {
     commands.push(cmd)
     if (cmd === "quit") runningPid = null
-    // The new QEMU's monitor answering means it is up: wait for the fake to have recorded its command line.
     if (cmd === "query-status") {
       answered += 1
-      for (let i = 0; i < 300 && launches().length < answered; i += 1) await new Promise((r) => setTimeout(r, 10))
+      for (let i = 0; i < 300 && launches().length < answered; i += 1)
+        await new Promise((r) => setTimeout(r, 10))
       runningPid = FAKE_PID
     }
-    if (cmd === "query-migrate") return { status: "completed", ram: { transferred: 10 } }
+    if (cmd === "query-migrate")
+      return { status: "completed", ram: { transferred: 10 } }
     if (cmd === "migrate") {
       const uri = (args as { uri: string }).uri
-      const path = uri.startsWith("file:") ? uri.slice("file:".length) : / -o '([^']+)'$/.exec(uri)?.[1]
-      if (path === undefined) throw new Error(`unexpected migration URI: ${uri}`)
+      const path = uri.startsWith("file:")
+        ? uri.slice("file:".length)
+        : / -o '([^']+)'$/.exec(uri)?.[1]
+      if (path === undefined)
+        throw new Error(`unexpected migration URI: ${uri}`)
       writeFileSync(path, "captured RAM")
     }
     return {}
   })
-  // What the running QEMU was launched with: a real command line for the fixture's profile until something launches one.
   spyOn(display, "runningCommand").mockImplementation((pid) => {
     if (pid !== FAKE_PID) return realRunningCommand(pid)
     if (launches().length > 0) return lastLaunch()
     if (initialRunning === null) return "qemu-system-aarch64 -display none"
-    const options = { installMedia: false, ephemeral: false, virtioBoot: true, display: initialRunning } as const
-    const args = qemu.qemuArgs("source", pathsFor("source"), meta, initialDevices === undefined ? options : { ...options, shareDevices: initialDevices })
+    const options = {
+      installMedia: false,
+      ephemeral: false,
+      virtioBoot: true,
+      display: initialRunning,
+    } as const
+    const args = qemu.qemuArgs(
+      "source",
+      pathsFor("source"),
+      meta,
+      initialDevices === undefined
+        ? options
+        : { ...options, shareDevices: initialDevices },
+    )
     const command = ["qemu-system-aarch64", ...args].join(" ")
     return spacedHome === null ? command : command.replaceAll(state, spacedHome)
   })
@@ -202,6 +295,8 @@ beforeEach(() => {
 afterEach(() => {
   mock.restore()
   share.setProbe(previousProbe)
+  qemu.setSettle(previousSettle)
+  qemu.setSpawner(previousSpawner)
   for (const [k, v] of Object.entries(previous)) {
     if (v === undefined) delete process.env[k]
     else process.env[k] = v
@@ -213,10 +308,18 @@ describe("capturing the running display", () => {
   it("records the display actually running, and hashes that, not the pending preference", async () => {
     writeDisplay(pathsFor("source"), RAMFB)
     initialRunning = VIRTIO_GPU
-    const result = await createSave("source", { name: "now", kind: "manual", format: "raw" })
+    const result = await createSave("source", {
+      name: "now",
+      kind: "manual",
+      format: "raw",
+    })
     expect(result.manifest.display).toEqual(VIRTIO_GPU)
-    expect(result.manifest.compat).toBe(currentCompat("source", meta, VIRTIO_GPU).hash)
-    expect(result.manifest.compat).not.toBe(currentCompat("source", meta, RAMFB).hash)
+    expect(result.manifest.compat).toBe(
+      currentCompat("source", meta, VIRTIO_GPU).hash,
+    )
+    expect(result.manifest.compat).not.toBe(
+      currentCompat("source", meta, RAMFB).hash,
+    )
     expect(readSave("source", "now")?.display).toEqual(VIRTIO_GPU)
     expect(readDisplay(pathsFor("source"))).toEqual(RAMFB)
   })
@@ -224,21 +327,28 @@ describe("capturing the running display", () => {
   it("records an earlier winvm's sized virtio-gpu exactly", async () => {
     writeDisplay(pathsFor("source"), VIRTIO_GPU)
     initialRunning = SIZED
-    const result = await createSave("source", { name: "sized", kind: "manual", format: "raw" })
+    const result = await createSave("source", {
+      name: "sized",
+      kind: "manual",
+      format: "raw",
+    })
     expect(result.manifest.display).toEqual(SIZED)
-    expect(result.manifest.compat).toBe(currentCompat("source", meta, SIZED).hash)
+    expect(result.manifest.compat).toBe(
+      currentCompat("source", meta, SIZED).hash,
+    )
   })
 
   it("refuses an unidentified running display before any monitor command or save directory", async () => {
     initialRunning = null
-    await expect(createSave("source", { name: "unknown", kind: "manual", format: "raw" })).rejects.toThrow(/display/)
+    await expect(
+      createSave("source", { name: "unknown", kind: "manual", format: "raw" }),
+    ).rejects.toThrow(/display/)
     expect(commands).toEqual([])
     expect(statusCalls).toBe(0)
     expect(existsSync(savesDir("source"))).toBe(false)
   })
 
   it("refuses the temporary ramfb-plus-share-devices boot of `share install`, before anything is stopped or written", async () => {
-    // What installGuest launches: display.json is ramfb and the devices are forced on.
     writeDisplay(pathsFor("source"), RAMFB)
     initialRunning = RAMFB
     initialDevices = "all"
@@ -246,9 +356,14 @@ describe("capturing the running display", () => {
     expect(command).toContain("-device ramfb")
     expect(command).toContain("memory-backend-shm")
     expect(command).toContain("vhost-user-fs-pci")
-    // It parses as plain ramfb, which is why the display alone cannot be trusted.
     expect(displayFromCommandLine(command)).toEqual(RAMFB)
-    await expect(createSave("source", { name: "during-install", kind: "manual", format: "raw" })).rejects.toThrow(/share install.*Save after it finishes/)
+    await expect(
+      createSave("source", {
+        name: "during-install",
+        kind: "manual",
+        format: "raw",
+      }),
+    ).rejects.toThrow(/share install.*Save after it finishes/)
     expect(commands).toEqual([])
     expect(statusCalls).toBe(0)
     expect(existsSync(savesDir("source"))).toBe(false)
@@ -257,27 +372,44 @@ describe("capturing the running display", () => {
   it("refuses the opposite mismatch too: virtio-gpu running without the devices its restore would launch", async () => {
     initialRunning = VIRTIO_GPU
     initialDevices = "none"
-    await expect(createSave("source", { name: "bare", kind: "manual", format: "raw" })).rejects.toThrow(/temporary setup configuration/)
+    await expect(
+      createSave("source", { name: "bare", kind: "manual", format: "raw" }),
+    ).rejects.toThrow(/temporary setup configuration/)
     expect(commands).toEqual([])
     expect(statusCalls).toBe(0)
     expect(existsSync(savesDir("source"))).toBe(false)
   })
 
   it("is not fooled by a space in a path, and still saves each ordinary configuration", async () => {
-    // WINVM_HOME is in the arguments; a space there must not change what the devices say.
     spacedHome = resolve(state, "with space")
     for (const shown of [RAMFB, VIRTIO_GPU, SIZED]) {
       initialRunning = shown
-      const result = await createSave("source", { name: "ok", kind: "manual", format: "raw" })
+      const result = await createSave("source", {
+        name: "ok",
+        kind: "manual",
+        format: "raw",
+      })
       expect(result.manifest.display).toEqual(shown)
     }
   })
 
   it("names an out-of-range legacy size instead of claiming there is no display device", async () => {
-    spyOn(display, "runningCommand").mockReturnValue("qemu-system-aarch64 -device virtio-gpu-pci,xres=8000,yres=600 -display none")
-    const refusal = createSave("source", { name: "huge", kind: "manual", format: "raw" })
-    await expect(refusal).rejects.toThrow(/virtio-gpu profile \(xres=8000,yres=600\) that a save cannot record.*640x480 to 7680x4320.*winvm display/)
-    await refusal.catch((error: Error) => expect(error.message).not.toContain("no single"))
+    spyOn(display, "runningCommand").mockReturnValue(
+      "qemu-system-aarch64 -device virtio-gpu-pci,xres=8000,yres=600 -display none",
+    )
+    const refusal = createSave("source", {
+      name: "huge",
+      kind: "manual",
+      format: "raw",
+    })
+    await expect(refusal).rejects.toThrow(
+      /virtio-gpu profile \(xres=8000,yres=600\) that a save cannot record.*640x480 to 7680x4320.*winvm display/,
+    )
+    await refusal.catch((error: unknown) => {
+      expect(error instanceof Error ? error.message : "").not.toContain(
+        "no single",
+      )
+    })
     expect(commands).toEqual([])
     expect(statusCalls).toBe(0)
     expect(existsSync(savesDir("source"))).toBe(false)
@@ -320,14 +452,21 @@ describe("loading a profiled save", () => {
     fixture(SIZED)
     writeDisplay(pathsFor("source"), VIRTIO_GPU)
     await loadSave("source", "saved")
-    expect(lastLaunch()).toContain("-device virtio-gpu-pci,xres=1920,yres=1080 ")
+    expect(lastLaunch()).toContain(
+      "-device virtio-gpu-pci,xres=1920,yres=1080 ",
+    )
     expect(virtiofsd).toBe(1)
   })
 
   it("replays the saved processors and memory together with the display", async () => {
     const hardware = { cpus: 6, memoryMiB: 8192 }
     const compat = currentCompat("source", meta, RAMFB, hardware)
-    publish({ ...fixture(RAMFB), compat: compat.hash, compatParts: compat.parts, hardware })
+    publish({
+      ...fixture(RAMFB),
+      compat: compat.hash,
+      compatParts: compat.parts,
+      hardware,
+    })
     writeDisplay(pathsFor("source"), VIRTIO_GPU)
     await loadSave("source", "saved")
     expect(lastLaunch()).toContain("-smp 6 -m 8192")
@@ -338,7 +477,11 @@ describe("loading a profiled save", () => {
     const saved = fixture(RAMFB)
     writeDisplay(pathsFor("source"), VIRTIO_GPU)
     await loadSave("source", "saved")
-    const again = await createSave("source", { name: "again", kind: "manual", format: "raw" })
+    const again = await createSave("source", {
+      name: "again",
+      kind: "manual",
+      format: "raw",
+    })
     expect(again.manifest.display).toEqual(RAMFB)
     expect(again.manifest.compat).toBe(saved.compat)
     expect(readSave("source", "again")?.display).toEqual(RAMFB)
@@ -352,14 +495,15 @@ describe("loading a profiled save", () => {
     await loadSave("source", "saved")
     expect(lastLaunch()).toContain("-device ramfb")
     expect(virtiofsd).toBe(0)
-    // The new instance keeps the cold-boot preference a new instance gets, not the save's display.
     expect(readDisplay(pathsFor("source"))).toEqual(VIRTIO_GPU)
   })
 
   it("keeps legacy saves strict: the preference decides, and a mismatch says how to restore it", async () => {
     fixture(VIRTIO_GPU, false)
     writeDisplay(pathsFor("source"), RAMFB)
-    await expect(loadSave("source", "saved")).rejects.toThrow(/no recorded display[^]*winvm display/)
+    await expect(loadSave("source", "saved")).rejects.toThrow(
+      /no recorded display[\s\S]*winvm display/,
+    )
     expect(commands).toEqual([])
     expect(launches()).toEqual([])
     expect(readFileSync(pathsFor("source").overlay, "utf8")).toBe("live disk")
@@ -370,11 +514,16 @@ describe("loading a profiled save", () => {
 
   it("rejects every unrelated mismatch before stopping the guest or replacing a disk", async () => {
     const saved = fixture(RAMFB)
+    const { compatParts } = saved
+    if (compatParts === undefined)
+      throw new Error("the fixture save records no compatParts")
     writeDisplay(pathsFor("source"), VIRTIO_GPU)
     for (const part of ["base", "hardware", "firmware", "qemu"] as const) {
-      const parts = { ...saved.compatParts!, [part]: "different" }
+      const parts = { ...compatParts, [part]: "different" }
       publish({ ...saved, compat: compatHash(parts), compatParts: parts })
-      await expect(loadSave("source", "saved")).rejects.toThrow(/cannot be loaded/)
+      await expect(loadSave("source", "saved")).rejects.toThrow(
+        /cannot be loaded/,
+      )
       expect(readFileSync(pathsFor("source").overlay, "utf8")).toBe("live disk")
     }
     expect(commands).toEqual([])
@@ -386,8 +535,15 @@ describe("loading a profiled save", () => {
     const saved = fixture(RAMFB)
     rmSync(resolve(saveDir("source", "saved"), FILES.vars))
     await expect(loadSave("source", "saved")).rejects.toThrow(/incomplete/)
-    for (const bad of [null, { device: "other" }, { device: "virtio-gpu", legacySize: { width: 1920 } }]) {
-      writeFileSync(resolve(saveDir("source", "saved"), FILES.manifest), JSON.stringify({ ...saved, display: bad }))
+    for (const bad of [
+      null,
+      { device: "other" },
+      { device: "virtio-gpu", legacySize: { width: 1920 } },
+    ]) {
+      writeFileSync(
+        resolve(saveDir("source", "saved"), FILES.manifest),
+        JSON.stringify({ ...saved, display: bad }),
+      )
       await expect(loadSave("source", "saved")).rejects.toThrow(/no save/)
     }
     expect(commands).toEqual([])
@@ -404,7 +560,6 @@ describe("cloning", () => {
     expect(clone.display).toEqual(RAMFB)
     expect(clone.clonedFrom?.instance).toBe("source")
     expect(readSave("target", "saved")?.display).toEqual(RAMFB)
-    // A new instance is seeded with the source's preference, as before: the save's display is not written to it.
     expect(readDisplay(pathsFor("target"))).toEqual(VIRTIO_GPU)
     await loadSave("target", "saved")
     expect(lastLaunch()).toContain("-device ramfb")
@@ -422,13 +577,17 @@ describe("cloning", () => {
 })
 
 describe("recalling and reusing", () => {
-  const recall = (): Promise<number | null> => savecmds.recallStow("source", parseArgs([]))
+  const recall = (): Promise<number | null> =>
+    savecmds.recallStow("source", parseArgs([]))
 
   it("recalls a stow with its saved display instead of cold booting", async () => {
     fixture(RAMFB, true, "stow", "stow")
     writeDisplay(pathsFor("source"), VIRTIO_GPU)
     spyOn(qga, "waitResponsive").mockResolvedValue(true)
-    spyOn(clock, "syncGuestClock").mockResolvedValue({ beforeOffsetMs: 0, afterOffsetMs: 0 } as never)
+    spyOn(clock, "syncGuestClock").mockResolvedValue({
+      beforeOffsetMs: 0,
+      afterOffsetMs: 0,
+    })
     expect(await recall()).toBe(0)
     expect(lastLaunch()).toContain("-device ramfb")
     expect(readSave("source", "stow")).toBeNull()
@@ -449,8 +608,15 @@ describe("recalling and reusing", () => {
     fixture(RAMFB, true, "baseline", "baseline")
     writeDisplay(pathsFor("source"), VIRTIO_GPU)
     markPristine("source")
-    spyOn(clock, "alignGuestTimeZone").mockResolvedValue({ from: "UTC", to: "UTC", changed: false } as never)
-    spyOn(clock, "syncGuestClock").mockResolvedValue({ beforeOffsetMs: 0, afterOffsetMs: 0 } as never)
+    spyOn(clock, "alignGuestTimeZone").mockResolvedValue({
+      from: "UTC",
+      to: "UTC",
+      changed: false,
+    })
+    spyOn(clock, "syncGuestClock").mockResolvedValue({
+      beforeOffsetMs: 0,
+      afterOffsetMs: 0,
+    })
     await savecmds.afterBoot("source", parseArgs([]))
     expect(isPristine("source")).toBe(false)
     expect(commands).toEqual([])
@@ -459,19 +625,36 @@ describe("recalling and reusing", () => {
 })
 
 describe("the display a launch resolves", () => {
-  const options = { installMedia: false, ephemeral: false, virtioBoot: true } as const
+  const options = {
+    installMedia: false,
+    ephemeral: false,
+    virtioBoot: true,
+  } as const
 
   it("is one value for the command line and the sidecars: an explicit display beats the preference, a build is always ramfb", () => {
     const p = pathsFor("source")
     writeDisplay(p, VIRTIO_GPU)
     const preference = readFileSync(displayPath(p), "utf8")
-    expect(qemu.launchDevices(p, { ...options, display: RAMFB })).toEqual({ display: RAMFB, devices: "none" })
-    expect(qemu.launchDevices(p, options)).toEqual({ display: VIRTIO_GPU, devices: "all" })
+    expect(qemu.launchDevices(p, { ...options, display: RAMFB })).toEqual({
+      display: RAMFB,
+      devices: "none",
+    })
+    expect(qemu.launchDevices(p, options)).toEqual({
+      display: VIRTIO_GPU,
+      devices: "all",
+    })
     writeDisplay(p, RAMFB)
-    expect(qemu.launchDevices(p, { ...options, display: SIZED })).toEqual({ display: SIZED, devices: "all" })
-    expect(qemu.launchDevices(p, { ...options, installMedia: true, display: SIZED })).toEqual({ display: RAMFB, devices: "fs" })
-    // `share install` boots ramfb WITH the devices: an explicit set still wins.
-    expect(qemu.launchDevices(p, { ...options, shareDevices: "fs" })).toEqual({ display: RAMFB, devices: "fs" })
+    expect(qemu.launchDevices(p, { ...options, display: SIZED })).toEqual({
+      display: SIZED,
+      devices: "all",
+    })
+    expect(
+      qemu.launchDevices(p, { ...options, installMedia: true, display: SIZED }),
+    ).toEqual({ display: RAMFB, devices: "fs" })
+    expect(qemu.launchDevices(p, { ...options, shareDevices: "fs" })).toEqual({
+      display: RAMFB,
+      devices: "fs",
+    })
     writeDisplay(p, VIRTIO_GPU)
     expect(readFileSync(displayPath(p), "utf8")).toBe(preference)
   })
@@ -480,11 +663,12 @@ describe("the display a launch resolves", () => {
     const p = pathsFor("source")
     writeDisplay(p, VIRTIO_GPU)
     for (const display of [RAMFB, VIRTIO_GPU, SIZED]) {
-      const args = qemu.qemuArgs("source", p, meta, { ...options, display }).join(" ")
+      const args = qemu
+        .qemuArgs("source", p, meta, { ...options, display })
+        .join(" ")
       const { devices } = qemu.launchDevices(p, { ...options, display })
       expect(args.includes("vhost-user-fs-pci")).toBe(devices !== "none")
       expect(args.includes("memory-backend-shm")).toBe(devices !== "none")
-      // And a save's capture reads the display straight back off a real command line, share devices and all.
       expect(displayFromCommandLine(args)).toEqual(display)
     }
   })
@@ -493,10 +677,15 @@ describe("the display a launch resolves", () => {
 describe("launch resolves the display once", () => {
   it("passes one resolution to the sidecar decision and the command line, even if the preference changes between", async () => {
     const p = pathsFor("source")
-    // display.json read twice would see virtio-gpu first, then (a concurrent `winvm display ramfb`) ramfb.
     const reads = [VIRTIO_GPU, RAMFB, RAMFB]
-    spyOn(display, "readDisplay").mockImplementation(() => reads.shift() ?? RAMFB)
-    await qemu.launch("source", p, meta, { installMedia: false, ephemeral: false, virtioBoot: true })
+    spyOn(display, "readDisplay").mockImplementation(
+      () => reads.shift() ?? RAMFB,
+    )
+    await qemu.launch("source", p, meta, {
+      installMedia: false,
+      ephemeral: false,
+      virtioBoot: true,
+    })
     expect(virtiofsd).toBe(1)
     expect(lastLaunch()).toContain("-device virtio-gpu-pci ")
     expect(lastLaunch()).not.toContain("-device ramfb")
@@ -506,11 +695,22 @@ describe("launch resolves the display once", () => {
   it("keeps a build on ramfb with the filesystem device, and an explicit share set as given", async () => {
     const p = pathsFor("source")
     writeDisplay(p, VIRTIO_GPU)
-    await qemu.launch("source", p, meta, { installMedia: true, ephemeral: false, virtioBoot: true, display: SIZED })
+    await qemu.launch("source", p, meta, {
+      installMedia: true,
+      ephemeral: false,
+      virtioBoot: true,
+      display: SIZED,
+    })
     expect(lastLaunch()).toContain("-device ramfb")
     expect(lastLaunch()).toContain("vhost-user-fs-pci")
     expect(lastLaunch()).not.toContain("qemu-vdagent")
-    await qemu.launch("source", p, meta, { installMedia: false, ephemeral: false, virtioBoot: true, display: RAMFB, shareDevices: "all" })
+    await qemu.launch("source", p, meta, {
+      installMedia: false,
+      ephemeral: false,
+      virtioBoot: true,
+      display: RAMFB,
+      shareDevices: "all",
+    })
     expect(lastLaunch()).toContain("-device ramfb")
     expect(lastLaunch()).toContain("vhost-user-fs-pci")
     expect(lastLaunch()).toContain("qemu-vdagent")
@@ -518,11 +718,28 @@ describe("launch resolves the display once", () => {
   })
 })
 
+describe("launch outcome", () => {
+  it("reports a qemu that exits at once, with its output, under the real settle window", async () => {
+    qemu.setSettle()
+    qemuOutput = "boom\n"
+    await expect(
+      qemu.launch("source", pathsFor("source"), meta, {
+        installMedia: false,
+        ephemeral: false,
+        virtioBoot: true,
+      }),
+    ).rejects.toThrow(/qemu exited immediately:\n {2}boom/)
+  })
+})
+
 describe("listing and switching", () => {
   const listed = (): { name: string; compatible: boolean | null }[] => {
     const log = spyOn(console, "log")
     expect(savecmds.list(parseArgs(["-i", "source", "--json"]))).toBe(0)
-    return JSON.parse(String(log.mock.calls.at(-1)?.[0])) as { name: string; compatible: boolean | null }[]
+    return JSON.parse(String(log.mock.calls.at(-1)?.[0])) as {
+      name: string
+      compatible: boolean | null
+    }[]
   }
 
   it("lists profiled saves compatible under a different preference, and a legacy one by the preference", () => {
@@ -560,7 +777,9 @@ describe("listing and switching", () => {
     writeDisplay(pathsFor("source"), VIRTIO_GPU)
     const log = spyOn(console, "log")
     expect(savecmds.list(parseArgs(["-i", "source"]))).toBe(0)
-    const row = log.mock.calls.map((c) => String(c[0])).find((l) => l.includes("ramfb"))
+    const row = log.mock.calls
+      .map((c) => String(c[0]))
+      .find((l) => l.includes("ramfb"))
     expect(row).toMatch(/\byes\b/)
   })
 
@@ -590,7 +809,21 @@ describe("status", () => {
       ["ramfb", display.describeDisplay(RAMFB)],
       ["virtio-gpu-pci", display.describeDisplay(VIRTIO_GPU)],
     ] as const) {
-      const child = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)", "--", "-smp", "4", "-m", "4096", "-device", device], { stdio: "ignore" })
+      const child = spawn(
+        process.execPath,
+        [
+          "-e",
+          "setInterval(() => {}, 1000)",
+          "--",
+          "-smp",
+          "4",
+          "-m",
+          "4096",
+          "-device",
+          device,
+        ],
+        { stdio: "ignore" },
+      )
       try {
         expect(child.pid).toBeDefined()
         runningPid = child.pid ?? null
@@ -605,12 +838,30 @@ describe("status", () => {
       }
     }
     runningPid = null
-    expect((await gather("source", false)).screen).toBe(display.describeDisplay(SIZED))
+    expect((await gather("source", false)).screen).toBe(
+      display.describeDisplay(SIZED),
+    )
   })
 
   it("does not pass off the preference as the display of a process it cannot read", async () => {
     writeDisplay(pathsFor("source"), SIZED)
-    const child = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)", "--", "-smp", "4", "-m", "4096", "-device", "ramfb", "-device", "virtio-gpu-pci"], { stdio: "ignore" })
+    const child = spawn(
+      process.execPath,
+      [
+        "-e",
+        "setInterval(() => {}, 1000)",
+        "--",
+        "-smp",
+        "4",
+        "-m",
+        "4096",
+        "-device",
+        "ramfb",
+        "-device",
+        "virtio-gpu-pci",
+      ],
+      { stdio: "ignore" },
+    )
     try {
       runningPid = child.pid ?? null
       expect((await gather("source", false)).screen).toBeNull()

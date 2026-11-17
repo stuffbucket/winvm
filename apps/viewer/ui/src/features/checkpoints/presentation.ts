@@ -3,7 +3,11 @@ import { setCheckpointPresentation } from "../../backend"
 /** Keep enter/leave in order, including effect cleanup/replay and a fast dismissal. */
 export class PresentationQueue {
   private tail: Promise<void> = Promise.resolve()
-  constructor(private readonly change: (enabled: boolean) => Promise<void>) {}
+  private readonly change: (enabled: boolean) => Promise<void>
+
+  constructor(change: (enabled: boolean) => Promise<void>) {
+    this.change = change
+  }
 
   set(enabled: boolean): Promise<void> {
     const next = this.tail.catch(() => undefined).then(() => this.change(enabled))

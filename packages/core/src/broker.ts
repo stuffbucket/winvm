@@ -1,6 +1,8 @@
 import { readlinkSync, renameSync, rmSync, symlinkSync } from "node:fs"
-import { basename } from "node:path"
 import { connect, createServer, type Server, type Socket } from "node:net"
+import { basename } from "node:path"
+
+import type { DisconnectReason } from "./eventlog"
 
 type Json = Record<string, unknown>
 
@@ -59,7 +61,12 @@ class Listener {
     }
     if (ours) rmSync(this.path, { force: true })
     const server = this.server
-    if (server !== null) await new Promise<void>((r) => server.close(() => r()))
+    if (server !== null)
+      await new Promise<void>((r) =>
+        server.close(() => {
+          r()
+        }),
+      )
     rmSync(this.own, { force: true })
   }
 }
@@ -70,6 +77,8 @@ export interface QmpChannelOptions {
   readonly listen: string
   readonly upstream: string
   readonly onEvent?: (event: Json) => void
+  readonly onSync?: (reply: Json) => void
+  readonly onLost?: (reason: DisconnectReason) => void
   readonly drainTimeoutMs?: number
   readonly negotiateTimeoutMs?: number
 }
@@ -91,6 +100,8 @@ export class QmpChannel {
   private stopped = false
   private nextId = 0
   private readonly requests = new Map<string, (reply: Json) => void>()
+  private syncId: string | null = null
+  private dropped: DisconnectReason | null = null
 
   constructor(o: QmpChannelOptions) {
     this.o = o
@@ -102,7 +113,9 @@ export class QmpChannel {
   }
 
   async start(): Promise<void> {
-    await this.listener.start((c) => this.accept(c))
+    await this.listener.start((c) => {
+      this.accept(c)
+    })
     this.connectUpstream()
   }
 
@@ -117,11 +130,15 @@ export class QmpChannel {
     await this.listener.stop()
   }
 
+  private newId(): string {
+    this.nextId += 1
+    return `${REQUEST_ID}${String(this.nextId)}`
+  }
+
   async request(execute: string, args?: Json, timeoutMs = 5000): Promise<Json> {
     const up = this.upstream
     if (up === null || !this.ready) throw new Error("not connected to QEMU")
-    this.nextId += 1
-    const id = `${REQUEST_ID}${String(this.nextId)}`
+    const id = this.newId()
     let timer: ReturnType<typeof setTimeout> | undefined
     try {
       return await new Promise<Json>((res, rej) => {
@@ -129,8 +146,12 @@ export class QmpChannel {
           const { id: _id, ...rest } = reply
           res(rest)
         })
-        timer = setTimeout(() => rej(new Error(`${execute}: no answer in ${String(timeoutMs)} ms`)), timeoutMs)
-        up.write(`${JSON.stringify(args === undefined ? { execute, id } : { execute, arguments: args, id })}\n`)
+        timer = setTimeout(() => {
+          rej(new Error(`${execute}: no answer in ${String(timeoutMs)} ms`))
+        }, timeoutMs)
+        up.write(
+          `${JSON.stringify(args === undefined ? { execute, id } : { execute, arguments: args, id })}\n`,
+        )
       })
     } finally {
       clearTimeout(timer)
@@ -143,13 +164,19 @@ export class QmpChannel {
     const s = connect(this.o.upstream)
     this.connecting = s
     let negotiating = false
-    const negotiation = setTimeout(() => s.destroy(), this.o.negotiateTimeoutMs ?? 10_000)
+    const negotiation = setTimeout(
+      () => s.destroy(),
+      this.o.negotiateTimeoutMs ?? 10_000,
+    )
     s.on("error", () => undefined)
     s.on("close", () => {
       clearTimeout(negotiation)
       if (this.connecting === s) this.connecting = null
       if (this.upstream === s) this.upstreamLost()
-      if (!this.stopped) setTimeout(() => this.connectUpstream(), 200)
+      if (!this.stopped)
+        setTimeout(() => {
+          this.connectUpstream()
+        }, 200)
     })
     s.on(
       "data",
@@ -168,6 +195,7 @@ export class QmpChannel {
           this.connecting = null
           this.upstream = s
           this.ready = true
+          this.sync(s)
           this.pump()
           return
         }
@@ -176,7 +204,23 @@ export class QmpChannel {
     )
   }
 
+  private sync(up: Socket): void {
+    const onSync = this.o.onSync
+    if (onSync === undefined) return
+    const id = this.newId()
+    this.syncId = id
+    this.requests.set(id, (reply) => {
+      this.requests.delete(id)
+      if (this.syncId === id) this.syncId = null
+      const { id: _id, ...rest } = reply
+      onSync(rest)
+    })
+    up.write(`${JSON.stringify({ execute: "query-status", id })}\n`)
+  }
+
   private upstreamLost(): void {
+    if (this.syncId !== null) this.requests.delete(this.syncId)
+    this.syncId = null
     this.upstream = null
     this.ready = false
     this.active?.destroy()
@@ -184,6 +228,9 @@ export class QmpChannel {
     this.owed = 0
     this.draining = false
     clearTimeout(this.drainTimer)
+    const reason = this.dropped ?? "qemu-closed"
+    this.dropped = null
+    if (!this.stopped) this.o.onLost?.(reason)
   }
 
   private fromUpstream(line: string, msg: Json): void {
@@ -192,7 +239,7 @@ export class QmpChannel {
       if (this.active !== null && !this.draining) this.active.write(`${line}\n`)
       return
     }
-    const id = msg["id"]
+    const id = msg.id
     if (typeof id === "string" && id.startsWith(REQUEST_ID)) {
       this.requests.get(id)?.(msg)
       return
@@ -229,14 +276,21 @@ export class QmpChannel {
   }
 
   private pump(): void {
-    if (this.active !== null || this.draining || !this.ready || this.greeting === null) return
+    if (
+      this.active !== null ||
+      this.draining ||
+      !this.ready ||
+      this.greeting === null
+    )
+      return
     for (;;) {
       const next = this.queue.shift()
       if (next === undefined) return
       if (next.destroyed) continue
       this.active = next
       next.write(`${this.greeting}\n`)
-      for (const line of this.pending.get(next)?.splice(0) ?? []) this.fromCaller(next, line)
+      for (const line of this.pending.get(next)?.splice(0) ?? [])
+        this.fromCaller(next, line)
       return
     }
   }
@@ -244,7 +298,7 @@ export class QmpChannel {
   private fromCaller(c: Socket, line: string): void {
     const msg = parse(line)
     if (msg === null) return
-    if (msg["execute"] === "qmp_capabilities") {
+    if (msg.execute === "qmp_capabilities") {
       c.write(`${JSON.stringify({ return: {} })}\n`)
       return
     }
@@ -257,7 +311,10 @@ export class QmpChannel {
     this.active = null
     if (this.owed > 0 && this.upstream !== null) {
       this.draining = true
-      this.drainTimer = setTimeout(() => this.upstream?.destroy(), this.o.drainTimeoutMs ?? 200_000)
+      this.drainTimer = setTimeout(() => {
+        this.dropped = "drain-timeout"
+        this.upstream?.destroy()
+      }, this.o.drainTimeoutMs ?? 200_000)
       return
     }
     this.owed = 0
@@ -295,7 +352,9 @@ export class QgaChannel {
   }
 
   async start(): Promise<void> {
-    await this.listener.start((c) => this.accept(c))
+    await this.listener.start((c) => {
+      this.accept(c)
+    })
   }
 
   async stop(): Promise<void> {
@@ -312,7 +371,8 @@ export class QgaChannel {
     this.pending.set(c, [])
     c.on("error", () => undefined)
     c.on("data", (chunk: Buffer) => {
-      if (this.active === c && this.upstream !== null) this.upstream.write(chunk)
+      if (this.active === c && this.upstream !== null)
+        this.upstream.write(chunk)
       else this.pending.get(c)?.push(chunk)
     })
     c.on("close", () => {
@@ -331,6 +391,14 @@ export class QgaChannel {
     void this.pump()
   }
 
+  private ended(next: Socket): boolean {
+    return next.destroyed || this.stopped
+  }
+
+  private superseded(next: Socket): boolean {
+    return this.active !== next
+  }
+
   private async pump(): Promise<void> {
     if (this.active !== null || this.stopped) return
     const next = this.queue.shift()
@@ -340,10 +408,13 @@ export class QgaChannel {
       return
     }
     this.active = next
-    while (!next.destroyed && !this.stopped && (await this.o.portOpen().catch(() => null)) !== true) {
+    while (
+      !this.ended(next) &&
+      (await this.o.portOpen().catch(() => null)) !== true
+    ) {
       await new Promise((r) => setTimeout(r, this.o.pollMs ?? 250))
     }
-    if (next.destroyed || this.stopped || this.active !== next) return
+    if (this.ended(next) || this.superseded(next)) return
     const up = connect(this.o.upstream)
     this.upstream = up
     up.on("error", () => undefined)
@@ -359,7 +430,8 @@ export class QgaChannel {
         up.destroy()
         return
       }
-      for (const chunk of this.pending.get(next)?.splice(0) ?? []) up.write(chunk)
+      for (const chunk of this.pending.get(next)?.splice(0) ?? [])
+        up.write(chunk)
     })
   }
 }

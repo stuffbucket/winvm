@@ -246,7 +246,7 @@ line), before it replaces the files, and again just before it starts the new
 tree.
 
 An existing guest that already has a duplicate supervisor (agent version 11 or
-older) is cleaned by `winvm agent connect`: the version differs from 12, so it
+older) is cleaned by `winvm agent connect`: the version differs from 13, so it
 reinstalls, and step 1 ends both supervisors. Without reinstalling, end the
 supervisors that are not the parent of the agent holding the port, in the
 guest (`winvm exec -i NAME -- powershell -NoProfile -Command "..."`):

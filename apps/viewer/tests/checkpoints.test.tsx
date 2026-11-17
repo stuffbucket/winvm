@@ -1,10 +1,15 @@
-/**
- * The Checkpoints view's rules: where cards sit, the timeline, search, names,
- * settings, and what Restore and Delete ask and do. And the confirmation
- * dialog's third button, rendered in happy-dom.
- */
+import {
+  afterAll,
+  afterEach,
+  describe,
+  expect,
+  it,
+  type Mock,
+  mock,
+  setSystemTime,
+} from "bun:test"
 import { GlobalRegistrator } from "@happy-dom/global-registrator"
-import { afterAll, afterEach, describe, expect, it, mock, setSystemTime } from "bun:test"
+import type { JSX } from "react"
 
 GlobalRegistrator.register()
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true })
@@ -12,26 +17,62 @@ Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true })
 const { act } = await import("react")
 const { createRoot } = await import("react-dom/client")
 const cp = await import("../ui/src/features/checkpoints/checkpoints")
-const { loadSettings, parseSettings, saveSettings } = await import("../ui/src/features/checkpoints/settings")
-const { CHECKPOINT_TITLE_MAX, CheckpointDetails, CheckpointDetailsLayer, PANEL_EXIT_MS, draftOf, shortReason, tagsOf } = await import("../ui/src/features/checkpoints/CheckpointDetails")
+const { loadSettings, parseSettings, saveSettings } = await import(
+  "../ui/src/features/checkpoints/settings"
+)
+const {
+  CHECKPOINT_TITLE_MAX,
+  CheckpointDetails,
+  CheckpointDetailsLayer,
+  PANEL_EXIT_MS,
+  draftOf,
+  shortReason,
+  tagsOf,
+} = await import("../ui/src/features/checkpoints/CheckpointDetails")
 const { t } = await import("../ui/src/i18n")
 const { ConfirmDialog } = await import("../ui/src/components/ConfirmDialog")
 const { ControlBar } = await import("../ui/src/features/checkpoints/ControlBar")
-const { ZoomControl, ZOOM_SHOWN_MS, pointerNear } = await import("../ui/src/features/checkpoints/ZoomControl")
-const { levelFor, textScale, FULL_WIDTH, NAME_WIDTH, MIN_TEXT, CheckpointCard, cardLabel, absoluteTime, kindIcon, kindLabel, kindTip } = await import("../ui/src/features/checkpoints/CheckpointCard")
-const { NewCheckpointForm } = await import("../ui/src/features/checkpoints/NewCheckpoint")
+const { ZoomControl, ZOOM_SHOWN_MS, pointerNear } = await import(
+  "../ui/src/features/checkpoints/ZoomControl"
+)
+const {
+  levelFor,
+  textScale,
+  FULL_WIDTH,
+  NAME_WIDTH,
+  MIN_TEXT,
+  CheckpointCard,
+  cardLabel,
+  absoluteTime,
+  kindIcon,
+  kindLabel,
+  kindTip,
+} = await import("../ui/src/features/checkpoints/CheckpointCard")
+const { NewCheckpointForm } = await import(
+  "../ui/src/features/checkpoints/NewCheckpoint"
+)
+const { CheckpointLook } = await import(
+  "../ui/src/features/checkpoints/CheckpointLook"
+)
+const { usePicture } = await import("../ui/src/features/checkpoints/pictures")
 const { parseNote, parseSaves } = await import("../ui/src/model")
 const { centreOf, clampCamera, fitRect } = await import("@winvm/canvas")
 
-type Checkpoint = import("../ui/src/features/checkpoints/checkpoints").Checkpoint
+type Checkpoint =
+  import("../ui/src/features/checkpoints/checkpoints").Checkpoint
 type CardBox = import("../ui/src/features/checkpoints/checkpoints").CardBox
 type Moves = import("../ui/src/features/checkpoints/checkpoints").Moves
 
 afterAll(() => GlobalRegistrator.unregister())
 
-const at = (y: number, m: number, d: number, h = 12, min = 0): string => new Date(y, m - 1, d, h, min).toISOString()
+const at = (y: number, m: number, d: number, h = 12, min = 0): string =>
+  new Date(y, m - 1, d, h, min).toISOString()
 
-function checkpoint(name: string, createdAt: string, extra: Partial<Checkpoint> = {}): Checkpoint {
+function checkpoint(
+  name: string,
+  createdAt: string,
+  extra: Partial<Checkpoint> = {},
+): Checkpoint {
   return {
     name,
     kind: "manual",
@@ -63,7 +104,11 @@ describe("the timeline layout", () => {
   })
 
   it("makes one block per day, oldest at the top, Now at the bottom", () => {
-    expect(layout.days.map((d) => d.key)).toEqual(["2026-08-09", "2026-10-20", "2026-10-21"])
+    expect(layout.days.map((d) => d.key)).toEqual([
+      "2026-08-09",
+      "2026-10-20",
+      "2026-10-21",
+    ])
     const tops = layout.days.map((d) => d.y)
     expect(tops[0]).toBeLessThan(tops[1] ?? 0)
     expect(tops[1]).toBeLessThan(tops[2] ?? 0)
@@ -87,16 +132,18 @@ describe("the timeline layout", () => {
   })
 
   it("centres each day over Now, and wraps a busy day after `columns`", () => {
-    const busy = Array.from({ length: 8 }, (_, i) => checkpoint(`x${String(i)}`, at(2026, 10, 21, 8, i)))
+    const busy = Array.from({ length: 8 }, (_, i) =>
+      checkpoint(`x${String(i)}`, at(2026, 10, 21, 8, i)),
+    )
     const l = cp.layoutTimeline(busy, 16 / 10, 3)
     const day = l.days[0]
     expect(day).toBeDefined()
     expect((day?.x ?? 0) + (day?.width ?? 0) / 2).toBeCloseTo(0, 6)
     const lines = new Set(busy.map((c) => l.cards.get(c.name)?.y))
     expect(lines.size).toBe(3)
-    // The last, short line is centred under the full ones.
     const last = ["x6", "x7"].map((n) => l.cards.get(n))
-    const mid = ((last[0]?.x ?? 0) + (last[1]?.x ?? 0) + (last[1]?.width ?? 0)) / 2
+    const mid =
+      ((last[0]?.x ?? 0) + (last[1]?.x ?? 0) + (last[1]?.width ?? 0)) / 2
     expect(mid).toBeCloseTo(0, 6)
   })
 
@@ -105,12 +152,21 @@ describe("the timeline layout", () => {
     expect(wide.now.width / wide.now.frame).toBeCloseTo(2, 2)
     const fallback = cp.layoutTimeline([], Number.NaN)
     expect(fallback.now.width / fallback.now.frame).toBeCloseTo(1.6, 2)
-    expect(cp.frameOf(wide.now)).toEqual({ x: wide.now.x, y: wide.now.y, width: wide.now.width, height: wide.now.frame })
+    expect(cp.frameOf(wide.now)).toEqual({
+      x: wide.now.x,
+      y: wide.now.y,
+      width: wide.now.width,
+      height: wide.now.frame,
+    })
   })
 
   it("bounds everything, dates included", () => {
     const b = layout.bounds
-    for (const r of [layout.now, ...layout.cards.values(), ...layout.days.map(cp.withLabel)]) {
+    for (const r of [
+      layout.now,
+      ...layout.cards.values(),
+      ...layout.days.map(cp.withLabel),
+    ]) {
       expect(r.x).toBeGreaterThanOrEqual(b.x - 1e-6)
       expect(r.y).toBeGreaterThanOrEqual(b.y - 1e-6)
       expect(r.x + r.width).toBeLessThanOrEqual(b.x + b.width + 1e-6)
@@ -129,7 +185,13 @@ describe("the timeline layout", () => {
   it("keeps the camera in reach of the stack whatever the zoom", () => {
     const view = { width: 1280, height: 820 }
     const fit = fitRect(layout.bounds, view, 48)
-    const lost = clampCamera({ x: 99_999, y: -99_999, zoom: 50 }, layout.bounds, view, 96, { min: fit.zoom * 0.85, max: 3 })
+    const lost = clampCamera(
+      { x: 99_999, y: -99_999, zoom: 50 },
+      layout.bounds,
+      view,
+      96,
+      { min: fit.zoom * 0.85, max: 3 },
+    )
     expect(lost.zoom).toBe(3)
     const c = centreOf(lost, view)
     expect(c.x).toBeGreaterThanOrEqual(layout.bounds.x)
@@ -140,7 +202,12 @@ describe("the timeline layout", () => {
 })
 
 describe("the timeline's ticks", () => {
-  const words = { now: "Now", today: "Today", yesterday: "Yesterday", locale: "en-US" }
+  const words = {
+    now: "Now",
+    today: "Today",
+    yesterday: "Yesterday",
+    locale: "en-US",
+  }
   const now = new Date(2026, 9, 21, 16)
   const days = cp.layoutTimeline(list, 1.6).days
 
@@ -148,14 +215,23 @@ describe("the timeline's ticks", () => {
     const ticks = cp.timelineTicks(days, now, words)
     expect(ticks.map((t) => t.at)).toEqual([0, 1 / 3, 2 / 3, 1])
     expect(ticks.map((t) => t.month)).toEqual(["August", "October", null, null])
-    expect(ticks.map((t) => t.label)).toEqual(["August 9", "Yesterday", "Today", "Now"])
+    expect(ticks.map((t) => t.label)).toEqual([
+      "August 9",
+      "Yesterday",
+      "Today",
+      "Now",
+    ])
     expect(ticks.at(-1)?.kind).toBe("now")
   })
 
   it("says the weekday within the week, and the year when it isn't this one", () => {
     expect(cp.dayLabel(new Date(2026, 9, 17), now, words)).toBe("Saturday")
     expect(cp.dayLabel(new Date(2025, 11, 30), now, words)).toBe("Dec 30, 2025")
-    const ticks = cp.timelineTicks([{ key: "2025-12-30", date: new Date(2025, 11, 30) }], now, words)
+    const ticks = cp.timelineTicks(
+      [{ key: "2025-12-30", date: new Date(2025, 11, 30) }],
+      now,
+      words,
+    )
     expect(ticks[0]?.month).toBe("December 2025")
   })
 
@@ -181,51 +257,90 @@ describe("the timeline's ticks", () => {
 })
 
 describe("search", () => {
-  const notes = (title: string | null, text: string, tags: string[] = []) => ({ title, text, tags })
+  const notes = (title: string | null, text: string, tags: string[] = []) => ({
+    title,
+    text,
+    tags,
+  })
   const all = [
-    checkpoint("office-installed", at(2026, 10, 16), { title: "Office installed", notes: notes("Office installed", "Excel **activated**", ["office"]) }),
-    checkpoint("before-update", at(2026, 10, 18), { notes: notes(null, "KB5050094 pending", ["updates"]) }),
+    checkpoint("office-installed", at(2026, 10, 16), {
+      title: "Office installed",
+      notes: notes("Office installed", "Excel **activated**", ["office"]),
+    }),
+    checkpoint("before-update", at(2026, 10, 18), {
+      notes: notes(null, "KB5050094 pending", ["updates"]),
+    }),
     checkpoint("auto-1", at(2026, 10, 19), { kind: "auto" }),
   ]
   const when = (c: Checkpoint): string => c.createdAt
   it("matches names, titles, notes, tags and kinds, every word, newest first", () => {
-    expect(cp.searchCheckpoints(all, "office", when).map((c) => c.name)).toEqual(["office-installed"])
-    expect(cp.searchCheckpoints(all, "KB5050094", when).map((c) => c.name)).toEqual(["before-update"])
-    expect(cp.searchCheckpoints(all, "updates pending", when).map((c) => c.name)).toEqual(["before-update"])
+    expect(
+      cp.searchCheckpoints(all, "office", when).map((c) => c.name),
+    ).toEqual(["office-installed"])
+    expect(
+      cp.searchCheckpoints(all, "KB5050094", when).map((c) => c.name),
+    ).toEqual(["before-update"])
+    expect(
+      cp.searchCheckpoints(all, "updates pending", when).map((c) => c.name),
+    ).toEqual(["before-update"])
     expect(cp.searchCheckpoints(all, "updates office", when)).toEqual([])
-    expect(cp.searchCheckpoints(all, "AUTO", when).map((c) => c.name)).toEqual(["auto-1"])
+    expect(cp.searchCheckpoints(all, "AUTO", when).map((c) => c.name)).toEqual([
+      "auto-1",
+    ])
     expect(cp.searchCheckpoints(all, "   ", when)).toEqual([])
   })
   it("names a card by its title, and marks one with notes", () => {
     expect(cp.shownName(all[0] as Checkpoint)).toBe("Office installed")
     expect(cp.shownName(all[2] as Checkpoint)).toBe("auto-1")
     expect(cp.hasNotes(all[1] as Checkpoint)).toBe(true)
-    expect(cp.hasNotes(checkpoint("t", at(2026, 1, 1), { notes: notes("Only a title", "") }))).toBe(false)
-    expect(cp.hasNotes(checkpoint("m", at(2026, 1, 1), { note: "from --note" }))).toBe(true)
+    expect(
+      cp.hasNotes(
+        checkpoint("t", at(2026, 1, 1), { notes: notes("Only a title", "") }),
+      ),
+    ).toBe(false)
+    expect(
+      cp.hasNotes(checkpoint("m", at(2026, 1, 1), { note: "from --note" })),
+    ).toBe(true)
   })
 })
 
 describe("names and rules", () => {
   const now = new Date(2026, 9, 21, 16, 43, 5)
   it("makes a save name from a title, or the time, never one taken", () => {
-    expect(cp.saveNameFor("Before Office 365!", new Set(), now)).toBe("Before-Office-365")
+    expect(cp.saveNameFor("Before Office 365!", new Set(), now)).toBe(
+      "Before-Office-365",
+    )
     expect(cp.saveNameFor("  Café crème ", new Set(), now)).toBe("Cafe-creme")
     expect(cp.saveNameFor("", new Set(), now)).toBe("2026-10-21_16-43-05")
     expect(cp.saveNameFor("!!!", new Set(), now)).toBe("2026-10-21_16-43-05")
     expect(cp.saveNameFor("stow", new Set(), now)).toBe("2026-10-21_16-43-05")
-    expect(cp.saveNameFor("Clean", new Set(["Clean", "Clean-2"]), now)).toBe("Clean-3")
-    for (const title of ["x".repeat(200), "-leading", ".dot", "a/b\\c", "naïve"]) {
+    expect(cp.saveNameFor("Clean", new Set(["Clean", "Clean-2"]), now)).toBe(
+      "Clean-3",
+    )
+    for (const title of [
+      "x".repeat(200),
+      "-leading",
+      ".dot",
+      "a/b\\c",
+      "naïve",
+    ]) {
       expect(cp.validSaveName(cp.saveNameFor(title, new Set(), now))).toBe(true)
     }
   })
   it("keeps baselines and goldens from being deleted here, and says why", () => {
-    expect(cp.deleteBlocked({ kind: "baseline" })).toBe("checkpoints.keep.baseline")
+    expect(cp.deleteBlocked({ kind: "baseline" })).toBe(
+      "checkpoints.keep.baseline",
+    )
     expect(cp.deleteBlocked({ kind: "golden" })).toBe("checkpoints.keep.golden")
     expect(cp.deleteBlocked({ kind: "manual" })).toBeNull()
     expect(cp.deleteBlocked({ kind: "auto" })).toBeNull()
     expect(cp.deleteBlocked({ kind: "stow" })).toBeNull()
-    expect(cp.deleteBlocked({ kind: "auto", protected: true })).toBe("checkpoints.keep.protected")
-    expect(cp.deleteBlocked({ kind: "manual", protected: true })).toBe("checkpoints.keep.protected")
+    expect(cp.deleteBlocked({ kind: "auto", protected: true })).toBe(
+      "checkpoints.keep.protected",
+    )
+    expect(cp.deleteBlocked({ kind: "manual", protected: true })).toBe(
+      "checkpoints.keep.protected",
+    )
   })
   it("protects only named checkpoints, and names the memory formats that exist without converting any", () => {
     expect(cp.canProtect({ kind: "stow", name: "stow" })).toBe(false)
@@ -237,35 +352,72 @@ describe("names and rules", () => {
     expect(cp.formatLabelKey(undefined)).toBe("checkpoints.format.unknown")
   })
   it("says the most specific reason a checkpoint can't load", () => {
-    expect(cp.incompatibleReason({ compatible: true, incompatible: [] })).toBeNull()
-    expect(cp.incompatibleReason({ compatible: null, incompatible: [] })).toBeNull()
-    expect(cp.incompatibleReason({ compatible: false, incompatible: ["display"] })).toBe("checkpoints.incompatible.display")
-    expect(cp.incompatibleReason({ compatible: false, incompatible: ["qemu", "base"] })).toBe("checkpoints.incompatible.base")
-    expect(cp.incompatibleReason({ compatible: false, incompatible: [] })).toBe("checkpoints.incompatible.other")
+    expect(
+      cp.incompatibleReason({ compatible: true, incompatible: [] }),
+    ).toBeNull()
+    expect(
+      cp.incompatibleReason({ compatible: null, incompatible: [] }),
+    ).toBeNull()
+    expect(
+      cp.incompatibleReason({ compatible: false, incompatible: ["display"] }),
+    ).toBe("checkpoints.incompatible.display")
+    expect(
+      cp.incompatibleReason({
+        compatible: false,
+        incompatible: ["qemu", "base"],
+      }),
+    ).toBe("checkpoints.incompatible.base")
+    expect(cp.incompatibleReason({ compatible: false, incompatible: [] })).toBe(
+      "checkpoints.incompatible.other",
+    )
   })
 })
 
 describe("going back", () => {
-  const ctx = { live: true, now: new Date(2026, 9, 21, 9), taken: new Set(["Before-going-back-to-Office"]), keepTitle: "Before going back to Office" }
+  const ctx = {
+    live: true,
+    now: new Date(2026, 9, 21, 9),
+    taken: new Set(["Before-going-back-to-Office"]),
+    keepTitle: "Before going back to Office",
+  }
   it("loads straight away when asked to", () => {
-    expect(cp.goBackSteps("office", false, ctx)).toEqual([{ verb: "load", name: "office" }])
+    expect(cp.goBackSteps("office", false, ctx)).toEqual([
+      { verb: "load", name: "office" },
+    ])
   })
   it("keeps the present first, under a name not taken, when asked to", () => {
     expect(cp.goBackSteps("office", true, ctx)).toEqual([
-      { verb: "save", name: "Before-going-back-to-Office-2", title: "Before going back to Office" },
+      {
+        verb: "save",
+        name: "Before-going-back-to-Office-2",
+        title: "Before going back to Office",
+      },
       { verb: "load", name: "office" },
     ])
   })
   it("has nothing to keep when Windows isn't running", () => {
-    expect(cp.goBackSteps("office", true, { ...ctx, live: false })).toEqual([{ verb: "load", name: "office" }])
-    expect(cp.goBackConfirm({ live: false })).toEqual({ body: "checkpoints.goBack.bodyStopped", offerSaveFirst: false })
-    expect(cp.goBackConfirm({ live: true })).toEqual({ body: "checkpoints.goBack.bodyLive", offerSaveFirst: true })
+    expect(cp.goBackSteps("office", true, { ...ctx, live: false })).toEqual([
+      { verb: "load", name: "office" },
+    ])
+    expect(cp.goBackConfirm({ live: false })).toEqual({
+      body: "checkpoints.goBack.bodyStopped",
+      offerSaveFirst: false,
+    })
+    expect(cp.goBackConfirm({ live: true })).toEqual({
+      body: "checkpoints.goBack.bodyLive",
+      offerSaveFirst: true,
+    })
   })
   it("says plainly, in one short sentence, what happens to this machine, and that no new machine is made", () => {
-    expect(t("checkpoints.goBack.title", { name: "Office" })).toBe("Restore “Office”?")
+    expect(t("checkpoints.goBack.title", { name: "Office" })).toBe(
+      "Restore “Office”?",
+    )
     expect(t("checkpoints.goBack.confirm")).toBe("Restore")
     expect(t("checkpoints.goBack.saveFirst")).toBe("Take Checkpoint First")
-    for (const key of ["checkpoints.goBack.bodyLive", "checkpoints.goBack.bodyStopped"]) {
+    for (const key of [
+      "checkpoints.goBack.bodyLive",
+      "checkpoints.goBack.bodyStopped",
+    ]) {
       const body = t(key)
       expect(body.split(/(?<=\.)\s+/).length).toBe(1)
       expect(body).toContain("This machine")
@@ -273,6 +425,262 @@ describe("going back", () => {
       expect(body).not.toContain("kept")
       expect(body).not.toMatch(/new machine|Go [Bb]ack|save/)
     }
+  })
+})
+
+type Draft =
+  import("../ui/src/features/checkpoints/CheckpointDetails").NoteDraft
+
+function Selected({
+  c,
+  writes,
+}: {
+  readonly c: Checkpoint
+  readonly writes: [string, Draft][]
+}): JSX.Element {
+  return (
+    <CheckpointDetails
+      c={c}
+      now={Date.now()}
+      busy={false}
+      saving="idle"
+      onClose={() => undefined}
+      onLook={() => undefined}
+      onNote={(name, d) => {
+        writes.push([name, d])
+      }}
+      onGoBack={() => undefined}
+      onReveal={() => undefined}
+      onDelete={() => undefined}
+      onProtect={() => undefined}
+    />
+  )
+}
+
+describe("a checkpoint's note", () => {
+  let root: ReturnType<typeof createRoot> | null = null
+  afterEach(() => {
+    act(() => root?.unmount())
+    root = null
+    document.body.replaceChildren()
+  })
+
+  it("saves an edit still waiting to be written to the checkpoint it was typed for, when another is selected", () => {
+    const writes: [string, Draft][] = []
+    const a = checkpoint("a", at(2026, 8, 9, 10))
+    const b = checkpoint("b", at(2026, 10, 20, 9))
+    const host = document.createElement("div")
+    document.body.append(host)
+    const r = createRoot(host)
+    root = r
+    act(() => {
+      r.render(<Selected c={a} writes={writes} />)
+    })
+    const text = host.querySelector<HTMLTextAreaElement>(
+      "textarea.checkpoint-details__text",
+    )
+    if (text === null) throw new Error("no notes field")
+    act(() => {
+      const descriptor = Object.getOwnPropertyDescriptor(
+        window.HTMLTextAreaElement.prototype,
+        "value",
+      )
+      descriptor?.set?.call(text, "Before the update")
+      text.dispatchEvent(new Event("input", { bubbles: true }))
+    })
+    expect(writes).toEqual([])
+    act(() => {
+      r.render(<Selected c={b} writes={writes} />)
+    })
+    expect(writes).toEqual([
+      ["a", { title: "", text: "Before the update", tags: "" }],
+    ])
+    expect(text.value).toBe("")
+  })
+
+  it("keeps what is being typed when the same checkpoint's notes are read again, and starts from a new checkpoint's notes", () => {
+    const writes: [string, Draft][] = []
+    const notes = (text: string) => ({ title: "", text, tags: [] })
+    const a = checkpoint("a", at(2026, 8, 9, 10), { notes: notes("Saved") })
+    const host = document.createElement("div")
+    document.body.append(host)
+    const r = createRoot(host)
+    root = r
+    act(() => {
+      r.render(<Selected c={a} writes={writes} />)
+    })
+    const text = host.querySelector<HTMLTextAreaElement>(
+      "textarea.checkpoint-details__text",
+    )
+    if (text === null) throw new Error("no notes field")
+    expect(text.value).toBe("Saved")
+    act(() => {
+      const descriptor = Object.getOwnPropertyDescriptor(
+        window.HTMLTextAreaElement.prototype,
+        "value",
+      )
+      descriptor?.set?.call(text, "Typing")
+      text.dispatchEvent(new Event("input", { bubbles: true }))
+    })
+    act(() => {
+      r.render(
+        <Selected c={{ ...a, notes: notes("Read again") }} writes={writes} />,
+      )
+    })
+    expect(text.value).toBe("Typing")
+    act(() => {
+      r.render(
+        <Selected
+          c={{ ...a, createdAt: at(2026, 8, 10, 10), notes: notes("Newer") }}
+          writes={writes}
+        />,
+      )
+    })
+    expect(text.value).toBe("Newer")
+  })
+})
+
+interface PictureProps {
+  readonly path: string | null
+  readonly version: string
+  readonly wanted: boolean
+  readonly seen: (string | null)[]
+}
+
+function PictureProbe({ path, version, wanted, seen }: PictureProps): null {
+  seen.push(usePicture(path, version, wanted))
+  return null
+}
+
+describe("a checkpoint's picture", () => {
+  let root: ReturnType<typeof createRoot> | null = null
+  afterEach(() => {
+    act(() => root?.unmount())
+    root = null
+    document.body.replaceChildren()
+    delete (window as { __TAURI__?: unknown }).__TAURI__
+  })
+  const settle = async (): Promise<void> => {
+    await act(async () => {
+      for (let i = 0; i < 10; i++) await Promise.resolve()
+    })
+  }
+
+  it("keeps its picture while it is not wanted, and drops it for another path or version", async () => {
+    const asked: string[] = []
+    const invoke = (cmd: string, a?: { path?: string }): Promise<unknown> => {
+      if (cmd !== "checkpoint_image") return Promise.resolve(null)
+      asked.push(a?.path ?? "")
+      if (a?.path === "/held.png") return new Promise(() => undefined)
+      return Promise.resolve(new ArrayBuffer(4))
+    }
+    Object.assign(window, { __TAURI__: { core: { invoke } } })
+    const seen: (string | null)[] = []
+    const host = document.createElement("div")
+    document.body.append(host)
+    const r = createRoot(host)
+    root = r
+    const show = (over: Partial<PictureProps> = {}): void => {
+      act(() => {
+        r.render(
+          <PictureProbe
+            path="/shown.png"
+            version="1"
+            wanted
+            seen={seen}
+            {...over}
+          />,
+        )
+      })
+    }
+    show()
+    await settle()
+    const first = seen.at(-1)
+    expect(typeof first).toBe("string")
+    show({ wanted: false })
+    await settle()
+    expect(seen.at(-1)).toBe(first ?? "")
+    show({ version: "2", wanted: false })
+    await settle()
+    expect(seen.at(-1)).toBeNull()
+    show({ version: "2" })
+    await settle()
+    expect(typeof seen.at(-1)).toBe("string")
+    show({ path: "/held.png", version: "2" })
+    await settle()
+    expect(seen.at(-1)).toBeNull()
+    expect(asked).toEqual(["/shown.png", "/shown.png", "/held.png"])
+  })
+})
+
+describe("the screenshot look", () => {
+  let root: ReturnType<typeof createRoot> | null = null
+  afterEach(() => {
+    act(() => root?.unmount())
+    root = null
+    document.body.replaceChildren()
+  })
+  const c = checkpoint("a", at(2026, 8, 9, 10), { title: "Office installed" })
+
+  function open(
+    onClose: () => void,
+    opener: HTMLElement | null = null,
+  ): HTMLDialogElement {
+    const host = document.createElement("div")
+    document.body.append(host)
+    root = createRoot(host)
+    act(() =>
+      root?.render(
+        <CheckpointLook
+          c={c}
+          now={Date.now()}
+          opener={opener}
+          onClose={onClose}
+        />,
+      ),
+    )
+    const dialog = host.querySelector("dialog")
+    if (dialog === null) throw new Error("no dialog")
+    return dialog
+  }
+
+  it("opens as a modal dialog named for the screenshot, and moves focus to its close button", () => {
+    const dialog = open(() => undefined)
+    expect(dialog.open).toBe(true)
+    expect(dialog.getAttribute("aria-label")).toBe(
+      "Screenshot of Office installed",
+    )
+    const close = dialog.querySelector("button")
+    expect(close?.getAttribute("aria-label")).toBe("Close the screenshot")
+    expect(document.activeElement).toBe(close)
+  })
+
+  it("closes from its close button, from Escape and from a click on it", () => {
+    const onClose = mock(() => undefined)
+    const dialog = open(onClose)
+    act(() => dialog.querySelector("button")?.click())
+    expect(onClose).toHaveBeenCalledTimes(1)
+    const cancel = new Event("cancel", { cancelable: true })
+    act(() => {
+      dialog.dispatchEvent(cancel)
+    })
+    expect(cancel.defaultPrevented).toBe(true)
+    expect(onClose).toHaveBeenCalledTimes(2)
+    act(() => {
+      dialog.click()
+    })
+    expect(onClose).toHaveBeenCalledTimes(3)
+  })
+
+  it("hands focus back to the button that opened it when it closes", () => {
+    const opener = document.createElement("button")
+    document.body.append(opener)
+    opener.focus()
+    open(() => undefined, opener)
+    expect(document.activeElement).not.toBe(opener)
+    act(() => root?.unmount())
+    root = null
+    expect(document.activeElement).toBe(opener)
   })
 })
 
@@ -308,8 +716,16 @@ describe("the confirmation's three choices", () => {
         onConfirm={confirm}
       />,
     )
-    const buttons = [...host.querySelectorAll<HTMLButtonElement>(".confirm-dialog__actions button")]
-    expect(buttons.map((b) => b.textContent)).toEqual(["Cancel", "Take Checkpoint First", "Restore"])
+    const buttons = [
+      ...host.querySelectorAll<HTMLButtonElement>(
+        ".confirm-dialog__actions button",
+      ),
+    ]
+    expect(buttons.map((b) => b.textContent)).toEqual([
+      "Cancel",
+      "Take Checkpoint First",
+      "Restore",
+    ])
     act(() => buttons[1]?.click())
     act(() => buttons[2]?.click())
     act(() => buttons[0]?.click())
@@ -319,8 +735,20 @@ describe("the confirmation's three choices", () => {
   })
 
   it("is two choices when there is no third", () => {
-    const host = render(<ConfirmDialog open title="Delete “x”?" body={<p>gone</p>} confirmLabel="Delete" tone="danger" onCancel={() => undefined} onConfirm={() => undefined} />)
-    const buttons = [...host.querySelectorAll(".confirm-dialog__actions button")]
+    const host = render(
+      <ConfirmDialog
+        open
+        title="Delete “x”?"
+        body={<p>gone</p>}
+        confirmLabel="Delete"
+        tone="danger"
+        onCancel={() => undefined}
+        onConfirm={() => undefined}
+      />,
+    )
+    const buttons = [
+      ...host.querySelectorAll(".confirm-dialog__actions button"),
+    ]
     expect(buttons).toHaveLength(2)
     expect(buttons[1]?.className).toContain("btn--destructive")
   })
@@ -342,61 +770,130 @@ describe("what winvm says", () => {
           thumbnail: "/h/saves/i/x/thumb.png",
           screenSize: { width: 1920, height: 1200 },
           title: "X",
-          notes: { title: "X", text: "t", tags: ["a"], updatedAt: "2026-10-21T10:00:00.000Z" },
+          notes: {
+            title: "X",
+            text: "t",
+            tags: ["a"],
+            updatedAt: "2026-10-21T10:00:00.000Z",
+          },
         },
       ]),
     )
     expect(now?.[0]?.thumbnail).toBe("/h/saves/i/x/thumb.png")
     expect(now?.[0]?.incompatible).toEqual(["display"])
-    const old = parseSaves(JSON.stringify([{ name: "y", kind: "auto", createdAt: "2026-10-21T10:00:00.000Z", bytes: 5, compatible: true }]))
-    expect(old?.[0]).toMatchObject({ title: null, screenshot: null, thumbnail: null, notes: null, incompatible: [] })
+    const old = parseSaves(
+      JSON.stringify([
+        {
+          name: "y",
+          kind: "auto",
+          createdAt: "2026-10-21T10:00:00.000Z",
+          bytes: 5,
+          compatible: true,
+        },
+      ]),
+    )
+    expect(old?.[0]).toMatchObject({
+      title: null,
+      screenshot: null,
+      thumbnail: null,
+      notes: null,
+      incompatible: [],
+    })
   })
   it("reads a note, its absence, and a failure apart", () => {
-    expect(parseNote('{"title":"T","text":"x","tags":[],"updatedAt":"z"}')?.title).toBe("T")
+    expect(
+      parseNote('{"title":"T","text":"x","tags":[],"updatedAt":"z"}')?.title,
+    ).toBe("T")
     expect(parseNote("null")).toBeNull()
     expect(parseNote("nonsense")).toBeUndefined()
   })
   it("turns a draft into the note's fields and back", () => {
     expect(tagsOf(" a, b ,, a,c ")).toEqual(["a", "b", "c"])
     expect(draftOf(null)).toEqual({ title: "", text: "", tags: "" })
-    expect(draftOf({ title: "T", text: "md", tags: ["a", "b"] })).toEqual({ title: "T", text: "md", tags: "a, b" })
+    expect(draftOf({ title: "T", text: "md", tags: ["a", "b"] })).toEqual({
+      title: "T",
+      text: "md",
+      tags: "a, b",
+    })
   })
 })
 
 describe("settings", () => {
   it("falls back to the defaults for anything missing or broken", () => {
-    expect(parseSettings(null)).toEqual({ showAutomatic: true, zoom: null, layouts: {} })
-    expect(parseSettings({ showAutomatic: false, zoom: 0.5 })).toEqual({ showAutomatic: false, zoom: 0.5, layouts: {} })
-    expect(parseSettings({ showAutomatic: "yes", zoom: -1 })).toEqual({ showAutomatic: true, zoom: null, layouts: {} })
-    expect(parseSettings("nonsense")).toEqual({ showAutomatic: true, zoom: null, layouts: {} })
+    expect(parseSettings(null)).toEqual({
+      showAutomatic: true,
+      zoom: null,
+      layouts: {},
+    })
+    expect(parseSettings({ showAutomatic: false, zoom: 0.5 })).toEqual({
+      showAutomatic: false,
+      zoom: 0.5,
+      layouts: {},
+    })
+    expect(parseSettings({ showAutomatic: "yes", zoom: -1 })).toEqual({
+      showAutomatic: true,
+      zoom: null,
+      layouts: {},
+    })
+    expect(parseSettings("nonsense")).toEqual({
+      showAutomatic: true,
+      zoom: null,
+      layouts: {},
+    })
   })
 
   it("keeps where cards were moved, per machine, and drops what isn't sound", () => {
-    const layouts = { "work-pc": { b: { x: 40, y: -12.5 } }, other: { c: { x: 1, y: 2 } } }
+    const layouts = {
+      "work-pc": { b: { x: 40, y: -12.5 } },
+      other: { c: { x: 1, y: 2 } },
+    }
     expect(parseSettings({ layouts }).layouts).toEqual(layouts)
     expect(parseSettings({ layouts: "no" }).layouts).toEqual({})
-    expect(parseSettings({ layouts: { "work-pc": { b: { x: "far", y: 0 } } } }).layouts).toEqual({})
-    // An older file, from before cards could be moved, has none.
+    expect(
+      parseSettings({ layouts: { "work-pc": { b: { x: "far", y: 0 } } } })
+        .layouts,
+    ).toEqual({})
     expect(parseSettings({ showAutomatic: false, zoom: 2 }).layouts).toEqual({})
   })
 
   it("go through `winvm settings --section checkpoints`, the file's one writer", async () => {
     const calls: string[][] = []
     let stored: unknown = null
-    const invoke = async (cmd: string, a: { args: string[] }): Promise<unknown> => {
-      if (cmd !== "winvm") throw new Error(`unexpected ${cmd}`)
+    const invoke = (cmd: string, a: { args: string[] }): Promise<unknown> => {
+      if (cmd !== "winvm") return Promise.reject(new Error(`unexpected ${cmd}`))
       calls.push(a.args)
       const set = a.args.find((x) => x.startsWith("--set="))
       if (set !== undefined) stored = JSON.parse(set.slice("--set=".length))
-      return { code: 0, stdout: JSON.stringify(stored), stderr: "" }
+      return Promise.resolve({
+        code: 0,
+        stdout: JSON.stringify(stored),
+        stderr: "",
+      })
     }
     Object.assign(window, { __TAURI__: { core: { invoke } } })
     try {
-      expect(await loadSettings()).toEqual({ showAutomatic: true, zoom: null, layouts: {} })
-      await saveSettings({ showAutomatic: false, zoom: 2, layouts: { m: { b: { x: 3, y: 4 } } } })
-      expect(await loadSettings()).toEqual({ showAutomatic: false, zoom: 2, layouts: { m: { b: { x: 3, y: 4 } } } })
+      expect(await loadSettings()).toEqual({
+        showAutomatic: true,
+        zoom: null,
+        layouts: {},
+      })
+      await saveSettings({
+        showAutomatic: false,
+        zoom: 2,
+        layouts: { m: { b: { x: 3, y: 4 } } },
+      })
+      expect(await loadSettings()).toEqual({
+        showAutomatic: false,
+        zoom: 2,
+        layouts: { m: { b: { x: 3, y: 4 } } },
+      })
       expect(calls[0]).toEqual(["settings", "--section", "checkpoints"])
-      expect(calls[1]).toEqual(["settings", "--section", "checkpoints", '--set={"showAutomatic":false,"zoom":2,"layouts":{"m":{"b":{"x":3,"y":4}}}}'])
+      expect(calls[1]).toEqual([
+        "settings",
+        "--section",
+        "checkpoints",
+        '--set={"showAutomatic":false,"zoom":2,"layouts":{"m":{"b":{"x":3,"y":4}}}}',
+      ])
     } finally {
       delete (window as { __TAURI__?: unknown }).__TAURI__
     }
@@ -428,10 +925,15 @@ describe("moved cards", () => {
   it("grows the bounds to hold a card moved out of them, and its caption", () => {
     const placed = cp.placeCards(base, { b: { x: 9000, y: 4000 } })
     const b = placed.cards.get("b")
-    expect(placed.bounds.x + placed.bounds.width).toBeGreaterThanOrEqual((b?.x ?? 0) + (b?.width ?? 0))
-    expect(placed.bounds.y + placed.bounds.height).toBeGreaterThanOrEqual((b?.y ?? 0) + (b?.height ?? 0) + cp.CAPTION_ROOM)
-    // Moved within them, nothing grows.
-    expect(cp.placeCards(base, { b: { x: 1, y: 1 } }).bounds).toEqual(base.bounds)
+    expect(placed.bounds.x + placed.bounds.width).toBeGreaterThanOrEqual(
+      (b?.x ?? 0) + (b?.width ?? 0),
+    )
+    expect(placed.bounds.y + placed.bounds.height).toBeGreaterThanOrEqual(
+      (b?.y ?? 0) + (b?.height ?? 0) + cp.CAPTION_ROOM,
+    )
+    expect(cp.placeCards(base, { b: { x: 1, y: 1 } }).bounds).toEqual(
+      base.bounds,
+    )
   })
 })
 
@@ -444,11 +946,11 @@ describe("a card's words", () => {
   })
 
   it("never draw smaller than they read: a card's scale up close, the least that reads when far out", () => {
-    // Close up an older day's words are a little smaller, like its card.
     expect(textScale(0.8, 2)).toBeCloseTo(0.8, 6)
-    // Far out they are scaled up in the world, so on screen they stay at MIN_TEXT of their size.
     for (const zoom of [0.5, 0.3, 0.1]) {
-      expect(textScale(0.7, zoom) * zoom).toBeGreaterThanOrEqual(MIN_TEXT - 1e-9)
+      expect(textScale(0.7, zoom) * zoom).toBeGreaterThanOrEqual(
+        MIN_TEXT - 1e-9,
+      )
     }
   })
 })
@@ -461,8 +963,18 @@ describe("the control bar", () => {
     document.body.replaceChildren()
   })
   const noop = (): void => undefined
-  function bar(over: Partial<import("react").ComponentProps<typeof ControlBar>> = {}): { host: HTMLElement; calls: Record<string, ReturnType<typeof mock>> } {
-    const calls = { onNew: mock(noop), onNewest: mock(noop), onToggleAutomatic: mock(noop), onDone: mock(noop), onSearchToggle: mock(noop), onReset: mock(noop), onSectionTool: mock(noop) }
+  function bar(
+    over: Partial<import("react").ComponentProps<typeof ControlBar>> = {},
+  ): { host: HTMLElement; calls: Record<string, ReturnType<typeof mock>> } {
+    const calls = {
+      onNew: mock(noop),
+      onNewest: mock(noop),
+      onToggleAutomatic: mock(noop),
+      onDone: mock(noop),
+      onSearchToggle: mock(noop),
+      onReset: mock(noop),
+      onSectionTool: mock(noop),
+    }
     const host = document.createElement("div")
     document.body.append(host)
     root = createRoot(host)
@@ -491,46 +1003,67 @@ describe("the control bar", () => {
     )
     return { host, calls }
   }
-  const named = (host: HTMLElement, name: string): HTMLButtonElement | null => host.querySelector<HTMLButtonElement>(`button[aria-label="${name}"]`)
+  const named = (host: HTMLElement, name: string): HTMLButtonElement | null =>
+    host.querySelector<HTMLButtonElement>(`button[aria-label="${name}"]`)
 
   it("is one labelled group of buttons that each have a name and a tooltip", () => {
     const { host } = bar()
-    expect(host.querySelector("nav")?.getAttribute("aria-label")).toBe("Checkpoint controls")
+    expect(host.querySelector("nav")?.getAttribute("aria-label")).toBe(
+      "Checkpoint controls",
+    )
     const buttons = [...host.querySelectorAll("button")]
     expect(buttons.length).toBeGreaterThanOrEqual(6)
     for (const b of buttons) {
-      expect((b.getAttribute("aria-label") ?? b.textContent ?? "").length).toBeGreaterThan(0)
-      expect(b.getAttribute("title") ?? b.textContent ?? "").not.toBe("")
+      expect(
+        (b.getAttribute("aria-label") ?? b.textContent).length,
+      ).toBeGreaterThan(0)
+      expect(b.getAttribute("title") ?? b.textContent).not.toBe("")
     }
-    // The wordy title chip and "(⌘F)" in the placeholder are gone.
     expect(host.textContent).not.toContain("⌘F)")
-    expect(host.querySelector("input")?.getAttribute("placeholder")).toBe("Search names and notes")
+    expect(host.querySelector("input")?.getAttribute("placeholder")).toBe(
+      "Search names and notes",
+    )
   })
 
   it("keeps search to a magnifier until it is used, and takes no Tab stop while folded", () => {
     const folded = bar()
-    expect(folded.host.querySelector(".checkpoints__search")?.getAttribute("data-open")).toBe("false")
-    expect(folded.host.querySelector("input")?.getAttribute("tabindex")).toBe("-1")
+    expect(
+      folded.host
+        .querySelector(".checkpoints__search")
+        ?.getAttribute("data-open"),
+    ).toBe("false")
+    expect(folded.host.querySelector("input")?.getAttribute("tabindex")).toBe(
+      "-1",
+    )
     act(() => root?.unmount())
     document.body.replaceChildren()
     const open = bar({ searchOpen: true })
-    expect(open.host.querySelector(".checkpoints__search")?.getAttribute("data-open")).toBe("true")
+    expect(
+      open.host
+        .querySelector(".checkpoints__search")
+        ?.getAttribute("data-open"),
+    ).toBe("true")
     expect(open.host.querySelector("input")?.getAttribute("tabindex")).toBe("0")
-    // A search with words in it stays open even when focus has left it.
     act(() => root?.unmount())
     document.body.replaceChildren()
-    expect(bar({ query: "office" }).host.querySelector(".checkpoints__search")?.getAttribute("data-open")).toBe("true")
+    expect(
+      bar({ query: "office" })
+        .host.querySelector(".checkpoints__search")
+        ?.getAttribute("data-open"),
+    ).toBe("true")
   })
 
   it("is one rounded field with the magnifier as its leading icon, and the field before the other controls", () => {
     const { host } = bar({ searchOpen: true })
     const box = host.querySelector(".checkpoints__search-box")
-    expect(box?.firstElementChild?.getAttribute("aria-label")).toBe("Search checkpoints")
+    expect(box?.firstElementChild?.getAttribute("aria-label")).toBe(
+      "Search checkpoints",
+    )
     expect(box?.firstElementChild?.getAttribute("aria-expanded")).toBe("true")
     expect(box?.querySelector("input")).not.toBeNull()
-    // The other controls sit in their own group, after the search.
-    expect(host.querySelector(".checkpoints__search + .checkpoints__bar-rest")).not.toBeNull()
-    // Nothing to clear yet.
+    expect(
+      host.querySelector(".checkpoints__search + .checkpoints__bar-rest"),
+    ).not.toBeNull()
     expect(named(host, "Clear search")).toBeNull()
   })
 
@@ -545,12 +1078,21 @@ describe("the control bar", () => {
     act(() => root?.unmount())
     document.body.replaceChildren()
     const none = bar({ query: "zzz", matchCount: 0 })
-    expect(none.host.querySelector(".checkpoints__search [role=status]")?.textContent).toBe("No checkpoints match")
-    expect(none.host.querySelector(".checkpoints__search")?.getAttribute("data-empty")).toBe("true")
+    expect(
+      none.host.querySelector(".checkpoints__search [role=status]")
+        ?.textContent,
+    ).toBe("No checkpoints match")
+    expect(
+      none.host
+        .querySelector(".checkpoints__search")
+        ?.getAttribute("data-empty"),
+    ).toBe("true")
     act(() => root?.unmount())
     document.body.replaceChildren()
-    // Folded and empty: nothing is said.
-    expect(bar().host.querySelector(".checkpoints__search [role=status]")?.textContent).toBe("")
+    expect(
+      bar().host.querySelector(".checkpoints__search [role=status]")
+        ?.textContent,
+    ).toBe("")
   })
 
   it("names the button for the newest plainly, with a target glyph rather than a download arrow", () => {
@@ -567,10 +1109,12 @@ describe("the control bar", () => {
     expect(auto?.getAttribute("aria-pressed")).toBe("false")
     expect(auto?.textContent).toBe("")
     act(() => auto?.click())
-    expect(calls["onToggleAutomatic"]).toHaveBeenCalledTimes(1)
+    expect(calls.onToggleAutomatic).toHaveBeenCalledTimes(1)
     const fresh = named(host, "New Checkpoint")
     expect(fresh?.disabled).toBe(true)
-    expect(fresh?.getAttribute("title")).toBe("Start Windows to take a checkpoint")
+    expect(fresh?.getAttribute("title")).toBe(
+      "Start Windows to take a checkpoint",
+    )
     expect(fresh?.textContent).toBe("New")
   })
 
@@ -578,23 +1122,32 @@ describe("the control bar", () => {
     const { host, calls } = bar()
     act(() => named(host, "Newest")?.click())
     act(() => named(host, "New Checkpoint")?.click())
-    act(() => [...host.querySelectorAll("button")].find((b) => b.textContent === "Done")?.click())
-    expect(calls["onNewest"]).toHaveBeenCalledTimes(1)
-    expect(calls["onNew"]).toHaveBeenCalledTimes(1)
-    expect(calls["onDone"]).toHaveBeenCalledTimes(1)
+    act(() =>
+      [...host.querySelectorAll("button")]
+        .find((b) => b.textContent === "Done")
+        ?.click(),
+    )
+    expect(calls.onNewest).toHaveBeenCalledTimes(1)
+    expect(calls.onNew).toHaveBeenCalledTimes(1)
+    expect(calls.onDone).toHaveBeenCalledTimes(1)
     expect(named(host, "Reset layout")?.disabled).toBe(true)
     act(() => root?.unmount())
     document.body.replaceChildren()
     const moved = bar({ arranged: true })
     expect(named(moved.host, "Reset layout")?.disabled).toBe(false)
     act(() => named(moved.host, "Reset layout")?.click())
-    expect(moved.calls["onReset"]).toHaveBeenCalledTimes(1)
+    expect(moved.calls.onReset).toHaveBeenCalledTimes(1)
   })
 
   it("keeps the zoom out of the bar: Reset layout stays, the zoom is its own control", () => {
     const { host } = bar()
     expect(host.querySelector(".checkpoints__zoom")).toBeNull()
-    for (const gone of ["Zoom out (⌘−)", "Zoom in (⌘+)", "Show all checkpoints (⌘0)"]) expect(named(host, gone)).toBeNull()
+    for (const gone of [
+      "Zoom out (⌘−)",
+      "Zoom in (⌘+)",
+      "Show all checkpoints (⌘0)",
+    ])
+      expect(named(host, gone)).toBeNull()
     expect(named(host, "Reset layout")).not.toBeNull()
   })
 })
@@ -607,20 +1160,57 @@ describe("the checkpoint's panel", () => {
     document.body.replaceChildren()
   })
   const noop = (): void => undefined
-  const notes = (over: Partial<NonNullable<Checkpoint["notes"]>> = {}): NonNullable<Checkpoint["notes"]> => ({ title: "Office installed", text: "Signed in.", tags: ["office"], ...over })
-  function panel(c: Checkpoint, over: Partial<import("react").ComponentProps<typeof CheckpointDetails>> = {}): { host: HTMLElement; onNote: ReturnType<typeof mock>; onClose: ReturnType<typeof mock> } {
-    const onNote = mock(noop)
+  const notes = (
+    over: Partial<NonNullable<Checkpoint["notes"]>> = {},
+  ): NonNullable<Checkpoint["notes"]> => ({
+    title: "Office installed",
+    text: "Signed in.",
+    tags: ["office"],
+    ...over,
+  })
+  function panel(
+    c: Checkpoint,
+    over: Partial<
+      import("react").ComponentProps<typeof CheckpointDetails>
+    > = {},
+  ): {
+    host: HTMLElement
+    onNote: Mock<(name: string, draft: Draft) => void>
+    onClose: ReturnType<typeof mock>
+  } {
+    const onNote = mock((_name: string, _draft: Draft): void => undefined)
     const onClose = mock(noop)
     const host = document.createElement("div")
     document.body.append(host)
     root = createRoot(host)
     act(() =>
-      root?.render(<CheckpointDetails c={c} now={Date.parse("2026-10-22T20:00:00Z")} busy={false} saving="idle" onClose={onClose} onLook={noop} onNote={onNote} onGoBack={noop} onReveal={noop} onDelete={noop} onProtect={noop} {...over} />),
+      root?.render(
+        <CheckpointDetails
+          c={c}
+          now={Date.parse("2026-10-22T20:00:00Z")}
+          busy={false}
+          saving="idle"
+          onClose={onClose}
+          onLook={noop}
+          onNote={onNote}
+          onGoBack={noop}
+          onReveal={noop}
+          onDelete={noop}
+          onProtect={noop}
+          {...over}
+        />,
+      ),
     )
     return { host, onNote, onClose }
   }
-  const type = (el: HTMLInputElement | HTMLTextAreaElement, value: string): void => {
-    const proto = el instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype
+  const type = (
+    el: HTMLInputElement | HTMLTextAreaElement,
+    value: string,
+  ): void => {
+    const proto =
+      el instanceof HTMLTextAreaElement
+        ? HTMLTextAreaElement.prototype
+        : HTMLInputElement.prototype
     act(() => {
       Object.getOwnPropertyDescriptor(proto, "value")?.set?.call(el, value)
       el.dispatchEvent(new Event("input", { bubbles: true }))
@@ -628,21 +1218,31 @@ describe("the checkpoint's panel", () => {
   }
   const press = (el: Element, key: string): void => {
     act(() => {
-      el.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true }))
+      el.dispatchEvent(
+        new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true }),
+      )
     })
   }
-  const titleButton = (host: HTMLElement): HTMLButtonElement | null => host.querySelector<HTMLButtonElement>("button.checkpoint-details__title-field")
-  const titleInput = (host: HTMLElement): HTMLInputElement | null => host.querySelector<HTMLInputElement>(".checkpoint-details__title input")
-  const withNotes = checkpoint("office", at(2026, 10, 22, 14), { notes: notes(), bytes: 7.8 * 1024 ** 3 })
+  const titleButton = (host: HTMLElement): HTMLButtonElement | null =>
+    host.querySelector<HTMLButtonElement>(
+      "button.checkpoint-details__title-field",
+    )
+  const titleInput = (host: HTMLElement): HTMLInputElement | null =>
+    host.querySelector<HTMLInputElement>(".checkpoint-details__title input")
+  const withNotes = checkpoint("office", at(2026, 10, 22, 14), {
+    notes: notes(),
+    bytes: 7.8 * 1024 ** 3,
+  })
 
   it("names the checkpoint once, at the top, as text that is edited where it stands", () => {
     const { host } = panel(withNotes)
     expect(titleButton(host)?.textContent).toBe("Office installed")
     expect(titleButton(host)?.getAttribute("title")).toBe("Rename (F2)")
-    // No separate Name or Title field, and no second copy of the title.
     expect(host.querySelectorAll("label").length).toBe(0)
-    expect(host.textContent?.split("Office installed").length).toBe(2)
-    expect(host.querySelectorAll(".checkpoint-details__title input").length).toBe(0)
+    expect(host.textContent.split("Office installed").length).toBe(2)
+    expect(
+      host.querySelectorAll(".checkpoint-details__title input").length,
+    ).toBe(0)
   })
 
   it("keeps a new title on Return, and writes it at once", () => {
@@ -654,7 +1254,11 @@ describe("the checkpoint's panel", () => {
     type(field as HTMLInputElement, "Office and Teams")
     press(field as HTMLInputElement, "Enter")
     expect(onNote).toHaveBeenCalledTimes(1)
-    expect(onNote.mock.calls[0]?.[0]).toEqual({ title: "Office and Teams", text: "Signed in.", tags: "office" })
+    expect(onNote.mock.calls[0]?.[1]).toEqual({
+      title: "Office and Teams",
+      text: "Signed in.",
+      tags: "office",
+    })
     expect(titleButton(host)?.textContent).toBe("Office and Teams")
   })
 
@@ -674,8 +1278,10 @@ describe("the checkpoint's panel", () => {
     const field = titleInput(host) as HTMLInputElement
     field.focus()
     type(field, "After a pause")
-    act(() => field.blur())
-    expect(onNote.mock.calls[0]?.[0].title).toBe("After a pause")
+    act(() => {
+      field.blur()
+    })
+    expect(onNote.mock.calls[0]?.[1].title).toBe("After a pause")
   })
 
   it("says why a title can't be kept, inline, and keeps the field", () => {
@@ -684,7 +1290,9 @@ describe("the checkpoint's panel", () => {
     const field = titleInput(host) as HTMLInputElement
     type(field, "x".repeat(CHECKPOINT_TITLE_MAX + 1))
     press(field, "Enter")
-    expect(host.querySelector("[role=alert]")?.textContent).toBe("Keep it to 120 characters or fewer.")
+    expect(host.querySelector("[role=alert]")?.textContent).toBe(
+      "Keep it to 120 characters or fewer.",
+    )
     expect(field.getAttribute("aria-invalid")).toBe("true")
     expect(titleInput(host)).not.toBeNull()
     expect(onNote).not.toHaveBeenCalled()
@@ -699,7 +1307,7 @@ describe("the checkpoint's panel", () => {
     type(field, "")
     expect(host.textContent).toContain("Leave it empty to use “office”.")
     press(field, "Enter")
-    expect(onNote.mock.calls[0]?.[0].title).toBe("")
+    expect(onNote.mock.calls[0]?.[1].title).toBe("")
     expect(titleButton(host)?.textContent).toBe("office")
   })
 
@@ -708,14 +1316,18 @@ describe("the checkpoint's panel", () => {
     const note = host.querySelector("textarea") as HTMLTextAreaElement
     expect(note.getAttribute("placeholder")).toBe("Add a note")
     expect(note.getAttribute("aria-label")).toBe("Notes")
-    expect([...host.querySelectorAll("button")].some((b) => /save/i.test(b.textContent ?? ""))).toBe(false)
+    expect(
+      [...host.querySelectorAll("button")].some((b) =>
+        /save/i.test(b.textContent),
+      ),
+    ).toBe(false)
     type(note, "Before the driver update")
     expect(onNote).not.toHaveBeenCalled()
     await act(async () => {
       await new Promise((r) => setTimeout(r, 900))
     })
     expect(onNote).toHaveBeenCalledTimes(1)
-    expect(onNote.mock.calls[0]?.[0].text).toBe("Before the driver update")
+    expect(onNote.mock.calls[0]?.[1].text).toBe("Before the driver update")
   })
 
   it("puts the note back on Escape, and saves it as it was", async () => {
@@ -741,14 +1353,22 @@ describe("the checkpoint's panel", () => {
 
   it("lists only what is more as rows: the tags, editable; no save name, nothing the caption already says", () => {
     const { host } = panel(withNotes)
-    const rows = [...host.querySelectorAll(".checkpoint-details__prop")].map((r) => r.querySelector("dt")?.textContent)
-    // Title, date, kind and size are in the caption; the save name is nowhere (the folder button is the way to it).
-    // How its memory is stored is not in the caption, so it is a row.
+    const rows = [...host.querySelectorAll(".checkpoint-details__prop")].map(
+      (r) => r.querySelector("dt")?.textContent,
+    )
     expect(rows).toEqual(["Tags", t("checkpoints.fact.format")])
-    const tags = host.querySelector<HTMLInputElement>(".checkpoint-details__prop input")
+    const tags = host.querySelector<HTMLInputElement>(
+      ".checkpoint-details__prop input",
+    )
     expect(tags?.value).toBe("office")
     expect(tags?.getAttribute("aria-label")).toBe("Tags")
-    for (const gone of ["Loads here", "Name in winvm", "Save name", "Copy save name"]) expect(host.textContent).not.toContain(gone)
+    for (const gone of [
+      "Loads here",
+      "Name in winvm",
+      "Save name",
+      "Copy save name",
+    ])
+      expect(host.textContent).not.toContain(gone)
     expect(host.querySelector("[aria-label='Copy save name']")).toBeNull()
   })
 
@@ -756,41 +1376,71 @@ describe("the checkpoint's panel", () => {
     const { host } = panel(withNotes)
     const aside = host.querySelector("aside") as HTMLElement
     expect(aside.querySelector("header")).toBeNull()
-    const order = [".checkpoint-details__picture", ".checkpoint-details__title", ".checkpoint-details__when", ".checkpoint-details__facts", "hr", "textarea", ".checkpoint-details__props", "footer"]
+    const order = [
+      ".checkpoint-details__picture",
+      ".checkpoint-details__title",
+      ".checkpoint-details__when",
+      ".checkpoint-details__facts",
+      "hr",
+      "textarea",
+      ".checkpoint-details__props",
+      "footer",
+    ]
     const all = [...aside.querySelectorAll("*")]
-    const positions = order.map((sel) => all.indexOf(aside.querySelector(sel) as Element))
+    const positions = order.map((sel) =>
+      all.indexOf(aside.querySelector(sel) as Element),
+    )
     expect(positions.every((i) => i >= 0)).toBe(true)
     expect(positions).toEqual([...positions].sort((x, y) => x - y))
-    // Exactly one break, between the caption and the note.
     expect(aside.querySelectorAll("hr").length).toBe(1)
-    expect(aside.querySelector("hr")?.previousElementSibling?.className).toBe("checkpoint-details__facts")
-    expect(aside.querySelector("hr")?.nextElementSibling?.tagName.toLowerCase()).toBe("textarea")
-    // The picture is the first thing in the scrolling body; only the close button comes before it.
+    expect(aside.querySelector("hr")?.previousElementSibling?.className).toBe(
+      "checkpoint-details__facts",
+    )
+    expect(
+      aside.querySelector("hr")?.nextElementSibling?.tagName.toLowerCase(),
+    ).toBe("textarea")
     expect(aside.firstElementChild?.getAttribute("aria-label")).toBe("Close")
-    expect(aside.querySelector(".checkpoint-details__scroll")?.firstElementChild?.className).toBe("checkpoint-details__figure")
-    expect(aside.querySelector(".checkpoint-details__figure")?.firstElementChild?.className).toBe("checkpoint-details__picture")
-    // When, then the kind and size at the row's end.
-    const when = host.querySelector(".checkpoint-details__when")?.textContent ?? ""
+    expect(
+      aside.querySelector(".checkpoint-details__scroll")?.firstElementChild
+        ?.className,
+    ).toBe("checkpoint-details__figure")
+    expect(
+      aside.querySelector(".checkpoint-details__figure")?.firstElementChild
+        ?.className,
+    ).toBe("checkpoint-details__picture")
+    const when =
+      host.querySelector(".checkpoint-details__when")?.textContent ?? ""
     expect(when).toMatch(/2:00 PM/)
-    expect([...(host.querySelector(".checkpoint-details__facts")?.children ?? [])].map((e) => e.className)).toEqual(["checkpoint-details__kind", "checkpoint-details__size"])
-    // One fact, one place: the date, the kind and the size are each said once.
-    expect(host.textContent?.split(when).length).toBe(2)
-    expect(host.textContent?.split("7.8 GiB").length).toBe(2)
+    expect(
+      [
+        ...(host.querySelector(".checkpoint-details__facts")?.children ?? []),
+      ].map((e) => e.className),
+    ).toEqual(["checkpoint-details__kind", "checkpoint-details__size"])
+    expect(host.textContent.split(when).length).toBe(2)
+    expect(host.textContent.split("7.8 GiB").length).toBe(2)
   })
 
   it("says what the size is on hover, in one line, in the panel and on the card", () => {
     const { host } = panel(withNotes)
-    const tip = host.querySelector(".checkpoint-details__size")?.getAttribute("title") ?? ""
+    const tip =
+      host.querySelector(".checkpoint-details__size")?.getAttribute("title") ??
+      ""
     expect(tip).toBe("Disk space on your Mac, at most: checkpoints share space")
     expect(tip).not.toContain("\n")
   })
 
   it("shows no save name whether or not there is a title of its own, and the title once", () => {
-    for (const c of [withNotes, checkpoint("stow", at(2026, 10, 22, 14), { title: "stow" }), checkpoint("plain", at(2026, 10, 22, 14))]) {
+    for (const c of [
+      withNotes,
+      checkpoint("stow", at(2026, 10, 22, 14), { title: "stow" }),
+      checkpoint("plain", at(2026, 10, 22, 14)),
+    ]) {
       const { host } = panel(c)
       expect(host.querySelector(".checkpoint-details__prop--name")).toBeNull()
       expect(host.textContent).not.toContain("Save name")
-      expect(host.textContent?.split(titleButton(host)?.textContent ?? "?").length).toBe(2)
+      expect(
+        host.textContent.split(titleButton(host)?.textContent ?? "?").length,
+      ).toBe(2)
       act(() => root?.unmount())
       document.body.replaceChildren()
     }
@@ -800,16 +1450,19 @@ describe("the checkpoint's panel", () => {
     const onReveal = mock(noop)
     const onGoBack = mock(noop)
     const { host } = panel(withNotes, { onReveal, onGoBack })
-    const folder = host.querySelector<HTMLButtonElement>("footer button[aria-label='Show in Finder']")
+    const folder = host.querySelector<HTMLButtonElement>(
+      "footer button[aria-label='Show in Finder']",
+    )
     expect(folder?.getAttribute("title")).toBe("Show in Finder")
     expect(folder?.querySelector("svg")).not.toBeNull()
     act(() => folder?.click())
     expect(onReveal).toHaveBeenCalledTimes(1)
-    const restore = host.querySelector<HTMLButtonElement>("footer button[aria-label='Restore this checkpoint']")
+    const restore = host.querySelector<HTMLButtonElement>(
+      "footer button[aria-label='Restore this checkpoint']",
+    )
     expect(restore?.textContent).toBe("")
     expect(restore?.getAttribute("title")).toBe("Restore this checkpoint")
     expect(restore?.querySelector("svg")).not.toBeNull()
-    // The rewind glyph, two triangles, not the clock's.
     expect(restore?.querySelectorAll("polygon").length).toBe(2)
     act(() => restore?.click())
     expect(onGoBack).toHaveBeenCalledTimes(1)
@@ -817,10 +1470,14 @@ describe("the checkpoint's panel", () => {
 
   it("says nothing about restoring when a checkpoint can go back here", () => {
     for (const compatible of [true, null]) {
-      const { host } = panel(checkpoint("ok", at(2026, 10, 22, 14), { compatible }))
+      const { host } = panel(
+        checkpoint("ok", at(2026, 10, 22, 14), { compatible }),
+      )
       expect(host.querySelector(".checkpoint-details__banner")).toBeNull()
       expect(host.textContent).not.toContain("Can't restore")
-      const restore = host.querySelector<HTMLButtonElement>("button[aria-label='Restore this checkpoint']")
+      const restore = host.querySelector<HTMLButtonElement>(
+        "button[aria-label='Restore this checkpoint']",
+      )
       expect(restore?.disabled).toBe(false)
       expect(restore?.getAttribute("title")).toBe("Restore this checkpoint")
       act(() => root?.unmount())
@@ -829,28 +1486,58 @@ describe("the checkpoint's panel", () => {
   })
 
   it("says it can't be restored in one line across the picture's foot, the whole reason on hover and in the Restore button's description", () => {
-    const { host } = panel(checkpoint("q", at(2026, 10, 21, 12), { compatible: false, incompatible: ["qemu"] }))
-    const banner = host.querySelector<HTMLElement>(".checkpoint-details__banner")
-    const full = "It was made with a different version of QEMU, so it can't be restored on this machine."
+    const { host } = panel(
+      checkpoint("q", at(2026, 10, 21, 12), {
+        compatible: false,
+        incompatible: ["qemu"],
+      }),
+    )
+    const banner = host.querySelector<HTMLElement>(
+      ".checkpoint-details__banner",
+    )
+    const full =
+      "It was made with a different version of QEMU, so it can't be restored on this machine."
     expect(banner?.firstElementChild?.tagName.toLowerCase()).toBe("svg")
-    expect(banner?.querySelector("span:not([hidden])")?.textContent).toBe("Can't restore · Wrong QEMU version")
+    expect(banner?.querySelector("span:not([hidden])")?.textContent).toBe(
+      "Can't restore · Wrong QEMU version",
+    )
     expect(banner?.getAttribute("title")).toBe(full)
-    // It is laid over the picture (in its figure, after it), not a row of the caption or the properties.
     expect(banner?.parentElement?.className).toBe("checkpoint-details__figure")
-    expect(banner?.previousElementSibling?.className).toBe("checkpoint-details__picture")
-    expect(host.querySelector(".checkpoint-details__plate")?.contains(banner ?? null)).toBe(false)
+    expect(banner?.previousElementSibling?.className).toBe(
+      "checkpoint-details__picture",
+    )
+    expect(
+      host
+        .querySelector(".checkpoint-details__plate")
+        ?.contains(banner ?? null),
+    ).toBe(false)
     expect(host.querySelector(".checkpoint-details__status")).toBeNull()
-    // The old wording is gone, and the long sentence is not drawn as a paragraph of its own.
     expect(host.textContent).not.toContain("Loads here")
-    const restore = host.querySelector<HTMLButtonElement>("button[aria-label='Restore this checkpoint']")
+    const restore = host.querySelector<HTMLButtonElement>(
+      "button[aria-label='Restore this checkpoint']",
+    )
     expect(restore?.disabled).toBe(true)
     expect(restore?.getAttribute("title")).toBe(full)
-    expect(host.querySelector(`[id="${restore?.getAttribute("aria-describedby") ?? ""}"]`)?.textContent).toBe(full)
+    expect(
+      host.querySelector(
+        `[id="${restore?.getAttribute("aria-describedby") ?? ""}"]`,
+      )?.textContent,
+    ).toBe(full)
   })
 
   it("has a short, plain phrase and a whole sentence for every reason a checkpoint can't be restored", () => {
-    for (const part of ["display", "base", "hardware", "firmware", "qemu", "other"]) {
-      const reason = cp.incompatibleReason({ compatible: false, incompatible: part === "other" ? [] : [part] })
+    for (const part of [
+      "display",
+      "base",
+      "hardware",
+      "firmware",
+      "qemu",
+      "other",
+    ]) {
+      const reason = cp.incompatibleReason({
+        compatible: false,
+        incompatible: part === "other" ? [] : [part],
+      })
       expect(reason).not.toBeNull()
       const key = shortReason(reason as string)
       expect(t(key)).not.toBe(key)
@@ -863,71 +1550,115 @@ describe("the checkpoint's panel", () => {
 
   it("says what each kind of checkpoint is, in the same words on the card and in the panel, and in a sentence", () => {
     const words: Record<string, [string, string]> = {
-      manual: ["Taken by you", "You took this one yourself, with New Checkpoint."],
+      manual: [
+        "Taken by you",
+        "You took this one yourself, with New Checkpoint.",
+      ],
       auto: ["Saved while idle", "Taken automatically while Windows sat idle."],
-      baseline: ["Fresh install", "Taken the first time this machine started, once Windows had finished setting up and before you changed anything."],
+      baseline: [
+        "Fresh install",
+        "Taken the first time this machine started, once Windows had finished setting up and before you changed anything.",
+      ],
       stow: ["Saved on suspend", "Taken when Windows was suspended."],
-      golden: ["Test starting point", "A quiet moment saved so automated tests can start from the same state every time."],
+      golden: [
+        "Test starting point",
+        "A quiet moment saved so automated tests can start from the same state every time.",
+      ],
     }
     for (const [kind, [label, sentence]] of Object.entries(words)) {
       const { host } = panel(checkpoint("k", at(2026, 10, 22, 14), { kind }))
       const chip = host.querySelector(".checkpoint-details__kind")
       expect(chip?.textContent).toBe(label)
       expect(chip?.getAttribute("title")).toBe(sentence)
-      // The sentence is the chip's hover, not a line in the panel.
       expect(host.querySelector(".checkpoint-details__kind-note")).toBeNull()
       act(() => root?.unmount())
       document.body.replaceChildren()
       expect(kindLabel(kind)).toBe(label)
       expect(kindTip(kind)).toBe(sentence)
-      // No jargon in what a person reads.
-      expect(`${label} ${sentence}`).not.toMatch(/stow|pristine|golden|baseline|auto\b/i)
+      expect(`${label} ${sentence}`).not.toMatch(
+        /stow|pristine|golden|baseline|auto\b/i,
+      )
     }
   })
 
-  const protectButton = (host: HTMLElement): HTMLButtonElement | null => host.querySelector<HTMLButtonElement>(".checkpoint-details__protection button")
+  const protectButton = (host: HTMLElement): HTMLButtonElement | null =>
+    host.querySelector<HTMLButtonElement>(
+      ".checkpoint-details__protection button",
+    )
 
   it("offers to protect an ordinary checkpoint, and shows how its memory is stored", () => {
     const onProtect = mock((_: boolean) => undefined)
-    const { host } = panel(checkpoint("a", at(2026, 10, 21), { format: "zstd" }), { onProtect })
+    const { host } = panel(
+      checkpoint("a", at(2026, 10, 21), { format: "zstd" }),
+      { onProtect },
+    )
     const control = protectButton(host)
     expect(control?.textContent).toBe(t("checkpoints.protect"))
     expect(control?.disabled).toBe(false)
     expect(control?.getAttribute("aria-pressed")).toBe("false")
     act(() => control?.click())
     expect(onProtect).toHaveBeenCalledWith(true)
-    expect(host.querySelector(".checkpoint-details__props")?.textContent).toContain(t("checkpoints.format.zstd"))
+    expect(
+      host.querySelector(".checkpoint-details__props")?.textContent,
+    ).toContain(t("checkpoints.format.zstd"))
   })
 
   it("unprotects on request, refuses Delete while protected, and still restores", () => {
     const onProtect = mock((_: boolean) => undefined)
-    const { host } = panel(checkpoint("locked", at(2026, 10, 21), { kind: "auto", protected: true, format: "mapped" }), { onProtect })
-    const del = host.querySelector<HTMLButtonElement>(".checkpoint-details__delete")
+    const { host } = panel(
+      checkpoint("locked", at(2026, 10, 21), {
+        kind: "auto",
+        protected: true,
+        format: "mapped",
+      }),
+      { onProtect },
+    )
+    const del = host.querySelector<HTMLButtonElement>(
+      ".checkpoint-details__delete",
+    )
     expect(del?.disabled).toBe(true)
     expect(del?.title).toBe(t("checkpoints.keep.protected"))
-    expect(host.querySelector<HTMLButtonElement>(".checkpoint-details__restore")?.disabled).toBe(false)
+    expect(
+      host.querySelector<HTMLButtonElement>(".checkpoint-details__restore")
+        ?.disabled,
+    ).toBe(false)
     const control = protectButton(host)
     expect(control?.textContent).toBe(t("checkpoints.unprotect"))
     expect(control?.getAttribute("aria-pressed")).toBe("true")
     act(() => control?.click())
     expect(onProtect).toHaveBeenCalledWith(false)
-    expect(host.querySelector(".checkpoint-details__props")?.textContent).toContain(t("checkpoints.format.mapped"))
+    expect(
+      host.querySelector(".checkpoint-details__props")?.textContent,
+    ).toContain(t("checkpoints.format.mapped"))
   })
 
   it("can't protect the suspended session, and says why without another line of copy", () => {
     const onProtect = mock((_: boolean) => undefined)
-    const { host } = panel(checkpoint("stow", at(2026, 10, 21), { kind: "stow" }), { onProtect })
+    const { host } = panel(
+      checkpoint("stow", at(2026, 10, 21), { kind: "stow" }),
+      { onProtect },
+    )
     const control = protectButton(host)
     expect(control?.disabled).toBe(true)
-    expect(host.querySelector(".checkpoint-details__protection")?.getAttribute("title")).toBe(t("checkpoints.protectStow"))
-    expect(document.getElementById(control?.getAttribute("aria-describedby") ?? "")?.textContent).toBe(t("checkpoints.protectStow"))
+    expect(
+      host
+        .querySelector(".checkpoint-details__protection")
+        ?.getAttribute("title"),
+    ).toBe(t("checkpoints.protectStow"))
+    expect(
+      document.getElementById(control?.getAttribute("aria-describedby") ?? "")
+        ?.textContent,
+    ).toBe(t("checkpoints.protectStow"))
     act(() => control?.click())
     expect(onProtect).not.toHaveBeenCalled()
   })
 
   it("waits for other work before changing protection", () => {
     const onProtect = mock((_: boolean) => undefined)
-    const { host } = panel(checkpoint("a", at(2026, 10, 21)), { onProtect, busy: true })
+    const { host } = panel(checkpoint("a", at(2026, 10, 21)), {
+      onProtect,
+      busy: true,
+    })
     expect(protectButton(host)?.disabled).toBe(true)
   })
 
@@ -950,14 +1681,36 @@ describe("the details layer", () => {
   const A = checkpoint("a", at(2026, 10, 22, 14), { title: "First" })
   const B = checkpoint("b", at(2026, 10, 22, 15), { title: "Second" })
   const host = document.createElement("div")
-  function mount(): (c: Checkpoint | undefined, onNote?: (name: string, d: unknown) => void) => void {
+  function mount(): (
+    c: Checkpoint | undefined,
+    onNote?: (name: string, d: unknown) => void,
+  ) => void {
     document.body.replaceChildren(host)
     root = createRoot(host)
-    return (c, onNote = noop) =>
-      act(() => root?.render(<CheckpointDetailsLayer c={c} now={Date.parse("2026-10-22T20:00:00Z")} busy={false} saving="idle" onClose={noop} onLook={noop} onNote={onNote} onGoBack={noop} onReveal={noop} onDelete={noop} onProtect={noop} />))
+    return (c, onNote = noop) => {
+      act(() =>
+        root?.render(
+          <CheckpointDetailsLayer
+            c={c}
+            now={Date.parse("2026-10-22T20:00:00Z")}
+            busy={false}
+            saving="idle"
+            onClose={noop}
+            onLook={noop}
+            onNote={onNote}
+            onGoBack={noop}
+            onReveal={noop}
+            onDelete={noop}
+            onProtect={noop}
+          />,
+        ),
+      )
+    }
   }
-  const aside = (): HTMLElement | null => host.querySelector<HTMLElement>("aside.checkpoint-details")
-  const wait = (ms: number): Promise<void> => act(async () => void (await new Promise((r) => setTimeout(r, ms))))
+  const aside = (): HTMLElement | null =>
+    host.querySelector<HTMLElement>("aside.checkpoint-details")
+  const wait = (ms: number): Promise<void> =>
+    act(async () => void (await new Promise((r) => setTimeout(r, ms))))
 
   it("is not in the page while nothing is selected, and opens, drawn closed first, then moved", () => {
     const show = mount()
@@ -980,7 +1733,6 @@ describe("the details layer", () => {
     show(undefined)
     expect(aside()?.getAttribute("data-state")).toBe("closed")
     expect((aside() as HTMLElement & { inert?: boolean }).inert).toBe(true)
-    // It says what it said, not nothing, while it goes.
     expect(aside()?.textContent).toContain("First")
     await wait(PANEL_EXIT_MS - 80)
     expect(aside()).not.toBeNull()
@@ -992,7 +1744,7 @@ describe("the details layer", () => {
     document.body.replaceChildren(host)
     const card = document.createElement("div")
     card.className = "checkpoint"
-    card.dataset["name"] = "a"
+    card.dataset.name = "a"
     const hit = document.createElement("button")
     hit.className = "checkpoint__hit"
     card.append(hit)
@@ -1023,7 +1775,6 @@ describe("the details layer", () => {
     expect(host.querySelectorAll("aside.checkpoint-details").length).toBe(1)
     expect(aside()?.getAttribute("data-state")).toBe("open")
     expect((aside() as HTMLElement & { inert?: boolean }).inert).toBe(false)
-    // The ease out that was started is not left to remove it.
     await wait(PANEL_EXIT_MS + 120)
     expect(aside()?.getAttribute("data-state")).toBe("open")
   })
@@ -1038,7 +1789,9 @@ describe("the details layer", () => {
     expect(aside()?.getAttribute("data-mark")).toBe("same")
     expect(aside()?.getAttribute("data-state")).toBe("open")
     expect(aside()?.getAttribute("aria-label")).toBe("Checkpoint Second")
-    expect(aside()?.querySelector(".checkpoint-details__title-field")?.textContent).toBe("Second")
+    expect(
+      aside()?.querySelector(".checkpoint-details__title-field")?.textContent,
+    ).toBe("Second")
   })
 
   it("writes a note for the checkpoint it was showing, even after the selection has gone", async () => {
@@ -1046,9 +1799,12 @@ describe("the details layer", () => {
     const show = mount()
     show(A, (name, d) => void calls.push([name, d]))
     const note = aside()?.querySelector("textarea") as HTMLTextAreaElement
-    const set = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")?.set
+    const descriptor = Object.getOwnPropertyDescriptor(
+      HTMLTextAreaElement.prototype,
+      "value",
+    )
     act(() => {
-      set?.call(note, "Typed as it was let go")
+      descriptor?.set?.call(note, "Typed as it was let go")
       note.dispatchEvent(new Event("input", { bubbles: true }))
     })
     show(undefined, (name, d) => void calls.push([name, d]))
@@ -1058,7 +1814,10 @@ describe("the details layer", () => {
 
   it("is a cut, with no ease out, under reduced motion", async () => {
     const before = globalThis.matchMedia
-    globalThis.matchMedia = ((query: string) => ({ matches: query.includes("reduce"), media: query })) as typeof matchMedia
+    globalThis.matchMedia = ((query: string) => ({
+      matches: query.includes("reduce"),
+      media: query,
+    })) as typeof matchMedia
     try {
       const show = mount()
       show(A)
@@ -1079,25 +1838,56 @@ describe("the zoom control", () => {
     document.body.replaceChildren()
   })
   const noop = (): void => undefined
-  // Test DOMs compute no layout: the window is 1000x700 and the control sits in its lower left.
-  const rect = (left: number, top: number, right: number, bottom: number): DOMRect => ({ left, top, right, bottom, x: left, y: top, width: right - left, height: bottom - top, toJSON: noop }) as DOMRect
-  function zoomControl(zoom = 0.5): { group: () => HTMLElement; render(zoom: number): void; calls: Record<"out" | "in" | "fit", ReturnType<typeof mock>> } {
+  const rect = (
+    left: number,
+    top: number,
+    right: number,
+    bottom: number,
+  ): DOMRect => ({
+    left,
+    top,
+    right,
+    bottom,
+    x: left,
+    y: top,
+    width: right - left,
+    height: bottom - top,
+    toJSON: noop,
+  })
+  function zoomControl(zoom = 0.5): {
+    group: () => HTMLElement
+    render: (zoom: number) => void
+    calls: Record<"out" | "in" | "fit", ReturnType<typeof mock>>
+  } {
     const calls = { out: mock(noop), in: mock(noop), fit: mock(noop) }
     const host = document.createElement("div")
     document.body.append(host)
     host.getBoundingClientRect = () => rect(0, 0, 1000, 700)
     root = createRoot(host)
-    const render = (z: number): void => act(() => root?.render(<ZoomControl zoom={z} onZoomOut={calls.out} onZoomIn={calls.in} onFit={calls.fit} />))
+    const render = (z: number): void => {
+      act(() =>
+        root?.render(
+          <ZoomControl
+            zoom={z}
+            onZoomOut={calls.out}
+            onZoomIn={calls.in}
+            onFit={calls.fit}
+          />,
+        ),
+      )
+    }
     render(zoom)
-    const group = (): HTMLElement => host.querySelector<HTMLElement>(".checkpoints__zoom") as HTMLElement
+    const group = (): HTMLElement =>
+      host.querySelector<HTMLElement>(".checkpoints__zoom") as HTMLElement
     group().getBoundingClientRect = () => rect(16, 650, 210, 684)
-    // No layout here: the host stands in for the offset parent.
     Object.defineProperty(group(), "offsetParent", { value: host })
     return { group, render, calls }
   }
   const move = (x: number, y: number): void => {
     act(() => {
-      window.dispatchEvent(new MouseEvent("pointermove", { clientX: x, clientY: y }))
+      window.dispatchEvent(
+        new MouseEvent("pointermove", { clientX: x, clientY: y }),
+      )
     })
   }
   const shown = (g: HTMLElement): string | null => g.getAttribute("data-shown")
@@ -1113,8 +1903,15 @@ describe("the zoom control", () => {
     expect(group().getAttribute("aria-label")).toBe("Zoom")
     expect(shown(group())).toBe("false")
     const buttons = [...group().querySelectorAll("button")]
-    expect(buttons.map((b) => b.getAttribute("aria-label"))).toEqual(["Zoom out (⌘−)", "Zoom in (⌘+)", "Show all checkpoints (⌘0)"])
-    for (const b of buttons) act(() => b.click())
+    expect(buttons.map((b) => b.getAttribute("aria-label"))).toEqual([
+      "Zoom out (⌘−)",
+      "Zoom in (⌘+)",
+      "Show all checkpoints (⌘0)",
+    ])
+    for (const b of buttons)
+      act(() => {
+        b.click()
+      })
     expect(calls.out).toHaveBeenCalledTimes(1)
     expect(calls.in).toHaveBeenCalledTimes(1)
     expect(calls.fit).toHaveBeenCalledTimes(1)
@@ -1128,7 +1925,6 @@ describe("the zoom control", () => {
     move(120, 600)
     expect(shown(group())).toBe("true")
     move(300, 300)
-    // The pointer has gone, but the control stays a moment.
     expect(shown(group())).toBe("true")
     await rest()
     expect(shown(group())).toBe("false")
@@ -1136,7 +1932,6 @@ describe("the zoom control", () => {
 
   it("shows while the zoom changes, and folds away once it rests", async () => {
     const { group, render } = zoomControl(0.5)
-    // Nothing has changed yet.
     expect(shown(group())).toBe("false")
     render(0.62)
     expect(shown(group())).toBe("true")
@@ -1158,16 +1953,25 @@ describe("the zoom control", () => {
 
 describe("a day's date", () => {
   const base = cp.layoutTimeline(list, 16 / 10)
-  // The day of "b" and "c" (two cards, one line), and its date's place when nothing is moved.
   const day = base.days.find((d) => d.names.includes("b"))
-  const cardsOf = (moves: Moves): ReadonlyMap<string, CardBox> => cp.placeCards(base, moves).cards
-  const three = [checkpoint("p", at(2026, 10, 25, 8)), checkpoint("q", at(2026, 10, 25, 9)), checkpoint("r", at(2026, 10, 25, 10))]
+  const cardsOf = (moves: Moves): ReadonlyMap<string, CardBox> =>
+    cp.placeCards(base, moves).cards
+  const three = [
+    checkpoint("p", at(2026, 10, 25, 8)),
+    checkpoint("q", at(2026, 10, 25, 9)),
+    checkpoint("r", at(2026, 10, 25, 10)),
+  ]
 
   it("sits where the layout puts it while the day's cards are where the layout put them", () => {
     for (const d of base.days) {
       const g = cp.dayGroup(d, base.cards)
       expect(g.label).toEqual(d.label)
-      expect(g.rect).toEqual({ x: d.x, y: d.y, width: d.width, height: d.height })
+      expect(g.rect).toEqual({
+        x: d.x,
+        y: d.y,
+        width: d.width,
+        height: d.height,
+      })
     }
   })
 
@@ -1177,15 +1981,15 @@ describe("a day's date", () => {
     const g = cp.dayGroup(day, cardsOf({ b: by, c: by }))
     expect(g.label.x).toBeCloseTo(day.label.x + by.x, 6)
     expect(g.label.y).toBeCloseTo(day.label.y + by.y, 6)
-    // Only the leftmost, topmost of them decides: moving the one that is neither changes nothing.
-    expect(cp.dayGroup(day, cardsOf({ c: { x: 40, y: 0 } })).label).toEqual(day.label)
+    expect(cp.dayGroup(day, cardsOf({ c: { x: 40, y: 0 } })).label).toEqual(
+      day.label,
+    )
   })
 
   it("stays with the rest of the day when one card is dragged out of it", () => {
     const layout = cp.layoutTimeline(three, 16 / 10)
     const d = layout.days[0]
     if (d === undefined) throw new Error("no day")
-    // The first card, taken out: the date goes to the two that are left, at the left of them.
     const out = cp.placeCards(layout, { p: { x: -900, y: -700 } })
     const g = cp.dayGroup(d, out.cards)
     const q = out.cards.get("q")
@@ -1197,10 +2001,17 @@ describe("a day's date", () => {
     const layout = cp.layoutTimeline(three, 16 / 10)
     const d = layout.days[0]
     if (d === undefined) throw new Error("no day")
-    const apart = cp.placeCards(layout, { p: { x: 0, y: -900 }, q: { x: 0, y: 0 }, r: { x: 0, y: 900 } })
+    const apart = cp.placeCards(layout, {
+      p: { x: 0, y: -900 },
+      q: { x: 0, y: 0 },
+      r: { x: 0, y: 900 },
+    })
     const p = apart.cards.get("p")
     const g = cp.dayGroup(d, apart.cards)
-    expect(g.label).toEqual({ x: p?.x ?? 0, y: (p?.y ?? 0) - cp.LABEL_LIFT * d.scale })
+    expect(g.label).toEqual({
+      x: p?.x ?? 0,
+      y: (p?.y ?? 0) - cp.LABEL_LIFT * d.scale,
+    })
     expect(g.rect.width).toBe(p?.width ?? 0)
   })
 
@@ -1211,21 +2022,35 @@ describe("a day's date", () => {
 })
 
 describe("a card's note", () => {
-  const cardNote = (text: string, tags: string[] = []): ReturnType<typeof cp.noteOf> => cp.noteOf({ notes: { title: null, text, tags, updatedAt: "" } })
+  const cardNote = (
+    text: string,
+    tags: string[] = [],
+  ): ReturnType<typeof cp.noteOf> =>
+    cp.noteOf({ notes: { title: null, text, tags, updatedAt: "" } })
 
   it("is its text's first line, without markdown marks, and the whole text for the tooltip", () => {
-    const n = cardNote("\n## Signed in as **test@contoso.com**.\n\n- Excel activated", ["office"])
+    const n = cardNote(
+      "\n## Signed in as **test@contoso.com**.\n\n- Excel activated",
+      ["office"],
+    )
     expect(n?.line).toBe("Signed in as test@contoso.com.")
-    expect(n?.full).toBe("## Signed in as **test@contoso.com**.\n\n- Excel activated\noffice")
+    expect(n?.full).toBe(
+      "## Signed in as **test@contoso.com**.\n\n- Excel activated\noffice",
+    )
   })
 
   it("falls back to the manifest's note, then to the tags, and is nothing without any", () => {
-    expect(cp.noteOf({ notes: null, note: "from the CLI" })?.line).toBe("from the CLI")
+    expect(cp.noteOf({ notes: null, note: "from the CLI" })?.line).toBe(
+      "from the CLI",
+    )
     expect(cardNote("", ["ci", "office"])?.line).toBe("ci, office")
     expect(cp.noteOf({ notes: null })).toBeNull()
     expect(cardNote("  ")).toBeNull()
-    // A title alone is the name, not a note.
-    expect(cp.noteOf({ notes: { title: "Only a title", text: "", tags: [], updatedAt: "" } })).toBeNull()
+    expect(
+      cp.noteOf({
+        notes: { title: "Only a title", text: "", tags: [], updatedAt: "" },
+      }),
+    ).toBeNull()
   })
 })
 
@@ -1237,7 +2062,17 @@ describe("a card", () => {
     document.body.replaceChildren()
   })
   const NOW = new Date(2026, 10, 3, 15, 30).getTime()
-  const box = { name: "x", x: 0, y: 0, width: 240, height: 150, frame: 150, scale: 1, day: 0, index: 0 }
+  const box = {
+    name: "x",
+    x: 0,
+    y: 0,
+    width: 240,
+    height: 150,
+    frame: 150,
+    scale: 1,
+    day: 0,
+    index: 0,
+  }
   function card(c: Checkpoint, zoom = 1): HTMLElement {
     act(() => root?.unmount())
     document.body.replaceChildren()
@@ -1246,14 +2081,33 @@ describe("a card", () => {
     root = createRoot(host)
     act(() =>
       root?.render(
-        <CheckpointCard c={c} box={box} selected={false} zoom={zoom} now={NOW} dimmed={false} lit={false} carried={false} arriving={null} leaving={false} working={null} onSelect={() => undefined} />,
+        <CheckpointCard
+          c={c}
+          box={box}
+          selected={false}
+          zoom={zoom}
+          now={NOW}
+          dimmed={false}
+          lit={false}
+          carried={false}
+          arriving={null}
+          leaving={false}
+          working={null}
+          onSelect={() => undefined}
+        />,
       ),
     )
     return host
   }
-  const text = (host: HTMLElement, cls: string): string | undefined => host.querySelector(`.${cls}`)?.textContent ?? undefined
+  const text = (host: HTMLElement, cls: string): string | undefined =>
+    host.querySelector(`.${cls}`)?.textContent ?? undefined
   const taken = at(2026, 10, 21, 17, 38)
-  const note = { title: null, text: "Signed in.\nMore.", tags: [], updatedAt: "" }
+  const note = {
+    title: null,
+    text: "Signed in.\nMore.",
+    tags: [],
+    updatedAt: "",
+  }
   const GIB = 1024 ** 3
 
   it("is one button holding the picture and its caption, so they are selected and carried as one", () => {
@@ -1274,8 +2128,9 @@ describe("a card", () => {
     expect(text(host, "checkpoint__size")).toBe("7.8 GiB")
     expect(host.querySelector(".checkpoint__note")).toBeNull()
     expect(host.querySelector(".checkpoint__badge")).toBeNull()
-    // Nothing floats on the picture's corner any more.
-    expect(host.querySelector(".checkpoint__frame .checkpoint__kind")).toBeNull()
+    expect(
+      host.querySelector(".checkpoint__frame .checkpoint__kind"),
+    ).toBeNull()
   })
 
   it("shows a note as its own line: its notebook mark, its first line, the whole of it on hover", () => {
@@ -1284,33 +2139,54 @@ describe("a card", () => {
     expect(line?.textContent).toBe("Signed in.")
     expect(line?.getAttribute("title")).toBe("Signed in.\nMore.")
     expect(line?.querySelector("svg")).not.toBeNull()
-    // The note is its own line, apart from the kind.
-    expect(host.querySelector(".checkpoint__facts")?.contains(line ?? null)).toBe(false)
+    expect(
+      host.querySelector(".checkpoint__facts")?.contains(line ?? null),
+    ).toBe(false)
   })
 
   it("says every kind in the same words as the panel, with what made it as the chip's tooltip", () => {
-    const words: Record<string, string> = { manual: "Taken by you", auto: "Saved while idle", baseline: "Fresh install", stow: "Saved on suspend", golden: "Test starting point" }
+    const words: Record<string, string> = {
+      manual: "Taken by you",
+      auto: "Saved while idle",
+      baseline: "Fresh install",
+      stow: "Saved on suspend",
+      golden: "Test starting point",
+    }
     for (const [kind, label] of Object.entries(words)) {
-      const chip = card(checkpoint("x", taken, { kind })).querySelector(".checkpoint__kind")
+      const chip = card(checkpoint("x", taken, { kind })).querySelector(
+        ".checkpoint__kind",
+      )
       expect(chip?.textContent).toBe(label)
       expect(chip?.getAttribute("title")).toBe(kindTip(kind))
     }
   })
 
   it("states Can't restore on the picture, with the reason in its tooltip, not as a caption row", () => {
-    const host = card(checkpoint("x", taken, { compatible: false, incompatible: ["display"] }))
+    const host = card(
+      checkpoint("x", taken, { compatible: false, incompatible: ["display"] }),
+    )
     const badge = host.querySelector(".checkpoint__badge")
     expect(badge?.closest(".checkpoint__frame")).not.toBeNull()
     expect(badge?.closest(".checkpoint__caption")).toBeNull()
     expect(badge?.textContent).toBe("Can't restore")
-    expect(badge?.getAttribute("title")).toBe("It was made with a different display setup, so it can't be restored on this machine.")
-    // At the full caption level it is a banner across the picture's foot, one line; the size's hover says what it counts.
-    expect(host.querySelector(".checkpoint__size")?.getAttribute("title")).toBe("Disk space on your Mac, at most: checkpoints share space")
+    expect(badge?.getAttribute("title")).toBe(
+      "It was made with a different display setup, so it can't be restored on this machine.",
+    )
+    expect(host.querySelector(".checkpoint__size")?.getAttribute("title")).toBe(
+      "Disk space on your Mac, at most: checkpoints share space",
+    )
     expect(badge?.querySelectorAll("span").length).toBe(1)
   })
 
   it("names every fact in its one accessible name", () => {
-    const c = checkpoint("x", taken, { kind: "stow", bytes: 7.8 * GIB, notes: note, compatible: false, incompatible: ["qemu"], title: "stow away" })
+    const c = checkpoint("x", taken, {
+      kind: "stow",
+      bytes: 7.8 * GIB,
+      notes: note,
+      compatible: false,
+      incompatible: ["qemu"],
+      title: "stow away",
+    })
     const label = card(c).querySelector("button")?.getAttribute("aria-label")
     expect(label).toBe(cardLabel(c, NOW))
     expect(label).toContain("stow away")
@@ -1319,7 +2195,6 @@ describe("a card", () => {
     expect(label).toContain("7.8 GiB")
     expect(label).toContain("Has notes")
     expect(label).toContain("can't be restored on this machine")
-    // Without a note or a problem, it says neither.
     const plain = cardLabel(checkpoint("y", taken), NOW)
     expect(plain).not.toContain("Has notes")
     expect(plain).not.toContain("can't be restored")
@@ -1327,12 +2202,22 @@ describe("a card", () => {
 
   it("thins its caption out with its width on screen: all, then the name alone, then the picture", () => {
     const c = checkpoint("x", taken, { notes: note })
-    const parts = (zoom: number): string[] => Array.from(card(c, zoom).querySelectorAll(".checkpoint__caption > span")).map((e) => e.className)
-    expect(parts(FULL_WIDTH / 240)).toEqual(["checkpoint__name", "checkpoint__when", "checkpoint__facts", "checkpoint__note"])
+    const parts = (zoom: number): string[] =>
+      Array.from(
+        card(c, zoom).querySelectorAll(".checkpoint__caption > span"),
+      ).map((e) => e.className)
+    expect(parts(FULL_WIDTH / 240)).toEqual([
+      "checkpoint__name",
+      "checkpoint__when",
+      "checkpoint__facts",
+      "checkpoint__note",
+    ])
     expect(parts(NAME_WIDTH / 240)).toEqual(["checkpoint__name"])
     const picture = card(c, (NAME_WIDTH - 1) / 240)
     expect(picture.querySelector(".checkpoint__caption")).toBeNull()
-    expect(picture.querySelector("button")?.getAttribute("title")).toContain("x")
+    expect(picture.querySelector("button")?.getAttribute("title")).toContain(
+      "x",
+    )
   })
 
   it("uses an abstract wallpaper, not desktop chrome or placeholder copy, without a screenshot", () => {
@@ -1340,25 +2225,40 @@ describe("a card", () => {
     const frame = host.querySelector(".checkpoint__frame")
     expect(frame?.getAttribute("data-empty")).toBe("true")
     expect(frame?.getAttribute("title")).toBe("No picture")
-    expect(frame?.querySelector(".checkpoint__wallpaper")?.getAttribute("aria-hidden")).toBe("true")
+    expect(
+      frame
+        ?.querySelector(".checkpoint__wallpaper")
+        ?.getAttribute("aria-hidden"),
+    ).toBe("true")
     expect(frame?.querySelectorAll("linearGradient").length).toBe(3)
     expect(frame?.querySelector("text")).toBeNull()
     expect(frame?.querySelector("img")).toBeNull()
     expect(frame?.textContent).toBe("")
-    const gradients = [...(frame?.querySelectorAll("linearGradient") ?? [])].map((el) => el.id)
+    const gradients = [
+      ...(frame?.querySelectorAll("linearGradient") ?? []),
+    ].map((el) => el.id)
     expect(new Set(gradients).size).toBe(3)
-    expect(host.querySelector(".checkpoint__caption .checkpoint__name")?.textContent).toBe("no-picture")
+    expect(
+      host.querySelector(".checkpoint__caption .checkpoint__name")?.textContent,
+    ).toBe("no-picture")
   })
 
   it("marks a protected checkpoint with a lock, and says so to a screen reader", () => {
     const host = card(checkpoint("kept", taken, { protected: true }))
     expect(host.querySelector(".checkpoint__protected svg")).not.toBeNull()
-    expect(host.querySelector(".checkpoint__hit")?.getAttribute("aria-label")).toContain(t("checkpoints.protected"))
-    expect(card(checkpoint("plain", taken)).querySelector(".checkpoint__protected")).toBeNull()
+    expect(
+      host.querySelector(".checkpoint__hit")?.getAttribute("aria-label"),
+    ).toContain(t("checkpoints.protected"))
+    expect(
+      card(checkpoint("plain", taken)).querySelector(".checkpoint__protected"),
+    ).toBeNull()
   })
 
   it("has a glyph for each kind", () => {
-    expect(new Set(["manual", "auto", "baseline", "stow", "golden"].map(kindIcon)).size).toBe(5)
+    expect(
+      new Set(["manual", "auto", "baseline", "stow", "golden"].map(kindIcon))
+        .size,
+    ).toBe(5)
   })
 })
 
@@ -1371,7 +2271,9 @@ describe("New Checkpoint's name field", () => {
     document.body.replaceChildren()
   })
   const input = (): HTMLInputElement => {
-    const field = document.querySelector<HTMLInputElement>("#checkpoint-new-title")
+    const field = document.querySelector<HTMLInputElement>(
+      "#checkpoint-new-title",
+    )
     if (field === null) throw new Error("no field")
     return field
   }
@@ -1380,7 +2282,16 @@ describe("New Checkpoint's name field", () => {
     const host = document.createElement("div")
     document.body.append(host)
     root = createRoot(host)
-    act(() => root?.render(<NewCheckpointForm live busy={false} onCancel={() => undefined} onSubmit={onSubmit} />))
+    act(() =>
+      root?.render(
+        <NewCheckpointForm
+          live
+          busy={false}
+          onCancel={() => undefined}
+          onSubmit={onSubmit}
+        />,
+      ),
+    )
     return onSubmit
   }
 
@@ -1399,40 +2310,76 @@ describe("New Checkpoint's name field", () => {
     const host = document.createElement("div")
     document.body.append(host)
     root = createRoot(host)
-    act(() => root?.render(<NewCheckpointForm live busy={false} onCancel={() => undefined} onSubmit={onSubmit} />))
-    const box = document.querySelector<HTMLInputElement>(".checkpoints__compression input")
+    act(() =>
+      root?.render(
+        <NewCheckpointForm
+          live
+          busy={false}
+          onCancel={() => undefined}
+          onSubmit={onSubmit}
+        />,
+      ),
+    )
+    const box = document.querySelector<HTMLInputElement>(
+      ".checkpoints__compression input",
+    )
     expect(box?.checked).toBe(true)
-    expect(document.querySelector(".checkpoints__compression")?.getAttribute("title")).toBe(t("checkpoints.compressionHint"))
+    expect(
+      document
+        .querySelector(".checkpoints__compression")
+        ?.getAttribute("title"),
+    ).toBe(t("checkpoints.compressionHint"))
     const form = document.querySelector("form")
-    act(() => form?.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })))
+    act(() => {
+      form?.dispatchEvent(
+        new Event("submit", { bubbles: true, cancelable: true }),
+      )
+    })
     expect(onSubmit.mock.calls[0]?.[2]).toBe("zstd")
     act(() => box?.click())
-    act(() => form?.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })))
+    act(() => {
+      form?.dispatchEvent(
+        new Event("submit", { bubbles: true, cancelable: true }),
+      )
+    })
     expect(onSubmit.mock.calls[1]?.[2]).toBe("mapped")
   })
 
   it("spells the date out for today as for any day: what is stored never says Today", () => {
-    expect(absoluteTime(new Date(2026, 10, 3, 15, 30).getTime(), "en-US")).toBe("Nov 3, 2026 at 3:30 PM")
+    expect(absoluteTime(new Date(2026, 10, 3, 15, 30).getTime(), "en-US")).toBe(
+      "Nov 3, 2026 at 3:30 PM",
+    )
   })
 
   it("keeps the placeholder current: it changes when the minute does", async () => {
     setSystemTime(new Date(2026, 10, 3, 15, 30, 59, 940))
     mount()
     const first = input().placeholder
-    // The clock is frozen under test: move it across the minute while the form waits for it.
     setSystemTime(new Date(2026, 10, 3, 15, 31, 0, 5))
     await act(async () => {
       await new Promise((r) => setTimeout(r, 400))
     })
     expect(input().placeholder).not.toBe(first)
-    expect(input().placeholder).toBe(absoluteTime(new Date(2026, 10, 3, 15, 31).getTime()))
+    expect(input().placeholder).toBe(
+      absoluteTime(new Date(2026, 10, 3, 15, 31).getTime()),
+    )
   })
 
   it("hands over what was typed, and the placeholder's name for an empty field to be stored as", () => {
     const stamp = new Date(2026, 10, 3, 15, 30, 12)
     setSystemTime(stamp)
     const onSubmit = mount()
-    act(() => document.querySelector("form")?.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })))
-    expect(onSubmit).toHaveBeenCalledWith("", absoluteTime(stamp.getTime()), "zstd")
+    act(() => {
+      document
+        .querySelector("form")
+        ?.dispatchEvent(
+          new Event("submit", { bubbles: true, cancelable: true }),
+        )
+    })
+    expect(onSubmit).toHaveBeenCalledWith(
+      "",
+      absoluteTime(stamp.getTime()),
+      "zstd",
+    )
   })
 })

@@ -400,7 +400,7 @@ describe("the layout that lets the note grow upward", () => {
   it("is one column for everything on the screen: as wide as the window allows up to a measure, then centered", () => {
     expect(rule(".overview__content")).toMatch(/width:\s*min\(100%,\s*var\(--overview-measure\)\)/)
     expect(rule(".overview__content")).toMatch(/margin-inline:\s*auto/)
-    expect(rule(".overview--notes .overview__content")).toMatch(/padding-inline:\s*max\(var\(--space-7\),\s*calc\(\(100% - var\(--overview-measure\)\) \/ 2\)\)/)
+    expect(rule(".overview--notes .overview__content")).toMatch(/padding-inline:\s*max\(\s*var\(--space-7\),\s*calc\(\(100% - var\(--overview-measure\)\) \/ 2\)\s*\)/)
     // The note, the heading and the list take the column's width; none sets a width or a measure of its own.
     expect(rule(".abilities__list")).toMatch(/width:\s*100%/)
     expect(rule(".overview__upper")).not.toMatch(/max-width/)
@@ -567,7 +567,7 @@ describe("text over the backdrop", () => {
 
 // ---- The machine's name in the heading, edited where it stands --------------------
 
-const { checkTitle } = await import("../../../packages/core/src/config")
+const { checkTitle } = await import("@winvm/core/config")
 
 interface Renamer {
   /** Every title it was asked to set, in order ("" clears). */

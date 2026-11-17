@@ -1,21 +1,8 @@
-/**
- * The QEMU guest agent client — the whole reason this VM is scriptable.
- *
- * qemu-ga listens on a virtio-serial port and speaks line-delimited JSON. That
- * gives "run a command in the guest, get stdout, stderr and the exit code" with
- * no SSH, no listening TCP port, and no dependency on guest networking.
- *
- * The alternative was UTM's `utmctl exec`, which does the same thing over Apple
- * Events and therefore needs a logged-in Aqua session plus an interactive TCC
- * grant — upstream's own error text says it "does not work from SSH sessions or
- * before logging in".
- */
 import { connect } from "node:net"
 
 import { monitorBeside } from "./paths"
 import * as qmp from "./qmp"
 
-/** The chardev id qemu.ts gives the guest agent's socket. */
 export const CHARDEV = "qga0"
 
 export interface ExecResult {
@@ -24,34 +11,23 @@ export interface ExecResult {
   readonly stderr: string
 }
 
-/** A call the agent did not answer in time. Distinct so a caller can recover from it. */
 export class AgentTimeout extends Error {
-  /** Which command, and how long it was given: the evidence when one stalls. */
-  constructor(command = "", timeoutMs = 0) {
-    super(command === "" ? "guest agent timed out" : `guest agent timed out: ${command} after ${String(timeoutMs / 1000)} s`)
+  readonly sent: boolean
+
+  constructor(command = "", timeoutMs = 0, sent = false) {
+    super(
+      command === ""
+        ? "guest agent timed out"
+        : `guest agent timed out: ${command} after ${String(timeoutMs / 1000)} s`,
+    )
     this.name = "AgentTimeout"
+    this.sent = sent
   }
 }
 
-/** Byte that delimits guest-sync-delimited's reply. Never appears in UTF-8 JSON. */
 const DELIMITER = 0xff
 const NEWLINE = 0x0a
 
-/**
- * One request, one reply — on a channel that is synced first.
- *
- * THE SYNC IS NOT OPTIONAL. The agent sits behind a single virtio-serial port
- * and answers every request it was sent, whether or not anyone is still
- * listening. A call that timed out leaves its reply in flight, and the next
- * connection — this process or another one — used to read that stale reply as
- * its own: a `guest-exec` handed the previous call's pid, a status poll handed
- * another command's output. So every call first sends guest-sync-delimited
- * with a random id. The agent answers requests in order, so anything still
- * owed to an earlier caller arrives before the 0xFF that opens our sync reply;
- * everything before a delimiter, and any sync reply carrying another id, is
- * discarded. The leading 0xFF the client sends also makes the agent drop any
- * half-received request a previous caller abandoned mid-write.
- */
 export async function call(
   sockPath: string,
   payload: Record<string, unknown>,
@@ -62,20 +38,32 @@ export async function call(
     const sock = connect(sockPath)
     let synced = false
     let inSyncReply = false
-    // The current line so far, kept as chunks so a multi-megabyte reply is not
-    // re-copied on every read.
     let pending: Buffer[] = []
     const settle = (fn: () => void): void => {
       clearTimeout(timer)
       sock.destroy()
       fn()
     }
+    const execute = payload.execute
     const timer = setTimeout(() => {
-      settle(() => rej(new AgentTimeout(String(payload["execute"] ?? "?"), timeoutMs)))
+      settle(() => {
+        rej(
+          new AgentTimeout(
+            typeof execute === "string" ? execute : "?",
+            timeoutMs,
+            synced,
+          ),
+        )
+      })
     }, timeoutMs)
     sock.on("connect", () => {
-      const sync = JSON.stringify({ execute: "guest-sync-delimited", arguments: { id } })
-      sock.write(Buffer.concat([Buffer.from([DELIMITER]), Buffer.from(`${sync}\n`)]))
+      const sync = JSON.stringify({
+        execute: "guest-sync-delimited",
+        arguments: { id },
+      })
+      sock.write(
+        Buffer.concat([Buffer.from([DELIMITER]), Buffer.from(`${sync}\n`)]),
+      )
     })
     sock.on("data", (chunk: Buffer) => {
       let data = chunk
@@ -91,7 +79,9 @@ export async function call(
           pending.push(data)
           return
         }
-        const line = Buffer.concat([...pending, data.subarray(0, nl)]).toString("utf8")
+        const line = Buffer.concat([...pending, data.subarray(0, nl)]).toString(
+          "utf8",
+        )
         data = data.subarray(nl + 1)
         pending = []
         inSyncReply = false
@@ -105,7 +95,9 @@ export async function call(
         pending.push(data)
         return
       }
-      const line = Buffer.concat([...pending, data.subarray(0, nl)]).toString("utf8")
+      const line = Buffer.concat([...pending, data.subarray(0, nl)]).toString(
+        "utf8",
+      )
       settle(() => {
         try {
           res(JSON.parse(line) as Record<string, unknown>)
@@ -115,7 +107,9 @@ export async function call(
       })
     })
     sock.on("error", (error) => {
-      settle(() => rej(error))
+      settle(() => {
+        rej(error)
+      })
     })
   })
 }
@@ -128,14 +122,14 @@ function syncReplyId(line: string): unknown {
   }
 }
 
-/**
- * Whether qemu-ga in the guest has its end of the virtio-serial port open, as
- * QEMU sees it (query-chardev's "frontend-open"). Null when the monitor does
- * not say: unknown, so the caller should just try the agent.
- */
 export async function portOpen(sockPath: string): Promise<boolean | null> {
   try {
-    const r = (await qmp.execute(monitorBeside(sockPath), "query-chardev", undefined, 2000)) as {
+    const r = (await qmp.execute(
+      monitorBeside(sockPath),
+      "query-chardev",
+      undefined,
+      2000,
+    )) as {
       readonly label: string
       readonly "frontend-open": boolean
     }[]
@@ -146,36 +140,18 @@ export async function portOpen(sockPath: string): Promise<boolean | null> {
 }
 
 export interface WaitOptions {
-  /** Injectable for tests; QEMU's monitor otherwise. */
   readonly portOpen?: (sockPath: string) => Promise<boolean | null>
+  readonly signal?: AbortSignal
 }
 
-/**
- * Poll until the agent answers. A cold boot to a responsive agent is ~10-25 s.
- *
- * DO NOT CONNECT BEFORE THE GUEST HAS OPENED ITS PORT. QEMU on macOS cannot
- * see a client hang up while the guest end is closed: char-socket watches for
- * the hangup with a G_IO_HUP-only source, and GLib polls with select() on
- * macOS (poll() is marked broken there), which has no way to ask for HUP —
- * so the only way QEMU learns of it is by reading, and it reads only while
- * the guest can take the data. A probe that gave up before qemu-ga started
- * therefore left QEMU holding a dead connection; the socket accepts one
- * client at a time with a backlog of one, so the next probe sat unanswered
- * and the one after was refused outright (Bun reports that as ENOENT). It
- * cleared itself once qemu-ga opened the port, but by then the probes were
- * spaced seconds apart. Measured on a fresh boot: a client closed at 8 s was
- * held as connected until qemu-ga opened at 14.3 s.
- *
- * So wait on QEMU's view of the port first (one monitor round trip), and ping
- * only once it is open. Measured on fresh boots: no connection at all until
- * qemu-ga opened the port at ~10.8 s, and the ping answered 0.1 s after.
- * Anything else that connects early (a stray `status`, a script) can still
- * leave a dead client behind; it clears when qemu-ga opens the port.
- */
-export async function waitFor(sockPath: string, timeoutMs: number, o: WaitOptions = {}): Promise<boolean> {
+export async function waitFor(
+  sockPath: string,
+  timeoutMs: number,
+  o: WaitOptions = {},
+): Promise<boolean> {
   const isOpen = o.portOpen ?? portOpen
   const deadline = Date.now() + timeoutMs
-  while (Date.now() < deadline) {
+  while (Date.now() < deadline && o.signal?.aborted !== true) {
     if ((await isOpen(sockPath)) === false) {
       await new Promise((r) => setTimeout(r, 250))
       continue
@@ -190,74 +166,40 @@ export async function waitFor(sockPath: string, timeoutMs: number, o: WaitOption
   return false
 }
 
-/**
- * Poll until Windows has FINISHED STARTING — a state of the OS, not a sign of
- * life from the channel.
- *
- * THE DISTINCTION IS THE WHOLE POINT, AND GETTING IT WRONG COSTS INSTANCES.
- * qemu-ga runs as SYSTEM and answers long before any logon, so `guest-ping`
- * succeeds throughout OOBE — and so does `guest-exec`, and so does anything else
- * that merely asks whether the agent is alive. A guest sitting on "Just a
- * moment, checking for updates" satisfies every one of those probes while being
- * nowhere near settled. Two earlier versions of this function gated on exactly
- * that and were meaningless: `start` reported the guest up, `smoke` returned
- * correct answers, and the machine was still in OOBE the entire time.
- *
- * WHAT IS ASKED INSTEAD: has the REAL account logged on?
- *
- * Windows runs the out-of-box experience under a temporary account called
- * `defaultuser0`, and it runs a full session as it — Explorer included. While
- * that session is on screen showing "Checking for updates", the guest already
- * reports `OOBEInProgress = 0` AND `SystemSetupInProgress = 0` AND a running
- * `explorer.exe`. Every one of those was tried here and every one was true too
- * early. `Win32_ComputerSystem.UserName` is not: it reads `<HOST>\defaultuser0`
- * throughout OOBE and only becomes the answer file's account once AutoLogon has
- * actually taken the machine to its desktop. That is the end of the lifecycle,
- * and it is unambiguous.
- *
- * It matters beyond tidiness: freezing a guest mid-OOBE and restoring it
- * LIVELOCKS the machine — every vCPU at 100%, no disk I/O, recoverable only by
- * killing it. Snapshots must not be taken until this returns true.
- */
-export async function waitReady(sockPath: string, timeoutMs: number, o: ReadyOptions = {}): Promise<boolean> {
+export async function waitReady(
+  sockPath: string,
+  timeoutMs: number,
+  o: ReadyOptions = {},
+): Promise<boolean> {
   return (await untilReady(sockPath, timeoutMs, o)) === "ready"
 }
 
 export type Readiness = "ready" | "timeout" | "no-logon"
 
 export interface ReadyOptions {
-  /**
-   * Answer "no-logon" once the guest has been up and answering, with no one
-   * logged on, for this long (after any repair). Unset: wait out the timeout.
-   */
   readonly noLogonMs?: number
   readonly log?: (line: string) => void
-  /** Injectable for tests. */
   readonly waitFor?: (sockPath: string, timeoutMs: number) => Promise<boolean>
-  /** The logged-on user ("" for none), or null when the guest could not be asked within timeoutMs. */
-  readonly loggedOnUser?: (sockPath: string, timeoutMs: number) => Promise<string | null>
-  /** The longest one "who is logged on" probe may take before it is asked again. */
+  readonly loggedOnUser?: (
+    sockPath: string,
+    timeoutMs: number,
+  ) => Promise<string | null>
   readonly probeMs?: number
-  /** Repair a broken audit-mode logon if that is what this is; true when it did (and restarted). */
   readonly repairAudit?: (sockPath: string) => Promise<boolean>
   readonly pollMs?: number
   readonly repairAfterMs?: number
 }
 
-/** How long a reachable guest may sit with no one logged on before the audit repair is tried. */
 export const REPAIR_AFTER_MS = 45_000
 
-/**
- * The longest one "who is logged on" probe may take. guest-get-users answers
- * in milliseconds and the PowerShell fallback in a few seconds; a probe still
- * running after this is stuck, and is asked again rather than allowed to use
- * up the caller's wait (#10).
- */
 export const PROBE_MS = 15_000
 const MAX_REPAIRS = 2
 
-/** waitReady, saying why it stopped: and repairing a broken audit-mode logon on the way. */
-export async function untilReady(sockPath: string, timeoutMs: number, o: ReadyOptions = {}): Promise<Readiness> {
+export async function untilReady(
+  sockPath: string,
+  timeoutMs: number,
+  o: ReadyOptions = {},
+): Promise<Readiness> {
   const deadline = Date.now() + timeoutMs
   if (!(await (o.waitFor ?? waitFor)(sockPath, timeoutMs))) return "timeout"
   const user = o.loggedOnUser ?? loggedOnUser
@@ -268,16 +210,18 @@ export async function untilReady(sockPath: string, timeoutMs: number, o: ReadyOp
   let repairs = 0
   let slowNoted = false
   while (Date.now() < deadline) {
-    const probe = Math.max(1, Math.min(o.probeMs ?? PROBE_MS, deadline - Date.now()))
+    const probe = Math.max(
+      1,
+      Math.min(o.probeMs ?? PROBE_MS, deadline - Date.now()),
+    )
     const asked = Date.now()
     const u = await user(sockPath, probe)
     if (u === null && Date.now() - asked >= probe && !slowNoted) {
       slowNoted = true
-      o.log?.(`the guest did not say who is logged on within ${String(Math.round(probe / 1000))} s; asking again`)
+      o.log?.(
+        `the guest did not say who is logged on within ${String(Math.round(probe / 1000))} s; asking again`,
+      )
     }
-    // Matched by SHAPE, not by name: this file knows nothing about which
-    // account a caller's answer file creates, only that OOBE's own temporary
-    // one is `defaultuser<n>`.
     if (u !== null && u !== "" && !/\\defaultuser\d+$/i.test(u)) return "ready"
     if (u === "") {
       emptySince ??= Date.now()
@@ -286,40 +230,53 @@ export async function untilReady(sockPath: string, timeoutMs: number, o: ReadyOp
         checked = true
         if (await repair(sockPath).catch(() => false)) {
           repairs++
-          o.log?.("no one had logged on: audit mode had been interrupted; restored it and restarted the guest")
+          o.log?.(
+            "no one had logged on: audit mode had been interrupted; restored it and restarted the guest",
+          )
           emptySince = null
           checked = false
         }
       }
-      if (emptySince !== null && o.noLogonMs !== undefined && Date.now() - emptySince >= o.noLogonMs) return "no-logon"
+      if (
+        emptySince !== null &&
+        o.noLogonMs !== undefined &&
+        Date.now() - emptySince >= o.noLogonMs
+      )
+        return "no-logon"
     } else if (u !== null) {
-      emptySince = null // OOBE's own account: still starting, not stuck
+      emptySince = null
     }
     await new Promise((r) => setTimeout(r, o.pollMs ?? 5000))
   }
   return "timeout"
 }
 
-/**
- * Who is logged on, as DOMAIN\user ("" for no one), or null when the guest
- * could not be asked within timeoutMs.
- *
- * Asks qemu-ga itself (guest-get-users), which starts nothing in the guest.
- * Only an agent without that command gets a PowerShell query of
- * Win32_ComputerSystem.UserName, bounded the same way: a PowerShell that never
- * exits once used up a whole reboot's wait (#10).
- */
-export async function loggedOnUser(sockPath: string, timeoutMs = PROBE_MS): Promise<string | null> {
+export async function loggedOnUser(
+  sockPath: string,
+  timeoutMs = PROBE_MS,
+): Promise<string | null> {
   try {
     const r = await call(sockPath, { execute: "guest-get-users" }, timeoutMs)
-    if (Array.isArray(r["return"])) return pickUser(r["return"] as readonly GuestUser[])
-    if ((r["error"] as { class?: string } | undefined)?.class !== "CommandNotFound") return null
+    if (Array.isArray(r.return))
+      return pickUser(r.return as readonly GuestUser[])
+    if (
+      (r.error as { class?: string } | undefined)?.class !== "CommandNotFound"
+    )
+      return null
   } catch {
-    // The agent drops in and out across OOBE's reboots; keep asking.
     return null
   }
   try {
-    const r = await exec(sockPath, POWERSHELL, ["-NoProfile", "-Command", "(Get-CimInstance Win32_ComputerSystem).UserName"], timeoutMs)
+    const r = await exec(
+      sockPath,
+      POWERSHELL,
+      [
+        "-NoProfile",
+        "-Command",
+        "(Get-CimInstance Win32_ComputerSystem).UserName",
+      ],
+      timeoutMs,
+    )
     return r.stdout.trim()
   } catch {
     return null
@@ -331,41 +288,20 @@ interface GuestUser {
   readonly domain?: string
 }
 
-/** The account that counts as logged on: any but OOBE's own defaultuser<n> if there is one. */
 function pickUser(users: readonly GuestUser[]): string {
   const names = users
     .filter((u) => typeof u.user === "string" && u.user !== "")
-    .map((u) => (u.domain === undefined || u.domain === "" ? (u.user ?? "") : `${u.domain}\\${u.user ?? ""}`))
+    .map((u) =>
+      u.domain === undefined || u.domain === ""
+        ? (u.user ?? "")
+        : `${u.domain}\\${u.user ?? ""}`,
+    )
   return names.find((n) => !/\\defaultuser\d+$/i.test(n)) ?? names[0] ?? ""
 }
 
-/**
- * AN AUDIT-MODE BOOT KILLED HALF-WAY NEVER LOGS ON AGAIN, unless repaired.
- *
- * Each audit-mode boot Windows runs HKLM\SYSTEM\Setup CmdLine (windeploy.exe),
- * which clears it and OOBEInProgress; audit.exe then enables the built-in
- * Administrator with a fresh password, logs it on, and writes the values back
- * for the next boot; the account is disabled again after logon. Kill the guest
- * in that window (a runner timing out, `winvm kill`) and they stay cleared: the
- * next boot runs nothing, the auto-logon meets "Your account has been
- * disabled", and nobody ever logs on. Measured: two kills 14 s and 18 s into
- * boot did it, and the instance stayed at that screen across restarts.
- *
- * Not fixable from inside the guest with what Windows offers before a logon:
- * Task Scheduler queues every task while setup is unfinished (measured: an
- * "At startup" SYSTEM task stayed Queued in exactly this state), and a static
- * Winlogon AutoAdminLogon cannot work because audit mode disables the account
- * and changes its password every boot. qemu-ga runs as SYSTEM before any
- * logon, so the host repairs it: write back what windeploy would have, and
- * restart. Measured: the next boot ran windeploy and reached the desktop.
- *
- * Only when the signature is exact: AuditBoot=1, CmdLine not windeploy (empty
- * after a kill; anything else is no better), and neither windeploy nor audit
- * running (that is a healthy boot, mid-way).
- */
 export const AUDIT_REPAIR_PS = [
   "$k = 'HKLM:\\SYSTEM\\Setup'",
-  "$audit = (Get-ItemProperty \"$k\\Status\" -ErrorAction SilentlyContinue).AuditBoot",
+  '$audit = (Get-ItemProperty "$k\\Status" -ErrorAction SilentlyContinue).AuditBoot',
   "$cmd = (Get-ItemProperty $k).CmdLine",
   "if ($audit -ne 1 -or $cmd -match 'windeploy\\.exe$' -or (Get-Process windeploy, audit -ErrorAction SilentlyContinue)) { 'healthy'; exit 0 }",
   "Set-ItemProperty $k -Name CmdLine -Value 'C:\\WINDOWS\\system32\\oobe\\windeploy.exe' -Type String",
@@ -373,69 +309,79 @@ export const AUDIT_REPAIR_PS = [
   "Set-ItemProperty $k -Name SetupType -Value 2 -Type DWord",
   "Set-ItemProperty $k -Name SetupPhase -Value 4 -Type DWord",
   "'repaired'",
-  // A moment's grace, so this command's own result gets back to the host.
   "shutdown.exe /r /t 3 /f",
 ].join("\n")
 
 async function repairAudit(sockPath: string): Promise<boolean> {
   const encoded = Buffer.from(AUDIT_REPAIR_PS, "utf16le").toString("base64")
-  const r = await exec(sockPath, POWERSHELL, ["-NoProfile", "-NonInteractive", "-EncodedCommand", encoded])
+  const r = await exec(sockPath, POWERSHELL, [
+    "-NoProfile",
+    "-NonInteractive",
+    "-EncodedCommand",
+    encoded,
+  ])
   return r.stdout.includes("repaired")
 }
 
-const POWERSHELL = "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe"
+const POWERSHELL =
+  "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe"
 
-/**
- * After a rewind: the restored guest is already past OOBE (a snapshot can only
- * be taken once `waitReady` passed), so all that matters is that the agent is
- * serving commands again. `waitReady`'s PowerShell + CIM probe costs ~20 s per
- * try on ARM64; one `cmd /c echo` costs ~2 s. The nonce makes sure the answer
- * came from a command started after the restore, not a reply left over from
- * before it.
- */
-export async function waitResponsive(sockPath: string, timeoutMs: number): Promise<boolean> {
+export async function waitResponsive(
+  sockPath: string,
+  timeoutMs: number,
+): Promise<boolean> {
   const deadline = Date.now() + timeoutMs
   if (!(await waitFor(sockPath, timeoutMs))) return false
   const nonce = `winvm-${String(Date.now())}-${String(Math.random()).slice(2, 8)}`
   while (Date.now() < deadline) {
     try {
-      const r = await exec(sockPath, "C:\\Windows\\System32\\cmd.exe", ["/c", "echo", nonce])
+      const r = await exec(sockPath, "C:\\Windows\\System32\\cmd.exe", [
+        "/c",
+        "echo",
+        nonce,
+      ])
       if (r.stdout.includes(nonce)) return true
-    } catch {
-      // The agent reconnects after the restore; keep asking.
-    }
+    } catch {}
     await new Promise((r) => setTimeout(r, 250))
   }
   return false
 }
 
-/**
- * `guest-exec` starts a process and returns immediately; the output is only
- * available once `guest-exec-status` reports it exited, so this polls. Output
- * arrives base64-encoded.
- */
-export async function exec(sockPath: string, path: string, args: readonly string[], timeoutMs = 900_000): Promise<ExecResult> {
+export async function exec(
+  sockPath: string,
+  path: string,
+  args: readonly string[],
+  timeoutMs = 900_000,
+): Promise<ExecResult> {
   const started = await call(sockPath, {
     execute: "guest-exec",
     arguments: { path, arg: [...args], "capture-output": true },
   })
-  const pid = (started["return"] as { pid?: number } | undefined)?.pid
-  if (pid === undefined) throw new Error(`guest-exec failed: ${JSON.stringify(started)}`)
+  const pid = (started.return as { pid?: number } | undefined)?.pid
+  if (pid === undefined)
+    throw new Error(`guest-exec failed: ${JSON.stringify(started)}`)
 
   const deadline = Date.now() + timeoutMs
-  // Poll fast first, then back off: most commands finish in well under a
-  // second, and a fixed 1 s poll made every exec cost at least that (measured:
-  // `cmd /c echo` 1.06 s at 1 s, 75-190 ms at 25 ms). Long commands settle at
-  // 500 ms so a 15-minute install doesn't hammer the agent.
   let pollMs = 25
   while (Date.now() < deadline) {
-    const st = (await call(sockPath, { execute: "guest-exec-status", arguments: { pid } }))["return"] as
-      | { exited?: boolean; exitcode?: number; "out-data"?: string; "err-data"?: string }
+    const st = (
+      await call(sockPath, { execute: "guest-exec-status", arguments: { pid } })
+    ).return as
+      | {
+          exited?: boolean
+          exitcode?: number
+          "out-data"?: string
+          "err-data"?: string
+        }
       | undefined
     if (st?.exited === true) {
       const dec = (s: string | undefined): string =>
         s === undefined ? "" : Buffer.from(s, "base64").toString("utf8")
-      return { exitcode: st.exitcode ?? 0, stdout: dec(st["out-data"]), stderr: dec(st["err-data"]) }
+      return {
+        exitcode: st.exitcode ?? 0,
+        stdout: dec(st["out-data"]),
+        stderr: dec(st["err-data"]),
+      }
     }
     await new Promise((r) => setTimeout(r, pollMs))
     pollMs = Math.min(pollMs * 2, 500)
@@ -443,28 +389,49 @@ export async function exec(sockPath: string, path: string, args: readonly string
   throw new Error("guest command timed out")
 }
 
-/** Ask the guest to power down. The socket drops as it goes; that is success. */
-export async function shutdown(sockPath: string): Promise<void> {
+async function requestShutdown(
+  sockPath: string,
+  mode: "powerdown" | "reboot",
+  timeoutMs: number,
+): Promise<void> {
+  const what =
+    mode === "powerdown" ? "guest-shutdown" : `guest-shutdown (${mode})`
+  let reply: Record<string, unknown>
   try {
-    await call(sockPath, { execute: "guest-shutdown", arguments: { mode: "powerdown" } }, 5000)
-  } catch {
-    // Expected: the agent stops answering mid-request.
+    reply = await call(
+      sockPath,
+      { execute: "guest-shutdown", arguments: { mode } },
+      timeoutMs,
+    )
+  } catch (error) {
+    if (error instanceof AgentTimeout && error.sent) return
+    if (error instanceof AgentTimeout)
+      throw new Error(`${what} was not sent: the guest agent did not answer`, {
+        cause: error,
+      })
+    throw error
   }
+  const refusal = reply.error as { desc?: unknown } | undefined
+  if (refusal !== undefined)
+    throw new Error(
+      `${what}: ${typeof refusal.desc === "string" ? refusal.desc : JSON.stringify(refusal)}`,
+    )
 }
 
-/** Ask Windows to restart. As with shutdown, the socket dropping is success. */
-export async function reboot(sockPath: string): Promise<void> {
-  try {
-    await call(sockPath, { execute: "guest-shutdown", arguments: { mode: "reboot" } }, 5000)
-  } catch {
-    // Expected: the agent stops answering mid-request.
-  }
+export async function shutdown(
+  sockPath: string,
+  timeoutMs = 5000,
+): Promise<void> {
+  await requestShutdown(sockPath, "powerdown", timeoutMs)
 }
 
-/**
- * Win32_OperatingSystem.LastBootUpTime, which tells one boot from the next;
- * null when qemu-ga could not be asked.
- */
+export async function reboot(
+  sockPath: string,
+  timeoutMs = 5000,
+): Promise<void> {
+  await requestShutdown(sockPath, "reboot", timeoutMs)
+}
+
 export async function bootTime(sockPath: string): Promise<string | null> {
   try {
     const r = await exec(sockPath, POWERSHELL, [
@@ -480,18 +447,21 @@ export async function bootTime(sockPath: string): Promise<string | null> {
 }
 
 export interface NewBootOptions extends ReadyOptions {
-  /** Injectable for tests. */
   readonly bootTime?: (sockPath: string) => Promise<string | null>
-  readonly untilReady?: (sockPath: string, timeoutMs: number, o: ReadyOptions) => Promise<Readiness>
+  readonly untilReady?: (
+    sockPath: string,
+    timeoutMs: number,
+    o: ReadyOptions,
+  ) => Promise<Readiness>
   readonly settleMs?: number
 }
 
-/**
- * untilReady for a boot OTHER than `before` (a LastBootUpTime). After a
- * restart is asked for, the old boot goes on answering — logged on and all —
- * until Windows gets round to stopping, so plain readiness says nothing.
- */
-export async function untilNewBoot(sockPath: string, before: string, timeoutMs: number, o: NewBootOptions = {}): Promise<Readiness> {
+export async function untilNewBoot(
+  sockPath: string,
+  before: string,
+  timeoutMs: number,
+  o: NewBootOptions = {},
+): Promise<Readiness> {
   const deadline = Date.now() + timeoutMs
   const ready = o.untilReady ?? untilReady
   const boot = o.bootTime ?? bootTime
@@ -500,41 +470,29 @@ export async function untilNewBoot(sockPath: string, before: string, timeoutMs: 
     if (r !== "ready") return r
     const now = await boot(sockPath)
     if (now !== null && now !== before) return "ready"
-    await new Promise((res) => setTimeout(res, o.settleMs ?? 2000)) // still the old boot, on its way down
+    await new Promise((res) => setTimeout(res, o.settleMs ?? 2000))
   }
   return "timeout"
 }
 
-/**
- * guest-file-read's count. KEPT WELL UNDER WHAT THE AGENT CAN ANSWER: measured
- * against qemu-ga on the Windows 11 ARM64 guest, a read of 1,900,000 bytes
- * comes back in ~15 ms and one of 1,950,000 never comes back at all — no
- * reply, no error, while the file position still advances past the data. A
- * count of 4 MiB therefore hung every read of a file larger than about 1.9 MB.
- * Smaller is slower — each chunk is a round trip; 6 MiB took ~0.7 s at 1 MiB,
- * ~1.1 s at 512 KiB, ~2.3 s at 256 KiB — so this keeps a wide margin under the
- * ceiling without paying much for it.
- */
 export const READ_CHUNK = 512 * 1024
 const MIN_READ_CHUNK = 16 * 1024
 
 export interface ReadOptions {
   readonly chunk?: number
-  /** Per guest-file-read. A chunk is milliseconds of work; waiting longer only delays the recovery below. */
   readonly chunkTimeoutMs?: number
 }
 
-/**
- * Read a guest file whole, in chunks. Null if it cannot be opened.
- *
- * A chunk whose reply never arrives is retried smaller, after seeking back:
- * the guest moved its file position whether or not the reply made it, so a
- * plain retry would silently skip that data. That covers a guest whose ceiling
- * sits lower than the one measured above.
- */
-export async function readFile(sockPath: string, guestPath: string, o: ReadOptions = {}): Promise<Buffer | null> {
-  const open = await call(sockPath, { execute: "guest-file-open", arguments: { path: guestPath, mode: "rb" } })
-  const handle = open["return"]
+export async function readFile(
+  sockPath: string,
+  guestPath: string,
+  o: ReadOptions = {},
+): Promise<Buffer | null> {
+  const open = await call(sockPath, {
+    execute: "guest-file-open",
+    arguments: { path: guestPath, mode: "rb" },
+  })
+  const handle = open.return
   if (typeof handle !== "number") return null
   const parts: Buffer[] = []
   let offset = 0
@@ -543,23 +501,42 @@ export async function readFile(sockPath: string, guestPath: string, o: ReadOptio
     for (;;) {
       let r: Record<string, unknown>
       try {
-        r = await call(sockPath, { execute: "guest-file-read", arguments: { handle, count } }, o.chunkTimeoutMs ?? 15_000)
+        r = await call(
+          sockPath,
+          { execute: "guest-file-read", arguments: { handle, count } },
+          o.chunkTimeoutMs ?? 15_000,
+        )
       } catch (error) {
-        if (!(error instanceof AgentTimeout) || count <= MIN_READ_CHUNK) throw error
-        const seek = await call(sockPath, { execute: "guest-file-seek", arguments: { handle, offset, whence: "set" } })
-        if (seek["error"] !== undefined) throw new Error(`guest-file-seek ${guestPath}: ${JSON.stringify(seek["error"])}`)
+        if (!(error instanceof AgentTimeout) || count <= MIN_READ_CHUNK)
+          throw error
+        const seek = await call(sockPath, {
+          execute: "guest-file-seek",
+          arguments: { handle, offset, whence: "set" },
+        })
+        if (seek.error !== undefined)
+          throw new Error(
+            `guest-file-seek ${guestPath}: ${JSON.stringify(seek.error)}`,
+          )
         count = Math.max(MIN_READ_CHUNK, Math.floor(count / 2))
         continue
       }
-      const ret = r["return"] as { "buf-b64"?: string; count?: number; eof?: boolean } | undefined
-      if (ret === undefined) throw new Error(`guest-file-read ${guestPath}: ${JSON.stringify(r["error"] ?? r)}`)
+      const ret = r.return as
+        | { "buf-b64"?: string; count?: number; eof?: boolean }
+        | undefined
+      if (ret === undefined)
+        throw new Error(
+          `guest-file-read ${guestPath}: ${JSON.stringify(r.error ?? r)}`,
+        )
       const bytes = Buffer.from(ret["buf-b64"] ?? "", "base64")
       parts.push(bytes)
       offset += bytes.length
       if (ret.eof === true || bytes.length === 0) break
     }
   } finally {
-    await call(sockPath, { execute: "guest-file-close", arguments: { handle } }).catch(() => undefined)
+    await call(sockPath, {
+      execute: "guest-file-close",
+      arguments: { handle },
+    }).catch(() => undefined)
   }
   return Buffer.concat(parts)
 }

@@ -1,36 +1,5 @@
-# Provisioning for the winvm Windows 11 ARM64 guest.
-#
-# Runs once, at the END OF SETUP, via C:\Windows\Setup\Scripts\SetupComplete.cmd
-# -- which Windows executes as SYSTEM before any user logs on. The answer file's
-# specialize pass copies this script and that wrapper into place.
-#
-# NOT FirstLogonCommands: that needs a user session, runs unelevated (so the
-# guest-tools installer raises a UAC dialog nobody can answer), and on 25H2 is
-# silently suppressed by the deprecated Skip*OOBE settings. All three failures
-# look identical from outside -- the desktop appears and nothing has run.
-#
-# THIS SCRIPT KNOWS NOTHING ABOUT ANY PARTICULAR PROJECT. It installs the guest
-# tools, then stages whatever the caller put in the seed's `payload\` directory:
-# every .zip is expanded into C:\payload\<name>, and if a `setup.ps1` is present
-# it is run afterwards. That is the whole contract. A consumer that wants Bun
-# passes a Bun zip; one that wants something else passes something else.
-#
-# WHY IT SEARCHES FOR VOLUMES INSTEAD OF USING DRIVE LETTERS.
-#
-# The VM attaches several removable volumes plus an NVMe disk, and Windows
-# assigns letters by enumeration order — a property of the QEMU command line,
-# not a contract. UTM's own answer file hard-codes
-# `E:\utm-guest-tools-0.1.271.exe` and so breaks both when device order shifts
-# AND when the tools version bumps. Searching by a file that identifies the
-# volume costs three lines and removes both failure modes.
-
 $ErrorActionPreference = "Stop"
 
-# IDEMPOTENT BY DESIGN. Two documented hooks invoke this script — SetupComplete.cmd
-# (once, at the end of Setup) and the answer file's auditUser pass (each time the
-# machine enters audit mode). Whichever runs first does the work; every later
-# invocation returns here immediately. Without this guard, audit mode would
-# reinstall the guest tools and re-expand the payload on every single boot.
 $Done = "C:\winvm-provisioned.txt"
 if (Test-Path $Done) {
     Write-Output "already provisioned on $(Get-Content $Done -Raw); nothing to do"
@@ -45,12 +14,8 @@ function Find-VolumeContaining {
     return $null
 }
 
-# Diagnostic only. Several volumes carry a copy of this script, so this is NOT
-# a reliable way to find the seed -- see the payload section below.
 $seed = Find-VolumeContaining -RelativePath "provision.ps1"
 
-# The RESULT volume is a separate writable FAT image: the seed is an ISO and
-# cannot carry anything back out. Found by label, for the same reason as above.
 $resultVolume = Get-Volume | Where-Object { $_.FileSystemLabel -eq "MAXRESULT" } | Select-Object -First 1
 if (-not $resultVolume) { throw "result volume MAXRESULT not found" }
 $resultDir = "$($resultVolume.DriveLetter):\"
@@ -65,16 +30,6 @@ function Write-Result {
 try {
     Write-Output "seed=$seed result=$resultDir arch=$env:PROCESSOR_ARCHITECTURE"
 
-    # --- 1. Guest tools: vioserial + NetKVM + qemu-ga -------------------------
-    #
-    # THE STEP THAT MAKES THIS VM USEFUL. qemu-ga rides vioserial and gives the
-    # host `guest-exec` (run a command, capture stdout/stderr and the exit code)
-    # with no SSH, no open port and no Apple Events. NetKVM is the only way this
-    # guest gets a working NIC: Windows 11 ARM64 has no in-box virtio-net driver.
-    #
-    # The drivers are Fedora's virtio-win ARM64 builds, WHQL-signed by
-    # `Microsoft Windows Hardware Compatibility Publisher`, so they load on a
-    # stock install with no test-signing.
     $tools = Find-VolumeContaining -RelativePath "Drivers\vioserial\w11\ARM64\vioser.inf"
     if ($tools) {
         $installer = Get-ChildItem -Path "$tools\utm-guest-tools-*.exe" -ErrorAction SilentlyContinue |
@@ -90,28 +45,12 @@ try {
         Write-Output "WARNING: guest tools volume not found - no agent and no network"
     }
 
-    # --- 2. Stage the caller's payload ---------------------------------------
-    #
-    # The payload volume is located by looking for the `payload` DIRECTORY, not
-    # by assuming it sits next to this script.
-    #
-    # This script runs from C:\Windows\Setup\Scripts (copied there by the
-    # answer file's specialize pass), and copies of it also exist on the seed
-    # ISO and on the writable result volume — so "the volume containing
-    # provision.ps1" is genuinely ambiguous and picked the wrong one, silently
-    # staging nothing. The payload directory only ever exists on the seed.
-    #
-    # Payloads are shipped on the seed rather than downloaded, so what runs is
-    # exactly what the caller pinned rather than whatever an installer resolves
-    # on the day. It also does not depend on the NIC, whose driver has only just
-    # been installed above.
     $payloadRoot = "C:\payload"
     New-Item -ItemType Directory -Force -Path $payloadRoot | Out-Null
 
     $payloadSource = $null
     foreach ($name in (Get-PSDrive -PSProvider FileSystem).Name) {
         $candidate = "${name}:\payload"
-        # Skip the destination itself, which this script just created.
         if ($candidate -eq $payloadRoot) { continue }
         if ((Test-Path $candidate) -and (Get-ChildItem $candidate -ErrorAction SilentlyContinue)) {
             $payloadSource = $candidate
@@ -133,8 +72,6 @@ try {
     }
     Write-Result -Name "payload.txt" -Content ($staged -join "`n")
 
-    # Put every directory containing an executable on the machine PATH, so a
-    # later `winvm exec` finds tools without knowing this layout.
     $binDirs = Get-ChildItem -Path $payloadRoot -Recurse -Filter *.exe -ErrorAction SilentlyContinue |
         ForEach-Object { $_.DirectoryName } | Sort-Object -Unique
     if ($binDirs) {
@@ -146,19 +83,12 @@ try {
         Write-Output "PATH += $($binDirs -join '; ')"
     }
 
-    # --- 3. Caller-supplied setup, if any ------------------------------------
     $setup = Join-Path $payloadRoot "setup.ps1"
     if (Test-Path $setup) {
         Write-Output "running payload setup.ps1"
         & $setup
     }
 
-    # --- 3a. PowerShell 7 ------------------------------------------------------
-    #
-    # Native ARM64, so it starts several times faster than Windows PowerShell 5.1
-    # and is what a harness should script this guest with. Shipped on the seed
-    # (`winvm\`) by the host, pinned by digest, so nothing is fetched in-guest.
-    # A warning rather than a failure: the image is still a working guest.
     $extras = Find-VolumeContaining -RelativePath "winvm\PowerShell-win-arm64.msi"
     if ($extras) {
         $msi = "$extras\winvm\PowerShell-win-arm64.msi"
@@ -166,7 +96,6 @@ try {
             "USE_MU=0 ENABLE_MU=0 DISABLE_TELEMETRY=1"
         $p = Start-Process -FilePath msiexec.exe -ArgumentList $msiArgs -Wait -PassThru
         Write-Output "PowerShell 7 msiexec exit: $($p.ExitCode)"
-        # Its update check prints a banner and phones home on interactive starts.
         [Environment]::SetEnvironmentVariable("POWERSHELL_UPDATECHECK", "Off", "Machine")
         [Environment]::SetEnvironmentVariable("POWERSHELL_TELEMETRY_OPTOUT", "1", "Machine")
         $pwsh = "C:\Program Files\PowerShell\7\pwsh.exe"
@@ -175,20 +104,6 @@ try {
         Write-Output "WARNING: no winvm\PowerShell-win-arm64.msi on any volume - no PowerShell 7"
     }
 
-    # --- 3b. Quiet: nothing in the background that a test did not start ------
-    #
-    # A fixture whose idle guest burns CPU makes every timing it produces noisy,
-    # and one that reboots for updates or reindexes the disk mid-test makes them
-    # wrong. Measured on this guest: QEMU at 6.7% of 4 vCPUs idle before, 1.1%
-    # after. MACHINE-WIDE ONLY: per-user (HKCU) settings belong to the logged-on
-    # account, which this script may not be running as -- logon.ps1 does those.
-    #
-    # Defender is deliberately absent. Tamper Protection reverts, and AMSI
-    # blocks, any script that tries to switch it off -- including THIS one, which
-    # would then fail as a whole. Its exclusions live in defender.ps1.
-    #
-    # Each step is independent and reported; one refusal (WaaSMedicSvc is
-    # protected, for example) must not cost the rest.
     function Step([string] $Name, [scriptblock] $Body) {
         try { & $Body 2>&1 | Out-Null; Write-Output "quiet: ok   $Name" }
         catch { Write-Output "quiet: FAIL $Name : $($_.Exception.Message)" }
@@ -245,10 +160,14 @@ try {
         powercfg.exe /setactive 8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c
         powercfg.exe /change hibernate-timeout-ac 0
     }
-    # A guest hard-killed mid-boot (a runner timing out, `winvm kill`) otherwise
-    # comes back in Windows Recovery, where qemu-ga never starts and `start`
-    # waits out its timeout. "{default}" is quoted: bare braces are a script
-    # block to PowerShell.
+    Step "power button: shut down" {
+        powercfg.exe /setacvalueindex SCHEME_CURRENT SUB_BUTTONS PBUTTONACTION 3
+        if ($LASTEXITCODE -ne 0) { throw "powercfg setacvalueindex exit $LASTEXITCODE" }
+        powercfg.exe /setdcvalueindex SCHEME_CURRENT SUB_BUTTONS PBUTTONACTION 3
+        if ($LASTEXITCODE -ne 0) { throw "powercfg setdcvalueindex exit $LASTEXITCODE" }
+        powercfg.exe /setactive SCHEME_CURRENT
+        if ($LASTEXITCODE -ne 0) { throw "powercfg setactive exit $LASTEXITCODE" }
+    }
     Step "boot: no recovery environment after a failed boot" {
         bcdedit.exe /set "{default}" recoveryenabled No
         if ($LASTEXITCODE -ne 0) { throw "bcdedit recoveryenabled exit $LASTEXITCODE" }
@@ -260,11 +179,6 @@ try {
         fsutil.exe 8dot3name set C: 1
     }
 
-    # --- 3c. Defender exclusions, from their own script ----------------------
-    #
-    # A child process running a SEPARATE file, because AMSI judges a script by
-    # its whole text: Defender-touching lines in here would get all of
-    # provision.ps1 blocked, not just themselves. See defender.ps1.
     $extras = Find-VolumeContaining -RelativePath "winvm\defender.ps1"
     if ($extras) {
         & powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$extras\winvm\defender.ps1"
@@ -273,12 +187,6 @@ try {
         Write-Output "WARNING: no winvm\defender.ps1 on any volume - no Defender exclusions"
     }
 
-    # --- 3d. Every logon: per-user settings, and close the Sysprep dialog ------
-    #
-    # An HKLM Run entry, NOT a scheduled task: audit mode keeps OOBEInProgress=1
-    # and Task Scheduler runs nothing while it is set. Under `conhost --headless`
-    # so no console window flashes up on the desktop. See logon.ps1 for what it
-    # does and why it has to be at logon.
     $extras = Find-VolumeContaining -RelativePath "winvm\logon.ps1"
     if ($extras) {
         $winvmDir = "C:\ProgramData\winvm"
@@ -292,30 +200,15 @@ try {
         Write-Output "WARNING: no winvm\logon.ps1 on any volume - the Sysprep dialog will stay open"
     }
 
-    # --- 3e. The in-guest agent, baked in ------------------------------------
-    #
-    # Installed now, with -NoStart and no token, so every instance of the image
-    # has it at its first logon and the host only writes a token (agent.ensure)
-    # instead of staging files and compiling over qemu-ga. The host ships the
-    # agent, its bun.exe and runinsession.cs under `winvm\`. A warning rather
-    # than a failure: without it the host installs the agent on first use.
     $extras = Find-VolumeContaining -RelativePath "winvm\agent-install.ps1"
     if ($extras) {
         & powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$extras\winvm\agent-install.ps1" -Source "$extras\winvm" -NoStart
         Write-Output "agent-install.ps1 exit: $LASTEXITCODE"
-        # Copied off an ISO, so read-only; nothing needs them to be.
         Get-ChildItem "C:\ProgramData\winvm\agent" -File -ErrorAction SilentlyContinue | ForEach-Object { $_.IsReadOnly = $false }
     } else {
         Write-Output "WARNING: no winvm\agent-install.ps1 on any volume - the agent installs on first use"
     }
 
-    # --- 3e2. The shared folder: viofs and WinFsp -----------------------------
-    #
-    # The build runs on ramfb with the virtio-fs device attached, so viofs is
-    # bound to the device here, where no virtio-gpu driver runs: binding it
-    # under virtio-gpu bugchecks Windows (see viofs-install.ps1). Instances
-    # then find the device installed. Optional: an image without it gets it
-    # from `winvm share install`.
     $extras = Find-VolumeContaining -RelativePath "winvm\viofs\viofs-install.ps1"
     if ($extras) {
         & powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$extras\winvm\viofs\viofs-install.ps1" -Source "$extras\winvm\viofs"
@@ -325,19 +218,6 @@ try {
         Write-Output "no winvm\viofs on any volume - no shared folder in this image (winvm share install adds it)"
     }
 
-    # --- 3f. .NET native images -----------------------------------------------
-    #
-    # AUDIT MODE NEVER RUNS THE NGEN QUEUE. Windows ships the .NET Framework with
-    # its native-image compilation QUEUED, and leaves the work to the scheduled
-    # ".NET Framework NGEN" tasks. Audit mode keeps OOBEInProgress=1, and with that
-    # set Task Scheduler never runs anything -- so on this guest the queue is
-    # simply never drained, and every PowerShell 5.1 start JITs
-    # System.Management.Automation from IL. Measured: draining it here makes
-    # `powershell -c 1` start 4-5x faster.
-    #
-    # Both frameworks, because both get used: FrameworkArm64 by native processes,
-    # Framework64 by x64 ones -- and qemu-ga is the x64 build, so everything
-    # `winvm exec` runs starts life under Prism emulation.
     foreach ($fw in "Framework64", "FrameworkArm64") {
         $ngen = "C:\Windows\Microsoft.NET\$fw\v4.0.30319\ngen.exe"
         if (-not (Test-Path $ngen)) { Write-Output "ngen: no $fw"; continue }
@@ -346,17 +226,6 @@ try {
         Write-Output "ngen $fw executeQueuedItems: exit $LASTEXITCODE in $([int]$sw.Elapsed.TotalSeconds)s"
     }
 
-    # --- 4. Confirm viostor came out boot-start ------------------------------
-    #
-    # The build attaches a scratch virtio-blk disk purely so PnP installs
-    # viostor from the DriverStore and marks it boot-start (Start=0). That is
-    # what lets instances run their boot disk on virtio-blk, which QEMU requires
-    # for live snapshots -- the nvme device model has no migration support, so
-    # `savevm` refuses outright.
-    #
-    # Reported, NOT thrown: an image without it is still a working Windows
-    # guest, just one that cannot be snapshotted. The host records the answer on
-    # the image so instances know which bus to boot.
     $viostor = Get-ItemProperty "HKLM:\SYSTEM\CurrentControlSet\Services\viostor" -ErrorAction SilentlyContinue
     if ($viostor -and $viostor.Start -eq 0) {
         Write-Output "viostor is boot-start: this image can boot on virtio-blk"
@@ -367,21 +236,11 @@ try {
         Write-Result -Name "virtio.txt" -Content "no"
     }
 
-    # --- 5. Audit mode housekeeping ------------------------------------------
-    #
-    # Microsoft, on audit mode: "If a password-protected screen saver starts
-    # when you are in audit mode, you cannot log back on to the system. The
-    # built-in administrator account that is used to log on to audit mode is
-    # immediately disabled after logon." A long-lived VM would eventually lock
-    # itself out of its own desktop, so turn the screen saver off outright.
     # <https://learn.microsoft.com/en-us/windows-hardware/manufacture/desktop/boot-windows-to-audit-mode-or-oobe>
     reg.exe add "HKCU\Control Panel\Desktop" /v ScreenSaveActive /t REG_SZ /d 0 /f | Out-Null
     reg.exe add "HKCU\Control Panel\Desktop" /v ScreenSaverIsSecure /t REG_SZ /d 0 /f | Out-Null
     powercfg.exe /change monitor-timeout-ac 0
     powercfg.exe /change standby-timeout-ac 0
-    # Hibernation off: hiberfil.sys is sized from RAM and would be pure waste in
-    # every overlay. This used to be a FirstLogonCommand, which audit mode does
-    # not run — so it lives here now, with everything else that must happen once.
     powercfg.exe -h off
 
     Set-Content -Path $Done -Value (Get-Date -Format o) -Encoding UTF8
@@ -393,15 +252,4 @@ try {
 } finally {
     Stop-Transcript | Out-Null
 }
-# DELIBERATELY DOES NOT POWER THE MACHINE OFF.
-#
-# This used to end in `Stop-Computer -Force`, so the host could treat the guest
-# vanishing as "build complete". Microsoft is explicit that this is unsafe from
-# a Setup script: "You can't reboot the system and resume running
-# SetupComplete.cmd. You should not reboot the system by adding a command such
-# as shutdown -r. This will put the system in a bad state."
 # <https://learn.microsoft.com/en-us/windows-hardware/manufacture/desktop/add-a-custom-script-to-windows-setup>
-#
-# The host now waits for the guest to become genuinely ready, checks this
-# script's verdict, and shuts the guest down itself through the guest agent —
-# an ordinary, orderly shutdown of a machine that has finished starting.

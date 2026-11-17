@@ -1,18 +1,4 @@
 #!/usr/bin/env bun
-/**
- * Emit a CycloneDX 1.4 SBOM for production npm dependencies and run a
- * license scan. Pure Bun script — no new GitHub Actions / build deps.
- *
- * Usage:
- *
- *   bun scripts/sbom.ts
- *   bun scripts/sbom.ts --root . --root packages/mcp-broker
- *   bun scripts/sbom.ts --output PATH
- *   bun scripts/sbom.ts --no-fail-on-license
- *
- * License allowlist matches the conservative set from the parent PRD.
- * Loosen only with a documented justification in the commit message.
- */
 
 import fs from "node:fs"
 import path from "node:path"
@@ -30,13 +16,9 @@ const ALLOWED_LICENSES = new Set([
   "BlueOak-1.0.0",
   "Python-2.0",
   "WTFPL",
-  // SPDX expressions are split on AND / OR and checked leaf by leaf.
 ])
 
-const LICENSE_ALIASES = new Map([
-  // human-readable-ids@1.0.4 uses this non-SPDX spelling.
-  ["Apache2", "Apache-2.0"],
-])
+const LICENSE_ALIASES = new Map([["Apache2", "Apache-2.0"]])
 
 interface PackageJson {
   name?: string
@@ -62,17 +44,18 @@ interface ScanRow {
   allowed: boolean
 }
 
-function readJson<T>(filePath: string): T | undefined {
+function readJson(filePath: string): unknown {
   try {
-    return JSON.parse(fs.readFileSync(filePath, "utf8")) as T
+    return JSON.parse(fs.readFileSync(filePath, "utf8"))
   } catch {
     return undefined
   }
 }
 
 function normalizeLicense(license: string): string {
-  return license.replace(/\bApache2\b/gu, (value) =>
-    LICENSE_ALIASES.get(value) ?? value,
+  return license.replace(
+    /\bApache2\b/gu,
+    (value) => LICENSE_ALIASES.get(value) ?? value,
   )
 }
 
@@ -81,8 +64,9 @@ function extractLicense(pkg: PackageJson, packageDirectory: string): string {
   if (pkg.license && typeof pkg.license === "object" && pkg.license.type) {
     return normalizeLicense(pkg.license.type)
   }
-  if (pkg.licenses && pkg.licenses.length > 0 && pkg.licenses[0].type) {
-    return normalizeLicense(pkg.licenses[0].type)
+  const firstLicense = pkg.licenses?.[0]
+  if (firstLicense?.type) {
+    return normalizeLicense(firstLicense.type)
   }
 
   for (const fileName of ["LICENSE", "LICENSE.txt", "LICENSE.md"]) {
@@ -91,14 +75,12 @@ function extractLicense(pkg: PackageJson, packageDirectory: string): string {
         .readFileSync(path.join(packageDirectory, fileName), "utf8")
         .slice(0, 16_384)
       if (
-        /^(?:The )?MIT License(?: \(MIT\))?/iu.test(text)
-        && text.includes("Permission is hereby granted, free of charge")
+        /^(?:The )?MIT License(?: \(MIT\))?/iu.test(text) &&
+        text.includes("Permission is hereby granted, free of charge")
       ) {
         return "MIT"
       }
-    } catch {
-      // Try the next conventional license filename.
-    }
+    } catch {}
   }
   return "UNKNOWN"
 }
@@ -115,7 +97,7 @@ function resolveDependencyPackageJson(
   fromDirectory: string,
 ): string | undefined {
   let directory = fromDirectory
-  while (true) {
+  for (;;) {
     const candidate = path.join(directory, "node_modules", name, "package.json")
     try {
       return fs.realpathSync(candidate)
@@ -136,7 +118,10 @@ function collectDependencies(rootDirectories: Array<string>): Array<ScanRow> {
     packageDirectory: string,
   ): void => {
     for (const name of Object.keys(pkg.dependencies ?? {})) {
-      const packageJsonPath = resolveDependencyPackageJson(name, packageDirectory)
+      const packageJsonPath = resolveDependencyPackageJson(
+        name,
+        packageDirectory,
+      )
       if (packageJsonPath) queue.push(packageJsonPath)
       else unresolved.add(name)
     }
@@ -144,15 +129,20 @@ function collectDependencies(rootDirectories: Array<string>): Array<ScanRow> {
 
   for (const rootDirectory of rootDirectories) {
     const absoluteRoot = path.resolve(rootDirectory)
-    const root = readJson<PackageJson>(path.join(absoluteRoot, "package.json"))
+    const root = readJson(path.join(absoluteRoot, "package.json")) as
+      | PackageJson
+      | undefined
     if (!root) throw new Error(`package.json not found under ${rootDirectory}`)
     enqueueDependencies(root, absoluteRoot)
   }
 
   const rows = new Map<string, ScanRow>()
-  while (queue.length > 0) {
-    const packageJsonPath = queue.shift()!
-    const pkg = readJson<PackageJson>(packageJsonPath)
+  for (
+    let packageJsonPath = queue.shift();
+    packageJsonPath !== undefined;
+    packageJsonPath = queue.shift()
+  ) {
+    const pkg = readJson(packageJsonPath) as PackageJson | undefined
     if (!pkg) continue
     const name = pkg.name ?? path.basename(path.dirname(packageJsonPath))
     const version = pkg.version ?? "unknown"
@@ -183,8 +173,8 @@ function collectDependencies(rootDirectories: Array<string>): Array<ScanRow> {
 
   return [...rows.values()].sort(
     (left, right) =>
-      left.name.localeCompare(right.name)
-      || left.version.localeCompare(right.version),
+      left.name.localeCompare(right.name) ||
+      left.version.localeCompare(right.version),
   )
 }
 
@@ -217,51 +207,55 @@ function buildBom(rows: Array<ScanRow>, rootName: string, rootVersion: string) {
   }
 }
 
+function optionValue(argv: Array<string>, index: number): string {
+  const value = argv[index]
+  if (value === undefined)
+    throw new Error(`${String(argv[index - 1])} requires a value`)
+  return value
+}
+
 function parseArgs(argv: Array<string>): {
   output: string
   failOnLicense: boolean
-  roots: Array<string>
+  roots: [string, ...Array<string>]
 } {
   let output = "SBOM.cdx.json"
   let failOnLicense = true
   const roots: Array<string> = []
   for (let index = 0; index < argv.length; index += 1) {
     if (argv[index] === "--output") {
-      output = argv[++index]
+      output = optionValue(argv, ++index)
     } else if (argv[index] === "--root") {
-      roots.push(argv[++index])
+      roots.push(optionValue(argv, ++index))
     } else if (argv[index] === "--no-fail-on-license") {
       failOnLicense = false
     }
   }
+  const [firstRoot, ...otherRoots] = roots
   return {
     output,
     failOnLicense,
-    roots: roots.length === 0 ? ["."] : roots,
+    roots: firstRoot === undefined ? ["."] : [firstRoot, ...otherRoots],
   }
 }
 
 function main(): number {
   const args = parseArgs(process.argv.slice(2))
-  const root = readJson<PackageJson>(
+  const root = readJson(
     path.join(path.resolve(args.roots[0]), "package.json"),
-  )
+  ) as PackageJson | undefined
   if (!root) {
     console.error(`package.json not found under ${args.roots[0]}`)
     return 1
   }
   const rows = collectDependencies(args.roots)
-  const bom = buildBom(
-    rows,
-    root.name ?? "unknown",
-    root.version ?? "0.0.0",
-  )
+  const bom = buildBom(rows, root.name ?? "unknown", root.version ?? "0.0.0")
   fs.writeFileSync(args.output, `${JSON.stringify(bom, null, 2)}\n`)
 
   const denied = rows.filter((row) => !row.allowed)
   console.log(`SBOM written: ${args.output}`)
-  console.log(`Production dependencies scanned: ${rows.length}`)
-  console.log(`Disallowed licenses: ${denied.length}`)
+  console.log(`Production dependencies scanned: ${String(rows.length)}`)
+  console.log(`Disallowed licenses: ${String(denied.length)}`)
   if (denied.length > 0) {
     console.log("")
     console.log("Disallowed:")

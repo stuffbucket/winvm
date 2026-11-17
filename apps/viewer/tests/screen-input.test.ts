@@ -125,9 +125,9 @@ describe("absolute guest pointer ownership", () => {
 // Exercise the exact private noVNC methods and real document capture proxy used
 // by Screen, not a second implementation of their button/timer/capture behavior.
 GlobalRegistrator.register()
-const { default: RFB } = await import("novnc/core/rfb.js")
-const { clientToElement } = await import("novnc/core/util/element.js")
-const { releaseCapture } = await import("novnc/core/util/events.js")
+const { default: RFB } = await import("@winvm/novnc/core/rfb.js")
+const { clientToElement } = await import("@winvm/novnc/core/util/element.js")
+const { releaseCapture } = await import("@winvm/novnc/core/util/events.js")
 
 interface TestPointer extends NoVncPointer {
   _handleMouse(event: MouseEvent): void

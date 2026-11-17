@@ -153,12 +153,11 @@ rules, in order:
 
 ## Empty states
 
-Where a list will be, an `EmptyState` (`components/EmptyState.tsx`,
-`.empty`) says what's missing and how to get it: a title ("No MCP
-servers yet"), a sentence or two, and the one action that fills it if
-the user can take it here. Dashed border, not a card — it holds no
-entity. Don't show an empty state and an error at the same time; the
-error wins.
+Where a list will be, an empty state says what's missing and how to
+get it: a title ("No MCP servers yet"), a sentence or two, and the one
+action that fills it if the user can take it here. Dashed border, not
+a card — it holds no entity. Don't show an empty state and an error at
+the same time; the error wins.
 
 ## Checkbox groups with "All"
 
