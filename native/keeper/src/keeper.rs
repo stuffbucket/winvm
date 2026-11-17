@@ -695,7 +695,7 @@ impl Keeper {
                 fields
             }
             Ok(None) if now >= host.stop_deadline => {
-                spawn::kill(-stop.pid, libc::SIGKILL);
+                spawn::kill_group(stop.pid, libc::SIGKILL);
                 spawn::kill(stop.pid, libc::SIGKILL);
                 vec![
                     ("step", "stop-action".into()),

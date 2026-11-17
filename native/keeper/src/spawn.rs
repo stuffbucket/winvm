@@ -109,9 +109,17 @@ pub fn spawn(
     command.spawn()
 }
 
-pub fn kill(pid: i32, signal: libc::c_int) -> bool {
+fn signal_raw(target: i32, signal: libc::c_int) -> bool {
     // SAFETY: kill(2) has no memory-safety requirements.
-    unsafe { libc::kill(pid, signal) == 0 }
+    unsafe { libc::kill(target, signal) == 0 }
+}
+
+pub fn kill(pid: i32, signal: libc::c_int) -> bool {
+    pid > 1 && signal_raw(pid, signal)
+}
+
+pub fn kill_group(group: i32, signal: libc::c_int) -> bool {
+    group > 1 && signal_raw(-group, signal)
 }
 
 pub fn exit_fields(status: ExitStatus) -> Vec<(&'static str, Value)> {
@@ -180,6 +188,22 @@ mod tests {
         set_thread_mask(libc::SIG_UNBLOCK);
         assert_eq!(unshielded.signal(), Some(libc::SIGTERM));
         assert_eq!(shielded.code(), Some(0));
+    }
+
+    #[test]
+    fn kill_reaches_one_real_process_and_never_minus_one_zero_or_one() {
+        for pid in [-1, 0, 1] {
+            assert!(!kill(pid, 0), "kill({pid})");
+        }
+        let own = i32::try_from(std::process::id()).expect("a pid");
+        assert!(kill(own, 0));
+    }
+
+    #[test]
+    fn kill_group_never_reaches_every_process_or_this_group() {
+        for group in [-5, 0, 1] {
+            assert!(!kill_group(group, 0), "kill_group({group})");
+        }
     }
 
     #[test]
