@@ -1,12 +1,41 @@
 import { dlopen, FFIType, ptr } from "bun:ffi"
-import { closeSync, openSync } from "node:fs"
+import { closeSync, openSync, writeSync } from "node:fs"
 
-const F_GETLK = 7
-const F_UNLCK = 2
-const F_WRLCK = 3
-const FLOCK_BYTES = 24
-const L_PID = 16
-const L_TYPE = 20
+interface Fcntl {
+  readonly library: string
+  readonly symbol: string
+  readonly getLock: number
+  readonly setLock: number
+  readonly writeLock: number
+  readonly unlocked: number
+  readonly bytes: number
+  readonly typeAt: number
+  readonly pidAt: number
+}
+
+const DARWIN: Fcntl = {
+  library: "/usr/lib/libSystem.B.dylib",
+  symbol: "__fcntl",
+  getLock: 7,
+  setLock: 8,
+  writeLock: 3,
+  unlocked: 2,
+  bytes: 24,
+  typeAt: 20,
+  pidAt: 16,
+}
+
+const LINUX: Fcntl = {
+  library: "libc.so.6",
+  symbol: "fcntl",
+  getLock: 5,
+  setLock: 6,
+  writeLock: 1,
+  unlocked: 2,
+  bytes: 32,
+  typeAt: 0,
+  pidAt: 24,
+}
 
 export type LockState =
   | { readonly held: number }
@@ -14,24 +43,45 @@ export type LockState =
   | "missing"
   | "unknown"
 
-type Fcntl = (fd: number, cmd: number, arg: ReturnType<typeof ptr>) => number
+type Call = (fd: number, cmd: number, arg: ReturnType<typeof ptr>) => number
 
-let fcntl: Fcntl | null | undefined
+interface Bound {
+  readonly abi: Fcntl
+  readonly call: Call
+}
 
-function loadFcntl(): Fcntl | null {
-  if (fcntl !== undefined) return fcntl
+let bound: Bound | null | undefined
+
+function abiFor(platform: string): Fcntl | null {
+  if (platform === "darwin") return DARWIN
+  if (platform === "linux") return LINUX
+  return null
+}
+
+function bind(): Bound | null {
+  if (bound !== undefined) return bound
+  const abi = abiFor(process.platform)
   try {
-    const lib = dlopen("/usr/lib/libSystem.B.dylib", {
-      __fcntl: {
+    if (abi === null) throw new Error(`no fcntl layout for ${process.platform}`)
+    const lib = dlopen(abi.library, {
+      [abi.symbol]: {
         args: [FFIType.i32, FFIType.i32, FFIType.ptr],
         returns: FFIType.i32,
       },
     })
-    fcntl = (fd, cmd, arg) => lib.symbols.__fcntl(fd, cmd, arg)
+    const symbol = lib.symbols[abi.symbol]
+    if (symbol === undefined) throw new Error(`no ${abi.symbol}`)
+    bound = { abi, call: (fd, cmd, arg) => symbol(fd, cmd, arg) }
   } catch {
-    fcntl = null
+    bound = null
   }
-  return fcntl
+  return bound
+}
+
+function writeLockOf(abi: Fcntl): DataView {
+  const lock = new DataView(new ArrayBuffer(abi.bytes))
+  lock.setInt16(abi.typeAt, abi.writeLock, true)
+  return lock
 }
 
 export function lockState(path: string): LockState {
@@ -44,15 +94,25 @@ export function lockState(path: string): LockState {
       : "unknown"
   }
   try {
-    const call = loadFcntl()
-    if (call === null) return "unknown"
-    const lock = new DataView(new ArrayBuffer(FLOCK_BYTES))
-    lock.setInt16(L_TYPE, F_WRLCK, true)
-    if (call(fd, F_GETLK, ptr(lock.buffer)) !== 0) return "unknown"
-    return lock.getInt16(L_TYPE, true) === F_UNLCK
+    const fcntl = bind()
+    if (fcntl === null) return "unknown"
+    const lock = writeLockOf(fcntl.abi)
+    if (fcntl.call(fd, fcntl.abi.getLock, ptr(lock.buffer)) !== 0)
+      return "unknown"
+    return lock.getInt16(fcntl.abi.typeAt, true) === fcntl.abi.unlocked
       ? "free"
-      : { held: lock.getInt32(L_PID, true) }
+      : { held: lock.getInt32(fcntl.abi.pidAt, true) }
   } finally {
     closeSync(fd)
   }
+}
+
+export function lockPidfile(path: string): void {
+  const fcntl = bind()
+  if (fcntl === null) throw new Error(`no fcntl on ${process.platform}`)
+  const fd = openSync(path, "w")
+  const lock = writeLockOf(fcntl.abi)
+  if (fcntl.call(fd, fcntl.abi.setLock, ptr(lock.buffer)) !== 0)
+    throw new Error(`could not lock ${path}`)
+  writeSync(fd, `${String(process.pid)}\n`)
 }

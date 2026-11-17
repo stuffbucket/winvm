@@ -89,7 +89,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await fake.close()
-  releasePidfiles()
+  await releasePidfiles()
   rmSync(home, { recursive: true, force: true })
   if (savedHome === undefined) delete process.env.WINVM_HOME
   else process.env.WINVM_HOME = savedHome

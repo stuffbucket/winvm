@@ -835,7 +835,7 @@ describe("watcher generations", () => {
       ).toMatchObject({ state: "stopped", build: buildIdentity() })
     } finally {
       child.kill("SIGKILL")
-      releasePidfiles()
+      await releasePidfiles()
     }
   }, 30_000)
 })

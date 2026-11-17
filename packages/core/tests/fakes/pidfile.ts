@@ -18,12 +18,16 @@ export async function lockPidfile(
   )
   holders.add(proc)
   const reader = (proc.stdout as ReadableStream<Uint8Array>).getReader()
-  await reader.read()
+  const first = await reader.read()
   reader.releaseLock()
+  if (!new TextDecoder().decode(first.value).includes("ready"))
+    throw new Error(`the holder could not lock ${pidfile}`)
   return { pid: proc.pid, proc }
 }
 
-export function releasePidfiles(): void {
-  for (const proc of holders) proc.kill("SIGKILL")
+export async function releasePidfiles(): Promise<void> {
+  const ending = [...holders]
   holders.clear()
+  for (const proc of ending) proc.kill("SIGKILL")
+  await Promise.all(ending.map(async (proc) => await proc.exited))
 }

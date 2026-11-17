@@ -348,6 +348,7 @@ describe("launching QEMU through the keeper", () => {
     const p = pathsFor(NAME)
     const before = await keeperHello(p)
     const tpm = before?.sidecars[0]?.pid ?? 0
+    await until("the pidfile", () => qemu.isRunning(p))
     rmSync(p.pid, { force: true })
     await expect(leasedLaunch()).rejects.toThrow("still runs QEMU")
     expect(alive(tpm)).toBe(true)
@@ -599,6 +600,7 @@ describe("fix round 1", () => {
   it("does not call a launch in progress confused", async () => {
     await withOperation(NAME, "start", async () => {
       await qemu.launch(NAME, pathsFor(NAME), meta, launchOptions)
+      await until("the pidfile", () => qemu.isRunning(pathsFor(NAME)))
       rmSync(pathsFor(NAME).pid)
       const s = await gather(NAME, false)
       expect(s.keeper).toBeNull()

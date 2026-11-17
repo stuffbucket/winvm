@@ -31,8 +31,8 @@ afterAll(() => {
 })
 
 describe("pidOf", () => {
-  afterEach(() => {
-    releasePidfiles()
+  afterEach(async () => {
+    await releasePidfiles()
   })
 
   it("is null, not an error, when there is no pidfile (QEMU removed it as it exited)", () => {
@@ -67,6 +67,7 @@ describe("pidOf", () => {
 
   it("is null when the unlocked pidfile names another instance's QEMU", async () => {
     const p = pathsFor(NAME)
+    mkdirSync(pathsFor("other").dir, { recursive: true })
     const other = await lockPidfile(
       pathsFor("other").pid,
       "qemu-system-aarch64",

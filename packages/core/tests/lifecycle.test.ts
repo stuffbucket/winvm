@@ -270,7 +270,7 @@ afterEach(async () => {
   await control?.stop(true)
   control = null
   for (const s of spawned.splice(0)) s.kill("SIGKILL")
-  releasePidfiles()
+  await releasePidfiles()
   for (const [k, v] of Object.entries(saved)) {
     if (v === undefined) delete process.env[k]
     else process.env[k] = v

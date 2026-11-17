@@ -11,8 +11,8 @@ beforeEach(() => {
   dir = mkdtempSync("/tmp/wvlk-")
 })
 
-afterEach(() => {
-  releasePidfiles()
+afterEach(async () => {
+  await releasePidfiles()
   rmSync(dir, { recursive: true, force: true })
 })
 

@@ -72,7 +72,7 @@ beforeEach(async () => {
 afterEach(async () => {
   await svc?.stop()
   svc = null
-  releasePidfiles()
+  await releasePidfiles()
   await fake.close().catch(() => undefined)
   await agent.close().catch(() => undefined)
   if (savedHome === undefined) delete process.env.WINVM_HOME

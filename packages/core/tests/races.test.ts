@@ -145,11 +145,11 @@ beforeEach(() => {
   spyOn(process.stdout, "write").mockImplementation(() => true)
 })
 
-afterEach(() => {
+afterEach(async () => {
   mock.restore()
   qemu.stopSwtpm(pathsFor(NAME))
   for (const h of spawned.splice(0)) h.kill("SIGKILL")
-  releasePidfiles()
+  await releasePidfiles()
   share.setProbe(previousProbe)
   for (const [k, v] of Object.entries(previous)) {
     if (v === undefined) delete process.env[k]
