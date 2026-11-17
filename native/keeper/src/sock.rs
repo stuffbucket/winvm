@@ -102,7 +102,12 @@ impl Connection {
                         Received::Line(String::from_utf8_lossy(&self.buffer).into_owned())
                     };
                 }
-                Ok(n) => self.buffer.extend_from_slice(&chunk[..n]),
+                Ok(n) => {
+                    self.buffer.extend_from_slice(&chunk[..n]);
+                    if self.buffer.len() > MAX_REQUEST_BYTES && !self.buffer.contains(&b'\n') {
+                        return Received::Closed;
+                    }
+                }
                 Err(e) if e.kind() == io::ErrorKind::WouldBlock => break,
                 Err(e) if e.kind() == io::ErrorKind::Interrupted => {}
                 Err(_) => return Received::Closed,

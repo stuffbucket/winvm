@@ -847,7 +847,7 @@ fn requests_with_unknown_fields_or_a_newer_protocol_are_refused() {
         request(&scratch, &json!({ "op": "hello", "protocol": 1 }))["ok"],
         true
     );
-    let newer = request(&scratch, &json!({ "op": "hello", "protocol": 2 }));
+    let newer = request(&scratch, &json!({ "op": "kill", "protocol": 2 }));
     assert_eq!(newer["ok"], false);
     assert_eq!(newer["protocol"], 1);
     assert_eq!(
@@ -1068,4 +1068,23 @@ fn a_sigterm_pending_at_start_launches_nothing() {
         "{:?}",
         records(&scratch)
     );
+}
+
+#[test]
+fn hello_answers_a_newer_client_with_this_keepers_protocol() {
+    let scratch = Scratch::new();
+    scratch.write_spec(&json!({ "lingerMs": 60_000 }));
+    let mut keeper = start(&scratch, 10_000);
+    let hello = request(&scratch, &json!({ "op": "hello", "protocol": 2 }));
+    assert_eq!(hello["ok"], true, "{hello}");
+    assert_eq!(hello["protocol"], 1);
+    assert_eq!(hello["hostEnding"], false);
+    let kill = request(&scratch, &json!({ "op": "kill", "protocol": 2 }));
+    assert_eq!(kill["ok"], false);
+    assert_eq!(kill["protocol"], 1);
+    assert_eq!(
+        request(&scratch, &json!({ "op": "exit-when-idle" }))["ok"],
+        true
+    );
+    assert!(wait_exit(&mut keeper, Duration::from_secs(5)).success());
 }

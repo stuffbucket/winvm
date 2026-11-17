@@ -559,8 +559,10 @@ impl Keeper {
         let Some(fields) = request.as_object() else {
             return json!({ "ok": false, "error": "a request is one JSON object" });
         };
+        let op = request["op"].as_str();
         if let Some(protocol) = fields.get("protocol") {
-            if protocol.as_u64().is_none_or(|p| p > u64::from(PROTOCOL)) {
+            let newer = protocol.as_u64().is_none_or(|p| p > u64::from(PROTOCOL));
+            if newer && op != Some("hello") {
                 return json!({
                     "ok": false,
                     "error": format!("protocol {protocol} is newer than this keeper's"),
@@ -568,7 +570,6 @@ impl Keeper {
                 });
             }
         }
-        let op = request["op"].as_str();
         let extra: &[&str] = if op == Some("launch") {
             &["child"]
         } else {
