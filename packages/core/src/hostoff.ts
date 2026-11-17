@@ -9,11 +9,15 @@ export type HostPowerCause =
   | "host-quit"
   | "host-quit-stopped"
   | "host-kill"
+  | "host-stow"
+  | "host-cut-off"
 
 export interface HostPoweredOff {
   readonly at: string
   readonly cause: HostPowerCause
   readonly detail: string | null
+  readonly fallback: string | null
+  readonly elapsedMs: number | null
 }
 
 const BRINGS_BACK: ReadonlySet<string> = new Set([
@@ -80,10 +84,16 @@ type KeptExit = "clean" | "unclean" | "unknown"
 
 interface HostEnd {
   readonly at: string
+  readonly withQemu: boolean
   readonly steps: Set<string>
   stoppedStatus: string | null
   exit: KeptExit | null
+  exitAt: string | null
   shutdown: string | null
+  stowing: boolean
+  stowed: boolean
+  fallback: string | null
+  last: string
 }
 
 const STOPPED_FOR_MIGRATION: ReadonlySet<string> = new Set([
@@ -92,7 +102,13 @@ const STOPPED_FOR_MIGRATION: ReadonlySet<string> = new Set([
   "prelaunch",
 ])
 
+const between = (from: string, to: string): number | null => {
+  const ms = Date.parse(to) - Date.parse(from)
+  return Number.isFinite(ms) ? Math.max(0, ms) : null
+}
+
 function exitCause(end: HostEnd): HostPowerCause {
+  if (end.shutdown === "host-signal") return "host-signal"
   if (end.exit === "clean") return "host-shutdown"
   if (end.exit === "unclean") return "host-kill"
   if (end.shutdown === "guest-shutdown") return "host-shutdown"
@@ -100,34 +116,89 @@ function exitCause(end: HostEnd): HostPowerCause {
   return "host-kill"
 }
 
-function keptEnd(end: HostEnd): HostPoweredOff {
-  if (end.steps.has("kill"))
-    return { at: end.at, cause: "host-kill", detail: null }
+function keptCause(end: HostEnd): {
+  readonly cause: HostPowerCause
+  readonly detail: string | null
+} {
+  if (end.stowed) return { cause: "host-stow", detail: null }
+  if (end.steps.has("kill")) return { cause: "host-kill", detail: null }
   if (end.stoppedStatus !== null)
-    return {
-      at: end.at,
-      cause: "host-quit-stopped",
-      detail: end.stoppedStatus,
-    }
-  if (end.steps.has("quit"))
-    return { at: end.at, cause: "host-quit", detail: null }
-  return { at: end.at, cause: exitCause(end), detail: null }
+    return { cause: "host-quit-stopped", detail: end.stoppedStatus }
+  if (end.steps.has("quit")) return { cause: "host-quit", detail: null }
+  return { cause: exitCause(end), detail: null }
 }
 
-const CLOSES_HOST_END: ReadonlySet<string> = new Set(["started", "launched"])
+function keptEnd(end: HostEnd): HostPoweredOff {
+  return {
+    at: end.at,
+    ...keptCause(end),
+    fallback: end.fallback,
+    elapsedMs: between(end.at, end.exitAt ?? end.last),
+  }
+}
+
+function cutOff(end: HostEnd): HostPoweredOff {
+  const last = [...end.steps].at(-1)
+  return {
+    at: end.at,
+    cause: "host-cut-off",
+    detail: end.stowing
+      ? "a stow was being written"
+      : last === undefined
+        ? "it had not started"
+        : `its last step was ${last}`,
+    fallback: end.fallback,
+    elapsedMs: between(end.at, end.last),
+  }
+}
+
+const plain = (at: string, cause: HostPowerCause): HostPoweredOff => ({
+  at,
+  cause,
+  detail: null,
+  fallback: null,
+  elapsedMs: null,
+})
+
+const isQemuOf = (e: Readonly<Record<string, unknown>>): boolean =>
+  e.child === "qemu"
+
+function noteStep(end: HostEnd, e: Readonly<Record<string, unknown>>): void {
+  if (typeof e.step !== "string") return
+  end.steps.add(e.step)
+  if (
+    e.step === "quit" &&
+    typeof e.status === "string" &&
+    STOPPED_FOR_MIGRATION.has(e.status)
+  )
+    end.stoppedStatus = e.status
+  if (e.step === "fallback" && typeof e.reason === "string")
+    end.fallback = e.reason
+  if (e.step === "service" && e.ok === false)
+    end.fallback = `the service did not take it: ${typeof e.error === "string" ? e.error : "no reason given"}`
+}
 
 export function hostPoweredOff(name: string): HostPoweredOff | null {
   let found = null as HostPoweredOff | null
   let sawShutdown = false
   let intended = false
+  let keptQemu = false
   let hostEnd = null as HostEnd | null
   const close = (): void => {
-    if (hostEnd?.exit !== null && hostEnd !== null) found = keptEnd(hostEnd)
+    const end = hostEnd
     hostEnd = null
+    if (end === null) return
+    if (end.exit !== null) found = keptEnd(end)
+    else if (end.withQemu && !end.steps.has("done")) found = cutOff(end)
   }
   for (const e of readSince(name, START).entries) {
     const settled = hostEnd !== null && hostEnd.exit !== null
+    if (hostEnd !== null && !settled) hostEnd.last = e.t
     if (e.kind === "op") {
+      if (hostEnd !== null && !settled && e.operation === "stow") {
+        hostEnd.stowing = e.phase === "begin"
+        if (e.phase === "end" && e.ok) hostEnd.stowed = true
+      }
       if (e.phase === "begin" && ENDS_QEMU.has(e.operation)) intended = true
       else if (e.phase === "end" && e.ok) {
         if (BRINGS_BACK.has(e.operation)) found = null
@@ -139,42 +210,42 @@ export function hostPoweredOff(name: string): HostPoweredOff | null {
       } else if (e.phase === "end" && e.operation === "start")
         found = found?.cause === "qemu-gone" ? null : found
     } else if (e.kind === "keeper") {
-      if (
-        CLOSES_HOST_END.has(e.what) &&
-        (e.what === "started" || e.child === "qemu")
-      ) {
+      if (e.what === "started" || (e.what === "launched" && isQemuOf(e))) {
         close()
         sawShutdown = false
         intended = false
-      } else if (e.what === "host-ending")
+        if (e.what === "launched") keptQemu = true
+      } else if (e.what === "adopted" && isQemuOf(e)) keptQemu = true
+      else if (e.what === "host-ending")
         hostEnd = {
           at: e.t,
+          withQemu: keptQemu,
           steps: new Set(),
           stoppedStatus: null,
           exit: null,
+          exitAt: null,
           shutdown: null,
+          stowing: false,
+          stowed: false,
+          fallback: null,
+          last: e.t,
         }
-      else if (e.what === "host-end" && typeof e.step === "string") {
-        hostEnd?.steps.add(e.step)
-        if (
-          e.step === "quit" &&
-          typeof e.status === "string" &&
-          STOPPED_FOR_MIGRATION.has(e.status) &&
-          hostEnd !== null
-        )
-          hostEnd.stoppedStatus = e.status
-      } else if (
+      else if (e.what === "host-end" && hostEnd !== null) noteStep(hostEnd, e)
+      else if (
         (e.what === "exited" || e.what === "exited-unknown") &&
-        e.child === "qemu" &&
-        hostEnd !== null &&
-        hostEnd.exit === null
-      )
-        hostEnd.exit =
-          e.what === "exited-unknown"
-            ? "unknown"
-            : e.status === 0
-              ? "clean"
-              : "unclean"
+        isQemuOf(e)
+      ) {
+        keptQemu = false
+        if (hostEnd !== null && hostEnd.exit === null) {
+          hostEnd.exitAt = e.t
+          hostEnd.exit =
+            e.what === "exited-unknown"
+              ? "unknown"
+              : e.status === 0
+                ? "clean"
+                : "unclean"
+        }
+      }
     } else if (e.kind === "qmp" && e.event === "SHUTDOWN") {
       if (hostEnd !== null && hostEnd.shutdown === null)
         hostEnd.shutdown =
@@ -182,9 +253,7 @@ export function hostPoweredOff(name: string): HostPoweredOff | null {
       if (settled) continue
       sawShutdown = true
       found =
-        e.data?.reason === "host-signal"
-          ? { at: e.t, cause: "host-signal", detail: null }
-          : null
+        e.data?.reason === "host-signal" ? plain(e.t, "host-signal") : null
     } else if (
       !settled &&
       e.kind === "disconnected" &&
@@ -192,7 +261,7 @@ export function hostPoweredOff(name: string): HostPoweredOff | null {
       !sawShutdown &&
       !intended
     )
-      found = { at: e.t, cause: "qemu-gone", detail: null }
+      found = plain(e.t, "qemu-gone")
   }
   close()
   if (found?.cause !== "host-signal") return found

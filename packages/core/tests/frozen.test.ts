@@ -1484,6 +1484,8 @@ describe("status when the host powered Windows off", () => {
       at: expect.any(String) as string,
       cause: "host-signal",
       detail: "terminating on signal 15 from pid 412 (launchd)",
+      fallback: null,
+      elapsedMs: null,
     })
     const note = s.notes.find((x) => x.includes("host"))
     expect(note).toContain("launchd")
@@ -1722,5 +1724,119 @@ describe("status when the host powered Windows off", () => {
     const note = s.notes.join("\n")
     expect(note).toContain("was not running")
     expect(note).not.toContain("is lost")
+  })
+
+  const hostEnding = (): void => {
+    keeper("host-ending", { signal: "SIGTERM", budgetMs: 55_000 })
+  }
+  const served = (): void => {
+    hostEnding()
+    step("service")
+    appendEntry(HOST, {
+      kind: "service",
+      what: "host-end",
+      step: "plan",
+      first: "none",
+      end: "stow",
+      reason: null,
+    })
+  }
+
+  it("says Windows was stowed when the Mac shut down, how long that took, and that start recalls it", async () => {
+    keptStart()
+    served()
+    op("begin", "stow", true, "host-stow")
+    op("end", "stow", true, "host-stow")
+    keeper("exited", { child: "qemu", pid: 501, status: 0 })
+    keeper("service-exited", { pid: 700, status: 0 })
+    step("done")
+    const s = await gather(HOST, false)
+    expect(s.hostPoweredOff).toMatchObject({
+      cause: "host-stow",
+      fallback: null,
+    })
+    expect(s.hostPoweredOff?.elapsedMs).toBeGreaterThanOrEqual(0)
+    const note = s.notes.join("\n")
+    expect(note).toContain("stowed Windows when the Mac shut down")
+    expect(note).toContain("winvm start -i frozen-hostoff` recalls it")
+    expect(note).not.toContain("lost")
+  })
+
+  it("says the stow failed and the keeper's power button shut Windows down instead", async () => {
+    keptStart()
+    served()
+    op("begin", "stow", true, "host-stow")
+    op("end", "stow", false, "host-stow")
+    keeper("host-end", {
+      step: "fallback",
+      reason: "stow failed: migration failed: no space",
+      end: "shutdown",
+    })
+    step("powerdown")
+    keeper("exited", { child: "qemu", pid: 501, status: 0 })
+    step("done")
+    const s = await gather(HOST, false)
+    expect(s.hostPoweredOff).toMatchObject({
+      cause: "host-shutdown",
+      fallback: "stow failed: migration failed: no space",
+    })
+    const note = s.notes.join("\n")
+    expect(note).toContain("could not stow Windows")
+    expect(note).toContain("no space")
+    expect(note).toContain("shut down cleanly")
+  })
+
+  it("says the keeper fell back when the service did not take the host end", async () => {
+    keptStart()
+    hostEnding()
+    keeper("host-end", {
+      step: "service",
+      ok: false,
+      error: "control.sock: Connection refused",
+    })
+    step("powerdown")
+    step("quit")
+    keeper("exited", { child: "qemu", pid: 501, status: 0 })
+    step("done")
+    const s = await gather(HOST, false)
+    expect(s.hostPoweredOff).toMatchObject({
+      cause: "host-quit",
+      fallback: "the service did not take it: control.sock: Connection refused",
+    })
+  })
+
+  it("says the Mac cut winvm off when the keeper never saw QEMU end, and where it got to", async () => {
+    keptStart()
+    served()
+    op("begin", "stow", true, "host-stow")
+    const s = await gather(HOST, false)
+    expect(s.hostPoweredOff).toMatchObject({
+      cause: "host-cut-off",
+      detail: "a stow was being written",
+    })
+    expect(s.hostPoweredOff?.elapsedMs).toBeGreaterThanOrEqual(0)
+    const note = s.notes.join("\n")
+    expect(note).toContain("before winvm's keeper finished")
+    expect(note).toContain("the previous stow, if any, is kept")
+  })
+
+  it("does not call a host end with no QEMU cut off", async () => {
+    keptStart()
+    op("begin", "stop")
+    keeper("exited", { child: "qemu", pid: 501, status: 0 })
+    op("end", "stop")
+    hostEnding()
+    expect((await gather(HOST, false)).hostPoweredOff).toBeNull()
+  })
+
+  it("says the host signalled an adopted QEMU that the keeper could not shield", async () => {
+    keptStart()
+    served()
+    shutdown("host-signal")
+    keeper("exited-unknown", { child: "qemu", pid: 501 })
+    step("done")
+    expect((await gather(HOST, false)).hostPoweredOff).toMatchObject({
+      cause: "host-signal",
+    })
   })
 })

@@ -159,6 +159,41 @@ export function unfinishedStop(name: string): StopUnfinished | null {
   return killed !== null && killed.at > lastClear ? killed : found
 }
 
+const secondsIn = (ms: number | null): string =>
+  ms === null ? "" : `${(ms / 1000).toFixed(1)} s after it began`
+
+const seconds = (ms: number | null): string =>
+  ms === null ? "" : ` (${secondsIn(ms)})`
+
+function keptEndNote(name: string, off: HostPoweredOff): string {
+  const again = `\`winvm start -i ${name}\` starts it again`
+  switch (off.cause) {
+    case "host-stow":
+      return `winvm stowed Windows when the Mac shut down at ${off.at}${seconds(off.elapsedMs)}; \`winvm start -i ${name}\` recalls it`
+    case "host-cut-off":
+      return (
+        `the Mac shut down at ${off.at} before winvm's keeper finished (${[off.detail ?? "no step recorded", secondsIn(off.elapsedMs)].filter((part) => part !== "").join(", ")}): ` +
+        "Windows did not shut down cleanly and anything unsaved in it is lost" +
+        (off.detail === "a stow was being written"
+          ? "; the previous stow, if any, is kept"
+          : "") +
+        `; ${again}`
+      )
+    case "host-shutdown":
+      return `Windows shut down cleanly when the Mac shut down at ${off.at}: winvm's keeper pressed its power button${seconds(off.elapsedMs)}; ${again}`
+    case "host-quit-stopped":
+      return (
+        `the Mac shut down at ${off.at} while Windows was stopped for a save or a recall (QEMU ${off.detail ?? "stopped"}), ` +
+        `so winvm's keeper quit QEMU without pressing the power button; Windows was not running at the time; ${again}`
+      )
+    default:
+      return (
+        `the Mac shut down at ${off.at} and Windows did not finish shutting down in time, so winvm's keeper ${off.cause === "host-quit" ? "quit" : "killed"} QEMU${seconds(off.elapsedMs)}: ` +
+        `Windows did not shut down cleanly and anything unsaved in it is lost; ${again}`
+      )
+  }
+}
+
 function hostPowerNote(name: string, off: HostPoweredOff): string {
   const again = `\`winvm start -i ${name}\` starts it again`
   if (off.cause === "qemu-gone")
@@ -167,20 +202,14 @@ function hostPowerNote(name: string, off: HostPoweredOff): string {
       "the host (a restart or logout), a crash or another tool ended it, and anything unsaved in Windows is lost; " +
       again
     )
-  if (off.cause === "host-shutdown")
-    return `Windows shut down cleanly when the Mac shut down at ${off.at}: winvm's keeper pressed its power button; ${again}`
-  if (off.cause === "host-quit-stopped")
-    return (
-      `the Mac shut down at ${off.at} while Windows was stopped for a save or a recall (QEMU ${off.detail ?? "stopped"}), ` +
-      `so winvm's keeper quit QEMU without pressing the power button; Windows was not running at the time; ${again}`
-    )
-  if (off.cause === "host-quit" || off.cause === "host-kill")
-    return (
-      `the Mac shut down at ${off.at} and Windows did not finish shutting down in time, so winvm's keeper ${off.cause === "host-quit" ? "quit" : "killed"} QEMU: ` +
-      `Windows did not shut down cleanly and anything unsaved in it is lost; ${again}`
-    )
+  const fellBack =
+    off.fallback === null
+      ? ""
+      : `winvm could not stow Windows when the Mac shut down (${off.fallback}); `
+  if (off.cause !== "host-signal") return fellBack + keptEndNote(name, off)
   const who = off.detail === null ? "" : ` (${off.detail})`
   return (
+    fellBack +
     `the host powered Windows off at ${off.at}: QEMU was signalled${who}, ` +
     `so Windows did not shut down by itself and anything unsaved in it is lost; ${again}`
   )
