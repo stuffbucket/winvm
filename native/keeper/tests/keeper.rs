@@ -1304,7 +1304,7 @@ fn a_restarted_keeper_adopts_its_sidecars_and_still_ends_them_with_the_child() {
 }
 
 #[test]
-fn a_sidecar_is_refused_while_the_host_ends() {
+fn a_host_end_without_a_child_ends_the_sidecars_at_once() {
     let scratch = Scratch::new();
     let mut keeper = idle_keeper(&scratch, 60_000);
     let tpm = sidecar(&scratch, "swtpm");
@@ -1550,18 +1550,14 @@ fn a_migration_still_running_at_the_budget_less_twelve_seconds_is_cancelled() {
 fn a_child_and_a_sidecar_create_files_with_the_umask_the_client_asked_for() {
     let scratch = Scratch::new();
     let mut keeper = idle_keeper(&scratch, 60_000);
-    let touch = |name: &str, umask: Option<u32>| {
-        let mut child = json!({
-            "name": name,
-            "argv": ["/bin/sh", "-c", format!("touch {}; exec sleep 30", scratch.path(name))],
-        });
-        if let Some(umask) = umask {
-            child["umask"] = json!(umask);
-        }
+    let touch = |name: &str, umask: u32| {
+        let made = scratch.path(&format!("{name}.made"));
+        let mut child = fake_as(&scratch, name, name, &["--touch", &made]);
+        child["umask"] = json!(umask);
         child
     };
     let made = |name: &str| {
-        let path = scratch.path(name);
+        let path = scratch.path(&format!("{name}.made"));
         wait_until("the file", Duration::from_secs(5), || {
             Path::new(&path).exists()
         });
@@ -1569,13 +1565,13 @@ fn a_child_and_a_sidecar_create_files_with_the_umask_the_client_asked_for() {
     };
     let sidecar = request(
         &scratch,
-        &json!({ "op": "launch-sidecar", "child": touch("virtiofsd", Some(0o022)) }),
+        &json!({ "op": "launch-sidecar", "child": touch("virtiofsd", 0o002) }),
     );
     assert_eq!(sidecar["ok"], true, "{sidecar}");
-    assert_eq!(made("virtiofsd"), 0o644);
+    assert_eq!(made("virtiofsd"), 0o664);
     let main = request(
         &scratch,
-        &json!({ "op": "launch", "child": touch("qemu", Some(0o027)) }),
+        &json!({ "op": "launch", "child": touch("qemu", 0o027) }),
     );
     assert_eq!(main["ok"], true, "{main}");
     assert_eq!(made("qemu"), 0o640);
@@ -1585,4 +1581,92 @@ fn a_child_and_a_sidecar_create_files_with_the_umask_the_client_asked_for() {
         true
     );
     assert!(wait_exit(&mut keeper, Duration::from_secs(5)).success());
+}
+
+#[test]
+fn a_sidecar_or_a_child_is_refused_while_the_host_ends() {
+    let scratch = Scratch::new();
+    fs::write(scratch.path("budget"), "20000").expect("budget");
+    let mut keeper = monitored(&scratch, &["--powerdown", "ignore"]);
+    let pid = hello_child_pid(&scratch);
+    reported(&scratch, "qemu", pid);
+    signal(pid_of(&keeper), libc::SIGTERM);
+    wait_until("the power button", Duration::from_secs(5), || {
+        qmp_seen(&scratch).contains(&"system_powerdown".to_owned())
+    });
+    let sidecar = request(
+        &scratch,
+        &json!({ "op": "launch-sidecar", "child": fake_as(&scratch, "swtpm", "swtpm", &[]) }),
+    );
+    assert_eq!(sidecar, json!({ "ok": false, "error": "host-ending" }));
+    let child = request(
+        &scratch,
+        &json!({ "op": "launch", "child": fake_as(&scratch, "other", "other", &[]) }),
+    );
+    assert_eq!(child, json!({ "ok": false, "error": "host-ending" }));
+    assert_eq!(request(&scratch, &json!({ "op": "kill" }))["ok"], true);
+    assert!(wait_exit(&mut keeper, Duration::from_secs(5)).success());
+}
+
+#[test]
+fn a_launch_in_progress_keeps_its_sidecars_past_the_linger() {
+    let scratch = Scratch::new();
+    let mut keeper = idle_keeper(&scratch, 400);
+    let tpm = sidecar(&scratch, "swtpm");
+    for _ in 0..8 {
+        std::thread::sleep(Duration::from_millis(100));
+        assert_eq!(
+            request(&scratch, &json!({ "op": "hello", "launching": true }))["ok"],
+            true
+        );
+    }
+    assert!(alive(tpm), "the sidecar was retired mid-launch");
+    let main = request(
+        &scratch,
+        &json!({ "op": "launch", "child": fake_as(&scratch, "qemu", "qemu", &[]) }),
+    );
+    assert_eq!(main["ok"], true, "{main}");
+    assert_eq!(request(&scratch, &json!({ "op": "kill" }))["ok"], true);
+    assert!(wait_exit(&mut keeper, Duration::from_secs(5)).success());
+}
+
+#[test]
+fn a_plain_hello_does_not_keep_an_idle_keeper_alive() {
+    let scratch = Scratch::new();
+    let mut keeper = idle_keeper(&scratch, 400);
+    let started = Instant::now();
+    while keeper.try_wait().expect("try_wait").is_none() {
+        assert!(
+            started.elapsed() < Duration::from_secs(3),
+            "plain hellos kept the keeper alive"
+        );
+        let socket = scratch.keeper().join("keeper.sock");
+        if let Ok(mut stream) = UnixStream::connect(&socket) {
+            let _ = writeln!(stream, "{}", json!({ "op": "hello" }));
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+}
+
+#[test]
+fn a_guest_stopped_after_a_migration_is_quit_at_once() {
+    for status in ["postmigrate", "inmigrate", "prelaunch"] {
+        let scratch = Scratch::new();
+        let (exit, took) = host_end_with(
+            &scratch,
+            20_000,
+            &["--status", status, "--powerdown", "ignore"],
+        );
+        assert!(exit.success());
+        assert!(took < Duration::from_secs(3), "{status}: {took:?}");
+        assert_eq!(
+            qmp_seen(&scratch),
+            ["query-migrate", "query-status", "quit"],
+            "{status}"
+        );
+        let all = steps(&scratch);
+        assert_eq!(all[0]["step"], "quit", "{status}");
+        assert_eq!(all[0]["status"], status);
+        assert_eq!(exits_of(&scratch, "qemu")[0]["status"], 0);
+    }
 }

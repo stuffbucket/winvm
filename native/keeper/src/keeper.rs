@@ -600,6 +600,22 @@ impl Keeper {
         let status = qmp::execute(socket, "query-status", QMP_TIMEOUT)
             .ok()
             .and_then(|s| s["status"].as_str().map(str::to_owned));
+        if let Some(stopped) = status
+            .as_deref()
+            .filter(|s| matches!(*s, "postmigrate" | "inmigrate" | "prelaunch"))
+        {
+            let quit = qmp::execute(socket, "quit", QMP_TIMEOUT);
+            let mut fields = vec![
+                ("step", Value::from("quit")),
+                ("ok", quit.is_ok().into()),
+                ("status", stopped.into()),
+            ];
+            if let Err(error) = quit {
+                fields.push(("error", error.into()));
+            }
+            self.record.note("host-end", &fields);
+            return Fallback::Quit;
+        }
         let sent = qmp::execute(socket, "system_powerdown", QMP_TIMEOUT);
         let mut fields = vec![
             ("step", Value::from("powerdown")),
@@ -799,6 +815,9 @@ impl Keeper {
         };
         let op = request["op"].as_str();
         if op == Some("hello") {
+            if request["launching"] == Value::Bool(true) {
+                self.idle_since = Instant::now();
+            }
             return self.hello();
         }
         if let Some(protocol) = fields.get("protocol") {

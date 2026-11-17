@@ -158,6 +158,9 @@ fn main() {
         install(signal);
     }
     let _held = value("--pidfile").map(|p| lock(Path::new(&p)));
+    if let Some(path) = value("--touch") {
+        File::create(path).expect("create the touched file");
+    }
     if let Some(path) = value("--qmp") {
         let monitor = Monitor {
             path: PathBuf::from(path),
