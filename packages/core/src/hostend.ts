@@ -3,6 +3,7 @@ import { statfsSync } from "node:fs"
 import { effectiveConfig, type HostEndAction } from "./config"
 import { runningCommand } from "./display"
 import { appendEntry } from "./eventlog"
+import { CHOSEN_SHUTDOWN } from "./hostoff"
 import { keeperRequest } from "./keeper"
 import { keeperSocket } from "./kept"
 import { irreversibleSince, leaseHolder, withOperation } from "./operation"
@@ -62,7 +63,7 @@ function lastStep(f: HostEndFacts): Pick<HostEndPlan, "end" | "reason"> {
       reason: "a stop already asked Windows to shut down",
     }
   if (f.action === "shutdown")
-    return { end: "shutdown", reason: "hostEnd.action is shutdown" }
+    return { end: "shutdown", reason: CHOSEN_SHUTDOWN }
   if (f.unsaveable !== null) return { end: "shutdown", reason: f.unsaveable }
   if (f.freeBytes !== null && f.needBytes !== null && f.freeBytes < f.needBytes)
     return {

@@ -6,7 +6,7 @@ import { effectiveConfig } from "./config"
 import { describeDisplay, readDisplay, runningDisplay } from "./display"
 import { readSince, START } from "./eventlog"
 import { frozenFrom, markedAsleep } from "./frozen"
-import { type HostPoweredOff, hostPoweredOff } from "./hostoff"
+import { CHOSEN_SHUTDOWN, type HostPoweredOff, hostPoweredOff } from "./hostoff"
 import {
   type KeeperStanding,
   keeperDir,
@@ -200,7 +200,7 @@ function causeNote(name: string, off: HostPoweredOff): string {
     case "host-quit":
     case "host-kill":
       return (
-        `the Mac shut down at ${off.at} and Windows did not finish shutting down in time, so winvm's keeper ${off.cause === "host-quit" ? "quit" : "killed"} QEMU${seconds(off.elapsedMs)}: ` +
+        `the Mac shut down at ${off.at} and Windows did not shut down in time, so winvm ${off.cause === "host-quit" ? "quit" : "killed"} QEMU${seconds(off.elapsedMs)}: ` +
         `Windows did not shut down cleanly and anything unsaved in it is lost; ${again}`
       )
   }
@@ -210,7 +210,9 @@ function hostPowerNote(name: string, off: HostPoweredOff): string {
   const fellBack =
     off.fallback === null
       ? ""
-      : `winvm could not stow Windows when the Mac shut down (${off.fallback}); `
+      : off.fallback === CHOSEN_SHUTDOWN
+        ? `winvm did not stow Windows when the Mac shut down, because ${CHOSEN_SHUTDOWN}; `
+        : `winvm could not stow Windows when the Mac shut down (${off.fallback}); `
   return fellBack + causeNote(name, off)
 }
 

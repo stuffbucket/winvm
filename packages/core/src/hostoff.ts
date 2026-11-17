@@ -2,6 +2,8 @@ import { closeSync, fstatSync, openSync, readSync } from "node:fs"
 import { readSince, START } from "./eventlog"
 import { pathsFor } from "./paths"
 
+export const CHOSEN_SHUTDOWN = "hostEnd.action is shutdown"
+
 export type HostPowerCause =
   | "host-signal"
   | "qemu-gone"
@@ -109,6 +111,7 @@ const between = (from: string, to: string): number | null => {
 
 function exitCause(end: HostEnd): HostPowerCause {
   if (end.shutdown === "host-signal") return "host-signal"
+  if (end.shutdown === "host-qmp-quit") return "host-quit"
   if (end.exit === "clean") return "host-shutdown"
   if (end.exit === "unclean") return "host-kill"
   if (end.shutdown === "guest-shutdown") return "host-shutdown"
@@ -129,10 +132,11 @@ function keptCause(end: HostEnd): {
 }
 
 function keptEnd(end: HostEnd): HostPoweredOff {
+  const cause = keptCause(end)
   return {
     at: end.at,
-    ...keptCause(end),
-    fallback: end.fallback,
+    ...cause,
+    fallback: cause.cause === "host-stow" ? null : end.fallback,
     elapsedMs: between(end.at, end.exitAt ?? end.last),
   }
 }
@@ -174,7 +178,7 @@ function noteStep(end: HostEnd, e: Readonly<Record<string, unknown>>): void {
     end.stoppedStatus = e.status
   if (e.step === "fallback" && typeof e.reason === "string")
     end.fallback = e.reason
-  if (e.step === "service" && e.ok === false)
+  if (e.step === "service" && e.ok === false && e.unconfirmed !== true)
     end.fallback = `the service did not take it: ${typeof e.error === "string" ? e.error : "no reason given"}`
 }
 
@@ -199,6 +203,8 @@ export function hostPoweredOff(name: string): HostPoweredOff | null {
       if (hostEnd !== null && e.operation === "stow") {
         hostEnd.stowing = e.phase === "begin"
         if (e.phase === "end" && e.ok) hostEnd.stowed = true
+        else if (e.phase === "end")
+          hostEnd.fallback ??= `the stow failed: ${e.error ?? `exit ${String(e.exitCode ?? "?")}`}`
       }
       if (e.phase === "begin" && ENDS_QEMU.has(e.operation)) intended = true
       else if (e.phase === "end" && e.ok) {

@@ -1835,6 +1835,75 @@ describe("status when the host powered Windows off", () => {
     expect(s.notes.join("\n")).toContain("the previous stow, if any, is kept")
   })
 
+  it("calls an unconfirmed hand-off that the service finished a stow, not a fallback", async () => {
+    keptStart()
+    hostEnding()
+    keeper("host-end", {
+      step: "service",
+      ok: false,
+      unconfirmed: true,
+      error: "control.sock: Resource temporarily unavailable",
+    })
+    op("begin", "stow", true, "host-stow")
+    keeper("exited", { child: "qemu", pid: 501, status: 0 })
+    op("end", "stow", true, "host-stow")
+    step("done")
+    const s = await gather(HOST, false)
+    expect(s.hostPoweredOff).toMatchObject({
+      cause: "host-stow",
+      fallback: null,
+    })
+  })
+
+  it("never calls a stow that failed after QEMU quit for it a clean shutdown", async () => {
+    keptStart()
+    served()
+    op("begin", "stow", true, "host-stow")
+    shutdown("host-qmp-quit")
+    keeper("exited", { child: "qemu", pid: 501, status: 0 })
+    op("end", "stow", false, "host-stow")
+    step("done")
+    const s = await gather(HOST, false)
+    expect(s.hostPoweredOff).toMatchObject({ cause: "host-quit" })
+    expect(s.hostPoweredOff?.fallback).toContain("the stow failed")
+    expect(s.notes.join("\n")).not.toContain("Windows shut down cleanly")
+  })
+
+  it("says Windows was shut down because hostEnd.action asked for it, not that a stow failed", async () => {
+    keptStart()
+    hostEnding()
+    step("service")
+    keeper("host-end", {
+      step: "fallback",
+      reason: "hostEnd.action is shutdown",
+      end: "shutdown",
+    })
+    step("powerdown")
+    keeper("exited", { child: "qemu", pid: 501, status: 0 })
+    step("done")
+    const note = (await gather(HOST, false)).notes.join("\n")
+    expect(note).not.toContain("could not stow")
+    expect(note).toContain("hostEnd.action is shutdown")
+    expect(note).toContain("shut down cleanly")
+  })
+
+  it("never says a stow that finished could not be done", async () => {
+    keptStart()
+    served()
+    op("begin", "stow", true, "host-stow")
+    keeper("host-end", {
+      step: "fallback",
+      reason: "service-deadline",
+      end: "quit",
+    })
+    keeper("exited", { child: "qemu", pid: 501, status: 0 })
+    op("end", "stow", true, "host-stow")
+    step("done")
+    const s = await gather(HOST, false)
+    expect(s.hostPoweredOff?.cause).toBe("host-stow")
+    expect(s.notes.join("\n")).not.toContain("could not stow")
+  })
+
   it("does not call a host end with no QEMU cut off", async () => {
     keptStart()
     op("begin", "stop")
