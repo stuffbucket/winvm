@@ -39,6 +39,7 @@ import {
   watchPathsFor,
 } from "../src/watch"
 import { FakeAgent } from "./fakes/agent"
+import { lockPidfile, releasePidfiles } from "./fakes/pidfile"
 import { FakeQmp } from "./fakes/qmp"
 
 const HOLDER = resolve(import.meta.dir, "fakes", "holder.ts")
@@ -255,8 +256,7 @@ beforeEach(async () => {
   mkdirSync(p.dir, { recursive: true })
   writeFileSync(p.meta, JSON.stringify({ image: "x", vnc: 9, created: "" }))
   writeFileSync(p.qmpQemu, "")
-  qemu = await hold("qemu-stand-in")
-  writeFileSync(p.pid, `${String(qemu.pid)}\n`)
+  qemu = (await lockPidfile(p.pid, "qemu-stand-in")).proc
   control = Bun.serve({ unix: p.control, fetch: () => new Response("ok") })
   signals.length = 0
   process.kill = (pid: number, sig?: string | number): true => {
@@ -270,6 +270,7 @@ afterEach(async () => {
   await control?.stop(true)
   control = null
   for (const s of spawned.splice(0)) s.kill("SIGKILL")
+  releasePidfiles()
   for (const [k, v] of Object.entries(saved)) {
     if (v === undefined) delete process.env[k]
     else process.env[k] = v
@@ -907,8 +908,9 @@ describe("a watcher owed after a failure", () => {
         seams({ watcherTimeoutMs: 200, startWatcher: () => null }).options,
       ),
     ).rejects.toThrow()
-    const next = await hold("qemu-stand-in-2")
-    writeFileSync(p.pid, `${String(next.pid)}\n`)
+    qemu.kill("SIGKILL")
+    await qemu.exited
+    await lockPidfile(p.pid, "qemu-stand-in-2")
     const s = seams()
     const r = await reconcileManagement("t", p, s.options)
     expect(s.starts).toEqual({ service: 0, watcher: 0 })
@@ -1413,7 +1415,7 @@ describe("the CLI", () => {
     const a = pathsFor("a")
     mkdirSync(a.dir, { recursive: true })
     writeFileSync(a.meta, JSON.stringify({ image: "x", vnc: 8, created: "" }))
-    writeFileSync(a.pid, `${String(qemu.pid)}\n`)
+    await lockPidfile(a.pid, "qemu-stand-in-a")
     writeFileSync(a.qmpQemu, "")
     mkdirSync(resolve(a.dir, "service.log"))
     const old = await staleFromSameCli()
@@ -1431,7 +1433,7 @@ describe("the CLI", () => {
     const a = pathsFor("a")
     mkdirSync(a.dir, { recursive: true })
     writeFileSync(a.meta, JSON.stringify({ image: "x", vnc: 8, created: "" }))
-    writeFileSync(a.pid, `${String(qemu.pid)}\n`)
+    await lockPidfile(a.pid, "qemu-stand-in-a")
     const got = resolve(home, "a-watcher-signals")
     const w = await hold("--log-signals", got, "winvm", "watch", "-i", "a")
     writeFileSync(watchPathsFor("a").pid, `${String(w.pid)}\n`)

@@ -17,7 +17,6 @@ import {
 } from "node:fs"
 import { createServer, type Server } from "node:net"
 import { resolve } from "node:path"
-
 import * as agent from "../src/agent"
 import { parseArgs } from "../src/args"
 import {
@@ -55,6 +54,7 @@ import {
 import { pathsFor } from "../src/paths"
 import { processStart } from "../src/proc"
 import { deriveState, gather } from "../src/status"
+import { lockPidfile, releasePidfiles } from "./fakes/pidfile"
 import { FakeQmp } from "./fakes/qmp"
 
 const NAME = "frozen-test"
@@ -62,6 +62,7 @@ let home: string
 let savedHome: string | undefined
 let fake: FakeQmp
 let runState = "running"
+let qemuPid = 0
 
 beforeAll(async () => {
   savedHome = process.env.WINVM_HOME
@@ -77,7 +78,7 @@ beforeAll(async () => {
       created: new Date().toISOString(),
     }),
   )
-  writeFileSync(p.pid, `${String(process.pid)}\n`)
+  qemuPid = (await lockPidfile(p.pid, "qemu-system-aarch64")).pid
   fake = new FakeQmp(p.qmp)
   fake.handler = (cmd) =>
     cmd.execute === "query-status"
@@ -88,6 +89,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await fake.close()
+  releasePidfiles()
   rmSync(home, { recursive: true, force: true })
   if (savedHome === undefined) delete process.env.WINVM_HOME
   else process.env.WINVM_HOME = savedHome
@@ -191,7 +193,7 @@ describe("the asleep mark", () => {
     expect(await frozenState(p)).toBeNull()
     runState = "paused"
     expect(await frozenState(p)).toBe("paused")
-    markAsleep(p, process.pid)
+    markAsleep(p, qemuPid)
     expect(await frozenState(p)).toBe("asleep")
   })
 })
@@ -204,7 +206,7 @@ describe("nothing calls into a frozen guest", () => {
     expect(paused).toBeInstanceOf(GuestFrozen)
     expect((paused as GuestFrozen).state).toBe("paused")
     expect((paused as Error).message).toContain("winvm resume -i frozen-test")
-    markAsleep(pathsFor(NAME), process.pid)
+    markAsleep(pathsFor(NAME), qemuPid)
     const asleep = await refuseFrozen(NAME).catch((e: unknown) => e)
     expect((asleep as GuestFrozen).state).toBe("asleep")
     expect((asleep as Error).message).toContain("winvm wake -i frozen-test")
@@ -275,7 +277,7 @@ describe("status of a frozen guest", () => {
 
   it("says asleep when marked, and never sends cont", async () => {
     runState = "paused"
-    markAsleep(pathsFor(NAME), process.pid)
+    markAsleep(pathsFor(NAME), qemuPid)
     const s = await gather(NAME, true)
     expect(s.state).toBe("asleep")
     expect(fake.commands).not.toContain("cont")

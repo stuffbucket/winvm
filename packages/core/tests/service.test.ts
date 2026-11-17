@@ -41,6 +41,7 @@ import {
 } from "../src/servicectl"
 import { watcherRecord, watchPathsFor } from "../src/watch"
 import { FakeAgent } from "./fakes/agent"
+import { lockPidfile, releasePidfiles } from "./fakes/pidfile"
 import { FakeQmp } from "./fakes/qmp"
 
 const sleep = async (ms: number): Promise<void> => {
@@ -53,6 +54,7 @@ let p: Paths
 let fake: FakeQmp
 let agent: FakeAgent
 let svc: ServiceHandle | null = null
+let qemuPid = 0
 
 beforeEach(async () => {
   savedHome = process.env.WINVM_HOME
@@ -60,7 +62,7 @@ beforeEach(async () => {
   process.env.WINVM_HOME = home
   p = pathsFor("t")
   mkdirSync(p.dir, { recursive: true })
-  writeFileSync(p.pid, `${String(process.pid)}\n`)
+  qemuPid = (await lockPidfile(p.pid, "qemu-system-aarch64")).pid
   fake = new FakeQmp(p.qmpQemu)
   await fake.listen()
   agent = new FakeAgent(p.qgaQemu)
@@ -70,6 +72,7 @@ beforeEach(async () => {
 afterEach(async () => {
   await svc?.stop()
   svc = null
+  releasePidfiles()
   await fake.close().catch(() => undefined)
   await agent.close().catch(() => undefined)
   if (savedHome === undefined) delete process.env.WINVM_HOME
@@ -337,9 +340,7 @@ describe("the service", () => {
     svc = await runService("t", { exitAfterMs: 200, checkMs: 50 })
     expect(statSync(p.control).mode & 0o777).toBe(0o600)
     const res = await fetch("http://localhost/status", { unix: p.control })
-    expect(((await res.json()) as { qemuPid: number }).qemuPid).toBe(
-      process.pid,
-    )
+    expect(((await res.json()) as { qemuPid: number }).qemuPid).toBe(qemuPid)
     expect(recorded()).not.toHaveProperty("port")
     expect(recorded()).not.toHaveProperty("token")
   })
@@ -1007,7 +1008,7 @@ describe("a watcher owed to the service's QEMU", () => {
 
   it("is restarted by the service on its own, with no command to repair it", async () => {
     writeFileSync(p.meta, JSON.stringify({ image: "x", vnc: 9, created: "" }))
-    writeFileSync(owed(), JSON.stringify({ qemu: process.pid }))
+    writeFileSync(owed(), JSON.stringify({ qemu: qemuPid }))
     const starts = { n: 0 }
     svc = await runService("t", {
       exitAfterMs: 5000,
