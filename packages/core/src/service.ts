@@ -159,7 +159,13 @@ export async function runService(
     for (const c of subs) send(c, ": op\n\n")
   }
   captureOutput()
-  const queue = new OpQueue(name, o.handlers ?? SERVICE_HANDLERS, record, nudge)
+  const queue = new OpQueue(name, o.handlers ?? SERVICE_HANDLERS, {
+    record,
+    nudge,
+    killed: () => {
+      void stop()
+    },
+  })
 
   const qmpChannel = new QmpChannel({
     listen: p.qmp,

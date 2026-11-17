@@ -16,6 +16,7 @@ export interface Accepted {
   readonly id: string
   readonly cursor: Cursor
   readonly servicePid: number
+  readonly queued: boolean
 }
 
 type Sent =
@@ -52,7 +53,12 @@ function acceptedOf(v: Json): Accepted | null {
   const cursor = cursorOf(v.cursor)
   if (typeof v.id !== "string" || typeof v.pid !== "number" || cursor === null)
     return null
-  return { id: v.id, cursor, servicePid: v.pid }
+  return {
+    id: v.id,
+    cursor,
+    servicePid: v.pid,
+    queued: holderOf(v.queued) !== null,
+  }
 }
 
 const why = (error: unknown): string =>
@@ -192,7 +198,7 @@ export async function runOp(
   const leave = (): void => {
     for (const [signal, handler] of handlers) process.off(signal, handler)
   }
-  let accepted = false
+  let accepted: Accepted | null = null
   try {
     const sent = await send(
       name,
@@ -226,14 +232,18 @@ export async function runOp(
         )
         return 1
       case "accepted":
-        accepted = true
+        accepted = sent
         return await followOp(name, call.op, sent, io, interrupted.signal)
     }
   } catch (error) {
-    if (!interrupted.signal.aborted || !accepted) throw error
+    if (!interrupted.signal.aborted || accepted === null) throw error
     io.err(
       `${call.op} continues in winvm's service; follow it with \`winvm events -i ${name} --follow\`\n`,
     )
+    if (accepted.queued)
+      io.err(
+        `  while it still waits for "${name}", \`winvm cancel -i ${name} --id ${accepted.id}\` takes it off the queue\n`,
+      )
     return INTERRUPTED
   } finally {
     leave()

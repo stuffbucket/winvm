@@ -176,23 +176,22 @@ export type Submitted =
     }
   | { readonly kind: "busy"; readonly holder: LeaseHolder }
 
+export interface QueueHooks {
+  readonly record: (fields: EntryFields) => void
+  readonly nudge: () => void
+  readonly killed: () => void
+}
+
 export class OpQueue {
   private readonly ops = new Map<string, Running>()
   private readonly name: string
   private readonly handlers: OpHandlers
-  private readonly record: (fields: EntryFields) => void
-  private readonly nudge: () => void
+  private readonly hooks: QueueHooks
 
-  constructor(
-    name: string,
-    handlers: OpHandlers,
-    record: (fields: EntryFields) => void,
-    nudge: () => void,
-  ) {
+  constructor(name: string, handlers: OpHandlers, hooks: QueueHooks) {
     this.name = name
     this.handlers = handlers
-    this.record = record
-    this.nudge = nudge
+    this.hooks = hooks
   }
 
   idle(): boolean {
@@ -239,6 +238,7 @@ export class OpQueue {
       decide({ kind: "accepted", id, cursor, queued })
     }
     const args = parseArgs([...req.args, "--instance", this.name])
+    let killedQemu = false
     running.ended = runInOp(scope, async () => {
       try {
         await withOperation(
@@ -247,9 +247,12 @@ export class OpQueue {
           async () => {
             running.held = true
             accept(null)
-            this.nudge()
+            this.hooks.nudge()
             const code = await this.raced(scope, handler.run(args))
-            if (req.op === "kill" && code === 0) this.preempt(id)
+            if (req.op === "kill" && code === 0) {
+              killedQemu = true
+              this.preempt(id)
+            }
             return code
           },
           {
@@ -271,8 +274,9 @@ export class OpQueue {
         if (!running.held) this.endUnheld(running, args, error)
       } finally {
         this.ops.delete(id)
-        this.nudge()
+        this.hooks.nudge()
       }
+      if (killedQemu) this.hooks.killed()
     })
     return await decided
   }
@@ -371,7 +375,7 @@ export class OpQueue {
     text: string,
   ): void {
     for (let at = 0; at < text.length; at += CHUNK)
-      this.record({
+      this.hooks.record({
         kind: "op",
         phase: "output",
         id,

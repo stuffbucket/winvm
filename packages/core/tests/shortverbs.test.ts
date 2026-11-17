@@ -240,6 +240,12 @@ describe("the short verbs, as the CLI prints and exits with them", () => {
     })
     expect(await qemu.proc.exited).not.toBe(0)
     expect(existsSync(p.pid)).toBe(false)
+    expect(
+      await Promise.race([
+        service?.exited.then(() => "stopped"),
+        Bun.sleep(5000).then(() => "still running"),
+      ]),
+    ).toBe("stopped")
   }, 30_000)
 
   for (const verb of ["pause", "resume", "wake", "sleep", "lock", "reboot"])
@@ -363,6 +369,38 @@ describe("the short verbs, run by winvm's service", () => {
     })
     expect((await first.done).code).toBe(0)
     expect(guest.status).toBe("paused")
+  }, 30_000)
+
+  it("say how to take a queued op off the queue when the CLI is interrupted while it waits", async () => {
+    guest.bootDelayMs = 2500
+    const first = launch("reboot", "-i", "t")
+    await until(() => first.stdout().includes("rebooting"))
+    const queued = launch("pause", "-i", "t", "--wait")
+    await until(() =>
+      ops().some(
+        (e) =>
+          e.kind === "op" &&
+          e.phase === "output" &&
+          e.operation === "pause" &&
+          e.text.includes("waiting for the reboot"),
+      ),
+    )
+    queued.proc.kill("SIGINT")
+    const detached = await queued.done
+    expect(detached.code).toBe(130)
+    expect(detached.stderr).toContain(
+      "pause continues in winvm's service; follow it with `winvm events -i t --follow`\n",
+    )
+    const id = /winvm cancel -i t --id (\S+)`/.exec(detached.stderr)?.[1]
+    expect(id).toBeDefined()
+    expect(await winvm("cancel", "-i", "t", "--id", id ?? "")).toEqual({
+      code: 0,
+      stdout: 'cancelled pause on "t"\n',
+      stderr: "",
+    })
+    expect((await first.done).code).toBe(0)
+    expect(endOf("pause")).toMatchObject({ ok: false, exitCode: 130 })
+    expect(guest.status).toBe("running")
   }, 30_000)
 
   it("can be cancelled before their point of no return, and not after it", async () => {
