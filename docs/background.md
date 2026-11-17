@@ -24,10 +24,13 @@ keeper to do it.
 When the keeper itself is told to stop, because the Mac is shutting down,
 restarting or logging out, or because someone ran `launchctl bootout` on it,
 it asks Windows to shut down through a QMP monitor of its own
-(`keeper/qmp.sock`). It first lets a save that is still running finish, or
-cancels it if there isn't time. It quits QEMU 5 seconds before launchd's limit
-and kills it 2 seconds before. Stowing Windows at that moment, instead of
-shutting it down, comes in a later release.
+(`keeper/qmp.sock`). launchd allows it 60 seconds. It lets a save that is
+still running go on for up to 43 seconds, then cancels it. If Windows hasn't
+shut down 50 seconds after the stop began, the keeper quits QEMU, and at 53
+seconds it kills it. A guest that is stopped mid-save or mid-load can't act on
+the power button, so the keeper quits it at once. Stowing Windows at that
+moment, instead of shutting it down, comes in a later release. After the next
+login, `winvm status` says whether Windows shut down cleanly or was powered off.
 
 The keeper isn't a login item and doesn't outlive a restart. The app carries
 it; a CLI-only install gets it from `winvm setup` once a release pins one.
