@@ -1228,6 +1228,20 @@ describe("a keeper from phase 3, which speaks protocol 2", () => {
     }
   }, 15_000)
 
+  it("lets winvm kill end the QEMU that a start refused on, though qemu.pid no longer names it", async () => {
+    const p = pathsFor(NAME)
+    const pid = await held()
+    rmSync(p.pid)
+    const said = spyOn(console, "log").mockImplementation(() => undefined)
+    try {
+      expect(await commands.kill(parseArgs(["-i", NAME]))).toBe(0)
+      await until("the QEMU to go", () => !alive(pid))
+      expect(String(said.mock.calls.at(-1)?.[0])).toContain(String(pid))
+    } finally {
+      await releasePidfiles()
+    }
+  })
+
   it("leaves the start refused while a QEMU of the instance runs, whatever qemu.pid says", async () => {
     const p = pathsFor(NAME)
     const pid = await held()

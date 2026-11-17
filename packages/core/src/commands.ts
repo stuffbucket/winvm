@@ -1330,13 +1330,17 @@ export async function kill(args: Args): Promise<number> {
   }
   if (pid === null) {
     const kept = await killKept(p, null)
+    const strays = qemu.qemuPids(p)
+    for (const stray of strays) signalProcess(stray, "SIGKILL")
     qemu.stopSidecars(p)
     stopService(p)
     finder.cleanStale(name)
     console.log(
-      kept
-        ? `killed the QEMU winvm's keeper ran for "${name}", which qemu.pid did not name`
-        : `instance "${name}" is not running`,
+      strays.length > 0
+        ? `killed QEMU (pid ${strays.join(", ")}) of "${name}", which no longer held qemu.pid`
+        : kept
+          ? `killed the QEMU winvm's keeper ran for "${name}", which qemu.pid did not name`
+          : `instance "${name}" is not running`,
     )
     return 0
   }

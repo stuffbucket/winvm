@@ -256,7 +256,7 @@ export function setSettle(next: Settle = settleByClock): Settle {
   return previous
 }
 
-function qemuPids(p: Paths): readonly number[] {
+export function qemuPids(p: Paths): readonly number[] {
   const pidfile = p.pid.replace(/[.*+?^$()|[\]{}\\]/g, "\\$&")
   const r = spawnSync(
     "pgrep",
