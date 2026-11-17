@@ -27,6 +27,9 @@ const ROOT = resolve(import.meta.dir, "..")
 const VIEWER = join(ROOT, "apps", "viewer")
 const TAURI = join(VIEWER, "src-tauri")
 const SIDECAR = join(TAURI, "binaries", "winvm-aarch64-apple-darwin")
+const KEEPER = join(ROOT, "native", "keeper")
+const KEEPER_BIN = join(TAURI, "binaries", "winvm-keeper-aarch64-apple-darwin")
+const CRATES = [TAURI, KEEPER]
 const DIST_INDEX = join(VIEWER, "dist", "index.html")
 
 const ENV = {
@@ -43,10 +46,12 @@ const npmScript = (script: string): Command => ({
   argv: ["pnpm", "run", "--silent", script],
 })
 const mise = (...argv: string[]): string[] => ["mise", "exec", "--", ...argv]
-const cargo = (...argv: string[]): Command => ({
+const cargo = (cwd: string, ...argv: string[]): Command => ({
   argv: mise("cargo", ...argv),
-  cwd: TAURI,
+  cwd,
 })
+const everyCrate = (...argv: string[]): Command[] =>
+  CRATES.map((crate) => cargo(crate, ...argv))
 
 function capture(argv: string[], cwd = ROOT): string {
   const run = Bun.spawnSync(argv, { cwd, env: ENV })
@@ -85,15 +90,20 @@ let rustInputsFailure: string | undefined | null = null
 function ensureRustInputs(): string | undefined {
   if (rustInputsFailure !== null) return rustInputsFailure
   rustInputsFailure = undefined
-  const builds: [string, string, string][] = [
-    [SIDECAR, join(VIEWER, "scripts", "build-sidecar.ts"), ROOT],
-    [DIST_INDEX, join(VIEWER, "scripts", "build-ui.ts"), VIEWER],
+  const builds: [string, string[], string][] = [
+    [SIDECAR, ["bun", join(VIEWER, "scripts", "build-sidecar.ts")], ROOT],
+    [DIST_INDEX, ["bun", join(VIEWER, "scripts", "build-ui.ts")], VIEWER],
+    [
+      KEEPER_BIN,
+      mise("bun", join(VIEWER, "scripts", "build-keeper.ts")),
+      KEEPER,
+    ],
   ]
-  for (const [output, script, cwd] of builds) {
+  for (const [output, argv, cwd] of builds) {
     if (existsSync(output)) continue
-    const built = Bun.spawnSync(["bun", script], { cwd, env: ENV })
+    const built = Bun.spawnSync(argv, { cwd, env: ENV })
     if (built.exitCode !== 0 || !existsSync(output)) {
-      rustInputsFailure = `setup failed: bun ${script} did not produce ${output}\n${built.stderr.toString()}${built.stdout.toString()}`
+      rustInputsFailure = `setup failed: ${argv.join(" ")} did not produce ${output}\n${built.stderr.toString()}${built.stdout.toString()}`
       return rustInputsFailure
     }
   }
@@ -193,19 +203,19 @@ const STEPS: Step[] = [
   {
     name: "cargo-fmt",
     group: "fast",
-    commands: [cargo("fmt", "--check")],
+    commands: everyCrate("fmt", "--check"),
     findings: count(/^Diff in /gm),
   },
   {
     name: "cargo-deny",
     group: "fast",
-    commands: [cargo("deny", "check")],
+    commands: everyCrate("deny", "check"),
     findings: count(/^error\[/gm),
   },
   {
     name: "cargo-machete",
     group: "fast",
-    commands: [cargo("machete")],
+    commands: everyCrate("machete"),
     findings: count(/^\t\S+/gm),
   },
   {
@@ -223,7 +233,7 @@ const STEPS: Step[] = [
     group: "slow",
     lane: "rust",
     prepare: ensureRustInputs,
-    commands: [cargo("clippy", "--all-targets")],
+    commands: everyCrate("clippy", "--all-targets"),
     findings: netWarnings,
   },
   {
@@ -232,7 +242,16 @@ const STEPS: Step[] = [
     lane: "rust",
     prepare: ensureRustInputs,
     commands: [
-      cargo("clippy", "--lib", "--bins", "--", "-D", "clippy::unwrap_used"),
+      cargo(
+        TAURI,
+        "clippy",
+        "--lib",
+        "--bins",
+        "--",
+        "-D",
+        "clippy::unwrap_used",
+      ),
+      cargo(KEEPER, "clippy", "--bins", "--", "-D", "clippy::unwrap_used"),
     ],
     findings: sumOf(/due to (\d+) previous errors?/g),
   },
@@ -241,7 +260,7 @@ const STEPS: Step[] = [
     group: "slow",
     lane: "rust",
     prepare: ensureRustInputs,
-    commands: [cargo("test")],
+    commands: everyCrate("test"),
     findings: sumOf(/test result: .*?(\d+) failed/g),
   },
 ]
@@ -339,6 +358,7 @@ function toolVersions(): Record<string, string> {
     shfmt: first(capture(mise("shfmt", "--version"))),
     actionlint: first(capture(mise("actionlint", "--version"))),
     cargo: first(capture(mise("cargo", "--version"), TAURI)),
+    keeperCargo: first(capture(mise("cargo", "--version"), KEEPER)),
     cargoDeny: first(capture(mise("cargo", "deny", "--version"), TAURI)),
     cargoMachete: first(capture(mise("cargo", "machete", "--version"), TAURI)),
   }

@@ -112,13 +112,16 @@ jobs:
         run: |
           mise trust mise.toml
           mise trust apps/viewer/mise.toml
+          mise trust native/keeper/mise.toml
           mise install
           mise --cd apps/viewer install
+          mise --cd native/keeper install
 
       # The fast group of scripts/verify.ts: biome, comments, encoding,
       # shellcheck, shfmt, actionlint, typecheck, types, typecheck-scripts,
-      # boundaries, knip, deps, cargo fmt, cargo-deny and cargo-machete.
-      # Clippy and cargo test need the macOS target and stay local.
+      # boundaries, knip, deps, and cargo fmt, cargo-deny and cargo-machete
+      # for the viewer and the keeper. Clippy and cargo test need the macOS
+      # target (AppKit, kqueue) and stay local.
       - name: Static gates
         run: pnpm verify --fast
 
