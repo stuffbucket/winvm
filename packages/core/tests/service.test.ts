@@ -384,6 +384,57 @@ describe("the service", () => {
   })
 })
 
+describe("a host end handed to the service", () => {
+  const post = async (body: unknown): Promise<number> =>
+    (
+      await fetch("http://localhost/host-ending", {
+        unix: p.control,
+        method: "POST",
+        body: JSON.stringify(body),
+      })
+    ).status
+
+  it("is accepted once, runs with the keeper's deadline, and holds the service until it finishes", async () => {
+    const calls: [string, number][] = []
+    let finish = (): void => undefined
+    const gate = new Promise<void>((r) => {
+      finish = r
+    })
+    svc = await runService("t", {
+      exitAfterMs: 60_000,
+      checkMs: 50,
+      hostEnd: async (name, deadlineMs) => {
+        calls.push([name, deadlineMs])
+        await gate
+      },
+    })
+    expect(await post({ deadlineMs: 1234, budgetMs: 55_000 })).toBe(202)
+    expect(await post({ deadlineMs: 1234, budgetMs: 55_000 })).toBe(409)
+    expect(calls).toEqual([["t", 1234]])
+    let stopped = false
+    const stopping = svc.stop().then(() => {
+      stopped = true
+    })
+    await sleep(200)
+    expect(stopped).toBe(false)
+    finish()
+    await stopping
+    expect(stopped).toBe(true)
+    svc = null
+  })
+
+  it("refuses a request without a deadline", async () => {
+    svc = await runService("t", {
+      exitAfterMs: 60_000,
+      checkMs: 50,
+      hostEnd: async () => {
+        await Promise.resolve()
+      },
+    })
+    expect(await post({ budgetMs: 1 })).toBe(400)
+  })
+})
+
 describe("one service per instance", () => {
   it("refuses to start while another service holds the instance, and leaves it working", async () => {
     svc = await runService("t", { exitAfterMs: 5000, checkMs: 50 })

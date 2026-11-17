@@ -354,6 +354,14 @@ export function irreversible(
   }
 }
 
+export function irreversibleSince(
+  name: string,
+  seams: LeaseSeams = {},
+): string | null {
+  const r = readLease(name, seams)
+  return r?.irreversibleAt ?? null
+}
+
 export function abandonedStop(
   name: string,
   seams: LeaseSeams = {},

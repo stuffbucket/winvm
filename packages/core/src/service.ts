@@ -11,6 +11,7 @@ import {
   rotateEvents,
   syncFields,
 } from "./eventlog"
+import { hostEnd } from "./hostend"
 import { buildIdentity } from "./identity"
 import { type ReconcileOptions, settleWatcherDebt } from "./lifecycle"
 import { leaseHolder } from "./operation"
@@ -25,6 +26,7 @@ export interface ServiceOptions {
   readonly heartbeatMs?: number
   readonly checkMs?: number
   readonly eventsMaxBytes?: number
+  readonly hostEnd?: (name: string, deadlineMs: number) => Promise<unknown>
   readonly settle?: {
     readonly everyMs?: number
     readonly options?: ReconcileOptions
@@ -178,8 +180,35 @@ export async function runService(
     upstream: p.qgaQemu,
     portOpen: askPortOpen,
   })
-  const handle = (req: Request): Response => {
+  let hostEnding: Promise<unknown> | null = null
+  const beginHostEnd = async (req: Request): Promise<Response> => {
+    let body: unknown = null
+    try {
+      body = await req.json()
+    } catch {}
+    const deadlineMs =
+      typeof body === "object" && body !== null
+        ? (body as { deadlineMs?: unknown }).deadlineMs
+        : undefined
+    if (typeof deadlineMs !== "number")
+      return new Response("deadlineMs is required", { status: 400 })
+    if (hostEnding !== null)
+      return new Response("already ending", { status: 409 })
+    hostEnding = (o.hostEnd ?? hostEnd)(name, deadlineMs).catch(
+      (error: unknown) => {
+        record({
+          kind: "warning",
+          what: "host-end",
+          error: error instanceof Error ? error.message : String(error),
+        })
+      },
+    )
+    return new Response(null, { status: 202 })
+  }
+  const handle = async (req: Request): Promise<Response> => {
     const url = new URL(req.url)
+    if (url.pathname === "/host-ending" && req.method === "POST")
+      return await beginHostEnd(req)
     if (url.pathname === "/events") {
       let controller: ReadableStreamDefaultController<Uint8Array> | undefined
       const stream = new ReadableStream<Uint8Array>({
@@ -358,6 +387,7 @@ export async function runService(
       return
     }
     stopping = true
+    if (hostEnding !== null) await hostEnding
     clearInterval(check)
     clearInterval(heartbeat)
     for (const c of subs) {
