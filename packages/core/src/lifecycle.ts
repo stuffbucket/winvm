@@ -11,6 +11,7 @@ import { resolve } from "node:path"
 import { effectiveConfig } from "./config"
 import { linkNew, takeOver } from "./exclusive"
 import { buildIdentity } from "./identity"
+import { keeperHello } from "./kept"
 import { adoptLegacy } from "./legacy"
 import { InstanceBusy, leaseHolder, withOperation } from "./operation"
 import { cliEntry, NO_RECONCILE, type Paths, pathsFor } from "./paths"
@@ -318,7 +319,13 @@ interface Plan {
   readonly foreign: boolean
 }
 
-function plan(name: string, p: Paths, current: string, debtOnly = false): Plan {
+function plan(
+  name: string,
+  p: Paths,
+  current: string,
+  debtOnly = false,
+  orphan: number | null = null,
+): Plan {
   if (debtOnly)
     return {
       service: readService(p),
@@ -347,7 +354,7 @@ function plan(name: string, p: Paths, current: string, debtOnly = false): Plan {
     ? "none"
     : service === null
       ? "start"
-      : serviceStanding === "rotate"
+      : serviceStanding === "rotate" || service.pid === orphan
         ? "replace"
         : "none"
   const rotateWatcher =
@@ -428,7 +435,9 @@ export async function reconcileManagement(
     return { ...r, adopted: true }
   }
   const current = o.current ?? buildIdentity()
-  const first = plan(name, p, current, o.debtOnly)
+  const kept = (await keeperHello(p))?.service ?? null
+  const orphan = kept?.adopted === true ? kept.pid : null
+  const first = plan(name, p, current, o.debtOnly, orphan)
   if (!hasWork(first) && !existsSync(owedPath(p))) {
     return {
       changed: false,
@@ -445,7 +454,7 @@ export async function reconcileManagement(
     }
   }
   try {
-    return await reconcileHeld(name, p, o, current, got.lock)
+    return await reconcileHeld(name, p, o, current, got.lock, orphan)
   } finally {
     got.lock.release()
   }
@@ -464,6 +473,7 @@ async function reconcileHeld(
   o: ReconcileOptions,
   current: string,
   lock: ReconcileLock,
+  orphan: number | null,
 ): Promise<ReconcileResult> {
   const qemu = qemuPid(p)
   const owed = owedTo(p)
@@ -472,7 +482,7 @@ async function reconcileHeld(
     return { changed: false, servicePid: null, watcherPid: null }
   }
   if (owed !== null && owed !== qemu) forgive(p)
-  const pl = plan(name, p, current, o.debtOnly)
+  const pl = plan(name, p, current, o.debtOnly, orphan)
   if (pl.foreign) return { changed: false, ...pids(name, p) }
   if (owed === qemu && pl.watcher !== null && !pl.rotateWatcher) forgive(p)
   const owesWatcher = owed === qemu && pl.watcher === null

@@ -907,6 +907,22 @@ describe("the control service under the keeper", () => {
     servicectl.stopService(p)
   }, 20_000)
 
+  it("is handed over by the next reconcile, not only by a launch", async () => {
+    process.env.WINVM_CLI = CLI
+    await leasedLaunch()
+    ensuring.mockRestore()
+    const p = pathsFor(NAME)
+    const first = await servicectl.ensureService(NAME, p)
+    writeFileSync(p.qmpQemu, "")
+    await keeperRequest(keeperSocket(p), { op: "test-adopt" })
+    await reconcileManagement(NAME, p)
+    const after = servicectl.readService(p)
+    expect(after?.pid).not.toBe(first.pid)
+    expect(alive(first.pid)).toBe(false)
+    expect((await keeperHello(p))?.service?.adopted).toBe(false)
+    servicectl.stopService(p)
+  }, 30_000)
+
   it("leaves the service alone, and starts no stray, while the keeper ends the session", async () => {
     const p = pathsFor(NAME)
     mkdirSync(keeperDir(p), { recursive: true })
