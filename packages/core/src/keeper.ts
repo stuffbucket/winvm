@@ -16,6 +16,7 @@ import { connect } from "node:net"
 import { basename, dirname, resolve } from "node:path"
 
 import pinned from "../keeper.json"
+import { type HeldLease, holdsLease, LeaseNotHeld } from "./operation"
 import { download } from "./shell"
 import { dataDir } from "./xdg"
 
@@ -37,7 +38,7 @@ export interface FoundKeeper {
 export const KEEPER_BINARY = "winvm-keeper"
 export const KEEPER_PREFIX = "co.stuffbucket.winvm.keeper."
 export const KEEPER_EXIT_TIMEOUT = 60
-export const KEEPER_PROTOCOL = 1
+export const KEEPER_PROTOCOL = 2
 const APP_BUNDLE_ID = "co.stuffbucket.winvm"
 const HASH_DIR = /^[0-9a-f]{12}$/
 
@@ -280,10 +281,10 @@ export interface KeeperCommand {
 export interface KeeperChild extends KeeperCommand {
   readonly name?: string
   readonly pidfile?: string
+  readonly qmp?: string
 }
 
 export interface KeeperSpec {
-  readonly instance?: string
   readonly record?: string
   readonly lingerMs?: number
   readonly child?: KeeperChild
@@ -304,8 +305,11 @@ function writePrivate(path: string, text: string): void {
 export async function startKeeper(o: {
   readonly launchd: Launchd
   readonly job: KeeperJob
+  readonly lease: HeldLease
   readonly spec?: KeeperSpec
 }): Promise<StartedKeeper> {
+  if (!holdsLease(o.lease))
+    throw new LeaseNotHeld(o.lease.instance, `starting ${o.job.Label}`)
   const dir = o.job.WorkingDirectory
   const hello = await keeperRequest(
     resolve(dir, "keeper.sock"),
@@ -323,11 +327,10 @@ export async function startKeeper(o: {
     )
   mkdirSync(dir, { recursive: true, mode: 0o700 })
   chmodSync(dir, 0o700)
-  if (o.spec !== undefined)
-    writePrivate(
-      resolve(dir, "spec.json"),
-      `${JSON.stringify({ ...o.spec, session: randomUUID() })}\n`,
-    )
+  writePrivate(
+    resolve(dir, "spec.json"),
+    `${JSON.stringify({ ...o.spec, instance: o.lease.instance, session: randomUUID() })}\n`,
+  )
   const plist = resolve(dir, "keeper.plist")
   writePrivate(plist, plistXml(o.job))
   o.launchd.bootout(o.job.Label)

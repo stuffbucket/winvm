@@ -35,6 +35,12 @@ import {
   plistXml,
   startKeeper,
 } from "../src/keeper"
+import {
+  type HeldLease,
+  heldLease,
+  LeaseNotHeld,
+  withOperation,
+} from "../src/operation"
 
 let tmp = ""
 
@@ -398,24 +404,60 @@ const closing = (server: Server): Promise<void> =>
 
 describe("starting a keeper job", () => {
   let short = ""
+  let savedHome: string | undefined
   beforeEach(() => {
     short = mkdtempSync("/tmp/wkts-")
+    savedHome = process.env.WINVM_HOME
+    process.env.WINVM_HOME = resolve(short, "home")
   })
   afterEach(() => {
+    if (savedHome === undefined) delete process.env.WINVM_HOME
+    else process.env.WINVM_HOME = savedHome
     rmSync(short, { recursive: true, force: true })
   })
   const testJob = (dir: string) =>
     keeperJob({ label: "co.stuffbucket.winvm.test.x", program: "/k", dir })
+  const leased = async <T>(
+    run: (lease: HeldLease) => Promise<T>,
+    name = "default",
+  ): Promise<T> =>
+    await withOperation(name, "start", async () => {
+      const lease = heldLease(name)
+      if (lease === null) throw new Error("no lease inside withOperation")
+      return await run(lease)
+    })
+
+  it("refuses without its instance's lease, and never touches launchd", async () => {
+    const dir = resolve(short, "default", "keeper")
+    const launchd = fakeLaunchd({})
+    const stale = await leased(async (lease) => await Promise.resolve(lease))
+    await expect(
+      startKeeper({ launchd, job: testJob(dir), lease: stale }),
+    ).rejects.toThrow(LeaseNotHeld)
+    const forged: HeldLease = { instance: "default", id: "x" }
+    await expect(
+      leased(
+        async () =>
+          await startKeeper({ launchd, job: testJob(dir), lease: forged }),
+      ),
+    ).rejects.toThrow(LeaseNotHeld)
+    expect(launchd.calls).toEqual([])
+    expect(existsSync(dir)).toBe(false)
+  })
 
   it("writes the spec with a fresh session and the plist, boots out the stopped job, then bootstraps", async () => {
     const dir = resolve(short, "default", "keeper")
     const launchd = fakeLaunchd({})
     const job = testJob(dir)
-    const started = await startKeeper({
-      launchd,
-      job,
-      spec: { instance: "default", child: { argv: ["/bin/sleep", "9"] } },
-    })
+    const started = await leased(
+      async (lease) =>
+        await startKeeper({
+          launchd,
+          job,
+          lease,
+          spec: { child: { argv: ["/bin/sleep", "9"] } },
+        }),
+    )
     const plist = resolve(dir, "keeper.plist")
     expect(started).toEqual({ state: "started", plist })
     expect(readFileSync(plist, "utf8")).toBe(plistXml(job))
@@ -441,7 +483,10 @@ describe("starting a keeper job", () => {
     )
     try {
       const launchd = fakeLaunchd({})
-      const started = await startKeeper({ launchd, job: testJob(dir) })
+      const started = await leased(
+        async (lease) =>
+          await startKeeper({ launchd, job: testJob(dir), lease }),
+      )
       expect(started).toEqual({
         state: "running",
         hello: { ok: true, pid: 42, hostEnding: false },
@@ -463,15 +508,21 @@ describe("starting a keeper job", () => {
       "co.stuffbucket.winvm.test.x": { state: "running", pid: 42 },
     })
     try {
-      await expect(startKeeper({ launchd, job: testJob(dir) })).rejects.toThrow(
-        KeeperBusy,
-      )
+      await expect(
+        leased(
+          async (lease) =>
+            await startKeeper({ launchd, job: testJob(dir), lease }),
+        ),
+      ).rejects.toThrow(KeeperBusy)
     } finally {
       await closing(server)
     }
-    await expect(startKeeper({ launchd, job: testJob(dir) })).rejects.toThrow(
-      "running but does not answer",
-    )
+    await expect(
+      leased(
+        async (lease) =>
+          await startKeeper({ launchd, job: testJob(dir), lease }),
+      ),
+    ).rejects.toThrow("running but does not answer")
     expect(launchd.calls).toEqual([])
   })
 })
@@ -494,7 +545,7 @@ describe("keeperRequest", () => {
     })
     try {
       expect(await keeperRequest(path, { op: "hello" })).toEqual({ ok: true })
-      expect(JSON.parse(got)).toEqual({ op: "hello", protocol: 1 })
+      expect(JSON.parse(got)).toEqual({ op: "hello", protocol: 2 })
     } finally {
       await closing(server)
     }

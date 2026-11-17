@@ -117,6 +117,37 @@ const held = new AsyncLocalStorage<ReadonlyMap<string, string>>()
 const heldHere = (name: string): string | undefined =>
   held.getStore()?.get(name)
 
+export interface HeldLease {
+  readonly instance: string
+  readonly id: string
+}
+
+const issued = new WeakSet<HeldLease>()
+
+export function heldLease(name: string): HeldLease | null {
+  const id = heldHere(name)
+  if (id === undefined) return null
+  const lease: HeldLease = Object.freeze({ instance: name, id })
+  issued.add(lease)
+  return lease
+}
+
+export function holdsLease(lease: HeldLease): boolean {
+  if (!issued.has(lease) || heldHere(lease.instance) !== lease.id) return false
+  return (
+    parseRecord(readOr(pathsFor(lease.instance).lease, ""))?.id === lease.id
+  )
+}
+
+export class LeaseNotHeld extends Error {
+  constructor(name: string, what: string) {
+    super(
+      `${what} needs the lease on instance "${name}", and this command does not hold it`,
+    )
+    this.name = "LeaseNotHeld"
+  }
+}
+
 export class InstanceBusy extends Error {
   readonly holder: LeaseHolder
 

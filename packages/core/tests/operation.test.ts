@@ -25,6 +25,9 @@ import type { LeaseOperation, VmOperation } from "../src/operation"
 import {
   abandonedStop,
   clearSavingRunning,
+  type HeldLease,
+  heldLease,
+  holdsLease,
   InstanceBusy,
   irreversible,
   leaseHolder,
@@ -117,6 +120,40 @@ const gate = (): {
 }
 
 const quietly = { onWait: (): void => undefined }
+
+describe("the held lease", () => {
+  it("exists only inside the operation that holds the instance", async () => {
+    expect(heldLease(NAME)).toBeNull()
+    let inside: HeldLease | null = null
+    let heldInside = false
+    await withOperation(NAME, "start", () => {
+      inside = heldLease(NAME)
+      heldInside = inside !== null && holdsLease(inside)
+      expect(heldLease("another")).toBeNull()
+    })
+    expect(inside).not.toBeNull()
+    expect(heldInside).toBe(true)
+    expect(inside === null ? true : holdsLease(inside)).toBe(false)
+  })
+
+  it("cannot be forged, even with the id of the lease on disk", async () => {
+    await withOperation(NAME, "start", () => {
+      const real = heldLease(NAME)
+      expect(real).not.toBeNull()
+      const forged: HeldLease = { instance: NAME, id: real?.id ?? "" }
+      expect(holdsLease(forged)).toBe(false)
+    })
+  })
+
+  it("stops counting once another process takes the instance over", async () => {
+    await withOperation(NAME, "start", () => {
+      const lease = heldLease(NAME)
+      expect(lease === null ? false : holdsLease(lease)).toBe(true)
+      writeFileSync(leaseFile(), JSON.stringify({ ...onDisk(), id: "other" }))
+      expect(lease === null ? true : holdsLease(lease)).toBe(false)
+    })
+  })
+})
 
 describe("operationFor", () => {
   it("maps the per-instance machine-impacting invocations, golden by its nested action", () => {
