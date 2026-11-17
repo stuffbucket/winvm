@@ -1746,8 +1746,8 @@ describe("status when the host powered Windows off", () => {
     keptStart()
     served()
     op("begin", "stow", true, "host-stow")
-    op("end", "stow", true, "host-stow")
     keeper("exited", { child: "qemu", pid: 501, status: 0 })
+    op("end", "stow", true, "host-stow")
     keeper("service-exited", { pid: 700, status: 0 })
     step("done")
     const s = await gather(HOST, false)
@@ -1818,6 +1818,21 @@ describe("status when the host powered Windows off", () => {
     const note = s.notes.join("\n")
     expect(note).toContain("before winvm's keeper finished")
     expect(note).toContain("the previous stow, if any, is kept")
+  })
+
+  it("says the stow was cut off when QEMU quit for it but the save never finished", async () => {
+    keptStart()
+    served()
+    op("begin", "stow", true, "host-stow")
+    keeper("exited", { child: "qemu", pid: 501, status: 0 })
+    keeper("service-exited", { pid: 700, signal: 9, core: false })
+    step("done")
+    const s = await gather(HOST, false)
+    expect(s.hostPoweredOff).toMatchObject({
+      cause: "host-cut-off",
+      detail: "a stow was being written",
+    })
+    expect(s.notes.join("\n")).toContain("the previous stow, if any, is kept")
   })
 
   it("does not call a host end with no QEMU cut off", async () => {

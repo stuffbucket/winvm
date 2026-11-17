@@ -188,14 +188,15 @@ export function hostPoweredOff(name: string): HostPoweredOff | null {
     const end = hostEnd
     hostEnd = null
     if (end === null) return
-    if (end.exit !== null) found = keptEnd(end)
+    if (end.exit !== null && end.stowing && !end.stowed) found = cutOff(end)
+    else if (end.exit !== null) found = keptEnd(end)
     else if (end.withQemu && !end.steps.has("done")) found = cutOff(end)
   }
   for (const e of readSince(name, START).entries) {
     const settled = hostEnd !== null && hostEnd.exit !== null
     if (hostEnd !== null && !settled) hostEnd.last = e.t
     if (e.kind === "op") {
-      if (hostEnd !== null && !settled && e.operation === "stow") {
+      if (hostEnd !== null && e.operation === "stow") {
         hostEnd.stowing = e.phase === "begin"
         if (e.phase === "end" && e.ok) hostEnd.stowed = true
       }
