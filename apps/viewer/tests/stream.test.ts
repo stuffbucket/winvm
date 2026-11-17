@@ -49,6 +49,14 @@ describe("what a line of the event stream means for the view", () => {
       { kind: "qmp", event: "MIGRATION", data: { status: "active" } },
       { kind: "service", what: "started" },
       { kind: "warning", what: "share notices" },
+      {
+        kind: "op",
+        phase: "output",
+        id: "op-1",
+        operation: "reboot",
+        stream: "out",
+        text: "rebooting",
+      },
     ])
       expect(signalOf(entry(e))).toBeNull()
     for (const junk of [
