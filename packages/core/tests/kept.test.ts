@@ -24,6 +24,7 @@ import * as commands from "../src/commands"
 import * as host from "../src/host"
 import { type JobInfo, keeperLabel, type Launchd } from "../src/keeper"
 import {
+  callerUmask,
   KEEPER_OFF,
   type KeeperHello,
   keeperDir,
@@ -142,14 +143,19 @@ const leasedLaunch = async (
 
 beforeEach(() => {
   previousEnv = Object.fromEntries(
-    ["WINVM_HOME", "WINVM_RUNTIME", "WINVM_KEEPER", "XDG_DATA_HOME"].map(
-      (k) => [k, process.env[k]],
-    ),
+    [
+      "WINVM_HOME",
+      "WINVM_RUNTIME",
+      "WINVM_KEEPER",
+      "XDG_DATA_HOME",
+      "KEPT_TEST_NOISE",
+    ].map((k) => [k, process.env[k]]),
   )
   state = mkdtempSync("/tmp/wkept-")
   process.env.WINVM_HOME = resolve(state, "home")
   process.env.WINVM_RUNTIME = resolve(state, "runtime")
   process.env.XDG_DATA_HOME = resolve(state, "data")
+  process.env.KEPT_TEST_NOISE = "x".repeat(70_000)
   const fakeBinary = resolve(state, "winvm-keeper")
   writeFileSync(fakeBinary, "#!/bin/sh\nexit 0\n")
   chmodSync(fakeBinary, 0o755)
@@ -241,8 +247,14 @@ describe("launching QEMU through the keeper", () => {
     expect(child.log).toBe(p.qemuLog)
     expect(child.qmp).toBe(keeperMonitor(p))
     expect(child.shield).toBeUndefined()
-    expect(child.umask).toBe(process.umask())
-    expect(tpmChild.umask).toBe(process.umask())
+    expect(child.umask).toBe(callerUmask())
+    expect(tpmChild.umask).toBe(callerUmask())
+    const env = child.env as Record<string, string>
+    expect(env.HOME).toBe(process.env.HOME ?? "")
+    expect(env.PATH).toBe(process.env.PATH ?? "")
+    expect(env.WINVM_HOME).toBe(process.env.WINVM_HOME ?? "")
+    expect(env.KEPT_TEST_NOISE).toBeUndefined()
+    expect(tpmChild.env).toEqual(env)
     const argv = child.argv as string[]
     expect(String(argv[0])).toEndWith("/bin/qemu-system-aarch64")
     expect(argv.join(" ")).toContain(

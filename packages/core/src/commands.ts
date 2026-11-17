@@ -578,16 +578,13 @@ export const launchInstaller = async (
   p: Paths,
   meta: InstanceMeta,
 ): Promise<void> => {
-  await withOperation(
-    scratch,
-    "build",
-    async () =>
-      await qemu.launch(scratch, p, meta, {
-        installMedia: true,
-        ephemeral: false,
-        virtioBoot: false,
-      }),
-  )
+  await withOperation(scratch, "build", async () => {
+    await qemu.launch(scratch, p, meta, {
+      installMedia: true,
+      ephemeral: false,
+      virtioBoot: false,
+    })
+  })
 }
 
 const NO_LOGON_MS = 120_000

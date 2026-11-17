@@ -38,6 +38,12 @@ export function keeperUse(
   return keeper === null ? { kind: "missing" } : { kind: "keeper", keeper }
 }
 
+export function callerUmask(): number {
+  const mask = process.umask(0o077)
+  process.umask(mask)
+  return mask
+}
+
 export const keeperDir = (p: Paths): string => resolve(p.dir, "keeper")
 export const keeperSocket = (p: Paths): string =>
   resolve(keeperDir(p), "keeper.sock")

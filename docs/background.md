@@ -12,6 +12,9 @@ keeper starts QEMU, its TPM emulator (`swtpm`) and the shared folder's daemon
 (`virtiofsd`) as its own children, waits on them, and writes each start and
 exit to `events.jsonl` as a `keeper` line. It exits 10 seconds after QEMU does.
 Its files are in `instances/<name>/keeper/`, and it logs to `keeper.log` there.
+The children get the umask of the command that started them, and of its
+environment only `HOME`, `USER`, `LOGNAME`, `PATH`, `SHELL`, `TMPDIR`, `LANG`,
+`LC_*` and `WINVM_*`.
 
 These children ignore SIGTERM, SIGHUP and SIGINT, so a stray SIGTERM can't
 end Windows abruptly. Activity Monitor's Quit does nothing to a kept QEMU;

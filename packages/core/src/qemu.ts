@@ -263,7 +263,8 @@ export async function launch(
   if (use.kind === "keeper") {
     const failed = await kept.openKeeper(name, p, use.keeper).then(
       () => null,
-      (error: unknown) => error,
+      (error: unknown) =>
+        error instanceof Error ? error : new Error(String(error)),
     )
     if (failed === null) {
       await launchKept(name, p, meta, o, use.keeper)
@@ -272,7 +273,7 @@ export async function launch(
     if (failed instanceof LeaseNotHeld || failed instanceof KeeperBusy)
       throw failed
     console.warn(
-      `warning: winvm's keeper did not start (${failed instanceof Error ? failed.message : String(failed)}); starting QEMU without it, so it is not protected if the Mac shuts down`,
+      `warning: winvm's keeper did not start (${failed.message}); starting QEMU without it, so it is not protected if the Mac shuts down`,
     )
   }
   await startSwtpm(p)
@@ -340,7 +341,7 @@ async function launchKept(
   await kept.openKeeper(name, p, keeper)
   stopSidecars(p)
   const env = keptEnv()
-  const umask = process.umask()
+  const umask = kept.callerUmask()
   const sidecar = async (
     child: KeeperChild & { readonly name: string },
   ): Promise<number> => {
@@ -397,9 +398,9 @@ async function launchKept(
     qmp: monitor,
     umask,
   })
-  let gone = false
+  const watching = new AbortController()
   const exited = (async (): Promise<"exited"> => {
-    while (!gone) {
+    while (!watching.signal.aborted) {
       const hello = await kept.keeperHello(p)
       if (hello !== null && hello.child?.pid !== pid) return "exited"
       await new Promise((r) => setTimeout(r, 50))
@@ -407,7 +408,7 @@ async function launchKept(
     return await new Promise<never>(() => undefined)
   })()
   const outcome = await settled(p, o, exited)
-  gone = true
+  watching.abort()
   if (outcome === "alive") {
     await afterLaunch(p)
     return
@@ -416,10 +417,24 @@ async function launchKept(
   throw exitedImmediately(p)
 }
 
+const PASSED_ENV = new Set([
+  "HOME",
+  "USER",
+  "LOGNAME",
+  "PATH",
+  "SHELL",
+  "TMPDIR",
+  "LANG",
+])
+
 const keptEnv = (): Readonly<Record<string, string>> =>
   Object.fromEntries(
     Object.entries(process.env).filter(
-      (e): e is [string, string] => e[1] !== undefined,
+      (e): e is [string, string] =>
+        e[1] !== undefined &&
+        (PASSED_ENV.has(e[0]) ||
+          e[0].startsWith("LC_") ||
+          e[0].startsWith("WINVM_")),
     ),
   )
 

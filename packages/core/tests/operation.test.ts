@@ -124,16 +124,17 @@ const quietly = { onWait: (): void => undefined }
 describe("the held lease", () => {
   it("exists only inside the operation that holds the instance", async () => {
     expect(heldLease(NAME)).toBeNull()
-    let inside: HeldLease | null = null
-    let heldInside = false
+    const issued: HeldLease[] = []
+    const heldInside: boolean[] = []
     await withOperation(NAME, "start", () => {
-      inside = heldLease(NAME)
-      heldInside = inside !== null && holdsLease(inside)
+      const lease = heldLease(NAME)
+      if (lease !== null) issued.push(lease)
+      heldInside.push(lease !== null && holdsLease(lease))
       expect(heldLease("another")).toBeNull()
     })
-    expect(inside).not.toBeNull()
-    expect(heldInside).toBe(true)
-    expect(inside === null ? true : holdsLease(inside)).toBe(false)
+    expect(issued).toHaveLength(1)
+    expect(heldInside).toEqual([true])
+    expect(issued.map(holdsLease)).toEqual([false])
   })
 
   it("cannot be forged, even with the id of the lease on disk", async () => {
