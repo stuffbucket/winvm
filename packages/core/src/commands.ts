@@ -61,7 +61,14 @@ import {
   resolveWindowsIso,
 } from "./media"
 import * as monitor from "./monitor"
-import { irreversible, leaseHolder, STOP_UNFINISHED } from "./operation"
+import {
+  INTERRUPTED,
+  interruptedAfterRequest,
+  irreversible,
+  leaseHolder,
+  STOP_UNFINISHED,
+  takeInterrupts,
+} from "./operation"
 import type { InstanceMeta, Paths } from "./paths"
 import {
   allocateVnc,
@@ -849,7 +856,24 @@ export interface StopCommandSeams {
   readonly beforeDown?: (name: string) => void
   readonly afterUp?: (name: string) => Promise<void>
   readonly stopSidecars?: (p: Paths) => void
-  readonly irreversible?: (name: string, recovery: readonly string[]) => void
+  readonly irreversible?: (
+    name: string,
+    recovery: readonly string[],
+  ) => () => void
+  readonly interrupts?: (name: string) => {
+    readonly signal: AbortSignal
+    readonly release: () => void
+  }
+}
+
+class StopInterrupted extends Error {
+  readonly by: string
+
+  constructor(by: string) {
+    super(`stop interrupted by ${by}`)
+    this.name = "StopInterrupted"
+    this.by = by
+  }
 }
 
 const errorText = (error: unknown): string =>
@@ -918,6 +942,25 @@ export const stop = (args: Args): Promise<number> => stopWith(args)
 export async function stopWith(
   args: Args,
   seams: StopCommandSeams = {},
+): Promise<number> {
+  const name = instanceName(args)
+  const interrupts = (seams.interrupts ?? ((n) => takeInterrupts(n, "stop")))(
+    name,
+  )
+  const settle = { disarm: (): void => undefined }
+  try {
+    return await stopRun(args, seams, interrupts.signal, settle)
+  } finally {
+    settle.disarm()
+    interrupts.release()
+  }
+}
+
+async function stopRun(
+  args: Args,
+  seams: StopCommandSeams,
+  interrupted: AbortSignal,
+  settle: { disarm: () => void },
 ): Promise<number> {
   const now = seams.now ?? Date.now
   const sleep =
@@ -994,19 +1037,28 @@ export async function stopWith(
       await attempt("restart the watcher", () => ensureWatcher(name))
   }
 
+  const interruptedBy = (): string => String(interrupted.reason)
+  const checkpoint = (): void => {
+    if (interrupted.aborted) throw new StopInterrupted(interruptedBy())
+  }
+
   let deadline: number
   let since: Cursor
   let unconfirmed: string | null = null
   try {
+    checkpoint()
     await stopWatcher(name)
+    checkpoint()
     beforeDown(name)
     deadline = now() + STOP_DEADLINE_MS
     await service(name, p)
+    checkpoint()
     since = endCursor(name)
     if (original !== null) {
       await resume(p)
       resumed = true
       frozen.clearAsleep(p)
+      checkpoint()
     }
     try {
       await powerdown(p)
@@ -1016,11 +1068,24 @@ export async function stopWith(
     }
   } catch (error) {
     await rollback()
+    if (error instanceof StopInterrupted) {
+      console.error(
+        `::error::stop interrupted by ${error.by} before it asked Windows to shut down; the watcher and the guest's drives were put back` +
+          (original === null ? "" : `, and the guest was left ${original}`),
+      )
+      return INTERRUPTED
+    }
     console.error(`::error::${errorText(error)}`)
     return 1
   }
 
-  markIrreversible(name, leftRunning(name, pidOf(p), original))
+  const afterRequest = leftRunning(name, pidOf(p), original)
+  settle.disarm = markIrreversible(name, afterRequest)
+  if (interrupted.aborted) {
+    console.error(interruptedAfterRequest("stop", interruptedBy()))
+    for (const line of afterRequest) console.error(`  ${line}`)
+    return STOP_UNFINISHED
+  }
   const requestedAt = now()
   const forceAt = requestedAt + FORCE_AFTER_MS
   const forced: { note: string | null } = { note: null }

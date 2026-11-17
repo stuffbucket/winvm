@@ -11,6 +11,7 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readFileSync,
   rmSync,
   writeFileSync,
 } from "node:fs"
@@ -419,6 +420,9 @@ describe("graceful stop", () => {
     readonly sinces: Cursor[]
     readonly asleepAtRequest: boolean[]
     readonly marks: { readonly after: string[]; readonly lines: string[] }[]
+    readonly disarmed: number[]
+    readonly released: number[]
+    readonly abort: (signal: string) => void
     readonly seams: StopCommandSeams
     readonly clock: { t: number }
   }
@@ -446,6 +450,9 @@ describe("graceful stop", () => {
     const sinces: Cursor[] = []
     const asleepAtRequest: boolean[] = []
     const marks: { after: string[]; lines: string[] }[] = []
+    const disarmed: number[] = []
+    const released: number[] = []
+    const interruption = new AbortController()
     const clock = { t: T0 }
     let exitAt: number | null = null
     let recorded = false
@@ -575,7 +582,16 @@ describe("graceful stop", () => {
       },
       irreversible: (_name, lines) => {
         marks.push({ after: [...events], lines: [...lines] })
+        return () => {
+          disarmed.push(marks.length)
+        }
       },
+      interrupts: () => ({
+        signal: interruption.signal,
+        release: () => {
+          released.push(1)
+        },
+      }),
     }
     return {
       events,
@@ -584,6 +600,11 @@ describe("graceful stop", () => {
       sinces,
       asleepAtRequest,
       marks,
+      disarmed,
+      released,
+      abort: (signal) => {
+        interruption.abort(signal)
+      },
       seams,
       clock,
     }
@@ -729,6 +750,132 @@ describe("graceful stop", () => {
       expect(r.marks).toEqual([])
       expect(r.events).toContain("ensureWatcher")
     }
+  })
+
+  it("disarms the mark and lets go of the signals when the stop finishes, and when it is left unfinished", async () => {
+    const ok = rig({ frozen: null, acpiExitAfterMs: 3000 })
+    expect((await stopped(ok.seams)).code).toBe(0)
+    expect(ok.disarmed).toEqual([1])
+    expect(ok.released).toEqual([1])
+    const late = rig({ frozen: null, lingers: true, acpiExitAfterMs: 1000 })
+    expect((await stopped(late.seams)).code).toBe(STOP_UNFINISHED)
+    expect(late.disarmed).toEqual([1])
+    expect(late.released).toEqual([1])
+  })
+
+  it("lets go of the signals when the stop fails before the request, with nothing to disarm", async () => {
+    const r = rig({ frozen: null, request: "refused" })
+    expect((await stopped(r.seams)).code).toBe(1)
+    expect(r.disarmed).toEqual([])
+    expect(r.released).toEqual([1])
+  })
+
+  const interruptedIn = async (
+    step: "stopWatcher" | "ensureService" | "resume",
+    o: Parameters<typeof rig>[0],
+  ): Promise<{ r: Rig; o: Outcome }> => {
+    const r = rig(o)
+    const inner = r.seams[step] as (...a: never[]) => Promise<unknown>
+    const seams: StopCommandSeams = {
+      ...r.seams,
+      [step]: async (...a: never[]) => {
+        r.abort("SIGINT")
+        return await inner(...a)
+      },
+    }
+    return { r, o: await stopped(seams) }
+  }
+
+  it("puts everything back and exits 130 when interrupted while the watcher is being stopped", async () => {
+    const { r, o } = await interruptedIn("stopWatcher", {
+      frozen: null,
+      watcher: true,
+    })
+    expect(o.code).toBe(130)
+    expect(r.events).toEqual(["stopWatcher", "afterUp", "ensureWatcher"])
+    expect(r.marks).toEqual([])
+    expect(o.err).toContain(
+      "interrupted by SIGINT before it asked Windows to shut down",
+    )
+    expect(o.err).not.toContain("::error::guest did not shut down")
+  })
+
+  it("puts everything back when interrupted while the control service is brought up", async () => {
+    const { r, o } = await interruptedIn("ensureService", {
+      frozen: null,
+      watcher: true,
+    })
+    expect(o.code).toBe(130)
+    expect(r.events).not.toContain("powerdown")
+    expect(r.events).toContain("afterUp")
+    expect(r.events).toContain("ensureWatcher")
+    expect(r.marks).toEqual([])
+  })
+
+  it("parks a paused guest again when interrupted after it was resumed", async () => {
+    const { r, o } = await interruptedIn("resume", {
+      frozen: "paused",
+      watcher: true,
+    })
+    expect(o.code).toBe(130)
+    expect(r.events).not.toContain("powerdown")
+    expect(r.events.slice(-3)).toEqual(["afterUp", "hold", "ensureWatcher"])
+    expect(r.marks).toEqual([])
+  })
+
+  it("leaves an asleep guest asleep when interrupted after it was resumed", async () => {
+    const { r } = await interruptedIn("resume", { frozen: "asleep" })
+    expect(r.events).toContain("hold")
+    expect(markedAsleep(pathsFor(NAME), OWN_PID)).toBe(true)
+  })
+
+  it("waits for a request in flight, then reports it as sent when it was delivered", async () => {
+    const r = rig({ frozen: null, watcher: true, acpiExitAfterMs: 3000 })
+    const seams: StopCommandSeams = {
+      ...r.seams,
+      powerdown: async (p) => {
+        r.abort("SIGTERM")
+        await r.seams.powerdown?.(p)
+      },
+    }
+    const o = await stopped(seams)
+    expect(o.code).toBe(STOP_UNFINISHED)
+    expect(r.marks).toHaveLength(1)
+    expect(o.err).toContain(
+      "interrupted by SIGTERM after it asked Windows to shut down",
+    )
+    expect(o.err).toContain("Nothing was undone after the request.")
+    expect(r.events).not.toContain("ensureWatcher")
+    expect(r.events).not.toContain("stopSidecars")
+  })
+
+  it("does the same when the request may have been delivered but QEMU never answered", async () => {
+    const r = rig({ frozen: null, request: "unanswered" })
+    const seams: StopCommandSeams = {
+      ...r.seams,
+      powerdown: async (p) => {
+        r.abort("SIGINT")
+        await r.seams.powerdown?.(p)
+      },
+    }
+    const o = await stopped(seams)
+    expect(o.code).toBe(STOP_UNFINISHED)
+    expect(r.marks).toHaveLength(1)
+  })
+
+  it("rolls back when it is interrupted during a request that QEMU did not take", async () => {
+    const r = rig({ frozen: "paused", watcher: true, request: "refused" })
+    const seams: StopCommandSeams = {
+      ...r.seams,
+      powerdown: async (p) => {
+        r.abort("SIGINT")
+        await r.seams.powerdown?.(p)
+      },
+    }
+    const o = await stopped(seams)
+    expect(o.code).toBe(1)
+    expect(r.marks).toEqual([])
+    expect(r.events.slice(-3)).toEqual(["afterUp", "hold", "ensureWatcher"])
   })
 
   it("resumes a paused guest right before the request, and restores nothing on success", async () => {
@@ -1159,6 +1306,67 @@ describe("status after a stop that did not finish", () => {
     )
   })
 
+  const leaseOf = async (
+    over: Record<string, unknown>,
+    alive = false,
+  ): Promise<void> => {
+    let pid = process.pid
+    if (!alive) {
+      const gone = Bun.spawn(["true"])
+      await gone.exited
+      pid = gone.pid
+    }
+    writeFileSync(
+      pathsFor(NAME).lease,
+      JSON.stringify({
+        operation: "stop",
+        id: "killed-stop",
+        pid,
+        pidStart: processStart(pid),
+        startedAt: "2026-11-16T18:00:00.000Z",
+        instance: NAME,
+        automatic: false,
+        ...over,
+      }),
+    )
+  }
+
+  it("reports a stop that was killed outright without taking its lease over", async () => {
+    await leaseOf({ irreversibleAt: "2026-11-16T18:01:00.000Z" })
+    const before = readFileSync(pathsFor(NAME).lease, "utf8")
+    const s = await gather(NAME, false)
+    expect(s.stopUnfinished).toEqual({ at: "2026-11-16T18:01:00.000Z" })
+    expect(s.notes.find((x) => x.includes("did not finish"))).toContain(
+      "winvm start -i frozen-test",
+    )
+    expect(readFileSync(pathsFor(NAME).lease, "utf8")).toBe(before)
+    expect(readSince(NAME, START).entries).toEqual([])
+    rmSync(pathsFor(NAME).lease, { force: true })
+  })
+
+  it("does not report a killed stop whose record never got to the request, or one still alive", async () => {
+    await leaseOf({})
+    expect((await gather(NAME, false)).stopUnfinished).toBeNull()
+    await leaseOf({ irreversibleAt: "2026-11-16T18:01:00.000Z" }, true)
+    expect((await gather(NAME, false)).stopUnfinished).toBeNull()
+    rmSync(pathsFor(NAME).lease, { force: true })
+  })
+
+  it("clears a killed stop's flag once QEMU records the shutdown or a start succeeds after it", async () => {
+    await leaseOf({ irreversibleAt: "2026-11-16T18:01:00.000Z" })
+    appendEntry(NAME, {
+      kind: "qmp",
+      event: "SHUTDOWN",
+      data: { guest: true, reason: "guest-shutdown" },
+      timestamp: null,
+    })
+    expect((await gather(NAME, false)).stopUnfinished).toBeNull()
+    rmSync(pathsFor(NAME).events, { force: true })
+    opEnd("start", true, 0)
+    expect((await gather(NAME, false)).stopUnfinished).toBeNull()
+    rmSync(pathsFor(NAME).lease, { force: true })
+  })
+
   it("does not report an abandoned stop that never reached the request", async () => {
     appendEntry(NAME, {
       kind: "op",
@@ -1317,6 +1525,35 @@ describe("status when the host powered Windows off", () => {
   it("is silent about QEMU closing during a kill that has not ended yet", async () => {
     op("begin", "kill")
     closed()
+    expect((await gather(HOST, false)).hostPoweredOff).toBeNull()
+  })
+
+  it("still notices QEMU vanishing after an idle sleep and wake", async () => {
+    op("begin", "sleep")
+    op("end", "sleep")
+    op("begin", "wake")
+    op("end", "wake")
+    closed()
+    expect((await gather(HOST, false)).hostPoweredOff).toMatchObject({
+      cause: "qemu-gone",
+    })
+  })
+
+  it("still notices QEMU vanishing after a load that launched it again", async () => {
+    op("begin", "kill")
+    op("end", "kill")
+    op("begin", "load")
+    op("end", "load")
+    closed()
+    expect((await gather(HOST, false)).hostPoweredOff).toMatchObject({
+      cause: "qemu-gone",
+    })
+  })
+
+  it("is silent about QEMU dying during a start that failed", async () => {
+    op("begin", "start")
+    closed()
+    op("end", "start", false)
     expect((await gather(HOST, false)).hostPoweredOff).toBeNull()
   })
 

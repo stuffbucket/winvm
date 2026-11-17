@@ -9,7 +9,12 @@ import { frozenFrom, markedAsleep } from "./frozen"
 import { type HostPoweredOff, hostPoweredOff } from "./hostoff"
 import { qmpCommand } from "./monitor"
 import type { OperationInfo } from "./operation"
-import { readOperation, STOP_UNFINISHED, savingRunning } from "./operation"
+import {
+  abandonedStop,
+  readOperation,
+  STOP_UNFINISHED,
+  savingRunning,
+} from "./operation"
 import type { Paths } from "./paths"
 import {
   home,
@@ -117,22 +122,29 @@ const RESTORING: ReadonlySet<string> = new Set([
 
 export function unfinishedStop(name: string): StopUnfinished | null {
   let found: StopUnfinished | null = null
+  let lastClear = ""
   for (const e of readSince(name, START).entries) {
     if (e.kind === "op" && e.phase === "end") {
       if (
-        e.operation === "stop" &&
         !e.ok &&
-        (e.exitCode === STOP_UNFINISHED || e.irreversibleAt !== undefined)
+        (e.irreversibleAt !== undefined ||
+          (e.operation === "stop" && e.exitCode === STOP_UNFINISHED))
       )
         found = { at: e.endedAt }
-      else if (e.ok && RESTORING.has(e.operation)) found = null
+      else if (e.ok && RESTORING.has(e.operation)) {
+        found = null
+        lastClear = e.t
+      }
     } else if (
       (e.kind === "qmp" && e.event === "SHUTDOWN") ||
       (e.kind === "disconnected" && e.reason === "qemu-closed")
-    )
+    ) {
       found = null
+      lastClear = e.t
+    }
   }
-  return found
+  const killed = abandonedStop(name)
+  return killed !== null && killed.at > lastClear ? killed : found
 }
 
 function hostPowerNote(name: string, off: HostPoweredOff): string {

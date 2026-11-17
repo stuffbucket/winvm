@@ -28,8 +28,17 @@ const ENDS_QEMU: ReadonlySet<string> = new Set([
   "rewind",
   "load",
   "stow",
-  "sleep",
   "destroy",
+  "golden-reset",
+])
+
+const LAUNCHES: ReadonlySet<string> = new Set([
+  "start",
+  "wake",
+  "resume",
+  "load",
+  "rewind",
+  "reset",
   "golden-reset",
 ])
 
@@ -62,19 +71,20 @@ export function signalLine(qemuLog: string): string | null {
 }
 
 export function hostPoweredOff(name: string): HostPoweredOff | null {
-  let found: HostPoweredOff | null = null
+  let found = null as HostPoweredOff | null
   let sawShutdown = false
   let intended = false
   for (const e of readSince(name, START).entries) {
     if (e.kind === "op") {
       if (e.phase === "begin" && ENDS_QEMU.has(e.operation)) intended = true
-      else if (e.phase === "end" && e.ok && BRINGS_BACK.has(e.operation)) {
-        found = null
-        if (e.operation === "start") {
+      else if (e.phase === "end" && e.ok) {
+        if (BRINGS_BACK.has(e.operation)) found = null
+        if (LAUNCHES.has(e.operation)) {
           sawShutdown = false
           intended = false
         }
-      }
+      } else if (e.phase === "end" && e.operation === "start")
+        found = found?.cause === "qemu-gone" ? null : found
     } else if (e.kind === "qmp" && e.event === "SHUTDOWN") {
       sawShutdown = true
       found =
