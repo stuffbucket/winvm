@@ -51,6 +51,7 @@ import {
 import * as input from "./input"
 import { ensureInstance, makeVars, resetInstance, sealBase } from "./instance"
 import { ensureKeeper } from "./keeper"
+import { killKept, retireKeeper } from "./kept"
 import { ManagementError, reconcileManagement } from "./lifecycle"
 import * as machineinfo from "./machineinfo"
 import {
@@ -69,6 +70,7 @@ import {
   leaseHolder,
   STOP_UNFINISHED,
   takeInterrupts,
+  withOperation,
 } from "./operation"
 import type { InstanceMeta, Paths } from "./paths"
 import {
@@ -87,6 +89,7 @@ import {
   readImageMeta,
   readMeta,
 } from "./paths"
+import { signalProcess } from "./proc"
 import * as qemu from "./qemu"
 import * as qga from "./qga"
 import * as qmp from "./qmp"
@@ -221,6 +224,7 @@ export function prune(args: Args): number {
     const size = du(p.dir)
     qemu.stopSidecars(p)
     stopService(p)
+    retireKeeper(name, p)
     rmSync(p.dir, { recursive: true, force: true })
     saves.removeAllSaves(name)
     console.log(`  removed scratch instance "${name}" (${size})`)
@@ -373,8 +377,7 @@ export async function build(args: Args): Promise<number> {
   }
   buildSeed(args.flags.get("payload"), args.flags.get("bun"), shareMedia)
 
-  stopService(p)
-  rmSync(p.dir, { recursive: true, force: true })
+  clearScratch(scratch, p)
   mkdirSync(p.tpmDir, { recursive: true })
   run(runtimeBin("qemu-img"), ["create", "-f", "qcow2", p.overlay, "64G"])
   run(runtimeBin("qemu-img"), ["create", "-f", "qcow2", p.prime, "64M"])
@@ -389,7 +392,7 @@ export async function build(args: Args): Promise<number> {
 
   const reap = (): void => {
     const pid = qemu.pidOf(p)
-    if (pid !== null) process.kill(pid, "SIGKILL")
+    if (pid !== null) signalProcess(pid, "SIGKILL")
     qemu.stopSidecars(p)
   }
   for (const sig of ["SIGINT", "SIGTERM"] as const) {
@@ -406,11 +409,7 @@ export async function build(args: Args): Promise<number> {
     `installing Windows (unattended, ~20 min) · watch: winvm open -i ${scratch}`,
   )
   try {
-    await qemu.launch(scratch, p, meta, {
-      installMedia: true,
-      ephemeral: false,
-      virtioBoot: false,
-    })
+    await launchInstaller(scratch, p, meta)
   } catch (error) {
     qemu.stopSidecars(p)
     console.error(
@@ -556,6 +555,7 @@ export async function build(args: Args): Promise<number> {
       )
       qemu.stopSidecars(p)
       stopService(p)
+      retireKeeper(scratch, p)
       rmSync(p.dir, { recursive: true, force: true })
       console.log(
         `base image ready: ${basePath(image)} (${du(basePath(image))})`,
@@ -571,6 +571,26 @@ export async function build(args: Args): Promise<number> {
     await new Promise((r) => setTimeout(r, 5000))
   }
   return guestFailed("the guest did not shut down after provisioning")
+}
+
+export function clearScratch(scratch: string, p: Paths): void {
+  stopService(p)
+  retireKeeper(scratch, p)
+  rmSync(p.dir, { recursive: true, force: true })
+}
+
+export const launchInstaller = async (
+  scratch: string,
+  p: Paths,
+  meta: InstanceMeta,
+): Promise<void> => {
+  await withOperation(scratch, "build", async () => {
+    await qemu.launch(scratch, p, meta, {
+      installMedia: true,
+      ephemeral: false,
+      virtioBoot: false,
+    })
+  })
 }
 
 const NO_LOGON_MS = 120_000
@@ -1279,7 +1299,7 @@ export async function reboot(args: Args): Promise<number> {
   return 0
 }
 
-export function kill(args: Args): number {
+export async function kill(args: Args): Promise<number> {
   const name = instanceName(args)
   const p = pathsFor(name)
   const pid = qemu.pidOf(p)
@@ -1291,10 +1311,15 @@ export function kill(args: Args): number {
     return 1
   }
   if (pid === null) {
+    const kept = await killKept(p, null)
     qemu.stopSidecars(p)
     stopService(p)
     finder.cleanStale(name)
-    console.log(`instance "${name}" is not running`)
+    console.log(
+      kept
+        ? `killed the QEMU winvm's keeper ran for "${name}", which qemu.pid did not name`
+        : `instance "${name}" is not running`,
+    )
     return 0
   }
   if (runningCommand(pid) === null) {
@@ -1311,7 +1336,10 @@ export function kill(args: Args): number {
     return 1
   }
   finder.beforeDown(name)
-  process.kill(pid, "SIGKILL")
+  if (!(await killKept(p, pid))) {
+    signalProcess(pid, "SIGKILL")
+    await killKept(p, null)
+  }
   rmSync(p.pid, { force: true })
   qemu.stopSidecars(p)
   stopService(p)
@@ -1352,6 +1380,7 @@ export function destroy(args: Args): number {
   }
   stopService(p)
   qemu.stopSidecars(p)
+  retireKeeper(name, p)
   finder.cleanStale(name)
   const size = du(instanceDir(name))
   rmSync(instanceDir(name), { recursive: true, force: true })

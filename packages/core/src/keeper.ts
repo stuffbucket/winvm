@@ -10,12 +10,16 @@ import {
   readFileSync,
   renameSync,
   rmSync,
+  statSync,
+  utimesSync,
   writeFileSync,
 } from "node:fs"
 import { connect } from "node:net"
 import { basename, dirname, resolve } from "node:path"
 
 import pinned from "../keeper.json"
+import { type HeldLease, holdsLease, LeaseNotHeld } from "./operation"
+import { home, pathsFor } from "./paths"
 import { download } from "./shell"
 import { dataDir } from "./xdg"
 
@@ -37,7 +41,9 @@ export interface FoundKeeper {
 export const KEEPER_BINARY = "winvm-keeper"
 export const KEEPER_PREFIX = "co.stuffbucket.winvm.keeper."
 export const KEEPER_EXIT_TIMEOUT = 60
-export const KEEPER_PROTOCOL = 1
+export const KEEPER_PROTOCOL = 2
+export const KEEPER_DIR = "keeper"
+const FRESH_MS = 60_000
 const APP_BUNDLE_ID = "co.stuffbucket.winvm"
 const HASH_DIR = /^[0-9a-f]{12}$/
 
@@ -121,7 +127,11 @@ function sha256File(path: string): string {
 export function installKeeper(binary: string, root: string): string {
   const dir = resolve(root, sha256File(binary).slice(0, 12))
   const dest = resolve(dir, KEEPER_BINARY)
-  if (isFile(dest)) return dest
+  if (isFile(dest)) {
+    const now = new Date()
+    utimesSync(dir, now, now)
+    return dest
+  }
   mkdirSync(dir, { recursive: true })
   const scratch = resolve(dir, `.${KEEPER_BINARY}.${String(process.pid)}`)
   copyFileSync(binary, scratch, constants.COPYFILE_FICLONE)
@@ -161,9 +171,11 @@ export function collectKeepers(o: {
   }
   if (!existsSync(o.root)) return []
   const removed: string[] = []
+  const fresh = Date.now() - FRESH_MS
   for (const name of readdirSync(o.root)) {
     const dir = resolve(o.root, name)
     if (!HASH_DIR.test(name) || keep.has(dir)) continue
+    if (statSync(dir).mtimeMs > fresh) continue
     rmSync(dir, { recursive: true, force: true })
     removed.push(dir)
   }
@@ -275,15 +287,16 @@ export interface KeeperCommand {
   readonly env?: Readonly<Record<string, string>>
   readonly log?: string
   readonly shield?: boolean
+  readonly umask?: number
 }
 
 export interface KeeperChild extends KeeperCommand {
   readonly name?: string
   readonly pidfile?: string
+  readonly qmp?: string
 }
 
 export interface KeeperSpec {
-  readonly instance?: string
   readonly record?: string
   readonly lingerMs?: number
   readonly child?: KeeperChild
@@ -304,12 +317,23 @@ function writePrivate(path: string, text: string): void {
 export async function startKeeper(o: {
   readonly launchd: Launchd
   readonly job: KeeperJob
+  readonly lease: HeldLease
   readonly spec?: KeeperSpec
 }): Promise<StartedKeeper> {
+  if (!holdsLease(o.lease))
+    throw new LeaseNotHeld(o.lease.instance, `starting ${o.job.Label}`)
+  if (
+    o.job.Label !== keeperLabel(home(), o.lease.instance) ||
+    o.job.WorkingDirectory !==
+      resolve(pathsFor(o.lease.instance).dir, KEEPER_DIR)
+  )
+    throw new Error(
+      `${o.job.Label} in ${o.job.WorkingDirectory} is not the keeper of "${o.lease.instance}", whose lease this command holds`,
+    )
   const dir = o.job.WorkingDirectory
   const hello = await keeperRequest(
     resolve(dir, "keeper.sock"),
-    { op: "hello" },
+    { op: "hello", launching: true },
     1000,
   ).catch(() => null)
   if (hello !== null && hello.hostEnding === true)
@@ -323,11 +347,10 @@ export async function startKeeper(o: {
     )
   mkdirSync(dir, { recursive: true, mode: 0o700 })
   chmodSync(dir, 0o700)
-  if (o.spec !== undefined)
-    writePrivate(
-      resolve(dir, "spec.json"),
-      `${JSON.stringify({ ...o.spec, session: randomUUID() })}\n`,
-    )
+  writePrivate(
+    resolve(dir, "spec.json"),
+    `${JSON.stringify({ ...o.spec, instance: o.lease.instance, session: randomUUID() })}\n`,
+  )
   const plist = resolve(dir, "keeper.plist")
   writePrivate(plist, plistXml(o.job))
   o.launchd.bootout(o.job.Label)

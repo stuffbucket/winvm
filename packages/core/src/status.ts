@@ -7,6 +7,15 @@ import { describeDisplay, readDisplay, runningDisplay } from "./display"
 import { readSince, START } from "./eventlog"
 import { frozenFrom, markedAsleep } from "./frozen"
 import { type HostPoweredOff, hostPoweredOff } from "./hostoff"
+import {
+  type KeeperStanding,
+  keeperDir,
+  keeperFallback,
+  keeperHello,
+  keeperStanding,
+  keeperUse,
+  type Protection,
+} from "./kept"
 import { qmpCommand } from "./monitor"
 import type { OperationInfo } from "./operation"
 import {
@@ -104,6 +113,7 @@ export interface InstanceStatus {
   readonly operation: OperationInfo | null
   readonly stopUnfinished: StopUnfinished | null
   readonly hostPoweredOff: HostPoweredOff | null
+  readonly keeper: KeeperStanding | null
   readonly notes: readonly string[]
 }
 
@@ -156,6 +166,13 @@ function hostPowerNote(name: string, off: HostPoweredOff): string {
       `QEMU is gone (last seen ${off.at}) without recording a shutdown, and no winvm stop or kill ended it: ` +
       "the host (a restart or logout), a crash or another tool ended it, and anything unsaved in Windows is lost; " +
       again
+    )
+  if (off.cause === "host-shutdown")
+    return `Windows shut down cleanly when the Mac shut down at ${off.at}: winvm's keeper pressed its power button; ${again}`
+  if (off.cause === "host-quit" || off.cause === "host-kill")
+    return (
+      `the Mac shut down at ${off.at} and Windows did not finish shutting down in time, so winvm's keeper ${off.cause === "host-quit" ? "quit" : "killed"} QEMU: ` +
+      `Windows did not shut down cleanly and anything unsaved in it is lost; ${again}`
     )
   const who = off.detail === null ? "" : ` (${off.detail})`
   return (
@@ -518,6 +535,7 @@ export async function gather(
       operation,
       stopUnfinished: null,
       hostPoweredOff: null,
+      keeper: null,
       notes: [`no instance "${name}" — \`winvm start -i ${name}\` creates it`],
     }
   }
@@ -550,6 +568,12 @@ export async function gather(
     )
   const poweredOff = running ? null : hostPoweredOff(name)
   if (poweredOff !== null) notes.push(hostPowerNote(name, poweredOff))
+  const keeper =
+    pid === null && operation !== null
+      ? null
+      : keeperStanding(pid, await keeperHello(p), keeperUse().kind)
+  const unprotected = keeper === null ? null : keeperNote(name, pid, keeper)
+  if (unprotected !== null) notes.push(unprotected)
   const management = managementOf(name)
   if (management === "repair")
     notes.push(
@@ -581,8 +605,53 @@ export async function gather(
     operation,
     stopUnfinished,
     hostPoweredOff: poweredOff,
+    keeper,
     notes,
   }
+}
+
+function keeperNote(
+  name: string,
+  pid: number | null,
+  k: KeeperStanding,
+): string | null {
+  const flag = name === "default" ? "" : ` -i ${name}`
+  const fellBack = k.protection === "legacy" ? keeperFallback(name) : null
+  if (fellBack !== null)
+    return (
+      `winvm's keeper could not start when Windows on "${name}" was started (${fellBack.error}), ` +
+      `so it is not protected if the Mac shuts down; see ${resolve(keeperDir(pathsFor(name)), "keeper.log")}`
+    )
+  switch (k.protection) {
+    case "kept":
+      return null
+    case "legacy":
+      return (
+        `Windows on "${name}" was started without winvm's keeper, so it is not protected if the Mac shuts down; ` +
+        `it is from its next start — \`winvm stow${flag} && winvm start${flag}\` does that now`
+      )
+    case "off":
+      return `WINVM_KEEPER=off: Windows on "${name}" runs without winvm's keeper, so it is not protected if the Mac shuts down`
+    case "missing":
+      return `this winvm has no winvm-keeper (the Mac app carries one, and \`WINVM_KEEPER=<path>\` names a build), so Windows on "${name}" is not protected if the Mac shuts down`
+    case "broken":
+      return pid === null
+        ? `winvm's keeper (pid ${String(k.pid)}) still runs a QEMU that qemu.pid does not name — \`winvm kill${flag}\` ends it`
+        : `winvm's keeper (pid ${String(k.pid)}) runs a different QEMU from the one qemu.pid names (pid ${String(pid)}) — \`winvm kill${flag}\`, then \`winvm start${flag}\``
+  }
+}
+
+const KEEPER_WORDS: Readonly<Record<Protection, string>> = {
+  kept: "protected",
+  legacy: "not protected: started without winvm's keeper",
+  broken: "confused: the keeper and qemu.pid disagree",
+  off: "not protected: WINVM_KEEPER=off",
+  missing: "not protected: no winvm-keeper installed",
+}
+
+function keeperRow(k: KeeperStanding): string {
+  if (k.protection !== "kept") return KEEPER_WORDS[k.protection]
+  return `protected by winvm-keeper ${k.version ?? "?"} (pid ${String(k.pid)})`
 }
 
 export const gatherAll = async (
@@ -768,6 +837,7 @@ export function statusReport(
           : "none (started before the control service)"
     rows.push(["service", service])
   }
+  if (s.keeper !== null) rows.push(["keeper", keeperRow(s.keeper)])
   rows.push(["watcher", formatWatcher(s.watcher, now)])
   rows.push([
     "time machine",

@@ -1,6 +1,7 @@
 mod adopt;
 mod keeper;
 mod kq;
+mod qmp;
 mod record;
 mod sock;
 mod spawn;
@@ -10,7 +11,7 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 use std::time::Duration;
 
-pub const PROTOCOL: u32 = 1;
+pub const PROTOCOL: u32 = 2;
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 const USAGE: &str = "usage: winvm-keeper run --dir DIR [--exit-timeout SECONDS] [--budget-ms MS]

@@ -10,6 +10,7 @@ import {
   readFileSync,
   rmSync,
   statSync,
+  utimesSync,
   writeFileSync,
 } from "node:fs"
 import { createServer, type Server } from "node:net"
@@ -35,6 +36,14 @@ import {
   plistXml,
   startKeeper,
 } from "../src/keeper"
+import { keeperDir } from "../src/kept"
+import {
+  type HeldLease,
+  heldLease,
+  LeaseNotHeld,
+  withOperation,
+} from "../src/operation"
+import { home, pathsFor } from "../src/paths"
 
 let tmp = ""
 
@@ -336,12 +345,33 @@ describe("collecting old keeper versions", () => {
       "com.example.other": { program: stale },
     })
 
+    const hourAgo = new Date(Date.now() - 3_600_000)
+    for (const dir of [used, current, stale])
+      utimesSync(resolve(dir, ".."), hourAgo, hourAgo)
     const removed = collectKeepers({ root, launchd, current })
 
     expect(removed).toEqual([resolve(stale, "..")])
     expect(existsSync(used)).toBe(true)
     expect(existsSync(current)).toBe(true)
     expect(existsSync(stale)).toBe(false)
+  })
+
+  it("keeps a version installed in the last minute, which another launch may be about to use", () => {
+    const root = resolve(tmp, "keeper")
+    const fresh = installKeeper(binary(resolve(tmp, "f"), "fresh\n"), root)
+    expect(
+      collectKeepers({ root, launchd: fakeLaunchd({}), current: null }),
+    ).toEqual([])
+    expect(existsSync(fresh)).toBe(true)
+    const hourAgo = new Date(Date.now() - 3_600_000)
+    utimesSync(resolve(fresh, ".."), hourAgo, hourAgo)
+    expect(installKeeper(binary(resolve(tmp, "f"), "fresh\n"), root)).toBe(
+      fresh,
+    )
+    expect(
+      collectKeepers({ root, launchd: fakeLaunchd({}), current: null }),
+    ).toEqual([])
+    expect(existsSync(fresh)).toBe(true)
   })
 
   it("collects nothing when launchd's jobs can't be listed or one can't be read", () => {
@@ -398,24 +428,84 @@ const closing = (server: Server): Promise<void> =>
 
 describe("starting a keeper job", () => {
   let short = ""
+  let savedHome: string | undefined
   beforeEach(() => {
     short = mkdtempSync("/tmp/wkts-")
+    savedHome = process.env.WINVM_HOME
+    process.env.WINVM_HOME = resolve(short, "home")
   })
   afterEach(() => {
+    if (savedHome === undefined) delete process.env.WINVM_HOME
+    else process.env.WINVM_HOME = savedHome
     rmSync(short, { recursive: true, force: true })
   })
-  const testJob = (dir: string) =>
-    keeperJob({ label: "co.stuffbucket.winvm.test.x", program: "/k", dir })
+  const testJob = (dir: string, instance = "default") =>
+    keeperJob({ label: keeperLabel(home(), instance), program: "/k", dir })
+  const ownDir = (): string => keeperDir(pathsFor("default"))
+  const leased = async <T>(
+    run: (lease: HeldLease) => Promise<T>,
+    name = "default",
+  ): Promise<T> =>
+    await withOperation(name, "start", async () => {
+      const lease = heldLease(name)
+      if (lease === null) throw new Error("no lease inside withOperation")
+      return await run(lease)
+    })
+
+  it("refuses to start another instance's keeper with this instance's lease", async () => {
+    const launchd = fakeLaunchd({})
+    const other = keeperDir(pathsFor("other"))
+    await expect(
+      leased(
+        async (lease) =>
+          await startKeeper({
+            launchd,
+            job: testJob(other, "other"),
+            lease,
+          }),
+      ),
+    ).rejects.toThrow('is not the keeper of "default"')
+    await expect(
+      leased(
+        async (lease) =>
+          await startKeeper({ launchd, job: testJob(other), lease }),
+      ),
+    ).rejects.toThrow('is not the keeper of "default"')
+    expect(launchd.calls).toEqual([])
+    expect(existsSync(other)).toBe(false)
+  })
+
+  it("refuses without its instance's lease, and never touches launchd", async () => {
+    const dir = ownDir()
+    const launchd = fakeLaunchd({})
+    const stale = await leased(async (lease) => await Promise.resolve(lease))
+    await expect(
+      startKeeper({ launchd, job: testJob(dir), lease: stale }),
+    ).rejects.toThrow(LeaseNotHeld)
+    const forged: HeldLease = { instance: "default", id: "x" }
+    await expect(
+      leased(
+        async () =>
+          await startKeeper({ launchd, job: testJob(dir), lease: forged }),
+      ),
+    ).rejects.toThrow(LeaseNotHeld)
+    expect(launchd.calls).toEqual([])
+    expect(existsSync(dir)).toBe(false)
+  })
 
   it("writes the spec with a fresh session and the plist, boots out the stopped job, then bootstraps", async () => {
-    const dir = resolve(short, "default", "keeper")
+    const dir = ownDir()
     const launchd = fakeLaunchd({})
     const job = testJob(dir)
-    const started = await startKeeper({
-      launchd,
-      job,
-      spec: { instance: "default", child: { argv: ["/bin/sleep", "9"] } },
-    })
+    const started = await leased(
+      async (lease) =>
+        await startKeeper({
+          launchd,
+          job,
+          lease,
+          spec: { child: { argv: ["/bin/sleep", "9"] } },
+        }),
+    )
     const plist = resolve(dir, "keeper.plist")
     expect(started).toEqual({ state: "started", plist })
     expect(readFileSync(plist, "utf8")).toBe(plistXml(job))
@@ -428,20 +518,23 @@ describe("starting a keeper job", () => {
     expect(spec.child).toEqual({ argv: ["/bin/sleep", "9"] })
     expect(spec.session).toMatch(/^[0-9a-f-]{36}$/)
     expect(launchd.calls).toEqual([
-      "bootout co.stuffbucket.winvm.test.x",
+      `bootout ${keeperLabel(home(), "default")}`,
       `bootstrap ${plist}`,
     ])
   })
 
   it("returns a keeper that answers instead of booting it out", async () => {
-    const dir = resolve(short, "keeper")
+    const dir = ownDir()
     mkdirSync(dir, { recursive: true })
     const server = await answering(resolve(dir, "keeper.sock"), () =>
       JSON.stringify({ ok: true, pid: 42, hostEnding: false }),
     )
     try {
       const launchd = fakeLaunchd({})
-      const started = await startKeeper({ launchd, job: testJob(dir) })
+      const started = await leased(
+        async (lease) =>
+          await startKeeper({ launchd, job: testJob(dir), lease }),
+      )
       expect(started).toEqual({
         state: "running",
         hello: { ok: true, pid: 42, hostEnding: false },
@@ -454,24 +547,30 @@ describe("starting a keeper job", () => {
   })
 
   it("refuses while a keeper is ending, and while launchd runs one that does not answer", async () => {
-    const dir = resolve(short, "keeper")
+    const dir = ownDir()
     mkdirSync(dir, { recursive: true })
     const server = await answering(resolve(dir, "keeper.sock"), () =>
       JSON.stringify({ ok: true, pid: 42, hostEnding: true }),
     )
     const launchd = fakeLaunchd({
-      "co.stuffbucket.winvm.test.x": { state: "running", pid: 42 },
+      [keeperLabel(home(), "default")]: { state: "running", pid: 42 },
     })
     try {
-      await expect(startKeeper({ launchd, job: testJob(dir) })).rejects.toThrow(
-        KeeperBusy,
-      )
+      await expect(
+        leased(
+          async (lease) =>
+            await startKeeper({ launchd, job: testJob(dir), lease }),
+        ),
+      ).rejects.toThrow(KeeperBusy)
     } finally {
       await closing(server)
     }
-    await expect(startKeeper({ launchd, job: testJob(dir) })).rejects.toThrow(
-      "running but does not answer",
-    )
+    await expect(
+      leased(
+        async (lease) =>
+          await startKeeper({ launchd, job: testJob(dir), lease }),
+      ),
+    ).rejects.toThrow("running but does not answer")
     expect(launchd.calls).toEqual([])
   })
 })
@@ -494,7 +593,7 @@ describe("keeperRequest", () => {
     })
     try {
       expect(await keeperRequest(path, { op: "hello" })).toEqual({ ok: true })
-      expect(JSON.parse(got)).toEqual({ op: "hello", protocol: 1 })
+      expect(JSON.parse(got)).toEqual({ op: "hello", protocol: 2 })
     } finally {
       await closing(server)
     }
@@ -560,13 +659,25 @@ describe("parseJobPrint", () => {
 
 describe("keeperCheck", () => {
   it("names where the keeper comes from, and is never a missing prerequisite", () => {
-    expect(keeperCheck({ path: "/a/winvm-keeper", source: "app" })).toEqual({
+    expect(
+      keeperCheck({
+        kind: "keeper",
+        keeper: { path: "/a/winvm-keeper", source: "app" },
+      }),
+    ).toEqual({
       label: "keeper /a/winvm-keeper (app)",
       ok: true,
       hint: "",
     })
-    expect(keeperCheck(null)).toMatchObject({
-      label: "keeper not installed (not used yet)",
+    expect(keeperCheck({ kind: "missing" })).toEqual({
+      label:
+        "keeper not installed: VMs start without it, unprotected if the Mac shuts down",
+      ok: true,
+      hint: "",
+    })
+    expect(keeperCheck({ kind: "off" })).toMatchObject({
+      label:
+        "keeper off (WINVM_KEEPER=off): VMs start without it, unprotected if the Mac shuts down",
       ok: true,
     })
   })

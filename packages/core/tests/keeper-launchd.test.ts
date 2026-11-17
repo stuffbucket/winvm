@@ -1,13 +1,38 @@
-import { afterAll, describe, expect, it } from "bun:test"
-import { mkdtempSync, readFileSync, rmSync } from "node:fs"
-import { resolve } from "node:path"
+import { afterAll, describe, expect, it, mock, spyOn } from "bun:test"
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs"
+import { dirname, resolve } from "node:path"
 
-import { keeperJob, keeperRequest, launchctl, startKeeper } from "../src/keeper"
+import * as host from "../src/host"
+import {
+  type KeeperJob,
+  type KeeperSpec,
+  keeperJob,
+  keeperLabel,
+  keeperRequest,
+  type Launchd,
+  launchctl,
+  startKeeper,
+} from "../src/keeper"
+import { keeperDir, keeperHello, keeperSocket } from "../src/kept"
+import { heldLease, withOperation } from "../src/operation"
+import { pathsFor } from "../src/paths"
+import * as qemu from "../src/qemu"
+import * as servicectl from "../src/servicectl"
+import * as share from "../src/share"
+import * as vnc from "../src/vnc"
 
 const enabled =
   process.platform === "darwin" && process.env.WINVM_TEST_LAUNCHD === "1"
 const keeper =
-  process.env.WINVM_KEEPER ??
+  process.env.WINVM_TEST_KEEPER ??
   resolve(
     import.meta.dir,
     "..",
@@ -19,13 +44,40 @@ const keeper =
     "debug",
     "winvm-keeper",
   )
-const label = `co.stuffbucket.winvm.test.keeper-${String(process.pid)}`
 const root = mkdtempSync("/tmp/wkl-")
+const savedHome = process.env.WINVM_HOME
+process.env.WINVM_HOME = resolve(root, "home")
 
-afterAll(() => {
-  if (enabled) launchctl().bootout(label)
+const VM = "kept-launchd"
+const vmLabel = keeperLabel(resolve(root, "home"), VM)
+const label = keeperLabel(resolve(root, "home"), "launchd-test")
+
+afterAll(async () => {
+  if (enabled) {
+    await keeperRequest(keeperSocket(pathsFor(VM)), { op: "kill" }).catch(
+      () => null,
+    )
+    launchctl().bootout(label)
+    launchctl().bootout(vmLabel)
+  }
+  if (savedHome === undefined) delete process.env.WINVM_HOME
+  else process.env.WINVM_HOME = savedHome
   rmSync(root, { recursive: true, force: true })
 })
+
+const leasedStart = async (
+  instance: string,
+  o: {
+    readonly launchd: Launchd
+    readonly job: KeeperJob
+    readonly spec: KeeperSpec
+  },
+): ReturnType<typeof startKeeper> =>
+  await withOperation(instance, "start", async () => {
+    const lease = heldLease(instance)
+    if (lease === null) throw new Error("no lease inside withOperation")
+    return await startKeeper({ ...o, lease })
+  })
 
 const sleep = (ms: number): Promise<void> =>
   new Promise((done) => setTimeout(done, ms))
@@ -72,11 +124,10 @@ const whats = (record: string): string[] =>
 
 describe.if(enabled)("a real launchd keeper job (WINVM_TEST_LAUNCHD=1)", () => {
   it("runs in the Background session, keeps a dummy child, and on bootout runs the stop action and exits 0", async () => {
-    const dir = resolve(root, "keeper")
+    const dir = keeperDir(pathsFor("launchd-test"))
     const record = resolve(root, "events.jsonl")
     const marker = resolve(root, "stop.ran")
     const spec = {
-      instance: "launchd-test",
       record,
       child: { name: "dummy", argv: ["/bin/sleep", "600"] },
       stop: {
@@ -90,7 +141,9 @@ describe.if(enabled)("a real launchd keeper job (WINVM_TEST_LAUNCHD=1)", () => {
     }
     const launchd = launchctl()
     const job = keeperJob({ label, program: keeper, dir, exitTimeout: 20 })
-    expect((await startKeeper({ launchd, job, spec })).state).toBe("started")
+    expect(
+      (await leasedStart("launchd-test", { launchd, job, spec })).state,
+    ).toBe("started")
 
     const running = await until("the job to run", 5000, () => {
       const info = launchd.print(label)
@@ -104,7 +157,9 @@ describe.if(enabled)("a real launchd keeper job (WINVM_TEST_LAUNCHD=1)", () => {
     const child = hello.child as { pid: number; adopted: boolean }
     expect(child.adopted).toBe(false)
 
-    expect(await startKeeper({ launchd, job, spec })).toMatchObject({
+    expect(
+      await leasedStart("launchd-test", { launchd, job, spec }),
+    ).toMatchObject({
       state: "running",
     })
     expect(launchd.print(label)?.pid).toBe(running.pid)
@@ -130,5 +185,96 @@ describe.if(enabled)("a real launchd keeper job (WINVM_TEST_LAUNCHD=1)", () => {
     await until("launchd to forget the job", 5000, () =>
       launchd.print(label) === null ? true : null,
     )
+  }, 30000)
+
+  it("launches QEMU's stand-in and its TPM emulator through a real keeper job, which powers it down through its own monitor at bootout", async () => {
+    const fakechild = resolve(dirname(keeper), "examples", "fakechild")
+    expect(existsSync(fakechild)).toBe(true)
+    const saved = Object.fromEntries(
+      ["WINVM_RUNTIME", "WINVM_KEEPER", "XDG_DATA_HOME"].map((k) => [
+        k,
+        process.env[k],
+      ]),
+    )
+    const bin = resolve(root, "runtime", "bin")
+    mkdirSync(bin, { recursive: true })
+    const script = (name: string, body: string): void => {
+      writeFileSync(resolve(bin, name), `#!/bin/sh\n${body}\n`)
+      chmodSync(resolve(bin, name), 0o755)
+    }
+    script(
+      "swtpm",
+      `while [ $# -gt 0 ]; do case "$1" in --ctrl) s="\${2#*path=}"; s="\${s%%,*}"; shift;; esac; shift; done; : > "$s"\nexec sleep 600`,
+    )
+    const report = resolve(root, "qemu.report")
+    script(
+      "qemu-system-aarch64",
+      `while [ $# -gt 0 ]; do case "$1" in -pidfile) p="$2"; shift;; -qmp) case "$2" in *keeper/qmp.sock*) q="\${2#unix:}"; q="\${q%%,*}";; esac; shift;; esac; shift; done\nexec "${fakechild}" "${report}" --pidfile "$p" --qmp "$q"`,
+    )
+    process.env.WINVM_RUNTIME = resolve(root, "runtime")
+    process.env.XDG_DATA_HOME = resolve(root, "data")
+    process.env.WINVM_KEEPER = keeper
+    const meta = { image: "win11-arm64", vnc: 9, created: "2026-11-17" }
+    const p = pathsFor(VM)
+    mkdirSync(p.tpmDir, { recursive: true })
+    writeFileSync(p.meta, JSON.stringify(meta))
+    const code = resolve(root, "code.fd")
+    writeFileSync(code, "firmware")
+    spyOn(host, "requireFirmware").mockReturnValue({ code, vars: code })
+    spyOn(host, "tpmTisHasPpi").mockReturnValue(true)
+    spyOn(vnc, "ensureFreeDisplay").mockImplementation((_n, _p, m) =>
+      Promise.resolve(m),
+    )
+    spyOn(vnc, "applyPassword").mockResolvedValue(null)
+    spyOn(servicectl, "ensureService").mockResolvedValue({} as never)
+    const probe = share.setProbe(() => ({ ok: false, reason: "test" }))
+    try {
+      await withOperation(VM, "start", async () => {
+        await qemu.launch(VM, p, meta, {
+          installMedia: false,
+          ephemeral: false,
+          virtioBoot: true,
+        })
+      })
+      const launchd = launchctl()
+      const job = await until("the keeper job", 5000, () => {
+        const info = launchd.print(vmLabel)
+        return info?.state === "running" ? info : null
+      })
+      const hello = await keeperHello(p)
+      expect(hello?.pid).toBe(job.pid ?? -1)
+      expect(hello?.child?.name).toBe("qemu")
+      expect(qemu.pidOf(p)).toBe(hello?.child?.pid ?? -1)
+      const tpm = hello?.sidecars.find((s) => s.name === "swtpm")?.pid ?? -1
+      expect(tpm).toBeGreaterThan(0)
+
+      expect(launchd.bootout(vmLabel)).toBe(true)
+      await until("the keeper to finish", 15000, () =>
+        whats(p.events).includes("exiting") ? true : null,
+      )
+      expect(whats(p.events)).toEqual([
+        "started",
+        "launched",
+        "launched",
+        "host-ending",
+        "host-end:powerdown",
+        "exited",
+        "exited",
+        "host-end:done",
+        "exiting",
+      ])
+      expect(readFileSync(report, "utf8")).toContain("qmp system_powerdown")
+      expect(() => process.kill(tpm, 0)).toThrow()
+      await until("launchd to forget the job", 5000, () =>
+        launchd.print(vmLabel) === null ? true : null,
+      )
+    } finally {
+      share.setProbe(probe)
+      mock.restore()
+      for (const [k, v] of Object.entries(saved)) {
+        if (v === undefined) delete process.env[k]
+        else process.env[k] = v
+      }
+    }
   }, 30000)
 })

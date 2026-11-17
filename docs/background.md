@@ -1,6 +1,54 @@
 # Background processes
 
-A running instance has two helper processes besides QEMU.
+A running instance has three helper processes besides QEMU: the keeper, the
+control service and the idle watcher.
+
+## The keeper
+
+`winvm start`, and anything else that launches QEMU, runs QEMU through the
+instance's keeper: `winvm-keeper`, a small launchd job in your account's
+background session, labelled `co.stuffbucket.winvm.keeper.<hash>.<name>`. The
+keeper starts QEMU, its TPM emulator (`swtpm`) and the shared folder's daemon
+(`virtiofsd`) as its own children, waits on them, and writes each start and
+exit to `events.jsonl` as a `keeper` line. It exits 10 seconds after QEMU does.
+Its files are in `instances/<name>/keeper/`, and it logs to `keeper.log` there.
+The children get the umask of the command that started them, and of its
+environment only `HOME`, `USER`, `LOGNAME`, `PATH`, `SHELL`, `TMPDIR`, `LANG`,
+`LC_*` and `WINVM_*`.
+
+These children ignore SIGTERM, SIGHUP and SIGINT, so a stray SIGTERM can't
+end Windows abruptly. Activity Monitor's Quit does nothing to a kept QEMU;
+Force Quit does. `winvm kill` is the supported hard stop, and it asks the
+keeper to do it.
+
+When the keeper itself is told to stop, because the Mac is shutting down,
+restarting or logging out, or because someone ran `launchctl bootout` on it,
+it asks Windows to shut down through a QMP monitor of its own
+(`keeper/qmp.sock`). launchd allows it 60 seconds. It lets a save that is
+still running go on for up to 43 seconds, then cancels it. If Windows hasn't
+shut down 50 seconds after the stop began, the keeper quits QEMU, and at 53
+seconds it kills it. A guest that is stopped mid-save or mid-load can't act on
+the power button, so the keeper quits it at once. Stowing Windows at that
+moment, instead of shutting it down, comes in a later release. After the next
+login, `winvm status` says whether Windows shut down cleanly or was powered off.
+
+The keeper isn't a login item and doesn't outlive a restart. The app carries
+it; a CLI-only install gets it from `winvm setup` once a release pins one.
+`WINVM_KEEPER=<path>` uses another build, for development.
+`WINVM_KEEPER=off` turns the keeper off: QEMU then starts detached, as it did
+before, and so does every VM when no keeper is installed. `winvm status` has a
+`keeper` row:
+
+- `protected`: QEMU runs under the keeper.
+- `not protected: started without winvm's keeper`: QEMU was started detached,
+  for example before this update. It keeps working, and `winvm stop`, `kill`
+  and `status` treat it as before. It is protected from its next start;
+  `winvm stow -i NAME && winvm start -i NAME` does that now.
+- `not protected: WINVM_KEEPER=off`, or `no winvm-keeper installed`.
+- `confused`: the keeper and `qemu.pid` name different processes; `winvm kill`
+  clears it.
+
+`winvm doctor` says which keeper it would use.
 
 ## The control service
 

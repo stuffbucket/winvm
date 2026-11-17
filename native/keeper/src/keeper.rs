@@ -9,6 +9,7 @@ use serde_json::{json, Value};
 
 use crate::adopt;
 use crate::kq::{Event, Kqueue};
+use crate::qmp;
 use crate::record::{self, Record};
 use crate::sock::{Connection, Received, Server};
 use crate::spawn;
@@ -20,6 +21,8 @@ const STOP_MARGIN: Duration = Duration::from_secs(5);
 const KILL_MARGIN: Duration = Duration::from_secs(2);
 const GRACE_AFTER_STOP: Duration = Duration::from_secs(3);
 const HOST_END_POLL: Duration = Duration::from_millis(250);
+const MIGRATE_MARGIN: Duration = Duration::from_secs(12);
+const QMP_TIMEOUT: Duration = Duration::from_secs(1);
 
 pub struct Settings {
     pub dir: PathBuf,
@@ -37,10 +40,21 @@ struct StopAction {
     started: Instant,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Fallback {
+    Check,
+    Migrating,
+    Waiting,
+    Quit,
+}
+
 struct HostEnd {
     stop_deadline: Instant,
     kill_at: Instant,
+    quit_at: Instant,
+    migrate_until: Instant,
     stop: Option<StopAction>,
+    fallback: Option<Fallback>,
     killed: bool,
 }
 
@@ -53,6 +67,7 @@ struct Keeper {
     kq: Kqueue,
     server: Server,
     child: Option<Running>,
+    sidecars: Vec<Running>,
     last_exit: Option<Value>,
     host_end: Option<HostEnd>,
     idle_since: Instant,
@@ -168,10 +183,10 @@ fn start(settings: Settings) -> Result<Option<Keeper>, Failure> {
             .map_err(|e| Failure::Retry(format!("watching signal {signal}: {e}")))?;
     }
     let (previous, unreadable) = match state::read_state(&dir) {
-        Ok(previous) => (previous, false),
+        Ok(previous) => (previous, None),
         Err(problem) => {
             eprintln!("winvm-keeper: {problem}; nothing to adopt, and nothing launched");
-            (None, true)
+            (None, Some(problem))
         }
     };
     let (spec, invalid) = spec_or_previous(&dir, previous.as_ref())?;
@@ -197,6 +212,7 @@ fn start(settings: Settings) -> Result<Option<Keeper>, Failure> {
         kq,
         server,
         child: None,
+        sidecars: Vec::new(),
         last_exit: None,
         host_end: None,
         idle_since: Instant::now(),
@@ -219,8 +235,13 @@ fn start(settings: Settings) -> Result<Option<Keeper>, Failure> {
             .record
             .note("spec-invalid", &[("error", problem.into())]);
     }
+    if let Some(problem) = &unreadable {
+        keeper
+            .record
+            .note("state-unreadable", &[("error", problem.clone().into())]);
+    }
     let ending = spawn::pending_shutdown();
-    keeper.resume_or_launch(previous, !unreadable && ending.is_none());
+    keeper.resume_or_launch(previous, unreadable.is_none() && ending.is_none());
     if let Some(signal) = ending {
         keeper.begin_host_end(signal);
     }
@@ -242,6 +263,10 @@ impl Keeper {
                 let new_session = (previous.session.is_some() || self.spec.session.is_some())
                     && previous.session != self.spec.session;
                 let adopted = self.adopt(previous.child);
+                self.adopt_sidecars(previous.sidecars);
+                if !adopted {
+                    self.retire_sidecars();
+                }
                 !adopted && (new_boot || new_session)
             }
         };
@@ -266,6 +291,7 @@ impl Keeper {
             record: self.spec.record.clone(),
             stop: self.spec.stop.clone(),
             child: self.child.as_ref().map(|r| r.kept.clone()),
+            sidecars: self.sidecars.iter().map(|r| r.kept.clone()).collect(),
         };
         if let Err(e) = state::write_state(&self.dir, &current) {
             eprintln!("winvm-keeper: writing {}: {e}", state::STATE);
@@ -289,7 +315,121 @@ impl Keeper {
         self.last_exit = Some(Value::Object(summary));
         self.child = None;
         self.idle_since = Instant::now();
+        self.retire_sidecars();
         self.save();
+    }
+
+    fn adopt_sidecars(&mut self, previous: Vec<Kept>) {
+        for kept in previous {
+            let watched =
+                adopt::identify(&kept).filter(|_| self.kq.watch_exit(kept.pid).unwrap_or(false));
+            let fields = [
+                ("child", kept.name.clone().into()),
+                ("pid", kept.pid.into()),
+            ];
+            match watched {
+                Some(by) => {
+                    let mut fields = fields.to_vec();
+                    fields.push(("by", by.into()));
+                    self.record.note("adopted", &fields);
+                    self.sidecars.push(Running {
+                        kept,
+                        process: None,
+                    });
+                }
+                None => self.record.note("exited-unknown", &fields),
+            }
+        }
+        self.save();
+    }
+
+    fn retire_sidecars(&mut self) {
+        for running in &self.sidecars {
+            let ours = running.process.is_some() || adopt::identify(&running.kept).is_some();
+            if ours {
+                spawn::kill(running.kept.pid, libc::SIGKILL);
+            }
+        }
+    }
+
+    fn poll_sidecars(&mut self, exited: &[i32]) {
+        let mut gone = Vec::new();
+        self.sidecars.retain_mut(|running| {
+            let outcome = match &mut running.process {
+                Some(process) => match process.try_wait() {
+                    Ok(Some(status)) => Some(("exited", spawn::exit_fields(status))),
+                    Ok(None) => None,
+                    Err(_) => Some(("exited-unknown", Vec::new())),
+                },
+                None => (exited.contains(&running.kept.pid)
+                    || adopt::identify(&running.kept).is_none())
+                .then(|| ("exited-unknown", Vec::new())),
+            };
+            match outcome {
+                Some((what, fields)) => {
+                    gone.push((running.kept.clone(), what, fields));
+                    false
+                }
+                None => true,
+            }
+        });
+        if gone.is_empty() {
+            return;
+        }
+        for (kept, what, fields) in gone {
+            let mut all = vec![("child", Value::from(kept.name)), ("pid", kept.pid.into())];
+            all.extend(fields);
+            self.record.note(what, &all);
+        }
+        self.save();
+    }
+
+    fn launch_sidecar(&mut self, spec: &ChildSpec) -> Result<i32, String> {
+        if let Some(index) = self.sidecars.iter().position(|r| r.kept.name == spec.name) {
+            let mut old = self.sidecars.swap_remove(index);
+            if old.process.is_some() || adopt::identify(&old.kept).is_some() {
+                spawn::kill(old.kept.pid, libc::SIGKILL);
+            }
+            let (what, fields) = match old.process.as_mut().map(Child::wait) {
+                Some(Ok(status)) => ("exited", spawn::exit_fields(status)),
+                _ => ("exited-unknown", Vec::new()),
+            };
+            let mut all = vec![
+                ("child", Value::from(old.kept.name.clone())),
+                ("pid", old.kept.pid.into()),
+            ];
+            all.extend(fields);
+            self.record.note(what, &all);
+        }
+        let program = spec.argv.first().cloned().unwrap_or_default();
+        let process =
+            spawn::spawn(&spec.command(), &[], false).map_err(|e| format!("{program}: {e}"))?;
+        let pid = pid_of(&process);
+        self.sidecars.push(Running {
+            kept: Kept {
+                name: spec.name.clone(),
+                pid,
+                start_us: adopt::start_time_us(pid).unwrap_or(0),
+                pidfile: spec.pidfile.clone(),
+                qmp: None,
+            },
+            process: Some(process),
+        });
+        self.idle_since = Instant::now();
+        self.save();
+        self.record.note(
+            "launched",
+            &[
+                ("child", spec.name.clone().into()),
+                ("pid", pid.into()),
+                ("program", program.into()),
+                ("sidecar", true.into()),
+            ],
+        );
+        if let Err(e) = self.kq.watch_exit(pid) {
+            eprintln!("winvm-keeper: watching {pid}: {e}");
+        }
+        Ok(pid)
     }
 
     fn adopt(&mut self, previous: Option<Kept>) -> bool {
@@ -329,6 +469,7 @@ impl Keeper {
             pid,
             start_us: adopt::start_time_us(pid).unwrap_or(0),
             pidfile: spec.pidfile.clone(),
+            qmp: spec.qmp.clone(),
         };
         self.child = Some(Running {
             kept,
@@ -394,9 +535,15 @@ impl Keeper {
         let mut host = HostEnd {
             stop_deadline: now + self.budget.saturating_sub(STOP_MARGIN),
             kill_at: now + self.budget.saturating_sub(KILL_MARGIN),
+            quit_at: now + self.budget.saturating_sub(STOP_MARGIN),
+            migrate_until: now + self.budget.saturating_sub(MIGRATE_MARGIN),
             stop: None,
+            fallback: None,
             killed: false,
         };
+        if self.child.is_none() {
+            self.retire_sidecars();
+        }
         if let Some(running) = &self.child {
             match &self.spec.stop {
                 Some(stop) => {
@@ -434,10 +581,100 @@ impl Keeper {
                         }
                     }
                 }
+                None if running.kept.qmp.is_some() => host.fallback = Some(Fallback::Check),
                 None => host.kill_at = now,
             }
         }
         self.host_end = Some(host);
+    }
+
+    fn host_end_step(&self, step: &str, outcome: Result<Value, String>) {
+        let mut fields = vec![("step", Value::from(step)), ("ok", outcome.is_ok().into())];
+        if let Err(error) = outcome {
+            fields.push(("error", error.into()));
+        }
+        self.record.note("host-end", &fields);
+    }
+
+    fn power_down(&self, socket: &Path) -> Fallback {
+        let status = qmp::execute(socket, "query-status", QMP_TIMEOUT)
+            .ok()
+            .and_then(|s| s["status"].as_str().map(str::to_owned));
+        if let Some(stopped) = status
+            .as_deref()
+            .filter(|s| matches!(*s, "postmigrate" | "inmigrate" | "prelaunch"))
+        {
+            let quit = qmp::execute(socket, "quit", QMP_TIMEOUT);
+            let mut fields = vec![
+                ("step", Value::from("quit")),
+                ("ok", quit.is_ok().into()),
+                ("status", stopped.into()),
+            ];
+            if let Err(error) = quit {
+                fields.push(("error", error.into()));
+            }
+            self.record.note("host-end", &fields);
+            return Fallback::Quit;
+        }
+        let sent = qmp::execute(socket, "system_powerdown", QMP_TIMEOUT);
+        let mut fields = vec![
+            ("step", Value::from("powerdown")),
+            ("ok", sent.is_ok().into()),
+        ];
+        if let Some(status) = &status {
+            fields.push(("status", status.clone().into()));
+        }
+        if let Err(error) = &sent {
+            fields.push(("error", error.clone().into()));
+        }
+        if sent.is_ok() && matches!(status.as_deref(), Some("paused" | "suspended")) {
+            let resumed = qmp::execute(socket, "cont", QMP_TIMEOUT);
+            fields.push(("cont", resumed.is_ok().into()));
+        }
+        self.record.note("host-end", &fields);
+        Fallback::Waiting
+    }
+
+    fn step_fallback(&mut self, now: Instant) {
+        let Some(host) = &self.host_end else {
+            return;
+        };
+        let (Some(step), migrate_until, quit_at) =
+            (host.fallback, host.migrate_until, host.quit_at)
+        else {
+            return;
+        };
+        let Some(socket) = self.child.as_ref().and_then(|r| r.kept.qmp.clone()) else {
+            return;
+        };
+        let next = match step {
+            Fallback::Check | Fallback::Migrating => {
+                match qmp::execute(&socket, "query-migrate", QMP_TIMEOUT) {
+                    Ok(answer) if qmp::migrating(&answer) && now < migrate_until => {
+                        if step == Fallback::Check {
+                            self.record
+                                .note("host-end", &[("step", "migration-wait".into())]);
+                        }
+                        Fallback::Migrating
+                    }
+                    Ok(answer) if qmp::migrating(&answer) => {
+                        let cancelled = qmp::execute(&socket, "migrate_cancel", QMP_TIMEOUT);
+                        self.host_end_step("migrate-cancel", cancelled);
+                        self.power_down(&socket)
+                    }
+                    _ => self.power_down(&socket),
+                }
+            }
+            Fallback::Waiting if now >= quit_at => {
+                let quit = qmp::execute(&socket, "quit", QMP_TIMEOUT);
+                self.host_end_step("quit", quit);
+                Fallback::Quit
+            }
+            other => other,
+        };
+        if let Some(host) = &mut self.host_end {
+            host.fallback = Some(next);
+        }
     }
 
     fn poll_stop(&mut self, now: Instant) {
@@ -458,7 +695,7 @@ impl Keeper {
                 fields
             }
             Ok(None) if now >= host.stop_deadline => {
-                spawn::kill(-stop.pid, libc::SIGKILL);
+                spawn::kill_group(stop.pid, libc::SIGKILL);
                 spawn::kill(stop.pid, libc::SIGKILL);
                 vec![
                     ("step", "stop-action".into()),
@@ -493,21 +730,32 @@ impl Keeper {
 
     fn tick(&mut self, exited: &[i32]) -> Option<&'static str> {
         self.poll_child(exited);
+        self.poll_sidecars(exited);
         let now = Instant::now();
         self.poll_stop(now);
         self.reap_stragglers();
         self.drop_late_connections(now);
         let Some(host) = &self.host_end else {
             let idle = self.child.is_none();
-            return if idle && self.exit_requested {
+            let reason = if idle && self.exit_requested {
                 Some("requested")
             } else if idle && now >= self.idle_since + self.linger {
                 Some("idle")
             } else {
                 None
             };
+            if reason.is_some() && !self.sidecars.is_empty() {
+                self.retire_sidecars();
+                return None;
+            }
+            return reason;
         };
-        if !host.killed && now >= host.kill_at {
+        let killed = host.killed;
+        let kill_at = host.kill_at;
+        if !killed && now < kill_at {
+            self.step_fallback(now);
+        }
+        if !killed && now >= kill_at {
             if let Some(pid) = self.signal_child(libc::SIGKILL) {
                 self.record
                     .note("host-end", &[("step", "kill".into()), ("pid", pid.into())]);
@@ -516,8 +764,9 @@ impl Keeper {
                 host.killed = true;
             }
         }
-        let finished =
-            self.child.is_none() && self.host_end.as_ref().is_some_and(|h| h.stop.is_none());
+        let finished = self.child.is_none()
+            && self.sidecars.is_empty()
+            && self.host_end.as_ref().is_some_and(|h| h.stop.is_none());
         if finished {
             self.record.note("host-end", &[("step", "done".into())]);
             return Some("host-end");
@@ -549,7 +798,12 @@ impl Keeper {
                 Some(wake.saturating_duration_since(now))
             }
             None if self.child.is_none() => {
-                Some((self.idle_since + self.linger).saturating_duration_since(now))
+                let idle_at = self.idle_since + self.linger;
+                Some(if self.sidecars.is_empty() || now < idle_at {
+                    idle_at.saturating_duration_since(now)
+                } else {
+                    HOST_END_POLL
+                })
             }
             None => None,
         }
@@ -560,6 +814,12 @@ impl Keeper {
             return json!({ "ok": false, "error": "a request is one JSON object" });
         };
         let op = request["op"].as_str();
+        if op == Some("hello") {
+            if request["launching"] == Value::Bool(true) {
+                self.idle_since = Instant::now();
+            }
+            return self.hello();
+        }
         if let Some(protocol) = fields.get("protocol") {
             let newer = protocol.as_u64().is_none_or(|p| p > u64::from(PROTOCOL));
             if newer && op != Some("hello") {
@@ -570,7 +830,7 @@ impl Keeper {
                 });
             }
         }
-        let extra: &[&str] = if op == Some("launch") {
+        let extra: &[&str] = if matches!(op, Some("launch" | "launch-sidecar")) {
             &["child"]
         } else {
             &[]
@@ -582,7 +842,21 @@ impl Keeper {
             return json!({ "ok": false, "error": format!("unknown field {unknown}") });
         }
         match op {
-            Some("hello") => self.hello(),
+            Some("launch-sidecar") => {
+                if self.host_end.is_some() {
+                    return json!({ "ok": false, "error": "host-ending" });
+                }
+                if self.child.is_some() {
+                    return json!({ "ok": false, "error": "busy" });
+                }
+                match serde_json::from_value::<ChildSpec>(request["child"].clone()) {
+                    Ok(spec) => match self.launch_sidecar(&spec) {
+                        Ok(pid) => json!({ "ok": true, "pid": pid }),
+                        Err(error) => json!({ "ok": false, "error": error }),
+                    },
+                    Err(e) => json!({ "ok": false, "error": format!("child: {e}") }),
+                }
+            }
             Some("launch") => {
                 if self.host_end.is_some() {
                     return json!({ "ok": false, "error": "host-ending" });
@@ -598,10 +872,14 @@ impl Keeper {
                     Err(e) => json!({ "ok": false, "error": format!("child: {e}") }),
                 }
             }
-            Some("kill") => match self.signal_child(libc::SIGKILL) {
-                Some(pid) => json!({ "ok": true, "pid": pid }),
-                None => json!({ "ok": false, "error": "no child" }),
-            },
+            Some("kill") => {
+                let killed = self.signal_child(libc::SIGKILL);
+                self.retire_sidecars();
+                match killed {
+                    Some(pid) => json!({ "ok": true, "pid": pid }),
+                    None => json!({ "ok": false, "error": "no child" }),
+                }
+            }
             Some("exit-when-idle") => {
                 self.exit_requested = true;
                 json!({ "ok": true })
@@ -623,6 +901,12 @@ impl Keeper {
                 "startUs": r.kept.start_us,
                 "adopted": r.process.is_none(),
             })),
+            "sidecars": self.sidecars.iter().map(|r| json!({
+                "name": r.kept.name,
+                "pid": r.kept.pid,
+                "startUs": r.kept.start_us,
+                "adopted": r.process.is_none(),
+            })).collect::<Vec<_>>(),
             "lastExit": self.last_exit,
             "hostEnding": self.host_end.is_some(),
         })

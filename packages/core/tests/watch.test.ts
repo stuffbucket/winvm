@@ -42,6 +42,7 @@ import {
   watcherRecord,
   watchPathsFor,
 } from "../src/watch"
+import { lockPidfile, releasePidfiles } from "./fakes/pidfile"
 
 const MIN = 60_000
 const TIMING: Timing = {
@@ -796,7 +797,7 @@ describe("watcher generations", () => {
     )
     const p = pathsFor("w")
     writeFileSync(p.meta, JSON.stringify({ image: "x", vnc: 9, created: "" }))
-    writeFileSync(p.pid, `${String(process.pid)}\n`)
+    await lockPidfile(p.pid, "qemu-system-aarch64")
     const env: Record<string, string | undefined> = {
       ...process.env,
       WINVM_HOME: home,
@@ -834,6 +835,7 @@ describe("watcher generations", () => {
       ).toMatchObject({ state: "stopped", build: buildIdentity() })
     } finally {
       child.kill("SIGKILL")
+      await releasePidfiles()
     }
   }, 30_000)
 })

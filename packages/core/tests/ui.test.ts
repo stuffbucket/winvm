@@ -183,8 +183,33 @@ describe("status formatting", () => {
     operation: null,
     stopUnfinished: null,
     hostPoweredOff: null,
+    keeper: null,
     notes: [],
   }
+
+  it("shows whether winvm's keeper protects the running VM", () => {
+    expect(
+      formatStatus(
+        {
+          ...sample,
+          keeper: { protection: "kept", version: "0.1.0", pid: 88 },
+        },
+        "",
+        NOW,
+      ),
+    ).toMatch(/^ *keeper {8}protected by winvm-keeper 0\.1\.0 \(pid 88\)$/m)
+    expect(
+      formatStatus(
+        {
+          ...sample,
+          keeper: { protection: "legacy", version: null, pid: null },
+        },
+        "",
+        NOW,
+      ),
+    ).toMatch(/^ *keeper {8}not protected: started without winvm's keeper$/m)
+    expect(formatStatus(sample, "", NOW)).not.toContain("keeper")
+  })
 
   it("shows the instance's control service", () => {
     expect(formatStatus(sample, "", NOW)).toMatch(/^ *service {7}pid 77$/m)

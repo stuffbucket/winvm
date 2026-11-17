@@ -19,7 +19,14 @@ pub fn lock_holder(path: &Path) -> Option<i32> {
     let mut lock = whole_file_write_lock();
     // SAFETY: the descriptor is open for the duration of the call and F_GETLK writes into a valid flock.
     let got = unsafe { libc::fcntl(file.as_raw_fd(), libc::F_GETLK, &raw mut lock) };
-    (got == 0 && lock.l_type != libc::F_UNLCK).then_some(lock.l_pid)
+    if got != 0 {
+        return None;
+    }
+    holder_of(&lock)
+}
+
+fn holder_of(lock: &libc::flock) -> Option<i32> {
+    (lock.l_type != libc::F_UNLCK && lock.l_pid > 0).then_some(lock.l_pid)
 }
 
 pub fn hold(path: &Path) -> io::Result<Option<File>> {
@@ -77,6 +84,9 @@ pub fn boot_session() -> Option<String> {
 }
 
 pub fn identify(kept: &Kept) -> Option<&'static str> {
+    if kept.pid <= 1 {
+        return None;
+    }
     if let Some(pidfile) = &kept.pidfile {
         if let Some(holder) = lock_holder(pidfile) {
             return (holder == kept.pid).then_some("pidfile");
@@ -113,12 +123,40 @@ mod tests {
     }
 
     #[test]
+    fn a_lock_held_by_no_single_process_names_no_holder() {
+        let mut lock = whole_file_write_lock();
+        for pid in [-1, 0] {
+            lock.l_pid = pid;
+            assert_eq!(holder_of(&lock), None, "l_pid {pid}");
+        }
+        lock.l_pid = 4242;
+        assert_eq!(holder_of(&lock), Some(4242));
+        lock.l_type = libc::F_UNLCK;
+        assert_eq!(holder_of(&lock), None);
+    }
+
+    #[test]
+    fn a_state_naming_pid_one_or_less_is_never_identified() {
+        for pid in [1, 0, -1] {
+            let kept = Kept {
+                name: "x".to_owned(),
+                pid,
+                start_us: start_time_us(pid).unwrap_or(1),
+                pidfile: None,
+                qmp: None,
+            };
+            assert_eq!(identify(&kept), None, "{pid}");
+        }
+    }
+
+    #[test]
     fn a_process_that_is_gone_is_not_identified() {
         let kept = Kept {
             name: "x".to_owned(),
             pid: i32::MAX,
             start_us: 1,
             pidfile: None,
+            qmp: None,
         };
         assert_eq!(identify(&kept), None);
     }

@@ -17,7 +17,6 @@ import {
 } from "node:fs"
 import { createServer, type Server } from "node:net"
 import { resolve } from "node:path"
-
 import * as agent from "../src/agent"
 import { parseArgs } from "../src/args"
 import {
@@ -55,6 +54,7 @@ import {
 import { pathsFor } from "../src/paths"
 import { processStart } from "../src/proc"
 import { deriveState, gather } from "../src/status"
+import { lockPidfile, releasePidfiles } from "./fakes/pidfile"
 import { FakeQmp } from "./fakes/qmp"
 
 const NAME = "frozen-test"
@@ -62,6 +62,7 @@ let home: string
 let savedHome: string | undefined
 let fake: FakeQmp
 let runState = "running"
+let qemuPid = 0
 
 beforeAll(async () => {
   savedHome = process.env.WINVM_HOME
@@ -77,7 +78,7 @@ beforeAll(async () => {
       created: new Date().toISOString(),
     }),
   )
-  writeFileSync(p.pid, `${String(process.pid)}\n`)
+  qemuPid = (await lockPidfile(p.pid, "qemu-system-aarch64")).pid
   fake = new FakeQmp(p.qmp)
   fake.handler = (cmd) =>
     cmd.execute === "query-status"
@@ -88,6 +89,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await fake.close()
+  await releasePidfiles()
   rmSync(home, { recursive: true, force: true })
   if (savedHome === undefined) delete process.env.WINVM_HOME
   else process.env.WINVM_HOME = savedHome
@@ -191,7 +193,7 @@ describe("the asleep mark", () => {
     expect(await frozenState(p)).toBeNull()
     runState = "paused"
     expect(await frozenState(p)).toBe("paused")
-    markAsleep(p, process.pid)
+    markAsleep(p, qemuPid)
     expect(await frozenState(p)).toBe("asleep")
   })
 })
@@ -204,7 +206,7 @@ describe("nothing calls into a frozen guest", () => {
     expect(paused).toBeInstanceOf(GuestFrozen)
     expect((paused as GuestFrozen).state).toBe("paused")
     expect((paused as Error).message).toContain("winvm resume -i frozen-test")
-    markAsleep(pathsFor(NAME), process.pid)
+    markAsleep(pathsFor(NAME), qemuPid)
     const asleep = await refuseFrozen(NAME).catch((e: unknown) => e)
     expect((asleep as GuestFrozen).state).toBe("asleep")
     expect((asleep as Error).message).toContain("winvm wake -i frozen-test")
@@ -275,7 +277,7 @@ describe("status of a frozen guest", () => {
 
   it("says asleep when marked, and never sends cont", async () => {
     runState = "paused"
-    markAsleep(pathsFor(NAME), process.pid)
+    markAsleep(pathsFor(NAME), qemuPid)
     const s = await gather(NAME, true)
     expect(s.state).toBe("asleep")
     expect(fake.commands).not.toContain("cont")
@@ -1580,5 +1582,73 @@ describe("status when the host powered Windows off", () => {
     expect(
       (await gather("frozen-hostoff-gone", false)).hostPoweredOff,
     ).toBeNull()
+  })
+
+  const keeper = (what: string, fields: Record<string, unknown> = {}): void => {
+    appendEntry(HOST, { kind: "keeper", what, ...fields })
+  }
+  const step = (name: string, ok = true): void => {
+    keeper("host-end", { step: name, ok })
+  }
+  const keptStart = (): void => {
+    op("begin", "start")
+    keeper("launched", { child: "qemu", pid: 501, program: "qemu" })
+    op("end", "start")
+  }
+
+  it("says the keeper quit QEMU when Windows did not finish shutting down at host end", async () => {
+    keptStart()
+    keeper("host-ending", { signal: "SIGTERM", budgetMs: 55_000 })
+    step("powerdown")
+    step("quit")
+    shutdown("host-qmp-quit")
+    closed()
+    keeper("exited", { child: "swtpm", pid: 502, signal: 9, core: false })
+    keeper("exited", { child: "qemu", pid: 501, status: 0 })
+    step("done")
+    const s = await gather(HOST, false)
+    expect(s.hostPoweredOff).toMatchObject({ cause: "host-quit" })
+    const note = s.notes.join("\n")
+    expect(note).toContain("did not shut down cleanly")
+    expect(note).toContain("winvm start -i frozen-hostoff")
+  })
+
+  it("says the keeper killed QEMU at the deadline, whatever order the record has", async () => {
+    keptStart()
+    keeper("host-ending", { signal: "SIGTERM", budgetMs: 55_000 })
+    step("powerdown")
+    step("quit", false)
+    step("kill")
+    keeper("exited", { child: "qemu", pid: 501, signal: 9, core: false })
+    closed()
+    step("done")
+    const s = await gather(HOST, false)
+    expect(s.hostPoweredOff).toMatchObject({ cause: "host-kill" })
+    expect(s.notes.join("\n")).toContain("did not shut down cleanly")
+  })
+
+  it("says Windows was shut down cleanly when the keeper's power button worked", async () => {
+    keptStart()
+    keeper("host-ending", { signal: "SIGTERM", budgetMs: 55_000 })
+    step("powerdown")
+    keeper("exited", { child: "qemu", pid: 501, status: 0 })
+    shutdown("guest-shutdown")
+    closed()
+    step("done")
+    const s = await gather(HOST, false)
+    expect(s.hostPoweredOff).toMatchObject({ cause: "host-shutdown" })
+    const note = s.notes.join("\n")
+    expect(note).toContain("shut down cleanly when the Mac shut down")
+    expect(note).not.toContain("lost")
+  })
+
+  it("forgets the keeper's host end once a later start succeeds", async () => {
+    keptStart()
+    keeper("host-ending", { signal: "SIGTERM", budgetMs: 55_000 })
+    step("quit")
+    keeper("exited", { child: "qemu", pid: 501, status: 0 })
+    closed()
+    keptStart()
+    expect((await gather(HOST, false)).hostPoweredOff).toBeNull()
   })
 })

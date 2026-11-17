@@ -19,6 +19,15 @@ function exists(pid: number): boolean {
   }
 }
 
+export function signalProcess(
+  pid: number,
+  signal: NodeJS.Signals | 0,
+): boolean {
+  if (!Number.isInteger(pid) || pid <= 1) return false
+  process.kill(pid, signal)
+  return true
+}
+
 export const UNREADABLE_START = ""
 
 export function processStart(pid: number): string | null {

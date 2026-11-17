@@ -28,6 +28,8 @@ pub struct CommandSpec {
     pub log: Option<PathBuf>,
     #[serde(default = "shielded")]
     pub shield: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub umask: Option<u32>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -42,6 +44,8 @@ pub struct ChildSpec {
     #[serde(default = "shielded")]
     pub shield: bool,
     pub pidfile: Option<PathBuf>,
+    pub qmp: Option<PathBuf>,
+    pub umask: Option<u32>,
 }
 
 impl ChildSpec {
@@ -51,6 +55,7 @@ impl ChildSpec {
             env: self.env.clone(),
             log: self.log.clone(),
             shield: self.shield,
+            umask: self.umask,
         }
     }
 }
@@ -73,6 +78,8 @@ pub struct Kept {
     pub pid: i32,
     pub start_us: u64,
     pub pidfile: Option<PathBuf>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub qmp: Option<PathBuf>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
@@ -89,6 +96,8 @@ pub struct State {
     #[serde(default)]
     pub stop: Option<CommandSpec>,
     pub child: Option<Kept>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub sidecars: Vec<Kept>,
 }
 
 pub fn read_spec(dir: &Path) -> Result<Spec, String> {
@@ -174,7 +183,15 @@ mod tests {
                 pid: 42,
                 start_us: 7,
                 pidfile: Some(PathBuf::from("/x/qemu.pid")),
+                qmp: Some(PathBuf::from("/x/keeper/qmp.sock")),
             }),
+            sidecars: vec![Kept {
+                name: "swtpm".to_owned(),
+                pid: 43,
+                start_us: 8,
+                pidfile: None,
+                qmp: None,
+            }],
             ..State::default()
         };
         write_state(&dir, &state).expect("write");

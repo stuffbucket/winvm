@@ -16,11 +16,17 @@ import {
 import { restoreForward } from "./agentfwd"
 import type { DisplayConfig } from "./display"
 import { displayArgs, RAMFB, readDisplay, runningCommand } from "./display"
+import { appendEntry } from "./eventlog"
 import type { Hardware } from "./hardware"
 import { readHardware } from "./hardware"
 import { requireFirmware, tpmTisHasPpi } from "./host"
+import { type FoundKeeper, KeeperBusy, type KeeperChild } from "./keeper"
+import * as kept from "./kept"
+import { LeaseNotHeld } from "./operation"
 import type { InstanceMeta, Paths } from "./paths"
 import { media } from "./paths"
+import { lockState } from "./pidlock"
+import { signalProcess } from "./proc"
 import * as qga from "./qga"
 import * as qmp from "./qmp"
 import { runtimeBin } from "./runtime"
@@ -189,7 +195,7 @@ function swtpmPids(p: Paths): readonly number[] {
 export function stopSwtpm(p: Paths): void {
   for (const pid of swtpmPids(p)) {
     try {
-      process.kill(pid, "SIGKILL")
+      signalProcess(pid, "SIGKILL")
     } catch {}
   }
   rmSync(p.tpmSock, { force: true })
@@ -200,31 +206,38 @@ export function stopSidecars(p: Paths): void {
   share.stopVirtiofsd(p)
 }
 
+const swtpmArgs = (p: Paths): readonly string[] => [
+  "socket",
+  "--tpmstate",
+  `dir=${p.tpmDir}`,
+  "--ctrl",
+  `type=unixio,path=${p.tpmSock},terminate`,
+  "--tpm2",
+]
+
+async function untilFile(path: string, timeoutMs: number): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() < deadline) {
+    if (existsSync(path)) return true
+    await new Promise((r) => setTimeout(r, 20))
+  }
+  return false
+}
+
 async function startSwtpm(p: Paths): Promise<void> {
   stopSwtpm(p)
   for (let i = 0; i < 50 && swtpmPids(p).length > 0; i += 1)
     await new Promise((r) => setTimeout(r, 20))
-  const proc = spawner(
-    runtimeBin("swtpm"),
-    [
-      "socket",
-      "--tpmstate",
-      `dir=${p.tpmDir}`,
-      "--ctrl",
-      `type=unixio,path=${p.tpmSock},terminate`,
-      "--tpm2",
-    ],
-    { detached: true, stdio: "ignore" },
-  )
+  const proc = spawner(runtimeBin("swtpm"), [...swtpmArgs(p)], {
+    detached: true,
+    stdio: "ignore",
+  })
   proc.unref()
-
-  const deadline = Date.now() + 10_000
-  while (Date.now() < deadline) {
-    if (existsSync(p.tpmSock)) return
-    await new Promise((r) => setTimeout(r, 20))
-  }
-  throw new Error(`swtpm never created ${p.tpmSock} — check \`winvm doctor\``)
+  if (!(await untilFile(p.tpmSock, 10_000))) throw swtpmMissing(p)
 }
+
+const swtpmMissing = (p: Paths): Error =>
+  new Error(`swtpm never created ${p.tpmSock} — check \`winvm doctor\``)
 
 export type Settle = (survived: () => void) => () => void
 
@@ -249,6 +262,28 @@ export async function launch(
   meta: InstanceMeta,
   o: LaunchOptions,
 ): Promise<void> {
+  const use = kept.keeperUse()
+  if (use.kind === "keeper") {
+    const failed = await kept.openKeeper(name, p, use.keeper).then(
+      () => null,
+      (error: unknown) =>
+        error instanceof Error ? error : new Error(String(error)),
+    )
+    if (failed === null) {
+      await launchKept(name, p, meta, o, use.keeper)
+      return
+    }
+    if (failed instanceof LeaseNotHeld || failed instanceof KeeperBusy)
+      throw failed
+    console.warn(
+      `warning: winvm's keeper did not start (${failed.message}); starting QEMU without it, so it is not protected if the Mac shuts down`,
+    )
+    appendEntry(name, {
+      kind: "warning",
+      what: kept.UNAVAILABLE,
+      error: failed.message,
+    })
+  }
   await startSwtpm(p)
   const { display, devices } = launchDevices(p, o)
   if (devices !== "none") {
@@ -282,6 +317,146 @@ export async function launch(
       res("exited")
     }),
   )
+  if ((await settled(p, o, exited)) === "alive") {
+    await afterLaunch(p)
+    return
+  }
+
+  stopSidecars(p)
+  throw exitedImmediately(p)
+}
+
+const REAPED_MS = 5000
+
+async function launchKept(
+  name: string,
+  p: Paths,
+  meta: InstanceMeta,
+  o: LaunchOptions,
+  keeper: FoundKeeper,
+): Promise<void> {
+  const { display, devices } = launchDevices(p, o)
+  const still = await kept.untilChildGone(p, REAPED_MS)
+  if (still !== null)
+    throw new Error(
+      `winvm's keeper still runs QEMU (pid ${String(still.pid)}) for "${name}"; \`winvm kill -i ${name}\` ends it`,
+    )
+  if (existsSync(p.serial)) renameSync(p.serial, p.serialPrev)
+  rmSync(p.qemuLog, { force: true })
+  closeSync(openSync(p.qemuLog, "w"))
+  if (o.incoming !== undefined) rmSync(p.qmpQemu, { force: true })
+  await ensureService(name, p)
+  const m = await ensureFreeDisplay(name, p, meta)
+  await kept.openKeeper(name, p, keeper)
+  stopSidecars(p)
+  const env = keptEnv()
+  const umask = kept.callerUmask()
+  const sidecar = async (
+    child: KeeperChild & { readonly name: string },
+  ): Promise<number> => {
+    const spec = { ...child, umask }
+    try {
+      return await kept.launchSidecar(p, spec)
+    } catch (error) {
+      if (error instanceof kept.KeeperRefused) throw error
+      await kept.openKeeper(name, p, keeper)
+      return await kept.launchSidecar(p, spec)
+    }
+  }
+  try {
+    await sidecar({
+      name: "swtpm",
+      argv: [runtimeBin("swtpm"), ...swtpmArgs(p)],
+      env,
+    })
+    if (!(await untilFile(p.tpmSock, 10_000))) throw swtpmMissing(p)
+    if (devices !== "none") {
+      const daemon = share.prepareVirtiofsd(p)
+      const pid = await sidecar({
+        name: "virtiofsd",
+        argv: daemon.argv,
+        env,
+        log: daemon.log,
+      })
+      await share.untilServing(
+        p,
+        { served: daemon.served, pid },
+        async () =>
+          !(
+            (await kept.keeperHello(p, { launching: true }))?.sidecars ?? []
+          ).some((s) => s.pid === pid),
+      )
+    }
+  } catch (error) {
+    await kept.killKept(p, null)
+    throw error
+  }
+
+  const monitor = kept.keeperMonitor(p)
+  const pid = await kept
+    .launchChild(p, {
+      name: "qemu",
+      argv: [
+        runtimeBin("qemu-system-aarch64"),
+        ...qemuArgs(name, p, m, { ...o, display, shareDevices: devices }),
+        "-qmp",
+        `unix:${monitor},server=on,wait=off`,
+      ],
+      env,
+      log: p.qemuLog,
+      pidfile: p.pid,
+      qmp: monitor,
+      umask,
+    })
+    .catch(async (error: unknown) => {
+      await kept.killKept(p, null)
+      throw error
+    })
+  const watching = new AbortController()
+  const exited = (async (): Promise<"exited"> => {
+    while (!watching.signal.aborted) {
+      const hello = await kept.keeperHello(p, { launching: true })
+      if (hello !== null && hello.child?.pid !== pid) return "exited"
+      await new Promise((r) => setTimeout(r, 50))
+    }
+    return await new Promise<never>(() => undefined)
+  })()
+  const outcome = await settled(p, o, exited)
+  watching.abort()
+  if (outcome === "alive") {
+    await afterLaunch(p)
+    return
+  }
+  await kept.killKept(p, null)
+  throw exitedImmediately(p)
+}
+
+const PASSED_ENV = new Set([
+  "HOME",
+  "USER",
+  "LOGNAME",
+  "PATH",
+  "SHELL",
+  "TMPDIR",
+  "LANG",
+])
+
+const keptEnv = (): Readonly<Record<string, string>> =>
+  Object.fromEntries(
+    Object.entries(process.env).filter(
+      (e): e is [string, string] =>
+        e[1] !== undefined &&
+        (PASSED_ENV.has(e[0]) ||
+          e[0].startsWith("LC_") ||
+          e[0].startsWith("WINVM_")),
+    ),
+  )
+
+async function settled(
+  p: Paths,
+  o: LaunchOptions,
+  exited: Promise<"exited">,
+): Promise<"alive" | "exited"> {
   let unsettle = (): void => undefined
   const survived = new Promise<"alive">((res) => {
     unsettle = settle(() => {
@@ -296,19 +471,21 @@ export async function launch(
   const outcome = await Promise.race([exited, survived, answering])
   stop = true
   unsettle()
-  if (outcome === "alive") {
-    await applyPassword(p).catch((error: unknown) => {
-      console.warn(
-        `warning: could not set the VNC password: ${error instanceof Error ? error.message : String(error)}`,
-      )
-    })
-    await restoreForward(p)
-    return
-  }
+  return outcome
+}
 
-  stopSidecars(p)
+async function afterLaunch(p: Paths): Promise<void> {
+  await applyPassword(p).catch((error: unknown) => {
+    console.warn(
+      `warning: could not set the VNC password: ${error instanceof Error ? error.message : String(error)}`,
+    )
+  })
+  await restoreForward(p)
+}
+
+function exitedImmediately(p: Paths): Error {
   const why = readTextOr(p.qemuLog, "").trim()
-  throw new Error(
+  return new Error(
     `qemu exited immediately${why === "" ? "" : `:\n  ${why.split("\n").join("\n  ")}`}`,
   )
 }
@@ -365,15 +542,20 @@ export function pidOf(p: Paths): number | null {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return null
     throw error
   }
+  const lock = lockState(p.pid)
+  if (typeof lock === "object") return lock.held
+  if (lock === "missing") return null
   const pid = Number.parseInt(text.trim(), 10)
-  if (!Number.isFinite(pid)) return null
+  if (!Number.isInteger(pid) || pid <= 1) return null
   try {
     process.kill(pid, 0)
-    return pid
   } catch {
     rmSync(p.pid, { force: true })
     return null
   }
+  if (lock === "unknown") return pid
+  const command = runningCommand(pid)
+  return command === null || isQemuCommandOf(command, p) ? pid : null
 }
 
 export const isRunning = (p: Paths): boolean => pidOf(p) !== null

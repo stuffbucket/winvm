@@ -40,9 +40,9 @@ import * as servicectl from "../src/servicectl"
 import * as share from "../src/share"
 import * as vnc from "../src/vnc"
 import { realActions } from "../src/watch"
+import { lockPidfile, releasePidfiles } from "./fakes/pidfile"
 
 const NAME = "race"
-const HOLDER = resolve(import.meta.dir, "fakes", "holder.ts")
 const meta: InstanceMeta = {
   image: "win11-arm64",
   vnc: 9,
@@ -85,18 +85,6 @@ const lines = (file: string): string[] =>
     : []
 const swtpmLog = (): string => resolve(state, "swtpm.log")
 const qemuLog = (): string => resolve(state, "qemu.log")
-
-async function hold(...argv: string[]): Promise<ReturnType<typeof Bun.spawn>> {
-  const h = Bun.spawn([process.execPath, HOLDER, ...argv], {
-    stdout: "pipe",
-    stderr: "ignore",
-  })
-  spawned.push(h)
-  const reader = (h.stdout as ReadableStream<Uint8Array>).getReader()
-  await reader.read()
-  reader.releaseLock()
-  return h
-}
 
 const outcome = async (p: Promise<unknown>): Promise<string> =>
   await p.then(
@@ -157,10 +145,11 @@ beforeEach(() => {
   spyOn(process.stdout, "write").mockImplementation(() => true)
 })
 
-afterEach(() => {
+afterEach(async () => {
   mock.restore()
   qemu.stopSwtpm(pathsFor(NAME))
   for (const h of spawned.splice(0)) h.kill("SIGKILL")
+  await releasePidfiles()
   share.setProbe(previousProbe)
   for (const [k, v] of Object.entries(previous)) {
     if (v === undefined) delete process.env[k]
@@ -411,9 +400,8 @@ describe("the watcher's work", () => {
 describe("kill", () => {
   it("never SIGKILLs a process that is not this instance's QEMU", async () => {
     const p = pathsFor(NAME)
-    const stranger = await hold("unrelated-process")
-    writeFileSync(p.pid, `${String(stranger.pid)}\n`)
-    const code = commands.kill(parseArgs(["-i", NAME]))
+    const stranger = (await lockPidfile(p.pid, "unrelated-process")).proc
+    const code = await commands.kill(parseArgs(["-i", NAME]))
     await sleep(100)
     expect(alive(stranger.pid)).toBe(true)
     expect(code).toBe(1)
@@ -422,15 +410,17 @@ describe("kill", () => {
 
   it("does not take another instance's QEMU for this one's", async () => {
     const p = pathsFor(NAME)
-    const other = await hold(
-      "qemu-system-aarch64",
-      "-name",
-      "winvm-other",
-      "-pidfile",
-      pathsFor("other").pid,
-    )
-    writeFileSync(p.pid, `${String(other.pid)}\n`)
-    expect(commands.kill(parseArgs(["-i", NAME]))).toBe(1)
+    const other = (
+      await lockPidfile(
+        p.pid,
+        "qemu-system-aarch64",
+        "-name",
+        "winvm-other",
+        "-pidfile",
+        pathsFor("other").pid,
+      )
+    ).proc
+    expect(await commands.kill(parseArgs(["-i", NAME]))).toBe(1)
     await sleep(100)
     expect(alive(other.pid)).toBe(true)
   })
@@ -477,20 +467,22 @@ describe("kill", () => {
 
   it("refuses without blaming the pid file when it cannot read the process's command line", async () => {
     const p = pathsFor(NAME)
-    const own = await hold(
-      "qemu-system-aarch64",
-      "-name",
-      `winvm-${NAME}`,
-      "-pidfile",
-      p.pid,
-    )
-    writeFileSync(p.pid, `${String(own.pid)}\n`)
+    const own = (
+      await lockPidfile(
+        p.pid,
+        "qemu-system-aarch64",
+        "-name",
+        `winvm-${NAME}`,
+        "-pidfile",
+        p.pid,
+      )
+    ).proc
     spyOn(display, "runningCommand").mockReturnValue(null)
     const errors: string[] = []
     spyOn(console, "error").mockImplementation((...a: unknown[]) => {
       errors.push(a.map(String).join(" "))
     })
-    expect(commands.kill(parseArgs(["-i", NAME]))).toBe(1)
+    expect(await commands.kill(parseArgs(["-i", NAME]))).toBe(1)
     expect(alive(own.pid)).toBe(true)
     expect(errors.join("\n")).toContain("could not read")
     expect(errors.join("\n")).not.toContain("remove that file")
@@ -498,19 +490,16 @@ describe("kill", () => {
 
   it("kills this instance's QEMU without waiting on a lease another command holds", async () => {
     const p = pathsFor(NAME)
-    script("qemu-system-aarch64", "while :; do sleep 0.2; done")
-    const own = Bun.spawn(
-      [
-        resolve(state, "runtime", "bin", "qemu-system-aarch64"),
+    const own = (
+      await lockPidfile(
+        p.pid,
+        "qemu-system-aarch64",
         "-name",
         `winvm-${NAME}`,
         "-pidfile",
         p.pid,
-      ],
-      { stdout: "ignore", stderr: "ignore" },
-    )
-    spawned.push(own)
-    writeFileSync(p.pid, `${String(own.pid)}\n`)
+      )
+    ).proc
     spyOn(servicectl, "stopService").mockImplementation(() => undefined)
     let release: () => void = () => undefined
     const wedged = withOperation(NAME, "stop", async () => {
