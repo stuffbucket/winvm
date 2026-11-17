@@ -86,6 +86,7 @@ export interface Manifest {
   readonly name: string
   readonly instance: string
   readonly kind: SaveKind
+  readonly protected?: boolean
   readonly createdAt: string
   readonly bytes: number
   readonly compat: string
@@ -168,6 +169,9 @@ export function parseManifest(text: string): Manifest {
   if (typeof bytes !== "number" || !Number.isFinite(bytes) || bytes < 0) {
     throw new Error("manifest.bytes must be a non-negative number")
   }
+  const protection = r.protected
+  if (protection !== undefined && typeof protection !== "boolean")
+    throw new Error("manifest.protected must be a boolean")
   const note = r.note
   if (note !== undefined && typeof note !== "string")
     throw new Error("manifest.note must be a string")
@@ -505,6 +509,7 @@ export type IncompatibleReason =
 export interface SaveEntry {
   readonly name: string
   readonly kind: SaveKind
+  readonly protected: boolean
   readonly createdAt: string
   readonly bytes: number
   readonly format: RamFormat
@@ -570,6 +575,7 @@ export function savesReport(
       {
         name: m.name,
         kind: m.kind,
+        protected: m.protected === true,
         createdAt: m.createdAt,
         bytes: m.bytes,
         format: ramFormatOf(m),
@@ -686,12 +692,67 @@ export function listSaves(instance: string): readonly Listed[] {
 export const hasSave = (instance: string, name: string): boolean =>
   readSave(instance, name) !== null
 
-export function removeSave(instance: string, name: string): void {
+export class ProtectedSave extends Error {}
+
+export function assertRemovable(
+  instance: string,
+  name: string,
+  force = false,
+): void {
+  const err = nameError(name)
+  if (err !== null) throw new Error(err)
+  if (force || !existsSync(saveDir(instance, name))) return
+  const m = parseManifest(
+    readFileSync(resolve(saveDir(instance, name), FILES.manifest), "utf8"),
+  )
+  if (m.protected === true) {
+    throw new ProtectedSave(
+      `save "${name}" is protected — unprotect it first, or explicitly delete it with \`winvm saves -i ${instance} rm ${name} --force\``,
+    )
+  }
+}
+
+export async function setSaveProtection(
+  instance: string,
+  name: string,
+  protect: boolean,
+): Promise<Manifest> {
+  const err = nameError(name)
+  if (err !== null) throw new Error(err)
+  return await withOperation(instance, "save", () => {
+    const m = readSave(instance, name)
+    if (m === null)
+      throw new Error(`instance "${instance}" has no readable save "${name}"`)
+    if (protect && (m.kind === "stow" || name === STOW)) {
+      throw new Error(
+        "the stow save is a one-shot resume slot and cannot be protected — take a named checkpoint instead",
+      )
+    }
+    const next = { ...m, protected: protect }
+    const file = resolve(saveDir(instance, name), FILES.manifest)
+    const tmp = `${file}.tmp-${String(process.pid)}`
+    try {
+      writeFileSync(tmp, `${JSON.stringify(next, null, 2)}\n`)
+      renameSync(tmp, file)
+    } finally {
+      rmSync(tmp, { force: true })
+    }
+    return next
+  })
+}
+
+export function removeSave(
+  instance: string,
+  name: string,
+  o: { readonly force?: boolean } = {},
+): void {
+  assertRemovable(instance, name, o.force)
   rmSync(saveDir(instance, name), { recursive: true, force: true })
   forgetNote(instance, name)
 }
 
 export function removeAllSaves(instance: string): void {
+  for (const s of listSaves(instance)) assertRemovable(instance, s.name)
   rmSync(savesDir(instance), { recursive: true, force: true })
   try {
     removeNotes(instance)
@@ -862,6 +923,7 @@ async function createSaveHeld(
   instance: string,
   o: CreateOptions,
 ): Promise<CreateResult> {
+  assertRemovable(instance, o.name)
   const p = pathsFor(instance)
   const meta = readMeta(instance)
   if (meta === null) throw new Error(`no such instance "${instance}"`)
@@ -1029,6 +1091,7 @@ export async function cloneSave(
   }
   const src = saveDir(from, name)
   return await withOperation(to, "save", () => {
+    assertRemovable(to, name)
     const tmp = resolve(savesDir(to), `.${name}.partial-${String(process.pid)}`)
     rmSync(tmp, { recursive: true, force: true })
     mkdirSync(tmp, { recursive: true })

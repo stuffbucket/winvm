@@ -2,7 +2,6 @@ import {
   type Camera,
   CanvasGlyph,
   CanvasIconButton,
-  cameraForScreenRect,
   centreOf,
   centreOn,
   clampCamera,
@@ -14,7 +13,6 @@ import {
   rectsIntersect,
   type Size,
   SpatialCanvas,
-  SpatialCanvasCorner,
   SpatialCanvasFloatingPanel,
   SpatialCanvasLabel,
   SpatialCanvasNode,
@@ -23,15 +21,14 @@ import {
   SpatialCanvasSearchResults,
   SpatialCanvasSurface,
   type SpatialCanvasSurfacePhase,
-  SpatialCanvasTopBar,
   SpatialCanvasViewport,
-  SpatialCanvasZoomControls,
   useCanvasCamera,
   visibleWorld,
   wheelZoomFactor,
   zoomAround,
 } from "@winvm/canvas"
 import {
+  type CSSProperties,
   type JSX,
   type PointerEvent,
   useCallback,
@@ -41,20 +38,26 @@ import {
   useState,
 } from "react"
 
-import { outputText, winvm } from "../../backend"
-import { Button } from "../../components/Button"
+import { outputText, showCheckpointInFinder, winvm } from "../../backend"
 import { ConfirmDialog } from "../../components/ConfirmDialog"
-import { focusOnMount } from "../../components/focusOnMount"
 import { t } from "../../i18n"
 import { type Phase, parseNote, parseSaves } from "../../model"
-import type { Ran } from "../winvm/useWinvm"
-import { CheckpointCard, MONITOR, takenAt } from "./CheckpointCard"
-import { CheckpointDetails, type NoteDraft, tagsOf } from "./CheckpointDetails"
-import { CheckpointLook } from "./CheckpointLook"
+import type { Ran, RunOptions } from "../winvm/useWinvm"
+import { CheckpointCard, takenAt, textScale } from "./CheckpointCard"
 import {
+  CheckpointDetailsLayer,
+  type NoteDraft,
+  tagsOf,
+} from "./CheckpointDetails"
+import { CheckpointLook } from "./CheckpointLook"
+import { ControlBar } from "./ControlBar"
+import {
+  CAPTION_ROOM,
   type CardBox,
   type Checkpoint,
+  type CheckpointFormat,
   DAY_GAP,
+  dayGroup,
   dayKey,
   dayNearest,
   deleteBlocked,
@@ -63,7 +66,9 @@ import {
   goBackSteps,
   isAutomatic,
   layoutTimeline,
+  type Moves,
   openingView,
+  placeCards,
   saveNameFor,
   searchCheckpoints,
   shownName,
@@ -75,7 +80,22 @@ import {
   withLabel,
 } from "./checkpoints"
 import { LiveFrame } from "./LiveFrame"
+import { NewCheckpointForm } from "./NewCheckpoint"
 import { forgetPictures } from "./pictures"
+import { checkpointPresentation } from "./presentation"
+import { SectionDraft, SectionGrid, SectionView } from "./Section"
+import {
+  type Arrangement,
+  centreOfCard,
+  dropCard,
+  GRID,
+  looseNames,
+  normalizeSections,
+  placeMembers,
+  readingOrder,
+  sectionAt,
+  sectionRect,
+} from "./sections"
 import {
   type CheckpointSettings,
   DEFAULT_SETTINGS,
@@ -83,6 +103,9 @@ import {
   saveSettings,
 } from "./settings"
 import { Timeline } from "./Timeline"
+import { type SectionsHost, useSections, withCaption } from "./useSections"
+import { Wallpaper } from "./Wallpaper"
+import { ZoomControl } from "./ZoomControl"
 
 export interface CheckpointCanvasProps {
   readonly instance: string
@@ -90,19 +113,33 @@ export interface CheckpointCanvasProps {
   readonly phase: Phase | null
   readonly busy: boolean
   readonly aspect: number
-  displayRect(): Rect | null
   liveSource: () => HTMLCanvasElement | null
-  run(verb: "save" | "load", arg: string): Promise<Ran | null>
+  run: (
+    verb: "save" | "load",
+    arg: string,
+    options?: RunOptions,
+  ) => Promise<Ran | null>
   readonly closeRequest: number
-  onClosed(): void
+  onClosed: () => void
 }
 
-const PANEL_SPACE = 400
+const PANEL_WIDTH = 368
 const TIMELINE_SPACE = 132
+const CANVAS_LEAST = 128
+const BAR_SPACE = 88
+const READABLE_FIT = 0.4
 const PAN_STEP = 80
+const NUDGE_STEP = 16
 const ZOOM_STEP = 1.25
 const ENTER_WAIT_MS = 450
-const FAR_ZOOM = 0.42
+const SURFACE_FADE_MS = 200
+const surfaceFadeMs = (): number =>
+  typeof matchMedia === "function" &&
+  matchMedia("(prefers-reduced-motion: reduce)").matches
+    ? 0
+    : SURFACE_FADE_MS
+const FAR_ZOOM = 0.3
+const NOW_TEXT = 1.25
 
 type Confirm =
   | { readonly kind: "go-back"; readonly name: string }
@@ -116,15 +153,11 @@ const viewSize = (): Size => ({
   width: window.innerWidth,
   height: window.innerHeight,
 })
-
-const centreIn = (
-  world: { x: number; y: number },
-  zoom: number,
-  reserve: number,
-): Camera => {
-  const c = centreOn(world, zoom, viewSize())
-  return { ...c, x: c.x - reserve / 2 }
-}
+const panelSpace = (): number =>
+  Math.max(
+    240,
+    Math.min(PANEL_WIDTH, viewSize().width - TIMELINE_SPACE - CANVAS_LEAST),
+  )
 
 export function CheckpointCanvas(p: CheckpointCanvasProps): JSX.Element {
   const live = p.phase === "running" || p.phase === "paused"
@@ -132,12 +165,42 @@ export function CheckpointCanvas(p: CheckpointCanvasProps): JSX.Element {
   const [listError, setListError] = useState<string | null>(null)
   const [settings, setSettings] = useState<CheckpointSettings>(DEFAULT_SETTINGS)
   const [phase, setPhase] = useState<SpatialCanvasSurfacePhase>("entering")
-  const [selected, setSelected] = useState<string | null>(null)
+  const [presented, setPresented] = useState(false)
+  const [surfaceReady, setSurfaceReady] = useState(false)
+  const finishLeaving = useRef<(() => void) | null>(null)
+  useEffect(() => {
+    let mounted = true
+    void checkpointPresentation
+      .set(true)
+      .catch((error: unknown) => {
+        console.warn("opening checkpoint fullscreen failed", error)
+      })
+      .then(() => {
+        if (mounted) {
+          setSize(viewSize())
+          setPresented(true)
+        }
+      })
+    return () => {
+      mounted = false
+      finishLeaving.current?.()
+      void checkpointPresentation.set(false).catch((error: unknown) => {
+        console.warn("restoring the checkpoint window failed", error)
+      })
+    }
+  }, [])
+  const [selected, setSelectedState] = useState<string | null>(null)
+  const leftSpace = useRef(0)
+  const setSelected = useCallback((name: string | null) => {
+    leftSpace.current = name === null ? 0 : panelSpace()
+    setSelectedState(name)
+  }, [])
   const [query, setQuery] = useState("")
   const [searchOpen, setSearchOpen] = useState(false)
+  const [autoHint, setAutoHint] = useState(false)
+  const [hoverDay, setHoverDay] = useState<string | null>(null)
   const [activeResult, setActiveResult] = useState(0)
   const [creating, setCreating] = useState(false)
-  const [newTitle, setNewTitle] = useState("")
   const [working, setWorking] = useState<{
     readonly on: string
     readonly label: string
@@ -214,7 +277,11 @@ export function CheckpointCanvas(p: CheckpointCanvasProps): JSX.Element {
   const shown = useMemo(
     () =>
       (list ?? []).filter(
-        (c) => settings.showAutomatic || !isAutomatic(c) || c.name === selected,
+        (c) =>
+          settings.showAutomatic ||
+          !isAutomatic(c) ||
+          c.protected === true ||
+          c.name === selected,
       ),
     [list, settings.showAutomatic, selected],
   )
@@ -222,12 +289,39 @@ export function CheckpointCanvas(p: CheckpointCanvasProps): JSX.Element {
     () => new Map((list ?? []).map((c) => [c.name, c])),
     [list],
   )
-  const layout = useMemo(
+  const moves = useMemo<Moves>(
+    () => settings.layouts[p.instance] ?? {},
+    [settings.layouts, p.instance],
+  )
+  const slots = useMemo(
     () => layoutTimeline(shown, p.aspect),
     [shown, p.aspect],
   )
+  const base = useMemo(() => placeCards(slots, moves), [slots, moves])
+  const stored = settings.sections?.[p.instance]
+  const storedSections = useMemo(
+    () =>
+      normalizeSections(
+        stored?.list ?? [],
+        [{ rect: withCaption(slots.now), gap: GRID }],
+        t("checkpoints.section.default"),
+      ),
+    [stored, slots.now],
+  )
+  const members = useMemo(() => stored?.members ?? {}, [stored])
+  const sectionsHost = useRef<SectionsHost | null>(null)
+  const sec = useSections(sectionsHost, storedSections, members)
+  const layout = useMemo(
+    () => ({
+      ...base,
+      cards: placeMembers(base.cards, sec.sections, sec.members),
+    }),
+    [base, sec.sections, sec.members],
+  )
   const layoutNow = useRef(layout)
   layoutNow.current = layout
+  const listNow = useRef<Checkpoint[]>([])
+  listNow.current = list ?? []
   const ticks = useMemo(
     () =>
       timelineTicks(layout.days, new Date(nowMs), {
@@ -239,102 +333,142 @@ export function CheckpointCanvas(p: CheckpointCanvasProps): JSX.Element {
   )
 
   const content = useMemo<Rect>(() => {
-    const b = layout.bounds
+    const b =
+      storedSections.length === 0
+        ? layout.bounds
+        : union([
+            layout.bounds,
+            ...storedSections.map((s) => ({
+              ...sectionRect(s),
+              y: s.y - 48,
+              height: s.h + 48,
+            })),
+          ])
     return {
       x: b.x - 120,
       y: b.y - 120,
       width: b.width + 240,
       height: b.height + 240,
     }
-  }, [layout.bounds])
+  }, [layout.bounds, storedSections])
   const limits = useMemo(() => {
     const fit = fitRect(content, size, 48).zoom
     return { min: Math.max(0.04, Math.min(0.3, fit * 0.85)), max: 3 }
   }, [content, size])
 
-  const nowCamera = useCallback((): Camera => {
-    const rect = props.current.displayRect()
-    const frame = frameOf(layout.now)
-    return rect === null || rect.width < 8
-      ? fitRect(frame, viewSize(), 0)
-      : cameraForScreenRect(frame, rect)
-  }, [layout.now])
+  const limitsNow = useRef(limits)
+  limitsNow.current = limits
 
-  const cam = useCanvasCamera(nowCamera(), viewSize)
+  const cam = useCanvasCamera(
+    fitRect(frameOf(layout.now), viewSize(), 0),
+    viewSize,
+  )
   const { fly: flyCamera, set: setCamera, current: cameraNow } = cam
   const camera = cam.camera
-  const reserve = useRef(TIMELINE_SPACE)
-  reserve.current =
-    selected === null ? TIMELINE_SPACE : PANEL_SPACE + TIMELINE_SPACE
+  leftSpace.current = selected === null ? 0 : panelSpace()
   const clamp = useCallback(
-    (c: Camera, right: number = reserve.current): Camera =>
-      clampCamera(
-        c,
+    (
+      c: Camera,
+      right: number = TIMELINE_SPACE,
+      left: number = leftSpace.current,
+    ): Camera => {
+      const free = clampCamera(
+        { ...c, x: c.x - left },
         content,
         {
-          width: Math.max(320, viewSize().width - right),
+          width: Math.max(320, viewSize().width - right - left),
           height: viewSize().height,
         },
         96,
         limits,
-      ),
+      )
+      return { ...free, x: free.x + left }
+    },
     [content, limits],
   )
+  const freeView = useCallback(
+    (): Size => ({
+      width: viewSize().width - TIMELINE_SPACE - leftSpace.current,
+      height: viewSize().height - BAR_SPACE,
+    }),
+    [],
+  )
+
+  const fitIn = useCallback(
+    (rect: Rect, padding: number): Camera => {
+      const f = fitRect(rect, freeView(), padding, limits)
+      return { ...f, x: f.x + leftSpace.current / 2 }
+    },
+    [freeView, limits],
+  )
+
+  const centreIn = useCallback(
+    (
+      world: { x: number; y: number },
+      zoom: number,
+      right: number = TIMELINE_SPACE,
+      left: number = leftSpace.current,
+    ): Camera => {
+      const c = centreOn(world, zoom, viewSize())
+      return { ...c, x: c.x + (left - right) / 2, y: c.y - BAR_SPACE / 2 }
+    },
+    [],
+  )
+
+  const newest = useCallback((): Camera => {
+    const view = openingView(layout)
+    const fit = fitIn(view, 72)
+    const zoom = clampZoom(Math.min(1.1, fit.zoom), limits)
+    return clamp(
+      centreIn(
+        { x: view.x + view.width / 2, y: view.y + view.height / 2 },
+        zoom,
+      ),
+    )
+  }, [layout, limits, clamp, fitIn, centreIn])
 
   const overview = useCallback((): Camera => {
+    const all = fitIn(layout.bounds, 56)
+    if (settings.zoom === null && all.zoom >= READABLE_FIT) return clamp(all)
     const view = openingView(layout)
-    const fit = fitRect(
-      view,
-      { width: viewSize().width - TIMELINE_SPACE, height: viewSize().height },
-      72,
-      limits,
-    )
+    const fit = fitIn(view, 72)
     const zoom = clampZoom(Math.min(1.1, settings.zoom ?? fit.zoom), limits)
     return clamp(
       centreIn(
         { x: view.x + view.width / 2, y: view.y + view.height / 2 },
         zoom,
-        TIMELINE_SPACE,
       ),
-      TIMELINE_SPACE,
     )
-  }, [layout, limits, settings.zoom, clamp])
+  }, [layout, limits, settings.zoom, clamp, fitIn, centreIn])
 
   const focusOn = useCallback(
     (box: Rect): Camera => {
       const v = viewSize()
-      const free = Math.max(320, v.width - PANEL_SPACE - TIMELINE_SPACE)
+      const free = Math.max(320, v.width - panelSpace() - TIMELINE_SPACE)
       const zoom = clampZoom(
         Math.min(
-          Math.min(free * 0.55, 380) / box.width,
-          (v.height * 0.55) / box.height,
+          Math.min(free * 0.5, 320) / box.width,
+          (v.height * 0.45) / box.height,
         ),
         limits,
       )
       return centreIn(
         { x: box.x + box.width / 2, y: box.y + box.height / 2 },
         zoom,
-        PANEL_SPACE + TIMELINE_SPACE,
+        TIMELINE_SPACE,
+        panelSpace(),
       )
     },
-    [limits],
+    [limits, centreIn],
   )
 
   const entered = useRef(false)
   useEffect(() => {
-    const frame = requestAnimationFrame(() => {
-      setPhase("open")
-    })
-    return () => {
-      cancelAnimationFrame(frame)
-    }
-  }, [])
-  useEffect(() => {
-    if (entered.current) return
+    if (entered.current || !presented) return
     const go = (): void => {
       if (entered.current) return
       entered.current = true
-      void flyCamera(overview(), { duration: 760 })
+      setCamera(overview())
     }
     if (list !== null) {
       go()
@@ -344,28 +478,76 @@ export function CheckpointCanvas(p: CheckpointCanvasProps): JSX.Element {
     return () => {
       clearTimeout(timer)
     }
-  }, [list, overview, flyCamera])
+  }, [list, overview, setCamera, presented])
+
+  useEffect(() => {
+    if (entered.current && presented && camera === cameraNow())
+      setSurfaceReady(true)
+  }, [camera, cameraNow, presented])
+
+  useEffect(() => {
+    if (!surfaceReady || phase !== "entering") return
+    if (surfaceFadeMs() === 0) {
+      setPhase("open")
+      return
+    }
+    const timer = setTimeout(() => {
+      setPhase("open")
+    }, ENTER_WAIT_MS)
+    return () => {
+      clearTimeout(timer)
+    }
+  }, [surfaceReady, phase])
 
   const leavingNow = useRef(false)
-  const leave = useCallback(
-    async (into?: Rect): Promise<void> => {
-      if (leavingNow.current) return
-      leavingNow.current = true
-      setSelected(null)
-      setSearchOpen(false)
-      if (selected === null)
-        void saveSettings({ ...settings, zoom: cameraNow().zoom })
+  const leave = useCallback(async (): Promise<void> => {
+    if (leavingNow.current) return
+    leavingNow.current = true
+    setCamera(cameraNow())
+    if (selected === null) {
+      const zoom = cameraNow().zoom
+      const all = fitRect(
+        layoutNow.current.bounds,
+        freeView(),
+        56,
+        limitsNow.current,
+      ).zoom
+      void saveSettings({
+        ...settings,
+        zoom: Math.abs(zoom / all - 1) < 0.04 ? null : zoom,
+      })
+    }
+    await new Promise<void>((done) => {
+      const motion =
+        typeof matchMedia === "function"
+          ? matchMedia("(prefers-reduced-motion: reduce)")
+          : null
+      const finish = (): void => {
+        clearTimeout(timer)
+        motion?.removeEventListener("change", preferenceChanged)
+        finishLeaving.current = null
+        done()
+      }
+      const preferenceChanged = (): void => {
+        if (motion?.matches) finish()
+      }
+      const timer = setTimeout(
+        finish,
+        surfaceFadeMs() === 0 ? 0 : ENTER_WAIT_MS,
+      )
+      finishLeaving.current = finish
+      motion?.addEventListener("change", preferenceChanged)
       setPhase("leaving")
-      const rect = props.current.displayRect()
-      const target =
-        into !== undefined && rect !== null
-          ? cameraForScreenRect(into, rect)
-          : nowCamera()
-      await flyCamera(target, { duration: 620 })
+    })
+    try {
+      await checkpointPresentation.set(false)
       props.current.onClosed()
-    },
-    [flyCamera, cameraNow, nowCamera, selected, settings],
-  )
+    } catch (error) {
+      console.warn("restoring the checkpoint window failed", error)
+      leavingNow.current = false
+      setPhase("open")
+    }
+  }, [cameraNow, setCamera, selected, settings, freeView])
 
   const closeRequest = useRef(p.closeRequest)
   useEffect(() => {
@@ -376,9 +558,9 @@ export function CheckpointCanvas(p: CheckpointCanvasProps): JSX.Element {
   }, [p.closeRequest, leave])
 
   const fly = useCallback(
-    (to: Camera, duration?: number, right?: number) =>
+    (to: Camera, duration?: number, right?: number, left?: number) =>
       void flyCamera(
-        clamp(to, right),
+        clamp(to, right, left),
         duration === undefined ? {} : { duration },
       ),
     [flyCamera, clamp],
@@ -389,11 +571,12 @@ export function CheckpointCanvas(p: CheckpointCanvasProps): JSX.Element {
       setSelected(name)
       setNoteState("idle")
       if (name === null) return
+      sec.select(null)
       const box = layout.cards.get(name)
       if (box !== undefined)
-        fly(focusOn(box), undefined, PANEL_SPACE + TIMELINE_SPACE)
+        fly(focusOn(box), undefined, TIMELINE_SPACE, panelSpace())
     },
-    [layout.cards, fly, focusOn],
+    [layout.cards, fly, focusOn, sec.select, setSelected],
   )
 
   const zoomBy = (factor: number, anchor?: { x: number; y: number }): void => {
@@ -409,14 +592,7 @@ export function CheckpointCanvas(p: CheckpointCanvasProps): JSX.Element {
     )
   }
   const fitAll = (): void => {
-    fly(
-      fitRect(
-        layout.bounds,
-        { width: viewSize().width - TIMELINE_SPACE, height: viewSize().height },
-        72,
-        limits,
-      ),
-    )
+    fly(fitIn(layout.bounds, 72))
   }
 
   const press = useRef<{
@@ -425,20 +601,101 @@ export function CheckpointCanvas(p: CheckpointCanvasProps): JSX.Element {
     y: number
     from: Camera
     moved: boolean
+    card: string | null
+    was: { x: number; y: number }
   } | null>(null)
   const suppressClick = useRef(false)
+  const [dragging, setDragging] = useState<{
+    readonly name: string
+    readonly x: number
+    readonly y: number
+  } | null>(null)
+
+  const commit = useCallback((next: Arrangement): void => {
+    const known = new Set(listNow.current.map((c) => c.name))
+    const kept = Object.fromEntries(
+      Object.entries(next.moves).filter(
+        ([n, by]) => known.has(n) && (by.x !== 0 || by.y !== 0),
+      ),
+    )
+    const inside = Object.fromEntries(
+      Object.entries(next.members).filter(([n]) => known.has(n)),
+    )
+    setSettings((s) => {
+      const layouts = { ...s.layouts }
+      if (Object.keys(kept).length === 0) delete layouts[props.current.instance]
+      else layouts[props.current.instance] = kept
+      const sections = { ...s.sections }
+      if (next.sections.length === 0) delete sections[props.current.instance]
+      else
+        sections[props.current.instance] = {
+          list: next.sections,
+          members: inside,
+        }
+      const out = {
+        ...s,
+        layouts,
+        sections: Object.keys(sections).length === 0 ? undefined : sections,
+      }
+      void saveSettings(out)
+      return out
+    })
+  }, [])
+  const arrangement: Arrangement = { sections: storedSections, members, moves }
+  sectionsHost.current = {
+    viewport,
+    camera: cameraNow,
+    placed: () => layout.cards,
+    slots: () => slots.cards,
+    names: () => new Set(shown.map((c) => c.name)),
+    now: () => withCaption(layout.now),
+    railX: () => viewSize().width - TIMELINE_SPACE,
+    arrangement: () => arrangement,
+    commit,
+    onChosen: () => {
+      setSelected(null)
+      setNoteState("idle")
+    },
+  }
+  const keepMoves = (next: Moves): void => {
+    commit({ ...arrangement, moves: next })
+  }
+  const offsetOf = (name: string): { x: number; y: number } => {
+    const at = layout.cards.get(name)
+    const slot = slots.cards.get(name)
+    if (members[name] === undefined || at === undefined || slot === undefined)
+      return moves[name] ?? { x: 0, y: 0 }
+    return { x: at.x - slot.x, y: at.y - slot.y }
+  }
+  const putCard = (name: string, to: { x: number; y: number }): void => {
+    const slot = slots.cards.get(name)
+    if (slot !== undefined) commit(dropCard(arrangement, name, slot, to))
+  }
 
   const pointerDown = (e: PointerEvent<HTMLDivElement>): void => {
-    if ((e.button !== 0 && e.button !== 1) || editableTarget(e.target)) return
+    if (
+      (e.button !== 0 && e.button !== 1) ||
+      editableTarget(e.target) ||
+      sec.down(e)
+    )
+      return
+    const card =
+      e.button === 0 && e.target instanceof Element
+        ? (e.target.closest<HTMLElement>(".checkpoint[data-name]")?.dataset
+            .name ?? null)
+        : null
     press.current = {
       id: e.pointerId,
       x: e.clientX,
       y: e.clientY,
       from: cameraNow(),
       moved: false,
+      card,
+      was: card === null ? { x: 0, y: 0 } : offsetOf(card),
     }
   }
   const pointerMove = (e: PointerEvent<HTMLDivElement>): void => {
+    if (sec.move(e)) return
     const pr = press.current
     if (pr === null || pr.id !== e.pointerId) return
     const dx = e.clientX - pr.x
@@ -446,23 +703,40 @@ export function CheckpointCanvas(p: CheckpointCanvasProps): JSX.Element {
     if (!pr.moved) {
       if (Math.hypot(dx, dy) < 4) return
       pr.moved = true
-      setPanning(true)
+      if (pr.card === null) setPanning(true)
       e.currentTarget.setPointerCapture(e.pointerId)
+    }
+    if (pr.card !== null) {
+      setDragging({
+        name: pr.card,
+        x: pr.was.x + dx / pr.from.zoom,
+        y: pr.was.y + dy / pr.from.zoom,
+      })
+      return
     }
     setCamera(clamp({ ...pr.from, x: pr.from.x + dx, y: pr.from.y + dy }))
   }
   const pointerUp = (e: PointerEvent<HTMLDivElement>): void => {
+    if (sec.up(e)) return
     const pr = press.current
     if (pr === null || pr.id !== e.pointerId) return
     press.current = null
     if (pr.moved) {
       setPanning(false)
+      if (pr.card !== null) {
+        putCard(pr.card, {
+          x: pr.was.x + (e.clientX - pr.x) / pr.from.zoom,
+          y: pr.was.y + (e.clientY - pr.y) / pr.from.zoom,
+        })
+        setDragging(null)
+      }
       suppressClick.current = true
       setTimeout(() => {
         suppressClick.current = false
       }, 0)
     } else if (e.target === e.currentTarget) {
       select(null)
+      sec.select(null)
     }
   }
 
@@ -555,11 +829,22 @@ export function CheckpointCanvas(p: CheckpointCanvasProps): JSX.Element {
     if (!settings.showAutomatic && isAutomatic(c)) {
       setSettings((s) => ({ ...s, showAutomatic: true }))
     }
+    setQuery("")
     setSearchOpen(false)
     setTimeout(() => {
       select(c.name)
     }, 0)
   }
+
+  const closeSearch = (): void => {
+    setQuery("")
+    setSearchOpen(false)
+    searchInput.current?.blur()
+  }
+  useEffect(() => {
+    if (searchOpen && document.activeElement !== searchInput.current)
+      searchInput.current?.focus()
+  }, [searchOpen])
 
   const centre = centreOf(camera, size)
   const nearest = dayNearest(layout, { x: centre.x, y: centre.y })
@@ -570,12 +855,7 @@ export function CheckpointCanvas(p: CheckpointCanvasProps): JSX.Element {
     const d = layout.days[tick.day]
     if (d === undefined) return overview()
     const block = withLabel(d)
-    const fit = fitRect(
-      block,
-      { width: viewSize().width - TIMELINE_SPACE, height: viewSize().height },
-      96,
-      limits,
-    )
+    const fit = fitIn(block, 96)
     const zoom = clampZoom(
       Math.min(fit.zoom, Math.max(cameraNow().zoom, 0.55)),
       limits,
@@ -583,7 +863,6 @@ export function CheckpointCanvas(p: CheckpointCanvasProps): JSX.Element {
     return centreIn(
       { x: block.x + block.width / 2, y: block.y + block.height / 2 },
       zoom,
-      TIMELINE_SPACE,
     )
   }
   const step = (direction: -1 | 1): void => {
@@ -612,6 +891,8 @@ export function CheckpointCanvas(p: CheckpointCanvasProps): JSX.Element {
   const takeCheckpoint = async (
     title: string,
     label: string,
+    storedTitle: string = title,
+    format?: CheckpointFormat,
   ): Promise<string | null> => {
     const name = saveNameFor(title, taken, new Date())
     setWorking({ on: "now", label })
@@ -620,21 +901,16 @@ export function CheckpointCanvas(p: CheckpointCanvasProps): JSX.Element {
     const isToday = today !== undefined && today.key === dayKey(new Date())
     void flyCamera(
       clamp(
-        fitRect(
-          union([layout.now, ...(isToday ? [withLabel(today)] : [])]),
-          {
-            width: viewSize().width - TIMELINE_SPACE,
-            height: viewSize().height,
-          },
-          96,
-          limits,
-        ),
-        TIMELINE_SPACE,
+        fitIn(union([layout.now, ...(isToday ? [withLabel(today)] : [])]), 96),
       ),
     )
     setStatus(null)
     try {
-      const ran = await props.current.run("save", name)
+      const ran = await props.current.run(
+        "save",
+        name,
+        format === undefined ? undefined : { format },
+      )
       if (ran === null || ran.code !== 0) {
         setStatus({
           tone: "error",
@@ -642,13 +918,16 @@ export function CheckpointCanvas(p: CheckpointCanvasProps): JSX.Element {
         })
         return null
       }
-      await writeTitle(name, title)
+      await writeTitle(name, storedTitle)
       const before = new Set(taken)
       let landed: TimelineLayout | null = null
       await reload((got) => {
         if (!got.some((c) => c.name === name) || before.has(name)) return
         const after = layoutTimeline(
-          got.filter((c) => settings.showAutomatic || !isAutomatic(c)),
+          got.filter(
+            (c) =>
+              settings.showAutomatic || !isAutomatic(c) || c.protected === true,
+          ),
           props.current.aspect,
         )
         const box = after.cards.get(name)
@@ -669,19 +948,13 @@ export function CheckpointCanvas(p: CheckpointCanvasProps): JSX.Element {
       if (after !== null)
         void flyCamera(
           clamp(
-            fitRect(
+            fitIn(
               union([
                 after.now,
                 ...(today === undefined ? [] : [withLabel(today)]),
               ]),
-              {
-                width: viewSize().width - TIMELINE_SPACE,
-                height: viewSize().height,
-              },
               96,
-              limits,
             ),
-            TIMELINE_SPACE,
           ),
         )
       return name
@@ -690,11 +963,18 @@ export function CheckpointCanvas(p: CheckpointCanvasProps): JSX.Element {
     }
   }
 
-  const submitNew = (): void => {
-    const title = newTitle.trim()
+  const submitNew = (
+    title: string,
+    unnamed: string,
+    format: CheckpointFormat,
+  ): void => {
     setCreating(false)
-    setNewTitle("")
-    void takeCheckpoint(title, t("checkpoints.taking"))
+    void takeCheckpoint(
+      title,
+      t("checkpoints.taking"),
+      title === "" ? unnamed : title,
+      format,
+    )
   }
 
   const goBack = async (name: string, saveFirst: boolean): Promise<void> => {
@@ -729,14 +1009,19 @@ export function CheckpointCanvas(p: CheckpointCanvasProps): JSX.Element {
         await reload()
         return
       }
-      const box = layoutNow.current.cards.get(name)
-      void leave(box === undefined ? undefined : frameOf(box))
+      void leave()
     }
   }
 
   const remove = async (name: string): Promise<void> => {
     setConfirm(null)
     const c = byName.get(name)
+    if (
+      p.busy ||
+      working !== null ||
+      (c !== undefined && deleteBlocked(c) !== null)
+    )
+      return
     setWorking({ on: name, label: t("checkpoints.deleting") })
     try {
       const out = await winvm("saves", "-i", props.current.instance, "rm", name)
@@ -762,6 +1047,36 @@ export function CheckpointCanvas(p: CheckpointCanvasProps): JSX.Element {
       setStatus({ tone: "error", text: String(e) })
     } finally {
       setLeaving(null)
+      setWorking(null)
+    }
+  }
+
+  const protect = async (name: string, value: boolean): Promise<void> => {
+    if (p.busy || working !== null) return
+    setWorking({
+      on: name,
+      label: t(value ? "checkpoints.protect" : "checkpoints.unprotect"),
+    })
+    setStatus(null)
+    try {
+      const out = await winvm(
+        "saves",
+        value ? "protect" : "unprotect",
+        "-i",
+        props.current.instance,
+        name,
+      )
+      if (out.code !== 0) {
+        setStatus({
+          tone: "error",
+          text: outputText(out) || t("checkpoints.protectFailed"),
+        })
+        return
+      }
+      await reload()
+    } catch (e) {
+      setStatus({ tone: "error", text: String(e) })
+    } finally {
       setWorking(null)
     }
   }
@@ -803,6 +1118,11 @@ export function CheckpointCanvas(p: CheckpointCanvasProps): JSX.Element {
     })
   }
 
+  const resetLayout = (): void => {
+    setSelected(null)
+    keepMoves({})
+  }
+
   const toggleAutomatic = (): void => {
     setSettings((s) => {
       const next = { ...s, showAutomatic: !s.showAutomatic }
@@ -824,11 +1144,15 @@ export function CheckpointCanvas(p: CheckpointCanvasProps): JSX.Element {
       e.preventDefault()
       if (editableTarget(e.target)) {
         if (target === searchInput.current && query !== "") setQuery("")
-        else (e.target as HTMLElement).blur()
+        if (e.target instanceof HTMLElement) e.target.blur()
         setSearchOpen(false)
         return
       }
-      if (creating) setCreating(false)
+      if (press.current?.card != null && press.current.moved) {
+        press.current = null
+        setDragging(null)
+      } else if (sec.escape()) {
+      } else if (creating) setCreating(false)
       else if (searchOpen) setSearchOpen(false)
       else if (selected !== null) select(null)
       else void leave()
@@ -842,7 +1166,17 @@ export function CheckpointCanvas(p: CheckpointCanvasProps): JSX.Element {
       return
     }
     if (editableTarget(e.target)) return
-    if (cmd && (e.key === "=" || e.key === "+")) {
+    if (!cmd && !e.altKey && e.key.toLowerCase() === "s") {
+      e.preventDefault()
+      sec.setTool(!sec.tool)
+    } else if (
+      !cmd &&
+      (e.key === "Delete" || e.key === "Backspace") &&
+      sec.selected !== null
+    ) {
+      e.preventDefault()
+      sec.remove(sec.selected)
+    } else if (cmd && (e.key === "=" || e.key === "+")) {
       e.preventDefault()
       zoomBy(ZOOM_STEP)
     } else if (cmd && e.key === "-") {
@@ -862,6 +1196,21 @@ export function CheckpointCanvas(p: CheckpointCanvasProps): JSX.Element {
       const c = byName.get(selected)
       if (c !== undefined && deleteBlocked(c) === null)
         setConfirm({ kind: "delete", name: selected })
+    } else if (
+      e.altKey &&
+      !cmd &&
+      e.key.startsWith("Arrow") &&
+      selected !== null &&
+      layout.cards.has(selected)
+    ) {
+      e.preventDefault()
+      const d = (e.shiftKey ? 4 : 1) * NUDGE_STEP
+      const by = offsetOf(selected)
+      const next = {
+        x: by.x + (e.key === "ArrowLeft" ? -d : e.key === "ArrowRight" ? d : 0),
+        y: by.y + (e.key === "ArrowUp" ? -d : e.key === "ArrowDown" ? d : 0),
+      }
+      putCard(selected, next)
     } else if (!cmd && e.key.startsWith("Arrow")) {
       e.preventDefault()
       const d = (e.shiftKey ? 4 : 1) * PAN_STEP
@@ -898,10 +1247,40 @@ export function CheckpointCanvas(p: CheckpointCanvasProps): JSX.Element {
   }, [])
 
   const seen = visibleWorld(camera, size, 360)
+  const cardsNow = useMemo(() => {
+    const carried =
+      dragging === null ? undefined : layout.cards.get(dragging.name)
+    if (dragging === null || carried === undefined) return layout.cards
+    const slot = slots.cards.get(dragging.name)
+    const was =
+      members[dragging.name] === undefined || slot === undefined
+        ? (moves[dragging.name] ?? { x: 0, y: 0 })
+        : { x: carried.x - slot.x, y: carried.y - slot.y }
+    return new Map(layout.cards).set(dragging.name, {
+      ...carried,
+      x: carried.x + dragging.x - was.x,
+      y: carried.y + dragging.y - was.y,
+    })
+  }, [layout.cards, slots.cards, dragging, moves, members])
+  const carriedBox = dragging === null ? undefined : cardsNow.get(dragging.name)
+  const overSection =
+    carriedBox === undefined
+      ? null
+      : (sectionAt(sec.sections, centreOfCard(carriedBox))?.id ?? null)
+  const counts = useMemo(() => {
+    const out = new Map<string, number>()
+    for (const [name, m] of Object.entries(sec.members))
+      if (byName.has(name)) out.set(m.section, (out.get(m.section) ?? 0) + 1)
+    return out
+  }, [sec.members, byName])
   const far = camera.zoom < FAR_ZOOM
   const selectedCheckpoint =
     selected === null ? undefined : byName.get(selected)
   const busy = p.busy || working !== null
+  const isLit = (c: Checkpoint): boolean =>
+    (autoHint && isAutomatic(c)) ||
+    (hoverDay !== null && dayKey(new Date(c.createdAt)) === hoverDay)
+  const picking = autoHint || hoverDay !== null
   const confirming = confirm === null ? undefined : byName.get(confirm.name)
   const goBackCopy = goBackConfirm({ live })
   const nowWorking = working?.on === "now" ? working.label : null
@@ -913,18 +1292,18 @@ export function CheckpointCanvas(p: CheckpointCanvasProps): JSX.Element {
       description={t("checkpoints.description")}
       phase={phase}
       className="checkpoints"
+      data-ready={surfaceReady}
     >
-      <div className="checkpoints__backdrop" aria-hidden="true">
-        {live && (
-          <LiveFrame
-            source={p.liveSource}
-            className="checkpoints__backdrop-screen"
-            interval={400}
-            maxWidth={640}
-          />
-        )}
-      </div>
-      <SpatialCanvas className="checkpoints__canvas">
+      <div className="checkpoints__backdrop" aria-hidden="true" />
+      <SpatialCanvas
+        className="checkpoints__canvas"
+        {...(phase !== "open" ? { inert: "" } : {})}
+        onAnimationEnd={(event) => {
+          if (event.target !== event.currentTarget) return
+          if (phase === "entering") setPhase("open")
+          else if (phase === "leaving") finishLeaving.current?.()
+        }}
+      >
         <div
           className="checkpoints__drag"
           data-tauri-drag-region
@@ -933,9 +1312,11 @@ export function CheckpointCanvas(p: CheckpointCanvasProps): JSX.Element {
         <SpatialCanvasViewport
           ref={viewport}
           camera={camera}
-          tool="select"
+          tool={sec.tool ? "section" : "select"}
+          plain
           data-panning={panning}
           data-far={far}
+          data-picking={picking}
           tabIndex={0}
           aria-label={t("checkpoints.canvas")}
           onPointerDown={pointerDown}
@@ -943,19 +1324,35 @@ export function CheckpointCanvas(p: CheckpointCanvasProps): JSX.Element {
           onPointerUp={pointerUp}
           onPointerCancel={pointerUp}
         >
+          <SectionGrid camera={camera} grid={GRID} on={sec.working} />
           <SpatialCanvasScene {...camera}>
             {layout.days.map((d, i) => {
-              if (!rectsIntersect(withLabel(d), seen)) return null
+              const loose = looseNames(d.names, sec.members)
+              if (d.names.length > 0 && loose.length === 0) return null
+              const group = dayGroup(
+                loose.length === d.names.length ? d : { ...d, names: loose },
+                cardsNow,
+              )
+              if (
+                !rectsIntersect(
+                  withLabel({ ...group.rect, scale: d.scale }),
+                  seen,
+                )
+              )
+                return null
               const tick = ticks[i]
               const near = DAY_GAP * d.scale * camera.zoom >= DAY_LABEL_ROOM
               if (!near && tick?.month == null) return null
               return (
                 <SpatialCanvasLabel
                   key={d.key}
-                  x={near ? d.label.x : d.x - 24 * d.scale}
-                  y={near ? d.label.y : d.y + d.height / 2}
+                  x={near ? group.label.x : group.rect.x - 24 * d.scale}
+                  y={
+                    near ? group.label.y : group.rect.y + group.rect.height / 2
+                  }
                   className="checkpoints__day"
                   data-far={!near}
+                  data-day={d.key}
                 >
                   <span
                     style={{
@@ -967,20 +1364,57 @@ export function CheckpointCanvas(p: CheckpointCanvasProps): JSX.Element {
                 </SpatialCanvasLabel>
               )
             })}
+            {readingOrder(sec.sections).map((s) => (
+              <SectionView
+                key={s.id}
+                s={s}
+                count={counts.get(s.id) ?? 0}
+                zoom={camera.zoom}
+                selected={sec.selected === s.id}
+                editing={sec.editing === s.id}
+                target={overSection === s.id}
+                moving={sec.moving === s.id}
+                onRename={sec.rename}
+                onRemove={sec.remove}
+                onKeyDown={sec.key}
+              />
+            ))}
+            {sec.draft?.box != null && (
+              <SectionDraft box={sec.draft.box} ok={sec.draft.ok} />
+            )}
             {shown.map((c) => {
-              const box: CardBox | undefined = layout.cards.get(c.name)
-              if (box === undefined || !rectsIntersect(box, seen)) return null
+              const placed: CardBox | undefined = layout.cards.get(c.name)
+              if (placed === undefined) return null
+              const carried = dragging?.name === c.name ? dragging : null
+              const was = carried === null ? null : offsetOf(c.name)
+              const box =
+                carried === null || was === null
+                  ? placed
+                  : {
+                      ...placed,
+                      x: placed.x + carried.x - was.x,
+                      y: placed.y + carried.y - was.y,
+                    }
+              if (
+                !rectsIntersect(
+                  { ...box, height: box.height + CAPTION_ROOM },
+                  seen,
+                )
+              )
+                return null
               return (
                 <CheckpointCard
                   key={`${c.name}#${c.createdAt}`}
                   c={c}
                   box={box}
                   selected={c.name === selected}
-                  screenWidth={box.width * camera.zoom}
+                  zoom={camera.zoom}
                   now={nowMs}
                   dimmed={
                     searchOpen && matches !== null && !matches.has(c.name)
                   }
+                  lit={isLit(c)}
+                  carried={carried !== null}
                   arriving={arriving?.name === c.name ? arriving : null}
                   leaving={leaving === c.name}
                   working={working?.on === c.name ? working.label : null}
@@ -999,23 +1433,18 @@ export function CheckpointCanvas(p: CheckpointCanvasProps): JSX.Element {
               <button
                 type="button"
                 className="checkpoint__hit"
+                style={
+                  {
+                    "--card-scale": NOW_TEXT,
+                    "--m": textScale(NOW_TEXT, camera.zoom),
+                    "--frame-h": `${String(layout.now.frame)}px`,
+                  } as CSSProperties
+                }
                 aria-label={t("checkpoints.nowLabel", { machine: p.machine })}
                 onClick={() => !suppressClick.current && void leave()}
               >
-                <span
-                  className="checkpoint__frame"
-                  style={{ height: layout.now.frame }}
-                >
-                  <span className="checkpoint__placeholder">
-                    {MONITOR}
-                    <span>
-                      {t(
-                        live
-                          ? "checkpoints.nowLive"
-                          : `checkpoints.nowState.${p.phase ?? "missing"}`,
-                      )}
-                    </span>
-                  </span>
+                <span className="checkpoint__frame">
+                  <Wallpaper />
                   {live && (
                     <LiveFrame
                       source={p.liveSource}
@@ -1023,14 +1452,14 @@ export function CheckpointCanvas(p: CheckpointCanvasProps): JSX.Element {
                     />
                   )}
                   {nowWorking !== null && (
-                    <span className="checkpoint__working">{nowWorking}</span>
+                    <span className="checkpoint__fit checkpoint__fit--frame">
+                      <span className="checkpoint__working">{nowWorking}</span>
+                    </span>
                   )}
                 </span>
                 <span className="checkpoint__caption">
-                  <span className="checkpoint__title">
-                    <span className="checkpoint__name">
-                      {t("checkpoints.now")}
-                    </span>
+                  <span className="checkpoint__name">
+                    {t("checkpoints.now")}
                   </span>
                   <span className="checkpoint__when">{p.machine}</span>
                 </span>
@@ -1038,92 +1467,6 @@ export function CheckpointCanvas(p: CheckpointCanvasProps): JSX.Element {
             </SpatialCanvasNode>
           </SpatialCanvasScene>
         </SpatialCanvasViewport>
-
-        <SpatialCanvasTopBar>
-          <SpatialCanvasCorner className="checkpoints__heading">
-            <strong>{t("checkpoints.heading")}</strong>
-            <span>
-              {list === null
-                ? t("state.loading")
-                : t("checkpoints.count", {
-                    count: list.length,
-                    machine: p.machine,
-                  })}
-            </span>
-          </SpatialCanvasCorner>
-          <SpatialCanvasCorner className="checkpoints__actions">
-            <label className="checkpoints__search">
-              <CanvasGlyph>{GLYPHS.search}</CanvasGlyph>
-              <input
-                ref={searchInput}
-                type="search"
-                value={query}
-                placeholder={t("checkpoints.searchPlaceholder")}
-                aria-label={t("checkpoints.search")}
-                aria-controls="checkpoint-results"
-                autoComplete="off"
-                spellCheck={false}
-                onFocus={() => {
-                  setSearchOpen(true)
-                }}
-                onChange={(e) => {
-                  setQuery(e.target.value)
-                  setActiveResult(0)
-                  setSearchOpen(true)
-                }}
-                onKeyDown={(e) => {
-                  if (e.key === "ArrowDown" || e.key === "ArrowUp") {
-                    e.preventDefault()
-                    setActiveResult((i) =>
-                      Math.max(
-                        0,
-                        Math.min(
-                          results.length - 1,
-                          i + (e.key === "ArrowDown" ? 1 : -1),
-                        ),
-                      ),
-                    )
-                  } else if (e.key === "Enter") {
-                    const c = results[activeResult]
-                    if (c !== undefined) pickResult(c)
-                  }
-                }}
-              />
-            </label>
-            <button
-              type="button"
-              className="spatial-canvas__button"
-              aria-pressed={settings.showAutomatic}
-              title={t("checkpoints.automaticTip")}
-              onClick={toggleAutomatic}
-            >
-              {t("checkpoints.automatic")}
-            </button>
-            <span className="checkpoints__divider" aria-hidden="true" />
-            <Button
-              size="sm"
-              variant="secondary"
-              disabled={!live || busy}
-              title={
-                live ? t("checkpoints.newTip") : t("checkpoints.needsRunning")
-              }
-              aria-expanded={creating}
-              onClick={() => {
-                setCreating((o) => !o)
-              }}
-            >
-              {t("checkpoints.new")}
-            </Button>
-            <Button
-              size="sm"
-              variant="primary"
-              title={t("checkpoints.doneTip")}
-              onClick={() => void leave()}
-            >
-              {t("checkpoints.done")}
-            </Button>
-          </SpatialCanvasCorner>
-        </SpatialCanvasTopBar>
 
         {searchOpen && query.trim() !== "" && (
           <SpatialCanvasFloatingPanel
@@ -1157,51 +1500,14 @@ export function CheckpointCanvas(p: CheckpointCanvasProps): JSX.Element {
             label={t("checkpoints.new")}
             className="checkpoints__new"
           >
-            <form
-              onSubmit={(e) => {
-                e.preventDefault()
-                submitNew()
+            <NewCheckpointForm
+              live={live}
+              busy={busy}
+              onCancel={() => {
+                setCreating(false)
               }}
-            >
-              <label
-                className="checkpoint-details__label"
-                htmlFor="checkpoint-new-title"
-              >
-                {t("checkpoints.newName")}
-              </label>
-              <input
-                id="checkpoint-new-title"
-                className="input"
-                ref={focusOnMount}
-                value={newTitle}
-                placeholder={t("checkpoints.newPlaceholder")}
-                autoComplete="off"
-                maxLength={120}
-                onChange={(e) => {
-                  setNewTitle(e.target.value)
-                }}
-              />
-              <p className="checkpoints__hint">{t("checkpoints.newHint")}</p>
-              <div className="checkpoints__new-actions">
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  onClick={() => {
-                    setCreating(false)
-                  }}
-                >
-                  {t("confirm.cancel")}
-                </Button>
-                <Button
-                  size="sm"
-                  variant="primary"
-                  type="submit"
-                  disabled={!live || busy}
-                >
-                  {t("checkpoints.take")}
-                </Button>
-              </div>
-            </form>
+              onSubmit={submitNew}
+            />
           </SpatialCanvasFloatingPanel>
         )}
 
@@ -1220,6 +1526,9 @@ export function CheckpointCanvas(p: CheckpointCanvasProps): JSX.Element {
           onNewer={() => {
             step(1)
           }}
+          onHover={(tick) => {
+            setHoverDay(tick?.kind === "day" ? tick.key : null)
+          }}
           canOlder={
             layout.order.length > 0 &&
             (selected === null || layout.order[0] !== selected)
@@ -1227,35 +1536,78 @@ export function CheckpointCanvas(p: CheckpointCanvasProps): JSX.Element {
           canNewer={selected !== null}
         />
 
-        <div className="checkpoints__zoom">
-          <SpatialCanvasZoomControls
-            zoom={camera.zoom}
-            labels={{
-              group: t("checkpoints.zoom"),
-              zoomOut: t("checkpoints.zoomOut"),
-              zoomIn: t("checkpoints.zoomIn"),
-              reset: t("checkpoints.fitAll"),
-            }}
-            onZoomOut={() => {
-              zoomBy(1 / ZOOM_STEP)
-            }}
-            onReset={fitAll}
-            onZoomIn={() => {
-              zoomBy(ZOOM_STEP)
-            }}
-          />
-          <CanvasIconButton
-            label={t("checkpoints.toNow")}
-            onClick={() => {
-              fly(overview())
-            }}
-          >
-            <CanvasGlyph>
-              <path d="M12 7v5l4 2" />
-              <circle cx="12" cy="12" r="10" />
-            </CanvasGlyph>
-          </CanvasIconButton>
-        </div>
+        <ControlBar
+          live={live}
+          busy={busy}
+          creating={creating}
+          showAutomatic={settings.showAutomatic}
+          searchOpen={searchOpen}
+          query={query}
+          inputRef={searchInput}
+          matchCount={results.length}
+          onNew={() => {
+            setCreating((o) => !o)
+          }}
+          onNewest={() => {
+            fly(newest())
+          }}
+          onToggleAutomatic={toggleAutomatic}
+          onAutomaticHint={setAutoHint}
+          onSearchToggle={() => {
+            if (searchOpen || query !== "") closeSearch()
+            else setSearchOpen(true)
+          }}
+          onSearchFocus={() => {
+            setSearchOpen(true)
+          }}
+          onSearchBlur={() => {
+            if (query === "") setSearchOpen(false)
+          }}
+          onQuery={(v) => {
+            setQuery(v)
+            setActiveResult(0)
+            setSearchOpen(true)
+          }}
+          onSearchKey={(e) => {
+            if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+              e.preventDefault()
+              setActiveResult((i) =>
+                Math.max(
+                  0,
+                  Math.min(
+                    results.length - 1,
+                    i + (e.key === "ArrowDown" ? 1 : -1),
+                  ),
+                ),
+              )
+            } else if (e.key === "Enter") {
+              const c = results[activeResult]
+              if (c !== undefined) pickResult(c)
+            }
+          }}
+          sectionTool={sec.tool}
+          onSectionTool={() => {
+            sec.setTool(!sec.tool)
+          }}
+          arranged={Object.keys(moves).length > 0}
+          onReset={resetLayout}
+          onDone={() => void leave()}
+        />
+
+        <span className="checkpoints__sr" role="status" aria-live="polite">
+          {sec.said}
+        </span>
+
+        <ZoomControl
+          zoom={camera.zoom}
+          onZoomOut={() => {
+            zoomBy(1 / ZOOM_STEP)
+          }}
+          onZoomIn={() => {
+            zoomBy(ZOOM_STEP)
+          }}
+          onFit={fitAll}
+        />
 
         {(status !== null ||
           listError !== null ||
@@ -1283,27 +1635,31 @@ export function CheckpointCanvas(p: CheckpointCanvasProps): JSX.Element {
           </div>
         )}
 
-        {selectedCheckpoint !== undefined && (
-          <CheckpointDetails
-            c={selectedCheckpoint}
-            now={nowMs}
-            busy={busy}
-            saving={noteState}
-            onClose={() => {
-              select(null)
-            }}
-            onLook={openLook}
-            onNote={(name, d) => {
-              writeNote(name, d)
-            }}
-            onGoBack={() => {
-              setConfirm({ kind: "go-back", name: selectedCheckpoint.name })
-            }}
-            onDelete={() => {
-              setConfirm({ kind: "delete", name: selectedCheckpoint.name })
-            }}
-          />
-        )}
+        <CheckpointDetailsLayer
+          c={selectedCheckpoint}
+          now={nowMs}
+          busy={busy}
+          saving={noteState}
+          onClose={() => {
+            select(null)
+          }}
+          onLook={openLook}
+          onNote={writeNote}
+          onGoBack={(name) => {
+            setConfirm({ kind: "go-back", name })
+          }}
+          onReveal={(name) => {
+            showCheckpointInFinder(props.current.instance, name).catch(
+              (e: unknown) => {
+                setStatus({ tone: "error", text: String(e) })
+              },
+            )
+          }}
+          onDelete={(name) => {
+            setConfirm({ kind: "delete", name })
+          }}
+          onProtect={(name, value) => void protect(name, value)}
+        />
       </SpatialCanvas>
 
       {looking && selectedCheckpoint !== undefined && (

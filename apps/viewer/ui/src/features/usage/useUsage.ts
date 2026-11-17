@@ -16,9 +16,15 @@ export interface UsageView {
   readonly now: Usage | null
   readonly cpuHistory: readonly number[]
   readonly memoryHistory: readonly number[]
+  readonly macCpuHistory: readonly number[]
 }
 
-const EMPTY: UsageView = { now: null, cpuHistory: [], memoryHistory: [] }
+const EMPTY: UsageView = {
+  now: null,
+  cpuHistory: [],
+  memoryHistory: [],
+  macCpuHistory: [],
+}
 
 const visible = (): boolean => document.visibilityState !== "hidden"
 
@@ -67,6 +73,7 @@ export function useUsage(
           setView((v) => ({
             now,
             cpuHistory: pushHistory(v.cpuHistory, now.cpu),
+            macCpuHistory: pushHistory(v.macCpuHistory, now.macCpu),
             memoryHistory: pushHistory(
               v.memoryHistory,
               now.memory === null ? null : fraction(now.memory),

@@ -28,6 +28,13 @@ import {
   savesToRotate,
 } from "./idle"
 import {
+  AT_THE_MAC_S,
+  hostIdleSeconds,
+  LivenessLog,
+  processState,
+} from "./inputcheck"
+import { qmpCommand } from "./monitor"
+import {
   AUTOMATIC_ENV,
   InstanceBusy,
   leaseHolder,
@@ -193,6 +200,7 @@ export function realActions(
   log: (s: string) => void,
 ): Actions {
   let ready = false
+  let waitingForQuiet = false
   return {
     save: async (name) => {
       try {
@@ -206,6 +214,16 @@ export function realActions(
             return "busy"
           }
         }
+        const away = hostIdleSeconds()
+        if (away !== null && away < AT_THE_MAC_S) {
+          if (!waitingForQuiet)
+            log(
+              `autosave: the Mac was used ${String(Math.round(away))} s ago — waiting for a quiet moment`,
+            )
+          waitingForQuiet = true
+          return "busy"
+        }
+        waitingForQuiet = false
         const r = await automatically(
           instance,
           async () => await saves.createSave(instance, { name, kind: "auto" }),
@@ -237,7 +255,11 @@ export function realActions(
       if (names.length === 0) return true
       try {
         await automatically(instance, () => {
-          for (const n of names) saves.removeSave(instance, n)
+          for (const n of names) {
+            const m = saves.readSave(instance, n)
+            if (m?.kind === "auto" && m.protected !== true)
+              saves.removeSave(instance, n)
+          }
         })
         return true
       } catch (error) {
@@ -267,6 +289,7 @@ function currentSaves(instance: string): readonly SaveInfo[] {
             name: l.name,
             kind: l.manifest.kind,
             createdAt: l.manifest.createdAt,
+            protected: l.manifest.protected === true,
           },
         ],
   )
@@ -311,26 +334,55 @@ export function vcpusOf(pid: number): number {
   return m?.[1] === undefined ? 4 : Number(m[1])
 }
 
-async function isFrozen(p: Paths): Promise<boolean> {
+async function isFrozen(
+  sockPath: string,
+  timeoutMs: number,
+): Promise<{ readonly frozen: boolean | null; readonly ms: number | null }> {
+  const t0 = performance.now()
   try {
-    const r = (await qmp.execute(p.qmp, "query-status", undefined, 5000)) as
-      | { status?: unknown }
-      | undefined
-    return isFrozenRunState(typeof r?.status === "string" ? r.status : null)
+    const r = (await qmpCommand(
+      sockPath,
+      "query-status",
+      undefined,
+      timeoutMs,
+    )) as { status?: unknown } | undefined
+    return {
+      frozen: typeof r?.status === "string" ? isFrozenRunState(r.status) : null,
+      ms: Math.round(performance.now() - t0),
+    }
   } catch {
-    return false
+    return { frozen: null, ms: null }
   }
 }
 
-async function vncClients(p: Paths): Promise<number | null> {
+async function vncClients(
+  sockPath: string,
+  timeoutMs: number,
+): Promise<number | null> {
   try {
-    const r = (await qmp.execute(p.qmp, "query-vnc", undefined, 5000)) as
-      | { clients?: unknown[] }
+    const r = (await qmpCommand(sockPath, "query-vnc", undefined, timeoutMs)) as
+      | { enabled?: unknown; clients?: unknown }
       | undefined
-    return Array.isArray(r?.clients) ? r.clients.length : 0
+    if (Array.isArray(r?.clients)) return r.clients.length
+    return r?.enabled === false ? 0 : null
   } catch {
     return null
   }
+}
+
+export async function probeMonitor(
+  sockPath: string,
+  timeoutMs = 5000,
+): Promise<{
+  readonly frozen: boolean | null
+  readonly ms: number | null
+  readonly clients: number | null
+}> {
+  const [monitor, clients] = await Promise.all([
+    isFrozen(sockPath, timeoutMs),
+    vncClients(sockPath, timeoutMs),
+  ])
+  return { ...monitor, clients }
 }
 
 function activityAt(path: string): number | null {
@@ -515,6 +567,59 @@ export async function stopWatcher(
   return true
 }
 
+export const caffeinateArgs = (pid: number): readonly string[] => [
+  "-i",
+  "-w",
+  String(pid),
+]
+
+export class KeepAwake {
+  private child: ReturnType<typeof spawn> | null = null
+  private pid: number | null = null
+
+  private readonly start: (
+    args: readonly string[],
+  ) => ReturnType<typeof spawn> | null
+
+  constructor(
+    start: (
+      args: readonly string[],
+    ) => ReturnType<typeof spawn> | null = realCaffeinate,
+  ) {
+    this.start = start
+  }
+
+  update(want: boolean, qemuPid: number): string | null {
+    if (!want) {
+      if (this.child === null) return null
+      this.child.kill()
+      this.child = null
+      this.pid = null
+      return "power: no longer keeping the Mac awake"
+    }
+    if (this.child !== null && this.pid === qemuPid) return null
+    this.child?.kill()
+    this.child = this.start(caffeinateArgs(qemuPid))
+    this.pid = qemuPid
+    return this.child === null
+      ? "power: could not start caffeinate; the Mac may sleep"
+      : `power: keeping the Mac awake while QEMU ${String(qemuPid)} runs (caffeinate -i)`
+  }
+}
+
+function realCaffeinate(
+  args: readonly string[],
+): ReturnType<typeof spawn> | null {
+  if (process.platform !== "darwin") return null
+  try {
+    const c = spawn("caffeinate", [...args], { stdio: "ignore" })
+    c.on("error", () => undefined)
+    c.unref()
+    return c
+  } catch {
+    return null
+  }
+}
 export interface WatchOptions {
   readonly timing?: Partial<Timing>
   readonly actions?: Actions
@@ -730,12 +835,17 @@ export async function watch(
 
   let lastSummary = ""
   let lastTickLogAt = 0
+  const liveness = new LivenessLog(timing.tickMs)
+  const awake = new KeepAwake()
   for (;;) {
     await sleep(timing.tickMs)
     const livePid = qemu.pidOf(p)
     if (livePid !== qemuPid) {
       if (livePid === null) {
-        if (leaseHeld(name)) continue
+        if (leaseHeld(name)) {
+          liveness.rebase(Date.now())
+          continue
+        }
         finder.cleanStale(name)
         finish("qemu exited")
         return 0
@@ -746,6 +856,7 @@ export async function watch(
       qemuPid = livePid
       vcpus = vcpusOf(livePid)
       machine.restarted(Date.now())
+      liveness.rebase(Date.now())
       rebaseCpu()
       publish()
       continue
@@ -755,6 +866,8 @@ export async function watch(
       finish("watch.enabled is false")
       return 0
     }
+    const power = awake.update(cfg["power.keepAwake"], qemuPid)
+    if (power !== null) log(power)
 
     const nowCpu = cpuSeconds(qemuPid)
     const now = Date.now()
@@ -766,13 +879,26 @@ export async function watch(
     prevCpu = { sec: nowCpu, at: now }
 
     const settings = settingsOf(cfg)
+    const monitor = await probeMonitor(p.qmp)
+    const clients = monitor.clients
+    for (const line of liveness.observe({
+      at: now,
+      monitorMs: monitor.ms,
+      clients,
+      processState:
+        monitor.ms === null || monitor.ms >= 1500
+          ? processState(qemuPid)
+          : null,
+    })) {
+      log(line)
+    }
     const decisions = machine.tick(
       {
         wallMs: now,
         cpu,
         activityAtMs: activityAt(w.activity),
-        vncClients: await vncClients(p),
-        frozen: await isFrozen(p),
+        vncClients: clients,
+        frozen: monitor.frozen,
       },
       ephemeral
         ? {
@@ -811,6 +937,7 @@ export async function watch(
         return 0
       }
     }
+    if (decisions.length > 0) liveness.rebase(Date.now())
     publish()
   }
 }

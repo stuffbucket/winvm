@@ -2,6 +2,7 @@ import { describe, expect, it } from "bun:test"
 import { readdirSync, readFileSync, statSync } from "node:fs"
 import { join, resolve } from "node:path"
 
+import { TOPICS, topicKeys } from "../ui/src/features/help/topics"
 import en from "../ui/src/i18n/en.json"
 import { CLOSE_POLICIES, VM_OPERATIONS } from "../ui/src/model"
 
@@ -87,7 +88,7 @@ const built = [
     "detail.disk",
     "detail.saves",
   ],
-  ...["ability.exec", "ability.files", "ability.saves", "ability.agent"],
+  ...TOPICS.flatMap(topicKeys),
   ...["desktop", "documents", "downloads"].map((p) => `files.place.${p}`),
   ...["notfound", "denied", "notdir", "notrunning", "other"].map(
     (c) => `files.error.${c}`,
@@ -162,11 +163,17 @@ const built = [
   ...["manual", "auto", "baseline", "stow", "golden"].map(
     (k) => `checkpoints.kind.${k}`,
   ),
+  ...["manual", "auto", "baseline", "stow", "golden"].map(
+    (k) => `checkpoints.kindTip.${k}`,
+  ),
   ...["running", "starting", "paused", "stopped", "stowed", "missing"].map(
     (s) => `checkpoints.nowState.${s}`,
   ),
   ...["display", "base", "hardware", "firmware", "qemu", "other"].map(
     (p) => `checkpoints.incompatible.${p}`,
+  ),
+  ...["display", "base", "hardware", "firmware", "qemu", "other"].map(
+    (p) => `checkpoints.incompatibleShort.${p}`,
   ),
   ...["baseline", "golden"].map((k) => `checkpoints.keep.${k}`),
   ...["bodyLive", "bodyStopped"].map((b) => `checkpoints.goBack.${b}`),
@@ -186,8 +193,8 @@ describe("the en catalog", () => {
   })
 
   it("keeps the hardware-incompatible checkpoint message compact", () => {
-    expect(en["checkpoints.incompatible.hardware"]).toBe(
-      "Can't load on this VM. Virtual hardware is different.",
+    expect(en["checkpoints.incompatibleShort.hardware"]).toBe(
+      "Wrong virtual hardware",
     )
   })
 

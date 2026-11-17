@@ -302,8 +302,11 @@ describe("screen access", () => {
     )
     expect(screenSharingUrl(1, null)).toBe("vnc://127.0.0.1:5901")
     expect(websocketPort(4)).toBe(5704)
+  })
+
+  it("requires authentication on both loopback listeners and forbids lossy encoding", () => {
     expect(vncArg(4)).toBe(
-      "127.0.0.1:4,websocket=127.0.0.1:5704,password=on,lossy=on",
+      "127.0.0.1:4,websocket=127.0.0.1:5704,password=on,lossy=off",
     )
   })
 

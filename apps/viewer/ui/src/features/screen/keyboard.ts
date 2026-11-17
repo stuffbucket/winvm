@@ -41,6 +41,7 @@ const isCaptureModifier = (code: string): boolean =>
 
 export class GuestKeyboardRouter {
   private captured = false
+  private enabled = true
   private captureChord = false
   private rightCommand = false
   private rightWindowsDown = false
@@ -52,7 +53,7 @@ export class GuestKeyboardRouter {
   }
 
   setCaptured(captured: boolean): void {
-    if (this.captured === captured) return
+    if (this.captured === captured || (captured && !this.enabled)) return
     this.releaseAll()
     this.captured = captured
   }
@@ -61,7 +62,14 @@ export class GuestKeyboardRouter {
     return this.captured
   }
 
+  setEnabled(enabled: boolean): void {
+    if (this.enabled === enabled) return
+    if (!enabled) this.lostFocus()
+    this.enabled = enabled
+  }
+
   keyDown(event: RoutedKeyEvent): void {
+    if (!this.enabled) return
     if (
       !event.repeat &&
       isCaptureModifier(event.code) &&
@@ -121,6 +129,7 @@ export class GuestKeyboardRouter {
   }
 
   keyUp(event: RoutedKeyEvent): void {
+    if (!this.enabled) return
     if (isCaptureModifier(event.code) && !(event.ctrlKey && event.altKey))
       this.captureChord = false
     if (this.captured) {

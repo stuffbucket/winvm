@@ -71,6 +71,9 @@
 
   --content-max: 640px;
   --panel-width: 320px;
+  --lights-clearance: 96px;
+  --overview-measure: 48rem;
+  --overview-height: 52rem;
 }
 
 :root {

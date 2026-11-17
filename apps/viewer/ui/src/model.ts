@@ -314,6 +314,7 @@ const SaveEntry = z.object({
   compatible: z.boolean().nullable(),
   note: z.string().optional(),
   format: z.string().optional(),
+  protected: z.boolean().optional(),
   screenshot: z.string().nullable().default(null),
   thumbnail: z.string().nullable().default(null),
   screenSize: z.object({ width: z.number(), height: z.number() }).optional(),

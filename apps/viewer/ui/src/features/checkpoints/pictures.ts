@@ -24,7 +24,7 @@ function done(): void {
 
 const keyOf = (path: string, version: string): string => `${path}#${version}`
 
-function pictureUrl(
+export function pictureUrl(
   path: string,
   version: string,
   read: (path: string) => Promise<ArrayBuffer> = checkpointImage,

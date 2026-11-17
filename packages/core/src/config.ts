@@ -16,6 +16,7 @@ export interface InstanceConfig {
   readonly "viewer.closePolicy": ClosePolicy
   readonly "watch.enabled": boolean
   readonly "watch.idleCpuPercent": number
+  readonly "power.keepAwake": boolean
   readonly title: string
 }
 
@@ -30,6 +31,7 @@ export const DEFAULTS: InstanceConfig = {
   "viewer.closePolicy": "ask",
   "watch.enabled": true,
   "watch.idleCpuPercent": 10,
+  "power.keepAwake": false,
   title: "",
 }
 
@@ -39,7 +41,11 @@ export function checkTitle(raw: string): string {
   const title = raw.trim()
   if (Array.from(title).length > TITLE_MAX)
     throw new Error(`title is at most ${String(TITLE_MAX)} characters`)
-  if (/[\p{Cc}\u2028\u2029]/u.test(title))
+  if (
+    /[\p{Cc}\u200b\u200e\u200f\u2028-\u202e\u2060\u2066-\u2069\ufeff]/u.test(
+      title,
+    )
+  )
     throw new Error("title is one line of text, without control characters")
   return title
 }

@@ -15,6 +15,7 @@ interface TimelineProps {
   readonly active: string
   onPick: (tick: Tick) => void
   onScrub: (tick: Tick) => void
+  onHover?: (tick: Tick | null) => void
   onOlder: () => void
   onNewer: () => void
   readonly canOlder: boolean
@@ -29,6 +30,7 @@ export function Timeline({
   active,
   onPick,
   onScrub,
+  onHover,
   onOlder,
   onNewer,
   canOlder,
@@ -59,6 +61,7 @@ export function Timeline({
   const move = (e: PointerEvent<HTMLDivElement>): void => {
     const tick = at(e.clientY)
     setHover(tick)
+    onHover?.(tick)
     if (!dragging.current || tick === null || tick.key === last.current) return
     last.current = tick.key
     onScrub(tick)
@@ -123,6 +126,7 @@ export function Timeline({
         }}
         onPointerLeave={() => {
           setHover(null)
+          onHover?.(null)
         }}
         onKeyDown={key}
       >

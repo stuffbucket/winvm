@@ -526,6 +526,7 @@ describe("the meters while held", () => {
       },
       cpuHistory: [],
       memoryHistory: [],
+      macCpuHistory: [],
     }
     const ctx = { cpus: 4, overlayBytes: null }
     const paused = render(
@@ -541,26 +542,159 @@ describe("the meters while held", () => {
     const running = render(<Resources usage={usage} context={ctx} />)
     expect(running.textContent).toContain(en["usage.cpu"] ?? "?")
     expect(running.textContent).toContain("3%")
-    expect(running.textContent).toContain(
-      "On the Mac, with the screen and disk: 12%",
+    expect(running.querySelector(".resource__note")).toBeNull()
+  })
+})
+
+describe("the meters' two values", () => {
+  const GB = 1024 ** 3
+  const now = (o: object = {}) => ({
+    cpu: 3,
+    cpuSource: "windows" as const,
+    macCpu: 12,
+    memory: { used: 1, total: 4, source: "windows" as const },
+    disk: { used: 12 * GB, total: 63 * GB },
+    ...o,
+  })
+  const view = (n: ReturnType<typeof now>) => ({
+    now: n,
+    cpuHistory: [2, 3, 4],
+    memoryHistory: [0.2, 0.3],
+    macCpuHistory: [10, 12, 14],
+  })
+  const meter = (host: HTMLElement, label: string): HTMLElement | null =>
+    host.querySelector<HTMLElement>(`[aria-label^="${label}"]`)
+
+  it("name both CPU values in full and draw the Mac's as a second, dashed line on the same chart", () => {
+    const host = render(
+      <Resources
+        usage={view(now())}
+        context={{ cpus: 4, overlayBytes: 3.2 * GB }}
+      />,
+    )
+    const cpu = meter(host, "CPU")
+    expect(cpu?.getAttribute("role")).toBe("img")
+    expect(cpu?.getAttribute("aria-label")).toBe(
+      "CPU. Windows: 3%. macOS: 12%.",
+    )
+    expect(cpu?.getAttribute("tabindex")).toBe("0")
+    expect(cpu?.querySelectorAll(".sparkline__line")).toHaveLength(2)
+    expect(cpu?.querySelectorAll(".sparkline__line--other")).toHaveLength(1)
+    expect(cpu?.querySelector(".resource__value")?.textContent).toBe("3%")
+  })
+
+  it("name both disk values in full and lay the Mac's changes over the same bar", () => {
+    const host = render(
+      <Resources
+        usage={view(now())}
+        context={{ cpus: 4, overlayBytes: 3.2 * GB }}
+      />,
+    )
+    const disk = meter(host, "Disk") as HTMLElement
+    expect(disk.getAttribute("aria-label")).toBe(
+      "Disk. Windows: 12 GB of 63 GB. macOS: 3.2 GB.",
+    )
+    expect(disk.querySelector(".resource__value")?.textContent).toBe(
+      "C: 12 GB of 63 GB",
+    )
+    expect(
+      (disk.querySelector(".resource__fill") as HTMLElement).style.inlineSize,
+    ).toBe("19.05%")
+    expect(
+      (disk.querySelector(".resource__overlay") as HTMLElement).style
+        .inlineSize,
+    ).toContain("5.08%")
+    expect(host.querySelector(".resource__note")).toBeNull()
+  })
+
+  it("keep a tiny overlay visible, and a huge one on the track", () => {
+    const tiny = render(
+      <Resources
+        usage={view(now())}
+        context={{ cpus: 4, overlayBytes: 0.05 * GB }}
+      />,
+    )
+    expect(
+      (tiny.querySelector(".resource__overlay") as HTMLElement).style
+        .inlineSize,
+    ).toMatch(/^max\(.*, ?0\.08%\)$/)
+    act(() => root?.unmount())
+    const big = render(
+      <Resources
+        usage={view(now())}
+        context={{ cpus: 4, overlayBytes: 90 * GB }}
+      />,
+    )
+    expect(
+      (big.querySelector(".resource__overlay") as HTMLElement).style.inlineSize,
+    ).toContain("100%")
+    expect(meter(big, "Disk")?.getAttribute("aria-label")).toContain(
+      "macOS: 90 GB",
     )
   })
 
-  it("exposes each meter's label, value and note without nesting the note in the meter", () => {
-    const GB = 1024 ** 3
-    const usage = {
-      now: {
-        cpu: 3,
-        cpuSource: "windows" as const,
-        macCpu: 12,
-        memory: { used: 2 * GB, total: 4 * GB, source: "windows" as const },
-        disk: { used: 10 * GB, total: 40 * GB },
-      },
-      cpuHistory: [0.1, 0.2],
-      memoryHistory: [0.4, 0.5],
-    }
+  it("have no second value without the Mac's figures", () => {
+    const first = render(
+      <Resources
+        usage={{ ...view(now({ macCpu: null })), macCpuHistory: [] }}
+        context={{ cpus: 4, overlayBytes: null }}
+      />,
+    )
+    expect(first.querySelector('[role="img"]')).toBeNull()
+    expect(first.querySelector(".sparkline__line--other")).toBeNull()
+    expect(first.querySelector(".resource__overlay")).toBeNull()
+    expect(
+      first.querySelector('[role="meter"][aria-label="CPU"]'),
+    ).not.toBeNull()
+    act(() => root?.unmount())
+    const mac = render(
+      <Resources
+        usage={view(now({ cpu: 12, cpuSource: "mac", disk: null }))}
+        context={{ cpus: 4, overlayBytes: 3 * GB }}
+      />,
+    )
+    expect(mac.querySelector(".resource__value")?.textContent).toBe(
+      "12% on macOS",
+    )
+    expect(mac.querySelector(".sparkline__line--other")).toBeNull()
+  })
+
+  it("hide the legend on Escape while pointed at or focused, and show it again after", () => {
     const host = render(
-      <Resources usage={usage} context={{ cpus: 4, overlayBytes: 5 * GB }} />,
+      <Resources
+        usage={view(now())}
+        context={{ cpus: 4, overlayBytes: 3.2 * GB }}
+      />,
+    )
+    const cpu = meter(host, "CPU") as HTMLElement
+    expect(cpu.hasAttribute("data-dismissed")).toBe(false)
+    act(() => {
+      cpu.dispatchEvent(new window.FocusEvent("focusin", { bubbles: true }))
+    })
+    act(() => {
+      window.dispatchEvent(
+        new window.KeyboardEvent("keydown", { key: "Escape" }),
+      )
+    })
+    expect(cpu.hasAttribute("data-dismissed")).toBe(true)
+    act(() => {
+      cpu.dispatchEvent(new window.FocusEvent("focusout", { bubbles: true }))
+    })
+    expect(cpu.hasAttribute("data-dismissed")).toBe(false)
+    expect(cpu.querySelector(".resource__legend")?.textContent).toBe(
+      "Windows: 3%macOS: 12%",
+    )
+  })
+
+  it("exposes a meter's label and value when it has one value to show", () => {
+    const host = render(
+      <Resources
+        usage={{
+          ...view(now({ macCpu: null })),
+          macCpuHistory: [],
+        }}
+        context={{ cpus: 4, overlayBytes: null }}
+      />,
     )
     const meters = [...host.querySelectorAll<HTMLElement>('[role="meter"]')]
     expect(meters.map((m) => m.getAttribute("aria-label"))).toEqual([
@@ -570,26 +704,11 @@ describe("the meters while held", () => {
     ])
     expect(meters.map((m) => m.getAttribute("aria-valuenow"))).toEqual([
       "3",
-      "50",
       "25",
+      "19",
     ])
     expect(meters[0]?.getAttribute("aria-valuetext")).toBe("3%")
-    const noteOf = (m: HTMLElement | undefined): HTMLElement | null => {
-      const id = m?.getAttribute("aria-describedby")
-      return id === null || id === undefined
-        ? null
-        : document.getElementById(id)
-    }
-    const cpuNote = noteOf(meters[0])
-    expect(cpuNote?.textContent).toContain(
-      "On the Mac, with the screen and disk: 12%",
-    )
-    expect(meters[0]?.contains(cpuNote ?? null)).toBe(false)
-    expect(noteOf(meters[1])).toBeNull()
-    const diskNote = noteOf(meters[2])
-    expect(diskNote?.textContent).toBe("Its changes take 5 GB on this Mac")
-    expect(meters[2]?.contains(diskNote ?? null)).toBe(false)
-    for (const m of meters) expect(m.textContent).toBe("")
+    expect(host.querySelector("[aria-describedby]")).toBeNull()
   })
 })
 
