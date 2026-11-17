@@ -3,7 +3,12 @@ import { connect } from "node:net"
 import { resolve } from "node:path"
 import type { ClosePolicy } from "./config"
 import { effectiveConfig } from "./config"
-import { describeDisplay, readDisplay, runningDisplay } from "./display"
+import {
+  describeDisplay,
+  readDisplay,
+  runningCommand,
+  runningDisplay,
+} from "./display"
 import { readSince, START } from "./eventlog"
 import { frozenFrom, markedAsleep } from "./frozen"
 import { type HostPoweredOff, hostPoweredOff, isDecision } from "./hostoff"
@@ -36,6 +41,8 @@ import {
 import { parseEtime } from "./proc"
 import * as qemu from "./qemu"
 import { type Management, managementOf } from "./reconcile"
+import { currentQemuCompat } from "./runtime"
+import * as saves from "./saves"
 import { readService } from "./servicectl"
 import { spawnText } from "./shell"
 import * as timemachine from "./timemachine"
@@ -598,10 +605,13 @@ export async function gather(
       : keeperStanding(pid, await keeperHello(p), keeperUse().kind)
   const fellBack =
     standing?.protection === "legacy" ? keeperFallback(name) : null
-  const keeper =
+  const keeper = await withRuntime(
+    p,
+    pid,
     standing === null || fellBack === null
       ? standing
-      : { ...standing, fallback: fellBack.error }
+      : { ...standing, fallback: fellBack.error },
+  )
   const unprotected = keeper === null ? null : keeperNote(name, pid, keeper)
   if (unprotected !== null) notes.push(unprotected)
   const management = managementOf(name)
@@ -640,6 +650,35 @@ export async function gather(
   }
 }
 
+const WATCHED: ReadonlySet<Protection> = new Set(["kept", "adopted", "legacy"])
+
+async function withRuntime(
+  p: Paths,
+  pid: number | null,
+  k: KeeperStanding | null,
+): Promise<KeeperStanding | null> {
+  if (k === null || pid === null || !WATCHED.has(k.protection)) return k
+  const by = await saves
+    .producedBy(p, pid, runningCommand(pid))
+    .catch(() => saves.UNKNOWN_RUNTIME)
+  const installed = currentQemuCompat()
+  return {
+    ...k,
+    recallable: saves.recallable(by, installed),
+    runningQemu:
+      by === saves.UNKNOWN_RUNTIME ? "unknown" : saves.versionOfRuntime(by),
+    installedQemu: saves.versionOfRuntime(installed),
+  }
+}
+
+function olderQemuNote(name: string, k: KeeperStanding): string {
+  const flag = name === "default" ? "" : ` -i ${name}`
+  const runs = `Windows on "${name}" runs QEMU ${k.runningQemu ?? "unknown"}, and this winvm runs QEMU ${k.installedQemu ?? "?"}, so a stow of it could not be brought back`
+  return k.protection === "kept"
+    ? `${runs}: if the Mac shuts down, winvm shuts Windows down instead of stowing it. \`winvm stop${flag}\`, then \`winvm start${flag}\`, moves it to this winvm's QEMU`
+    : `${runs}. To put it under winvm's keeper, shut Windows down (\`winvm stop${flag}\`) and start it again (\`winvm start${flag}\`)`
+}
+
 function keeperNote(
   name: string,
   pid: number | null,
@@ -652,6 +691,7 @@ function keeperNote(
       `winvm's keeper could not start when Windows on "${name}" was started (${fellBack.error}), ` +
       `so it is not protected if the Mac shuts down; see ${resolve(keeperDir(pathsFor(name)), "keeper.log")}`
     )
+  if (k.recallable === false) return olderQemuNote(name, k)
   switch (k.protection) {
     case "kept":
       return null

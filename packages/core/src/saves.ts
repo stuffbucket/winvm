@@ -34,6 +34,7 @@ import { hardwareFrom, LEGACY, readHardware, runningHardware } from "./hardware"
 import { requireFirmware } from "./host"
 import { ensureInstance } from "./instance"
 import { launchedRuntime } from "./kept"
+import { qmpCommand } from "./monitor"
 import type { Note } from "./notes"
 import { copyNote, readNote, removeNote, removeNotes } from "./notes"
 import {
@@ -56,6 +57,7 @@ import * as qemu from "./qemu"
 import * as qmp from "./qmp"
 import {
   currentQemuCompat,
+  findRuntime,
   qemuCompat,
   runtimeBin,
   runtimeManifestAt,
@@ -420,6 +422,18 @@ function reportedVersion(answer: unknown): string | null {
     : null
 }
 
+const ETIME_GRAIN_MS = 1000
+
+function olderThan(path: string, pid: number): boolean {
+  const age = processAgeMs(pid)
+  if (age === null) return false
+  try {
+    return statSync(path).mtimeMs < Date.now() - age - ETIME_GRAIN_MS
+  } catch {
+    return false
+  }
+}
+
 export async function producedBy(
   p: Paths,
   pid: number,
@@ -427,24 +441,31 @@ export async function producedBy(
 ): Promise<string> {
   const kept = await launchedRuntime(p, pid).catch(() => null)
   if (kept !== null) return kept
-  const version = reportedVersion(
-    await qmp.execute(p.qmp, "query-version").catch(() => null),
-  )
-  if (version === null) return UNKNOWN_RUNTIME
   const program =
     command === null
       ? null
       : (/(?:^|\s)(\S*\/bin\/qemu-system-[A-Za-z0-9_]+)(?:\s|$)/.exec(
           command,
         )?.[1] ?? null)
+  const rt = findRuntime()
+  if (
+    program !== null &&
+    rt !== null &&
+    rt.manifest === null &&
+    program.startsWith(`${resolve(rt.dir, "bin")}/`) &&
+    olderThan(program, pid)
+  )
+    return currentQemuCompat()
+  const version = reportedVersion(
+    await qmpCommand(p.qmp, "query-version", undefined, 2000).catch(() => null),
+  )
+  if (version === null) return UNKNOWN_RUNTIME
   const at =
     program === null ? null : runtimeManifestAt(dirname(dirname(program)))
-  const age = processAgeMs(pid)
   if (
     at !== null &&
     at.manifest.qemu === version &&
-    age !== null &&
-    at.mtimeMs <= Date.now() - age
+    olderThan(resolve(dirname(dirname(program ?? "")), "manifest.json"), pid)
   )
     return qemuCompat(at.manifest)
   return `${version}${UNKNOWN_PATCHES}`

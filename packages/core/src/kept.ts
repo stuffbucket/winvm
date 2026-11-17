@@ -352,6 +352,9 @@ export interface KeeperStanding {
   readonly version: string | null
   readonly pid: number | null
   readonly fallback?: string
+  readonly recallable?: boolean
+  readonly runningQemu?: string
+  readonly installedQemu?: string
 }
 
 export function keeperStanding(

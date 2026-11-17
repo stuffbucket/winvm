@@ -17,6 +17,7 @@ import {
   readFileSync,
   rmSync,
   statSync,
+  utimesSync,
   writeFileSync,
 } from "node:fs"
 import { createServer } from "node:net"
@@ -62,6 +63,7 @@ import * as share from "../src/share"
 import { gather } from "../src/status"
 import * as vnc from "../src/vnc"
 import { lockPidfile, releasePidfiles } from "./fakes/pidfile"
+import { FakeQmp } from "./fakes/qmp"
 
 const NAME = "kept"
 const FAKE_KEEPER = resolve(import.meta.dir, "fakes", "keeper.ts")
@@ -93,6 +95,8 @@ function script(name: string, body: string): void {
   const path = resolve(state, "runtime", "bin", name)
   writeFileSync(path, `#!/bin/sh\n${body}\n`)
   chmodSync(path, 0o755)
+  const installed = new Date(Date.now() - 86_400_000)
+  utimesSync(path, installed, installed)
 }
 
 const alive = (pid: number): boolean => {
@@ -154,7 +158,7 @@ const ops = (): string[] =>
 
 const HOLDER = resolve(import.meta.dir, "fakes", "holder.ts")
 const fakeQemu = (): string =>
-  `while [ $# -gt 0 ]; do [ "$1" = -pidfile ] && p="$2"; shift; done\nexec "${process.execPath}" "${HOLDER}" qemu-system-aarch64 -name winvm-${NAME} -pidfile "$p" --lock "$p"`
+  `while [ $# -gt 0 ]; do [ "$1" = -pidfile ] && p="$2"; shift; done\nexec "${process.execPath}" "${HOLDER}" "$0" -name winvm-${NAME} -pidfile "$p" --lock "$p"`
 
 const launchOptions: qemu.LaunchOptions = {
   installMedia: false,
@@ -960,11 +964,43 @@ describe("the control service under the keeper", () => {
 })
 
 describe("adopting a VM an older winvm started", () => {
+  let monitor: FakeQmp | null = null
+  const reporting = async (version: {
+    readonly major: number
+    readonly minor: number
+    readonly micro: number
+  }): Promise<void> => {
+    const manifest = resolve(state, "runtime", "manifest.json")
+    writeFileSync(
+      manifest,
+      JSON.stringify({
+        name: "winvm-runtime",
+        version: "11.1.2-2",
+        qemu: "11.1.2",
+        qemuPatches: "p2",
+        components: {},
+        macho: [],
+        files: {},
+      }),
+    )
+    const old = new Date(Date.now() - 86_400_000)
+    utimesSync(manifest, old, old)
+    monitor = new FakeQmp(pathsFor(NAME).qmp)
+    monitor.handler = (cmd) =>
+      cmd.execute === "query-version"
+        ? { return: { qemu: version, package: "" } }
+        : { return: {} }
+    await monitor.listen()
+  }
+  afterEach(async () => {
+    await monitor?.close().catch(() => undefined)
+    monitor = null
+  })
   const startLegacy = async (): Promise<number> =>
     (
       await lockPidfile(
         pathsFor(NAME).pid,
-        "qemu-system-aarch64",
+        resolve(state, "runtime", "bin", "qemu-system-aarch64"),
         "-pidfile",
         pathsFor(NAME).pid,
       )
@@ -972,6 +1008,7 @@ describe("adopting a VM an older winvm started", () => {
 
   it("bootstraps a keeper that watches the running QEMU in place, then runs the service under it", async () => {
     const p = pathsFor(NAME)
+    await reporting({ major: 11, minor: 1, micro: 2 })
     const pid = await startLegacy()
     try {
       expect(await adoptLegacy(NAME, p)).toBe("adopted")
@@ -989,9 +1026,33 @@ describe("adopting a VM an older winvm started", () => {
       expect(ops()).toEqual([])
       const s = await gather(NAME, false)
       expect(s.keeper?.protection).toBe("adopted")
+      expect(s.keeper?.recallable).toBe(true)
       const notes = s.notes.join("\n")
       expect(notes).toContain("not shielded")
       expect(notes).toContain("Protect now")
+    } finally {
+      await releasePidfiles()
+    }
+  })
+
+  it("offers no stow for an adopted VM whose QEMU the installed runtime could not recall, only a shutdown and a start", async () => {
+    const p = pathsFor(NAME)
+    await reporting({ major: 10, minor: 0, micro: 0 })
+    await startLegacy()
+    try {
+      expect(await adoptLegacy(NAME, p)).toBe("adopted")
+      const s = await gather(NAME, false)
+      expect(s.keeper).toMatchObject({
+        protection: "adopted",
+        recallable: false,
+        runningQemu: "10.0.0",
+        installedQemu: "11.1.2",
+      })
+      const notes = s.notes.join("\n")
+      expect(notes).toContain("runs QEMU 10.0.0")
+      expect(notes).toContain("shut Windows down")
+      expect(notes).not.toContain("Protect now")
+      expect(notes).not.toContain("winvm stow")
     } finally {
       await releasePidfiles()
     }

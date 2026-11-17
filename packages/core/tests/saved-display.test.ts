@@ -39,6 +39,7 @@ import * as host from "../src/host"
 import { hostEndFacts, hostEndSeams } from "../src/hostend"
 import * as kept from "../src/kept"
 import * as media from "../src/media"
+import * as monitor from "../src/monitor"
 import {
   basePath,
   type InstanceMeta,
@@ -275,7 +276,6 @@ beforeEach(() => {
         await new Promise((r) => setTimeout(r, 10))
       runningPid = FAKE_PID
     }
-    if (cmd === "query-version") return { qemu: reported, package: "" }
     if (cmd === "query-migrate")
       return { status: "completed", ram: { transferred: 10 } }
     if (cmd === "migrate") {
@@ -313,6 +313,11 @@ beforeEach(() => {
   spyOn(console, "log").mockImplementation(() => undefined)
   spyOn(kept, "launchedRuntime").mockImplementation(
     async () => await Promise.resolve(currentQemuCompat()),
+  )
+  spyOn(monitor, "qmpCommand").mockImplementation(async (_socket, cmd) =>
+    cmd === "query-version"
+      ? await Promise.resolve({ qemu: reported, package: "" })
+      : await Promise.reject(new Error(`unexpected ${cmd}`)),
   )
   makeInstance("source")
 })
@@ -1088,6 +1093,18 @@ describe("the runtime a stow is labelled with", () => {
       compatible: boolean | null
     }[]
     expect(rows.find((r) => r.name === "stow")?.compatible).toBe(true)
+  })
+
+  it("is the override runtime when QEMU runs from its directory, which has no manifest, and the binary predates the process", async () => {
+    const binary = resolve(state, "runtime", "bin", "qemu-system-aarch64")
+    writeFileSync(binary, "")
+    const old = new Date(Date.now() - 86_400_000)
+    utimesSync(binary, old, old)
+    program = binary
+    spyOn(proc, "processAgeMs").mockReturnValue(3_600_000)
+    const m = await stow()
+    expect(m.compatParts?.qemu).toBe(currentQemuCompat())
+    expect(recallable(m.compatParts?.qemu ?? "")).toBe(true)
   })
 
   it("makes the host end shut a kept VM down when the keeper launched it on another runtime than the installed one", async () => {
