@@ -599,7 +599,7 @@ describe("keeperRequest", () => {
     })
     try {
       expect(await keeperRequest(path, { op: "hello" })).toEqual({ ok: true })
-      expect(JSON.parse(got)).toEqual({ op: "hello", protocol: 2 })
+      expect(JSON.parse(got)).toEqual({ op: "hello", protocol: 3 })
     } finally {
       await closing(server)
     }
