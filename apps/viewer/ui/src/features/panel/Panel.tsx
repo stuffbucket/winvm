@@ -5,7 +5,7 @@ import { cx } from "../../components/cx"
 import { Icon } from "../../components/Icon"
 import { t } from "../../i18n"
 import type { Checks, ClosePolicy, Status } from "../../model"
-import { CLOSE_POLICIES, detailRows, phase } from "../../model"
+import { CLOSE_POLICIES, detailRows, phase, protectable } from "../../model"
 import { Hardware } from "../hardware/Hardware"
 import { formatMemory } from "../hardware/info"
 import { Network } from "../hardware/Network"
@@ -26,6 +26,7 @@ interface PanelProps {
   readonly usageContext: UsageContext
   readonly held?: "paused" | "asleep" | null
   readonly canForceStop: boolean
+  readonly protecting: boolean
   readonly sharedFolder: SharedFolderView
   readonly machineInfo: MachineInfoView
   readonly guestReady: boolean
@@ -34,6 +35,7 @@ interface PanelProps {
   readonly closePolicyError: string | null
   onClosePolicy(policy: ClosePolicy): void
   onForceStop: () => void
+  onProtect: () => void
 }
 
 function Section({
@@ -121,6 +123,16 @@ export function Panel(p: PanelProps): JSX.Element {
               ))}
             </ul>
           )}
+        {protectable(p.status) && (
+          <>
+            <p className="panel__note">{t("panel.protectBody")}</p>
+            <div className="actions">
+              <Button size="sm" disabled={p.protecting} onClick={p.onProtect}>
+                {t("action.protectNow")}
+              </Button>
+            </div>
+          </>
+        )}
         <label className="field">
           <span className="field__label">{t("panel.closePolicy")}</span>
           <select

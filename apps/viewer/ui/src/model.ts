@@ -70,10 +70,26 @@ const Status = z.object({
   guest: Guest.nullable(),
   saves: z.object({ count: z.number(), bytes: z.number() }),
   management: z.string().nullable().optional(),
+  keeper: z
+    .object({
+      protection: z.string(),
+      version: z.string().nullable(),
+      pid: z.number().nullable(),
+    })
+    .nullable()
+    .default(null),
   notes: z.array(z.string()),
 })
 
 export type Status = z.infer<typeof Status>
+
+const PROTECTABLE: ReadonlySet<string> = new Set(["legacy", "adopted"])
+
+export const protectable = (s: Status | null): boolean =>
+  s !== null &&
+  s.state === "running" &&
+  s.keeper !== null &&
+  PROTECTABLE.has(s.keeper.protection)
 
 export const TITLE_MAX = 80
 

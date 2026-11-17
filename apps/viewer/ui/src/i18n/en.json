@@ -300,6 +300,8 @@
   "panel.mac": "This Mac",
   "panel.troubleshooting": "Troubleshooting",
   "panel.notes": "Notes",
+  "panel.protectBody": "Windows was started by an older winvm and is not shielded if the Mac shuts down. Protect now stows it and starts it again under winvm's keeper, which takes a few seconds plus the time to bring it back.",
+  "action.protectNow": "Protect now",
   "panel.sharedFolder": "Shared folder",
   "panel.closePolicy": "When closing WinVM",
   "closePolicy.ask": "Ask every time",

@@ -60,6 +60,7 @@ const statusOf = (m: Machine) => ({
       ? { agent: m.agent ?? "ok", agentVersion: "9", os: "Windows 11" }
       : null,
   saves: { count: 0, bytes: 0 },
+  keeper: null,
   notes: [],
 })
 
