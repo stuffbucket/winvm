@@ -16,6 +16,8 @@ export class FakeGuest {
   resetDelayMs = 0
   bootDelayMs = 0
   holdBootQuery = false
+  resets = true
+  staleResetOnStatus = false
   shutdownRequests: string[] = []
   private readonly runs = new Map<number, Ran>()
   private nextPid = 4000
@@ -30,6 +32,14 @@ export class FakeGuest {
   private monitor(cmd: Json): Json {
     switch (cmd.execute) {
       case "query-status":
+        if (this.staleResetOnStatus) {
+          this.staleResetOnStatus = false
+          this.qmp.emit({
+            event: "RESET",
+            data: { guest: true, reason: "guest-reset" },
+            timestamp: { seconds: 0, microseconds: 1 },
+          })
+        }
         return {
           return: { status: this.status, running: this.status === "running" },
         }
@@ -79,6 +89,7 @@ export class FakeGuest {
       setTimeout(() => {
         this.bootTime = next
       }, this.bootDelayMs)
+    if (!this.resets) return
     setTimeout(() => {
       this.qmp.emit({
         event: "RESET",

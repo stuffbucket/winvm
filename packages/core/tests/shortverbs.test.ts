@@ -477,3 +477,33 @@ describe("the short verbs, with a service that runs no ops", () => {
     expect(await qemu.proc.exited).not.toBe(0)
   }, 30_000)
 })
+
+describe("reboot", () => {
+  const order = (): readonly string[] =>
+    readSince("t", START).entries.flatMap((e) =>
+      e.kind === "qmp" && e.event === "RESET"
+        ? ["RESET"]
+        : e.kind === "op" && e.phase === "end"
+          ? [`end ${e.operation}`]
+          : [],
+    )
+
+  it("counts the restart only once QEMU says Windows reset", async () => {
+    guest.resetDelayMs = 1500
+    expect((await winvm("reboot", "-i", "t")).code).toBe(0)
+    expect(order()).toEqual(["RESET", "end reboot"])
+  }, 30_000)
+
+  it("never takes a reset recorded before it asked Windows to restart for this one", async () => {
+    guest.resets = false
+    guest.staleResetOnStatus = true
+    expect(await winvm("reboot", "-i", "t", "--timeout", "2")).toEqual({
+      code: 1,
+      stdout: "rebooting\n",
+      stderr:
+        "::error::the guest was not back within 2 s. Look at it with `winvm open -i t` or " +
+        `${p.serial}\n`,
+    })
+    expect(order()).toEqual(["RESET", "end reboot"])
+  }, 30_000)
+})

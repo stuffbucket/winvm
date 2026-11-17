@@ -1230,6 +1230,18 @@ async function stopRun(
   return 0
 }
 
+const guestReset = (e: Entry): boolean =>
+  qmpEvent("RESET")(e) && e.data?.guest === true
+
+async function recordedSoFar(name: string, p: Paths): Promise<Cursor | null> {
+  try {
+    await monitor.qmpCommand(p.qmp, "query-status", undefined, 5000)
+  } catch {
+    return null
+  }
+  return endCursor(name)
+}
+
 export async function reboot(args: Args): Promise<number> {
   const name = instanceName(args)
   const p = pathsFor(name)
@@ -1254,6 +1266,13 @@ export async function reboot(args: Args): Promise<number> {
     )
     return 1
   }
+  const since = await recordedSoFar(name, p)
+  if (since === null) {
+    console.error(
+      `::error::QEMU's monitor did not answer, so a restart could not be confirmed; nothing was asked of Windows`,
+    )
+    return 1
+  }
   const t0 = Date.now()
   const deadline = t0 + s * 1000
   pointOfNoReturn()
@@ -1267,6 +1286,8 @@ export async function reboot(args: Args): Promise<number> {
         return { refused: errorText(error) }
       }
       process.stdout.write("rebooting")
+      if ((await waitForEvent(name, guestReset, deadline, { since })) === null)
+        return "timeout"
       return await qga.untilNewBoot(p.qga, before, deadline - Date.now(), {
         noLogonMs: NO_LOGON_MS,
         log: (line) => process.stdout.write(`\n${line}\n`),
