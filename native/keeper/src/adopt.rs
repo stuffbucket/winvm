@@ -54,6 +54,25 @@ pub fn start_time_us(pid: i32) -> Option<u64> {
     (got == size).then(|| info.pbi_start_tvsec * 1_000_000 + info.pbi_start_tvusec)
 }
 
+pub fn boot_time_us() -> Option<u64> {
+    // SAFETY: timeval is plain data for which all-zero bytes are a valid value.
+    let mut boot: libc::timeval = unsafe { std::mem::zeroed() };
+    let mut size = std::mem::size_of::<libc::timeval>();
+    // SAFETY: the name is NUL-terminated, and the output buffer is a timeval whose size is passed in.
+    let got = unsafe {
+        libc::sysctlbyname(
+            c"kern.boottime".as_ptr(),
+            (&raw mut boot).cast(),
+            &raw mut size,
+            std::ptr::null_mut(),
+            0,
+        )
+    };
+    let secs = u64::try_from(boot.tv_sec).ok()?;
+    let micros = u64::try_from(boot.tv_usec).ok()?;
+    (got == 0).then(|| secs * 1_000_000 + micros)
+}
+
 pub fn identify(kept: &Kept) -> Option<&'static str> {
     if let Some(pidfile) = &kept.pidfile {
         if let Some(holder) = lock_holder(pidfile) {
@@ -80,6 +99,13 @@ mod tests {
         assert_eq!(lock_holder(&path), None);
         drop(held);
         std::fs::remove_file(&path).expect("cleanup");
+    }
+
+    #[test]
+    fn the_boot_time_is_before_this_process_started() {
+        let me = i32::try_from(std::process::id()).expect("a pid");
+        let boot = boot_time_us().expect("kern.boottime");
+        assert!(boot > 0 && boot < start_time_us(me).expect("start time"));
     }
 
     #[test]

@@ -19,8 +19,8 @@ fn child_name() -> String {
     "child".to_owned()
 }
 
-#[derive(Clone, Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct CommandSpec {
     pub argv: Vec<String>,
     #[serde(default)]
@@ -31,18 +31,34 @@ pub struct CommandSpec {
 }
 
 #[derive(Clone, Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ChildSpec {
     #[serde(default = "child_name")]
     pub name: String,
-    #[serde(flatten)]
-    pub command: CommandSpec,
+    pub argv: Vec<String>,
+    #[serde(default)]
+    pub env: BTreeMap<String, String>,
+    pub log: Option<PathBuf>,
+    #[serde(default = "shielded")]
+    pub shield: bool,
     pub pidfile: Option<PathBuf>,
 }
 
+impl ChildSpec {
+    pub fn command(&self) -> CommandSpec {
+        CommandSpec {
+            argv: self.argv.clone(),
+            env: self.env.clone(),
+            log: self.log.clone(),
+            shield: self.shield,
+        }
+    }
+}
+
 #[derive(Debug, Default, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Spec {
+    pub session: Option<String>,
     pub instance: Option<String>,
     pub record: Option<PathBuf>,
     pub linger_ms: Option<u64>,
@@ -59,9 +75,19 @@ pub struct Kept {
     pub pidfile: Option<PathBuf>,
 }
 
-#[derive(Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct State {
+    #[serde(default)]
+    pub session: Option<String>,
+    #[serde(default)]
+    pub boot_us: u64,
+    #[serde(default)]
+    pub instance: Option<String>,
+    #[serde(default)]
+    pub record: Option<PathBuf>,
+    #[serde(default)]
+    pub stop: Option<CommandSpec>,
     pub child: Option<Kept>,
 }
 
@@ -113,11 +139,26 @@ mod tests {
         .expect("a spec");
         let child = spec.child.expect("a child");
         assert_eq!(child.name, "child");
-        assert!(child.command.shield);
-        assert!(child.command.env.is_empty());
+        assert!(child.shield);
+        assert!(child.env.is_empty());
         assert_eq!(child.pidfile, None);
         assert!(!spec.stop.expect("a stop action").shield);
         assert_eq!(spec.linger_ms, None);
+    }
+
+    #[test]
+    fn a_spec_with_an_unknown_field_is_refused() {
+        let refused = serde_json::from_str::<Spec>(r#"{"lingerMS":5}"#).map(|_| ());
+        assert!(refused.is_err_and(|e| e.to_string().contains("lingerMS")));
+        let child =
+            serde_json::from_str::<Spec>(r#"{"child":{"argv":["x"],"pidFile":"/p"}}"#).map(|_| ());
+        assert!(child.is_err_and(|e| e.to_string().contains("pidFile")));
+    }
+
+    #[test]
+    fn a_state_from_an_older_keeper_reads_with_defaults() {
+        let state: State = serde_json::from_str(r#"{"child":null}"#).expect("a state");
+        assert_eq!(state, State::default());
     }
 
     #[test]
@@ -126,12 +167,15 @@ mod tests {
         fs::create_dir_all(&dir).expect("dir");
         assert_eq!(read_state(&dir), Ok(None));
         let state = State {
+            session: Some("s".to_owned()),
+            boot_us: 9,
             child: Some(Kept {
                 name: "qemu".to_owned(),
                 pid: 42,
                 start_us: 7,
                 pidfile: Some(PathBuf::from("/x/qemu.pid")),
             }),
+            ..State::default()
         };
         write_state(&dir, &state).expect("write");
         assert_eq!(read_state(&dir), Ok(Some(state)));

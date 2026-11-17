@@ -4,14 +4,15 @@ use std::os::fd::{AsRawFd, RawFd};
 use std::os::unix::fs::PermissionsExt;
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
-use serde_json::{json, Value};
+use serde_json::Value;
 
 use crate::state::SOCKET;
 
 const IO_TIMEOUT: Duration = Duration::from_secs(1);
-const MAX_REQUEST_BYTES: u64 = 64 * 1024;
+const MAX_REQUEST_BYTES: usize = 64 * 1024;
+const REPLY_TIMEOUT: Duration = Duration::from_millis(200);
 
 pub struct Server {
     listener: UnixListener,
@@ -25,6 +26,18 @@ fn same_user(stream: &UnixStream) -> bool {
     let got = unsafe { libc::getpeereid(stream.as_raw_fd(), &raw mut uid, &raw mut gid) };
     // SAFETY: geteuid has no preconditions.
     got == 0 && uid == unsafe { libc::geteuid() }
+}
+
+pub enum Received {
+    Pending,
+    Line(String),
+    Closed,
+}
+
+pub struct Connection {
+    stream: UnixStream,
+    buffer: Vec<u8>,
+    pub deadline: Instant,
 }
 
 impl Server {
@@ -44,15 +57,23 @@ impl Server {
         self.listener.as_raw_fd()
     }
 
-    pub fn pending(&self) -> Vec<UnixStream> {
-        let mut streams = Vec::new();
+    pub fn accept(&self) -> Vec<Connection> {
+        let mut connections = Vec::new();
         loop {
             match self.listener.accept() {
-                Ok((stream, _)) => streams.push(stream),
-                Err(e) if e.kind() == io::ErrorKind::WouldBlock => return streams,
+                Ok((stream, _)) => {
+                    if same_user(&stream) && stream.set_nonblocking(true).is_ok() {
+                        connections.push(Connection {
+                            stream,
+                            buffer: Vec::new(),
+                            deadline: Instant::now() + IO_TIMEOUT,
+                        });
+                    }
+                }
+                Err(e) if e.kind() == io::ErrorKind::WouldBlock => return connections,
                 Err(e) => {
                     eprintln!("winvm-keeper: accept on {}: {e}", self.path.display());
-                    return streams;
+                    return connections;
                 }
             }
         }
@@ -65,25 +86,47 @@ impl Drop for Server {
     }
 }
 
-pub fn read_request(stream: &UnixStream) -> io::Result<Value> {
-    stream.set_nonblocking(false)?;
-    stream.set_read_timeout(Some(IO_TIMEOUT))?;
-    stream.set_write_timeout(Some(IO_TIMEOUT))?;
-    if !same_user(stream) {
-        return Err(io::Error::new(
-            io::ErrorKind::PermissionDenied,
-            "another user",
-        ));
+impl Connection {
+    pub fn fd(&self) -> RawFd {
+        self.stream.as_raw_fd()
     }
-    let mut line = String::new();
-    BufReader::new(stream.take(MAX_REQUEST_BYTES)).read_line(&mut line)?;
-    Ok(serde_json::from_str(&line)
-        .unwrap_or_else(|e| json!({ "op": null, "error": e.to_string() })))
-}
 
-pub fn reply(mut stream: &UnixStream, answer: &Value) {
-    if let Err(e) = stream.write_all(format!("{answer}\n").as_bytes()) {
-        eprintln!("winvm-keeper: reply: {e}");
+    pub fn read(&mut self) -> Received {
+        let mut chunk = [0u8; 4096];
+        loop {
+            match (&self.stream).read(&mut chunk) {
+                Ok(0) => {
+                    return if self.buffer.is_empty() {
+                        Received::Closed
+                    } else {
+                        Received::Line(String::from_utf8_lossy(&self.buffer).into_owned())
+                    };
+                }
+                Ok(n) => self.buffer.extend_from_slice(&chunk[..n]),
+                Err(e) if e.kind() == io::ErrorKind::WouldBlock => break,
+                Err(e) if e.kind() == io::ErrorKind::Interrupted => {}
+                Err(_) => return Received::Closed,
+            }
+        }
+        if let Some(end) = self.buffer.iter().position(|&b| b == b'\n') {
+            return Received::Line(String::from_utf8_lossy(&self.buffer[..end]).into_owned());
+        }
+        if self.buffer.len() > MAX_REQUEST_BYTES {
+            Received::Closed
+        } else {
+            Received::Pending
+        }
+    }
+
+    pub fn reply(&self, answer: &Value) {
+        let sent = self
+            .stream
+            .set_nonblocking(false)
+            .and_then(|()| self.stream.set_write_timeout(Some(REPLY_TIMEOUT)))
+            .and_then(|()| (&self.stream).write_all(format!("{answer}\n").as_bytes()));
+        if let Err(e) = sent {
+            eprintln!("winvm-keeper: reply: {e}");
+        }
     }
 }
 

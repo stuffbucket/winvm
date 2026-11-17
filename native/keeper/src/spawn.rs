@@ -19,6 +19,17 @@ fn empty_set() -> libc::sigset_t {
     }
 }
 
+pub fn pending_shutdown() -> Option<libc::c_int> {
+    let mut pending = empty_set();
+    // SAFETY: sigpending writes into an initialised set, and sigismember only reads it.
+    unsafe {
+        libc::sigpending(&raw mut pending);
+        [libc::SIGTERM, libc::SIGINT]
+            .into_iter()
+            .find(|&signal| libc::sigismember(&raw const pending, signal) == 1)
+    }
+}
+
 pub fn shield_set() -> libc::sigset_t {
     // SAFETY: sigset_t is plain data; sigemptyset initialises it and sigaddset only adds valid signals.
     unsafe {

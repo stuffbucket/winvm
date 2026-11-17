@@ -1,4 +1,5 @@
 use std::fs::{DirBuilder, File};
+use std::os::fd::RawFd;
 use std::os::unix::fs::DirBuilderExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, ExitCode};
@@ -9,7 +10,7 @@ use serde_json::{json, Value};
 use crate::adopt;
 use crate::kq::{Event, Kqueue};
 use crate::record::{self, Record};
-use crate::sock::{self, Server};
+use crate::sock::{Connection, Received, Server};
 use crate::spawn;
 use crate::state::{self, ChildSpec, Kept, Spec, State};
 use crate::{PROTOCOL, VERSION};
@@ -56,8 +57,18 @@ struct Keeper {
     host_end: Option<HostEnd>,
     idle_since: Instant,
     exit_requested: bool,
+    boot_us: u64,
+    connections: Vec<Connection>,
+    stragglers: Vec<Child>,
     _lock: File,
 }
+
+enum Failure {
+    Retry(String),
+    Park(String),
+}
+
+const REQUEST_FIELDS: [&str; 2] = ["op", "protocol"];
 
 fn millis(duration: Duration) -> u64 {
     u64::try_from(duration.as_millis()).unwrap_or(u64::MAX)
@@ -90,41 +101,91 @@ pub fn run(settings: Settings) -> ExitCode {
     match start(settings) {
         Ok(Some(keeper)) => keeper.serve(),
         Ok(None) => ExitCode::SUCCESS,
-        Err(problem) => {
+        Err(Failure::Park(problem)) => {
+            eprintln!("winvm-keeper: {problem}; nothing to keep, so not retrying");
+            ExitCode::SUCCESS
+        }
+        Err(Failure::Retry(problem)) => {
             eprintln!("winvm-keeper: {problem}");
             ExitCode::FAILURE
         }
     }
 }
 
-fn start(settings: Settings) -> Result<Option<Keeper>, String> {
+fn live_child(previous: Option<&State>) -> bool {
+    previous
+        .and_then(|p| p.child.as_ref())
+        .is_some_and(|kept| adopt::identify(kept).is_some())
+}
+
+fn spec_or_previous(
+    dir: &Path,
+    previous: Option<&State>,
+) -> Result<(Spec, Option<String>), Failure> {
+    match state::read_spec(dir) {
+        Ok(spec) => Ok((spec, None)),
+        Err(problem) if live_child(previous) => {
+            let p = previous.cloned().unwrap_or_default();
+            let spec = Spec {
+                session: p.session,
+                instance: p.instance,
+                record: p.record,
+                linger_ms: None,
+                child: None,
+                stop: p.stop,
+            };
+            Ok((spec, Some(problem)))
+        }
+        Err(problem) => {
+            if let Some(p) = previous {
+                let instance = p.instance.clone().unwrap_or_else(|| default_instance(dir));
+                Record::new(p.record.clone(), instance)
+                    .note("start-failed", &[("error", problem.clone().into())]);
+            }
+            Err(Failure::Park(problem))
+        }
+    }
+}
+
+fn start(settings: Settings) -> Result<Option<Keeper>, Failure> {
     let dir = settings.dir;
     let shown = dir.display().to_string();
     DirBuilder::new()
         .recursive(true)
         .mode(0o700)
         .create(&dir)
-        .map_err(|e| format!("{shown}: {e}"))?;
-    let Some(lock) =
-        adopt::hold(&dir.join(state::LOCK)).map_err(|e| format!("{shown}/{}: {e}", state::LOCK))?
+        .map_err(|e| Failure::Retry(format!("{shown}: {e}")))?;
+    let Some(lock) = adopt::hold(&dir.join(state::LOCK))
+        .map_err(|e| Failure::Retry(format!("{shown}/{}: {e}", state::LOCK)))?
     else {
         eprintln!("winvm-keeper: another keeper holds {shown}");
         return Ok(None);
     };
-    spawn::block_in_this_process().map_err(|e| format!("blocking signals: {e}"))?;
-    let spec = state::read_spec(&dir)?;
+    spawn::block_in_this_process().map_err(|e| Failure::Retry(format!("blocking signals: {e}")))?;
+    let kq = Kqueue::new().map_err(|e| Failure::Retry(format!("kqueue: {e}")))?;
+    for signal in spawn::SHIELDED {
+        kq.watch_signal(signal)
+            .map_err(|e| Failure::Retry(format!("watching signal {signal}: {e}")))?;
+    }
+    let previous = state::read_state(&dir).unwrap_or_else(|problem| {
+        eprintln!("winvm-keeper: {problem}; nothing to adopt");
+        Some(State::default())
+    });
+    let (spec, invalid) = spec_or_previous(&dir, previous.as_ref())?;
+    let server = Server::bind(&dir).map_err(|e| {
+        let problem = format!("{shown}/{}: {e}", state::SOCKET);
+        if e.kind() == std::io::ErrorKind::InvalidInput {
+            Failure::Park(problem)
+        } else {
+            Failure::Retry(problem)
+        }
+    })?;
+    kq.watch_readable(server.fd())
+        .map_err(|e| Failure::Retry(format!("watching the socket: {e}")))?;
     let instance = spec
         .instance
         .clone()
         .unwrap_or_else(|| default_instance(&dir));
-    let kq = Kqueue::new().map_err(|e| format!("kqueue: {e}"))?;
-    for signal in spawn::SHIELDED {
-        kq.watch_signal(signal)
-            .map_err(|e| format!("watching signal {signal}: {e}"))?;
-    }
-    let server = Server::bind(&dir).map_err(|e| format!("{shown}/{}: {e}", state::SOCKET))?;
-    kq.watch_readable(server.fd())
-        .map_err(|e| format!("watching the socket: {e}"))?;
     let mut keeper = Keeper {
         budget: settings.budget,
         linger: spec.linger_ms.map_or(DEFAULT_LINGER, Duration::from_millis),
@@ -137,6 +198,9 @@ fn start(settings: Settings) -> Result<Option<Keeper>, String> {
         host_end: None,
         idle_since: Instant::now(),
         exit_requested: false,
+        boot_us: adopt::boot_time_us().unwrap_or(0),
+        connections: Vec::new(),
+        stragglers: Vec::new(),
         _lock: lock,
         dir,
     };
@@ -147,34 +211,52 @@ fn start(settings: Settings) -> Result<Option<Keeper>, String> {
             ("version", VERSION.into()),
         ],
     );
-    keeper.resume_or_launch();
+    if let Some(problem) = invalid {
+        keeper
+            .record
+            .note("spec-invalid", &[("error", problem.into())]);
+    }
+    keeper.resume_or_launch(previous);
+    if let Some(signal) = spawn::pending_shutdown() {
+        keeper.begin_host_end(signal);
+    }
     Ok(Some(keeper))
 }
 
 impl Keeper {
-    fn resume_or_launch(&mut self) {
-        match state::read_state(&self.dir) {
-            Ok(Some(previous)) => self.adopt(previous.child),
-            Ok(None) => {
+    fn resume_or_launch(&mut self, previous: Option<State>) {
+        let launch = match previous {
+            None => {
                 self.save();
-                if let Some(child) = self.spec.child.clone() {
-                    if let Err(error) = self.launch(&child) {
-                        self.record.note(
-                            "launch-failed",
-                            &[("child", child.name.into()), ("error", error.into())],
-                        );
-                    }
-                }
+                true
             }
-            Err(problem) => {
-                eprintln!("winvm-keeper: {problem}; nothing to adopt");
-                self.save();
+            Some(previous) => {
+                let same_session =
+                    previous.boot_us == self.boot_us && previous.session == self.spec.session;
+                let adopted = self.adopt(previous.child);
+                !adopted && !same_session
+            }
+        };
+        if !launch {
+            return;
+        }
+        if let Some(child) = self.spec.child.clone() {
+            if let Err(error) = self.launch(&child) {
+                self.record.note(
+                    "launch-failed",
+                    &[("child", child.name.into()), ("error", error.into())],
+                );
             }
         }
     }
 
     fn save(&self) {
         let current = State {
+            session: self.spec.session.clone(),
+            boot_us: self.boot_us,
+            instance: Some(self.record.instance().to_owned()),
+            record: self.spec.record.clone(),
+            stop: self.spec.stop.clone(),
             child: self.child.as_ref().map(|r| r.kept.clone()),
         };
         if let Err(e) = state::write_state(&self.dir, &current) {
@@ -202,37 +284,37 @@ impl Keeper {
         self.save();
     }
 
-    fn adopt(&mut self, previous: Option<Kept>) {
+    fn adopt(&mut self, previous: Option<Kept>) -> bool {
         let Some(kept) = previous else {
             self.save();
-            return;
+            return false;
         };
         let watched =
             adopt::identify(&kept).filter(|_| self.kq.watch_exit(kept.pid).unwrap_or(false));
-        match watched {
-            Some(by) => {
-                self.record.note(
-                    "adopted",
-                    &[
-                        ("child", kept.name.clone().into()),
-                        ("pid", kept.pid.into()),
-                        ("by", by.into()),
-                    ],
-                );
-                self.child = Some(Running {
-                    kept,
-                    process: None,
-                });
-                self.save();
-            }
-            None => self.gone(&kept, "exited-unknown", Vec::new()),
-        }
+        let Some(by) = watched else {
+            self.gone(&kept, "exited-unknown", Vec::new());
+            return false;
+        };
+        self.record.note(
+            "adopted",
+            &[
+                ("child", kept.name.clone().into()),
+                ("pid", kept.pid.into()),
+                ("by", by.into()),
+            ],
+        );
+        self.child = Some(Running {
+            kept,
+            process: None,
+        });
+        self.save();
+        true
     }
 
     fn launch(&mut self, spec: &ChildSpec) -> Result<i32, String> {
-        let program = spec.command.argv.first().cloned().unwrap_or_default();
+        let program = spec.argv.first().cloned().unwrap_or_default();
         let process =
-            spawn::spawn(&spec.command, &[], false).map_err(|e| format!("{program}: {e}"))?;
+            spawn::spawn(&spec.command(), &[], false).map_err(|e| format!("{program}: {e}"))?;
         let pid = pid_of(&process);
         let kept = Kept {
             name: spec.name.clone(),
@@ -370,7 +452,6 @@ impl Keeper {
             Ok(None) if now >= host.stop_deadline => {
                 spawn::kill(-stop.pid, libc::SIGKILL);
                 spawn::kill(stop.pid, libc::SIGKILL);
-                let _ = stop.process.wait();
                 vec![
                     ("step", "stop-action".into()),
                     ("ok", false.into()),
@@ -387,14 +468,27 @@ impl Keeper {
         let mut fields = fields;
         fields.push(("ms", ms.into()));
         self.record.note("host-end", &fields);
-        host.stop = None;
+        if let Some(stop) = host.stop.take() {
+            self.stragglers.push(stop.process);
+        }
         host.kill_at = host.kill_at.min(now + GRACE_AFTER_STOP);
+    }
+
+    fn reap_stragglers(&mut self) {
+        self.stragglers
+            .retain_mut(|process| matches!(process.try_wait(), Ok(None)));
+    }
+
+    fn drop_late_connections(&mut self, now: Instant) {
+        self.connections.retain(|c| c.deadline > now);
     }
 
     fn tick(&mut self, exited: &[i32]) -> Option<&'static str> {
         self.poll_child(exited);
         let now = Instant::now();
         self.poll_stop(now);
+        self.reap_stragglers();
+        self.drop_late_connections(now);
         let Some(host) = &self.host_end else {
             let idle = self.child.is_none();
             return if idle && self.exit_requested {
@@ -425,6 +519,16 @@ impl Keeper {
 
     fn next_wake(&self) -> Option<Duration> {
         let now = Instant::now();
+        let soonest = self.connections.iter().map(|c| c.deadline).min();
+        let wake = self.state_wake(now);
+        match (wake, soonest) {
+            (Some(wake), Some(deadline)) => Some(wake.min(deadline.saturating_duration_since(now))),
+            (None, Some(deadline)) => Some(deadline.saturating_duration_since(now)),
+            (wake, None) => wake,
+        }
+    }
+
+    fn state_wake(&self, now: Instant) -> Option<Duration> {
         match &self.host_end {
             Some(host) => {
                 let mut wake = now + HOST_END_POLL;
@@ -444,7 +548,31 @@ impl Keeper {
     }
 
     fn answer(&mut self, request: &Value) -> Value {
-        match request["op"].as_str() {
+        let Some(fields) = request.as_object() else {
+            return json!({ "ok": false, "error": "a request is one JSON object" });
+        };
+        if let Some(protocol) = fields.get("protocol") {
+            if protocol.as_u64().is_none_or(|p| p > u64::from(PROTOCOL)) {
+                return json!({
+                    "ok": false,
+                    "error": format!("protocol {protocol} is newer than this keeper's"),
+                    "protocol": PROTOCOL,
+                });
+            }
+        }
+        let op = request["op"].as_str();
+        let extra: &[&str] = if op == Some("launch") {
+            &["child"]
+        } else {
+            &[]
+        };
+        if let Some(unknown) = fields
+            .keys()
+            .find(|k| !REQUEST_FIELDS.contains(&k.as_str()) && !extra.contains(&k.as_str()))
+        {
+            return json!({ "ok": false, "error": format!("unknown field {unknown}") });
+        }
+        match op {
             Some("hello") => self.hello(),
             Some("launch") => {
                 if self.host_end.is_some() {
@@ -491,15 +619,37 @@ impl Keeper {
         })
     }
 
-    fn answer_all(&mut self) {
-        for stream in self.server.pending() {
-            match sock::read_request(&stream) {
-                Ok(request) => {
-                    let answer = self.answer(&request);
-                    sock::reply(&stream, &answer);
-                }
-                Err(e) => eprintln!("winvm-keeper: request: {e}"),
+    fn accept(&mut self) {
+        for connection in self.server.accept() {
+            if let Err(e) = self.kq.watch_readable(connection.fd()) {
+                eprintln!("winvm-keeper: watching a connection: {e}");
+                continue;
             }
+            self.connections.push(connection);
+            self.serve_connection(self.connections.len() - 1);
+        }
+    }
+
+    fn serve_connection(&mut self, index: usize) {
+        let mut connection = self.connections.swap_remove(index);
+        match connection.read() {
+            Received::Pending => self.connections.push(connection),
+            Received::Closed => {}
+            Received::Line(line) => {
+                let answer = match serde_json::from_str::<Value>(&line) {
+                    Ok(request) => self.answer(&request),
+                    Err(e) => json!({ "ok": false, "error": format!("bad request: {e}") }),
+                };
+                connection.reply(&answer);
+            }
+        }
+    }
+
+    fn readable(&mut self, fd: RawFd) {
+        if fd == self.server.fd() {
+            self.accept();
+        } else if let Some(index) = self.connections.iter().position(|c| c.fd() == fd) {
+            self.serve_connection(index);
         }
     }
 
@@ -524,21 +674,23 @@ impl Keeper {
                     Vec::new()
                 }
             };
-            let mut readable = false;
+            let mut readable = Vec::new();
             for event in events {
                 match event {
                     Event::Signal(libc::SIGHUP) => eprintln!("winvm-keeper: SIGHUP ignored"),
                     Event::Signal(signal) => self.begin_host_end(signal),
                     Event::Exit(pid) => exited.push(pid),
-                    Event::Readable => readable = true,
+                    Event::Readable(fd) => readable.push(fd),
                 }
             }
-            if readable {
+            if !readable.is_empty() {
                 if let Some(reason) = self.tick(&exited) {
                     return self.finish(reason);
                 }
                 exited.clear();
-                self.answer_all();
+                for fd in readable {
+                    self.readable(fd);
+                }
             }
         }
     }

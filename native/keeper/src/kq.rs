@@ -5,7 +5,7 @@ use std::time::Duration;
 pub enum Event {
     Signal(i32),
     Exit(i32),
-    Readable,
+    Readable(RawFd),
 }
 
 pub struct Kqueue {
@@ -112,7 +112,7 @@ impl Kqueue {
                 match e.filter {
                     libc::EVFILT_SIGNAL => Some(Event::Signal(ident)),
                     libc::EVFILT_PROC => Some(Event::Exit(ident)),
-                    libc::EVFILT_READ => Some(Event::Readable),
+                    libc::EVFILT_READ => Some(Event::Readable(ident)),
                     _ => None,
                 }
             })

@@ -649,6 +649,29 @@ fn hello_child_pid(scratch: &Scratch) -> i32 {
     i32::try_from(hello["child"]["pid"].as_i64().expect("a child pid")).expect("a pid")
 }
 
+fn start_time_us(pid: i32) -> u64 {
+    // SAFETY: proc_bsdinfo is plain data, and the buffer is exactly its size.
+    unsafe {
+        let mut info: libc::proc_bsdinfo = std::mem::zeroed();
+        let size = libc::c_int::try_from(std::mem::size_of::<libc::proc_bsdinfo>()).expect("size");
+        let got = libc::proc_pidinfo(pid, libc::PROC_PIDTBSDINFO, 0, (&raw mut info).cast(), size);
+        assert_eq!(got, size, "proc_pidinfo({pid})");
+        info.pbi_start_tvsec * 1_000_000 + info.pbi_start_tvusec
+    }
+}
+
+fn gone_pid() -> i32 {
+    let mut child = Command::new("/usr/bin/true").spawn().expect("spawn true");
+    let pid = pid_of(&child);
+    child.wait().expect("reap true");
+    pid
+}
+
+fn write_state(scratch: &Scratch, state: &Value) {
+    fs::create_dir_all(scratch.keeper()).expect("keeper dir");
+    fs::write(scratch.keeper().join("state.json"), state.to_string()).expect("state.json");
+}
+
 #[test]
 fn an_unshielded_child_starts_with_an_empty_mask_and_dies_on_sigterm() {
     let scratch = Scratch::new();
@@ -677,4 +700,224 @@ fn an_unshielded_child_starts_with_an_empty_mask_and_dies_on_sigterm() {
     }
     assert!(exited.success());
     assert_eq!(find(&records(&plain), "exited")["signal"], libc::SIGTERM);
+}
+
+#[test]
+fn a_state_left_by_an_earlier_session_does_not_stop_the_launch() {
+    let scratch = Scratch::new();
+    let dead = gone_pid();
+    write_state(
+        &scratch,
+        &json!({ "session": "old", "child": { "name": "fake", "pid": dead, "startUs": 1, "pidfile": null } }),
+    );
+    let mut fresh = spec(&scratch, &scratch.fake(&[]), None);
+    fresh["session"] = json!("new");
+    scratch.write_spec(&fresh);
+    let mut keeper = start(&scratch, 10_000);
+    let pid = child_pid(&scratch);
+    assert_eq!(
+        keeper_whats(&scratch),
+        ["started", "exited-unknown", "launched"],
+        "{:?}",
+        records(&scratch)
+    );
+    assert_eq!(find(&records(&scratch), "exited-unknown")["pid"], dead);
+    assert_eq!(find(&records(&scratch), "launched")["pid"], pid);
+    assert_eq!(request(&scratch, &json!({ "op": "kill" }))["ok"], true);
+    assert!(wait_exit(&mut keeper, Duration::from_secs(5)).success());
+}
+
+#[test]
+fn a_state_from_before_the_last_boot_does_not_stop_the_launch() {
+    let scratch = Scratch::new();
+    write_state(
+        &scratch,
+        &json!({ "bootUs": 1, "child": { "name": "fake", "pid": gone_pid(), "startUs": 1, "pidfile": null } }),
+    );
+    scratch.write_spec(&spec(&scratch, &scratch.fake(&[]), None));
+    let mut keeper = start(&scratch, 10_000);
+    child_pid(&scratch);
+    assert_eq!(
+        keeper_whats(&scratch),
+        ["started", "exited-unknown", "launched"]
+    );
+    assert_eq!(request(&scratch, &json!({ "op": "kill" }))["ok"], true);
+    assert!(wait_exit(&mut keeper, Duration::from_secs(5)).success());
+}
+
+#[test]
+fn adoption_refuses_a_live_process_with_the_wrong_start_time() {
+    let scratch = Scratch::new();
+    let mut stranger = Command::new("/bin/sleep")
+        .arg("30")
+        .spawn()
+        .expect("spawn sleep");
+    let pid = pid_of(&stranger);
+    let mut state =
+        json!({ "child": { "name": "fake", "pid": pid, "startUs": 1, "pidfile": null } });
+    fs::create_dir_all(scratch.keeper()).expect("keeper dir");
+    let mut keeper = start(&scratch, 10_000);
+    request(&scratch, &json!({ "op": "hello" }));
+    assert_eq!(
+        request(&scratch, &json!({ "op": "exit-when-idle" }))["ok"],
+        true
+    );
+    assert!(wait_exit(&mut keeper, Duration::from_secs(5)).success());
+    state["session"] = Value::Null;
+    write_state(&scratch, &state);
+    scratch.write_spec(&json!({ "instance": "test", "record": scratch.record(), "lingerMs": 300 }));
+    let mut keeper = start(&scratch, 10_000);
+    assert!(wait_exit(&mut keeper, Duration::from_secs(5)).success());
+    assert!(alive(pid), "the stranger was signalled");
+    assert_eq!(find(&records(&scratch), "exited-unknown")["pid"], pid);
+    stranger.kill().expect("kill sleep");
+    stranger.wait().expect("reap sleep");
+}
+
+#[test]
+fn adoption_refuses_a_pid_whose_pidfile_another_process_holds() {
+    let scratch = Scratch::new();
+    let pidfile = scratch.path("fake.pid");
+    let mut holder = Command::new(fakechild())
+        .args([
+            scratch.path("report").as_str(),
+            "--pidfile",
+            pidfile.as_str(),
+        ])
+        .spawn()
+        .expect("spawn the lock holder");
+    wait_until("the lock", Duration::from_secs(5), || {
+        scratch.report().contains("blocked")
+    });
+    let mut stranger = Command::new("/bin/sleep")
+        .arg("30")
+        .spawn()
+        .expect("spawn sleep");
+    let pid = pid_of(&stranger);
+    write_state(
+        &scratch,
+        &json!({ "child": { "name": "fake", "pid": pid, "startUs": start_time_us(pid), "pidfile": pidfile } }),
+    );
+    scratch.write_spec(&json!({ "instance": "test", "record": scratch.record(), "lingerMs": 300 }));
+    let mut keeper = start(&scratch, 10_000);
+    assert!(wait_exit(&mut keeper, Duration::from_secs(5)).success());
+    assert!(alive(pid));
+    assert!(records(&scratch).iter().all(|r| r["what"] != "adopted"));
+    for process in [&mut stranger, &mut holder] {
+        process.kill().expect("kill");
+        process.wait().expect("reap");
+    }
+}
+
+#[test]
+fn idle_connections_do_not_delay_an_answer() {
+    let scratch = Scratch::new();
+    scratch.write_spec(&json!({ "lingerMs": 60_000 }));
+    let mut keeper = start(&scratch, 10_000);
+    request(&scratch, &json!({ "op": "hello" }));
+    let socket = scratch.keeper().join("keeper.sock");
+    let idle: Vec<UnixStream> = (0..4)
+        .map(|_| UnixStream::connect(&socket).expect("an idle connection"))
+        .collect();
+    std::thread::sleep(Duration::from_millis(50));
+    let asked = Instant::now();
+    assert_eq!(request(&scratch, &json!({ "op": "hello" }))["ok"], true);
+    assert!(
+        asked.elapsed() < Duration::from_millis(500),
+        "hello took {:?}",
+        asked.elapsed()
+    );
+    drop(idle);
+    assert_eq!(
+        request(&scratch, &json!({ "op": "exit-when-idle" }))["ok"],
+        true
+    );
+    assert!(wait_exit(&mut keeper, Duration::from_secs(5)).success());
+}
+
+#[test]
+fn requests_with_unknown_fields_or_a_newer_protocol_are_refused() {
+    let scratch = Scratch::new();
+    scratch.write_spec(&json!({ "lingerMs": 60_000 }));
+    let mut keeper = start(&scratch, 10_000);
+    assert_eq!(
+        request(&scratch, &json!({ "op": "hello", "protocol": 1 }))["ok"],
+        true
+    );
+    let newer = request(&scratch, &json!({ "op": "hello", "protocol": 2 }));
+    assert_eq!(newer["ok"], false);
+    assert_eq!(newer["protocol"], 1);
+    assert_eq!(
+        request(&scratch, &json!({ "op": "hello", "slot": "x" }))["ok"],
+        false
+    );
+    let typo = request(
+        &scratch,
+        &json!({ "op": "launch", "child": { "argv": ["/bin/sleep", "9"], "pidFile": "/tmp/x" } }),
+    );
+    assert_eq!(typo["ok"], false, "{typo}");
+    assert!(
+        typo["error"].as_str().unwrap_or("").contains("pidFile"),
+        "{typo}"
+    );
+    assert!(request(&scratch, &json!({ "op": "hello" }))["child"].is_null());
+    assert_eq!(
+        request(&scratch, &json!({ "op": "exit-when-idle" }))["ok"],
+        true
+    );
+    assert!(wait_exit(&mut keeper, Duration::from_secs(5)).success());
+}
+
+#[test]
+fn a_bad_spec_parks_the_keeper_with_exit_zero() {
+    let scratch = Scratch::new();
+    fs::create_dir_all(scratch.keeper()).expect("keeper dir");
+    fs::write(scratch.keeper().join("spec.json"), "{ not json").expect("spec.json");
+    let mut keeper = start(&scratch, 10_000);
+    assert!(wait_exit(&mut keeper, Duration::from_secs(5)).success());
+    assert!(fs::read_to_string(scratch.path("keeper.err"))
+        .expect("stderr")
+        .contains("spec.json"));
+    let typo = Scratch::new();
+    typo.write_spec(&json!({ "child": { "argv": ["/bin/sleep", "9"] }, "lingerMS": 5 }));
+    let mut keeper = start(&typo, 10_000);
+    assert!(wait_exit(&mut keeper, Duration::from_secs(5)).success());
+    assert!(fs::read_to_string(typo.path("keeper.err"))
+        .expect("stderr")
+        .contains("lingerMS"));
+}
+
+#[test]
+fn a_bad_spec_still_adopts_a_live_child_and_keeps_its_record() {
+    let scratch = Scratch::new();
+    scratch.write_spec(&spec(&scratch, &scratch.fake_locked(), None));
+    let mut first = start(&scratch, 10_000);
+    let pid = child_pid(&scratch);
+    first.kill().expect("SIGKILL the keeper");
+    first.wait().expect("reap the keeper");
+    fs::write(scratch.keeper().join("spec.json"), "{ not json").expect("spec.json");
+    let mut second = start(&scratch, 10_000);
+    let hello = request(&scratch, &json!({ "op": "hello" }));
+    assert_eq!(hello["child"]["pid"], pid);
+    assert_eq!(hello["instance"], "test");
+    signal(pid_of(&second), libc::SIGTERM);
+    assert!(wait_exit(&mut second, Duration::from_secs(5)).success());
+    assert!(!alive(pid));
+    assert_eq!(
+        keeper_whats(&scratch),
+        [
+            "started",
+            "launched",
+            "started",
+            "spec-invalid",
+            "adopted",
+            "host-ending",
+            "host-end:kill",
+            "exited-unknown",
+            "host-end:done",
+            "exiting"
+        ],
+        "{:?}",
+        records(&scratch)
+    );
 }
