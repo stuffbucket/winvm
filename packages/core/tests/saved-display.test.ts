@@ -53,6 +53,7 @@ import * as qga from "../src/qga"
 import * as qmp from "../src/qmp"
 import { currentQemuCompat } from "../src/runtime"
 import * as savecmds from "../src/savecmds"
+import * as saves from "../src/saves"
 import {
   cloneSave,
   compatFor,
@@ -1131,5 +1132,27 @@ describe("the runtime a stow is labelled with", () => {
     reported = { major: 10, minor: 0, micro: 0 }
     const f = await hostEndFacts("source")
     expect(f.unsaveable).toContain("QEMU 10.0.0")
+  })
+})
+
+describe("a recall that fails", () => {
+  it("names --boot as the way out, so start is never stuck on the stow", async () => {
+    await createSave("source", {
+      name: "stow",
+      kind: "stow",
+      format: "raw",
+      quitAfter: true,
+    })
+    spyOn(saves, "loadSave").mockRejectedValue(
+      new Error('QEMU exited while loading save "stow"'),
+    )
+    const errors = spyOn(console, "error").mockImplementation(() => undefined)
+    expect(
+      await savecmds.recallStow("source", parseArgs(["-i", "source"])),
+    ).toBe(1)
+    const said = errors.mock.calls.map((c) => String(c[0])).join("\n")
+    expect(said).toContain("QEMU exited while loading")
+    expect(said).toContain("winvm start -i source --boot")
+    expect(readSave("source", "stow")).not.toBeNull()
   })
 })

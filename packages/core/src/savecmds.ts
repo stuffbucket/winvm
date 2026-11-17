@@ -485,7 +485,12 @@ export async function recallStow(
       return null
     }
   }
-  return await doLoad(name, saves.STOW, "recalled")
+  const code = await doLoad(name, saves.STOW, "recalled")
+  if (code !== 0 && saves.hasSave(name, saves.STOW))
+    console.error(
+      `  the stow is kept; \`winvm start -i ${name} --boot\` discards it and starts Windows afresh from its disk`,
+    )
+  return code
 }
 
 export const markPristine = saves.markPristine
