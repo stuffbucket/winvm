@@ -59,6 +59,7 @@ let previousSpawner: qemu.Spawner
 let previousProbe: share.Probe
 let keepers: ReturnType<typeof Bun.spawn>[] = []
 let launchdCalls: string[] = []
+let bootstrapFails = false
 let detached: string[] = []
 
 const sleep = async (ms: number): Promise<void> => {
@@ -89,6 +90,8 @@ function fakeLaunchd(): Launchd {
   return {
     bootstrap: (plist) => {
       launchdCalls.push("bootstrap")
+      if (bootstrapFails)
+        throw new Error("launchctl bootstrap user/501 keeper.plist: 5: EIO")
       const proc = Bun.spawn(
         [process.execPath, FAKE_KEEPER, "run", "--dir", dirname(plist)],
         { stdout: "ignore", stderr: "inherit" },
@@ -188,6 +191,7 @@ beforeEach(() => {
   })
   launchdCalls = []
   detached = []
+  bootstrapFails = false
 })
 
 afterEach(() => {
@@ -477,6 +481,19 @@ describe("launching QEMU without the keeper", () => {
     expect(detached.some((c) => c.endsWith("/bin/swtpm"))).toBe(true)
     expect(launchdCalls).toEqual([])
     expect(existsSync(keeperDir(pathsFor(NAME)))).toBe(false)
+  })
+
+  it("spawns QEMU detached, with a warning, when the keeper cannot be started", async () => {
+    bootstrapFails = true
+    const warnings: string[] = []
+    spyOn(console, "warn").mockImplementation((...a: unknown[]) => {
+      warnings.push(a.map(String).join(" "))
+    })
+    await expect(leasedLaunch()).rejects.toThrow("detached spawn of")
+    expect(launchdCalls.at(-1)).toBe("bootstrap")
+    expect(warnings.join("\n")).toContain(
+      "winvm's keeper did not start (launchctl bootstrap user/501 keeper.plist: 5: EIO); starting QEMU without it, so it is not protected if the Mac shuts down",
+    )
   })
 
   it("spawns QEMU detached when no keeper is installed", async () => {

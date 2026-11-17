@@ -19,8 +19,9 @@ import { displayArgs, RAMFB, readDisplay, runningCommand } from "./display"
 import type { Hardware } from "./hardware"
 import { readHardware } from "./hardware"
 import { requireFirmware, tpmTisHasPpi } from "./host"
-import type { FoundKeeper, KeeperChild } from "./keeper"
+import { type FoundKeeper, KeeperBusy, type KeeperChild } from "./keeper"
 import * as kept from "./kept"
+import { LeaseNotHeld } from "./operation"
 import type { InstanceMeta, Paths } from "./paths"
 import { media } from "./paths"
 import * as qga from "./qga"
@@ -260,8 +261,19 @@ export async function launch(
 ): Promise<void> {
   const use = kept.keeperUse()
   if (use.kind === "keeper") {
-    await launchKept(name, p, meta, o, use.keeper)
-    return
+    const failed = await kept.openKeeper(name, p, use.keeper).then(
+      () => null,
+      (error: unknown) => error,
+    )
+    if (failed === null) {
+      await launchKept(name, p, meta, o, use.keeper)
+      return
+    }
+    if (failed instanceof LeaseNotHeld || failed instanceof KeeperBusy)
+      throw failed
+    console.warn(
+      `warning: winvm's keeper did not start (${failed instanceof Error ? failed.message : String(failed)}); starting QEMU without it, so it is not protected if the Mac shuts down`,
+    )
   }
   await startSwtpm(p)
   const { display, devices } = launchDevices(p, o)
@@ -315,7 +327,6 @@ async function launchKept(
   keeper: FoundKeeper,
 ): Promise<void> {
   const { display, devices } = launchDevices(p, o)
-  await kept.openKeeper(name, p, keeper)
   const still = await kept.untilChildGone(p, REAPED_MS)
   if (still !== null)
     throw new Error(
