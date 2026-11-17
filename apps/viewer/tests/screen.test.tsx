@@ -45,6 +45,7 @@ class FakeRFB extends EventTarget {
   clipboardPasteFrom(): void {}
 }
 
+const realRfb = { ...(await import("@winvm/novnc/core/rfb.js")) }
 await mock.module("@winvm/novnc/core/rfb.js", () => ({ default: FakeRFB }))
 
 const { act } = await import("react")
@@ -61,7 +62,10 @@ afterEach(() => {
   FakeRFB.made = []
   jest.useRealTimers()
 })
-afterAll(() => GlobalRegistrator.unregister())
+afterAll(async () => {
+  await mock.module("@winvm/novnc/core/rfb.js", () => realRfb)
+  await GlobalRegistrator.unregister()
+})
 
 interface Shown {
   readonly websocketPort?: number
