@@ -53,8 +53,12 @@ seconds, and the service has until 47 seconds after the stop began:
   would refuse or boot past: `winvm stow`, the idle watcher's stow and the
   app's close-window stow refuse it too, and Windows keeps running.
   `winvm stow` then exits 4 and says to shut Windows down and start it
-  again; the watcher notes it once and stops trying idle stows until QEMU
-  restarts; the app's close stays open with the same words.
+  again, before it stops the watcher or takes the Finder drives down; the
+  watcher stops trying idle stows until QEMU restarts, and `winvm status`
+  says so; the app's close stays open with the same words. When QEMU does
+  not say which version it runs, `winvm stow` exits 5 instead, and the
+  watcher tries again later. A stow that fails once it has begun puts the
+  watcher it stopped back while Windows still runs.
 
 The keeper never lets two of them act on Windows at once. If the service
 refuses the moment, or can't be reached, or never answered and has died, the
