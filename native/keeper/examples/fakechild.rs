@@ -1,12 +1,83 @@
 use std::fs::{File, OpenOptions};
-use std::io::Write;
+use std::io::{BufRead, BufReader, Write};
 use std::os::fd::AsRawFd;
-use std::path::Path;
+use std::os::unix::net::{UnixListener, UnixStream};
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
 use std::time::{Duration, Instant};
 
 static HANDLED: AtomicI32 = AtomicI32::new(0);
 static QUIT: AtomicBool = AtomicBool::new(false);
+static POWERED_DOWN: AtomicBool = AtomicBool::new(false);
+
+struct Monitor {
+    path: PathBuf,
+    report: PathBuf,
+    status: String,
+    migrate_ms: Option<u64>,
+    on_powerdown: String,
+    on_quit: String,
+}
+
+fn qmp_answer(monitor: &Monitor, started: Instant, cancelled: &mut bool, command: &str) -> String {
+    let migrating = !*cancelled
+        && monitor
+            .migrate_ms
+            .is_some_and(|ms| started.elapsed() < Duration::from_millis(ms));
+    match command {
+        "query-status" => format!(r#"{{"return":{{"status":"{}"}}}}"#, monitor.status),
+        "query-migrate" if migrating => r#"{"return":{"status":"active"}}"#.to_owned(),
+        "query-migrate" if *cancelled => r#"{"return":{"status":"cancelled"}}"#.to_owned(),
+        "query-migrate" if monitor.migrate_ms.is_some() => {
+            r#"{"return":{"status":"completed"}}"#.to_owned()
+        }
+        "migrate_cancel" => {
+            *cancelled = true;
+            r#"{"return":{}}"#.to_owned()
+        }
+        "system_powerdown" => {
+            if monitor.on_powerdown == "exit" {
+                POWERED_DOWN.store(true, Ordering::SeqCst);
+            }
+            "{\"event\":\"POWERDOWN\"}\n{\"return\":{}}".to_owned()
+        }
+        "qmp_capabilities" | "query-migrate" | "cont" | "quit" => r#"{"return":{}}"#.to_owned(),
+        _ => r#"{"error":{"class":"CommandNotFound","desc":"unknown"}}"#.to_owned(),
+    }
+}
+
+fn serve_client(monitor: &Monitor, started: Instant, cancelled: &mut bool, stream: UnixStream) {
+    let mut report = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&monitor.report)
+        .expect("open the report");
+    let mut writer = stream.try_clone().expect("clone the stream");
+    writeln!(writer, r#"{{"QMP":{{"version":{{}},"capabilities":[]}}}}"#).expect("greet");
+    for line in BufReader::new(stream).lines() {
+        let Ok(line) = line else { return };
+        let request: serde_json::Value = serde_json::from_str(&line).expect("a QMP request");
+        let command = request["execute"].as_str().unwrap_or("").to_owned();
+        writeln!(report, "qmp {command}").expect("write the report");
+        let answer = qmp_answer(monitor, started, cancelled, &command);
+        if writeln!(writer, "{answer}").is_err() {
+            return;
+        }
+        if command == "quit" && monitor.on_quit == "exit" {
+            std::process::exit(0);
+        }
+    }
+}
+
+fn serve_qmp(monitor: &Monitor) {
+    let _ = std::fs::remove_file(&monitor.path);
+    let listener = UnixListener::bind(&monitor.path).expect("bind the QMP socket");
+    let started = Instant::now();
+    let mut cancelled = false;
+    for stream in listener.incoming().flatten() {
+        serve_client(monitor, started, &mut cancelled, stream);
+    }
+}
 
 extern "C" fn on_signal(signal: libc::c_int) {
     if signal == libc::SIGUSR1 {
@@ -87,6 +158,17 @@ fn main() {
         install(signal);
     }
     let _held = value("--pidfile").map(|p| lock(Path::new(&p)));
+    if let Some(path) = value("--qmp") {
+        let monitor = Monitor {
+            path: PathBuf::from(path),
+            report: PathBuf::from(report_path),
+            status: value("--status").unwrap_or_else(|| "running".to_owned()),
+            migrate_ms: value("--migrate-ms").map(|m| m.parse().expect("--migrate-ms N")),
+            on_powerdown: value("--powerdown").unwrap_or_else(|| "exit".to_owned()),
+            on_quit: value("--quit").unwrap_or_else(|| "exit".to_owned()),
+        };
+        std::thread::spawn(move || serve_qmp(&monitor));
+    }
     let mask = blocked();
     let member = |signal| {
         // SAFETY: sigismember only reads the set returned by blocked().
@@ -117,6 +199,11 @@ fn main() {
         }
         if QUIT.load(Ordering::SeqCst) {
             writeln!(report, "quit").expect("write the report");
+            std::process::exit(0);
+        }
+        if POWERED_DOWN.load(Ordering::SeqCst) {
+            std::thread::sleep(Duration::from_millis(100));
+            writeln!(report, "shut down").expect("write the report");
             std::process::exit(0);
         }
         if let Some(code) = exit_code {

@@ -119,6 +119,7 @@ mod tests {
             pid: i32::MAX,
             start_us: 1,
             pidfile: None,
+            qmp: None,
         };
         assert_eq!(identify(&kept), None);
     }
