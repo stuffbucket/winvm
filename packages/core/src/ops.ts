@@ -175,6 +175,7 @@ export type Submitted =
       readonly queued: LeaseHolder | null
     }
   | { readonly kind: "busy"; readonly holder: LeaseHolder }
+  | { readonly kind: "failed"; readonly error: string }
 
 export interface QueueHooks {
   readonly record: (fields: EntryFields) => void
@@ -267,8 +268,15 @@ export class OpQueue {
           },
         )
       } catch (error) {
-        if (error instanceof InstanceBusy && !accepted) {
-          decide({ kind: "busy", holder: error.holder })
+        if (!accepted) {
+          decide(
+            error instanceof InstanceBusy
+              ? { kind: "busy", holder: error.holder }
+              : {
+                  kind: "failed",
+                  error: error instanceof Error ? error.message : String(error),
+                },
+          )
           return
         }
         if (!running.held) this.endUnheld(running, args, error)

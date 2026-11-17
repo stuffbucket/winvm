@@ -125,23 +125,23 @@ export async function followOp(
   signal: AbortSignal,
 ): Promise<number> {
   let since = a.cursor
+  let gone = false
   for (;;) {
     const found = await waitForEvent(
       name,
       ofOp(a.id),
-      Date.now() + LIVENESS_MS,
-      {
-        since,
-        signal,
-        pollMs: 100,
-      },
+      gone ? Date.now() : Date.now() + LIVENESS_MS,
+      { since, signal, pollMs: 100 },
     )
-    if (found === null) {
-      if (isAlive(a.servicePid)) continue
+    if (found === null && gone) {
       io.err(
         `::error::winvm's service for "${name}" ended before ${operation} finished; \`winvm events -i ${name}\` shows how far it got\n`,
       )
       return 1
+    }
+    if (found === null) {
+      gone = !isAlive(a.servicePid)
+      continue
     }
     since = found.cursor
     const e = found.entry

@@ -1,5 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test"
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
+import {
+  chmodSync,
+  mkdirSync,
+  mkdtempSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs"
 import { tmpdir } from "node:os"
 import { resolve } from "node:path"
 
@@ -251,6 +257,22 @@ describe("an op the service runs", () => {
     expect(res.ok).toBe(true)
     gates.resume?.open()
     await ended(a.body.id)
+  })
+
+  it("says at once that it could not take the lease, without running the op, when taking it fails", async () => {
+    writeFileSync(p.events, "")
+    chmodSync(p.dir, 0o500)
+    try {
+      const t0 = Date.now()
+      const r = await submit("pause")
+      expect(Date.now() - t0).toBeLessThan(2000)
+      expect(r.status).toBe(503)
+      expect(r.body).toMatchObject({ protocol: OPS_PROTOCOL })
+      expect(String(r.body.error)).toContain("EACCES")
+    } finally {
+      chmodSync(p.dir, 0o700)
+    }
+    expect(seen).toEqual([])
   })
 
   it("refuses a protocol it does not speak, and an op it does not run, so the client can run it itself", async () => {

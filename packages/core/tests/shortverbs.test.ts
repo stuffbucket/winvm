@@ -436,6 +436,19 @@ describe("the short verbs, run by winvm's service", () => {
     })
   }, 30_000)
 
+  it("say so when the service ends before the op does, instead of waiting for ever", async () => {
+    guest.bootDelayMs = 60_000
+    const r = launch("reboot", "-i", "t")
+    await until(() => r.stdout().includes("rebooting"))
+    service?.kill("SIGKILL")
+    expect(await r.done).toEqual({
+      code: 1,
+      stdout: "rebooting",
+      stderr:
+        '::error::winvm\'s service for "t" ended before reboot finished; `winvm events -i t` shows how far it got\n',
+    })
+  }, 30_000)
+
   it("end the op in flight when kill runs beside it", async () => {
     guest.bootDelayMs = 60_000
     const r = launch("reboot", "-i", "t")

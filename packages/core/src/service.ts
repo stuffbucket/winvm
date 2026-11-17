@@ -239,6 +239,7 @@ export async function runService(
     if ("status" in parsed) return answer(parsed)
     const s = await queue.submit(parsed)
     if (s.kind === "busy") return answer(reply(409, { busy: s.holder }))
+    if (s.kind === "failed") return answer(reply(503, { error: s.error }))
     return answer(
       reply(202, {
         id: s.id,
