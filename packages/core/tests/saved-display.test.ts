@@ -34,6 +34,7 @@ import {
   writeDisplay,
 } from "../src/display"
 import * as host from "../src/host"
+import * as kept from "../src/kept"
 import * as media from "../src/media"
 import {
   basePath,
@@ -322,6 +323,27 @@ describe("capturing the running display", () => {
     )
     expect(readSave("source", "now")?.display).toEqual(VIRTIO_GPU)
     expect(readDisplay(pathsFor("source"))).toEqual(RAMFB)
+  })
+
+  it("stamps a save with the runtime its QEMU was launched from, not the one installed since", async () => {
+    initialRunning = VIRTIO_GPU
+    const launched = spyOn(kept, "launchedRuntime").mockResolvedValue(
+      "10.0.0+patches:old",
+    )
+    const result = await createSave("source", {
+      name: "launched",
+      kind: "manual",
+      format: "raw",
+    })
+    expect(launched).toHaveBeenCalledWith(pathsFor("source"), FAKE_PID)
+    expect(result.manifest.compatParts?.qemu).toBe("10.0.0+patches:old")
+    expect(result.manifest.compat).toBe(
+      currentCompat("source", meta, VIRTIO_GPU, undefined, "10.0.0+patches:old")
+        .hash,
+    )
+    expect(result.manifest.compat).not.toBe(
+      currentCompat("source", meta, VIRTIO_GPU).hash,
+    )
   })
 
   it("records an earlier winvm's sized virtio-gpu exactly", async () => {

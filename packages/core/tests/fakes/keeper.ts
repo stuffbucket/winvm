@@ -13,11 +13,18 @@ interface Child {
   readonly argv: readonly string[]
   readonly env?: Readonly<Record<string, string>>
   readonly log?: string
+  readonly runtime?: string
 }
 
 interface Kept {
   readonly name: string
   readonly proc: ReturnType<typeof Bun.spawn>
+  readonly runtime?: string
+}
+
+interface Service {
+  readonly proc: ReturnType<typeof Bun.spawn>
+  readonly build: string
 }
 
 const dir = process.argv[process.argv.indexOf("--dir") + 1] ?? "."
@@ -29,6 +36,7 @@ const journal = resolve(dir, "requests.jsonl")
 let child: Kept | null = null
 let sidecars: Kept[] = []
 let lastExit: Record<string, unknown> | null = null
+let service: Service | null = null
 
 function spawnChild(c: Child, onExit: (code: number | null) => void): Kept {
   const out = c.log === undefined ? "ignore" : openSync(c.log, "a", 0o600)
@@ -41,7 +49,24 @@ function spawnChild(c: Child, onExit: (code: number | null) => void): Kept {
       onExit(code)
     },
   })
-  return { name: c.name, proc }
+  return {
+    name: c.name,
+    proc,
+    ...(c.runtime === undefined ? {} : { runtime: c.runtime }),
+  }
+}
+
+async function stopService(): Promise<number | null> {
+  const ending = service
+  if (ending === null) return null
+  service = null
+  ending.proc.kill("SIGUSR2")
+  const timer = setTimeout(() => {
+    ending.proc.kill("SIGKILL")
+  }, 5000)
+  await ending.proc.exited
+  clearTimeout(timer)
+  return ending.proc.pid
 }
 
 const retire = (): void => {
@@ -53,23 +78,59 @@ const listed = (k: Kept): Record<string, unknown> => ({
   pid: k.proc.pid,
   startUs: 1,
   adopted: false,
+  legacy: false,
+  runtime: k.runtime ?? null,
 })
 
-function answer(request: Record<string, unknown>): Record<string, unknown> {
+async function answer(
+  request: Record<string, unknown>,
+): Promise<Record<string, unknown>> {
   appendFileSync(journal, `${JSON.stringify(request)}\n`)
   switch (request.op) {
     case "hello":
       return {
         ok: true,
-        protocol: 2,
+        protocol: 3,
         version: "fake",
         pid: process.pid,
         instance: spec.instance,
         child: child === null ? null : listed(child),
         sidecars: sidecars.map(listed),
+        service:
+          service === null
+            ? null
+            : {
+                pid: service.proc.pid,
+                build: service.build,
+                startUs: 1,
+                adopted: false,
+              },
         lastExit,
         hostEnding: false,
       }
+    case "service": {
+      const s = request.service as Child & { readonly build: string }
+      if (service !== null && service.build === s.build)
+        return { ok: true, pid: service.proc.pid, started: false }
+      await stopService()
+      const proc = Bun.spawn([...s.argv], {
+        env: { ...s.env, WINVM_KEEPER_PID: String(process.pid) },
+        stdin: "ignore",
+        stdout: s.log === undefined ? "ignore" : openSync(s.log, "a", 0o600),
+        stderr: s.log === undefined ? "ignore" : openSync(s.log, "a", 0o600),
+        onExit: () => {
+          if (service?.proc === proc) service = null
+        },
+      })
+      service = { proc, build: s.build }
+      return { ok: true, pid: proc.pid, started: true }
+    }
+    case "service-stop": {
+      const pid = await stopService()
+      return pid === null
+        ? { ok: false, error: "no service" }
+        : { ok: true, pid }
+    }
     case "launch-sidecar": {
       if (child !== null) return { ok: false, error: "busy" }
       const c = request.child as Child
@@ -120,13 +181,16 @@ const server = createServer((connection: Socket) => {
       string,
       unknown
     >
-    connection.end(`${JSON.stringify(answer(request))}\n`)
+    void answer(request).then((reply) => {
+      connection.end(`${JSON.stringify(reply)}\n`)
+    })
   })
 })
 server.listen(socket)
 process.on("SIGTERM", () => {
   retire()
   child?.proc.kill("SIGKILL")
+  service?.proc.kill("SIGKILL")
   server.close()
   rmSync(socket, { force: true })
   process.exit(0)

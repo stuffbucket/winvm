@@ -42,12 +42,14 @@ import {
   keeperStanding,
   keeperUse,
   killKept,
+  launchedRuntime,
   setLaunchd,
 } from "../src/kept"
 import { InstanceBusy, LeaseNotHeld, withOperation } from "../src/operation"
 import { type InstanceMeta, pathsFor } from "../src/paths"
 import * as qemu from "../src/qemu"
 import * as qmp from "../src/qmp"
+import { currentQemuCompat } from "../src/runtime"
 import * as saves from "../src/saves"
 import * as servicectl from "../src/servicectl"
 import * as share from "../src/share"
@@ -253,6 +255,33 @@ describe("choosing how QEMU is launched", () => {
 })
 
 describe("launching QEMU through the keeper", () => {
+  it("launches QEMU with the runtime it comes from, and remembers that after the runtime changes", async () => {
+    const before = currentQemuCompat()
+    await leasedLaunch()
+    const p = pathsFor(NAME)
+    const launch = requests().find((r) => r.op === "launch")?.child as
+      | { readonly runtime?: string }
+      | undefined
+    expect(launch?.runtime).toBe(before)
+    await until("the pidfile", () => qemu.isRunning(p))
+    const pid = qemu.pidOf(p) ?? 0
+    writeFileSync(
+      resolve(state, "runtime", "manifest.json"),
+      JSON.stringify({
+        name: "winvm-runtime",
+        version: "9",
+        qemu: "99.0.0",
+        qemuPatches: "x",
+        components: {},
+        macho: [],
+        files: {},
+      }),
+    )
+    expect(currentQemuCompat()).toBe("99.0.0+patches:x")
+    expect(await launchedRuntime(p, pid)).toBe(before)
+    expect(await launchedRuntime(p, pid + 1)).toBeNull()
+  })
+
   it("starts the keeper under the lease, then the TPM emulator, then QEMU with the keeper's own monitor", async () => {
     await leasedLaunch()
     const p = pathsFor(NAME)
@@ -443,12 +472,16 @@ describe("a QEMU started detached, before the keeper", () => {
 })
 
 describe("whether the keeper protects a VM", () => {
-  const hello = (child: number | null): KeeperHello => ({
+  const hello = (child: number | null, legacy = false): KeeperHello => ({
     pid: 9,
-    protocol: 2,
+    protocol: 3,
     version: "0.1.0",
-    child: child === null ? null : { name: "qemu", pid: child, adopted: false },
+    child:
+      child === null
+        ? null
+        : { name: "qemu", pid: child, adopted: legacy, legacy, runtime: null },
     sidecars: [],
+    service: null,
     hostEnding: false,
   })
 

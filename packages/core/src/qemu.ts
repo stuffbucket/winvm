@@ -29,7 +29,7 @@ import { lockState } from "./pidlock"
 import { signalProcess } from "./proc"
 import * as qga from "./qga"
 import * as qmp from "./qmp"
-import { runtimeBin } from "./runtime"
+import { currentQemuCompat, runtimeBin } from "./runtime"
 import { ensureService } from "./servicectl"
 import * as share from "./share"
 import { applyPassword, ensureFreeDisplay, vncArg } from "./vnc"
@@ -349,7 +349,7 @@ async function launchKept(
   const m = await ensureFreeDisplay(name, p, meta)
   await kept.openKeeper(name, p, keeper)
   stopSidecars(p)
-  const env = keptEnv()
+  const env = kept.keptEnv()
   const umask = kept.callerUmask()
   const sidecar = async (
     child: KeeperChild & { readonly name: string },
@@ -407,6 +407,7 @@ async function launchKept(
       pidfile: p.pid,
       qmp: monitor,
       umask,
+      runtime: currentQemuCompat(),
     })
     .catch(async (error: unknown) => {
       await kept.killKept(p, null)
@@ -430,27 +431,6 @@ async function launchKept(
   await kept.killKept(p, null)
   throw exitedImmediately(p)
 }
-
-const PASSED_ENV = new Set([
-  "HOME",
-  "USER",
-  "LOGNAME",
-  "PATH",
-  "SHELL",
-  "TMPDIR",
-  "LANG",
-])
-
-const keptEnv = (): Readonly<Record<string, string>> =>
-  Object.fromEntries(
-    Object.entries(process.env).filter(
-      (e): e is [string, string] =>
-        e[1] !== undefined &&
-        (PASSED_ENV.has(e[0]) ||
-          e[0].startsWith("LC_") ||
-          e[0].startsWith("WINVM_")),
-    ),
-  )
 
 async function settled(
   p: Paths,

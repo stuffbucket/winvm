@@ -67,6 +67,14 @@ export interface KeptProcess {
   readonly name: string
   readonly pid: number
   readonly adopted: boolean
+  readonly legacy: boolean
+  readonly runtime: string | null
+}
+
+export interface KeptService {
+  readonly pid: number
+  readonly build: string
+  readonly adopted: boolean
 }
 
 export interface KeeperHello {
@@ -75,6 +83,7 @@ export interface KeeperHello {
   readonly version: string
   readonly child: KeptProcess | null
   readonly sidecars: readonly KeptProcess[]
+  readonly service: KeptService | null
   readonly hostEnding: boolean
 }
 
@@ -82,7 +91,25 @@ function keptProcess(raw: unknown): KeptProcess | null {
   if (typeof raw !== "object" || raw === null) return null
   const r = raw as Record<string, unknown>
   return typeof r.pid === "number" && typeof r.name === "string"
-    ? { name: r.name, pid: r.pid, adopted: r.adopted === true }
+    ? {
+        name: r.name,
+        pid: r.pid,
+        adopted: r.adopted === true,
+        legacy: r.legacy === true,
+        runtime: typeof r.runtime === "string" ? r.runtime : null,
+      }
+    : null
+}
+
+function keptService(raw: unknown): KeptService | null {
+  if (typeof raw !== "object" || raw === null) return null
+  const r = raw as Record<string, unknown>
+  return typeof r.pid === "number"
+    ? {
+        pid: r.pid,
+        build: typeof r.build === "string" ? r.build : "",
+        adopted: r.adopted === true,
+      }
     : null
 }
 
@@ -98,9 +125,41 @@ export function parseHello(raw: Record<string, unknown>): KeeperHello | null {
           .map(keptProcess)
           .filter((k): k is KeptProcess => k !== null)
       : [],
+    service: keptService(raw.service),
     hostEnding: raw.hostEnding === true,
   }
 }
+
+export async function launchedRuntime(
+  p: Paths,
+  pid: number,
+): Promise<string | null> {
+  const child = (await keeperHello(p))?.child ?? null
+  return child?.pid === pid ? child.runtime : null
+}
+
+const PASSED_ENV: ReadonlySet<string> = new Set([
+  "HOME",
+  "USER",
+  "LOGNAME",
+  "PATH",
+  "SHELL",
+  "TMPDIR",
+  "LANG",
+])
+
+export const keptEnv = (
+  env: Readonly<Record<string, string | undefined>> = process.env,
+): Readonly<Record<string, string>> =>
+  Object.fromEntries(
+    Object.entries(env).filter(
+      (e): e is [string, string] =>
+        e[1] !== undefined &&
+        (PASSED_ENV.has(e[0]) ||
+          e[0].startsWith("LC_") ||
+          e[0].startsWith("WINVM_")),
+    ),
+  )
 
 export async function keeperHello(
   p: Paths,

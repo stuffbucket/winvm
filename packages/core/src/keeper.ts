@@ -41,7 +41,7 @@ export interface FoundKeeper {
 export const KEEPER_BINARY = "winvm-keeper"
 export const KEEPER_PREFIX = "co.stuffbucket.winvm.keeper."
 export const KEEPER_EXIT_TIMEOUT = 60
-export const KEEPER_PROTOCOL = 2
+export const KEEPER_PROTOCOL = 3
 export const KEEPER_DIR = "keeper"
 const FRESH_MS = 60_000
 const APP_BUNDLE_ID = "co.stuffbucket.winvm"
@@ -294,6 +294,22 @@ export interface KeeperChild extends KeeperCommand {
   readonly name?: string
   readonly pidfile?: string
   readonly qmp?: string
+  readonly runtime?: string
+}
+
+export interface KeeperAdopt {
+  readonly name: string
+  readonly pidfile: string
+  readonly qmp?: string
+}
+
+export interface KeeperService {
+  readonly argv: readonly string[]
+  readonly env?: Readonly<Record<string, string>>
+  readonly log?: string
+  readonly umask?: number
+  readonly build: string
+  readonly control: string
 }
 
 export interface KeeperSpec {
@@ -301,6 +317,7 @@ export interface KeeperSpec {
   readonly lingerMs?: number
   readonly child?: KeeperChild
   readonly stop?: KeeperCommand
+  readonly adopt?: KeeperAdopt
 }
 
 export type StartedKeeper =

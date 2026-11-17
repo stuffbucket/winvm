@@ -33,6 +33,7 @@ import type { Hardware } from "./hardware"
 import { hardwareFrom, LEGACY, readHardware, runningHardware } from "./hardware"
 import { requireFirmware } from "./host"
 import { ensureInstance } from "./instance"
+import { launchedRuntime } from "./kept"
 import type { Note } from "./notes"
 import { copyNote, readNote, removeNote, removeNotes } from "./notes"
 import {
@@ -390,6 +391,7 @@ export function currentCompat(
   meta: InstanceMeta,
   display?: DisplayConfig,
   hardware?: Hardware,
+  launched?: string,
 ): { readonly hash: string; readonly parts: CompatParts } {
   const st = statSync(basePath(meta.image))
   let created = ""
@@ -409,7 +411,7 @@ export function currentCompat(
     base: baseIdentity(meta.image, st.size, st.mtimeMs, created),
     hardware: sha(JSON.stringify(hardwareArgs(argv))).slice(0, 16),
     firmware: firmwareDigest,
-    qemu: qemuVersion,
+    qemu: launched ?? qemuVersion,
   }
   return { hash: compatHash(parts), parts }
 }
@@ -898,7 +900,15 @@ async function createSaveHeld(
         "so a save could not be restored; nothing was saved. Save after it finishes",
     )
   }
-  const compat = currentCompat(instance, meta, display, hardware)
+  const launched =
+    pid === null ? null : await launchedRuntime(p, pid).catch(() => null)
+  const compat = currentCompat(
+    instance,
+    meta,
+    display,
+    hardware,
+    launched ?? undefined,
+  )
 
   const tmp = resolve(
     savesDir(instance),
