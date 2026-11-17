@@ -1306,7 +1306,7 @@ describe("a stow whose QEMU will not quit", () => {
     }
   })
 
-  it("removes only the folder it loaded when that folder's manifest still calls it the stow", async () => {
+  it("consumes the folder it loaded, and discards the real stow it supersedes, when that folder's manifest still calls it the stow", async () => {
     fixture(VIRTIO_GPU, true, "stow", "stow")
     renameSync(saveDir("source", "stow"), saveDir("source", "stow-unfinished"))
     fixture(VIRTIO_GPU, true, "stow", "stow")
@@ -1319,7 +1319,18 @@ describe("a stow whose QEMU will not quit", () => {
       await savecmds.load(parseArgs(["-i", "source", "stow-unfinished"])),
     ).toBe(0)
     expect(existsSync(saveDir("source", "stow-unfinished"))).toBe(false)
-    expect(readSave("source", "stow")).not.toBeNull()
+    expect(readSave("source", "stow")).toBeNull()
+  })
+
+  it("consumes the stow itself when the stow is what it loaded", async () => {
+    fixture(VIRTIO_GPU, true, "stow", "stow")
+    spyOn(qga, "waitResponsive").mockResolvedValue(true)
+    spyOn(clock, "syncGuestClock").mockResolvedValue({
+      beforeOffsetMs: 0,
+      afterOffsetMs: 0,
+    })
+    expect(await savecmds.load(parseArgs(["-i", "source", "stow"]))).toBe(0)
+    expect(readSave("source", "stow")).toBeNull()
   })
 
   it("is kept as it is when it can be neither moved nor marked", async () => {

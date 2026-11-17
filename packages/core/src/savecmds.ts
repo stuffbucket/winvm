@@ -153,9 +153,9 @@ async function doLoad(
   const restoredMs = Date.now() - started
   if (!(await settle(p, verb))) return 1
   if (m.kind === "stow") saves.removeSave(name, saveName)
-  else if (saves.hasSave(name, saves.STOW)) {
+  if (saveName !== saves.STOW && saves.hasSave(name, saves.STOW)) {
     saves.removeSave(name, saves.STOW)
-    console.log(`  (discarded the stow save; "${m.name}" supersedes it)`)
+    console.log(`  (discarded the stow save; "${saveName}" supersedes it)`)
   }
   console.log(
     `${verb} "${name}" from "${m.name}" (${m.kind}, taken ${new Date(m.createdAt).toLocaleString()}) ` +
