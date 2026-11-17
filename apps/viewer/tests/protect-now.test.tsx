@@ -71,6 +71,7 @@ interface Answer {
 interface World {
   protection: string | null
   fallback: string | null
+  recallable: boolean
   state: string
   verbs: string[][]
   stow: Answer
@@ -79,6 +80,7 @@ interface World {
 const newWorld = (protection: string | null): World => ({
   protection,
   fallback: null,
+  recallable: true,
   state: "running",
   verbs: [],
   stow: { code: 0, stdout: "", stderr: "" },
@@ -108,6 +110,9 @@ const statusOf = (w: World): Record<string, unknown> => ({
           version: "0.1.0",
           pid: 77,
           fallback: w.fallback,
+          recallable: w.recallable,
+          runningQemu: w.recallable ? "11.1.2" : "10.0.0",
+          installedQemu: "11.1.2",
         },
   notes: [],
 })
@@ -212,6 +217,20 @@ describe("Protect now", () => {
     expect(host.textContent).toContain("could not start")
     expect(host.textContent).toContain("launchctl bootstrap: 5: EIO")
     expect(host.textContent).not.toContain("older winvm")
+  })
+
+  it("offers no stow when this winvm could not recall it, and says to shut Windows down and start it", async () => {
+    for (const protection of ["legacy", "adopted"]) {
+      const world = newWorld(protection)
+      world.recallable = false
+      const host = await mount(world)
+      await openDetails(host)
+      expect(protectButton(host)).toBeNull()
+      expect(host.textContent).toContain("QEMU 10.0.0")
+      expect(host.textContent).toContain("shut Windows down")
+      expect(world.verbs).toEqual([])
+      unmount()
+    }
   })
 
   it("does not start the VM again when the stow fails", async () => {

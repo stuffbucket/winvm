@@ -76,6 +76,9 @@ const Status = z.object({
       version: z.string().nullable(),
       pid: z.number().nullable(),
       fallback: z.string().nullable().optional(),
+      recallable: z.boolean().optional(),
+      runningQemu: z.string().optional(),
+      installedQemu: z.string().optional(),
     })
     .nullable()
     .default(null),
@@ -86,11 +89,17 @@ export type Status = z.infer<typeof Status>
 
 const PROTECTABLE: ReadonlySet<string> = new Set(["legacy", "adopted"])
 
-export const protectable = (s: Status | null): boolean =>
+const unprotected = (s: Status | null): boolean =>
   s !== null &&
   s.state === "running" &&
   s.keeper !== null &&
   PROTECTABLE.has(s.keeper.protection)
+
+export const protectable = (s: Status | null): boolean =>
+  unprotected(s) && s?.keeper?.recallable !== false
+
+export const needsRestart = (s: Status | null): boolean =>
+  unprotected(s) && s?.keeper?.recallable === false
 
 export const TITLE_MAX = 80
 

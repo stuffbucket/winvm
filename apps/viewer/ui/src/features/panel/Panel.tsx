@@ -5,7 +5,13 @@ import { cx } from "../../components/cx"
 import { Icon } from "../../components/Icon"
 import { t } from "../../i18n"
 import type { Checks, ClosePolicy, Status } from "../../model"
-import { CLOSE_POLICIES, detailRows, phase, protectable } from "../../model"
+import {
+  CLOSE_POLICIES,
+  detailRows,
+  needsRestart,
+  phase,
+  protectable,
+} from "../../model"
 import { Hardware } from "../hardware/Hardware"
 import { formatMemory } from "../hardware/info"
 import { Network } from "../hardware/Network"
@@ -123,6 +129,14 @@ export function Panel(p: PanelProps): JSX.Element {
               ))}
             </ul>
           )}
+        {needsRestart(p.status) && (
+          <p className="panel__note">
+            {t("panel.protectOlderQemu", {
+              running: p.status?.keeper?.runningQemu ?? "?",
+              installed: p.status?.keeper?.installedQemu ?? "?",
+            })}
+          </p>
+        )}
         {protectable(p.status) && (
           <>
             <p className="panel__note">
