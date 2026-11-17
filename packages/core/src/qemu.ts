@@ -24,6 +24,7 @@ import * as kept from "./kept"
 import { LeaseNotHeld } from "./operation"
 import type { InstanceMeta, Paths } from "./paths"
 import { media } from "./paths"
+import { lockState } from "./pidlock"
 import * as qga from "./qga"
 import * as qmp from "./qmp"
 import { runtimeBin } from "./runtime"
@@ -528,15 +529,20 @@ export function pidOf(p: Paths): number | null {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return null
     throw error
   }
+  const lock = lockState(p.pid)
+  if (typeof lock === "object") return lock.held
+  if (lock === "missing") return null
   const pid = Number.parseInt(text.trim(), 10)
   if (!Number.isFinite(pid)) return null
   try {
     process.kill(pid, 0)
-    return pid
   } catch {
     rmSync(p.pid, { force: true })
     return null
   }
+  if (lock === "unknown") return pid
+  const command = runningCommand(pid)
+  return command === null || isQemuCommandOf(command, p) ? pid : null
 }
 
 export const isRunning = (p: Paths): boolean => pidOf(p) !== null
