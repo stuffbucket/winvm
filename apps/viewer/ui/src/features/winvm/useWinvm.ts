@@ -106,6 +106,8 @@ const NAMES_EVERY = 10
 const SETTLE_MS = 150
 const REPAIR_EVERY_MS = 60_000
 const REPAIR_LONGEST_MS = 30 * 60_000
+const SCREEN_RETRY_FIRST_MS = 1500
+const SCREEN_RETRY_LONGEST_MS = 15_000
 
 const transient = (s: Status): boolean =>
   s.operation !== null || phase(s) === "starting"
@@ -422,27 +424,54 @@ export function useWinvm(): Winvm {
   const live = isLivePhase(p)
   const pid = current?.pid ?? null
   const asking = useRef(false)
+  const [retries, setRetries] = useState(0)
+  const misses = useRef(0)
+  const retry = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
+  useEffect(
+    () => () => {
+      clearTimeout(retry.current)
+    },
+    [],
+  )
   const polled = useMemo(
-    () => ({ live, pid, name, polls }),
-    [live, pid, name, polls],
+    () => ({ live, pid, name, polls, retries }),
+    [live, pid, name, polls, retries],
   )
   useEffect(() => {
     const { pid, name } = polled
     if (!polled.live || pid === null || name === null) {
       setConnection(null)
+      misses.current = 0
       return
     }
     if ((connection !== null && connection.pid === pid) || asking.current)
       return
     asking.current = true
+    let reached = false
     winvm("open", "--json", "-i", name)
       .then((out) => {
         const conn = parseConnection(out.stdout)
-        if (conn !== null) setConnection({ pid, conn })
+        if (conn === null) return
+        reached = true
+        setConnection({ pid, conn })
       })
       .catch(() => undefined)
       .finally(() => {
         asking.current = false
+        if (reached) {
+          misses.current = 0
+          return
+        }
+        if (!streamingRef.current) return
+        const wait = Math.min(
+          SCREEN_RETRY_FIRST_MS * 2 ** misses.current,
+          SCREEN_RETRY_LONGEST_MS,
+        )
+        misses.current += 1
+        clearTimeout(retry.current)
+        retry.current = setTimeout(() => {
+          setRetries((n) => n + 1)
+        }, wait)
       })
   }, [polled, connection])
 

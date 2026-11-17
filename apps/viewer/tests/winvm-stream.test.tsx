@@ -91,6 +91,9 @@ function fakeApp(machines: Record<string, Machine>, up = true) {
     lists: (): number =>
       calls.filter((c) => c[0] === "status" && !c.includes("-i")).length,
     ran: (verb: string): string[][] => calls.filter((c) => c[0] === verb),
+    openFails: 0,
+    reconcile: (): Promise<unknown> =>
+      Promise.resolve({ code: 0, stdout: "", stderr: "" }),
     emit(payload: unknown): void {
       for (const cb of listeners) cb({ payload })
     },
@@ -132,6 +135,16 @@ function fakeApp(machines: Record<string, Machine>, up = true) {
           : ok(statusOf(n, m)),
       )
     }
+    if (args[0] === "open") {
+      if (app.openFails > 0) {
+        app.openFails -= 1
+        return Promise.resolve({ code: 1, stdout: "", stderr: "no screen" })
+      }
+      return Promise.resolve(
+        ok({ display: 1, vncPort: 5901, websocketPort: 5701, password: null }),
+      )
+    }
+    if (args[0] === "reconcile") return app.reconcile()
     return Promise.resolve({ code: 0, stdout: "", stderr: "" })
   }
   const listen = (
@@ -314,5 +327,26 @@ describe("useWinvm following the event stream", () => {
     })
     await mount()
     expect(app.ran("reconcile")).toEqual([])
+  })
+
+  it("asks again soon for a screen it could not reach, backing off, without reading the status", async () => {
+    const app = fakeApp({ demo: idle() })
+    app.openFails = 1
+    const w = await mount()
+    expect(w().connection).toBeNull()
+    const reads = app.reads("demo")
+    await tick(2000)
+    expect(w().connection?.websocketPort).toBe(5701)
+    expect(app.reads("demo")).toBe(reads)
+  })
+
+  it("keeps asking for an unreachable screen at a bounded pace", async () => {
+    const app = fakeApp({ demo: idle() })
+    app.openFails = 1000
+    await mount()
+    await tick(59_000)
+    const opens = app.ran("open").length
+    expect(opens).toBeGreaterThanOrEqual(5)
+    expect(opens).toBeLessThanOrEqual(8)
   })
 })
