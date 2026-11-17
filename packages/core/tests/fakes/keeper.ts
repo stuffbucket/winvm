@@ -1,4 +1,10 @@
-import { appendFileSync, openSync, readFileSync, rmSync } from "node:fs"
+import {
+  appendFileSync,
+  existsSync,
+  openSync,
+  readFileSync,
+  rmSync,
+} from "node:fs"
 import { createServer, type Socket } from "node:net"
 import { resolve } from "node:path"
 
@@ -25,7 +31,7 @@ let sidecars: Kept[] = []
 let lastExit: Record<string, unknown> | null = null
 
 function spawnChild(c: Child, onExit: (code: number | null) => void): Kept {
-  const out = c.log === undefined ? "ignore" : openSync(c.log, "a")
+  const out = c.log === undefined ? "ignore" : openSync(c.log, "a", 0o600)
   const proc = Bun.spawn([...c.argv], {
     env: { ...process.env, ...c.env },
     stdin: "ignore",
@@ -67,6 +73,7 @@ function answer(request: Record<string, unknown>): Record<string, unknown> {
     case "launch-sidecar": {
       if (child !== null) return { ok: false, error: "busy" }
       const c = request.child as Child
+      if (!existsSync(c.argv[0] ?? "")) return { ok: false, error: "ENOENT" }
       for (const s of sidecars.filter((k) => k.name === c.name))
         s.proc.kill("SIGKILL")
       sidecars = sidecars.filter((k) => k.name !== c.name)
@@ -79,6 +86,7 @@ function answer(request: Record<string, unknown>): Record<string, unknown> {
     case "launch": {
       if (child !== null) return { ok: false, error: "busy" }
       const c = request.child as Child
+      if (!existsSync(c.argv[0] ?? "")) return { ok: false, error: "ENOENT" }
       const kept = spawnChild(c, (code) => {
         lastExit = { child: c.name, pid: kept.proc.pid, status: code }
         child = null

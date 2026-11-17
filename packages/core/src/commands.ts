@@ -376,8 +376,7 @@ export async function build(args: Args): Promise<number> {
   }
   buildSeed(args.flags.get("payload"), args.flags.get("bun"), shareMedia)
 
-  stopService(p)
-  rmSync(p.dir, { recursive: true, force: true })
+  clearScratch(scratch, p)
   mkdirSync(p.tpmDir, { recursive: true })
   run(runtimeBin("qemu-img"), ["create", "-f", "qcow2", p.overlay, "64G"])
   run(runtimeBin("qemu-img"), ["create", "-f", "qcow2", p.prime, "64M"])
@@ -571,6 +570,12 @@ export async function build(args: Args): Promise<number> {
     await new Promise((r) => setTimeout(r, 5000))
   }
   return guestFailed("the guest did not shut down after provisioning")
+}
+
+export function clearScratch(scratch: string, p: Paths): void {
+  stopService(p)
+  retireKeeper(scratch, p)
+  rmSync(p.dir, { recursive: true, force: true })
 }
 
 export const launchInstaller = async (
@@ -1305,10 +1310,15 @@ export async function kill(args: Args): Promise<number> {
     return 1
   }
   if (pid === null) {
+    const kept = await killKept(p, null)
     qemu.stopSidecars(p)
     stopService(p)
     finder.cleanStale(name)
-    console.log(`instance "${name}" is not running`)
+    console.log(
+      kept
+        ? `killed the QEMU winvm's keeper ran for "${name}", which qemu.pid did not name`
+        : `instance "${name}" is not running`,
+    )
     return 0
   }
   if (runningCommand(pid) === null) {
@@ -1325,7 +1335,10 @@ export async function kill(args: Args): Promise<number> {
     return 1
   }
   finder.beforeDown(name)
-  if (!(await killKept(p, pid))) process.kill(pid, "SIGKILL")
+  if (!(await killKept(p, pid))) {
+    process.kill(pid, "SIGKILL")
+    await killKept(p, null)
+  }
   rmSync(p.pid, { force: true })
   qemu.stopSidecars(p)
   stopService(p)

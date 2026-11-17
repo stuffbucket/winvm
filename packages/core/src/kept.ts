@@ -1,11 +1,12 @@
 import { existsSync } from "node:fs"
 import { resolve } from "node:path"
-
+import { readSince, START } from "./eventlog"
 import {
   collectKeepers,
   type FoundKeeper,
   findKeeper,
   installKeeper,
+  KEEPER_DIR,
   KEEPER_PROTOCOL,
   KeeperBusy,
   type KeeperChild,
@@ -44,7 +45,7 @@ export function callerUmask(): number {
   return mask
 }
 
-export const keeperDir = (p: Paths): string => resolve(p.dir, "keeper")
+export const keeperDir = (p: Paths): string => resolve(p.dir, KEEPER_DIR)
 export const keeperSocket = (p: Paths): string =>
   resolve(keeperDir(p), "keeper.sock")
 export const keeperMonitor = (p: Paths): string =>
@@ -103,12 +104,18 @@ export function parseHello(raw: Record<string, unknown>): KeeperHello | null {
 
 export async function keeperHello(
   p: Paths,
-  timeoutMs = 1000,
+  o: { readonly timeoutMs?: number; readonly launching?: true } = {},
 ): Promise<KeeperHello | null> {
   if (!existsSync(keeperSocket(p))) return null
   try {
     return parseHello(
-      await keeperRequest(keeperSocket(p), { op: "hello" }, timeoutMs),
+      await keeperRequest(
+        keeperSocket(p),
+        o.launching === true
+          ? { op: "hello", launching: true }
+          : { op: "hello" },
+        o.timeoutMs ?? 1000,
+      ),
     )
   } catch {
     return null
@@ -168,9 +175,13 @@ export async function openKeeper(
   }
   try {
     collectKeepers({ root: keeperRoot(), launchd, current: program })
-  } catch {}
+  } catch (error) {
+    console.warn(
+      `warning: could not clean up old keeper versions: ${error instanceof Error ? error.message : String(error)}`,
+    )
+  }
   for (;;) {
-    const hello = await keeperHello(p)
+    const hello = await keeperHello(p, { launching: true })
     if (hello !== null && hello.protocol >= KEEPER_PROTOCOL) return hello
     if (hello !== null)
       throw new Error(
@@ -190,7 +201,7 @@ export async function untilChildGone(
 ): Promise<KeptProcess | null> {
   const deadline = Date.now() + timeoutMs
   for (;;) {
-    const child = (await keeperHello(p))?.child ?? null
+    const child = (await keeperHello(p, { launching: true }))?.child ?? null
     if (child === null || Date.now() > deadline) return child
     await sleep(50)
   }
@@ -217,7 +228,25 @@ export async function killKept(p: Paths, pid: number | null): Promise<boolean> {
   const answer = await keeperRequest(keeperSocket(p), { op: "kill" }).catch(
     () => null,
   )
-  return answer?.ok === true
+  return pid !== null || answer?.ok === true
+}
+
+export const UNAVAILABLE = "keeper-unavailable"
+
+export function keeperFallback(
+  name: string,
+): { readonly at: string; readonly error: string } | null {
+  let found = null as { readonly at: string; readonly error: string } | null
+  for (const e of readSince(name, START).entries) {
+    if (e.kind === "warning" && e.what === UNAVAILABLE)
+      found = {
+        at: e.t,
+        error: typeof e.error === "string" ? e.error : "no reason given",
+      }
+    else if (e.kind === "keeper" && e.what === "launched" && e.child === "qemu")
+      found = null
+  }
+  return found
 }
 
 export function retireKeeper(name: string, p: Paths): void {

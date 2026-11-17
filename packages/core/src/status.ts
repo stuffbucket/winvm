@@ -9,6 +9,8 @@ import { frozenFrom, markedAsleep } from "./frozen"
 import { type HostPoweredOff, hostPoweredOff } from "./hostoff"
 import {
   type KeeperStanding,
+  keeperDir,
+  keeperFallback,
   keeperHello,
   keeperStanding,
   keeperUse,
@@ -566,7 +568,10 @@ export async function gather(
     )
   const poweredOff = running ? null : hostPoweredOff(name)
   if (poweredOff !== null) notes.push(hostPowerNote(name, poweredOff))
-  const keeper = keeperStanding(pid, await keeperHello(p), keeperUse().kind)
+  const keeper =
+    pid === null && operation !== null
+      ? null
+      : keeperStanding(pid, await keeperHello(p), keeperUse().kind)
   const unprotected = keeper === null ? null : keeperNote(name, pid, keeper)
   if (unprotected !== null) notes.push(unprotected)
   const management = managementOf(name)
@@ -611,6 +616,12 @@ function keeperNote(
   k: KeeperStanding,
 ): string | null {
   const flag = name === "default" ? "" : ` -i ${name}`
+  const fellBack = k.protection === "legacy" ? keeperFallback(name) : null
+  if (fellBack !== null)
+    return (
+      `winvm's keeper could not start when Windows on "${name}" was started (${fellBack.error}), ` +
+      `so it is not protected if the Mac shuts down; see ${resolve(keeperDir(pathsFor(name)), "keeper.log")}`
+    )
   switch (k.protection) {
     case "kept":
       return null
@@ -622,7 +633,7 @@ function keeperNote(
     case "off":
       return `WINVM_KEEPER=off: Windows on "${name}" runs without winvm's keeper, so it is not protected if the Mac shuts down`
     case "missing":
-      return `no winvm-keeper is installed (\`winvm setup\` fetches it), so Windows on "${name}" is not protected if the Mac shuts down`
+      return `this winvm has no winvm-keeper (the Mac app carries one, and \`WINVM_KEEPER=<path>\` names a build), so Windows on "${name}" is not protected if the Mac shuts down`
     case "broken":
       return pid === null
         ? `winvm's keeper (pid ${String(k.pid)}) still runs a QEMU that qemu.pid does not name — \`winvm kill${flag}\` ends it`

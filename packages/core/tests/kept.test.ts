@@ -15,14 +15,21 @@ import {
   mkdtempSync,
   readFileSync,
   rmSync,
+  statSync,
   writeFileSync,
 } from "node:fs"
+import { createServer } from "node:net"
 import { dirname, resolve } from "node:path"
 
 import { parseArgs } from "../src/args"
 import * as commands from "../src/commands"
 import * as host from "../src/host"
-import { type JobInfo, keeperLabel, type Launchd } from "../src/keeper"
+import {
+  type JobInfo,
+  KeeperBusy,
+  keeperLabel,
+  type Launchd,
+} from "../src/keeper"
 import {
   callerUmask,
   KEEPER_OFF,
@@ -30,8 +37,11 @@ import {
   keeperDir,
   keeperHello,
   keeperMonitor,
+  keeperPlist,
+  keeperSocket,
   keeperStanding,
   keeperUse,
+  killKept,
   setLaunchd,
 } from "../src/kept"
 import { LeaseNotHeld, withOperation } from "../src/operation"
@@ -58,9 +68,11 @@ let previousLaunchd: () => Launchd
 let previousSettle: qemu.Settle
 let previousSpawner: qemu.Spawner
 let previousProbe: share.Probe
-let keepers: ReturnType<typeof Bun.spawn>[] = []
+const keepers: ReturnType<typeof Bun.spawn>[] = []
 let launchdCalls: string[] = []
 let bootstrapFails = false
+let silentlyRunning = false
+let listingFails = false
 let detached: string[] = []
 
 const sleep = async (ms: number): Promise<void> => {
@@ -104,8 +116,14 @@ function fakeLaunchd(): Launchd {
       launchdCalls.push(`bootout ${label}`)
       return false
     },
-    print: (): JobInfo | null => null,
-    labels: () => [],
+    print: (): JobInfo | null =>
+      silentlyRunning
+        ? { state: "running", pid: 1, lastExit: null, program: null, runs: 1 }
+        : null,
+    labels: () => {
+      if (listingFails) throw new Error("launchctl print: boom")
+      return []
+    },
   }
 }
 
@@ -124,8 +142,9 @@ const ops = (): string[] =>
     .map((r) => String(r.op))
     .filter((op) => op !== "hello")
 
-const FAKE_QEMU =
-  'while [ $# -gt 0 ]; do [ "$1" = -pidfile ] && echo $$ > "$2"; shift; done\nwhile :; do sleep 0.2; done'
+const HOLDER = resolve(import.meta.dir, "fakes", "holder.ts")
+const fakeQemu = (): string =>
+  `while [ $# -gt 0 ]; do [ "$1" = -pidfile ] && p="$2"; shift; done\nexec "${process.execPath}" "${HOLDER}" qemu-system-aarch64 -name winvm-${NAME} -pidfile "$p" --lock "$p"`
 
 const launchOptions: qemu.LaunchOptions = {
   installMedia: false,
@@ -169,7 +188,7 @@ beforeEach(() => {
     "virtiofsd",
     'while [ $# -gt 0 ]; do case "$1" in --socket-path) : > "$2"; shift;; esac; shift; done\nexec sleep 30',
   )
-  script("qemu-system-aarch64", FAKE_QEMU)
+  script("qemu-system-aarch64", fakeQemu())
   const p = pathsFor(NAME)
   mkdirSync(p.tpmDir, { recursive: true })
   writeFileSync(p.meta, JSON.stringify(meta))
@@ -198,16 +217,19 @@ beforeEach(() => {
   launchdCalls = []
   detached = []
   bootstrapFails = false
+  silentlyRunning = false
+  listingFails = false
 })
 
-afterEach(() => {
+afterEach(async () => {
   mock.restore()
   setLaunchd(previousLaunchd)
   qemu.setSettle(previousSettle)
   qemu.setSpawner(previousSpawner)
   share.setProbe(previousProbe)
-  for (const k of keepers.splice(0)) k.kill("SIGTERM")
-  keepers = []
+  const ending = keepers.splice(0)
+  for (const k of ending) k.kill("SIGTERM")
+  await Promise.all(ending.map(async (k) => await k.exited))
   for (const [k, v] of Object.entries(previousEnv)) {
     if (v === undefined) delete process.env[k]
     else process.env[k] = v
@@ -512,5 +534,162 @@ describe("launching QEMU without the keeper", () => {
     delete process.env.WINVM_KEEPER
     await expect(leasedLaunch()).rejects.toThrow("detached spawn of")
     expect(launchdCalls).toEqual([])
+  })
+})
+
+describe("fix round 1", () => {
+  it("asks the keeper to stay while a launch is in progress, in every hello", async () => {
+    await leasedLaunch({ ...launchOptions, shareDevices: "fs" })
+    const hellos = requests().filter((r) => r.op === "hello")
+    expect(hellos.length).toBeGreaterThan(0)
+    expect(hellos.filter((r) => r.launching !== true)).toEqual([])
+  })
+
+  it("creates qemu.log with the caller's umask, not the keeper's", async () => {
+    await leasedLaunch()
+    expect(statSync(pathsFor(NAME).qemuLog).mode & 0o777).toBe(
+      0o666 & ~callerUmask(),
+    )
+  })
+
+  it("ends the sidecars when the keeper refuses QEMU itself", async () => {
+    rmSync(resolve(state, "runtime", "bin", "qemu-system-aarch64"))
+    await expect(leasedLaunch()).rejects.toThrow("refused launch")
+    await until("the sidecars to go", () => {
+      const file = resolve(keeperDir(pathsFor(NAME)), "requests.jsonl")
+      return readFileSync(file, "utf8").includes('"op":"kill"')
+    })
+    expect(ops()).toEqual(["launch-sidecar", "launch", "kill"])
+  })
+
+  it("refuses, rather than falling back, while the keeper is running but silent", async () => {
+    silentlyRunning = true
+    await expect(leasedLaunch()).rejects.toThrow(KeeperBusy)
+    expect(detached).toEqual([])
+    expect(launchdCalls).toEqual([])
+  }, 15_000)
+
+  it("warns when it cannot collect old keeper versions, and still launches", async () => {
+    listingFails = true
+    const warnings: string[] = []
+    spyOn(console, "warn").mockImplementation((...a: unknown[]) => {
+      warnings.push(a.map(String).join(" "))
+    })
+    await leasedLaunch()
+    expect(ops()).toEqual(["launch-sidecar", "launch"])
+    expect(warnings.join("\n")).toContain(
+      "could not clean up old keeper versions: launchctl print: boom",
+    )
+  })
+
+  it("kill ends the keeper's QEMU when qemu.pid names none, and spares nothing else", async () => {
+    await leasedLaunch()
+    await until("the pidfile", () => qemu.isRunning(pathsFor(NAME)))
+    const hello = await keeperHello(pathsFor(NAME))
+    const child = hello?.child?.pid ?? 0
+    rmSync(pathsFor(NAME).pid)
+    expect(qemu.pidOf(pathsFor(NAME))).toBeNull()
+    expect((await gather(NAME, false)).keeper?.protection).toBe("broken")
+    spyOn(console, "log").mockImplementation(() => undefined)
+    expect(await commands.kill(parseArgs(["-i", NAME]))).toBe(0)
+    expect(ops()).toEqual(["launch-sidecar", "launch", "kill"])
+    await until("the keeper's QEMU to go", () => !alive(child))
+  })
+
+  it("does not call a launch in progress confused", async () => {
+    await withOperation(NAME, "start", async () => {
+      await qemu.launch(NAME, pathsFor(NAME), meta, launchOptions)
+      rmSync(pathsFor(NAME).pid)
+      const s = await gather(NAME, false)
+      expect(s.keeper).toBeNull()
+      expect(s.notes.join("\n")).not.toContain("keeper")
+    })
+  })
+
+  it("trusts the keeper once it has named the child, even when its kill answer is lost", async () => {
+    const p = pathsFor(NAME)
+    mkdirSync(keeperDir(p), { recursive: true })
+    const server = createServer((socket) => {
+      socket.setEncoding("utf8")
+      socket.on("data", (line: string) => {
+        const op = (JSON.parse(line) as { op: string }).op
+        socket.end(
+          op === "hello"
+            ? `${JSON.stringify({ ok: true, pid: 9, protocol: 2, child: { name: "qemu", pid: 4242 } })}\n`
+            : `${JSON.stringify({ ok: false, error: "no child" })}\n`,
+        )
+      })
+    })
+    await new Promise<void>((ready) => {
+      server.listen(keeperSocket(p), () => {
+        ready()
+      })
+    })
+    try {
+      expect(await killKept(p, 4242)).toBe(true)
+      expect(await killKept(p, 4243)).toBe(false)
+    } finally {
+      await new Promise<void>((done) => {
+        server.close(() => {
+          done()
+        })
+      })
+    }
+  })
+
+  it("names keeper.log, not a restart, when the VM runs unprotected because the keeper could not start", async () => {
+    bootstrapFails = true
+    spyOn(console, "warn").mockImplementation(() => undefined)
+    const legacy = Bun.spawn(
+      [
+        resolve(state, "runtime", "bin", "qemu-system-aarch64"),
+        "-pidfile",
+        pathsFor(NAME).pid,
+      ],
+      { stdout: "ignore", stderr: "ignore" },
+    )
+    try {
+      await withOperation(NAME, "start", async () => {
+        await qemu.launch(NAME, pathsFor(NAME), meta, launchOptions)
+      }).catch(() => undefined)
+      await until("the pidfile", () => qemu.isRunning(pathsFor(NAME)))
+      const notes = (await gather(NAME, false)).notes.join("\n")
+      expect(notes).toContain("could not start")
+      expect(notes).toContain(resolve(keeperDir(pathsFor(NAME)), "keeper.log"))
+      expect(notes).not.toContain("winvm stow")
+    } finally {
+      legacy.kill("SIGKILL")
+    }
+  })
+
+  it("says what is true when no keeper is installed", async () => {
+    delete process.env.WINVM_KEEPER
+    const legacy = Bun.spawn(
+      [
+        resolve(state, "runtime", "bin", "qemu-system-aarch64"),
+        "-pidfile",
+        pathsFor(NAME).pid,
+      ],
+      { stdout: "ignore", stderr: "ignore" },
+    )
+    try {
+      await until("the pidfile", () => qemu.isRunning(pathsFor(NAME)))
+      const notes = (await gather(NAME, false)).notes.join("\n")
+      expect(notes).toContain("not protected if the Mac shuts down")
+      expect(notes).not.toContain("winvm setup")
+    } finally {
+      legacy.kill("SIGKILL")
+    }
+  })
+
+  it("boots out a lingering keeper before a build clears its scratch instance", () => {
+    const p = pathsFor(NAME)
+    mkdirSync(keeperDir(p), { recursive: true })
+    writeFileSync(keeperPlist(p), "plist")
+    commands.clearScratch(NAME, p)
+    expect(launchdCalls).toEqual([
+      `bootout ${keeperLabel(process.env.WINVM_HOME ?? "", NAME)}`,
+    ])
+    expect(existsSync(p.dir)).toBe(false)
   })
 })

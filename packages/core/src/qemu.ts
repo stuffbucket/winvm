@@ -16,6 +16,7 @@ import {
 import { restoreForward } from "./agentfwd"
 import type { DisplayConfig } from "./display"
 import { displayArgs, RAMFB, readDisplay, runningCommand } from "./display"
+import { appendEntry } from "./eventlog"
 import type { Hardware } from "./hardware"
 import { readHardware } from "./hardware"
 import { requireFirmware, tpmTisHasPpi } from "./host"
@@ -276,6 +277,11 @@ export async function launch(
     console.warn(
       `warning: winvm's keeper did not start (${failed.message}); starting QEMU without it, so it is not protected if the Mac shuts down`,
     )
+    appendEntry(name, {
+      kind: "warning",
+      what: kept.UNAVAILABLE,
+      error: failed.message,
+    })
   }
   await startSwtpm(p)
   const { display, devices } = launchDevices(p, o)
@@ -336,6 +342,7 @@ async function launchKept(
     )
   if (existsSync(p.serial)) renameSync(p.serial, p.serialPrev)
   rmSync(p.qemuLog, { force: true })
+  closeSync(openSync(p.qemuLog, "w"))
   if (o.incoming !== undefined) rmSync(p.qmpQemu, { force: true })
   await ensureService(name, p)
   const m = await ensureFreeDisplay(name, p, meta)
@@ -374,9 +381,9 @@ async function launchKept(
         p,
         { served: daemon.served, pid },
         async () =>
-          !((await kept.keeperHello(p))?.sidecars ?? []).some(
-            (s) => s.pid === pid,
-          ),
+          !(
+            (await kept.keeperHello(p, { launching: true }))?.sidecars ?? []
+          ).some((s) => s.pid === pid),
       )
     }
   } catch (error) {
@@ -385,24 +392,29 @@ async function launchKept(
   }
 
   const monitor = kept.keeperMonitor(p)
-  const pid = await kept.launchChild(p, {
-    name: "qemu",
-    argv: [
-      runtimeBin("qemu-system-aarch64"),
-      ...qemuArgs(name, p, m, { ...o, display, shareDevices: devices }),
-      "-qmp",
-      `unix:${monitor},server=on,wait=off`,
-    ],
-    env,
-    log: p.qemuLog,
-    pidfile: p.pid,
-    qmp: monitor,
-    umask,
-  })
+  const pid = await kept
+    .launchChild(p, {
+      name: "qemu",
+      argv: [
+        runtimeBin("qemu-system-aarch64"),
+        ...qemuArgs(name, p, m, { ...o, display, shareDevices: devices }),
+        "-qmp",
+        `unix:${monitor},server=on,wait=off`,
+      ],
+      env,
+      log: p.qemuLog,
+      pidfile: p.pid,
+      qmp: monitor,
+      umask,
+    })
+    .catch(async (error: unknown) => {
+      await kept.killKept(p, null)
+      throw error
+    })
   const watching = new AbortController()
   const exited = (async (): Promise<"exited"> => {
     while (!watching.signal.aborted) {
-      const hello = await kept.keeperHello(p)
+      const hello = await kept.keeperHello(p, { launching: true })
       if (hello !== null && hello.child?.pid !== pid) return "exited"
       await new Promise((r) => setTimeout(r, 50))
     }
