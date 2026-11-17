@@ -50,7 +50,11 @@ seconds, and the service has until 47 seconds after the stop began:
   (the VM was started before an update that changed QEMU), or when the stow
   fails, the service hands the moment back to the keeper, which shuts
   Windows down instead. winvm never writes a stow that the next `start`
-  would refuse or boot past.
+  would refuse or boot past: `winvm stow`, the idle watcher's stow and the
+  app's close-window stow refuse it too, and Windows keeps running.
+  `winvm stow` then exits 4 and says to shut Windows down and start it
+  again; the watcher notes it once and stops trying idle stows until QEMU
+  restarts; the app's close stays open with the same words.
 
 The keeper never lets two of them act on Windows at once. If the service
 refuses the moment, or can't be reached, or never answered and has died, the
