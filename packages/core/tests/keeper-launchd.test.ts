@@ -44,6 +44,20 @@ async function until<T>(
   }
 }
 
+async function answered(socket: string): Promise<Record<string, unknown>> {
+  const deadline = Date.now() + 5000
+  for (;;) {
+    const hello = await keeperRequest(socket, { op: "hello" }).catch(
+      (error: unknown) => {
+        if (Date.now() > deadline) throw error
+        return null
+      },
+    )
+    if (hello !== null) return hello
+    await sleep(100)
+  }
+}
+
 const whats = (record: string): string[] =>
   readFileSync(record, "utf8")
     .trim()
@@ -83,9 +97,7 @@ describe.if(enabled)("a real launchd keeper job (WINVM_TEST_LAUNCHD=1)", () => {
       return info?.state === "running" && info.pid !== null ? info : null
     })
     expect(running.program).toBe(keeper)
-    const hello = await keeperRequest(resolve(dir, "keeper.sock"), {
-      op: "hello",
-    })
+    const hello = await answered(resolve(dir, "keeper.sock"))
     expect(hello.ok).toBe(true)
     expect(hello.pid).toBe(running.pid)
     expect(hello.instance).toBe("launchd-test")
