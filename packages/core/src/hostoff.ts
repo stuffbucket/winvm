@@ -3,6 +3,10 @@ import { readSince, START } from "./eventlog"
 import { pathsFor } from "./paths"
 
 export const CHOSEN_SHUTDOWN = "hostEnd.action is shutdown"
+export const FOREIGN_RUNTIME = "the running QEMU "
+
+export const isDecision = (reason: string): boolean =>
+  reason === CHOSEN_SHUTDOWN || reason.startsWith(FOREIGN_RUNTIME)
 
 export type HostPowerCause =
   | "host-signal"

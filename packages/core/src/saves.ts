@@ -406,6 +406,11 @@ export function sameQemu(saved: string, installed: string): boolean {
   return installed.startsWith(saved.slice(0, -"unknown".length))
 }
 
+export const recallable = (
+  label: string,
+  installed: string = currentQemuCompat(),
+): boolean => sameQemu(label, installed)
+
 function reportedVersion(answer: unknown): string | null {
   const q = (answer as { qemu?: Record<string, unknown> } | null)?.qemu
   if (q === undefined) return null
@@ -481,10 +486,7 @@ export function compatFor(
 ): ReturnType<typeof currentCompat> & { readonly display: DisplayConfig } {
   const display = m.display ?? readDisplay(pathsFor(instance))
   const saved = m.compatParts?.qemu
-  const launched =
-    saved !== undefined && sameQemu(saved, currentQemuCompat())
-      ? saved
-      : undefined
+  const launched = saved !== undefined && recallable(saved) ? saved : undefined
   return {
     ...currentCompat(instance, meta, display, saveHardware(m), launched),
     display,

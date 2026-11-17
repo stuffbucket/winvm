@@ -64,6 +64,7 @@ import {
   type Manifest,
   markPristine,
   readSave,
+  recallable,
   saveDir,
   savesDir,
 } from "../src/saves"
@@ -1087,6 +1088,24 @@ describe("the runtime a stow is labelled with", () => {
       compatible: boolean | null
     }[]
     expect(rows.find((r) => r.name === "stow")?.compatible).toBe(true)
+  })
+
+  it("makes the host end shut a kept VM down when the keeper launched it on another runtime than the installed one", async () => {
+    installed()
+    spyOn(kept, "launchedRuntime").mockResolvedValue("11.0.0+patches:p1")
+    const f = await hostEndFacts("source")
+    expect(f.unsaveable).toContain("QEMU 11.0.0")
+    expect(f.unsaveable).toContain("11.1.2")
+  })
+
+  it("decides recallability with the one predicate start uses", () => {
+    expect(recallable("11.1.2+patches:p2", "11.1.2+patches:p2")).toBe(true)
+    expect(recallable("11.1.2+patches:unknown", "11.1.2+patches:p2")).toBe(true)
+    expect(recallable("11.0.0+patches:p1", "11.1.2+patches:p2")).toBe(false)
+    expect(recallable("10.0.0+patches:unknown", "11.1.2+patches:p2")).toBe(
+      false,
+    )
+    expect(recallable("unknown", "11.1.2+patches:p2")).toBe(false)
   })
 
   it("makes the host end shut an adopted QEMU of another version down rather than stow what no recall could take", async () => {

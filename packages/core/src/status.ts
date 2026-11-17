@@ -6,7 +6,7 @@ import { effectiveConfig } from "./config"
 import { describeDisplay, readDisplay, runningDisplay } from "./display"
 import { readSince, START } from "./eventlog"
 import { frozenFrom, markedAsleep } from "./frozen"
-import { CHOSEN_SHUTDOWN, type HostPoweredOff, hostPoweredOff } from "./hostoff"
+import { type HostPoweredOff, hostPoweredOff, isDecision } from "./hostoff"
 import {
   type KeeperStanding,
   keeperDir,
@@ -211,8 +211,8 @@ function hostPowerNote(name: string, off: HostPoweredOff): string {
   const fellBack =
     off.fallback === null
       ? ""
-      : off.fallback === CHOSEN_SHUTDOWN
-        ? `winvm did not stow Windows when the Mac shut down, because ${CHOSEN_SHUTDOWN}; `
+      : isDecision(off.fallback)
+        ? `winvm did not stow Windows when the Mac shut down, because ${off.fallback}; `
         : `winvm could not stow Windows when the Mac shut down (${off.fallback}); `
   return fellBack + causeNote(name, off)
 }

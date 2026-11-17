@@ -1887,6 +1887,26 @@ describe("status when the host powered Windows off", () => {
     expect(note).toContain("shut down cleanly")
   })
 
+  it("says winvm shut Windows down rather than write a stow no recall could take", async () => {
+    keptStart()
+    hostEnding()
+    step("service")
+    keeper("host-end", {
+      step: "fallback",
+      reason:
+        "the running QEMU 11.0.0 is not this winvm's QEMU 11.1.2, so no recall could take its stow",
+      end: "shutdown",
+    })
+    step("powerdown")
+    keeper("exited", { child: "qemu", pid: 501, status: 0 })
+    step("done")
+    const note = (await gather(HOST, false)).notes.join("\n")
+    expect(note).not.toContain("could not stow")
+    expect(note).toContain(
+      "did not stow Windows when the Mac shut down, because the running QEMU 11.0.0",
+    )
+  })
+
   it("never says a stow that finished could not be done", async () => {
     keptStart()
     served()

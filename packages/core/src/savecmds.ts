@@ -462,7 +462,7 @@ export async function recallStow(
     if (
       by !== undefined &&
       saves.isUnknownRuntime(by) &&
-      !saves.sameQemu(by, installed)
+      !saves.recallable(by, installed)
     ) {
       console.error(
         `::error::the stow of "${name}" was written by ${by === saves.UNKNOWN_RUNTIME ? "a QEMU" : `QEMU ${saves.versionOfRuntime(by)}`} from a winvm runtime this winvm can't identify, ` +
