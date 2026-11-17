@@ -3,10 +3,15 @@ import { connect } from "node:net"
 import { resolve } from "node:path"
 import type { ClosePolicy } from "./config"
 import { effectiveConfig } from "./config"
-import { describeDisplay, readDisplay, runningDisplay } from "./display"
+import {
+  describeDisplay,
+  readDisplay,
+  runningCommand,
+  runningDisplay,
+} from "./display"
 import { readSince, START } from "./eventlog"
 import { frozenFrom, markedAsleep } from "./frozen"
-import { type HostPoweredOff, hostPoweredOff } from "./hostoff"
+import { type HostPoweredOff, hostPoweredOff, isDecision } from "./hostoff"
 import {
   type KeeperStanding,
   keeperDir,
@@ -33,8 +38,11 @@ import {
   readImageMeta,
   readMeta,
 } from "./paths"
+import { parseEtime } from "./proc"
 import * as qemu from "./qemu"
 import { type Management, managementOf } from "./reconcile"
+import { currentQemuCompat } from "./runtime"
+import * as saves from "./saves"
 import { readService } from "./servicectl"
 import { spawnText } from "./shell"
 import * as timemachine from "./timemachine"
@@ -72,6 +80,7 @@ export interface WatchInfo {
     readonly enabled: boolean
     readonly idleMinutes: number | null
     readonly lastAt: string | null
+    readonly off: string | null
   } | null
 }
 
@@ -159,26 +168,61 @@ export function unfinishedStop(name: string): StopUnfinished | null {
   return killed !== null && killed.at > lastClear ? killed : found
 }
 
-function hostPowerNote(name: string, off: HostPoweredOff): string {
+const secondsIn = (ms: number | null): string =>
+  ms === null ? "" : `${(ms / 1000).toFixed(1)} s after it began`
+
+const seconds = (ms: number | null): string =>
+  ms === null ? "" : ` (${secondsIn(ms)})`
+
+function causeNote(name: string, off: HostPoweredOff): string {
   const again = `\`winvm start -i ${name}\` starts it again`
-  if (off.cause === "qemu-gone")
-    return (
-      `QEMU is gone (last seen ${off.at}) without recording a shutdown, and no winvm stop or kill ended it: ` +
-      "the host (a restart or logout), a crash or another tool ended it, and anything unsaved in Windows is lost; " +
-      again
-    )
-  if (off.cause === "host-shutdown")
-    return `Windows shut down cleanly when the Mac shut down at ${off.at}: winvm's keeper pressed its power button; ${again}`
-  if (off.cause === "host-quit" || off.cause === "host-kill")
-    return (
-      `the Mac shut down at ${off.at} and Windows did not finish shutting down in time, so winvm's keeper ${off.cause === "host-quit" ? "quit" : "killed"} QEMU: ` +
-      `Windows did not shut down cleanly and anything unsaved in it is lost; ${again}`
-    )
-  const who = off.detail === null ? "" : ` (${off.detail})`
-  return (
-    `the host powered Windows off at ${off.at}: QEMU was signalled${who}, ` +
-    `so Windows did not shut down by itself and anything unsaved in it is lost; ${again}`
-  )
+  switch (off.cause) {
+    case "qemu-gone":
+      return (
+        `QEMU is gone (last seen ${off.at}) without recording a shutdown, and no winvm stop or kill ended it: ` +
+        "the host (a restart or logout), a crash or another tool ended it, and anything unsaved in Windows is lost; " +
+        again
+      )
+    case "host-signal":
+      return (
+        `the host powered Windows off at ${off.at}: QEMU was signalled${off.detail === null ? "" : ` (${off.detail})`}, ` +
+        `so Windows did not shut down by itself and anything unsaved in it is lost; ${again}`
+      )
+    case "host-stow":
+      return `winvm stowed Windows when the Mac shut down at ${off.at}${seconds(off.elapsedMs)}; \`winvm start -i ${name}\` recalls it`
+    case "host-cut-off":
+      return (
+        `the Mac shut down at ${off.at} before winvm's keeper finished (${[off.detail ?? "no step recorded", secondsIn(off.elapsedMs)].filter((part) => part !== "").join(", ")}): ` +
+        "Windows did not shut down cleanly and anything unsaved in it is lost" +
+        (off.detail === "a stow was being written"
+          ? "; the previous stow, if any, is kept"
+          : "") +
+        `; ${again}`
+      )
+    case "host-shutdown":
+      return `Windows shut down cleanly when the Mac shut down at ${off.at}: winvm's keeper pressed its power button${seconds(off.elapsedMs)}; ${again}`
+    case "host-quit-stopped":
+      return (
+        `the Mac shut down at ${off.at} while Windows was stopped for a save or a recall (QEMU ${off.detail ?? "stopped"}), ` +
+        `so winvm's keeper quit QEMU without pressing the power button; Windows was not running at the time; ${again}`
+      )
+    case "host-quit":
+    case "host-kill":
+      return (
+        `the Mac shut down at ${off.at} and Windows did not shut down in time, so winvm ${off.cause === "host-quit" ? "quit" : "killed"} QEMU${seconds(off.elapsedMs)}: ` +
+        `Windows did not shut down cleanly and anything unsaved in it is lost; ${again}`
+      )
+  }
+}
+
+function hostPowerNote(name: string, off: HostPoweredOff): string {
+  const fellBack =
+    off.fallback === null
+      ? ""
+      : isDecision(off.fallback)
+        ? `winvm did not stow Windows when the Mac shut down, because ${off.fallback}; `
+        : `winvm could not stow Windows when the Mac shut down (${off.fallback}); `
+  return fellBack + causeNote(name, off)
 }
 
 export const savesDir = (instance: string): string =>
@@ -276,6 +320,7 @@ export function parseWatch(
             enabled: s.enabled === true,
             idleMinutes: num(s.idleMinutes),
             lastAt: str(s.lastAt),
+            off: str(s.off),
           }
         : null,
   }
@@ -283,18 +328,6 @@ export function parseWatch(
 
 export const readWatch = (instance: string): WatchInfo | null =>
   parseWatch(readJson(watchPath(instance)), pidAlive)
-
-export function parseEtime(s: string): number | null {
-  const m = /^\s*(?:(\d+)-)?(?:(\d+):)?(\d+):(\d+)\s*$/.exec(s)
-  if (m === null) return null
-  const [, d, h, mm, ss] = m
-  return (
-    Number(d ?? 0) * 86400 +
-    Number(h ?? 0) * 3600 +
-    Number(mm) * 60 +
-    Number(ss)
-  )
-}
 
 export function parseHardware(argv: readonly string[]): {
   cpus: number | null
@@ -568,12 +601,24 @@ export async function gather(
     )
   const poweredOff = running ? null : hostPoweredOff(name)
   if (poweredOff !== null) notes.push(hostPowerNote(name, poweredOff))
-  const keeper =
+  const standing =
     pid === null && operation !== null
       ? null
       : keeperStanding(pid, await keeperHello(p), keeperUse().kind)
+  const fellBack =
+    standing?.protection === "legacy" ? keeperFallback(name) : null
+  const keeper = await withRuntime(
+    p,
+    pid,
+    standing === null || fellBack === null
+      ? standing
+      : { ...standing, fallback: fellBack.error },
+  )
   const unprotected = keeper === null ? null : keeperNote(name, pid, keeper)
   if (unprotected !== null) notes.push(unprotected)
+  const watcher = readWatch(name)
+  const idleOff = watcherNote(name, watcher)
+  if (idleOff !== null) notes.push(idleOff)
   const management = managementOf(name)
   if (management === "repair")
     notes.push(
@@ -598,7 +643,7 @@ export async function gather(
     overlayBytes: allocatedBytes(p.overlay),
     guest,
     saves: savesSummary,
-    watcher: readWatch(name),
+    watcher,
     service: serviceOf(p),
     serviceExpected: running && existsSync(p.qmpQemu),
     management,
@@ -608,6 +653,35 @@ export async function gather(
     keeper,
     notes,
   }
+}
+
+const WATCHED: ReadonlySet<Protection> = new Set(["kept", "adopted", "legacy"])
+
+async function withRuntime(
+  p: Paths,
+  pid: number | null,
+  k: KeeperStanding | null,
+): Promise<KeeperStanding | null> {
+  if (k === null || pid === null || !WATCHED.has(k.protection)) return k
+  const by = await saves
+    .producedBy(p, pid, runningCommand(pid))
+    .catch(() => saves.UNKNOWN_RUNTIME)
+  const installed = currentQemuCompat()
+  return {
+    ...k,
+    recallable: saves.recallable(by, installed),
+    runningQemu:
+      by === saves.UNKNOWN_RUNTIME ? "unknown" : saves.versionOfRuntime(by),
+    installedQemu: saves.versionOfRuntime(installed),
+  }
+}
+
+function olderQemuNote(name: string, k: KeeperStanding): string {
+  const flag = name === "default" ? "" : ` -i ${name}`
+  const runs = `Windows on "${name}" runs QEMU ${k.runningQemu ?? "unknown"}, and this winvm runs QEMU ${k.installedQemu ?? "?"}, so a stow of it could not be brought back`
+  return k.protection === "kept"
+    ? `${runs}: if the Mac shuts down, winvm shuts Windows down instead of stowing it. \`winvm stop${flag}\`, then \`winvm start${flag}\`, moves it to this winvm's QEMU`
+    : `${runs}. To put it under winvm's keeper, shut Windows down (\`winvm stop${flag}\`) and start it again (\`winvm start${flag}\`)`
 }
 
 function keeperNote(
@@ -622,9 +696,16 @@ function keeperNote(
       `winvm's keeper could not start when Windows on "${name}" was started (${fellBack.error}), ` +
       `so it is not protected if the Mac shuts down; see ${resolve(keeperDir(pathsFor(name)), "keeper.log")}`
     )
+  if (k.recallable === false) return olderQemuNote(name, k)
   switch (k.protection) {
     case "kept":
       return null
+    case "adopted":
+      return (
+        `Windows on "${name}" was started by an older winvm. winvm's keeper now watches it and tries to stow it if the Mac shuts down, ` +
+        "but its QEMU is not shielded from macOS's shutdown, so that may not finish. " +
+        `Protect now in the viewer, or \`winvm stow${flag} && winvm start${flag}\`, restarts it under the keeper (a stow, then a recall)`
+      )
     case "legacy":
       return (
         `Windows on "${name}" was started without winvm's keeper, so it is not protected if the Mac shuts down; ` +
@@ -643,6 +724,7 @@ function keeperNote(
 
 const KEEPER_WORDS: Readonly<Record<Protection, string>> = {
   kept: "protected",
+  adopted: "watched, not shielded: started by an older winvm",
   legacy: "not protected: started without winvm's keeper",
   broken: "confused: the keeper and qemu.pid disagree",
   off: "not protected: WINVM_KEEPER=off",
@@ -737,10 +819,20 @@ export function formatWatcher(w: WatchInfo | null, now: number): string {
       `stow after ${String(w.stow.idleMinutes ?? "?")} min idle${last}`,
     )
   } else {
-    parts.push("stow off")
+    parts.push(
+      w.stow?.off == null ? "stow off" : "stow off until QEMU restarts",
+    )
   }
   return parts.join(" · ")
 }
+
+export const watcherNote = (
+  name: string,
+  w: WatchInfo | null,
+): string | null =>
+  w?.alive === true && w.stow?.off != null
+    ? `the watcher of "${name}" does not stow Windows when it is idle: ${w.stow.off}`
+    : null
 
 const STATE_WORDS: Record<State, string> = {
   running: "running",

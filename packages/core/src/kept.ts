@@ -10,6 +10,7 @@ import {
   KEEPER_PROTOCOL,
   KeeperBusy,
   type KeeperChild,
+  type KeeperSpec,
   keeperJob,
   keeperLabel,
   keeperRequest,
@@ -67,6 +68,14 @@ export interface KeptProcess {
   readonly name: string
   readonly pid: number
   readonly adopted: boolean
+  readonly legacy: boolean
+  readonly runtime: string | null
+}
+
+export interface KeptService {
+  readonly pid: number
+  readonly build: string
+  readonly adopted: boolean
 }
 
 export interface KeeperHello {
@@ -75,6 +84,7 @@ export interface KeeperHello {
   readonly version: string
   readonly child: KeptProcess | null
   readonly sidecars: readonly KeptProcess[]
+  readonly service: KeptService | null
   readonly hostEnding: boolean
 }
 
@@ -82,7 +92,25 @@ function keptProcess(raw: unknown): KeptProcess | null {
   if (typeof raw !== "object" || raw === null) return null
   const r = raw as Record<string, unknown>
   return typeof r.pid === "number" && typeof r.name === "string"
-    ? { name: r.name, pid: r.pid, adopted: r.adopted === true }
+    ? {
+        name: r.name,
+        pid: r.pid,
+        adopted: r.adopted === true,
+        legacy: r.legacy === true,
+        runtime: typeof r.runtime === "string" ? r.runtime : null,
+      }
+    : null
+}
+
+function keptService(raw: unknown): KeptService | null {
+  if (typeof raw !== "object" || raw === null) return null
+  const r = raw as Record<string, unknown>
+  return typeof r.pid === "number"
+    ? {
+        pid: r.pid,
+        build: typeof r.build === "string" ? r.build : "",
+        adopted: r.adopted === true,
+      }
     : null
 }
 
@@ -98,9 +126,41 @@ export function parseHello(raw: Record<string, unknown>): KeeperHello | null {
           .map(keptProcess)
           .filter((k): k is KeptProcess => k !== null)
       : [],
+    service: keptService(raw.service),
     hostEnding: raw.hostEnding === true,
   }
 }
+
+export async function launchedRuntime(
+  p: Paths,
+  pid: number,
+): Promise<string | null> {
+  const child = (await keeperHello(p))?.child ?? null
+  return child?.pid === pid ? child.runtime : null
+}
+
+const PASSED_ENV: ReadonlySet<string> = new Set([
+  "HOME",
+  "USER",
+  "LOGNAME",
+  "PATH",
+  "SHELL",
+  "TMPDIR",
+  "LANG",
+])
+
+export const keptEnv = (
+  env: Readonly<Record<string, string | undefined>> = process.env,
+): Readonly<Record<string, string>> =>
+  Object.fromEntries(
+    Object.entries(env).filter(
+      (e): e is [string, string] =>
+        e[1] !== undefined &&
+        (PASSED_ENV.has(e[0]) ||
+          e[0].startsWith("LC_") ||
+          e[0].startsWith("WINVM_")),
+    ),
+  )
 
 export async function keeperHello(
   p: Paths,
@@ -148,10 +208,19 @@ const sleep = async (ms: number): Promise<void> => {
 
 const OPEN_MS = 5000
 
+async function untilGone(p: Paths, deadline: number): Promise<boolean> {
+  while (Date.now() <= deadline) {
+    if ((await keeperHello(p, { timeoutMs: 300 })) === null) return true
+    await sleep(100)
+  }
+  return false
+}
+
 export async function openKeeper(
   name: string,
   p: Paths,
   keeper: FoundKeeper,
+  extra: Pick<KeeperSpec, "adopt"> = {},
 ): Promise<KeeperHello> {
   const lease = heldLease(name)
   if (lease === null)
@@ -163,35 +232,51 @@ export async function openKeeper(
     program,
     dir: keeperDir(p),
   })
-  const deadline = Date.now() + OPEN_MS
+  let deadline = Date.now() + OPEN_MS
+  let retired = false
   for (;;) {
-    try {
-      await startKeeper({ launchd, job, lease, spec: { record: p.events } })
-      break
-    } catch (error) {
-      if (!(error instanceof KeeperBusy) || Date.now() > deadline) throw error
-      await sleep(200)
+    for (;;) {
+      try {
+        await startKeeper({
+          launchd,
+          job,
+          lease,
+          spec: { record: p.events, ...extra },
+        })
+        break
+      } catch (error) {
+        if (!(error instanceof KeeperBusy) || Date.now() > deadline) throw error
+        await sleep(200)
+      }
     }
-  }
-  try {
-    collectKeepers({ root: keeperRoot(), launchd, current: program })
-  } catch (error) {
-    console.warn(
-      `warning: could not clean up old keeper versions: ${error instanceof Error ? error.message : String(error)}`,
-    )
-  }
-  for (;;) {
-    const hello = await keeperHello(p, { launching: true })
-    if (hello !== null && hello.protocol >= KEEPER_PROTOCOL) return hello
-    if (hello !== null)
-      throw new Error(
-        `the keeper running for "${name}" speaks protocol ${String(hello.protocol)}, older than this winvm's ${String(KEEPER_PROTOCOL)}; it exits once its VM is stopped`,
+    try {
+      collectKeepers({ root: keeperRoot(), launchd, current: program })
+    } catch (error) {
+      console.warn(
+        `warning: could not clean up old keeper versions: ${error instanceof Error ? error.message : String(error)}`,
       )
-    if (Date.now() > deadline)
-      throw new Error(
-        `the keeper for "${name}" did not answer on ${keeperSocket(p)} — see ${resolve(keeperDir(p), "keeper.log")}`,
-      )
-    await sleep(100)
+    }
+    for (;;) {
+      const hello = await keeperHello(p, { launching: true })
+      if (hello !== null && hello.protocol >= KEEPER_PROTOCOL) return hello
+      if (hello !== null && hello.child === null && !retired) {
+        retired = true
+        deadline = Date.now() + OPEN_MS
+        await keeperRequest(keeperSocket(p), { op: "exit-when-idle" }).catch(
+          () => null,
+        )
+        if (await untilGone(p, deadline)) break
+      }
+      if (hello !== null)
+        throw new Error(
+          `the keeper running for "${name}" speaks protocol ${String(hello.protocol)}, older than this winvm's ${String(KEEPER_PROTOCOL)}; it exits once its VM is stopped`,
+        )
+      if (Date.now() > deadline)
+        throw new Error(
+          `the keeper for "${name}" did not answer on ${keeperSocket(p)} — see ${resolve(keeperDir(p), "keeper.log")}`,
+        )
+      await sleep(100)
+    }
   }
 }
 
@@ -228,7 +313,7 @@ export async function killKept(p: Paths, pid: number | null): Promise<boolean> {
   const answer = await keeperRequest(keeperSocket(p), { op: "kill" }).catch(
     () => null,
   )
-  return pid !== null || answer?.ok === true
+  return answer?.ok === true
 }
 
 export const UNAVAILABLE = "keeper-unavailable"
@@ -254,12 +339,22 @@ export function retireKeeper(name: string, p: Paths): void {
   launchdOf().bootout(keeperLabel(home(), name))
 }
 
-export type Protection = "kept" | "legacy" | "broken" | "off" | "missing"
+export type Protection =
+  | "kept"
+  | "adopted"
+  | "legacy"
+  | "broken"
+  | "off"
+  | "missing"
 
 export interface KeeperStanding {
   readonly protection: Protection
   readonly version: string | null
   readonly pid: number | null
+  readonly fallback?: string
+  readonly recallable?: boolean
+  readonly runningQemu?: string
+  readonly installedQemu?: string
 }
 
 export function keeperStanding(
@@ -274,7 +369,7 @@ export function keeperStanding(
     pid: hello?.pid ?? null,
   })
   if (qemuPid === null) return child === null ? null : of("broken")
-  if (child?.pid === qemuPid) return of("kept")
+  if (child?.pid === qemuPid) return of(child.legacy ? "adopted" : "kept")
   if (child !== null) return of("broken")
   return of(use === "keeper" ? "legacy" : use)
 }

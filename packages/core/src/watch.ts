@@ -28,7 +28,7 @@ import {
   savesToRotate,
 } from "./idle"
 import {
-  AUTOMATIC_ENV,
+  AUTOMATIC_FLAG,
   InstanceBusy,
   leaseHolder,
   withOperation,
@@ -97,6 +97,7 @@ export interface WatchState {
     readonly enabled: boolean
     readonly idleMinutes: number
     readonly lastAt?: string
+    readonly off?: string
   }
   readonly state: "watching" | "autosaving" | "stowing" | "stopped"
 }
@@ -118,7 +119,12 @@ export function readWatchState(name: string): WatchState | null {
 }
 
 export const CLI = {
-  stow: (instance: string): readonly string[] => ["stow", "-i", instance],
+  stow: (instance: string): readonly string[] => [
+    "stow",
+    "-i",
+    instance,
+    `--${AUTOMATIC_FLAG}`,
+  ],
 } as const
 
 export type SaveOutcome = "saved" | "busy" | "failed"
@@ -126,7 +132,7 @@ export type SaveOutcome = "saved" | "busy" | "failed"
 export interface Actions {
   save(name: string): Promise<SaveOutcome>
   deleteSaves(names: readonly string[]): Promise<boolean>
-  stow(): Promise<boolean>
+  stow(): Promise<StowOutcome>
   syncClock(): Promise<string>
   drift(): Promise<number | null>
 }
@@ -144,13 +150,13 @@ const automatically = async <T>(
 async function runWinvm(
   argv: readonly string[],
   log: (s: string) => void,
-): Promise<boolean> {
+): Promise<number> {
   log(`run: winvm ${argv.join(" ")}`)
   const started = Date.now()
   const code = await new Promise<number>((res) => {
     const child = spawn(process.execPath, [...cliArgv(...argv)], {
       stdio: ["ignore", "pipe", "pipe"],
-      env: { ...managedEnv(), [AUTOMATIC_ENV]: "1" },
+      env: managedEnv(),
     })
     let lines = 0
     const relay = (chunk: Buffer): void => {
@@ -173,7 +179,79 @@ async function runWinvm(
   log(
     `  -> exit ${String(code)} after ${String(Math.round((Date.now() - started) / 1000))} s`,
   )
-  return code === 0
+  return code
+}
+
+export type StowOutcome = "stowed" | "refused" | "failed"
+
+export const stowOutcome = (code: number): StowOutcome =>
+  code === 0 ? "stowed" : code === saves.STOW_REFUSED ? "refused" : "failed"
+
+const settingsOf = (c: InstanceConfig): Settings => ({
+  idleCpuPercent: c["watch.idleCpuPercent"],
+  autosave: {
+    enabled: c["autosave.enabled"],
+    idleMinutes: c["autosave.idleMinutes"],
+  },
+  stow: { enabled: c["stow.enabled"], idleMinutes: c["stow.idleMinutes"] },
+})
+
+export interface IdleOptions {
+  readonly ephemeral: boolean
+  readonly stowRefused: boolean
+}
+
+export function idleSettings(settings: Settings, o: IdleOptions): Settings {
+  if (o.ephemeral)
+    return {
+      ...settings,
+      autosave: { ...settings.autosave, enabled: false },
+      stow: { ...settings.stow, enabled: false },
+    }
+  return o.stowRefused
+    ? { ...settings, stow: { ...settings.stow, enabled: false } }
+    : settings
+}
+
+const STOW_REFUSED_OFF =
+  "winvm refused a stow, because this winvm could not recall a stow of the QEMU that runs Windows; idle stows are off until QEMU restarts"
+
+export function idleState(
+  cfg: InstanceConfig,
+  o: IdleOptions,
+  lastAt: {
+    readonly autosave?: string | undefined
+    readonly stow?: string | undefined
+  },
+): Pick<WatchState, "autosave" | "stow"> {
+  const effective = idleSettings(settingsOf(cfg), o)
+  return {
+    autosave: {
+      enabled: effective.autosave.enabled,
+      idleMinutes: cfg["autosave.idleMinutes"],
+      keep: cfg["autosave.keep"],
+      ...(lastAt.autosave === undefined ? {} : { lastAt: lastAt.autosave }),
+    },
+    stow: {
+      enabled: effective.stow.enabled,
+      idleMinutes: cfg["stow.idleMinutes"],
+      ...(lastAt.stow === undefined ? {} : { lastAt: lastAt.stow }),
+      ...(o.stowRefused && !o.ephemeral && cfg["stow.enabled"]
+        ? { off: STOW_REFUSED_OFF }
+        : {}),
+    },
+  }
+}
+
+export function noteStowRefused(
+  already: boolean,
+  log: (s: string) => void,
+): true {
+  if (already) return true
+  log(
+    "stow: refused, because this winvm could not recall a stow of the QEMU that runs Windows; idle stows are off until QEMU restarts, and Windows keeps running",
+  )
+  return true
 }
 
 async function syncIfRunning(p: Paths): Promise<string> {
@@ -245,7 +323,7 @@ export function realActions(
         return false
       }
     },
-    stow: async () => await runWinvm(CLI.stow(instance), log),
+    stow: async () => stowOutcome(await runWinvm(CLI.stow(instance), log)),
     syncClock: async () => await syncIfRunning(p),
     drift: async () => {
       try {
@@ -520,15 +598,6 @@ export interface WatchOptions {
   readonly actions?: Actions
 }
 
-const settingsOf = (c: InstanceConfig): Settings => ({
-  idleCpuPercent: c["watch.idleCpuPercent"],
-  autosave: {
-    enabled: c["autosave.enabled"],
-    idleMinutes: c["autosave.idleMinutes"],
-  },
-  stow: { enabled: c["stow.enabled"], idleMinutes: c["stow.idleMinutes"] },
-})
-
 const sleep = async (ms: number): Promise<void> => {
   await new Promise((r) => setTimeout(r, ms))
 }
@@ -566,6 +635,7 @@ export async function watch(
   const startedAt = new Date().toISOString()
   const machine = new IdleMachine(Date.now(), timing)
   let state: WatchState["state"] = "watching"
+  let stowRefused = false
   const lastAt = {
     autosave: newestOfKind(currentSaves(name), "auto"),
     stow: newestOfKind(currentSaves(name), "stow"),
@@ -581,17 +651,7 @@ export async function watch(
       startedAt,
       lastActivityAt: new Date(machine.idleSinceMs).toISOString(),
       idleSeconds: Math.round(machine.idleMs(Date.now()) / 1000),
-      autosave: {
-        enabled: cfg["autosave.enabled"],
-        idleMinutes: cfg["autosave.idleMinutes"],
-        keep: cfg["autosave.keep"],
-        ...(lastAt.autosave === undefined ? {} : { lastAt: lastAt.autosave }),
-      },
-      stow: {
-        enabled: cfg["stow.enabled"],
-        idleMinutes: cfg["stow.idleMinutes"],
-        ...(lastAt.stow === undefined ? {} : { lastAt: lastAt.stow }),
-      },
+      ...idleState(cfg, { ephemeral, stowRefused }, lastAt),
       state,
     }
     try {
@@ -714,11 +774,14 @@ export async function watch(
         log(
           `stow: idle ${String(Math.round(machine.idleMs(Date.now()) / 1000))} s — stowing`,
         )
-        if (await actions.stow()) {
+        const outcome = await actions.stow()
+        if (outcome === "stowed") {
           lastAt.stow = new Date().toISOString()
           return "stowed"
         }
-        log("stow: failed; back to watching")
+        if (outcome === "refused")
+          stowRefused = noteStowRefused(stowRefused, log)
+        else log("stow: failed; back to watching")
         machine.stowFailed(Date.now())
         machine.actionDone(Date.now())
         rebaseCpu()
@@ -745,6 +808,7 @@ export async function watch(
       )
       qemuPid = livePid
       vcpus = vcpusOf(livePid)
+      stowRefused = false
       machine.restarted(Date.now())
       rebaseCpu()
       publish()
@@ -774,13 +838,7 @@ export async function watch(
         vncClients: await vncClients(p),
         frozen: await isFrozen(p),
       },
-      ephemeral
-        ? {
-            ...settings,
-            autosave: { ...settings.autosave, enabled: false },
-            stow: { ...settings.stow, enabled: false },
-          }
-        : settings,
+      idleSettings(settings, { ephemeral, stowRefused }),
     )
     const v = machine.lastVerdict
     const summary = `${v.quiet ? "quiet" : "active"} ${String(machine.autosaveArmed)}`

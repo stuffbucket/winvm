@@ -65,6 +65,7 @@ import {
 import * as monitor from "./monitor"
 import {
   INTERRUPTED,
+  InstanceBusy,
   interruptedAfterRequest,
   irreversible,
   leaseHolder,
@@ -574,6 +575,8 @@ export async function build(args: Args): Promise<number> {
 }
 
 export function clearScratch(scratch: string, p: Paths): void {
+  const holder = leaseHolder(scratch)
+  if (holder !== null) throw new InstanceBusy(scratch, holder)
   stopService(p)
   retireKeeper(scratch, p)
   rmSync(p.dir, { recursive: true, force: true })
@@ -1299,6 +1302,21 @@ export async function reboot(args: Args): Promise<number> {
   return 0
 }
 
+const KILL_WAIT_MS = 5000
+
+async function untilUnlocked(
+  p: Paths,
+  pid: number,
+  ms: number,
+): Promise<boolean> {
+  const deadline = Date.now() + ms
+  while (qemu.pidOf(p) === pid) {
+    if (Date.now() > deadline) return false
+    await new Promise((r) => setTimeout(r, 50))
+  }
+  return true
+}
+
 export async function kill(args: Args): Promise<number> {
   const name = instanceName(args)
   const p = pathsFor(name)
@@ -1312,13 +1330,17 @@ export async function kill(args: Args): Promise<number> {
   }
   if (pid === null) {
     const kept = await killKept(p, null)
+    const strays = qemu.qemuPids(p)
+    for (const stray of strays) signalProcess(stray, "SIGKILL")
     qemu.stopSidecars(p)
     stopService(p)
     finder.cleanStale(name)
     console.log(
-      kept
-        ? `killed the QEMU winvm's keeper ran for "${name}", which qemu.pid did not name`
-        : `instance "${name}" is not running`,
+      strays.length > 0
+        ? `killed QEMU (pid ${strays.join(", ")}) of "${name}", which no longer held qemu.pid`
+        : kept
+          ? `killed the QEMU winvm's keeper ran for "${name}", which qemu.pid did not name`
+          : `instance "${name}" is not running`,
     )
     return 0
   }
@@ -1337,8 +1359,15 @@ export async function kill(args: Args): Promise<number> {
   }
   finder.beforeDown(name)
   if (!(await killKept(p, pid))) {
-    signalProcess(pid, "SIGKILL")
+    if (qemu.pidOf(p) === pid) signalProcess(pid, "SIGKILL")
     await killKept(p, null)
+  }
+  if (!(await untilUnlocked(p, pid, KILL_WAIT_MS))) {
+    console.error(
+      `::error::QEMU (pid ${String(pid)}) still holds its pidfile lock after winvm's kill, so "${name}" is still running; ` +
+        `nothing else was stopped and ${p.pid} is kept. Try again, or end pid ${String(pid)} in Activity Monitor (Force Quit)`,
+    )
+    return 1
   }
   rmSync(p.pid, { force: true })
   qemu.stopSidecars(p)

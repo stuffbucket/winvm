@@ -21,16 +21,76 @@ end Windows abruptly. Activity Monitor's Quit does nothing to a kept QEMU;
 Force Quit does. `winvm kill` is the supported hard stop, and it asks the
 keeper to do it.
 
-When the keeper itself is told to stop, because the Mac is shutting down,
-restarting or logging out, or because someone ran `launchctl bootout` on it,
-it asks Windows to shut down through a QMP monitor of its own
-(`keeper/qmp.sock`). launchd allows it 60 seconds. It lets a save that is
-still running go on for up to 43 seconds, then cancels it. If Windows hasn't
-shut down 50 seconds after the stop began, the keeper quits QEMU, and at 53
-seconds it kills it. A guest that is stopped mid-save or mid-load can't act on
-the power button, so the keeper quits it at once. Stowing Windows at that
-moment, instead of shutting it down, comes in a later release. After the next
-login, `winvm status` says whether Windows shut down cleanly or was powered off.
+The keeper also runs the control service (below) as its child, so the
+service is still there when the Mac shuts down. The service is not shielded,
+but while the keeper is its parent it records a SIGTERM, SIGHUP or SIGINT in
+`events.jsonl` and carries on; the keeper stops it with SIGUSR2. The keeper
+restarts a service that crashes while QEMU runs, waiting 1, 2, 4 and up to 30
+seconds between tries.
+
+When the keeper itself is told to stop, because the Mac is shutting down or
+restarting, because launchd ends your background session at logout, or
+because someone ran `launchctl bootout` on it, it hands the moment to the
+service (`POST /host-ending`, with a deadline). launchd allows the keeper 60
+seconds, and the service has until 47 seconds after the stop began:
+
+- An idle Windows is stowed: the guest's drives are first unmounted from
+  Finder while Windows still runs (at most 3 seconds for all of them, after
+  which a hung unmount is abandoned), then its memory is saved as the `stow`
+  save, the save is written in full, and only then does QEMU quit.
+  `winvm start` recalls it later. Nothing starts by itself at the next login.
+- An autosave in progress is cancelled first. A stow you started is waited
+  for; a save you started is waited for until 15 seconds before the deadline,
+  then cancelled.
+- A guest started with `--ephemeral`, or one running an installer, is quit.
+- When the instance's `hostEnd.action` is `shutdown`
+  (`winvm config -i NAME hostEnd.action=shutdown`), when its image predates
+  virtio boot, when the disk has less room than the memory QEMU uses plus
+  1 GiB, when this winvm could not recall a stow of the QEMU that runs it
+  (the VM was started before an update that changed QEMU), or when the stow
+  fails, the service hands the moment back to the keeper, which shuts
+  Windows down instead. winvm never writes a stow that the next `start`
+  would refuse or boot past: `winvm stow`, the idle watcher's stow and the
+  app's close-window stow refuse it too, and Windows keeps running.
+  `winvm stow` then exits 4 and says to shut Windows down and start it
+  again, before it stops the watcher or takes the Finder drives down; the
+  watcher stops trying idle stows until QEMU restarts, and `winvm status`
+  says so; the app's close stays open with the same words. When QEMU does
+  not say which version it runs, `winvm stow` exits 5 instead, and the
+  watcher tries again later. A stow that fails once it has begun puts the
+  watcher it stopped back while Windows still runs.
+
+The keeper never lets two of them act on Windows at once. If the service
+refuses the moment, or can't be reached, or never answered and has died, the
+keeper takes over through a QMP monitor of its own (`keeper/qmp.sock`): it
+lets a save that is still running go on until 43 seconds, then cancels it;
+presses the power button; quits QEMU at 50 seconds if Windows hasn't shut
+down; and kills it at 53. A guest that is stopped mid-save or mid-load can't
+act on the power button, so the keeper quits it at once. Once the service may
+be stowing (it answered, or the answer was lost), the keeper only waits: if
+the service dies, or is still busy at 47 seconds, the keeper quits QEMU, and
+never presses the power button on a guest that may be half saved. A VM an
+older winvm started gets SIGTERM a second before SIGKILL, since nothing
+shields it. While a winvm command or the watcher holds the instance (its
+`lease.json`), the keeper never presses the power button; it waits, and quits
+QEMU at 50 seconds if it must.
+
+At logout, the keeper only does this if launchd stops it. If launchd leaves
+your background session running, so does Windows, without a window, and you
+find it still running when you log back in.
+
+After the next login, `winvm status` says what happened: Windows was stowed;
+or winvm did not stow it, with the reason (your `hostEnd.action`, or what
+went wrong), and it was shut down, quit or killed instead; or the Mac ended
+winvm before the keeper finished, with the last step it reached. Each note
+says how many seconds after the stop began that happened, which is how long
+macOS gave winvm.
+
+Every save records the QEMU that wrote it. For a VM an older winvm started,
+winvm asks that QEMU for its version; when it can't tell which winvm runtime
+it came from, the save says so, and `winvm start` recalls such a stow only
+with QEMU of the same version. Otherwise it refuses, and
+`winvm start -i NAME --boot` discards the stow and starts Windows afresh.
 
 The keeper isn't a login item and doesn't outlive a restart. The app carries
 it; a CLI-only install gets it from `winvm setup` once a release pins one.
@@ -40,10 +100,18 @@ before, and so does every VM when no keeper is installed. `winvm status` has a
 `keeper` row:
 
 - `protected`: QEMU runs under the keeper.
-- `not protected: started without winvm's keeper`: QEMU was started detached,
-  for example before this update. It keeps working, and `winvm stop`, `kill`
-  and `status` treat it as before. It is protected from its next start;
-  `winvm stow -i NAME && winvm start -i NAME` does that now.
+- `watched, not shielded: started by an older winvm`: QEMU was started
+  detached before this update. The next winvm command, or the app, starts a
+  keeper that watches it where it is and runs the control service, without
+  restarting Windows. At a shutdown the keeper still tries to stow it, but
+  macOS may end QEMU first. Protect now in the app's Details, or
+  `winvm stow -i NAME && winvm start -i NAME`, restarts it under the keeper.
+  When this winvm could not recall a stow of the QEMU that runs it (an update
+  changed QEMU), there is no Protect now: status and the app say so, and
+  `winvm stop` then `winvm start` puts it under the keeper instead.
+- `not protected: started without winvm's keeper`: QEMU was started detached
+  and no keeper watches it yet. It keeps working, and `winvm stop`, `kill`
+  and `status` treat it as before.
 - `not protected: WINVM_KEEPER=off`, or `no winvm-keeper installed`.
 - `confused`: the keeper and `qemu.pid` name different processes; `winvm kill`
   clears it.

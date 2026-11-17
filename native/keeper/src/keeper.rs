@@ -8,12 +8,13 @@ use std::time::{Duration, Instant, SystemTime};
 use serde_json::{json, Value};
 
 use crate::adopt;
+use crate::control::{self, PostError};
 use crate::kq::{Event, Kqueue};
 use crate::qmp;
 use crate::record::{self, Record};
 use crate::sock::{Connection, Received, Server};
 use crate::spawn;
-use crate::state::{self, ChildSpec, Kept, Spec, State};
+use crate::state::{self, AdoptSpec, ChildSpec, Kept, ServiceSpec, Spec, State};
 use crate::{PROTOCOL, VERSION};
 
 const DEFAULT_LINGER: Duration = Duration::from_secs(10);
@@ -23,6 +24,13 @@ const GRACE_AFTER_STOP: Duration = Duration::from_secs(3);
 const HOST_END_POLL: Duration = Duration::from_millis(250);
 const MIGRATE_MARGIN: Duration = Duration::from_secs(12);
 const QMP_TIMEOUT: Duration = Duration::from_secs(1);
+const SERVICE_MARGIN: Duration = Duration::from_secs(8);
+const SERVICE_ANSWER: Duration = Duration::from_millis(1500);
+const SERVICE_STOP: Duration = Duration::from_secs(5);
+const SERVICE_GRACE: Duration = Duration::from_secs(5);
+const TERM_GRACE: Duration = Duration::from_secs(1);
+const SERVICE_BACKOFF_MAX: Duration = Duration::from_secs(30);
+const SERVICE_STEADY: Duration = Duration::from_secs(60);
 
 pub struct Settings {
     pub dir: PathBuf,
@@ -32,6 +40,13 @@ pub struct Settings {
 struct Running {
     kept: Kept,
     process: Option<Child>,
+}
+
+struct Service {
+    kept: Kept,
+    process: Option<Child>,
+    build: String,
+    since: Instant,
 }
 
 struct StopAction {
@@ -48,6 +63,13 @@ enum Fallback {
     Quit,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Ended {
+    No,
+    Termed,
+    Killed,
+}
+
 struct HostEnd {
     stop_deadline: Instant,
     kill_at: Instant,
@@ -55,7 +77,10 @@ struct HostEnd {
     migrate_until: Instant,
     stop: Option<StopAction>,
     fallback: Option<Fallback>,
-    killed: bool,
+    ended: Ended,
+    service: Option<Instant>,
+    acked: bool,
+    lease_noted: bool,
 }
 
 struct Keeper {
@@ -68,6 +93,11 @@ struct Keeper {
     server: Server,
     child: Option<Running>,
     sidecars: Vec<Running>,
+    service: Option<Service>,
+    service_spec: Option<ServiceSpec>,
+    service_restarts: u32,
+    service_restart_at: Option<Instant>,
+    service_stop_at: Option<Instant>,
     last_exit: Option<Value>,
     host_end: Option<HostEnd>,
     idle_since: Instant,
@@ -81,6 +111,12 @@ struct Keeper {
 enum Failure {
     Retry(String),
     Park(String),
+}
+
+enum Handed {
+    Acked,
+    Unconfirmed(String),
+    Declined(String),
 }
 
 const REQUEST_FIELDS: [&str; 2] = ["op", "protocol"];
@@ -100,6 +136,24 @@ fn signal_name(signal: i32) -> String {
 
 fn pid_of(process: &Child) -> i32 {
     i32::try_from(process.id()).unwrap_or(i32::MAX)
+}
+
+fn wait_or_kill(process: &mut Child, pid: i32, deadline: Instant) -> Vec<(&'static str, Value)> {
+    loop {
+        match process.try_wait() {
+            Ok(Some(status)) => return spawn::exit_fields(status),
+            Ok(None) if Instant::now() < deadline => {
+                std::thread::sleep(Duration::from_millis(20));
+            }
+            Ok(None) => {
+                spawn::kill(pid, libc::SIGKILL);
+                return process
+                    .wait()
+                    .map_or_else(|_| Vec::new(), spawn::exit_fields);
+            }
+            Err(_) => return Vec::new(),
+        }
+    }
 }
 
 fn default_instance(dir: &Path) -> String {
@@ -148,6 +202,7 @@ fn spec_or_previous(
                 linger_ms: None,
                 child: None,
                 stop: p.stop,
+                adopt: None,
             };
             Ok((spec, Some(problem)))
         }
@@ -213,6 +268,11 @@ fn start(settings: Settings) -> Result<Option<Keeper>, Failure> {
         server,
         child: None,
         sidecars: Vec::new(),
+        service: None,
+        service_spec: None,
+        service_restarts: 0,
+        service_restart_at: None,
+        service_stop_at: None,
         last_exit: None,
         host_end: None,
         idle_since: Instant::now(),
@@ -256,6 +316,8 @@ impl Keeper {
                 true
             }
             Some(previous) => {
+                self.service_spec.clone_from(&previous.service_spec);
+                self.adopt_service(previous.service);
                 let new_boot = matches!(
                     (&previous.boot_session, &self.boot_session),
                     (Some(was), Some(now)) if was != now
@@ -271,6 +333,10 @@ impl Keeper {
             }
         };
         if !launch || !may_launch {
+            return;
+        }
+        if let Some(legacy) = self.spec.adopt.clone() {
+            self.adopt_legacy(&legacy);
             return;
         }
         if let Some(child) = self.spec.child.clone() {
@@ -292,6 +358,8 @@ impl Keeper {
             stop: self.spec.stop.clone(),
             child: self.child.as_ref().map(|r| r.kept.clone()),
             sidecars: self.sidecars.iter().map(|r| r.kept.clone()).collect(),
+            service: self.service.as_ref().map(|s| s.kept.clone()),
+            service_spec: self.service_spec.clone(),
         };
         if let Err(e) = state::write_state(&self.dir, &current) {
             eprintln!("winvm-keeper: writing {}: {e}", state::STATE);
@@ -412,6 +480,8 @@ impl Keeper {
                 start_us: adopt::start_time_us(pid).unwrap_or(0),
                 pidfile: spec.pidfile.clone(),
                 qmp: None,
+                runtime: None,
+                legacy: false,
             },
             process: Some(process),
         });
@@ -459,6 +529,280 @@ impl Keeper {
         true
     }
 
+    fn adopt_legacy(&mut self, legacy: &AdoptSpec) {
+        let fields = [("child", Value::from(legacy.name.clone()))];
+        let Some(pid) = adopt::lock_holder(&legacy.pidfile) else {
+            let mut all = fields.to_vec();
+            all.push((
+                "error",
+                format!("no process holds {}", legacy.pidfile.display()).into(),
+            ));
+            self.record.note("adopt-failed", &all);
+            return;
+        };
+        let kept = Kept {
+            name: legacy.name.clone(),
+            pid,
+            start_us: adopt::start_time_us(pid).unwrap_or(0),
+            pidfile: Some(legacy.pidfile.clone()),
+            qmp: legacy.qmp.clone(),
+            runtime: None,
+            legacy: true,
+        };
+        if !self.kq.watch_exit(pid).unwrap_or(false) {
+            let mut all = fields.to_vec();
+            all.push(("error", format!("cannot watch pid {pid}").into()));
+            self.record.note("adopt-failed", &all);
+            return;
+        }
+        self.record.note(
+            "adopted",
+            &[
+                ("child", legacy.name.clone().into()),
+                ("pid", pid.into()),
+                ("by", "pidfile".into()),
+                ("legacy", true.into()),
+            ],
+        );
+        self.child = Some(Running {
+            kept,
+            process: None,
+        });
+        self.save();
+    }
+
+    fn adopt_service(&mut self, previous: Option<Kept>) {
+        let Some(kept) = previous else {
+            return;
+        };
+        let build = self
+            .service_spec
+            .as_ref()
+            .map(|s| s.build.clone())
+            .unwrap_or_default();
+        let watched =
+            adopt::identify(&kept).filter(|_| self.kq.watch_exit(kept.pid).unwrap_or(false));
+        match watched {
+            Some(by) => {
+                self.record.note(
+                    "service-adopted",
+                    &[
+                        ("pid", kept.pid.into()),
+                        ("by", by.into()),
+                        ("build", build.clone().into()),
+                    ],
+                );
+                self.service = Some(Service {
+                    kept,
+                    process: None,
+                    build,
+                    since: Instant::now(),
+                });
+            }
+            None => self
+                .record
+                .note("service-exited-unknown", &[("pid", kept.pid.into())]),
+        }
+    }
+
+    fn spawn_service(&mut self, spec: &ServiceSpec, restart: u32) -> Result<i32, String> {
+        let program = spec.argv.first().cloned().unwrap_or_default();
+        let keeper = std::process::id().to_string();
+        let process = spawn::spawn(&spec.command(), &[("WINVM_KEEPER_PID", keeper)], false)
+            .map_err(|e| format!("{program}: {e}"))?;
+        let pid = pid_of(&process);
+        self.service = Some(Service {
+            kept: Kept {
+                name: "service".to_owned(),
+                pid,
+                start_us: adopt::start_time_us(pid).unwrap_or(0),
+                pidfile: None,
+                qmp: None,
+                runtime: None,
+                legacy: false,
+            },
+            process: Some(process),
+            build: spec.build.clone(),
+            since: Instant::now(),
+        });
+        self.service_spec = Some(spec.clone());
+        self.service_restart_at = None;
+        self.service_stop_at = None;
+        self.save();
+        let mut fields = vec![
+            ("pid", Value::from(pid)),
+            ("build", spec.build.clone().into()),
+        ];
+        if restart > 0 {
+            fields.push(("restart", restart.into()));
+        }
+        self.record.note("service-started", &fields);
+        if let Err(e) = self.kq.watch_exit(pid) {
+            eprintln!("winvm-keeper: watching the service {pid}: {e}");
+        }
+        Ok(pid)
+    }
+
+    fn service_alive(&self) -> bool {
+        self.service
+            .as_ref()
+            .is_some_and(|s| s.process.is_some() || adopt::identify(&s.kept).is_some())
+    }
+
+    fn end_service_now(&mut self, extra: &[(&'static str, Value)]) -> Option<i32> {
+        let mut service = self.service.take()?;
+        let pid = service.kept.pid;
+        let ours = service.process.is_some() || adopt::identify(&service.kept).is_some();
+        let deadline = Instant::now() + SERVICE_STOP;
+        if ours {
+            spawn::kill(pid, libc::SIGUSR2);
+        }
+        let mut fields = if let Some(process) = service.process.as_mut() {
+            wait_or_kill(process, pid, deadline)
+        } else {
+            while ours && adopt::identify(&service.kept).is_some() && Instant::now() < deadline {
+                std::thread::sleep(Duration::from_millis(20));
+            }
+            if adopt::identify(&service.kept).is_some() {
+                spawn::kill(pid, libc::SIGKILL);
+            }
+            Vec::new()
+        };
+        fields.insert(0, ("pid", pid.into()));
+        fields.extend_from_slice(extra);
+        self.record.note("service-exited", &fields);
+        self.service_stop_at = None;
+        self.idle_since = Instant::now();
+        self.save();
+        Some(pid)
+    }
+
+    fn poll_service(&mut self, exited: &[i32], now: Instant) {
+        let Some(service) = &mut self.service else {
+            return;
+        };
+        let pid = service.kept.pid;
+        let outcome = match &mut service.process {
+            Some(process) => match process.try_wait() {
+                Ok(Some(status)) => Some((status.success(), spawn::exit_fields(status))),
+                Ok(None) => None,
+                Err(_) => Some((false, Vec::new())),
+            },
+            None => (exited.contains(&pid) || adopt::identify(&service.kept).is_none())
+                .then(|| (false, Vec::new())),
+        };
+        let Some((clean, fields)) = outcome else {
+            return;
+        };
+        let lived = now.saturating_duration_since(service.since);
+        self.service = None;
+        self.service_stop_at = None;
+        self.idle_since = now;
+        let mut all = vec![("pid", Value::from(pid))];
+        all.extend(fields);
+        let restart = !clean
+            && self.host_end.is_none()
+            && self.child.is_some()
+            && self.service_spec.is_some();
+        if restart {
+            if lived >= SERVICE_STEADY {
+                self.service_restarts = 0;
+            }
+            let shift = self.service_restarts.min(5);
+            let backoff = Duration::from_secs(1u64 << shift).min(SERVICE_BACKOFF_MAX);
+            self.service_restarts += 1;
+            self.service_restart_at = Some(now + backoff);
+            all.push(("restartInMs", millis(backoff).into()));
+        }
+        self.record.note("service-exited", &all);
+        self.save();
+    }
+
+    fn restart_service(&mut self, now: Instant) {
+        let Some(at) = self.service_restart_at else {
+            return;
+        };
+        if self.child.is_none() || self.host_end.is_some() {
+            self.service_restart_at = None;
+            return;
+        }
+        if now < at || self.service.is_some() {
+            return;
+        }
+        let Some(spec) = self.service_spec.clone() else {
+            self.service_restart_at = None;
+            return;
+        };
+        if let Err(error) = self.spawn_service(&spec, self.service_restarts) {
+            self.record
+                .note("service-failed", &[("error", error.into())]);
+        }
+    }
+
+    fn serve_service(&mut self, spec: &ServiceSpec) -> Value {
+        if self.host_end.is_some() {
+            return json!({ "ok": false, "error": "host-ending" });
+        }
+        if self.service_alive() {
+            if let Some(service) = &self.service {
+                if service.build == spec.build {
+                    return json!({ "ok": true, "pid": service.kept.pid, "started": false });
+                }
+            }
+            self.end_service_now(&[("replaced", true.into())]);
+        } else if self.service.is_some() {
+            self.poll_service(&[], Instant::now());
+        }
+        self.service_restarts = 0;
+        match self.spawn_service(spec, 0) {
+            Ok(pid) => json!({ "ok": true, "pid": pid, "started": true }),
+            Err(error) => json!({ "ok": false, "error": error }),
+        }
+    }
+
+    fn stop_service(&mut self) -> Value {
+        self.service_spec = None;
+        self.service_restart_at = None;
+        match self.end_service_now(&[("requested", true.into())]) {
+            Some(pid) => json!({ "ok": true, "pid": pid }),
+            None => json!({ "ok": false, "error": "no service" }),
+        }
+    }
+
+    fn hand_back(&mut self, request: &Value) -> Value {
+        let Some(host) = &self.host_end else {
+            return json!({ "ok": false, "error": "not ending" });
+        };
+        if host.service.is_none() {
+            return json!({ "ok": true, "taken": false });
+        }
+        let then = request["end"].as_str().unwrap_or("");
+        if !matches!(then, "shutdown" | "quit") {
+            return json!({ "ok": false, "error": "end must be shutdown or quit" });
+        }
+        let reason = request["reason"].as_str().unwrap_or("service").to_owned();
+        if self.child.is_some() {
+            self.fall_back(&reason, then, Instant::now());
+        }
+        json!({ "ok": true })
+    }
+
+    fn hand_to_service(&self, now: SystemTime) -> Handed {
+        let Some(control) = self.service_spec.as_ref().map(|s| s.control.clone()) else {
+            return Handed::Declined("no control socket".to_owned());
+        };
+        let body = json!({
+            "deadlineMs": record::epoch_ms(now + self.budget.saturating_sub(SERVICE_MARGIN)),
+            "budgetMs": millis(self.budget),
+        });
+        match control::post(&control, "/host-ending", &body, SERVICE_ANSWER) {
+            Ok(code) if (200..300).contains(&code) || code == 409 => Handed::Acked,
+            Ok(code) => Handed::Declined(format!("HTTP {code}")),
+            Err(PostError::Unreachable(error)) => Handed::Declined(error),
+            Err(PostError::NoAnswer(error)) => Handed::Unconfirmed(error),
+        }
+    }
+
     fn launch(&mut self, spec: &ChildSpec) -> Result<i32, String> {
         let program = spec.argv.first().cloned().unwrap_or_default();
         let process =
@@ -470,6 +814,8 @@ impl Keeper {
             start_us: adopt::start_time_us(pid).unwrap_or(0),
             pidfile: spec.pidfile.clone(),
             qmp: spec.qmp.clone(),
+            runtime: spec.runtime.clone(),
+            legacy: false,
         };
         self.child = Some(Running {
             kept,
@@ -539,12 +885,19 @@ impl Keeper {
             migrate_until: now + self.budget.saturating_sub(MIGRATE_MARGIN),
             stop: None,
             fallback: None,
-            killed: false,
+            ended: Ended::No,
+            service: None,
+            acked: false,
+            lease_noted: false,
         };
         if self.child.is_none() {
             self.retire_sidecars();
         }
-        if let Some(running) = &self.child {
+        let served = self.spec.stop.is_none() && self.child.is_some() && self.service_alive();
+        if served {
+            let has_qmp = self.child.as_ref().is_some_and(|r| r.kept.qmp.is_some());
+            self.hand_off(&mut host, now, has_qmp);
+        } else if let Some(running) = &self.child {
             match &self.spec.stop {
                 Some(stop) => {
                     let deadline = SystemTime::now() + self.budget.saturating_sub(STOP_MARGIN);
@@ -586,6 +939,46 @@ impl Keeper {
             }
         }
         self.host_end = Some(host);
+    }
+
+    fn hand_off(&self, host: &mut HostEnd, now: Instant, has_qmp: bool) {
+        match self.hand_to_service(SystemTime::now()) {
+            Handed::Acked => {
+                self.record.note(
+                    "host-end",
+                    &[("step", "service".into()), ("ok", true.into())],
+                );
+                host.service = Some(now + self.budget.saturating_sub(SERVICE_MARGIN));
+                host.acked = true;
+            }
+            Handed::Unconfirmed(error) => {
+                self.record.note(
+                    "host-end",
+                    &[
+                        ("step", "service".into()),
+                        ("ok", false.into()),
+                        ("unconfirmed", true.into()),
+                        ("error", error.into()),
+                    ],
+                );
+                host.service = Some(now + self.budget.saturating_sub(SERVICE_MARGIN));
+            }
+            Handed::Declined(error) => {
+                self.record.note(
+                    "host-end",
+                    &[
+                        ("step", "service".into()),
+                        ("ok", false.into()),
+                        ("error", error.into()),
+                    ],
+                );
+                if has_qmp {
+                    host.fallback = Some(Fallback::Check);
+                } else {
+                    host.kill_at = now;
+                }
+            }
+        }
     }
 
     fn host_end_step(&self, step: &str, outcome: Result<Value, String>) {
@@ -635,6 +1028,48 @@ impl Keeper {
         Fallback::Waiting
     }
 
+    fn lease_holder(&self) -> Option<(i32, String)> {
+        let text = std::fs::read_to_string(self.dir.parent()?.join("lease.json")).ok()?;
+        let lease: Value = serde_json::from_str(&text).ok()?;
+        let pid = i32::try_from(lease["pid"].as_i64()?).ok()?;
+        let operation = lease["operation"].as_str().unwrap_or("an operation");
+        let same = match lease["pidStart"].as_str() {
+            None | Some("") => true,
+            Some(start) => adopt::started_as(pid, start),
+        };
+        (same && spawn::kill(pid, 0)).then(|| (pid, operation.to_owned()))
+    }
+
+    fn wait_for_lease(
+        &mut self,
+        held: Option<(i32, String)>,
+        socket: &Path,
+        now: Instant,
+        quit_at: Instant,
+        step: Fallback,
+    ) -> Fallback {
+        if now >= quit_at {
+            let quit = qmp::execute(socket, "quit", QMP_TIMEOUT);
+            self.host_end_step("quit", quit);
+            return Fallback::Quit;
+        }
+        let noted = self.host_end.as_ref().is_some_and(|h| h.lease_noted);
+        if let (false, Some((pid, operation))) = (noted, held) {
+            self.record.note(
+                "host-end",
+                &[
+                    ("step", "lease-wait".into()),
+                    ("pid", pid.into()),
+                    ("operation", operation.into()),
+                ],
+            );
+            if let Some(host) = &mut self.host_end {
+                host.lease_noted = true;
+            }
+        }
+        step
+    }
+
     fn step_fallback(&mut self, now: Instant) {
         let Some(host) = &self.host_end else {
             return;
@@ -647,7 +1082,11 @@ impl Keeper {
         let Some(socket) = self.child.as_ref().and_then(|r| r.kept.qmp.clone()) else {
             return;
         };
+        let held = self.lease_holder();
         let next = match step {
+            Fallback::Check | Fallback::Migrating if held.is_some() => {
+                self.wait_for_lease(held, &socket, now, quit_at, step)
+            }
             Fallback::Check | Fallback::Migrating => {
                 match qmp::execute(&socket, "query-migrate", QMP_TIMEOUT) {
                     Ok(answer) if qmp::migrating(&answer) && now < migrate_until => {
@@ -728,15 +1167,80 @@ impl Keeper {
         self.connections.retain(|c| c.deadline > now);
     }
 
+    fn fall_back(&mut self, reason: &str, then: &str, now: Instant) {
+        let has_qmp = self.child.as_ref().is_some_and(|r| r.kept.qmp.is_some());
+        self.record.note(
+            "host-end",
+            &[
+                ("step", "fallback".into()),
+                ("reason", reason.into()),
+                ("end", then.into()),
+            ],
+        );
+        let quit_now = has_qmp && then == "quit";
+        if quit_now {
+            if let Some(socket) = self.child.as_ref().and_then(|r| r.kept.qmp.clone()) {
+                let quit = qmp::execute(&socket, "quit", QMP_TIMEOUT);
+                self.host_end_step("quit", quit);
+            }
+        }
+        if let Some(host) = &mut self.host_end {
+            host.service = None;
+            if quit_now {
+                host.fallback = Some(Fallback::Quit);
+            } else if has_qmp {
+                host.fallback = Some(Fallback::Check);
+            } else {
+                host.kill_at = now;
+            }
+        }
+    }
+
+    fn watch_service_host_end(&mut self, now: Instant) {
+        let deadline = self.host_end.as_ref().and_then(|h| h.service);
+        let acked = self.host_end.as_ref().is_some_and(|h| h.acked);
+        if self.child.is_none() {
+            if self.service.is_some() && self.service_stop_at.is_none() {
+                if let Some(service) = &self.service {
+                    spawn::kill(service.kept.pid, libc::SIGUSR2);
+                }
+                let cap = self
+                    .host_end
+                    .as_ref()
+                    .map_or(now + SERVICE_GRACE, |h| (h.kill_at + KILL_MARGIN).max(now));
+                self.service_stop_at = Some((now + SERVICE_GRACE).min(cap));
+            }
+            if let (Some(service), Some(at)) = (&self.service, self.service_stop_at) {
+                if now >= at {
+                    spawn::kill(service.kept.pid, libc::SIGKILL);
+                }
+            }
+            return;
+        }
+        let Some(deadline) = deadline else {
+            return;
+        };
+        if self.service.is_none() {
+            self.fall_back("service-gone", if acked { "quit" } else { "shutdown" }, now);
+        } else if now >= deadline {
+            self.fall_back("service-deadline", "quit", now);
+        }
+    }
+
     fn tick(&mut self, exited: &[i32]) -> Option<&'static str> {
         self.poll_child(exited);
         self.poll_sidecars(exited);
         let now = Instant::now();
+        self.poll_service(exited, now);
+        self.restart_service(now);
         self.poll_stop(now);
         self.reap_stragglers();
         self.drop_late_connections(now);
+        if self.host_end.is_some() {
+            self.watch_service_host_end(now);
+        }
         let Some(host) = &self.host_end else {
-            let idle = self.child.is_none();
+            let idle = self.child.is_none() && self.service.is_none();
             let reason = if idle && self.exit_requested {
                 Some("requested")
             } else if idle && now >= self.idle_since + self.linger {
@@ -750,28 +1254,49 @@ impl Keeper {
             }
             return reason;
         };
-        let killed = host.killed;
+        let killed = host.ended == Ended::Killed;
         let kill_at = host.kill_at;
         if !killed && now < kill_at {
             self.step_fallback(now);
         }
         if !killed && now >= kill_at {
-            if let Some(pid) = self.signal_child(libc::SIGKILL) {
-                self.record
-                    .note("host-end", &[("step", "kill".into()), ("pid", pid.into())]);
-            }
-            if let Some(host) = &mut self.host_end {
-                host.killed = true;
-            }
+            self.kill_at_deadline(now);
         }
         let finished = self.child.is_none()
             && self.sidecars.is_empty()
+            && self.service.is_none()
             && self.host_end.as_ref().is_some_and(|h| h.stop.is_none());
         if finished {
             self.record.note("host-end", &[("step", "done".into())]);
             return Some("host-end");
         }
         None
+    }
+
+    fn kill_at_deadline(&mut self, now: Instant) {
+        let legacy = self.child.as_ref().is_some_and(|r| r.kept.legacy);
+        let termed = self
+            .host_end
+            .as_ref()
+            .is_some_and(|h| h.ended == Ended::Termed);
+        if legacy && !termed {
+            if let Some(pid) = self.signal_child(libc::SIGTERM) {
+                self.record
+                    .note("host-end", &[("step", "term".into()), ("pid", pid.into())]);
+            }
+            if let Some(host) = &mut self.host_end {
+                host.ended = Ended::Termed;
+                host.kill_at = now + TERM_GRACE;
+            }
+            return;
+        }
+        if let Some(pid) = self.signal_child(libc::SIGKILL) {
+            self.record
+                .note("host-end", &[("step", "kill".into()), ("pid", pid.into())]);
+        }
+        if let Some(host) = &mut self.host_end {
+            host.ended = Ended::Killed;
+        }
     }
 
     fn next_wake(&self) -> Option<Duration> {
@@ -786,18 +1311,28 @@ impl Keeper {
     }
 
     fn state_wake(&self, now: Instant) -> Option<Duration> {
+        let wake = self.host_or_idle_wake(now);
+        match self.service_restart_at {
+            Some(at) => Some(wake.map_or(at.saturating_duration_since(now), |w| {
+                w.min(at.saturating_duration_since(now))
+            })),
+            None => wake,
+        }
+    }
+
+    fn host_or_idle_wake(&self, now: Instant) -> Option<Duration> {
         match &self.host_end {
             Some(host) => {
                 let mut wake = now + HOST_END_POLL;
                 if host.stop.is_some() {
                     wake = wake.min(host.stop_deadline);
                 }
-                if !host.killed {
+                if host.ended != Ended::Killed {
                     wake = wake.min(host.kill_at);
                 }
                 Some(wake.saturating_duration_since(now))
             }
-            None if self.child.is_none() => {
+            None if self.child.is_none() && self.service.is_none() => {
                 let idle_at = self.idle_since + self.linger;
                 Some(if self.sidecars.is_empty() || now < idle_at {
                     idle_at.saturating_duration_since(now)
@@ -830,10 +1365,11 @@ impl Keeper {
                 });
             }
         }
-        let extra: &[&str] = if matches!(op, Some("launch" | "launch-sidecar")) {
-            &["child"]
-        } else {
-            &[]
+        let extra: &[&str] = match op {
+            Some("launch" | "launch-sidecar") => &["child"],
+            Some("service") => &["service"],
+            Some("host-end") => &["end", "reason"],
+            _ => &[],
         };
         if let Some(unknown) = fields
             .keys()
@@ -884,6 +1420,14 @@ impl Keeper {
                 self.exit_requested = true;
                 json!({ "ok": true })
             }
+            Some("service") => {
+                match serde_json::from_value::<ServiceSpec>(request["service"].clone()) {
+                    Ok(spec) => self.serve_service(&spec),
+                    Err(e) => json!({ "ok": false, "error": format!("service: {e}") }),
+                }
+            }
+            Some("service-stop") => self.stop_service(),
+            Some("host-end") => self.hand_back(request),
             _ => json!({ "ok": false, "error": "unknown op" }),
         }
     }
@@ -900,6 +1444,14 @@ impl Keeper {
                 "pid": r.kept.pid,
                 "startUs": r.kept.start_us,
                 "adopted": r.process.is_none(),
+                "legacy": r.kept.legacy,
+                "runtime": r.kept.runtime,
+            })),
+            "service": self.service.as_ref().map(|s| json!({
+                "pid": s.kept.pid,
+                "build": s.build,
+                "startUs": s.kept.start_us,
+                "adopted": s.process.is_none(),
             })),
             "sidecars": self.sidecars.iter().map(|r| json!({
                 "name": r.kept.name,

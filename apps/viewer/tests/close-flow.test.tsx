@@ -60,6 +60,7 @@ const statusOf = (m: Machine) => ({
       ? { agent: m.agent ?? "ok", agentVersion: "9", os: "Windows 11" }
       : null,
   saves: { count: 0, bytes: 0 },
+  keeper: null,
   notes: [],
 })
 
@@ -830,6 +831,35 @@ describe("useCloseFlow", () => {
       copy("close.actionFailed", { title: "a" }),
     )
     expect(bridge.count("close_cancel")).toBe(2)
+  })
+
+  it("stays open with winvm's words when a remembered stow is refused because no recall could take it, and runs nothing else", async () => {
+    const bridge = fakeBridge()
+    const world = fakeWinvm(
+      [
+        { name: "a", state: "running", closePolicy: "stow" },
+        { name: "b", state: "running", closePolicy: "shutdown" },
+      ],
+      "a",
+    )
+    await mount(world)
+    act(() => {
+      bridge.fire()
+    })
+    await flush()
+    expect(world.runs.map((r) => `${r.name} ${r.verb}`)).toEqual(["a stow"])
+    const refusal =
+      'Windows on "a" runs QEMU 11.0.0, and this winvm runs QEMU 11.1.2, so a stow of it could not be brought back; nothing was saved and Windows keeps running. Shut it down (`winvm stop -i a`) and start it again (`winvm start -i a`) to move it to this winvm\'s QEMU'
+    world.settle(4, refusal)
+    await flush()
+    const failed = current().state
+    expect(failed.kind).toBe("failed")
+    if (failed.kind !== "failed") return
+    expect(failed.machine?.name).toBe("a")
+    expect(failed.message).toBe(refusal)
+    expect(bridge.count("close_cancel")).toBe(1)
+    expect(bridge.count("close_complete")).toBe(0)
+    expect(world.runs).toHaveLength(1)
   })
 
   it("fails the same way when the machine it is about to resolve can't be read", async () => {

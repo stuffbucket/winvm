@@ -41,7 +41,7 @@ export interface FoundKeeper {
 export const KEEPER_BINARY = "winvm-keeper"
 export const KEEPER_PREFIX = "co.stuffbucket.winvm.keeper."
 export const KEEPER_EXIT_TIMEOUT = 60
-export const KEEPER_PROTOCOL = 2
+export const KEEPER_PROTOCOL = 3
 export const KEEPER_DIR = "keeper"
 const FRESH_MS = 60_000
 const APP_BUNDLE_ID = "co.stuffbucket.winvm"
@@ -294,6 +294,22 @@ export interface KeeperChild extends KeeperCommand {
   readonly name?: string
   readonly pidfile?: string
   readonly qmp?: string
+  readonly runtime?: string
+}
+
+export interface KeeperAdopt {
+  readonly name: string
+  readonly pidfile: string
+  readonly qmp?: string
+}
+
+export interface KeeperService {
+  readonly argv: readonly string[]
+  readonly env?: Readonly<Record<string, string>>
+  readonly log?: string
+  readonly umask?: number
+  readonly build: string
+  readonly control: string
 }
 
 export interface KeeperSpec {
@@ -301,6 +317,7 @@ export interface KeeperSpec {
   readonly lingerMs?: number
   readonly child?: KeeperChild
   readonly stop?: KeeperCommand
+  readonly adopt?: KeeperAdopt
 }
 
 export type StartedKeeper =
@@ -308,6 +325,14 @@ export type StartedKeeper =
   | { readonly state: "running"; readonly hello: Record<string, unknown> }
 
 export class KeeperBusy extends Error {}
+
+export class KeeperOfAnother extends LeaseNotHeld {
+  constructor(job: KeeperJob, instance: string) {
+    super(instance, `starting ${job.Label}`)
+    this.message = `${job.Label} in ${job.WorkingDirectory} is not the keeper of "${instance}", whose lease this command holds`
+    this.name = "KeeperOfAnother"
+  }
+}
 
 function writePrivate(path: string, text: string): void {
   writeFileSync(path, text, { mode: 0o600 })
@@ -327,9 +352,7 @@ export async function startKeeper(o: {
     o.job.WorkingDirectory !==
       resolve(pathsFor(o.lease.instance).dir, KEEPER_DIR)
   )
-    throw new Error(
-      `${o.job.Label} in ${o.job.WorkingDirectory} is not the keeper of "${o.lease.instance}", whose lease this command holds`,
-    )
+    throw new KeeperOfAnother(o.job, o.lease.instance)
   const dir = o.job.WorkingDirectory
   const hello = await keeperRequest(
     resolve(dir, "keeper.sock"),
@@ -416,6 +439,16 @@ export function launchctl(uid: number = process.getuid?.() ?? 0): Launchd {
   }
 }
 
+const OP_PROTOCOL: Readonly<Record<string, number>> = {
+  launch: 2,
+  "launch-sidecar": 2,
+  kill: 2,
+  "exit-when-idle": 2,
+}
+
+export const protocolFor = (op: unknown): number =>
+  (typeof op === "string" ? OP_PROTOCOL[op] : undefined) ?? KEEPER_PROTOCOL
+
 export function keeperRequest(
   socket: string,
   message: Readonly<Record<string, unknown>>,
@@ -431,7 +464,7 @@ export function keeperRequest(
     stream.setEncoding("utf8")
     stream.on("connect", () =>
       stream.write(
-        `${JSON.stringify({ ...message, protocol: KEEPER_PROTOCOL })}\n`,
+        `${JSON.stringify({ ...message, protocol: protocolFor(message.op) })}\n`,
       ),
     )
     stream.on("close", () => {

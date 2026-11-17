@@ -163,6 +163,10 @@ export function App(): JSX.Element {
   const frozen = isFrozen(phase)
   const held = phase === "paused" || phase === "asleep" ? phase : null
   const operating = w.operation !== null
+  const protect = async (): Promise<void> => {
+    const stowed = await w.act("stow")
+    if (stowed?.code === 0) await w.act("start")
+  }
   useEffect(() => {
     if (frozen || operating) setKeyboardCaptured(false)
   }, [frozen, operating])
@@ -960,6 +964,10 @@ export function App(): JSX.Element {
             usageContext={usageContext}
             held={held}
             canForceStop={live && !operating}
+            protecting={operating || w.busy !== null}
+            onProtect={() => {
+              void protect()
+            }}
             sharedFolder={sharedFolder}
             machineInfo={machineInfo}
             guestReady={guestReady}

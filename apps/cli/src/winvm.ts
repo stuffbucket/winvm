@@ -16,6 +16,7 @@ import * as machineinfo from "@winvm/core/machineinfo"
 import * as mcpcmds from "@winvm/core/mcpcmds"
 import * as ocr from "@winvm/core/ocr"
 import {
+  automaticFrom,
   InstanceBusy,
   operationFor,
   withOperation,
@@ -53,6 +54,7 @@ const leased = async (run: () => number | Promise<number>): Promise<number> => {
   try {
     return await withOperation(instanceName(args), operation, run, {
       interruptible: true,
+      automatic: automaticFrom(args),
     })
   } catch (error) {
     if (!(error instanceof InstanceBusy)) throw error
@@ -241,7 +243,7 @@ switch (sub ?? "") {
     exitCode = settings.settingsCmd(args)
     break
   case "stow":
-    exitCode = await leased(() => savecmds.stow(args))
+    exitCode = await savecmds.stow(args, leased)
     break
   case "clock":
     exitCode = await savecmds.clock(args)
@@ -250,9 +252,9 @@ switch (sub ?? "") {
     exitCode = await commands.watchCmd(args)
     break
   case "serve": {
-    const handle = await service.runService(instanceName(args))
-    for (const sig of ["SIGINT", "SIGTERM", "SIGHUP"] as const)
-      process.on(sig, () => void handle.stop())
+    const name = instanceName(args)
+    const handle = await service.runService(name)
+    service.serviceSignals(name, () => void handle.stop())
     await handle.done
     exitCode = 0
     break

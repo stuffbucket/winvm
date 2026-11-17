@@ -70,7 +70,7 @@ export interface LeaseOptions extends LeaseSeams {
   readonly onWait?: (holder: LeaseHolder) => void
 }
 
-export const AUTOMATIC_ENV = "WINVM_AUTOMATIC"
+export const AUTOMATIC_FLAG = "automatic"
 export const AUTOMATIC_WAIT_MS = 10 * 60_000
 
 const isVmOperation = (v: unknown): v is VmOperation =>
@@ -354,6 +354,14 @@ export function irreversible(
   }
 }
 
+export function irreversibleSince(
+  name: string,
+  seams: LeaseSeams = {},
+): string | null {
+  const r = readLease(name, seams)
+  return r?.irreversibleAt ?? null
+}
+
 export function abandonedStop(
   name: string,
   seams: LeaseSeams = {},
@@ -423,8 +431,10 @@ function announceWait(name: string): (holder: LeaseHolder) => void {
 
 const TAKE_ATTEMPTS = 50
 
-const automaticOf = (o: LeaseOptions): boolean =>
-  o.automatic ?? process.env[AUTOMATIC_ENV] === "1"
+const automaticOf = (o: LeaseOptions): boolean => o.automatic === true
+
+export const automaticFrom = (args: Args): boolean =>
+  args.flags.has(AUTOMATIC_FLAG)
 
 const ownRecord = (
   name: string,

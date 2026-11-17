@@ -8,15 +8,19 @@ import {
   measureOffset,
   syncGuestClock,
 } from "./clock"
+import { runningCommand } from "./display"
+import { appendEntry } from "./eventlog"
 import * as finder from "./finder"
 import * as frozen from "./frozen"
 import { lockWindows } from "./lock"
 import * as notes from "./notes"
+import { automaticFrom } from "./operation"
 import type { InstanceMeta, Paths } from "./paths"
 import { pathsFor, readImageMeta, readMeta } from "./paths"
 import * as qemu from "./qemu"
 import * as qga from "./qga"
 import * as qmp from "./qmp"
+import { currentQemuCompat } from "./runtime"
 import { nameError } from "./savename"
 import * as saves from "./saves"
 import * as snapshot from "./snapshot"
@@ -86,7 +90,8 @@ async function doSave(
   try {
     r = await saves.createSave(name, o)
   } catch (error) {
-    return fail(msg(error))
+    fail(msg(error))
+    return error instanceof saves.StowNotRecallable ? error.exitCode : 1
   }
   const m = r.manifest
   console.log(
@@ -147,7 +152,7 @@ async function doLoad(
   }
   const restoredMs = Date.now() - started
   if (!(await settle(p, verb))) return 1
-  if (m.kind === "stow") saves.removeSave(name, m.name)
+  if (m.kind === "stow") saves.removeSave(name, saveName)
   else if (saves.hasSave(name, saves.STOW)) {
     saves.removeSave(name, saves.STOW)
     console.log(`  (discarded the stow save; "${m.name}" supersedes it)`)
@@ -382,19 +387,68 @@ export async function sleep(args: Args): Promise<number> {
   return 0
 }
 
-export async function stow(args: Args): Promise<number> {
+async function stowRefusal(
+  name: string,
+): Promise<saves.StowNotRecallable | null> {
+  const pid = qemu.pidOf(pathsFor(name))
+  if (pid === null) return null
+  return (await saves.stowRuntime(name, pid, runningCommand(pid))).refusal
+}
+
+async function runsGuest(p: Paths): Promise<boolean> {
+  if (!qemu.isRunning(p)) return false
+  return (await qmp.status(p.qmp).catch(() => null)) !== "postmigrate"
+}
+
+type Leased = (run: () => Promise<number>) => Promise<number>
+
+const unleased: Leased = async (run) => await run()
+
+function refuse(
+  name: string,
+  refusal: saves.StowNotRecallable,
+  automatic: boolean,
+): number {
+  appendEntry(name, {
+    kind: "warning",
+    what: "stow refused",
+    reason: refusal.reason,
+    automatic,
+    ...(refusal.undecided ? { undecided: true } : {}),
+  })
+  fail(refusal.message)
+  return refusal.exitCode
+}
+
+export async function stow(
+  args: Args,
+  leased: Leased = unleased,
+): Promise<number> {
   const name = instanceName(args)
-  await watcher.stopWatcher(name)
+  const refusal = await stowRefusal(name)
+  if (refusal !== null) return refuse(name, refusal, automaticFrom(args))
+  return await leased(async () => await stowHeld(name, args))
+}
+
+async function stowHeld(name: string, args: Args): Promise<number> {
+  const stopped = await watcher.stopWatcher(name)
   finder.beforeDown(name)
   const started = Date.now()
-  const code = await doSave(name, {
-    name: saves.STOW,
-    kind: "stow",
-    quitAfter: true,
-    checkReady: !args.flags.has("force"),
-  })
+  let code: number
+  try {
+    code = await doSave(name, {
+      name: saves.STOW,
+      kind: "stow",
+      quitAfter: true,
+      checkReady: !args.flags.has("force"),
+    })
+  } catch (error) {
+    code = fail(msg(error))
+  }
   if (code !== 0) {
     await finder.afterUp(name)
+    if (stopped && (await runsGuest(pathsFor(name))))
+      watcher.startWatcherFor(name, args)
     return code
   }
   console.log(
@@ -453,9 +507,30 @@ export async function recallStow(
     console.log("discarded the stow save (--boot)")
     return null
   }
+  if (saves.readSave(name, saves.STOW)?.unfinished === true) {
+    console.error(
+      `::error::the stow of "${name}" was written by a QEMU that did not quit afterwards, so Windows may have gone on past it, and it was not recalled. ` +
+        `\`winvm load -i ${name} ${saves.STOW}\` brings it back anyway; \`winvm start -i ${name} --boot\` discards it and starts Windows afresh from its disk`,
+    )
+    return 1
+  }
   const meta = readMeta(name)
   if (meta !== null) {
     const m = saves.readSave(name, saves.STOW)
+    const by = m?.compatParts?.qemu
+    const installed = currentQemuCompat()
+    if (
+      by !== undefined &&
+      saves.isUnknownRuntime(by) &&
+      !saves.recallable(by, installed)
+    ) {
+      console.error(
+        `::error::the stow of "${name}" was written by ${by === saves.UNKNOWN_RUNTIME ? "a QEMU" : `QEMU ${saves.versionOfRuntime(by)}`} from a winvm runtime this winvm can't identify, ` +
+          `and this winvm runs QEMU ${saves.versionOfRuntime(installed)}; recalling it could fail or give Windows different hardware, so it was not recalled. ` +
+          `\`winvm start -i ${name} --boot\` discards the stow and starts Windows afresh from its disk`,
+      )
+      return 1
+    }
     if (m !== null && m.compat !== saves.compatFor(name, meta, m).hash) {
       const devices = saves.takenBeforeDevices(
         m,
@@ -470,7 +545,12 @@ export async function recallStow(
       return null
     }
   }
-  return await doLoad(name, saves.STOW, "recalled")
+  const code = await doLoad(name, saves.STOW, "recalled")
+  if (code !== 0 && saves.hasSave(name, saves.STOW))
+    console.error(
+      `  the stow is kept; \`winvm start -i ${name} --boot\` discards it and starts Windows afresh from its disk`,
+    )
+  return code
 }
 
 export const markPristine = saves.markPristine

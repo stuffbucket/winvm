@@ -29,7 +29,7 @@ import { processStart } from "../src/proc"
 import { qemuArgs } from "../src/qemu"
 import * as qga from "../src/qga"
 import * as qmp from "../src/qmp"
-import { runService, type ServiceHandle } from "../src/service"
+import { runService, type ServiceHandle, serviceSignals } from "../src/service"
 import {
   dropServiceRecord,
   ensureService,
@@ -381,6 +381,57 @@ describe("the service", () => {
     await sleep(600)
     expect(recorded()?.pid).toBe(process.pid)
     expect(existsSync(p.qmp)).toBe(true)
+  })
+})
+
+describe("a host end handed to the service", () => {
+  const post = async (body: unknown): Promise<number> =>
+    (
+      await fetch("http://localhost/host-ending", {
+        unix: p.control,
+        method: "POST",
+        body: JSON.stringify(body),
+      })
+    ).status
+
+  it("is accepted once, runs with the keeper's deadline, and holds the service until it finishes", async () => {
+    const calls: [string, number][] = []
+    let finish = (): void => undefined
+    const gate = new Promise<void>((r) => {
+      finish = r
+    })
+    svc = await runService("t", {
+      exitAfterMs: 60_000,
+      checkMs: 50,
+      hostEnd: async (name, deadlineMs) => {
+        calls.push([name, deadlineMs])
+        await gate
+      },
+    })
+    expect(await post({ deadlineMs: 1234, budgetMs: 55_000 })).toBe(202)
+    expect(await post({ deadlineMs: 1234, budgetMs: 55_000 })).toBe(409)
+    expect(calls).toEqual([["t", 1234]])
+    let stopped = false
+    const stopping = svc.stop().then(() => {
+      stopped = true
+    })
+    await sleep(200)
+    expect(stopped).toBe(false)
+    finish()
+    await stopping
+    expect(stopped).toBe(true)
+    svc = null
+  })
+
+  it("refuses a request without a deadline", async () => {
+    svc = await runService("t", {
+      exitAfterMs: 60_000,
+      checkMs: 50,
+      hostEnd: async () => {
+        await Promise.resolve()
+      },
+    })
+    expect(await post({ budgetMs: 1 })).toBe(400)
   })
 })
 
@@ -1042,5 +1093,54 @@ describe("a watcher owed to the service's QEMU", () => {
     await sleep(400)
     expect(starts.n).toBe(0)
     expect(entries().some((e) => e.kind === "op")).toBe(false)
+  })
+})
+
+describe("the service's signals", () => {
+  const wire = (
+    keeperPid: string | undefined,
+    parent: number,
+  ): { readonly fire: (s: string) => void; readonly stops: () => number } => {
+    const handlers = new Map<string, () => void>()
+    let stops = 0
+    serviceSignals(
+      "signals",
+      () => {
+        stops += 1
+      },
+      {
+        keeperPid,
+        parent: () => parent,
+        on: (signal, handler) => {
+          handlers.set(signal, handler)
+        },
+      },
+    )
+    return {
+      fire: (signal) => {
+        handlers.get(signal)?.()
+      },
+      stops: () => stops,
+    }
+  }
+
+  it("stops on SIGTERM, SIGINT and SIGHUP when its parent is not winvm's keeper", () => {
+    for (const keeper of [undefined, "77"]) {
+      const s = wire(keeper, 1)
+      s.fire("SIGTERM")
+      s.fire("SIGINT")
+      s.fire("SIGHUP")
+      expect(s.stops()).toBe(3)
+    }
+  })
+
+  it("ignores them while the keeper is its parent, and stops on SIGUSR2", () => {
+    const s = wire("77", 77)
+    s.fire("SIGTERM")
+    s.fire("SIGINT")
+    s.fire("SIGHUP")
+    expect(s.stops()).toBe(0)
+    s.fire("SIGUSR2")
+    expect(s.stops()).toBe(1)
   })
 })

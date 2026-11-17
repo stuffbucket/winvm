@@ -10,7 +10,7 @@ import {
   statSync,
   writeFileSync,
 } from "node:fs"
-import { resolve } from "node:path"
+import { dirname, resolve } from "node:path"
 
 import type { Size } from "./cua"
 import { encodePng, fitScale, parsePpm, resize, scaled } from "./cua"
@@ -32,8 +32,10 @@ import * as finder from "./finder"
 import type { Hardware } from "./hardware"
 import { hardwareFrom, LEGACY, readHardware, runningHardware } from "./hardware"
 import { requireFirmware } from "./host"
+import { FOREIGN_RUNTIME } from "./hostoff"
 import { ensureInstance } from "./instance"
-import { killKept } from "./kept"
+import { launchedRuntime } from "./kept"
+import { qmpCommand } from "./monitor"
 import type { Note } from "./notes"
 import { copyNote, readNote, removeNote, removeNotes } from "./notes"
 import {
@@ -51,10 +53,16 @@ import {
   readImageMeta,
   readMeta,
 } from "./paths"
-import { signalProcess } from "./proc"
+import { processAgeMs } from "./proc"
 import * as qemu from "./qemu"
 import * as qmp from "./qmp"
-import { currentQemuCompat, runtimeBin } from "./runtime"
+import {
+  currentQemuCompat,
+  findRuntime,
+  qemuCompat,
+  runtimeBin,
+  runtimeManifestAt,
+} from "./runtime"
 import { nameError } from "./savename"
 import { capture } from "./shell"
 import { instanceOf } from "./smbstate"
@@ -107,6 +115,7 @@ export interface Manifest {
   readonly screenSize?: { readonly width: number; readonly height: number }
   readonly hardware?: Hardware
   readonly display?: DisplayConfig
+  readonly unfinished?: true
 }
 
 export const FILES = {
@@ -173,6 +182,8 @@ export function parseManifest(text: string): Manifest {
   const note = r.note
   if (note !== undefined && typeof note !== "string")
     throw new Error("manifest.note must be a string")
+  if (r.unfinished !== undefined && r.unfinished !== true)
+    throw new Error("manifest.unfinished must be true when present")
   const format = r.format
   if (
     format !== undefined &&
@@ -385,13 +396,149 @@ export function migrationPlan(
 }
 
 let firmwareDigest: string | null = null
-let qemuVersion: string | null = null
+
+export const UNKNOWN_RUNTIME = "unknown"
+const UNKNOWN_PATCHES = "+patches:unknown"
+
+export const isUnknownRuntime = (qemu: string | undefined): boolean =>
+  qemu === UNKNOWN_RUNTIME || qemu?.endsWith(UNKNOWN_PATCHES) === true
+
+export const versionOfRuntime = (qemu: string): string =>
+  qemu.split("+patches:")[0] ?? qemu
+
+export function sameQemu(saved: string, installed: string): boolean {
+  if (saved === installed) return true
+  if (!saved.endsWith(UNKNOWN_PATCHES)) return false
+  return installed.startsWith(saved.slice(0, -"unknown".length))
+}
+
+export const STOW_REFUSED = 4
+export const STOW_UNDECIDED = 5
+
+const notRecallableReason = (label: string, installed: string): string =>
+  label === UNKNOWN_RUNTIME
+    ? `${FOREIGN_RUNTIME}did not say which version it is, so winvm could not tell whether a recall could take its stow`
+    : `${FOREIGN_RUNTIME}${versionOfRuntime(label)} is not this winvm's QEMU ${versionOfRuntime(installed)}, so no recall could take its stow`
+
+const refusalMessage = (
+  instance: string,
+  label: string,
+  installed: string,
+): string =>
+  label === UNKNOWN_RUNTIME
+    ? `QEMU on "${instance}" did not say which version it runs, so winvm could not tell whether a stow of it could be brought back; ` +
+      "nothing was saved and Windows keeps running. " +
+      `Try again in a moment; if it keeps happening, shut it down (\`winvm stop -i ${instance}\`) and start it again (\`winvm start -i ${instance}\`)`
+    : `Windows on "${instance}" runs QEMU ${versionOfRuntime(label)}, and this winvm runs QEMU ${versionOfRuntime(installed)}, so a stow of it could not be brought back; ` +
+      "nothing was saved and Windows keeps running. " +
+      `Shut it down (\`winvm stop -i ${instance}\`) and start it again (\`winvm start -i ${instance}\`) to move it to this winvm's QEMU`
+
+export class StowNotRecallable extends Error {
+  readonly reason: string
+  readonly undecided: boolean
+  readonly exitCode: number
+
+  constructor(instance: string, label: string, installed: string) {
+    super(refusalMessage(instance, label, installed))
+    this.name = "StowNotRecallable"
+    this.reason = notRecallableReason(label, installed)
+    this.undecided = label === UNKNOWN_RUNTIME
+    this.exitCode = this.undecided ? STOW_UNDECIDED : STOW_REFUSED
+  }
+}
+
+export const recallable = (
+  label: string,
+  installed: string = currentQemuCompat(),
+): boolean => sameQemu(label, installed)
+
+export interface StowRuntime {
+  readonly label: string
+  readonly refusal: StowNotRecallable | null
+}
+
+export async function stowRuntime(
+  instance: string,
+  pid: number | null,
+  command: string | null,
+): Promise<StowRuntime> {
+  const label =
+    pid === null
+      ? UNKNOWN_RUNTIME
+      : await producedBy(pathsFor(instance), pid, command)
+  const installed = currentQemuCompat()
+  return {
+    label,
+    refusal: recallable(label, installed)
+      ? null
+      : new StowNotRecallable(instance, label, installed),
+  }
+}
+
+function reportedVersion(answer: unknown): string | null {
+  const q = (answer as { qemu?: Record<string, unknown> } | null)?.qemu
+  if (q === undefined) return null
+  const parts = [q.major, q.minor, q.micro]
+  return parts.every((n) => typeof n === "number")
+    ? parts.map(String).join(".")
+    : null
+}
+
+const ETIME_GRAIN_MS = 1000
+
+function olderThan(path: string, pid: number): boolean {
+  const age = processAgeMs(pid)
+  if (age === null) return false
+  try {
+    return statSync(path).mtimeMs < Date.now() - age - ETIME_GRAIN_MS
+  } catch {
+    return false
+  }
+}
+
+export async function producedBy(
+  p: Paths,
+  pid: number,
+  command: string | null,
+): Promise<string> {
+  const kept = await launchedRuntime(p, pid).catch(() => null)
+  if (kept !== null) return kept
+  const program =
+    command === null
+      ? null
+      : (/(?:^|\s)(\S*\/bin\/qemu-system-[A-Za-z0-9_]+)(?:\s|$)/.exec(
+          command,
+        )?.[1] ?? null)
+  const rt = findRuntime()
+  if (
+    program !== null &&
+    rt !== null &&
+    rt.manifest === null &&
+    program.startsWith(`${resolve(rt.dir, "bin")}/`) &&
+    olderThan(program, pid)
+  )
+    return currentQemuCompat()
+  const version = reportedVersion(
+    await qmpCommand(p.qmp, "query-version", undefined, 2000).catch(() => null),
+  )
+  if (version === null) return UNKNOWN_RUNTIME
+  const at =
+    program === null ? null : runtimeManifestAt(dirname(dirname(program)))
+  if (
+    at !== null &&
+    at.manifest.qemu === version &&
+    olderThan(resolve(dirname(dirname(program ?? "")), "manifest.json"), pid)
+  )
+    return qemuCompat(at.manifest)
+  return `${version}${UNKNOWN_PATCHES}`
+}
 
 export function currentCompat(
   instance: string,
   meta: InstanceMeta,
   display?: DisplayConfig,
   hardware?: Hardware,
+  launched?: string,
 ): { readonly hash: string; readonly parts: CompatParts } {
   const st = statSync(basePath(meta.image))
   let created = ""
@@ -399,7 +546,6 @@ export function currentCompat(
     created = readFileSync(imageMetaPath(meta.image), "utf8")
   } catch {}
   firmwareDigest ??= sha(readFileSync(requireFirmware().code)).slice(0, 16)
-  qemuVersion ??= currentQemuCompat()
   const argv = qemu.qemuArgs(instance, pathsFor(instance), meta, {
     installMedia: false,
     ephemeral: false,
@@ -411,7 +557,7 @@ export function currentCompat(
     base: baseIdentity(meta.image, st.size, st.mtimeMs, created),
     hardware: sha(JSON.stringify(hardwareArgs(argv))).slice(0, 16),
     firmware: firmwareDigest,
-    qemu: qemuVersion,
+    qemu: launched ?? currentQemuCompat(),
   }
   return { hash: compatHash(parts), parts }
 }
@@ -419,10 +565,15 @@ export function currentCompat(
 export function compatFor(
   instance: string,
   meta: InstanceMeta,
-  m: Pick<Manifest, "hardware" | "display">,
+  m: Pick<Manifest, "hardware" | "display" | "compatParts">,
 ): ReturnType<typeof currentCompat> & { readonly display: DisplayConfig } {
   const display = m.display ?? readDisplay(pathsFor(instance))
-  return { ...currentCompat(instance, meta, display, saveHardware(m)), display }
+  const saved = m.compatParts?.qemu
+  const launched = saved !== undefined && recallable(saved) ? saved : undefined
+  return {
+    ...currentCompat(instance, meta, display, saveHardware(m), launched),
+    display,
+  }
 }
 
 export function hardwareBeforeDevices(
@@ -556,6 +707,19 @@ function reasons(m: Manifest, ctx: ReportContext): IncompatibleReason[] | null {
   return out.length > 0 ? out : null
 }
 
+function sameRuntimeContext(m: Manifest, c: ReportContext): ReportContext {
+  const saved = m.compatParts?.qemu
+  if (
+    c.compat === null ||
+    saved === undefined ||
+    saved === c.compat.parts.qemu ||
+    !sameQemu(saved, c.compat.parts.qemu)
+  )
+    return c
+  const parts = { ...c.compat.parts, qemu: saved }
+  return { ...c, compat: { hash: compatHash(parts), parts } }
+}
+
 export function savesReport(
   rows: readonly Listed[],
   ctx: ReportContext,
@@ -565,7 +729,7 @@ export function savesReport(
   return rows.flatMap((r) => {
     const m = r.manifest
     if (m === null) return []
-    const c = contextFor(m, ctx)
+    const c = sameRuntimeContext(m, contextFor(m, ctx))
     const differ = reasons(m, c)
     const n = note(r.name)
     return [
@@ -815,10 +979,14 @@ async function waitMigration(
   throw new Error("the save did not finish in time")
 }
 
-export async function quitQemu(p: Paths, timeoutMs = 120_000): Promise<void> {
+export async function quitQemu(
+  p: Paths,
+  timeoutMs = 120_000,
+  o: { readonly leaveMounts?: true } = {},
+): Promise<void> {
   const pid = qemu.pidOf(p)
   if (pid === null) return
-  finder.beforeDown(instanceOf(p))
+  if (o.leaveMounts !== true) finder.beforeDown(instanceOf(p))
   try {
     await qmp.execute(p.qmp, "quit", undefined, 20_000)
   } catch {}
@@ -830,9 +998,100 @@ export async function quitQemu(p: Paths, timeoutMs = 120_000): Promise<void> {
     }
     await sleep(20)
   }
-  if (!(await killKept(p, pid))) signalProcess(pid, "SIGKILL")
-  while (qemu.pidOf(p) !== null) await sleep(250)
+  await qemu.killQemu(p, pid)
+  const killedBy = Date.now() + 10_000
+  while (qemu.pidOf(p) === pid) {
+    if (Date.now() > killedBy)
+      throw new Error(
+        `QEMU (pid ${String(pid)}) did not quit and could not be killed; it still holds ${p.pid}`,
+      )
+    await sleep(250)
+  }
   qemu.stopSidecars(p)
+}
+
+const errText = (e: unknown): string =>
+  e instanceof Error ? e.message : String(e)
+
+function freeAside(instance: string, name: string): string {
+  for (let n = 1; ; n += 1) {
+    const aside =
+      n === 1 ? `${name}-unfinished` : `${name}-unfinished-${String(n)}`
+    if (!existsSync(saveDir(instance, aside))) return aside
+  }
+}
+
+function rewriteManifest(dir: string, m: Manifest): void {
+  const file = resolve(dir, FILES.manifest)
+  const tmp = `${file}.${String(process.pid)}.tmp`
+  try {
+    writeFileSync(tmp, `${JSON.stringify(m, null, 2)}\n`)
+    renameSync(tmp, file)
+  } catch (error) {
+    rmSync(tmp, { force: true })
+    throw error
+  }
+}
+
+const unfinishedNote = (name: string): string =>
+  `a ${name} whose QEMU did not quit afterwards, so it may not match the disk that QEMU went on writing`
+
+function markUnfinished(
+  instance: string,
+  name: string,
+  m: Manifest,
+  moved: unknown,
+): string {
+  const why = `could not be moved aside (${errText(moved)})`
+  try {
+    rewriteManifest(saveDir(instance, name), {
+      ...m,
+      unfinished: true,
+      note: unfinishedNote(name),
+    })
+    return `the ${name} it had written ${why}, so it is kept where it is, marked so that start does not recall it; \`winvm load -i ${instance} ${name}\` brings it back`
+  } catch (marked) {
+    return (
+      `the ${name} it had written ${why} or marked (${errText(marked)}), so it is kept as it is: start refuses while that QEMU holds "${instance}", ` +
+      `and once it is gone, \`winvm start -i ${instance} --boot\` discards the ${name} if Windows went on after it`
+    )
+  }
+}
+
+function setAside(instance: string, name: string, m: Manifest): string {
+  const aside = freeAside(instance, name)
+  try {
+    renameSync(saveDir(instance, name), saveDir(instance, aside))
+  } catch (moved) {
+    return markUnfinished(instance, name, m, moved)
+  }
+  const kept = `the ${name} it had written is kept as "${aside}", where start does not recall it`
+  try {
+    rewriteManifest(saveDir(instance, aside), {
+      ...m,
+      name: aside,
+      kind: "manual",
+      note: unfinishedNote(name),
+    })
+    return kept
+  } catch (error) {
+    return `${kept} (its manifest still calls it the ${name}: ${errText(error)})`
+  }
+}
+
+function clearAbandonedPartials(instance: string): void {
+  const dir = savesDir(instance)
+  if (!existsSync(dir)) return
+  for (const entry of readdirSync(dir)) {
+    const pid = Number(/^\..+\.partial-(\d+)$/.exec(entry)?.[1])
+    if (!Number.isInteger(pid) || pid <= 1 || pid === process.pid) continue
+    try {
+      process.kill(pid, 0)
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ESRCH")
+        rmSync(resolve(dir, entry), { recursive: true, force: true })
+    }
+  }
 }
 
 export interface CreateOptions {
@@ -842,6 +1101,7 @@ export interface CreateOptions {
   readonly format?: RamFormat
   readonly compress?: boolean
   readonly quitAfter?: boolean
+  readonly leaveMounts?: true
 }
 
 export interface CreateResult {
@@ -900,8 +1160,11 @@ async function createSaveHeld(
         "so a save could not be restored; nothing was saved. Save after it finishes",
     )
   }
-  const compat = currentCompat(instance, meta, display, hardware)
+  const runtime = await stowRuntime(instance, pid, command)
+  if (o.kind === "stow" && runtime.refusal !== null) throw runtime.refusal
+  const compat = currentCompat(instance, meta, display, hardware, runtime.label)
 
+  clearAbandonedPartials(instance)
   const tmp = resolve(
     savesDir(instance),
     `.${o.name}.partial-${String(process.pid)}`,
@@ -936,14 +1199,12 @@ async function createSaveHeld(
     clearSavingRunning(instance)
     throw error
   }
-  try {
-    if (o.quitAfter === true) {
-      await quitQemu(p)
-    } else if (wasRunning) {
-      await qmp.execute(p.qmp, "cont")
+  if (o.quitAfter !== true) {
+    try {
+      if (wasRunning) await qmp.execute(p.qmp, "cont")
+    } finally {
+      clearSavingRunning(instance)
     }
-  } finally {
-    clearSavingRunning(instance)
   }
   const saveMs = Date.now() - started
   const screen = ppm === null ? null : writeScreenshots(ppm, tmp)
@@ -990,6 +1251,18 @@ async function createSaveHeld(
   const replaced = existsSync(final)
   if (replaced) renameSync(final, old)
   renameSync(tmp, final)
+  if (o.quitAfter === true) {
+    try {
+      await quitQemu(p, undefined, o.leaveMounts === true ? o : {})
+    } catch (error) {
+      throw new Error(
+        `${errText(error)}; ${setAside(instance, o.name, manifest)}`,
+        { cause: error },
+      )
+    } finally {
+      clearSavingRunning(instance)
+    }
+  }
   rmSync(old, { recursive: true, force: true })
   if (replaced) forgetNote(instance, o.name)
 

@@ -50,6 +50,18 @@ process.env.WINVM_HOME = resolve(root, "home")
 
 const VM = "kept-launchd"
 const vmLabel = keeperLabel(resolve(root, "home"), VM)
+const SERVED = "served-launchd"
+const servedLabel = keeperLabel(resolve(root, "home"), SERVED)
+const CLI = resolve(
+  import.meta.dir,
+  "..",
+  "..",
+  "..",
+  "apps",
+  "cli",
+  "src",
+  "winvm.ts",
+)
 const label = keeperLabel(resolve(root, "home"), "launchd-test")
 
 afterAll(async () => {
@@ -57,8 +69,12 @@ afterAll(async () => {
     await keeperRequest(keeperSocket(pathsFor(VM)), { op: "kill" }).catch(
       () => null,
     )
+    await keeperRequest(keeperSocket(pathsFor(SERVED)), { op: "kill" }).catch(
+      () => null,
+    )
     launchctl().bootout(label)
     launchctl().bootout(vmLabel)
+    launchctl().bootout(servedLabel)
   }
   if (savedHome === undefined) delete process.env.WINVM_HOME
   else process.env.WINVM_HOME = savedHome
@@ -277,4 +293,95 @@ describe.if(enabled)("a real launchd keeper job (WINVM_TEST_LAUNCHD=1)", () => {
       }
     }
   }, 30000)
+
+  it("runs the real control service under a real keeper job, which hands it the host end at bootout", async () => {
+    const fakechild = resolve(dirname(keeper), "examples", "fakechild")
+    const saved = Object.fromEntries(
+      ["WINVM_RUNTIME", "WINVM_KEEPER", "XDG_DATA_HOME", "WINVM_CLI"].map(
+        (k) => [k, process.env[k]],
+      ),
+    )
+    const bin = resolve(root, "served-runtime", "bin")
+    mkdirSync(bin, { recursive: true })
+    const script = (name: string, body: string): void => {
+      writeFileSync(resolve(bin, name), `#!/bin/sh\n${body}\n`)
+      chmodSync(resolve(bin, name), 0o755)
+    }
+    script(
+      "swtpm",
+      `while [ $# -gt 0 ]; do case "$1" in --ctrl) s="\${2#*path=}"; s="\${s%%,*}"; shift;; esac; shift; done; : > "$s"\nexec sleep 600`,
+    )
+    const report = resolve(root, "served.report")
+    script(
+      "qemu-system-aarch64",
+      `while [ $# -gt 0 ]; do case "$1" in -pidfile) p="$2"; shift;; -qmp) case "$2" in *keeper/qmp.sock*) q="\${2#unix:}"; q="\${q%%,*}";; esac; shift;; esac; shift; done\nexec "${fakechild}" "${report}" --pidfile "$p" --qmp "$q"`,
+    )
+    process.env.WINVM_RUNTIME = resolve(root, "served-runtime")
+    process.env.XDG_DATA_HOME = resolve(root, "data")
+    process.env.WINVM_KEEPER = keeper
+    process.env.WINVM_CLI = CLI
+    const meta = { image: "win11-arm64", vnc: 10, created: "2026-11-17" }
+    const p = pathsFor(SERVED)
+    mkdirSync(p.tpmDir, { recursive: true })
+    writeFileSync(p.meta, JSON.stringify(meta))
+    const code = resolve(root, "code.fd")
+    writeFileSync(code, "firmware")
+    spyOn(host, "requireFirmware").mockReturnValue({ code, vars: code })
+    spyOn(host, "tpmTisHasPpi").mockReturnValue(true)
+    spyOn(vnc, "ensureFreeDisplay").mockImplementation((_n, _p, m) =>
+      Promise.resolve(m),
+    )
+    spyOn(vnc, "applyPassword").mockResolvedValue(null)
+    const probe = share.setProbe(() => ({ ok: false, reason: "test" }))
+    try {
+      await withOperation(SERVED, "start", async () => {
+        await qemu.launch(SERVED, p, meta, {
+          installMedia: false,
+          ephemeral: false,
+          virtioBoot: true,
+        })
+      })
+      const launchd = launchctl()
+      const hello = await keeperHello(p)
+      const service = hello?.service?.pid ?? -1
+      expect(service).toBeGreaterThan(0)
+      expect(servicectl.readService(p)?.pid).toBe(service)
+
+      expect(launchd.bootout(servedLabel)).toBe(true)
+      await until("the keeper to finish", 20000, () =>
+        whats(p.events).includes("exiting") ? true : null,
+      )
+      const keeperWhats = whats(p.events)
+      expect(keeperWhats.slice(0, 5)).toEqual([
+        "started",
+        "service-started",
+        "launched",
+        "launched",
+        "host-ending",
+      ])
+      expect(keeperWhats).toContain("host-end:service")
+      expect(keeperWhats).toContain("host-end:fallback")
+      expect(keeperWhats).toContain("host-end:powerdown")
+      expect(keeperWhats).toContain("service-exited")
+      expect(keeperWhats.slice(-2)).toEqual(["host-end:done", "exiting"])
+      const plan = readFileSync(p.events, "utf8")
+        .trim()
+        .split("\n")
+        .map((line) => JSON.parse(line) as Record<string, unknown>)
+        .find((e) => e.kind === "service" && e.step === "plan")
+      expect(plan).toMatchObject({ end: "shutdown" })
+      expect(readFileSync(report, "utf8")).toContain("qmp system_powerdown")
+      expect(() => process.kill(service, 0)).toThrow()
+      await until("launchd to forget the job", 5000, () =>
+        launchd.print(servedLabel) === null ? true : null,
+      )
+    } finally {
+      share.setProbe(probe)
+      mock.restore()
+      for (const [k, v] of Object.entries(saved)) {
+        if (v === undefined) delete process.env[k]
+        else process.env[k] = v
+      }
+    }
+  }, 40000)
 })

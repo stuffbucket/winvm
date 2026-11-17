@@ -1271,7 +1271,7 @@ describe("no recursion", () => {
     expect(await seen("watch")).toBe("1")
     await expect(ensureService("t", p, { timeoutMs: 200 })).rejects.toThrow()
     expect(await seen("serve")).toBe("1")
-    expect(await realActions("t", p, () => undefined).stow()).toBe(true)
+    expect(await realActions("t", p, () => undefined).stow()).toBe("stowed")
     expect(await seen("stow")).toBe("1")
   }, 30_000)
 })

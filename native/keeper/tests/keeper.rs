@@ -3,6 +3,7 @@ use std::fs;
 use std::io::{BufRead, BufReader, Write};
 use std::os::unix::fs::PermissionsExt;
 use std::os::unix::net::UnixStream;
+use std::os::unix::process::ExitStatusExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, ExitStatus};
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -536,7 +537,7 @@ fn the_control_socket_answers_hello_launch_kill_and_exit_when_idle() {
 
     let hello = request(&scratch, &json!({ "op": "hello" }));
     assert_eq!(hello["ok"], true);
-    assert_eq!(hello["protocol"], 2);
+    assert_eq!(hello["protocol"], 3);
     assert_eq!(hello["version"], env!("CARGO_PKG_VERSION"));
     assert_eq!(hello["pid"], pid_of(&keeper));
     assert_eq!(hello["instance"], "test");
@@ -642,7 +643,7 @@ fn version_prints_the_version_and_protocol() {
     assert!(out.status.success());
     assert_eq!(
         String::from_utf8_lossy(&out.stdout).trim(),
-        format!("winvm-keeper {} protocol 2", env!("CARGO_PKG_VERSION"))
+        format!("winvm-keeper {} protocol 3", env!("CARGO_PKG_VERSION"))
     );
 }
 
@@ -849,12 +850,12 @@ fn requests_with_unknown_fields_or_a_newer_protocol_are_refused() {
     scratch.write_spec(&json!({ "lingerMs": 60_000 }));
     let mut keeper = start(&scratch, 10_000);
     assert_eq!(
-        request(&scratch, &json!({ "op": "hello", "protocol": 2 }))["ok"],
+        request(&scratch, &json!({ "op": "hello", "protocol": 3 }))["ok"],
         true
     );
-    let newer = request(&scratch, &json!({ "op": "kill", "protocol": 3 }));
+    let newer = request(&scratch, &json!({ "op": "kill", "protocol": 4 }));
     assert_eq!(newer["ok"], false);
-    assert_eq!(newer["protocol"], 2);
+    assert_eq!(newer["protocol"], 3);
     assert_eq!(
         request(&scratch, &json!({ "op": "kill", "slot": "x" }))["ok"],
         false
@@ -1089,14 +1090,14 @@ fn hello_answers_a_newer_client_with_this_keepers_protocol() {
     let mut keeper = start(&scratch, 10_000);
     let hello = request(
         &scratch,
-        &json!({ "op": "hello", "protocol": 3, "client": "winvm 9" }),
+        &json!({ "op": "hello", "protocol": 4, "client": "winvm 9" }),
     );
     assert_eq!(hello["ok"], true, "{hello}");
-    assert_eq!(hello["protocol"], 2);
+    assert_eq!(hello["protocol"], 3);
     assert_eq!(hello["hostEnding"], false);
-    let kill = request(&scratch, &json!({ "op": "kill", "protocol": 3 }));
+    let kill = request(&scratch, &json!({ "op": "kill", "protocol": 4 }));
     assert_eq!(kill["ok"], false);
-    assert_eq!(kill["protocol"], 2);
+    assert_eq!(kill["protocol"], 3);
     assert_eq!(
         request(&scratch, &json!({ "op": "exit-when-idle" }))["ok"],
         true
@@ -1669,4 +1670,668 @@ fn a_guest_stopped_after_a_migration_is_quit_at_once() {
         assert_eq!(all[0]["status"], status);
         assert_eq!(exits_of(&scratch, "qemu")[0]["status"], 0);
     }
+}
+
+fn service_spec(scratch: &Scratch, build: &str, extra: &[&str]) -> Value {
+    let control = scratch.path("control.sock");
+    let mut argv = vec![
+        fakechild().to_string_lossy().into_owned(),
+        scratch.path("service"),
+        "--control".to_owned(),
+        control.clone(),
+        "--keeper".to_owned(),
+        scratch.keeper().to_string_lossy().into_owned(),
+    ];
+    argv.extend(extra.iter().map(|s| (*s).to_owned()));
+    json!({
+        "argv": argv,
+        "log": scratch.path("service.log"),
+        "build": build,
+        "control": control,
+    })
+}
+
+fn service_report(scratch: &Scratch) -> String {
+    fs::read_to_string(scratch.path("service")).unwrap_or_default()
+}
+
+fn start_service(scratch: &Scratch, build: &str, extra: &[&str]) -> i32 {
+    let answer = request(
+        scratch,
+        &json!({ "op": "service", "service": service_spec(scratch, build, extra) }),
+    );
+    assert_eq!(answer["ok"], true, "{answer}");
+    let pid = launched_pid(&answer);
+    wait_until("the service's report", Duration::from_secs(5), || {
+        service_report(scratch).contains(&format!("pid={pid}"))
+    });
+    wait_until(
+        "the service's control socket",
+        Duration::from_secs(5),
+        || Path::new(&scratch.path("control.sock")).exists(),
+    );
+    pid
+}
+
+fn whats_of(scratch: &Scratch, what: &str) -> Vec<Value> {
+    records(scratch)
+        .into_iter()
+        .filter(|r| r["what"] == what)
+        .collect()
+}
+
+#[test]
+fn the_service_runs_unshielded_as_the_keepers_child_and_ignored_sigterm_does_not_end_it() {
+    let scratch = Scratch::new();
+    let mut keeper = idle_keeper(&scratch, 60_000);
+    let pid = start_service(&scratch, "b1", &[]);
+    assert!(
+        service_report(&scratch).contains(&format!(
+            "blocked TERM=0 HUP=0 INT=0 pid={pid} keeper={}",
+            pid_of(&keeper)
+        )),
+        "{}",
+        service_report(&scratch)
+    );
+    let hello = request(&scratch, &json!({ "op": "hello" }));
+    assert_eq!(hello["service"]["pid"], pid);
+    assert_eq!(hello["service"]["build"], "b1");
+    assert_eq!(hello["service"]["adopted"], false);
+    let again = request(
+        &scratch,
+        &json!({ "op": "service", "service": service_spec(&scratch, "b1", &[]) }),
+    );
+    assert_eq!(again["pid"], pid, "{again}");
+    assert_eq!(again["started"], false);
+    signal(pid, libc::SIGTERM);
+    wait_until("the service to see SIGTERM", Duration::from_secs(5), || {
+        service_report(&scratch).contains("handled 15")
+    });
+    assert!(alive(pid));
+    let started = whats_of(&scratch, "service-started");
+    assert_eq!(started.len(), 1);
+    assert_eq!(started[0]["pid"], pid);
+    assert_eq!(started[0]["build"], "b1");
+
+    let stopped = request(&scratch, &json!({ "op": "service-stop" }));
+    assert_eq!(stopped["ok"], true, "{stopped}");
+    assert!(!alive(pid));
+    assert!(service_report(&scratch).contains("stopped"));
+    assert_eq!(whats_of(&scratch, "service-exited")[0]["status"], 0);
+    assert_eq!(
+        request(&scratch, &json!({ "op": "hello" }))["service"],
+        Value::Null
+    );
+    assert_eq!(
+        request(&scratch, &json!({ "op": "exit-when-idle" }))["ok"],
+        true
+    );
+    assert!(wait_exit(&mut keeper, Duration::from_secs(5)).success());
+}
+
+#[test]
+fn a_service_of_another_build_is_replaced_once_the_old_one_has_exited() {
+    let scratch = Scratch::new();
+    let mut keeper = idle_keeper(&scratch, 60_000);
+    let old = start_service(&scratch, "b1", &[]);
+    let answer = request(
+        &scratch,
+        &json!({ "op": "service", "service": service_spec(&scratch, "b2", &[]) }),
+    );
+    assert_eq!(answer["ok"], true, "{answer}");
+    assert_eq!(answer["started"], true);
+    let new = launched_pid(&answer);
+    assert_ne!(old, new);
+    assert!(!alive(old));
+    let exited = whats_of(&scratch, "service-exited");
+    assert_eq!(exited[0]["pid"], old);
+    assert_eq!(exited[0]["replaced"], true);
+    assert_eq!(
+        request(&scratch, &json!({ "op": "hello" }))["service"]["build"],
+        "b2"
+    );
+    assert_eq!(
+        request(&scratch, &json!({ "op": "service-stop" }))["ok"],
+        true
+    );
+    assert_eq!(
+        request(&scratch, &json!({ "op": "exit-when-idle" }))["ok"],
+        true
+    );
+    assert!(wait_exit(&mut keeper, Duration::from_secs(5)).success());
+}
+
+#[test]
+fn an_idle_keeper_waits_for_its_service_to_exit() {
+    let scratch = Scratch::new();
+    let mut keeper = idle_keeper(&scratch, 200);
+    let pid = start_service(&scratch, "b1", &["--exit", "0", "--after-ms", "1200"]);
+    let started = Instant::now();
+    assert!(wait_exit(&mut keeper, Duration::from_secs(5)).success());
+    assert!(
+        started.elapsed() >= Duration::from_millis(900),
+        "{:?}",
+        started.elapsed()
+    );
+    assert!(!alive(pid));
+    assert_eq!(whats_of(&scratch, "service-exited")[0]["status"], 0);
+}
+
+#[test]
+fn a_crashed_service_is_restarted_while_qemu_runs_and_not_after() {
+    let scratch = Scratch::new();
+    let mut keeper = idle_keeper(&scratch, 60_000);
+    let main = request(
+        &scratch,
+        &json!({ "op": "launch", "child": fake_as(&scratch, "qemu", "qemu", &[]) }),
+    );
+    let qemu = launched_pid(&main);
+    reported(&scratch, "qemu", qemu);
+    let first = start_service(&scratch, "b1", &["--exit", "3", "--after-ms", "100"]);
+    wait_until("a restarted service", Duration::from_secs(5), || {
+        whats_of(&scratch, "service-started").len() >= 2
+    });
+    let exited = whats_of(&scratch, "service-exited");
+    assert_eq!(exited[0]["pid"], first);
+    assert_eq!(exited[0]["status"], 3);
+    assert!(exited[0]["restartInMs"].as_u64().is_some(), "{exited:?}");
+    assert_eq!(whats_of(&scratch, "service-started")[1]["restart"], 1);
+    signal(qemu, libc::SIGUSR1);
+    wait_until("the child to go", Duration::from_secs(5), || {
+        request(&scratch, &json!({ "op": "hello" }))["child"].is_null()
+    });
+    std::thread::sleep(Duration::from_millis(2500));
+    let after = whats_of(&scratch, "service-started").len();
+    std::thread::sleep(Duration::from_millis(2500));
+    assert_eq!(whats_of(&scratch, "service-started").len(), after);
+    assert_eq!(
+        request(&scratch, &json!({ "op": "hello" }))["service"],
+        Value::Null
+    );
+    assert_eq!(
+        request(&scratch, &json!({ "op": "exit-when-idle" }))["ok"],
+        true
+    );
+    assert!(wait_exit(&mut keeper, Duration::from_secs(5)).success());
+}
+
+#[test]
+fn a_restarted_keeper_adopts_its_service() {
+    let scratch = Scratch::new();
+    let mut first = idle_keeper(&scratch, 60_000);
+    let pid = start_service(&scratch, "b1", &[]);
+    first.kill().expect("SIGKILL the keeper");
+    first.wait().expect("reap the keeper");
+    let mut second = start(&scratch, 10_000);
+    let hello = request(&scratch, &json!({ "op": "hello" }));
+    assert_eq!(hello["service"]["pid"], pid);
+    assert_eq!(hello["service"]["adopted"], true);
+    assert_eq!(hello["service"]["build"], "b1");
+    assert_eq!(
+        request(&scratch, &json!({ "op": "service-stop" }))["ok"],
+        true
+    );
+    assert!(!alive(pid));
+    assert_eq!(
+        request(&scratch, &json!({ "op": "exit-when-idle" }))["ok"],
+        true
+    );
+    assert!(wait_exit(&mut second, Duration::from_secs(5)).success());
+}
+
+fn served_host_end(
+    scratch: &Scratch,
+    budget_ms: u64,
+    qemu: &[&str],
+    service: &[&str],
+) -> (Child, i32, i32) {
+    fs::write(scratch.path("budget"), budget_ms.to_string()).expect("budget");
+    let keeper = monitored(scratch, qemu);
+    let pid = hello_child_pid(scratch);
+    reported(scratch, "qemu", pid);
+    wait_until("the private monitor", Duration::from_secs(5), || {
+        Path::new(&scratch.path("qmp.sock")).exists()
+    });
+    let service_pid = start_service(scratch, "b1", service);
+    (keeper, pid, service_pid)
+}
+
+#[test]
+fn sigterm_hands_the_host_end_to_the_service_whose_stow_ends_qemu() {
+    let scratch = Scratch::new();
+    let qmp = scratch.path("qmp.sock");
+    let (mut keeper, qemu, service) = served_host_end(
+        &scratch,
+        20_000,
+        &[],
+        &["--on-host-end", "quit", "--quit-qmp", &qmp],
+    );
+    let sent = Instant::now();
+    signal(pid_of(&keeper), libc::SIGTERM);
+    assert!(wait_exit(&mut keeper, Duration::from_secs(10)).success());
+    assert!(
+        sent.elapsed() < Duration::from_secs(4),
+        "{:?}",
+        sent.elapsed()
+    );
+    assert!(!alive(qemu));
+    assert!(!alive(service));
+    let report = service_report(&scratch);
+    assert!(
+        report.contains("/host-ending {\"budgetMs\":20000,\"deadlineMs\":"),
+        "{report}"
+    );
+    assert!(
+        report.contains("handled 15") || !report.contains("handled"),
+        "{report}"
+    );
+    assert!(report.contains("stopped"), "{report}");
+    assert_eq!(qmp_seen(&scratch), ["quit"]);
+    assert_eq!(
+        keeper_whats(&scratch),
+        [
+            "started",
+            "launched",
+            "service-started",
+            "host-ending",
+            "host-end:service",
+            "exited",
+            "service-exited",
+            "host-end:done",
+            "exiting"
+        ],
+        "{:?}",
+        records(&scratch)
+    );
+    assert_eq!(steps(&scratch)[0]["ok"], true);
+}
+
+#[test]
+fn a_service_that_refuses_the_host_end_leaves_it_to_the_keepers_power_button() {
+    let scratch = Scratch::new();
+    let (mut keeper, qemu, _) =
+        served_host_end(&scratch, 20_000, &[], &["--on-host-end", "refuse"]);
+    signal(pid_of(&keeper), libc::SIGTERM);
+    assert!(wait_exit(&mut keeper, Duration::from_secs(10)).success());
+    assert!(!alive(qemu));
+    let all = steps(&scratch);
+    assert_eq!(all[0]["step"], "service");
+    assert_eq!(all[0]["ok"], false);
+    assert!(
+        all[0]["error"].as_str().unwrap_or("").contains("503"),
+        "{all:?}"
+    );
+    assert_eq!(all[1]["step"], "powerdown");
+    assert_eq!(
+        qmp_seen(&scratch),
+        ["query-migrate", "query-status", "system_powerdown"]
+    );
+}
+
+#[test]
+fn a_service_that_overruns_its_deadline_is_quit_never_powered_down() {
+    let scratch = Scratch::new();
+    let (mut keeper, qemu, _) = served_host_end(&scratch, 10_000, &[], &[]);
+    let sent = Instant::now();
+    signal(pid_of(&keeper), libc::SIGTERM);
+    assert!(wait_exit(&mut keeper, Duration::from_secs(12)).success());
+    let took = sent.elapsed();
+    assert!(took >= Duration::from_millis(1900), "{took:?}");
+    assert!(took < Duration::from_secs(5), "{took:?}");
+    assert!(!alive(qemu));
+    let all = steps(&scratch);
+    assert_eq!(all[0]["step"], "service");
+    assert_eq!(all[0]["ok"], true);
+    assert_eq!(all[1]["step"], "fallback");
+    assert_eq!(all[1]["reason"], "service-deadline");
+    assert_eq!(all[1]["end"], "quit");
+    assert_eq!(all[2]["step"], "quit");
+    assert_eq!(qmp_seen(&scratch), ["quit"]);
+}
+
+#[test]
+fn a_service_that_dies_after_its_ack_is_followed_by_a_quit_never_the_power_button() {
+    let scratch = Scratch::new();
+    let (mut keeper, qemu, service) = served_host_end(&scratch, 20_000, &[], &[]);
+    signal(pid_of(&keeper), libc::SIGTERM);
+    wait_until("the service's ack", Duration::from_secs(5), || {
+        steps(&scratch).iter().any(|s| s["step"] == "service")
+    });
+    signal(service, libc::SIGKILL);
+    assert!(wait_exit(&mut keeper, Duration::from_secs(10)).success());
+    assert!(!alive(qemu));
+    let all = steps(&scratch);
+    assert_eq!(all[1]["step"], "fallback");
+    assert_eq!(all[1]["reason"], "service-gone");
+    assert_eq!(all[1]["end"], "quit");
+    assert_eq!(qmp_seen(&scratch), ["quit"]);
+}
+
+#[test]
+fn a_late_ack_leaves_the_host_end_with_the_service_alone() {
+    let scratch = Scratch::new();
+    let qmp = scratch.path("qmp.sock");
+    let (mut keeper, qemu, _) = served_host_end(
+        &scratch,
+        20_000,
+        &[],
+        &[
+            "--on-host-end",
+            "quit",
+            "--quit-qmp",
+            &qmp,
+            "--ack-ms",
+            "2500",
+        ],
+    );
+    signal(pid_of(&keeper), libc::SIGTERM);
+    assert!(wait_exit(&mut keeper, Duration::from_secs(10)).success());
+    assert!(!alive(qemu));
+    let all = steps(&scratch);
+    assert_eq!(all[0]["step"], "service");
+    assert_eq!(all[0]["unconfirmed"], true, "{all:?}");
+    assert!(all.iter().all(|s| s["step"] != "fallback"), "{all:?}");
+    assert_eq!(qmp_seen(&scratch), ["quit"]);
+}
+
+#[test]
+fn a_service_that_never_acked_and_died_hands_the_host_end_to_the_power_button() {
+    let scratch = Scratch::new();
+    let (mut keeper, qemu, service) = served_host_end(&scratch, 20_000, &[], &["--ack-ms", "4000"]);
+    signal(pid_of(&keeper), libc::SIGTERM);
+    wait_until(
+        "the keeper to stop waiting for the ack",
+        Duration::from_secs(5),
+        || steps(&scratch).iter().any(|s| s["step"] == "service"),
+    );
+    signal(service, libc::SIGKILL);
+    assert!(wait_exit(&mut keeper, Duration::from_secs(10)).success());
+    assert!(!alive(qemu));
+    let all = steps(&scratch);
+    assert_eq!(all[0]["unconfirmed"], true, "{all:?}");
+    assert_eq!(all[1]["reason"], "service-gone");
+    assert_eq!(all[1]["end"], "shutdown");
+    assert_eq!(all[2]["step"], "powerdown");
+}
+
+#[test]
+fn an_adopted_qemu_is_sent_sigterm_before_sigkill_at_the_deadline() {
+    let scratch = Scratch::new();
+    let pidfile = scratch.path("qemu.pid");
+    let mut legacy = Command::new(fakechild())
+        .args([
+            scratch.path("qemu"),
+            "--pidfile".to_owned(),
+            pidfile.clone(),
+        ])
+        .spawn()
+        .expect("spawn a legacy QEMU");
+    let pid = pid_of(&legacy);
+    reported(&scratch, "qemu", pid);
+    scratch.write_spec(&json!({
+        "instance": "test",
+        "record": scratch.record(),
+        "lingerMs": 60_000,
+        "adopt": { "name": "qemu", "pidfile": pidfile, "qmp": scratch.path("gone.sock") },
+    }));
+    let mut keeper = start(&scratch, 4000);
+    assert_eq!(
+        request(&scratch, &json!({ "op": "hello" }))["child"]["pid"],
+        pid
+    );
+    signal(pid_of(&keeper), libc::SIGTERM);
+    assert_eq!(
+        legacy.wait().expect("reap the legacy QEMU").signal(),
+        Some(libc::SIGKILL)
+    );
+    assert!(wait_exit(&mut keeper, Duration::from_secs(10)).success());
+    assert!(fs::read_to_string(scratch.path("qemu"))
+        .unwrap_or_default()
+        .contains("handled 15"));
+    let order: Vec<String> = steps(&scratch)
+        .iter()
+        .filter_map(|s| s["step"].as_str().map(str::to_owned))
+        .filter(|s| s == "term" || s == "kill")
+        .collect();
+    assert_eq!(order, ["term", "kill"]);
+}
+
+#[test]
+fn a_service_can_hand_the_host_end_back_for_a_shutdown_or_a_quit() {
+    for (then, last) in [("shutdown", "system_powerdown"), ("quit", "quit")] {
+        let scratch = Scratch::new();
+        let flag = format!("fallback-{then}");
+        let (mut keeper, qemu, _) = served_host_end(
+            &scratch,
+            20_000,
+            &["--powerdown", "exit"],
+            &["--on-host-end", &flag],
+        );
+        signal(pid_of(&keeper), libc::SIGTERM);
+        assert!(wait_exit(&mut keeper, Duration::from_secs(10)).success());
+        assert!(!alive(qemu));
+        assert!(
+            service_report(&scratch).contains("handed back {\"ok\":true}"),
+            "{}",
+            service_report(&scratch)
+        );
+        let all = steps(&scratch);
+        assert_eq!(all[1]["step"], "fallback", "{all:?}");
+        assert_eq!(all[1]["reason"], "test");
+        assert_eq!(all[1]["end"], then);
+        assert_eq!(
+            qmp_seen(&scratch).last().map(String::as_str),
+            Some(last),
+            "{then}"
+        );
+    }
+}
+
+#[test]
+fn a_host_end_request_outside_a_host_end_is_refused() {
+    let scratch = Scratch::new();
+    let mut keeper = idle_keeper(&scratch, 60_000);
+    let answer = request(
+        &scratch,
+        &json!({ "op": "host-end", "end": "quit", "reason": "x" }),
+    );
+    assert_eq!(answer, json!({ "ok": false, "error": "not ending" }));
+    assert_eq!(
+        request(&scratch, &json!({ "op": "exit-when-idle" }))["ok"],
+        true
+    );
+    assert!(wait_exit(&mut keeper, Duration::from_secs(5)).success());
+}
+
+#[test]
+fn a_keeper_adopts_a_qemu_it_did_not_launch_by_its_pidfile_lock_and_powers_it_down() {
+    let scratch = Scratch::new();
+    let pidfile = scratch.path("qemu.pid");
+    let qmp = scratch.path("qmp.sock");
+    let mut legacy = Command::new(fakechild())
+        .args([
+            scratch.path("qemu"),
+            "--pidfile".to_owned(),
+            pidfile.clone(),
+            "--qmp".to_owned(),
+            qmp.clone(),
+        ])
+        .spawn()
+        .expect("spawn a legacy QEMU");
+    let pid = pid_of(&legacy);
+    reported(&scratch, "qemu", pid);
+    wait_until("its monitor", Duration::from_secs(5), || {
+        Path::new(&qmp).exists()
+    });
+    scratch.write_spec(&json!({
+        "instance": "test",
+        "record": scratch.record(),
+        "lingerMs": 60_000,
+        "adopt": { "name": "qemu", "pidfile": pidfile, "qmp": qmp },
+    }));
+    let mut keeper = start(&scratch, 20_000);
+    let hello = request(&scratch, &json!({ "op": "hello" }));
+    assert_eq!(hello["child"]["pid"], pid, "{hello}");
+    assert_eq!(hello["child"]["adopted"], true);
+    assert_eq!(hello["child"]["legacy"], true);
+    let adopted = whats_of(&scratch, "adopted");
+    assert_eq!(adopted[0]["by"], "pidfile");
+    assert_eq!(adopted[0]["legacy"], true);
+    signal(pid_of(&keeper), libc::SIGTERM);
+    assert_eq!(legacy.wait().expect("reap the legacy QEMU").code(), Some(0));
+    assert!(wait_exit(&mut keeper, Duration::from_secs(10)).success());
+    assert_eq!(
+        qmp_seen(&scratch),
+        ["query-migrate", "query-status", "system_powerdown"]
+    );
+    assert_eq!(whats_of(&scratch, "exited-unknown")[0]["child"], "qemu");
+}
+
+#[test]
+fn a_launched_child_reports_the_runtime_it_was_launched_from() {
+    let scratch = Scratch::new();
+    let mut keeper = idle_keeper(&scratch, 60_000);
+    let mut child = fake_as(&scratch, "qemu", "qemu", &[]);
+    child["runtime"] = json!("11.1.2+patches:abc");
+    let pid = launched_pid(&request(
+        &scratch,
+        &json!({ "op": "launch", "child": child }),
+    ));
+    reported(&scratch, "qemu", pid);
+    let hello = request(&scratch, &json!({ "op": "hello" }));
+    assert_eq!(hello["child"]["runtime"], "11.1.2+patches:abc");
+    assert_eq!(hello["child"]["legacy"], false);
+    assert_eq!(request(&scratch, &json!({ "op": "kill" }))["ok"], true);
+    assert_eq!(
+        request(&scratch, &json!({ "op": "exit-when-idle" }))["ok"],
+        true
+    );
+    assert!(wait_exit(&mut keeper, Duration::from_secs(5)).success());
+}
+
+#[test]
+fn a_hand_back_after_the_keeper_has_taken_over_changes_nothing() {
+    let scratch = Scratch::new();
+    let (mut keeper, _, _) = served_host_end(
+        &scratch,
+        20_000,
+        &["--powerdown", "ignore"],
+        &["--on-host-end", "refuse"],
+    );
+    signal(pid_of(&keeper), libc::SIGTERM);
+    wait_until("the power button", Duration::from_secs(5), || {
+        qmp_seen(&scratch).contains(&"system_powerdown".to_owned())
+    });
+    let late = request(
+        &scratch,
+        &json!({ "op": "host-end", "end": "quit", "reason": "late" }),
+    );
+    assert_eq!(late["ok"], true, "{late}");
+    assert!(
+        steps(&scratch).iter().all(|s| s["reason"] != "late"),
+        "{:?}",
+        steps(&scratch)
+    );
+    assert!(!qmp_seen(&scratch).contains(&"quit".to_owned()));
+    assert_eq!(request(&scratch, &json!({ "op": "kill" }))["ok"], true);
+    assert!(wait_exit(&mut keeper, Duration::from_secs(5)).success());
+}
+
+#[test]
+fn a_service_still_writing_its_stow_after_qemu_quits_gets_time_to_finish() {
+    let scratch = Scratch::new();
+    let qmp = scratch.path("qmp.sock");
+    let (mut keeper, _, service) = served_host_end(
+        &scratch,
+        20_000,
+        &[],
+        &[
+            "--on-host-end",
+            "quit",
+            "--quit-qmp",
+            &qmp,
+            "--stop-ms",
+            "3500",
+        ],
+    );
+    signal(pid_of(&keeper), libc::SIGTERM);
+    assert!(wait_exit(&mut keeper, Duration::from_secs(12)).success());
+    assert!(!alive(service));
+    assert!(service_report(&scratch).contains("stopped"));
+    let exited = whats_of(&scratch, "service-exited");
+    assert_eq!(exited[0]["status"], 0, "{exited:?}");
+}
+
+#[test]
+fn a_service_already_ending_counts_as_acting_never_as_a_refusal() {
+    let scratch = Scratch::new();
+    let (mut keeper, qemu, _) = served_host_end(&scratch, 10_000, &[], &["--on-host-end", "busy"]);
+    signal(pid_of(&keeper), libc::SIGTERM);
+    assert!(wait_exit(&mut keeper, Duration::from_secs(12)).success());
+    assert!(!alive(qemu));
+    let all = steps(&scratch);
+    assert_eq!(all[0]["step"], "service");
+    assert_eq!(all[0]["ok"], true, "{all:?}");
+    assert_eq!(qmp_seen(&scratch), ["quit"]);
+}
+
+#[test]
+fn the_keepers_fallback_never_presses_the_button_while_an_op_holds_the_instance() {
+    let scratch = Scratch::new();
+    let me = std::process::id();
+    let started = Command::new("ps")
+        .args(["-o", "lstart=", "-p", &me.to_string()])
+        .env("LC_ALL", "C")
+        .env("TZ", "UTC")
+        .output()
+        .expect("ps");
+    let started = String::from_utf8_lossy(&started.stdout).trim().to_owned();
+    fs::write(
+        scratch.path("lease.json"),
+        json!({ "pid": me, "pidStart": started, "operation": "stow", "id": "x" }).to_string(),
+    )
+    .expect("lease.json");
+    fs::write(scratch.path("budget"), "8000").expect("budget");
+    let mut keeper = monitored(&scratch, &[]);
+    let pid = hello_child_pid(&scratch);
+    reported(&scratch, "qemu", pid);
+    wait_until("the private monitor", Duration::from_secs(5), || {
+        Path::new(&scratch.path("qmp.sock")).exists()
+    });
+    signal(pid_of(&keeper), libc::SIGTERM);
+    assert!(wait_exit(&mut keeper, Duration::from_secs(10)).success());
+    assert!(!alive(pid));
+    assert!(
+        !qmp_seen(&scratch).contains(&"system_powerdown".to_owned()),
+        "{:?}",
+        qmp_seen(&scratch)
+    );
+    let all = steps(&scratch);
+    let wait = find(&all, "host-end");
+    assert_eq!(wait["step"], "lease-wait", "{all:?}");
+    assert_eq!(wait["operation"], "stow");
+    assert!(all.iter().any(|s| s["step"] == "quit"), "{all:?}");
+}
+
+#[test]
+fn a_lease_whose_pid_now_belongs_to_another_process_is_not_waited_for() {
+    let scratch = Scratch::new();
+    let me = std::process::id();
+    fs::write(
+        scratch.path("lease.json"),
+        json!({ "pid": me, "pidStart": "Thu Jan  1 00:00:00 1970", "operation": "stow", "id": "x" })
+            .to_string(),
+    )
+    .expect("lease.json");
+    let (status, _) = host_end_with(&scratch, 20_000, &[]);
+    assert!(status.success());
+    assert!(
+        steps(&scratch).iter().all(|s| s["step"] != "lease-wait"),
+        "{:?}",
+        steps(&scratch)
+    );
+    assert_eq!(
+        qmp_seen(&scratch),
+        ["query-migrate", "query-status", "system_powerdown"]
+    );
 }

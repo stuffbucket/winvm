@@ -29,7 +29,7 @@ import { lockState } from "./pidlock"
 import { signalProcess } from "./proc"
 import * as qga from "./qga"
 import * as qmp from "./qmp"
-import { runtimeBin } from "./runtime"
+import { currentQemuCompat, runtimeBin } from "./runtime"
 import { ensureService } from "./servicectl"
 import * as share from "./share"
 import { applyPassword, ensureFreeDisplay, vncArg } from "./vnc"
@@ -256,12 +256,41 @@ export function setSettle(next: Settle = settleByClock): Settle {
   return previous
 }
 
+export function qemuPids(p: Paths): readonly number[] {
+  const pidfile = p.pid.replace(/[.*+?^$()|[\]{}\\]/g, "\\$&")
+  const r = spawnSync(
+    "pgrep",
+    ["-f", `qemu-system-[A-Za-z0-9_]+ .*-pidfile ${pidfile}( |$)`],
+    { encoding: "utf8" },
+  )
+  if (r.status !== 0) return []
+  return r.stdout
+    .split("\n")
+    .map((l) => Number.parseInt(l, 10))
+    .filter((n) => Number.isInteger(n) && n > 1 && n !== process.pid)
+    .filter((n) => isInstanceQemu(n, p))
+}
+
+async function stillRunning(p: Paths): Promise<number | null> {
+  const deadline = Date.now() + REAPED_MS
+  for (;;) {
+    const pid = pidOf(p) ?? qemuPids(p)[0] ?? null
+    if (pid === null || Date.now() > deadline) return pid
+    await new Promise((r) => setTimeout(r, 100))
+  }
+}
+
 export async function launch(
   name: string,
   p: Paths,
   meta: InstanceMeta,
   o: LaunchOptions,
 ): Promise<void> {
+  const running = await stillRunning(p)
+  if (running !== null)
+    throw new Error(
+      `QEMU (pid ${String(running)}) still runs for "${name}", so nothing was started; \`winvm kill -i ${name}\` ends it`,
+    )
   const use = kept.keeperUse()
   if (use.kind === "keeper") {
     const failed = await kept.openKeeper(name, p, use.keeper).then(
@@ -349,7 +378,7 @@ async function launchKept(
   const m = await ensureFreeDisplay(name, p, meta)
   await kept.openKeeper(name, p, keeper)
   stopSidecars(p)
-  const env = keptEnv()
+  const env = kept.keptEnv()
   const umask = kept.callerUmask()
   const sidecar = async (
     child: KeeperChild & { readonly name: string },
@@ -407,6 +436,7 @@ async function launchKept(
       pidfile: p.pid,
       qmp: monitor,
       umask,
+      runtime: currentQemuCompat(),
     })
     .catch(async (error: unknown) => {
       await kept.killKept(p, null)
@@ -430,27 +460,6 @@ async function launchKept(
   await kept.killKept(p, null)
   throw exitedImmediately(p)
 }
-
-const PASSED_ENV = new Set([
-  "HOME",
-  "USER",
-  "LOGNAME",
-  "PATH",
-  "SHELL",
-  "TMPDIR",
-  "LANG",
-])
-
-const keptEnv = (): Readonly<Record<string, string>> =>
-  Object.fromEntries(
-    Object.entries(process.env).filter(
-      (e): e is [string, string] =>
-        e[1] !== undefined &&
-        (PASSED_ENV.has(e[0]) ||
-          e[0].startsWith("LC_") ||
-          e[0].startsWith("WINVM_")),
-    ),
-  )
 
 async function settled(
   p: Paths,
@@ -559,6 +568,11 @@ export function pidOf(p: Paths): number | null {
 }
 
 export const isRunning = (p: Paths): boolean => pidOf(p) !== null
+
+export async function killQemu(p: Paths, pid: number): Promise<boolean> {
+  if (await kept.killKept(p, pid)) return true
+  return pidOf(p) === pid && signalProcess(pid, "SIGKILL")
+}
 
 export const isQemuCommandOf = (command: string, p: Paths): boolean =>
   /(^|[\s/])qemu-system-[A-Za-z0-9_]+(\s|$)/.test(command) &&

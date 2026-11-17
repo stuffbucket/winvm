@@ -28,15 +28,21 @@ import {
   readOverrides,
   writeAssignments,
 } from "../src/config"
+import { readSince, START } from "../src/eventlog"
 import { buildIdentity } from "../src/identity"
 import type { Decision, Sample, Settings, Timing } from "../src/idle"
 import { autosaveName, IdleMachine, savesToRotate } from "../src/idle"
 import { instanceDir, PACKAGE_DIR, pathsFor } from "../src/paths"
+import { STOW_REFUSED, STOW_UNDECIDED } from "../src/saves"
 import {
   ensureWatcher,
+  idleSettings,
+  idleState,
+  noteStowRefused,
   parseCpuTime,
   readWatchState,
   stopWatcher,
+  stowOutcome,
   watchAfterRestore,
   watcherFreshness,
   watcherRecord,
@@ -838,4 +844,67 @@ describe("watcher generations", () => {
       await releasePidfiles()
     }
   }, 30_000)
+})
+
+describe("an idle stow that winvm refuses", () => {
+  it("is told apart from a failed stow by winvm stow's exit code", () => {
+    expect(stowOutcome(0)).toBe("stowed")
+    expect(stowOutcome(STOW_REFUSED)).toBe("refused")
+    expect(stowOutcome(STOW_UNDECIDED)).toBe("failed")
+    expect(stowOutcome(1)).toBe("failed")
+  })
+
+  it("turns idle stows off for the rest of this QEMU, leaving autosave alone", () => {
+    expect(
+      idleSettings(SETTINGS, { ephemeral: false, stowRefused: true }),
+    ).toEqual({
+      ...SETTINGS,
+      stow: { ...SETTINGS.stow, enabled: false },
+    })
+    expect(
+      idleSettings(SETTINGS, { ephemeral: false, stowRefused: false }),
+    ).toEqual(SETTINGS)
+    expect(
+      idleSettings(SETTINGS, { ephemeral: true, stowRefused: false }).autosave
+        .enabled,
+    ).toBe(false)
+  })
+
+  it("is published as idle stow off, with why, while it holds", () => {
+    const cfg = { ...DEFAULTS, "stow.enabled": true }
+    const latched = idleState(
+      cfg,
+      { ephemeral: false, stowRefused: true },
+      { stow: "2026-11-17T08:00:00Z" },
+    )
+    expect(latched.stow.enabled).toBe(false)
+    expect(latched.stow.off).toContain("refused")
+    expect(latched.stow.off).toContain("until QEMU restarts")
+    expect(latched.stow.lastAt).toBe("2026-11-17T08:00:00Z")
+    expect(latched.autosave.enabled).toBe(cfg["autosave.enabled"])
+    const free = idleState(cfg, { ephemeral: false, stowRefused: false }, {})
+    expect(free.stow.enabled).toBe(true)
+    expect(free.stow.off).toBeUndefined()
+    expect(
+      idleState(
+        { ...cfg, "stow.enabled": false },
+        { ephemeral: false, stowRefused: true },
+        {},
+      ).stow.off,
+    ).toBeUndefined()
+  })
+
+  it("is logged once, however often it comes back, and leaves the record to winvm stow", () => {
+    rmSync(instanceDir("refused"), { recursive: true, force: true })
+    mkdirSync(instanceDir("refused"), { recursive: true })
+    const logged: string[] = []
+    const log = (line: string): void => {
+      logged.push(line)
+    }
+    expect(noteStowRefused(false, log)).toBe(true)
+    expect(noteStowRefused(true, log)).toBe(true)
+    expect(readSince("refused", START).entries).toEqual([])
+    expect(logged).toHaveLength(1)
+    expect(logged[0]).toContain("idle stows are off")
+  })
 })

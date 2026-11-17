@@ -7,10 +7,15 @@ export const CLOSE_POLICIES = ["ask", "leave", "stow", "shutdown"] as const
 
 export type ClosePolicy = (typeof CLOSE_POLICIES)[number]
 
+export const HOST_END_ACTIONS = ["stow", "shutdown"] as const
+
+export type HostEndAction = (typeof HOST_END_ACTIONS)[number]
+
 export interface InstanceConfig {
   readonly "autosave.enabled": boolean
   readonly "autosave.idleMinutes": number
   readonly "autosave.keep": number
+  readonly "hostEnd.action": HostEndAction
   readonly "stow.enabled": boolean
   readonly "stow.idleMinutes": number
   readonly "viewer.closePolicy": ClosePolicy
@@ -25,6 +30,7 @@ export const DEFAULTS: InstanceConfig = {
   "autosave.enabled": true,
   "autosave.idleMinutes": 10,
   "autosave.keep": 3,
+  "hostEnd.action": "stow",
   "stow.enabled": true,
   "stow.idleMinutes": 60,
   "viewer.closePolicy": "ask",
@@ -49,10 +55,14 @@ type Value = InstanceConfig[ConfigKey]
 const isClosePolicy = (v: string): v is ClosePolicy =>
   (CLOSE_POLICIES as readonly string[]).includes(v)
 
+const isHostEndAction = (v: string): v is HostEndAction =>
+  (HOST_END_ACTIONS as readonly string[]).includes(v)
+
 const valid = (k: ConfigKey, v: unknown): v is Value => {
   if (typeof v !== typeof DEFAULTS[k]) return false
   if (typeof v !== "string") return true
   if (k === "viewer.closePolicy") return isClosePolicy(v)
+  if (k === "hostEnd.action") return isHostEndAction(v)
   try {
     return checkTitle(v) === v
   } catch {
@@ -99,6 +109,12 @@ export function parseAssignment(assignment: string): [ConfigKey, Value] {
     if (isClosePolicy(value)) return [key, value]
     throw new Error(
       `${key} is one of: ${CLOSE_POLICIES.join(", ")}, got "${value}"`,
+    )
+  }
+  if (key === "hostEnd.action") {
+    if (isHostEndAction(value)) return [key, value]
+    throw new Error(
+      `${key} is one of: ${HOST_END_ACTIONS.join(", ")}, got "${value}"`,
     )
   }
   if (typeof DEFAULTS[key] === "string") return [key, checkTitle(value)]

@@ -24,6 +24,7 @@ import { type Entry, readSince, START } from "../src/eventlog"
 import type { LeaseOperation, VmOperation } from "../src/operation"
 import {
   abandonedStop,
+  automaticFrom,
   clearSavingRunning,
   type HeldLease,
   heldLease,
@@ -40,6 +41,7 @@ import {
 } from "../src/operation"
 import { pathsFor } from "../src/paths"
 import { isSameProcess, processStart } from "../src/proc"
+import { CLI } from "../src/watch"
 
 const NAME = "op-test"
 const HOLDER = resolve(import.meta.dir, "fakes", "holder.ts")
@@ -563,12 +565,23 @@ describe("waiting", () => {
     await auto
   })
 
-  it("marks every lease taken by a command winvm ran on its own", async () => {
+  it("marks the lease of the watcher's own winvm stow, which says --automatic", async () => {
+    const argv = parseArgs(CLI.stow(NAME).slice(1))
+    expect(automaticFrom(argv)).toBe(true)
+    expect(automaticFrom(parseArgs(["-i", NAME]))).toBe(false)
+    expect(
+      await withOperation(NAME, "stow", () => onDisk()?.automatic, {
+        automatic: automaticFrom(argv),
+      }),
+    ).toBe(true)
+  })
+
+  it("marks no lease automatic for a WINVM_AUTOMATIC it merely inherited", async () => {
     const before = process.env.WINVM_AUTOMATIC
     process.env.WINVM_AUTOMATIC = "1"
     try {
       expect(await withOperation(NAME, "stow", () => onDisk()?.automatic)).toBe(
-        true,
+        false,
       )
     } finally {
       if (before === undefined) delete process.env.WINVM_AUTOMATIC
