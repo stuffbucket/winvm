@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process"
-import { createHash } from "node:crypto"
+import { createHash, randomUUID } from "node:crypto"
 import {
   chmodSync,
   constants,
@@ -37,6 +37,7 @@ export interface FoundKeeper {
 export const KEEPER_BINARY = "winvm-keeper"
 export const KEEPER_PREFIX = "co.stuffbucket.winvm.keeper."
 export const KEEPER_EXIT_TIMEOUT = 60
+export const KEEPER_PROTOCOL = 1
 const APP_BUNDLE_ID = "co.stuffbucket.winvm"
 const HASH_DIR = /^[0-9a-f]{12}$/
 
@@ -89,7 +90,9 @@ export function findKeeper(o: FindKeeperOptions = {}): FoundKeeper | null {
     pin.version,
     KEEPER_BINARY,
   )
-  return isFile(cached) ? { path: cached, source: "cache" } : null
+  return isFile(cached) && sha256File(cached) === pin.sha256
+    ? { path: cached, source: "cache" }
+    : null
 }
 
 export function ensureKeeper(
@@ -98,13 +101,22 @@ export function ensureKeeper(
   const pin = o.pin === undefined ? keeperPin() : o.pin
   if (pin === null) return null
   const path = resolve(o.cache ?? keeperCache(), pin.version, KEEPER_BINARY)
-  download(pin.url, path, pin.sha256)
-  chmodSync(path, 0o755)
+  if (isFile(path) && sha256File(path) === pin.sha256)
+    return { path, source: "cache" }
+  const partial = `${path}.${String(process.pid)}.partial`
+  try {
+    download(pin.url, partial, pin.sha256)
+    chmodSync(partial, 0o755)
+    renameSync(partial, path)
+  } finally {
+    rmSync(partial, { force: true })
+  }
   return { path, source: "cache" }
 }
 
-const sha256File = (path: string): string =>
-  createHash("sha256").update(readFileSync(path)).digest("hex")
+function sha256File(path: string): string {
+  return createHash("sha256").update(readFileSync(path)).digest("hex")
+}
 
 export function installKeeper(binary: string, root: string): string {
   const dir = resolve(root, sha256File(binary).slice(0, 12))
@@ -130,7 +142,7 @@ export interface Launchd {
   bootstrap(plist: string): void
   bootout(label: string): boolean
   print(label: string): JobInfo | null
-  labels(prefix: string): readonly string[]
+  labels(prefix: string): readonly string[] | null
 }
 
 export function collectKeepers(o: {
@@ -140,9 +152,12 @@ export function collectKeepers(o: {
 }): readonly string[] {
   const keep = new Set<string>()
   if (o.current !== null) keep.add(dirname(o.current))
-  for (const label of o.launchd.labels(KEEPER_PREFIX)) {
+  const labels = o.launchd.labels(KEEPER_PREFIX)
+  if (labels === null) return []
+  for (const label of labels) {
     const program = o.launchd.print(label)?.program
-    if (program !== null && program !== undefined) keep.add(dirname(program))
+    if (program === null || program === undefined) return []
+    keep.add(dirname(program))
   }
   if (!existsSync(o.root)) return []
   const removed: string[] = []
@@ -255,19 +270,69 @@ export function plistXml(dict: { readonly [key: string]: PlistValue }): string {
   ].join("\n")
 }
 
-export function startKeeper(o: {
+export interface KeeperCommand {
+  readonly argv: readonly string[]
+  readonly env?: Readonly<Record<string, string>>
+  readonly log?: string
+  readonly shield?: boolean
+}
+
+export interface KeeperChild extends KeeperCommand {
+  readonly name?: string
+  readonly pidfile?: string
+}
+
+export interface KeeperSpec {
+  readonly instance?: string
+  readonly record?: string
+  readonly lingerMs?: number
+  readonly child?: KeeperChild
+  readonly stop?: KeeperCommand
+}
+
+export type StartedKeeper =
+  | { readonly state: "started"; readonly plist: string }
+  | { readonly state: "running"; readonly hello: Record<string, unknown> }
+
+export class KeeperBusy extends Error {}
+
+function writePrivate(path: string, text: string): void {
+  writeFileSync(path, text, { mode: 0o600 })
+  chmodSync(path, 0o600)
+}
+
+export async function startKeeper(o: {
   readonly launchd: Launchd
   readonly job: KeeperJob
-}): string {
+  readonly spec?: KeeperSpec
+}): Promise<StartedKeeper> {
   const dir = o.job.WorkingDirectory
+  const hello = await keeperRequest(
+    resolve(dir, "keeper.sock"),
+    { op: "hello" },
+    1000,
+  ).catch(() => null)
+  if (hello !== null && hello.hostEnding === true)
+    throw new KeeperBusy(
+      `the keeper for ${o.job.Label} is shutting down; start again once it has exited`,
+    )
+  if (hello !== null) return { state: "running", hello }
+  if (o.launchd.print(o.job.Label)?.state === "running")
+    throw new KeeperBusy(
+      `the keeper for ${o.job.Label} is running but does not answer; see ${resolve(dir, "keeper.log")}`,
+    )
   mkdirSync(dir, { recursive: true, mode: 0o700 })
   chmodSync(dir, 0o700)
+  if (o.spec !== undefined)
+    writePrivate(
+      resolve(dir, "spec.json"),
+      `${JSON.stringify({ ...o.spec, session: randomUUID() })}\n`,
+    )
   const plist = resolve(dir, "keeper.plist")
-  writeFileSync(plist, plistXml(o.job), { mode: 0o600 })
-  chmodSync(plist, 0o600)
+  writePrivate(plist, plistXml(o.job))
   o.launchd.bootout(o.job.Label)
   o.launchd.bootstrap(plist)
-  return plist
+  return { state: "started", plist }
 }
 
 const numberOrNull = (text: string | undefined): number | null =>
@@ -319,7 +384,7 @@ export function launchctl(uid: number = process.getuid?.() ?? 0): Launchd {
     },
     labels: (prefix) => {
       const r = launchctlRun(["print", domain])
-      if (!r.ok) return []
+      if (!r.ok) return null
       return r.out
         .split("\n")
         .map((line) => /^\t\t\s*\S+\s+\S+\s+(\S+)$/.exec(line)?.[1])
@@ -341,7 +406,19 @@ export function keeperRequest(
       fail(new Error(`${socket}: no answer within ${String(timeoutMs)} ms`))
     }, timeoutMs)
     stream.setEncoding("utf8")
-    stream.on("connect", () => stream.write(`${JSON.stringify(message)}\n`))
+    stream.on("connect", () =>
+      stream.write(
+        `${JSON.stringify({ ...message, protocol: KEEPER_PROTOCOL })}\n`,
+      ),
+    )
+    stream.on("close", () => {
+      clearTimeout(timer)
+      fail(
+        new Error(
+          `${socket}: the keeper closed the connection without an answer`,
+        ),
+      )
+    })
     stream.on("data", (chunk: string) => {
       answer += chunk
       const end = answer.indexOf("\n")

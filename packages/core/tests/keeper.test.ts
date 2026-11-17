@@ -12,6 +12,7 @@ import {
   statSync,
   writeFileSync,
 } from "node:fs"
+import { createServer, type Server } from "node:net"
 import { tmpdir } from "node:os"
 import { resolve } from "node:path"
 
@@ -24,9 +25,11 @@ import {
   installKeeper,
   type JobInfo,
   KEEPER_PREFIX,
+  KeeperBusy,
   keeperJob,
   keeperLabel,
   keeperPin,
+  keeperRequest,
   type Launchd,
   parseJobPrint,
   plistXml,
@@ -161,7 +164,11 @@ describe("plistXml", () => {
 })
 
 describe("finding the keeper", () => {
-  const pin = { version: "v0.2.0", url: "unused", sha256: "unused" }
+  const pin = {
+    version: "v0.2.0",
+    url: "unused",
+    sha256: sha256("#!/bin/sh\necho keeper\n"),
+  }
 
   it("takes WINVM_KEEPER first, then the app's, then the pinned cache", () => {
     const app = resolve(tmp, "winvm.app")
@@ -181,6 +188,15 @@ describe("finding the keeper", () => {
     expect(
       findKeeper({ env: {}, execPath: "/usr/local/bin/bun", cache, pin }),
     ).toEqual({ path: cached, source: "cache" })
+  })
+
+  it("does not take a cached keeper that does not match its pin", () => {
+    const cache = resolve(tmp, "cache")
+    binary(resolve(cache, "v0.2.0", "winvm-keeper"), "truncated")
+    const real = { ...pin, sha256: sha256("the whole binary") }
+    expect(
+      findKeeper({ env: {}, execPath: "/x/bun", cache, pin: real }),
+    ).toBeNull()
   })
 
   it("finds nothing without a pin, an app or an override, and ignores an empty WINVM_KEEPER", () => {
@@ -275,7 +291,10 @@ describe("installing the keeper by content", () => {
   })
 })
 
-function fakeLaunchd(jobs: Record<string, Partial<JobInfo>>): Launchd & {
+function fakeLaunchd(
+  jobs: Record<string, Partial<JobInfo> | null>,
+  listing = true,
+): Launchd & {
   readonly calls: string[]
 } {
   const calls: string[] = []
@@ -290,7 +309,7 @@ function fakeLaunchd(jobs: Record<string, Partial<JobInfo>>): Launchd & {
     },
     print: (label) => {
       const job = jobs[label]
-      return job === undefined
+      return job === undefined || job === null
         ? null
         : {
             state: "running",
@@ -301,7 +320,8 @@ function fakeLaunchd(jobs: Record<string, Partial<JobInfo>>): Launchd & {
             ...job,
           }
     },
-    labels: (prefix) => Object.keys(jobs).filter((l) => l.startsWith(prefix)),
+    labels: (prefix) =>
+      listing ? Object.keys(jobs).filter((l) => l.startsWith(prefix)) : null,
   }
 }
 
@@ -324,6 +344,22 @@ describe("collecting old keeper versions", () => {
     expect(existsSync(stale)).toBe(false)
   })
 
+  it("collects nothing when launchd's jobs can't be listed or one can't be read", () => {
+    const root = resolve(tmp, "keeper")
+    const stale = installKeeper(binary(resolve(tmp, "c"), "stale\n"), root)
+    expect(
+      collectKeepers({ root, launchd: fakeLaunchd({}, false), current: null }),
+    ).toEqual([])
+    expect(
+      collectKeepers({
+        root,
+        launchd: fakeLaunchd({ [`${KEEPER_PREFIX}abcd1234.default`]: null }),
+        current: null,
+      }),
+    ).toEqual([])
+    expect(existsSync(stale)).toBe(true)
+  })
+
   it("leaves a root it does not recognise alone", () => {
     const root = resolve(tmp, "keeper")
     mkdirSync(resolve(root, "notes"), { recursive: true })
@@ -334,24 +370,148 @@ describe("collecting old keeper versions", () => {
   })
 })
 
-describe("starting a keeper job", () => {
-  it("writes the plist beside the instance's keeper directory, boots out the old job, then bootstraps", () => {
-    const dir = resolve(tmp, "instances", "default", "keeper")
-    const launchd = fakeLaunchd({})
-    const job = keeperJob({
-      label: "co.stuffbucket.winvm.test.x",
-      program: "/k",
-      dir,
+function answering(
+  path: string,
+  answer: (line: string) => string | null,
+): Promise<Server> {
+  return new Promise((ready) => {
+    const server = createServer((socket) => {
+      socket.setEncoding("utf8")
+      socket.on("data", (line: string) => {
+        const reply = answer(line)
+        if (reply === null) socket.destroy()
+        else socket.end(`${reply}\n`)
+      })
     })
-    const plist = startKeeper({ launchd, job })
-    expect(plist).toBe(resolve(dir, "keeper.plist"))
+    server.listen(path, () => {
+      ready(server)
+    })
+  })
+}
+
+const closing = (server: Server): Promise<void> =>
+  new Promise((done) => {
+    server.close(() => {
+      done()
+    })
+  })
+
+describe("starting a keeper job", () => {
+  let short = ""
+  beforeEach(() => {
+    short = mkdtempSync("/tmp/wkts-")
+  })
+  afterEach(() => {
+    rmSync(short, { recursive: true, force: true })
+  })
+  const testJob = (dir: string) =>
+    keeperJob({ label: "co.stuffbucket.winvm.test.x", program: "/k", dir })
+
+  it("writes the spec with a fresh session and the plist, boots out the stopped job, then bootstraps", async () => {
+    const dir = resolve(short, "default", "keeper")
+    const launchd = fakeLaunchd({})
+    const job = testJob(dir)
+    const started = await startKeeper({
+      launchd,
+      job,
+      spec: { instance: "default", child: { argv: ["/bin/sleep", "9"] } },
+    })
+    const plist = resolve(dir, "keeper.plist")
+    expect(started).toEqual({ state: "started", plist })
     expect(readFileSync(plist, "utf8")).toBe(plistXml(job))
     expect(statSync(plist).mode & 0o777).toBe(0o600)
     expect(statSync(dir).mode & 0o777).toBe(0o700)
+    const spec = JSON.parse(
+      readFileSync(resolve(dir, "spec.json"), "utf8"),
+    ) as Record<string, unknown>
+    expect(spec.instance).toBe("default")
+    expect(spec.child).toEqual({ argv: ["/bin/sleep", "9"] })
+    expect(spec.session).toMatch(/^[0-9a-f-]{36}$/)
     expect(launchd.calls).toEqual([
       "bootout co.stuffbucket.winvm.test.x",
       `bootstrap ${plist}`,
     ])
+  })
+
+  it("returns a keeper that answers instead of booting it out", async () => {
+    const dir = resolve(short, "keeper")
+    mkdirSync(dir, { recursive: true })
+    const server = await answering(resolve(dir, "keeper.sock"), () =>
+      JSON.stringify({ ok: true, pid: 42, hostEnding: false }),
+    )
+    try {
+      const launchd = fakeLaunchd({})
+      const started = await startKeeper({ launchd, job: testJob(dir) })
+      expect(started).toEqual({
+        state: "running",
+        hello: { ok: true, pid: 42, hostEnding: false },
+      })
+      expect(launchd.calls).toEqual([])
+      expect(existsSync(resolve(dir, "keeper.plist"))).toBe(false)
+    } finally {
+      await closing(server)
+    }
+  })
+
+  it("refuses while a keeper is ending, and while launchd runs one that does not answer", async () => {
+    const dir = resolve(short, "keeper")
+    mkdirSync(dir, { recursive: true })
+    const server = await answering(resolve(dir, "keeper.sock"), () =>
+      JSON.stringify({ ok: true, pid: 42, hostEnding: true }),
+    )
+    const launchd = fakeLaunchd({
+      "co.stuffbucket.winvm.test.x": { state: "running", pid: 42 },
+    })
+    try {
+      await expect(startKeeper({ launchd, job: testJob(dir) })).rejects.toThrow(
+        KeeperBusy,
+      )
+    } finally {
+      await closing(server)
+    }
+    await expect(startKeeper({ launchd, job: testJob(dir) })).rejects.toThrow(
+      "running but does not answer",
+    )
+    expect(launchd.calls).toEqual([])
+  })
+})
+
+describe("keeperRequest", () => {
+  let short = ""
+  beforeEach(() => {
+    short = mkdtempSync("/tmp/wktr-")
+  })
+  afterEach(() => {
+    rmSync(short, { recursive: true, force: true })
+  })
+
+  it("sends the protocol it speaks with every request", async () => {
+    let got = ""
+    const path = resolve(short, "k.sock")
+    const server = await answering(path, (line) => {
+      got = line
+      return JSON.stringify({ ok: true })
+    })
+    try {
+      expect(await keeperRequest(path, { op: "hello" })).toEqual({ ok: true })
+      expect(JSON.parse(got)).toEqual({ op: "hello", protocol: 1 })
+    } finally {
+      await closing(server)
+    }
+  })
+
+  it("fails at once when the keeper hangs up without an answer", async () => {
+    const path = resolve(short, "k.sock")
+    const server = await answering(path, () => null)
+    const asked = Date.now()
+    try {
+      await expect(keeperRequest(path, { op: "hello" }, 5000)).rejects.toThrow(
+        "closed",
+      )
+      expect(Date.now() - asked).toBeLessThan(1000)
+    } finally {
+      await closing(server)
+    }
   })
 })
 

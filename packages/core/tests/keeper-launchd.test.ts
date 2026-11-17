@@ -1,11 +1,5 @@
 import { afterAll, describe, expect, it } from "bun:test"
-import {
-  mkdirSync,
-  mkdtempSync,
-  readFileSync,
-  rmSync,
-  writeFileSync,
-} from "node:fs"
+import { mkdtempSync, readFileSync, rmSync } from "node:fs"
 import { resolve } from "node:path"
 
 import { keeperJob, keeperRequest, launchctl, startKeeper } from "../src/keeper"
@@ -67,28 +61,22 @@ describe.if(enabled)("a real launchd keeper job (WINVM_TEST_LAUNCHD=1)", () => {
     const dir = resolve(root, "keeper")
     const record = resolve(root, "events.jsonl")
     const marker = resolve(root, "stop.ran")
-    mkdirSync(dir, { recursive: true, mode: 0o700 })
-    writeFileSync(
-      resolve(dir, "spec.json"),
-      JSON.stringify({
-        instance: "launchd-test",
-        record,
-        child: { name: "dummy", argv: ["/bin/sleep", "600"] },
-        stop: {
-          argv: [
-            "/bin/sh",
-            "-c",
-            'echo "$WINVM_KEEPER_DEADLINE_MS" > "$0"; kill -KILL "$WINVM_KEEPER_CHILD_PID"; while kill -0 "$WINVM_KEEPER_CHILD_PID" 2>/dev/null; do sleep 0.05; done',
-            marker,
-          ],
-        },
-      }),
-    )
+    const spec = {
+      instance: "launchd-test",
+      record,
+      child: { name: "dummy", argv: ["/bin/sleep", "600"] },
+      stop: {
+        argv: [
+          "/bin/sh",
+          "-c",
+          'echo "$WINVM_KEEPER_DEADLINE_MS" > "$0"; kill -KILL "$WINVM_KEEPER_CHILD_PID"; while kill -0 "$WINVM_KEEPER_CHILD_PID" 2>/dev/null; do sleep 0.05; done',
+          marker,
+        ],
+      },
+    }
     const launchd = launchctl()
-    startKeeper({
-      launchd,
-      job: keeperJob({ label, program: keeper, dir, exitTimeout: 20 }),
-    })
+    const job = keeperJob({ label, program: keeper, dir, exitTimeout: 20 })
+    expect((await startKeeper({ launchd, job, spec })).state).toBe("started")
 
     const running = await until("the job to run", 5000, () => {
       const info = launchd.print(label)
@@ -103,6 +91,11 @@ describe.if(enabled)("a real launchd keeper job (WINVM_TEST_LAUNCHD=1)", () => {
     expect(hello.instance).toBe("launchd-test")
     const child = hello.child as { pid: number; adopted: boolean }
     expect(child.adopted).toBe(false)
+
+    expect(await startKeeper({ launchd, job, spec })).toMatchObject({
+      state: "running",
+    })
+    expect(launchd.print(label)?.pid).toBe(running.pid)
 
     const session = readFileSync(resolve(dir, "keeper.log"), "utf8")
     expect(session).toContain('"what":"launched"')
