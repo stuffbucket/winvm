@@ -50,6 +50,7 @@ import {
 } from "./host"
 import * as input from "./input"
 import { ensureInstance, makeVars, resetInstance, sealBase } from "./instance"
+import { ensureKeeper } from "./keeper"
 import { ManagementError, reconcileManagement } from "./lifecycle"
 import * as machineinfo from "./machineinfo"
 import {
@@ -241,6 +242,8 @@ export function setup(args: Args): number {
   try {
     const rt = ensureRuntime()
     console.log(`runtime ${rt.manifest?.version ?? "?"} in ${rt.dir}`)
+    const keeper = ensureKeeper()
+    if (keeper !== null) console.log(`keeper ${keeper.path}`)
   } catch (error) {
     console.error(
       `::error::${error instanceof Error ? error.message : String(error)}`,
@@ -878,6 +881,7 @@ function sighting(e: Entry): string | null {
     case "op":
     case "service":
     case "warning":
+    case "keeper":
       return null
   }
 }

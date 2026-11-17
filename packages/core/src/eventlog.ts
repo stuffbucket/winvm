@@ -75,7 +75,7 @@ export interface OpEndFields extends OpIdentity, OpOutcome {
 }
 
 export interface NoteFields {
-  readonly kind: "service" | "warning"
+  readonly kind: "service" | "warning" | "keeper"
   readonly what: string
   readonly [field: string]: unknown
 }
@@ -351,7 +351,8 @@ function entryOf(r: Json): Entry | null {
     case "op":
       return opEntry(stamp, r)
     case "service":
-    case "warning": {
+    case "warning":
+    case "keeper": {
       const what = str(r.what)
       return what === null ? null : { ...r, ...stamp, kind: r.kind, what }
     }

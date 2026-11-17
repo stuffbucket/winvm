@@ -15,6 +15,7 @@ const INPUT_FILES = [
   ".bun-version",
   "pnpm-lock.yaml",
   "packages/core/runtime.json",
+  "packages/core/keeper.json",
   "apps/viewer/scripts/build-sidecar.ts",
 ] as const
 const SOURCE_DIRS = [
