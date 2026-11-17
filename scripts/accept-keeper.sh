@@ -9,6 +9,10 @@
 # until the keeper's deadline (50 s) or until something kills it. report prints
 # what happened; cleanup removes the job, its processes and every file.
 #
+# Once, from the repository: mise trust native/keeper/mise.toml, then
+# pnpm install --frozen-lockfile (install builds the keeper with that Rust
+# and writes the plist with the repository's code).
+#
 #   1. scripts/accept-keeper.sh install
 #   2. Restart the Mac. It may take about a minute longer than usual.
 #   3. Log in, then: scripts/accept-keeper.sh report > ~/keeper-restart.txt
@@ -26,11 +30,24 @@ job="user/$(id -u)/$label"
 
 loaded() { launchctl print "$job" >/dev/null 2>&1; }
 latest() { find "$base" -maxdepth 1 -type d -name 'run-*' 2>/dev/null | sort | tail -n 1; }
+answers() {
+  local run
+  run=$(latest)
+  [ -n "$run" ] && [ -x "$base/bin/winvm-keeper" ] &&
+    "$base/bin/winvm-keeper" ctl --dir "$run/keeper" '{"op":"hello"}' >/dev/null 2>&1
+}
+# The sed program is a literal: it escapes the regex metacharacters in $base.
+# shellcheck disable=SC2016
+ours() {
+  local escaped
+  escaped=$(printf '%s' "$base" | sed 's/[][\\.*^$()+?{}|]/\\&/g')
+  printf '%s' "$escaped/(bin/winvm-keeper run --dir |run-[0-9-]+/(child|stop)\\.beat)"
+}
 when() { date -r "$1" '+%Y-%m-%d %H:%M:%S'; }
 
 install() {
-  if loaded; then
-    echo "already installed; run report or cleanup" >&2
+  if loaded || answers; then
+    echo "already installed or still finishing; run report or cleanup" >&2
     exit 1
   fi
   local keeper=${WINVM_KEEPER:-} run
@@ -40,7 +57,8 @@ install() {
     keeper="$root/native/keeper/target/release/winvm-keeper"
   fi
   mkdir -p "$base/bin"
-  cp "$keeper" "$base/bin/winvm-keeper"
+  cp "$keeper" "$base/bin/.winvm-keeper.$$"
+  mv -f "$base/bin/.winvm-keeper.$$" "$base/bin/winvm-keeper"
   run="$base/run-$(date +%Y%m%d-%H%M%S)"
   mkdir -p "$run/keeper"
   chmod 700 "$run/keeper"
@@ -80,9 +98,13 @@ beats() {
     echo "  none"
     return 0
   fi
+  count=$(grep -cE '^[0-9]+$' "$file" || true)
+  if [ "$count" -eq 0 ]; then
+    echo "  no beats"
+    return 0
+  fi
   first=$(grep -E '^[0-9]+$' "$file" | head -n 1)
   last=$(grep -E '^[0-9]+$' "$file" | tail -n 1)
-  count=$(grep -cE '^[0-9]+$' "$file")
   echo "  first $(when "$first") ($first)"
   echo "  last  $(when "$last") ($last), $count beats"
   grep -E '^[0-9]+$' "$file" | while read -r t; do
@@ -101,8 +123,8 @@ report() {
   fi
   echo "run      $run"
   echo "now      $(date '+%Y-%m-%d %H:%M:%S %Z')"
-  echo "booted   $(sysctl -n kern.boottime)"
-  echo "macOS    $(sw_vers -productVersion) ($(sw_vers -buildVersion))"
+  echo "booted   $(sysctl -n kern.boottime 2>/dev/null || echo unknown)"
+  echo "macOS    $(sw_vers -productVersion 2>/dev/null || echo unknown) ($(sw_vers -buildVersion 2>/dev/null || echo unknown))"
   echo "--- launchd job"
   launchctl print "$job" 2>/dev/null | grep -E $'^\t(state|pid|runs|last exit code|exit timeout) =' || echo "  not loaded"
   echo "--- recent sessions"
@@ -119,23 +141,24 @@ report() {
 }
 
 cleanup() {
-  local run
+  local run pattern
   run=$(latest)
-  if loaded; then
-    if [ -n "$run" ]; then
-      "$base/bin/winvm-keeper" ctl --dir "$run/keeper" '{"op":"kill"}' >/dev/null 2>&1 || true
-    fi
-    launchctl bootout "$job" 2>/dev/null || true
-    for _ in $(seq 1 100); do
-      loaded || break
-      sleep 0.2
-    done
+  pattern=$(ours)
+  if [ -n "$run" ] && [ -x "$base/bin/winvm-keeper" ]; then
+    "$base/bin/winvm-keeper" ctl --dir "$run/keeper" '{"op":"kill"}' >/dev/null 2>&1 || true
   fi
-  pkill -KILL -f -- "$base/" 2>/dev/null || true
+  if loaded; then
+    launchctl bootout "$job" 2>/dev/null || true
+  fi
+  for _ in $(seq 1 100); do
+    loaded || pgrep -f -- "$pattern" >/dev/null || break
+    sleep 0.2
+  done
+  pkill -KILL -f -- "$pattern" 2>/dev/null || true
   sleep 0.5
   rm -rf "$base"
-  if loaded || pgrep -f -- "$base/" >/dev/null; then
-    echo "cleanup incomplete: launchctl print $job; pgrep -fl $base/" >&2
+  if loaded || pgrep -f -- "$pattern" >/dev/null; then
+    echo "cleanup incomplete: launchctl print $job; pgrep -fl -- '$pattern'" >&2
     exit 1
   fi
   echo "removed $label and $base"
@@ -146,7 +169,7 @@ install) install ;;
 report) report "${2:-}" ;;
 cleanup) cleanup ;;
 *)
-  sed -n '2,18p' "$0" | sed 's/^# \{0,1\}//'
+  sed -n '2,23p' "$0" | sed 's/^# \{0,1\}//'
   exit 2
   ;;
 esac
