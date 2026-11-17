@@ -75,6 +75,15 @@ export interface OpEndFields extends OpIdentity, OpOutcome {
   readonly endedAt: string
 }
 
+export interface OpOutputFields {
+  readonly kind: "op"
+  readonly phase: "output"
+  readonly id: string
+  readonly operation: string
+  readonly stream: "out" | "err"
+  readonly text: string
+}
+
 export interface NoteFields {
   readonly kind: "service" | "warning" | "keeper"
   readonly what: string
@@ -87,11 +96,13 @@ export type EntryFields =
   | DisconnectedFields
   | OpBeginFields
   | OpEndFields
+  | OpOutputFields
   | NoteFields
 
 export type QmpEntry = QmpFields & Stamp
 export type SyncEntry = SyncFields & Stamp
 export type OpEntry = (OpBeginFields | OpEndFields) & Stamp
+export type OpOutputEntry = OpOutputFields & Stamp
 export type Entry = EntryFields & Stamp
 
 export interface Position {
@@ -273,7 +284,25 @@ function legacyEntry(stamp: Stamp, r: Json): Entry | null {
   }
 }
 
+function opOutput(stamp: Stamp, r: Json): Entry | null {
+  const id = str(r.id)
+  const operation = str(r.operation)
+  const text = str(r.text)
+  if (id === null || operation === null || text === null) return null
+  if (r.stream !== "out" && r.stream !== "err") return null
+  return {
+    ...stamp,
+    kind: "op",
+    phase: "output",
+    id,
+    operation,
+    stream: r.stream,
+    text,
+  }
+}
+
 function opEntry(stamp: Stamp, r: Json): Entry | null {
+  if (r.phase === "output") return opOutput(stamp, r)
   const id = str(r.id)
   const operation = str(r.operation)
   const startedAt = str(r.startedAt)

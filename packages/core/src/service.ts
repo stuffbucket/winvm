@@ -15,6 +15,15 @@ import { hostEnd } from "./hostend"
 import { buildIdentity } from "./identity"
 import { type ReconcileOptions, settleWatcherDebt } from "./lifecycle"
 import { leaseHolder } from "./operation"
+import {
+  captureOutput,
+  type OpHandlers,
+  OpQueue,
+  type Reply,
+  readOpRequest,
+  reply,
+} from "./ops"
+import { SERVICE_HANDLERS } from "./opverbs"
 import { PACKAGE_DIR, type Paths, pathsFor } from "./paths"
 import * as qga from "./qga"
 import { claim, keptWithin, livePidIn, recordedPid } from "./servicectl"
@@ -27,6 +36,7 @@ export interface ServiceOptions {
   readonly checkMs?: number
   readonly eventsMaxBytes?: number
   readonly hostEnd?: (name: string, deadlineMs: number) => Promise<unknown>
+  readonly handlers?: OpHandlers
   readonly settle?: {
     readonly everyMs?: number
     readonly options?: ReconcileOptions
@@ -145,6 +155,11 @@ export async function runService(
   const rotate = (): void => {
     rotateEvents(name, eventsMaxBytes, () => leaseHolder(name) === null)
   }
+  const nudge = (): void => {
+    for (const c of subs) send(c, ": op\n\n")
+  }
+  captureOutput()
+  const queue = new OpQueue(name, o.handlers ?? SERVICE_HANDLERS, record, nudge)
 
   const qmpChannel = new QmpChannel({
     listen: p.qmp,
@@ -181,6 +196,7 @@ export async function runService(
     portOpen: askPortOpen,
   })
   let hostEnding: Promise<unknown> | null = null
+  let stopping = false
   const beginHostEnd = async (req: Request): Promise<Response> => {
     let body: unknown = null
     try {
@@ -205,10 +221,48 @@ export async function runService(
     )
     return new Response(null, { status: 202 })
   }
+  const answer = (r: Reply): Response =>
+    Response.json(r.body, { status: r.status })
+  const submitOp = async (req: Request): Promise<Response> => {
+    if (stopping)
+      return answer(reply(503, { error: "the service is stopping" }))
+    const parsed = readOpRequest(
+      await req.json().catch(() => null),
+      o.handlers ?? SERVICE_HANDLERS,
+    )
+    if ("status" in parsed) return answer(parsed)
+    const s = await queue.submit(parsed)
+    if (s.kind === "busy") return answer(reply(409, { busy: s.holder }))
+    return answer(
+      reply(202, {
+        id: s.id,
+        cursor: s.cursor,
+        pid: process.pid,
+        queued: s.queued,
+      }),
+    )
+  }
+  const cancelOp = async (req: Request): Promise<Response> => {
+    const body: unknown = await req.json().catch(() => null)
+    const id =
+      typeof body === "object" &&
+      body !== null &&
+      typeof (body as { id?: unknown }).id === "string"
+        ? (body as { id: string }).id
+        : null
+    const c = queue.cancel(id)
+    if (c.kind === "none") return answer(reply(404, { none: true }))
+    const { kind, ...what } = c
+    return answer(reply(kind === "cancelled" ? 200 : 409, { [kind]: what }))
+  }
   const handle = async (req: Request): Promise<Response> => {
     const url = new URL(req.url)
     if (url.pathname === "/host-ending" && req.method === "POST")
       return await beginHostEnd(req)
+    if (url.pathname === "/ops" && req.method === "POST")
+      return await submitOp(req)
+    if (url.pathname === "/ops/cancel" && req.method === "POST")
+      return await cancelOp(req)
     if (url.pathname === "/events") {
       let controller: ReadableStreamDefaultController<Uint8Array> | undefined
       const stream = new ReadableStream<Uint8Array>({
@@ -275,7 +329,6 @@ export async function runService(
   const done = new Promise<void>((r) => {
     finish = r
   })
-  let stopping = false
   let goneMs = 0
   let settling = false
   let settleAt = 0
@@ -371,6 +424,7 @@ export async function runService(
     settle()
     if (
       livePidIn(p.pid) !== null ||
+      !queue.idle() ||
       leaseHolder(name) !== null ||
       keptWithin(p, exitAfterMs)
     ) {
@@ -388,6 +442,7 @@ export async function runService(
     }
     stopping = true
     if (hostEnding !== null) await hostEnding
+    await queue.drain()
     clearInterval(check)
     clearInterval(heartbeat)
     for (const c of subs) {

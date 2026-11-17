@@ -1317,9 +1317,16 @@ async function untilUnlocked(
   return true
 }
 
-export async function kill(args: Args): Promise<number> {
+export interface KillOptions {
+  readonly inService?: boolean
+}
+
+export async function kill(args: Args, o: KillOptions = {}): Promise<number> {
   const name = instanceName(args)
   const p = pathsFor(name)
+  const endService = (): void => {
+    if (o.inService !== true) stopService(p)
+  }
   const pid = qemu.pidOf(p)
   const holder = leaseHolder(name)
   if (pid === null && holder !== null) {
@@ -1333,7 +1340,7 @@ export async function kill(args: Args): Promise<number> {
     const strays = qemu.qemuPids(p)
     for (const stray of strays) signalProcess(stray, "SIGKILL")
     qemu.stopSidecars(p)
-    stopService(p)
+    endService()
     finder.cleanStale(name)
     console.log(
       strays.length > 0
@@ -1371,7 +1378,7 @@ export async function kill(args: Args): Promise<number> {
   }
   rmSync(p.pid, { force: true })
   qemu.stopSidecars(p)
-  stopService(p)
+  endService()
   void watcher.stopWatcher(name)
   console.log(`killed instance "${name}"`)
   return 0

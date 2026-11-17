@@ -1,5 +1,6 @@
 import { connect } from "node:net"
 
+import { checkOp } from "./opcontext"
 import { monitorBeside } from "./paths"
 import * as qmp from "./qmp"
 
@@ -33,6 +34,7 @@ export async function call(
   payload: Record<string, unknown>,
   timeoutMs = 20_000,
 ): Promise<Record<string, unknown>> {
+  checkOp()
   const id = Math.floor(Math.random() * 2 ** 31)
   return await new Promise((res, rej) => {
     const sock = connect(sockPath)

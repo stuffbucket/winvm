@@ -28,6 +28,7 @@ import type {
 } from "./guestagent"
 import { AGENT_VERSION, GUEST_PORT, WINDOWS_DIR } from "./guestagent"
 import { bunZip } from "./media"
+import { checkOp } from "./opcontext"
 import { PACKAGE_DIR, pathsFor } from "./paths"
 import * as qemu from "./qemu"
 import * as qga from "./qga"
@@ -89,6 +90,7 @@ export class AgentClient {
     body?: RequestInit["body"],
     timeoutMs = 30_000,
   ): Promise<Response> {
+    checkOp()
     const r = await fetch(`${this.base}${path}`, {
       method,
       headers: { authorization: `Bearer ${this.token}` },

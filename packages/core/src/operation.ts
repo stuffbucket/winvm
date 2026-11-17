@@ -65,6 +65,9 @@ export interface LeaseSeams {
 
 export interface LeaseOptions extends LeaseSeams {
   readonly automatic?: boolean
+  readonly id?: string
+  readonly queue?: boolean
+  readonly signal?: AbortSignal
   readonly waitMs?: number
   readonly pollMs?: number
   readonly onWait?: (holder: LeaseHolder) => void
@@ -418,20 +421,21 @@ const sleep = async (ms: number): Promise<void> => {
   await new Promise((r) => setTimeout(r, ms))
 }
 
-const waitsFor = (automatic: boolean, holder: LeaseHolder): boolean =>
-  !automatic && holder.automatic
+const automaticOf = (o: LeaseOptions): boolean => o.automatic === true
+
+const waitsFor = (o: LeaseOptions, holder: LeaseHolder): boolean =>
+  o.queue === true || (!automaticOf(o) && holder.automatic)
+
+export const waitNote = (name: string, holder: LeaseHolder): string =>
+  `instance "${name}": waiting for the ${holder.operation}${holder.automatic ? " winvm started by itself" : ""} (pid ${String(holder.pid)}) to finish`
 
 function announceWait(name: string): (holder: LeaseHolder) => void {
   return (holder) => {
-    console.error(
-      `instance "${name}": waiting for the ${holder.operation} winvm started by itself (pid ${String(holder.pid)}) to finish`,
-    )
+    console.error(waitNote(name, holder))
   }
 }
 
 const TAKE_ATTEMPTS = 50
-
-const automaticOf = (o: LeaseOptions): boolean => o.automatic === true
 
 export const automaticFrom = (args: Args): boolean =>
   args.flags.has(AUTOMATIC_FLAG)
@@ -439,15 +443,15 @@ export const automaticFrom = (args: Args): boolean =>
 const ownRecord = (
   name: string,
   operation: LeaseOperation,
-  automatic: boolean,
+  o: LeaseOptions,
 ): LeaseRecord => ({
   operation,
-  id: randomUUID(),
+  id: o.id ?? randomUUID(),
   pid: process.pid,
   pidStart: ownStart(),
   startedAt: new Date().toISOString(),
   instance: name,
-  automatic,
+  automatic: automaticOf(o),
 })
 
 async function acquire(
@@ -456,12 +460,12 @@ async function acquire(
   o: LeaseOptions,
 ): Promise<LeaseRecord | InstanceBusy> {
   const file = pathsFor(name).lease
-  const automatic = automaticOf(o)
-  const record = ownRecord(name, operation, automatic)
+  const record = ownRecord(name, operation, o)
   const deadline = Date.now() + (o.waitMs ?? AUTOMATIC_WAIT_MS)
   const onWait = o.onWait ?? announceWait(name)
   let announced = false
   for (let vanished = 0; vanished < TAKE_ATTEMPTS; ) {
+    o.signal?.throwIfAborted()
     mkdirSync(dirname(file), { recursive: true })
     if (linkNew(file, JSON.stringify(record))) return record
     const holder = leaseHolder(name, o, true)
@@ -469,7 +473,7 @@ async function acquire(
       vanished += 1
       continue
     }
-    if (!waitsFor(automatic, holder) || Date.now() >= deadline)
+    if (!waitsFor(o, holder) || Date.now() >= deadline)
       return new InstanceBusy(name, holder)
     if (!announced) onWait(holder)
     announced = true
@@ -501,7 +505,7 @@ export async function withOperation<T>(
     console.error(
       `note: ${got.holder.operation} (pid ${String(got.holder.pid)}) holds "${name}"; killing it anyway`,
     )
-    const own = ownRecord(name, operation, automaticOf(o))
+    const own = ownRecord(name, operation, o)
     return await recorded(name, identityOf(own, false), run, o.outcome)
   }
   const file = pathsFor(name).lease

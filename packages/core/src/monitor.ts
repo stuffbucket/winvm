@@ -1,5 +1,7 @@
 import { connect } from "node:net"
 
+import { checkOp } from "./opcontext"
+
 export class QmpError extends Error {}
 
 export class QmpNotDelivered extends QmpError {}
@@ -14,6 +16,7 @@ export async function withQmp<T>(
   fn: (send: QmpSend) => Promise<T>,
   timeoutMs = 3000,
 ): Promise<T> {
+  checkOp()
   const sock = connect(sockPath)
   let buf = ""
   let greeted: (() => void) | null = null

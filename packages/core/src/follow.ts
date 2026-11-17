@@ -109,6 +109,8 @@ function describe(e: Entry): string {
     case "op":
       if (e.phase === "begin")
         return `${e.operation} began (pid ${String(e.pid)})`
+      if (e.phase === "output")
+        return `${e.operation} ${e.stream === "err" ? "stderr" : "stdout"}: ${e.text.trimEnd()}`
       return `${e.operation} ${e.ok ? "succeeded" : "failed"}${e.error === undefined ? "" : `: ${e.error}`}`
     case "service":
     case "warning":

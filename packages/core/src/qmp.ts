@@ -1,6 +1,8 @@
 import { readFileSync, rmSync } from "node:fs"
 import { connect } from "node:net"
 
+import { checkOp } from "./opcontext"
+
 export async function hmp(
   sockPath: string,
   command: string,
@@ -61,6 +63,7 @@ async function withSocket<T>(
     ) => Promise<Record<string, unknown>>,
   ) => Promise<T>,
 ): Promise<T> {
+  checkOp()
   const deadline = Date.now() + 30_000
   let sock: ReturnType<typeof connect> | null = null
   for (;;) {
