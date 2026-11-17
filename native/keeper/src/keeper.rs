@@ -163,7 +163,7 @@ fn start(settings: Settings) -> Result<Option<Keeper>, Failure> {
     };
     spawn::block_in_this_process().map_err(|e| Failure::Retry(format!("blocking signals: {e}")))?;
     let kq = Kqueue::new().map_err(|e| Failure::Retry(format!("kqueue: {e}")))?;
-    for signal in spawn::SHIELDED {
+    for signal in spawn::SHIELDED.into_iter().chain([libc::SIGCHLD]) {
         kq.watch_signal(signal)
             .map_err(|e| Failure::Retry(format!("watching signal {signal}: {e}")))?;
     }
@@ -678,6 +678,7 @@ impl Keeper {
             for event in events {
                 match event {
                     Event::Signal(libc::SIGHUP) => eprintln!("winvm-keeper: SIGHUP ignored"),
+                    Event::Signal(libc::SIGCHLD) => {}
                     Event::Signal(signal) => self.begin_host_end(signal),
                     Event::Exit(pid) => exited.push(pid),
                     Event::Readable(fd) => readable.push(fd),

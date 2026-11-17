@@ -43,7 +43,9 @@ pub fn shield_set() -> libc::sigset_t {
 }
 
 pub fn block_in_this_process() -> io::Result<()> {
-    let set = shield_set();
+    let mut set = shield_set();
+    // SAFETY: the set is initialised, and SIGCHLD is a valid signal.
+    unsafe { libc::sigaddset(&raw mut set, libc::SIGCHLD) };
     // SAFETY: the set is initialised and the old mask is not wanted.
     match unsafe { libc::pthread_sigmask(libc::SIG_BLOCK, &raw const set, std::ptr::null_mut()) } {
         0 => Ok(()),

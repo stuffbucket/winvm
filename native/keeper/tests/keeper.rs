@@ -921,3 +921,69 @@ fn a_bad_spec_still_adopts_a_live_child_and_keeps_its_record() {
         records(&scratch)
     );
 }
+
+fn exits_soon(scratch: &Scratch) -> Value {
+    json!({ "name": "brief", "argv": ["/bin/bash", "-c", "echo x"], "log": scratch.path("brief.log") })
+}
+
+#[test]
+fn a_child_that_exits_at_once_is_reaped_without_any_request() {
+    for round in 0..20 {
+        let scratch = Scratch::new();
+        let mut quick = spec(&scratch, &exits_soon(&scratch), None);
+        quick["lingerMs"] = json!(100);
+        scratch.write_spec(&quick);
+        let mut keeper = start(&scratch, 10_000);
+        let deadline = Instant::now() + Duration::from_secs(3);
+        let status = loop {
+            if let Some(status) = keeper.try_wait().expect("try_wait") {
+                break status;
+            }
+            if Instant::now() >= deadline {
+                let _ = keeper.kill();
+                panic!(
+                    "round {round}: the keeper kept a finished child: {:?}",
+                    records(&scratch)
+                );
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        };
+        assert!(status.success());
+        assert_eq!(
+            find(&records(&scratch), "exited")["status"],
+            0,
+            "round {round}"
+        );
+    }
+}
+
+#[test]
+fn a_launched_child_that_exits_at_once_is_recorded_without_any_request() {
+    let scratch = Scratch::new();
+    scratch
+        .write_spec(&json!({ "instance": "test", "record": scratch.record(), "lingerMs": 60_000 }));
+    let mut keeper = start(&scratch, 10_000);
+    for round in 0..20 {
+        let launched = request(
+            &scratch,
+            &json!({ "op": "launch", "child": exits_soon(&scratch) }),
+        );
+        assert_eq!(launched["ok"], true, "round {round}: {launched}");
+        let wanted = round + 1;
+        let deadline = Instant::now() + Duration::from_secs(3);
+        while records(&scratch)
+            .iter()
+            .filter(|r| r["what"] == "exited")
+            .count()
+            < wanted
+        {
+            assert!(Instant::now() < deadline, "round {round}: no exited record");
+            std::thread::sleep(Duration::from_millis(20));
+        }
+    }
+    assert_eq!(
+        request(&scratch, &json!({ "op": "exit-when-idle" }))["ok"],
+        true
+    );
+    assert!(wait_exit(&mut keeper, Duration::from_secs(5)).success());
+}
