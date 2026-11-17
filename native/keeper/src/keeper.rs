@@ -1033,7 +1033,11 @@ impl Keeper {
         let lease: Value = serde_json::from_str(&text).ok()?;
         let pid = i32::try_from(lease["pid"].as_i64()?).ok()?;
         let operation = lease["operation"].as_str().unwrap_or("an operation");
-        spawn::kill(pid, 0).then(|| (pid, operation.to_owned()))
+        let same = match lease["pidStart"].as_str() {
+            None | Some("") => true,
+            Some(start) => adopt::started_as(pid, start),
+        };
+        (same && spawn::kill(pid, 0)).then(|| (pid, operation.to_owned()))
     }
 
     fn wait_for_lease(

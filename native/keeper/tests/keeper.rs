@@ -2279,9 +2279,16 @@ fn a_service_already_ending_counts_as_acting_never_as_a_refusal() {
 fn the_keepers_fallback_never_presses_the_button_while_an_op_holds_the_instance() {
     let scratch = Scratch::new();
     let me = std::process::id();
+    let started = Command::new("ps")
+        .args(["-o", "lstart=", "-p", &me.to_string()])
+        .env("LC_ALL", "C")
+        .env("TZ", "UTC")
+        .output()
+        .expect("ps");
+    let started = String::from_utf8_lossy(&started.stdout).trim().to_owned();
     fs::write(
         scratch.path("lease.json"),
-        json!({ "pid": me, "operation": "stow", "id": "x" }).to_string(),
+        json!({ "pid": me, "pidStart": started, "operation": "stow", "id": "x" }).to_string(),
     )
     .expect("lease.json");
     fs::write(scratch.path("budget"), "8000").expect("budget");
@@ -2304,4 +2311,27 @@ fn the_keepers_fallback_never_presses_the_button_while_an_op_holds_the_instance(
     assert_eq!(wait["step"], "lease-wait", "{all:?}");
     assert_eq!(wait["operation"], "stow");
     assert!(all.iter().any(|s| s["step"] == "quit"), "{all:?}");
+}
+
+#[test]
+fn a_lease_whose_pid_now_belongs_to_another_process_is_not_waited_for() {
+    let scratch = Scratch::new();
+    let me = std::process::id();
+    fs::write(
+        scratch.path("lease.json"),
+        json!({ "pid": me, "pidStart": "Thu Jan  1 00:00:00 1970", "operation": "stow", "id": "x" })
+            .to_string(),
+    )
+    .expect("lease.json");
+    let (status, _) = host_end_with(&scratch, 20_000, &[]);
+    assert!(status.success());
+    assert!(
+        steps(&scratch).iter().all(|s| s["step"] != "lease-wait"),
+        "{:?}",
+        steps(&scratch)
+    );
+    assert_eq!(
+        qmp_seen(&scratch),
+        ["query-migrate", "query-status", "system_powerdown"]
+    );
 }
