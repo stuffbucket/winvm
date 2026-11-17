@@ -659,6 +659,12 @@ function keeperNote(
   switch (k.protection) {
     case "kept":
       return null
+    case "adopted":
+      return (
+        `Windows on "${name}" was started by an older winvm. winvm's keeper now watches it and tries to stow it if the Mac shuts down, ` +
+        "but its QEMU is not shielded from macOS's shutdown, so that may not finish. " +
+        `Protect now in the viewer, or \`winvm stow${flag} && winvm start${flag}\`, restarts it under the keeper (a stow, then a recall)`
+      )
     case "legacy":
       return (
         `Windows on "${name}" was started without winvm's keeper, so it is not protected if the Mac shuts down; ` +
@@ -677,6 +683,7 @@ function keeperNote(
 
 const KEEPER_WORDS: Readonly<Record<Protection, string>> = {
   kept: "protected",
+  adopted: "watched, not shielded: started by an older winvm",
   legacy: "not protected: started without winvm's keeper",
   broken: "confused: the keeper and qemu.pid disagree",
   off: "not protected: WINVM_KEEPER=off",

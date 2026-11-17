@@ -11,6 +11,7 @@ import { resolve } from "node:path"
 import { effectiveConfig } from "./config"
 import { linkNew, takeOver } from "./exclusive"
 import { buildIdentity } from "./identity"
+import { adoptLegacy } from "./legacy"
 import { InstanceBusy, leaseHolder, withOperation } from "./operation"
 import { cliEntry, NO_RECONCILE, type Paths, pathsFor } from "./paths"
 import { isSameProcess, ownStart } from "./proc"
@@ -51,6 +52,7 @@ export type ReconcileResult = {
   readonly servicePid: number | null
   readonly watcherPid: number | null
   readonly deferred?: "saving" | "autosaving" | "stowing"
+  readonly adopted?: true
 }
 
 export interface ReconcileOptions {
@@ -123,6 +125,8 @@ export function reconcileNote(
   r: ReconcileResult,
   p: Paths = pathsFor(name),
 ): string | null {
+  if (r.adopted === true)
+    return `note: winvm's keeper now watches Windows on "${name}", which an older winvm started; Windows kept running`
   if (!r.changed || r.deferred !== undefined || qemuPid(p) === null) return null
   const managed = [
     r.servicePid === null ? null : "control service",
@@ -401,6 +405,17 @@ function busyWith(
     : null
 }
 
+async function adopted(name: string, p: Paths): Promise<boolean> {
+  try {
+    return (await adoptLegacy(name, p)) === "adopted"
+  } catch (error) {
+    console.error(
+      `note: winvm's keeper could not take over Windows on "${name}" (${errText(error)}); it keeps running as it was`,
+    )
+    return false
+  }
+}
+
 export async function reconcileManagement(
   name: string,
   p: Paths = pathsFor(name),
@@ -408,6 +423,10 @@ export async function reconcileManagement(
 ): Promise<ReconcileResult> {
   if (qemuPid(p) === null)
     return { changed: false, servicePid: null, watcherPid: null }
+  if (o.debtOnly !== true && (await adopted(name, p))) {
+    const r = await reconcileManagement(name, p, o)
+    return { ...r, adopted: true }
+  }
   const current = o.current ?? buildIdentity()
   const first = plan(name, p, current, o.debtOnly)
   if (!hasWork(first) && !existsSync(owedPath(p))) {

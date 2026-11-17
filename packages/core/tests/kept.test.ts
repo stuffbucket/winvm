@@ -46,6 +46,8 @@ import {
   launchedRuntime,
   setLaunchd,
 } from "../src/kept"
+import { adoptLegacy } from "../src/legacy"
+import { reconcileManagement, reconcileNote } from "../src/lifecycle"
 import { InstanceBusy, LeaseNotHeld, withOperation } from "../src/operation"
 import { type InstanceMeta, pathsFor } from "../src/paths"
 import * as qemu from "../src/qemu"
@@ -508,6 +510,12 @@ describe("whether the keeper protects a VM", () => {
     expect(keeperStanding(null, hello(11), "keeper")?.protection).toBe("broken")
   })
 
+  it("is adopted when the keeper watches a QEMU it did not launch", () => {
+    expect(keeperStanding(10, hello(10, true), "keeper")?.protection).toBe(
+      "adopted",
+    )
+  })
+
   it("says nothing for a stopped VM with no kept QEMU", () => {
     expect(keeperStanding(null, hello(null), "keeper")).toBeNull()
     expect(keeperStanding(null, null, "off")).toBeNull()
@@ -891,4 +899,93 @@ describe("the control service under the keeper", () => {
     expect((await keeperHello(p))?.service?.pid).toBe(info.pid)
     servicectl.stopService(p)
   }, 20_000)
+})
+
+describe("adopting a VM an older winvm started", () => {
+  const startLegacy = async (): Promise<number> =>
+    (
+      await lockPidfile(
+        pathsFor(NAME).pid,
+        "qemu-system-aarch64",
+        "-pidfile",
+        pathsFor(NAME).pid,
+      )
+    ).pid
+
+  it("bootstraps a keeper that watches the running QEMU in place, then runs the service under it", async () => {
+    const p = pathsFor(NAME)
+    const pid = await startLegacy()
+    try {
+      expect(await adoptLegacy(NAME, p)).toBe("adopted")
+      const spec = JSON.parse(
+        readFileSync(resolve(keeperDir(p), "spec.json"), "utf8"),
+      ) as { readonly adopt?: unknown }
+      expect(spec.adopt).toEqual({ name: "qemu", pidfile: p.pid, qmp: p.qmp })
+      const hello = await keeperHello(p)
+      expect(hello?.child).toMatchObject({ pid, legacy: true, adopted: true })
+      expect(alive(pid)).toBe(true)
+      expect(ensuring).toHaveBeenCalledTimes(1)
+      expect(launchdCalls.filter((c) => c === "bootstrap")).toHaveLength(1)
+      expect(await adoptLegacy(NAME, p)).toBe("kept")
+      expect(launchdCalls.filter((c) => c === "bootstrap")).toHaveLength(1)
+      expect(ops()).toEqual([])
+      const s = await gather(NAME, false)
+      expect(s.keeper?.protection).toBe("adopted")
+      const notes = s.notes.join("\n")
+      expect(notes).toContain("not shielded")
+      expect(notes).toContain("Protect now")
+    } finally {
+      await releasePidfiles()
+    }
+  })
+
+  it("is what reconcile does first, and reconcile says so", async () => {
+    process.env.WINVM_CLI = resolve(
+      import.meta.dir,
+      "..",
+      "..",
+      "..",
+      "apps",
+      "cli",
+      "src",
+      "winvm.ts",
+    )
+    const p = pathsFor(NAME)
+    const pid = await startLegacy()
+    try {
+      const r = await reconcileManagement(NAME, p)
+      expect(r.adopted).toBe(true)
+      expect((await keeperHello(p))?.child).toMatchObject({ pid, legacy: true })
+      expect(reconcileNote(NAME, r, p)).toContain("winvm's keeper now watches")
+      expect((await reconcileManagement(NAME, p)).adopted).toBeUndefined()
+    } finally {
+      await releasePidfiles()
+    }
+  })
+
+  it("leaves a VM alone when the keeper is off or missing, when nothing runs, and while another operation holds it", async () => {
+    const p = pathsFor(NAME)
+    expect(await adoptLegacy(NAME, p)).toBe("none")
+    await startLegacy()
+    try {
+      expect(await adoptLegacy(NAME, p, { kind: "off" })).toBe("none")
+      expect(await adoptLegacy(NAME, p, { kind: "missing" })).toBe("none")
+      expect(
+        await withOperation(NAME, "save", async () => {
+          const holder = Bun.spawn(
+            [
+              process.execPath,
+              "-e",
+              `const { adoptLegacy } = await import(${JSON.stringify(resolve(import.meta.dir, "..", "src", "legacy.ts"))}); console.log(await adoptLegacy(${JSON.stringify(NAME)}))`,
+            ],
+            { stdout: "pipe", stderr: "inherit", env: process.env },
+          )
+          return (await new Response(holder.stdout).text()).trim()
+        }),
+      ).toBe("busy")
+      expect(launchdCalls).toEqual([])
+    } finally {
+      await releasePidfiles()
+    }
+  })
 })

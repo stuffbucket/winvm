@@ -9,6 +9,8 @@ import {
 import { createServer, type Socket } from "node:net"
 import { resolve } from "node:path"
 
+import { lockState } from "../../src/pidlock"
+
 interface Child {
   readonly name: string
   readonly argv: readonly string[]
@@ -31,6 +33,7 @@ interface Service {
 const dir = process.argv[process.argv.indexOf("--dir") + 1] ?? "."
 const spec = JSON.parse(readFileSync(resolve(dir, "spec.json"), "utf8")) as {
   readonly instance?: string
+  readonly adopt?: { readonly name: string; readonly pidfile: string }
 }
 const socket = resolve(dir, "keeper.sock")
 const journal = resolve(dir, "requests.jsonl")
@@ -38,6 +41,20 @@ let child: Kept | null = null
 let sidecars: Kept[] = []
 let lastExit: Record<string, unknown> | null = null
 let service: Service | null = null
+let adopted: { readonly name: string; readonly pid: number } | null = null
+
+const held = spec.adopt === undefined ? null : lockState(spec.adopt.pidfile)
+if (spec.adopt !== undefined && typeof held === "object" && held !== null)
+  adopted = { name: spec.adopt.name, pid: held.held }
+const watching = setInterval(() => {
+  if (adopted === null) return
+  try {
+    process.kill(adopted.pid, 0)
+  } catch {
+    lastExit = { child: adopted.name, pid: adopted.pid, unknown: true }
+    adopted = null
+  }
+}, 100)
 
 function spawnChild(c: Child, onExit: (code: number | null) => void): Kept {
   const out = c.log === undefined ? "ignore" : openSync(c.log, "a", 0o600)
@@ -95,7 +112,19 @@ async function answer(
         version: "fake",
         pid: process.pid,
         instance: spec.instance,
-        child: child === null ? null : listed(child),
+        child:
+          child !== null
+            ? listed(child)
+            : adopted === null
+              ? null
+              : {
+                  name: adopted.name,
+                  pid: adopted.pid,
+                  startUs: 1,
+                  adopted: true,
+                  legacy: true,
+                  runtime: null,
+                },
         sidecars: sidecars.map(listed),
         service:
           service === null
@@ -146,7 +175,8 @@ async function answer(
       return { ok: true, pid: kept.proc.pid }
     }
     case "launch": {
-      if (child !== null) return { ok: false, error: "busy" }
+      if (child !== null || adopted !== null)
+        return { ok: false, error: "busy" }
       const c = request.child as Child
       if (!existsSync(c.argv[0] ?? "")) return { ok: false, error: "ENOENT" }
       const kept = spawnChild(c, (code) => {
@@ -159,6 +189,10 @@ async function answer(
     }
     case "kill": {
       retire()
+      if (adopted !== null) {
+        process.kill(adopted.pid, "SIGKILL")
+        return { ok: true, pid: adopted.pid }
+      }
       if (child === null) return { ok: false, error: "no child" }
       child.proc.kill("SIGKILL")
       return { ok: true, pid: child.proc.pid }
@@ -190,6 +224,7 @@ const server = createServer((connection: Socket) => {
 })
 server.listen(socket)
 process.on("SIGTERM", () => {
+  clearInterval(watching)
   retire()
   child?.proc.kill("SIGKILL")
   service?.proc.kill("SIGKILL")

@@ -10,6 +10,7 @@ import {
   KEEPER_PROTOCOL,
   KeeperBusy,
   type KeeperChild,
+  type KeeperSpec,
   keeperJob,
   keeperLabel,
   keeperRequest,
@@ -211,6 +212,7 @@ export async function openKeeper(
   name: string,
   p: Paths,
   keeper: FoundKeeper,
+  extra: Pick<KeeperSpec, "adopt"> = {},
 ): Promise<KeeperHello> {
   const lease = heldLease(name)
   if (lease === null)
@@ -225,7 +227,12 @@ export async function openKeeper(
   const deadline = Date.now() + OPEN_MS
   for (;;) {
     try {
-      await startKeeper({ launchd, job, lease, spec: { record: p.events } })
+      await startKeeper({
+        launchd,
+        job,
+        lease,
+        spec: { record: p.events, ...extra },
+      })
       break
     } catch (error) {
       if (!(error instanceof KeeperBusy) || Date.now() > deadline) throw error
@@ -314,7 +321,13 @@ export function retireKeeper(name: string, p: Paths): void {
   launchdOf().bootout(keeperLabel(home(), name))
 }
 
-export type Protection = "kept" | "legacy" | "broken" | "off" | "missing"
+export type Protection =
+  | "kept"
+  | "adopted"
+  | "legacy"
+  | "broken"
+  | "off"
+  | "missing"
 
 export interface KeeperStanding {
   readonly protection: Protection
@@ -334,7 +347,7 @@ export function keeperStanding(
     pid: hello?.pid ?? null,
   })
   if (qemuPid === null) return child === null ? null : of("broken")
-  if (child?.pid === qemuPid) return of("kept")
+  if (child?.pid === qemuPid) return of(child.legacy ? "adopted" : "kept")
   if (child !== null) return of("broken")
   return of(use === "keeper" ? "legacy" : use)
 }
