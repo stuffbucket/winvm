@@ -2,7 +2,6 @@ import { afterAll, beforeAll, describe, expect, it } from "bun:test"
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { resolve } from "node:path"
-
 import {
   ABS_MAX,
   charToStroke,
@@ -12,6 +11,7 @@ import {
   scaleAxis,
   textToStrokes,
 } from "../src/input"
+import { parseEtime } from "../src/proc"
 import type { InstanceStatus } from "../src/status"
 import {
   deriveState,
@@ -24,7 +24,6 @@ import {
   formatTable,
   formatWatcher,
   osLabel,
-  parseEtime,
   parseHardware,
   parseWatch,
   readSaves,

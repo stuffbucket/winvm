@@ -15,6 +15,7 @@ import {
   mkdtempSync,
   readFileSync,
   rmSync,
+  utimesSync,
   writeFileSync,
   writeSync,
 } from "node:fs"
@@ -45,12 +46,15 @@ import {
   pathsFor,
   readMeta,
 } from "../src/paths"
+import * as proc from "../src/proc"
 import * as qemu from "../src/qemu"
 import * as qga from "../src/qga"
 import * as qmp from "../src/qmp"
+import { currentQemuCompat } from "../src/runtime"
 import * as savecmds from "../src/savecmds"
 import {
   cloneSave,
+  compatFor,
   compatHash,
   createSave,
   currentCompat,
@@ -98,6 +102,8 @@ let statusCalls = 0
 let answered = 0
 let settled = 0
 let quitSawStow: boolean | null = null
+let reported = { major: 11, minor: 1, micro: 2 }
+let program = "qemu-system-aarch64"
 const realRunningCommand = display.runningCommand
 
 const qemuLog = (): string => resolve(state, "qemu.log")
@@ -217,6 +223,8 @@ beforeEach(() => {
   statusCalls = 0
   answered = 0
   quitSawStow = null
+  reported = { major: 11, minor: 1, micro: 2 }
+  program = "qemu-system-aarch64"
 
   mkdirSync(resolve(state, "images", meta.image), { recursive: true })
   writeFileSync(basePath(meta.image), "immutable base")
@@ -266,6 +274,7 @@ beforeEach(() => {
         await new Promise((r) => setTimeout(r, 10))
       runningPid = FAKE_PID
     }
+    if (cmd === "query-version") return { qemu: reported, package: "" }
     if (cmd === "query-migrate")
       return { status: "completed", ram: { transferred: 10 } }
     if (cmd === "migrate") {
@@ -297,10 +306,13 @@ beforeEach(() => {
         ? options
         : { ...options, shareDevices: initialDevices },
     )
-    const command = ["qemu-system-aarch64", ...args].join(" ")
+    const command = [program, ...args].join(" ")
     return spacedHome === null ? command : command.replaceAll(state, spacedHome)
   })
   spyOn(console, "log").mockImplementation(() => undefined)
+  spyOn(kept, "launchedRuntime").mockImplementation(
+    async () => await Promise.resolve(currentQemuCompat()),
+  )
   makeInstance("source")
 })
 
@@ -967,11 +979,11 @@ describe("the host-end stow", () => {
     expect(readSave("source", "stow")?.kind).toBe("stow")
   })
 
-  it("reads the running QEMU's facts: -snapshot, install media and the free space", () => {
+  it("reads the running QEMU's facts: -snapshot, install media and the free space", async () => {
     spyOn(display, "runningCommand").mockReturnValue(
       "qemu-system-aarch64 -snapshot -drive if=none,media=cdrom,id=cd0",
     )
-    const f = hostEndFacts("source")
+    const f = await hostEndFacts("source")
     expect(f.ephemeral).toBe(true)
     expect(f.installMedia).toBe(true)
     expect(f.unsaveable).toBeNull()
@@ -1003,5 +1015,85 @@ describe("partial saves left behind", () => {
       writer.kill("SIGKILL")
       await writer.exited
     }
+  })
+})
+
+describe("the runtime a stow is labelled with", () => {
+  const installed = (): void => {
+    const manifest = resolve(state, "runtime", "manifest.json")
+    writeFileSync(
+      manifest,
+      JSON.stringify({
+        name: "winvm-runtime",
+        version: "11.1.2-2",
+        qemu: "11.1.2",
+        qemuPatches: "p2",
+        components: {},
+        macho: [],
+        files: {},
+      }),
+    )
+    const old = new Date(Date.now() - 86_400_000)
+    utimesSync(manifest, old, old)
+  }
+  beforeEach(() => {
+    spyOn(kept, "launchedRuntime").mockResolvedValue(null)
+  })
+  const stow = async (): Promise<Manifest> =>
+    (
+      await createSave("source", {
+        name: "stow",
+        kind: "stow",
+        format: "raw",
+        quitAfter: true,
+      })
+    ).manifest
+
+  it("is the version QEMU itself reports, runtime-unknown, for an adopted QEMU that is not the installed runtime's, and its recall refuses naming --boot", async () => {
+    installed()
+    program = resolve(state, "runtime", "bin", "qemu-system-aarch64")
+    reported = { major: 10, minor: 0, micro: 0 }
+    const m = await stow()
+    expect(m.compatParts?.qemu).toBe("10.0.0+patches:unknown")
+    const errors = spyOn(console, "error").mockImplementation(() => undefined)
+    expect(
+      await savecmds.recallStow("source", parseArgs(["-i", "source"])),
+    ).toBe(1)
+    const said = errors.mock.calls.map((c) => String(c[0])).join("\n")
+    expect(said).toContain("10.0.0")
+    expect(said).toContain("--boot")
+    expect(readSave("source", "stow")).not.toBeNull()
+  })
+
+  it("is the installed runtime when QEMU reports its version and the runtime predates the process", async () => {
+    installed()
+    program = resolve(state, "runtime", "bin", "qemu-system-aarch64")
+    spyOn(proc, "processAgeMs").mockReturnValue(3_600_000)
+    expect((await stow()).compatParts?.qemu).toBe("11.1.2+patches:p2")
+  })
+
+  it("is runtime-unknown when the process can't be dated, and a QEMU of the same version may still recall it", async () => {
+    installed()
+    program = resolve(state, "runtime", "bin", "qemu-system-aarch64")
+    const m = await stow()
+    expect(m.compatParts?.qemu).toBe("11.1.2+patches:unknown")
+    const saved = readSave("source", "stow")
+    if (saved === null) throw new Error("no stow")
+    expect(compatFor("source", meta, saved).hash).toBe(saved.compat)
+    const log = spyOn(console, "log")
+    expect(savecmds.list(parseArgs(["-i", "source", "--json"]))).toBe(0)
+    const rows = JSON.parse(String(log.mock.calls.at(-1)?.[0])) as {
+      name: string
+      compatible: boolean | null
+    }[]
+    expect(rows.find((r) => r.name === "stow")?.compatible).toBe(true)
+  })
+
+  it("makes the host end shut an adopted QEMU of another version down rather than stow what no recall could take", async () => {
+    installed()
+    program = resolve(state, "runtime", "bin", "qemu-system-aarch64")
+    reported = { major: 10, minor: 0, micro: 0 }
+    const f = await hostEndFacts("source")
+    expect(f.unsaveable).toContain("QEMU 10.0.0")
   })
 })

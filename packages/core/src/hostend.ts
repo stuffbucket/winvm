@@ -12,6 +12,7 @@ import { irreversibleSince, leaseHolder, withOperation } from "./operation"
 import { pathsFor, readImageMeta, readMeta } from "./paths"
 import * as qemu from "./qemu"
 import * as qmp from "./qmp"
+import { currentQemuCompat } from "./runtime"
 import * as saves from "./saves"
 import { spawnText } from "./shell"
 
@@ -82,7 +83,7 @@ export function hostEndPlan(f: HostEndFacts): HostEndPlan {
 export type HostEndOutcome = "stowed" | "ended-by-op" | "handed-back"
 
 export interface HostEndSeams {
-  readonly facts: () => HostEndFacts
+  readonly facts: () => HostEndFacts | Promise<HostEndFacts>
   readonly running: () => boolean
   readonly busy: () => Busy | null
   readonly cancel: () => Promise<void>
@@ -133,7 +134,7 @@ export async function runHostEnd(
   s: HostEndSeams,
 ): Promise<HostEndOutcome> {
   const started = s.now()
-  const facts = s.facts()
+  const facts = await s.facts()
   const plan = hostEndPlan(facts)
   s.note({ what: "host-end", step: "plan", ...plan, deadlineMs })
   const finish = (outcome: HostEndOutcome): HostEndOutcome => {
@@ -183,11 +184,24 @@ function residentBytes(pid: number): number | null {
   return Number.isFinite(kib) ? kib * 1024 : null
 }
 
-export function hostEndFacts(name: string): HostEndFacts {
+async function foreignRuntime(
+  p: ReturnType<typeof pathsFor>,
+  pid: number | null,
+  command: string | null,
+): Promise<string | null> {
+  if (pid === null) return null
+  const by = await saves.producedBy(p, pid, command)
+  const installed = currentQemuCompat()
+  if (!saves.isUnknownRuntime(by) || saves.sameQemu(by, installed)) return null
+  return `the running QEMU ${saves.versionOfRuntime(by)} is not this winvm's QEMU ${saves.versionOfRuntime(installed)}, so no recall could take its stow`
+}
+
+export async function hostEndFacts(name: string): Promise<HostEndFacts> {
   const p = pathsFor(name)
   const pid = qemu.pidOf(p)
   const command = pid === null ? null : runningCommand(pid)
   const meta = readMeta(name)
+  const foreign = await foreignRuntime(p, pid, command).catch(() => null)
   const virtio = meta !== null && readImageMeta(meta.image)?.virtioBoot === true
   const resident = pid === null ? null : residentBytes(pid)
   const holder = leaseHolder(name)
@@ -196,7 +210,7 @@ export function hostEndFacts(name: string): HostEndFacts {
     ephemeral: command !== null && / -snapshot( |$)/.test(command),
     installMedia: command?.includes("media=cdrom") === true,
     unsaveable: virtio
-      ? null
+      ? foreign
       : "the image predates virtio boot, so its disk cannot be saved",
     freeBytes: freeBytes(existingParent(saves.savesRoot())),
     needBytes: resident === null ? null : resident + GIB,
@@ -222,7 +236,7 @@ export function hostEndSeams(
     appendEntry(name, { ...fields, kind: "service", what: "host-end" })
   }
   return {
-    facts: () => hostEndFacts(name),
+    facts: async () => await hostEndFacts(name),
     running: () => qemu.isRunning(p),
     busy: () => {
       const h = leaseHolder(name)

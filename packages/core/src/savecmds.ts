@@ -17,6 +17,7 @@ import { pathsFor, readImageMeta, readMeta } from "./paths"
 import * as qemu from "./qemu"
 import * as qga from "./qga"
 import * as qmp from "./qmp"
+import { currentQemuCompat } from "./runtime"
 import { nameError } from "./savename"
 import * as saves from "./saves"
 import * as snapshot from "./snapshot"
@@ -456,6 +457,20 @@ export async function recallStow(
   const meta = readMeta(name)
   if (meta !== null) {
     const m = saves.readSave(name, saves.STOW)
+    const by = m?.compatParts?.qemu
+    const installed = currentQemuCompat()
+    if (
+      by !== undefined &&
+      saves.isUnknownRuntime(by) &&
+      !saves.sameQemu(by, installed)
+    ) {
+      console.error(
+        `::error::the stow of "${name}" was written by ${by === saves.UNKNOWN_RUNTIME ? "a QEMU" : `QEMU ${saves.versionOfRuntime(by)}`} from a winvm runtime this winvm can't identify, ` +
+          `and this winvm runs QEMU ${saves.versionOfRuntime(installed)}; recalling it could fail or give Windows different hardware, so it was not recalled. ` +
+          `\`winvm start -i ${name} --boot\` discards the stow and starts Windows afresh from its disk`,
+      )
+      return 1
+    }
     if (m !== null && m.compat !== saves.compatFor(name, meta, m).hash) {
       const devices = saves.takenBeforeDevices(
         m,

@@ -10,7 +10,7 @@ import {
   statSync,
   writeFileSync,
 } from "node:fs"
-import { resolve } from "node:path"
+import { dirname, resolve } from "node:path"
 
 import type { Size } from "./cua"
 import { encodePng, fitScale, parsePpm, resize, scaled } from "./cua"
@@ -51,9 +51,15 @@ import {
   readImageMeta,
   readMeta,
 } from "./paths"
+import { processAgeMs } from "./proc"
 import * as qemu from "./qemu"
 import * as qmp from "./qmp"
-import { currentQemuCompat, runtimeBin } from "./runtime"
+import {
+  currentQemuCompat,
+  qemuCompat,
+  runtimeBin,
+  runtimeManifestAt,
+} from "./runtime"
 import { nameError } from "./savename"
 import { capture } from "./shell"
 import { instanceOf } from "./smbstate"
@@ -384,7 +390,60 @@ export function migrationPlan(
 }
 
 let firmwareDigest: string | null = null
-let qemuVersion: string | null = null
+
+export const UNKNOWN_RUNTIME = "unknown"
+const UNKNOWN_PATCHES = "+patches:unknown"
+
+export const isUnknownRuntime = (qemu: string | undefined): boolean =>
+  qemu === UNKNOWN_RUNTIME || qemu?.endsWith(UNKNOWN_PATCHES) === true
+
+export const versionOfRuntime = (qemu: string): string =>
+  qemu.split("+patches:")[0] ?? qemu
+
+export function sameQemu(saved: string, installed: string): boolean {
+  if (saved === installed) return true
+  if (!saved.endsWith(UNKNOWN_PATCHES)) return false
+  return installed.startsWith(saved.slice(0, -"unknown".length))
+}
+
+function reportedVersion(answer: unknown): string | null {
+  const q = (answer as { qemu?: Record<string, unknown> } | null)?.qemu
+  if (q === undefined) return null
+  const parts = [q.major, q.minor, q.micro]
+  return parts.every((n) => typeof n === "number")
+    ? parts.map(String).join(".")
+    : null
+}
+
+export async function producedBy(
+  p: Paths,
+  pid: number,
+  command: string | null,
+): Promise<string> {
+  const kept = await launchedRuntime(p, pid).catch(() => null)
+  if (kept !== null) return kept
+  const version = reportedVersion(
+    await qmp.execute(p.qmp, "query-version").catch(() => null),
+  )
+  if (version === null) return UNKNOWN_RUNTIME
+  const program =
+    command === null
+      ? null
+      : (/(?:^|\s)(\S*\/bin\/qemu-system-[A-Za-z0-9_]+)(?:\s|$)/.exec(
+          command,
+        )?.[1] ?? null)
+  const at =
+    program === null ? null : runtimeManifestAt(dirname(dirname(program)))
+  const age = processAgeMs(pid)
+  if (
+    at !== null &&
+    at.manifest.qemu === version &&
+    age !== null &&
+    at.mtimeMs <= Date.now() - age
+  )
+    return qemuCompat(at.manifest)
+  return `${version}${UNKNOWN_PATCHES}`
+}
 
 export function currentCompat(
   instance: string,
@@ -399,7 +458,6 @@ export function currentCompat(
     created = readFileSync(imageMetaPath(meta.image), "utf8")
   } catch {}
   firmwareDigest ??= sha(readFileSync(requireFirmware().code)).slice(0, 16)
-  qemuVersion ??= currentQemuCompat()
   const argv = qemu.qemuArgs(instance, pathsFor(instance), meta, {
     installMedia: false,
     ephemeral: false,
@@ -411,7 +469,7 @@ export function currentCompat(
     base: baseIdentity(meta.image, st.size, st.mtimeMs, created),
     hardware: sha(JSON.stringify(hardwareArgs(argv))).slice(0, 16),
     firmware: firmwareDigest,
-    qemu: launched ?? qemuVersion,
+    qemu: launched ?? currentQemuCompat(),
   }
   return { hash: compatHash(parts), parts }
 }
@@ -419,10 +477,18 @@ export function currentCompat(
 export function compatFor(
   instance: string,
   meta: InstanceMeta,
-  m: Pick<Manifest, "hardware" | "display">,
+  m: Pick<Manifest, "hardware" | "display" | "compatParts">,
 ): ReturnType<typeof currentCompat> & { readonly display: DisplayConfig } {
   const display = m.display ?? readDisplay(pathsFor(instance))
-  return { ...currentCompat(instance, meta, display, saveHardware(m)), display }
+  const saved = m.compatParts?.qemu
+  const launched =
+    saved !== undefined && sameQemu(saved, currentQemuCompat())
+      ? saved
+      : undefined
+  return {
+    ...currentCompat(instance, meta, display, saveHardware(m), launched),
+    display,
+  }
 }
 
 export function hardwareBeforeDevices(
@@ -556,6 +622,19 @@ function reasons(m: Manifest, ctx: ReportContext): IncompatibleReason[] | null {
   return out.length > 0 ? out : null
 }
 
+function sameRuntimeContext(m: Manifest, c: ReportContext): ReportContext {
+  const saved = m.compatParts?.qemu
+  if (
+    c.compat === null ||
+    saved === undefined ||
+    saved === c.compat.parts.qemu ||
+    !sameQemu(saved, c.compat.parts.qemu)
+  )
+    return c
+  const parts = { ...c.compat.parts, qemu: saved }
+  return { ...c, compat: { hash: compatHash(parts), parts } }
+}
+
 export function savesReport(
   rows: readonly Listed[],
   ctx: ReportContext,
@@ -565,7 +644,7 @@ export function savesReport(
   return rows.flatMap((r) => {
     const m = r.manifest
     if (m === null) return []
-    const c = contextFor(m, ctx)
+    const c = sameRuntimeContext(m, contextFor(m, ctx))
     const differ = reasons(m, c)
     const n = note(r.name)
     return [
@@ -927,14 +1006,12 @@ async function createSaveHeld(
         "so a save could not be restored; nothing was saved. Save after it finishes",
     )
   }
-  const launched =
-    pid === null ? null : await launchedRuntime(p, pid).catch(() => null)
   const compat = currentCompat(
     instance,
     meta,
     display,
     hardware,
-    launched ?? undefined,
+    pid === null ? UNKNOWN_RUNTIME : await producedBy(p, pid, command),
   )
 
   clearAbandonedPartials(instance)

@@ -33,6 +33,7 @@ import {
   readImageMeta,
   readMeta,
 } from "./paths"
+import { parseEtime } from "./proc"
 import * as qemu from "./qemu"
 import { type Management, managementOf } from "./reconcile"
 import { readService } from "./servicectl"
@@ -318,18 +319,6 @@ export function parseWatch(
 
 export const readWatch = (instance: string): WatchInfo | null =>
   parseWatch(readJson(watchPath(instance)), pidAlive)
-
-export function parseEtime(s: string): number | null {
-  const m = /^\s*(?:(\d+)-)?(?:(\d+):)?(\d+):(\d+)\s*$/.exec(s)
-  if (m === null) return null
-  const [, d, h, mm, ss] = m
-  return (
-    Number(d ?? 0) * 86400 +
-    Number(h ?? 0) * 3600 +
-    Number(mm) * 60 +
-    Number(ss)
-  )
-}
 
 export function parseHardware(argv: readonly string[]): {
   cpus: number | null
