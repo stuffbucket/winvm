@@ -19,8 +19,10 @@ import {
 } from "node:fs"
 import { dirname, resolve } from "node:path"
 
+import { parseArgs } from "../src/args"
+import * as commands from "../src/commands"
 import * as host from "../src/host"
-import type { JobInfo, Launchd } from "../src/keeper"
+import { type JobInfo, keeperLabel, type Launchd } from "../src/keeper"
 import {
   KEEPER_OFF,
   keeperDir,
@@ -32,6 +34,8 @@ import {
 import { LeaseNotHeld, withOperation } from "../src/operation"
 import { type InstanceMeta, pathsFor } from "../src/paths"
 import * as qemu from "../src/qemu"
+import * as qmp from "../src/qmp"
+import * as saves from "../src/saves"
 import * as servicectl from "../src/servicectl"
 import * as share from "../src/share"
 import * as vnc from "../src/vnc"
@@ -113,6 +117,9 @@ const ops = (): string[] =>
     .map((r) => String(r.op))
     .filter((op) => op !== "hello")
 
+const FAKE_QEMU =
+  'while [ $# -gt 0 ]; do [ "$1" = -pidfile ] && echo $$ > "$2"; shift; done\nwhile :; do sleep 0.2; done'
+
 const launchOptions: qemu.LaunchOptions = {
   installMedia: false,
   ephemeral: false,
@@ -150,7 +157,7 @@ beforeEach(() => {
     "virtiofsd",
     'while [ $# -gt 0 ]; do case "$1" in --socket-path) : > "$2"; shift;; esac; shift; done\nexec sleep 30',
   )
-  script("qemu-system-aarch64", "exec sleep 30")
+  script("qemu-system-aarch64", FAKE_QEMU)
   const p = pathsFor(NAME)
   mkdirSync(p.tpmDir, { recursive: true })
   writeFileSync(p.meta, JSON.stringify(meta))
@@ -303,6 +310,77 @@ describe("launching QEMU through the keeper", () => {
     expect(alive(tpm)).toBe(true)
     expect(ops()).toEqual(["launch-sidecar", "launch"])
   }, 15_000)
+})
+
+const qemuPid = (): number =>
+  Number(readFileSync(pathsFor(NAME).pid, "utf8").trim())
+
+async function until(what: string, probe: () => boolean): Promise<void> {
+  for (let i = 0; i < 150; i += 1) {
+    if (probe()) return
+    await sleep(20)
+  }
+  throw new Error(`timed out waiting for ${what}`)
+}
+
+describe("ending a kept QEMU", () => {
+  it("kill asks the keeper, which SIGKILLs its child and ends the sidecars", async () => {
+    await leasedLaunch()
+    await until("the pidfile", () => existsSync(pathsFor(NAME).pid))
+    const pid = qemuPid()
+    const tpm = (await keeperHello(pathsFor(NAME)))?.sidecars[0]?.pid ?? 0
+    spyOn(console, "log").mockImplementation(() => undefined)
+    expect(await commands.kill(parseArgs(["-i", NAME]))).toBe(0)
+    expect(ops()).toEqual(["launch-sidecar", "launch", "kill"])
+    await until("QEMU to go", () => !alive(pid))
+    await until("the TPM emulator to go", () => !alive(tpm))
+  })
+
+  it("quitQemu has the keeper kill a QEMU that will not quit", async () => {
+    await leasedLaunch()
+    await until("the pidfile", () => existsSync(pathsFor(NAME).pid))
+    const pid = qemuPid()
+    spyOn(qmp, "execute").mockRejectedValue(new Error("no monitor"))
+    await saves.quitQemu(pathsFor(NAME), 200)
+    expect(ops()).toContain("kill")
+    expect(alive(pid)).toBe(false)
+  })
+
+  it("destroy boots the instance's keeper job out", async () => {
+    await leasedLaunch()
+    await until("the pidfile", () => existsSync(pathsFor(NAME).pid))
+    spyOn(console, "log").mockImplementation(() => undefined)
+    expect(await commands.kill(parseArgs(["-i", NAME]))).toBe(0)
+    await until("QEMU to go", () => !qemu.isRunning(pathsFor(NAME)))
+    const before = launchdCalls.length
+    expect(commands.destroy(parseArgs(["-i", NAME]))).toBe(0)
+    expect(launchdCalls.slice(before)).toEqual([
+      `bootout ${keeperLabel(process.env.WINVM_HOME ?? "", NAME)}`,
+    ])
+  })
+})
+
+describe("a QEMU started detached, before the keeper", () => {
+  it("is still killed directly, without starting a keeper", async () => {
+    const p = pathsFor(NAME)
+    const legacy = Bun.spawn(
+      [
+        resolve(state, "runtime", "bin", "qemu-system-aarch64"),
+        "-name",
+        `winvm-${NAME}`,
+        "-pidfile",
+        p.pid,
+      ],
+      { stdout: "ignore", stderr: "ignore" },
+    )
+    await until("the pidfile", () => existsSync(p.pid))
+    spyOn(console, "log").mockImplementation(() => undefined)
+    expect(await commands.kill(parseArgs(["-i", NAME]))).toBe(0)
+    await legacy.exited
+    expect(legacy.signalCode).toBe("SIGKILL")
+    expect(launchdCalls).toEqual([])
+    expect(existsSync(keeperDir(p))).toBe(false)
+  })
 })
 
 describe("launching QEMU without the keeper", () => {

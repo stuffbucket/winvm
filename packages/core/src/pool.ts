@@ -7,6 +7,7 @@ import type { Args } from "./args"
 import { parseDuration } from "./golden"
 import { NEW_DEFAULT } from "./hardware"
 import type { Job } from "./job"
+import { killKept } from "./kept"
 import { withOperation } from "./operation"
 import { home, pathsFor, readMeta } from "./paths"
 import * as qemu from "./qemu"
@@ -228,7 +229,7 @@ async function hardStop(instance: string): Promise<void> {
   const pid = qemu.pidOf(p)
   if (pid !== null && qemu.isInstanceQemu(pid, p)) {
     try {
-      process.kill(pid, "SIGKILL")
+      if (!(await killKept(p, pid))) process.kill(pid, "SIGKILL")
     } catch {}
     for (let i = 0; i < 100 && qemu.pidOf(p) !== null; i += 1) await sleep(100)
   }

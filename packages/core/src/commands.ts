@@ -51,6 +51,7 @@ import {
 import * as input from "./input"
 import { ensureInstance, makeVars, resetInstance, sealBase } from "./instance"
 import { ensureKeeper } from "./keeper"
+import { killKept, retireKeeper } from "./kept"
 import { ManagementError, reconcileManagement } from "./lifecycle"
 import * as machineinfo from "./machineinfo"
 import {
@@ -221,6 +222,7 @@ export function prune(args: Args): number {
     const size = du(p.dir)
     qemu.stopSidecars(p)
     stopService(p)
+    retireKeeper(name, p)
     rmSync(p.dir, { recursive: true, force: true })
     saves.removeAllSaves(name)
     console.log(`  removed scratch instance "${name}" (${size})`)
@@ -556,6 +558,7 @@ export async function build(args: Args): Promise<number> {
       )
       qemu.stopSidecars(p)
       stopService(p)
+      retireKeeper(scratch, p)
       rmSync(p.dir, { recursive: true, force: true })
       console.log(
         `base image ready: ${basePath(image)} (${du(basePath(image))})`,
@@ -1279,7 +1282,7 @@ export async function reboot(args: Args): Promise<number> {
   return 0
 }
 
-export function kill(args: Args): number {
+export async function kill(args: Args): Promise<number> {
   const name = instanceName(args)
   const p = pathsFor(name)
   const pid = qemu.pidOf(p)
@@ -1311,7 +1314,7 @@ export function kill(args: Args): number {
     return 1
   }
   finder.beforeDown(name)
-  process.kill(pid, "SIGKILL")
+  if (!(await killKept(p, pid))) process.kill(pid, "SIGKILL")
   rmSync(p.pid, { force: true })
   qemu.stopSidecars(p)
   stopService(p)
@@ -1352,6 +1355,7 @@ export function destroy(args: Args): number {
   }
   stopService(p)
   qemu.stopSidecars(p)
+  retireKeeper(name, p)
   finder.cleanStale(name)
   const size = du(instanceDir(name))
   rmSync(instanceDir(name), { recursive: true, force: true })

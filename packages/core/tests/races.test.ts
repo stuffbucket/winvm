@@ -413,7 +413,7 @@ describe("kill", () => {
     const p = pathsFor(NAME)
     const stranger = await hold("unrelated-process")
     writeFileSync(p.pid, `${String(stranger.pid)}\n`)
-    const code = commands.kill(parseArgs(["-i", NAME]))
+    const code = await commands.kill(parseArgs(["-i", NAME]))
     await sleep(100)
     expect(alive(stranger.pid)).toBe(true)
     expect(code).toBe(1)
@@ -430,7 +430,7 @@ describe("kill", () => {
       pathsFor("other").pid,
     )
     writeFileSync(p.pid, `${String(other.pid)}\n`)
-    expect(commands.kill(parseArgs(["-i", NAME]))).toBe(1)
+    expect(await commands.kill(parseArgs(["-i", NAME]))).toBe(1)
     await sleep(100)
     expect(alive(other.pid)).toBe(true)
   })
@@ -490,7 +490,7 @@ describe("kill", () => {
     spyOn(console, "error").mockImplementation((...a: unknown[]) => {
       errors.push(a.map(String).join(" "))
     })
-    expect(commands.kill(parseArgs(["-i", NAME]))).toBe(1)
+    expect(await commands.kill(parseArgs(["-i", NAME]))).toBe(1)
     expect(alive(own.pid)).toBe(true)
     expect(errors.join("\n")).toContain("could not read")
     expect(errors.join("\n")).not.toContain("remove that file")

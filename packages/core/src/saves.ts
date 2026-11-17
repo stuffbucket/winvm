@@ -33,6 +33,7 @@ import type { Hardware } from "./hardware"
 import { hardwareFrom, LEGACY, readHardware, runningHardware } from "./hardware"
 import { requireFirmware } from "./host"
 import { ensureInstance } from "./instance"
+import { killKept } from "./kept"
 import type { Note } from "./notes"
 import { copyNote, readNote, removeNote, removeNotes } from "./notes"
 import {
@@ -828,7 +829,7 @@ export async function quitQemu(p: Paths, timeoutMs = 120_000): Promise<void> {
     }
     await sleep(20)
   }
-  process.kill(pid, "SIGKILL")
+  if (!(await killKept(p, pid))) process.kill(pid, "SIGKILL")
   while (qemu.pidOf(p) !== null) await sleep(250)
   qemu.stopSidecars(p)
 }

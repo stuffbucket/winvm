@@ -327,7 +327,7 @@ async function install(
   } finally {
     if (qemu.isRunning(p)) {
       if ((await quietly(asJson, async () => await commands.stop(cli()))) !== 0)
-        commands.kill(cli())
+        await commands.kill(cli())
     }
     writeDisplay(p, display)
   }
