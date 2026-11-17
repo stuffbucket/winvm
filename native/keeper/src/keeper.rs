@@ -57,7 +57,7 @@ struct Keeper {
     host_end: Option<HostEnd>,
     idle_since: Instant,
     exit_requested: bool,
-    boot_us: u64,
+    boot_session: Option<String>,
     connections: Vec<Connection>,
     stragglers: Vec<Child>,
     _lock: File,
@@ -167,10 +167,13 @@ fn start(settings: Settings) -> Result<Option<Keeper>, Failure> {
         kq.watch_signal(signal)
             .map_err(|e| Failure::Retry(format!("watching signal {signal}: {e}")))?;
     }
-    let previous = state::read_state(&dir).unwrap_or_else(|problem| {
-        eprintln!("winvm-keeper: {problem}; nothing to adopt");
-        Some(State::default())
-    });
+    let (previous, unreadable) = match state::read_state(&dir) {
+        Ok(previous) => (previous, false),
+        Err(problem) => {
+            eprintln!("winvm-keeper: {problem}; nothing to adopt, and nothing launched");
+            (None, true)
+        }
+    };
     let (spec, invalid) = spec_or_previous(&dir, previous.as_ref())?;
     let server = Server::bind(&dir).map_err(|e| {
         let problem = format!("{shown}/{}: {e}", state::SOCKET);
@@ -198,7 +201,7 @@ fn start(settings: Settings) -> Result<Option<Keeper>, Failure> {
         host_end: None,
         idle_since: Instant::now(),
         exit_requested: false,
-        boot_us: adopt::boot_time_us().unwrap_or(0),
+        boot_session: adopt::boot_session(),
         connections: Vec::new(),
         stragglers: Vec::new(),
         _lock: lock,
@@ -216,28 +219,33 @@ fn start(settings: Settings) -> Result<Option<Keeper>, Failure> {
             .record
             .note("spec-invalid", &[("error", problem.into())]);
     }
-    keeper.resume_or_launch(previous);
-    if let Some(signal) = spawn::pending_shutdown() {
+    let ending = spawn::pending_shutdown();
+    keeper.resume_or_launch(previous, !unreadable && ending.is_none());
+    if let Some(signal) = ending {
         keeper.begin_host_end(signal);
     }
     Ok(Some(keeper))
 }
 
 impl Keeper {
-    fn resume_or_launch(&mut self, previous: Option<State>) {
+    fn resume_or_launch(&mut self, previous: Option<State>, may_launch: bool) {
         let launch = match previous {
             None => {
                 self.save();
                 true
             }
             Some(previous) => {
-                let same_session =
-                    previous.boot_us == self.boot_us && previous.session == self.spec.session;
+                let new_boot = matches!(
+                    (&previous.boot_session, &self.boot_session),
+                    (Some(was), Some(now)) if was != now
+                );
+                let new_session = (previous.session.is_some() || self.spec.session.is_some())
+                    && previous.session != self.spec.session;
                 let adopted = self.adopt(previous.child);
-                !adopted && !same_session
+                !adopted && (new_boot || new_session)
             }
         };
-        if !launch {
+        if !launch || !may_launch {
             return;
         }
         if let Some(child) = self.spec.child.clone() {
@@ -253,7 +261,7 @@ impl Keeper {
     fn save(&self) {
         let current = State {
             session: self.spec.session.clone(),
-            boot_us: self.boot_us,
+            boot_session: self.boot_session.clone(),
             instance: Some(self.record.instance().to_owned()),
             record: self.spec.record.clone(),
             stop: self.spec.stop.clone(),

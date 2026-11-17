@@ -732,7 +732,10 @@ fn a_state_from_before_the_last_boot_does_not_stop_the_launch() {
     let scratch = Scratch::new();
     write_state(
         &scratch,
-        &json!({ "bootUs": 1, "child": { "name": "fake", "pid": gone_pid(), "startUs": 1, "pidfile": null } }),
+        &json!({
+            "bootSession": "00000000-0000-0000-0000-000000000000",
+            "child": { "name": "fake", "pid": gone_pid(), "startUs": 1, "pidfile": null },
+        }),
     );
     scratch.write_spec(&spec(&scratch, &scratch.fake(&[]), None));
     let mut keeper = start(&scratch, 10_000);
@@ -922,6 +925,24 @@ fn a_bad_spec_still_adopts_a_live_child_and_keeps_its_record() {
     );
 }
 
+fn boot_time_us() -> u64 {
+    // SAFETY: timeval is plain data, the name is NUL-terminated and the size is passed in.
+    unsafe {
+        let mut boot: libc::timeval = std::mem::zeroed();
+        let mut size = std::mem::size_of::<libc::timeval>();
+        let got = libc::sysctlbyname(
+            c"kern.boottime".as_ptr(),
+            (&raw mut boot).cast(),
+            &raw mut size,
+            std::ptr::null_mut(),
+            0,
+        );
+        assert_eq!(got, 0, "kern.boottime");
+        u64::try_from(boot.tv_sec).expect("secs") * 1_000_000
+            + u64::try_from(boot.tv_usec).expect("usecs")
+    }
+}
+
 fn exits_soon(scratch: &Scratch) -> Value {
     json!({ "name": "brief", "argv": ["/bin/bash", "-c", "echo x"], "log": scratch.path("brief.log") })
 }
@@ -986,4 +1007,65 @@ fn a_launched_child_that_exits_at_once_is_recorded_without_any_request() {
         true
     );
     assert!(wait_exit(&mut keeper, Duration::from_secs(5)).success());
+}
+
+#[test]
+fn a_clock_step_does_not_make_a_crash_restart_relaunch() {
+    let scratch = Scratch::new();
+    write_state(
+        &scratch,
+        &json!({
+            "session": "same",
+            "bootUs": boot_time_us() - 1,
+            "child": { "name": "fake", "pid": gone_pid(), "startUs": 1, "pidfile": null },
+        }),
+    );
+    let mut same = spec(&scratch, &scratch.fake(&[]), None);
+    same["session"] = json!("same");
+    scratch.write_spec(&same);
+    let mut keeper = start(&scratch, 10_000);
+    assert!(wait_exit(&mut keeper, Duration::from_secs(5)).success());
+    assert_eq!(
+        keeper_whats(&scratch),
+        ["started", "exited-unknown", "exiting"]
+    );
+}
+
+#[test]
+fn an_unreadable_state_launches_nothing() {
+    let scratch = Scratch::new();
+    fs::create_dir_all(scratch.keeper()).expect("keeper dir");
+    fs::write(scratch.keeper().join("state.json"), "{ truncated").expect("state.json");
+    scratch.write_spec(&spec(&scratch, &scratch.fake(&[]), None));
+    let mut keeper = start(&scratch, 10_000);
+    assert!(wait_exit(&mut keeper, Duration::from_secs(5)).success());
+    assert_eq!(keeper_whats(&scratch), ["started", "exiting"]);
+}
+
+#[test]
+fn a_sigterm_pending_at_start_launches_nothing() {
+    let scratch = Scratch::new();
+    scratch.write_spec(&spec(&scratch, &scratch.fake(&[]), None));
+    let term = {
+        // SAFETY: sigset_t is plain data, initialised by sigemptyset.
+        unsafe {
+            let mut set: libc::sigset_t = std::mem::zeroed();
+            libc::sigemptyset(&raw mut set);
+            libc::sigaddset(&raw mut set, libc::SIGTERM);
+            set
+        }
+    };
+    // SAFETY: blocks SIGTERM in this test thread only, so the keeper starts with it blocked.
+    unsafe { libc::pthread_sigmask(libc::SIG_BLOCK, &raw const term, std::ptr::null_mut()) };
+    let mut keeper = start(&scratch, 10_000);
+    // SAFETY: restores this test thread's mask.
+    unsafe { libc::pthread_sigmask(libc::SIG_UNBLOCK, &raw const term, std::ptr::null_mut()) };
+    signal(pid_of(&keeper), libc::SIGTERM);
+    assert!(wait_exit(&mut keeper, Duration::from_secs(5)).success());
+    assert_eq!(
+        keeper_whats(&scratch),
+        ["started", "host-ending", "host-end:done", "exiting"],
+        "{:?}",
+        records(&scratch)
+    );
 }

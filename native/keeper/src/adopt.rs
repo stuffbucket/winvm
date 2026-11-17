@@ -54,23 +54,26 @@ pub fn start_time_us(pid: i32) -> Option<u64> {
     (got == size).then(|| info.pbi_start_tvsec * 1_000_000 + info.pbi_start_tvusec)
 }
 
-pub fn boot_time_us() -> Option<u64> {
-    // SAFETY: timeval is plain data for which all-zero bytes are a valid value.
-    let mut boot: libc::timeval = unsafe { std::mem::zeroed() };
-    let mut size = std::mem::size_of::<libc::timeval>();
-    // SAFETY: the name is NUL-terminated, and the output buffer is a timeval whose size is passed in.
+pub fn boot_session() -> Option<String> {
+    let mut buffer = [0u8; 64];
+    let mut size = buffer.len();
+    // SAFETY: the name is NUL-terminated, and the output buffer is writable for `size` bytes.
     let got = unsafe {
         libc::sysctlbyname(
-            c"kern.boottime".as_ptr(),
-            (&raw mut boot).cast(),
+            c"kern.bootsessionuuid".as_ptr(),
+            buffer.as_mut_ptr().cast(),
             &raw mut size,
             std::ptr::null_mut(),
             0,
         )
     };
-    let secs = u64::try_from(boot.tv_sec).ok()?;
-    let micros = u64::try_from(boot.tv_usec).ok()?;
-    (got == 0).then(|| secs * 1_000_000 + micros)
+    if got != 0 {
+        return None;
+    }
+    let text = buffer.get(..size)?;
+    let text = text.split(|&b| b == 0).next()?;
+    let uuid = std::str::from_utf8(text).ok()?.trim();
+    (!uuid.is_empty()).then(|| uuid.to_owned())
 }
 
 pub fn identify(kept: &Kept) -> Option<&'static str> {
@@ -102,10 +105,11 @@ mod tests {
     }
 
     #[test]
-    fn the_boot_time_is_before_this_process_started() {
-        let me = i32::try_from(std::process::id()).expect("a pid");
-        let boot = boot_time_us().expect("kern.boottime");
-        assert!(boot > 0 && boot < start_time_us(me).expect("start time"));
+    fn the_boot_session_is_a_stable_uuid() {
+        let first = boot_session().expect("kern.bootsessionuuid");
+        assert_eq!(first.len(), 36, "{first}");
+        assert_eq!(first.matches('-').count(), 4, "{first}");
+        assert_eq!(boot_session(), Some(first));
     }
 
     #[test]

@@ -81,7 +81,7 @@ pub struct State {
     #[serde(default)]
     pub session: Option<String>,
     #[serde(default)]
-    pub boot_us: u64,
+    pub boot_session: Option<String>,
     #[serde(default)]
     pub instance: Option<String>,
     #[serde(default)]
@@ -168,7 +168,7 @@ mod tests {
         assert_eq!(read_state(&dir), Ok(None));
         let state = State {
             session: Some("s".to_owned()),
-            boot_us: 9,
+            boot_session: Some("B".to_owned()),
             child: Some(Kept {
                 name: "qemu".to_owned(),
                 pid: 42,
