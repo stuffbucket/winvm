@@ -19,6 +19,7 @@ import {
   readMeta,
 } from "./paths"
 import * as qemu from "./qemu"
+import { type Management, managementOf } from "./reconcile"
 import { readService } from "./servicectl"
 import { spawnText } from "./shell"
 import * as timemachine from "./timemachine"
@@ -93,6 +94,7 @@ export interface InstanceStatus {
   readonly watcher: WatchInfo | null
   readonly service: { readonly pid: number } | null
   readonly serviceExpected: boolean
+  readonly management: Management
   readonly operation: OperationInfo | null
   readonly stopUnfinished: StopUnfinished | null
   readonly notes: readonly string[]
@@ -479,6 +481,7 @@ export async function gather(
       watcher: readWatch(name),
       service: null,
       serviceExpected: false,
+      management: "current",
       operation,
       stopUnfinished: null,
       notes: [`no instance "${name}" — \`winvm start -i ${name}\` creates it`],
@@ -511,6 +514,12 @@ export async function gather(
         "the watcher and the guest's Finder drives are down until " +
         `\`winvm start -i ${name}\` brings them back — \`winvm kill -i ${name}\` if Windows is stuck`,
     )
+  const management = managementOf(name)
+  if (management === "repair")
+    notes.push(
+      "its control service or watcher is missing or from another build, or a guest that is gone left drives mounted — " +
+        `\`winvm reconcile${name === "default" ? "" : ` -i ${name}`}\` repairs that and leaves Windows running`,
+    )
 
   return {
     name,
@@ -532,6 +541,7 @@ export async function gather(
     watcher: readWatch(name),
     service: serviceOf(p),
     serviceExpected: running && existsSync(p.qmpQemu),
+    management,
     operation,
     stopUnfinished,
     notes,
@@ -796,7 +806,7 @@ export interface StatusArgs {
 }
 
 export async function run(a: StatusArgs): Promise<number> {
-  const tm = timemachine.summary()
+  const tm = timemachine.localSummary()
   const now = Date.now()
   const names = listInstances()
   if (a.instance === null && names.length !== 1) {

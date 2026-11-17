@@ -61,10 +61,10 @@ export interface ReconcileOptions {
   readonly watcherTimeoutMs?: number
   readonly lockWaitMs?: number
   readonly waitForBusyWatcher?: boolean
+  readonly debtOnly?: boolean
 }
 
 const RECONCILING_VERBS: ReadonlySet<string> = new Set([
-  "status",
   "info",
   "saves",
   "snapshots",
@@ -311,7 +311,15 @@ interface Plan {
   readonly foreign: boolean
 }
 
-function plan(name: string, p: Paths, current: string): Plan {
+function plan(name: string, p: Paths, current: string, debtOnly = false): Plan {
+  if (debtOnly)
+    return {
+      service: readService(p),
+      serviceAction: "none",
+      watcher: watcherRecord(name),
+      rotateWatcher: false,
+      foreign: false,
+    }
   const mine = cliEntry()
   const service = readService(p)
   const watcher = watcherRecord(name)
@@ -344,6 +352,31 @@ function plan(name: string, p: Paths, current: string): Plan {
 const hasWork = (pl: Plan): boolean =>
   pl.serviceAction !== "none" || pl.rotateWatcher
 
+export function needsRepair(
+  name: string,
+  p: Paths = pathsFor(name),
+  current: string = buildIdentity(),
+): boolean {
+  if (qemuPid(p) === null) return false
+  if (owedTo(p) !== null) return true
+  const pl = plan(name, p, current)
+  return !pl.foreign && hasWork(pl)
+}
+
+export async function settleWatcherDebt(
+  name: string,
+  p: Paths = pathsFor(name),
+  o: ReconcileOptions = {},
+): Promise<ReconcileResult | null> {
+  if (!existsSync(owedPath(p))) return null
+  return await reconcileManagement(name, p, {
+    lockWaitMs: 250,
+    waitForBusyWatcher: false,
+    ...o,
+    debtOnly: true,
+  })
+}
+
 const pids = (
   name: string,
   p: Paths,
@@ -373,7 +406,7 @@ export async function reconcileManagement(
   if (qemuPid(p) === null)
     return { changed: false, servicePid: null, watcherPid: null }
   const current = o.current ?? buildIdentity()
-  const first = plan(name, p, current)
+  const first = plan(name, p, current, o.debtOnly)
   if (!hasWork(first) && !existsSync(owedPath(p))) {
     return {
       changed: false,
@@ -417,7 +450,7 @@ async function reconcileHeld(
     return { changed: false, servicePid: null, watcherPid: null }
   }
   if (owed !== null && owed !== qemu) forgive(p)
-  const pl = plan(name, p, current)
+  const pl = plan(name, p, current, o.debtOnly)
   if (pl.foreign) return { changed: false, ...pids(name, p) }
   if (owed === qemu && pl.watcher !== null && !pl.rotateWatcher) forgive(p)
   const owesWatcher = owed === qemu && pl.watcher === null

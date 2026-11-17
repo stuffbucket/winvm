@@ -173,6 +173,7 @@ pub fn timeout_for(args: &[String]) -> Option<Duration> {
         "status" | "info" | "doctor" | "ls" | "settings" | "config" | "help" => Some(READ_TIMEOUT),
         "saves" if !matches!(subcommand(args), Some("rm" | "note")) => Some(READ_TIMEOUT),
         "terminal" | "open" => Some(CONNECT_TIMEOUT),
+        "events" if !crate::events::follows(args) => Some(READ_TIMEOUT),
         "share" | "mcp" if subcommand(args) == Some("status") => Some(READ_TIMEOUT),
         _ => None,
     }
