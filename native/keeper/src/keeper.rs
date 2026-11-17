@@ -757,9 +757,9 @@ impl Keeper {
         if self.host_end.is_none() {
             return json!({ "ok": false, "error": "not ending" });
         }
-        let then = request["then"].as_str().unwrap_or("");
+        let then = request["end"].as_str().unwrap_or("");
         if !matches!(then, "shutdown" | "quit") {
-            return json!({ "ok": false, "error": "then must be shutdown or quit" });
+            return json!({ "ok": false, "error": "end must be shutdown or quit" });
         }
         let reason = request["reason"].as_str().unwrap_or("service").to_owned();
         if self.child.is_some() {
@@ -1090,7 +1090,7 @@ impl Keeper {
             &[
                 ("step", "fallback".into()),
                 ("reason", reason.into()),
-                ("then", then.into()),
+                ("end", then.into()),
             ],
         );
         let quit_now = has_qmp && then == "quit";
@@ -1259,7 +1259,7 @@ impl Keeper {
         let extra: &[&str] = match op {
             Some("launch" | "launch-sidecar") => &["child"],
             Some("service") => &["service"],
-            Some("host-end") => &["then", "reason"],
+            Some("host-end") => &["end", "reason"],
             _ => &[],
         };
         if let Some(unknown) = fields

@@ -2025,7 +2025,7 @@ fn a_service_can_hand_the_host_end_back_for_a_shutdown_or_a_quit() {
         let all = steps(&scratch);
         assert_eq!(all[1]["step"], "fallback", "{all:?}");
         assert_eq!(all[1]["reason"], "test");
-        assert_eq!(all[1]["then"], then);
+        assert_eq!(all[1]["end"], then);
         assert_eq!(
             qmp_seen(&scratch).last().map(String::as_str),
             Some(last),
@@ -2040,7 +2040,7 @@ fn a_host_end_request_outside_a_host_end_is_refused() {
     let mut keeper = idle_keeper(&scratch, 60_000);
     let answer = request(
         &scratch,
-        &json!({ "op": "host-end", "then": "quit", "reason": "x" }),
+        &json!({ "op": "host-end", "end": "quit", "reason": "x" }),
     );
     assert_eq!(answer, json!({ "ok": false, "error": "not ending" }));
     assert_eq!(

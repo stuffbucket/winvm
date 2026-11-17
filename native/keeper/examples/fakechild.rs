@@ -131,7 +131,7 @@ fn act_on_host_end(control: &Control) {
             let answer = send_line(
                 &dir.join("keeper.sock"),
                 &[format!(
-                    r#"{{"op":"host-end","then":"{then}","reason":"test"}}"#
+                    r#"{{"op":"host-end","end":"{then}","reason":"test"}}"#
                 )],
             );
             let mut report = OpenOptions::new()
