@@ -13,6 +13,7 @@ pub const EVENT: &str = "winvm-event";
 pub const FIRST_DELAY: Duration = Duration::from_secs(1);
 pub const LONGEST_DELAY: Duration = Duration::from_secs(60);
 pub const HEALTHY_AFTER: Duration = Duration::from_secs(30);
+const REFUSED: i32 = 2;
 
 pub fn stream_args(cursor: Option<&str>) -> Vec<String> {
     let mut args: Vec<String> = ["events", "--follow", "--json"].map(String::from).into();
@@ -110,9 +111,9 @@ impl<C: SidecarChild> Stream<C> {
         self.cursor.lock().ok().and_then(|c| c.clone())
     }
 
-    fn remember(&self, cursor: String) {
+    fn remember(&self, cursor: Option<String>) {
         if let Ok(mut c) = self.cursor.lock() {
-            *c = Some(cursor);
+            *c = cursor;
         }
     }
 
@@ -155,7 +156,7 @@ impl<C: SidecarChild> Stream<C> {
                         continue;
                     };
                     if let Some(c) = cursor_of(&line) {
-                        self.remember(c);
+                        self.remember(Some(c));
                     }
                     runner.emit(line);
                 }
@@ -191,6 +192,9 @@ impl<C: SidecarChild> Stream<C> {
             };
             if self.stopping() {
                 break;
+            }
+            if terminated.as_ref().and_then(|t| t.code) == Some(REFUSED) {
+                self.remember(None);
             }
             let wait = backoff.after(runner.now().saturating_duration_since(started));
             runner.emit(ended(terminated.as_ref(), error.as_deref(), wait));
@@ -509,6 +513,30 @@ mod tests {
             })
             .is_some());
         stream.stop(&|_| Err("never".into())).unwrap();
+    }
+
+    #[test]
+    fn drops_a_cursor_the_command_refuses_and_starts_again_from_the_end() {
+        let fake = Fake::new(vec![
+            Run::Lines(
+                vec![r#"{"type":"hello","instances":[],"cursor":"c7"}"#],
+                Duration::from_millis(5),
+                exit(1),
+            ),
+            Run::Lines(vec![], Duration::from_millis(5), exit(2)),
+            Run::StopsTheApp,
+        ]);
+        let stream = fake.stream.clone();
+        block_on(stream.supervise(&fake));
+        let spawned = fake.spawned.borrow().clone();
+        assert_eq!(
+            spawned,
+            [
+                stream_args(None),
+                stream_args(Some("c7")),
+                stream_args(None)
+            ]
+        );
     }
 
     #[test]
