@@ -1088,6 +1088,29 @@ describe("a keeper from phase 3, which speaks protocol 2", () => {
     }
   }, 15_000)
 
+  it("is asked to exit when it lingers with no QEMU, and the launch goes through a current keeper", async () => {
+    const p = pathsFor(NAME)
+    const asked: Record<string, unknown>[] = []
+    let server: ReturnType<typeof createServer> | null = null
+    server = await oldKeeper(p, null, (request) => {
+      asked.push(request)
+      if (request.op === "exit-when-idle")
+        setTimeout(() => {
+          server?.close()
+          rmSync(keeperSocket(p), { force: true })
+        }, 50)
+      return { ok: true }
+    })
+    try {
+      await leasedLaunch()
+      expect(asked).toEqual([{ op: "exit-when-idle", protocol: 2 }])
+      expect(detached).toEqual([])
+      expect(ops()).toEqual(["launch-sidecar", "launch"])
+    } finally {
+      server.close()
+    }
+  }, 15_000)
+
   it("leaves the start refused while a QEMU of the instance runs, whatever qemu.pid says", async () => {
     const p = pathsFor(NAME)
     const pid = await held()

@@ -208,6 +208,14 @@ const sleep = async (ms: number): Promise<void> => {
 
 const OPEN_MS = 5000
 
+async function untilGone(p: Paths, deadline: number): Promise<boolean> {
+  while (Date.now() <= deadline) {
+    if ((await keeperHello(p, { timeoutMs: 300 })) === null) return true
+    await sleep(100)
+  }
+  return false
+}
+
 export async function openKeeper(
   name: string,
   p: Paths,
@@ -224,40 +232,51 @@ export async function openKeeper(
     program,
     dir: keeperDir(p),
   })
-  const deadline = Date.now() + OPEN_MS
+  let deadline = Date.now() + OPEN_MS
+  let retired = false
   for (;;) {
-    try {
-      await startKeeper({
-        launchd,
-        job,
-        lease,
-        spec: { record: p.events, ...extra },
-      })
-      break
-    } catch (error) {
-      if (!(error instanceof KeeperBusy) || Date.now() > deadline) throw error
-      await sleep(200)
+    for (;;) {
+      try {
+        await startKeeper({
+          launchd,
+          job,
+          lease,
+          spec: { record: p.events, ...extra },
+        })
+        break
+      } catch (error) {
+        if (!(error instanceof KeeperBusy) || Date.now() > deadline) throw error
+        await sleep(200)
+      }
     }
-  }
-  try {
-    collectKeepers({ root: keeperRoot(), launchd, current: program })
-  } catch (error) {
-    console.warn(
-      `warning: could not clean up old keeper versions: ${error instanceof Error ? error.message : String(error)}`,
-    )
-  }
-  for (;;) {
-    const hello = await keeperHello(p, { launching: true })
-    if (hello !== null && hello.protocol >= KEEPER_PROTOCOL) return hello
-    if (hello !== null)
-      throw new Error(
-        `the keeper running for "${name}" speaks protocol ${String(hello.protocol)}, older than this winvm's ${String(KEEPER_PROTOCOL)}; it exits once its VM is stopped`,
+    try {
+      collectKeepers({ root: keeperRoot(), launchd, current: program })
+    } catch (error) {
+      console.warn(
+        `warning: could not clean up old keeper versions: ${error instanceof Error ? error.message : String(error)}`,
       )
-    if (Date.now() > deadline)
-      throw new Error(
-        `the keeper for "${name}" did not answer on ${keeperSocket(p)} — see ${resolve(keeperDir(p), "keeper.log")}`,
-      )
-    await sleep(100)
+    }
+    for (;;) {
+      const hello = await keeperHello(p, { launching: true })
+      if (hello !== null && hello.protocol >= KEEPER_PROTOCOL) return hello
+      if (hello !== null && hello.child === null && !retired) {
+        retired = true
+        deadline = Date.now() + OPEN_MS
+        await keeperRequest(keeperSocket(p), { op: "exit-when-idle" }).catch(
+          () => null,
+        )
+        if (await untilGone(p, deadline)) break
+      }
+      if (hello !== null)
+        throw new Error(
+          `the keeper running for "${name}" speaks protocol ${String(hello.protocol)}, older than this winvm's ${String(KEEPER_PROTOCOL)}; it exits once its VM is stopped`,
+        )
+      if (Date.now() > deadline)
+        throw new Error(
+          `the keeper for "${name}" did not answer on ${keeperSocket(p)} — see ${resolve(keeperDir(p), "keeper.log")}`,
+        )
+      await sleep(100)
+    }
   }
 }
 
