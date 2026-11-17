@@ -13,6 +13,7 @@ import { appendEntry } from "./eventlog"
 import * as finder from "./finder"
 import * as frozen from "./frozen"
 import { lockWindows } from "./lock"
+import { qmpCommand } from "./monitor"
 import * as notes from "./notes"
 import { automaticFrom } from "./operation"
 import type { InstanceMeta, Paths } from "./paths"
@@ -397,7 +398,10 @@ async function stowRefusal(
 
 async function runsGuest(p: Paths): Promise<boolean> {
   if (!qemu.isRunning(p)) return false
-  return (await qmp.status(p.qmp).catch(() => null)) !== "postmigrate"
+  const r = (await qmpCommand(p.qmp, "query-status", undefined, 2000).catch(
+    () => null,
+  )) as { status?: unknown } | null
+  return typeof r?.status === "string" && r.status !== "postmigrate"
 }
 
 type Leased = (run: () => Promise<number>) => Promise<number>

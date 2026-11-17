@@ -1486,10 +1486,24 @@ describe("a stow whose QEMU did not say which version it runs", () => {
 })
 
 describe("a winvm stow that fails while QEMU still runs Windows", () => {
+  let afterwards: () => Promise<unknown> = async () =>
+    await Promise.resolve({ status: "running" })
+  let asked: number[] = []
   beforeEach(() => {
+    afterwards = async () => await Promise.resolve({ status: "running" })
+    asked = []
     spyOn(console, "error").mockImplementation(() => undefined)
     spyOn(saves, "captureScreen").mockRejectedValue(
       new Error("screendump failed"),
+    )
+    spyOn(monitor, "qmpCommand").mockImplementation(
+      async (_socket, cmd, _args, timeoutMs) => {
+        if (cmd === "query-version")
+          return await Promise.resolve({ qemu: reported, package: "" })
+        if (cmd !== "query-status") throw new Error(`unexpected ${cmd}`)
+        asked.push(timeoutMs ?? 3000)
+        return await afterwards()
+      },
     )
   })
 
@@ -1502,6 +1516,24 @@ describe("a winvm stow that fails while QEMU still runs Windows", () => {
     expect(runningPid).toBe(FAKE_PID)
     expect(commands).toContain("cont")
     expect(restarted).toHaveBeenCalledTimes(1)
+  })
+
+  it("starts no watcher when QEMU's monitor won't say what the guest is doing, and asks it only briefly", async () => {
+    afterwards = async () =>
+      await Promise.reject(new Error("QMP did not answer within 2000 ms"))
+    spyOn(qmp, "status").mockImplementation(() =>
+      commands.includes("cont")
+        ? Promise.reject(new Error("qmp.sock went away"))
+        : Promise.resolve("running"),
+    )
+    spyOn(watcher, "stopWatcher").mockResolvedValue(true)
+    const restarted = spyOn(watcher, "startWatcherFor").mockImplementation(
+      () => undefined,
+    )
+    expect(await savecmds.stow(parseArgs(["-i", "source", "--force"]))).toBe(1)
+    expect(restarted).not.toHaveBeenCalled()
+    expect(asked.length).toBeGreaterThan(0)
+    expect(Math.max(...asked)).toBeLessThanOrEqual(2000)
   })
 
   it("stops and restarts the watcher even when it inherited WINVM_AUTOMATIC", async () => {
@@ -1540,6 +1572,10 @@ describe("a winvm stow that fails while QEMU still runs Windows", () => {
     spyOn(qmp, "status").mockImplementation(() =>
       Promise.resolve(commands.includes("migrate") ? "postmigrate" : "running"),
     )
+    afterwards = async () =>
+      await Promise.resolve({
+        status: commands.includes("migrate") ? "postmigrate" : "running",
+      })
     spyOn(watcher, "stopWatcher").mockResolvedValue(true)
     const restarted = spyOn(watcher, "startWatcherFor").mockImplementation(
       () => undefined,
