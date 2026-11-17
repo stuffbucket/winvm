@@ -2261,3 +2261,47 @@ fn a_service_still_writing_its_stow_after_qemu_quits_gets_time_to_finish() {
     let exited = whats_of(&scratch, "service-exited");
     assert_eq!(exited[0]["status"], 0, "{exited:?}");
 }
+
+#[test]
+fn a_service_already_ending_counts_as_acting_never_as_a_refusal() {
+    let scratch = Scratch::new();
+    let (mut keeper, qemu, _) = served_host_end(&scratch, 10_000, &[], &["--on-host-end", "busy"]);
+    signal(pid_of(&keeper), libc::SIGTERM);
+    assert!(wait_exit(&mut keeper, Duration::from_secs(12)).success());
+    assert!(!alive(qemu));
+    let all = steps(&scratch);
+    assert_eq!(all[0]["step"], "service");
+    assert_eq!(all[0]["ok"], true, "{all:?}");
+    assert_eq!(qmp_seen(&scratch), ["quit"]);
+}
+
+#[test]
+fn the_keepers_fallback_never_presses_the_button_while_an_op_holds_the_instance() {
+    let scratch = Scratch::new();
+    let me = std::process::id();
+    fs::write(
+        scratch.path("lease.json"),
+        json!({ "pid": me, "operation": "stow", "id": "x" }).to_string(),
+    )
+    .expect("lease.json");
+    fs::write(scratch.path("budget"), "8000").expect("budget");
+    let mut keeper = monitored(&scratch, &[]);
+    let pid = hello_child_pid(&scratch);
+    reported(&scratch, "qemu", pid);
+    wait_until("the private monitor", Duration::from_secs(5), || {
+        Path::new(&scratch.path("qmp.sock")).exists()
+    });
+    signal(pid_of(&keeper), libc::SIGTERM);
+    assert!(wait_exit(&mut keeper, Duration::from_secs(10)).success());
+    assert!(!alive(pid));
+    assert!(
+        !qmp_seen(&scratch).contains(&"system_powerdown".to_owned()),
+        "{:?}",
+        qmp_seen(&scratch)
+    );
+    let all = steps(&scratch);
+    let wait = find(&all, "host-end");
+    assert_eq!(wait["step"], "lease-wait", "{all:?}");
+    assert_eq!(wait["operation"], "stow");
+    assert!(all.iter().any(|s| s["step"] == "quit"), "{all:?}");
+}

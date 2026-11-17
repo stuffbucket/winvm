@@ -177,7 +177,11 @@ fn serve_http(control: &Control, stream: UnixStream) {
     )
     .expect("write the report");
     let refused = control.on_host_end == "refuse";
-    let status = if refused { "503 Busy" } else { "202 Accepted" };
+    let status = match control.on_host_end.as_str() {
+        "refuse" => "503 Busy",
+        "busy" => "409 Conflict",
+        _ => "202 Accepted",
+    };
     std::thread::sleep(Duration::from_millis(control.ack_ms));
     let _ = write!(
         writer,

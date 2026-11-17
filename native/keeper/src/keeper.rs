@@ -63,6 +63,13 @@ enum Fallback {
     Quit,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Ended {
+    No,
+    Termed,
+    Killed,
+}
+
 struct HostEnd {
     stop_deadline: Instant,
     kill_at: Instant,
@@ -70,10 +77,10 @@ struct HostEnd {
     migrate_until: Instant,
     stop: Option<StopAction>,
     fallback: Option<Fallback>,
-    killed: bool,
-    termed: bool,
+    ended: Ended,
     service: Option<Instant>,
     acked: bool,
+    lease_noted: bool,
 }
 
 struct Keeper {
@@ -789,7 +796,7 @@ impl Keeper {
             "budgetMs": millis(self.budget),
         });
         match control::post(&control, "/host-ending", &body, SERVICE_ANSWER) {
-            Ok(code) if (200..300).contains(&code) => Handed::Acked,
+            Ok(code) if (200..300).contains(&code) || code == 409 => Handed::Acked,
             Ok(code) => Handed::Declined(format!("HTTP {code}")),
             Err(PostError::Unreachable(error)) => Handed::Declined(error),
             Err(PostError::NoAnswer(error)) => Handed::Unconfirmed(error),
@@ -878,10 +885,10 @@ impl Keeper {
             migrate_until: now + self.budget.saturating_sub(MIGRATE_MARGIN),
             stop: None,
             fallback: None,
-            killed: false,
-            termed: false,
+            ended: Ended::No,
             service: None,
             acked: false,
+            lease_noted: false,
         };
         if self.child.is_none() {
             self.retire_sidecars();
@@ -1021,6 +1028,44 @@ impl Keeper {
         Fallback::Waiting
     }
 
+    fn lease_holder(&self) -> Option<(i32, String)> {
+        let text = std::fs::read_to_string(self.dir.parent()?.join("lease.json")).ok()?;
+        let lease: Value = serde_json::from_str(&text).ok()?;
+        let pid = i32::try_from(lease["pid"].as_i64()?).ok()?;
+        let operation = lease["operation"].as_str().unwrap_or("an operation");
+        spawn::kill(pid, 0).then(|| (pid, operation.to_owned()))
+    }
+
+    fn wait_for_lease(
+        &mut self,
+        held: Option<(i32, String)>,
+        socket: &Path,
+        now: Instant,
+        quit_at: Instant,
+        step: Fallback,
+    ) -> Fallback {
+        if now >= quit_at {
+            let quit = qmp::execute(socket, "quit", QMP_TIMEOUT);
+            self.host_end_step("quit", quit);
+            return Fallback::Quit;
+        }
+        let noted = self.host_end.as_ref().is_some_and(|h| h.lease_noted);
+        if let (false, Some((pid, operation))) = (noted, held) {
+            self.record.note(
+                "host-end",
+                &[
+                    ("step", "lease-wait".into()),
+                    ("pid", pid.into()),
+                    ("operation", operation.into()),
+                ],
+            );
+            if let Some(host) = &mut self.host_end {
+                host.lease_noted = true;
+            }
+        }
+        step
+    }
+
     fn step_fallback(&mut self, now: Instant) {
         let Some(host) = &self.host_end else {
             return;
@@ -1033,7 +1078,11 @@ impl Keeper {
         let Some(socket) = self.child.as_ref().and_then(|r| r.kept.qmp.clone()) else {
             return;
         };
+        let held = self.lease_holder();
         let next = match step {
+            Fallback::Check | Fallback::Migrating if held.is_some() => {
+                self.wait_for_lease(held, &socket, now, quit_at, step)
+            }
             Fallback::Check | Fallback::Migrating => {
                 match qmp::execute(&socket, "query-migrate", QMP_TIMEOUT) {
                     Ok(answer) if qmp::migrating(&answer) && now < migrate_until => {
@@ -1201,7 +1250,7 @@ impl Keeper {
             }
             return reason;
         };
-        let killed = host.killed;
+        let killed = host.ended == Ended::Killed;
         let kill_at = host.kill_at;
         if !killed && now < kill_at {
             self.step_fallback(now);
@@ -1222,14 +1271,17 @@ impl Keeper {
 
     fn kill_at_deadline(&mut self, now: Instant) {
         let legacy = self.child.as_ref().is_some_and(|r| r.kept.legacy);
-        let termed = self.host_end.as_ref().is_some_and(|h| h.termed);
+        let termed = self
+            .host_end
+            .as_ref()
+            .is_some_and(|h| h.ended == Ended::Termed);
         if legacy && !termed {
             if let Some(pid) = self.signal_child(libc::SIGTERM) {
                 self.record
                     .note("host-end", &[("step", "term".into()), ("pid", pid.into())]);
             }
             if let Some(host) = &mut self.host_end {
-                host.termed = true;
+                host.ended = Ended::Termed;
                 host.kill_at = now + TERM_GRACE;
             }
             return;
@@ -1239,7 +1291,7 @@ impl Keeper {
                 .note("host-end", &[("step", "kill".into()), ("pid", pid.into())]);
         }
         if let Some(host) = &mut self.host_end {
-            host.killed = true;
+            host.ended = Ended::Killed;
         }
     }
 
@@ -1271,7 +1323,7 @@ impl Keeper {
                 if host.stop.is_some() {
                     wake = wake.min(host.stop_deadline);
                 }
-                if !host.killed {
+                if host.ended != Ended::Killed {
                     wake = wake.min(host.kill_at);
                 }
                 Some(wake.saturating_duration_since(now))
