@@ -10,6 +10,7 @@ import {
 import { ChildProcess, type SpawnOptions, spawn } from "node:child_process"
 import {
   appendFileSync,
+  chmodSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -1216,7 +1217,37 @@ describe("a stow whose QEMU will not quit", () => {
       }),
     ).rejects.toThrow("stow-unfinished")
     expect(readSave("source", "stow")).toBeNull()
-    expect(readSave("source", "stow-unfinished")?.kind).toBe("stow")
+    const aside = readSave("source", "stow-unfinished")
+    expect(aside?.name).toBe("stow-unfinished")
+    expect(aside?.kind).toBe("manual")
+    expect(aside?.note).toContain("did not quit")
+  })
+
+  it("is deleted, never left where start recalls it, when it can't be moved aside, and both errors are told", async () => {
+    spyOn(saves, "quitQemu").mockRejectedValue(
+      new Error("QEMU (pid 1234567) did not quit and could not be killed"),
+    )
+    const blocked = saveDir("source", "stow-unfinished")
+    mkdirSync(blocked, { recursive: true })
+    writeFileSync(resolve(blocked, "pinned"), "x")
+    chmodSync(blocked, 0o500)
+    try {
+      let error: unknown = null
+      await createSave("source", {
+        name: "stow",
+        kind: "stow",
+        format: "raw",
+        quitAfter: true,
+      }).catch((e: unknown) => {
+        error = e
+      })
+      const text = (error as Error).message
+      expect(text).toContain("did not quit")
+      expect(text).toContain("could not be moved aside")
+      expect(readSave("source", "stow")).toBeNull()
+    } finally {
+      chmodSync(blocked, 0o700)
+    }
   })
 })
 

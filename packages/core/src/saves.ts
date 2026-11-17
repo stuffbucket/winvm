@@ -973,6 +973,30 @@ export async function quitQemu(
   qemu.stopSidecars(p)
 }
 
+function setAside(instance: string, name: string, m: Manifest): string {
+  const aside = `${name}-unfinished`
+  const from = saveDir(instance, name)
+  const to = saveDir(instance, aside)
+  try {
+    rmSync(to, { recursive: true, force: true })
+    const kept: Manifest = {
+      ...m,
+      name: aside,
+      kind: "manual",
+      note: `a ${name} whose QEMU did not quit afterwards, so it may not match the disk that QEMU went on writing`,
+    }
+    writeFileSync(
+      resolve(from, FILES.manifest),
+      `${JSON.stringify(kept, null, 2)}\n`,
+    )
+    renameSync(from, to)
+    return `the ${name} it had written is kept as "${aside}", where start does not recall it`
+  } catch (error) {
+    rmSync(from, { recursive: true, force: true })
+    return `the ${name} it had written could not be moved aside (${error instanceof Error ? error.message : String(error)}), so it was deleted rather than left where start would recall it`
+  }
+}
+
 function clearAbandonedPartials(instance: string): void {
   const dir = savesDir(instance)
   if (!existsSync(dir)) return
@@ -1152,11 +1176,8 @@ async function createSaveHeld(
     try {
       await quitQemu(p, undefined, o.leaveMounts === true ? o : {})
     } catch (error) {
-      const aside = `${o.name}-unfinished`
-      rmSync(saveDir(instance, aside), { recursive: true, force: true })
-      renameSync(final, saveDir(instance, aside))
       throw new Error(
-        `${error instanceof Error ? error.message : String(error)}; the ${o.name} it had written is kept as "${aside}", where start does not recall it`,
+        `${error instanceof Error ? error.message : String(error)}; ${setAside(instance, o.name, manifest)}`,
         { cause: error },
       )
     } finally {

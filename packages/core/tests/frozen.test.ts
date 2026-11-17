@@ -1907,6 +1907,29 @@ describe("status when the host powered Windows off", () => {
     )
   })
 
+  it("calls a stow that createSave refused at host end a decision followed by a clean shutdown, never a cut-off", async () => {
+    keptStart()
+    served()
+    op("begin", "stow", true, "host-stow")
+    op("end", "stow", false, "host-stow")
+    keeper("host-end", {
+      step: "fallback",
+      reason:
+        "the running QEMU 11.0.0 is not this winvm's QEMU 11.1.2, so no recall could take its stow",
+      end: "shutdown",
+    })
+    step("powerdown")
+    keeper("exited", { child: "qemu", pid: 501, status: 0 })
+    step("done")
+    const s = await gather(HOST, false)
+    expect(s.hostPoweredOff?.cause).toBe("host-shutdown")
+    const note = s.notes.join("\n")
+    expect(note).toContain(
+      "did not stow Windows when the Mac shut down, because the running QEMU 11.0.0",
+    )
+    expect(note).not.toContain("before winvm's keeper finished")
+  })
+
   it("never says a stow that finished could not be done", async () => {
     keptStart()
     served()
