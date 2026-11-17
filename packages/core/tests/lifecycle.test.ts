@@ -625,6 +625,24 @@ describe("one reconciliation at a time", () => {
         ),
       ).toEqual([])
     })
+    it(`takes over a lock left by ${label} however little of the wait is left`, async () => {
+      await service(OLD)
+      writeFileSync(
+        resolve(p.dir, "reconcile.lock"),
+        JSON.stringify({
+          ...(await stale()),
+          token: "dead",
+          restoreWatcher: true,
+          qemu: qemu.pid,
+        }),
+      )
+      owe(qemu.pid)
+      const s = seams({ lockWaitMs: 0 })
+      const r = await reconcileManagement("t", p, s.options)
+      expect(s.starts).toEqual({ service: 1, watcher: 1 })
+      expect(r.changed).toBe(true)
+      expect(existsSync(resolve(p.dir, "reconcile.lock"))).toBe(false)
+    })
   }
 
   it("never takes over from a live holder whose ps prints its start in another locale and time zone", async () => {
