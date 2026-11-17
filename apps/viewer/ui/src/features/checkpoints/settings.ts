@@ -10,7 +10,7 @@ import {
 
 const Move = z.object({ x: z.number(), y: z.number() })
 
-export interface SectionSet {
+interface SectionSet {
   readonly list: readonly Section[]
   readonly members: Readonly<Record<string, Member>>
 }

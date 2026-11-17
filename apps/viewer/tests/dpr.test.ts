@@ -1,20 +1,16 @@
-/**
- * Anything computed from the device pixel ratio must follow the window to a display of another
- * ratio (which changes no size and fires no resize): the watcher, the hook's source, the checkpoint
- * card's sharp-picture rule, and where a drag from the Mac is.
- */
-import { GlobalRegistrator } from "@happy-dom/global-registrator"
 import { afterAll, beforeEach, describe, expect, it } from "bun:test"
+import { GlobalRegistrator } from "@happy-dom/global-registrator"
 
 GlobalRegistrator.register()
 
 const { pixelRatio, watchPixelRatio } = await import("../ui/src/dpr")
 const { dragPointToCss } = await import("../ui/src/backend")
-const { sharpAt } = await import("../ui/src/features/checkpoints/CheckpointCard")
+const { sharpAt } = await import(
+  "../ui/src/features/checkpoints/CheckpointCard"
+)
 
 afterAll(() => GlobalRegistrator.unregister())
 
-/** A stand-in for matchMedia whose queries can be made to stop matching, as the real one does when the ratio changes. */
 interface FakeQuery {
   readonly media: string
   readonly listeners: Set<() => void>
@@ -22,10 +18,12 @@ interface FakeQuery {
 let queries: FakeQuery[] = []
 
 function setRatio(ratio: number | undefined): void {
-  Object.defineProperty(window, "devicePixelRatio", { configurable: true, value: ratio })
+  Object.defineProperty(window, "devicePixelRatio", {
+    configurable: true,
+    value: ratio,
+  })
 }
 
-/** The window moves to a display with this ratio: the ratio changes, then every armed query reports it. */
 function moveTo(ratio: number): void {
   setRatio(ratio)
   for (const q of [...queries]) for (const l of [...q.listeners]) l()
@@ -51,7 +49,8 @@ beforeEach(() => {
   })
 })
 
-const armed = (): string[] => queries.filter((q) => q.listeners.size > 0).map((q) => q.media)
+const armed = (): string[] =>
+  queries.filter((q) => q.listeners.size > 0).map((q) => q.media)
 
 describe("pixelRatio", () => {
   it("is the window's ratio now, and 1 when there is none", () => {
@@ -97,9 +96,14 @@ describe("watchPixelRatio", () => {
   })
 
   it("does nothing where there is no matchMedia", () => {
-    Object.defineProperty(window, "matchMedia", { configurable: true, value: undefined })
+    Object.defineProperty(window, "matchMedia", {
+      configurable: true,
+      value: undefined,
+    })
     const stop = watchPixelRatio(() => undefined)
-    expect(() => stop()).not.toThrow()
+    expect(() => {
+      stop()
+    }).not.toThrow()
   })
 })
 
@@ -115,13 +119,28 @@ describe("a checkpoint card's picture", () => {
 
 describe("where a drag from the Mac is", () => {
   it("is already in CSS pixels on macOS, on any display (wry reports AppKit's points as 'physical')", () => {
-    expect(dragPointToCss({ x: 120, y: 340 }, 2, "macos")).toEqual({ x: 120, y: 340 })
-    expect(dragPointToCss({ x: 120, y: 340 }, 1, "macos")).toEqual({ x: 120, y: 340 })
-    expect(dragPointToCss({ x: 120, y: 340 }, 1.5, "macos")).toEqual({ x: 120, y: 340 })
+    expect(dragPointToCss({ x: 120, y: 340 }, 2, "macos")).toEqual({
+      x: 120,
+      y: 340,
+    })
+    expect(dragPointToCss({ x: 120, y: 340 }, 1, "macos")).toEqual({
+      x: 120,
+      y: 340,
+    })
+    expect(dragPointToCss({ x: 120, y: 340 }, 1.5, "macos")).toEqual({
+      x: 120,
+      y: 340,
+    })
   })
 
   it("is device pixels elsewhere, divided by the ratio", () => {
-    expect(dragPointToCss({ x: 300, y: 150 }, 1.5, "windows")).toEqual({ x: 200, y: 100 })
-    expect(dragPointToCss({ x: 300, y: 150 }, 0, "linux")).toEqual({ x: 300, y: 150 })
+    expect(dragPointToCss({ x: 300, y: 150 }, 1.5, "windows")).toEqual({
+      x: 200,
+      y: 100,
+    })
+    expect(dragPointToCss({ x: 300, y: 150 }, 0, "linux")).toEqual({
+      x: 300,
+      y: 150,
+    })
   })
 })

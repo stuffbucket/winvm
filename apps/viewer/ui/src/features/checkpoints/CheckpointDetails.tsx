@@ -58,9 +58,7 @@ const CONTROL =
   // biome-ignore lint/suspicious/noControlCharactersInRegex: a title is refused when it holds these control and direction characters, so the pattern has to name them
   /[\u0000-\u001f\u007f-\u009f\u200b\u200e\u200f\u2028-\u202e\u2060\u2066-\u2069\ufeff]/
 
-export function checkpointTitleProblem(
-  title: string,
-): "long" | "control" | null {
+function checkpointTitleProblem(title: string): "long" | "control" | null {
   const typed = title.trim()
   if (Array.from(typed).length > CHECKPOINT_TITLE_MAX) return "long"
   if (CONTROL.test(typed)) return "control"

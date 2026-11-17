@@ -1,12 +1,23 @@
 import { controls, isLivePhase, type Phase } from "../../model"
 
-/** Same enablement as the toolbar, with modal/background safety for native commands. */
-export function nativeMenuState(p: { phase: Phase | null; busy: boolean; hostReady: boolean; instance: boolean; forwardInput: boolean; resizable: boolean; modal: boolean }): Record<string, boolean> {
-  const c = controls(p.phase ?? "missing", p.busy || p.phase === null || !p.hostReady)
+export function nativeMenuState(p: {
+  phase: Phase | null
+  busy: boolean
+  hostReady: boolean
+  instance: boolean
+  forwardInput: boolean
+  resizable: boolean
+  modal: boolean
+}): Record<string, boolean> {
+  const c = controls(
+    p.phase ?? "missing",
+    p.busy || p.phase === null || !p.hostReady,
+  )
   const available = !p.modal
-  const has = available && p.instance && p.phase !== null && p.phase !== "missing"
+  const has =
+    available && p.instance && p.phase !== null && p.phase !== "missing"
   return {
-    "settings": available,
+    settings: available,
     "vm-new": available && !p.busy,
     "vm-choose": available && !p.busy,
     "vm-delete": has && !p.busy,
@@ -18,7 +29,8 @@ export function nativeMenuState(p: { phase: Phase | null; busy: boolean; hostRea
     "vm-sleep": available && c.sleep,
     "vm-lock": available && c.lock,
     "vm-kill": available && isLivePhase(p.phase) && !p.busy,
-    "vm-save": available && !p.busy && (p.phase === "running" || p.phase === "paused"),
+    "vm-save":
+      available && !p.busy && (p.phase === "running" || p.phase === "paused"),
     "vm-files": available && c.terminal,
     "vm-files-menu": available && c.terminal,
     "vm-shells": available && c.terminal,

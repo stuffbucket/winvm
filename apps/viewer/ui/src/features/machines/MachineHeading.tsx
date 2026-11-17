@@ -1,45 +1,42 @@
-import { type KeyboardEvent, useEffect, useId, useRef, useState } from "react"
+import {
+  type JSX,
+  type KeyboardEvent,
+  useEffect,
+  useId,
+  useRef,
+  useState,
+} from "react"
 
 import { t } from "../../i18n"
 import { TITLE_MAX } from "../../model"
 import { titleEdit, titleProblem } from "./machines"
 
-/** Where the machine's name goes in a heading's text: `t(key, { title: TITLE_MARK })`, then handed to MachineHeading. */
 export const TITLE_MARK = "\u0001"
 
-/** The reason a typed title can't be kept, in words; null when it can. */
 function problemText(typed: string): string | null {
   switch (titleProblem(typed)) {
     case "long":
       return t("machine.title.long", { max: TITLE_MAX })
     case "control":
       return t("machine.title.control")
-    default:
+    case null:
       return null
   }
 }
 
 export interface MachineHeadingProps {
-  /** The heading's words with TITLE_MARK where the machine's name goes: "Windows machine \u0001 is off". */
   readonly text: string
-  /** What the person calls this machine: its title, else its name. */
   readonly shown: string
-  /** It has a title of its own; emptying the field then clears it (back to the name). */
   readonly hasTitle: boolean
-  /** Sets the title (empty clears it); resolves with why it couldn't, or null. Absent: the name is plain text. */
-  onRename?(title: string): Promise<string | null>
+  readonly onRename?: (title: string) => Promise<string | null>
 }
 
-/**
- * An overview's heading with the machine's name in it, editable where it
- * stands (as a tab's name is in VS Code). At rest the name is a button that
- * reads as text, with a quiet background on hover and a text cursor. A
- * click, Return or F2 turns it into a text field of the same size and face,
- * selected; Return or leaving the field keeps what was typed, Escape puts the
- * name back. A name that can't be kept (what `winvm config title=` refuses) says
- * why in a line under the heading and stays in the field; no dialog.
- */
-export function MachineHeading({ text, shown, hasTitle, onRename }: MachineHeadingProps): JSX.Element {
+export function MachineHeading({
+  text,
+  shown,
+  hasTitle,
+  onRename,
+}: MachineHeadingProps): JSX.Element {
   const [before = "", after = ""] = text.split(TITLE_MARK)
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState(shown)
@@ -80,7 +77,6 @@ export function MachineHeading({ text, shown, hasTitle, onRename }: MachineHeadi
     if (ended.current || saving || onRename === undefined) return
     const problem = problemText(typed)
     if (problem !== null) {
-      // Enter says why and stays; leaving the field is a change of mind.
       if (focus) setMessage(problem)
       else end(false)
       return
@@ -103,7 +99,6 @@ export function MachineHeading({ text, shown, hasTitle, onRename }: MachineHeadi
       })
   }
   const onFieldKeyDown = (e: KeyboardEvent<HTMLInputElement>): void => {
-    // Keys typed here are for the field: none reaches the window's own shortcuts.
     e.stopPropagation()
     if (e.key === "Enter") commit(e.currentTarget.value, true)
     else if (e.key === "Escape") end(true)
@@ -123,8 +118,9 @@ export function MachineHeading({ text, shown, hasTitle, onRename }: MachineHeadi
             className="name-field name-field--editing"
             type="text"
             value={draft}
-            // The mono face is one width a character, so the field is as wide as what it holds.
-            style={{ width: `${String(Math.max([...draft].length, 4))}ch` }}
+            style={{
+              width: `${String(Math.max(Array.from(draft).length, 4))}ch`,
+            }}
             aria-label={t("machine.renameField")}
             aria-invalid={message !== null}
             aria-describedby={message === null ? undefined : messageId}
@@ -137,7 +133,9 @@ export function MachineHeading({ text, shown, hasTitle, onRename }: MachineHeadi
               setMessage(problemText(e.target.value))
             }}
             onKeyDown={onFieldKeyDown}
-            onBlur={(e) => commit(e.currentTarget.value, false)}
+            onBlur={(e) => {
+              commit(e.currentTarget.value, false)
+            }}
           />
         ) : (
           <button
@@ -147,8 +145,6 @@ export function MachineHeading({ text, shown, hasTitle, onRename }: MachineHeadi
             title={t("machine.renameTip")}
             aria-describedby={hintId}
             onClick={(e) => {
-              // The Return that kept the name can land on the button the focus has just gone back to,
-              // and WebKit clicks it; a click from the keyboard (no pointer) that soon is that.
               if (e.detail === 0 && Date.now() - endedAt.current < 400) return
               start()
             }}

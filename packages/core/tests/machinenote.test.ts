@@ -1,14 +1,33 @@
-/**
- * The note on a machine (machinenote.ts) and `winvm note`, against temporary
- * data directories: no VM, and never the real home.
- */
-import { afterEach, beforeEach, describe, expect, it, mock, spyOn } from "bun:test"
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
+import {
+  afterEach,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  mock,
+  spyOn,
+} from "bun:test"
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs"
 import { tmpdir } from "node:os"
 import { resolve } from "node:path"
 
 import { parseArgs } from "../src/args"
-import { MAX_NOTE_CHARS, forgetMachineNote, machineNotePath, noteCmd, readMachineNote, removeMachineNote, writeMachineNote } from "../src/machinenote"
+import {
+  forgetMachineNote,
+  MAX_NOTE_CHARS,
+  machineNotePath,
+  noteCmd,
+  readMachineNote,
+  removeMachineNote,
+  writeMachineNote,
+} from "../src/machinenote"
 import { notePath, writeNote } from "../src/notes"
 import { removeAllSaves } from "../src/saves"
 
@@ -21,13 +40,17 @@ let errs: string[] = []
 beforeEach(() => {
   saved = Object.fromEntries(VARS.map((v) => [v, process.env[v]]))
   root = mkdtempSync(resolve(tmpdir(), "winvm-machine-note-"))
-  process.env["WINVM_HOME"] = resolve(root, "state")
-  process.env["XDG_DATA_HOME"] = resolve(root, "data")
-  process.env["XDG_CONFIG_HOME"] = resolve(root, "config")
+  process.env.WINVM_HOME = resolve(root, "state")
+  process.env.XDG_DATA_HOME = resolve(root, "data")
+  process.env.XDG_CONFIG_HOME = resolve(root, "config")
   out = []
   errs = []
-  spyOn(console, "log").mockImplementation((...a: unknown[]) => void out.push(a.map(String).join(" ")))
-  spyOn(console, "error").mockImplementation((...a: unknown[]) => void errs.push(a.map(String).join(" ")))
+  spyOn(console, "log").mockImplementation(
+    (...a: unknown[]) => void out.push(a.map(String).join(" ")),
+  )
+  spyOn(console, "error").mockImplementation(
+    (...a: unknown[]) => void errs.push(a.map(String).join(" ")),
+  )
 })
 
 afterEach(() => {
@@ -41,21 +64,33 @@ afterEach(() => {
 
 describe("a machine's note", () => {
   it("lives in the XDG data dir, one file per instance, apart from the notes on saves", () => {
-    expect(machineNotePath("dev")).toBe(resolve(root, "data/winvm/machine-notes/dev.json"))
+    expect(machineNotePath("dev")).toBe(
+      resolve(root, "data/winvm/machine-notes/dev.json"),
+    )
     expect(machineNotePath("dev")).not.toBe(notePath("dev", "dev"))
   })
 
   it("refuses names that would leave the directory", () => {
-    for (const i of ["../x", ".x", "a/b", "a\\b", ""]) expect(() => machineNotePath(i)).toThrow()
+    for (const i of ["../x", ".x", "a/b", "a\\b", ""])
+      expect(() => machineNotePath(i)).toThrow()
   })
 
   it("reads back what was written, with the time", () => {
     const at = new Date("2026-11-03T09:00:00.000Z")
-    expect(writeMachineNote("dev", "Office is not installed.\nLicense key in the drawer.", process.env, at)).toEqual({
+    expect(
+      writeMachineNote(
+        "dev",
+        "Office is not installed.\nLicense key in the drawer.",
+        process.env,
+        at,
+      ),
+    ).toEqual({
       text: "Office is not installed.\nLicense key in the drawer.",
       updatedAt: "2026-11-03T09:00:00.000Z",
     })
-    expect(readMachineNote("dev")?.text).toBe("Office is not installed.\nLicense key in the drawer.")
+    expect(readMachineNote("dev")?.text).toBe(
+      "Office is not installed.\nLicense key in the drawer.",
+    )
     expect(JSON.parse(readFileSync(machineNotePath("dev"), "utf8"))).toEqual({
       text: "Office is not installed.\nLicense key in the drawer.",
       updatedAt: "2026-11-03T09:00:00.000Z",
@@ -86,7 +121,10 @@ describe("a machine's note", () => {
     mkdirSync(resolve(machineNotePath("dev"), ".."), { recursive: true })
     writeFileSync(machineNotePath("dev"), "{not json")
     expect(readMachineNote("dev")).toBeNull()
-    writeFileSync(machineNotePath("dev"), JSON.stringify({ text: "kept", updatedAt: "yesterday" }))
+    writeFileSync(
+      machineNotePath("dev"),
+      JSON.stringify({ text: "kept", updatedAt: "yesterday" }),
+    )
     const n = readMachineNote("dev")
     expect(n?.text).toBe("kept")
     expect(Number.isNaN(Date.parse(n?.updatedAt ?? ""))).toBe(false)
@@ -100,13 +138,18 @@ describe("a machine's note", () => {
     expect(readMachineNote("dev")?.text).toBe("mine")
     forgetMachineNote("dev")
     expect(readMachineNote("dev")).toBeNull()
-    expect(() => forgetMachineNote("../x")).not.toThrow()
-    expect(() => removeMachineNote("dev")).not.toThrow()
+    expect(() => {
+      forgetMachineNote("../x")
+    }).not.toThrow()
+    expect(() => {
+      removeMachineNote("dev")
+    }).not.toThrow()
   })
 })
 
 describe("winvm note", () => {
-  const run = (...argv: string[]): number => noteCmd(parseArgs(["note", ...argv]), () => "from stdin\n\n")
+  const run = (...argv: string[]): number =>
+    noteCmd(parseArgs(["note", ...argv]), () => "from stdin\n\n")
 
   it("says there is none, then writes, prints and clears", () => {
     expect(run("-i", "dev")).toBe(0)
@@ -123,7 +166,7 @@ describe("winvm note", () => {
     run("-i", "dev", "--json")
     expect(JSON.parse(out.at(-1) ?? "")).toBeNull()
     run("-i", "dev", "--text=hi", "--json")
-    expect(JSON.parse(out.at(-1) ?? "").text).toBe("hi")
+    expect((JSON.parse(out.at(-1) ?? "") as { text: string }).text).toBe("hi")
   })
 
   it("reads text from stdin with -", () => {

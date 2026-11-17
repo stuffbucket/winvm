@@ -1,12 +1,3 @@
-/**
- * A stand-in for the guest's terminal WebSocket that plays a short, fixed
- * session, so the Terminal window can be looked at (and photographed for the
- * help pictures) without a VM. It speaks the same interface as
- * tests/fake-term-server.ts, and prints the same one line of JSON when it is
- * ready: `{"url": "ws://127.0.0.1:<port>/term?shell=pwsh", "protocols": [...]}`.
- *
- *   bun tests/render/help-term-server.ts
- */
 const token = crypto.randomUUID().replace(/-/g, "")
 const encoder = new TextEncoder()
 
@@ -17,7 +8,6 @@ const str = (s: string): string => `${ESC}36m${s}${ESC}0m`
 const ok = (s: string): string => `${ESC}32m${s}${ESC}0m`
 const PROMPT = "PS C:\\Users\\Administrator> "
 
-// What the shell has already done when the window opens: the banner, then three commands.
 const SESSION = [
   "PowerShell 7.5.1\r\n",
   `\r\n${PROMPT}${cmd("winget")} install Git.Git\r\n`,
@@ -35,22 +25,43 @@ const SESSION = [
   `\r\n${PROMPT}`,
 ]
 
-const server = Bun.serve<undefined>({
+const server = Bun.serve({
   hostname: "127.0.0.1",
   port: 0,
   fetch(req, srv) {
     const url = new URL(req.url)
-    if (url.pathname !== "/term") return new Response("not found", { status: 404 })
-    const protocols = (req.headers.get("sec-websocket-protocol") ?? "").split(",").map((p) => p.trim())
-    if (!protocols.includes("winvm-term") || !protocols.includes(`winvm-token.${token}`)) return new Response("forbidden", { status: 403 })
-    return srv.upgrade(req, { data: undefined, headers: { "Sec-WebSocket-Protocol": "winvm-term" } }) ? undefined : new Response("upgrade failed", { status: 400 })
+    if (url.pathname !== "/term")
+      return new Response("not found", { status: 404 })
+    const protocols = (req.headers.get("sec-websocket-protocol") ?? "")
+      .split(",")
+      .map((p) => p.trim())
+    if (
+      !protocols.includes("winvm-term") ||
+      !protocols.includes(`winvm-token.${token}`)
+    )
+      return new Response("forbidden", { status: 403 })
+    return srv.upgrade(req, {
+      data: undefined,
+      headers: { "Sec-WebSocket-Protocol": "winvm-term" },
+    })
+      ? undefined
+      : new Response("upgrade failed", { status: 400 })
   },
   websocket: {
     open(ws) {
-      ws.sendBinary(encoder.encode(`\x1b]0;C:\\Program Files\\PowerShell\\7\\pwsh.exe\x07${SESSION.join("")}`))
+      ws.sendBinary(
+        encoder.encode(
+          `\x1b]0;C:\\Program Files\\PowerShell\\7\\pwsh.exe\x07${SESSION.join("")}`,
+        ),
+      )
     },
     message() {},
   },
 })
 
-console.log(JSON.stringify({ url: `ws://127.0.0.1:${String(server.port)}/term?shell=pwsh`, protocols: ["winvm-term", `winvm-token.${token}`] }))
+console.log(
+  JSON.stringify({
+    url: `ws://127.0.0.1:${String(server.port)}/term?shell=pwsh`,
+    protocols: ["winvm-term", `winvm-token.${token}`],
+  }),
+)

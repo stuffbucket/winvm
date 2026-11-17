@@ -14,7 +14,8 @@
         "ui/src/{main,files,terminal}.tsx",
         "scripts/*.{ts,mjs}",
         "tests/**/*.test.{ts,tsx}",
-        "tests/render/fake-tauri.js"
+        "tests/render/{fake-tauri,fake-help}.js",
+        "tests/render/help-term-server.ts"
       ],
       "project": ["ui/src/**/*.{ts,tsx}", "scripts/**", "tests/**"]
     },
@@ -29,7 +30,7 @@
         "tests/fakes/{conpty,holder}.ts"
       ],
       "project": ["src/**/*.ts", "tests/**/*.ts"],
-      "ignoreBinaries": ["hdiutil"]
+      "ignoreBinaries": ["hdiutil", "ioreg", "sample", "caffeinate"]
     },
     "packages/terminal": {
       "entry": ["tests/**/*.test.{ts,tsx}"],

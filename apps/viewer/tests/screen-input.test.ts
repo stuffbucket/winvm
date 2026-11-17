@@ -1,14 +1,29 @@
-import { GlobalRegistrator } from "@happy-dom/global-registrator"
 import { afterAll, afterEach, describe, expect, it } from "bun:test"
+import { GlobalRegistrator } from "@happy-dom/global-registrator"
 
-import { GuestPointerRouter, releaseNoVncPointer, type NoVncPointer, type PointerPoint, type RoutedPointerEvent } from "../ui/src/features/screen/input"
+import {
+  GuestPointerRouter,
+  type NoVncPointer,
+  type PointerPoint,
+  type RoutedPointerEvent,
+  releaseNoVncPointer,
+} from "../ui/src/features/screen/input"
 
 function event(type: string, buttons = 0, button = 0, x = 50, y = 60) {
   return {
-    type, buttons, button, clientX: x, clientY: y,
-    prevented: false, stopped: false,
-    preventDefault() { this.prevented = true },
-    stopImmediatePropagation() { this.stopped = true },
+    type,
+    buttons,
+    button,
+    clientX: x,
+    clientY: y,
+    prevented: false,
+    stopped: false,
+    preventDefault() {
+      this.prevented = true
+    },
+    stopImmediatePropagation() {
+      this.stopped = true
+    },
   } satisfies RoutedPointerEvent & { prevented: boolean; stopped: boolean }
 }
 
@@ -53,7 +68,8 @@ describe("absolute guest pointer ownership", () => {
   it("keeps a guest-origin drag across the edge and back, without changing its coordinates", () => {
     const { pass, released } = setup()
     expect(pass(event("mousedown", 1))).toBe(true)
-    for (const x of [99, 120, -30, 60]) expect(pass(event("mousemove", 1, 0, x))).toBe(true)
+    for (const x of [99, 120, -30, 60])
+      expect(pass(event("mousemove", 1, 0, x))).toBe(true)
     expect(pass(event("mouseup", 0, 0, 140))).toBe(true)
     expect(released).toEqual([])
   })
@@ -61,11 +77,23 @@ describe("absolute guest pointer ownership", () => {
   it("tracks left, middle, right and extended buttons without conflating DOM bits", () => {
     const { pass } = setup()
     let buttons = 0
-    for (const [button, bit] of [[0, 1], [1, 4], [2, 2], [3, 8], [4, 16]] as const) {
+    for (const [button, bit] of [
+      [0, 1],
+      [1, 4],
+      [2, 2],
+      [3, 8],
+      [4, 16],
+    ] as const) {
       buttons |= bit
       expect(pass(event("mousedown", buttons, button))).toBe(true)
     }
-    for (const [button, bit] of [[2, 2], [0, 1], [4, 16], [1, 4], [3, 8]] as const) {
+    for (const [button, bit] of [
+      [2, 2],
+      [0, 1],
+      [4, 16],
+      [1, 4],
+      [3, 8],
+    ] as const) {
       buttons &= ~bit
       expect(pass(event("mouseup", buttons, button))).toBe(true)
     }
@@ -122,8 +150,6 @@ describe("absolute guest pointer ownership", () => {
   }
 })
 
-// Exercise the exact private noVNC methods and real document capture proxy used
-// by Screen, not a second implementation of their button/timer/capture behavior.
 GlobalRegistrator.register()
 const { default: RFB } = await import("@winvm/novnc/core/rfb.js")
 const { clientToElement } = await import("@winvm/novnc/core/util/element.js")
@@ -150,27 +176,59 @@ function noVnc() {
   document.body.append(host)
   canvas.getBoundingClientRect = () => new DOMRect(10, 20, 100, 100)
   const sent: { x: number; y: number; buttons: number }[] = []
-  const conn: TestPointer = Object.assign(Object.create(RFB.prototype), {
-    _canvas: canvas,
-    _mouseButtonMask: 0,
-    _mouseMoveTimer: null,
-    _mouseLastMoveTime: 0,
-    _sendMouse: (x: number, y: number, buttons: number) => sent.push({ x, y, buttons }),
-  })
+  const conn: TestPointer = Object.assign(
+    Object.create(RFB.prototype) as TestPointer,
+    {
+      _canvas: canvas,
+      _mouseButtonMask: 0,
+      _mouseMoveTimer: null,
+      _mouseLastMoveTime: 0,
+      _sendMouse: (x: number, y: number, buttons: number) =>
+        sent.push({ x, y, buttons }),
+    },
+  )
   const router = new GuestPointerRouter((point) => {
-    const pos = point === null ? { x: 0, y: 0 } : clientToElement(point.x, point.y, canvas)
+    const pos =
+      point === null
+        ? { x: 0, y: 0 }
+        : clientToElement(point.x, point.y, canvas)
     releaseNoVncPointer(conn, pos, releaseCapture)
   })
   for (const name of ["mousedown", "mouseup", "mousemove"] as const) {
-    host.addEventListener(name, (e) => router.handle(e), true)
-    canvas.addEventListener(name, (e) => conn._handleMouse(e))
+    host.addEventListener(
+      name,
+      (e) => {
+        router.handle(e)
+      },
+      true,
+    )
+    canvas.addEventListener(name, (e) => {
+      conn._handleMouse(e)
+    })
   }
-  dispose = () => router.releaseAll()
-  const send = (target: EventTarget, type: string, buttons = 0, x = 50, y = 60): void => {
+  dispose = () => {
+    router.releaseAll()
+  }
+  const send = (
+    target: EventTarget,
+    type: string,
+    buttons = 0,
+    x = 50,
+    y = 60,
+  ): void => {
     conn._mouseLastMoveTime = 0
-    target.dispatchEvent(new MouseEvent(type, { buttons, clientX: x, clientY: y, bubbles: true, cancelable: true }))
+    target.dispatchEvent(
+      new MouseEvent(type, {
+        buttons,
+        clientX: x,
+        clientY: y,
+        bubbles: true,
+        cancelable: true,
+      }),
+    )
   }
-  const captured = (): boolean => document.getElementById("noVNC_mouse_capture_elem")?.style.display === ""
+  const captured = (): boolean =>
+    document.getElementById("noVNC_mouse_capture_elem")?.style.display === ""
   return { canvas, conn, router, sent, send, captured }
 }
 
@@ -203,9 +261,15 @@ describe("noVNC drag capture integration", () => {
     const { canvas, conn, router, sent, send, captured } = noVnc()
     send(canvas, "mousedown", 1, 80, 90)
     send(canvas, "mousemove", 1, 85, 95)
-    // Force a queued move using the actual noVNC throttle.
     conn._mouseLastMoveTime = Date.now()
-    canvas.dispatchEvent(new MouseEvent("mousemove", { buttons: 1, clientX: 90, clientY: 100, bubbles: true }))
+    canvas.dispatchEvent(
+      new MouseEvent("mousemove", {
+        buttons: 1,
+        clientX: 90,
+        clientY: 100,
+        bubbles: true,
+      }),
+    )
     expect(conn._mouseMoveTimer).not.toBeNull()
     const before = sent.length
     router.setResizing(true)
@@ -223,8 +287,16 @@ describe("noVNC drag capture integration", () => {
   it("releases every held button and the document overlay on focus loss", () => {
     const { canvas, conn, router, sent, send, captured } = noVnc()
     send(canvas, "mousedown", 1)
-    canvas.dispatchEvent(new MouseEvent("mousedown", { buttons: 3, button: 2, clientX: 60, clientY: 70, bubbles: true }))
-    expect(conn._mouseButtonMask).toBe(5) // noVNC's RFB bits, not the DOM bits
+    canvas.dispatchEvent(
+      new MouseEvent("mousedown", {
+        buttons: 3,
+        button: 2,
+        clientX: 60,
+        clientY: 70,
+        bubbles: true,
+      }),
+    )
+    expect(conn._mouseButtonMask).toBe(5)
     router.setFocused(false)
     expect(sent.at(-1)).toEqual({ x: 50, y: 50, buttons: 0 })
     expect(conn._mouseButtonMask).toBe(0)

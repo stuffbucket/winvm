@@ -1,21 +1,17 @@
-/**
- * The agent's supervisor is single-instance per port. Two of them started at
- * once (a logon's Run key racing an install's own start) used to leave the
- * loser retrying "could not start" every 30 s for ever. Real processes on the
- * host (the agent is plain Bun), an ephemeral port, a temp token: no VM.
- */
+import { afterAll, beforeAll, describe, expect, it } from "bun:test"
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { resolve } from "node:path"
 
-import { afterAll, beforeAll, describe, expect, it } from "bun:test"
-
 import { AgentClient } from "../src/agent"
-import { agentServes, superviseLoop, type SuperviseHooks } from "../src/guestagent"
+import {
+  agentServes,
+  type SuperviseHooks,
+  superviseLoop,
+} from "../src/guestagent"
 
 const AGENT = resolve(import.meta.dir, "..", "src", "guestagent.ts")
 const TOKEN = "supervise-test-token"
-/** A loaded host is slow, not broken: bound the wait by the test timeout, not by a clock assertion. */
 const SLOW_HOST_MS = 120_000
 
 let dir: string
@@ -25,7 +21,11 @@ let port: number
 const children: Bun.Subprocess[] = []
 
 function freePort(): number {
-  const s = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: () => new Response("") })
+  const s = Bun.serve({
+    port: 0,
+    hostname: "127.0.0.1",
+    fetch: () => new Response(""),
+  })
   const p = s.port ?? 0
   void s.stop(true)
   return p
@@ -33,7 +33,20 @@ function freePort(): number {
 
 function supervisor(extra: readonly string[] = []): Bun.Subprocess {
   const p = Bun.spawn(
-    [process.execPath, AGENT, "--supervise", "--port", String(port), "--hostname", "127.0.0.1", "--token-file", tokenFile, "--log", logFile, ...extra],
+    [
+      process.execPath,
+      AGENT,
+      "--supervise",
+      "--port",
+      String(port),
+      "--hostname",
+      "127.0.0.1",
+      "--token-file",
+      tokenFile,
+      "--log",
+      logFile,
+      ...extra,
+    ],
     { stdio: ["ignore", "ignore", "ignore"] },
   )
   children.push(p)
@@ -43,14 +56,22 @@ function supervisor(extra: readonly string[] = []): Bun.Subprocess {
 async function untilServing(): Promise<void> {
   const c = new AgentClient(`http://127.0.0.1:${String(port)}`, TOKEN)
   for (;;) {
-    if (await c.health(1000).then(() => true, () => false)) return
+    if (
+      await c.health(1000).then(
+        () => true,
+        () => false,
+      )
+    )
+      return
     await Bun.sleep(100)
   }
 }
 
 const logLines = (): string[] => {
   try {
-    return readFileSync(logFile, "utf8").split("\n").filter((l) => l !== "")
+    return readFileSync(logFile, "utf8")
+      .split("\n")
+      .filter((l) => l !== "")
   } catch {
     return []
   }
@@ -69,45 +90,66 @@ afterAll(() => {
 })
 
 describe("two supervisors on one port", () => {
-  it("lets the second exit quietly with one line while the first keeps serving", async () => {
-    const first = supervisor()
-    await untilServing()
-    const second = supervisor()
-    expect(await second.exited).toBe(0)
-    const said = logLines().filter((l) => l.includes(`another agent already serves port ${String(port)}`))
-    expect(said).toHaveLength(1)
-    expect(first.killed || first.exitCode !== null).toBe(false)
-    await untilServing()
-  }, SLOW_HOST_MS)
+  it(
+    "lets the second exit quietly with one line while the first keeps serving",
+    async () => {
+      const first = supervisor()
+      await untilServing()
+      const second = supervisor()
+      expect(await second.exited).toBe(0)
+      const said = logLines().filter((l) =>
+        l.includes(`another agent already serves port ${String(port)}`),
+      )
+      expect(said).toHaveLength(1)
+      expect(first.killed || first.exitCode !== null).toBe(false)
+      await untilServing()
+    },
+    SLOW_HOST_MS,
+  )
 })
 
 describe("two supervisors started at the same moment", () => {
-  it("leaves exactly one tree: the one whose agent bound the port", async () => {
-    port = freePort()
-    writeFileSync(logFile, "")
-    const a = supervisor()
-    const b = supervisor()
-    await untilServing()
-    const [loser] = await Promise.race([a.exited.then((c) => [a, c] as const), b.exited.then((c) => [b, c] as const)])
-    const winner = loser === a ? b : a
-    expect(loser.exitCode).toBe(0)
-    expect(winner.exitCode).toBeNull()
-    await untilServing()
-  }, SLOW_HOST_MS)
+  it(
+    "leaves exactly one tree: the one whose agent bound the port",
+    async () => {
+      port = freePort()
+      writeFileSync(logFile, "")
+      const a = supervisor()
+      const b = supervisor()
+      await untilServing()
+      const [loser] = await Promise.race([
+        a.exited.then((c) => [a, c] as const),
+        b.exited.then((c) => [b, c] as const),
+      ])
+      const winner = loser === a ? b : a
+      expect(loser.exitCode).toBe(0)
+      expect(winner.exitCode).toBeNull()
+      await untilServing()
+    },
+    SLOW_HOST_MS,
+  )
 })
 
 describe("agentServes", () => {
-  it("is true for an agent, whatever token it is given", async () => {
-    await untilServing()
-    expect(await agentServes(port, TOKEN)).toBe(true)
-    expect(await agentServes(port, "some other token")).toBe(true)
-  }, SLOW_HOST_MS)
+  it(
+    "is true for an agent, whatever token it is given",
+    async () => {
+      await untilServing()
+      expect(await agentServes(port, TOKEN)).toBe(true)
+      expect(await agentServes(port, "some other token")).toBe(true)
+    },
+    SLOW_HOST_MS,
+  )
 
   it("is false for a listener that never answers, and for nothing at all", async () => {
     const held: unknown[] = []
-    const silent = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { open: (s) => void held.push(s), data() {} } })
+    const silent = Bun.listen({
+      hostname: "127.0.0.1",
+      port: 0,
+      socket: { open: (s) => void held.push(s), data() {} },
+    })
     try {
-      expect(await agentServes(silent.port ?? 0, TOKEN, 200)).toBe(false)
+      expect(await agentServes(silent.port, TOKEN, 200)).toBe(false)
     } finally {
       silent.stop(true)
     }
@@ -115,7 +157,11 @@ describe("agentServes", () => {
   })
 
   it("is false for another web server", async () => {
-    const other = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: () => new Response("hello") })
+    const other = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      fetch: () => new Response("hello"),
+    })
     try {
       expect(await agentServes(other.port ?? 0, TOKEN, 1000)).toBe(false)
     } finally {
@@ -124,8 +170,15 @@ describe("agentServes", () => {
   })
 })
 
-/** A scripted child and clock: `codes` are the exit codes of successive children. */
-function scripted(codes: number[], serves: boolean | (() => boolean)): { hooks: SuperviseHooks; runs: () => number; log: string[]; sleeps: number[] } {
+function scripted(
+  codes: number[],
+  serves: boolean | (() => boolean),
+): {
+  hooks: SuperviseHooks
+  runs: () => number
+  log: string[]
+  sleeps: number[]
+} {
   let now = 0
   let runs = 0
   const log: string[] = []
@@ -135,15 +188,17 @@ function scripted(codes: number[], serves: boolean | (() => boolean)): { hooks: 
     log,
     sleeps,
     hooks: {
-      run: async () => {
+      run: () => {
         runs++
         now += 100
-        return codes[Math.min(runs - 1, codes.length - 1)] ?? 0
+        return Promise.resolve(codes[Math.min(runs - 1, codes.length - 1)] ?? 0)
       },
-      serves: async () => (typeof serves === "function" ? serves() : serves),
-      sleep: async (ms) => {
+      serves: () =>
+        Promise.resolve(typeof serves === "function" ? serves() : serves),
+      sleep: (ms) => {
         sleeps.push(ms)
         now += ms
+        return Promise.resolve()
       },
       now: () => now,
       log: (l) => log.push(l),
@@ -183,7 +238,9 @@ describe("superviseLoop", () => {
 
   it("keeps retrying a stale listener with bounded backoff, then gives up once", async () => {
     const s = scripted([2], false)
-    expect(await superviseLoop(s.hooks, 7801, { staleLimitMs: 120_000 })).toBe(1)
+    expect(await superviseLoop(s.hooks, 7801, { staleLimitMs: 120_000 })).toBe(
+      1,
+    )
     expect(s.runs()).toBeGreaterThan(2)
     expect(Math.max(...s.sleeps)).toBeLessThanOrEqual(30_000)
     expect(s.log).toHaveLength(1)
@@ -192,19 +249,19 @@ describe("superviseLoop", () => {
 
   it("restarts after a crash that follows a stale spell, and forgets the spell", async () => {
     const s = scripted([2, 2, 1, 0], false)
-    expect(await superviseLoop(s.hooks, 7801, { staleLimitMs: 120_000 })).toBe(0)
+    expect(await superviseLoop(s.hooks, 7801, { staleLimitMs: 120_000 })).toBe(
+      0,
+    )
     expect(s.runs()).toBe(4)
     expect(s.log).toEqual([])
   })
 })
 
-/**
- * No PowerShell on the host to run agent-install.ps1, so what can be checked is
- * its shape: balanced, and every start of the agent is preceded by a sweep that
- * stops supervisors by command line.
- */
 describe("agent-install.ps1", () => {
-  const ps1 = readFileSync(resolve(import.meta.dir, "..", "assets", "agent-install.ps1"), "utf8")
+  const ps1 = readFileSync(
+    resolve(import.meta.dir, "..", "assets", "agent-install.ps1"),
+    "utf8",
+  )
   const code = ps1
     .split("\n")
     .map((l) => l.replace(/^\s*#.*$/, ""))
@@ -219,9 +276,11 @@ describe("agent-install.ps1", () => {
   })
 
   it("stops supervisors by command line before the files are replaced, and again before it starts one", () => {
-    const sweeps = [...ps1.matchAll(/^\s*Stop-Agent\s*$/gm)].map((m) => m.index ?? -1)
+    const sweeps = [...ps1.matchAll(/^\s*Stop-Agent\s*$/gm)].map((m) => m.index)
     expect(sweeps).toHaveLength(2)
-    expect(sweeps[0]).toBeLessThan(ps1.indexOf("Copy-Item (Join-Path $Source \"guestagent.ts\")"))
+    expect(sweeps[0]).toBeLessThan(
+      ps1.indexOf('Copy-Item (Join-Path $Source "guestagent.ts")'),
+    )
     expect(sweeps[1]).toBeLessThan(ps1.indexOf("& $ris --hidden"))
     expect(sweeps[1]).toBeGreaterThan(ps1.indexOf("Set-ItemProperty"))
     expect(ps1).toContain("Win32_Process")

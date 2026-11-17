@@ -1,12 +1,6 @@
-/**
- * The overview's list of things to do, and the help popover each row opens:
- * where the popover goes, how it opens and closes, where focus is, what the
- * keys do, and that every topic has its words and its pictures. Rendered in
- * happy-dom, which computes no layout; the pictures themselves are looked at
- * with scripts/render-help.mjs.
- */
-import { GlobalRegistrator } from "@happy-dom/global-registrator"
 import { afterAll, afterEach, describe, expect, it } from "bun:test"
+import { GlobalRegistrator } from "@happy-dom/global-registrator"
+import type { JSX } from "react"
 
 GlobalRegistrator.register()
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true })
@@ -17,9 +11,14 @@ const { placeNear } = await import("../ui/src/components/HelpPopover")
 const { Abilities } = await import("../ui/src/features/help/Abilities")
 const { blockedBy } = await import("../ui/src/features/help/availability")
 const { IMAGES } = await import("../ui/src/features/help/images")
-const { TOPICS, pictureKey, topicKeys } = await import("../ui/src/features/help/topics")
+const { TOPICS, pictureKey, topicKeys } = await import(
+  "../ui/src/features/help/topics"
+)
 const { Overview } = await import("../ui/src/features/overview/Overview")
-const en = (await import("../ui/src/i18n/en.json")).default as Record<string, string>
+const en = (await import("../ui/src/i18n/en.json")).default as Record<
+  string,
+  string
+>
 const text = (k: string): string => en[k] ?? `(missing ${k})`
 
 type Root = ReturnType<typeof createRoot>
@@ -40,12 +39,27 @@ function render(node: JSX.Element): HTMLElement {
   return host
 }
 
-const rows = (): HTMLButtonElement[] => [...document.querySelectorAll<HTMLButtonElement>(".ability")]
-const popover = (): HTMLElement | null => document.querySelector<HTMLElement>(".help")
-const title = (): string => popover()?.querySelector(".help__title")?.textContent ?? ""
-const key = (target: EventTarget, k: string, init: KeyboardEventInit = {}): void => {
+const rows = (): HTMLButtonElement[] => [
+  ...document.querySelectorAll<HTMLButtonElement>(".ability"),
+]
+const popover = (): HTMLElement | null =>
+  document.querySelector<HTMLElement>(".help")
+const title = (): string =>
+  popover()?.querySelector(".help__title")?.textContent ?? ""
+const key = (
+  target: EventTarget,
+  k: string,
+  init: KeyboardEventInit = {},
+): void => {
   act(() => {
-    target.dispatchEvent(new KeyboardEvent("keydown", { key: k, bubbles: true, cancelable: true, ...init }))
+    target.dispatchEvent(
+      new KeyboardEvent("keydown", {
+        key: k,
+        bubbles: true,
+        cancelable: true,
+        ...init,
+      }),
+    )
   })
 }
 const press = (target: EventTarget): void => {
@@ -81,14 +95,26 @@ describe("where the popover goes", () => {
     const below = placeNear(wide, { width: 600, height: 300 }, narrow, 12, 12)
     expect(below.side).toBe("below")
     expect(below.top).toBe(100 + 40 + 12)
-    const above = placeNear({ ...wide, top: 700 }, { width: 600, height: 300 }, narrow, 12, 12)
+    const above = placeNear(
+      { ...wide, top: 700 },
+      { width: 600, height: 300 },
+      narrow,
+      12,
+      12,
+    )
     expect(above.side).toBe("above")
     expect(above.top).toBe(700 - 12 - 300)
   })
 
   it("covers the middle of a window with no room anywhere, as tall as the window allows", () => {
     const small = { width: 600, height: 400 }
-    const p = placeNear({ left: 20, top: 150, width: 560, height: 50 }, panel, small, 12, 12)
+    const p = placeNear(
+      { left: 20, top: 150, width: 560, height: 50 },
+      panel,
+      small,
+      12,
+      12,
+    )
     expect(p.side).toBe("over")
     expect(p.top).toBe(12)
     expect(p.maxHeight).toBe(400 - 24)
@@ -105,15 +131,25 @@ describe("where the popover goes", () => {
 
 describe("the topics", () => {
   it("are the five things to do, in the order the overview lists them", () => {
-    expect(TOPICS.map((x) => x.id)).toEqual(["exec", "files", "save", "restore", "agent"])
+    expect(TOPICS.map((x) => x.id)).toEqual([
+      "exec",
+      "files",
+      "save",
+      "restore",
+      "agent",
+    ])
   })
 
   it("name the thing to do plainly", () => {
     expect(text("ability.exec")).toBe("Open a Windows terminal")
-    expect(text("ability.files")).toBe("Copy files between your Mac and Windows")
+    expect(text("ability.files")).toBe(
+      "Copy files between your Mac and Windows",
+    )
     expect(text("ability.save")).toBe("Save a checkpoint")
     expect(text("ability.restore")).toBe("Restore a checkpoint")
-    expect(text("ability.agent")).toBe("Use winvm from Claude Code and Claude Desktop")
+    expect(text("ability.agent")).toBe(
+      "Use winvm from Claude Code and Claude Desktop",
+    )
   })
 
   it("title the list in a few plain words", () => {
@@ -139,13 +175,17 @@ describe("the topics", () => {
 describe("the list", () => {
   it("is one button per topic, each saying it opens a dialog, none open yet", () => {
     render(<Abilities />)
-    expect(rows().map((r) => r.textContent)).toEqual(TOPICS.map((x) => text(`ability.${x.id}`)))
+    expect(rows().map((r) => r.textContent)).toEqual(
+      TOPICS.map((x) => text(`ability.${x.id}`)),
+    )
     for (const r of rows()) {
       expect(r.getAttribute("aria-haspopup")).toBe("dialog")
       expect(r.getAttribute("aria-expanded")).toBe("false")
     }
     expect(popover()).toBeNull()
-    expect(document.getElementById("abilities-title")?.textContent).toBe(text("abilities.title"))
+    expect(document.getElementById("abilities-title")?.textContent).toBe(
+      text("abilities.title"),
+    )
   })
 
   it("keeps each row's icon in a column of its own, apart from the label", () => {
@@ -163,28 +203,39 @@ describe("the list", () => {
     const first = all[0] as HTMLButtonElement
     const second = all[1] as HTMLButtonElement
     const last = all[4] as HTMLButtonElement
-    act(() => first.focus())
-    key(first as HTMLElement, "ArrowDown")
+    act(() => {
+      first.focus()
+    })
+    key(first, "ArrowDown")
     expect(document.activeElement).toBe(second)
-    key(second as HTMLElement, "ArrowUp")
+    key(second, "ArrowUp")
     expect(document.activeElement).toBe(first)
-    key(first as HTMLElement, "End")
+    key(first, "End")
     expect(document.activeElement).toBe(last)
-    key(last as HTMLElement, "ArrowDown")
+    key(last, "ArrowDown")
     expect(document.activeElement).toBe(last)
-    key(last as HTMLElement, "Home")
+    key(last, "Home")
     expect(document.activeElement).toBe(first)
   })
 
   it("is part of the overview of a machine that is off", () => {
-    render(<Overview phase="stopped" status={null} steps={null} canStart onStart={() => undefined} />)
+    render(
+      <Overview
+        phase="stopped"
+        status={null}
+        steps={null}
+        canStart
+        onStart={() => undefined}
+      />,
+    )
     expect(rows()).toHaveLength(TOPICS.length)
   })
 })
 
 describe("what the machine's state allows", () => {
   type Id = (typeof TOPICS)[number]["id"]
-  const unavailable = (phase: Parameters<typeof blockedBy>[1]): Id[] => TOPICS.filter((x) => blockedBy(x.id, phase) !== null).map((x) => x.id)
+  const unavailable = (phase: Parameters<typeof blockedBy>[1]): Id[] =>
+    TOPICS.filter((x) => blockedBy(x.id, phase) !== null).map((x) => x.id)
 
   it("leaves all five open while Windows runs, and while the state is not known yet", () => {
     expect(unavailable("running")).toEqual([])
@@ -195,7 +246,8 @@ describe("what the machine's state allows", () => {
   it("keeps only going back to a checkpoint open while Windows is off or put away", () => {
     for (const phase of ["stopped", "stowed"] as const) {
       expect(unavailable(phase)).toEqual(["exec", "files", "save", "agent"])
-      for (const id of ["exec", "files", "save", "agent"] as const) expect(blockedBy(id, phase)).toBe("abilities.why.start")
+      for (const id of ["exec", "files", "save", "agent"] as const)
+        expect(blockedBy(id, phase)).toBe("abilities.why.start")
     }
   })
 
@@ -212,18 +264,26 @@ describe("what the machine's state allows", () => {
   })
 
   it("has a sentence for every reason", () => {
-    for (const k of ["start", "setUp", "starting", "resume"]) expect(en[`abilities.why.${k}`]).toBeDefined()
+    for (const k of ["start", "setUp", "starting", "resume"])
+      expect(en[`abilities.why.${k}`]).toBeDefined()
   })
 
   it("marks the rows it can't do aria-disabled, with the reason under the label, and leaves the others plain", () => {
     render(<Abilities phase="stowed" />)
     const all = rows()
-    expect(all.map((r) => r.getAttribute("aria-disabled"))).toEqual(["true", "true", "true", null, "true"])
-    expect(all[0]?.querySelector(".ability__why")?.textContent).toBe(text("abilities.why.start"))
+    expect(all.map((r) => r.getAttribute("aria-disabled"))).toEqual([
+      "true",
+      "true",
+      "true",
+      null,
+      "true",
+    ])
+    expect(all[0]?.querySelector(".ability__why")?.textContent).toBe(
+      text("abilities.why.start"),
+    )
     expect(all[3]?.querySelector(".ability__why")).toBeNull()
     expect(all[3]?.className).not.toContain("ability--off")
     expect(all[0]?.className).toContain("ability--off")
-    // Not `disabled`: it stays in the Tab order and can be pressed for its help.
     expect(all[0]?.hasAttribute("disabled")).toBe(false)
   })
 
@@ -238,39 +298,59 @@ describe("what the machine's state allows", () => {
   it("still opens the help of a row that is not available, and says the same as for any other row", () => {
     render(<Abilities phase="stopped" />)
     const r = rows()[4] as HTMLButtonElement
-    act(() => r.click())
+    act(() => {
+      r.click()
+    })
     expect(title()).toBe(text("ability.agent"))
     expect(r.getAttribute("aria-expanded")).toBe("true")
     const p = popover() as HTMLElement
     expect(p.querySelector(".help__unavailable")).toBeNull()
-    expect(p.querySelector(".help__lead")?.textContent).toBe(text("help.agent.lead"))
+    expect(p.querySelector(".help__lead")?.textContent).toBe(
+      text("help.agent.lead"),
+    )
     expect(p.querySelectorAll(".help__steps li")).toHaveLength(3)
   })
 
   it("says nothing of the sort in the help of a row that is available", () => {
     render(<Abilities phase="stopped" />)
-    act(() => (rows()[3] as HTMLButtonElement).click())
+    act(() => {
+      ;(rows()[3] as HTMLButtonElement).click()
+    })
     expect(popover()?.querySelector(".help__unavailable")).toBeNull()
   })
 
   it("still moves between unavailable rows with the arrow keys", () => {
     render(<Abilities phase="stowed" />)
     const all = rows()
-    act(() => (all[0] as HTMLButtonElement).focus())
+    act(() => {
+      ;(all[0] as HTMLButtonElement).focus()
+    })
     key(all[0] as HTMLElement, "ArrowDown")
     expect(document.activeElement).toBe(all[1] as HTMLElement)
   })
 
   it("reaches the list from the overview of a suspended machine, with its reasons", () => {
-    render(<Overview phase="stowed" status={null} steps={null} canStart onStart={() => undefined} />)
-    expect(rows().filter((r) => r.getAttribute("aria-disabled") === "true")).toHaveLength(4)
+    render(
+      <Overview
+        phase="stowed"
+        status={null}
+        steps={null}
+        canStart
+        onStart={() => undefined}
+      />,
+    )
+    expect(
+      rows().filter((r) => r.getAttribute("aria-disabled") === "true"),
+    ).toHaveLength(4)
   })
 })
 
 describe("a topic's popover", () => {
   const open = (i: number): HTMLButtonElement => {
     const r = rows()[i] as HTMLButtonElement
-    act(() => r.click())
+    act(() => {
+      r.click()
+    })
     return r
   }
 
@@ -281,7 +361,9 @@ describe("a topic's popover", () => {
     expect(p).not.toBeNull()
     expect(p?.getAttribute("role")).toBe("dialog")
     expect(title()).toBe(text("ability.exec"))
-    expect(p?.getAttribute("aria-labelledby")).toBe(p?.querySelector(".help__title")?.id ?? "x")
+    expect(p?.getAttribute("aria-labelledby")).toBe(
+      p?.querySelector(".help__title")?.id ?? "x",
+    )
     expect(r.getAttribute("aria-expanded")).toBe("true")
     expect(document.activeElement).toBe(p)
   })
@@ -297,9 +379,19 @@ describe("a topic's popover", () => {
     render(<Abilities />)
     open(2)
     const p = popover() as HTMLElement
-    expect(p.querySelector(".help__lead")?.textContent).toBe(text("help.save.lead"))
-    expect([...p.querySelectorAll(".help__steps li")].map((li) => li.textContent)).toEqual([text("help.save.step1"), text("help.save.step2"), text("help.save.step3")])
-    expect(p.querySelector(".help__note-title")?.textContent).toBe(text("help.save.note.title"))
+    expect(p.querySelector(".help__lead")?.textContent).toBe(
+      text("help.save.lead"),
+    )
+    expect(
+      [...p.querySelectorAll(".help__steps li")].map((li) => li.textContent),
+    ).toEqual([
+      text("help.save.step1"),
+      text("help.save.step2"),
+      text("help.save.step3"),
+    ])
+    expect(p.querySelector(".help__note-title")?.textContent).toBe(
+      text("help.save.note.title"),
+    )
     const img = p.querySelector("img")
     expect(img?.getAttribute("alt")).toBe(text("help.save.fig.new.alt"))
   })
@@ -311,22 +403,42 @@ describe("a topic's popover", () => {
     const dark = popover()?.querySelector("source")
     expect(dark?.getAttribute("media")).toBe("(prefers-color-scheme: dark)")
     expect(dark?.getAttribute("srcset")).toBe(image?.dark)
-    expect(popover()?.querySelector("img")?.getAttribute("src")).toBe(image?.light)
+    expect(popover()?.querySelector("img")?.getAttribute("src")).toBe(
+      image?.light,
+    )
   })
 
   it("lets a topic with two pictures switch between them", () => {
     render(<Abilities />)
     open(3)
-    const buttons = [...(popover()?.querySelectorAll<HTMLButtonElement>(".help__view") ?? [])]
-    expect(buttons.map((b) => b.textContent)).toEqual([text("help.restore.fig.browse.label"), text("help.restore.fig.goBack.label")])
-    expect(buttons.map((b) => b.getAttribute("aria-pressed"))).toEqual(["true", "false"])
+    const buttons = [
+      ...(popover()?.querySelectorAll<HTMLButtonElement>(".help__view") ?? []),
+    ]
+    expect(buttons.map((b) => b.textContent)).toEqual([
+      text("help.restore.fig.browse.label"),
+      text("help.restore.fig.goBack.label"),
+    ])
+    expect(buttons.map((b) => b.getAttribute("aria-pressed"))).toEqual([
+      "true",
+      "false",
+    ])
     const browse = IMAGES[pictureKey("restore", "browse")]
-    expect(popover()?.querySelector("img")?.getAttribute("src")).toBe(browse?.light)
+    expect(popover()?.querySelector("img")?.getAttribute("src")).toBe(
+      browse?.light,
+    )
     act(() => buttons[1]?.click())
     const goBack = IMAGES[pictureKey("restore", "goBack")]
-    expect(popover()?.querySelector("img")?.getAttribute("src")).toBe(goBack?.light)
-    expect(popover()?.querySelector("img")?.getAttribute("alt")).toBe(text("help.restore.fig.goBack.alt"))
-    expect([...popover()?.querySelectorAll(".help__view") ?? []].map((b) => b.getAttribute("aria-pressed"))).toEqual(["false", "true"])
+    expect(popover()?.querySelector("img")?.getAttribute("src")).toBe(
+      goBack?.light,
+    )
+    expect(popover()?.querySelector("img")?.getAttribute("alt")).toBe(
+      text("help.restore.fig.goBack.alt"),
+    )
+    expect(
+      [...(popover()?.querySelectorAll(".help__view") ?? [])].map((b) =>
+        b.getAttribute("aria-pressed"),
+      ),
+    ).toEqual(["false", "true"])
   })
 
   it("shows no switch for a topic with one picture", () => {
@@ -341,7 +453,11 @@ describe("a topic's popover", () => {
     open(0)
     expect(popover()).toBeNull()
     open(0)
-    act(() => popover()?.querySelector<HTMLButtonElement>('button[aria-label="Close"]')?.click())
+    act(() =>
+      popover()
+        ?.querySelector<HTMLButtonElement>('button[aria-label="Close"]')
+        ?.click(),
+    )
     expect(popover()).toBeNull()
   })
 
@@ -377,9 +493,14 @@ describe("a topic's popover", () => {
   it("steps to the next and previous topic with its buttons and the left and right arrows, round the ends", () => {
     render(<Abilities />)
     open(0)
-    const position = (): string => popover()?.querySelector(".help__position")?.textContent ?? ""
+    const position = (): string =>
+      popover()?.querySelector(".help__position")?.textContent ?? ""
     expect(position()).toBe("1 of 5")
-    act(() => popover()?.querySelector<HTMLButtonElement>('button[aria-label="Next topic"]')?.click())
+    act(() =>
+      popover()
+        ?.querySelector<HTMLButtonElement>('button[aria-label="Next topic"]')
+        ?.click(),
+    )
     expect(title()).toBe(text("ability.files"))
     expect(position()).toBe("2 of 5")
     key(popover() as HTMLElement, "ArrowRight")
@@ -409,14 +530,19 @@ describe("a topic's popover", () => {
     const items = [...p.querySelectorAll<HTMLElement>("button")]
     const first = items[0] as HTMLElement
     const last = items[items.length - 1] as HTMLElement
-    act(() => last.focus())
+    act(() => {
+      last.focus()
+    })
     key(last, "Tab")
     expect(document.activeElement).toBe(first)
-    act(() => first.focus())
+    act(() => {
+      first.focus()
+    })
     key(first, "Tab", { shiftKey: true })
     expect(document.activeElement).toBe(last)
-    // From the panel itself, where focus starts, Shift-Tab also goes to the end.
-    act(() => p.focus())
+    act(() => {
+      p.focus()
+    })
     key(p, "Tab", { shiftKey: true })
     expect(document.activeElement).toBe(last)
   })
@@ -426,7 +552,9 @@ describe("a topic's popover", () => {
     open(0)
     const outside = document.createElement("button")
     document.body.append(outside)
-    act(() => outside.focus())
+    act(() => {
+      outside.focus()
+    })
     key(window, "Escape")
     expect(popover()).toBeNull()
     expect(document.activeElement).toBe(outside)

@@ -261,12 +261,13 @@ describe("the machine picker", () => {
     const menu = await open(
       document.querySelector(".machine-picker") as HTMLElement,
     )
-    const press = (k: string): void =>
+    const press = (k: string): void => {
       act(() => {
         ;(document.activeElement ?? menu).dispatchEvent(
           new KeyboardEvent("keydown", { key: k, bubbles: true }),
         )
       })
+    }
     const lit = (): string =>
       items().find((i) => i.hasAttribute("data-highlighted"))?.textContent ?? ""
     const walked: string[] = [lit()]

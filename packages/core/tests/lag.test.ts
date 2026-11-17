@@ -1,7 +1,3 @@
-/**
- * The lag recorder: which layer stopped answering (lag.ts). Pure analysis, a
- * recording against a fake clock and fake layers, and the log readers.
- */
 import { describe, expect, it } from "bun:test"
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
@@ -9,17 +5,17 @@ import { join } from "node:path"
 
 import type { LagProbe, LagSample } from "../src/lag"
 import {
-  CAPTURE_AFTER_MS,
-  CAPTURE_COOLDOWN_MS,
-  STALL_MS,
   analyzeLag,
   appendToWatchLog,
+  CAPTURE_AFTER_MS,
+  CAPTURE_COOLDOWN_MS,
   captureFile,
   eventsBetween,
   formatLagReport,
   formatSample,
   minThreadPriority,
   recordLag,
+  STALL_MS,
   watchLogBetween,
 } from "../src/lag"
 
@@ -35,7 +31,8 @@ const sample = (i: number, over: Partial<LagSample> = {}): LagSample => ({
   minPri: 31,
   ...over,
 })
-const run = (n: number, from: number, over: Partial<LagSample>): LagSample[] => Array.from({ length: n }, (_, k) => sample(from + k, over))
+const run = (n: number, from: number, over: Partial<LagSample>): LagSample[] =>
+  Array.from({ length: n }, (_, k) => sample(from + k, over))
 
 describe("analyzeLag", () => {
   it("finds no stall in a healthy minute and says what it measured", () => {
@@ -47,7 +44,11 @@ describe("analyzeLag", () => {
   })
 
   it("blames Windows when QEMU answers and the agent does not", () => {
-    const s = [...run(5, 0, {}), ...run(3, 5, { agent: null }), ...run(5, 8, {})]
+    const s = [
+      ...run(5, 0, {}),
+      ...run(3, 5, { agent: null }),
+      ...run(5, 8, {}),
+    ]
     const r = analyzeLag(s)
     expect(r.stalls).toHaveLength(1)
     expect(r.stalls[0]?.kind).toBe("windows")
@@ -57,50 +58,82 @@ describe("analyzeLag", () => {
   })
 
   it("blames QEMU when the monitor and the agent both stop but the recorder ran on time", () => {
-    const r = analyzeLag([...run(2, 0, {}), ...run(2, 2, { qmp: null, agent: null, state: null }), ...run(2, 4, {})])
+    const r = analyzeLag([
+      ...run(2, 0, {}),
+      ...run(2, 2, { qmp: null, agent: null, state: null }),
+      ...run(2, 4, {}),
+    ])
     expect(r.stalls.map((x) => x.kind)).toEqual(["qemu"])
   })
 
   it("blames the Mac when the recorder's own timer was late too", () => {
-    const r = analyzeLag([sample(0), sample(1, { lateMs: 3400, qmp: 900, agent: 950 }), sample(2)])
+    const r = analyzeLag([
+      sample(0),
+      sample(1, { lateMs: 3400, qmp: 900, agent: 950 }),
+      sample(2),
+    ])
     expect(r.stalls.map((x) => x.kind)).toEqual(["mac"])
     expect(r.stalls[0]?.explanation).toContain("pmset")
   })
 
   it("calls a paused machine paused, even though the monitor answers instantly", () => {
-    const r = analyzeLag([sample(0), ...run(2, 1, { state: "paused", agent: null }), sample(3)])
+    const r = analyzeLag([
+      sample(0),
+      ...run(2, 1, { state: "paused", agent: null }),
+      sample(3),
+    ])
     expect(r.stalls.map((x) => x.kind)).toEqual(["paused"])
     expect(r.stalls[0]?.explanation).toContain("autosave")
   })
 
   it("keeps different causes apart and ends a stall when answers recover", () => {
-    const r = analyzeLag([sample(0, { agent: 900 }), sample(1, { agent: 800 }), sample(2), sample(3, { qmp: 700, agent: 4 })])
+    const r = analyzeLag([
+      sample(0, { agent: 900 }),
+      sample(1, { agent: 800 }),
+      sample(2),
+      sample(3, { qmp: 700, agent: 4 }),
+    ])
     expect(r.stalls.map((x) => x.kind)).toEqual(["windows", "monitor"])
     expect(r.stalls[0]?.samples).toBe(2)
   })
 
   it("does not count an answer at exactly the threshold", () => {
-    expect(analyzeLag([sample(0, { qmp: STALL_MS, agent: STALL_MS })]).stalls).toEqual([])
-    expect(analyzeLag([sample(0, { qmp: STALL_MS + 1 })]).stalls).toHaveLength(1)
+    expect(
+      analyzeLag([sample(0, { qmp: STALL_MS, agent: STALL_MS })]).stalls,
+    ).toEqual([])
+    expect(analyzeLag([sample(0, { qmp: STALL_MS + 1 })]).stalls).toHaveLength(
+      1,
+    )
   })
 
   it("only times the monitor when the guest has no agent", () => {
-    const r = analyzeLag(Array.from({ length: 3 }, (_, i) => sample(i, { agent: undefined })))
+    const r = analyzeLag(
+      Array.from({ length: 3 }, (_, i) => sample(i, { agent: undefined })),
+    )
     expect(r.agent).toBeNull()
     expect(r.summary).toContain("no agent")
-    expect(analyzeLag(run(2, 0, { agent: undefined, qmp: null })).stalls[0]?.kind).toBe("monitor")
+    expect(
+      analyzeLag(run(2, 0, { agent: undefined, qmp: null })).stalls[0]?.kind,
+    ).toBe("monitor")
   })
 
   it("reports the lowest thread priority and the CPU peak", () => {
-    const r = analyzeLag([sample(0, { minPri: 31, cpu: 40 }), sample(1, { minPri: 4, cpu: 380 })])
+    const r = analyzeLag([
+      sample(0, { minPri: 31, cpu: 40 }),
+      sample(1, { minPri: 4, cpu: 380 }),
+    ])
     expect(r.minPri).toBe(4)
     expect(r.peakCpu).toBe(380)
     expect(formatLagReport("x", r, [])).toContain("LOW priority")
   })
 
   it("measures a stall from its first slow answer to the end of its last", () => {
-    const r = analyzeLag([sample(0), sample(1, { qmp: null, agent: null }), sample(2, { qmp: null, agent: null }), sample(3)])
-    // two seconds of samples, the last one's wait lasting the 5 s timeout
+    const r = analyzeLag([
+      sample(0),
+      sample(1, { qmp: null, agent: null }),
+      sample(2, { qmp: null, agent: null }),
+      sample(3),
+    ])
     expect(r.stalls[0]?.durationMs).toBe(1000 + 5000)
   })
 })
@@ -122,13 +155,17 @@ describe("minThreadPriority", () => {
 })
 
 describe("recordLag", () => {
-  /** A clock the fake layers advance: the recorder's sleeps move it, and so do slow answers. */
-  const world = (): { now: () => number; sleep: (ms: number) => Promise<void>; advance: (ms: number) => void } => {
+  const world = (): {
+    now: () => number
+    sleep: (ms: number) => Promise<void>
+    advance: (ms: number) => void
+  } => {
     let t = T0
     return {
       now: () => t,
-      sleep: async (ms) => {
+      sleep: (ms) => {
         t += ms
+        return Promise.resolve()
       },
       advance: (ms) => {
         t += ms
@@ -140,17 +177,25 @@ describe("recordLag", () => {
     const w = world()
     let cpu = 100
     const probe: LagProbe = {
-      qmp: async () => ({ ms: 3, state: "running" }),
-      agent: async () => 5,
-      process: () => ({ proc: "S", cpuSec: (cpu += 0.5), minPri: 31 }),
+      qmp: () => Promise.resolve({ ms: 3, state: "running" }),
+      agent: () => Promise.resolve(5),
+      process: () => {
+        cpu += 0.5
+        return { proc: "S", cpuSec: cpu, minPri: 31 }
+      },
     }
     const seen: number[] = []
-    const out = await recordLag(probe, { seconds: 4, now: w.now, sleep: w.sleep, onSample: (_s, i) => seen.push(i) })
+    const out = await recordLag(probe, {
+      seconds: 4,
+      now: w.now,
+      sleep: w.sleep,
+      onSample: (_s, i) => seen.push(i),
+    })
     expect(out).toHaveLength(4)
     expect(seen).toEqual([0, 1, 2, 3])
     expect(out.map((s) => s.t)).toEqual([T0, T0 + 1000, T0 + 2000, T0 + 3000])
-    expect(out[0]?.cpu).toBeNull() // no full second behind the first
-    expect(out[1]?.cpu).toBe(50) // half a CPU-second in one second
+    expect(out[0]?.cpu).toBeNull()
+    expect(out[1]?.cpu).toBe(50)
     expect(analyzeLag(out).stalls).toEqual([])
   })
 
@@ -164,13 +209,17 @@ describe("recordLag", () => {
         order.push("qmp end")
         return { ms: null, state: null }
       },
-      agent: async () => {
+      agent: () => {
         order.push("agent")
-        return 4
+        return Promise.resolve(4)
       },
       process: () => ({ proc: "S", cpuSec: null, minPri: null }),
     }
-    const out = await recordLag(probe, { seconds: 1, now: w.now, sleep: w.sleep })
+    const out = await recordLag(probe, {
+      seconds: 1,
+      now: w.now,
+      sleep: w.sleep,
+    })
     expect(order).toEqual(["qmp start", "agent", "qmp end"])
     expect(out[0]?.qmp).toBeNull()
     expect(out[0]?.agent).toBe(4)
@@ -180,11 +229,10 @@ describe("recordLag", () => {
     const w = world()
     let sleeps = 0
     const probe: LagProbe = {
-      qmp: async () => ({ ms: 2, state: "running" }),
+      qmp: () => Promise.resolve({ ms: 2, state: "running" }),
       agent: undefined,
       process: () => ({ proc: "S", cpuSec: null, minPri: null }),
     }
-    // The first wait oversleeps by 3 s: the Mac stood still while the timer ran.
     const sleep = async (ms: number): Promise<void> => {
       sleeps += 1
       await w.sleep(sleeps === 1 ? ms + 3000 : ms)
@@ -198,15 +246,19 @@ describe("recordLag", () => {
     const w = world()
     let asked = 0
     const probe: LagProbe = {
-      qmp: async () => {
+      qmp: () => {
         asked += 1
-        if (asked === 2) w.advance(2300) // QEMU took 2.3 s to answer the second question
-        return { ms: asked === 2 ? 2300 : 2, state: "running" }
+        if (asked === 2) w.advance(2300)
+        return Promise.resolve({ ms: asked === 2 ? 2300 : 2, state: "running" })
       },
       agent: undefined,
       process: () => ({ proc: "S", cpuSec: null, minPri: null }),
     }
-    const out = await recordLag(probe, { seconds: 4, now: w.now, sleep: w.sleep })
+    const out = await recordLag(probe, {
+      seconds: 4,
+      now: w.now,
+      sleep: w.sleep,
+    })
     expect(out.map((s) => s.lateMs)).toEqual([0, 0, 0, 0])
     expect(analyzeLag(out).stalls.map((x) => x.kind)).toEqual(["monitor"])
   })
@@ -219,16 +271,19 @@ describe("what the instance's logs say meanwhile", () => {
     const at = (s: number): string => new Date(T0 + s * 1000).toISOString()
     writeFileSync(
       file,
-      [
+      `${[
         { t: at(-100), kind: "state", state: "paused" },
         { t: at(10), kind: "state", state: "paused" },
         { t: at(11.6), kind: "state", state: "running" },
         { t: at(500), kind: "service", what: "started" },
       ]
         .map((e) => JSON.stringify(e))
-        .join("\n") + "\n{half a line",
+        .join("\n")}\n{half a line`,
     )
-    expect(eventsBetween(file, T0, T0 + 60_000).map((l) => l.text)).toEqual(["events: state paused", "events: state running"])
+    expect(eventsBetween(file, T0, T0 + 60_000).map((l) => l.text)).toEqual([
+      "events: state paused",
+      "events: state running",
+    ])
     expect(eventsBetween(join(dir, "none.jsonl"), 0, 1)).toEqual([])
   })
 
@@ -252,17 +307,25 @@ describe("what the instance's logs say meanwhile", () => {
 
   it("puts a summary and each stall in watch.log, in the watcher's own line format", () => {
     const dir = mkdtempSync(join(tmpdir(), "lag-"))
-    const before = process.env["WINVM_HOME"]
-    process.env["WINVM_HOME"] = dir
-    // instanceDir() is under WINVM_HOME/instances/<name>; the folder must exist for the append
+    const before = process.env.WINVM_HOME
+    process.env.WINVM_HOME = dir
     mkdirSync(join(dir, "instances", "demo"), { recursive: true })
-    const report = analyzeLag([sample(0), sample(1, { agent: null }), sample(2)])
+    const report = analyzeLag([
+      sample(0),
+      sample(1, { agent: null }),
+      sample(2),
+    ])
     appendToWatchLog("demo", report, new Date(T0))
-    const text = readFileSync(join(dir, "instances", "demo", "watch.log"), "utf8")
-    expect(text).toContain(`${new Date(T0).toISOString()} [demo] lag: recorded 3 s`)
+    const text = readFileSync(
+      join(dir, "instances", "demo", "watch.log"),
+      "utf8",
+    )
+    expect(text).toContain(
+      `${new Date(T0).toISOString()} [demo] lag: recorded 3 s`,
+    )
     expect(text).toContain("lag: windows stall")
-    if (before === undefined) delete process.env["WINVM_HOME"]
-    else process.env["WINVM_HOME"] = before
+    if (before === undefined) delete process.env.WINVM_HOME
+    else process.env.WINVM_HOME = before
   })
 })
 

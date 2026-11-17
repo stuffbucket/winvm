@@ -12,9 +12,9 @@ const skills = ["winvm-mise", "winvm-release"] as const
 
 function localLinks(file: string): string[] {
   return [...read(file).matchAll(/\]\(([^)]+)\)/g)]
-    .map((match) => match[1]!)
+    .map((match) => match[1] ?? "")
     .filter((link) => !/^[a-z]+:|^#/.test(link))
-    .map((link) => resolve(ROOT, dirname(file), link.split("#")[0]!))
+    .map((link) => resolve(ROOT, dirname(file), link.split("#")[0] ?? link))
 }
 
 describe("development command contract", () => {
@@ -25,27 +25,35 @@ describe("development command contract", () => {
   })
 
   test("quality tasks delegate to existing package scripts", () => {
-    expect(config.tasks["check"]!.run).toBe("pnpm run check")
-    expect(config.tasks["test"]!.run).toBe("pnpm run test")
-    expect(config.tasks["typecheck"]!.run).toBe("pnpm run typecheck")
-    expect(config.tasks["check:force"]!.run).toEqual([
+    expect(config.tasks.check?.run).toBe("pnpm run check")
+    expect(config.tasks.test?.run).toBe("pnpm run test")
+    expect(config.tasks.typecheck?.run).toBe("pnpm run typecheck")
+    expect(config.tasks["check:force"]?.run).toEqual([
       "pnpm exec turbo run typecheck test --force",
       "bun test scripts",
     ])
   })
 
   test("native build uses viewer tool scope without a release version or launch", () => {
-    expect(config.tasks["build"]!.run).toBe("mise -C apps/viewer exec -- pnpm run app")
-    expect(config.tasks["build"]!.alias).toBe("app:build")
-    expect(config.tasks["dev"]!.run).toContain('open -n "$app"')
-    expect(config.tasks["dev"]!.run).toContain('if [ ! -d "$app" ]')
-    expect(config.tasks["dev"]!.run).not.toContain("/Applications/")
+    expect(config.tasks.build?.run).toBe(
+      "mise -C apps/viewer exec -- pnpm run app",
+    )
+    expect(config.tasks.build?.alias).toBe("app:build")
+    expect(config.tasks.dev?.run).toContain('open -n "$app"')
+    expect(config.tasks.dev?.run).toContain('if [ ! -d "$app" ]')
+    expect(config.tasks.dev?.run).not.toContain("/Applications/")
   })
 
   test("UI watch is distinct from launching and token generation is explicit", () => {
-    expect(config.tasks["ui:build"]!.run).toBe("pnpm --filter @winvm/viewer run build:ui")
-    expect(config.tasks["ui:watch"]!.run).toBe("pnpm --filter @winvm/viewer run dev:ui")
-    expect(config.tasks["tokens:generate"]!.run).toBe("pnpm --filter @winvm/viewer run tokens")
+    expect(config.tasks["ui:build"]?.run).toBe(
+      "pnpm --filter @winvm/viewer run build:ui",
+    )
+    expect(config.tasks["ui:watch"]?.run).toBe(
+      "pnpm --filter @winvm/viewer run dev:ui",
+    )
+    expect(config.tasks["tokens:generate"]?.run).toBe(
+      "pnpm --filter @winvm/viewer run tokens",
+    )
   })
 })
 
@@ -69,7 +77,9 @@ describe("mise skill discovery", () => {
     expect(content).toContain("### Build")
     expect(content).toContain("### Test / check")
     for (const name of ["winvm-run", "winvm-build", "winvm-check"]) {
-      expect(existsSync(resolve(ROOT, `.claude/skills/${name}/SKILL.md`))).toBe(false)
+      expect(existsSync(resolve(ROOT, `.claude/skills/${name}/SKILL.md`))).toBe(
+        false,
+      )
       expect(instructions).not.toContain(name)
       expect(read("README.md")).not.toContain(name)
       expect(read("docs/development.md")).not.toContain(name)
@@ -80,7 +90,9 @@ describe("mise skill discovery", () => {
     const files = [
       "AGENTS.md",
       "docs/development.md",
-      ...skills.filter((name) => name !== "winvm-release").map((name) => `.claude/skills/${name}/SKILL.md`),
+      ...skills
+        .filter((name) => name !== "winvm-release")
+        .map((name) => `.claude/skills/${name}/SKILL.md`),
     ]
     for (const file of files) {
       for (const link of localLinks(file)) expect(existsSync(link)).toBe(true)

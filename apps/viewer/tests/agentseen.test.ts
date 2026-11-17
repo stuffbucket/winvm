@@ -1,14 +1,11 @@
-/**
- * Whether Windows has answered since this QEMU started: a silent agent after it
- * has is a busy Windows, not a booting one, and must not take the mouse and
- * keyboard away (features/winvm/agentSeen.ts).
- */
 import { describe, expect, it } from "bun:test"
-
-import { type Status, parseStatus } from "../ui/src/model"
-import { UNSEEN, agentSeen, inputPhase } from "../ui/src/features/winvm/agentSeen"
 import { inputRule } from "../ui/src/features/screen/input"
-import { phase } from "../ui/src/model"
+import {
+  agentSeen,
+  inputPhase,
+  UNSEEN,
+} from "../ui/src/features/winvm/agentSeen"
+import { parseStatus, phase, type Status } from "../ui/src/model"
 
 const read = (pid: number | null, agent: "ok" | "silent" | null): Status => {
   const s = parseStatus(
@@ -56,12 +53,15 @@ describe("agentSeen", () => {
   it("keeps the mouse and keyboard on through a silent poll, but not through a real boot", () => {
     const silent = read(7, "silent")
     expect(phase(silent)).toBe("starting")
-    // Booting: never seen, so input stays off.
-    expect(inputRule(inputPhase(phase(silent), agentSeen(UNSEEN, silent)), false).forward).toBe(false)
-    // Seen before: a blip.
+    expect(
+      inputRule(inputPhase(phase(silent), agentSeen(UNSEEN, silent)), false)
+        .forward,
+    ).toBe(false)
     const seen = agentSeen(UNSEEN, read(7, "ok"))
-    expect(inputRule(inputPhase(phase(silent), agentSeen(seen, silent)), false).forward).toBe(true)
-    // Held states are never overridden.
+    expect(
+      inputRule(inputPhase(phase(silent), agentSeen(seen, silent)), false)
+        .forward,
+    ).toBe(true)
     expect(inputPhase("paused", seen)).toBe("paused")
   })
 })
