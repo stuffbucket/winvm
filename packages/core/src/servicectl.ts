@@ -14,6 +14,15 @@ import { basename, resolve } from "node:path"
 
 import { commandInstance, winvmCommandAfter } from "./args"
 import { buildIdentity } from "./identity"
+import { KEEPER_PROTOCOL, keeperRequest } from "./keeper"
+import {
+  callerUmask,
+  type KeeperHello,
+  keeperDir,
+  keeperHello,
+  keeperSocket,
+  keptEnv,
+} from "./kept"
 import { cliArgv, managedEnv, type Paths } from "./paths"
 import { spawnText } from "./shell"
 
@@ -208,7 +217,7 @@ export function stopService(p: Paths, seams: StopServiceSeams = {}): void {
   const pid = pidIn(seen)
   if (seen === null || pid === null || !isService(pid)) return
   try {
-    kill(pid, "SIGTERM")
+    kill(pid, keptBy(p, pid) ? "SIGUSR2" : "SIGTERM")
   } catch {
     return
   }
@@ -220,6 +229,24 @@ export function stopService(p: Paths, seams: StopServiceSeams = {}): void {
     } catch {}
   }
   dropServiceRecord(p, seen)
+}
+
+function keptBy(p: Paths, pid: number): boolean {
+  const keeper = Number.parseInt(
+    readOr(resolve(keeperDir(p), "keeper.pid")),
+    10,
+  )
+  if (!Number.isInteger(keeper) || keeper <= 1) return false
+  const parent = spawnText("ps", ["-o", "ppid=", "-p", String(pid)])
+  return Number.parseInt(parent.stdout.trim(), 10) === keeper
+}
+
+function readOr(file: string): string {
+  try {
+    return readFileSync(file, "utf8")
+  } catch {
+    return ""
+  }
 }
 
 function exited(pid: number): boolean {
@@ -234,12 +261,80 @@ export interface EnsureServiceOptions {
   readonly current?: string
 }
 
+async function untilAnswering(
+  name: string,
+  p: Paths,
+  current: string,
+  timeoutMs: number,
+): Promise<ServiceInfo> {
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() < deadline) {
+    const info = readService(p)
+    if (
+      info !== null &&
+      serviceFreshness(info, current) === "current" &&
+      (await answers(p.control))
+    )
+      return info
+    await new Promise((r) => setTimeout(r, 50))
+  }
+  throw new Error(
+    `the control service for "${name}" did not start; see ${resolve(p.dir, "service.log")}`,
+  )
+}
+
+async function keptService(
+  name: string,
+  p: Paths,
+  hello: KeeperHello,
+  current: string,
+  timeoutMs: number,
+): Promise<ServiceInfo> {
+  const running = readService(p)
+  const ours = running !== null && hello.service?.pid === running.pid
+  if (ours && serviceFreshness(running, current) === "current") {
+    keepService(p)
+    return running
+  }
+  if (running !== null && !ours) stopService(p)
+  else if (running === null && hello.service === null) {
+    const seen = readRecord(p)
+    if (seen !== null) dropServiceRecord(p, seen)
+  }
+  keepService(p)
+  const answer = await keeperRequest(keeperSocket(p), {
+    op: "service",
+    service: {
+      argv: [process.execPath, ...cliArgv("serve", "-i", name)],
+      env: keptEnv(managedEnv()),
+      log: resolve(p.dir, "service.log"),
+      umask: callerUmask(),
+      build: current,
+      control: p.control,
+    },
+  })
+  if (answer.ok !== true)
+    throw new Error(
+      `winvm's keeper did not start the control service for "${name}": ${typeof answer.error === "string" ? answer.error : "no reason given"}`,
+    )
+  return await untilAnswering(name, p, current, timeoutMs)
+}
+
 export async function ensureService(
   name: string,
   p: Paths,
   o: EnsureServiceOptions = {},
 ): Promise<ServiceInfo> {
   const current = o.current ?? buildIdentity()
+  if (o.start === undefined) {
+    const hello = await keeperHello(p)
+    if (
+      hello !== null &&
+      hello.protocol >= KEEPER_PROTOCOL &&
+      !hello.hostEnding
+    )
+      return await keptService(name, p, hello, current, o.timeoutMs ?? 10_000)
+  }
   const seen = readRecord(p)
   const running = readService(p)
   if (running !== null && serviceFreshness(running, current) === "current") {
@@ -262,18 +357,5 @@ export async function ensureService(
       child.unref()
     })
   start()
-  const deadline = Date.now() + (o.timeoutMs ?? 10_000)
-  while (Date.now() < deadline) {
-    const info = readService(p)
-    if (
-      info !== null &&
-      serviceFreshness(info, current) === "current" &&
-      (await answers(p.control))
-    )
-      return info
-    await new Promise((r) => setTimeout(r, 50))
-  }
-  throw new Error(
-    `the control service for "${name}" did not start; see ${resolve(p.dir, "service.log")}`,
-  )
+  return await untilAnswering(name, p, current, o.timeoutMs ?? 10_000)
 }

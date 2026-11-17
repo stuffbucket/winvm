@@ -23,6 +23,7 @@ import { dirname, resolve } from "node:path"
 
 import { parseArgs } from "../src/args"
 import * as commands from "../src/commands"
+import { readSince, START } from "../src/eventlog"
 import * as host from "../src/host"
 import {
   type JobInfo,
@@ -71,6 +72,7 @@ let previousLaunchd: () => Launchd
 let previousSettle: qemu.Settle
 let previousSpawner: qemu.Spawner
 let previousProbe: share.Probe
+let ensuring: ReturnType<typeof spyOn>
 const keepers: ReturnType<typeof Bun.spawn>[] = []
 let launchdCalls: string[] = []
 let bootstrapFails = false
@@ -171,6 +173,7 @@ beforeEach(() => {
       "WINVM_KEEPER",
       "XDG_DATA_HOME",
       "KEPT_TEST_NOISE",
+      "WINVM_CLI",
     ].map((k) => [k, process.env[k]]),
   )
   state = mkdtempSync("/tmp/wkept-")
@@ -203,7 +206,7 @@ beforeEach(() => {
     Promise.resolve(m),
   )
   spyOn(vnc, "applyPassword").mockResolvedValue(null)
-  spyOn(servicectl, "ensureService").mockResolvedValue({} as never)
+  ensuring = spyOn(servicectl, "ensureService").mockResolvedValue({} as never)
   spyOn(console, "warn").mockImplementation(() => undefined)
   previousProbe = share.setProbe(() => ({ ok: true, reason: null }))
   previousLaunchd = setLaunchd(fakeLaunchd)
@@ -822,4 +825,70 @@ describe("fix round 1", () => {
       await holder.exited
     }
   })
+})
+
+describe("the control service under the keeper", () => {
+  const CLI = resolve(
+    import.meta.dir,
+    "..",
+    "..",
+    "..",
+    "apps",
+    "cli",
+    "src",
+    "winvm.ts",
+  )
+  const parentOf = (pid: number): number =>
+    Number(
+      spawnSync("ps", ["-o", "ppid=", "-p", String(pid)], {
+        encoding: "utf8",
+      }).stdout.trim(),
+    )
+
+  it("runs as the keeper's child, shrugs off SIGTERM, and stops when asked", async () => {
+    process.env.WINVM_CLI = CLI
+    await leasedLaunch()
+    ensuring.mockRestore()
+    const p = pathsFor(NAME)
+    const info = await servicectl.ensureService(NAME, p)
+    const hello = await keeperHello(p)
+    expect(hello?.service?.pid).toBe(info.pid)
+    expect(parentOf(info.pid)).toBe(hello?.pid ?? -1)
+    expect(ops()).toContain("service")
+    process.kill(info.pid, "SIGTERM")
+    await sleep(500)
+    expect(alive(info.pid)).toBe(true)
+    expect(
+      readSince(NAME, START).entries.some(
+        (e) =>
+          e.kind === "service" &&
+          e.what === "signal ignored" &&
+          e.signal === "SIGTERM",
+      ),
+    ).toBe(true)
+    const again = await servicectl.ensureService(NAME, p)
+    expect(again.pid).toBe(info.pid)
+    const started = Date.now()
+    servicectl.stopService(p)
+    expect(alive(info.pid)).toBe(false)
+    expect(Date.now() - started).toBeLessThan(3000)
+  }, 20_000)
+
+  it("stops a stray service before the keeper starts its own", async () => {
+    process.env.WINVM_CLI = CLI
+    await leasedLaunch()
+    ensuring.mockRestore()
+    const p = pathsFor(NAME)
+    const stray = Bun.spawn([process.execPath, CLI, "serve", "-i", NAME], {
+      stdout: "ignore",
+      stderr: "ignore",
+      env: { ...process.env, WINVM_NO_RECONCILE: "1" },
+    })
+    await until("the stray service", () => servicectl.readService(p) !== null)
+    const info = await servicectl.ensureService(NAME, p)
+    await stray.exited
+    expect(info.pid).not.toBe(stray.pid)
+    expect((await keeperHello(p))?.service?.pid).toBe(info.pid)
+    servicectl.stopService(p)
+  }, 20_000)
 })

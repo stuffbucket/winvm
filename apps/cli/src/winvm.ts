@@ -250,9 +250,9 @@ switch (sub ?? "") {
     exitCode = await commands.watchCmd(args)
     break
   case "serve": {
-    const handle = await service.runService(instanceName(args))
-    for (const sig of ["SIGINT", "SIGTERM", "SIGHUP"] as const)
-      process.on(sig, () => void handle.stop())
+    const name = instanceName(args)
+    const handle = await service.runService(name)
+    service.serviceSignals(name, () => void handle.stop())
     await handle.done
     exitCode = 0
     break

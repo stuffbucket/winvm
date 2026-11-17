@@ -4,6 +4,7 @@ import {
   openSync,
   readFileSync,
   rmSync,
+  writeFileSync,
 } from "node:fs"
 import { createServer, type Socket } from "node:net"
 import { resolve } from "node:path"
@@ -169,6 +170,7 @@ async function answer(
   }
 }
 
+writeFileSync(resolve(dir, "keeper.pid"), `${String(process.pid)}\n`)
 rmSync(socket, { force: true })
 const server = createServer((connection: Socket) => {
   connection.setEncoding("utf8")
