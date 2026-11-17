@@ -292,10 +292,16 @@ async function keptService(
 ): Promise<ServiceInfo> {
   const running = readService(p)
   const ours = running !== null && hello.service?.pid === running.pid
-  if (ours && serviceFreshness(running, current) === "current") {
+  if (
+    ours &&
+    hello.service?.adopted !== true &&
+    serviceFreshness(running, current) === "current"
+  ) {
     keepService(p)
     return running
   }
+  if (ours && hello.service?.adopted === true)
+    await keeperRequest(keeperSocket(p), { op: "service-stop" })
   if (running !== null && !ours) stopService(p)
   else if (running === null && hello.service === null) {
     const seen = readRecord(p)
@@ -326,15 +332,17 @@ export async function ensureService(
   o: EnsureServiceOptions = {},
 ): Promise<ServiceInfo> {
   const current = o.current ?? buildIdentity()
-  if (o.start === undefined) {
-    const hello = await keeperHello(p)
-    if (
-      hello !== null &&
-      hello.protocol >= KEEPER_PROTOCOL &&
-      !hello.hostEnding
+  const hello = await keeperHello(p)
+  if (hello?.hostEnding === true)
+    throw new Error(
+      `winvm's keeper for "${name}" is ending its session (the Mac is shutting down or you logged out), so its control service is left as it is`,
     )
-      return await keptService(name, p, hello, current, o.timeoutMs ?? 10_000)
-  }
+  if (
+    o.start === undefined &&
+    hello !== null &&
+    hello.protocol >= KEEPER_PROTOCOL
+  )
+    return await keptService(name, p, hello, current, o.timeoutMs ?? 10_000)
   const seen = readRecord(p)
   const running = readService(p)
   if (running !== null && serviceFreshness(running, current) === "current") {

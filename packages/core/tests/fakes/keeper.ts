@@ -28,6 +28,7 @@ interface Kept {
 interface Service {
   readonly proc: ReturnType<typeof Bun.spawn>
   readonly build: string
+  adopted: boolean
 }
 
 const dir = process.argv[process.argv.indexOf("--dir") + 1] ?? "."
@@ -133,7 +134,7 @@ async function answer(
                 pid: service.proc.pid,
                 build: service.build,
                 startUs: 1,
-                adopted: false,
+                adopted: service.adopted,
               },
         lastExit,
         hostEnding: false,
@@ -152,9 +153,12 @@ async function answer(
           if (service?.proc === proc) service = null
         },
       })
-      service = { proc, build: s.build }
+      service = { proc, build: s.build, adopted: false }
       return { ok: true, pid: proc.pid, started: true }
     }
+    case "test-adopt":
+      if (service !== null) service.adopted = true
+      return { ok: true }
     case "service-stop": {
       const pid = await stopService()
       return pid === null

@@ -30,6 +30,7 @@ import {
   type JobInfo,
   KeeperBusy,
   keeperLabel,
+  keeperRequest,
   type Launchd,
 } from "../src/keeper"
 import {
@@ -883,6 +884,58 @@ describe("the control service under the keeper", () => {
     expect(alive(info.pid)).toBe(false)
     expect(Date.now() - started).toBeLessThan(3000)
   }, 20_000)
+
+  it("hands over a service the keeper adopted after a restart, so its parent is the keeper again", async () => {
+    process.env.WINVM_CLI = CLI
+    await leasedLaunch()
+    ensuring.mockRestore()
+    const p = pathsFor(NAME)
+    const first = await servicectl.ensureService(NAME, p)
+    await keeperRequest(keeperSocket(p), { op: "test-adopt" })
+    const second = await servicectl.ensureService(NAME, p)
+    expect(second.pid).not.toBe(first.pid)
+    expect(alive(first.pid)).toBe(false)
+    expect(ops()).toContain("service-stop")
+    expect(parentOf(second.pid)).toBe((await keeperHello(p))?.pid ?? -1)
+    servicectl.stopService(p)
+  }, 20_000)
+
+  it("leaves the service alone, and starts no stray, while the keeper ends the session", async () => {
+    const p = pathsFor(NAME)
+    mkdirSync(keeperDir(p), { recursive: true })
+    const server = createServer((socket) => {
+      socket.setEncoding("utf8")
+      socket.on("data", () => {
+        socket.end(
+          `${JSON.stringify({ ok: true, pid: 9, protocol: 3, child: null, service: null, hostEnding: true })}\n`,
+        )
+      })
+    })
+    await new Promise<void>((ready) => {
+      server.listen(keeperSocket(p), () => {
+        ready()
+      })
+    })
+    ensuring.mockRestore()
+    let started = 0
+    try {
+      await expect(
+        servicectl.ensureService(NAME, p, {
+          start: () => {
+            started += 1
+          },
+          timeoutMs: 200,
+        }),
+      ).rejects.toThrow("is ending")
+      expect(started).toBe(0)
+    } finally {
+      await new Promise<void>((done) => {
+        server.close(() => {
+          done()
+        })
+      })
+    }
+  })
 
   it("stops a stray service before the keeper starts its own", async () => {
     process.env.WINVM_CLI = CLI
