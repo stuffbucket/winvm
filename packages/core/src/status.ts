@@ -165,9 +165,20 @@ const secondsIn = (ms: number | null): string =>
 const seconds = (ms: number | null): string =>
   ms === null ? "" : ` (${secondsIn(ms)})`
 
-function keptEndNote(name: string, off: HostPoweredOff): string {
+function causeNote(name: string, off: HostPoweredOff): string {
   const again = `\`winvm start -i ${name}\` starts it again`
   switch (off.cause) {
+    case "qemu-gone":
+      return (
+        `QEMU is gone (last seen ${off.at}) without recording a shutdown, and no winvm stop or kill ended it: ` +
+        "the host (a restart or logout), a crash or another tool ended it, and anything unsaved in Windows is lost; " +
+        again
+      )
+    case "host-signal":
+      return (
+        `the host powered Windows off at ${off.at}: QEMU was signalled${off.detail === null ? "" : ` (${off.detail})`}, ` +
+        `so Windows did not shut down by itself and anything unsaved in it is lost; ${again}`
+      )
     case "host-stow":
       return `winvm stowed Windows when the Mac shut down at ${off.at}${seconds(off.elapsedMs)}; \`winvm start -i ${name}\` recalls it`
     case "host-cut-off":
@@ -186,7 +197,8 @@ function keptEndNote(name: string, off: HostPoweredOff): string {
         `the Mac shut down at ${off.at} while Windows was stopped for a save or a recall (QEMU ${off.detail ?? "stopped"}), ` +
         `so winvm's keeper quit QEMU without pressing the power button; Windows was not running at the time; ${again}`
       )
-    default:
+    case "host-quit":
+    case "host-kill":
       return (
         `the Mac shut down at ${off.at} and Windows did not finish shutting down in time, so winvm's keeper ${off.cause === "host-quit" ? "quit" : "killed"} QEMU${seconds(off.elapsedMs)}: ` +
         `Windows did not shut down cleanly and anything unsaved in it is lost; ${again}`
@@ -195,24 +207,11 @@ function keptEndNote(name: string, off: HostPoweredOff): string {
 }
 
 function hostPowerNote(name: string, off: HostPoweredOff): string {
-  const again = `\`winvm start -i ${name}\` starts it again`
-  if (off.cause === "qemu-gone")
-    return (
-      `QEMU is gone (last seen ${off.at}) without recording a shutdown, and no winvm stop or kill ended it: ` +
-      "the host (a restart or logout), a crash or another tool ended it, and anything unsaved in Windows is lost; " +
-      again
-    )
   const fellBack =
     off.fallback === null
       ? ""
       : `winvm could not stow Windows when the Mac shut down (${off.fallback}); `
-  if (off.cause !== "host-signal") return fellBack + keptEndNote(name, off)
-  const who = off.detail === null ? "" : ` (${off.detail})`
-  return (
-    fellBack +
-    `the host powered Windows off at ${off.at}: QEMU was signalled${who}, ` +
-    `so Windows did not shut down by itself and anything unsaved in it is lost; ${again}`
-  )
+  return fellBack + causeNote(name, off)
 }
 
 export const savesDir = (instance: string): string =>

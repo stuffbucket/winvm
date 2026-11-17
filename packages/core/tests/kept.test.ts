@@ -4,6 +4,7 @@ import {
   describe,
   expect,
   it,
+  type Mock,
   mock,
   spyOn,
 } from "bun:test"
@@ -74,7 +75,7 @@ let previousLaunchd: () => Launchd
 let previousSettle: qemu.Settle
 let previousSpawner: qemu.Spawner
 let previousProbe: share.Probe
-let ensuring: ReturnType<typeof spyOn>
+let ensuring: Mock<typeof servicectl.ensureService>
 const keepers: ReturnType<typeof Bun.spawn>[] = []
 let launchdCalls: string[] = []
 let bootstrapFails = false

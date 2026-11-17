@@ -190,7 +190,7 @@ describe("running the host end", () => {
         }
         await Promise.resolve()
       },
-    } as HostEndSeams
+    }
     expect(await runHostEnd(60_000, r.seams)).toBe("ended-by-op")
     expect(r.calls).toEqual([])
   })
