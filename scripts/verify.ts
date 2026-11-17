@@ -54,7 +54,7 @@ function capture(argv: string[], cwd = ROOT): string {
 }
 
 function shellFiles(): string[] {
-  return capture(["git", "ls-files", "*.sh", ".githooks"])
+  return capture(["git", "ls-files", "*.sh", ".githooks", ":!vendor/"])
     .split("\n")
     .filter((file) => file !== "" && existsSync(join(ROOT, file)))
 }
