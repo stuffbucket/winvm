@@ -97,6 +97,7 @@ export interface WatchState {
     readonly enabled: boolean
     readonly idleMinutes: number
     readonly lastAt?: string
+    readonly off?: string
   }
   readonly state: "watching" | "autosaving" | "stowing" | "stopped"
 }
@@ -186,10 +187,21 @@ export type StowOutcome = "stowed" | "refused" | "failed"
 export const stowOutcome = (code: number): StowOutcome =>
   code === 0 ? "stowed" : code === saves.STOW_REFUSED ? "refused" : "failed"
 
-export function idleSettings(
-  settings: Settings,
-  o: { readonly ephemeral: boolean; readonly stowRefused: boolean },
-): Settings {
+const settingsOf = (c: InstanceConfig): Settings => ({
+  idleCpuPercent: c["watch.idleCpuPercent"],
+  autosave: {
+    enabled: c["autosave.enabled"],
+    idleMinutes: c["autosave.idleMinutes"],
+  },
+  stow: { enabled: c["stow.enabled"], idleMinutes: c["stow.idleMinutes"] },
+})
+
+export interface IdleOptions {
+  readonly ephemeral: boolean
+  readonly stowRefused: boolean
+}
+
+export function idleSettings(settings: Settings, o: IdleOptions): Settings {
   if (o.ephemeral)
     return {
       ...settings,
@@ -199,6 +211,36 @@ export function idleSettings(
   return o.stowRefused
     ? { ...settings, stow: { ...settings.stow, enabled: false } }
     : settings
+}
+
+const STOW_REFUSED_OFF =
+  "winvm refused a stow, because this winvm could not recall a stow of the QEMU that runs Windows; idle stows are off until QEMU restarts"
+
+export function idleState(
+  cfg: InstanceConfig,
+  o: IdleOptions,
+  lastAt: {
+    readonly autosave?: string | undefined
+    readonly stow?: string | undefined
+  },
+): Pick<WatchState, "autosave" | "stow"> {
+  const effective = idleSettings(settingsOf(cfg), o)
+  return {
+    autosave: {
+      enabled: effective.autosave.enabled,
+      idleMinutes: cfg["autosave.idleMinutes"],
+      keep: cfg["autosave.keep"],
+      ...(lastAt.autosave === undefined ? {} : { lastAt: lastAt.autosave }),
+    },
+    stow: {
+      enabled: effective.stow.enabled,
+      idleMinutes: cfg["stow.idleMinutes"],
+      ...(lastAt.stow === undefined ? {} : { lastAt: lastAt.stow }),
+      ...(o.stowRefused && !o.ephemeral && cfg["stow.enabled"]
+        ? { off: STOW_REFUSED_OFF }
+        : {}),
+    },
+  }
 }
 
 export function noteStowRefused(
@@ -556,15 +598,6 @@ export interface WatchOptions {
   readonly actions?: Actions
 }
 
-const settingsOf = (c: InstanceConfig): Settings => ({
-  idleCpuPercent: c["watch.idleCpuPercent"],
-  autosave: {
-    enabled: c["autosave.enabled"],
-    idleMinutes: c["autosave.idleMinutes"],
-  },
-  stow: { enabled: c["stow.enabled"], idleMinutes: c["stow.idleMinutes"] },
-})
-
 const sleep = async (ms: number): Promise<void> => {
   await new Promise((r) => setTimeout(r, ms))
 }
@@ -618,17 +651,7 @@ export async function watch(
       startedAt,
       lastActivityAt: new Date(machine.idleSinceMs).toISOString(),
       idleSeconds: Math.round(machine.idleMs(Date.now()) / 1000),
-      autosave: {
-        enabled: cfg["autosave.enabled"],
-        idleMinutes: cfg["autosave.idleMinutes"],
-        keep: cfg["autosave.keep"],
-        ...(lastAt.autosave === undefined ? {} : { lastAt: lastAt.autosave }),
-      },
-      stow: {
-        enabled: cfg["stow.enabled"],
-        idleMinutes: cfg["stow.idleMinutes"],
-        ...(lastAt.stow === undefined ? {} : { lastAt: lastAt.stow }),
-      },
+      ...idleState(cfg, { ephemeral, stowRefused }, lastAt),
       state,
     }
     try {
@@ -785,6 +808,7 @@ export async function watch(
       )
       qemuPid = livePid
       vcpus = vcpusOf(livePid)
+      stowRefused = false
       machine.restarted(Date.now())
       rebaseCpu()
       publish()

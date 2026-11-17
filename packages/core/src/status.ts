@@ -80,6 +80,7 @@ export interface WatchInfo {
     readonly enabled: boolean
     readonly idleMinutes: number | null
     readonly lastAt: string | null
+    readonly off: string | null
   } | null
 }
 
@@ -319,6 +320,7 @@ export function parseWatch(
             enabled: s.enabled === true,
             idleMinutes: num(s.idleMinutes),
             lastAt: str(s.lastAt),
+            off: str(s.off),
           }
         : null,
   }
@@ -614,6 +616,9 @@ export async function gather(
   )
   const unprotected = keeper === null ? null : keeperNote(name, pid, keeper)
   if (unprotected !== null) notes.push(unprotected)
+  const watcher = readWatch(name)
+  const idleOff = watcherNote(name, watcher)
+  if (idleOff !== null) notes.push(idleOff)
   const management = managementOf(name)
   if (management === "repair")
     notes.push(
@@ -638,7 +643,7 @@ export async function gather(
     overlayBytes: allocatedBytes(p.overlay),
     guest,
     saves: savesSummary,
-    watcher: readWatch(name),
+    watcher,
     service: serviceOf(p),
     serviceExpected: running && existsSync(p.qmpQemu),
     management,
@@ -814,10 +819,20 @@ export function formatWatcher(w: WatchInfo | null, now: number): string {
       `stow after ${String(w.stow.idleMinutes ?? "?")} min idle${last}`,
     )
   } else {
-    parts.push("stow off")
+    parts.push(
+      w.stow?.off == null ? "stow off" : "stow off until QEMU restarts",
+    )
   }
   return parts.join(" · ")
 }
+
+export const watcherNote = (
+  name: string,
+  w: WatchInfo | null,
+): string | null =>
+  w?.alive === true && w.stow?.off != null
+    ? `the watcher of "${name}" does not stow Windows when it is idle: ${w.stow.off}`
+    : null
 
 const STATE_WORDS: Record<State, string> = {
   running: "running",

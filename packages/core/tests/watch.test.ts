@@ -37,6 +37,7 @@ import { STOW_REFUSED, STOW_UNDECIDED } from "../src/saves"
 import {
   ensureWatcher,
   idleSettings,
+  idleState,
   noteStowRefused,
   parseCpuTime,
   readWatchState,
@@ -867,6 +868,30 @@ describe("an idle stow that winvm refuses", () => {
       idleSettings(SETTINGS, { ephemeral: true, stowRefused: false }).autosave
         .enabled,
     ).toBe(false)
+  })
+
+  it("is published as idle stow off, with why, while it holds", () => {
+    const cfg = { ...DEFAULTS, "stow.enabled": true }
+    const latched = idleState(
+      cfg,
+      { ephemeral: false, stowRefused: true },
+      { stow: "2026-11-17T08:00:00Z" },
+    )
+    expect(latched.stow.enabled).toBe(false)
+    expect(latched.stow.off).toContain("refused")
+    expect(latched.stow.off).toContain("until QEMU restarts")
+    expect(latched.stow.lastAt).toBe("2026-11-17T08:00:00Z")
+    expect(latched.autosave.enabled).toBe(cfg["autosave.enabled"])
+    const free = idleState(cfg, { ephemeral: false, stowRefused: false }, {})
+    expect(free.stow.enabled).toBe(true)
+    expect(free.stow.off).toBeUndefined()
+    expect(
+      idleState(
+        { ...cfg, "stow.enabled": false },
+        { ephemeral: false, stowRefused: true },
+        {},
+      ).stow.off,
+    ).toBeUndefined()
   })
 
   it("is logged once, however often it comes back, and leaves the record to winvm stow", () => {
