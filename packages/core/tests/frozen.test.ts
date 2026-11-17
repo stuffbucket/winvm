@@ -1583,4 +1583,72 @@ describe("status when the host powered Windows off", () => {
       (await gather("frozen-hostoff-gone", false)).hostPoweredOff,
     ).toBeNull()
   })
+
+  const keeper = (what: string, fields: Record<string, unknown> = {}): void => {
+    appendEntry(HOST, { kind: "keeper", what, ...fields })
+  }
+  const step = (name: string, ok = true): void => {
+    keeper("host-end", { step: name, ok })
+  }
+  const keptStart = (): void => {
+    op("begin", "start")
+    keeper("launched", { child: "qemu", pid: 501, program: "qemu" })
+    op("end", "start")
+  }
+
+  it("says the keeper quit QEMU when Windows did not finish shutting down at host end", async () => {
+    keptStart()
+    keeper("host-ending", { signal: "SIGTERM", budgetMs: 55_000 })
+    step("powerdown")
+    step("quit")
+    shutdown("host-qmp-quit")
+    closed()
+    keeper("exited", { child: "swtpm", pid: 502, signal: 9, core: false })
+    keeper("exited", { child: "qemu", pid: 501, status: 0 })
+    step("done")
+    const s = await gather(HOST, false)
+    expect(s.hostPoweredOff).toMatchObject({ cause: "host-quit" })
+    const note = s.notes.join("\n")
+    expect(note).toContain("did not shut down cleanly")
+    expect(note).toContain("winvm start -i frozen-hostoff")
+  })
+
+  it("says the keeper killed QEMU at the deadline, whatever order the record has", async () => {
+    keptStart()
+    keeper("host-ending", { signal: "SIGTERM", budgetMs: 55_000 })
+    step("powerdown")
+    step("quit", false)
+    step("kill")
+    keeper("exited", { child: "qemu", pid: 501, signal: 9, core: false })
+    closed()
+    step("done")
+    const s = await gather(HOST, false)
+    expect(s.hostPoweredOff).toMatchObject({ cause: "host-kill" })
+    expect(s.notes.join("\n")).toContain("did not shut down cleanly")
+  })
+
+  it("says Windows was shut down cleanly when the keeper's power button worked", async () => {
+    keptStart()
+    keeper("host-ending", { signal: "SIGTERM", budgetMs: 55_000 })
+    step("powerdown")
+    keeper("exited", { child: "qemu", pid: 501, status: 0 })
+    shutdown("guest-shutdown")
+    closed()
+    step("done")
+    const s = await gather(HOST, false)
+    expect(s.hostPoweredOff).toMatchObject({ cause: "host-shutdown" })
+    const note = s.notes.join("\n")
+    expect(note).toContain("shut down cleanly when the Mac shut down")
+    expect(note).not.toContain("lost")
+  })
+
+  it("forgets the keeper's host end once a later start succeeds", async () => {
+    keptStart()
+    keeper("host-ending", { signal: "SIGTERM", budgetMs: 55_000 })
+    step("quit")
+    keeper("exited", { child: "qemu", pid: 501, status: 0 })
+    closed()
+    keptStart()
+    expect((await gather(HOST, false)).hostPoweredOff).toBeNull()
+  })
 })

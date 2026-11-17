@@ -165,6 +165,13 @@ function hostPowerNote(name: string, off: HostPoweredOff): string {
       "the host (a restart or logout), a crash or another tool ended it, and anything unsaved in Windows is lost; " +
       again
     )
+  if (off.cause === "host-shutdown")
+    return `Windows shut down cleanly when the Mac shut down at ${off.at}: winvm's keeper pressed its power button; ${again}`
+  if (off.cause === "host-quit" || off.cause === "host-kill")
+    return (
+      `the Mac shut down at ${off.at} and Windows did not finish shutting down in time, so winvm's keeper ${off.cause === "host-quit" ? "quit" : "killed"} QEMU: ` +
+      `Windows did not shut down cleanly and anything unsaved in it is lost; ${again}`
+    )
   const who = off.detail === null ? "" : ` (${off.detail})`
   return (
     `the host powered Windows off at ${off.at}: QEMU was signalled${who}, ` +

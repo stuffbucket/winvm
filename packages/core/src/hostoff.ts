@@ -2,7 +2,12 @@ import { closeSync, fstatSync, openSync, readSync } from "node:fs"
 import { readSince, START } from "./eventlog"
 import { pathsFor } from "./paths"
 
-export type HostPowerCause = "host-signal" | "qemu-gone"
+export type HostPowerCause =
+  | "host-signal"
+  | "qemu-gone"
+  | "host-shutdown"
+  | "host-quit"
+  | "host-kill"
 
 export interface HostPoweredOff {
   readonly at: string
@@ -70,10 +75,31 @@ export function signalLine(qemuLog: string): string | null {
   return found?.at(-1) ?? null
 }
 
+interface HostEnd {
+  readonly at: string
+  readonly steps: Set<string>
+}
+
+function keptEnd(
+  end: HostEnd,
+  exit: Readonly<Record<string, unknown>>,
+): HostPoweredOff {
+  const cause: HostPowerCause = end.steps.has("kill")
+    ? "host-kill"
+    : end.steps.has("quit")
+      ? "host-quit"
+      : exit.status === 0
+        ? "host-shutdown"
+        : "host-kill"
+  return { at: end.at, cause, detail: null }
+}
+
 export function hostPoweredOff(name: string): HostPoweredOff | null {
   let found = null as HostPoweredOff | null
   let sawShutdown = false
   let intended = false
+  let hostEnd = null as HostEnd | null
+  let settledByKeeper = false
   for (const e of readSince(name, START).entries) {
     if (e.kind === "op") {
       if (e.phase === "begin" && ENDS_QEMU.has(e.operation)) intended = true
@@ -82,9 +108,24 @@ export function hostPoweredOff(name: string): HostPoweredOff | null {
         if (LAUNCHES.has(e.operation)) {
           sawShutdown = false
           intended = false
+          hostEnd = null
+          settledByKeeper = false
         }
       } else if (e.phase === "end" && e.operation === "start")
         found = found?.cause === "qemu-gone" ? null : found
+    } else if (e.kind === "keeper") {
+      if (e.what === "host-ending") hostEnd = { at: e.t, steps: new Set() }
+      else if (e.what === "host-end" && typeof e.step === "string")
+        hostEnd?.steps.add(e.step)
+      else if (
+        (e.what === "exited" || e.what === "exited-unknown") &&
+        e.child === "qemu" &&
+        hostEnd !== null
+      ) {
+        found = keptEnd(hostEnd, e)
+        settledByKeeper = true
+      }
+    } else if (settledByKeeper) {
     } else if (e.kind === "qmp" && e.event === "SHUTDOWN") {
       sawShutdown = true
       found =
