@@ -38,6 +38,7 @@ const want = (JSON.parse(readFileSync(CONF, "utf8")) as { version: string })
 
 step("bun", [resolve(VIEWER, "scripts", "build-ui.ts")])
 step("bun", [resolve(VIEWER, "scripts", "build-sidecar.ts")])
+step("bun", [resolve(VIEWER, "scripts", "build-keeper.ts")])
 rmSync(APP, { recursive: true, force: true })
 step("pnpm", ["exec", "tauri", "build", "--bundles", "app"], VIEWER)
 step("bun", [
@@ -61,8 +62,10 @@ if (got !== want) {
   console.error(`::error::the app says version ${got}, expected ${want}`)
   process.exit(1)
 }
-if (!existsSync(resolve(APP, "Contents", "MacOS", "winvm"))) {
-  console.error("::error::the app has no Contents/MacOS/winvm")
-  process.exit(1)
+for (const binary of ["winvm", "winvm-keeper"]) {
+  if (!existsSync(resolve(APP, "Contents", "MacOS", binary))) {
+    console.error(`::error::the app has no Contents/MacOS/${binary}`)
+    process.exit(1)
+  }
 }
 console.log(APP)
