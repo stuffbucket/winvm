@@ -33,7 +33,7 @@ import { buildIdentity } from "../src/identity"
 import type { Decision, Sample, Settings, Timing } from "../src/idle"
 import { autosaveName, IdleMachine, savesToRotate } from "../src/idle"
 import { instanceDir, PACKAGE_DIR, pathsFor } from "../src/paths"
-import { STOW_REFUSED } from "../src/saves"
+import { STOW_REFUSED, STOW_UNDECIDED } from "../src/saves"
 import {
   ensureWatcher,
   idleSettings,
@@ -849,6 +849,7 @@ describe("an idle stow that winvm refuses", () => {
   it("is told apart from a failed stow by winvm stow's exit code", () => {
     expect(stowOutcome(0)).toBe("stowed")
     expect(stowOutcome(STOW_REFUSED)).toBe("refused")
+    expect(stowOutcome(STOW_UNDECIDED)).toBe("failed")
     expect(stowOutcome(1)).toBe("failed")
   })
 

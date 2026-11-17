@@ -410,26 +410,37 @@ export function sameQemu(saved: string, installed: string): boolean {
 }
 
 export const STOW_REFUSED = 4
-
-const qemuOf = (label: string): string =>
-  label === UNKNOWN_RUNTIME
-    ? "an unidentified QEMU"
-    : `QEMU ${versionOfRuntime(label)}`
+export const STOW_UNDECIDED = 5
 
 const notRecallableReason = (label: string, installed: string): string =>
-  `${FOREIGN_RUNTIME}${label === UNKNOWN_RUNTIME ? "(unidentified)" : versionOfRuntime(label)} is not this winvm's QEMU ${versionOfRuntime(installed)}, so no recall could take its stow`
+  label === UNKNOWN_RUNTIME
+    ? `${FOREIGN_RUNTIME}did not say which version it is, so winvm could not tell whether a recall could take its stow`
+    : `${FOREIGN_RUNTIME}${versionOfRuntime(label)} is not this winvm's QEMU ${versionOfRuntime(installed)}, so no recall could take its stow`
+
+const refusalMessage = (
+  instance: string,
+  label: string,
+  installed: string,
+): string =>
+  label === UNKNOWN_RUNTIME
+    ? `QEMU on "${instance}" did not say which version it runs, so winvm could not tell whether a stow of it could be brought back; ` +
+      "nothing was saved and Windows keeps running. " +
+      `Try again in a moment; if it keeps happening, shut it down (\`winvm stop -i ${instance}\`) and start it again (\`winvm start -i ${instance}\`)`
+    : `Windows on "${instance}" runs QEMU ${versionOfRuntime(label)}, and this winvm runs QEMU ${versionOfRuntime(installed)}, so a stow of it could not be brought back; ` +
+      "nothing was saved and Windows keeps running. " +
+      `Shut it down (\`winvm stop -i ${instance}\`) and start it again (\`winvm start -i ${instance}\`) to move it to this winvm's QEMU`
 
 export class StowNotRecallable extends Error {
   readonly reason: string
+  readonly undecided: boolean
+  readonly exitCode: number
 
   constructor(instance: string, label: string, installed: string) {
-    super(
-      `Windows on "${instance}" runs ${qemuOf(label)}, and this winvm runs QEMU ${versionOfRuntime(installed)}, so a stow of it could not be brought back; ` +
-        "nothing was saved and Windows keeps running. " +
-        `Shut it down (\`winvm stop -i ${instance}\`) and start it again (\`winvm start -i ${instance}\`) to move it to this winvm's QEMU`,
-    )
+    super(refusalMessage(instance, label, installed))
     this.name = "StowNotRecallable"
     this.reason = notRecallableReason(label, installed)
+    this.undecided = label === UNKNOWN_RUNTIME
+    this.exitCode = this.undecided ? STOW_UNDECIDED : STOW_REFUSED
   }
 }
 

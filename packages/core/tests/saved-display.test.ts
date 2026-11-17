@@ -1352,6 +1352,41 @@ describe("a stow the installed runtime could not recall", () => {
   })
 })
 
+describe("a stow whose QEMU did not say which version it runs", () => {
+  beforeEach(() => {
+    spyOn(kept, "launchedRuntime").mockResolvedValue(null)
+    spyOn(monitor, "qmpCommand").mockRejectedValue(
+      new Error("QMP did not answer within 2000 ms"),
+    )
+  })
+
+  it("is refused this time, as undecided rather than unrecallable", async () => {
+    let refusal: unknown = null
+    await createSave("source", {
+      name: "stow",
+      kind: "stow",
+      format: "raw",
+      quitAfter: true,
+    }).catch((e: unknown) => {
+      refusal = e
+    })
+    expect(refusal).toBeInstanceOf(StowNotRecallable)
+    expect((refusal as StowNotRecallable).undecided).toBe(true)
+    expect((refusal as Error).message).toContain("did not say")
+    expect(commands).not.toContain("stop")
+    expect(readSave("source", "stow")).toBeNull()
+  })
+
+  it("makes winvm stow exit with a code of its own, which the watcher takes as a stow to try again", async () => {
+    spyOn(console, "error").mockImplementation(() => undefined)
+    const code = await savecmds.stow(parseArgs(["-i", "source", "--force"]))
+    expect(code).toBe(saves.STOW_UNDECIDED)
+    expect(code).not.toBe(STOW_REFUSED)
+    expect(watcher.stowOutcome(code)).toBe("failed")
+    expect(runningPid).toBe(FAKE_PID)
+  })
+})
+
 describe("a winvm stow that fails while QEMU still runs Windows", () => {
   beforeEach(() => {
     spyOn(console, "error").mockImplementation(() => undefined)

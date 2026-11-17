@@ -91,7 +91,7 @@ async function doSave(
     r = await saves.createSave(name, o)
   } catch (error) {
     fail(msg(error))
-    return error instanceof saves.StowNotRecallable ? saves.STOW_REFUSED : 1
+    return error instanceof saves.StowNotRecallable ? error.exitCode : 1
   }
   const m = r.manifest
   console.log(
@@ -414,9 +414,10 @@ function refuse(
     what: "stow refused",
     reason: refusal.reason,
     automatic,
+    ...(refusal.undecided ? { undecided: true } : {}),
   })
   fail(refusal.message)
-  return saves.STOW_REFUSED
+  return refusal.exitCode
 }
 
 export async function stow(
