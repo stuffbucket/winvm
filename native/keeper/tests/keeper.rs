@@ -3,6 +3,7 @@ use std::fs;
 use std::io::{BufRead, BufReader, Write};
 use std::os::unix::fs::PermissionsExt;
 use std::os::unix::net::UnixStream;
+use std::os::unix::process::ExitStatusExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, ExitStatus};
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -1968,7 +1969,7 @@ fn a_service_that_refuses_the_host_end_leaves_it_to_the_keepers_power_button() {
 }
 
 #[test]
-fn a_service_that_overruns_its_deadline_is_overtaken_by_the_power_button() {
+fn a_service_that_overruns_its_deadline_is_quit_never_powered_down() {
     let scratch = Scratch::new();
     let (mut keeper, qemu, _) = served_host_end(&scratch, 10_000, &[], &[]);
     let sent = Instant::now();
@@ -1983,16 +1984,18 @@ fn a_service_that_overruns_its_deadline_is_overtaken_by_the_power_button() {
     assert_eq!(all[0]["ok"], true);
     assert_eq!(all[1]["step"], "fallback");
     assert_eq!(all[1]["reason"], "service-deadline");
-    assert_eq!(all[2]["step"], "powerdown");
+    assert_eq!(all[1]["end"], "quit");
+    assert_eq!(all[2]["step"], "quit");
+    assert_eq!(qmp_seen(&scratch), ["quit"]);
 }
 
 #[test]
-fn a_service_that_dies_during_the_host_end_hands_it_to_the_power_button() {
+fn a_service_that_dies_after_its_ack_is_followed_by_a_quit_never_the_power_button() {
     let scratch = Scratch::new();
     let (mut keeper, qemu, service) = served_host_end(&scratch, 20_000, &[], &[]);
     signal(pid_of(&keeper), libc::SIGTERM);
-    wait_until("the service to be asked", Duration::from_secs(5), || {
-        service_report(&scratch).contains("/host-ending")
+    wait_until("the service's ack", Duration::from_secs(5), || {
+        steps(&scratch).iter().any(|s| s["step"] == "service")
     });
     signal(service, libc::SIGKILL);
     assert!(wait_exit(&mut keeper, Duration::from_secs(10)).success());
@@ -2000,7 +2003,97 @@ fn a_service_that_dies_during_the_host_end_hands_it_to_the_power_button() {
     let all = steps(&scratch);
     assert_eq!(all[1]["step"], "fallback");
     assert_eq!(all[1]["reason"], "service-gone");
+    assert_eq!(all[1]["end"], "quit");
+    assert_eq!(qmp_seen(&scratch), ["quit"]);
+}
+
+#[test]
+fn a_late_ack_leaves_the_host_end_with_the_service_alone() {
+    let scratch = Scratch::new();
+    let qmp = scratch.path("qmp.sock");
+    let (mut keeper, qemu, _) = served_host_end(
+        &scratch,
+        20_000,
+        &[],
+        &[
+            "--on-host-end",
+            "quit",
+            "--quit-qmp",
+            &qmp,
+            "--ack-ms",
+            "2500",
+        ],
+    );
+    signal(pid_of(&keeper), libc::SIGTERM);
+    assert!(wait_exit(&mut keeper, Duration::from_secs(10)).success());
+    assert!(!alive(qemu));
+    let all = steps(&scratch);
+    assert_eq!(all[0]["step"], "service");
+    assert_eq!(all[0]["unconfirmed"], true, "{all:?}");
+    assert!(all.iter().all(|s| s["step"] != "fallback"), "{all:?}");
+    assert_eq!(qmp_seen(&scratch), ["quit"]);
+}
+
+#[test]
+fn a_service_that_never_acked_and_died_hands_the_host_end_to_the_power_button() {
+    let scratch = Scratch::new();
+    let (mut keeper, qemu, service) = served_host_end(&scratch, 20_000, &[], &["--ack-ms", "4000"]);
+    signal(pid_of(&keeper), libc::SIGTERM);
+    wait_until(
+        "the keeper to stop waiting for the ack",
+        Duration::from_secs(5),
+        || steps(&scratch).iter().any(|s| s["step"] == "service"),
+    );
+    signal(service, libc::SIGKILL);
+    assert!(wait_exit(&mut keeper, Duration::from_secs(10)).success());
+    assert!(!alive(qemu));
+    let all = steps(&scratch);
+    assert_eq!(all[0]["unconfirmed"], true, "{all:?}");
+    assert_eq!(all[1]["reason"], "service-gone");
+    assert_eq!(all[1]["end"], "shutdown");
     assert_eq!(all[2]["step"], "powerdown");
+}
+
+#[test]
+fn an_adopted_qemu_is_sent_sigterm_before_sigkill_at_the_deadline() {
+    let scratch = Scratch::new();
+    let pidfile = scratch.path("qemu.pid");
+    let mut legacy = Command::new(fakechild())
+        .args([
+            scratch.path("qemu"),
+            "--pidfile".to_owned(),
+            pidfile.clone(),
+        ])
+        .spawn()
+        .expect("spawn a legacy QEMU");
+    let pid = pid_of(&legacy);
+    reported(&scratch, "qemu", pid);
+    scratch.write_spec(&json!({
+        "instance": "test",
+        "record": scratch.record(),
+        "lingerMs": 60_000,
+        "adopt": { "name": "qemu", "pidfile": pidfile, "qmp": scratch.path("gone.sock") },
+    }));
+    let mut keeper = start(&scratch, 4000);
+    assert_eq!(
+        request(&scratch, &json!({ "op": "hello" }))["child"]["pid"],
+        pid
+    );
+    signal(pid_of(&keeper), libc::SIGTERM);
+    assert_eq!(
+        legacy.wait().expect("reap the legacy QEMU").signal(),
+        Some(libc::SIGKILL)
+    );
+    assert!(wait_exit(&mut keeper, Duration::from_secs(10)).success());
+    assert!(fs::read_to_string(scratch.path("qemu"))
+        .unwrap_or_default()
+        .contains("handled 15"));
+    let order: Vec<String> = steps(&scratch)
+        .iter()
+        .filter_map(|s| s["step"].as_str().map(str::to_owned))
+        .filter(|s| s == "term" || s == "kill")
+        .collect();
+    assert_eq!(order, ["term", "kill"]);
 }
 
 #[test]

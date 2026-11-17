@@ -8,7 +8,7 @@ use std::time::{Duration, Instant, SystemTime};
 use serde_json::{json, Value};
 
 use crate::adopt;
-use crate::control;
+use crate::control::{self, PostError};
 use crate::kq::{Event, Kqueue};
 use crate::qmp;
 use crate::record::{self, Record};
@@ -28,6 +28,7 @@ const SERVICE_MARGIN: Duration = Duration::from_secs(8);
 const SERVICE_ANSWER: Duration = Duration::from_millis(1500);
 const SERVICE_STOP: Duration = Duration::from_secs(5);
 const SERVICE_GRACE: Duration = Duration::from_secs(5);
+const TERM_GRACE: Duration = Duration::from_secs(1);
 const SERVICE_BACKOFF_MAX: Duration = Duration::from_secs(30);
 const SERVICE_STEADY: Duration = Duration::from_secs(60);
 
@@ -70,7 +71,9 @@ struct HostEnd {
     stop: Option<StopAction>,
     fallback: Option<Fallback>,
     killed: bool,
+    termed: bool,
     service: Option<Instant>,
+    acked: bool,
 }
 
 struct Keeper {
@@ -101,6 +104,12 @@ struct Keeper {
 enum Failure {
     Retry(String),
     Park(String),
+}
+
+enum Handed {
+    Acked,
+    Unconfirmed(String),
+    Declined(String),
 }
 
 const REQUEST_FIELDS: [&str; 2] = ["op", "protocol"];
@@ -771,19 +780,19 @@ impl Keeper {
         json!({ "ok": true })
     }
 
-    fn hand_to_service(&self, now: SystemTime) -> Result<(), String> {
-        let control = self
-            .service_spec
-            .as_ref()
-            .map(|s| s.control.clone())
-            .ok_or_else(|| "no control socket".to_owned())?;
+    fn hand_to_service(&self, now: SystemTime) -> Handed {
+        let Some(control) = self.service_spec.as_ref().map(|s| s.control.clone()) else {
+            return Handed::Declined("no control socket".to_owned());
+        };
         let body = json!({
             "deadlineMs": record::epoch_ms(now + self.budget.saturating_sub(SERVICE_MARGIN)),
             "budgetMs": millis(self.budget),
         });
-        match control::post(&control, "/host-ending", &body, SERVICE_ANSWER)? {
-            code if (200..300).contains(&code) => Ok(()),
-            code => Err(format!("HTTP {code}")),
+        match control::post(&control, "/host-ending", &body, SERVICE_ANSWER) {
+            Ok(code) if (200..300).contains(&code) => Handed::Acked,
+            Ok(code) => Handed::Declined(format!("HTTP {code}")),
+            Err(PostError::Unreachable(error)) => Handed::Declined(error),
+            Err(PostError::NoAnswer(error)) => Handed::Unconfirmed(error),
         }
     }
 
@@ -870,7 +879,9 @@ impl Keeper {
             stop: None,
             fallback: None,
             killed: false,
+            termed: false,
             service: None,
+            acked: false,
         };
         if self.child.is_none() {
             self.retire_sidecars();
@@ -878,30 +889,7 @@ impl Keeper {
         let served = self.spec.stop.is_none() && self.child.is_some() && self.service_alive();
         if served {
             let has_qmp = self.child.as_ref().is_some_and(|r| r.kept.qmp.is_some());
-            match self.hand_to_service(SystemTime::now()) {
-                Ok(()) => {
-                    self.record.note(
-                        "host-end",
-                        &[("step", "service".into()), ("ok", true.into())],
-                    );
-                    host.service = Some(now + self.budget.saturating_sub(SERVICE_MARGIN));
-                }
-                Err(error) => {
-                    self.record.note(
-                        "host-end",
-                        &[
-                            ("step", "service".into()),
-                            ("ok", false.into()),
-                            ("error", error.into()),
-                        ],
-                    );
-                    if has_qmp {
-                        host.fallback = Some(Fallback::Check);
-                    } else {
-                        host.kill_at = now;
-                    }
-                }
-            }
+            self.hand_off(&mut host, now, has_qmp);
         } else if let Some(running) = &self.child {
             match &self.spec.stop {
                 Some(stop) => {
@@ -944,6 +932,46 @@ impl Keeper {
             }
         }
         self.host_end = Some(host);
+    }
+
+    fn hand_off(&self, host: &mut HostEnd, now: Instant, has_qmp: bool) {
+        match self.hand_to_service(SystemTime::now()) {
+            Handed::Acked => {
+                self.record.note(
+                    "host-end",
+                    &[("step", "service".into()), ("ok", true.into())],
+                );
+                host.service = Some(now + self.budget.saturating_sub(SERVICE_MARGIN));
+                host.acked = true;
+            }
+            Handed::Unconfirmed(error) => {
+                self.record.note(
+                    "host-end",
+                    &[
+                        ("step", "service".into()),
+                        ("ok", false.into()),
+                        ("unconfirmed", true.into()),
+                        ("error", error.into()),
+                    ],
+                );
+                host.service = Some(now + self.budget.saturating_sub(SERVICE_MARGIN));
+            }
+            Handed::Declined(error) => {
+                self.record.note(
+                    "host-end",
+                    &[
+                        ("step", "service".into()),
+                        ("ok", false.into()),
+                        ("error", error.into()),
+                    ],
+                );
+                if has_qmp {
+                    host.fallback = Some(Fallback::Check);
+                } else {
+                    host.kill_at = now;
+                }
+            }
+        }
     }
 
     fn host_end_step(&self, step: &str, outcome: Result<Value, String>) {
@@ -1117,12 +1145,17 @@ impl Keeper {
 
     fn watch_service_host_end(&mut self, now: Instant) {
         let deadline = self.host_end.as_ref().and_then(|h| h.service);
+        let acked = self.host_end.as_ref().is_some_and(|h| h.acked);
         if self.child.is_none() {
             if self.service.is_some() && self.service_stop_at.is_none() {
                 if let Some(service) = &self.service {
                     spawn::kill(service.kept.pid, libc::SIGUSR2);
                 }
-                self.service_stop_at = Some(now + SERVICE_GRACE);
+                let cap = self
+                    .host_end
+                    .as_ref()
+                    .map_or(now + SERVICE_GRACE, |h| (h.kill_at + KILL_MARGIN).max(now));
+                self.service_stop_at = Some((now + SERVICE_GRACE).min(cap));
             }
             if let (Some(service), Some(at)) = (&self.service, self.service_stop_at) {
                 if now >= at {
@@ -1135,9 +1168,9 @@ impl Keeper {
             return;
         };
         if self.service.is_none() {
-            self.fall_back("service-gone", "shutdown", now);
+            self.fall_back("service-gone", if acked { "quit" } else { "shutdown" }, now);
         } else if now >= deadline {
-            self.fall_back("service-deadline", "shutdown", now);
+            self.fall_back("service-deadline", "quit", now);
         }
     }
 
@@ -1174,13 +1207,7 @@ impl Keeper {
             self.step_fallback(now);
         }
         if !killed && now >= kill_at {
-            if let Some(pid) = self.signal_child(libc::SIGKILL) {
-                self.record
-                    .note("host-end", &[("step", "kill".into()), ("pid", pid.into())]);
-            }
-            if let Some(host) = &mut self.host_end {
-                host.killed = true;
-            }
+            self.kill_at_deadline(now);
         }
         let finished = self.child.is_none()
             && self.sidecars.is_empty()
@@ -1191,6 +1218,29 @@ impl Keeper {
             return Some("host-end");
         }
         None
+    }
+
+    fn kill_at_deadline(&mut self, now: Instant) {
+        let legacy = self.child.as_ref().is_some_and(|r| r.kept.legacy);
+        let termed = self.host_end.as_ref().is_some_and(|h| h.termed);
+        if legacy && !termed {
+            if let Some(pid) = self.signal_child(libc::SIGTERM) {
+                self.record
+                    .note("host-end", &[("step", "term".into()), ("pid", pid.into())]);
+            }
+            if let Some(host) = &mut self.host_end {
+                host.termed = true;
+                host.kill_at = now + TERM_GRACE;
+            }
+            return;
+        }
+        if let Some(pid) = self.signal_child(libc::SIGKILL) {
+            self.record
+                .note("host-end", &[("step", "kill".into()), ("pid", pid.into())]);
+        }
+        if let Some(host) = &mut self.host_end {
+            host.killed = true;
+        }
     }
 
     fn next_wake(&self) -> Option<Duration> {

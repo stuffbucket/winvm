@@ -17,6 +17,7 @@ struct Control {
     on_host_end: String,
     quit_qmp: Option<PathBuf>,
     keeper: Option<PathBuf>,
+    ack_ms: u64,
 }
 
 struct Monitor {
@@ -177,6 +178,7 @@ fn serve_http(control: &Control, stream: UnixStream) {
     .expect("write the report");
     let refused = control.on_host_end == "refuse";
     let status = if refused { "503 Busy" } else { "202 Accepted" };
+    std::thread::sleep(Duration::from_millis(control.ack_ms));
     let _ = write!(
         writer,
         "HTTP/1.1 {status}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
@@ -303,6 +305,7 @@ fn main() {
             on_host_end: value("--on-host-end").unwrap_or_else(|| "accept".to_owned()),
             quit_qmp: value("--quit-qmp").map(PathBuf::from),
             keeper: value("--keeper").map(PathBuf::from),
+            ack_ms: value("--ack-ms").map_or(0, |m| m.parse().expect("--ack-ms N")),
         };
         std::thread::spawn(move || serve_control(&control));
     }

@@ -5,13 +5,21 @@ use std::time::Duration;
 
 use serde_json::Value;
 
-pub fn post(socket: &Path, path: &str, body: &Value, timeout: Duration) -> Result<u16, String> {
+#[derive(Debug, PartialEq, Eq)]
+pub enum PostError {
+    Unreachable(String),
+    NoAnswer(String),
+}
+
+pub fn post(socket: &Path, path: &str, body: &Value, timeout: Duration) -> Result<u16, PostError> {
     let shown = socket.display();
-    let stream = UnixStream::connect(socket).map_err(|e| format!("{shown}: {e}"))?;
+    let stream =
+        UnixStream::connect(socket).map_err(|e| PostError::Unreachable(format!("{shown}: {e}")))?;
+    let unanswered = |e: std::io::Error| PostError::NoAnswer(format!("{shown}: {e}"));
     stream
         .set_write_timeout(Some(timeout))
         .and_then(|()| stream.set_read_timeout(Some(timeout)))
-        .map_err(|e| format!("{shown}: {e}"))?;
+        .map_err(unanswered)?;
     let text = body.to_string();
     let request = format!(
         "POST {path} HTTP/1.1\r\nHost: localhost\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{text}",
@@ -19,16 +27,16 @@ pub fn post(socket: &Path, path: &str, body: &Value, timeout: Duration) -> Resul
     );
     (&stream)
         .write_all(request.as_bytes())
-        .map_err(|e| format!("{shown}: {e}"))?;
+        .map_err(unanswered)?;
     let mut status = String::new();
     BufReader::new(&stream)
         .read_line(&mut status)
-        .map_err(|e| format!("{shown}: {e}"))?;
+        .map_err(unanswered)?;
     status
         .split_whitespace()
         .nth(1)
         .and_then(|code| code.parse().ok())
-        .ok_or_else(|| format!("{shown}: no HTTP answer"))
+        .ok_or_else(|| PostError::NoAnswer(format!("{shown}: no HTTP answer")))
 }
 
 #[cfg(test)]
@@ -72,6 +80,8 @@ mod tests {
             &Value::Null,
             Duration::from_secs(1),
         );
-        assert!(answer.is_err_and(|e| e.contains("/nonexistent/control.sock")));
+        assert!(
+            matches!(answer, Err(PostError::Unreachable(e)) if e.contains("/nonexistent/control.sock"))
+        );
     }
 }
