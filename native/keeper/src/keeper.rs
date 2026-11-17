@@ -754,8 +754,11 @@ impl Keeper {
     }
 
     fn hand_back(&mut self, request: &Value) -> Value {
-        if self.host_end.is_none() {
+        let Some(host) = &self.host_end else {
             return json!({ "ok": false, "error": "not ending" });
+        };
+        if host.service.is_none() {
+            return json!({ "ok": true, "taken": false });
         }
         let then = request["end"].as_str().unwrap_or("");
         if !matches!(then, "shutdown" | "quit") {

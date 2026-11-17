@@ -2115,3 +2115,31 @@ fn a_launched_child_reports_the_runtime_it_was_launched_from() {
     );
     assert!(wait_exit(&mut keeper, Duration::from_secs(5)).success());
 }
+
+#[test]
+fn a_hand_back_after_the_keeper_has_taken_over_changes_nothing() {
+    let scratch = Scratch::new();
+    let (mut keeper, _, _) = served_host_end(
+        &scratch,
+        20_000,
+        &["--powerdown", "ignore"],
+        &["--on-host-end", "refuse"],
+    );
+    signal(pid_of(&keeper), libc::SIGTERM);
+    wait_until("the power button", Duration::from_secs(5), || {
+        qmp_seen(&scratch).contains(&"system_powerdown".to_owned())
+    });
+    let late = request(
+        &scratch,
+        &json!({ "op": "host-end", "end": "quit", "reason": "late" }),
+    );
+    assert_eq!(late["ok"], true, "{late}");
+    assert!(
+        steps(&scratch).iter().all(|s| s["reason"] != "late"),
+        "{:?}",
+        steps(&scratch)
+    );
+    assert!(!qmp_seen(&scratch).contains(&"quit".to_owned()));
+    assert_eq!(request(&scratch, &json!({ "op": "kill" }))["ok"], true);
+    assert!(wait_exit(&mut keeper, Duration::from_secs(5)).success());
+}
