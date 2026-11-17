@@ -44,15 +44,25 @@ the status every few seconds.
 
 ## Keeping them current
 
-`winvm status` only reads. When the service or watcher is missing or was
+`winvm status` only reads. Before this release it also replaced an
+out-of-date service and watcher and unmounted drives a gone guest left; it no
+longer does, so scripts that ran `winvm status` to repair an instance should
+run `winvm reconcile` instead. When the service or watcher is missing or was
 started by another build of winvm, or a guest that is gone left its drives
-mounted, it says so (`"management": "repair"` in `--json`) and leaves them be.
-`winvm reconcile [-i name]` repairs them and leaves Windows running. So do
-`winvm start` on a running instance, and the other commands that use the guest
-(`exec`, `info`, `save` and the rest). The app runs `winvm reconcile -i NAME`
-when a status it reads says a repair is due, at most once a minute per
-instance. If a repair is cut short after it stopped the watcher, the service
-restarts the watcher within about 30 seconds.
+mounted, `status` says so (`"management": "repair"` in `--json`) and leaves
+them be. `winvm reconcile [-i name]` repairs them and leaves Windows running.
+So do `winvm start` on a running instance, and the other commands that use the
+guest (`exec`, `info`, `save` and the rest). The app runs
+`winvm reconcile -i NAME` when a status it reads says a repair is due, one at a
+time per instance: a minute after a repair that finished (or was put off
+because the watcher was saving), and after one that failed it waits 1, 2, 4
+minutes and so on, up to 30. If a repair is cut short after it stopped the
+watcher, the service restarts the watcher within about 30 seconds.
+
+`winvm status` also no longer looks at the folder the Windows ISO links to
+when it reports Time Machine: if that is on another disk, macOS would ask for
+permission and the status would wait. `winvm doctor` and `winvm timemachine`
+still check it.
 
 ## The idle watcher
 
