@@ -1,17 +1,10 @@
-/**
- * The screen's input path with a fake noVNC: while the guest takes input
- * (running, nothing under way) noVNC is live; in every other phase it is
- * view-only, the Mac's arrow shows, capture is released, nothing is swallowed,
- * held keys and buttons are let go of first, and the Mac's clipboard waits.
- * Rendered in happy-dom, with the app's Tauri bridge faked.
- */
-import { GlobalRegistrator } from "@happy-dom/global-registrator"
 import { afterAll, afterEach, describe, expect, it, mock } from "bun:test"
+import { GlobalRegistrator } from "@happy-dom/global-registrator"
+import type { JSX } from "react"
 
 GlobalRegistrator.register()
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true })
 
-/** Every call a connection made, in order, with `viewOnly` as it was when made. */
 interface Call {
   readonly what: string
   readonly viewOnly: boolean
@@ -34,15 +27,20 @@ class FakeRFB extends EventTarget {
   _sock = { sQpush8() {}, sQpush16() {}, sQpush32() {}, flush() {} }
   _clipboardServerCapabilitiesFormats = { 1: true }
   _display = { flip() {}, _renderQ: [] as unknown[], _fbWidth: 0, _fbHeight: 0 }
-  _keyboard = { _allKeysUp: () => this.log("allKeysUp") }
+  _keyboard = {
+    _allKeysUp: () => {
+      this.log("allKeysUp")
+    },
+  }
   static messages = { setDesktopSize() {} }
-  constructor(
-    readonly target: HTMLElement,
-    readonly url: string,
-  ) {
+  readonly target: HTMLElement
+  readonly url: string
+
+  constructor(target: HTMLElement, url: string) {
     super()
+    this.target = target
+    this.url = url
     made.push(this)
-    // noVNC puts its canvas in the target, and sets its own cursor on it.
     const canvas = document.createElement("canvas")
     canvas.style.cursor = "none"
     target.append(canvas)
@@ -78,16 +76,22 @@ class FakeRFB extends EventTarget {
 
 let mac = "from the Mac"
 let focused = true
-mock.module("novnc/core/rfb.js", () => ({ default: FakeRFB }))
-mock.module("novnc/core/input/util.js", () => ({
+const realRfb = { ...(await import("@winvm/novnc/core/rfb.js")) }
+const realInputUtil = { ...(await import("@winvm/novnc/core/input/util.js")) }
+await mock.module("@winvm/novnc/core/rfb.js", () => ({ default: FakeRFB }))
+await mock.module("@winvm/novnc/core/input/util.js", () => ({
   getKeysym: (e: KeyboardEvent) => (e.code === "KeyA" ? 0x61 : null),
   getKeycode: (e: KeyboardEvent) => e.code,
 }))
-// The app's bridge: the Mac's clipboard is `mac`; everything else is answered with nothing.
-// (backend.ts is not mocked: bun's module mocks outlive this file.)
 const bridge = {
-  core: { invoke: async (cmd: string): Promise<unknown> => (cmd === "read_text" ? mac : null) },
-  event: { listen: async (): Promise<() => void> => () => undefined, emit: async () => undefined },
+  core: {
+    invoke: (cmd: string): Promise<unknown> =>
+      Promise.resolve(cmd === "read_text" ? mac : null),
+  },
+  event: {
+    listen: (): Promise<() => void> => Promise.resolve(() => undefined),
+    emit: (): Promise<undefined> => Promise.resolve(undefined),
+  },
 }
 Object.assign(window, { __TAURI__: bridge })
 
@@ -108,13 +112,25 @@ afterEach(() => {
   mac = "from the Mac"
   focused = true
 })
-afterAll(() => GlobalRegistrator.unregister())
-Object.defineProperty(document, "hasFocus", { value: () => focused, configurable: true })
+afterAll(async () => {
+  await mock.module("@winvm/novnc/core/rfb.js", () => realRfb)
+  await mock.module("@winvm/novnc/core/input/util.js", () => realInputUtil)
+  await GlobalRegistrator.unregister()
+})
+Object.defineProperty(document, "hasFocus", {
+  value: () => focused,
+  configurable: true,
+})
 
 const flush = async (): Promise<void> => {
   await act(async () => {
     for (let i = 0; i < 20; i++) await Promise.resolve()
   })
+}
+
+function need<T>(value: T | null | undefined): T {
+  if (value === null || value === undefined) throw new Error("missing")
+  return value
 }
 
 type Phase = Parameters<typeof inputRule>[0]
@@ -124,7 +140,7 @@ interface Props {
   captured?: boolean
 }
 
-function Harness(p: Props & { onCaptured(c: boolean): void }): JSX.Element {
+function Harness(p: Props & { onCaptured: (c: boolean) => void }): JSX.Element {
   const rule = inputRule(p.phase, p.busy ?? false)
   return (
     <Screen
@@ -140,16 +156,28 @@ function Harness(p: Props & { onCaptured(c: boolean): void }): JSX.Element {
   )
 }
 
-async function mount(initial: Props): Promise<{ set(next: Props): Promise<void>; captures: boolean[]; rfb: FakeRFB; area(): HTMLElement; canvas(): HTMLCanvasElement }> {
+async function mount(initial: Props): Promise<{
+  set(next: Props): Promise<void>
+  captures: boolean[]
+  rfb: FakeRFB
+  area(): HTMLElement
+  canvas(): HTMLCanvasElement
+}> {
   const host = document.createElement("div")
   document.body.append(host)
   root = createRoot(host)
   const captures: boolean[] = []
-  const render = (p: Props): void => act(() => root?.render(<Harness {...p} onCaptured={(c) => captures.push(c)} />))
+  const render = (p: Props): void => {
+    act(() =>
+      root?.render(<Harness {...p} onCaptured={(c) => captures.push(c)} />),
+    )
+  }
   render(initial)
   await flush()
-  const rfb = made[0]!
-  await act(async () => rfb.connect())
+  const rfb = need(made[0])
+  act(() => {
+    rfb.connect()
+  })
   await flush()
   return {
     async set(next) {
@@ -158,13 +186,23 @@ async function mount(initial: Props): Promise<{ set(next: Props): Promise<void>;
     },
     captures,
     rfb,
-    area: () => host.querySelector<HTMLElement>(".screen")!,
-    canvas: () => host.querySelector<HTMLCanvasElement>("canvas")!,
+    area: () => need(host.querySelector<HTMLElement>(".screen")),
+    canvas: () => need(host.querySelector<HTMLCanvasElement>("canvas")),
   }
 }
 
-const key = (target: EventTarget, type: "keydown" | "keyup", code: string, init: KeyboardEventInit = {}): KeyboardEvent => {
-  const e = new KeyboardEvent(type, { code, bubbles: true, cancelable: true, ...init })
+const key = (
+  target: EventTarget,
+  type: "keydown" | "keyup",
+  code: string,
+  init: KeyboardEventInit = {},
+): KeyboardEvent => {
+  const e = new KeyboardEvent(type, {
+    code,
+    bubbles: true,
+    cancelable: true,
+    ...init,
+  })
   target.dispatchEvent(e)
   return e
 }
@@ -182,12 +220,15 @@ describe("the screen's input", () => {
     expect(s.area().classList.contains("screen--inert")).toBe(false)
   })
 
-  it.each(["paused", "asleep", "starting", "stopped", "stowed"] as const)("is a picture in %s: view-only, the Mac's arrow, no focus on click (except asleep)", async (phase) => {
-    const s = await mount({ phase })
-    expect(s.rfb.viewOnly).toBe(true)
-    expect(s.area().classList.contains("screen--inert")).toBe(true)
-    expect(s.rfb.focusOnClick).toBe(phase === "asleep")
-  })
+  it.each(["paused", "asleep", "starting", "stopped", "stowed"] as const)(
+    "is a picture in %s: view-only, the Mac's arrow, no focus on click (except asleep)",
+    async (phase) => {
+      const s = await mount({ phase })
+      expect(s.rfb.viewOnly).toBe(true)
+      expect(s.area().classList.contains("screen--inert")).toBe(true)
+      expect(s.rfb.focusOnClick).toBe(phase === "asleep")
+    },
+  )
 
   it("is a picture while a verb is under way, and live again after", async () => {
     const s = await mount({ phase: "running" })
@@ -201,7 +242,14 @@ describe("the screen's input", () => {
 
   it("lets go of held keys and buttons first, while noVNC can still send, and releases capture", async () => {
     const s = await mount({ phase: "running", captured: true })
-    key(s.area().querySelector(".screen__canvas")!, "keydown", "MetaLeft", { metaKey: true })
+    key(
+      need(s.area().querySelector(".screen__canvas")),
+      "keydown",
+      "MetaLeft",
+      {
+        metaKey: true,
+      },
+    )
     s.rfb._mouseButtonMask = 1
     calls.length = 0
     await s.set({ phase: "paused", captured: true })
@@ -209,18 +257,28 @@ describe("the screen's input", () => {
     expect(names).toContain("key:MetaLeft:false")
     expect(names).toContain("mouse:0")
     expect(names).toContain("allKeysUp")
-    // Every release went out before noVNC went view-only.
     const viewOnlyAt = names.indexOf("viewOnly=true")
     expect(viewOnlyAt).toBeGreaterThan(-1)
-    for (const release of ["key:MetaLeft:false", "mouse:0", "allKeysUp"]) expect(names.indexOf(release)).toBeLessThan(viewOnlyAt)
+    for (const release of ["key:MetaLeft:false", "mouse:0", "allKeysUp"])
+      expect(names.indexOf(release)).toBeLessThan(viewOnlyAt)
     expect(s.captures).toEqual([false])
   })
 
   it("swallows no key while paused, wherever it is held", async () => {
     const s = await mount({ phase: "paused" })
-    const target = s.area().querySelector(".screen__canvas")!
-    for (const init of [{ metaKey: true }, { ctrlKey: true, altKey: true }, {}]) {
-      for (const code of ["MetaRight", "MetaLeft", "ControlLeft", "AltLeft", "KeyA"]) {
+    const target = need(s.area().querySelector(".screen__canvas"))
+    for (const init of [
+      { metaKey: true },
+      { ctrlKey: true, altKey: true },
+      {},
+    ]) {
+      for (const code of [
+        "MetaRight",
+        "MetaLeft",
+        "ControlLeft",
+        "AltLeft",
+        "KeyA",
+      ]) {
         const down = key(target, "keydown", code, init)
         key(target, "keyup", code, init)
         expect(down.defaultPrevented).toBe(false)
@@ -236,8 +294,12 @@ describe("the screen's input", () => {
     await s.set({ phase: "running", captured: false })
     expect(s.rfb.viewOnly).toBe(false)
     calls.length = 0
-    // Right Command still works as the uncaptured Windows modifier, so capture isn't what it was.
-    const e = key(s.area().querySelector(".screen__canvas")!, "keydown", "MetaLeft", { metaKey: true })
+    const e = key(
+      need(s.area().querySelector(".screen__canvas")),
+      "keydown",
+      "MetaLeft",
+      { metaKey: true },
+    )
     expect(e.defaultPrevented).toBe(false)
     expect(calls.filter((c) => c.what.startsWith("key:"))).toEqual([])
   })
@@ -247,7 +309,9 @@ describe("the screen's input", () => {
     expect(calls.filter((c) => c.what.startsWith("paste:"))).toEqual([])
     await s.set({ phase: "running" })
     await flush()
-    expect(calls.filter((c) => c.what.startsWith("paste:")).map((c) => c.what)).toEqual(["paste:from the Mac"])
+    expect(
+      calls.filter((c) => c.what.startsWith("paste:")).map((c) => c.what),
+    ).toEqual(["paste:from the Mac"])
   })
 
   it("does not take focus while paused, and a click on an asleep frame focuses it for the wake key", async () => {
