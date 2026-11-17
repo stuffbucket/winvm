@@ -65,6 +65,7 @@ import {
 import * as monitor from "./monitor"
 import {
   INTERRUPTED,
+  InstanceBusy,
   interruptedAfterRequest,
   irreversible,
   leaseHolder,
@@ -574,6 +575,8 @@ export async function build(args: Args): Promise<number> {
 }
 
 export function clearScratch(scratch: string, p: Paths): void {
+  const holder = leaseHolder(scratch)
+  if (holder !== null) throw new InstanceBusy(scratch, holder)
   stopService(p)
   retireKeeper(scratch, p)
   rmSync(p.dir, { recursive: true, force: true })
@@ -1337,7 +1340,7 @@ export async function kill(args: Args): Promise<number> {
   }
   finder.beforeDown(name)
   if (!(await killKept(p, pid))) {
-    signalProcess(pid, "SIGKILL")
+    if (qemu.pidOf(p) === pid) signalProcess(pid, "SIGKILL")
     await killKept(p, null)
   }
   rmSync(p.pid, { force: true })

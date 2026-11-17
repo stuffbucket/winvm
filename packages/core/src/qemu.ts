@@ -560,6 +560,11 @@ export function pidOf(p: Paths): number | null {
 
 export const isRunning = (p: Paths): boolean => pidOf(p) !== null
 
+export async function killQemu(p: Paths, pid: number): Promise<boolean> {
+  if (await kept.killKept(p, pid)) return true
+  return pidOf(p) === pid && signalProcess(pid, "SIGKILL")
+}
+
 export const isQemuCommandOf = (command: string, p: Paths): boolean =>
   /(^|[\s/])qemu-system-[A-Za-z0-9_]+(\s|$)/.test(command) &&
   `${command} `.includes(` -pidfile ${p.pid} `)

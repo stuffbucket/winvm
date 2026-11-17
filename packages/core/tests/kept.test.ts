@@ -44,7 +44,7 @@ import {
   killKept,
   setLaunchd,
 } from "../src/kept"
-import { LeaseNotHeld, withOperation } from "../src/operation"
+import { InstanceBusy, LeaseNotHeld, withOperation } from "../src/operation"
 import { type InstanceMeta, pathsFor } from "../src/paths"
 import * as qemu from "../src/qemu"
 import * as qmp from "../src/qmp"
@@ -53,6 +53,7 @@ import * as servicectl from "../src/servicectl"
 import * as share from "../src/share"
 import { gather } from "../src/status"
 import * as vnc from "../src/vnc"
+import { lockPidfile, releasePidfiles } from "./fakes/pidfile"
 
 const NAME = "kept"
 const FAKE_KEEPER = resolve(import.meta.dir, "fakes", "keeper.ts")
@@ -639,6 +640,73 @@ describe("fix round 1", () => {
     }
   })
 
+  it("says the keeper did not kill QEMU when its kill request itself failed", async () => {
+    const p = pathsFor(NAME)
+    mkdirSync(keeperDir(p), { recursive: true })
+    const server = createServer((socket) => {
+      socket.setEncoding("utf8")
+      socket.on("data", (line: string) => {
+        const op = (JSON.parse(line) as { op: string }).op
+        if (op === "hello")
+          socket.end(
+            `${JSON.stringify({ ok: true, pid: 9, protocol: 2, child: { name: "qemu", pid: 4242 } })}\n`,
+          )
+        else socket.destroy()
+      })
+    })
+    await new Promise<void>((ready) => {
+      server.listen(keeperSocket(p), () => {
+        ready()
+      })
+    })
+    try {
+      expect(await killKept(p, 4242)).toBe(false)
+    } finally {
+      await new Promise<void>((done) => {
+        server.close(() => {
+          done()
+        })
+      })
+    }
+  })
+
+  it("kills QEMU itself after a failed keeper request only while the pidfile lock still names it", async () => {
+    const p = pathsFor(NAME)
+    const held = (
+      await lockPidfile(p.pid, "qemu-system-aarch64", "-pidfile", p.pid)
+    ).pid
+    mkdirSync(keeperDir(p), { recursive: true })
+    const server = createServer((socket) => {
+      socket.setEncoding("utf8")
+      socket.on("data", (line: string) => {
+        const op = (JSON.parse(line) as { op: string }).op
+        if (op === "hello")
+          socket.end(
+            `${JSON.stringify({ ok: true, pid: 9, protocol: 2, child: { name: "qemu", pid: held } })}\n`,
+          )
+        else socket.destroy()
+      })
+    })
+    await new Promise<void>((ready) => {
+      server.listen(keeperSocket(p), () => {
+        ready()
+      })
+    })
+    try {
+      expect(await qemu.killQemu(p, held + 1)).toBe(false)
+      expect(alive(held)).toBe(true)
+      expect(await qemu.killQemu(p, held)).toBe(true)
+      await until("the QEMU to go", () => !alive(held))
+    } finally {
+      await new Promise<void>((done) => {
+        server.close(() => {
+          done()
+        })
+      })
+      await releasePidfiles()
+    }
+  })
+
   it("names keeper.log, not a restart, when the VM runs unprotected because the keeper could not start", async () => {
     bootstrapFails = true
     spyOn(console, "warn").mockImplementation(() => undefined)
@@ -693,5 +761,32 @@ describe("fix round 1", () => {
       `bootout ${keeperLabel(process.env.WINVM_HOME ?? "", NAME)}`,
     ])
     expect(existsSync(p.dir)).toBe(false)
+  })
+
+  it("will not clear a build's scratch, or boot its keeper out, while another build holds its lease", async () => {
+    const p = pathsFor(NAME)
+    mkdirSync(keeperDir(p), { recursive: true })
+    writeFileSync(keeperPlist(p), "plist")
+    const holder = Bun.spawn(
+      [
+        process.execPath,
+        "-e",
+        `const { withOperation } = await import(${JSON.stringify(resolve(import.meta.dir, "..", "src", "operation.ts"))}); await withOperation(${JSON.stringify(NAME)}, "build", async () => { console.log("held"); await new Promise((r) => setTimeout(r, 20000)) })`,
+      ],
+      { stdout: "pipe", stderr: "inherit", env: process.env },
+    )
+    try {
+      const reader = (holder.stdout as ReadableStream<Uint8Array>).getReader()
+      await reader.read()
+      reader.releaseLock()
+      expect(() => {
+        commands.clearScratch(NAME, p)
+      }).toThrow(InstanceBusy)
+      expect(launchdCalls).toEqual([])
+      expect(existsSync(keeperPlist(p))).toBe(true)
+    } finally {
+      holder.kill("SIGKILL")
+      await holder.exited
+    }
   })
 })
