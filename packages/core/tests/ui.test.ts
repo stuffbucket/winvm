@@ -182,6 +182,7 @@ describe("status formatting", () => {
     management: "current",
     operation: null,
     stopUnfinished: null,
+    hostPoweredOff: null,
     notes: [],
   }
 
