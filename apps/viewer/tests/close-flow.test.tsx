@@ -203,9 +203,11 @@ function fakeWinvm(machines: Machine[], selected: string | null) {
     through: unknown
     done: Deferred<Ran | null>
   }[] = []
+  const waiting = new Map<string, ((s: Status | null) => void)[]>()
   const world = {
     machines,
     name: selected,
+    streaming: false,
     busy: null as Verb | null,
     all: "ok" as "ok" | "fail",
     log,
@@ -213,6 +215,12 @@ function fakeWinvm(machines: Machine[], selected: string | null) {
     rerender: (): void => undefined,
     find(name: string): Machine | undefined {
       return world.machines.find((m) => m.name === name)
+    },
+    announce(name: string): void {
+      const m = world.find(name)
+      for (const wake of waiting.get(name) ?? [])
+        wake(m === undefined ? null : parsed(m))
+      waiting.delete(name)
     },
     set(name: string, change: Partial<Machine>): void {
       world.machines = world.machines.map((m) =>
@@ -258,6 +266,22 @@ function fakeWinvm(machines: Machine[], selected: string | null) {
         failure: null,
         last: null,
         cliPath: null,
+        streaming: world.streaming,
+        nextStatus: (name: string, ms: number) => {
+          log.push(`nextStatus ${name} ${String(ms)}`)
+          return new Promise<Status | null>((resolve) => {
+            const timer = setTimeout(() => {
+              resolve(null)
+            }, ms)
+            waiting.set(name, [
+              ...(waiting.get(name) ?? []),
+              (s) => {
+                clearTimeout(timer)
+                resolve(s)
+              },
+            ])
+          })
+        },
         select: (name: string) => {
           log.push(`select ${name}`)
           world.name = name
@@ -1079,6 +1103,52 @@ describe("useCloseFlow", () => {
     await tick(1500)
     expect(bridge.count("close_complete")).toBe(1)
     expect(world.runs).toHaveLength(0)
+  })
+
+  it("with the event stream up, waits for an operation it did not start without reading it again until a read after an event shows it ended", async () => {
+    const bridge = fakeBridge()
+    const world = fakeWinvm(
+      [{ name: "a", state: "running", operation: "stow" }],
+      "a",
+    )
+    world.streaming = true
+    await mount(world)
+    act(() => {
+      bridge.fire()
+    })
+    await flush()
+    expect(current().state.kind).toBe("waiting")
+    await tick(15_000)
+    expect(current().state.kind).toBe("waiting")
+    expect(world.log.filter((l) => l === "refreshOne a")).toHaveLength(1)
+    expect(world.log).toContain("nextStatus a 20000")
+
+    world.set("a", { operation: null, state: "stowed" })
+    world.announce("a")
+    await flush()
+    expect(world.log.filter((l) => l === "refreshOne a")).toHaveLength(1)
+    expect(bridge.count("close_complete")).toBe(1)
+  })
+
+  it("with the event stream up, reads the machine itself when no event has come for a while", async () => {
+    const bridge = fakeBridge()
+    const world = fakeWinvm(
+      [{ name: "a", state: "running", operation: "save" }],
+      "a",
+    )
+    world.streaming = true
+    await mount(world)
+    act(() => {
+      bridge.fire()
+    })
+    await flush()
+    world.set("a", { operation: null })
+    await tick(15_000)
+    expect(current().state.kind).toBe("waiting")
+    expect(world.log.filter((l) => l === "refreshOne a")).toHaveLength(1)
+    await tick(5000)
+    expect(world.log.filter((l) => l === "refreshOne a")).toHaveLength(2)
+    expect(current().state.kind).toBe("asking")
   })
 
   it("waits for this window's own command on the machine too", async () => {

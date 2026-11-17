@@ -39,8 +39,31 @@ function localSnapshots(mount: string): readonly string[] {
     .filter((l) => l.startsWith("com.apple.TimeMachine."))
 }
 
-export function summary(): string {
-  const missing = targets().filter((p) => !isExcluded(p))
+export interface Probe {
+  readonly exists: (path: string) => boolean
+  readonly realpath: (path: string) => string
+  readonly excluded: (path: string) => boolean
+}
+
+const REAL: Probe = {
+  exists: existsSync,
+  realpath: realpathSync,
+  excluded: isExcluded,
+}
+
+export function localSummary(probe: Probe = REAL): string {
+  return verdict(
+    [home()].filter((p) => probe.exists(p)),
+    probe,
+  )
+}
+
+export function summary(probe: Probe = REAL): string {
+  return verdict(targets({ realpath: probe.realpath }), probe)
+}
+
+function verdict(paths: readonly string[], probe: Probe): string {
+  const missing = paths.filter((p) => !probe.excluded(p))
   return missing.length === 0
     ? "ok    Time Machine: VM files excluded from backups"
     : `note  Time Machine: ${missing.join(", ")} not excluded -> winvm timemachine`

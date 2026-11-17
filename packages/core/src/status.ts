@@ -6,9 +6,15 @@ import { effectiveConfig } from "./config"
 import { describeDisplay, readDisplay, runningDisplay } from "./display"
 import { readSince, START } from "./eventlog"
 import { frozenFrom, markedAsleep } from "./frozen"
+import { type HostPoweredOff, hostPoweredOff } from "./hostoff"
 import { qmpCommand } from "./monitor"
 import type { OperationInfo } from "./operation"
-import { readOperation, STOP_UNFINISHED, savingRunning } from "./operation"
+import {
+  abandonedStop,
+  readOperation,
+  STOP_UNFINISHED,
+  savingRunning,
+} from "./operation"
 import type { Paths } from "./paths"
 import {
   home,
@@ -19,6 +25,7 @@ import {
   readMeta,
 } from "./paths"
 import * as qemu from "./qemu"
+import { type Management, managementOf } from "./reconcile"
 import { readService } from "./servicectl"
 import { spawnText } from "./shell"
 import * as timemachine from "./timemachine"
@@ -93,8 +100,10 @@ export interface InstanceStatus {
   readonly watcher: WatchInfo | null
   readonly service: { readonly pid: number } | null
   readonly serviceExpected: boolean
+  readonly management: Management
   readonly operation: OperationInfo | null
   readonly stopUnfinished: StopUnfinished | null
+  readonly hostPoweredOff: HostPoweredOff | null
   readonly notes: readonly string[]
 }
 
@@ -115,18 +124,44 @@ const RESTORING: ReadonlySet<string> = new Set([
 
 export function unfinishedStop(name: string): StopUnfinished | null {
   let found: StopUnfinished | null = null
+  let lastClear = ""
   for (const e of readSince(name, START).entries) {
     if (e.kind === "op" && e.phase === "end") {
-      if (e.operation === "stop" && e.exitCode === STOP_UNFINISHED)
+      if (
+        !e.ok &&
+        (e.irreversibleAt !== undefined ||
+          (e.operation === "stop" && e.exitCode === STOP_UNFINISHED))
+      )
         found = { at: e.endedAt }
-      else if (e.ok && RESTORING.has(e.operation)) found = null
+      else if (e.ok && RESTORING.has(e.operation)) {
+        found = null
+        lastClear = e.t
+      }
     } else if (
       (e.kind === "qmp" && e.event === "SHUTDOWN") ||
       (e.kind === "disconnected" && e.reason === "qemu-closed")
-    )
+    ) {
       found = null
+      lastClear = e.t
+    }
   }
-  return found
+  const killed = abandonedStop(name)
+  return killed !== null && killed.at > lastClear ? killed : found
+}
+
+function hostPowerNote(name: string, off: HostPoweredOff): string {
+  const again = `\`winvm start -i ${name}\` starts it again`
+  if (off.cause === "qemu-gone")
+    return (
+      `QEMU is gone (last seen ${off.at}) without recording a shutdown, and no winvm stop or kill ended it: ` +
+      "the host (a restart or logout), a crash or another tool ended it, and anything unsaved in Windows is lost; " +
+      again
+    )
+  const who = off.detail === null ? "" : ` (${off.detail})`
+  return (
+    `the host powered Windows off at ${off.at}: QEMU was signalled${who}, ` +
+    `so Windows did not shut down by itself and anything unsaved in it is lost; ${again}`
+  )
 }
 
 export const savesDir = (instance: string): string =>
@@ -479,8 +514,10 @@ export async function gather(
       watcher: readWatch(name),
       service: null,
       serviceExpected: false,
+      management: "current",
       operation,
       stopUnfinished: null,
+      hostPoweredOff: null,
       notes: [`no instance "${name}" — \`winvm start -i ${name}\` creates it`],
     }
   }
@@ -511,6 +548,14 @@ export async function gather(
         "the watcher and the guest's Finder drives are down until " +
         `\`winvm start -i ${name}\` brings them back — \`winvm kill -i ${name}\` if Windows is stuck`,
     )
+  const poweredOff = running ? null : hostPoweredOff(name)
+  if (poweredOff !== null) notes.push(hostPowerNote(name, poweredOff))
+  const management = managementOf(name)
+  if (management === "repair")
+    notes.push(
+      "its control service or watcher is missing or from another build, or a guest that is gone left drives mounted — " +
+        `\`winvm reconcile${name === "default" ? "" : ` -i ${name}`}\` repairs that and leaves Windows running`,
+    )
 
   return {
     name,
@@ -532,8 +577,10 @@ export async function gather(
     watcher: readWatch(name),
     service: serviceOf(p),
     serviceExpected: running && existsSync(p.qmpQemu),
+    management,
     operation,
     stopUnfinished,
+    hostPoweredOff: poweredOff,
     notes,
   }
 }
@@ -796,7 +843,7 @@ export interface StatusArgs {
 }
 
 export async function run(a: StatusArgs): Promise<number> {
-  const tm = timemachine.summary()
+  const tm = timemachine.localSummary()
   const now = Date.now()
   const names = listInstances()
   if (a.instance === null && names.length !== 1) {

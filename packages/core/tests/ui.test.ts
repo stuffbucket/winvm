@@ -179,8 +179,10 @@ describe("status formatting", () => {
     watcher: null,
     service: { pid: 77 },
     serviceExpected: false,
+    management: "current",
     operation: null,
     stopUnfinished: null,
+    hostPoweredOff: null,
     notes: [],
   }
 

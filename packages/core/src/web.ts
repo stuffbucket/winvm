@@ -286,7 +286,7 @@ async function statusBody(name: string): Promise<unknown> {
   const meta = readMeta(name)
   return {
     status: s,
-    report: status.statusReport(s, timemachine.summary(), Date.now()),
+    report: status.statusReport(s, timemachine.localSummary(), Date.now()),
     saves: status.readSaves(name),
     vnc:
       live && meta !== null

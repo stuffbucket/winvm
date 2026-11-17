@@ -39,6 +39,7 @@ import {
   serviceFreshness,
   stopService,
 } from "../src/servicectl"
+import { watcherRecord, watchPathsFor } from "../src/watch"
 import { FakeAgent } from "./fakes/agent"
 import { FakeQmp } from "./fakes/qmp"
 
@@ -962,5 +963,83 @@ describe("QEMU's command line", () => {
     expect(args).toContain(`socket,path=${p.qgaQemu},`)
     expect(args).not.toContain(`unix:${p.qmp},`)
     expect(args).not.toContain(`path=${p.qga},`)
+  })
+})
+
+describe("a watcher owed to the service's QEMU", () => {
+  const HOLDER = resolve(import.meta.dir, "fakes", "holder.ts")
+  const held: ReturnType<typeof Bun.spawn>[] = []
+  let savedCli: string | undefined
+
+  beforeEach(() => {
+    savedCli = process.env.WINVM_CLI
+    process.env.WINVM_CLI = "/test/apps/cli/src/winvm.ts"
+  })
+
+  afterEach(() => {
+    for (const h of held.splice(0)) h.kill("SIGKILL")
+    if (savedCli === undefined) delete process.env.WINVM_CLI
+    else process.env.WINVM_CLI = savedCli
+  })
+
+  const owed = (): string => resolve(p.dir, "watch.owed")
+
+  function startWatcher(starts: { n: number }): () => number {
+    return () => {
+      starts.n += 1
+      const h = Bun.spawn(
+        [process.execPath, HOLDER, "winvm", "watch", "-i", "t"],
+        { stdout: "ignore", stderr: "ignore" },
+      )
+      held.push(h)
+      writeFileSync(watchPathsFor("t").pid, `${String(h.pid)}\n`)
+      writeFileSync(
+        watchPathsFor("t").state,
+        JSON.stringify({
+          pid: h.pid,
+          state: "watching",
+          build: buildIdentity(),
+        }),
+      )
+      return h.pid
+    }
+  }
+
+  it("is restarted by the service on its own, with no command to repair it", async () => {
+    writeFileSync(p.meta, JSON.stringify({ image: "x", vnc: 9, created: "" }))
+    writeFileSync(owed(), JSON.stringify({ qemu: process.pid }))
+    const starts = { n: 0 }
+    svc = await runService("t", {
+      exitAfterMs: 5000,
+      checkMs: 50,
+      settle: {
+        everyMs: 100,
+        options: { startWatcher: startWatcher(starts), watcherTimeoutMs: 3000 },
+      },
+    })
+    await until(() => !existsSync(owed()), 8000)
+    expect(starts.n).toBe(1)
+    expect(watcherRecord("t")?.build).toBe(buildIdentity())
+    await until(() =>
+      entries().some(
+        (e) =>
+          e.kind === "op" &&
+          e.operation === "reconcile" &&
+          e.phase === "end" &&
+          e.ok,
+      ),
+    )
+  }, 20_000)
+
+  it("starts nothing when nothing is owed", async () => {
+    const starts = { n: 0 }
+    svc = await runService("t", {
+      exitAfterMs: 5000,
+      checkMs: 50,
+      settle: { everyMs: 50, options: { startWatcher: startWatcher(starts) } },
+    })
+    await sleep(400)
+    expect(starts.n).toBe(0)
+    expect(entries().some((e) => e.kind === "op")).toBe(false)
   })
 })

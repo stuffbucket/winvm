@@ -56,6 +56,7 @@ interface LeaseRecord extends LeaseHolder {
   readonly pidStart: string | null
   readonly instance: string
   readonly savingRunning?: true
+  readonly irreversibleAt?: string
 }
 
 export interface LeaseSeams {
@@ -152,6 +153,9 @@ function parseRecord(json: string): LeaseRecord | null {
     instance: text(r.instance, ""),
     automatic: r.automatic === true,
     ...(r.savingRunning === true ? { savingRunning: true as const } : {}),
+    ...(typeof r.irreversibleAt === "string"
+      ? { irreversibleAt: r.irreversibleAt }
+      : {}),
   }
 }
 
@@ -190,19 +194,22 @@ const failed = (error: unknown): OpOutcome => ({
   error: error instanceof Error ? error.message : String(error),
 })
 
+const noMark = (): Pick<OpOutcome, "irreversibleAt"> => ({})
+
 async function recorded<T>(
   name: string,
   who: OpIdentity,
   run: () => T | Promise<T>,
   outcome: (result: T) => OpOutcome = settled,
+  markOf: () => Pick<OpOutcome, "irreversibleAt"> = noMark,
 ): Promise<T> {
   recordBegin(name, who)
   try {
     const result = await run()
-    recordEnd(name, who, outcome(result))
+    recordEnd(name, who, { ...outcome(result), ...markOf() })
     return result
   } catch (error) {
-    recordEnd(name, who, failed(error))
+    recordEnd(name, who, { ...failed(error), ...markOf() })
     throw error
   }
 }
@@ -227,6 +234,9 @@ function readLease(
       ok: false,
       abandoned: true,
       error: `pid ${String(r.pid)} went away without letting go of the instance`,
+      ...(r.irreversibleAt === undefined
+        ? {}
+        : { irreversibleAt: r.irreversibleAt }),
     })
   return null
 }
@@ -278,6 +288,88 @@ export const markSavingRunning = (name: string): void => {
 export const clearSavingRunning = (name: string): void => {
   rewriteOwn(name, ({ savingRunning: _, ...rest }) => rest)
 }
+
+interface Mark {
+  readonly at: string
+  readonly recovery: readonly string[]
+}
+
+const marks = new Map<string, Mark>()
+const listening = new Map<string, LeaseOperation>()
+const taken = new Map<string, AbortController>()
+
+const tolerated = (f: () => void): void => {
+  try {
+    f()
+  } catch {}
+}
+
+export function irreversible(
+  name: string,
+  recovery: readonly string[],
+): () => void {
+  if (heldHere(name) === undefined) return () => undefined
+  const mark: Mark = { at: new Date().toISOString(), recovery }
+  marks.set(name, mark)
+  tolerated(() => {
+    rewriteOwn(name, (r) => ({ ...r, irreversibleAt: mark.at }))
+  })
+  return () => {
+    if (marks.get(name) !== mark) return
+    marks.delete(name)
+    tolerated(() => {
+      rewriteOwn(name, ({ irreversibleAt: _, ...rest }) => rest)
+    })
+  }
+}
+
+export function abandonedStop(
+  name: string,
+  seams: LeaseSeams = {},
+): { readonly at: string } | null {
+  if (!isPlainName(name)) return null
+  const json = readOr(pathsFor(name).lease, null)
+  const r = json === null ? null : parseRecord(json)
+  if (r === null || r.irreversibleAt === undefined) return null
+  return isSameProcess(r.pid, r.pidStart, seams.startOf ?? processStart)
+    ? null
+    : { at: r.irreversibleAt }
+}
+
+export interface Interrupts {
+  readonly signal: AbortSignal
+  readonly release: () => void
+}
+
+export function takeInterrupts(
+  name: string,
+  operation: LeaseOperation,
+): Interrupts {
+  if (heldHere(name) === undefined || listening.get(name) !== operation)
+    return { signal: new AbortController().signal, release: () => undefined }
+  const controller = new AbortController()
+  taken.set(name, controller)
+  return {
+    signal: controller.signal,
+    release: () => {
+      if (taken.get(name) === controller) taken.delete(name)
+    },
+  }
+}
+
+export const interruptedAfterRequest = (
+  operation: string,
+  signal: string,
+): string =>
+  `::error::${operation} interrupted by ${signal} after it asked Windows to shut down, and did not finish.`
+
+const markOf = (name: string): Pick<OpOutcome, "irreversibleAt"> => {
+  const mark = marks.get(name)
+  return mark === undefined ? {} : { irreversibleAt: mark.at }
+}
+
+const INTERRUPTS = ["SIGINT", "SIGTERM", "SIGHUP"] as const
+export const INTERRUPTED = 130
 
 function release(file: string, id: string): void {
   if (parseRecord(readOr(file, ""))?.id === id) rmSync(file, { force: true })
@@ -347,6 +439,7 @@ async function acquire(
 
 export interface OperationOptions<T> extends LeaseOptions {
   readonly outcome?: (result: T) => OpOutcome
+  readonly interruptible?: true
 }
 
 export async function withOperation<T>(
@@ -373,12 +466,59 @@ export async function withOperation<T>(
   const file = pathsFor(name).lease
   const who = identityOf(got, true)
   let ended = false
-  const onExit = (code: number): void => {
-    if (!ended) recordEnd(name, who, exited(code))
+  const end = (outcome: OpOutcome): void => {
+    if (!ended) recordEnd(name, who, { ...outcome, ...markOf(name) })
     ended = true
     release(file, got.id)
   }
+  const onExit = (code: number): void => {
+    end(exited(code))
+  }
+  const say = (...lines: readonly string[]): void => {
+    tolerated(() => {
+      for (const line of lines) console.error(line)
+    })
+  }
+  const handlers = INTERRUPTS.map((signal) => {
+    const handler = (): void => {
+      const mark = marks.get(name)
+      if (mark !== undefined) {
+        end(exited(STOP_UNFINISHED))
+        say(
+          interruptedAfterRequest(who.operation, signal),
+          ...mark.recovery.map((line) => `  ${line}`),
+        )
+        process.exit(INTERRUPTED)
+      }
+      const rollback = taken.get(name)
+      if (rollback === undefined) {
+        if (process.listenerCount(signal) > 1) return
+        leaveInterrupts()
+        process.kill(process.pid, signal)
+        return
+      }
+      if (rollback.signal.aborted) {
+        end(exited(INTERRUPTED))
+        say(
+          `::error::${who.operation} interrupted again by ${signal}; exiting at once, and what it took down may not have been put back`,
+        )
+        process.exit(INTERRUPTED)
+      }
+      rollback.abort(signal)
+      say(
+        `::error::${who.operation} interrupted by ${signal}: finishing the current step, then putting everything back. Interrupt again to exit at once.`,
+      )
+    }
+    return [signal, handler] as const
+  })
+  const leaveInterrupts = (): void => {
+    for (const [signal, handler] of handlers) process.off(signal, handler)
+  }
   process.on("exit", onExit)
+  if (o.interruptible === true) {
+    listening.set(name, operation)
+    for (const [signal, handler] of handlers) process.on(signal, handler)
+  }
   try {
     return await recorded(
       name,
@@ -394,9 +534,14 @@ export async function withOperation<T>(
         }
       },
       o.outcome,
+      () => markOf(name),
     )
   } finally {
+    leaveInterrupts()
     process.off("exit", onExit)
+    marks.delete(name)
+    listening.delete(name)
+    taken.delete(name)
     release(file, got.id)
   }
 }
