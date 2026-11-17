@@ -1651,4 +1651,76 @@ describe("status when the host powered Windows off", () => {
     keptStart()
     expect((await gather(HOST, false)).hostPoweredOff).toBeNull()
   })
+
+  it("does not pin a host end with no QEMU on a QEMU that a later setup launched", async () => {
+    keptStart()
+    op("begin", "stop")
+    keeper("exited", { child: "qemu", pid: 501, status: 0 })
+    op("end", "stop")
+    keeper("host-ending", { signal: "SIGTERM", budgetMs: 55_000 })
+    step("done")
+    op("begin", "setup")
+    keeper("started", { pid: 900 })
+    keeper("launched", { child: "qemu", pid: 601, program: "qemu" })
+    keeper("exited", { child: "qemu", pid: 601, status: 1 })
+    op("end", "setup")
+    expect((await gather(HOST, false)).hostPoweredOff).toBeNull()
+  })
+
+  it("notices a later QEMU vanishing once the keeper launched it after a settled host end", async () => {
+    keptStart()
+    keeper("host-ending", { signal: "SIGTERM", budgetMs: 55_000 })
+    step("powerdown")
+    keeper("exited", { child: "qemu", pid: 501, status: 0 })
+    step("done")
+    op("begin", "setup")
+    keeper("started", { pid: 900 })
+    keeper("launched", { child: "qemu", pid: 601, program: "qemu" })
+    op("end", "setup")
+    closed()
+    expect((await gather(HOST, false)).hostPoweredOff).toMatchObject({
+      cause: "qemu-gone",
+    })
+  })
+
+  it("says Windows shut down cleanly for an adopted QEMU whose exit status the keeper could not see", async () => {
+    keptStart()
+    keeper("host-ending", { signal: "SIGTERM", budgetMs: 55_000 })
+    step("powerdown")
+    keeper("exited-unknown", { child: "qemu", pid: 501 })
+    shutdown("guest-shutdown")
+    closed()
+    step("done")
+    expect((await gather(HOST, false)).hostPoweredOff).toMatchObject({
+      cause: "host-shutdown",
+    })
+  })
+
+  it("says the keeper quit an adopted QEMU when that is what it recorded", async () => {
+    keptStart()
+    keeper("host-ending", { signal: "SIGTERM", budgetMs: 55_000 })
+    step("powerdown")
+    shutdown("host-qmp-quit")
+    keeper("exited-unknown", { child: "qemu", pid: 501 })
+    step("done")
+    expect((await gather(HOST, false)).hostPoweredOff).toMatchObject({
+      cause: "host-quit",
+    })
+  })
+
+  it("says the keeper quit a guest stopped for a save or a recall, without claiming work was lost", async () => {
+    keptStart()
+    keeper("host-ending", { signal: "SIGTERM", budgetMs: 55_000 })
+    keeper("host-end", { step: "quit", ok: true, status: "postmigrate" })
+    keeper("exited", { child: "qemu", pid: 501, status: 0 })
+    step("done")
+    const s = await gather(HOST, false)
+    expect(s.hostPoweredOff).toMatchObject({
+      cause: "host-quit-stopped",
+      detail: "postmigrate",
+    })
+    const note = s.notes.join("\n")
+    expect(note).toContain("was not running")
+    expect(note).not.toContain("is lost")
+  })
 })
