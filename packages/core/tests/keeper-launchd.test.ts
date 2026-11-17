@@ -21,7 +21,7 @@ import {
   launchctl,
   startKeeper,
 } from "../src/keeper"
-import { keeperHello, keeperSocket } from "../src/kept"
+import { keeperDir, keeperHello, keeperSocket } from "../src/kept"
 import { heldLease, withOperation } from "../src/operation"
 import { pathsFor } from "../src/paths"
 import * as qemu from "../src/qemu"
@@ -44,13 +44,13 @@ const keeper =
     "debug",
     "winvm-keeper",
   )
-const label = `co.stuffbucket.winvm.test.keeper-${String(process.pid)}`
 const root = mkdtempSync("/tmp/wkl-")
 const savedHome = process.env.WINVM_HOME
 process.env.WINVM_HOME = resolve(root, "home")
 
 const VM = "kept-launchd"
 const vmLabel = keeperLabel(resolve(root, "home"), VM)
+const label = keeperLabel(resolve(root, "home"), "launchd-test")
 
 afterAll(async () => {
   if (enabled) {
@@ -124,7 +124,7 @@ const whats = (record: string): string[] =>
 
 describe.if(enabled)("a real launchd keeper job (WINVM_TEST_LAUNCHD=1)", () => {
   it("runs in the Background session, keeps a dummy child, and on bootout runs the stop action and exits 0", async () => {
-    const dir = resolve(root, "keeper")
+    const dir = keeperDir(pathsFor("launchd-test"))
     const record = resolve(root, "events.jsonl")
     const marker = resolve(root, "stop.ran")
     const spec = {

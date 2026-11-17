@@ -10,6 +10,8 @@ import {
   readFileSync,
   renameSync,
   rmSync,
+  statSync,
+  utimesSync,
   writeFileSync,
 } from "node:fs"
 import { connect } from "node:net"
@@ -17,6 +19,7 @@ import { basename, dirname, resolve } from "node:path"
 
 import pinned from "../keeper.json"
 import { type HeldLease, holdsLease, LeaseNotHeld } from "./operation"
+import { home, pathsFor } from "./paths"
 import { download } from "./shell"
 import { dataDir } from "./xdg"
 
@@ -39,6 +42,8 @@ export const KEEPER_BINARY = "winvm-keeper"
 export const KEEPER_PREFIX = "co.stuffbucket.winvm.keeper."
 export const KEEPER_EXIT_TIMEOUT = 60
 export const KEEPER_PROTOCOL = 2
+export const KEEPER_DIR = "keeper"
+const FRESH_MS = 60_000
 const APP_BUNDLE_ID = "co.stuffbucket.winvm"
 const HASH_DIR = /^[0-9a-f]{12}$/
 
@@ -122,7 +127,11 @@ function sha256File(path: string): string {
 export function installKeeper(binary: string, root: string): string {
   const dir = resolve(root, sha256File(binary).slice(0, 12))
   const dest = resolve(dir, KEEPER_BINARY)
-  if (isFile(dest)) return dest
+  if (isFile(dest)) {
+    const now = new Date()
+    utimesSync(dir, now, now)
+    return dest
+  }
   mkdirSync(dir, { recursive: true })
   const scratch = resolve(dir, `.${KEEPER_BINARY}.${String(process.pid)}`)
   copyFileSync(binary, scratch, constants.COPYFILE_FICLONE)
@@ -162,9 +171,11 @@ export function collectKeepers(o: {
   }
   if (!existsSync(o.root)) return []
   const removed: string[] = []
+  const fresh = Date.now() - FRESH_MS
   for (const name of readdirSync(o.root)) {
     const dir = resolve(o.root, name)
     if (!HASH_DIR.test(name) || keep.has(dir)) continue
+    if (statSync(dir).mtimeMs > fresh) continue
     rmSync(dir, { recursive: true, force: true })
     removed.push(dir)
   }
@@ -311,10 +322,18 @@ export async function startKeeper(o: {
 }): Promise<StartedKeeper> {
   if (!holdsLease(o.lease))
     throw new LeaseNotHeld(o.lease.instance, `starting ${o.job.Label}`)
+  if (
+    o.job.Label !== keeperLabel(home(), o.lease.instance) ||
+    o.job.WorkingDirectory !==
+      resolve(pathsFor(o.lease.instance).dir, KEEPER_DIR)
+  )
+    throw new Error(
+      `${o.job.Label} in ${o.job.WorkingDirectory} is not the keeper of "${o.lease.instance}", whose lease this command holds`,
+    )
   const dir = o.job.WorkingDirectory
   const hello = await keeperRequest(
     resolve(dir, "keeper.sock"),
-    { op: "hello" },
+    { op: "hello", launching: true },
     1000,
   ).catch(() => null)
   if (hello !== null && hello.hostEnding === true)
