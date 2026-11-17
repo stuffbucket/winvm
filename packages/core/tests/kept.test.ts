@@ -770,7 +770,9 @@ describe("fix round 1", () => {
     )
     try {
       await until("the pidfile", () => qemu.isRunning(pathsFor(NAME)))
-      const notes = (await gather(NAME, false)).notes.join("\n")
+      const s = await gather(NAME, false)
+      expect(s.keeper?.fallback).toContain("EIO")
+      const notes = s.notes.join("\n")
       expect(notes).toContain("could not start")
       expect(notes).toContain(resolve(keeperDir(pathsFor(NAME)), "keeper.log"))
       expect(notes).not.toContain("winvm stow")

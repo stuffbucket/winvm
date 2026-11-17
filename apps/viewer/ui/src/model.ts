@@ -75,6 +75,7 @@ const Status = z.object({
       protection: z.string(),
       version: z.string().nullable(),
       pid: z.number().nullable(),
+      fallback: z.string().nullable().optional(),
     })
     .nullable()
     .default(null),

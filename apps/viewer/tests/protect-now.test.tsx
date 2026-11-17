@@ -70,6 +70,7 @@ interface Answer {
 
 interface World {
   protection: string | null
+  fallback: string | null
   state: string
   verbs: string[][]
   stow: Answer
@@ -77,6 +78,7 @@ interface World {
 
 const newWorld = (protection: string | null): World => ({
   protection,
+  fallback: null,
   state: "running",
   verbs: [],
   stow: { code: 0, stdout: "", stderr: "" },
@@ -101,7 +103,12 @@ const statusOf = (w: World): Record<string, unknown> => ({
   keeper:
     w.protection === null
       ? null
-      : { protection: w.protection, version: "0.1.0", pid: 77 },
+      : {
+          protection: w.protection,
+          version: "0.1.0",
+          pid: 77,
+          fallback: w.fallback,
+        },
   notes: [],
 })
 
@@ -194,6 +201,17 @@ describe("Protect now", () => {
       expect(world.verbs.every((v) => v.includes("demo"))).toBe(true)
       unmount()
     }
+  })
+
+  it("says why the VM is unprotected when the keeper could not start, without blaming an older winvm", async () => {
+    const world = newWorld("legacy")
+    world.fallback = "launchctl bootstrap: 5: EIO"
+    const host = await mount(world)
+    await openDetails(host)
+    expect(protectButton(host)).not.toBeNull()
+    expect(host.textContent).toContain("could not start")
+    expect(host.textContent).toContain("launchctl bootstrap: 5: EIO")
+    expect(host.textContent).not.toContain("older winvm")
   })
 
   it("does not start the VM again when the stow fails", async () => {

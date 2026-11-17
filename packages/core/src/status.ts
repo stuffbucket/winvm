@@ -592,10 +592,16 @@ export async function gather(
     )
   const poweredOff = running ? null : hostPoweredOff(name)
   if (poweredOff !== null) notes.push(hostPowerNote(name, poweredOff))
-  const keeper =
+  const standing =
     pid === null && operation !== null
       ? null
       : keeperStanding(pid, await keeperHello(p), keeperUse().kind)
+  const fellBack =
+    standing?.protection === "legacy" ? keeperFallback(name) : null
+  const keeper =
+    standing === null || fellBack === null
+      ? standing
+      : { ...standing, fallback: fellBack.error }
   const unprotected = keeper === null ? null : keeperNote(name, pid, keeper)
   if (unprotected !== null) notes.push(unprotected)
   const management = managementOf(name)

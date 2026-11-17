@@ -351,6 +351,7 @@ export interface KeeperStanding {
   readonly protection: Protection
   readonly version: string | null
   readonly pid: number | null
+  readonly fallback?: string
 }
 
 export function keeperStanding(
