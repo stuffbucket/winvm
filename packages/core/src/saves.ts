@@ -414,6 +414,18 @@ export function sameQemu(saved: string, installed: string): boolean {
 
 export const STOW_REFUSED = 4
 export const STOW_UNDECIDED = 5
+export const RESTORED_UNANSWERED = 6
+
+export function retireLoaded(
+  instance: string,
+  loaded: string,
+  m: Manifest,
+): boolean {
+  if (m.kind === "stow") removeSave(instance, loaded)
+  if (loaded === STOW || !hasSave(instance, STOW)) return false
+  removeSave(instance, STOW)
+  return true
+}
 
 const notRecallableReason = (label: string, installed: string): string =>
   label === UNKNOWN_RUNTIME
@@ -1446,10 +1458,12 @@ async function loadSaveHeld(instance: string, name: string): Promise<Manifest> {
       await qmp.execute(p.qmp, "cont")
       break
     }
-    if (Date.now() > deadline)
+    if (Date.now() > deadline) {
+      await quitQemu(p).catch(() => undefined)
       throw new Error(
-        `loading save "${name}" did not finish in time (state: ${s})`,
+        `loading save "${name}" did not finish in time (state: ${s}), so its QEMU was quit`,
       )
+    }
     await sleep(50)
   }
   return m

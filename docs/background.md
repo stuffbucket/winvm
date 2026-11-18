@@ -75,6 +75,15 @@ shields it. While a winvm command or the watcher holds the instance (its
 `lease.json`), the keeper never presses the power button; it waits, and quits
 QEMU at 50 seconds if it must.
 
+A stow is used up the moment QEMU has loaded it and Windows runs again, so
+`winvm start` never recalls the same stow twice, even when Windows was
+stowed in the middle of restarting or installing updates and is slow to
+answer afterwards. If Windows' guest agent does not answer within 5 minutes
+of a recall (or of `winvm load`), winvm says Windows is still busy but was
+restored, starts the watcher, and exits 6; set the clock and mount the
+drives later with `winvm clock` and `winvm files mount`. A load that QEMU
+never finishes is quit, and the stow is kept.
+
 At logout, the keeper only does this if launchd stops it. If launchd leaves
 your background session running, so does Windows, without a window, and you
 find it still running when you log back in.

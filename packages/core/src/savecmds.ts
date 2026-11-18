@@ -36,11 +36,13 @@ const secs = (ms: number): string => `${(ms / 1000).toFixed(1)} s`
 
 const RESPONSIVE_MS = 300_000
 
-async function settle(p: Paths, label: string): Promise<boolean> {
+async function settle(
+  p: Paths,
+  label: string,
+  silent: (p: Paths, label: string) => void = refuseSilent,
+): Promise<boolean> {
   if (!(await qga.waitResponsive(p.qga, RESPONSIVE_MS))) {
-    console.error(
-      `::error::guest did not answer after ${label} — see ${p.serial}`,
-    )
+    silent(p, label)
     return false
   }
   try {
@@ -54,6 +56,12 @@ async function settle(p: Paths, label: string): Promise<boolean> {
     )
   }
   return true
+}
+
+function refuseSilent(p: Paths, label: string): void {
+  console.error(
+    `::error::guest did not answer after ${label} — see ${p.serial}`,
+  )
 }
 
 function requireSaveable(
@@ -152,12 +160,15 @@ async function doLoad(
     return fail(msg(error))
   }
   const restoredMs = Date.now() - started
-  if (!(await settle(p, verb))) return 1
-  if (m.kind === "stow") saves.removeSave(name, saveName)
-  if (saveName !== saves.STOW && saves.hasSave(name, saves.STOW)) {
-    saves.removeSave(name, saves.STOW)
+  if (saves.retireLoaded(name, saveName, m))
     console.log(`  (discarded the stow save; "${saveName}" supersedes it)`)
-  }
+  const answered = await settle(p, verb, (_p, label) => {
+    console.warn(
+      `warning: Windows is still busy; it was restored ("${name}" ${label} from "${saveName}" and runs), but its guest agent did not answer within ${String(RESPONSIVE_MS / 1000)} s, ` +
+        `so its clock was not set and its drives were not mounted — \`winvm clock -i ${name}\` and \`winvm files mount -i ${name}\` once it answers (see ${p.serial})`,
+    )
+  })
+  if (!answered) return saves.RESTORED_UNANSWERED
   console.log(
     `${verb} "${name}" from "${m.name}" (${m.kind}, taken ${new Date(m.createdAt).toLocaleString()}) ` +
       `in ${secs(Date.now() - started)} — ${wasRunning ? "was running" : "was stopped"}; state restored in ${secs(restoredMs)}`,
@@ -180,7 +191,7 @@ export async function load(args: Args): Promise<number> {
   watcher.touchActivity(name)
   const rewatch = watcher.rewatchAfterRestore(name, args)
   const code = await doLoad(name, saveName, "loaded")
-  if (code === 0) {
+  if (code === 0 || code === saves.RESTORED_UNANSWERED) {
     watcher.touchActivity(name)
     rewatch()
   }
