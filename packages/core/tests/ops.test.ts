@@ -16,7 +16,7 @@ import { type HostEndOutcome, runHostEnd } from "../src/hostend"
 import { remountHeld, runOp } from "../src/opclient"
 import { currentOp, pointOfNoReturn } from "../src/opcontext"
 import { InstanceBusy, leaseHolder, withOperation } from "../src/operation"
-import { OPS_PROTOCOL, type OpHandlers } from "../src/ops"
+import { OPS_PROTOCOL, type OpHandlers, OpQueue } from "../src/ops"
 import { SERVICE_HANDLERS } from "../src/opverbs"
 import { type Paths, pathsFor } from "../src/paths"
 import * as qmp from "../src/qmp"
@@ -1178,5 +1178,29 @@ describe("the long verbs' rules in the queue", () => {
     })
     const bad = await submit("start", { id: "x y" })
     expect(bad.status).toBe(400)
+  })
+
+  it("refuses a second op with the id of one not yet under way", async () => {
+    const queue = new OpQueue("t", longHandlers, {
+      record: () => undefined,
+      nudge: () => undefined,
+      killed: () => undefined,
+    })
+    const request = {
+      op: "start",
+      args: [],
+      wait: true,
+      id: "same-id-0001",
+    } as const
+    const [first, second] = await Promise.all([
+      queue.submit({ ...request, wait: false }),
+      queue.submit(request),
+    ])
+    expect([first.kind, second.kind]).toEqual(["accepted", "failed"])
+    gates.start?.open()
+    await queue.drain()
+    expect(
+      opsOf("same-id-0001").filter((e) => e.kind === "op" && e.phase === "end"),
+    ).toHaveLength(1)
   })
 })

@@ -259,6 +259,7 @@ export interface QueueHooks {
 
 export class OpQueue {
   private readonly ops = new Map<string, Running>()
+  private readonly ids = new Set<string>()
   private readonly name: string
   private readonly handlers: OpHandlers
   private readonly hooks: QueueHooks
@@ -307,11 +308,12 @@ export class OpQueue {
     const handler = this.handlers[req.op]
     if (handler === undefined) throw new Error(`no handler for ${req.op}`)
     const id = req.id ?? randomUUID()
-    if (this.ops.has(id))
+    if (this.ids.has(id))
       return {
         kind: "failed",
         error: `winvm's service already runs an op with id ${id}`,
       }
+    this.ids.add(id)
     const cursor = endCursor(this.name)
     const controller = new AbortController()
     const cancelling = new AbortController()
@@ -410,6 +412,7 @@ export class OpQueue {
       } finally {
         over = true
         this.ops.delete(id)
+        this.ids.delete(id)
         this.hooks.nudge()
       }
       if (killedQemu)

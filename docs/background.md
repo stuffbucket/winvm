@@ -234,7 +234,8 @@ The requests, on `control.sock`:
   answers `202` with `{id, cursor, pid, queued}`, or `409` with `{busy}` naming
   the lease holder. An optional `id` (8 to 64 letters, digits and dashes) is
   used as the op's id, so a client can follow it in the record by a name it
-  chose. A protocol or command the service doesn't have gets `400`
+  chose. The service refuses an id an op it has taken still uses; keeping ids
+  unique over time is the client's job (the app uses fresh UUIDs). A protocol or command the service doesn't have gets `400`
   or `501`, with the protocol it speaks, so the caller can run the command
   itself.
 - `POST /ops/cancel` with `{"protocol": 1}` and an optional `id` answers `200`
