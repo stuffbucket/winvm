@@ -481,7 +481,7 @@ export async function stow(
 }
 
 async function stowHeld(name: string, args: Args): Promise<number> {
-  const stopped = await watcher.stopWatcher(name)
+  const stopped = automaticFrom(args) ? false : await watcher.stopWatcher(name)
   finder.beforeDown(name)
   const started = Date.now()
   let code: number

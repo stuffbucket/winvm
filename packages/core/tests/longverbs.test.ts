@@ -30,6 +30,7 @@ import { FakeAgent } from "./fakes/agent"
 import { FakeGuest } from "./fakes/guest"
 import { lockPidfile, releasePidfiles } from "./fakes/pidfile"
 import { FakeQmp } from "./fakes/qmp"
+import { scratchPattern } from "./fakes/scratch"
 
 const CLI = resolve(
   import.meta.dir,
@@ -42,6 +43,7 @@ const CLI = resolve(
   "winvm.ts",
 )
 const IMAGE = "win11-arm64"
+const SCRATCH = "winvm-long-"
 
 let home = ""
 let saved: Record<string, string | undefined> = {}
@@ -224,7 +226,7 @@ beforeEach(async () => {
       .filter((k) => k.startsWith("WINVM_"))
       .map((k) => [k, process.env[k]]),
   )
-  home = mkdtempSync(resolve(tmpdir(), "winvm-long-"))
+  home = mkdtempSync(resolve(tmpdir(), SCRATCH))
   for (const [k, v] of Object.entries(env()))
     if (k.startsWith("WINVM_")) process.env[k] = v
   p = pathsFor("t")
@@ -276,6 +278,18 @@ const begins = (operation: string): readonly Entry[] =>
   readSince("t", START).entries.filter(
     (e) => e.kind === "op" && e.phase === "begin" && e.operation === operation,
   )
+
+describe("the suite's own cleanup", () => {
+  it("names only a scratch home this suite made, so it can never match every process", () => {
+    const made = resolve(tmpdir(), `${SCRATCH}Ab12Cd`)
+    expect(scratchPattern(made, SCRATCH)).toBe(made)
+    expect(scratchPattern("", SCRATCH)).toBeNull()
+    expect(scratchPattern("/", SCRATCH)).toBeNull()
+    expect(scratchPattern(tmpdir(), SCRATCH)).toBeNull()
+    expect(scratchPattern(resolve(tmpdir(), SCRATCH), SCRATCH)).toBeNull()
+    expect(scratchPattern(`/Users/someone/${SCRATCH}x`, SCRATCH)).toBeNull()
+  })
+})
 
 describe("the long verbs, as the CLI prints and exits with them", () => {
   it("stop asks Windows to shut down and waits for QEMU to exit", async () => {
@@ -750,7 +764,8 @@ describe("the long verbs that launch QEMU, run by winvm's service with the keepe
   }
 
   afterEach(() => {
-    Bun.spawnSync(["pkill", "-KILL", "-f", home])
+    const pattern = scratchPattern(home, SCRATCH)
+    if (pattern !== null) Bun.spawnSync(["pkill", "-KILL", "-f", pattern])
   })
 
   it.skipIf(process.platform !== "darwin")(

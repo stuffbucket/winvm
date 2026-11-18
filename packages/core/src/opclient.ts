@@ -93,12 +93,13 @@ async function post(
   name: string,
   path: string,
   body: Json,
+  timeoutMs: number,
 ): Promise<{ readonly status: number; readonly body: Json | null }> {
   const res = await fetch(`http://localhost${path}`, {
     unix: pathsFor(name).control,
     method: "POST",
     body: JSON.stringify({ protocol: OPS_PROTOCOL, ...body }),
-    signal: AbortSignal.timeout(SEND_TIMEOUT_MS),
+    signal: AbortSignal.timeout(timeoutMs),
   })
   const parsed: unknown = await res.json().catch(() => null)
   return {
@@ -107,16 +108,34 @@ async function post(
   }
 }
 
-async function send(name: string, body: Json): Promise<Sent> {
-  let r: Awaited<ReturnType<typeof post>>
+export type Asked =
+  | {
+      readonly kind: "answered"
+      readonly status: number
+      readonly body: Json | null
+    }
+  | { readonly kind: "unavailable" }
+  | { readonly kind: "unanswered"; readonly why: string }
+
+export async function askService(
+  name: string,
+  path: string,
+  body: Json,
+  timeoutMs = SEND_TIMEOUT_MS,
+): Promise<Asked> {
   try {
-    r = await post(name, "/ops", body)
+    return { kind: "answered", ...(await post(name, path, body, timeoutMs)) }
   } catch (error) {
     const code = (error as { code?: unknown }).code
     if (typeof code === "string" && NOT_RECEIVED.has(code))
       return { kind: "unavailable" }
     return { kind: "unanswered", why: why(error) }
   }
+}
+
+async function send(name: string, body: Json): Promise<Sent> {
+  const r = await askService(name, "/ops", body)
+  if (r.kind !== "answered") return r
   if (r.status === 202 && r.body !== null) {
     const a = acceptedOf(r.body)
     if (a !== null) return { kind: "accepted", ...a }
@@ -282,6 +301,11 @@ export async function remountHeld(
   }
 }
 
+export async function remountCmd(args: Args): Promise<number> {
+  await remountHeld(instanceName(args))
+  return 0
+}
+
 export async function runOp(
   call: OpCall,
   here: () => Promise<number>,
@@ -369,7 +393,12 @@ export async function cancelCmd(args: Args, io: Io = stdio): Promise<number> {
   const id = args.flags.get("id")
   let r: Awaited<ReturnType<typeof post>>
   try {
-    r = await post(name, "/ops/cancel", id === undefined ? {} : { id })
+    r = await post(
+      name,
+      "/ops/cancel",
+      id === undefined ? {} : { id },
+      SEND_TIMEOUT_MS,
+    )
   } catch {
     io.err(
       `::error::winvm's service for "${name}" is not running, so nothing was cancelled\n`,

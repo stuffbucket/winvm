@@ -1566,6 +1566,20 @@ describe("a winvm stow that fails while QEMU still runs Windows", () => {
     expect(restarted).not.toHaveBeenCalled()
   })
 
+  it("never stops the watcher whose own idle stow it is, though the service runs it", async () => {
+    const stopped = spyOn(watcher, "stopWatcher").mockResolvedValue(true)
+    const restarted = spyOn(watcher, "startWatcherFor").mockImplementation(
+      () => undefined,
+    )
+    expect(
+      await savecmds.stow(
+        parseArgs(["-i", "source", "--force", "--automatic"]),
+      ),
+    ).toBe(1)
+    expect(stopped).not.toHaveBeenCalled()
+    expect(restarted).not.toHaveBeenCalled()
+  })
+
   it("starts no watcher beside a QEMU that kept the guest stopped after writing the stow", async () => {
     spyOn(saves, "captureScreen").mockResolvedValue(null)
     spyOn(saves, "quitQemu").mockRejectedValue(

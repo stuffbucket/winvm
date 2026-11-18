@@ -304,11 +304,13 @@ export async function launch(
       await launchKept(name, p, meta, o, use.keeper)
       return
     }
-    if (
-      failed instanceof LeaseNotHeld ||
-      failed instanceof KeeperBusy ||
-      kept.servingHere(p)
-    )
+    if (kept.servingHere(p))
+      throw new Error(
+        `${failed.message.replace(/\.$/, "")}. Windows is stopped; \`winvm start -i ${name}\` starts it again once the keeper answers, ` +
+          `or \`WINVM_KEEPER=off winvm start -i ${name}\` starts it without the keeper`,
+        { cause: failed },
+      )
+    if (failed instanceof LeaseNotHeld || failed instanceof KeeperBusy)
       throw failed
     console.warn(
       `warning: winvm's keeper did not start (${failed.message}); starting QEMU without it, so it is not protected if the Mac shuts down`,

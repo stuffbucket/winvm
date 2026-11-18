@@ -311,10 +311,11 @@ export function parseWatch(
   const pid = num(raw.pid)
   const a = rec(raw.autosave)
   const s = rec(raw.stow)
+  const state = str(raw.state) ?? "unknown"
   return {
-    alive: alive(pid),
+    alive: state !== "stopped" && alive(pid),
     pid,
-    state: str(raw.state) ?? "unknown",
+    state,
     idleSeconds: num(raw.idleSeconds),
     lastActivityAt: str(raw.lastActivityAt),
     autosave:
@@ -636,7 +637,7 @@ export async function gather(
   const management = managementOf(name)
   if (management === "repair")
     notes.push(
-      "its control service or watcher is missing or from another build, or a guest that is gone left drives mounted — " +
+      "its control service is missing or from another build, or a guest that is gone left drives mounted — " +
         `\`winvm reconcile${name === "default" ? "" : ` -i ${name}`}\` repairs that and leaves Windows running`,
     )
 

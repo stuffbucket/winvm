@@ -334,6 +334,17 @@ export function useWinvm(): Winvm {
     const r = refresher.current
     r.start()
     let gone = false
+    const remounting = new Set<string>()
+    const remount = (instance: string): void => {
+      if (remounting.has(instance)) return
+      remounting.add(instance)
+      winvm("files", "remount", "-i", instance)
+        .catch(() => undefined)
+        .finally(() => {
+          remounting.delete(instance)
+          if (!gone) r.changed(instance, 0)
+        })
+    }
     const resync = (): void => {
       loadNames().catch(() => undefined)
       const shown = nameRef.current
@@ -348,7 +359,9 @@ export function useWinvm(): Winvm {
         return
       }
       setStreaming(true)
-      if (signal.kind === "changed") r.changed(signal.instance, SETTLE_MS)
+      if (signal.kind === "remount") remount(signal.instance)
+      if (signal.kind === "changed" || signal.kind === "remount")
+        r.changed(signal.instance, SETTLE_MS)
       else resync()
     })
     eventStreamUp().then(

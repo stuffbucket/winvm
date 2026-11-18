@@ -320,6 +320,41 @@ describe("useWinvm following the event stream", () => {
     expect(app.ran("reconcile")).toHaveLength(2)
   })
 
+  it("mounts the guest's drives again, in this session, when winvm's own op leaves that to a client, and only for its own op", async () => {
+    const app = fakeApp({ demo: idle() })
+    await mount()
+    app.entry("demo", {
+      kind: "op",
+      phase: "end",
+      operation: "stow",
+      automatic: true,
+      ok: false,
+      exitCode: 1,
+      remount: true,
+    })
+    await tick(300)
+    expect(app.ran("files")).toEqual([["files", "remount", "-i", "demo"]])
+    app.entry("demo", {
+      kind: "op",
+      phase: "end",
+      operation: "stow",
+      automatic: false,
+      ok: false,
+      exitCode: 1,
+      remount: true,
+    })
+    app.entry("demo", {
+      kind: "op",
+      phase: "end",
+      operation: "save",
+      automatic: true,
+      ok: true,
+      exitCode: 0,
+    })
+    await tick(300)
+    expect(app.ran("files")).toHaveLength(1)
+  })
+
   it("asks for no repair while an operation runs, nor when none is due", async () => {
     const app = fakeApp({
       demo: { ...idle(), operation: "save", management: "repair" },

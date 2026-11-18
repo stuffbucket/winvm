@@ -202,11 +202,13 @@ export function useCloseFlow(w: Winvm): CloseFlow {
   wRef.current = w
   const active = useRef(false)
   const shown = useRef<CloseFlowState>(IDLE)
+  const dismissForgets = useRef<string | null>(null)
   const answer = useRef<((a: Answer | null) => void) | null>(null)
   const transaction = useRef<Transaction | null>(null)
 
-  const show = useCallback((next: CloseFlowState): void => {
+  const show = useCallback((next: CloseFlowState, forget?: string): void => {
     shown.current = next
+    dismissForgets.current = forget ?? null
     setState(next)
   }, [])
 
@@ -463,50 +465,69 @@ export function useCloseFlow(w: Winvm): CloseFlow {
       settle(tx, resume(tx, snapshot))
     }
 
-    const reportOrphan = async (orphan: CloseCommand): Promise<boolean> => {
-      const op = orphan.op
-      if (op === undefined || op === null) return true
-      const unmounted = (): boolean => gone
-      const elsewhere = (): boolean => gone || active.current
-      const reading = await readOp(orphan.machine, op, true)
-      if (unmounted()) return false
-      const recorded = reading.kind === "read" ? reading.record : null
-      const unheard =
-        recorded !== null && !recorded.ended && recorded.operation === null
-      const unfinished =
-        recorded !== null && !unheard && (!recorded.ended || opFailed(recorded))
-      if (reading.kind === "read" && !unfinished) {
-        await closeForget(op).catch(() => undefined)
-        return true
-      }
+    type Unread = { readonly orphan: CloseCommand; readonly why: string }
+
+    const showOrphan = async (
+      orphan: CloseCommand,
+      message: (title: string) => string,
+      forget?: string,
+    ): Promise<boolean> => {
       const s = await wRef.current.refreshOne(orphan.machine)
-      if (unmounted()) return false
+      if (gone || active.current) return false
       const title = s === null ? orphan.machine : shownTitle(s.name, s.title)
-      if (elsewhere()) return false
       if (wRef.current.name !== orphan.machine)
         wRef.current.select(orphan.machine)
-      show({
-        kind: "failed",
-        machine: s,
-        message:
-          reading.kind === "unreadable"
-            ? `${t("close.orphanUnreadable", {
-                operation: orphan.verb,
-                title,
-                machine: orphan.machine,
-                op,
-              })}\n${reading.why}`
-            : (recorded?.output ?? "") ||
-              t("close.cutShort", { operation: orphan.verb, title }),
-      })
-      if (reading.kind === "read") await closeForget(op).catch(() => undefined)
-      return false
+      show({ kind: "failed", machine: s, message: message(title) }, forget)
+      return true
+    }
+
+    const reportOrphan = async (
+      orphan: CloseCommand,
+    ): Promise<"settled" | "shown" | Unread> => {
+      const op = orphan.op
+      if (op === undefined || op === null) return "settled"
+      const reading = await readOp(orphan.machine, op, true)
+      if (gone) return "shown"
+      if (reading.kind === "unreadable") return { orphan, why: reading.why }
+      const recorded = reading.record
+      const unheard = !recorded.ended && recorded.operation === null
+      if (unheard || (recorded.ended && !opFailed(recorded))) {
+        await closeForget(op).catch(() => undefined)
+        return "settled"
+      }
+      const shownNow = await showOrphan(
+        orphan,
+        (title) =>
+          recorded.output ||
+          t("close.cutShort", { operation: orphan.verb, title }),
+      )
+      if (shownNow) await closeForget(op).catch(() => undefined)
+      return "shown"
     }
 
     const reportOrphans = async (
       orphans: readonly CloseCommand[],
     ): Promise<void> => {
-      for (const orphan of orphans) if (!(await reportOrphan(orphan))) return
+      let unread: Unread | null = null
+      for (const orphan of orphans) {
+        const r = await reportOrphan(orphan)
+        if (r === "shown") return
+        if (r !== "settled") unread ??= r
+      }
+      if (unread === null) return
+      const { orphan, why } = unread
+      const op = orphan.op ?? ""
+      await showOrphan(
+        orphan,
+        (title) =>
+          `${t("close.orphanUnreadable", {
+            operation: orphan.verb,
+            title,
+            machine: orphan.machine,
+            op,
+          })}\n${why}`,
+        op,
+      )
     }
 
     const unlistenSession = onViewerCloseSession((next) => {
@@ -551,7 +572,9 @@ export function useCloseFlow(w: Winvm): CloseFlow {
   const cancel = useCallback((): void => {
     const now = shown.current
     if (now.kind === "failed") {
+      const forget = dismissForgets.current
       show(IDLE)
+      if (forget !== null) closeForget(forget).catch(() => undefined)
       return
     }
     if (now.kind !== "asking" && now.kind !== "waiting") return

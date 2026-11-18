@@ -567,14 +567,14 @@ describe("graceful stop", () => {
         exitIn(o.forcedExitAfterMs)
         return Promise.resolve()
       },
-      watcherPid: () => (o.watcher === true ? 7 : null),
+      watching: () => o.watcher === true,
       stopWatcher: () => {
         note("stopWatcher")
         return Promise.resolve(o.watcher === true)
       },
       ensureWatcher: () => {
         note("ensureWatcher")
-        return null
+        return true
       },
       beforeDown: () => {
         note("beforeDown")

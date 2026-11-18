@@ -1,8 +1,6 @@
-import { spawn, spawnSync } from "node:child_process"
+import { spawnSync } from "node:child_process"
 import {
-  closeSync,
-  existsSync,
-  openSync,
+  appendFileSync,
   readFileSync,
   renameSync,
   rmSync,
@@ -12,10 +10,10 @@ import {
 import { resolve } from "node:path"
 
 import type { Args } from "./args"
-import { commandInstance, winvmCommandAfter } from "./args"
 import { formatOffset, measureOffset, syncGuestClock } from "./clock"
 import type { InstanceConfig } from "./config"
 import { effectiveConfig } from "./config"
+import { appendEntry, readSince, START } from "./eventlog"
 import * as finder from "./finder"
 import { isFrozenRunState } from "./frozen"
 import { buildIdentity } from "./identity"
@@ -26,35 +24,41 @@ import {
   DRIFT_TOLERANCE_MS,
   IdleMachine,
   savesToRotate,
+  timingFrom,
+  WATCH_TIMING_ENV,
 } from "./idle"
+import { servingHere } from "./kept"
 import {
-  AUTOMATIC_FLAG,
-  InstanceBusy,
-  leaseHolder,
-  withOperation,
-} from "./operation"
+  forgiveLegacyWatcher,
+  legacyWatcherOwed,
+  legacyWatcherPid,
+  stopLegacyWatcher,
+} from "./legacy"
+import { askService } from "./opclient"
+import { InstanceBusy, leaseHolder } from "./operation"
+import type { OpHandler, Performed, ServiceOp } from "./ops"
 import type { Paths } from "./paths"
-import { cliArgv, instanceDir, managedEnv, pathsFor } from "./paths"
+import { instanceDir, pathsFor } from "./paths"
 import * as qemu from "./qemu"
 import * as qga from "./qga"
 import * as qmp from "./qmp"
 import * as saves from "./saves"
-import { spawnText } from "./shell"
+import { readService } from "./servicectl"
 
 export interface WatchPaths {
-  readonly pid: string
   readonly state: string
   readonly log: string
   readonly activity: string
+  readonly on: string
 }
 
 export function watchPathsFor(name: string): WatchPaths {
   const dir = instanceDir(name)
   return {
-    pid: resolve(dir, "watch.pid"),
     state: resolve(dir, "watch.json"),
     log: resolve(dir, "watch.log"),
     activity: resolve(dir, "activity"),
+    on: resolve(dir, "watching.json"),
   }
 }
 
@@ -118,14 +122,131 @@ export function readWatchState(name: string): WatchState | null {
   }
 }
 
-export const CLI = {
-  stow: (instance: string): readonly string[] => [
-    "stow",
-    "-i",
-    instance,
-    `--${AUTOMATIC_FLAG}`,
-  ],
-} as const
+function markedQemu(name: string): number | null {
+  try {
+    const q = (
+      JSON.parse(readFileSync(watchPathsFor(name).on, "utf8")) as {
+        qemu?: unknown
+      }
+    ).qemu
+    return typeof q === "number" ? q : null
+  } catch {
+    return null
+  }
+}
+
+const markedFor = (name: string, pid: number | null): boolean =>
+  pid !== null && markedQemu(name) === pid
+
+function mark(name: string, pid: number): boolean {
+  try {
+    writeAtomic(watchPathsFor(name).on, `${JSON.stringify({ qemu: pid })}\n`)
+    return true
+  } catch (error) {
+    logTo(name)(`could not turn the watcher on: ${errText(error)}`)
+    return false
+  }
+}
+
+function unmark(name: string): boolean {
+  const was = markedFor(name, qemu.pidOf(pathsFor(name)))
+  try {
+    rmSync(watchPathsFor(name).on, { force: true })
+  } catch (error) {
+    logTo(name)(`could not turn the watcher off: ${errText(error)}`)
+  }
+  return was
+}
+
+export const watching = (name: string): boolean =>
+  markedFor(name, qemu.pidOf(pathsFor(name))) || legacyWatcherPid(name) !== null
+
+export function watchingNow(name: string, st: WatchState): boolean {
+  if (st.state === "stopped" || st.pid <= 1) return false
+  if (legacyWatcherPid(name) === st.pid) return true
+  const p = pathsFor(name)
+  return readService(p)?.pid === st.pid && markedFor(name, qemu.pidOf(p))
+}
+
+export function ensureWatcher(name: string): boolean {
+  if (!effectiveConfig(name)["watch.enabled"]) return false
+  const pid = qemu.pidOf(pathsFor(name))
+  return pid !== null && mark(name, pid)
+}
+
+const watcherLine = (name: string, service: number | undefined): string =>
+  `watcher: in winvm's service${service === undefined ? "" : ` (pid ${String(service)})`} · ${watchPathsFor(name).log}`
+
+export function startWatcherFor(name: string, args: Args): void {
+  if (args.flags.has("no-watch") || !ensureWatcher(name)) return
+  console.log(watcherLine(name, readService(pathsFor(name))?.pid))
+}
+
+interface Run {
+  readonly halt: (why: string) => void
+  readonly ended: Promise<void>
+}
+
+const runs = new Map<string, Run>()
+const turnedOff = new Map<string, number>()
+
+async function stopHere(name: string): Promise<boolean> {
+  turnedOff.set(name, (turnedOff.get(name) ?? 0) + 1)
+  const on = unmark(name)
+  const run = runs.get(name)
+  run?.halt("stopped")
+  await run?.ended
+  const legacy = await stopLegacyWatcher(name)
+  return on || legacy
+}
+
+const QUIESCE_MS = 11 * 60_000
+
+export async function stopWatcher(name: string): Promise<boolean> {
+  if (runs.has(name) || servingHere(pathsFor(name))) return await stopHere(name)
+  const r = await askService(name, "/watch", { on: false }, QUIESCE_MS)
+  if (r.kind === "answered" && typeof r.body?.stopped === "boolean")
+    return r.body.stopped
+  if (r.kind === "unavailable" || (r.kind === "answered" && r.status !== 200))
+    return await stopHere(name)
+  throw new Error(
+    `winvm's service for "${name}" did not say its watcher had stopped (${r.kind === "unanswered" ? r.why : "no answer"}), so it may still autosave or stow; try again`,
+  )
+}
+
+export async function watchViaService(name: string): Promise<boolean> {
+  const r = await askService(name, "/watch", { on: true })
+  if (r.kind === "answered" && typeof r.body?.watching === "boolean") {
+    if (r.body.watching)
+      console.log(
+        watcherLine(
+          name,
+          typeof r.body.pid === "number" ? r.body.pid : undefined,
+        ),
+      )
+    return r.body.watching
+  }
+  if (r.kind === "unanswered")
+    throw new Error(
+      `winvm's service for "${name}" did not answer (${r.why}), so it may or may not watch the guest; \`winvm watch -i ${name} --status\` says which`,
+    )
+  return false
+}
+
+export const watchAfterRestore = (
+  wasRunning: boolean,
+  hadWatcher: boolean,
+): boolean => !wasRunning || hadWatcher
+
+export function rewatchAfterRestore(name: string, args: Args): () => void {
+  const again = watchAfterRestore(
+    qemu.isRunning(pathsFor(name)),
+    watching(name),
+  )
+  return () => {
+    if (again) startWatcherFor(name, args)
+  }
+}
 
 export type SaveOutcome = "saved" | "busy" | "failed"
 
@@ -137,50 +258,10 @@ export interface Actions {
   drift(): Promise<number | null>
 }
 
+const stopped = (signal: AbortSignal): boolean => signal.aborted
+
 const errText = (e: unknown): string =>
   e instanceof Error ? e.message : String(e)
-
-const isBusy = (e: unknown): boolean => e instanceof InstanceBusy
-
-const automatically = async <T>(
-  instance: string,
-  run: () => T | Promise<T>,
-): Promise<T> => await withOperation(instance, "save", run, { automatic: true })
-
-async function runWinvm(
-  argv: readonly string[],
-  log: (s: string) => void,
-): Promise<number> {
-  log(`run: winvm ${argv.join(" ")}`)
-  const started = Date.now()
-  const code = await new Promise<number>((res) => {
-    const child = spawn(process.execPath, [...cliArgv(...argv)], {
-      stdio: ["ignore", "pipe", "pipe"],
-      env: managedEnv(),
-    })
-    let lines = 0
-    const relay = (chunk: Buffer): void => {
-      for (const line of chunk.toString("utf8").split("\n")) {
-        if (line.trim() === "") continue
-        lines += 1
-        if (lines <= 20) log(`  | ${line}`)
-        else if (lines === 21) log("  | (further output not logged)")
-      }
-    }
-    child.stdout.on("data", relay)
-    child.stderr.on("data", relay)
-    child.on("error", () => {
-      res(127)
-    })
-    child.on("exit", (c) => {
-      res(c ?? 1)
-    })
-  })
-  log(
-    `  -> exit ${String(code)} after ${String(Math.round((Date.now() - started) / 1000))} s`,
-  )
-  return code
-}
 
 export type StowOutcome = "stowed" | "refused" | "failed"
 
@@ -265,10 +346,34 @@ async function syncIfRunning(p: Paths): Promise<string> {
   }
 }
 
-export function realActions(
+export type Perform = (
+  op: Extract<ServiceOp, "save" | "stow">,
+  handler: OpHandler,
+  args: readonly string[],
+) => Promise<Performed>
+
+export interface DutyHooks {
+  readonly perform: Perform
+  readonly stow: OpHandler
+}
+
+function whyNot(
+  instance: string,
+  r: Exclude<Performed, { readonly kind: "done" }>,
+): string {
+  if (r.kind === "busy") return new InstanceBusy(instance, r.holder).message
+  if (r.kind === "failed") return r.error
+  return r.reason === "host-end"
+    ? "the Mac is shutting down"
+    : "winvm's service is stopping"
+}
+
+export function serviceActions(
   instance: string,
   p: Paths,
   log: (s: string) => void,
+  hooks: DutyHooks,
+  signal: AbortSignal = new AbortController().signal,
 ): Actions {
   let ready = false
   return {
@@ -276,7 +381,7 @@ export function realActions(
       try {
         const state = await qmp.status(p.qmp)
         if (!ready && state === "running") {
-          ready = await qga.waitReady(p.qga, 120_000)
+          ready = await qga.waitReady(p.qga, 120_000, { signal })
           if (!ready) {
             log(
               "autosave: guest is not ready (still starting?) — skipping this round",
@@ -284,46 +389,79 @@ export function realActions(
             return "busy"
           }
         }
-        const r = await automatically(
-          instance,
-          async () => await saves.createSave(instance, { name, kind: "auto" }),
-        )
-        const m = r.manifest
-        log(
-          `autosave: saved "${m.name}" in ${String(Math.round((m.saveMs ?? 0) / 100) / 10)} s, ` +
-            `${saves.formatBytes(m.bytes)} on disk`,
-        )
-        if (r.resumed) {
-          if (await qga.waitResponsive(p.qga, 120_000))
-            log(`clock: after the save — ${await syncIfRunning(p)}`)
-          else
-            log(
-              "clock: the guest agent did not answer after the save; clock not synced",
-            )
-        }
-        return "saved"
       } catch (error) {
-        if (isBusy(error)) {
-          log(`autosave: ${errText(error)} — skipping this round`)
-          return "busy"
-        }
         log(`autosave: failed: ${errText(error)}`)
         return "failed"
       }
+      if (stopped(signal)) return "busy"
+      const made: { result: saves.CreateResult | null } = { result: null }
+      const r = await hooks.perform(
+        "save",
+        {
+          cancel: "cooperative",
+          hostEnd: "cancel",
+          run: async () => {
+            made.result = await saves.createSave(instance, {
+              name,
+              kind: "auto",
+            })
+            return 0
+          },
+        },
+        [],
+      )
+      if (r.kind === "busy" || r.kind === "closed") {
+        log(`autosave: ${whyNot(instance, r)} — skipping this round`)
+        return "busy"
+      }
+      if (r.kind === "failed" || made.result === null) {
+        log(
+          `autosave: failed: ${r.kind === "failed" ? r.error : `exit ${String(r.code)}`}`,
+        )
+        return "failed"
+      }
+      const m = made.result.manifest
+      log(
+        `autosave: saved "${m.name}" in ${String(Math.round((m.saveMs ?? 0) / 100) / 10)} s, ` +
+          `${saves.formatBytes(m.bytes)} on disk`,
+      )
+      if (!made.result.resumed) return "saved"
+      if (await qga.waitResponsive(p.qga, 120_000, { signal }))
+        log(`clock: after the save — ${await syncIfRunning(p)}`)
+      else if (!stopped(signal))
+        log(
+          "clock: the guest agent did not answer after the save; clock not synced",
+        )
+      return "saved"
     },
     deleteSaves: async (names) => {
       if (names.length === 0) return true
-      try {
-        await automatically(instance, () => {
-          for (const n of names) saves.removeSave(instance, n)
-        })
-        return true
-      } catch (error) {
-        log(`rotate: ${errText(error)} — will rotate after the next save`)
-        return false
-      }
+      const r = await hooks.perform(
+        "save",
+        {
+          cancel: "never",
+          run: async () => {
+            for (const n of names) saves.removeSave(instance, n)
+            return await Promise.resolve(0)
+          },
+        },
+        [],
+      )
+      if (r.kind === "done") return true
+      log(`rotate: ${whyNot(instance, r)} — will rotate after the next save`)
+      return false
     },
-    stow: async () => stowOutcome(await runWinvm(CLI.stow(instance), log)),
+    stow: async () => {
+      log("run: stow, as winvm's own op in its service")
+      const started = Date.now()
+      const r = await hooks.perform("stow", hooks.stow, [])
+      if ((r.kind === "done" || r.kind === "failed") && r.id !== undefined)
+        relay(instance, r.id, log)
+      log(
+        `  -> ${r.kind === "done" ? `exit ${String(r.code)}` : whyNot(instance, r)} after ${String(Math.round((Date.now() - started) / 1000))} s`,
+      )
+      return stowOutcome(r.kind === "done" ? r.code : 1)
+    },
     syncClock: async () => await syncIfRunning(p),
     drift: async () => {
       try {
@@ -334,6 +472,27 @@ export function realActions(
       }
     },
   }
+}
+
+const RELAYED_LINES = 20
+
+function relay(instance: string, id: string, log: (s: string) => void): void {
+  const mine = readSince(instance, START).entries.filter(
+    (e) => e.kind === "op" && e.id === id,
+  )
+  const lines = mine
+    .flatMap((e) => (e.kind === "op" && e.phase === "output" ? [e.text] : []))
+    .join("")
+    .split("\n")
+    .filter((l) => l.trim() !== "")
+  for (const l of lines.slice(0, RELAYED_LINES)) log(`  | ${l}`)
+  if (lines.length > RELAYED_LINES) log("  | (further output not logged)")
+  if (
+    mine.some((e) => e.kind === "op" && e.phase === "end" && e.remount === true)
+  )
+    log(
+      `the guest's drives were taken down and wait to be mounted again in your session — \`winvm files mount -i ${instance}\``,
+    )
 }
 
 function currentSaves(instance: string): readonly SaveInfo[] {
@@ -374,14 +533,14 @@ export function parseCpuTime(s: string): number | null {
   )
 }
 
-export function cpuSeconds(pid: number): number | null {
+function cpuSeconds(pid: number): number | null {
   const r = spawnSync("ps", ["-o", "time=", "-p", String(pid)], {
     encoding: "utf8",
   })
   return r.status === 0 ? parseCpuTime(r.stdout) : null
 }
 
-export function vcpusOf(pid: number): number {
+function vcpusOf(pid: number): number {
   const r = spawnSync("ps", ["-o", "command=", "-p", String(pid)], {
     encoding: "utf8",
   })
@@ -419,178 +578,35 @@ function activityAt(path: string): number | null {
   }
 }
 
-function isWatcherProcess(pid: number, name: string): boolean {
-  try {
-    process.kill(pid, 0)
-  } catch {
-    return false
-  }
-  const r = spawnText("ps", ["-o", "command=", "-p", String(pid)])
-  const rest = winvmCommandAfter(r.stdout, "watch")
-  if (rest === null) return false
-  if (/(?:^|\s)--(?:stop|status)(?:\s|$)/.test(rest)) return false
-  return (commandInstance(rest) ?? "default") === name
-}
-
-export function watcherPid(
-  name: string,
-  isWatcher: (pid: number) => boolean = (pid) => isWatcherProcess(pid, name),
-): number | null {
-  const f = watchPathsFor(name).pid
-  let pid: number
-  try {
-    pid = Number.parseInt(readFileSync(f, "utf8").trim(), 10)
-  } catch {
-    return null
-  }
-  if (Number.isFinite(pid) && isWatcher(pid)) return pid
-  rmSync(f, { force: true })
-  return null
-}
-
-function acquireLock(name: string): number | null {
-  const f = watchPathsFor(name).pid
-  for (let attempt = 0; attempt < 2; attempt += 1) {
-    try {
-      const fd = openSync(f, "wx")
-      writeFileSync(fd, `${String(process.pid)}\n`)
-      closeSync(fd)
-      return null
-    } catch {
-      const other = watcherPid(name)
-      if (other !== null) return other
+async function pause(ms: number, signal: AbortSignal): Promise<void> {
+  if (signal.aborted) return
+  await new Promise<void>((r) => {
+    const done = (): void => {
+      clearTimeout(timer)
+      signal.removeEventListener("abort", done)
+      r()
     }
-  }
-  return -1
-}
-
-function releaseLock(name: string): void {
-  const f = watchPathsFor(name).pid
-  try {
-    if (readFileSync(f, "utf8").trim() === String(process.pid))
-      rmSync(f, { force: true })
-  } catch {}
-}
-
-export function ensureWatcher(name: string): number | null {
-  if (!effectiveConfig(name)["watch.enabled"]) return null
-  const running = watcherPid(name)
-  if (running !== null) return running
-  const w = watchPathsFor(name)
-  try {
-    if (statSync(w.log).size > 1_000_000) renameSync(w.log, `${w.log}.1`)
-  } catch {}
-  const log = openSync(w.log, "a")
-  const child = spawn(process.execPath, [...cliArgv("watch", "-i", name)], {
-    detached: true,
-    stdio: ["ignore", log, log],
-    env: managedEnv(),
+    const timer = setTimeout(done, ms)
+    signal.addEventListener("abort", done, { once: true })
   })
-  closeSync(log)
-  child.unref()
-  return child.pid ?? null
 }
 
-export function startWatcherFor(name: string, args: Args): void {
-  if (args.flags.has("no-watch")) return
-  const pid = ensureWatcher(name)
-  if (pid !== null)
-    console.log(`watcher: pid ${String(pid)} · ${watchPathsFor(name).log}`)
-}
-
-export const watchAfterRestore = (
-  wasRunning: boolean,
-  hadWatcher: boolean,
-): boolean => !wasRunning || hadWatcher
-
-export function rewatchAfterRestore(name: string, args: Args): () => void {
-  const again = watchAfterRestore(
-    qemu.isRunning(pathsFor(name)),
-    watcherPid(name) !== null,
-  )
-  return () => {
-    if (again) startWatcherFor(name, args)
-  }
-}
-
-export interface WatcherRecord {
-  readonly pid: number
-  readonly build?: string
-  readonly cli?: string
-}
-
-export function watcherRecord(
-  name: string,
-  isWatcher: (pid: number) => boolean = (pid) => isWatcherProcess(pid, name),
-): WatcherRecord | null {
-  const pid = watcherPid(name, isWatcher)
-  if (pid === null) return null
-  const st = readWatchState(name)
-  if (st?.pid !== pid) return { pid }
-  return {
-    pid,
-    ...(typeof st.build === "string" && st.build !== ""
-      ? { build: st.build }
-      : {}),
-    ...(typeof st.cli === "string" && st.cli !== "" ? { cli: st.cli } : {}),
-  }
-}
-
-export const watcherFreshness = (
-  record: WatcherRecord,
-  current: string = buildIdentity(),
-): "current" | "stale" | "legacy" =>
-  record.build === undefined || record.build === ""
-    ? "legacy"
-    : record.build === current
-      ? "current"
-      : "stale"
-
-export interface StopSeams {
-  readonly kill?: (pid: number, signal: NodeJS.Signals) => void
-  readonly now?: () => number
-  readonly sleep?: (ms: number) => Promise<void>
-  readonly isWatcher?: (pid: number) => boolean
-}
-
-export async function stopWatcher(
-  name: string,
-  seams: StopSeams = {},
-): Promise<boolean> {
-  const kill =
-    seams.kill ??
-    ((pid: number, signal: NodeJS.Signals): void =>
-      void process.kill(pid, signal))
-  const now = seams.now ?? Date.now
-  const wait = seams.sleep ?? sleep
-  const isWatcher =
-    seams.isWatcher ?? ((p: number): boolean => isWatcherProcess(p, name))
-  const pid = watcherPid(name, isWatcher)
-  if (pid === null || pid === process.ppid || pid === process.pid) return false
-  try {
-    kill(pid, "SIGTERM")
-  } catch {
-    return false
-  }
-  const st = readWatchState(name)
-  const saving =
-    st?.pid === pid && (st.state === "autosaving" || st.state === "stowing")
-  const deadline = now() + (saving ? 10 * 60_000 : 10_000)
-  while (now() < deadline) {
-    if (!isWatcher(pid)) return true
-    await wait(200)
-  }
-  if (isWatcher(pid)) {
+function logTo(name: string): (s: string) => void {
+  const file = watchPathsFor(name).log
+  return (s) => {
     try {
-      kill(pid, "SIGKILL")
+      appendFileSync(file, `${new Date().toISOString()} [${name}] ${s}\n`)
     } catch {}
   }
-  const f = watchPathsFor(name).pid
+}
+
+const LOG_MAX_BYTES = 1_000_000
+
+function rotateLog(name: string): void {
+  const file = watchPathsFor(name).log
   try {
-    if (readFileSync(f, "utf8").trim() === String(pid))
-      rmSync(f, { force: true })
+    if (statSync(file).size > LOG_MAX_BYTES) renameSync(file, `${file}.1`)
   } catch {}
-  return true
 }
 
 export interface WatchOptions {
@@ -598,39 +614,17 @@ export interface WatchOptions {
   readonly actions?: Actions
 }
 
-const sleep = async (ms: number): Promise<void> => {
-  await new Promise((r) => setTimeout(r, ms))
-}
-
-export async function watch(
+async function watchQemu(
   name: string,
-  o: WatchOptions = {},
-): Promise<number> {
+  firstPid: number,
+  actions: Actions,
+  timing: Timing,
+  signal: AbortSignal,
+): Promise<void> {
   const p = pathsFor(name)
   const w = watchPathsFor(name)
-  const timing: Timing = { ...DEFAULT_TIMING, ...o.timing }
-  const log = (s: string): void => {
-    console.log(`${new Date().toISOString()} [${name}] ${s}`)
-  }
-
-  if (!existsSync(p.meta)) {
-    console.error(`::error::no such instance "${name}"`)
-    return 1
-  }
-  const firstPid = qemu.pidOf(p)
-  if (firstPid === null) {
-    console.error(
-      `::error::instance "${name}" is not running — nothing to watch`,
-    )
-    return 1
-  }
+  const log = logTo(name)
   let cfg = effectiveConfig(name)
-  if (!cfg["watch.enabled"]) {
-    console.error(
-      `::error::watching is off for "${name}" — \`winvm config -i ${name} watch.enabled=true\``,
-    )
-    return 1
-  }
   const ephemeral = saves.isEphemeral(p)
   const startedAt = new Date().toISOString()
   const machine = new IdleMachine(Date.now(), timing)
@@ -658,51 +652,14 @@ export async function watch(
       writeAtomic(w.state, `${JSON.stringify(s, null, 2)}\n`)
     } catch {}
   }
-
-  const other = acquireLock(name)
-  if (other !== null) {
-    console.error(
-      other > 0
-        ? `::error::instance "${name}" already has a watcher (pid ${String(other)})`
-        : "::error::could not take watch.pid",
-    )
-    return 1
-  }
-  publish()
-
-  let qemuPid = firstPid
-  const actions = o.actions ?? realActions(name, p, log)
-  let vcpus = vcpusOf(qemuPid)
-
-  let busy: Promise<unknown> | null = null
-  let exiting = false
   const finish = (why: string): void => {
-    if (exiting) return
-    exiting = true
     state = "stopped"
     publish()
-    releaseLock(name)
     log(`watcher stopped: ${why}`)
   }
-  process.on("exit", () => {
-    finish("exit")
-  })
-  for (const sig of ["SIGINT", "SIGTERM", "SIGHUP"] as const) {
-    process.on(sig, () => {
-      if (busy === null) {
-        finish(sig)
-        process.exit(0)
-      }
-      log(
-        `${sig}: letting the ${state === "stowing" ? "stow" : "save"} in progress finish first`,
-      )
-      void busy.finally(() => {
-        finish(sig)
-        process.exit(0)
-      })
-    })
-  }
 
+  let qemuPid = firstPid
+  let vcpus = vcpusOf(qemuPid)
   log(
     `watching qemu pid ${String(qemuPid)} (${String(vcpus)} vCPUs), tick ${String(timing.tickMs / 1000)} s · ` +
       `autosave ${cfg["autosave.enabled"] ? `after ${String(cfg["autosave.idleMinutes"])} min, keep ${String(cfg["autosave.keep"])}` : "off"} · ` +
@@ -794,18 +751,23 @@ export async function watch(
   let lastSummary = ""
   let lastTickLogAt = 0
   for (;;) {
-    await sleep(timing.tickMs)
+    await pause(timing.tickMs, signal)
+    if (signal.aborted) {
+      finish(String(signal.reason))
+      return
+    }
     const livePid = qemu.pidOf(p)
     if (livePid !== qemuPid) {
       if (livePid === null) {
         if (leaseHeld(name)) continue
         finder.cleanStale(name)
         finish("qemu exited")
-        return 0
+        return
       }
       log(
         `qemu was replaced (pid ${String(qemuPid)} -> ${String(livePid)}; a load or a rewind) — following it`,
       )
+      if (markedQemu(name) === qemuPid) mark(name, livePid)
       qemuPid = livePid
       vcpus = vcpusOf(livePid)
       stowRefused = false
@@ -816,8 +778,9 @@ export async function watch(
     }
     cfg = effectiveConfig(name)
     if (!cfg["watch.enabled"]) {
+      unmark(name)
       finish("watch.enabled is false")
-      return 0
+      return
     }
 
     const nowCpu = cpuSeconds(qemuPid)
@@ -860,15 +823,113 @@ export async function watch(
     }
 
     for (const d of decisions) {
-      const action = run(d)
-      busy = action
-      const outcome = await action
-      busy = null
-      if (outcome === "stowed") {
+      if (stopped(signal)) break
+      if ((await run(d)) === "stowed") {
         finish("stowed")
-        return 0
+        return
       }
     }
     publish()
+  }
+}
+
+export interface Duties {
+  check(): void
+  halt(why: string): Promise<void>
+}
+
+export function watchDuties(
+  name: string,
+  hooks: DutyHooks,
+  o: WatchOptions = {},
+): Duties {
+  const p = pathsFor(name)
+  const log = logTo(name)
+  const timing: Timing = {
+    ...DEFAULT_TIMING,
+    ...timingFrom(process.env[WATCH_TIMING_ENV]),
+    ...o.timing,
+  }
+  let halted = false
+  let draining = false
+  let current: Run | null = null
+
+  const takeOver = async (legacy: number): Promise<void> => {
+    const offs = turnedOff.get(name) ?? 0
+    if (!(await stopLegacyWatcher(name)) || halted) return
+    if ((turnedOff.get(name) ?? 0) !== offs || !ensureWatcher(name)) return
+    log(
+      `an older winvm's watcher (pid ${String(legacy)}) has stopped; winvm's service watches "${name}" from now on`,
+    )
+    appendEntry(name, {
+      kind: "service",
+      what: "watcher taken over",
+      pid: legacy,
+    })
+  }
+
+  const begin = (pid: number): void => {
+    rotateLog(name)
+    const controller = new AbortController()
+    const run: Run = {
+      halt: (why) => {
+        controller.abort(why)
+      },
+      ended: watchQemu(
+        name,
+        pid,
+        o.actions ?? serviceActions(name, p, log, hooks, controller.signal),
+        timing,
+        controller.signal,
+      )
+        .catch((error: unknown) => {
+          log(`watcher stopped: ${errText(error)}`)
+        })
+        .finally(() => {
+          current = null
+          runs.delete(name)
+        }),
+    }
+    current = run
+    runs.set(name, run)
+  }
+
+  return {
+    check: () => {
+      if (halted) return
+      const legacy = draining ? null : legacyWatcherPid(name)
+      if (legacy !== null) {
+        draining = true
+        void takeOver(legacy)
+          .catch((error: unknown) => {
+            log(
+              `could not take over from an older winvm's watcher: ${errText(error)}`,
+            )
+          })
+          .finally(() => {
+            draining = false
+          })
+      }
+      if (current !== null) {
+        if (markedQemu(name) === null) current.halt("stopped")
+        return
+      }
+      if (draining) return
+      const pid = qemu.pidOf(p)
+      if (pid === null) return
+      const owed = legacyWatcherOwed(p)
+      if (owed !== null) {
+        if (owed === pid) ensureWatcher(name)
+        forgiveLegacyWatcher(p)
+      }
+      if (markedFor(name, pid) && effectiveConfig(name)["watch.enabled"])
+        begin(pid)
+    },
+    halt: async (why) => {
+      halted = true
+      const run = current
+      run?.halt(why)
+      await run?.ended
+    },
   }
 }

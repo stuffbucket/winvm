@@ -1,5 +1,11 @@
 import { ptr } from "bun:ffi"
-import { appendFileSync, openSync, rmSync, writeSync } from "node:fs"
+import {
+  appendFileSync,
+  openSync,
+  rmSync,
+  writeFileSync,
+  writeSync,
+} from "node:fs"
 
 import { bindFcntl, writeLockOf } from "../../src/pidlock"
 import { FakeAgent } from "./agent"
@@ -52,6 +58,29 @@ if (agentPath === undefined) throw new Error("no guest agent chardev")
 rmSync(agentPath, { force: true })
 const agent = new FakeAgent(agentPath)
 await agent.listen()
+const slowFirst = process.env.WINVM_FAKE_QEMU_SLOW_MIGRATION === "1"
+let migrations = 0
+let migrating: { slow: boolean; cancelled: boolean } | null = null
+const migrate = (uri: string): void => {
+  const to = uri.startsWith("file:")
+    ? uri.slice("file:".length)
+    : / -o '([^']+)'$/.exec(uri)?.[1]
+  if (to !== undefined) writeFileSync(to, "captured RAM")
+  migrations += 1
+  migrating = { slow: slowFirst && migrations === 1, cancelled: false }
+  say(`migrate ${String(process.pid)} ${String(Date.now())}`)
+}
+const migrationStatus = (): string => {
+  const m = migrating
+  if (m?.cancelled === true) {
+    migrating = null
+    return "cancelled"
+  }
+  if (m?.slow === true) return "active"
+  migrating = null
+  return "completed"
+}
+
 let watched = false
 for (const path of monitors) {
   const qmp = new FakeQmp(path)
@@ -60,6 +89,19 @@ for (const path of monitors) {
   watched = true
   const answer = qmp.handler
   qmp.handler = async (cmd) => {
+    const given = (cmd.arguments ?? {}) as Record<string, unknown>
+    if (cmd.execute === "migrate") {
+      migrate(String(given.uri))
+      return { return: {} }
+    }
+    if (cmd.execute === "migrate_cancel") {
+      if (migrating !== null) migrating.cancelled = true
+      return { return: {} }
+    }
+    if (cmd.execute === "query-migrate")
+      return {
+        return: { status: migrationStatus(), ram: { transferred: 4096 } },
+      }
     if (cmd.execute === "quit") {
       end("quit")
       return { return: {} }

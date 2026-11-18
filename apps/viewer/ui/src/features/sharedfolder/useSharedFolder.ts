@@ -3,14 +3,22 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { homeDir, pickFolder, winvm } from "../../backend"
 import { t } from "../../i18n"
 import type { Phase, SharedFolderStatus } from "../../model"
-import { parseSharedFolder } from "../../model"
-import { clearArgs, cliError, installArgs, setArgs, statusArgs } from "./folder"
+import { parseSharedFolder, RESTORED_BUSY } from "../../model"
+import {
+  clearArgs,
+  cliError,
+  cliWarning,
+  installArgs,
+  setArgs,
+  statusArgs,
+} from "./folder"
 
 type SharedFolderWork = "set" | "clear" | "install"
 
 export interface SharedFolderView {
   readonly status: SharedFolderStatus | null
   readonly error: string | null
+  readonly notice: string | null
   readonly working: SharedFolderWork | null
   readonly home: string | null
   choose: () => void
@@ -27,6 +35,7 @@ export function useSharedFolder(
 ): SharedFolderView {
   const [status, setStatus] = useState<SharedFolderStatus | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [notice, setNotice] = useState<string | null>(null)
   const [work, setWork] = useState<{
     instance: string
     kind: SharedFolderWork
@@ -50,6 +59,7 @@ export function useSharedFolder(
     statusFor.current = instance
     setStatus(null)
     setError(null)
+    setNotice(null)
   }, [instance])
 
   const read = useCallback(async (name: string): Promise<void> => {
@@ -90,13 +100,17 @@ export function useSharedFolder(
     ): Promise<void> => {
       setWork({ instance: name, kind })
       setError(null)
+      setNotice(null)
       reads.current++
       try {
         const out = await winvm(...args)
         if (shown.current !== name) return
-        const got = out.code === 0 ? parseSharedFolder(out.stdout) : null
-        if (got !== null) setStatus(got)
-        else {
+        const done = out.code === 0 || out.code === RESTORED_BUSY
+        const got = done ? parseSharedFolder(out.stdout) : null
+        if (got !== null) {
+          setStatus(got)
+          setNotice(cliWarning(out) || null)
+        } else {
           setError(cliError(out) || t("folder.changeError"))
           await read(name)
         }
@@ -143,6 +157,7 @@ export function useSharedFolder(
   return {
     status,
     error,
+    notice,
     working: work !== null && work.instance === instance ? work.kind : null,
     home,
     choose,
