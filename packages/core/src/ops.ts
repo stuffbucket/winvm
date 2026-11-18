@@ -18,6 +18,7 @@ import {
   runInOp,
 } from "./opcontext"
 import {
+  AUTOMATIC_FLAG,
   automaticFrom,
   INTERRUPTED,
   InstanceBusy,
@@ -231,16 +232,29 @@ export function captureOutput(): void {
   routeWrites(process.stderr, "err")
 }
 
+export type Ended =
+  | { readonly kind: "done"; readonly code: number }
+  | { readonly kind: "failed"; readonly error: string }
+
 export type Submitted =
   | {
       readonly kind: "accepted"
       readonly id: string
       readonly cursor: Cursor
       readonly queued: LeaseHolder | null
+      readonly ended: Promise<Ended>
     }
   | { readonly kind: "busy"; readonly holder: LeaseHolder }
   | { readonly kind: "failed"; readonly error: string }
   | { readonly kind: "closed"; readonly reason: Closing }
+
+export type Performed =
+  | Ended
+  | { readonly kind: "busy"; readonly holder: LeaseHolder }
+  | { readonly kind: "closed"; readonly reason: Closing }
+
+const errorText = (error: unknown): string =>
+  error instanceof Error ? error.message : String(error)
 
 function lastsThroughHostEnd(r: Running): boolean {
   const policy = r.handler.hostEnd ?? "end"
@@ -305,14 +319,33 @@ export class OpQueue {
   }
 
   async submit(req: OpRequest): Promise<Submitted> {
+    const handler = this.handlers[req.op]
+    if (handler === undefined) throw new Error(`no handler for ${req.op}`)
+    return await this.enqueue(req, handler)
+  }
+
+  async perform(
+    op: ServiceOp,
+    handler: OpHandler,
+    args: readonly string[],
+  ): Promise<Performed> {
+    const s = await this.enqueue(
+      { op, args: [...args, `--${AUTOMATIC_FLAG}`], wait: false },
+      handler,
+    )
+    return s.kind === "accepted" ? await s.ended : s
+  }
+
+  private async enqueue(
+    req: OpRequest,
+    handler: OpHandler,
+  ): Promise<Submitted> {
     if (this.closed !== null) return { kind: "closed", reason: this.closed }
     if (readMeta(this.name) === null)
       return {
         kind: "failed",
         error: `instance "${this.name}" has no meta.json, so an op on it could not be recorded`,
       }
-    const handler = this.handlers[req.op]
-    if (handler === undefined) throw new Error(`no handler for ${req.op}`)
     const id = req.id ?? randomUUID()
     if (this.ids.has(id))
       return {
@@ -360,12 +393,25 @@ export class OpQueue {
     const decided = new Promise<Submitted>((r) => {
       decide = r
     })
+    let ended: Ended = { kind: "failed", error: "it did not run" }
+    let finish: () => void = () => undefined
+    const finished = new Promise<Ended>((r) => {
+      finish = () => {
+        r(ended)
+      }
+    })
     let accepted = false
     const accept = (queued: LeaseHolder | null): void => {
       if (accepted) return
       accepted = true
       this.ops.set(id, running)
-      decide({ kind: "accepted", id, cursor, queued })
+      decide({
+        kind: "accepted",
+        id,
+        cursor,
+        queued,
+        ended: finished,
+      })
     }
     const args = parseArgs([...req.args, "--instance", this.name])
     let killedQemu = false
@@ -379,6 +425,7 @@ export class OpQueue {
             accept(null)
             this.hooks.nudge()
             const code = await this.raced(scope, handler.run(args))
+            ended = { kind: "done", code }
             if (req.op === "kill" && code === 0) {
               killedQemu = true
               this.preempt(id)
@@ -407,19 +454,18 @@ export class OpQueue {
           decide(
             error instanceof InstanceBusy
               ? { kind: "busy", holder: error.holder }
-              : {
-                  kind: "failed",
-                  error: error instanceof Error ? error.message : String(error),
-                },
+              : { kind: "failed", error: errorText(error) },
           )
           return
         }
+        ended = { kind: "failed", error: errorText(error) }
         if (!running.held) this.endUnheld(running, args, error)
       } finally {
         over = true
         this.ops.delete(id)
         this.ids.delete(id)
         this.hooks.nudge()
+        finish()
       }
       if (killedQemu)
         outsideOp(() => {

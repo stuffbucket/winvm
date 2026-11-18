@@ -3,6 +3,7 @@ import {
   chmodSync,
   mkdirSync,
   mkdtempSync,
+  readFileSync,
   rmSync,
   writeFileSync,
 } from "node:fs"
@@ -1202,5 +1203,119 @@ describe("the long verbs' rules in the queue", () => {
     expect(
       opsOf("same-id-0001").filter((e) => e.kind === "op" && e.phase === "end"),
     ).toHaveLength(1)
+  })
+})
+
+describe("an op winvm's service runs by itself", () => {
+  const ownQueue = (): OpQueue =>
+    new OpQueue(
+      "t",
+      {},
+      {
+        record: () => undefined,
+        nudge: () => undefined,
+        killed: () => undefined,
+      },
+    )
+  const automaticOf = (operation: string): readonly Entry[] =>
+    readSince("t", START).entries.filter(
+      (e) =>
+        e.kind === "op" &&
+        (e.phase === "begin" || e.phase === "end") &&
+        e.operation === operation &&
+        e.automatic,
+    )
+
+  it("runs under the lease as winvm's own, by the service, and answers with its exit code", async () => {
+    const queue = ownQueue()
+    const ran: Args[] = []
+    const r = await queue.perform(
+      "stow",
+      {
+        cancel: "cooperative",
+        run: async (args) => {
+          ran.push(args)
+          expect(JSON.parse(readFileSync(p.lease, "utf8"))).toMatchObject({
+            operation: "stow",
+            pid: process.pid,
+            automatic: true,
+          })
+          return await Promise.resolve(4)
+        },
+      },
+      ["--force"],
+    )
+    expect(r).toEqual({ kind: "done", code: 4 })
+    expect(ran[0]?.flags.has("automatic")).toBe(true)
+    expect(ran[0]?.flags.has("force")).toBe(true)
+    expect(automaticOf("stow").map((e) => e.kind === "op" && e.phase)).toEqual([
+      "begin",
+      "end",
+    ])
+    expect(automaticOf("stow")[1]).toMatchObject({
+      pid: process.pid,
+      leased: true,
+      ok: false,
+      exitCode: 4,
+    })
+  })
+
+  it("answers busy at once, running nothing, while someone else holds the instance", async () => {
+    writeFileSync(
+      p.lease,
+      JSON.stringify({
+        operation: "reboot",
+        id: "someone-else",
+        pid: process.pid,
+        pidStart: null,
+        startedAt: "2026-11-17T00:00:00.000Z",
+        instance: "t",
+        automatic: false,
+      }),
+    )
+    let ran = false
+    const r = await ownQueue().perform(
+      "save",
+      {
+        cancel: "never",
+        run: async () => {
+          ran = true
+          return await Promise.resolve(0)
+        },
+      },
+      [],
+    )
+    expect(r).toMatchObject({ kind: "busy", holder: { operation: "reboot" } })
+    expect(ran).toBe(false)
+    expect(automaticOf("save")).toEqual([])
+  })
+
+  it("answers with the error its body threw, recorded as it always was", async () => {
+    const r = await ownQueue().perform(
+      "save",
+      {
+        cancel: "never",
+        run: async () => await Promise.reject(new Error("the disk is full")),
+      },
+      [],
+    )
+    expect(r).toEqual({ kind: "failed", error: "the disk is full" })
+    expect(automaticOf("save").at(-1)).toMatchObject({
+      phase: "end",
+      ok: false,
+      error: "the disk is full",
+    })
+  })
+
+  it("answers closed once the Mac is shutting down", async () => {
+    const queue = ownQueue()
+    await queue.close("host-end")
+    expect(
+      await queue.perform(
+        "save",
+        { cancel: "never", run: async () => await Promise.resolve(0) },
+        [],
+      ),
+    ).toEqual({ kind: "closed", reason: "host-end" })
   })
 })
