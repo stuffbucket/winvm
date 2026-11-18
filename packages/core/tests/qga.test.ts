@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync } from "node:fs"
 import { createServer } from "node:net"
 import { tmpdir } from "node:os"
 import { resolve } from "node:path"
-
+import { type OpScope, runInOp } from "../src/opcontext"
 import {
   call,
   loggedOnUser,
@@ -31,7 +31,41 @@ afterAll(async () => {
   rmSync(dir, { recursive: true, force: true })
 })
 
+const scopeFor = (signal: AbortSignal): OpScope => ({
+  id: "op-1",
+  operation: "resume",
+  signal,
+  write: () => undefined,
+  remount: () => undefined,
+  irreversibleAt: null,
+  calls: 0,
+})
+
 describe("qga.call", () => {
+  it("never writes a command for an op that ended while it waited for the agent's handshake", async () => {
+    const seen: unknown[] = []
+    agent.handler = (req) => {
+      seen.push(req.execute)
+      return { return: {} }
+    }
+    agent.syncDelayMs = 200
+    const ac = new AbortController()
+    try {
+      const asked = runInOp(
+        scopeFor(ac.signal),
+        async () => await call(agent.path, { execute: "guest-set-time" }),
+      )
+      setTimeout(() => {
+        ac.abort("host-end")
+      }, 50)
+      await expect(asked).rejects.toThrow("the Mac is shutting down")
+      await Bun.sleep(300)
+      expect(seen).toEqual([])
+    } finally {
+      agent.syncDelayMs = 0
+    }
+  })
+
   it("answers a plain request", async () => {
     agent.handler = (req) => ({ return: { echoed: req.execute } })
     expect(await call(agent.path, { execute: "guest-ping" })).toEqual({

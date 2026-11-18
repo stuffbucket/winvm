@@ -1,7 +1,7 @@
 import { readFileSync, rmSync } from "node:fs"
 import { connect } from "node:net"
 
-import { fenced } from "./opcontext"
+import { checkOp, fenced } from "./opcontext"
 
 export async function hmp(
   sockPath: string,
@@ -107,6 +107,7 @@ async function onSocket<T>(sockPath: string, fn: SocketUse<T>): Promise<T> {
     o: object,
     timeoutMs = 20_000,
   ): Promise<Record<string, unknown>> => {
+    checkOp()
     let timer: ReturnType<typeof setTimeout> | undefined
     const reply = new Promise<Record<string, unknown>>((res) =>
       waiting.push(res),
@@ -122,6 +123,7 @@ async function onSocket<T>(sockPath: string, fn: SocketUse<T>): Promise<T> {
     return out
   }
   const send = async (o: object): Promise<void> => {
+    checkOp()
     sock.write(`${JSON.stringify(o)}\n`)
     await new Promise((r) => setTimeout(r, 30))
   }

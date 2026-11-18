@@ -1,6 +1,6 @@
 import { connect } from "node:net"
 
-import { fenced } from "./opcontext"
+import { checkOp, fenced } from "./opcontext"
 
 export class QmpError extends Error {}
 
@@ -71,6 +71,7 @@ async function qmpSession<T>(
 
   const raw = async (o: object, label: string): Promise<unknown> => {
     if (deadErr !== null) throw deadErr
+    checkOp()
     let timer: ReturnType<typeof setTimeout> | undefined
     const reply = new Promise<Record<string, unknown>>((res) =>
       waiting.push(res),

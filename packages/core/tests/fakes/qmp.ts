@@ -20,6 +20,7 @@ export class FakeQmp {
     return { return: {} }
   }
   greets = true
+  negotiateDelayMs = 0
   connections = 0
   readonly commands: string[] = []
   private readonly sockets = new Set<Socket>()
@@ -92,9 +93,12 @@ export class FakeQmp {
         this.commands.push(name)
         if (name === "qmp_capabilities") {
           negotiated = true
-          s.write(
-            `${JSON.stringify({ return: {}, ...(id === undefined ? {} : { id }) })}\n`,
-          )
+          const answer = `${JSON.stringify({ return: {}, ...(id === undefined ? {} : { id }) })}\n`
+          if (this.negotiateDelayMs === 0) s.write(answer)
+          else
+            setTimeout(() => {
+              if (!s.destroyed) s.write(answer)
+            }, this.negotiateDelayMs)
           continue
         }
         if (!negotiated) {

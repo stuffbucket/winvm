@@ -1,6 +1,6 @@
 import { connect } from "node:net"
 
-import { fenced } from "./opcontext"
+import { checkOp, fenced } from "./opcontext"
 import { monitorBeside } from "./paths"
 import * as qmp from "./qmp"
 
@@ -96,6 +96,14 @@ async function callAgent(
         inSyncReply = false
         if (syncReplyId(line) === id) {
           synced = true
+          try {
+            checkOp()
+          } catch (error) {
+            settle(() => {
+              rej(error instanceof Error ? error : new Error(String(error)))
+            })
+            return
+          }
           sock.write(`${JSON.stringify(payload)}\n`)
         }
       }
