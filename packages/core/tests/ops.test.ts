@@ -810,6 +810,33 @@ describe("host end", () => {
     await outcome
   }, 20_000)
 
+  it("still says the Mac is shutting down when the service starts stopping during host end", async () => {
+    release = async () => {
+      await Bun.sleep(1500)
+    }
+    const autosave = gate()
+    const saving = withOperation(
+      "t",
+      "save",
+      async () => {
+        await autosave.opened
+      },
+      { automatic: true },
+    )
+    await Bun.sleep(20)
+    expect(await ending()).toBe(202)
+    await until(() => outcome !== null, 10_000)
+    const stopping = svc?.stop()
+    const r = await submit("pause")
+    expect(r.status).toBe(503)
+    expect(r.body).toMatchObject({ hostEnding: true })
+    autosave.open()
+    await saving
+    await outcome
+    await stopping
+    svc = null
+  }, 20_000)
+
   it("takes no new op once it has begun, and says why", async () => {
     release = async () => {
       await Bun.sleep(2000)

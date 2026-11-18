@@ -233,6 +233,10 @@ export async function runService(
   const answer = (r: Reply): Response =>
     Response.json(r.body, { status: r.status })
   const submitOp = async (req: Request): Promise<Response> => {
+    if (hostEnding !== null)
+      return answer(
+        reply(503, { error: "the Mac is shutting down", hostEnding: true }),
+      )
     if (stopping)
       return answer(reply(503, { error: "the service is stopping" }))
     const parsed = readOpRequest(
