@@ -596,3 +596,76 @@ const ranByCli = (operation: string): number | undefined => {
   const b = begins(operation).at(-1)
   return b?.kind === "op" && b.phase === "begin" ? b.pid : undefined
 }
+
+describe("an op a client names, and reads back from the record", () => {
+  const ID = "0b9c2f1e-7d3a-4e5b-9c8d-112233445566"
+
+  const named = (id: string): readonly Entry[] =>
+    readSince("t", START).entries.filter((e) => e.kind === "op" && e.id === id)
+
+  it("runs under the id the client gave", async () => {
+    expect((await winvm("stow", "-i", "t", "--op-id", ID)).code).toBe(0)
+    expect(named(ID).map((e) => (e.kind === "op" ? e.phase : ""))).toContain(
+      "begin",
+    )
+    expect(named(ID).at(-1)).toMatchObject({ phase: "end", exitCode: 0 })
+  }, 30_000)
+
+  it("refuses an id that is not one", async () => {
+    expect(await winvm("stop", "-i", "t", "--op-id", "x y")).toEqual({
+      code: 1,
+      stdout: "",
+      stderr:
+        "::error::--op-id wants 8 to 64 letters, digits and dashes, starting with a letter or digit\n",
+    })
+    expect(fakeQmp.commands).not.toContain("system_powerdown")
+  }, 30_000)
+
+  it("is named in status while it runs", async () => {
+    powerdownExits = false
+    const r = launch("stop", "-i", "t", "--op-id", ID)
+    await until(() => fakeQmp.commands.includes("system_powerdown"))
+    const s = await winvm("status", "-i", "t", "--json")
+    expect(JSON.parse(s.stdout)).toMatchObject({
+      operation: { operation: "stop", id: ID },
+    })
+    await qemuGoes()
+    await r.done
+  }, 30_000)
+
+  it("is read back by its id: how it ended and what it said", async () => {
+    await winvm("save", "-i", "t", "x", "--force", "--op-id", ID)
+    const r = await winvm("events", "-i", "t", "--op", ID, "--json")
+    expect(r.code).toBe(0)
+    const got = JSON.parse(r.stdout) as Record<string, unknown>
+    expect(got).toMatchObject({
+      id: ID,
+      operation: "save",
+      ended: true,
+      ok: true,
+      exitCode: 0,
+    })
+    expect(String(got.output)).toContain('saved "x" (manual, zstd)')
+  }, 30_000)
+
+  it("is followed by its id until it ends", async () => {
+    powerdownExits = false
+    const r = launch("stop", "-i", "t", "--op-id", ID)
+    await until(() => fakeQmp.commands.includes("system_powerdown"))
+    const following = launch("events", "-i", "t", "--op", ID, "--follow")
+    await Bun.sleep(300)
+    await qemuGoes()
+    expect(await following.done).toEqual({
+      code: 0,
+      stdout: 'instance "t" stopped\n',
+      stderr: "",
+    })
+    await r.done
+  }, 30_000)
+
+  it("says so when no op of that id was recorded, and does not wait for it", async () => {
+    const r = await winvm("events", "-i", "t", "--op", ID, "--follow", "--json")
+    expect(r.code).toBe(0)
+    expect(JSON.parse(r.stdout)).toMatchObject({ id: ID, ended: false })
+  }, 30_000)
+})

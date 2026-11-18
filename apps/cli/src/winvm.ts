@@ -22,7 +22,7 @@ import {
   operationFor,
   withOperation,
 } from "@winvm/core/operation"
-import { isServiceOp } from "@winvm/core/ops"
+import { isOpId, isServiceOp } from "@winvm/core/ops"
 import {
   bunVersionWarning,
   pinnedBunVersion,
@@ -52,12 +52,20 @@ const args = parseArgs(rawArgs)
 
 const operation = operationFor(sub, args)
 const serviceOp = isServiceOp(operation) ? operation : null
+const opId = args.flags.get("op-id")
+if (opId !== undefined && !isOpId(opId)) {
+  console.error(
+    "::error::--op-id wants 8 to 64 letters, digits and dashes, starting with a letter or digit",
+  )
+  process.exit(1)
+}
 const leased = async (run: () => number | Promise<number>): Promise<number> => {
   if (operation === null) return await run()
   try {
     return await withOperation(instanceName(args), operation, run, {
       interruptible: true,
       automatic: automaticFrom(args),
+      ...(opId === undefined ? {} : { id: opId }),
       ...(serviceOp !== null && args.flags.has("wait")
         ? { queue: true, waitMs: Number.POSITIVE_INFINITY }
         : {}),
@@ -71,7 +79,15 @@ const leased = async (run: () => number | Promise<number>): Promise<number> => {
 const viaService = async (here: () => Promise<number>): Promise<number> =>
   serviceOp === null
     ? await here()
-    : await opclient.runOp({ op: serviceOp, args, argv: rawArgs }, here)
+    : await opclient.runOp(
+        {
+          op: serviceOp,
+          args,
+          argv: rawArgs,
+          ...(opId === undefined ? {} : { id: opId }),
+        },
+        here,
+      )
 const NO_SWEEP = [
   "help",
   "--help",
@@ -277,7 +293,9 @@ switch (sub ?? "") {
     exitCode = await reconcile.reconcileCmd(args)
     break
   case "events":
-    exitCode = await follow.eventsCmd(args)
+    exitCode = args.flags.has("op")
+      ? await opclient.opEventsCmd(args)
+      : await follow.eventsCmd(args)
     break
   case "run":
     exitCode = await runcmds.run(args)

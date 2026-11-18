@@ -243,6 +243,7 @@ describe("the lease record", () => {
       operation: "start",
       pid: process.pid,
       startedAt: during.record?.startedAt as string,
+      id: expect.any(String) as string,
     })
     expect(onDisk()).toBeNull()
 
@@ -261,6 +262,7 @@ describe("the lease record", () => {
       operation: "save",
       pid: h.pid,
       startedAt: "2026-01-01T00:00:00.000Z",
+      id: `id-${String(h.pid)}`,
     })
 
     put(h.pid, { pidStart: "Thu Jan  1 00:00:00 1970" })
@@ -319,6 +321,7 @@ describe("the lease record", () => {
     expect(readOperation(NAME)).toEqual({
       operation: "save",
       pid: child.pid,
+      id: expect.any(String) as string,
       startedAt: expect.any(String) as string,
     })
     await expect(withOperation(NAME, "stop", () => "ran")).rejects.toThrow(

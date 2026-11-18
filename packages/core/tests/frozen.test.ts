@@ -351,6 +351,7 @@ describe("status exposes the operation in flight", () => {
       operation: "start",
       pid: c.pid,
       startedAt: "2026-03-03T00:00:00.000Z",
+      id: "t",
     })
     c.kill()
     await c.exited
@@ -363,6 +364,7 @@ describe("status exposes the operation in flight", () => {
       operation: "save",
       pid: c.pid,
       startedAt: "2026-03-03T00:00:00.000Z",
+      id: "t",
     })
     c.kill()
     await c.exited

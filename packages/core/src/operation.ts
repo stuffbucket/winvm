@@ -47,6 +47,7 @@ export interface OperationInfo {
   readonly operation: VmOperation
   readonly pid: number
   readonly startedAt: string
+  readonly id?: string
 }
 
 export interface LeaseHolder {
@@ -294,7 +295,12 @@ export function readOperation(
   const r = readLease(name, seams)
   return r === null || !isVmOperation(r.operation)
     ? null
-    : { operation: r.operation, pid: r.pid, startedAt: r.startedAt }
+    : {
+        operation: r.operation,
+        pid: r.pid,
+        startedAt: r.startedAt,
+        ...(r.id === "" ? {} : { id: r.id }),
+      }
 }
 
 export function leaseHolder(

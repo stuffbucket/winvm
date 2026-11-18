@@ -1772,6 +1772,8 @@ export const USAGE =
   "                                missing ones and unmount drives a gone guest left; no -i: all\n" +
   "  events  [-i name] [--json]    the instances' event records (QEMU events, operations);\n" +
   "          [--follow] [--since c]  keep following / resume after a line's cursor (or `start`)\n" +
+  "          --op ID [--follow]    one operation: what it printed, then its exit code; --follow\n" +
+  "                                waits while it runs (an op is named with --op-id ID)\n" +
   "  info    [-i name] [--json]    processors, memory and disk (running, and set for the next start),\n" +
   "                                and the network: addresses and the ports forwarded into Windows\n" +
   "  open    [-i name] [--web]     show the screen in Screen Sharing, or (--web) the browser;\n" +
