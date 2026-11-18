@@ -158,6 +158,7 @@ export const keptEnv = (
         e[1] !== undefined &&
         (PASSED_ENV.has(e[0]) ||
           e[0].startsWith("LC_") ||
+          e[0].startsWith("XDG_") ||
           e[0].startsWith("WINVM_")),
     ),
   )

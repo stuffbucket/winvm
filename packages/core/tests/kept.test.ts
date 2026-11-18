@@ -45,6 +45,7 @@ import {
   keeperSocket,
   keeperStanding,
   keeperUse,
+  keptEnv,
   killKept,
   launchedRuntime,
   setLaunchd,
@@ -1273,4 +1274,24 @@ describe("a keeper from phase 3, which speaks protocol 2", () => {
       await releasePidfiles()
     }
   }, 15_000)
+})
+
+describe("the environment the keeper hands its children", () => {
+  it("keeps the XDG folders, so a service launching QEMU finds the same runtime, keeper copies and settings as its CLI", () => {
+    const env = keptEnv({
+      HOME: "/Users/someone",
+      XDG_DATA_HOME: "/elsewhere/data",
+      XDG_CONFIG_HOME: "/elsewhere/config",
+      XDG_CACHE_HOME: "/elsewhere/cache",
+      XDG_STATE_HOME: "/elsewhere/state",
+      SECRET_TOKEN: "x",
+    })
+    expect(env).toMatchObject({
+      XDG_DATA_HOME: "/elsewhere/data",
+      XDG_CONFIG_HOME: "/elsewhere/config",
+      XDG_CACHE_HOME: "/elsewhere/cache",
+      XDG_STATE_HOME: "/elsewhere/state",
+    })
+    expect(env.SECRET_TOKEN).toBeUndefined()
+  })
 })
