@@ -1070,6 +1070,32 @@ function markUnfinished(
   }
 }
 
+function heldBack(instance: string, name: string, m: Manifest): string {
+  const stows = [
+    ...new Set([
+      ...(m.kind === "stow" ? [name] : []),
+      ...(hasSave(instance, STOW) ? [STOW] : []),
+    ]),
+  ]
+  const marked = stows.filter((stow) => {
+    const found = readSave(instance, stow)
+    if (found === null) return false
+    try {
+      rewriteManifest(saveDir(instance, stow), {
+        ...found,
+        unfinished: true,
+        note: `a ${stow} whose recall did not finish, so the QEMU loading it may have gone on from it`,
+      })
+      return true
+    } catch {
+      return false
+    }
+  })
+  return marked.length === 0
+    ? ""
+    : `; ${marked.map((s) => `"${s}"`).join(" and ")} ${marked.length === 1 ? "is" : "are"} marked so that start does not recall it — \`winvm load -i ${instance} ${marked[0] ?? STOW}\` brings it back, and \`winvm kill -i ${instance}\` ends that QEMU`
+}
+
 function setAside(instance: string, name: string, m: Manifest): string {
   const aside = freeAside(instance, name)
   try {
@@ -1459,7 +1485,20 @@ async function loadSaveHeld(instance: string, name: string): Promise<Manifest> {
       break
     }
     if (Date.now() > deadline) {
-      await quitQemu(p).catch(() => undefined)
+      if (s === "unknown")
+        throw new Error(
+          `loading save "${name}" did not finish in time and QEMU did not say what state it is in, so it was left as it is` +
+            heldBack(instance, name, m),
+        )
+      try {
+        await quitQemu(p)
+      } catch (error) {
+        throw new Error(
+          `loading save "${name}" did not finish in time (state: ${s}), and its QEMU could not be quit: ${errText(error)}` +
+            heldBack(instance, name, m),
+          { cause: error },
+        )
+      }
       throw new Error(
         `loading save "${name}" did not finish in time (state: ${s}), so its QEMU was quit`,
       )
