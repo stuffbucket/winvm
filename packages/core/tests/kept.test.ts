@@ -585,6 +585,22 @@ describe("launching QEMU without the keeper", () => {
     )
   })
 
+  it("refuses, rather than spawn QEMU outside the keeper, when the launch runs inside the keeper's own service", async () => {
+    bootstrapFails = true
+    writeFileSync(
+      pathsFor(NAME).service,
+      JSON.stringify({
+        pid: process.pid,
+        cli: "",
+        version: "0",
+        startedAt: "",
+      }),
+    )
+    spyOn(console, "warn").mockImplementation(() => undefined)
+    await expect(leasedLaunch()).rejects.toThrow("EIO")
+    expect(detached).toEqual([])
+  })
+
   it("spawns QEMU detached when no keeper is installed", async () => {
     delete process.env.WINVM_KEEPER
     await expect(leasedLaunch()).rejects.toThrow("detached spawn of")
@@ -1240,6 +1256,31 @@ describe("a keeper from phase 3, which speaks protocol 2", () => {
       expect(asked).toEqual([{ op: "exit-when-idle", protocol: 2 }])
       expect(detached).toEqual([])
       expect(ops()).toEqual(["launch-sidecar", "launch"])
+    } finally {
+      server.close()
+    }
+  }, 15_000)
+
+  it("is never asked to exit by its own service, which refuses the launch instead", async () => {
+    const p = pathsFor(NAME)
+    const asked: Record<string, unknown>[] = []
+    const server = await oldKeeper(p, null, (request) => {
+      asked.push(request)
+      return { ok: true }
+    })
+    writeFileSync(
+      p.service,
+      JSON.stringify({
+        pid: process.pid,
+        cli: "",
+        version: "0",
+        startedAt: "",
+      }),
+    )
+    try {
+      await expect(leasedLaunch()).rejects.toThrow("older than this winvm")
+      expect(asked.filter((r) => r.op === "exit-when-idle")).toEqual([])
+      expect(detached).toEqual([])
     } finally {
       server.close()
     }

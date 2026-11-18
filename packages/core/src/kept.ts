@@ -1,4 +1,4 @@
-import { existsSync } from "node:fs"
+import { existsSync, readFileSync } from "node:fs"
 import { resolve } from "node:path"
 import { readSince, START } from "./eventlog"
 import {
@@ -260,7 +260,12 @@ export async function openKeeper(
     for (;;) {
       const hello = await keeperHello(p, { launching: true })
       if (hello !== null && hello.protocol >= KEEPER_PROTOCOL) return hello
-      if (hello !== null && hello.child === null && !retired) {
+      if (
+        hello !== null &&
+        hello.child === null &&
+        !retired &&
+        !servingHere(p)
+      ) {
         retired = true
         deadline = Date.now() + OPEN_MS
         await keeperRequest(keeperSocket(p), { op: "exit-when-idle" }).catch(
@@ -278,6 +283,19 @@ export async function openKeeper(
         )
       await sleep(100)
     }
+  }
+}
+
+export function servingHere(p: Paths): boolean {
+  try {
+    const record: unknown = JSON.parse(readFileSync(p.service, "utf8"))
+    return (
+      typeof record === "object" &&
+      record !== null &&
+      (record as { pid?: unknown }).pid === process.pid
+    )
+  } catch {
+    return false
   }
 }
 

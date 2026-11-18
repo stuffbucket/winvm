@@ -304,7 +304,11 @@ export async function launch(
       await launchKept(name, p, meta, o, use.keeper)
       return
     }
-    if (failed instanceof LeaseNotHeld || failed instanceof KeeperBusy)
+    if (
+      failed instanceof LeaseNotHeld ||
+      failed instanceof KeeperBusy ||
+      kept.servingHere(p)
+    )
       throw failed
     console.warn(
       `warning: winvm's keeper did not start (${failed.message}); starting QEMU without it, so it is not protected if the Mac shuts down`,
