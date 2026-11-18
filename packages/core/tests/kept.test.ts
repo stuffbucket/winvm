@@ -1286,6 +1286,28 @@ describe("a keeper from phase 3, which speaks protocol 2", () => {
     }
   }, 15_000)
 
+  it("says, when its own service refuses a launch, that Windows is stopped and what starts it again", async () => {
+    const p = pathsFor(NAME)
+    const server = await oldKeeper(p, null, () => ({ ok: true }))
+    writeFileSync(
+      p.service,
+      JSON.stringify({
+        pid: process.pid,
+        cli: "",
+        version: "0",
+        startedAt: "",
+      }),
+    )
+    try {
+      await expect(leasedLaunch()).rejects.toThrow(
+        `Windows is stopped; \`winvm start -i ${NAME}\` starts it again once the keeper answers, or \`WINVM_KEEPER=off winvm start -i ${NAME}\` starts it without the keeper`,
+      )
+      expect(detached).toEqual([])
+    } finally {
+      server.close()
+    }
+  }, 15_000)
+
   it("lets winvm kill end the QEMU that a start refused on, though qemu.pid no longer names it", async () => {
     const p = pathsFor(NAME)
     const pid = await held()
