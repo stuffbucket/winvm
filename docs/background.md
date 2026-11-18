@@ -327,7 +327,10 @@ is due (`"remount": true` on the stow's end), `watch.log` says why the stow
 failed, and `winvm status` names `winvm files mount -i NAME`. The app mounts
 them again by itself, in your session, with `winvm files remount -i NAME`,
 which mounts what a command took down under the instance's lease, and not
-while the guest is paused or the Mac is shutting down.
+while the guest is paused or the Mac is shutting down. It stops at once if
+the Mac begins shutting down meanwhile. It exits 1 when it mounted nothing
+that was waiting (busy, paused, shutting down, or a failed mount), and 0 when
+nothing was waiting.
 
 ```sh
 winvm config -i default                        # current settings and defaults
