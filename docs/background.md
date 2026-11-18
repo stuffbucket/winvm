@@ -82,8 +82,9 @@ answer afterwards. If Windows' guest agent does not answer within 5 minutes
 of a recall (or of `winvm load`, `winvm rewind` or `winvm golden reset`),
 winvm says Windows is still busy but was restored, starts the watcher, and
 exits 6; set the clock and mount the drives later with `winvm clock` and
-`winvm files mount`. The app shows that as a notice, not a failure, and
-`winvm run` and `winvm share install` carry on. A load that QEMU never
+`winvm files mount`. The app shows that as a notice, not a failure.
+`winvm share install` says it could not check the shared folder and also
+exits 6, and `winvm run` runs no job and exits 6. A load that QEMU never
 finishes is quit, and the stow is kept. If QEMU cannot be quit, or does not
 say what state it is in, it is left as it is and the stow is marked so that
 `winvm start` does not recall it; `winvm load` still can.

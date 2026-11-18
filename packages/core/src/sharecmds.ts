@@ -339,7 +339,14 @@ async function install(
     )
     if (!saves.windowsRuns(started))
       return fail(`"${name}" did not start again`)
-    if (started === 0) await agent.connect(name, { timeoutMs: 60_000 })
+    if (started === saves.RESTORED_UNANSWERED) {
+      console.error(
+        `::warning::the shared folder is set up in "${name}", but its guest agent has not answered since Windows came back, so winvm could not check it — \`winvm share${flag}\` shows it once Windows answers`,
+      )
+      printStatus(name, await gather(name, p), asJson)
+      return started
+    }
+    await agent.connect(name, { timeoutMs: 60_000 })
   }
   printStatus(name, await gather(name, p), asJson)
   return 0
