@@ -13,6 +13,7 @@ import {
   OpEnded,
   type OpScope,
   type OutputStream,
+  outsideOp,
   runInOp,
 } from "./opcontext"
 import {
@@ -129,12 +130,21 @@ export type Cancelled =
     }
   | { readonly kind: "none" }
 
-const textOf = (chunk: unknown): string =>
-  typeof chunk === "string"
-    ? chunk
-    : chunk instanceof Uint8Array
-      ? Buffer.from(chunk).toString("utf8")
-      : String(chunk)
+const decoders = new WeakMap<OpScope, Record<OutputStream, TextDecoder>>()
+
+function textOf(op: OpScope, stream: OutputStream, chunk: unknown): string {
+  if (typeof chunk === "string") return chunk
+  if (!(chunk instanceof Uint8Array)) return String(chunk)
+  let own = decoders.get(op)
+  if (own === undefined) {
+    own = { out: new TextDecoder(), err: new TextDecoder() }
+    decoders.set(op, own)
+  }
+  return own[stream].decode(chunk, { stream: true })
+}
+
+const isHighSurrogate = (code: number): boolean =>
+  code >= 0xd800 && code <= 0xdbff
 
 let captured = false
 
@@ -145,7 +155,8 @@ function routeWrites(target: NodeJS.WriteStream, stream: OutputStream): void {
   const routed: Write = (chunk, ...rest) => {
     const op = currentOp()
     if (op === null) return original(chunk, ...rest)
-    op.write(stream, textOf(chunk))
+    const text = textOf(op, stream, chunk)
+    if (text !== "") op.write(stream, text)
     const done = rest.find((r) => typeof r === "function")
     if (typeof done === "function")
       queueMicrotask(() => {
@@ -165,6 +176,12 @@ function routeConsole(method: ConsoleMethod, stream: OutputStream): void {
     if (op === null) original(...data)
     else op.write(stream, `${format(...data)}\n`)
   }
+}
+
+function toServiceLog(stream: OutputStream, text: string): void {
+  outsideOp(() => {
+    ;(stream === "out" ? process.stdout : process.stderr).write(text)
+  })
 }
 
 export function captureOutput(): void {
@@ -243,12 +260,14 @@ export class OpQueue {
     const cursor = endCursor(this.name)
     const controller = new AbortController()
     let owesRemount = false
+    let over = false
     const scope: OpScope = {
       id,
       operation: req.op,
       signal: controller.signal,
       write: (stream, text) => {
-        this.output(id, req.op, stream, text)
+        if (controller.signal.aborted || over) toServiceLog(stream, text)
+        else this.output(id, req.op, stream, text)
       },
       remount: () => {
         if (owesRemount) return
@@ -330,10 +349,14 @@ export class OpQueue {
         }
         if (!running.held) this.endUnheld(running, args, error)
       } finally {
+        over = true
         this.ops.delete(id)
         this.hooks.nudge()
       }
-      if (killedQemu) this.hooks.killed()
+      if (killedQemu)
+        outsideOp(() => {
+          this.hooks.killed()
+        })
     })
     return await decided
   }
@@ -387,7 +410,9 @@ export class OpQueue {
           })
           return
         }
-        scope.write(
+        this.output(
+          scope.id,
+          scope.operation,
           "err",
           `::error::${scope.operation} was cancelled (winvm cancel) before its point of no return; it changed nothing more\n`,
         )
@@ -399,17 +424,24 @@ export class OpQueue {
       }
       scope.signal.addEventListener("abort", stop, { once: true })
       work
-        .then(resolve, (error: unknown) => {
-          reject(
-            error instanceof Error && !(error instanceof OpEnded)
-              ? error
-              : new Error(
-                  error instanceof OpEnded
-                    ? String(scope.signal.reason)
-                    : String(error),
-                ),
-          )
-        })
+        .then(
+          (code) => {
+            if (scope.signal.reason === HOST_END && code !== 0)
+              reject(new Error(HOST_END))
+            else resolve(code)
+          },
+          (error: unknown) => {
+            reject(
+              error instanceof Error && !(error instanceof OpEnded)
+                ? error
+                : new Error(
+                    error instanceof OpEnded
+                      ? String(scope.signal.reason)
+                      : String(error),
+                  ),
+            )
+          },
+        )
         .finally(() => {
           scope.signal.removeEventListener("abort", stop)
         })
@@ -429,7 +461,8 @@ export class OpQueue {
         : error instanceof Error
           ? error.message
           : String(error)
-    if (!killed) scope.write("err", `::error::${message}\n`)
+    if (!killed)
+      this.output(scope.id, scope.operation, "err", `::error::${message}\n`)
     appendEntry(this.name, {
       kind: "op",
       phase: "end",
@@ -456,14 +489,19 @@ export class OpQueue {
     stream: OutputStream,
     text: string,
   ): void {
-    for (let at = 0; at < text.length; at += CHUNK)
+    for (let at = 0; at < text.length; ) {
+      let end = Math.min(at + CHUNK, text.length)
+      if (end < text.length && isHighSurrogate(text.charCodeAt(end - 1)))
+        end -= 1
       this.hooks.record({
         kind: "op",
         phase: "output",
         id,
         operation,
         stream,
-        text: text.slice(at, at + CHUNK),
+        text: text.slice(at, end),
       })
+      at = end
+    }
   }
 }

@@ -107,6 +107,19 @@ const handlers: OpHandlers = {
       return 0
     },
   },
+  wake: {
+    cancel: "never",
+    run: async () => {
+      process.stdout.write(`${"x".repeat(1023)}😀\n`)
+      const e = Buffer.from("é\n")
+      process.stdout.write(e.subarray(0, 1))
+      process.stdout.write(e.subarray(1))
+      setTimeout(() => {
+        console.log("after the end")
+      }, 50)
+      return await Promise.resolve(0)
+    },
+  },
   kill: {
     cancel: "never",
     run: async () => {
@@ -248,6 +261,33 @@ describe("an op the service runs", () => {
     expect(Math.max(...said.map((e) => e.text.length))).toBeLessThanOrEqual(
       1024,
     )
+  })
+
+  it("cuts what an op prints only between characters, and joins a character written in two pieces", async () => {
+    const a = await submit("wake")
+    await ended(a.body.id)
+    const said = opsOf(a.body.id).flatMap((e) =>
+      e.kind === "op" && e.phase === "output" ? [e.text] : [],
+    )
+    expect(said.join("")).toBe(`${"x".repeat(1023)}😀\né\n`)
+    for (const piece of said) {
+      expect(piece).not.toContain("\uFFFD")
+      expect(/[\uD800-\uDBFF]$/.test(piece)).toBe(false)
+    }
+  })
+
+  it("records nothing under an op's id once it has ended", async () => {
+    const a = await submit("wake")
+    await ended(a.body.id)
+    await Bun.sleep(200)
+    expect(
+      opsOf(a.body.id).filter(
+        (e) =>
+          e.kind === "op" &&
+          e.phase === "output" &&
+          e.text.includes("after the end"),
+      ),
+    ).toEqual([])
   })
 
   it("keeps the service alive while it runs, though QEMU has gone", async () => {
@@ -574,6 +614,19 @@ describe("host end", () => {
             return 0
           },
         },
+        sleep: {
+          cancel: "never",
+          run: async () => {
+            for (;;) {
+              try {
+                await qmp.execute(p.qmp, "query-status")
+              } catch {
+                console.error("::error::the guest was not back")
+                return 1
+              }
+            }
+          },
+        },
       },
       hostEnd,
     })
@@ -655,6 +708,26 @@ describe("host end", () => {
     expect(answeredAt).toBeGreaterThan(0)
     expect(stowedAt).toBeGreaterThanOrEqual(answeredAt)
     expect(await ended(a.body.id)).toMatchObject({ ok: true, exitCode: 0 })
+  }, 20_000)
+
+  it("reports an op it ended as ended by host end, not as the failure the op then made of it", async () => {
+    const plain = fake.handler
+    fake.handler = async (cmd) => {
+      if (cmd.execute === "query-status") await Bun.sleep(100)
+      return await plain(cmd)
+    }
+    const a = await submit("sleep")
+    await Bun.sleep(150)
+    expect(await ending()).toBe(202)
+    await until(() => outcome !== null, 10_000)
+    expect(await outcome).toBe("stowed")
+    expect(await ended(a.body.id)).toMatchObject({
+      ok: false,
+      error: "host-end",
+    })
+    expect(
+      opsOf(a.body.id).filter((e) => e.kind === "op" && e.phase === "output"),
+    ).toEqual([])
   }, 20_000)
 
   it("takes no new op once it has begun, and says why", async () => {
