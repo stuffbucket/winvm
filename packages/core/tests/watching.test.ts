@@ -1070,7 +1070,7 @@ describe("an idle stow that fails after taking the drives down", () => {
         ).length
       const before = remounts()
       const remounted = await winvm("files", "remount", "-i", "t")
-      expect(remounted).toEqual({ code: 0, stdout: "", stderr: NOT_REMOUNTED })
+      expect(remounted).toEqual({ code: 1, stdout: "", stderr: NOT_REMOUNTED })
       expect(remounts()).toBe(before + 1)
     },
     45_000,

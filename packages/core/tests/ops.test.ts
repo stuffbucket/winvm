@@ -14,7 +14,7 @@ import type { Args } from "../src/args"
 import { parseArgs } from "../src/args"
 import { type Entry, readSince, START } from "../src/eventlog"
 import { type HostEndOutcome, runHostEnd } from "../src/hostend"
-import { remountHeld, runOp } from "../src/opclient"
+import { remountCmd, remountHeld, runOp } from "../src/opclient"
 import { currentOp, OpCancelled, pointOfNoReturn } from "../src/opcontext"
 import { InstanceBusy, leaseHolder, withOperation } from "../src/operation"
 import { OPS_PROTOCOL, type OpHandlers, OpQueue } from "../src/ops"
@@ -584,12 +584,15 @@ describe("an op waiting for the lease when QEMU goes", () => {
 })
 
 describe("a client's remount", () => {
-  const mounts = (): { count: number; mount: () => Promise<void> } => {
+  const mounts = (): {
+    count: number
+    mount: () => Promise<"mounted">
+  } => {
     const m = {
       count: 0,
-      mount: async (): Promise<void> => {
+      mount: async (): Promise<"mounted"> => {
         m.count += 1
-        await Promise.resolve()
+        return await Promise.resolve("mounted")
       },
     }
     return m
@@ -607,7 +610,7 @@ describe("a client's remount", () => {
     const m = mounts()
     const done = remountHeld("t", async () => {
       leasedWhileMounting = leaseHolder("t")
-      await m.mount()
+      return await m.mount()
     })
     await Bun.sleep(100)
     expect(m.count).toBe(0)
@@ -625,14 +628,50 @@ describe("a client's remount", () => {
     ).toBe(true)
   })
 
-  it("mounts nothing on a guest that was paused meanwhile", async () => {
+  it("mounts nothing on a guest that was paused meanwhile, and says to resume it", async () => {
     fake.handler = (cmd) =>
       cmd.execute === "query-status"
         ? { return: { status: "paused", running: false } }
         : { return: {} }
     const m = mounts()
-    await remountHeld("t", m.mount)
+    const r = await remountHeld("t", m.mount)
     expect(m.count).toBe(0)
+    expect(r).toEqual({
+      kind: "refused",
+      why: 'instance "t" is paused — resume it first (`winvm resume -i t`)',
+    })
+  })
+
+  it("says what the mount did: mounted, nothing pending, or failed", async () => {
+    expect(
+      await remountHeld("t", async () => await Promise.resolve("mounted")),
+    ).toEqual({ kind: "mounted" })
+    expect(
+      await remountHeld(
+        "t",
+        async () => await Promise.resolve("nothing pending"),
+      ),
+    ).toEqual({ kind: "nothing pending" })
+    expect(
+      await remountHeld("t", async () => await Promise.resolve("failed")),
+    ).toEqual({ kind: "failed" })
+  })
+
+  it("is refused, naming the holder, when the instance stays busy for the whole wait", async () => {
+    const outside = gate()
+    const other = withOperation("t", "resume", async () => {
+      await outside.opened
+    })
+    await Bun.sleep(20)
+    const m = mounts()
+    const r = await remountHeld("t", m.mount, new AbortController().signal, 200)
+    expect(m.count).toBe(0)
+    expect(r).toMatchObject({ kind: "refused" })
+    expect(r.kind === "refused" ? r.why : "").toContain(
+      'instance "t" is busy: resume',
+    )
+    outside.open()
+    await other
   })
 
   it("stops waiting for the instance at once when the client is interrupted, and mounts nothing", async () => {
@@ -662,6 +701,7 @@ describe("a client's remount", () => {
       "t",
       async () => {
         await Bun.sleep(5000)
+        return "mounted"
       },
       interrupted.signal,
     )
@@ -715,6 +755,59 @@ describe("a client's remount", () => {
     process.emit("SIGINT")
     expect(await ran).toBe(130)
     expect(said.join("")).toContain("resume continues in winvm's service")
+  })
+})
+
+describe("winvm files remount, as a command", () => {
+  const runCmd = async (
+    outcome: Awaited<ReturnType<typeof remountHeld>>,
+  ): Promise<{ code: number; out: string; err: string }> => {
+    const said = { out: "", err: "" }
+    const code = await remountCmd(
+      parseArgs(["files", "remount", "-i", "t"]),
+      {
+        out: (text) => {
+          said.out += text
+        },
+        err: (text) => {
+          said.err += text
+        },
+      },
+      async () => await Promise.resolve(outcome),
+    )
+    return { code, ...said }
+  }
+
+  it("exits 0 and says nothing when it mounted the drives", async () => {
+    expect(await runCmd({ kind: "mounted" })).toEqual({
+      code: 0,
+      out: "",
+      err: "",
+    })
+  })
+
+  it("exits 0 and says so when no drives were pending", async () => {
+    expect(await runCmd({ kind: "nothing pending" })).toEqual({
+      code: 0,
+      out: 'no drives of "t" are waiting to be mounted again\n',
+      err: "",
+    })
+  })
+
+  it("exits 1 when the mount failed, leaving the reason to the warning the mount printed", async () => {
+    expect(await runCmd({ kind: "failed" })).toEqual({
+      code: 1,
+      out: "",
+      err: "",
+    })
+  })
+
+  it("exits 1 and says why when it was refused", async () => {
+    expect(await runCmd({ kind: "refused", why: "the reason" })).toEqual({
+      code: 1,
+      out: "",
+      err: "::error::the reason\n",
+    })
   })
 })
 
@@ -1033,11 +1126,15 @@ describe("host end", () => {
     autosave.open()
     await saving
     let mounted = 0
-    await remountHeld("t", async () => {
+    const r = await remountHeld("t", async () => {
       mounted += 1
-      await Promise.resolve()
+      return await Promise.resolve("mounted")
     })
     expect(mounted).toBe(0)
+    expect(r).toEqual({
+      kind: "refused",
+      why: 'the Mac is shutting down, so the guest\'s drives of "t" were not mounted again',
+    })
     await until(() => outcome !== null, 10_000)
     await outcome
   }, 20_000)
