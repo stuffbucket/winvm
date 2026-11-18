@@ -463,42 +463,50 @@ export function useCloseFlow(w: Winvm): CloseFlow {
       settle(tx, resume(tx, snapshot))
     }
 
-    const reportOrphan = async (orphan: CloseCommand): Promise<void> => {
+    const reportOrphan = async (orphan: CloseCommand): Promise<boolean> => {
       const op = orphan.op
-      if (op === undefined || op === null) return
+      if (op === undefined || op === null) return true
       const unmounted = (): boolean => gone
       const elsewhere = (): boolean => gone || active.current
       const reading = await readOp(orphan.machine, op, true)
-      if (unmounted()) return
+      if (unmounted()) return false
       const recorded = reading.kind === "read" ? reading.record : null
       const unheard =
         recorded !== null && !recorded.ended && recorded.operation === null
       const unfinished =
         recorded !== null && !unheard && (!recorded.ended || opFailed(recorded))
-      if (reading.kind === "unreadable" || unfinished) {
-        const s = await wRef.current.refreshOne(orphan.machine)
-        if (unmounted()) return
-        const title = s === null ? orphan.machine : shownTitle(s.name, s.title)
-        if (elsewhere()) return
-        if (wRef.current.name !== orphan.machine)
-          wRef.current.select(orphan.machine)
-        show({
-          kind: "failed",
-          machine: s,
-          message:
-            reading.kind === "unreadable"
-              ? `${t("close.orphanUnreadable", {
-                  operation: orphan.verb,
-                  title,
-                  machine: orphan.machine,
-                  op,
-                })}\n${reading.why}`
-              : (recorded?.output ?? "") ||
-                t("close.cutShort", { operation: orphan.verb, title }),
-        })
-        if (reading.kind === "unreadable") return
+      if (reading.kind === "read" && !unfinished) {
+        await closeForget(op).catch(() => undefined)
+        return true
       }
-      await closeForget(op).catch(() => undefined)
+      const s = await wRef.current.refreshOne(orphan.machine)
+      if (unmounted()) return false
+      const title = s === null ? orphan.machine : shownTitle(s.name, s.title)
+      if (elsewhere()) return false
+      if (wRef.current.name !== orphan.machine)
+        wRef.current.select(orphan.machine)
+      show({
+        kind: "failed",
+        machine: s,
+        message:
+          reading.kind === "unreadable"
+            ? `${t("close.orphanUnreadable", {
+                operation: orphan.verb,
+                title,
+                machine: orphan.machine,
+                op,
+              })}\n${reading.why}`
+            : (recorded?.output ?? "") ||
+              t("close.cutShort", { operation: orphan.verb, title }),
+      })
+      if (reading.kind === "read") await closeForget(op).catch(() => undefined)
+      return false
+    }
+
+    const reportOrphans = async (
+      orphans: readonly CloseCommand[],
+    ): Promise<void> => {
+      for (const orphan of orphans) if (!(await reportOrphan(orphan))) return
     }
 
     const unlistenSession = onViewerCloseSession((next) => {
@@ -511,7 +519,7 @@ export function useCloseFlow(w: Winvm): CloseFlow {
           if (snapshot.session !== null) setSession(snapshot.session)
           if (snapshot.state === "requested") begin()
           else if (snapshot.state === "running") adopt(snapshot)
-          if (snapshot.orphan != null) void reportOrphan(snapshot.orphan)
+          void reportOrphans(snapshot.orphans ?? [])
         },
         () => undefined,
       )

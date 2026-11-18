@@ -116,7 +116,7 @@ interface Snapshot {
   last: (Command & { code: number; output: string }) | null
   resolved: string[]
   session: { kind: "waiting"; deadline: number } | { kind: "missed" } | null
-  orphan?: Command | null
+  orphans?: Command[]
 }
 
 interface Recorded {
@@ -1946,7 +1946,7 @@ describe("useCloseFlow after the app was quit during a close", () => {
       output: "::error::the disk is full",
     })
     bridge.snapshot = snapshotOf({
-      orphan: { machine: "b", verb: "stow", op: "orphan-op-1" },
+      orphans: [{ machine: "b", verb: "stow", op: "orphan-op-1" }],
     })
     const world = fakeWinvm(
       [
@@ -1971,7 +1971,7 @@ describe("useCloseFlow after the app was quit during a close", () => {
     const bridge = fakeBridge()
     bridge.refuseFollow = true
     bridge.snapshot = snapshotOf({
-      orphan: { machine: "b", verb: "stow", op: "orphan-op-3" },
+      orphans: [{ machine: "b", verb: "stow", op: "orphan-op-3" }],
     })
     await mount(
       fakeWinvm(
@@ -1998,10 +1998,50 @@ describe("useCloseFlow after the app was quit during a close", () => {
     expect(bridge.log.filter((l) => l.startsWith("close_forget"))).toEqual([])
   })
 
+  it("follows every close cut short, one after the other, and stops at the first it must show", async () => {
+    const bridge = fakeBridge()
+    bridge.records.set("orphan-op-5", {
+      ended: true,
+      ok: true,
+      exitCode: 0,
+      output: "",
+    })
+    bridge.records.set("orphan-op-6", {
+      ended: true,
+      ok: false,
+      exitCode: 4,
+      output: "::error::the stow was refused",
+    })
+    bridge.snapshot = snapshotOf({
+      orphans: [
+        { machine: "a", verb: "stow", op: "orphan-op-5" },
+        { machine: "b", verb: "stow", op: "orphan-op-6" },
+        { machine: "a", verb: "stop", op: "orphan-op-7" },
+      ],
+    })
+    await mount(
+      fakeWinvm(
+        [
+          { name: "a", state: "stowed" },
+          { name: "b", state: "running" },
+        ],
+        "a",
+      ),
+    )
+    const failed = current().state
+    expect(failed.kind === "failed" ? failed.message : null).toBe(
+      "::error::the stow was refused",
+    )
+    expect(bridge.log.filter((l) => l.startsWith("close_forget"))).toEqual([
+      "close_forget orphan-op-5",
+      "close_forget orphan-op-6",
+    ])
+  })
+
   it("lets a note go silently when the record never heard of its op", async () => {
     const bridge = fakeBridge()
     bridge.snapshot = snapshotOf({
-      orphan: { machine: "a", verb: "stow", op: "orphan-op-4" },
+      orphans: [{ machine: "a", verb: "stow", op: "orphan-op-4" }],
     })
     await mount(fakeWinvm([{ name: "a", state: "running" }], "a"))
     expect(current().state.kind).toBe("idle")
@@ -2017,7 +2057,7 @@ describe("useCloseFlow after the app was quit during a close", () => {
       output: "",
     })
     bridge.snapshot = snapshotOf({
-      orphan: { machine: "a", verb: "stow", op: "orphan-op-2" },
+      orphans: [{ machine: "a", verb: "stow", op: "orphan-op-2" }],
     })
     await mount(fakeWinvm([{ name: "a", state: "stowed" }], "a"))
     expect(current().state.kind).toBe("idle")

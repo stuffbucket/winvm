@@ -113,7 +113,7 @@ pub struct Snapshot {
     pub last: Option<Outcome>,
     pub resolved: Vec<String>,
     pub session: Option<Session>,
-    pub orphan: Option<Command>,
+    pub orphans: Vec<Command>,
 }
 
 #[derive(Default)]
@@ -123,7 +123,8 @@ struct Inner {
     sessions: u64,
     deadline: u64,
     journal: Option<PathBuf>,
-    orphan: Option<Command>,
+    orphans: Vec<Command>,
+    written: Vec<String>,
 }
 
 impl Inner {
@@ -161,26 +162,32 @@ impl Inner {
         }
     }
 
-    fn journal(&self, command: &Command) {
-        if let (Some(path), Some(_)) = (&self.journal, &command.op) {
-            if let Ok(text) = serde_json::to_string(command) {
-                if let Some(dir) = path.parent() {
-                    let _ = std::fs::create_dir_all(dir);
-                }
-                if let Err(e) = std::fs::write(path, text) {
-                    note(&format!(
-                        "winvm: couldn't note the close's winvm {} on {} for a later window: {e}",
-                        command.verb, command.machine
-                    ));
-                }
-            }
+    fn journal(&mut self, command: &Command) {
+        let (Some(path), Some(op)) = (&self.journal, &command.op) else {
+            return;
+        };
+        let mut notes = journaled(path);
+        notes.push(command.clone());
+        match rewrite(path, &notes) {
+            Ok(()) => self.written.push(op.clone()),
+            Err(e) => note(&format!(
+                "winvm: couldn't note the close's winvm {} on {} for a later window: {e}",
+                command.verb, command.machine
+            )),
         }
     }
 
-    fn unjournal(&self) {
+    fn unjournal(&mut self) {
+        let written = std::mem::take(&mut self.written);
         if let Some(path) = &self.journal {
-            if journaled(path).is_some() && journaled(path) != self.orphan {
-                let _ = std::fs::remove_file(path);
+            let notes = journaled(path);
+            let kept: Vec<Command> = notes
+                .iter()
+                .filter(|c| !c.op.as_ref().is_some_and(|op| written.contains(op)))
+                .cloned()
+                .collect();
+            if kept.len() != notes.len() {
+                let _ = rewrite(path, &kept);
             }
         }
     }
@@ -246,27 +253,34 @@ impl CloseCoordinator {
     pub fn snapshot(&self) -> Snapshot {
         let inner = self.lock();
         Snapshot {
-            orphan: inner.orphan.clone(),
+            orphans: inner.orphans.clone(),
             ..inner.now.clone()
         }
     }
 
     pub fn open_journal(&self, path: PathBuf) {
         self.change(|i| {
-            i.orphan = journaled(&path);
+            i.orphans = journaled(&path);
             i.journal = Some(path);
         });
     }
 
     pub fn forget_orphan(&self, op: &str) {
         self.change(|i| {
-            if i.orphan.as_ref().and_then(|o| o.op.as_deref()) != Some(op) {
+            let before = i.orphans.len();
+            i.orphans.retain(|o| o.op.as_deref() != Some(op));
+            if i.orphans.len() == before {
                 return;
             }
-            let orphan = i.orphan.take();
             if let Some(path) = &i.journal {
-                if journaled(path) == orphan {
-                    let _ = std::fs::remove_file(path);
+                let notes = journaled(path);
+                let kept: Vec<Command> = notes
+                    .iter()
+                    .filter(|c| c.op.as_deref() != Some(op))
+                    .cloned()
+                    .collect();
+                if kept.len() != notes.len() {
+                    let _ = rewrite(path, &kept);
                 }
             }
         });
@@ -278,7 +292,7 @@ impl CloseCoordinator {
             .wait_while(self.lock(), |i| i.now.command.is_some())
             .unwrap_or_else(PoisonError::into_inner);
         Snapshot {
-            orphan: inner.orphan.clone(),
+            orphans: inner.orphans.clone(),
             ..inner.now.clone()
         }
     }
@@ -474,11 +488,40 @@ fn out_of_order(what: &str, state: CloseState) -> String {
     format!("close {what} arrived while the close was {state:?}")
 }
 
-fn journaled(path: &std::path::Path) -> Option<Command> {
-    let text = std::fs::read_to_string(path).ok()?;
-    serde_json::from_str::<Command>(&text)
-        .ok()
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum Journaled {
+    Many(Vec<Command>),
+    One(Command),
+}
+
+fn journaled(path: &std::path::Path) -> Vec<Command> {
+    let Ok(text) = std::fs::read_to_string(path) else {
+        return Vec::new();
+    };
+    let notes = match serde_json::from_str::<Journaled>(&text) {
+        Ok(Journaled::Many(notes)) => notes,
+        Ok(Journaled::One(note)) => vec![note],
+        Err(_) => Vec::new(),
+    };
+    notes
+        .into_iter()
         .filter(|c| c.op.as_deref().is_some_and(is_op_id))
+        .collect()
+}
+
+fn rewrite(path: &std::path::Path, notes: &[Command]) -> std::io::Result<()> {
+    if notes.is_empty() {
+        return match std::fs::remove_file(path) {
+            Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(e),
+            _ => Ok(()),
+        };
+    }
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir)?;
+    }
+    let text = serde_json::to_string(notes).map_err(std::io::Error::other)?;
+    std::fs::write(path, text)
 }
 
 pub fn is_op_id(id: &str) -> bool {
@@ -1343,7 +1386,7 @@ mod tests {
         drop(close);
         let next = CloseCoordinator::default();
         next.open_journal(path.clone());
-        let orphan = next.snapshot().orphan.unwrap();
+        let orphan = next.snapshot().orphans.first().cloned().unwrap();
         assert_eq!(
             (
                 orphan.machine.as_str(),
@@ -1353,10 +1396,75 @@ mod tests {
             ("a", "stow", Some(OP))
         );
         next.forget_orphan("someone-else-01");
-        assert!(next.snapshot().orphan.is_some());
+        assert_eq!(next.snapshot().orphans.len(), 1);
         next.forget_orphan(OP);
-        assert_eq!(next.snapshot().orphan, None);
+        assert_eq!(next.snapshot().orphans, vec![]);
         assert!(!path.exists());
+    }
+
+    #[test]
+    fn a_second_close_cut_short_keeps_the_first_for_the_next_app_too() {
+        const SECOND: &str = "1c2d3e4f-0000-4000-8000-aabbccddeeff";
+        let path = journal_path("two");
+        let first = running();
+        first.open_journal(path.clone());
+        first
+            .begin(&args(&["stow", "-i", "a", "--op-id", OP]))
+            .unwrap();
+        drop(first);
+        let second = running();
+        second.open_journal(path.clone());
+        second
+            .begin(&args(&["stow", "-i", "b", "--op-id", SECOND]))
+            .unwrap();
+        drop(second);
+        let third = CloseCoordinator::default();
+        third.open_journal(path.clone());
+        let ops: Vec<String> = third
+            .snapshot()
+            .orphans
+            .iter()
+            .filter_map(|o| o.op.clone())
+            .collect();
+        assert_eq!(ops, vec![OP.to_owned(), SECOND.to_owned()]);
+        third.forget_orphan(OP);
+        third.forget_orphan(SECOND);
+        assert!(!path.exists());
+    }
+
+    #[test]
+    fn a_close_that_settles_its_command_keeps_an_earlier_close_cut_short() {
+        let path = journal_path("keeps");
+        let first = running();
+        first.open_journal(path.clone());
+        first
+            .begin(&args(&["stow", "-i", "a", "--op-id", OP]))
+            .unwrap();
+        drop(first);
+        let next = running();
+        next.open_journal(path.clone());
+        next.begin(&args(&[
+            "stop",
+            "-i",
+            "b",
+            "--op-id",
+            "2d3e4f50-0000-4000-8000-aabbccddeeff",
+        ]))
+        .unwrap();
+        next.end(outcome("b", "stop", 0));
+        next.resolved("b").unwrap();
+        let after = CloseCoordinator::default();
+        after.open_journal(path.clone());
+        assert_eq!(
+            after
+                .snapshot()
+                .orphans
+                .iter()
+                .filter_map(|o| o.op.as_deref())
+                .collect::<Vec<_>>(),
+            vec![OP]
+        );
+        after.forget_orphan(OP);
     }
 
     #[test]
@@ -1422,7 +1530,7 @@ mod tests {
                 "last": null,
                 "resolved": ["a"],
                 "session": null,
-                "orphan": null,
+                "orphans": [],
             })
         );
     }

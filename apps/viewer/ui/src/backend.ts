@@ -409,7 +409,7 @@ export interface CloseSnapshot {
     | null
   readonly resolved: readonly string[]
   readonly session: CloseSession | null
-  readonly orphan?: CloseCommand | null
+  readonly orphans?: readonly CloseCommand[]
 }
 
 function closeSessionOf(raw: unknown): CloseSession | null {
