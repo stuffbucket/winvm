@@ -106,8 +106,12 @@ async function runAll(files: readonly string[], args: Args): Promise<number> {
   console.log(
     `winvm run: ${String(jobs.length)} job(s) on instance "${instance}"; artifacts in ${artifactsDir}`,
   )
-  if (await watcher.stopWatcher(instance))
-    console.log(`  stopped the idle watcher of "${instance}"`)
+  try {
+    if (await watcher.stopWatcher(instance))
+      console.log(`  stopped the idle watcher of "${instance}"`)
+  } catch (error) {
+    return fail(errMsg(error))
+  }
 
   const boot = async (name: string): Promise<number> =>
     await withOperation(

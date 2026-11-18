@@ -208,7 +208,10 @@ switch (sub ?? "") {
     exitCode = await agentcmds.rm(args)
     break
   case "files":
-    exitCode = await finder.filesCmd(args)
+    exitCode =
+      args.positional[0] === "remount"
+        ? await opclient.remountCmd(args)
+        : await finder.filesCmd(args)
     break
   case "launch":
     exitCode = await agentcmds.launch(args)

@@ -16,6 +16,7 @@ import { buildIdentity } from "./identity"
 import { leaseHolder } from "./operation"
 import {
   captureOutput,
+  OPS_PROTOCOL,
   type OpHandlers,
   OpQueue,
   type Reply,
@@ -29,7 +30,12 @@ import * as qga from "./qga"
 import { claim, keptWithin, livePidIn, recordedPid } from "./servicectl"
 import * as share from "./share"
 import { ChangeNotices } from "./sharewatch"
-import { type WatchOptions, watchDuties } from "./watch"
+import {
+  ensureWatcher,
+  stopWatcher,
+  type WatchOptions,
+  watchDuties,
+} from "./watch"
 
 export interface ServiceOptions {
   readonly exitAfterMs?: number
@@ -288,8 +294,25 @@ export async function runService(
     const { kind, ...what } = c
     return answer(reply(kind === "cancelled" ? 200 : 409, { [kind]: what }))
   }
+  const watchRequest = async (req: Request): Promise<Response> => {
+    const body: unknown = await req.json().catch(() => null)
+    const on =
+      typeof body === "object" && body !== null
+        ? (body as { protocol?: unknown; on?: unknown })
+        : null
+    if (on?.protocol !== OPS_PROTOCOL || typeof on.on !== "boolean")
+      return answer(reply(400, { error: "the body is not a watch request" }))
+    if (!on.on) return answer(reply(200, { stopped: await stopWatcher(name) }))
+    if (hostEnding !== null || stopping)
+      return answer(reply(503, { error: "the service is stopping" }))
+    return answer(
+      reply(200, { watching: ensureWatcher(name), pid: process.pid }),
+    )
+  }
   const handle = async (req: Request): Promise<Response> => {
     const url = new URL(req.url)
+    if (url.pathname === "/watch" && req.method === "POST")
+      return await watchRequest(req)
     if (url.pathname === "/host-ending" && req.method === "POST")
       return await beginHostEnd(req)
     if (url.pathname === "/ops" && req.method === "POST")

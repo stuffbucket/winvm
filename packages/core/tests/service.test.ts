@@ -1141,6 +1141,64 @@ describe("the watcher's duties in the service", () => {
     expect(readWatchState("t")).toMatchObject({ pid: process.pid })
   }, 20_000)
 
+  it("does not turn the watcher back on after an older one it drained, if it was turned off meanwhile", async () => {
+    const legacy = Bun.spawn(
+      [
+        process.execPath,
+        HOLDER,
+        "winvm",
+        "watch",
+        "-i",
+        "t",
+        "--linger",
+        "800",
+      ],
+      { stdout: "pipe", stderr: "ignore" },
+    )
+    held.push(legacy)
+    const reader = (legacy.stdout as ReadableStream<Uint8Array>).getReader()
+    await reader.read()
+    reader.releaseLock()
+    writeFileSync(resolve(p.dir, "watch.pid"), `${String(legacy.pid)}\n`)
+    writeFileSync(
+      watchPathsFor("t").state,
+      JSON.stringify({ pid: legacy.pid, state: "autosaving" }),
+    )
+    svc = await runService("t", {
+      exitAfterMs: 5000,
+      checkMs: 50,
+      watch: watchedQuickly,
+    })
+    await sleep(200)
+    expect(await stopWatcher("t")).toBe(true)
+    await legacy.exited
+    await sleep(500)
+    expect(markedQemu()).toBeNull()
+    expect(saved).toEqual([])
+    expect(
+      entries().some(
+        (e) => e.kind === "service" && e.what === "watcher taken over",
+      ),
+    ).toBe(false)
+  }, 20_000)
+
+  it("keeps running when it cannot write its mark, and still forgets an owed watcher", async () => {
+    mkdirSync(watchPathsFor("t").on)
+    const owed = resolve(p.dir, "watch.owed")
+    writeFileSync(owed, JSON.stringify({ qemu: qemuPid }))
+    svc = await runService("t", {
+      exitAfterMs: 5000,
+      checkMs: 50,
+      watch: watchedQuickly,
+    })
+    await until(() => !existsSync(owed))
+    await sleep(300)
+    expect(await serviceState()).toBe("running")
+    expect(readFileSync(watchPathsFor("t").log, "utf8")).toContain(
+      "could not turn the watcher on",
+    )
+  }, 20_000)
+
   it("takes over a watcher an older winvm's repair owed to this QEMU", async () => {
     const owed = resolve(p.dir, "watch.owed")
     writeFileSync(owed, JSON.stringify({ qemu: qemuPid }))

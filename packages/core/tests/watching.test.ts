@@ -23,6 +23,7 @@ import {
 } from "../src/paths"
 import { qemuArgs } from "../src/qemu"
 import { currentCompat, FILES, type Manifest, saveDir } from "../src/saves"
+import { newPassword, SMB_USER, writeSmb } from "../src/smbstate"
 import { FakeAgent } from "./fakes/agent"
 import { FakeGuest } from "./fakes/guest"
 import { lockPidfile, releasePidfiles } from "./fakes/pidfile"
@@ -52,9 +53,9 @@ let guest: FakeGuest
 let service: ReturnType<typeof Bun.spawn> | null = null
 let vncClients = 0
 let reportsVersion: string | null = null
-let slowMigrations: ("until-cancel" | number)[] = []
+let slowMigrations: ("until-cancel" | "fail" | number)[] = []
 let migration: {
-  slow: "until-cancel" | number
+  slow: "until-cancel" | "fail" | number
   at: number
   cancelled: boolean
 } | null = null
@@ -83,6 +84,45 @@ interface Ran {
   readonly code: number
   readonly stdout: string
   readonly stderr: string
+}
+
+interface Live {
+  readonly done: Promise<Ran>
+  readonly seenAt: (text: string) => number | null
+}
+
+function launch(
+  argv: readonly string[],
+  extra: Record<string, string> = {},
+): Live {
+  const proc = Bun.spawn([process.execPath, CLI, ...argv], {
+    env: { ...env(), ...extra },
+    stdout: "pipe",
+    stderr: "pipe",
+  })
+  let out = ""
+  const marks: { readonly at: number; readonly upTo: number }[] = []
+  const dec = new TextDecoder()
+  const reading = (async (): Promise<string> => {
+    for await (const chunk of proc.stdout as ReadableStream<Uint8Array>) {
+      out += dec.decode(chunk)
+      marks.push({ at: Date.now(), upTo: out.length })
+    }
+    return out
+  })()
+  const done = Promise.all([
+    reading,
+    new Response(proc.stderr as ReadableStream<Uint8Array>).text(),
+    proc.exited,
+  ]).then(([stdout, stderr, code]) => ({ code, stdout, stderr }))
+  return {
+    done,
+    seenAt: (text) => {
+      const i = out.indexOf(text)
+      if (i < 0) return null
+      return marks.find((m) => m.upTo >= i + text.length)?.at ?? null
+    },
+  }
 }
 
 async function winvm(...argv: readonly string[]): Promise<Ran> {
@@ -176,6 +216,15 @@ function monitor(): void {
           migration = null
           return { return: { status: "cancelled" } }
         }
+        if (m?.slow === "fail") {
+          migration = null
+          return {
+            return: {
+              status: "failed",
+              "error-desc": "No space left on device",
+            },
+          }
+        }
         if (
           m !== null &&
           (m.slow === "until-cancel" || Date.now() - m.at < m.slow)
@@ -261,6 +310,23 @@ const automaticOps = (operation: string, phase: "begin" | "end"): Entry[] =>
       e.operation === operation &&
       e.automatic,
   )
+
+const endedAt = (operation: string): number | null => {
+  const e = automaticOps(operation, "end")[0]
+  return e === undefined ? null : Date.parse(e.t)
+}
+
+function rememberDrives(): void {
+  writeSmb(p, {
+    user: SMB_USER,
+    password: newPassword(),
+    hostPort: 41_234,
+    mounted: ["home", "c"],
+  })
+}
+
+const NOT_REMOUNTED =
+  "warning: the guest's drives were not mounted again (could not forward a host port to the guest's port 445: Could not set up host forwarding rule) — `winvm files mount -i t`\n"
 
 const refusals = (): Entry[] =>
   records().filter((e) => e.kind === "warning" && e.what === "stow refused")
@@ -821,7 +887,12 @@ describe("the watcher's work, as winvm's service runs it", () => {
       )
       expect(steps[0]).toMatchObject({ step: "plan", end: "stow" })
       expect(fakeQmp.commands).toContain("migrate_cancel")
-      expect(automaticOps("save", "end")[0]).toMatchObject({ ok: false })
+      expect(automaticOps("save", "end")[0]).toMatchObject({
+        ok: false,
+        error: expect.stringContaining(
+          "save was cancelled (the Mac is shutting down)",
+        ) as string,
+      })
       expect(automaticOps("save", "begin")).toHaveLength(1)
       expect(automaticOps("stow", "end")[0]).toMatchObject({ ok: true })
       expect(savesOf("stow")).toEqual(["stow"])
@@ -852,4 +923,191 @@ describe("the watcher's work, as winvm's service runs it", () => {
         "::error::--interval is gone: winvm's service watches the guest, every 15 s\n",
     })
   }, 45_000)
+})
+
+describe("turning the watcher off from a client, as the service quiesces it", () => {
+  const job = (): string => {
+    const file = resolve(home, "job.yml")
+    writeFileSync(
+      file,
+      "name: quick\nreset: false\nsteps:\n  - name: echo\n    shell: cmd\n    run: echo ok\n",
+    )
+    return file
+  }
+
+  it.skipIf(!ON_MAC)(
+    "winvm watch --stop during an autosave answers only once it has ended",
+    async () => {
+      await winvm(
+        "config",
+        "-i",
+        "t",
+        "autosave.idleMinutes=0.01",
+        "stow.enabled=false",
+      )
+      slowMigrations = [2000]
+      await watching()
+      await until("the autosave's migration", () =>
+        fakeQmp.commands.includes("migrate"),
+      )
+      const r = await winvm("watch", "-i", "t", "--stop")
+      const back = Date.now()
+      expect(r).toEqual({
+        code: 0,
+        stdout: 'stopped the watcher for "t"\n',
+        stderr: "",
+      })
+      expect(endedAt("save")).not.toBeNull()
+      expect(endedAt("save") ?? Number.POSITIVE_INFINITY).toBeLessThanOrEqual(
+        back,
+      )
+      expect(watcherRow(await statusText())).toBe("not running")
+    },
+    45_000,
+  )
+
+  it.skipIf(!ON_MAC)(
+    "winvm watch --stop during an idle stow answers only once QEMU has stopped",
+    async () => {
+      await winvm(
+        "config",
+        "-i",
+        "t",
+        "autosave.enabled=false",
+        "stow.idleMinutes=0.01",
+      )
+      slowMigrations = [2000]
+      await watching()
+      await until("the stow's migration", () =>
+        fakeQmp.commands.includes("migrate"),
+      )
+      const r = await winvm("watch", "-i", "t", "--stop")
+      const back = Date.now()
+      expect(r.code).toBe(0)
+      expect(endedAt("stow")).not.toBeNull()
+      expect(endedAt("stow") ?? Number.POSITIVE_INFINITY).toBeLessThanOrEqual(
+        back,
+      )
+      expect(existsSync(p.pid)).toBe(false)
+    },
+    45_000,
+  )
+
+  it.skipIf(!ON_MAC)(
+    "winvm run during an autosave goes on only once the autosave has ended",
+    async () => {
+      await winvm(
+        "config",
+        "-i",
+        "t",
+        "autosave.idleMinutes=0.01",
+        "stow.enabled=false",
+      )
+      slowMigrations = [2000]
+      await watching()
+      await until("the autosave's migration", () =>
+        fakeQmp.commands.includes("migrate"),
+      )
+      const run = launch(
+        ["run", job(), "-i", "t", "--artifacts", resolve(home, "artifacts")],
+        { WINVM_CHANNEL: "qga" },
+      )
+      await run.done
+      const stopped = run.seenAt('stopped the idle watcher of "t"')
+      expect(stopped).not.toBeNull()
+      expect(endedAt("save")).not.toBeNull()
+      expect(stopped ?? 0).toBeGreaterThanOrEqual(endedAt("save") ?? 0)
+    },
+    60_000,
+  )
+})
+
+describe("an idle stow that fails after taking the drives down", () => {
+  it.skipIf(!ON_MAC)(
+    "leaves their remount pending in the record, status names winvm files mount, and winvm files remount mounts them in the user's session",
+    async () => {
+      rememberDrives()
+      await winvm(
+        "config",
+        "-i",
+        "t",
+        "autosave.enabled=false",
+        "stow.idleMinutes=0.01",
+      )
+      slowMigrations = ["fail"]
+      await watching()
+      await until(
+        "the stow's end",
+        () => automaticOps("stow", "end").length === 1,
+      )
+      await winvm("watch", "-i", "t", "--stop")
+      const end = automaticOps("stow", "end")[0]
+      expect(end).toMatchObject({ ok: false, remount: true })
+      expect(
+        records().some(
+          (e) =>
+            e.kind === "op" &&
+            e.phase === "remount" &&
+            e.operation === "stow" &&
+            end?.kind === "op" &&
+            e.id === end.id,
+        ),
+      ).toBe(true)
+      expect(existsSync(p.pid)).toBe(true)
+      expect(await statusText()).toContain(
+        "note: the guest's drives Home and C were mounted before and are not now; `winvm files mount -i t` mounts them again",
+      )
+      expect(readFileSync(resolve(p.dir, "watch.log"), "utf8")).toContain(
+        "  | ::error::",
+      )
+      const remounts = (): number =>
+        records().filter(
+          (e) =>
+            e.kind === "op" &&
+            e.phase === "begin" &&
+            e.operation === "remount" &&
+            e.automatic,
+        ).length
+      const before = remounts()
+      const remounted = await winvm("files", "remount", "-i", "t")
+      expect(remounted).toEqual({ code: 0, stdout: "", stderr: NOT_REMOUNTED })
+      expect(remounts()).toBe(before + 1)
+    },
+    45_000,
+  )
+})
+
+describe("winvm watch, when no current service would act on it", () => {
+  it("refuses, says how to start one, and turns nothing on", async () => {
+    const r = await winvm("watch", "-i", "t")
+    expect(r.code).toBe(1)
+    expect(r.stdout).toBe("")
+    expect(r.stderr).toBe(
+      '::error::no current winvm service runs for "t", so nothing would watch it — `winvm reconcile -i t` starts one, then `winvm watch -i t` turns the watcher on\n',
+    )
+    expect(existsSync(resolve(p.dir, "watching.json"))).toBe(false)
+  }, 30_000)
+
+  it("--status says stopped when what last published is not the instance's service or watcher", async () => {
+    const pid = readFileSync(p.pid, "utf8").trim()
+    writeFileSync(
+      resolve(p.dir, "watching.json"),
+      JSON.stringify({ qemu: Number(pid) }),
+    )
+    writeFileSync(
+      resolve(p.dir, "watch.json"),
+      JSON.stringify({
+        pid: process.pid,
+        startedAt: "2026-11-17T00:00:00.000Z",
+        lastActivityAt: "2026-11-17T00:00:00.000Z",
+        idleSeconds: 0,
+        autosave: { enabled: true, idleMinutes: 10, keep: 3 },
+        stow: { enabled: true, idleMinutes: 60 },
+        state: "watching",
+      }),
+    )
+    const r = await winvm("watch", "-i", "t", "--status")
+    expect(r.code).toBe(0)
+    expect((JSON.parse(r.stdout) as { state: string }).state).toBe("stopped")
+  }, 30_000)
 })

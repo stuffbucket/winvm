@@ -49,6 +49,7 @@ const RECONCILING_VERBS: ReadonlySet<string> = new Set([
   "wake",
   "sleep",
   "lock",
+  "watch",
 ])
 
 export function shouldReconcileVerb(

@@ -457,18 +457,18 @@ describe("no recursion", () => {
       "snapshot",
       "config",
       "share",
+      "watch",
     ]) {
       expect(shouldReconcileVerb(verb, {})).toBe(true)
     }
   })
 
-  it("never inside the service or the watcher, nor for teardown, build or test verbs, nor for status, which only reads", () => {
+  it("never inside the service, nor for teardown, build or test verbs, nor for status, which only reads", () => {
     for (const verb of [
       "status",
       "events",
       "reconcile",
       "serve",
-      "watch",
       "stop",
       "kill",
       "destroy",

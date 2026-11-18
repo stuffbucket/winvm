@@ -541,6 +541,7 @@ const USAGE =
   "usage: winvm files open    [-i name] [c|home] [--path GUEST_PATH]   mount if needed, then show it in Finder\n" +
   "       winvm files mount   [-i name] [c|home]    both when neither is named\n" +
   "       winvm files unmount [-i name] [c|home]\n" +
+  "       winvm files remount [-i name]    mount again what a command took down, unless the guest is paused or the Mac is shutting down\n" +
   "       winvm files status  [-i name] [--json]"
 
 function keysOf(

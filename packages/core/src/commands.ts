@@ -1644,7 +1644,15 @@ export function diagnoseCmd(args: Args): number {
 export async function watchCmd(args: Args): Promise<number> {
   const name = instanceName(args)
   if (args.flags.has("stop")) {
-    const stopped = await watcher.stopWatcher(name)
+    let stopped: boolean
+    try {
+      stopped = await watcher.stopWatcher(name)
+    } catch (error) {
+      console.error(
+        `::error::${error instanceof Error ? error.message : String(error)}`,
+      )
+      return 1
+    }
     console.log(
       stopped
         ? `stopped the watcher for "${name}"`
@@ -1658,7 +1666,7 @@ export async function watchCmd(args: Args): Promise<number> {
     else
       console.log(
         JSON.stringify(
-          watcher.watching(name) ? st : { ...st, state: "stopped" },
+          watcher.watchingNow(name, st) ? st : { ...st, state: "stopped" },
           null,
           2,
         ),
@@ -1687,8 +1695,11 @@ export async function watchCmd(args: Args): Promise<number> {
     )
     return 1
   }
-  watcher.startWatcherFor(name, args)
-  return 0
+  if (await watcher.watchViaService(name)) return 0
+  console.error(
+    `::error::no current winvm service runs for "${name}", so nothing would watch it — \`winvm reconcile -i ${name}\` starts one, then \`winvm watch -i ${name}\` turns the watcher on`,
+  )
+  return 1
 }
 
 export function configCmd(args: Args): number {

@@ -1245,7 +1245,7 @@ describe("an op winvm's service runs by itself", () => {
       },
       ["--force"],
     )
-    expect(r).toEqual({ kind: "done", code: 4 })
+    expect(r).toMatchObject({ kind: "done", code: 4 })
     expect(ran[0]?.flags.has("automatic")).toBe(true)
     expect(ran[0]?.flags.has("force")).toBe(true)
     expect(automaticOf("stow").map((e) => e.kind === "op" && e.phase)).toEqual([
@@ -1299,7 +1299,7 @@ describe("an op winvm's service runs by itself", () => {
       },
       [],
     )
-    expect(r).toEqual({ kind: "failed", error: "the disk is full" })
+    expect(r).toMatchObject({ kind: "failed", error: "the disk is full" })
     expect(automaticOf("save").at(-1)).toMatchObject({
       phase: "end",
       ok: false,
@@ -1335,7 +1335,7 @@ describe("an op winvm's service runs by itself", () => {
       automatic: true,
     })
     g.open()
-    expect(await performing).toEqual({ kind: "done", code: 130 })
+    expect(await performing).toMatchObject({ kind: "done", code: 130 })
     expect(why).toBe(
       "save was cancelled (the Mac is shutting down) before its point of no return; what it had begun was put back",
     )

@@ -233,8 +233,8 @@ export function captureOutput(): void {
 }
 
 export type Ended =
-  | { readonly kind: "done"; readonly code: number }
-  | { readonly kind: "failed"; readonly error: string }
+  | { readonly kind: "done"; readonly id: string; readonly code: number }
+  | { readonly kind: "failed"; readonly id?: string; readonly error: string }
 
 export type Submitted =
   | {
@@ -395,7 +395,7 @@ export class OpQueue {
     const decided = new Promise<Submitted>((r) => {
       decide = r
     })
-    let ended: Ended = { kind: "failed", error: "it did not run" }
+    let ended: Ended = { kind: "failed", id, error: "it did not run" }
     let finish: () => void = () => undefined
     const finished = new Promise<Ended>((r) => {
       finish = () => {
@@ -427,7 +427,7 @@ export class OpQueue {
             accept(null)
             this.hooks.nudge()
             const code = await this.raced(scope, handler.run(args))
-            ended = { kind: "done", code }
+            ended = { kind: "done", id, code }
             if (req.op === "kill" && code === 0) {
               killedQemu = true
               this.preempt(id)
@@ -460,7 +460,7 @@ export class OpQueue {
           )
           return
         }
-        ended = { kind: "failed", error: errorText(error) }
+        ended = { kind: "failed", id, error: errorText(error) }
         if (!running.held) this.endUnheld(running, args, error)
       } finally {
         over = true

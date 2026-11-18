@@ -13,7 +13,7 @@ import type { Args } from "./args"
 import { formatOffset, measureOffset, syncGuestClock } from "./clock"
 import type { InstanceConfig } from "./config"
 import { effectiveConfig } from "./config"
-import { appendEntry } from "./eventlog"
+import { appendEntry, readSince, START } from "./eventlog"
 import * as finder from "./finder"
 import { isFrozenRunState } from "./frozen"
 import { buildIdentity } from "./identity"
@@ -27,12 +27,14 @@ import {
   timingFrom,
   WATCH_TIMING_ENV,
 } from "./idle"
+import { servingHere } from "./kept"
 import {
   forgiveLegacyWatcher,
   legacyWatcherOwed,
   legacyWatcherPid,
   stopLegacyWatcher,
 } from "./legacy"
+import { askService } from "./opclient"
 import { InstanceBusy, leaseHolder } from "./operation"
 import type { OpHandler, Performed, ServiceOp } from "./ops"
 import type { Paths } from "./paths"
@@ -136,33 +138,48 @@ function markedQemu(name: string): number | null {
 const markedFor = (name: string, pid: number | null): boolean =>
   pid !== null && markedQemu(name) === pid
 
-function mark(name: string, pid: number): void {
-  writeAtomic(watchPathsFor(name).on, `${JSON.stringify({ qemu: pid })}\n`)
+function mark(name: string, pid: number): boolean {
+  try {
+    writeAtomic(watchPathsFor(name).on, `${JSON.stringify({ qemu: pid })}\n`)
+    return true
+  } catch (error) {
+    logTo(name)(`could not turn the watcher on: ${errText(error)}`)
+    return false
+  }
 }
 
 function unmark(name: string): boolean {
   const was = markedFor(name, qemu.pidOf(pathsFor(name)))
-  rmSync(watchPathsFor(name).on, { force: true })
+  try {
+    rmSync(watchPathsFor(name).on, { force: true })
+  } catch (error) {
+    logTo(name)(`could not turn the watcher off: ${errText(error)}`)
+  }
   return was
 }
 
 export const watching = (name: string): boolean =>
   markedFor(name, qemu.pidOf(pathsFor(name))) || legacyWatcherPid(name) !== null
 
+export function watchingNow(name: string, st: WatchState): boolean {
+  if (st.state === "stopped" || st.pid <= 1) return false
+  if (legacyWatcherPid(name) === st.pid) return true
+  const p = pathsFor(name)
+  return readService(p)?.pid === st.pid && markedFor(name, qemu.pidOf(p))
+}
+
 export function ensureWatcher(name: string): boolean {
   if (!effectiveConfig(name)["watch.enabled"]) return false
   const pid = qemu.pidOf(pathsFor(name))
-  if (pid === null) return false
-  mark(name, pid)
-  return true
+  return pid !== null && mark(name, pid)
 }
+
+const watcherLine = (name: string, service: number | undefined): string =>
+  `watcher: in winvm's service${service === undefined ? "" : ` (pid ${String(service)})`} · ${watchPathsFor(name).log}`
 
 export function startWatcherFor(name: string, args: Args): void {
   if (args.flags.has("no-watch") || !ensureWatcher(name)) return
-  const service = readService(pathsFor(name))?.pid
-  console.log(
-    `watcher: in winvm's service${service === undefined ? "" : ` (pid ${String(service)})`} · ${watchPathsFor(name).log}`,
-  )
+  console.log(watcherLine(name, readService(pathsFor(name))?.pid))
 }
 
 interface Run {
@@ -171,14 +188,49 @@ interface Run {
 }
 
 const runs = new Map<string, Run>()
+const turnedOff = new Map<string, number>()
 
-export async function stopWatcher(name: string): Promise<boolean> {
+async function stopHere(name: string): Promise<boolean> {
+  turnedOff.set(name, (turnedOff.get(name) ?? 0) + 1)
   const on = unmark(name)
   const run = runs.get(name)
   run?.halt("stopped")
   await run?.ended
   const legacy = await stopLegacyWatcher(name)
   return on || legacy
+}
+
+const QUIESCE_MS = 11 * 60_000
+
+export async function stopWatcher(name: string): Promise<boolean> {
+  if (runs.has(name) || servingHere(pathsFor(name))) return await stopHere(name)
+  const r = await askService(name, "/watch", { on: false }, QUIESCE_MS)
+  if (r.kind === "answered" && typeof r.body?.stopped === "boolean")
+    return r.body.stopped
+  if (r.kind === "unavailable" || (r.kind === "answered" && r.status !== 200))
+    return await stopHere(name)
+  throw new Error(
+    `winvm's service for "${name}" did not say its watcher had stopped (${r.kind === "unanswered" ? r.why : "no answer"}), so it may still autosave or stow; try again`,
+  )
+}
+
+export async function watchViaService(name: string): Promise<boolean> {
+  const r = await askService(name, "/watch", { on: true })
+  if (r.kind === "answered" && typeof r.body?.watching === "boolean") {
+    if (r.body.watching)
+      console.log(
+        watcherLine(
+          name,
+          typeof r.body.pid === "number" ? r.body.pid : undefined,
+        ),
+      )
+    return r.body.watching
+  }
+  if (r.kind === "unanswered")
+    throw new Error(
+      `winvm's service for "${name}" did not answer (${r.why}), so it may or may not watch the guest; \`winvm watch -i ${name} --status\` says which`,
+    )
+  return false
 }
 
 export const watchAfterRestore = (
@@ -205,6 +257,8 @@ export interface Actions {
   syncClock(): Promise<string>
   drift(): Promise<number | null>
 }
+
+const stopped = (signal: AbortSignal): boolean => signal.aborted
 
 const errText = (e: unknown): string =>
   e instanceof Error ? e.message : String(e)
@@ -339,6 +393,7 @@ export function serviceActions(
         log(`autosave: failed: ${errText(error)}`)
         return "failed"
       }
+      if (stopped(signal)) return "busy"
       const made: { result: saves.CreateResult | null } = { result: null }
       const r = await hooks.perform(
         "save",
@@ -373,7 +428,7 @@ export function serviceActions(
       if (!made.result.resumed) return "saved"
       if (await qga.waitResponsive(p.qga, 120_000, { signal }))
         log(`clock: after the save — ${await syncIfRunning(p)}`)
-      else if (!signal.aborted)
+      else if (!stopped(signal))
         log(
           "clock: the guest agent did not answer after the save; clock not synced",
         )
@@ -400,6 +455,8 @@ export function serviceActions(
       log("run: stow, as winvm's own op in its service")
       const started = Date.now()
       const r = await hooks.perform("stow", hooks.stow, [])
+      if ((r.kind === "done" || r.kind === "failed") && r.id !== undefined)
+        relay(instance, r.id, log)
       log(
         `  -> ${r.kind === "done" ? `exit ${String(r.code)}` : whyNot(instance, r)} after ${String(Math.round((Date.now() - started) / 1000))} s`,
       )
@@ -415,6 +472,27 @@ export function serviceActions(
       }
     },
   }
+}
+
+const RELAYED_LINES = 20
+
+function relay(instance: string, id: string, log: (s: string) => void): void {
+  const mine = readSince(instance, START).entries.filter(
+    (e) => e.kind === "op" && e.id === id,
+  )
+  const lines = mine
+    .flatMap((e) => (e.kind === "op" && e.phase === "output" ? [e.text] : []))
+    .join("")
+    .split("\n")
+    .filter((l) => l.trim() !== "")
+  for (const l of lines.slice(0, RELAYED_LINES)) log(`  | ${l}`)
+  if (lines.length > RELAYED_LINES) log("  | (further output not logged)")
+  if (
+    mine.some((e) => e.kind === "op" && e.phase === "end" && e.remount === true)
+  )
+    log(
+      `the guest's drives were taken down and wait to be mounted again in your session — \`winvm files mount -i ${instance}\``,
+    )
 }
 
 function currentSaves(instance: string): readonly SaveInfo[] {
@@ -745,6 +823,7 @@ async function watchQemu(
     }
 
     for (const d of decisions) {
+      if (stopped(signal)) break
       if ((await run(d)) === "stowed") {
         finish("stowed")
         return
@@ -776,8 +855,9 @@ export function watchDuties(
   let current: Run | null = null
 
   const takeOver = async (legacy: number): Promise<void> => {
-    if (!(await stopLegacyWatcher(name)) || halted || !ensureWatcher(name))
-      return
+    const offs = turnedOff.get(name) ?? 0
+    if (!(await stopLegacyWatcher(name)) || halted) return
+    if ((turnedOff.get(name) ?? 0) !== offs || !ensureWatcher(name)) return
     log(
       `an older winvm's watcher (pid ${String(legacy)}) has stopped; winvm's service watches "${name}" from now on`,
     )
@@ -820,9 +900,15 @@ export function watchDuties(
       const legacy = draining ? null : legacyWatcherPid(name)
       if (legacy !== null) {
         draining = true
-        void takeOver(legacy).finally(() => {
-          draining = false
-        })
+        void takeOver(legacy)
+          .catch((error: unknown) => {
+            log(
+              `could not take over from an older winvm's watcher: ${errText(error)}`,
+            )
+          })
+          .finally(() => {
+            draining = false
+          })
       }
       if (current !== null) {
         if (markedQemu(name) === null) current.halt("stopped")
