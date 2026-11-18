@@ -314,6 +314,21 @@ watcher skips that round. A command you start meanwhile waits for an autosave
 under way, as before. When the Mac shuts down, an autosave under way is
 cancelled and Windows is stowed.
 
+Turning the watcher off waits for it, as stopping the watcher process did:
+`winvm watch --stop`, `winvm run` and `winvm test` ask the service, which
+starts no more autosaves or stows, lets one under way finish, and only then
+answers. After an idle stow, QEMU has stopped by then, so `winvm run` recalls
+the stow. With no service running, only a watcher an older winvm started can
+be watching; it is stopped as before, waiting for its autosave or stow.
+
+A stow takes the guest's Finder drives down first. If an idle stow then fails,
+nobody's command is there to mount them again, so the record says a remount
+is due (`"remount": true` on the stow's end), `watch.log` says why the stow
+failed, and `winvm status` names `winvm files mount -i NAME`. The app mounts
+them again by itself, in your session, with `winvm files remount -i NAME`,
+which mounts what a command took down under the instance's lease, and not
+while the guest is paused or the Mac is shutting down.
+
 ```sh
 winvm config -i default                        # current settings and defaults
 winvm config -i default stow.idleMinutes=120 autosave.keep=5
@@ -323,7 +338,11 @@ winvm watch  -i default --status               # or --stop, until the next start
 ```
 
 `winvm watch` used to run the watcher in the foreground until QEMU exited. It
-now turns the service's watcher on and returns at once; `--interval` is gone.
+now asks the instance's service to turn its watcher on and returns at once;
+`--interval` is gone. Like the other commands that use the guest, it first
+brings an out-of-date service up to this build. If no current service runs,
+it says so, names `winvm reconcile`, and exits 1. `--status` says `stopped`
+unless what last published the state is the instance's service or watcher.
 
 Settings are stored in `instances/<name>/config.json`. A running watcher picks
 up changes within a minute.
