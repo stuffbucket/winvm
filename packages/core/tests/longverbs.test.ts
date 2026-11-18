@@ -10,6 +10,7 @@ import {
 import { tmpdir } from "node:os"
 import { resolve } from "node:path"
 
+import { QgaChannel, QmpChannel } from "../src/broker"
 import { RAMFB } from "../src/display"
 import { type Entry, readSince, START } from "../src/eventlog"
 import {
@@ -422,3 +423,176 @@ describe("the long verbs, as the CLI prints and exits with them", () => {
     expect(begins("stop")).toEqual([])
   }, 30_000)
 })
+
+const until = async (ok: () => boolean, ms = 15_000): Promise<void> => {
+  const end = Date.now() + ms
+  while (!ok()) {
+    if (Date.now() > end) throw new Error("timed out waiting")
+    await Bun.sleep(20)
+  }
+}
+
+const ends = (operation: string): readonly Entry[] =>
+  readSince("t", START).entries.filter(
+    (e) => e.kind === "op" && e.phase === "end" && e.operation === operation,
+  )
+
+describe("the long verbs, run by winvm's service", () => {
+  const ranBy = (operation: string): number | undefined => {
+    const b = begins(operation).at(-1)
+    return b?.kind === "op" && b.phase === "begin" ? b.pid : undefined
+  }
+
+  it("stop runs in the service", async () => {
+    expect((await winvm("stop", "-i", "t")).code).toBe(0)
+    expect(ranBy("stop")).toBe(service?.pid)
+  }, 30_000)
+
+  it("stow runs in the service", async () => {
+    expect((await winvm("stow", "-i", "t")).code).toBe(0)
+    expect(ranBy("stow")).toBe(service?.pid)
+  }, 30_000)
+
+  it("save runs in the service", async () => {
+    expect((await winvm("save", "-i", "t", "x", "--force")).code).toBe(0)
+    expect(ranBy("save")).toBe(service?.pid)
+  }, 30_000)
+
+  it("start of a running instance runs in the service, and the CLI mounts the drives", async () => {
+    rememberDrives()
+    expect((await winvm("start", "-i", "t", "--no-watch")).code).toBe(0)
+    expect(ranBy("start")).toBe(service?.pid)
+    expect(
+      readSince("t", START).entries.some(
+        (e) =>
+          e.kind === "op" && e.phase === "output" && e.text.includes("445"),
+      ),
+    ).toBe(false)
+  }, 30_000)
+
+  it("load, rewind and golden reset run in the service", async () => {
+    expect((await winvm("load", "-i", "t", "nope")).code).toBe(1)
+    expect(ranBy("load")).toBe(service?.pid)
+    expect((await winvm("golden", "reset", "-i", "t")).code).toBe(1)
+    expect(ranBy("golden-reset")).toBe(service?.pid)
+    await qemuGoes()
+    expect((await winvm("rewind", "-i", "t", "nope")).code).toBe(1)
+    expect(ranBy("rewind")).toBe(service?.pid)
+  }, 30_000)
+
+  it("a stop interrupted after its request detaches, and the stop ends normally in the service", async () => {
+    powerdownExits = false
+    const r = launch("stop", "-i", "t")
+    await until(() => fakeQmp.commands.includes("system_powerdown"))
+    r.proc.kill("SIGINT")
+    expect(await r.done).toEqual({
+      code: 130,
+      stdout: "",
+      stderr:
+        "stop continues in winvm's service; follow it with `winvm events -i t --follow`\n",
+    })
+    expect(ends("stop")).toEqual([])
+    fakeQmp.emit({
+      event: "SHUTDOWN",
+      data: { guest: true, reason: "guest-shutdown" },
+      timestamp: { seconds: 6, microseconds: 0 },
+    })
+    await qemuGoes()
+    await until(() => ends("stop").length > 0)
+    expect(ends("stop")[0]).toMatchObject({ ok: true, exitCode: 0 })
+  }, 30_000)
+
+  it("a save cancelled before its migration completes asks QEMU to cancel it, and keeps Windows running", async () => {
+    let cancelled = false
+    const scripted = fakeQmp.handler
+    fakeQmp.handler = async (cmd) => {
+      if (cmd.execute === "migrate_cancel") {
+        cancelled = true
+        return { return: {} }
+      }
+      if (cmd.execute === "query-migrate")
+        return {
+          return: { status: cancelled ? "cancelled" : "active" },
+        }
+      return await scripted(cmd)
+    }
+    const r = launch("save", "-i", "t", "x", "--force")
+    await until(() => fakeQmp.commands.includes("migrate"))
+    const c = await winvm("cancel", "-i", "t")
+    expect(c).toEqual({
+      code: 0,
+      stdout: 'cancelled save on "t"\n',
+      stderr: "",
+    })
+    const done = await r.done
+    expect(done.code).toBe(130)
+    expect(done.stderr).toContain("save was cancelled (winvm cancel)")
+    expect(fakeQmp.commands).toContain("migrate_cancel")
+    expect(guest.status).toBe("running")
+    expect(existsSync(resolve(home, "saves", "t", "x"))).toBe(false)
+  }, 30_000)
+
+  it("a stop cannot be cancelled once it has asked Windows to shut down", async () => {
+    powerdownExits = false
+    const r = launch("stop", "-i", "t")
+    await until(() => fakeQmp.commands.includes("system_powerdown"))
+    const c = await winvm("cancel", "-i", "t")
+    expect(c.code).toBe(1)
+    expect(c.stderr).toContain("stop is past its point of no return")
+    await qemuGoes()
+    expect((await r.done).code).toBe(0)
+  }, 30_000)
+})
+
+describe("the long verbs, with a service from before they moved", () => {
+  let control: ReturnType<typeof Bun.serve> | null = null
+
+  afterEach(async () => {
+    await control?.stop(true)
+    control = null
+  })
+
+  it("run in the CLI itself when the service does not run them, with the same output", async () => {
+    stopService(p)
+    service?.kill("SIGKILL")
+    await service?.exited
+    service = null
+    rmSync(p.control, { force: true })
+    const broker = new QmpChannel({ listen: p.qmp, upstream: p.qmpQemu })
+    await broker.start()
+    const agentBroker = new QgaChannel({
+      listen: p.qga,
+      upstream: p.qgaQemu,
+      portOpen: () => Promise.resolve(true),
+    })
+    await agentBroker.start()
+    control = Bun.serve({
+      unix: p.control,
+      fetch: () =>
+        Response.json(
+          { protocol: 1, error: "this service does not run save" },
+          { status: 501 },
+        ),
+    })
+    try {
+      const r = launch("save", "-i", "t", "x", "--force")
+      const done = await r.done
+      expect({ ...done, stdout: timings(done.stdout) }).toEqual({
+        code: 0,
+        stdout:
+          'saved "x" (manual, zstd) in N: RAM N -> N on disk, N total (disks are clones)\n' +
+          "  clock: guest was N from the host, now N\n",
+        stderr: "",
+      })
+      expect(ranByCli("save")).toBe(r.proc.pid)
+    } finally {
+      await broker.stop()
+      await agentBroker.stop()
+    }
+  }, 30_000)
+})
+
+const ranByCli = (operation: string): number | undefined => {
+  const b = begins(operation).at(-1)
+  return b?.kind === "op" && b.phase === "begin" ? b.pid : undefined
+}

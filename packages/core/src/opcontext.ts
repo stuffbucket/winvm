@@ -6,6 +6,7 @@ export interface OpScope {
   readonly id: string
   readonly operation: string
   readonly signal: AbortSignal
+  readonly cancelled: AbortSignal
   readonly write: (stream: OutputStream, text: string) => void
   readonly remount: () => void
   irreversibleAt: string | null
@@ -26,6 +27,17 @@ export class OpEnded extends Error {
       `${scope.operation} was ${(typeof why === "string" ? ENDED_BY[why] : undefined) ?? "cancelled"}, so it sends nothing more to QEMU or Windows`,
     )
     this.name = "OpEnded"
+  }
+}
+
+export const CANCEL_REASON = "winvm cancel"
+
+export class OpCancelled extends Error {
+  constructor(scope: OpScope) {
+    super(
+      `${scope.operation} was cancelled (${CANCEL_REASON}) before its point of no return; what it had begun was put back`,
+    )
+    this.name = "OpCancelled"
   }
 }
 
@@ -55,9 +67,15 @@ export async function fenced<T>(call: () => Promise<T>): Promise<T> {
   }
 }
 
+export function checkCancelled(): void {
+  const scope = scopes.getStore()
+  if (scope?.cancelled.aborted === true) throw new OpCancelled(scope)
+}
+
 export function pointOfNoReturn(): void {
   const scope = scopes.getStore()
   if (scope === undefined) return
   checkOp()
+  checkCancelled()
   scope.irreversibleAt ??= new Date().toISOString()
 }

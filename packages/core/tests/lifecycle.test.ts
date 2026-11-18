@@ -1506,3 +1506,26 @@ describe("what the CLI says after a repair", () => {
     ).toBeNull()
   })
 })
+
+describe("a service asked to ensure itself, as an op it runs does", () => {
+  it("answers with its own record and starts no other service", async () => {
+    const own: ServiceInfo = {
+      pid: process.pid,
+      cli: "",
+      version: "0",
+      startedAt: "2026-11-17T00:00:00.000Z",
+      build: CURRENT,
+    }
+    writeFileSync(p.service, JSON.stringify(own))
+    let started = 0
+    const info = await ensureService("t", p, {
+      start: () => {
+        started += 1
+      },
+      timeoutMs: 200,
+    })
+    expect(started).toBe(0)
+    expect(info.pid).toBe(process.pid)
+    expect(existsSync(p.service)).toBe(true)
+  })
+})

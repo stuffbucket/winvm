@@ -89,6 +89,7 @@ describe("an op that ends while its QMP client negotiates", () => {
     signal,
     write: () => undefined,
     remount: () => undefined,
+    cancelled: new AbortController().signal,
     irreversibleAt: null,
     calls: 0,
   })

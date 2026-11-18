@@ -173,10 +173,13 @@ the status every few seconds.
 
 ## Operations the service runs
 
-`pause`, `resume`, `wake`, `sleep`, `lock`, `reboot` and `kill` run inside the
-control service. The CLI, and the app, which runs the CLI, sends the command to
-the service, prints what the service records for it, and exits with its exit
-code. What they print and their exit codes are as before.
+`start`, `stop`, `stow`, `save`, `load`, `rewind`, `golden reset`, `pause`,
+`resume`, `wake`, `sleep`, `lock`, `reboot` and `kill` run inside the control
+service. The CLI, and the app, which runs the CLI, sends the command to the
+service, prints what the service records for it, and exits with its exit code.
+What they print and their exit codes (3, 4, 5 and 6 included) are as before.
+A `start` of a machine that is not running usually finds no service, and the
+CLI starts it itself, as before.
 
 - **Ctrl-C only lets go.** Ctrl-C, or the app quitting, stops the CLI from
   following, not the command. The command finishes in the service and its end
@@ -192,15 +195,28 @@ code. What they print and their exit codes are as before.
   ends as killed and sends nothing more to QEMU or Windows. Once the kill is
   recorded, the service stops.
 - **`winvm cancel -i NAME`** ends the command the service runs, or, with
-  `--id ID`, a given one. It ends a command still waiting for its turn, and a
-  `reboot` that has not yet asked Windows to restart. Any other command, and a
-  reboot after its request, is refused with the reason. A CLI interrupted
-  while its command still waited prints the `--id` to use.
+  `--id ID`, a given one. It ends a command still waiting for its turn, and
+  these before their point of no return:
+  - `stop`, before it presses the power button: everything it took down is
+    put back, as when Ctrl-C stopped it before;
+  - `stow` and `save`, before the migration completes: QEMU is asked to
+    cancel the migration, and Windows runs on;
+  - `start`, `load`, `rewind` and `golden reset`, before they quit or launch
+    QEMU or replace its disk;
+  - `reboot`, before it asks Windows to restart.
+
+  Any other command, and these after that point, is refused with the reason.
+  A CLI interrupted while its command still waited prints the `--id` to use.
+- **When the Mac shuts down**, a `stow`, a `save` and a `stop` that has
+  pressed the power button are left to finish (a `save` is cancelled if it
+  would run past the keeper's limit); every other command ends at its next
+  step, and winvm stows Windows.
 - **`reboot` counts the restart by Windows' new boot and a logon**, as
   before, then looks for QEMU's report that Windows reset; when the record
   has none, it says so with a `warning` line. It stops at once if QEMU exits.
-- **The guest's Finder drives come back through the CLI.** `resume`, `wake`
-  and `reboot` leave mounting the drives again to the CLI that follows them,
+- **The guest's Finder drives come back through the CLI.** `start`, `load`,
+  `rewind`, `resume`, `wake` and `reboot`, and a `stop` or `stow` that put
+  things back, leave mounting the drives again to the CLI that follows them,
   which mounts them in your own session while it holds the instance, and not
   while the Mac is shutting down or the guest is paused. A CLI that let go
   leaves them down, and `winvm status` names them and the
@@ -216,7 +232,9 @@ The requests, on `control.sock`:
 
 - `POST /ops` with `{"protocol": 1, "op": "pause", "args": [], "wait": false}`
   answers `202` with `{id, cursor, pid, queued}`, or `409` with `{busy}` naming
-  the lease holder. A protocol or command the service doesn't have gets `400`
+  the lease holder. An optional `id` (8 to 64 letters, digits and dashes) is
+  used as the op's id, so a client can follow it in the record by a name it
+  chose. A protocol or command the service doesn't have gets `400`
   or `501`, with the protocol it speaks, so the caller can run the command
   itself.
 - `POST /ops/cancel` with `{"protocol": 1}` and an optional `id` answers `200`

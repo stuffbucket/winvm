@@ -324,11 +324,23 @@ async function keptService(
   return await untilAnswering(name, p, current, timeoutMs)
 }
 
+function ownService(p: Paths): ServiceInfo | null {
+  const seen = readRecord(p)
+  if (seen === null || pidIn(seen) !== process.pid) return null
+  try {
+    return JSON.parse(seen) as ServiceInfo
+  } catch {
+    return null
+  }
+}
+
 export async function ensureService(
   name: string,
   p: Paths,
   o: EnsureServiceOptions = {},
 ): Promise<ServiceInfo> {
+  const own = ownService(p)
+  if (own !== null) return own
   const current = o.current ?? buildIdentity()
   const hello = await keeperHello(p)
   if (hello?.hostEnding === true)

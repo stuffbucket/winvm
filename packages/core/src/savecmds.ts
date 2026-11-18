@@ -15,8 +15,8 @@ import * as frozen from "./frozen"
 import { lockWindows } from "./lock"
 import { qmpCommand } from "./monitor"
 import * as notes from "./notes"
-import { currentOp } from "./opcontext"
-import { automaticFrom } from "./operation"
+import { currentOp, OpCancelled } from "./opcontext"
+import { automaticFrom, INTERRUPTED } from "./operation"
 import type { InstanceMeta, Paths } from "./paths"
 import { pathsFor, readImageMeta, readMeta } from "./paths"
 import * as qemu from "./qemu"
@@ -36,6 +36,11 @@ const msg = (e: unknown): string => (e instanceof Error ? e.message : String(e))
 const secs = (ms: number): string => `${(ms / 1000).toFixed(1)} s`
 
 const RESPONSIVE_MS = 300_000
+
+const cancelled = (error: OpCancelled): number => {
+  fail(error.message)
+  return INTERRUPTED
+}
 
 type Settled = "answered" | "silent" | "gone"
 
@@ -107,8 +112,14 @@ async function doSave(
   const state = await qmp.status(p.qmp)
   if (o.checkReady && state === "running") {
     process.stdout.write("checking the guest has finished starting… ")
-    const ready = await qga.waitReady(p.qga, RESPONSIVE_MS)
+    const op = currentOp()
+    const ready = await qga.waitReady(
+      p.qga,
+      RESPONSIVE_MS,
+      op === null ? {} : { signal: op.cancelled },
+    )
     process.stdout.write("\n")
+    if (op?.cancelled.aborted === true) return cancelled(new OpCancelled(op))
     if (!ready)
       return fail(
         `guest "${name}" is not ready — saving one that is still booting wedges it (--force to override)`,
@@ -118,6 +129,7 @@ async function doSave(
   try {
     r = await saves.createSave(name, o)
   } catch (error) {
+    if (error instanceof OpCancelled) return cancelled(error)
     fail(msg(error))
     return error instanceof saves.StowNotRecallable ? error.exitCode : 1
   }

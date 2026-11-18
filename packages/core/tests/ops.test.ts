@@ -1066,3 +1066,117 @@ describe("host end", () => {
     await outcome
   }, 20_000)
 })
+
+describe("the long verbs' rules in the queue", () => {
+  const longHandlers: OpHandlers = {
+    stow: {
+      cancel: "cooperative",
+      hostEnd: "finish",
+      run: async () => {
+        await held("stow")
+        return currentOp()?.cancelled.aborted === true ? 130 : 0
+      },
+    },
+    stop: {
+      cancel: "cooperative",
+      hostEnd: "finish-after-mark",
+      run: async () => {
+        await held("before")
+        pointOfNoReturn()
+        await held("after")
+        return 0
+      },
+    },
+    start: {
+      cancel: "before-request",
+      run: async () => {
+        await held("start")
+        return 0
+      },
+    },
+  }
+  let hostEndedAt: number | null = null
+
+  beforeEach(async () => {
+    hostEndedAt = null
+    for (const k of ["stow", "before", "after", "start"]) gates[k] = gate()
+    await svc?.stop()
+    svc = await runService("t", {
+      exitAfterMs: 60_000,
+      checkMs: 50,
+      handlers: longHandlers,
+      hostEnd: async () => {
+        hostEndedAt = Date.now()
+        await Promise.resolve()
+      },
+    })
+  })
+
+  const hostEnding = async (): Promise<void> => {
+    await post("/host-ending", { deadlineMs: Date.now() + 30_000 })
+  }
+
+  it("lets a cooperative op put things back when cancelled, and ends it with what it returns", async () => {
+    const a = await submit("stow")
+    await until(() => running === 1)
+    const c = await post("/ops/cancel", { protocol: OPS_PROTOCOL })
+    expect(c.status).toBe(200)
+    await Bun.sleep(100)
+    expect(endOf(a.body.id)).toBeUndefined()
+    gates.stow?.open()
+    expect(await ended(a.body.id)).toMatchObject({ exitCode: 130 })
+  })
+
+  it("lets a stow finish through host end, and does not wait for it before host end begins", async () => {
+    const a = await submit("stow")
+    await until(() => running === 1)
+    await hostEnding()
+    await until(() => hostEndedAt !== null)
+    expect(endOf(a.body.id)).toBeUndefined()
+    gates.stow?.open()
+    expect(await ended(a.body.id)).toMatchObject({ ok: true, exitCode: 0 })
+  })
+
+  it("ends a stop at host end before its point of no return, and lets it finish after", async () => {
+    const early = await submit("stop")
+    await until(() => running === 1)
+    await hostEnding()
+    expect(await ended(early.body.id)).toMatchObject({ error: "host-end" })
+    gates.before?.open()
+    gates.after?.open()
+  })
+
+  it("lets a stop past its point of no return finish through host end", async () => {
+    const a = await submit("stop")
+    await until(() => running === 1)
+    gates.before?.open()
+    await Bun.sleep(50)
+    await hostEnding()
+    await until(() => hostEndedAt !== null)
+    expect(endOf(a.body.id)).toBeUndefined()
+    gates.after?.open()
+    expect(await ended(a.body.id)).toMatchObject({ ok: true })
+  })
+
+  it("ends a start at host end, as the short verbs are", async () => {
+    const a = await submit("start")
+    await until(() => running === 1)
+    await hostEnding()
+    expect(await ended(a.body.id)).toMatchObject({ error: "host-end" })
+    gates.start?.open()
+  })
+
+  it("takes the id its client chose, and refuses one that is not an id", async () => {
+    const a = await submit("start", { id: "close-0123456789abcdef" })
+    expect(a.status).toBe(202)
+    expect(a.body.id).toBe("close-0123456789abcdef")
+    gates.start?.open()
+    expect(await ended("close-0123456789abcdef")).toMatchObject({ ok: true })
+    expect(opsOf("close-0123456789abcdef")[0]).toMatchObject({
+      phase: "begin",
+      operation: "start",
+    })
+    const bad = await submit("start", { id: "x y" })
+    expect(bad.status).toBe(400)
+  })
+})

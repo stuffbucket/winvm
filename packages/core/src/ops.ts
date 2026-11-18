@@ -9,6 +9,7 @@ import {
   endCursor,
 } from "./eventlog"
 import {
+  CANCEL_REASON,
   currentOp,
   OpEnded,
   type OpScope,
@@ -37,6 +38,13 @@ export const SERVICE_OPS = [
   "lock",
   "reboot",
   "kill",
+  "start",
+  "stop",
+  "stow",
+  "save",
+  "load",
+  "rewind",
+  "golden-reset",
 ] as const satisfies readonly VmOperation[]
 
 export type ServiceOp = (typeof SERVICE_OPS)[number]
@@ -46,7 +54,8 @@ export const isServiceOp = (v: unknown): v is ServiceOp =>
 
 export interface OpHandler {
   readonly run: (args: Args) => Promise<number>
-  readonly cancel: "never" | "before-request"
+  readonly cancel: "never" | "before-request" | "cooperative"
+  readonly hostEnd?: "end" | "finish" | "finish-after-mark"
 }
 
 export type OpHandlers = Readonly<Partial<Record<ServiceOp, OpHandler>>>
@@ -55,7 +64,13 @@ export interface OpRequest {
   readonly op: ServiceOp
   readonly args: readonly string[]
   readonly wait: boolean
+  readonly id?: string
 }
+
+export const OP_ID = /^[A-Za-z0-9][A-Za-z0-9-]{7,63}$/
+
+export const isOpId = (v: unknown): v is string =>
+  typeof v === "string" && OP_ID.test(v)
 
 type Json = Record<string, unknown>
 
@@ -90,7 +105,16 @@ export function readOpRequest(
   const args = body.args
   if (!Array.isArray(args) || !args.every((a) => typeof a === "string"))
     return reply(400, { error: "args must be a list of words" })
-  return { op, args, wait: body.wait === true }
+  if (body.id !== undefined && !isOpId(body.id))
+    return reply(400, {
+      error: "id must be 8 to 64 letters, digits and dashes",
+    })
+  return {
+    op,
+    args,
+    wait: body.wait === true,
+    ...(isOpId(body.id) ? { id: body.id } : {}),
+  }
 }
 
 const CHUNK = 1024
@@ -113,7 +137,8 @@ const DID_NOT_RUN: Readonly<Record<string, string>> = {
 interface Running {
   readonly scope: OpScope
   readonly controller: AbortController
-  readonly cancel: OpHandler["cancel"]
+  readonly cancelling: AbortController
+  readonly handler: OpHandler
   readonly startedAt: string
   held: boolean
   ended: Promise<void>
@@ -211,6 +236,12 @@ export type Submitted =
   | { readonly kind: "failed"; readonly error: string }
   | { readonly kind: "closed"; readonly reason: Closing }
 
+function lastsThroughHostEnd(r: Running): boolean {
+  const policy = r.handler.hostEnd ?? "end"
+  if (policy === "finish") return true
+  return policy === "finish-after-mark" && r.scope.irreversibleAt !== null
+}
+
 function atSafePoint(scope: OpScope, then: () => void): void {
   const by = Date.now() + HOST_END_GRACE_MS
   const look = (): void => {
@@ -255,10 +286,15 @@ export class OpQueue {
 
   async close(reason: Closing): Promise<void> {
     this.closed ??= reason
-    for (const r of this.ops.values())
-      if (r.scope.operation !== "kill" && (reason === HOST_END || !r.held))
-        r.controller.abort(reason)
-    await this.drain()
+    const ended: Running[] = []
+    for (const r of this.ops.values()) {
+      if (r.scope.operation === "kill") continue
+      if (r.held && (reason !== HOST_END || lastsThroughHostEnd(r))) continue
+      r.controller.abort(reason)
+      ended.push(r)
+    }
+    if (reason === HOST_END) await Promise.all(ended.map((r) => r.ended))
+    else await this.drain()
   }
 
   async submit(req: OpRequest): Promise<Submitted> {
@@ -270,15 +306,22 @@ export class OpQueue {
       }
     const handler = this.handlers[req.op]
     if (handler === undefined) throw new Error(`no handler for ${req.op}`)
-    const id = randomUUID()
+    const id = req.id ?? randomUUID()
+    if (this.ops.has(id))
+      return {
+        kind: "failed",
+        error: `winvm's service already runs an op with id ${id}`,
+      }
     const cursor = endCursor(this.name)
     const controller = new AbortController()
+    const cancelling = new AbortController()
     let owesRemount = false
     let over = false
     const scope: OpScope = {
       id,
       operation: req.op,
       signal: controller.signal,
+      cancelled: cancelling.signal,
       write: (stream, text) => {
         if (controller.signal.aborted || over) toServiceLog(stream, text)
         else this.output(id, req.op, stream, text)
@@ -299,7 +342,8 @@ export class OpQueue {
     const running: Running = {
       scope,
       controller,
-      cancel: handler.cancel,
+      cancelling,
+      handler,
       startedAt: new Date().toISOString(),
       held: false,
       ended: Promise.resolve(),
@@ -391,7 +435,8 @@ export class OpQueue {
     const { scope } = target
     const named = { id: scope.id, operation: scope.operation }
     const why: unknown = scope.signal.aborted ? scope.signal.reason : null
-    if (why === CANCELLED) return { kind: "cancelled", ...named }
+    if (why === CANCELLED || (why === null && scope.cancelled.aborted))
+      return { kind: "cancelled", ...named }
     if (why !== null)
       return {
         kind: "refused",
@@ -402,7 +447,7 @@ export class OpQueue {
       target.controller.abort(CANCELLED)
       return { kind: "cancelled", ...named }
     }
-    if (target.cancel === "never")
+    if (target.handler.cancel === "never")
       return {
         kind: "refused",
         ...named,
@@ -414,7 +459,9 @@ export class OpQueue {
         ...named,
         reason: `${scope.operation} is past its point of no return (since ${scope.irreversibleAt}), so it was not cancelled`,
       }
-    target.controller.abort(CANCELLED)
+    if (target.handler.cancel === "cooperative")
+      target.cancelling.abort(CANCEL_REASON)
+    else target.controller.abort(CANCELLED)
     return { kind: "cancelled", ...named }
   }
 

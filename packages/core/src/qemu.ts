@@ -22,6 +22,7 @@ import { readHardware } from "./hardware"
 import { requireFirmware, tpmTisHasPpi } from "./host"
 import { type FoundKeeper, KeeperBusy, type KeeperChild } from "./keeper"
 import * as kept from "./kept"
+import { pointOfNoReturn } from "./opcontext"
 import { LeaseNotHeld } from "./operation"
 import type { InstanceMeta, Paths } from "./paths"
 import { media } from "./paths"
@@ -291,6 +292,7 @@ export async function launch(
     throw new Error(
       `QEMU (pid ${String(running)}) still runs for "${name}", so nothing was started; \`winvm kill -i ${name}\` ends it`,
     )
+  pointOfNoReturn()
   const use = kept.keeperUse()
   if (use.kind === "keeper") {
     const failed = await kept.openKeeper(name, p, use.keeper).then(

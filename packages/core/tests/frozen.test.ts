@@ -45,7 +45,9 @@ import {
   refuseFrozen,
 } from "../src/frozen"
 import { QmpError, QmpNotDelivered } from "../src/monitor"
+import { CANCEL_REASON, type OpScope, runInOp } from "../src/opcontext"
 import {
+  INTERRUPTED,
   markSavingRunning,
   STOP_UNFINISHED,
   savingRunning,
@@ -643,6 +645,89 @@ describe("graceful stop", () => {
     const p = pathsFor(NAME)
     rmSync(p.events, { force: true })
     rmSync(p.eventsPrev, { force: true })
+  })
+
+  describe("as winvm's service runs it", () => {
+    const inOp = (): {
+      readonly scope: OpScope
+      readonly cancel: () => void
+    } => {
+      const cancelling = new AbortController()
+      return {
+        scope: {
+          id: "op-stop",
+          operation: "stop",
+          signal: new AbortController().signal,
+          cancelled: cancelling.signal,
+          write: () => undefined,
+          remount: () => undefined,
+          irreversibleAt: null,
+          calls: 0,
+        },
+        cancel: () => {
+          cancelling.abort(CANCEL_REASON)
+        },
+      }
+    }
+
+    const withoutInterrupts = (seams: StopCommandSeams): StopCommandSeams => {
+      const { interrupts: _, ...rest } = seams
+      return rest
+    }
+
+    it("ends with exit 3 only when Windows really did not shut down in time", async () => {
+      const r = rig({ frozen: null, agent: false })
+      const op = inOp()
+      const o = await runInOp(op.scope, () =>
+        stopped(withoutInterrupts(r.seams)),
+      )
+      expect(o.code).toBe(STOP_UNFINISHED)
+      expect(r.clock.t - T0).toBeGreaterThanOrEqual(DEADLINE)
+      expect(o.err).toContain("did not shut down within 180 s")
+    })
+
+    it("marks its point of no return before it asks Windows to shut down", async () => {
+      const r = rig({ frozen: null, acpiExitAfterMs: 1000 })
+      const op = inOp()
+      const marked: { first: boolean | null } = { first: null }
+      const seams: StopCommandSeams = {
+        ...withoutInterrupts(r.seams),
+        powerdown: async (p) => {
+          marked.first = op.scope.irreversibleAt !== null
+          await r.seams.powerdown?.(p)
+        },
+      }
+      expect((await runInOp(op.scope, () => stopped(seams))).code).toBe(0)
+      expect(marked.first).toBe(true)
+    })
+
+    it("puts everything back, as before, when cancelled before the request", async () => {
+      const r = rig({ frozen: "paused", watcher: true })
+      const op = inOp()
+      const seams: StopCommandSeams = {
+        ...withoutInterrupts(r.seams),
+        resume: async (p) => {
+          await r.seams.resume?.(p)
+          op.cancel()
+        },
+      }
+      const o = await runInOp(op.scope, () => stopped(seams))
+      expect(o.code).toBe(INTERRUPTED)
+      expect(r.events).not.toContain("powerdown")
+      expect(r.events).toEqual([
+        "stopWatcher",
+        "beforeDown",
+        "ensureService",
+        "resume",
+        "afterUp",
+        "hold",
+        "ensureWatcher",
+      ])
+      expect(o.err).toContain(
+        "stop interrupted by winvm cancel before it asked Windows to shut down; the watcher and the guest's drives were put back, and the guest was left paused",
+      )
+      expect(op.scope.irreversibleAt).toBeNull()
+    })
   })
 
   it("presses the ACPI power button of a running guest without needing its agent, and restores nothing on success", async () => {

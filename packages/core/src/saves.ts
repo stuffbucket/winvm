@@ -39,6 +39,12 @@ import { qmpCommand } from "./monitor"
 import type { Note } from "./notes"
 import { copyNote, readNote, removeNote, removeNotes } from "./notes"
 import {
+  checkCancelled,
+  currentOp,
+  OpCancelled,
+  pointOfNoReturn,
+} from "./opcontext"
+import {
   clearSavingRunning,
   markSavingRunning,
   withOperation,
@@ -976,7 +982,13 @@ async function waitMigration(
   timeoutMs: number,
 ): Promise<Record<string, unknown>> {
   const deadline = Date.now() + timeoutMs
+  const op = currentOp()
+  let cancelling = false
   while (Date.now() < deadline) {
+    if (op?.cancelled.aborted === true && !cancelling) {
+      cancelling = true
+      await qmp.execute(p.qmp, "migrate_cancel")
+    }
     const r = (await qmp.execute(p.qmp, "query-migrate")) as Record<
       string,
       unknown
@@ -984,6 +996,7 @@ async function waitMigration(
     const s = r.status
     if (s === "completed") return r
     if (s === "failed" || s === "cancelled") {
+      if (cancelling && op !== null) throw new OpCancelled(op)
       const detail = r["error-desc"]
       throw new Error(
         `migration ${s}: ${typeof detail === "string" ? detail : "no detail"}`,
@@ -1224,14 +1237,17 @@ async function createSaveHeld(
   let ppm: string | null = null
   if (wasRunning) markSavingRunning(instance)
   try {
+    checkCancelled()
     if (wasRunning) await qmp.execute(p.qmp, "stop")
     ppm = await captureScreen(p.qmp, tmp)
     await qmp.execute(p.qmp, "migrate-set-capabilities", {
       capabilities: plan.capabilities,
     })
     await qmp.execute(p.qmp, "migrate-set-parameters", plan.parameters)
+    checkCancelled()
     await qmp.execute(p.qmp, "migrate", { uri: plan.uri })
     migrated = await waitMigration(p, 30 * 60_000)
+    pointOfNoReturn()
     cloneFile(p.overlay, resolve(tmp, FILES.overlay))
     cloneFile(p.vars, resolve(tmp, FILES.vars))
   } catch (error) {
@@ -1442,6 +1458,7 @@ async function loadSaveHeld(instance: string, name: string): Promise<Manifest> {
   }
 
   const p = pathsFor(instance)
+  pointOfNoReturn()
   await quitQemu(p)
   for (const [src, dst] of [
     [resolve(dir, FILES.overlay), p.overlay],

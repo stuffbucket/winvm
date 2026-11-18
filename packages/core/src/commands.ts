@@ -41,6 +41,7 @@ import * as frozen from "./frozen"
 import {
   checksReport,
   hostChecks,
+  hostMissing,
   PWSH_SHA256,
   PWSH_URL,
   printChecks,
@@ -63,10 +64,16 @@ import {
   resolveWindowsIso,
 } from "./media"
 import * as monitor from "./monitor"
-import { currentOp, pointOfNoReturn } from "./opcontext"
+import {
+  CANCEL_REASON,
+  currentOp,
+  OpCancelled,
+  pointOfNoReturn,
+} from "./opcontext"
 import {
   INTERRUPTED,
   InstanceBusy,
+  type Interrupts,
   interruptedAfterRequest,
   irreversible,
   leaseHolder,
@@ -650,7 +657,7 @@ export async function startRunning(
 }
 
 export async function start(args: Args): Promise<number> {
-  requireHost()
+  if (hostMissing()) return 1
   const name = instanceName(args)
   const p = pathsFor(name)
   if (qemu.isRunning(p)) return await startRunning(name, args)
@@ -805,6 +812,7 @@ export async function rewind(args: Args): Promise<number> {
     }
   } else {
     try {
+      pointOfNoReturn()
       await snapshot.load(p, tag)
     } catch (error) {
       console.error(
@@ -973,9 +981,14 @@ export async function stopWith(
   seams: StopCommandSeams = {},
 ): Promise<number> {
   const name = instanceName(args)
-  const interrupts = (seams.interrupts ?? ((n) => takeInterrupts(n, "stop")))(
-    name,
-  )
+  const op = currentOp()
+  const interrupts = (
+    seams.interrupts ??
+    ((n: string): Interrupts =>
+      op === null
+        ? takeInterrupts(n, "stop")
+        : { signal: op.cancelled, release: () => undefined })
+  )(name)
   const settle = { disarm: (): void => undefined }
   try {
     return await stopRun(args, seams, interrupts.signal, settle)
@@ -1088,6 +1101,12 @@ async function stopRun(
       resumed = true
       frozen.clearAsleep(p)
       checkpoint()
+    }
+    try {
+      pointOfNoReturn()
+    } catch (error) {
+      if (error instanceof OpCancelled) throw new StopInterrupted(CANCEL_REASON)
+      throw error
     }
     try {
       await powerdown(p)

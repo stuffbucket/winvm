@@ -51,7 +51,7 @@ const [, , sub, ...rawArgs] = process.argv
 const args = parseArgs(rawArgs)
 
 const operation = operationFor(sub, args)
-const serviceOp = isServiceOp(sub) ? sub : null
+const serviceOp = isServiceOp(operation) ? operation : null
 const leased = async (run: () => number | Promise<number>): Promise<number> => {
   if (operation === null) return await run()
   try {
@@ -154,10 +154,10 @@ switch (sub ?? "") {
     exitCode = await commands.build(args)
     break
   case "start":
-    exitCode = await leased(() => commands.start(args))
+    exitCode = await viaService(() => leased(() => commands.start(args)))
     break
   case "stop":
-    exitCode = await leased(() => commands.stop(args))
+    exitCode = await viaService(() => leased(() => commands.stop(args)))
     break
   case "reboot":
     exitCode = await viaService(() => leased(() => commands.reboot(args)))
@@ -220,22 +220,22 @@ switch (sub ?? "") {
     exitCode = await leased(() => commands.snap(args))
     break
   case "rewind":
-    exitCode = await leased(() => commands.rewind(args))
+    exitCode = await viaService(() => leased(() => commands.rewind(args)))
     break
   case "snapshots":
     exitCode = await commands.snapshots(args)
     break
   case "save":
-    exitCode = await leased(() => savecmds.save(args))
+    exitCode = await viaService(() => leased(() => savecmds.save(args)))
     break
   case "load":
-    exitCode = await leased(() => savecmds.load(args))
+    exitCode = await viaService(() => leased(() => savecmds.load(args)))
     break
   case "share":
     exitCode = await leased(() => sharecmds.shareCmd(args))
     break
   case "golden":
-    exitCode = await leased(() => goldens.golden(args))
+    exitCode = await viaService(() => leased(() => goldens.golden(args)))
     break
   case "saves":
     exitCode = savecmds.list(args)
@@ -257,7 +257,7 @@ switch (sub ?? "") {
     exitCode = settings.settingsCmd(args)
     break
   case "stow":
-    exitCode = await savecmds.stow(args, leased)
+    exitCode = await viaService(() => savecmds.stow(args, leased))
     break
   case "clock":
     exitCode = await savecmds.clock(args)
