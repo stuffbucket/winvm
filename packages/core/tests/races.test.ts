@@ -26,6 +26,8 @@ import * as display from "../src/display"
 import { VIRTIO_GPU } from "../src/display"
 import * as host from "../src/host"
 import { withOperation } from "../src/operation"
+import { OpQueue } from "../src/ops"
+import { STOW_HANDLER } from "../src/opverbs"
 import {
   basePath,
   type InstanceMeta,
@@ -39,7 +41,7 @@ import * as savecmds from "../src/savecmds"
 import * as servicectl from "../src/servicectl"
 import * as share from "../src/share"
 import * as vnc from "../src/vnc"
-import { realActions } from "../src/watch"
+import { serviceActions } from "../src/watch"
 import { lockPidfile, releasePidfiles } from "./fakes/pidfile"
 
 const NAME = "race"
@@ -256,8 +258,8 @@ describe("stop during a manual save", () => {
         await sleep(1)
       },
       stopWatcher: () => Promise.resolve(false),
-      watcherPid: () => null,
-      ensureWatcher: () => null,
+      watching: () => false,
+      ensureWatcher: () => false,
       beforeDown: () => undefined,
       afterUp: () => Promise.resolve(undefined),
       stopSidecars: () => undefined,
@@ -309,7 +311,7 @@ describe("stop during a manual save", () => {
   }, 20_000)
 })
 
-describe("the watcher's work", () => {
+describe("the watcher's work, in winvm's service", () => {
   it("skips an autosave while a person's command holds the instance, without touching QEMU", async () => {
     const sent: string[] = []
     spyOn(qemu, "pidOf").mockImplementation(() => 1_234_567)
@@ -321,7 +323,20 @@ describe("the watcher's work", () => {
       return Promise.resolve({})
     })
     const log: string[] = []
-    const actions = realActions(NAME, pathsFor(NAME), (l) => log.push(l))
+    const queue = new OpQueue(
+      NAME,
+      {},
+      {
+        record: () => undefined,
+        nudge: () => undefined,
+        killed: () => undefined,
+      },
+    )
+    const actions = serviceActions(NAME, pathsFor(NAME), (l) => log.push(l), {
+      perform: async (op, handler, args) =>
+        await queue.perform(op, handler, args),
+      stow: STOW_HANDLER,
+    })
     let release: () => void = () => undefined
     const reboot = withOperation(NAME, "reboot", async () => {
       await new Promise<void>((r) => {
@@ -364,7 +379,7 @@ describe("the watcher's work", () => {
           pidOf: () => 1_234_567,
           frozenState: () => Promise.resolve(null),
           stopWatcher: () => Promise.resolve(false),
-          watcherPid: () => null,
+          watching: () => false,
           beforeDown: () => undefined,
           stopSidecars: () => undefined,
           ensureService: () => Promise.resolve(),

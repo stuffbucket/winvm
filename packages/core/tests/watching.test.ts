@@ -23,7 +23,6 @@ import {
 } from "../src/paths"
 import { qemuArgs } from "../src/qemu"
 import { currentCompat, FILES, type Manifest, saveDir } from "../src/saves"
-import { stopService } from "../src/servicectl"
 import { FakeAgent } from "./fakes/agent"
 import { FakeGuest } from "./fakes/guest"
 import { lockPidfile, releasePidfiles } from "./fakes/pidfile"
@@ -52,6 +51,12 @@ let guest: FakeGuest
 let service: ReturnType<typeof Bun.spawn> | null = null
 let vncClients = 0
 let reportsVersion: string | null = null
+let slowMigrations: ("until-cancel" | number)[] = []
+let migration: {
+  slow: "until-cancel" | number
+  at: number
+  cancelled: boolean
+} | null = null
 
 const runtime = (): string => resolve(home, "runtime")
 
@@ -154,13 +159,32 @@ function monitor(): void {
   fakeQmp.handler = async (cmd) => {
     const args = (cmd.arguments ?? {}) as Record<string, unknown>
     switch (cmd.execute) {
-      case "migrate":
+      case "migrate": {
         migrateTo(String(args.uri))
+        const slow = slowMigrations.shift()
+        migration =
+          slow === undefined ? null : { slow, at: Date.now(), cancelled: false }
         return { return: {} }
-      case "query-migrate":
+      }
+      case "migrate_cancel":
+        if (migration !== null) migration.cancelled = true
+        return { return: {} }
+      case "query-migrate": {
+        const m = migration
+        if (m?.cancelled === true) {
+          migration = null
+          return { return: { status: "cancelled" } }
+        }
+        if (
+          m !== null &&
+          (m.slow === "until-cancel" || Date.now() - m.at < m.slow)
+        )
+          return { return: { status: "active" } }
+        migration = null
         return {
           return: { status: "completed", ram: { transferred: 4096 } },
         }
+      }
       case "quit":
         setTimeout(() => void releasePidfiles(), 20)
         return { return: {} }
@@ -316,6 +340,8 @@ beforeEach(async () => {
   utimesSync(program, old, old)
   vncClients = 0
   reportsVersion = null
+  slowMigrations = []
+  migration = null
   await startQemu()
   fakeQmp = new FakeQmp(p.qmpQemu)
   await fakeQmp.listen()
@@ -337,10 +363,12 @@ afterEach(async () => {
     try {
       process.kill(service.pid, "SIGCONT")
     } catch {}
+    service.kill("SIGTERM")
+    const ended = service.exited
+    if (!(await Promise.race([ended.then(() => true), Bun.sleep(3000)])))
+      service.kill("SIGKILL")
+    await ended
   }
-  stopService(p)
-  service?.kill("SIGKILL")
-  await service?.exited
   service = null
   await releasePidfiles()
   await fakeQmp.close().catch(() => undefined)
@@ -693,5 +721,121 @@ describe("what the watcher does for the user", () => {
     await Bun.sleep(2500)
     expect(savesOf("auto")).toEqual([])
     expect(watcherRow(await statusText())).toBe("not set up")
+  }, 45_000)
+})
+
+describe("the watcher's work, as winvm's service runs it", () => {
+  const servicePid = (): number => service?.pid ?? -1
+  it("autosaves and stows as ops of the service itself, marked as winvm's own", async () => {
+    await winvm(
+      "config",
+      "-i",
+      "t",
+      "autosave.idleMinutes=0.01",
+      "stow.idleMinutes=0.04",
+    )
+    await watching()
+    await until("the stow", () => automaticOps("stow", "end").length === 1)
+    expect(automaticOps("save", "begin")[0]).toMatchObject({
+      pid: servicePid(),
+      leased: true,
+    })
+    expect(automaticOps("stow", "begin")[0]).toMatchObject({
+      pid: servicePid(),
+      leased: true,
+    })
+    expect((await watcher())?.pid).toBe(servicePid())
+  }, 45_000)
+
+  it("never autosaves while a person's command runs in the service, and does once it is done", async () => {
+    await winvm(
+      "config",
+      "-i",
+      "t",
+      "autosave.idleMinutes=0.01",
+      "stow.enabled=false",
+    )
+    guest.bootDelayMs = 3000
+    await watching()
+    expect((await winvm("reboot", "-i", "t")).code).toBe(0)
+    await until("an autosave", () => automaticOps("save", "end").length === 1)
+    const reboot = records().filter(
+      (e) => e.kind === "op" && e.operation === "reboot",
+    )
+    const began = reboot.find((e) => e.kind === "op" && e.phase === "begin")
+    const ended = reboot.find((e) => e.kind === "op" && e.phase === "end")
+    if (began === undefined || ended === undefined) throw new Error("no reboot")
+    expect(began).toMatchObject({ pid: servicePid() })
+    expect(automaticOps("save", "begin").filter((e) => e.t < ended.t)).toEqual(
+      [],
+    )
+    expect(readFileSync(resolve(p.dir, "watch.log"), "utf8")).toContain(
+      "is busy: reboot",
+    )
+  }, 45_000)
+
+  it("at host end, cancels its own autosave under way, then stows Windows", async () => {
+    await winvm(
+      "config",
+      "-i",
+      "t",
+      "autosave.idleMinutes=0.01",
+      "stow.enabled=false",
+    )
+    slowMigrations = ["until-cancel"]
+    await watching()
+    await until("the autosave's migration", () =>
+      fakeQmp.commands.includes("migrate"),
+    )
+    const r = await fetch("http://localhost/host-ending", {
+      unix: p.control,
+      method: "POST",
+      body: JSON.stringify({ deadlineMs: Date.now() + 40_000 }),
+    })
+    expect(r.status).toBe(202)
+    await until(
+      "the host end to finish",
+      () =>
+        records().some(
+          (e) =>
+            e.kind === "service" &&
+            e.what === "host-end" &&
+            e.step === "stowed",
+        ),
+      30_000,
+    )
+    const steps = records().filter(
+      (e) => e.kind === "service" && e.what === "host-end",
+    )
+    expect(steps[0]).toMatchObject({ step: "plan", end: "stow" })
+    expect(fakeQmp.commands).toContain("migrate_cancel")
+    expect(automaticOps("save", "end")[0]).toMatchObject({ ok: false })
+    expect(automaticOps("save", "begin")).toHaveLength(1)
+    expect(automaticOps("stow", "end")[0]).toMatchObject({ ok: true })
+    expect(savesOf("stow")).toEqual(["stow"])
+    expect(savesOf("auto")).toEqual([])
+  }, 45_000)
+
+  it("turns the watcher on for winvm watch, and says --interval is gone", async () => {
+    await winvm(
+      "config",
+      "-i",
+      "t",
+      "autosave.idleMinutes=0.01",
+      "stow.enabled=false",
+    )
+    await startService()
+    const on = await winvm("watch", "-i", "t")
+    expect(on.code).toBe(0)
+    expect(on.stdout).toBe(
+      `watcher: in winvm's service (pid ${String(servicePid())}) · ${resolve(p.dir, "watch.log")}\n`,
+    )
+    await until("an autosave", () => savesOf("auto").length === 1)
+    expect(await winvm("watch", "-i", "t", "--interval", "5")).toEqual({
+      code: 1,
+      stdout: "",
+      stderr:
+        "::error::--interval is gone: winvm's service watches the guest, every 15 s\n",
+    })
   }, 45_000)
 })

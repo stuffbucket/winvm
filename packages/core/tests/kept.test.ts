@@ -51,12 +51,13 @@ import {
   setLaunchd,
 } from "../src/kept"
 import { adoptLegacy } from "../src/legacy"
-import { reconcileManagement, reconcileNote } from "../src/lifecycle"
+import { ensureCurrent } from "../src/lifecycle"
 import { InstanceBusy, LeaseNotHeld, withOperation } from "../src/operation"
 import { type InstanceMeta, pathsFor } from "../src/paths"
 import * as proc from "../src/proc"
 import * as qemu from "../src/qemu"
 import * as qmp from "../src/qmp"
+import { reconcileNote } from "../src/reconcile"
 import { currentQemuCompat } from "../src/runtime"
 import * as saves from "../src/saves"
 import * as servicectl from "../src/servicectl"
@@ -932,7 +933,7 @@ describe("the control service under the keeper", () => {
     const first = await servicectl.ensureService(NAME, p)
     writeFileSync(p.qmpQemu, "")
     await keeperRequest(keeperSocket(p), { op: "test-adopt" })
-    await reconcileManagement(NAME, p)
+    await ensureCurrent(NAME, p)
     const after = servicectl.readService(p)
     expect(after?.pid).not.toBe(first.pid)
     expect(alive(first.pid)).toBe(false)
@@ -1105,11 +1106,11 @@ describe("adopting a VM an older winvm started", () => {
     const p = pathsFor(NAME)
     const pid = await startLegacy()
     try {
-      const r = await reconcileManagement(NAME, p)
+      const r = await ensureCurrent(NAME, p)
       expect(r.adopted).toBe(true)
       expect((await keeperHello(p))?.child).toMatchObject({ pid, legacy: true })
       expect(reconcileNote(NAME, r, p)).toContain("winvm's keeper now watches")
-      expect((await reconcileManagement(NAME, p)).adopted).toBeUndefined()
+      expect((await ensureCurrent(NAME, p)).adopted).toBeUndefined()
     } finally {
       await releasePidfiles()
     }

@@ -13,7 +13,6 @@ import {
 } from "./eventlog"
 import { hostEnd } from "./hostend"
 import { buildIdentity } from "./identity"
-import { type ReconcileOptions, settleWatcherDebt } from "./lifecycle"
 import { leaseHolder } from "./operation"
 import {
   captureOutput,
@@ -23,13 +22,14 @@ import {
   readOpRequest,
   reply,
 } from "./ops"
-import { SERVICE_HANDLERS } from "./opverbs"
+import { SERVICE_HANDLERS, STOW_HANDLER } from "./opverbs"
 import { PACKAGE_DIR, type Paths, pathsFor } from "./paths"
 import { ownStart } from "./proc"
 import * as qga from "./qga"
 import { claim, keptWithin, livePidIn, recordedPid } from "./servicectl"
 import * as share from "./share"
 import { ChangeNotices } from "./sharewatch"
+import { type WatchOptions, watchDuties } from "./watch"
 
 export interface ServiceOptions {
   readonly exitAfterMs?: number
@@ -38,10 +38,7 @@ export interface ServiceOptions {
   readonly eventsMaxBytes?: number
   readonly hostEnd?: (name: string, deadlineMs: number) => Promise<unknown>
   readonly handlers?: OpHandlers
-  readonly settle?: {
-    readonly everyMs?: number
-    readonly options?: ReconcileOptions
-  }
+  readonly watch?: WatchOptions
 }
 
 export interface ServiceHandle {
@@ -168,6 +165,16 @@ export async function runService(
     },
   })
 
+  const duties = watchDuties(
+    name,
+    {
+      perform: async (op, handler, args) =>
+        await queue.perform(op, handler, args),
+      stow: STOW_HANDLER,
+    },
+    o.watch,
+  )
+
   const qmpChannel = new QmpChannel({
     listen: p.qmp,
     upstream: p.qmpQemu,
@@ -218,6 +225,7 @@ export async function runService(
     if (hostEnding !== null)
       return new Response("already ending", { status: 409 })
     const endHost = o.hostEnd ?? hostEnd
+    void duties.halt("the Mac is shutting down")
     hostEnding = (async (): Promise<unknown> => {
       await queue.close("host-end")
       return await endHost(name, deadlineMs)
@@ -357,30 +365,6 @@ export async function runService(
   })
   let goneMs = 0
   let qemuGoneMs = 0
-  let settling = false
-  let settleAt = 0
-  const settleEveryMs = o.settle?.everyMs ?? 30_000
-  const settle = (): void => {
-    if (settling || stopping || Date.now() < settleAt) return
-    settling = true
-    settleWatcherDebt(name, p, o.settle?.options)
-      .then(
-        (r) => {
-          if (r !== null) settleAt = Date.now() + settleEveryMs
-        },
-        (error: unknown) => {
-          settleAt = Date.now() + settleEveryMs
-          record({
-            kind: "warning",
-            what: "watcher owed",
-            error: error instanceof Error ? error.message : String(error),
-          })
-        },
-      )
-      .finally(() => {
-        settling = false
-      })
-  }
 
   let notices: { readonly key: string; readonly n: ChangeNotices } | null = null
   let syncing = false
@@ -448,7 +432,7 @@ export async function runService(
     }
     void syncNotices()
     rotate()
-    settle()
+    duties.check()
     qemuGoneMs = livePidIn(p.pid) === null ? qemuGoneMs + checkMs : 0
     if (qemuGoneMs >= exitAfterMs) queue.endQueued()
     if (
@@ -471,6 +455,7 @@ export async function runService(
     }
     stopping = true
     if (hostEnding !== null) await hostEnding
+    await duties.halt("winvm's service stopped")
     await queue.close("stopping")
     clearInterval(check)
     clearInterval(heartbeat)

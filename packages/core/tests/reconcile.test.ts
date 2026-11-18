@@ -59,14 +59,9 @@ describe("reconciling instances", () => {
           return []
         },
         reconcile: async (n) => {
-          if (n === "b")
-            throw new ManagementError("service-replace", `b would not start`)
+          if (n === "b") throw new ManagementError("b would not start")
           done.push(n)
-          return await Promise.resolve({
-            changed: false,
-            servicePid: null,
-            watcherPid: null,
-          })
+          return await Promise.resolve({ changed: false, servicePid: null })
         },
       })
       expect(code).toBe(1)
@@ -89,13 +84,14 @@ describe("reconciling instances", () => {
           await Promise.resolve({
             changed: false,
             servicePid: 1,
-            watcherPid: 2,
-            deferred: "autosaving" as const,
+            deferred: "busy" as const,
           }),
       })
       expect(code).toBe(0)
       const text = said.mock.calls.flat().join("\n")
-      expect(text).toContain("autosaving")
+      expect(text).toContain(
+        '"a" is busy, so its control service was left as it is',
+      )
       expect(text).toContain("winvm reconcile -i a")
     } finally {
       said.mockRestore()

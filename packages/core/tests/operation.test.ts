@@ -42,7 +42,6 @@ import {
 } from "../src/operation"
 import { pathsFor } from "../src/paths"
 import { isSameProcess, processStart } from "../src/proc"
-import { CLI } from "../src/watch"
 
 const NAME = "op-test"
 const HOLDER = resolve(import.meta.dir, "fakes", "holder.ts")
@@ -569,8 +568,8 @@ describe("waiting", () => {
     await auto
   })
 
-  it("marks the lease of the watcher's own winvm stow, which says --automatic", async () => {
-    const argv = parseArgs(CLI.stow(NAME).slice(1))
+  it("marks the lease of a stow that says --automatic, as winvm's own idle stows do", async () => {
+    const argv = parseArgs(["-i", NAME, "--automatic"])
     expect(automaticFrom(argv)).toBe(true)
     expect(automaticFrom(parseArgs(["-i", NAME]))).toBe(false)
     expect(

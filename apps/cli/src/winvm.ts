@@ -6,12 +6,7 @@ import * as cuacmds from "@winvm/core/cuacmds"
 import * as finder from "@winvm/core/finder"
 import * as follow from "@winvm/core/follow"
 import * as goldens from "@winvm/core/golden"
-import {
-  ManagementError,
-  reconcileManagement,
-  reconcileNote,
-  shouldReconcileVerb,
-} from "@winvm/core/lifecycle"
+import { ensureCurrent, ManagementError } from "@winvm/core/lifecycle"
 import * as machineinfo from "@winvm/core/machineinfo"
 import * as mcpcmds from "@winvm/core/mcpcmds"
 import * as ocr from "@winvm/core/ocr"
@@ -127,17 +122,12 @@ if (
 
 if (
   sub !== undefined &&
-  shouldReconcileVerb(sub, process.env, instanceName(args)) &&
+  reconcile.shouldReconcileVerb(sub, process.env, instanceName(args)) &&
   !(sub === "files" && args.positional[0]?.startsWith("_") === true)
 ) {
   const name = instanceName(args)
   try {
-    const note = reconcileNote(
-      name,
-      await reconcileManagement(name, undefined, {
-        waitForBusyWatcher: false,
-      }),
-    )
+    const note = reconcile.reconcileNote(name, await ensureCurrent(name))
     if (note !== null) console.error(note)
   } catch (error) {
     if (!(error instanceof ManagementError)) throw error

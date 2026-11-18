@@ -53,7 +53,7 @@ import * as input from "./input"
 import { ensureInstance, makeVars, resetInstance, sealBase } from "./instance"
 import { ensureKeeper } from "./keeper"
 import { killKept, retireKeeper } from "./kept"
-import { ManagementError, reconcileManagement } from "./lifecycle"
+import { ensureCurrent, ManagementError } from "./lifecycle"
 import * as machineinfo from "./machineinfo"
 import {
   buildSeed,
@@ -640,7 +640,7 @@ export async function startRunning(
   seams: RunningStartSeams = {},
 ): Promise<number> {
   const p = pathsFor(name)
-  const reconcile = seams.reconcile ?? reconcileManagement
+  const reconcile = seams.reconcile ?? ensureCurrent
   const startWatcher = seams.startWatcher ?? watcher.startWatcherFor
   const frozenState = seams.frozenState ?? ((q: Paths) => frozen.frozenState(q))
   const afterUp = seams.afterUp ?? ((n: string) => finder.afterUp(n))
@@ -887,9 +887,9 @@ export interface StopCommandSeams {
     o?: qga.WaitOptions,
   ) => Promise<boolean>
   readonly shutdown?: (sockPath: string) => Promise<void>
-  readonly watcherPid?: (name: string) => number | null
+  readonly watching?: (name: string) => boolean
   readonly stopWatcher?: (name: string) => Promise<boolean>
-  readonly ensureWatcher?: (name: string) => number | null
+  readonly ensureWatcher?: (name: string) => boolean
   readonly beforeDown?: (name: string) => void
   readonly afterUp?: (name: string) => Promise<void>
   readonly stopSidecars?: (p: Paths) => void
@@ -1051,7 +1051,7 @@ async function stopRun(
       waitForEvent(n, matches, Date.now() + (until - now()), { since }))
   const afterUp = seams.afterUp ?? ((n: string) => finder.afterUp(n))
   const ensureWatcher = seams.ensureWatcher ?? watcher.ensureWatcher
-  const watcherPid = seams.watcherPid ?? ((n: string) => watcher.watcherPid(n))
+  const watching = seams.watching ?? watcher.watching
   const name = instanceName(args)
   const p = pathsFor(name)
   if (!isRunning(p)) {
@@ -1060,7 +1060,7 @@ async function stopRun(
   }
   const pid = pidOf(p)
   const original = await frozenState(p)
-  const hadWatcher = watcherPid(name) !== null
+  const hadWatcher = watching(name)
   let resumed = false
   const attempt = async (what: string, f: () => unknown): Promise<void> => {
     try {
@@ -1653,28 +1653,42 @@ export async function watchCmd(args: Args): Promise<number> {
     return 0
   }
   if (args.flags.has("status")) {
-    const pid = watcher.watcherPid(name)
     const st = watcher.readWatchState(name)
     if (st === null) console.log(`instance "${name}" has never been watched`)
     else
       console.log(
         JSON.stringify(
-          pid === null ? { ...st, state: "stopped" } : st,
+          watcher.watching(name) ? st : { ...st, state: "stopped" },
           null,
           2,
         ),
       )
     return 0
   }
-  const interval = args.flags.get("interval")
-  const tickMs = interval === undefined ? undefined : Number(interval) * 1000
-  if (tickMs !== undefined && !(tickMs >= 1000)) {
-    console.error("::error::--interval is a number of seconds, at least 1")
+  if (args.flags.has("interval")) {
+    console.error(
+      "::error::--interval is gone: winvm's service watches the guest, every 15 s",
+    )
     return 1
   }
-  return await watcher.watch(name, {
-    ...(tickMs === undefined ? {} : { timing: { tickMs } }),
-  })
+  if (readMeta(name) === null) {
+    console.error(`::error::no such instance "${name}"`)
+    return 1
+  }
+  if (!qemu.isRunning(pathsFor(name))) {
+    console.error(
+      `::error::instance "${name}" is not running — nothing to watch`,
+    )
+    return 1
+  }
+  if (!effectiveConfig(name)["watch.enabled"]) {
+    console.error(
+      `::error::watching is off for "${name}" — \`winvm config -i ${name} watch.enabled=true\``,
+    )
+    return 1
+  }
+  watcher.startWatcherFor(name, args)
+  return 0
 }
 
 export function configCmd(args: Args): number {
@@ -1773,8 +1787,8 @@ export const USAGE =
   "  clock   [-i name] [--check]   guest-vs-host clock offset, and fix it\n" +
   "  status  [-i name] [--json]    what it's doing; with no -i and several instances, a table.\n" +
   "                                Only reads: it never stops, starts or replaces anything\n" +
-  "  reconcile [-i name]           bring the control service and watcher up to this build, restart\n" +
-  "                                missing ones and unmount drives a gone guest left; no -i: all\n" +
+  "  reconcile [-i name]           bring the control service up to this build, restart a missing\n" +
+  "                                one and unmount drives a gone guest left; no -i: all\n" +
   "  events  [-i name] [--json]    the instances' event records (QEMU events, operations);\n" +
   "          [--follow] [--since c]  keep following / resume after a line's cursor (or `start`)\n" +
   "          --op ID [--follow]    one operation: what it printed, then its exit code; --follow\n" +
@@ -1817,8 +1831,8 @@ export const USAGE =
   "  prune [--media]               drop leftover build scratch instances, and cached media\n" +
   "  stop | kill [-i name]\n" +
   "  destroy [-i name] [--keep-saves]  remove the instance and its saves\n" +
-  "  watch   [-i name]             run the idle watcher in the foreground (start runs it in the background)\n" +
-  "          [--stop | --status]   end it / print its state\n" +
+  "  watch   [-i name]             turn the idle watcher on, in winvm's service (start does too)\n" +
+  "          [--stop | --status]   turn it off until the next start / print its state\n" +
   "  config  [-i name] [key=value ...]  autosave/stow/watch settings and the app's title; bare prints them\n" +
   "          [-i name] cpus=N memory=8G  processors and memory, from the next time Windows starts\n" +
   "  settings [key=value ...] [--json]  your own settings, for every instance (viewer.pauseOverlay);\n" +
