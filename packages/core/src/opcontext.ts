@@ -34,8 +34,9 @@ export const CANCEL_REASON = "winvm cancel"
 
 export class OpCancelled extends Error {
   constructor(scope: OpScope) {
+    const why: unknown = scope.cancelled.reason
     super(
-      `${scope.operation} was cancelled (${CANCEL_REASON}) before its point of no return; what it had begun was put back`,
+      `${scope.operation} was cancelled (${typeof why === "string" ? why : CANCEL_REASON}) before its point of no return; what it had begun was put back`,
     )
     this.name = "OpCancelled"
   }

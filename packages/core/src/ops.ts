@@ -56,7 +56,7 @@ export const isServiceOp = (v: unknown): v is ServiceOp =>
 export interface OpHandler {
   readonly run: (args: Args) => Promise<number>
   readonly cancel: "never" | "before-request" | "cooperative"
-  readonly hostEnd?: "end" | "finish" | "finish-after-mark"
+  readonly hostEnd?: "end" | "finish" | "finish-after-mark" | "cancel"
 }
 
 export type OpHandlers = Readonly<Partial<Record<ServiceOp, OpHandler>>>
@@ -258,7 +258,7 @@ const errorText = (error: unknown): string =>
 
 function lastsThroughHostEnd(r: Running): boolean {
   const policy = r.handler.hostEnd ?? "end"
-  if (policy === "finish") return true
+  if (policy === "finish" || policy === "cancel") return true
   return policy === "finish-after-mark" && r.scope.irreversibleAt !== null
 }
 
@@ -310,6 +310,8 @@ export class OpQueue {
     const ended: Running[] = []
     for (const r of this.ops.values()) {
       if (r.scope.operation === "kill") continue
+      if (r.held && reason === HOST_END && r.handler.hostEnd === "cancel")
+        r.cancelling.abort(DID_NOT_RUN[HOST_END])
       if (r.held && (reason !== HOST_END || lastsThroughHostEnd(r))) continue
       r.controller.abort(reason)
       ended.push(r)

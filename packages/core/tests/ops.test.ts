@@ -15,7 +15,7 @@ import { parseArgs } from "../src/args"
 import { type Entry, readSince, START } from "../src/eventlog"
 import { type HostEndOutcome, runHostEnd } from "../src/hostend"
 import { remountHeld, runOp } from "../src/opclient"
-import { currentOp, pointOfNoReturn } from "../src/opcontext"
+import { currentOp, OpCancelled, pointOfNoReturn } from "../src/opcontext"
 import { InstanceBusy, leaseHolder, withOperation } from "../src/operation"
 import { OPS_PROTOCOL, type OpHandlers, OpQueue } from "../src/ops"
 import { SERVICE_HANDLERS } from "../src/opverbs"
@@ -1305,6 +1305,40 @@ describe("an op winvm's service runs by itself", () => {
       ok: false,
       error: "the disk is full",
     })
+  })
+
+  it("is cancelled at host end, if it asks to be, and holds the instance until it has put things back", async () => {
+    const queue = ownQueue()
+    const g = gate()
+    let started = false
+    let why = ""
+    const performing = queue.perform(
+      "save",
+      {
+        cancel: "cooperative",
+        hostEnd: "cancel",
+        run: async () => {
+          started = true
+          await g.opened
+          const op = currentOp()
+          if (op === null) return 1
+          why = new OpCancelled(op).message
+          return op.cancelled.aborted ? 130 : 0
+        },
+      },
+      [],
+    )
+    await until(() => started)
+    await queue.close("host-end")
+    expect(JSON.parse(readFileSync(p.lease, "utf8"))).toMatchObject({
+      operation: "save",
+      automatic: true,
+    })
+    g.open()
+    expect(await performing).toEqual({ kind: "done", code: 130 })
+    expect(why).toBe(
+      "save was cancelled (the Mac is shutting down) before its point of no return; what it had begun was put back",
+    )
   })
 
   it("answers closed once the Mac is shutting down", async () => {
