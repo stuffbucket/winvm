@@ -203,7 +203,7 @@ export function hostPoweredOff(name: string): HostPoweredOff | null {
   for (const e of readSince(name, START).entries) {
     const settled = hostEnd !== null && hostEnd.exit !== null
     if (hostEnd !== null && !settled) hostEnd.last = e.t
-    if (e.kind === "op") {
+    if (e.kind === "op" && (e.phase === "begin" || e.phase === "end")) {
       if (hostEnd !== null && e.operation === "stow") {
         hostEnd.stowing = e.phase === "begin"
         if (e.phase === "end" && e.ok) hostEnd.stowed = true
