@@ -365,7 +365,7 @@
   "close.failed": "WinVM stayed open",
   "close.statusFailed": "WinVM couldn't read which Windows machines are running, so it stayed open. Try closing it again.",
   "close.actionFailed": "WinVM couldn't finish with {title}, so it stayed open.",
-  "close.orphanUnreadable": "WinVM closed while winvm {operation} on {title} ran, and couldn't read the outcome of the close (op {op}). It will look again the next time it opens; `winvm events -i {machine} --op {op}` shows it.",
+  "close.orphanUnreadable": "WinVM closed while winvm {operation} on {title} ran, and couldn't read the outcome of the close (op {op}). It will look again the next time it opens, unless you dismiss this; `winvm events -i {machine} --op {op}` shows it.",
   "close.cutShort": "WinVM closed while winvm {operation} on {title} ran, and it ended without finishing.",
   "close.externalFailed": "winvm {operation} on {title}, run elsewhere, ended without finishing, so WinVM stayed open. What it said is where it was run.",
   "close.sessionTitle": "macOS is waiting for WinVM to close",

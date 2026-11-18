@@ -147,6 +147,7 @@ function fakeBridge() {
     waitFailures: 0,
     wait: null as Deferred<Snapshot> | null,
     records: new Map<string, Recorded>(),
+    unreadable: new Set<string>(),
     refuseFollow: false,
     start: "ok" as "ok" | "out-of-order",
     config: { code: 0, stdout: "", stderr: "" },
@@ -185,6 +186,12 @@ function fakeBridge() {
         })
       if (args[0] === "events") {
         const id = args[args.indexOf("--op") + 1] ?? ""
+        if (bridge.unreadable.has(id))
+          return Promise.resolve({
+            code: 1,
+            stdout: "",
+            stderr: "::error::events.jsonl could not be read",
+          })
         const r = bridge.records.get(id)
         return Promise.resolve({
           code: 0,
@@ -2035,6 +2042,89 @@ describe("useCloseFlow after the app was quit during a close", () => {
     expect(bridge.log.filter((l) => l.startsWith("close_forget"))).toEqual([
       "close_forget orphan-op-5",
       "close_forget orphan-op-6",
+    ])
+  })
+
+  it("goes past a note it cannot read to the next, shows that one, and keeps the unreadable note", async () => {
+    const bridge = fakeBridge()
+    bridge.unreadable.add("orphan-op-8")
+    bridge.records.set("orphan-op-9", {
+      ended: true,
+      ok: false,
+      exitCode: 1,
+      output: "::error::the disk is full",
+    })
+    bridge.snapshot = snapshotOf({
+      orphans: [
+        { machine: "a", verb: "stow", op: "orphan-op-8" },
+        { machine: "b", verb: "stow", op: "orphan-op-9" },
+      ],
+    })
+    await mount(
+      fakeWinvm(
+        [
+          { name: "a", state: "running" },
+          { name: "b", state: "running" },
+        ],
+        "a",
+      ),
+    )
+    const failed = current().state
+    expect(failed.kind === "failed" ? failed.message : null).toBe(
+      "::error::the disk is full",
+    )
+    expect(bridge.log.filter((l) => l.startsWith("close_forget"))).toEqual([
+      "close_forget orphan-op-9",
+    ])
+  })
+
+  it("shows a note it cannot read once the others are settled, and forgets it when the person dismisses it", async () => {
+    const bridge = fakeBridge()
+    bridge.unreadable.add("orphan-op-10")
+    bridge.records.set("orphan-op-11", {
+      ended: true,
+      ok: true,
+      exitCode: 0,
+      output: "",
+    })
+    bridge.snapshot = snapshotOf({
+      orphans: [
+        { machine: "b", verb: "stow", op: "orphan-op-10" },
+        { machine: "a", verb: "stow", op: "orphan-op-11" },
+      ],
+    })
+    await mount(
+      fakeWinvm(
+        [
+          { name: "a", state: "stowed" },
+          { name: "b", state: "running" },
+        ],
+        "a",
+      ),
+    )
+    const failed = current().state
+    expect(failed.kind).toBe("failed")
+    if (failed.kind !== "failed") return
+    expect(failed.machine?.name).toBe("b")
+    expect(failed.message).toContain(
+      copy("close.orphanUnreadable", {
+        operation: "stow",
+        title: "b",
+        machine: "b",
+        op: "orphan-op-10",
+      }),
+    )
+    expect(bridge.log.filter((l) => l.startsWith("close_forget"))).toEqual([
+      "close_forget orphan-op-11",
+    ])
+    act(() => {
+      current().cancel()
+    })
+    await flush()
+    expect(current().state.kind).toBe("idle")
+    expect(bridge.log.filter((l) => l.startsWith("close_forget"))).toEqual([
+      "close_forget orphan-op-11",
+      "close_forget orphan-op-10",
     ])
   })
 
