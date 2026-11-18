@@ -139,7 +139,7 @@ async function runAll(files: readonly string[], args: Args): Promise<number> {
   if (
     !qemu.isRunning(pathsFor(instance)) &&
     jobs.some((j) => !j.reset) &&
-    (await boot(instance)) !== 0
+    !saves.windowsRuns(await boot(instance))
   ) {
     return fail(`could not start instance "${instance}"`)
   }

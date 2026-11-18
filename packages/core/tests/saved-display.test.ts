@@ -38,7 +38,7 @@ import {
 } from "../src/display"
 import { appendEntry, readSince, START } from "../src/eventlog"
 import * as finder from "../src/finder"
-import { resetToGolden } from "../src/golden"
+import { golden, resetToGolden } from "../src/golden"
 import * as host from "../src/host"
 import { hostEndFacts, hostEndSeams } from "../src/hostend"
 import { hostPoweredOff } from "../src/hostoff"
@@ -1633,6 +1633,17 @@ describe("a recall that completed but whose guest did not answer in time", () =>
       resetToGolden("source", "golden", { timeoutMs: 10 }),
     ).rejects.toThrow("did not answer")
     expect(readSave("source", "stow")).toBeNull()
+  })
+
+  it("has golden reset exit like load, saying Windows was restored and is still busy", async () => {
+    fixture(VIRTIO_GPU, true, "golden", "golden")
+    const warned = spyOn(console, "warn").mockImplementation(() => undefined)
+    expect(await golden(parseArgs(["reset", "golden", "-i", "source"]))).toBe(
+      saves.RESTORED_UNANSWERED,
+    )
+    const said = warned.mock.calls.map((c) => String(c[0])).join("\n")
+    expect(said).toContain("still busy")
+    expect(said).toContain("restored")
   })
 })
 

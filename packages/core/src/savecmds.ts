@@ -211,7 +211,7 @@ export async function load(args: Args): Promise<number> {
   watcher.touchActivity(name)
   const rewatch = watcher.rewatchAfterRestore(name, args)
   const code = await doLoad(name, saveName, "loaded")
-  if (code === 0 || code === saves.RESTORED_UNANSWERED) {
+  if (saves.windowsRuns(code)) {
     watcher.touchActivity(name)
     rewatch()
   }

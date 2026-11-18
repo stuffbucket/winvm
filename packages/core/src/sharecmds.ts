@@ -333,9 +333,13 @@ async function install(
   }
   if (wasRunning || args.flags.has("start")) {
     log("starting Windows again")
-    if ((await quietly(asJson, async () => await commands.start(cli()))) !== 0)
+    const started = await quietly(
+      asJson,
+      async () => await commands.start(cli()),
+    )
+    if (!saves.windowsRuns(started))
       return fail(`"${name}" did not start again`)
-    await agent.connect(name, { timeoutMs: 60_000 })
+    if (started === 0) await agent.connect(name, { timeoutMs: 60_000 })
   }
   printStatus(name, await gather(name, p), asJson)
   return 0

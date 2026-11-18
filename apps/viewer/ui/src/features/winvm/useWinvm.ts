@@ -24,6 +24,7 @@ import {
   parseConnection,
   parseStatus,
   phase,
+  RESTORED_BUSY,
   titleAssignment,
 } from "../../model"
 import { Refresher } from "./refresher"
@@ -516,7 +517,11 @@ export function useWinvm(): Winvm {
         setLast(ran)
         if (out.code !== 0) setFailure(ran)
         if (target === null || target === nameRef.current)
-          guard.current.settle(out.code === 0 ? phaseAfter(verb) : null)
+          guard.current.settle(
+            out.code === 0 || out.code === RESTORED_BUSY
+              ? phaseAfter(verb)
+              : null,
+          )
       } catch (e) {
         const ran: Ran = { verb, code: -1, output: errorText(e) }
         result = ran

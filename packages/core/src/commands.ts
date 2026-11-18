@@ -655,7 +655,7 @@ export async function start(args: Args): Promise<number> {
   const p = pathsFor(name)
   if (qemu.isRunning(p)) return await startRunning(name, args)
   const recalled = await savecmds.recallStow(name, args)
-  if (recalled === 0 || recalled === saves.RESTORED_UNANSWERED)
+  if (recalled !== null && saves.windowsRuns(recalled))
     watcher.startWatcherFor(name, args)
   if (recalled !== null) return recalled
   const isNew = readMeta(name) === null
@@ -775,7 +775,7 @@ export async function rewind(args: Args): Promise<number> {
   const rewatch = watcher.rewatchAfterRestore(name, args)
   finder.beforeDown(name)
   const viaSave = await savecmds.rewindViaSave(name, args.positional[0])
-  if (viaSave === 0 || viaSave === saves.RESTORED_UNANSWERED) {
+  if (viaSave !== null && saves.windowsRuns(viaSave)) {
     watcher.touchActivity(name)
     rewatch()
   }

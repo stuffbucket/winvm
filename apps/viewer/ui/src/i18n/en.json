@@ -277,6 +277,7 @@
   "host.notReady": "This Mac can't run Windows yet",
   "host.runtimeMissing": "The runtime that runs Windows isn't installed.",
   "error.start": "Windows didn't start",
+  "notice.restoredBusy": "Windows is back, and still busy",
   "error.stop": "Windows didn't shut down",
   "error.reboot": "Windows didn't restart",
   "error.pause": "Windows didn't pause",

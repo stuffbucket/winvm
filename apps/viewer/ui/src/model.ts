@@ -37,6 +37,8 @@ const OperationInfoSchema = z.object({
   startedAt: z.string(),
 })
 
+export const RESTORED_BUSY = 6
+
 export const CLOSE_POLICIES = ["ask", "leave", "stow", "shutdown"] as const
 
 const ClosePolicySchema = z.enum(CLOSE_POLICIES)

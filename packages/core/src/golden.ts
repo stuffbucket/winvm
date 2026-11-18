@@ -269,6 +269,18 @@ export interface ResetResult {
   readonly manifest: saves.Manifest
 }
 
+export class RestoredUnanswered extends Error {
+  readonly warning: string
+
+  constructor(instance: string, name: string, waitMs: number, serial: string) {
+    super(`guest did not answer after loading "${name}" — see ${serial}`)
+    this.name = "RestoredUnanswered"
+    this.warning =
+      `warning: Windows is still busy; it was restored ("${instance}" reset to "${name}" and runs), but its guest agent did not answer within ${String(Math.round(waitMs / 1000))} s, ` +
+      `so its clock was not set — \`winvm clock -i ${instance}\` once it answers (see ${serial})`
+  }
+}
+
 export async function resetToGolden(
   instance: string,
   name: string = saves.GOLDEN,
@@ -279,11 +291,9 @@ export async function resetToGolden(
   saves.retireLoaded(instance, name, manifest)
   const restoredMs = Date.now() - started
   const p = pathsFor(instance)
-  if (!(await qga.waitResponsive(p.qga, o.timeoutMs ?? 120_000))) {
-    throw new Error(
-      `guest did not answer after loading "${name}" — see ${p.serial}`,
-    )
-  }
+  const waitMs = o.timeoutMs ?? 120_000
+  if (!(await qga.waitResponsive(p.qga, waitMs)))
+    throw new RestoredUnanswered(instance, name, waitMs, p.serial)
   const responsiveAt = Date.now()
   const c = await syncGuestClock(p)
   const done = Date.now()
@@ -345,6 +355,10 @@ export async function golden(args: Args): Promise<number> {
       return 0
     }
   } catch (error) {
+    if (error instanceof RestoredUnanswered) {
+      console.warn(error.warning)
+      return saves.RESTORED_UNANSWERED
+    }
     return fail(errMsg(error))
   }
   return fail(

@@ -79,10 +79,14 @@ A stow is used up the moment QEMU has loaded it and Windows runs again, so
 `winvm start` never recalls the same stow twice, even when Windows was
 stowed in the middle of restarting or installing updates and is slow to
 answer afterwards. If Windows' guest agent does not answer within 5 minutes
-of a recall (or of `winvm load`), winvm says Windows is still busy but was
-restored, starts the watcher, and exits 6; set the clock and mount the
-drives later with `winvm clock` and `winvm files mount`. A load that QEMU
-never finishes is quit, and the stow is kept.
+of a recall (or of `winvm load`, `winvm rewind` or `winvm golden reset`),
+winvm says Windows is still busy but was restored, starts the watcher, and
+exits 6; set the clock and mount the drives later with `winvm clock` and
+`winvm files mount`. The app shows that as a notice, not a failure, and
+`winvm run` and `winvm share install` carry on. A load that QEMU never
+finishes is quit, and the stow is kept. If QEMU cannot be quit, or does not
+say what state it is in, it is left as it is and the stow is marked so that
+`winvm start` does not recall it; `winvm load` still can.
 
 At logout, the keeper only does this if launchd stops it. If launchd leaves
 your background session running, so does Windows, without a window, and you

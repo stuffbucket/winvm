@@ -416,6 +416,9 @@ export const STOW_REFUSED = 4
 export const STOW_UNDECIDED = 5
 export const RESTORED_UNANSWERED = 6
 
+export const windowsRuns = (code: number): boolean =>
+  code === 0 || code === RESTORED_UNANSWERED
+
 export function retireLoaded(
   instance: string,
   loaded: string,
