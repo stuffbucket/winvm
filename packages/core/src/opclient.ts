@@ -309,6 +309,12 @@ export async function cancelCmd(args: Args, io: Io = stdio): Promise<number> {
     io.out(`cancelled ${String(done.operation)} on "${name}"\n`)
     return 0
   }
+  if (typeof body.unknown === "string") {
+    io.err(
+      `::error::winvm's service for "${name}" runs no op with id ${body.unknown}, so nothing was cancelled\n`,
+    )
+    return 1
+  }
   const refused = isObject(body.refused) ? body.refused : null
   if (refused !== null) {
     io.err(`::error::${String(refused.reason)}\n`)

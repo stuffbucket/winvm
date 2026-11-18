@@ -113,6 +113,8 @@ function describe(e: Entry): string {
         return `${e.operation} left the guest's drives for its caller to mount again`
       if (e.phase === "output")
         return `${e.operation} ${e.stream === "err" ? "stderr" : "stdout"}: ${e.text.trimEnd()}`
+      if (e.queued === true)
+        return `${e.operation} did not run: ${e.error ?? "it never began"}`
       return `${e.operation} ${e.ok ? "succeeded" : "failed"}${e.error === undefined ? "" : `: ${e.error}`}`
     case "service":
     case "warning":

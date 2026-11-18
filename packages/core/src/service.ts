@@ -270,6 +270,7 @@ export async function runService(
         : null
     const c = queue.cancel(id)
     if (c.kind === "none") return answer(reply(404, { none: true }))
+    if (c.kind === "unknown") return answer(reply(404, { unknown: c.id }))
     const { kind, ...what } = c
     return answer(reply(kind === "cancelled" ? 200 : 409, { [kind]: what }))
   }

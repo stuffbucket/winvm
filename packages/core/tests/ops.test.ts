@@ -318,6 +318,13 @@ describe("an op the service runs", () => {
     expect(seen).toEqual([])
   })
 
+  it("refuses an op it could not record, for an instance with no metadata", async () => {
+    rmSync(p.meta)
+    const r = await submit("pause")
+    expect(r.status).toBe(503)
+    expect(seen).toEqual([])
+  })
+
   it("refuses a protocol it does not speak, and an op it does not run, so the client can run it itself", async () => {
     const wrong = await post("/ops", { protocol: 99, op: "pause", args: [] })
     expect(wrong.status).toBe(400)
@@ -492,6 +499,38 @@ describe("cancel", () => {
     })
     gates.resume?.open()
     expect(await ended(first.body.id)).toMatchObject({ ok: true })
+  })
+
+  it("says so when the id names no op, rather than that nothing runs", async () => {
+    const a = await submit("resume")
+    await until(() => running === 1)
+    const c = await cancel("no-such-op")
+    expect(c.status).toBe(404)
+    expect(c.body).toMatchObject({ unknown: "no-such-op" })
+    gates.resume?.open()
+    await ended(a.body.id)
+  })
+
+  it("cancels no queued op of its own choosing while another process holds the lease", async () => {
+    const outside = gate()
+    const other = withOperation("t", "stop", async () => {
+      await outside.opened
+    })
+    await Bun.sleep(20)
+    const queued = await submit("pause", { wait: true })
+    expect(queued.status).toBe(202)
+    const c = await cancel()
+    expect(c.status).toBe(409)
+    expect((c.body.refused as { reason: string }).reason).toContain("--id")
+    expect(endOf(queued.body.id)).toBeUndefined()
+    const off = await cancel(queued.body.id)
+    expect(off.status).toBe(200)
+    expect(await ended(queued.body.id)).toMatchObject({
+      queued: true,
+      exitCode: 130,
+    })
+    outside.open()
+    await other
   })
 
   it("says when there is nothing to cancel", async () => {
@@ -728,6 +767,27 @@ describe("host end", () => {
     expect(
       opsOf(a.body.id).filter((e) => e.kind === "op" && e.phase === "output"),
     ).toEqual([])
+  }, 20_000)
+
+  it("never calls an op cancelled that it already ended", async () => {
+    const plain = fake.handler
+    fake.handler = async (cmd) => {
+      if (cmd.execute === "stop") await Bun.sleep(800)
+      return await plain(cmd)
+    }
+    const a = await submit("lock")
+    await until(() => fake.commands.includes("stop"))
+    expect(await ending()).toBe(202)
+    const c = await post("/ops/cancel", {
+      protocol: OPS_PROTOCOL,
+      id: a.body.id,
+    })
+    expect(c.status).toBe(409)
+    expect((c.body.refused as { reason: string }).reason).toContain(
+      "the Mac is shutting down",
+    )
+    await until(() => outcome !== null, 10_000)
+    await outcome
   }, 20_000)
 
   it("takes no new op once it has begun, and says why", async () => {

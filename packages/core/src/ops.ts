@@ -25,6 +25,7 @@ import {
   waitNote,
   withOperation,
 } from "./operation"
+import { readMeta } from "./paths"
 
 export const OPS_PROTOCOL = 1
 
@@ -124,10 +125,11 @@ export type Cancelled =
     }
   | {
       readonly kind: "refused"
-      readonly id: string
-      readonly operation: string
+      readonly id?: string
+      readonly operation?: string
       readonly reason: string
     }
+  | { readonly kind: "unknown"; readonly id: string }
   | { readonly kind: "none" }
 
 const decoders = new WeakMap<OpScope, Record<OutputStream, TextDecoder>>()
@@ -254,6 +256,11 @@ export class OpQueue {
 
   async submit(req: OpRequest): Promise<Submitted> {
     if (this.closed !== null) return { kind: "closed", reason: this.closed }
+    if (readMeta(this.name) === null)
+      return {
+        kind: "failed",
+        error: `instance "${this.name}" has no meta.json, so an op on it could not be recorded`,
+      }
     const handler = this.handlers[req.op]
     if (handler === undefined) throw new Error(`no handler for ${req.op}`)
     const id = randomUUID()
@@ -365,12 +372,25 @@ export class OpQueue {
     const all = [...this.ops.values()].filter(
       (r) => r.scope.operation !== "kill",
     )
-    const target =
-      id === null ? (all.find((r) => r.held) ?? all[0]) : this.ops.get(id)
-    if (target === undefined) return { kind: "none" }
+    if (id === null && all.length === 0) return { kind: "none" }
+    const target = id === null ? all.find((r) => r.held) : this.ops.get(id)
+    if (target === undefined && id !== null) return { kind: "unknown", id }
+    if (target === undefined)
+      return {
+        kind: "refused",
+        reason: `the command holding "${this.name}" is not one winvm's service runs, so nothing was cancelled; \`winvm cancel -i ${this.name} --id ID\` takes a waiting op off the queue`,
+      }
     const { scope } = target
     const named = { id: scope.id, operation: scope.operation }
-    if (!target.held || target.scope.signal.aborted) {
+    const why: unknown = scope.signal.aborted ? scope.signal.reason : null
+    if (why === CANCELLED) return { kind: "cancelled", ...named }
+    if (why !== null)
+      return {
+        kind: "refused",
+        ...named,
+        reason: `${scope.operation} was already ended (${typeof why === "string" ? (DID_NOT_RUN[why] ?? why) : "ended"}), so it was not cancelled`,
+      }
+    if (!target.held) {
       target.controller.abort(CANCELLED)
       return { kind: "cancelled", ...named }
     }
@@ -472,6 +492,7 @@ export class OpQueue {
       startedAt: running.startedAt,
       automatic: automaticFrom(args),
       leased: false,
+      queued: true,
       endedAt: new Date().toISOString(),
       ok: false,
       ...(killed

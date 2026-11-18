@@ -68,6 +68,7 @@ export interface OpOutcome {
   readonly abandoned?: true
   readonly irreversibleAt?: string
   readonly remount?: true
+  readonly queued?: true
 }
 
 export interface OpEndFields extends OpIdentity, OpOutcome {
@@ -359,6 +360,7 @@ function opEntry(stamp: Stamp, r: Json): Entry | null {
     ...(r.abandoned === true ? { abandoned: true as const } : {}),
     ...(irreversibleAt === null ? {} : { irreversibleAt }),
     ...(r.remount === true ? { remount: true as const } : {}),
+    ...(r.queued === true ? { queued: true as const } : {}),
   }
 }
 
