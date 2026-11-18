@@ -1404,6 +1404,31 @@ describe("the CLI", () => {
     })
   }, 60_000)
 
+  it("start of a running instance hands a stale service over before it sends the start", async () => {
+    await control?.stop(true)
+    control = null
+    rmSync(p.control, { force: true })
+    const old = Bun.spawn([process.execPath, cli, "serve", "-i", "t"], {
+      env: env({ WINVM_BUILD_ID: OLD, WINVM_CLI: cli }),
+      stdout: "ignore",
+      stderr: "ignore",
+    })
+    try {
+      const end = Date.now() + 15_000
+      while (readService(p)?.build !== OLD) {
+        if (Date.now() > end) throw new Error("the old service never claimed")
+        await Bun.sleep(50)
+      }
+      winvm(["start", "-i", "t", "--no-watch"])
+      expect(readService(p)?.build).toBe("sha256:cli-test")
+      expect(live(old.pid)).toBe(false)
+      expect(live(qemu.pid)).toBe(true)
+    } finally {
+      old.kill("SIGKILL")
+      await old.exited
+    }
+  }, 60_000)
+
   it("does not reconcile with WINVM_NO_RECONCILE=1", async () => {
     const old = await staleFromSameCli()
     expect(reconcile({ WINVM_NO_RECONCILE: "1" }).status).toBe(0)

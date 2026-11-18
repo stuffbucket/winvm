@@ -127,7 +127,7 @@ if (
 
 if (
   sub !== undefined &&
-  shouldReconcileVerb(sub) &&
+  shouldReconcileVerb(sub, process.env, instanceName(args)) &&
   !(sub === "files" && args.positional[0]?.startsWith("_") === true)
 ) {
   const name = instanceName(args)
