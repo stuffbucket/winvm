@@ -9,7 +9,7 @@ import {
   writeFileSync,
 } from "node:fs"
 import { dirname, resolve } from "node:path"
-
+import { parseAssignment, writeAssignments } from "../src/config"
 import { RAMFB, writeDisplay } from "../src/display"
 import { type Entry, readSince, START } from "../src/eventlog"
 import * as host from "../src/host"
@@ -31,6 +31,7 @@ import { currentCompat, FILES, type Manifest, saveDir } from "../src/saves"
 import * as servicectl from "../src/servicectl"
 import * as share from "../src/share"
 import * as vnc from "../src/vnc"
+import { ensureWatcher } from "../src/watch"
 
 const enabled =
   process.platform === "darwin" && process.env.WINVM_TEST_LAUNCHD === "1"
@@ -69,6 +70,8 @@ const label = keeperLabel(resolve(root, "home"), "launchd-test")
 const RELAUNCH = "relaunch-launchd"
 const relaunchLabel = keeperLabel(resolve(root, "home"), RELAUNCH)
 const FAKE_QEMU = resolve(import.meta.dir, "fakes", "qemu.ts")
+const AUTOSAVE = "autosave-launchd"
+const autosaveLabel = keeperLabel(resolve(root, "home"), AUTOSAVE)
 
 afterAll(async () => {
   if (enabled) {
@@ -81,6 +84,10 @@ afterAll(async () => {
     await keeperRequest(keeperSocket(pathsFor(RELAUNCH)), {
       op: "kill",
     }).catch(() => null)
+    await keeperRequest(keeperSocket(pathsFor(AUTOSAVE)), {
+      op: "kill",
+    }).catch(() => null)
+    launchctl().bootout(autosaveLabel)
     launchctl().bootout(relaunchLabel)
     launchctl().bootout(label)
     launchctl().bootout(vmLabel)
@@ -615,6 +622,133 @@ describe.if(enabled)("a real launchd keeper job (WINVM_TEST_LAUNCHD=1)", () => {
         launchd.print(relaunchLabel) === null ? true : null,
       )
       expect(() => process.kill(servicePid, 0)).toThrow()
+    } finally {
+      for (const [k, v] of Object.entries(saved)) {
+        if (v === undefined) delete process.env[k]
+        else process.env[k] = v
+      }
+    }
+  }, 120000)
+  it("cancels the service's own autosave under way when the Mac shuts down, and the service stows Windows", async () => {
+    const saved = Object.fromEntries(
+      [
+        "WINVM_RUNTIME",
+        "WINVM_KEEPER",
+        "XDG_DATA_HOME",
+        "WINVM_CLI",
+        "WINVM_QEMU_DATA",
+        "WINVM_FAKE_QEMU_LOG",
+        "WINVM_FAKE_QEMU_SLOW_MIGRATION",
+        "WINVM_WATCH_TIMING",
+      ].map((k) => [k, process.env[k]]),
+    )
+    const runtime = resolve(root, "autosave-runtime")
+    const bin = resolve(runtime, "bin")
+    mkdirSync(bin, { recursive: true })
+    const script = (name: string, body: string): void => {
+      writeFileSync(resolve(bin, name), `#!/bin/sh\n${body}\n`)
+      chmodSync(resolve(bin, name), 0o755)
+    }
+    script(
+      "swtpm",
+      `while [ $# -gt 0 ]; do case "$1" in --ctrl) s="\${2#*path=}"; s="\${s%%,*}"; shift;; esac; shift; done; : > "$s"\nexec sleep 600`,
+    )
+    script(
+      "qemu-system-aarch64",
+      `exec "${process.execPath}" "${FAKE_QEMU}" "$@"`,
+    )
+    const firmware = resolve(root, "autosave-firmware")
+    mkdirSync(firmware, { recursive: true })
+    writeFileSync(resolve(firmware, "edk2-aarch64-code.fd"), "firmware")
+    writeFileSync(resolve(firmware, "edk2-arm-vars.fd"), "variables")
+    const qemuLog = resolve(root, "autosave.qemu-log")
+    process.env.WINVM_RUNTIME = runtime
+    process.env.XDG_DATA_HOME = resolve(root, "data")
+    process.env.WINVM_KEEPER = keeper
+    process.env.WINVM_CLI = CLI
+    process.env.WINVM_QEMU_DATA = firmware
+    process.env.WINVM_FAKE_QEMU_LOG = qemuLog
+    process.env.WINVM_FAKE_QEMU_SLOW_MIGRATION = "1"
+    process.env.WINVM_WATCH_TIMING = JSON.stringify({ tickMs: 200 })
+
+    const image = "win11-arm64"
+    const meta = { image, vnc: 12, created: "2026-11-17T00:00:00Z" }
+    const p = pathsFor(AUTOSAVE)
+    mkdirSync(p.tpmDir, { recursive: true })
+    writeFileSync(p.meta, JSON.stringify(meta))
+    writeFileSync(p.overlay, "live disk")
+    writeFileSync(p.vars, "live vars")
+    writeDisplay(p, RAMFB)
+    mkdirSync(dirname(basePath(image)), { recursive: true })
+    writeFileSync(basePath(image), "immutable base")
+    writeFileSync(imageMetaPath(image), JSON.stringify({ virtioBoot: true }))
+    writeAssignments(AUTOSAVE, [
+      parseAssignment("autosave.idleMinutes=0.01"),
+      parseAssignment("stow.enabled=false"),
+    ])
+    const entries = (): readonly Entry[] => readSince(AUTOSAVE, START).entries
+    const hostEnd = (step: string): Entry | undefined =>
+      entries().find(
+        (e) => e.kind === "service" && e.what === "host-end" && e.step === step,
+      )
+    const automatic = (operation: string, phase: string): readonly Entry[] =>
+      entries().filter(
+        (e) =>
+          e.kind === "op" &&
+          (e.phase === "begin" || e.phase === "end") &&
+          e.phase === phase &&
+          e.operation === operation &&
+          e.automatic,
+      )
+
+    try {
+      await withOperation(AUTOSAVE, "start", async () => {
+        await qemu.launch(AUTOSAVE, p, meta, {
+          installMedia: false,
+          ephemeral: false,
+          virtioBoot: true,
+        })
+      })
+      const hello = await keeperHello(p)
+      const servicePid = hello?.service?.pid ?? -1
+      expect(servicePid).toBeGreaterThan(0)
+      expect(ensureWatcher(AUTOSAVE)).toBe(true)
+      await until("the autosave's migration", 20000, () =>
+        existsSync(qemuLog) &&
+        readFileSync(qemuLog, "utf8").includes("migrate ")
+          ? true
+          : null,
+      )
+      expect(automatic("save", "begin")[0]).toMatchObject({ pid: servicePid })
+
+      const launchd = launchctl()
+      expect(launchd.bootout(autosaveLabel)).toBe(true)
+      await until("the keeper to finish", 30000, () =>
+        whats(p.events).includes("exiting") ? true : null,
+      )
+      const keeperWhats = whats(p.events)
+      expect(keeperWhats).toContain("host-end:service")
+      expect(keeperWhats).not.toContain("host-end:fallback")
+      expect(keeperWhats.slice(-2)).toEqual(["host-end:done", "exiting"])
+      expect(hostEnd("plan")).toMatchObject({ end: "stow" })
+      expect(hostEnd("stowed")).toBeDefined()
+      expect(automatic("save", "end")[0]).toMatchObject({
+        pid: servicePid,
+        ok: false,
+        error: expect.stringContaining("the Mac is shutting down") as string,
+      })
+      expect(automatic("save", "begin")).toHaveLength(1)
+      expect(automatic("stow", "end")[0]).toMatchObject({
+        pid: servicePid,
+        ok: true,
+      })
+      expect(
+        existsSync(resolve(saveDir(AUTOSAVE, "stow"), FILES.manifest)),
+      ).toBe(true)
+      expect(() => process.kill(servicePid, 0)).toThrow()
+      await until("launchd to forget the job", 20000, () =>
+        launchd.print(autosaveLabel) === null ? true : null,
+      )
     } finally {
       for (const [k, v] of Object.entries(saved)) {
         if (v === undefined) delete process.env[k]
