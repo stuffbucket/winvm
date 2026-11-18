@@ -31,7 +31,13 @@ import {
 import { readSince, START } from "../src/eventlog"
 import { buildIdentity } from "../src/identity"
 import type { Decision, Sample, Settings, Timing } from "../src/idle"
-import { autosaveName, IdleMachine, savesToRotate } from "../src/idle"
+import {
+  autosaveName,
+  DEFAULT_TIMING,
+  IdleMachine,
+  savesToRotate,
+  timingFrom,
+} from "../src/idle"
 import { instanceDir, PACKAGE_DIR, pathsFor } from "../src/paths"
 import { STOW_REFUSED, STOW_UNDECIDED } from "../src/saves"
 import {
@@ -299,6 +305,34 @@ describe("idle state machine", () => {
     h.tick(IDLE)
     expect(h.tick(IDLE, -10 * MIN)).toEqual([
       { kind: "syncClock", reason: "clock-jump" },
+    ])
+  })
+})
+
+describe("the watcher's timing, as tests set it through the environment", () => {
+  it("takes the positive numbers it knows and nothing else", () => {
+    expect(timingFrom(undefined)).toEqual({})
+    expect(timingFrom("")).toEqual({})
+    expect(timingFrom("not json")).toEqual({})
+    expect(timingFrom("[200]")).toEqual({})
+    expect(
+      timingFrom(
+        JSON.stringify({
+          tickMs: 200,
+          wakeGapMs: 1500,
+          driftCheckMs: 0,
+          settleMs: -1,
+          cpuWindowMs: "60",
+          other: 5,
+        }),
+      ),
+    ).toEqual({ tickMs: 200, wakeGapMs: 1500 })
+    expect(Object.keys(DEFAULT_TIMING).toSorted()).toEqual([
+      "cpuWindowMs",
+      "driftCheckMs",
+      "settleMs",
+      "tickMs",
+      "wakeGapMs",
     ])
   })
 })

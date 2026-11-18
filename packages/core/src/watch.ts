@@ -26,6 +26,8 @@ import {
   DRIFT_TOLERANCE_MS,
   IdleMachine,
   savesToRotate,
+  timingFrom,
+  WATCH_TIMING_ENV,
 } from "./idle"
 import {
   AUTOMATIC_FLAG,
@@ -608,7 +610,11 @@ export async function watch(
 ): Promise<number> {
   const p = pathsFor(name)
   const w = watchPathsFor(name)
-  const timing: Timing = { ...DEFAULT_TIMING, ...o.timing }
+  const timing: Timing = {
+    ...DEFAULT_TIMING,
+    ...timingFrom(process.env[WATCH_TIMING_ENV]),
+    ...o.timing,
+  }
   const log = (s: string): void => {
     console.log(`${new Date().toISOString()} [${name}] ${s}`)
   }

@@ -28,6 +28,28 @@ export const DEFAULT_TIMING: Timing = {
   driftCheckMs: 30 * 60_000,
 }
 
+export const WATCH_TIMING_ENV = "WINVM_WATCH_TIMING"
+
+export function timingFrom(raw: string | undefined): Partial<Timing> {
+  let parsed: unknown = null
+  try {
+    parsed = raw === undefined ? null : JSON.parse(raw)
+  } catch {
+    return {}
+  }
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed))
+    return {}
+  const given = parsed as Readonly<Record<string, unknown>>
+  return Object.fromEntries(
+    Object.keys(DEFAULT_TIMING).flatMap((k) => {
+      const v = given[k]
+      return typeof v === "number" && Number.isFinite(v) && v > 0
+        ? [[k, v]]
+        : []
+    }),
+  )
+}
+
 export const DRIFT_TOLERANCE_MS = 2_000
 
 export type Decision =
