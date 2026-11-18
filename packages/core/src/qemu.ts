@@ -569,6 +569,22 @@ export function pidOf(p: Paths): number | null {
 
 export const isRunning = (p: Paths): boolean => pidOf(p) !== null
 
+export function watchExit(
+  p: Paths,
+  pollMs = 500,
+): { readonly signal: AbortSignal; readonly stop: () => void } {
+  const gone = new AbortController()
+  const timer = setInterval(() => {
+    if (pidOf(p) === null) gone.abort("qemu-gone")
+  }, pollMs)
+  return {
+    signal: gone.signal,
+    stop: () => {
+      clearInterval(timer)
+    },
+  }
+}
+
 export async function killQemu(p: Paths, pid: number): Promise<boolean> {
   if (await kept.killKept(p, pid)) return true
   return pidOf(p) === pid && signalProcess(pid, "SIGKILL")

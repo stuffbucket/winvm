@@ -1299,15 +1299,12 @@ export async function reboot(args: Args): Promise<number> {
   }
   const t0 = Date.now()
   const deadline = t0 + s * 1000
-  const gone = new AbortController()
+  const gone = qemu.watchExit(p, QEMU_GONE_POLL_MS)
   const op = currentOp()
   const signal =
     op === null ? gone.signal : AbortSignal.any([gone.signal, op.signal])
   pointOfNoReturn()
   finder.beforeDown(name)
-  const watch = setInterval(() => {
-    if (qemu.pidOf(p) === null) gone.abort("qemu-gone")
-  }, QEMU_GONE_POLL_MS)
   let outcome: qga.Readiness | { readonly refused: string }
   try {
     outcome = await watcher.whileActive(
@@ -1334,7 +1331,7 @@ export async function reboot(args: Args): Promise<number> {
       })(),
     )
   } finally {
-    clearInterval(watch)
+    gone.stop()
   }
   if (gone.signal.aborted) {
     process.stdout.write("\n")

@@ -447,6 +447,7 @@ export async function runService(
     void syncNotices()
     rotate()
     settle()
+    if (livePidIn(p.pid) === null) queue.endQueued()
     if (
       livePidIn(p.pid) !== null ||
       !queue.idle() ||

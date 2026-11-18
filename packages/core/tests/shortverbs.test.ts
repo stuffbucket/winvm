@@ -753,6 +753,27 @@ describe("the short verbs, with a service that runs no ops", () => {
   }, 30_000)
 })
 
+describe("resume and wake", () => {
+  for (const verb of ["resume", "wake"])
+    it(`${verb} stops waiting for the guest agent, and says so, when QEMU exits`, async () => {
+      guest.status = "paused"
+      guest.silent = true
+      const r = launch(verb, "-i", "t")
+      await until(() =>
+        ops().some(
+          (e) => e.kind === "op" && e.phase === "begin" && e.operation === verb,
+        ),
+      )
+      await Bun.sleep(300)
+      const t0 = Date.now()
+      await releasePidfiles()
+      const done = await r.done
+      expect(Date.now() - t0).toBeLessThan(8000)
+      expect(done.code).toBe(1)
+      expect(done.stderr).toContain("QEMU exited")
+    }, 40_000)
+})
+
 describe("reboot", () => {
   const order = (): readonly string[] =>
     readSince("t", START).entries.flatMap((e) =>

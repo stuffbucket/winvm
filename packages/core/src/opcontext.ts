@@ -16,6 +16,7 @@ const ENDED_BY: Readonly<Record<string, string>> = {
   killed: "ended by winvm kill",
   "host-end": "ended because the Mac is shutting down",
   stopping: "ended because winvm's service stopped",
+  "qemu-gone": "ended because QEMU is not running",
 }
 
 export class OpEnded extends Error {

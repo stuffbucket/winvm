@@ -15,6 +15,7 @@ import * as frozen from "./frozen"
 import { lockWindows } from "./lock"
 import { qmpCommand } from "./monitor"
 import * as notes from "./notes"
+import { currentOp } from "./opcontext"
 import { automaticFrom } from "./operation"
 import type { InstanceMeta, Paths } from "./paths"
 import { pathsFor, readImageMeta, readMeta } from "./paths"
@@ -36,14 +37,32 @@ const secs = (ms: number): string => `${(ms / 1000).toFixed(1)} s`
 
 const RESPONSIVE_MS = 300_000
 
+type Settled = "answered" | "silent" | "gone"
+
 async function settle(
   p: Paths,
   label: string,
   silent: (p: Paths, label: string) => void = refuseSilent,
-): Promise<boolean> {
-  if (!(await qga.waitResponsive(p.qga, RESPONSIVE_MS))) {
+): Promise<Settled> {
+  const exit = qemu.watchExit(p)
+  const op = currentOp()
+  const signal =
+    op === null ? exit.signal : AbortSignal.any([exit.signal, op.signal])
+  let answered: boolean
+  try {
+    answered = await qga.waitResponsive(p.qga, RESPONSIVE_MS, { signal })
+  } finally {
+    exit.stop()
+  }
+  if (exit.signal.aborted) {
+    console.error(
+      `::error::QEMU exited before the guest answered after ${label} — see ${p.qemuLog}`,
+    )
+    return "gone"
+  }
+  if (!answered) {
     silent(p, label)
-    return false
+    return "silent"
   }
   try {
     const c = await syncGuestClock(p)
@@ -55,7 +74,7 @@ async function settle(
       `warning: could not set the guest clock (${msg(error)}) — try \`winvm clock\``,
     )
   }
-  return true
+  return "answered"
 }
 
 function refuseSilent(p: Paths, label: string): void {
@@ -168,7 +187,8 @@ async function doLoad(
         `so its clock was not set and its drives were not mounted — \`winvm clock -i ${name}\` and \`winvm files mount -i ${name}\` once it answers (see ${p.serial})`,
     )
   })
-  if (!answered) return saves.RESTORED_UNANSWERED
+  if (answered === "silent") return saves.RESTORED_UNANSWERED
+  if (answered === "gone") return 1
   console.log(
     `${verb} "${name}" from "${m.name}" (${m.kind}, taken ${new Date(m.createdAt).toLocaleString()}) ` +
       `in ${secs(Date.now() - started)} — ${wasRunning ? "was running" : "was stopped"}; state restored in ${secs(restoredMs)}`,
@@ -345,7 +365,10 @@ export async function resume(args: Args): Promise<number> {
   if (state !== "running") await qmp.execute(p.qmp, "cont")
   else console.log(`"${name}" was not ${was}`)
   frozen.clearAsleep(p)
-  if (!(await settle(p, was === "asleep" ? "waking" : "resuming"))) return 1
+  if (
+    (await settle(p, was === "asleep" ? "waking" : "resuming")) !== "answered"
+  )
+    return 1
   if (state !== "running")
     console.log(
       was === "asleep"

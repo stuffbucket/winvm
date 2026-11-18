@@ -98,6 +98,7 @@ const KILLED = "killed"
 const CANCELLED = "cancelled"
 const HOST_END = "host-end"
 const STOPPING = "stopping"
+const QEMU_GONE = "qemu-gone"
 export const HOST_END_GRACE_MS = 5000
 
 export type Closing = typeof HOST_END | typeof STOPPING
@@ -106,6 +107,7 @@ const DID_NOT_RUN: Readonly<Record<string, string>> = {
   [KILLED]: "winvm kill ended QEMU",
   [HOST_END]: "the Mac is shutting down",
   [STOPPING]: "winvm's service stopped",
+  [QEMU_GONE]: "QEMU is not running",
 }
 
 interface Running {
@@ -244,6 +246,11 @@ export class OpQueue {
   async drain(): Promise<void> {
     while (this.ops.size > 0)
       await Promise.all([...this.ops.values()].map((r) => r.ended))
+  }
+
+  endQueued(): void {
+    for (const r of this.ops.values())
+      if (!r.held && !r.scope.signal.aborted) r.controller.abort(QEMU_GONE)
   }
 
   async close(reason: Closing): Promise<void> {

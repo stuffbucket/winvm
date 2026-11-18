@@ -354,11 +354,12 @@ const POWERSHELL =
 export async function waitResponsive(
   sockPath: string,
   timeoutMs: number,
+  o: WaitOptions = {},
 ): Promise<boolean> {
   const deadline = Date.now() + timeoutMs
-  if (!(await waitFor(sockPath, timeoutMs))) return false
+  if (!(await waitFor(sockPath, timeoutMs, o))) return false
   const nonce = `winvm-${String(Date.now())}-${String(Math.random()).slice(2, 8)}`
-  while (Date.now() < deadline) {
+  while (Date.now() < deadline && o.signal?.aborted !== true) {
     try {
       const r = await exec(sockPath, "C:\\Windows\\System32\\cmd.exe", [
         "/c",

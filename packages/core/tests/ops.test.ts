@@ -540,6 +540,27 @@ describe("cancel", () => {
   })
 })
 
+describe("an op waiting for the lease when QEMU goes", () => {
+  it("ends at once, saying QEMU is not running, instead of keeping the service up", async () => {
+    const outside = gate()
+    const other = withOperation("t", "stop", async () => {
+      await outside.opened
+    })
+    await Bun.sleep(20)
+    const queued = await submit("pause", { wait: true })
+    expect(queued.status).toBe(202)
+    await releasePidfiles()
+    expect(await ended(queued.body.id)).toMatchObject({
+      queued: true,
+      exitCode: 1,
+      error: "QEMU is not running",
+    })
+    expect(seen).toEqual([])
+    outside.open()
+    await other
+  })
+})
+
 describe("stopping the service", () => {
   it("ends the ops still waiting for the lease at once, saying why", async () => {
     const outside = gate()

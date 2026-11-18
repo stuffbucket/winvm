@@ -17,6 +17,7 @@ export class FakeGuest {
   bootDelayMs = 0
   holdBootQuery = false
   resets = true
+  silent = false
   staleResetOnStatus = false
   shutdownRequests: string[] = []
   private readonly runs = new Map<number, Ran>()
@@ -109,7 +110,8 @@ export class FakeGuest {
     }, this.resetDelayMs)
   }
 
-  private guest(req: Json): Json {
+  private guest(req: Json): Json | null {
+    if (this.silent) return null
     const a = (req.arguments ?? {}) as Json
     switch (req.execute) {
       case "guest-ping":
