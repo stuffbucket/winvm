@@ -10,6 +10,8 @@ import {
 } from "node:fs"
 import { dirname, resolve } from "node:path"
 
+import { RAMFB, writeDisplay } from "../src/display"
+import { type Entry, readSince, START } from "../src/eventlog"
 import * as host from "../src/host"
 import {
   type KeeperJob,
@@ -23,8 +25,9 @@ import {
 } from "../src/keeper"
 import { keeperDir, keeperHello, keeperSocket } from "../src/kept"
 import { heldLease, withOperation } from "../src/operation"
-import { pathsFor } from "../src/paths"
+import { basePath, imageMetaPath, pathsFor } from "../src/paths"
 import * as qemu from "../src/qemu"
+import { currentCompat, FILES, type Manifest, saveDir } from "../src/saves"
 import * as servicectl from "../src/servicectl"
 import * as share from "../src/share"
 import * as vnc from "../src/vnc"
@@ -63,6 +66,9 @@ const CLI = resolve(
   "winvm.ts",
 )
 const label = keeperLabel(resolve(root, "home"), "launchd-test")
+const RELAUNCH = "relaunch-launchd"
+const relaunchLabel = keeperLabel(resolve(root, "home"), RELAUNCH)
+const FAKE_QEMU = resolve(import.meta.dir, "fakes", "qemu.ts")
 
 afterAll(async () => {
   if (enabled) {
@@ -72,6 +78,10 @@ afterAll(async () => {
     await keeperRequest(keeperSocket(pathsFor(SERVED)), { op: "kill" }).catch(
       () => null,
     )
+    await keeperRequest(keeperSocket(pathsFor(RELAUNCH)), {
+      op: "kill",
+    }).catch(() => null)
+    launchctl().bootout(relaunchLabel)
     launchctl().bootout(label)
     launchctl().bootout(vmLabel)
     launchctl().bootout(servedLabel)
@@ -384,4 +394,232 @@ describe.if(enabled)("a real launchd keeper job (WINVM_TEST_LAUNCHD=1)", () => {
       }
     }
   }, 40000)
+
+  it("relaunches QEMU as the keeper's child from inside the service, for a load and for a start sent while the service lingers", async () => {
+    const saved = Object.fromEntries(
+      [
+        "WINVM_RUNTIME",
+        "WINVM_KEEPER",
+        "XDG_DATA_HOME",
+        "WINVM_CLI",
+        "WINVM_QEMU_DATA",
+        "WINVM_FAKE_QEMU_LOG",
+      ].map((k) => [k, process.env[k]]),
+    )
+    const runtime = resolve(root, "relaunch-runtime")
+    const bin = resolve(runtime, "bin")
+    mkdirSync(bin, { recursive: true })
+    const script = (name: string, body: string): void => {
+      writeFileSync(resolve(bin, name), `#!/bin/sh\n${body}\n`)
+      chmodSync(resolve(bin, name), 0o755)
+    }
+    script(
+      "swtpm",
+      `while [ $# -gt 0 ]; do case "$1" in --ctrl) s="\${2#*path=}"; s="\${s%%,*}"; shift;; esac; shift; done; : > "$s"\nexec sleep 600`,
+    )
+    script(
+      "qemu-system-aarch64",
+      `exec "${process.execPath}" "${FAKE_QEMU}" "$@"`,
+    )
+    const firmware = resolve(root, "relaunch-firmware")
+    mkdirSync(firmware, { recursive: true })
+    writeFileSync(resolve(firmware, "edk2-aarch64-code.fd"), "firmware")
+    writeFileSync(resolve(firmware, "edk2-arm-vars.fd"), "variables")
+    const qemuLog = resolve(root, "relaunch.qemu-log")
+    process.env.WINVM_RUNTIME = runtime
+    process.env.XDG_DATA_HOME = resolve(root, "data")
+    process.env.WINVM_KEEPER = keeper
+    process.env.WINVM_CLI = CLI
+    process.env.WINVM_QEMU_DATA = firmware
+    process.env.WINVM_FAKE_QEMU_LOG = qemuLog
+
+    const image = "win11-arm64"
+    const meta = { image, vnc: 11, created: "2026-11-17T00:00:00Z" }
+    const p = pathsFor(RELAUNCH)
+    mkdirSync(p.tpmDir, { recursive: true })
+    writeFileSync(p.meta, JSON.stringify(meta))
+    writeFileSync(p.overlay, "live disk")
+    writeFileSync(p.vars, "live vars")
+    writeDisplay(p, RAMFB)
+    mkdirSync(dirname(basePath(image)), { recursive: true })
+    writeFileSync(basePath(image), "immutable base")
+    writeFileSync(imageMetaPath(image), JSON.stringify({ virtioBoot: true }))
+    const compat = currentCompat(RELAUNCH, meta, RAMFB)
+    const manifest: Manifest = {
+      name: "saved",
+      instance: RELAUNCH,
+      kind: "manual",
+      createdAt: meta.created,
+      bytes: 42,
+      image,
+      compat: compat.hash,
+      compatParts: compat.parts,
+      format: "raw",
+      ramFile: FILES.ramRaw,
+      display: RAMFB,
+    }
+    const dir = saveDir(RELAUNCH, "saved")
+    mkdirSync(dir, { recursive: true })
+    writeFileSync(resolve(dir, FILES.manifest), JSON.stringify(manifest))
+    writeFileSync(resolve(dir, FILES.ramRaw), "saved RAM")
+    writeFileSync(resolve(dir, FILES.overlay), "saved disk")
+    writeFileSync(resolve(dir, FILES.vars), "saved vars")
+
+    const cli = async (
+      ...argv: string[]
+    ): Promise<{ code: number; stdout: string; stderr: string }> => {
+      const proc = Bun.spawn([process.execPath, CLI, ...argv], {
+        env: { ...process.env, WINVM_NO_RECONCILE: "1" },
+        stdout: "pipe",
+        stderr: "pipe",
+      })
+      const killer = setTimeout(() => {
+        proc.kill("SIGKILL")
+      }, 40000)
+      void proc.exited.then(() => {
+        clearTimeout(killer)
+      })
+      const leases: (string | null)[] = []
+      const state = { running: true }
+      const runs = (): boolean => state.running
+      void proc.exited.then(() => {
+        state.running = false
+      })
+      while (runs()) {
+        try {
+          leases.push(
+            (JSON.parse(readFileSync(p.lease, "utf8")) as { id: string }).id,
+          )
+        } catch {
+          leases.push(null)
+        }
+        await sleep(5)
+      }
+      lastLeases = leases
+      return {
+        code: await proc.exited,
+        stdout: await new Response(proc.stdout).text(),
+        stderr: await new Response(proc.stderr).text(),
+      }
+    }
+    let lastLeases: (string | null)[] = []
+    const ops = (): Extract<Entry, { kind: "op" }>[] =>
+      readSince(RELAUNCH, START).entries.flatMap((e) =>
+        e.kind === "op" ? [e] : [],
+      )
+    const keeperEntries = (): Record<string, unknown>[] =>
+      readFileSync(p.events, "utf8")
+        .trim()
+        .split("\n")
+        .map((line) => JSON.parse(line) as Record<string, unknown>)
+        .filter((e) => e.kind === "keeper")
+    const parentOf = (pid: number): number =>
+      Number(
+        Bun.spawnSync(["ps", "-o", "ppid=", "-p", String(pid)])
+          .stdout.toString()
+          .trim(),
+      )
+    const heldThroughout = (id: string): boolean => {
+      const first = lastLeases.indexOf(id)
+      const last = lastLeases.lastIndexOf(id)
+      return (
+        first >= 0 && lastLeases.slice(first, last + 1).every((l) => l === id)
+      )
+    }
+    const neverTwoAtOnce = (): void => {
+      const lines = readFileSync(qemuLog, "utf8").trim().split("\n")
+      expect(lines.filter((l) => l.startsWith("lock-failed"))).toEqual([])
+      let alive = 0
+      for (const l of lines) {
+        alive += l.startsWith("start ") ? 1 : l.startsWith("exit ") ? -1 : 0
+        expect(alive).toBeLessThanOrEqual(1)
+      }
+    }
+
+    try {
+      await withOperation(RELAUNCH, "start", async () => {
+        await qemu.launch(RELAUNCH, p, meta, {
+          installMedia: false,
+          ephemeral: false,
+          virtioBoot: true,
+        })
+      })
+      const first = await keeperHello(p)
+      const keeperPid = first?.pid ?? -1
+      const servicePid = first?.service?.pid ?? -1
+      const oldQemu = first?.child?.pid ?? -1
+      expect(servicePid).toBeGreaterThan(0)
+      expect(qemu.pidOf(p)).toBe(oldQemu)
+
+      const LOAD = "relaunch-load-0001"
+      const loaded = await cli("load", "-i", RELAUNCH, "saved", "--op-id", LOAD)
+      expect(loaded.stderr).toBe("")
+      expect(loaded.code).toBe(0)
+      expect(loaded.stdout).toContain(`loaded "${RELAUNCH}" from "saved"`)
+      const loadOps = ops().filter((e) => e.id === LOAD)
+      expect(loadOps[0]).toMatchObject({ phase: "begin", pid: servicePid })
+      expect(loadOps.at(-1)).toMatchObject({
+        phase: "end",
+        ok: true,
+        exitCode: 0,
+        leased: true,
+      })
+      expect(heldThroughout(LOAD)).toBe(true)
+      const afterLoad = await keeperHello(p)
+      const newQemu = afterLoad?.child?.pid ?? -1
+      expect(afterLoad?.pid).toBe(keeperPid)
+      expect(newQemu).not.toBe(oldQemu)
+      expect(qemu.pidOf(p)).toBe(newQemu)
+      expect(parentOf(newQemu)).toBe(keeperPid)
+      expect(() => process.kill(oldQemu, 0)).toThrow()
+      expect(
+        keeperEntries().some((e) => e.what === "exited" && e.pid === oldQemu),
+      ).toBe(true)
+      neverTwoAtOnce()
+
+      expect((await cli("stop", "-i", RELAUNCH)).code).toBe(0)
+      const START_ID = "relaunch-start-0001"
+      const started = await cli(
+        "start",
+        "-i",
+        RELAUNCH,
+        "--no-watch",
+        "--op-id",
+        START_ID,
+      )
+      expect(started.code).toBe(0)
+      expect(started.stdout).toContain(`instance "${RELAUNCH}" up`)
+      const startOps = ops().filter((e) => e.id === START_ID)
+      expect(startOps[0]).toMatchObject({ phase: "begin", pid: servicePid })
+      expect(startOps.at(-1)).toMatchObject({ phase: "end", ok: true })
+      expect(heldThroughout(START_ID)).toBe(true)
+      const afterStart = await keeperHello(p)
+      const third = afterStart?.child?.pid ?? -1
+      expect(afterStart?.pid).toBe(keeperPid)
+      expect(afterStart?.service?.pid).toBe(servicePid)
+      expect(qemu.pidOf(p)).toBe(third)
+      expect(parentOf(third)).toBe(keeperPid)
+      expect(() => process.kill(newQemu, 0)).toThrow()
+      neverTwoAtOnce()
+      expect(
+        readFileSync(qemuLog, "utf8")
+          .trim()
+          .split("\n")
+          .filter((l) => l.startsWith("start ")),
+      ).toHaveLength(3)
+
+      await keeperRequest(keeperSocket(p), { op: "kill" })
+      const launchd = launchctl()
+      expect(launchd.bootout(relaunchLabel)).toBe(true)
+      await until("launchd to forget the job", 20000, () =>
+        launchd.print(relaunchLabel) === null ? true : null,
+      )
+      expect(() => process.kill(servicePid, 0)).toThrow()
+    } finally {
+      for (const [k, v] of Object.entries(saved)) {
+        if (v === undefined) delete process.env[k]
+        else process.env[k] = v
+      }
+    }
+  }, 120000)
 })
