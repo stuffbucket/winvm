@@ -34,7 +34,7 @@ describe("entering and leaving Checkpoints", () => {
       body(
         '.checkpoints[data-phase="entering"][data-ready="true"] .checkpoints__canvas',
       ),
-    ).toContain("checkpoint-enter 200ms ease-out")
+    ).toContain("checkpoint-enter var(--duration-xl) ease-out")
     expect(body(".checkpoints__canvas")).toContain("filter: none")
     expect(body(".checkpoints__canvas")).toContain("transform: none")
     expect(body(".checkpoints")).toContain("background: var(--surface-base)")

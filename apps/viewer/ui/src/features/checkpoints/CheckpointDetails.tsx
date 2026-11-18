@@ -15,6 +15,7 @@ import { Button } from "../../components/Button"
 import { Icon } from "../../components/Icon"
 import { t } from "../../i18n"
 import { formatSize, type SaveNotes } from "../../model"
+import { motion, ms } from "../../styles/theme"
 import { titleEdit } from "../machines/machines"
 import { KindChip, Picture, takenAt } from "./CheckpointCard"
 import {
@@ -255,7 +256,7 @@ function InlineTitle({
   )
 }
 
-export const PANEL_EXIT_MS = 180
+export const PANEL_EXIT_MS = ms(motion.duration.lg)
 const panelExitMs = (): number =>
   typeof matchMedia === "function" &&
   matchMedia("(prefers-reduced-motion: reduce)").matches

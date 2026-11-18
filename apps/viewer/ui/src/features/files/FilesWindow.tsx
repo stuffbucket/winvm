@@ -34,6 +34,7 @@ import { cx } from "../../components/cx"
 import { focusOnMount } from "../../components/focusOnMount"
 import { Icon, type IconName } from "../../components/Icon"
 import { t } from "../../i18n"
+import { px, spacing } from "../../styles/theme"
 import { defaultShell, installedList, runnable } from "../terminal/shells"
 import { FileList, type Renaming, rowHeight } from "./FileList"
 import type { Entry, ListFailure, Listing, Place, Sort, SortKey } from "./files"
@@ -1280,7 +1281,7 @@ export function FilesWindow({
         <div
           className={cx("fw__ghost", drag.copy && "fw__ghost--copy")}
           style={{
-            transform: `translate(${String(drag.x + 12)}px, ${String(drag.y + 8)}px)`,
+            transform: `translate(${String(drag.x + px(spacing[3]))}px, ${String(drag.y + px(spacing[2]))}px)`,
           }}
           aria-hidden="true"
         >

@@ -11,6 +11,7 @@ import {
 import { createPortal } from "react-dom"
 
 import { t } from "../i18n"
+import { px, spacing } from "../styles/theme"
 import { Icon } from "./Icon"
 
 export interface Box {
@@ -87,7 +88,7 @@ export function placeNear(
   }
 }
 
-const GAP = 12
+const GAP = px(spacing[3])
 
 const FOCUSABLE =
   'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'

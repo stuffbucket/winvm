@@ -12,6 +12,7 @@ import {
 
 import { cx } from "../../components/cx"
 import { t } from "../../i18n"
+import { px, size } from "../../styles/theme"
 import type { Entry, Sort, SortKey } from "./files"
 import { finderDate, formatBytes } from "./files"
 import { CHEVRON, glyphOf, kindLabel, kindOf } from "./kinds"
@@ -53,15 +54,16 @@ const COLUMNS: readonly { key: SortKey; label: string; className: string }[] = [
 ]
 
 const OVERSCAN = 8
+const ROW_FALLBACK = px(size.lg)
 
 const rowId = (name: string): string => `files-row-${encodeURIComponent(name)}`
 
 export function rowHeight(el: HTMLElement | null): number {
-  if (el === null) return 24
-  const px = Number.parseFloat(
+  if (el === null) return ROW_FALLBACK
+  const row = Number.parseFloat(
     getComputedStyle(el).getPropertyValue("--files-row"),
   )
-  return Number.isFinite(px) && px > 0 ? px : 24
+  return Number.isFinite(row) && row > 0 ? row : ROW_FALLBACK
 }
 
 function When({
@@ -135,7 +137,7 @@ function NameField({
 }
 
 export function FileList(p: FileListProps): JSX.Element {
-  const [view, setView] = useState({ top: 0, height: 600, row: 24 })
+  const [view, setView] = useState({ top: 0, height: 600, row: ROW_FALLBACK })
 
   useEffect(() => {
     const el = p.list.current

@@ -7,6 +7,10 @@ import {
   useState,
 } from "react"
 
+import { px, spacing } from "../styles/theme"
+
+const EDGE = px(spacing[2])
+
 interface PopoverProps {
   readonly anchor: HTMLElement | null
   readonly label: string
@@ -31,7 +35,7 @@ export function Popover({
       const r = anchor.getBoundingClientRect()
       setPlace({
         top: r.bottom + 6,
-        right: Math.max(8, window.innerWidth - r.right - 8),
+        right: Math.max(EDGE, window.innerWidth - r.right - EDGE),
       })
     }
     measure()

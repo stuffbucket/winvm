@@ -1,6 +1,7 @@
 import type { Point, Rect } from "@winvm/canvas"
 
 import type { SaveEntry } from "../../model"
+import { px, spacing } from "../../styles/theme"
 
 export type Checkpoint = SaveEntry & {
   readonly protected?: boolean | undefined
@@ -19,7 +20,7 @@ export const canProtect = (c: Pick<Checkpoint, "kind" | "name">): boolean =>
 const CARD_WIDTH = 240
 const CARD_FRAME = 150
 const NOW_WIDTH = 440
-const COLUMN_GAP = 32
+const COLUMN_GAP = px(spacing[6])
 const LINE_GAP = 128
 export const DAY_GAP = 176
 const NOW_GAP = 144

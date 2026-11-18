@@ -42,6 +42,15 @@ import { outputText, showCheckpointInFinder, winvm } from "../../backend"
 import { ConfirmDialog } from "../../components/ConfirmDialog"
 import { t } from "../../i18n"
 import { type Phase, parseNote, parseSaves } from "../../model"
+import {
+  checkpointLayout,
+  motion,
+  ms,
+  px,
+  rem,
+  spacing,
+  text,
+} from "../../styles/theme"
 import type { Ran, RunOptions } from "../winvm/useWinvm"
 import { CheckpointCard, takenAt, textScale } from "./CheckpointCard"
 import {
@@ -123,16 +132,21 @@ export interface CheckpointCanvasProps {
   onClosed: () => void
 }
 
-const PANEL_WIDTH = 368
-const TIMELINE_SPACE = 132
-const CANVAS_LEAST = 128
+const PANEL_WIDTH = px(checkpointLayout.panel)
+const PANEL_MIN = px(checkpointLayout.panelMin)
+const TIMELINE_SPACE = px(checkpointLayout.timelineSpace)
+const CANVAS_MIN = px(checkpointLayout.canvasMin)
 const BAR_SPACE = 88
 const READABLE_FIT = 0.4
 const PAN_STEP = 80
-const NUDGE_STEP = 16
+const NUDGE_STEP = px(spacing[4])
 const ZOOM_STEP = 1.25
 const ENTER_WAIT_MS = 450
-const SURFACE_FADE_MS = 200
+const SURFACE_FADE_MS = ms(motion.duration.xl)
+const LEAVE_SLACK_MS = 40
+const LEAVE_WAIT_MS = ms(motion.duration["2xl"]) + LEAVE_SLACK_MS
+const ARRIVE_SLACK_MS = 200
+const ARRIVE_WAIT_MS = ms(motion.duration["4xl"]) + ARRIVE_SLACK_MS
 const surfaceFadeMs = (): number =>
   typeof matchMedia === "function" &&
   matchMedia("(prefers-reduced-motion: reduce)").matches
@@ -145,8 +159,8 @@ type Confirm =
   | { readonly kind: "go-back"; readonly name: string }
   | { readonly kind: "delete"; readonly name: string }
 
-const DAY_LABEL = 24
-const DAY_LABEL_MIN = 12
+const DAY_LABEL = rem(text.xl)
+const DAY_LABEL_MIN = rem(text.xs)
 const DAY_LABEL_ROOM = 30
 
 const viewSize = (): Size => ({
@@ -155,8 +169,8 @@ const viewSize = (): Size => ({
 })
 const panelSpace = (): number =>
   Math.max(
-    240,
-    Math.min(PANEL_WIDTH, viewSize().width - TIMELINE_SPACE - CANVAS_LEAST),
+    PANEL_MIN,
+    Math.min(PANEL_WIDTH, viewSize().width - TIMELINE_SPACE - CANVAS_MIN),
   )
 
 export function CheckpointCanvas(p: CheckpointCanvasProps): JSX.Element {
@@ -941,7 +955,7 @@ export function CheckpointCanvas(p: CheckpointCanvasProps): JSX.Element {
         })
         setTimeout(() => {
           setArriving((a) => (a?.name === name ? null : a))
-        }, 1100)
+        }, ARRIVE_WAIT_MS)
       })
       const after = landed as TimelineLayout | null
       const today = after?.days.at(-1)
@@ -1034,7 +1048,7 @@ export function CheckpointCanvas(p: CheckpointCanvasProps): JSX.Element {
       }
       setLeaving(name)
       if (selected === name) setSelected(null)
-      await new Promise((r) => setTimeout(r, 260))
+      await new Promise((r) => setTimeout(r, LEAVE_WAIT_MS))
       if (c !== undefined) forgetPictures([c.thumbnail, c.screenshot])
       await reload()
       setStatus({
