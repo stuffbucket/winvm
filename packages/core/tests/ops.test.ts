@@ -542,7 +542,9 @@ describe("cancel", () => {
 })
 
 describe("an op waiting for the lease when QEMU goes", () => {
-  it("ends at once, saying QEMU is not running, instead of keeping the service up", async () => {
+  it("ends, saying QEMU is not running, once QEMU has been gone as long as the service waits before it exits", async () => {
+    await svc?.stop()
+    svc = await runService("t", { exitAfterMs: 300, checkMs: 50, handlers })
     const outside = gate()
     const other = withOperation("t", "stop", async () => {
       await outside.opened
@@ -559,6 +561,23 @@ describe("an op waiting for the lease when QEMU goes", () => {
     expect(seen).toEqual([])
     outside.open()
     await other
+  })
+
+  it("still runs once another command's load has started QEMU again", async () => {
+    const outside = gate()
+    const other = withOperation("t", "load", async () => {
+      await outside.opened
+    })
+    await Bun.sleep(20)
+    const queued = await submit("pause", { wait: true })
+    expect(queued.status).toBe(202)
+    await releasePidfiles()
+    await Bun.sleep(400)
+    await lockPidfile(p.pid, "qemu-system-aarch64", "-pidfile", p.pid)
+    outside.open()
+    await other
+    expect(await ended(queued.body.id)).toMatchObject({ ok: true, exitCode: 0 })
+    expect(seen).toHaveLength(1)
   })
 })
 
