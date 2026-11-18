@@ -1286,6 +1286,64 @@ describe("the watcher's duties in the service", () => {
   }, 20_000)
 })
 
+describe("turning the watcher off through a service that cannot quiesce it", () => {
+  let stub: ReturnType<typeof Bun.serve> | null = null
+  let asked = 0
+
+  const answering = (respond: () => Response | Promise<Response>): void => {
+    stub = Bun.serve({
+      unix: p.control,
+      fetch: async (req) => {
+        if (req.method === "POST" && new URL(req.url).pathname === "/watch")
+          asked += 1
+        return await respond()
+      },
+    })
+  }
+
+  const marked = (): unknown => {
+    try {
+      return (
+        JSON.parse(readFileSync(watchPathsFor("t").on, "utf8")) as {
+          qemu?: unknown
+        }
+      ).qemu
+    } catch {
+      return null
+    }
+  }
+
+  beforeEach(() => {
+    asked = 0
+    writeFileSync(p.meta, JSON.stringify({ image: "x", vnc: 9, created: "" }))
+  })
+
+  afterEach(async () => {
+    await stub?.stop(true)
+    stub = null
+  })
+
+  it("turns it off here when an older service answers 404 to the request", async () => {
+    expect(ensureWatcher("t")).toBe(true)
+    expect(marked()).toBe(qemuPid)
+    answering(() => Response.json({ error: "not found" }, { status: 404 }))
+    expect(await stopWatcher("t")).toBe(true)
+    expect(asked).toBe(1)
+    expect(marked()).toBeNull()
+  })
+
+  it("reports an error, not a stop, when the service takes the request and never answers", async () => {
+    expect(ensureWatcher("t")).toBe(true)
+    answering(() => new Promise<Response>(() => undefined))
+    const t0 = Date.now()
+    await expect(stopWatcher("t", 300)).rejects.toThrow(
+      /did not say its watcher had stopped.*try again/,
+    )
+    expect(Date.now() - t0).toBeLessThan(3000)
+    expect(asked).toBe(1)
+  })
+})
+
 describe("the service's signals", () => {
   const wire = (
     keeperPid: string | undefined,

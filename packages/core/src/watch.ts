@@ -211,10 +211,13 @@ function announceQuiesce(name: string): void {
     )
 }
 
-export async function stopWatcher(name: string): Promise<boolean> {
+export async function stopWatcher(
+  name: string,
+  quiesceMs = QUIESCE_MS,
+): Promise<boolean> {
   if (runs.has(name) || servingHere(pathsFor(name))) return await stopHere(name)
   announceQuiesce(name)
-  const r = await askService(name, "/watch", { on: false }, QUIESCE_MS)
+  const r = await askService(name, "/watch", { on: false }, quiesceMs)
   if (r.kind === "answered" && typeof r.body?.stopped === "boolean")
     return r.body.stopped
   if (r.kind === "unavailable" || (r.kind === "answered" && r.status !== 200))

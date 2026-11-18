@@ -151,6 +151,20 @@ mod command_allowlist_tests {
         assert!(permitted(&[]).is_err());
     }
 
+    #[test]
+    fn runs_the_remount_the_app_asks_for_after_a_failed_idle_stow_without_a_deadline() {
+        let remount = ["files", "remount", "-i", "demo"]
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>();
+        assert!(permitted(&remount).is_ok());
+        assert_eq!(
+            sidecar::timeout_for(&remount),
+            None,
+            "a remount waits for the instance and for the mount, so it has no deadline"
+        );
+    }
+
     const OP: &str = "0b9c2f1e-7d3a-4e5b-9c8d-112233445566";
 
     #[test]
