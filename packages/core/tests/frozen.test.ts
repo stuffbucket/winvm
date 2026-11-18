@@ -703,6 +703,25 @@ describe("graceful stop", () => {
       expect(marked.first).toBe(true)
     })
 
+    it("stops at its next step and puts nothing back when host end ends it before the request", async () => {
+      const r = rig({ frozen: "asleep", watcher: true })
+      const ending = new AbortController()
+      const op = inOp()
+      const scope: OpScope = { ...op.scope, signal: ending.signal }
+      const seams: StopCommandSeams = {
+        ...withoutInterrupts(r.seams),
+        stopWatcher: async (n) => {
+          const stopped = await r.seams.stopWatcher?.(n)
+          ending.abort("host-end")
+          return stopped ?? false
+        },
+      }
+      const o = await runInOp(scope, () => stopped(seams))
+      expect(o.code).not.toBe(0)
+      expect(r.events).toEqual(["stopWatcher"])
+      expect(markedAsleep(pathsFor(NAME), OWN_PID)).toBe(true)
+    })
+
     it("puts everything back, as before, when cancelled before the request", async () => {
       const r = rig({ frozen: "paused", watcher: true })
       const op = inOp()

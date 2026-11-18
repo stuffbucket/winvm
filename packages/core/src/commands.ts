@@ -68,6 +68,7 @@ import {
   CANCEL_REASON,
   currentOp,
   OpCancelled,
+  OpEnded,
   pointOfNoReturn,
 } from "./opcontext"
 import {
@@ -1068,7 +1069,10 @@ async function stopRun(
       console.warn(`warning: could not ${what}: ${errorText(error)}`)
     }
   }
+  const op = currentOp()
+  const ended = (): boolean => op?.signal.aborted === true
   const rollback = async (): Promise<void> => {
+    if (ended()) return
     if (original === null || resumed)
       await attempt("remount the guest's drives", () => afterUp(name))
     if (original !== null && pid !== null && pidOf(p) === pid) {
@@ -1081,6 +1085,7 @@ async function stopRun(
 
   const interruptedBy = (): string => String(interrupted.reason)
   const checkpoint = (): void => {
+    if (op !== null && ended()) throw new OpEnded(op)
     if (interrupted.aborted) throw new StopInterrupted(interruptedBy())
   }
 
