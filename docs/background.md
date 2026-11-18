@@ -1,7 +1,7 @@
 # Background processes
 
-A running instance has three helper processes besides QEMU: the keeper, the
-control service and the idle watcher.
+A running instance has two helper processes besides QEMU: the keeper and the
+control service, which also runs the idle watcher.
 
 ## The keeper
 
@@ -53,12 +53,12 @@ seconds, and the service has until 47 seconds after the stop began:
   would refuse or boot past: `winvm stow`, the idle watcher's stow and the
   app's close-window stow refuse it too, and Windows keeps running.
   `winvm stow` then exits 4 and says to shut Windows down and start it
-  again, before it stops the watcher or takes the Finder drives down; the
-  watcher stops trying idle stows until QEMU restarts, and `winvm status`
-  says so; the app's close stays open with the same words. When QEMU does
-  not say which version it runs, `winvm stow` exits 5 instead, and the
-  watcher tries again later. A stow that fails once it has begun puts the
-  watcher it stopped back while Windows still runs.
+  again, before it turns the watcher off or takes the Finder drives down;
+  the watcher stops trying idle stows until QEMU restarts, and
+  `winvm status` says so; the app's close stays open with the same words.
+  When QEMU does not say which version it runs, `winvm stow` exits 5
+  instead, and the watcher tries again later. A stow that fails once it has
+  begun turns the watcher it turned off back on while Windows still runs.
 
 The keeper never lets two of them act on Windows at once. If the service
 refuses the moment, or can't be reached, or never answered and has died, the
@@ -80,7 +80,7 @@ A stow is used up the moment QEMU has loaded it and Windows runs again, so
 stowed in the middle of restarting or installing updates and is slow to
 answer afterwards. If Windows' guest agent does not answer within 5 minutes
 of a recall (or of `winvm load`, `winvm rewind` or `winvm golden reset`),
-winvm says Windows is still busy but was restored, starts the watcher, and
+winvm says Windows is still busy but was restored, turns the watcher on, and
 exits 6; set the clock and mount the drives later with `winvm clock` and
 `winvm files mount`. The app shows that as a notice, not a failure.
 `winvm share install` says it could not check the shared folder and also
@@ -262,19 +262,26 @@ next app follows it to its end and says if it did not finish.
 ## Keeping them current
 
 `winvm status` only reads. Before this release it also replaced an
-out-of-date service and watcher and unmounted drives a gone guest left; it no
-longer does, so scripts that ran `winvm status` to repair an instance should
-run `winvm reconcile` instead. When the service or watcher is missing or was
-started by another build of winvm, or a guest that is gone left its drives
-mounted, `status` says so (`"management": "repair"` in `--json`) and leaves
-them be. `winvm reconcile [-i name]` repairs them and leaves Windows running.
-So do `winvm start` on a running instance, and the other commands that use the
-guest (`exec`, `info`, `save` and the rest). The app runs
-`winvm reconcile -i NAME` when a status it reads says a repair is due, one at a
-time per instance: a minute after a repair that finished (or was put off
-because the watcher was saving), and after one that failed it waits 1, 2, 4
-minutes and so on, up to 30. If a repair is cut short after it stopped the
-watcher, the service restarts the watcher within about 30 seconds.
+out-of-date service and unmounted drives a gone guest left; it no longer does,
+so scripts that ran `winvm status` to repair an instance should run
+`winvm reconcile` instead. When the service is missing or was started by
+another build of winvm, or a guest that is gone left its drives mounted,
+`status` says so (`"management": "repair"` in `--json`) and leaves them be.
+`winvm reconcile [-i name]` repairs them and leaves Windows running. So do
+`winvm start` on a running instance, and the other commands that use the guest
+(`exec`, `info`, `save` and the rest). The app runs `winvm reconcile -i NAME`
+when a status it reads says a repair is due, one at a time per instance: a
+minute after a repair that finished (or was put off because a command held the
+instance), and after one that failed it waits 1, 2, 4 minutes and so on, up to
+30.
+
+A repair hands the service over under the instance's lease, so it is put off
+while any command, or an autosave, holds the instance, and never interrupts
+one. The new service carries on the watcher's work: if a watcher process an
+older winvm started is still running, the service asks it to stop, waits for
+an autosave or stow it has under way to finish, and only then watches the
+guest itself. The record says so with `{"kind": "service", "what": "watcher
+taken over"}`.
 
 `winvm status` also no longer looks at the folder the Windows ISO links to
 when it reports Time Machine: if that is on another disk, macOS would ask for
@@ -283,9 +290,10 @@ still check it.
 
 ## The idle watcher
 
-`start` also starts an idle watcher, unless you pass `--no-watch`. `load` and
-`rewind` into a stopped instance start one too. It logs to
-`instances/<name>/watch.log` and exits when QEMU does.
+`start` also turns on the idle watcher, unless you pass `--no-watch`. `load`
+and `rewind` into a stopped instance turn it on too. The watcher runs inside
+the control service; there is no separate process. It logs to
+`instances/<name>/watch.log` and stops when QEMU does.
 
 The guest counts as idle when QEMU's CPU use stays below a threshold, no
 `winvm` command is using the guest, and no VNC client is connected. When it
@@ -294,18 +302,28 @@ has been idle long enough, the watcher:
 - **autosaves**: one save named `auto-<time>`, then another only after the
   guest has been used and gone idle again. It keeps the newest three
   (`autosave.keep`) and never touches other saves.
-- **stows**: after a longer idle time, runs `winvm stow`, which saves the
-  guest and shuts QEMU down. `winvm start` brings it back.
+- **stows**: after a longer idle time, stows the guest, which saves it and
+  shuts QEMU down. `winvm start` brings it back.
 - **fixes the clock**: after the Mac sleeps, or when the guest's clock has
   drifted, it resyncs it.
+
+Autosaves and stows are operations the service runs itself, in the same queue
+as yours and marked as winvm's own (`"automatic": true` in the record). They
+never run beside a command you started: while one holds the instance, the
+watcher skips that round. A command you start meanwhile waits for an autosave
+under way, as before. When the Mac shuts down, an autosave under way is
+cancelled and Windows is stowed.
 
 ```sh
 winvm config -i default                        # current settings and defaults
 winvm config -i default stow.idleMinutes=120 autosave.keep=5
 winvm config -i default watch.enabled=false    # no watcher for this instance
-winvm watch  -i default                        # run it in the foreground
-winvm watch  -i default --status               # or --stop
+winvm watch  -i default                        # turn it on, as start does
+winvm watch  -i default --status               # or --stop, until the next start
 ```
+
+`winvm watch` used to run the watcher in the foreground until QEMU exited. It
+now turns the service's watcher on and returns at once; `--interval` is gone.
 
 Settings are stored in `instances/<name>/config.json`. A running watcher picks
 up changes within a minute.
