@@ -245,6 +245,16 @@ Between a command's `begin` and `end` lines in `events.jsonl`, each piece it
 prints is a line `{"kind": "op", "phase": "output", "id", "operation",
 "stream": "out" | "err", "text"}`. Older readers skip these lines.
 
+A command can be given its op's id with `--op-id ID` (8 to 64 letters, digits
+and dashes). `winvm status --json` names the id of the command in progress,
+and `winvm events -i NAME --op ID` prints what that command printed and exits
+with its exit code; `--follow` waits while it runs, and `--json` prints how it
+ended as one object. The app names every command it runs this way, and its
+close reads how each one ended from the record: its own stow or stop, and any
+command it waited for, whoever ran it. While its own stow or stop runs, the
+app notes it in its data folder, so if the app is quit before it ends, the
+next app follows it to its end and says if it did not finish.
+
 ## Keeping them current
 
 `winvm status` only reads. Before this release it also replaced an
