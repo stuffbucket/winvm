@@ -279,33 +279,74 @@ export type Remount =
 
 const refused = (why: string): Remount => ({ kind: "refused", why })
 
+const shuttingDown = (name: string): Remount =>
+  refused(
+    `the Mac is shutting down, so the guest's drives of "${name}" were not mounted again`,
+  )
+
+const HOST_END_POLL_MS = 500
+
+function watchHostEnd(
+  name: string,
+  pollMs: number,
+): { readonly begun: AbortSignal; readonly stop: () => void } {
+  const begun = new AbortController()
+  let stopped = false
+  let timer: ReturnType<typeof setTimeout> | null = null
+  const look = async (): Promise<void> => {
+    if (await hostEnding(name)) begun.abort("host end")
+    else if (!stopped) timer = setTimeout(() => void look(), pollMs)
+  }
+  timer = setTimeout(() => void look(), pollMs)
+  return {
+    begun: begun.signal,
+    stop: () => {
+      stopped = true
+      if (timer !== null) clearTimeout(timer)
+    },
+  }
+}
+
+export interface RemountOptions {
+  readonly waitMs?: number
+  readonly hostPollMs?: number
+}
+
 export async function remountHeld(
   name: string,
   mount: (name: string) => Promise<finder.Remounted> = finder.remountPending,
   signal: AbortSignal = new AbortController().signal,
-  waitMs = REMOUNT_WAIT_MS,
+  options: RemountOptions = {},
 ): Promise<Remount> {
   try {
     return await withOperation(
       name,
       "remount",
       async (): Promise<Remount> => {
-        if (await hostEnding(name))
-          return refused(
-            `the Mac is shutting down, so the guest's drives of "${name}" were not mounted again`,
-          )
+        if (await hostEnding(name)) return shuttingDown(name)
         const frozen = await frozenState(pathsFor(name))
         if (frozen !== null)
           return refused(new GuestFrozen(name, frozen).message)
         signal.throwIfAborted()
-        return {
-          kind: await Promise.race([mount(name), abandoned(signal)]),
+        const watch = watchHostEnd(name, options.hostPollMs ?? HOST_END_POLL_MS)
+        try {
+          return {
+            kind: await Promise.race([
+              mount(name),
+              abandoned(AbortSignal.any([signal, watch.begun])),
+            ]),
+          }
+        } catch (error) {
+          if (watch.begun.aborted && !signal.aborted) return shuttingDown(name)
+          throw error
+        } finally {
+          watch.stop()
         }
       },
       {
         automatic: true,
         queue: true,
-        waitMs,
+        waitMs: options.waitMs ?? REMOUNT_WAIT_MS,
         onWait: () => undefined,
         signal,
       },

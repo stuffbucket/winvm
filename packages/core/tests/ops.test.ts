@@ -664,7 +664,9 @@ describe("a client's remount", () => {
     })
     await Bun.sleep(20)
     const m = mounts()
-    const r = await remountHeld("t", m.mount, new AbortController().signal, 200)
+    const r = await remountHeld("t", m.mount, new AbortController().signal, {
+      waitMs: 200,
+    })
     expect(m.count).toBe(0)
     expect(r).toMatchObject({ kind: "refused" })
     expect(r.kind === "refused" ? r.why : "").toContain(
@@ -1137,6 +1139,31 @@ describe("host end", () => {
     })
     await until(() => outcome !== null, 10_000)
     await outcome
+  }, 20_000)
+
+  it("cuts a remount short that is already mounting, so the stow is not kept waiting for the mount", async () => {
+    let mounting = false
+    const remounting = remountHeld(
+      "t",
+      async () => {
+        mounting = true
+        await Bun.sleep(5000)
+        return "mounted"
+      },
+      new AbortController().signal,
+      { hostPollMs: 50 },
+    )
+    await until(() => mounting)
+    const began = Date.now()
+    expect(await ending()).toBe(202)
+    expect(await remounting).toEqual({
+      kind: "refused",
+      why: 'the Mac is shutting down, so the guest\'s drives of "t" were not mounted again',
+    })
+    expect(Date.now() - began).toBeLessThan(1500)
+    await until(() => outcome !== null, 10_000)
+    expect(await outcome).toBe("stowed")
+    expect(stowedAt - began).toBeLessThan(2500)
   }, 20_000)
 
   it("takes no new op once it has begun, and says why", async () => {
