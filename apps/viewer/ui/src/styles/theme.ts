@@ -119,13 +119,15 @@ export const rem = (value: `${number}rem`): number =>
 const toPx = (value: number): `${number}px` =>
   `${String(value)}px` as `${number}px`
 
-const CHECKPOINTS_TIMELINE = px(size["2xl"]) * 3
+const CHECKPOINTS_TIMELINE_TILES = 3
+const CHECKPOINTS_TIMELINE = px(size["2xl"]) * CHECKPOINTS_TIMELINE_TILES
+const CHECKPOINTS_PANEL_MIN_TILES = 6
 
 export const checkpointLayout = {
   timeline: toPx(CHECKPOINTS_TIMELINE),
   timelineSpace: toPx(CHECKPOINTS_TIMELINE + px(spacing[3])),
   panel: toPx(px(layout.panelWidth) + px(spacing[7])),
-  panelMin: toPx(px(size["2xl"]) * 6),
+  panelMin: toPx(px(size["2xl"]) * CHECKPOINTS_PANEL_MIN_TILES),
   canvasMin: toPx(px(spacing[8]) * 2),
 } as const
 

@@ -3,6 +3,7 @@ import { type JSX, useEffect, useRef, useState } from "react"
 import { copyText } from "../../backend"
 import { Icon } from "../../components/Icon"
 import { OneLine } from "../../components/OneLine"
+import { COPIED_FEEDBACK_MS } from "../../constants"
 import { t } from "../../i18n"
 import { endpoint, forwardKey, listenerKey, windowsAddress } from "./info"
 import type { MachineInfoView } from "./useMachineInfo"
@@ -33,7 +34,7 @@ function CopyRow({
         clearTimeout(timer.current)
         timer.current = setTimeout(() => {
           setCopied(false)
-        }, 1500)
+        }, COPIED_FEEDBACK_MS)
       })
       .catch(() => undefined)
   }

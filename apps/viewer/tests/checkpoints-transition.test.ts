@@ -83,7 +83,7 @@ describe("entering and leaving Checkpoints", () => {
     expect(reduced).toContain("transform: none")
     expect(reduced).toContain("filter: none")
     expect(SOURCE).toMatch(
-      /prefers-reduced-motion: reduce[\s\S]{0,80}\?\s*0\s*:\s*SURFACE_FADE_MS/,
+      /prefersReducedMotion\(\)\s*\?\s*0\s*:\s*SURFACE_FADE_MS/,
     )
   })
 })

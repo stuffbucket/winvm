@@ -19,6 +19,10 @@ export interface LiveResizeOptions {
   readonly settleMs?: number
 }
 
+const DEFAULT_STILL_MS = 250
+const DEFAULT_IDLE_MS = 120
+const DEFAULT_SETTLE_MS = 1500
+
 const realTimers: Timers = {
   set: (fn, ms) => setTimeout(fn, ms),
   clear: (t) => {
@@ -68,7 +72,9 @@ export class LiveResize {
       () => {
         this.flush()
       },
-      this.live ? (this.o.stillMs ?? 250) : (this.o.idleMs ?? 120),
+      this.live
+        ? (this.o.stillMs ?? DEFAULT_STILL_MS)
+        : (this.o.idleMs ?? DEFAULT_IDLE_MS),
     )
   }
 
@@ -154,7 +160,7 @@ export class LiveResize {
     this.settleTimer = this.timers.set(() => {
       this.settleTimer = null
       if (!this.live && this.phase === "resizing") this.settle(true)
-    }, this.o.settleMs ?? 1500)
+    }, this.o.settleMs ?? DEFAULT_SETTLE_MS)
   }
 
   private clearStill(): void {

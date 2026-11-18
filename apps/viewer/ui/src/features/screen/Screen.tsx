@@ -63,6 +63,9 @@ const FRAME_WAIT_MS = 150
 
 const CLIPBOARD_CAPS_MS = 2000
 const CLIPBOARD_TEXT = 1
+const CLIPBOARD_POLL_MS = 100
+const RECONNECT_MS = 2000
+const SCALE_SLACK_PX = 0.5
 
 const dpr = pixelRatio
 
@@ -399,7 +402,7 @@ export const Screen = forwardRef<ScreenHandle, ScreenProps>(function Screen(
       ) {
         clipboardWait = setTimeout(() => {
           startClipboard(since)
-        }, 100)
+        }, CLIPBOARD_POLL_MS)
         return
       }
       clipboardReady = true
@@ -435,7 +438,7 @@ export const Screen = forwardRef<ScreenHandle, ScreenProps>(function Screen(
       setView((v) => (v === "refused" ? v : "lost"))
       retry = setTimeout(() => {
         setAttempt((a) => a + 1)
-      }, 2000)
+      }, RECONNECT_MS)
     })
     return () => {
       closing = true
@@ -498,7 +501,9 @@ export const Screen = forwardRef<ScreenHandle, ScreenProps>(function Screen(
           height: `${String(drawn.height)}px`,
         }
   const scaled =
-    drawn !== null && fb !== null && drawn.width > fb.width / ratio + 0.5
+    drawn !== null &&
+    fb !== null &&
+    drawn.width > fb.width / ratio + SCALE_SLACK_PX
   const holding = resizable && phase === "resizing" && held
 
   const exactSize =

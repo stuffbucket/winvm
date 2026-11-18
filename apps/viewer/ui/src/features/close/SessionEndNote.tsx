@@ -1,6 +1,7 @@
 import { type JSX, useEffect, useState } from "react"
 
 import type { CloseSession } from "../../backend"
+import { MS_PER_SECOND } from "../../constants"
 import { t } from "../../i18n"
 
 function useNow(ticking: boolean): number {
@@ -10,7 +11,7 @@ function useNow(ticking: boolean): number {
     setNow(Date.now())
     const timer = setInterval(() => {
       setNow(Date.now())
-    }, 1000)
+    }, MS_PER_SECOND)
     return () => {
       clearInterval(timer)
     }
@@ -31,7 +32,10 @@ export function SessionEndNote({
         {t("close.sessionMissed")}
       </p>
     )
-  const seconds = Math.max(0, Math.ceil((session.deadline - now) / 1000))
+  const seconds = Math.max(
+    0,
+    Math.ceil((session.deadline - now) / MS_PER_SECOND),
+  )
   return (
     <p className="close-dialog__session" role="timer">
       {t("close.sessionEnd", { seconds })}

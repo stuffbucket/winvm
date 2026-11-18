@@ -1,3 +1,4 @@
+import { POINTER_SLOP } from "@winvm/canvas"
 import {
   type JSX,
   type KeyboardEvent,
@@ -33,6 +34,7 @@ import { ConfirmDialog } from "../../components/ConfirmDialog"
 import { cx } from "../../components/cx"
 import { focusOnMount } from "../../components/focusOnMount"
 import { Icon, type IconName } from "../../components/Icon"
+import { PERCENT } from "../../constants"
 import { t } from "../../i18n"
 import { px, spacing } from "../../styles/theme"
 import { defaultShell, installedList, runnable } from "../terminal/shells"
@@ -80,7 +82,9 @@ const mod = (e: { metaKey: boolean; ctrlKey: boolean }): boolean =>
   isMac() ? e.metaKey : e.ctrlKey
 
 const CONFIRM_FROM = 10
-const DRAG_SLOP = 4
+const TYPEAHEAD_RESET_MS = 800
+const LIST_HEIGHT_FALLBACK = 240
+const CURRENT_ITEM_SHARE = 0.5
 
 const remember = {
   get(key: string): string | null {
@@ -786,7 +790,7 @@ export function FilesWindow({
       if (p === null) return
       const d = live.current.drag
       if (d === null) {
-        if (Math.hypot(e.clientX - p.x, e.clientY - p.y) < DRAG_SLOP) return
+        if (Math.hypot(e.clientX - p.x, e.clientY - p.y) < POINTER_SLOP) return
         const names = live.current.chosen.map((x) => x.name)
         if (names.length === 0) return
         setDrag({
@@ -917,7 +921,8 @@ export function FilesWindow({
     const page = Math.max(
       1,
       Math.floor(
-        (list.current?.clientHeight ?? 240) / rowHeight(list.current),
+        (list.current?.clientHeight ?? LIST_HEIGHT_FALLBACK) /
+          rowHeight(list.current),
       ) - 1,
     )
     if (
@@ -946,7 +951,9 @@ export function FilesWindow({
     else if (e.key.length === 1 && !cmd && !e.altKey && !e.ctrlKey) {
       const tnow = Date.now()
       const text =
-        (tnow - typed.current.at < 800 ? typed.current.text : "") + e.key
+        (tnow - typed.current.at < TYPEAHEAD_RESET_MS
+          ? typed.current.text
+          : "") + e.key
       typed.current = { text, at: tnow }
       const hit = findByPrefix(
         entries.map((x) => x.name),
@@ -1244,7 +1251,7 @@ export function FilesWindow({
                 <span className="fw__progress" aria-hidden="true">
                   <span
                     style={{
-                      width: `${String(Math.round(((job.done + 0.5) / Math.max(1, job.total)) * 100))}%`,
+                      width: `${String(Math.round(((job.done + CURRENT_ITEM_SHARE) / Math.max(1, job.total)) * PERCENT))}%`,
                     }}
                   />
                 </span>

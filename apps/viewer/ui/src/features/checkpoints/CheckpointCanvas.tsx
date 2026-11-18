@@ -9,6 +9,8 @@ import {
   editableTarget,
   fitRect,
   GLYPHS,
+  POINTER_SLOP,
+  prefersReducedMotion,
   type Rect,
   rectsIntersect,
   type Size,
@@ -42,15 +44,7 @@ import { outputText, showCheckpointInFinder, winvm } from "../../backend"
 import { ConfirmDialog } from "../../components/ConfirmDialog"
 import { t } from "../../i18n"
 import { type Phase, parseNote, parseSaves } from "../../model"
-import {
-  checkpointLayout,
-  motion,
-  ms,
-  px,
-  rem,
-  spacing,
-  text,
-} from "../../styles/theme"
+import { motion, ms } from "../../styles/theme"
 import type { Ran, RunOptions } from "../winvm/useWinvm"
 import { CheckpointCard, takenAt, textScale } from "./CheckpointCard"
 import {
@@ -89,6 +83,38 @@ import {
   withLabel,
 } from "./checkpoints"
 import { LiveFrame } from "./LiveFrame"
+import {
+  BAR_SPACE,
+  CULL_MARGIN,
+  contentRect,
+  DAY_LABEL,
+  DAY_LABEL_MIN,
+  DAY_LABEL_ROOM,
+  DAY_ZOOM_MIN,
+  FAR_LABEL_GAP,
+  FAR_ZOOM,
+  FAST_STEP,
+  FIT_COMFORTABLE,
+  FIT_ROOMY,
+  FIT_SNUG,
+  focusZoom,
+  NOW_TEXT,
+  NUDGE_STEP,
+  OPENING_ZOOM_MAX,
+  PAN_FLY_MS,
+  PAN_MARGIN,
+  PAN_STEP,
+  panelSpaceFor,
+  READABLE_FIT,
+  SAVED_ZOOM_SLACK,
+  SCRUB_FLY_MS,
+  TIMELINE_SPACE,
+  VIEW_MIN_WIDTH,
+  WHEEL_LINE,
+  ZOOM_FLY_MS,
+  ZOOM_STEP,
+  zoomLimits,
+} from "./layout/geometry"
 import { NewCheckpointForm } from "./NewCheckpoint"
 import { forgetPictures } from "./pictures"
 import { checkpointPresentation } from "./presentation"
@@ -103,7 +129,6 @@ import {
   placeMembers,
   readingOrder,
   sectionAt,
-  sectionRect,
 } from "./sections"
 import {
   type CheckpointSettings,
@@ -132,15 +157,6 @@ export interface CheckpointCanvasProps {
   onClosed: () => void
 }
 
-const PANEL_WIDTH = px(checkpointLayout.panel)
-const PANEL_MIN = px(checkpointLayout.panelMin)
-const TIMELINE_SPACE = px(checkpointLayout.timelineSpace)
-const CANVAS_MIN = px(checkpointLayout.canvasMin)
-const BAR_SPACE = 88
-const READABLE_FIT = 0.4
-const PAN_STEP = 80
-const NUDGE_STEP = px(spacing[4])
-const ZOOM_STEP = 1.25
 const ENTER_WAIT_MS = 450
 const SURFACE_FADE_MS = ms(motion.duration.xl)
 const LEAVE_SLACK_MS = 40
@@ -148,30 +164,18 @@ const LEAVE_WAIT_MS = ms(motion.duration["2xl"]) + LEAVE_SLACK_MS
 const ARRIVE_SLACK_MS = 200
 const ARRIVE_WAIT_MS = ms(motion.duration["4xl"]) + ARRIVE_SLACK_MS
 const surfaceFadeMs = (): number =>
-  typeof matchMedia === "function" &&
-  matchMedia("(prefers-reduced-motion: reduce)").matches
-    ? 0
-    : SURFACE_FADE_MS
-const FAR_ZOOM = 0.3
-const NOW_TEXT = 1.25
+  prefersReducedMotion() ? 0 : SURFACE_FADE_MS
+const RESULTS_SHOWN = 50
 
 type Confirm =
   | { readonly kind: "go-back"; readonly name: string }
   | { readonly kind: "delete"; readonly name: string }
 
-const DAY_LABEL = rem(text.xl)
-const DAY_LABEL_MIN = rem(text.xs)
-const DAY_LABEL_ROOM = 30
-
 const viewSize = (): Size => ({
   width: window.innerWidth,
   height: window.innerHeight,
 })
-const panelSpace = (): number =>
-  Math.max(
-    PANEL_MIN,
-    Math.min(PANEL_WIDTH, viewSize().width - TIMELINE_SPACE - CANVAS_MIN),
-  )
+const panelSpace = (): number => panelSpaceFor(viewSize().width)
 
 export function CheckpointCanvas(p: CheckpointCanvasProps): JSX.Element {
   const live = p.phase === "running" || p.phase === "paused"
@@ -346,29 +350,11 @@ export function CheckpointCanvas(p: CheckpointCanvasProps): JSX.Element {
     [layout.days, nowMs],
   )
 
-  const content = useMemo<Rect>(() => {
-    const b =
-      storedSections.length === 0
-        ? layout.bounds
-        : union([
-            layout.bounds,
-            ...storedSections.map((s) => ({
-              ...sectionRect(s),
-              y: s.y - 48,
-              height: s.h + 48,
-            })),
-          ])
-    return {
-      x: b.x - 120,
-      y: b.y - 120,
-      width: b.width + 240,
-      height: b.height + 240,
-    }
-  }, [layout.bounds, storedSections])
-  const limits = useMemo(() => {
-    const fit = fitRect(content, size, 48).zoom
-    return { min: Math.max(0.04, Math.min(0.3, fit * 0.85)), max: 3 }
-  }, [content, size])
+  const content = useMemo<Rect>(
+    () => contentRect(layout.bounds, storedSections),
+    [layout.bounds, storedSections],
+  )
+  const limits = useMemo(() => zoomLimits(content, size), [content, size])
 
   const limitsNow = useRef(limits)
   limitsNow.current = limits
@@ -390,10 +376,10 @@ export function CheckpointCanvas(p: CheckpointCanvasProps): JSX.Element {
         { ...c, x: c.x - left },
         content,
         {
-          width: Math.max(320, viewSize().width - right - left),
+          width: Math.max(VIEW_MIN_WIDTH, viewSize().width - right - left),
           height: viewSize().height,
         },
-        96,
+        PAN_MARGIN,
         limits,
       )
       return { ...free, x: free.x + left }
@@ -431,8 +417,8 @@ export function CheckpointCanvas(p: CheckpointCanvasProps): JSX.Element {
 
   const newest = useCallback((): Camera => {
     const view = openingView(layout)
-    const fit = fitIn(view, 72)
-    const zoom = clampZoom(Math.min(1.1, fit.zoom), limits)
+    const fit = fitIn(view, FIT_COMFORTABLE)
+    const zoom = clampZoom(Math.min(OPENING_ZOOM_MAX, fit.zoom), limits)
     return clamp(
       centreIn(
         { x: view.x + view.width / 2, y: view.y + view.height / 2 },
@@ -442,11 +428,14 @@ export function CheckpointCanvas(p: CheckpointCanvasProps): JSX.Element {
   }, [layout, limits, clamp, fitIn, centreIn])
 
   const overview = useCallback((): Camera => {
-    const all = fitIn(layout.bounds, 56)
+    const all = fitIn(layout.bounds, FIT_SNUG)
     if (settings.zoom === null && all.zoom >= READABLE_FIT) return clamp(all)
     const view = openingView(layout)
-    const fit = fitIn(view, 72)
-    const zoom = clampZoom(Math.min(1.1, settings.zoom ?? fit.zoom), limits)
+    const fit = fitIn(view, FIT_COMFORTABLE)
+    const zoom = clampZoom(
+      Math.min(OPENING_ZOOM_MAX, settings.zoom ?? fit.zoom),
+      limits,
+    )
     return clamp(
       centreIn(
         { x: view.x + view.width / 2, y: view.y + view.height / 2 },
@@ -457,15 +446,7 @@ export function CheckpointCanvas(p: CheckpointCanvasProps): JSX.Element {
 
   const focusOn = useCallback(
     (box: Rect): Camera => {
-      const v = viewSize()
-      const free = Math.max(320, v.width - panelSpace() - TIMELINE_SPACE)
-      const zoom = clampZoom(
-        Math.min(
-          Math.min(free * 0.5, 320) / box.width,
-          (v.height * 0.45) / box.height,
-        ),
-        limits,
-      )
+      const zoom = focusZoom(box, viewSize(), panelSpace(), limits)
       return centreIn(
         { x: box.x + box.width / 2, y: box.y + box.height / 2 },
         zoom,
@@ -523,12 +504,12 @@ export function CheckpointCanvas(p: CheckpointCanvasProps): JSX.Element {
       const all = fitRect(
         layoutNow.current.bounds,
         freeView(),
-        56,
+        FIT_SNUG,
         limitsNow.current,
       ).zoom
       void saveSettings({
         ...settings,
-        zoom: Math.abs(zoom / all - 1) < 0.04 ? null : zoom,
+        zoom: Math.abs(zoom / all - 1) < SAVED_ZOOM_SLACK ? null : zoom,
       })
     }
     await new Promise<void>((done) => {
@@ -602,11 +583,11 @@ export function CheckpointCanvas(p: CheckpointCanvasProps): JSX.Element {
         anchor ?? { x: v.width / 2, y: v.height / 2 },
         limits,
       ),
-      260,
+      ZOOM_FLY_MS,
     )
   }
   const fitAll = (): void => {
-    fly(fitIn(layout.bounds, 72))
+    fly(fitIn(layout.bounds, FIT_COMFORTABLE))
   }
 
   const press = useRef<{
@@ -715,7 +696,7 @@ export function CheckpointCanvas(p: CheckpointCanvasProps): JSX.Element {
     const dx = e.clientX - pr.x
     const dy = e.clientY - pr.y
     if (!pr.moved) {
-      if (Math.hypot(dx, dy) < 4) return
+      if (Math.hypot(dx, dy) < POINTER_SLOP) return
       pr.moved = true
       if (pr.card === null) setPanning(true)
       e.currentTarget.setPointerCapture(e.pointerId)
@@ -771,7 +752,7 @@ export function CheckpointCanvas(p: CheckpointCanvasProps): JSX.Element {
       e.preventDefault()
       const { clamp: c, limits: l } = wheelState.current
       const r = el.getBoundingClientRect()
-      const lines = e.deltaMode === 1 ? 16 : 1
+      const lines = e.deltaMode === 1 ? WHEEL_LINE : 1
       if (e.ctrlKey || e.metaKey) {
         setCamera(
           c(
@@ -869,9 +850,9 @@ export function CheckpointCanvas(p: CheckpointCanvasProps): JSX.Element {
     const d = layout.days[tick.day]
     if (d === undefined) return overview()
     const block = withLabel(d)
-    const fit = fitIn(block, 96)
+    const fit = fitIn(block, FIT_ROOMY)
     const zoom = clampZoom(
-      Math.min(fit.zoom, Math.max(cameraNow().zoom, 0.55)),
+      Math.min(fit.zoom, Math.max(cameraNow().zoom, DAY_ZOOM_MIN)),
       limits,
     )
     return centreIn(
@@ -915,7 +896,10 @@ export function CheckpointCanvas(p: CheckpointCanvasProps): JSX.Element {
     const isToday = today !== undefined && today.key === dayKey(new Date())
     void flyCamera(
       clamp(
-        fitIn(union([layout.now, ...(isToday ? [withLabel(today)] : [])]), 96),
+        fitIn(
+          union([layout.now, ...(isToday ? [withLabel(today)] : [])]),
+          FIT_ROOMY,
+        ),
       ),
     )
     setStatus(null)
@@ -967,7 +951,7 @@ export function CheckpointCanvas(p: CheckpointCanvasProps): JSX.Element {
                 after.now,
                 ...(today === undefined ? [] : [withLabel(today)]),
               ]),
-              96,
+              FIT_ROOMY,
             ),
           ),
         )
@@ -1218,7 +1202,7 @@ export function CheckpointCanvas(p: CheckpointCanvasProps): JSX.Element {
       layout.cards.has(selected)
     ) {
       e.preventDefault()
-      const d = (e.shiftKey ? 4 : 1) * NUDGE_STEP
+      const d = (e.shiftKey ? FAST_STEP : 1) * NUDGE_STEP
       const by = offsetOf(selected)
       const next = {
         x: by.x + (e.key === "ArrowLeft" ? -d : e.key === "ArrowRight" ? d : 0),
@@ -1227,11 +1211,11 @@ export function CheckpointCanvas(p: CheckpointCanvasProps): JSX.Element {
       putCard(selected, next)
     } else if (!cmd && e.key.startsWith("Arrow")) {
       e.preventDefault()
-      const d = (e.shiftKey ? 4 : 1) * PAN_STEP
+      const d = (e.shiftKey ? FAST_STEP : 1) * PAN_STEP
       const now = cameraNow()
       const dx = e.key === "ArrowLeft" ? d : e.key === "ArrowRight" ? -d : 0
       const dy = e.key === "ArrowUp" ? d : e.key === "ArrowDown" ? -d : 0
-      fly({ ...now, x: now.x + dx, y: now.y + dy }, 180)
+      fly({ ...now, x: now.x + dx, y: now.y + dy }, PAN_FLY_MS)
     } else if (
       !cmd &&
       e.key === " " &&
@@ -1260,7 +1244,7 @@ export function CheckpointCanvas(p: CheckpointCanvasProps): JSX.Element {
     }
   }, [])
 
-  const seen = visibleWorld(camera, size, 360)
+  const seen = visibleWorld(camera, size, CULL_MARGIN)
   const cardsNow = useMemo(() => {
     const carried =
       dragging === null ? undefined : layout.cards.get(dragging.name)
@@ -1360,7 +1344,11 @@ export function CheckpointCanvas(p: CheckpointCanvasProps): JSX.Element {
               return (
                 <SpatialCanvasLabel
                   key={d.key}
-                  x={near ? group.label.x : group.rect.x - 24 * d.scale}
+                  x={
+                    near
+                      ? group.label.x
+                      : group.rect.x - FAR_LABEL_GAP * d.scale
+                  }
                   y={
                     near ? group.label.y : group.rect.y + group.rect.height / 2
                   }
@@ -1491,7 +1479,7 @@ export function CheckpointCanvas(p: CheckpointCanvasProps): JSX.Element {
               label={t("checkpoints.results")}
               emptyMessage={t("checkpoints.noMatches")}
             >
-              {results.slice(0, 50).map((c, i) => (
+              {results.slice(0, RESULTS_SHOWN).map((c, i) => (
                 <SpatialCanvasSearchResult
                   key={c.name}
                   id={
@@ -1532,7 +1520,7 @@ export function CheckpointCanvas(p: CheckpointCanvasProps): JSX.Element {
             fly(dayCamera(tick))
           }}
           onScrub={(tick) => {
-            fly(dayCamera(tick), 200)
+            fly(dayCamera(tick), SCRUB_FLY_MS)
           }}
           onOlder={() => {
             step(-1)

@@ -2,9 +2,13 @@ import { type JSX, useEffect, useState } from "react"
 
 import { Button } from "../../components/Button"
 import { focusOnMount } from "../../components/focusOnMount"
+import { MS_PER_MINUTE } from "../../constants"
 import { t } from "../../i18n"
 import { absoluteTime } from "./CheckpointCard"
+import { CHECKPOINT_TITLE_MAX } from "./CheckpointDetails"
 import type { CheckpointFormat } from "./checkpoints"
+
+const MINUTE_SLACK_MS = 20
 
 function useMinute(active: boolean): number {
   const [now, setNow] = useState(() => Date.now())
@@ -18,7 +22,7 @@ function useMinute(active: boolean): number {
           setNow(Date.now())
           next()
         },
-        60_000 - (Date.now() % 60_000) + 20,
+        MS_PER_MINUTE - (Date.now() % MS_PER_MINUTE) + MINUTE_SLACK_MS,
       )
     }
     next()
@@ -69,7 +73,7 @@ export function NewCheckpointForm({
         value={title}
         placeholder={unnamed}
         autoComplete="off"
-        maxLength={120}
+        maxLength={CHECKPOINT_TITLE_MAX}
         onChange={(e) => {
           setTitle(e.target.value)
         }}

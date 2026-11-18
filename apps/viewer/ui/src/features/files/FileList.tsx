@@ -55,6 +55,7 @@ const COLUMNS: readonly { key: SortKey; label: string; className: string }[] = [
 
 const OVERSCAN = 8
 const ROW_FALLBACK = px(size.lg)
+const VIEW_HEIGHT_FALLBACK = 600
 
 const rowId = (name: string): string => `files-row-${encodeURIComponent(name)}`
 
@@ -137,7 +138,11 @@ function NameField({
 }
 
 export function FileList(p: FileListProps): JSX.Element {
-  const [view, setView] = useState({ top: 0, height: 600, row: ROW_FALLBACK })
+  const [view, setView] = useState({
+    top: 0,
+    height: VIEW_HEIGHT_FALLBACK,
+    row: ROW_FALLBACK,
+  })
 
   useEffect(() => {
     const el = p.list.current

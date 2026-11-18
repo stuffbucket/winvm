@@ -27,7 +27,9 @@ export function terminalTheme(dark: boolean): TerminalTheme {
   }
 }
 
-const PT_PER_PX = 72 / 96
+const POINTS_PER_INCH = 72
+const CSS_PX_PER_INCH = 96
+const PT_PER_PX = POINTS_PER_INCH / CSS_PX_PER_INCH
 
 export const terminalTypography: TerminalTypography = {
   fontFamily: fontStacks.mono,

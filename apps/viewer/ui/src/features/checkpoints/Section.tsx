@@ -9,6 +9,7 @@ import {
 } from "react"
 
 import { t } from "../../i18n"
+import { GRID_MIN_STEP, SECTION_TAB_MIN } from "./layout/geometry"
 import {
   HANDLES,
   type Handle,
@@ -128,7 +129,7 @@ export function SectionView({
   }, [editing])
   const frame = {
     "--inv": String(1 / zoom),
-    "--tab-max": `${String(Math.max(96, s.w * zoom))}px`,
+    "--tab-max": `${String(Math.max(SECTION_TAB_MIN, s.w * zoom))}px`,
   } as CSSProperties
   return (
     <SpatialCanvasNode
@@ -247,7 +248,7 @@ export function SectionGrid({
   readonly on: boolean
 }): JSX.Element {
   let step = grid * camera.zoom
-  while (step < 10) step *= 2
+  while (step < GRID_MIN_STEP) step *= 2
   const at = (v: number): number => (((v - step / 2) % step) + step) % step
   return (
     <span

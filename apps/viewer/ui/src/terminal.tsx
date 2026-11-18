@@ -3,6 +3,7 @@ import { createRoot } from "react-dom/client"
 
 import { showWindow } from "./backend"
 import { ErrorBoundary } from "./components/ErrorBoundary"
+import { SHOW_WINDOW_DELAY_MS } from "./constants"
 import { TerminalWindow } from "./features/terminal/TerminalWindow"
 import { t } from "./i18n"
 import { osKind } from "./platform"
@@ -18,4 +19,4 @@ createRoot(root).render(
     </ErrorBoundary>
   </StrictMode>,
 )
-setTimeout(showWindow, 1000)
+setTimeout(showWindow, SHOW_WINDOW_DELAY_MS)
