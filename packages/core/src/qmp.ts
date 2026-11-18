@@ -1,7 +1,7 @@
 import { readFileSync, rmSync } from "node:fs"
 import { connect } from "node:net"
 
-import { checkOp } from "./opcontext"
+import { fenced } from "./opcontext"
 
 export async function hmp(
   sockPath: string,
@@ -53,17 +53,16 @@ export async function status(sockPath: string): Promise<string> {
   return r?.status ?? "unknown"
 }
 
-async function withSocket<T>(
-  sockPath: string,
-  fn: (
-    send: (o: object) => Promise<void>,
-    request: (
-      o: object,
-      timeoutMs?: number,
-    ) => Promise<Record<string, unknown>>,
-  ) => Promise<T>,
-): Promise<T> {
-  checkOp()
+type SocketUse<T> = (
+  send: (o: object) => Promise<void>,
+  request: (o: object, timeoutMs?: number) => Promise<Record<string, unknown>>,
+) => Promise<T>
+
+async function withSocket<T>(sockPath: string, fn: SocketUse<T>): Promise<T> {
+  return await fenced(async () => await onSocket(sockPath, fn))
+}
+
+async function onSocket<T>(sockPath: string, fn: SocketUse<T>): Promise<T> {
   const deadline = Date.now() + 30_000
   let sock: ReturnType<typeof connect> | null = null
   for (;;) {

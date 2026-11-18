@@ -10,6 +10,7 @@ import {
 } from "./eventlog"
 import {
   currentOp,
+  OpEnded,
   type OpScope,
   type OutputStream,
   runInOp,
@@ -93,6 +94,17 @@ export function readOpRequest(
 const CHUNK = 1024
 const KILLED = "killed"
 const CANCELLED = "cancelled"
+const HOST_END = "host-end"
+const STOPPING = "stopping"
+export const HOST_END_GRACE_MS = 5000
+
+export type Closing = typeof HOST_END | typeof STOPPING
+
+const DID_NOT_RUN: Readonly<Record<string, string>> = {
+  [KILLED]: "winvm kill ended QEMU",
+  [HOST_END]: "the Mac is shutting down",
+  [STOPPING]: "winvm's service stopped",
+}
 
 interface Running {
   readonly scope: OpScope
@@ -176,6 +188,16 @@ export type Submitted =
     }
   | { readonly kind: "busy"; readonly holder: LeaseHolder }
   | { readonly kind: "failed"; readonly error: string }
+  | { readonly kind: "closed"; readonly reason: Closing }
+
+function atSafePoint(scope: OpScope, then: () => void): void {
+  const by = Date.now() + HOST_END_GRACE_MS
+  const look = (): void => {
+    if (scope.calls === 0 || Date.now() >= by) then()
+    else setTimeout(look, 20)
+  }
+  look()
+}
 
 export interface QueueHooks {
   readonly record: (fields: EntryFields) => void
@@ -188,6 +210,7 @@ export class OpQueue {
   private readonly name: string
   private readonly handlers: OpHandlers
   private readonly hooks: QueueHooks
+  private closed: Closing | null = null
 
   constructor(name: string, handlers: OpHandlers, hooks: QueueHooks) {
     this.name = name
@@ -204,7 +227,16 @@ export class OpQueue {
       await Promise.all([...this.ops.values()].map((r) => r.ended))
   }
 
+  async close(reason: Closing): Promise<void> {
+    this.closed ??= reason
+    for (const r of this.ops.values())
+      if (r.scope.operation !== "kill" && (reason === HOST_END || !r.held))
+        r.controller.abort(reason)
+    await this.drain()
+  }
+
   async submit(req: OpRequest): Promise<Submitted> {
+    if (this.closed !== null) return { kind: "closed", reason: this.closed }
     const handler = this.handlers[req.op]
     if (handler === undefined) throw new Error(`no handler for ${req.op}`)
     const id = randomUUID()
@@ -229,6 +261,7 @@ export class OpQueue {
         })
       },
       irreversibleAt: null,
+      calls: 0,
     }
     const running: Running = {
       scope,
@@ -348,6 +381,12 @@ export class OpQueue {
           reject(new Error(KILLED))
           return
         }
+        if (scope.signal.reason === HOST_END) {
+          atSafePoint(scope, () => {
+            reject(new Error(HOST_END))
+          })
+          return
+        }
         scope.write(
           "err",
           `::error::${scope.operation} was cancelled (winvm cancel) before its point of no return; it changed nothing more\n`,
@@ -359,21 +398,37 @@ export class OpQueue {
         return
       }
       scope.signal.addEventListener("abort", stop, { once: true })
-      work.then(resolve, reject).finally(() => {
-        scope.signal.removeEventListener("abort", stop)
-      })
+      work
+        .then(resolve, (error: unknown) => {
+          reject(
+            error instanceof Error && !(error instanceof OpEnded)
+              ? error
+              : new Error(
+                  error instanceof OpEnded
+                    ? String(scope.signal.reason)
+                    : String(error),
+                ),
+          )
+        })
+        .finally(() => {
+          scope.signal.removeEventListener("abort", stop)
+        })
     })
   }
 
   private endUnheld(running: Running, args: Args, error: unknown): void {
     const { scope } = running
-    const killed = scope.signal.reason === KILLED
-    const cancelled = scope.signal.aborted && !killed
+    const why: unknown = scope.signal.aborted ? scope.signal.reason : null
+    const killed = why === KILLED
+    const cancelled = why === CANCELLED
+    const ended = typeof why === "string" ? DID_NOT_RUN[why] : undefined
     const message = cancelled
       ? `${scope.operation} was cancelled (winvm cancel) before it began; nothing was done`
-      : error instanceof Error
-        ? error.message
-        : String(error)
+      : ended !== undefined
+        ? `${scope.operation} did not run: ${ended}`
+        : error instanceof Error
+          ? error.message
+          : String(error)
     if (!killed) scope.write("err", `::error::${message}\n`)
     appendEntry(this.name, {
       kind: "op",
@@ -388,7 +443,10 @@ export class OpQueue {
       ok: false,
       ...(killed
         ? { error: KILLED }
-        : { exitCode: cancelled ? INTERRUPTED : 1, error: message }),
+        : {
+            exitCode: cancelled ? INTERRUPTED : 1,
+            error: ended ?? message,
+          }),
     })
   }
 

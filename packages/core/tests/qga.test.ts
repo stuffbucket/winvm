@@ -385,6 +385,23 @@ describe("qga.untilNewBoot", () => {
     ).toBe("no-logon")
     expect(asked).toBe(0)
   })
+
+  it("stops waiting as soon as its signal aborts, though the boot never changed", async () => {
+    const ac = new AbortController()
+    setTimeout(() => {
+      ac.abort("host-end")
+    }, 30)
+    const t0 = Date.now()
+    expect(
+      await untilNewBoot("unused", BEFORE, 60_000, {
+        untilReady: ready,
+        bootTime: () => Promise.resolve(BEFORE),
+        settleMs: 5,
+        signal: ac.signal,
+      }),
+    ).toBe("timeout")
+    expect(Date.now() - t0).toBeLessThan(1000)
+  })
 })
 
 describe("qga.reboot", () => {

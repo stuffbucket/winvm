@@ -216,15 +216,17 @@ export async function runService(
       return new Response("deadlineMs is required", { status: 400 })
     if (hostEnding !== null)
       return new Response("already ending", { status: 409 })
-    hostEnding = (o.hostEnd ?? hostEnd)(name, deadlineMs).catch(
-      (error: unknown) => {
-        record({
-          kind: "warning",
-          what: "host-end",
-          error: error instanceof Error ? error.message : String(error),
-        })
-      },
-    )
+    const endHost = o.hostEnd ?? hostEnd
+    hostEnding = (async (): Promise<unknown> => {
+      await queue.close("host-end")
+      return await endHost(name, deadlineMs)
+    })().catch((error: unknown) => {
+      record({
+        kind: "warning",
+        what: "host-end",
+        error: error instanceof Error ? error.message : String(error),
+      })
+    })
     return new Response(null, { status: 202 })
   }
   const answer = (r: Reply): Response =>
@@ -240,6 +242,15 @@ export async function runService(
     const s = await queue.submit(parsed)
     if (s.kind === "busy") return answer(reply(409, { busy: s.holder }))
     if (s.kind === "failed") return answer(reply(503, { error: s.error }))
+    if (s.kind === "closed")
+      return answer(
+        reply(
+          503,
+          s.reason === "host-end"
+            ? { error: "the Mac is shutting down", hostEnding: true }
+            : { error: "the service is stopping" },
+        ),
+      )
     return answer(
       reply(202, {
         id: s.id,
@@ -449,7 +460,7 @@ export async function runService(
     }
     stopping = true
     if (hostEnding !== null) await hostEnding
-    await queue.drain()
+    await queue.close("stopping")
     clearInterval(check)
     clearInterval(heartbeat)
     for (const c of subs) {

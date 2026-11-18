@@ -9,13 +9,20 @@ export interface OpScope {
   readonly write: (stream: OutputStream, text: string) => void
   readonly remount: () => void
   irreversibleAt: string | null
+  calls: number
+}
+
+const ENDED_BY: Readonly<Record<string, string>> = {
+  killed: "ended by winvm kill",
+  "host-end": "ended because the Mac is shutting down",
+  stopping: "ended because winvm's service stopped",
 }
 
 export class OpEnded extends Error {
   constructor(scope: OpScope) {
     const why: unknown = scope.signal.reason
     super(
-      `${scope.operation} was ${why === "killed" ? "ended by winvm kill" : "cancelled"}, so it sends nothing more to QEMU or Windows`,
+      `${scope.operation} was ${(typeof why === "string" ? ENDED_BY[why] : undefined) ?? "cancelled"}, so it sends nothing more to QEMU or Windows`,
     )
     this.name = "OpEnded"
   }
@@ -28,9 +35,23 @@ export const runInOp = <T>(scope: OpScope, run: () => T): T =>
 
 export const currentOp = (): OpScope | null => scopes.getStore() ?? null
 
+export const outsideOp = <T>(run: () => T): T => scopes.exit(run)
+
 export function checkOp(): void {
   const scope = scopes.getStore()
   if (scope?.signal.aborted === true) throw new OpEnded(scope)
+}
+
+export async function fenced<T>(call: () => Promise<T>): Promise<T> {
+  const scope = scopes.getStore()
+  if (scope === undefined) return await call()
+  checkOp()
+  scope.calls += 1
+  try {
+    return await call()
+  } finally {
+    scope.calls -= 1
+  }
 }
 
 export function pointOfNoReturn(): void {

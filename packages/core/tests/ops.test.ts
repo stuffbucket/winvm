@@ -11,13 +11,16 @@ import { resolve } from "node:path"
 
 import type { Args } from "../src/args"
 import { type Entry, readSince, START } from "../src/eventlog"
+import { type HostEndOutcome, runHostEnd } from "../src/hostend"
 import { pointOfNoReturn } from "../src/opcontext"
 import { InstanceBusy, leaseHolder, withOperation } from "../src/operation"
 import { OPS_PROTOCOL, type OpHandlers } from "../src/ops"
+import { SERVICE_HANDLERS } from "../src/opverbs"
 import { type Paths, pathsFor } from "../src/paths"
 import * as qmp from "../src/qmp"
 import { runService, type ServiceHandle } from "../src/service"
 import { FakeAgent } from "./fakes/agent"
+import { FakeGuest } from "./fakes/guest"
 import { lockPidfile, releasePidfiles } from "./fakes/pidfile"
 import { FakeQmp } from "./fakes/qmp"
 
@@ -474,4 +477,208 @@ describe("stopping the service", () => {
     svc = null
     expect(endOf(a.body.id)).toMatchObject({ ok: true })
   })
+})
+
+const realReboot = SERVICE_HANDLERS.reboot ?? {
+  cancel: "never",
+  run: async () => await Promise.resolve(1),
+}
+
+describe("host end", () => {
+  let outcome: Promise<HostEndOutcome> | null = null
+  let handedBack: string[] = []
+  let stowed = 0
+  let stowedAt = 0
+  let release: () => Promise<void> = async () => {
+    await Promise.resolve()
+  }
+
+  const hostEnd = (_name: string, deadlineMs: number): Promise<unknown> => {
+    outcome = runHostEnd(deadlineMs, {
+      facts: () => ({
+        action: "stow",
+        ephemeral: false,
+        installMedia: false,
+        unsaveable: null,
+        freeBytes: null,
+        needBytes: null,
+        busy: busyNow(),
+      }),
+      running: () => true,
+      busy: busyNow,
+      cancel: async () => {
+        await release()
+      },
+      stow: async () => {
+        await withOperation(
+          "t",
+          "stow",
+          () => {
+            stowed += 1
+            stowedAt = Date.now()
+          },
+          { automatic: true, waitMs: 0 },
+        )
+      },
+      handBack: async (end, reason) => {
+        handedBack.push(`${end}: ${reason}`)
+        await Promise.resolve()
+      },
+      note: () => undefined,
+      now: Date.now,
+      sleep: async (ms) => {
+        await Bun.sleep(ms)
+      },
+    })
+    return outcome
+  }
+
+  const busyNow = (): {
+    operation: string
+    automatic: boolean
+    irreversible: boolean
+  } | null => {
+    const h = leaseHolder("t")
+    return h === null
+      ? null
+      : { operation: h.operation, automatic: h.automatic, irreversible: false }
+  }
+
+  const ending = async (): Promise<number> => {
+    const res = await fetch("http://localhost/host-ending", {
+      unix: p.control,
+      method: "POST",
+      body: JSON.stringify({ deadlineMs: Date.now() + 8000, budgetMs: 55_000 }),
+    })
+    return res.status
+  }
+
+  beforeEach(async () => {
+    outcome = null
+    handedBack = []
+    stowed = 0
+    release = async () => {
+      await Promise.resolve()
+    }
+    await svc?.stop()
+    svc = await runService("t", {
+      exitAfterMs: 60_000,
+      checkMs: 50,
+      handlers: {
+        ...handlers,
+        reboot: realReboot,
+        lock: {
+          cancel: "never",
+          run: async () => {
+            await qmp.execute(p.qmp, "stop")
+            return 0
+          },
+        },
+      },
+      hostEnd,
+    })
+  })
+
+  it("ends a reboot already sent to Windows at once, and stows instead of waiting it out", async () => {
+    const guest = new FakeGuest(fake, agent)
+    guest.bootDelayMs = 60_000
+    const a = await submit("reboot")
+    await until(() =>
+      opsOf(a.body.id).some(
+        (e) =>
+          e.kind === "op" && e.phase === "output" && e.text === "rebooting",
+      ),
+    )
+    const t0 = Date.now()
+    expect(await ending()).toBe(202)
+    await until(() => outcome !== null, 10_000)
+    expect(await outcome).toBe("stowed")
+    expect(Date.now() - t0).toBeLessThan(6000)
+    expect(handedBack).toEqual([])
+    expect(stowed).toBe(1)
+    expect(await ended(a.body.id)).toMatchObject({
+      ok: false,
+      error: "host-end",
+    })
+    expect(guest.shutdownRequests).toEqual(["reboot"])
+  }, 20_000)
+
+  it("never lets an op queued behind an autosave take the guest from host end", async () => {
+    const autosave = gate()
+    const saving = withOperation(
+      "t",
+      "save",
+      async () => {
+        await autosave.opened
+      },
+      { automatic: true },
+    )
+    await Bun.sleep(20)
+    release = async () => {
+      autosave.open()
+      await saving
+      await Bun.sleep(400)
+    }
+    const queued = await submit("resume")
+    expect(queued.body).toMatchObject({ queued: { operation: "save" } })
+    expect(await ending()).toBe(202)
+    await until(() => outcome !== null, 10_000)
+    expect(await outcome).toBe("stowed")
+    expect(handedBack).toEqual([])
+    expect(stowed).toBe(1)
+    expect(running).toBe(0)
+    expect(await ended(queued.body.id)).toMatchObject({
+      ok: false,
+      exitCode: 1,
+      leased: false,
+    })
+    const said = opsOf(queued.body.id).flatMap((e) =>
+      e.kind === "op" && e.phase === "output" ? [e.text] : [],
+    )
+    expect(said.join("")).toContain("the Mac is shutting down")
+  }, 20_000)
+
+  it("lets a command the op already sent to QEMU be answered before it stows", async () => {
+    const plain = fake.handler
+    let answeredAt = 0
+    fake.handler = async (cmd) => {
+      if (cmd.execute !== "stop") return await plain(cmd)
+      await Bun.sleep(800)
+      answeredAt = Date.now()
+      return { return: {} }
+    }
+    const a = await submit("lock")
+    await until(() => fake.commands.includes("stop"))
+    expect(await ending()).toBe(202)
+    await until(() => outcome !== null, 10_000)
+    expect(await outcome).toBe("stowed")
+    expect(answeredAt).toBeGreaterThan(0)
+    expect(stowedAt).toBeGreaterThanOrEqual(answeredAt)
+    expect(await ended(a.body.id)).toMatchObject({ ok: true, exitCode: 0 })
+  }, 20_000)
+
+  it("takes no new op once it has begun, and says why", async () => {
+    release = async () => {
+      await Bun.sleep(2000)
+    }
+    const autosave = gate()
+    const saving = withOperation(
+      "t",
+      "save",
+      async () => {
+        await autosave.opened
+      },
+      { automatic: true },
+    )
+    await Bun.sleep(20)
+    expect(await ending()).toBe(202)
+    const r = await submit("pause")
+    expect(r.status).toBe(503)
+    expect(r.body).toMatchObject({ protocol: OPS_PROTOCOL, hostEnding: true })
+    expect(seen).toEqual([])
+    autosave.open()
+    await saving
+    await until(() => outcome !== null, 10_000)
+    await outcome
+  }, 20_000)
 })

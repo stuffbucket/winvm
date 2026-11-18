@@ -601,6 +601,25 @@ describe("the short verbs, with a service that runs no ops", () => {
     expect(r.stderr).toContain(`winvm's service for "t" did not answer`)
   }, 30_000)
 
+  it("run nothing, in the service or the CLI, once the Mac is shutting down", async () => {
+    await replace(() =>
+      Response.json(
+        {
+          protocol: 1,
+          error: "the Mac is shutting down",
+          hostEnding: true,
+        },
+        { status: 503 },
+      ),
+    )
+    expect(await winvm("pause", "-i", "t")).toEqual({
+      code: 1,
+      stdout: "",
+      stderr: "::error::the Mac is shutting down, so pause was not run\n",
+    })
+    expect(guest.status).toBe("running")
+  }, 30_000)
+
   it("kill from the CLI itself when the service takes the kill but never answers", async () => {
     await replace(async () => {
       await new Promise(() => undefined)

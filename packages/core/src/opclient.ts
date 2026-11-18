@@ -24,6 +24,7 @@ type Sent =
   | ({ readonly kind: "accepted" } & Accepted)
   | { readonly kind: "busy"; readonly holder: LeaseHolder }
   | { readonly kind: "unavailable" }
+  | { readonly kind: "refused"; readonly why: string }
   | { readonly kind: "unanswered"; readonly why: string }
 
 const NOT_RECEIVED: ReadonlySet<string> = new Set([
@@ -108,6 +109,8 @@ async function send(
     const a = acceptedOf(r.body)
     if (a !== null) return { kind: "accepted", ...a }
   }
+  if (r.status === 503 && r.body?.hostEnding === true)
+    return { kind: "refused", why: "the Mac is shutting down" }
   const holder = r.status === 409 ? holderOf(r.body?.busy) : null
   if (holder !== null) return { kind: "busy", holder }
   if ([400, 404, 501, 503].includes(r.status)) return { kind: "unavailable" }
@@ -178,7 +181,9 @@ function ended(operation: string, e: OpEntry, io: Io): number {
   io.err(
     e.error === "killed"
       ? `::error::${operation} was ended by \`winvm kill\` while it ran\n`
-      : `error: ${e.error ?? "it failed"}\n`,
+      : e.error === "host-end"
+        ? `::error::${operation} was ended because the Mac is shutting down\n`
+        : `error: ${e.error ?? "it failed"}\n`,
   )
   return 1
 }
@@ -243,6 +248,9 @@ export async function runOp(
         return await here()
       case "busy":
         io.err(`::error::${new InstanceBusy(name, sent.holder).message}\n`)
+        return 1
+      case "refused":
+        io.err(`::error::${sent.why}, so ${call.op} was not run\n`)
         return 1
       case "unanswered":
         if (call.op === "kill") {

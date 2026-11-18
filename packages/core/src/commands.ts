@@ -63,7 +63,7 @@ import {
   resolveWindowsIso,
 } from "./media"
 import * as monitor from "./monitor"
-import { pointOfNoReturn } from "./opcontext"
+import { currentOp, pointOfNoReturn } from "./opcontext"
 import {
   INTERRUPTED,
   InstanceBusy,
@@ -1275,6 +1275,8 @@ export async function reboot(args: Args): Promise<number> {
   }
   const t0 = Date.now()
   const deadline = t0 + s * 1000
+  const op = currentOp()
+  const stopWith = op === null ? {} : { signal: op.signal }
   pointOfNoReturn()
   finder.beforeDown(name)
   const outcome = await watcher.whileActive(
@@ -1286,11 +1288,15 @@ export async function reboot(args: Args): Promise<number> {
         return { refused: errorText(error) }
       }
       process.stdout.write("rebooting")
-      if ((await waitForEvent(name, guestReset, deadline, { since })) === null)
-        return "timeout"
+      const reset = await waitForEvent(name, guestReset, deadline, {
+        since,
+        ...stopWith,
+      })
+      if (reset === null) return "timeout"
       return await qga.untilNewBoot(p.qga, before, deadline - Date.now(), {
         noLogonMs: NO_LOGON_MS,
         log: (line) => process.stdout.write(`\n${line}\n`),
+        ...stopWith,
       })
     })(),
   )
