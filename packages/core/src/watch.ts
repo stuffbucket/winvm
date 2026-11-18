@@ -202,9 +202,22 @@ async function stopHere(name: string): Promise<boolean> {
 
 const QUIESCE_MS = 11 * 60_000
 
-export async function stopWatcher(name: string): Promise<boolean> {
+function announceQuiesce(name: string): void {
+  const st = readWatchState(name)
+  if (st === null || readService(pathsFor(name))?.pid !== st.pid) return
+  if (st.state === "autosaving" || st.state === "stowing")
+    console.error(
+      `instance "${name}": waiting for the ${st.state === "autosaving" ? "autosave" : "idle stow"} in progress to finish`,
+    )
+}
+
+export async function stopWatcher(
+  name: string,
+  quiesceMs = QUIESCE_MS,
+): Promise<boolean> {
   if (runs.has(name) || servingHere(pathsFor(name))) return await stopHere(name)
-  const r = await askService(name, "/watch", { on: false }, QUIESCE_MS)
+  announceQuiesce(name)
+  const r = await askService(name, "/watch", { on: false }, quiesceMs)
   if (r.kind === "answered" && typeof r.body?.stopped === "boolean")
     return r.body.stopped
   if (r.kind === "unavailable" || (r.kind === "answered" && r.status !== 200))

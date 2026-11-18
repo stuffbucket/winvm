@@ -92,6 +92,8 @@ function fakeApp(machines: Record<string, Machine>, up = true) {
       calls.filter((c) => c[0] === "status" && !c.includes("-i")).length,
     ran: (verb: string): string[][] => calls.filter((c) => c[0] === verb),
     openFails: 0,
+    files: (): Promise<unknown> =>
+      Promise.resolve({ code: 0, stdout: "", stderr: "" }),
     reconcile: (): Promise<unknown> =>
       Promise.resolve({ code: 0, stdout: "", stderr: "" }),
     emit(payload: unknown): void {
@@ -145,6 +147,7 @@ function fakeApp(machines: Record<string, Machine>, up = true) {
       )
     }
     if (args[0] === "reconcile") return app.reconcile()
+    if (args[0] === "files") return app.files()
     return Promise.resolve({ code: 0, stdout: "", stderr: "" })
   }
   const listen = (
@@ -353,6 +356,31 @@ describe("useWinvm following the event stream", () => {
     })
     await tick(300)
     expect(app.ran("files")).toHaveLength(1)
+  })
+
+  it("reads the status again, and shows no error, when the remount exits non-zero for want of drives to mount", async () => {
+    const app = fakeApp({ demo: idle() })
+    app.files = () =>
+      Promise.resolve({
+        code: 1,
+        stdout: "",
+        stderr: '::error::instance "demo" is busy: save\n',
+      })
+    const w = await mount()
+    const reads = app.reads("demo")
+    app.entry("demo", {
+      kind: "op",
+      phase: "end",
+      operation: "stow",
+      automatic: true,
+      ok: false,
+      exitCode: 1,
+      remount: true,
+    })
+    await tick(300)
+    expect(app.ran("files")).toEqual([["files", "remount", "-i", "demo"]])
+    expect(app.reads("demo")).toBeGreaterThan(reads)
+    expect(w().statusError).toBeNull()
   })
 
   it("asks for no repair while an operation runs, nor when none is due", async () => {

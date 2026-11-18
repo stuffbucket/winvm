@@ -417,24 +417,50 @@ export async function unmountWithin(
   }
 }
 
+export type Remounted = "mounted" | "nothing pending" | "failed"
+
+const pendingMounts = (instance: string, sys: Sys): readonly ShareKey[] => {
+  const s = readSmb(pathsFor(instance))
+  return s === null || !sys.running(instance) ? [] : s.mounted
+}
+
+async function mountAgain(
+  instance: string,
+  mounted: readonly ShareKey[],
+  sys: Sys,
+): Promise<boolean> {
+  try {
+    await mountShares(instance, mounted, { waitMs: 30_000, sys })
+    return true
+  } catch (error) {
+    console.warn(
+      `warning: the guest's drives were not mounted again (${errMsg(error)}) — \`winvm files mount -i ${instance}\``,
+    )
+    return false
+  }
+}
+
+export async function remountPending(
+  instance: string,
+  sys: Sys = realSys,
+): Promise<Remounted> {
+  const mounted = pendingMounts(instance, sys)
+  if (mounted.length === 0) return "nothing pending"
+  return (await mountAgain(instance, mounted, sys)) ? "mounted" : "failed"
+}
+
 export async function afterUp(
   instance: string,
   sys: Sys = realSys,
 ): Promise<void> {
-  const s = readSmb(pathsFor(instance))
-  if (s === null || s.mounted.length === 0 || !sys.running(instance)) return
+  const mounted = pendingMounts(instance, sys)
+  if (mounted.length === 0) return
   const op = currentOp()
   if (op !== null) {
     op.remount()
     return
   }
-  try {
-    await mountShares(instance, s.mounted, { waitMs: 30_000, sys })
-  } catch (error) {
-    console.warn(
-      `warning: the guest's drives were not mounted again (${errMsg(error)}) — \`winvm files mount -i ${instance}\``,
-    )
-  }
+  await mountAgain(instance, mounted, sys)
 }
 
 export function cleanStale(
@@ -541,7 +567,7 @@ const USAGE =
   "usage: winvm files open    [-i name] [c|home] [--path GUEST_PATH]   mount if needed, then show it in Finder\n" +
   "       winvm files mount   [-i name] [c|home]    both when neither is named\n" +
   "       winvm files unmount [-i name] [c|home]\n" +
-  "       winvm files remount [-i name]    mount again what a command took down, unless the guest is paused or the Mac is shutting down\n" +
+  "       winvm files remount [-i name]    mount again what a command took down; exits 1 if it mounted nothing that was waiting\n" +
   "       winvm files status  [-i name] [--json]"
 
 function keysOf(

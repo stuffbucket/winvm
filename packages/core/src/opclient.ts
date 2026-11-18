@@ -10,7 +10,7 @@ import {
 } from "./eventlog"
 import * as finder from "./finder"
 import { cursorOf } from "./follow"
-import { frozenState } from "./frozen"
+import { frozenState, GuestFrozen } from "./frozen"
 import {
   INTERRUPTED,
   InstanceBusy,
@@ -242,7 +242,7 @@ const stdio: Io = {
     process.stderr.write(text)
   },
   remount: async (name, signal) => {
-    await remountHeld(name, finder.afterUp, signal)
+    await remountHeld(name, finder.remountPending, signal)
   },
 }
 
@@ -273,37 +273,109 @@ function abandoned(signal: AbortSignal): Promise<never> {
   })
 }
 
+export type Remount =
+  | { readonly kind: finder.Remounted }
+  | { readonly kind: "refused"; readonly why: string }
+
+const refused = (why: string): Remount => ({ kind: "refused", why })
+
+const shuttingDown = (name: string): Remount =>
+  refused(
+    `the Mac is shutting down, so the guest's drives of "${name}" were not mounted again`,
+  )
+
+const HOST_END_POLL_MS = 500
+
+function watchHostEnd(
+  name: string,
+  pollMs: number,
+): { readonly begun: AbortSignal; readonly stop: () => void } {
+  const begun = new AbortController()
+  let stopped = false
+  let timer: ReturnType<typeof setTimeout> | null = null
+  const look = async (): Promise<void> => {
+    if (await hostEnding(name)) begun.abort("host end")
+    else if (!stopped) timer = setTimeout(() => void look(), pollMs)
+  }
+  timer = setTimeout(() => void look(), pollMs)
+  return {
+    begun: begun.signal,
+    stop: () => {
+      stopped = true
+      if (timer !== null) clearTimeout(timer)
+    },
+  }
+}
+
+export interface RemountOptions {
+  readonly waitMs?: number
+  readonly hostPollMs?: number
+}
+
 export async function remountHeld(
   name: string,
-  mount: (name: string) => Promise<void> = finder.afterUp,
+  mount: (name: string) => Promise<finder.Remounted> = finder.remountPending,
   signal: AbortSignal = new AbortController().signal,
-): Promise<void> {
+  options: RemountOptions = {},
+): Promise<Remount> {
   try {
-    await withOperation(
+    return await withOperation(
       name,
       "remount",
-      async () => {
-        if (await hostEnding(name)) return
-        if ((await frozenState(pathsFor(name))) !== null) return
+      async (): Promise<Remount> => {
+        if (await hostEnding(name)) return shuttingDown(name)
+        const frozen = await frozenState(pathsFor(name))
+        if (frozen !== null)
+          return refused(new GuestFrozen(name, frozen).message)
         signal.throwIfAborted()
-        await Promise.race([mount(name), abandoned(signal)])
+        const watch = watchHostEnd(name, options.hostPollMs ?? HOST_END_POLL_MS)
+        try {
+          return {
+            kind: await Promise.race([
+              mount(name),
+              abandoned(AbortSignal.any([signal, watch.begun])),
+            ]),
+          }
+        } catch (error) {
+          if (watch.begun.aborted && !signal.aborted) return shuttingDown(name)
+          throw error
+        } finally {
+          watch.stop()
+        }
       },
       {
         automatic: true,
         queue: true,
-        waitMs: REMOUNT_WAIT_MS,
+        waitMs: options.waitMs ?? REMOUNT_WAIT_MS,
         onWait: () => undefined,
         signal,
       },
     )
   } catch (error) {
-    if (!(error instanceof InstanceBusy)) throw error
+    if (error instanceof InstanceBusy) return refused(error.message)
+    throw error
   }
 }
 
-export async function remountCmd(args: Args): Promise<number> {
-  await remountHeld(instanceName(args))
-  return 0
+export async function remountCmd(
+  args: Args,
+  io: Pick<Io, "out" | "err"> = stdio,
+  remount: typeof remountHeld = remountHeld,
+): Promise<number> {
+  const name = instanceName(args)
+  const r = await remount(name)
+  switch (r.kind) {
+    case "mounted":
+      return 0
+    case "nothing pending":
+      io.out(`no drives of "${name}" are waiting to be mounted again\n`)
+      return 0
+    case "failed":
+      return 1
+    case "refused":
+      io.err(`::error::${r.why}\n`)
+      return 1
+  }
 }
 
 export async function runOp(

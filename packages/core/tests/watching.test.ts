@@ -955,7 +955,8 @@ describe("turning the watcher off from a client, as the service quiesces it", ()
       expect(r).toEqual({
         code: 0,
         stdout: 'stopped the watcher for "t"\n',
-        stderr: "",
+        stderr:
+          'instance "t": waiting for the autosave in progress to finish\n',
       })
       expect(endedAt("save")).not.toBeNull()
       expect(endedAt("save") ?? Number.POSITIVE_INFINITY).toBeLessThanOrEqual(
@@ -984,6 +985,9 @@ describe("turning the watcher off from a client, as the service quiesces it", ()
       const r = await winvm("watch", "-i", "t", "--stop")
       const back = Date.now()
       expect(r.code).toBe(0)
+      expect(r.stderr).toBe(
+        'instance "t": waiting for the idle stow in progress to finish\n',
+      )
       expect(endedAt("stow")).not.toBeNull()
       expect(endedAt("stow") ?? Number.POSITIVE_INFINITY).toBeLessThanOrEqual(
         back,
@@ -1070,7 +1074,7 @@ describe("an idle stow that fails after taking the drives down", () => {
         ).length
       const before = remounts()
       const remounted = await winvm("files", "remount", "-i", "t")
-      expect(remounted).toEqual({ code: 0, stdout: "", stderr: NOT_REMOUNTED })
+      expect(remounted).toEqual({ code: 1, stdout: "", stderr: NOT_REMOUNTED })
       expect(remounts()).toBe(before + 1)
     },
     45_000,
