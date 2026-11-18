@@ -1,5 +1,30 @@
 # Changelog
 
+## [0.1.5](https://github.com/stuffbucket/winvm/compare/v0.1.4...v0.1.5) (2026-11-18)
+
+
+### Features
+
+* **core:** fold the idle watcher into winvm's service, and hand services over under the lease ([a443892](https://github.com/stuffbucket/winvm/commit/a443892ff7326f8dc86b1bc72dc9233b6eb266a5))
+* **core:** fold the watcher into the control service ([7e8eb9e](https://github.com/stuffbucket/winvm/commit/7e8eb9e9c878c9a96421a241e66291cace7ad5af))
+* **core:** let an op ask to be cancelled, not ended, when the Mac shuts down, and say why it was ([56e5505](https://github.com/stuffbucket/winvm/commit/56e5505613fbd8b6d52076e21d9d62653df92c3f))
+* **core:** let winvm's service run its own automatic ops and learn how each ended ([8d51720](https://github.com/stuffbucket/winvm/commit/8d5172088af98c3af9242d8141cedfe9fd7207dc))
+* **core:** run the long verbs as ops and follow the app's close by op id ([aa073bb](https://github.com/stuffbucket/winvm/commit/aa073bb6122f45a6daaed3f30a56647b88e163b6))
+* **watch:** say what the quiesce waits for ([2896c6a](https://github.com/stuffbucket/winvm/commit/2896c6a7dcb7acf1e0bc9bdb8d39d8a2ad2ed658))
+
+
+### Bug Fixes
+
+* **core:** say Windows is stopped, and what starts it, when the service refuses a launch (R2-M3) ([1241b54](https://github.com/stuffbucket/winvm/commit/1241b5443b40b5d978ee24edcaec32732745f7c7))
+* **core:** settle the phase 7 review's remaining minors ([0f05e86](https://github.com/stuffbucket/winvm/commit/0f05e868f05dbbbfe1be2fda44eca14224fce121))
+* **core:** turn the watcher off through the service, which waits for its autosave or stow, and leave a failed idle stow's remount to the user's session ([618c775](https://github.com/stuffbucket/winvm/commit/618c775315702c4455d568c296c43f9526b0a046))
+* **files:** cut a remount short when the Mac begins shutting down ([be11225](https://github.com/stuffbucket/winvm/commit/be112256313480fde87923927159ee07679e807a))
+* **files:** make files remount exit non-zero when it mounted nothing that was pending ([9125bc9](https://github.com/stuffbucket/winvm/commit/9125bc940f4275d8bc0ba433c18131a88b9c9331))
+* **savecmds:** let the watcher's own idle stow run in the service without waiting on that watcher ([595792a](https://github.com/stuffbucket/winvm/commit/595792af7d4d9b61fc049003de85e85d93dce9a2))
+* **viewer:** go past a close note the app cannot read, and forget it once dismissed (R2-M1) ([eae868e](https://github.com/stuffbucket/winvm/commit/eae868e3dc7dc26a7d642df31e187dc92776de85))
+* **viewer:** mount the guest's drives again when one of winvm's own ops leaves that to a client ([b6ee5a4](https://github.com/stuffbucket/winvm/commit/b6ee5a452f67ea8c1da84464f13be255310be10c))
+* **viewer:** show a shared-folder setup that brought Windows back busy as done, with its warning as a notice (R2-M2) ([58f7c9a](https://github.com/stuffbucket/winvm/commit/58f7c9a4c412e4983fe88c3982d5bff5dc74c089))
+
 ## [0.1.4](https://github.com/stuffbucket/winvm/compare/v0.1.3...v0.1.4) (2026-11-18)
 
 
