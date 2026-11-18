@@ -319,6 +319,28 @@ describe("the short verbs, as the CLI prints and exits with them", () => {
     }, 30_000)
   }
 
+  it("kill succeeds when another kill already ended QEMU and still holds the instance", async () => {
+    await releasePidfiles()
+    await stopTheService()
+    writeFileSync(
+      p.lease,
+      JSON.stringify({
+        operation: "kill",
+        id: "the-other-kill",
+        pid: process.pid,
+        pidStart: null,
+        startedAt: "2026-11-17T10:00:00.000Z",
+        instance: "t",
+        automatic: false,
+      }),
+    )
+    expect(await winvm("kill", "-i", "t")).toEqual({
+      code: 0,
+      stdout: 'instance "t" is not running\n',
+      stderr: `note: kill (pid ${String(process.pid)}) holds "t"; killing it anyway\n`,
+    })
+  }, 30_000)
+
   it("a verb another command holds the instance for is refused as busy", async () => {
     writeFileSync(
       p.lease,

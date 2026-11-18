@@ -1400,7 +1400,7 @@ export async function kill(args: Args, o: KillOptions = {}): Promise<number> {
   }
   const pid = qemu.pidOf(p)
   const holder = leaseHolder(name)
-  if (pid === null && holder !== null) {
+  if (pid === null && holder !== null && holder.operation !== "kill") {
     console.error(
       `::error::"${name}" has no QEMU running, and its ${holder.operation} (pid ${String(holder.pid)}) is still in progress; nothing was killed`,
     )
