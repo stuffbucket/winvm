@@ -45,6 +45,7 @@ import { hostPoweredOff } from "../src/hostoff"
 import * as kept from "../src/kept"
 import * as media from "../src/media"
 import * as monitor from "../src/monitor"
+import { type OpScope, runInOp } from "../src/opcontext"
 import { withOperation } from "../src/operation"
 import {
   basePath,
@@ -1709,5 +1710,36 @@ describe("a load that never completes", () => {
     ).toBe(1)
     expect(runningPid).toBe(FAKE_PID)
     expect(readSave("source", "stow")?.unfinished).toBe(true)
+  })
+})
+
+describe("a load whose op is ended by kill while QEMU quits", () => {
+  it("leaves the disk as it was instead of replacing it with the lease gone", async () => {
+    fixture(VIRTIO_GPU, true, "named", "manual")
+    const killer = new AbortController()
+    const scope: OpScope = {
+      id: "op-load",
+      operation: "load",
+      signal: killer.signal,
+      cancelled: new AbortController().signal,
+      write: () => undefined,
+      remount: () => undefined,
+      irreversibleAt: null,
+      calls: 0,
+    }
+    spyOn(qmp, "execute").mockImplementation((_socket, cmd) => {
+      commands.push(cmd)
+      if (cmd === "quit") {
+        runningPid = null
+        killer.abort("killed")
+      }
+      return Promise.resolve({})
+    })
+    await expect(
+      runInOp(scope, () => loadSave("source", "named")),
+    ).rejects.toThrow()
+    expect(readFileSync(pathsFor("source").overlay, "utf8")).toBe("live disk")
+    expect(readFileSync(pathsFor("source").vars, "utf8")).toBe("live vars")
+    expect(launches()).toHaveLength(0)
   })
 })

@@ -40,6 +40,7 @@ import type { Note } from "./notes"
 import { copyNote, readNote, removeNote, removeNotes } from "./notes"
 import {
   checkCancelled,
+  checkOp,
   currentOp,
   OpCancelled,
   pointOfNoReturn,
@@ -1460,6 +1461,7 @@ async function loadSaveHeld(instance: string, name: string): Promise<Manifest> {
   const p = pathsFor(instance)
   pointOfNoReturn()
   await quitQemu(p)
+  checkOp()
   for (const [src, dst] of [
     [resolve(dir, FILES.overlay), p.overlay],
     [resolve(dir, FILES.vars), p.vars],
