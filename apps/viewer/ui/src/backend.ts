@@ -11,6 +11,7 @@ import {
   shellsArgs,
 } from "./features/terminal/shells"
 import { t } from "./i18n"
+import { type OpRecord, parseOpRecord } from "./model"
 
 type SidecarFailureKind = "missing" | "launch" | "timeout" | "exit"
 
@@ -206,6 +207,48 @@ function tauri(): TauriGlobal {
 export const winvm = (...args: string[]): Promise<Output> =>
   sidecar("winvm", { args }, args[0] ?? "winvm")
 
+export const newOpId = (): string => crypto.randomUUID()
+
+export type OpReading =
+  | { readonly kind: "read"; readonly record: OpRecord }
+  | { readonly kind: "unreadable"; readonly why: string }
+
+export async function readOp(
+  name: string,
+  id: string,
+  follow: boolean,
+): Promise<OpReading> {
+  try {
+    const out = await winvm(
+      "events",
+      "-i",
+      name,
+      "--op",
+      id,
+      "--json",
+      ...(follow ? ["--follow"] : []),
+    )
+    const record = out.code === 0 ? parseOpRecord(out.stdout) : null
+    return record === null
+      ? {
+          kind: "unreadable",
+          why: outputText(out) || `winvm events exited ${String(out.code)}`,
+        }
+      : { kind: "read", record }
+  } catch (e) {
+    return { kind: "unreadable", why: errorMessage(e) }
+  }
+}
+
+export async function opRecord(
+  name: string,
+  id: string,
+  follow: boolean,
+): Promise<OpRecord | null> {
+  const r = await readOp(name, id, follow)
+  return r.kind === "read" ? r.record : null
+}
+
 export const installCli = (): Promise<string> =>
   tauri().core.invoke<string>("install_cli")
 
@@ -348,18 +391,25 @@ export type CloseSession =
   | { readonly kind: "waiting"; readonly deadline: number }
   | { readonly kind: "missed" }
 
+export interface CloseCommand {
+  readonly machine: string
+  readonly verb: string
+  readonly op?: string | null
+}
+
 export interface CloseSnapshot {
   readonly state: "idle" | "requested" | "running" | "authorized"
   readonly machine: string | null
-  readonly command: { readonly machine: string; readonly verb: string } | null
-  readonly last: {
-    readonly machine: string
-    readonly verb: string
-    readonly code: number
-    readonly output: string
-  } | null
+  readonly command: CloseCommand | null
+  readonly last:
+    | (CloseCommand & {
+        readonly code: number
+        readonly output: string
+      })
+    | null
   readonly resolved: readonly string[]
   readonly session: CloseSession | null
+  readonly orphans?: readonly CloseCommand[]
 }
 
 function closeSessionOf(raw: unknown): CloseSession | null {
@@ -381,6 +431,12 @@ export const onViewerCloseSession = (
 
 export const closeState = (): Promise<CloseSnapshot> =>
   tauri().core.invoke<CloseSnapshot>("close_state")
+
+export const closeWait = (): Promise<CloseSnapshot> =>
+  tauri().core.invoke<CloseSnapshot>("close_wait")
+
+export const closeForget = (op: string): Promise<void> =>
+  tauri().core.invoke<void>("close_forget", { op })
 
 export const closeAt = (machine: string): Promise<void> =>
   tauri().core.invoke<void>("close_at", { machine })

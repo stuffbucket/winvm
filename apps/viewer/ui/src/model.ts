@@ -35,7 +35,34 @@ const OperationInfoSchema = z.object({
   operation: VmOperationSchema,
   pid: z.number(),
   startedAt: z.string(),
+  id: z.string().optional(),
 })
+
+export const RESTORED_BUSY = 6
+
+const OpRecordSchema = z.object({
+  id: z.string(),
+  operation: z.string().nullable(),
+  ended: z.boolean(),
+  ok: z.boolean().nullable(),
+  exitCode: z.number().nullable(),
+  error: z.string().nullable(),
+  output: z.string(),
+})
+
+export type OpRecord = z.infer<typeof OpRecordSchema>
+
+export function parseOpRecord(stdout: string): OpRecord | null {
+  try {
+    const r = OpRecordSchema.safeParse(JSON.parse(stdout))
+    return r.success ? r.data : null
+  } catch {
+    return null
+  }
+}
+
+export const opFailed = (r: OpRecord): boolean =>
+  r.ended && r.ok !== true && r.exitCode !== RESTORED_BUSY
 
 export const CLOSE_POLICIES = ["ask", "leave", "stow", "shutdown"] as const
 

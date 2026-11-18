@@ -1,26 +1,32 @@
 import { useCallback, useEffect, useRef, useState } from "react"
 
 import {
+  type CloseCommand,
   type CloseSession,
   type CloseSnapshot,
   closeAt,
   closeCancel,
   closeComplete,
+  closeForget,
   closeResolved,
   closeRun,
   closeStart,
   closeState,
+  closeWait,
   errorMessage,
   onViewerCloseRequested,
   onViewerCloseSession,
+  opRecord,
   outputText,
+  readOp,
   winvm,
 } from "../../backend"
 import { t } from "../../i18n"
-import type { Phase, Status, VmOperation } from "../../model"
+import type { Status } from "../../model"
 import {
   closePolicyAssignment,
   isLivePhase,
+  opFailed,
   phase,
   shownTitle,
 } from "../../model"
@@ -79,7 +85,7 @@ type Answer = { readonly policy: CloseChoice; readonly remember: boolean }
 interface Transaction {
   cancelled: boolean
   wake: (() => void) | null
-  ranBefore: (name: string) => number
+  before: ReadonlySet<string>
   readonly resolved: Set<string>
   first: string | null
 }
@@ -90,7 +96,7 @@ const transactionOf = (
 ): Transaction => ({
   cancelled: false,
   wake: null,
-  ranBefore: () => 0,
+  before: new Set(),
   resolved: new Set(resolved),
   first,
 })
@@ -100,10 +106,35 @@ const policyOf = (verb: string): "stow" | "shutdown" =>
 
 const isCancelled = (tx: Transaction): boolean => tx.cancelled
 
-function ranBefore(w: Winvm): (name: string) => number {
-  const known = new Map(w.names.map((n) => [n, w.lastOn(n)?.seq ?? 0]))
-  const latest = Math.max(0, ...known.values())
-  return (name) => known.get(name) ?? latest
+function ranBefore(w: Winvm): ReadonlySet<string> {
+  return new Set(
+    w.names.flatMap((n) => {
+      const id = w.lastOn(n)?.id
+      return id === undefined || id === null ? [] : [id]
+    }),
+  )
+}
+
+type Verdict =
+  | { readonly kind: "ok" }
+  | { readonly kind: "failed"; readonly output: string }
+  | { readonly kind: "unknown" }
+
+async function verdictOf(
+  name: string,
+  id: string | null | undefined,
+  fallback: { readonly code: number; readonly output: string } | null,
+): Promise<Verdict> {
+  const recorded =
+    id === undefined || id === null ? null : await opRecord(name, id, false)
+  if (recorded?.ended === true)
+    return opFailed(recorded)
+      ? { kind: "failed", output: recorded.output || fallback?.output || "" }
+      : { kind: "ok" }
+  if (fallback === null) return { kind: "unknown" }
+  return fallback.code === 0
+    ? { kind: "ok" }
+    : { kind: "failed", output: fallback.output }
 }
 
 const WAIT_MS = 1500
@@ -136,42 +167,19 @@ async function pause(
 
 function busyWith(w: Winvm, s: Status): ActiveOperation | null {
   if (w.name === s.name && w.busy !== null)
-    return { operation: operationFor(w.busy), source: "local" }
+    return w.operation?.source === "local"
+      ? w.operation
+      : { operation: operationFor(w.busy), source: "local" }
   return s.operation === null
     ? null
-    : { operation: s.operation.operation, source: "external" }
+    : {
+        operation: s.operation.operation,
+        source: "external",
+        ...(s.operation.id === undefined ? {} : { id: s.operation.id }),
+      }
 }
 
 type Outcome = "resolved" | "skipped" | "stopped"
-
-function settled(operation: VmOperation, p: Phase): boolean | null {
-  switch (operation) {
-    case "start":
-    case "reboot":
-    case "resume":
-    case "wake":
-      return p === "running" || p === "starting"
-    case "stop":
-    case "kill":
-      return p === "stopped"
-    case "stow":
-      return p === "stowed"
-    case "pause":
-      return p === "paused"
-    case "sleep":
-      return p === "asleep"
-    case "golden-create":
-    case "golden-reset":
-    case "load":
-    case "lock":
-    case "reset":
-    case "rewind":
-    case "save":
-    case "setup":
-    case "snapshot":
-      return null
-  }
-}
 
 async function rememberChoice(
   name: string,
@@ -229,8 +237,7 @@ export function useCloseFlow(w: Winvm): CloseFlow {
     ): Promise<Outcome> => {
       if (wRef.current.name !== name) wRef.current.select(name)
       closeAt(name).catch(() => undefined)
-      const before = tx.ranBefore(name)
-      let external: VmOperation | null = null
+      let external: ActiveOperation | null = null
       let s: Status | null
       let read: Status | null = null
       for (;;) {
@@ -242,36 +249,48 @@ export function useCloseFlow(w: Winvm): CloseFlow {
         }
         const operation = busyWith(wRef.current, s)
         if (operation === null) break
-        if (operation.source === "external") external = operation.operation
+        if (
+          operation.source === "external" &&
+          (external === null || operation.id != null)
+        )
+          external = operation
         show({ kind: "waiting", machine: s, operation, index, total })
         read = await pause(tx, wRef.current, name)
         if (isCancelled(tx)) return "stopped"
       }
       const own = wRef.current.lastOn(name)
-      if (own !== null && own.seq > before && own.code !== 0) {
-        fail(
-          tx,
-          s,
-          own.output ||
-            t("close.actionFailed", { title: shownTitle(s.name, s.title) }),
-        )
-        return "stopped"
+      if (own?.id != null && !tx.before.has(own.id)) {
+        const mine = await verdictOf(name, own.id, own)
+        if (isCancelled(tx)) return "stopped"
+        if (mine.kind === "failed") {
+          fail(
+            tx,
+            s,
+            mine.output ||
+              t("close.actionFailed", { title: shownTitle(s.name, s.title) }),
+          )
+          return "stopped"
+        }
       }
-      if (external !== null && settled(external, phase(s)) === false) {
+      const theirs =
+        external === null ? null : await verdictOf(name, external.id, null)
+      if (isCancelled(tx)) return "stopped"
+      if (external !== null && theirs?.kind === "failed") {
         fail(
           tx,
           s,
-          t("close.externalFailed", {
-            operation: external,
-            title: shownTitle(s.name, s.title),
-          }),
+          theirs.output ||
+            t("close.externalFailed", {
+              operation: external.operation,
+              title: shownTitle(s.name, s.title),
+            }),
         )
         return "stopped"
       }
       if (!isLivePhase(phase(s))) return "skipped"
       let choice: CloseChoice
       let remember = false
-      const unsure = external !== null && settled(external, phase(s)) === null
+      const unsure = theirs?.kind === "unknown"
       if (s.closePolicy === "ask" || unsure) {
         show({ kind: "asking", machine: s, index, total, remember: false })
         const chosen = await new Promise<Answer | null>((settle) => {
@@ -363,7 +382,7 @@ export function useCloseFlow(w: Winvm): CloseFlow {
       transaction.current = tx
       closeStart().then(
         () => {
-          tx.ranBefore = ranBefore(wRef.current)
+          tx.before = ranBefore(wRef.current)
           settle(tx, run(tx))
         },
         () => {
@@ -377,11 +396,8 @@ export function useCloseFlow(w: Winvm): CloseFlow {
       from: CloseSnapshot,
     ): Promise<void> => {
       let snapshot = from
-      for (
-        let command = snapshot.command;
-        command !== null;
-        command = snapshot.command
-      ) {
+      const command = snapshot.command
+      if (command !== null) {
         if (wRef.current.name !== command.machine)
           wRef.current.select(command.machine)
         const w = wRef.current
@@ -399,11 +415,18 @@ export function useCloseFlow(w: Winvm): CloseFlow {
             index: tx.resolved.size + 1,
             total: tx.resolved.size + 1,
           })
-        await new Promise<void>((wake) => {
-          setTimeout(wake, WAIT_MS)
-        })
-        snapshot = await closeState().catch(() => snapshot)
-        if (isCancelled(tx)) return
+        for (;;) {
+          const waited = await closeWait().catch(() => null)
+          if (isCancelled(tx)) return
+          if (waited !== null) {
+            snapshot = waited
+            break
+          }
+          await new Promise<void>((wake) => {
+            setTimeout(wake, WAIT_MS)
+          })
+          if (isCancelled(tx)) return
+        }
       }
       if (snapshot.state !== "running") {
         if (transaction.current === tx) transaction.current = null
@@ -412,12 +435,15 @@ export function useCloseFlow(w: Winvm): CloseFlow {
         return
       }
       const ended = snapshot.last
-      if (ended !== null && ended.code !== 0) {
+      const verdict =
+        ended === null ? null : await verdictOf(ended.machine, ended.op, ended)
+      if (isCancelled(tx)) return
+      if (ended !== null && verdict?.kind === "failed") {
         const s = await wRef.current.refreshOne(ended.machine)
         fail(
           tx,
           s,
-          ended.output ||
+          verdict.output ||
             t("close.actionFailed", {
               title: s === null ? ended.machine : shownTitle(s.name, s.title),
             }),
@@ -432,9 +458,55 @@ export function useCloseFlow(w: Winvm): CloseFlow {
       if (active.current) return
       active.current = true
       const tx = transactionOf(snapshot.resolved, snapshot.machine)
-      tx.ranBefore = ranBefore(wRef.current)
+      tx.before = ranBefore(wRef.current)
       transaction.current = tx
       settle(tx, resume(tx, snapshot))
+    }
+
+    const reportOrphan = async (orphan: CloseCommand): Promise<boolean> => {
+      const op = orphan.op
+      if (op === undefined || op === null) return true
+      const unmounted = (): boolean => gone
+      const elsewhere = (): boolean => gone || active.current
+      const reading = await readOp(orphan.machine, op, true)
+      if (unmounted()) return false
+      const recorded = reading.kind === "read" ? reading.record : null
+      const unheard =
+        recorded !== null && !recorded.ended && recorded.operation === null
+      const unfinished =
+        recorded !== null && !unheard && (!recorded.ended || opFailed(recorded))
+      if (reading.kind === "read" && !unfinished) {
+        await closeForget(op).catch(() => undefined)
+        return true
+      }
+      const s = await wRef.current.refreshOne(orphan.machine)
+      if (unmounted()) return false
+      const title = s === null ? orphan.machine : shownTitle(s.name, s.title)
+      if (elsewhere()) return false
+      if (wRef.current.name !== orphan.machine)
+        wRef.current.select(orphan.machine)
+      show({
+        kind: "failed",
+        machine: s,
+        message:
+          reading.kind === "unreadable"
+            ? `${t("close.orphanUnreadable", {
+                operation: orphan.verb,
+                title,
+                machine: orphan.machine,
+                op,
+              })}\n${reading.why}`
+            : (recorded?.output ?? "") ||
+              t("close.cutShort", { operation: orphan.verb, title }),
+      })
+      if (reading.kind === "read") await closeForget(op).catch(() => undefined)
+      return false
+    }
+
+    const reportOrphans = async (
+      orphans: readonly CloseCommand[],
+    ): Promise<void> => {
+      for (const orphan of orphans) if (!(await reportOrphan(orphan))) return
     }
 
     const unlistenSession = onViewerCloseSession((next) => {
@@ -447,6 +519,7 @@ export function useCloseFlow(w: Winvm): CloseFlow {
           if (snapshot.session !== null) setSession(snapshot.session)
           if (snapshot.state === "requested") begin()
           else if (snapshot.state === "running") adopt(snapshot)
+          void reportOrphans(snapshot.orphans ?? [])
         },
         () => undefined,
       )

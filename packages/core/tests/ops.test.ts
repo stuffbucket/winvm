@@ -10,12 +10,13 @@ import { tmpdir } from "node:os"
 import { resolve } from "node:path"
 
 import type { Args } from "../src/args"
+import { parseArgs } from "../src/args"
 import { type Entry, readSince, START } from "../src/eventlog"
 import { type HostEndOutcome, runHostEnd } from "../src/hostend"
-import { remountHeld } from "../src/opclient"
-import { pointOfNoReturn } from "../src/opcontext"
+import { remountHeld, runOp } from "../src/opclient"
+import { currentOp, pointOfNoReturn } from "../src/opcontext"
 import { InstanceBusy, leaseHolder, withOperation } from "../src/operation"
-import { OPS_PROTOCOL, type OpHandlers } from "../src/ops"
+import { OPS_PROTOCOL, type OpHandlers, OpQueue } from "../src/ops"
 import { SERVICE_HANDLERS } from "../src/opverbs"
 import { type Paths, pathsFor } from "../src/paths"
 import * as qmp from "../src/qmp"
@@ -542,7 +543,9 @@ describe("cancel", () => {
 })
 
 describe("an op waiting for the lease when QEMU goes", () => {
-  it("ends at once, saying QEMU is not running, instead of keeping the service up", async () => {
+  it("ends, saying QEMU is not running, once QEMU has been gone as long as the service waits before it exits", async () => {
+    await svc?.stop()
+    svc = await runService("t", { exitAfterMs: 300, checkMs: 50, handlers })
     const outside = gate()
     const other = withOperation("t", "stop", async () => {
       await outside.opened
@@ -559,6 +562,23 @@ describe("an op waiting for the lease when QEMU goes", () => {
     expect(seen).toEqual([])
     outside.open()
     await other
+  })
+
+  it("still runs once another command's load has started QEMU again", async () => {
+    const outside = gate()
+    const other = withOperation("t", "load", async () => {
+      await outside.opened
+    })
+    await Bun.sleep(20)
+    const queued = await submit("pause", { wait: true })
+    expect(queued.status).toBe(202)
+    await releasePidfiles()
+    await Bun.sleep(400)
+    await lockPidfile(p.pid, "qemu-system-aarch64", "-pidfile", p.pid)
+    outside.open()
+    await other
+    expect(await ended(queued.body.id)).toMatchObject({ ok: true, exitCode: 0 })
+    expect(seen).toHaveLength(1)
   })
 })
 
@@ -612,6 +632,88 @@ describe("a client's remount", () => {
     const m = mounts()
     await remountHeld("t", m.mount)
     expect(m.count).toBe(0)
+  })
+
+  it("stops waiting for the instance at once when the client is interrupted, and mounts nothing", async () => {
+    const outside = gate()
+    const other = withOperation("t", "resume", async () => {
+      await outside.opened
+    })
+    await Bun.sleep(20)
+    const m = mounts()
+    const interrupted = new AbortController()
+    const t0 = Date.now()
+    const done = remountHeld("t", m.mount, interrupted.signal)
+    setTimeout(() => {
+      interrupted.abort("SIGINT")
+    }, 100)
+    await expect(done).rejects.toThrow()
+    expect(Date.now() - t0).toBeLessThan(1000)
+    expect(m.count).toBe(0)
+    outside.open()
+    await other
+  })
+
+  it("stops waiting for a slow mount at once when the client is interrupted", async () => {
+    const interrupted = new AbortController()
+    const t0 = Date.now()
+    const done = remountHeld(
+      "t",
+      async () => {
+        await Bun.sleep(5000)
+      },
+      interrupted.signal,
+    )
+    setTimeout(() => {
+      interrupted.abort("SIGINT")
+    }, 100)
+    await expect(done).rejects.toThrow()
+    expect(Date.now() - t0).toBeLessThan(1000)
+    expect(leaseHolder("t")).toBeNull()
+  })
+
+  it("lets a client interrupted during its remount detach at once, saying so", async () => {
+    await svc?.stop()
+    svc = await runService("t", {
+      exitAfterMs: 60_000,
+      checkMs: 50,
+      handlers: {
+        resume: {
+          cancel: "never",
+          run: async () => {
+            currentOp()?.remount()
+            return await Promise.resolve(0)
+          },
+        },
+      },
+    })
+    const said: string[] = []
+    let remounting = false
+    const io = {
+      out: (text: string): void => {
+        said.push(text)
+      },
+      err: (text: string): void => {
+        said.push(text)
+      },
+      remount: async (_name: string, signal?: AbortSignal): Promise<void> => {
+        remounting = true
+        await new Promise<void>((_resolve, reject) => {
+          signal?.addEventListener("abort", () => {
+            reject(new Error("interrupted"))
+          })
+        })
+      },
+    }
+    const ran = runOp(
+      { op: "resume", args: parseArgs(["-i", "t"]), argv: ["-i", "t"] },
+      () => Promise.resolve(99),
+      io,
+    )
+    await until(() => remounting)
+    process.emit("SIGINT")
+    expect(await ran).toBe(130)
+    expect(said.join("")).toContain("resume continues in winvm's service")
   })
 })
 
@@ -963,4 +1065,142 @@ describe("host end", () => {
     await until(() => outcome !== null, 10_000)
     await outcome
   }, 20_000)
+})
+
+describe("the long verbs' rules in the queue", () => {
+  const longHandlers: OpHandlers = {
+    stow: {
+      cancel: "cooperative",
+      hostEnd: "finish",
+      run: async () => {
+        await held("stow")
+        return currentOp()?.cancelled.aborted === true ? 130 : 0
+      },
+    },
+    stop: {
+      cancel: "cooperative",
+      hostEnd: "finish-after-mark",
+      run: async () => {
+        await held("before")
+        pointOfNoReturn()
+        await held("after")
+        return 0
+      },
+    },
+    start: {
+      cancel: "before-request",
+      run: async () => {
+        await held("start")
+        return 0
+      },
+    },
+  }
+  let hostEndedAt: number | null = null
+
+  beforeEach(async () => {
+    hostEndedAt = null
+    for (const k of ["stow", "before", "after", "start"]) gates[k] = gate()
+    await svc?.stop()
+    svc = await runService("t", {
+      exitAfterMs: 60_000,
+      checkMs: 50,
+      handlers: longHandlers,
+      hostEnd: async () => {
+        hostEndedAt = Date.now()
+        await Promise.resolve()
+      },
+    })
+  })
+
+  const hostEnding = async (): Promise<void> => {
+    await post("/host-ending", { deadlineMs: Date.now() + 30_000 })
+  }
+
+  it("lets a cooperative op put things back when cancelled, and ends it with what it returns", async () => {
+    const a = await submit("stow")
+    await until(() => running === 1)
+    const c = await post("/ops/cancel", { protocol: OPS_PROTOCOL })
+    expect(c.status).toBe(200)
+    await Bun.sleep(100)
+    expect(endOf(a.body.id)).toBeUndefined()
+    gates.stow?.open()
+    expect(await ended(a.body.id)).toMatchObject({ exitCode: 130 })
+  })
+
+  it("lets a stow finish through host end, and does not wait for it before host end begins", async () => {
+    const a = await submit("stow")
+    await until(() => running === 1)
+    await hostEnding()
+    await until(() => hostEndedAt !== null)
+    expect(endOf(a.body.id)).toBeUndefined()
+    gates.stow?.open()
+    expect(await ended(a.body.id)).toMatchObject({ ok: true, exitCode: 0 })
+  })
+
+  it("ends a stop at host end before its point of no return, and lets it finish after", async () => {
+    const early = await submit("stop")
+    await until(() => running === 1)
+    await hostEnding()
+    expect(await ended(early.body.id)).toMatchObject({ error: "host-end" })
+    gates.before?.open()
+    gates.after?.open()
+  })
+
+  it("lets a stop past its point of no return finish through host end", async () => {
+    const a = await submit("stop")
+    await until(() => running === 1)
+    gates.before?.open()
+    await Bun.sleep(50)
+    await hostEnding()
+    await until(() => hostEndedAt !== null)
+    expect(endOf(a.body.id)).toBeUndefined()
+    gates.after?.open()
+    expect(await ended(a.body.id)).toMatchObject({ ok: true })
+  })
+
+  it("ends a start at host end, as the short verbs are", async () => {
+    const a = await submit("start")
+    await until(() => running === 1)
+    await hostEnding()
+    expect(await ended(a.body.id)).toMatchObject({ error: "host-end" })
+    gates.start?.open()
+  })
+
+  it("takes the id its client chose, and refuses one that is not an id", async () => {
+    const a = await submit("start", { id: "close-0123456789abcdef" })
+    expect(a.status).toBe(202)
+    expect(a.body.id).toBe("close-0123456789abcdef")
+    gates.start?.open()
+    expect(await ended("close-0123456789abcdef")).toMatchObject({ ok: true })
+    expect(opsOf("close-0123456789abcdef")[0]).toMatchObject({
+      phase: "begin",
+      operation: "start",
+    })
+    const bad = await submit("start", { id: "x y" })
+    expect(bad.status).toBe(400)
+  })
+
+  it("refuses a second op with the id of one not yet under way", async () => {
+    const queue = new OpQueue("t", longHandlers, {
+      record: () => undefined,
+      nudge: () => undefined,
+      killed: () => undefined,
+    })
+    const request = {
+      op: "start",
+      args: [],
+      wait: true,
+      id: "same-id-0001",
+    } as const
+    const [first, second] = await Promise.all([
+      queue.submit({ ...request, wait: false }),
+      queue.submit(request),
+    ])
+    expect([first.kind, second.kind]).toEqual(["accepted", "failed"])
+    gates.start?.open()
+    await queue.drain()
+    expect(
+      opsOf("same-id-0001").filter((e) => e.kind === "op" && e.phase === "end"),
+    ).toHaveLength(1)
+  })
 })

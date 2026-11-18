@@ -22,7 +22,7 @@ import {
   operationFor,
   withOperation,
 } from "@winvm/core/operation"
-import { isServiceOp } from "@winvm/core/ops"
+import { isOpId, isServiceOp } from "@winvm/core/ops"
 import {
   bunVersionWarning,
   pinnedBunVersion,
@@ -51,13 +51,21 @@ const [, , sub, ...rawArgs] = process.argv
 const args = parseArgs(rawArgs)
 
 const operation = operationFor(sub, args)
-const serviceOp = isServiceOp(sub) ? sub : null
+const serviceOp = isServiceOp(operation) ? operation : null
+const opId = args.flags.get("op-id")
+if (opId !== undefined && !isOpId(opId)) {
+  console.error(
+    "::error::--op-id wants 8 to 64 letters, digits and dashes, starting with a letter or digit",
+  )
+  process.exit(1)
+}
 const leased = async (run: () => number | Promise<number>): Promise<number> => {
   if (operation === null) return await run()
   try {
     return await withOperation(instanceName(args), operation, run, {
       interruptible: true,
       automatic: automaticFrom(args),
+      ...(opId === undefined ? {} : { id: opId }),
       ...(serviceOp !== null && args.flags.has("wait")
         ? { queue: true, waitMs: Number.POSITIVE_INFINITY }
         : {}),
@@ -71,7 +79,15 @@ const leased = async (run: () => number | Promise<number>): Promise<number> => {
 const viaService = async (here: () => Promise<number>): Promise<number> =>
   serviceOp === null
     ? await here()
-    : await opclient.runOp({ op: serviceOp, args, argv: rawArgs }, here)
+    : await opclient.runOp(
+        {
+          op: serviceOp,
+          args,
+          argv: rawArgs,
+          ...(opId === undefined ? {} : { id: opId }),
+        },
+        here,
+      )
 const NO_SWEEP = [
   "help",
   "--help",
@@ -111,7 +127,7 @@ if (
 
 if (
   sub !== undefined &&
-  shouldReconcileVerb(sub) &&
+  shouldReconcileVerb(sub, process.env, instanceName(args)) &&
   !(sub === "files" && args.positional[0]?.startsWith("_") === true)
 ) {
   const name = instanceName(args)
@@ -154,10 +170,10 @@ switch (sub ?? "") {
     exitCode = await commands.build(args)
     break
   case "start":
-    exitCode = await leased(() => commands.start(args))
+    exitCode = await viaService(() => leased(() => commands.start(args)))
     break
   case "stop":
-    exitCode = await leased(() => commands.stop(args))
+    exitCode = await viaService(() => leased(() => commands.stop(args)))
     break
   case "reboot":
     exitCode = await viaService(() => leased(() => commands.reboot(args)))
@@ -220,22 +236,22 @@ switch (sub ?? "") {
     exitCode = await leased(() => commands.snap(args))
     break
   case "rewind":
-    exitCode = await leased(() => commands.rewind(args))
+    exitCode = await viaService(() => leased(() => commands.rewind(args)))
     break
   case "snapshots":
     exitCode = await commands.snapshots(args)
     break
   case "save":
-    exitCode = await leased(() => savecmds.save(args))
+    exitCode = await viaService(() => leased(() => savecmds.save(args)))
     break
   case "load":
-    exitCode = await leased(() => savecmds.load(args))
+    exitCode = await viaService(() => leased(() => savecmds.load(args)))
     break
   case "share":
     exitCode = await leased(() => sharecmds.shareCmd(args))
     break
   case "golden":
-    exitCode = await leased(() => goldens.golden(args))
+    exitCode = await viaService(() => leased(() => goldens.golden(args)))
     break
   case "saves":
     exitCode = savecmds.list(args)
@@ -257,7 +273,7 @@ switch (sub ?? "") {
     exitCode = settings.settingsCmd(args)
     break
   case "stow":
-    exitCode = await savecmds.stow(args, leased)
+    exitCode = await viaService(() => savecmds.stow(args, leased))
     break
   case "clock":
     exitCode = await savecmds.clock(args)
@@ -277,7 +293,9 @@ switch (sub ?? "") {
     exitCode = await reconcile.reconcileCmd(args)
     break
   case "events":
-    exitCode = await follow.eventsCmd(args)
+    exitCode = args.flags.has("op")
+      ? await opclient.opEventsCmd(args)
+      : await follow.eventsCmd(args)
     break
   case "run":
     exitCode = await runcmds.run(args)

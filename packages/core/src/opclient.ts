@@ -1,6 +1,13 @@
 import type { Args } from "./args"
 import { instanceName } from "./args"
-import { type Cursor, type Entry, type OpEntry, waitForEvent } from "./eventlog"
+import {
+  type Cursor,
+  type Entry,
+  type OpEntry,
+  readSince,
+  START,
+  waitForEvent,
+} from "./eventlog"
 import * as finder from "./finder"
 import { cursorOf } from "./follow"
 import { frozenState } from "./frozen"
@@ -8,6 +15,7 @@ import {
   INTERRUPTED,
   InstanceBusy,
   type LeaseHolder,
+  readOperation,
   withOperation,
 } from "./operation"
 import { OPS_PROTOCOL, type ServiceOp } from "./ops"
@@ -124,7 +132,7 @@ async function send(name: string, body: Json): Promise<Sent> {
 export interface Io {
   readonly out: (text: string) => void
   readonly err: (text: string) => void
-  readonly remount: (name: string) => Promise<void>
+  readonly remount: (name: string, signal: AbortSignal) => Promise<void>
 }
 
 const ofOp =
@@ -145,7 +153,7 @@ export async function followOp(
   const remount = async (): Promise<void> => {
     if (remounted) return
     remounted = true
-    await io.remount(name)
+    await io.remount(name, signal)
   }
   for (;;) {
     const found = await waitForEvent(
@@ -204,6 +212,7 @@ export interface OpCall {
   readonly op: ServiceOp
   readonly args: Args
   readonly argv: readonly string[]
+  readonly id?: string
 }
 
 const stdio: Io = {
@@ -213,8 +222,8 @@ const stdio: Io = {
   err: (text) => {
     process.stderr.write(text)
   },
-  remount: async (name) => {
-    await remountHeld(name)
+  remount: async (name, signal) => {
+    await remountHeld(name, finder.afterUp, signal)
   },
 }
 
@@ -233,9 +242,22 @@ async function hostEnding(name: string): Promise<boolean> {
   }
 }
 
+function abandoned(signal: AbortSignal): Promise<never> {
+  return new Promise((_resolve, reject) => {
+    const stop = (): void => {
+      reject(
+        new Error(`the remount was interrupted by ${String(signal.reason)}`),
+      )
+    }
+    if (signal.aborted) stop()
+    else signal.addEventListener("abort", stop, { once: true })
+  })
+}
+
 export async function remountHeld(
   name: string,
   mount: (name: string) => Promise<void> = finder.afterUp,
+  signal: AbortSignal = new AbortController().signal,
 ): Promise<void> {
   try {
     await withOperation(
@@ -244,13 +266,15 @@ export async function remountHeld(
       async () => {
         if (await hostEnding(name)) return
         if ((await frozenState(pathsFor(name))) !== null) return
-        await mount(name)
+        signal.throwIfAborted()
+        await Promise.race([mount(name), abandoned(signal)])
       },
       {
         automatic: true,
         queue: true,
         waitMs: REMOUNT_WAIT_MS,
         onWait: () => undefined,
+        signal,
       },
     )
   } catch (error) {
@@ -281,6 +305,8 @@ export async function runOp(
       op: call.op,
       args: [...call.argv],
       wait: call.args.flags.has("wait"),
+      keeper: process.env.WINVM_KEEPER ?? null,
+      ...(call.id === undefined ? {} : { id: call.id }),
     })
     if (interrupted.signal.aborted && sent.kind === "accepted") {
       detached(call.op, name, sent, io)
@@ -376,5 +402,128 @@ export async function cancelCmd(args: Args, io: Io = stdio): Promise<number> {
   io.err(
     `::error::nothing is running in winvm's service for "${name}", so nothing was cancelled\n`,
   )
+  return 1
+}
+
+export interface RecordedOp {
+  readonly id: string
+  readonly operation: string | null
+  readonly ended: boolean
+  readonly ok: boolean | null
+  readonly exitCode: number | null
+  readonly error: string | null
+  readonly out: string
+  readonly err: string
+}
+
+const ofId =
+  (id: string) =>
+  (e: Entry): e is Extract<Entry, { kind: "op" }> =>
+    e.kind === "op" && e.id === id
+
+function heard(id: string, lines: readonly Entry[]): RecordedOp {
+  let operation: string | null = null
+  let end: OpEntry | null = null
+  let out = ""
+  let err = ""
+  for (const e of lines) {
+    if (e.kind !== "op" || e.id !== id) continue
+    operation = e.operation
+    if (e.phase === "output") {
+      if (e.stream === "out") out += e.text
+      else err += e.text
+    }
+    if (e.phase === "end") end = e
+  }
+  return {
+    id,
+    operation,
+    ended: end !== null,
+    ok: end?.phase === "end" ? end.ok : null,
+    exitCode: end?.phase === "end" ? (end.exitCode ?? null) : null,
+    error: end?.phase === "end" ? (end.error ?? null) : null,
+    out,
+    err,
+  }
+}
+
+const stillRuns = (
+  name: string,
+  id: string,
+  lines: readonly Entry[],
+): boolean =>
+  readOperation(name)?.id === id ||
+  lines.some(
+    (e) =>
+      e.kind === "op" &&
+      e.id === id &&
+      e.phase === "begin" &&
+      isSameProcess(e.pid, null),
+  )
+
+export async function recordedOp(
+  name: string,
+  id: string,
+  o: { readonly follow: boolean; readonly signal?: AbortSignal },
+): Promise<RecordedOp> {
+  const read = readSince(name, START)
+  const lines: Entry[] = read.entries.filter(ofId(id))
+  let since = read.cursor
+  for (;;) {
+    const now = heard(id, lines)
+    if (now.ended || !o.follow || o.signal?.aborted === true) return now
+    if (!stillRuns(name, id, lines)) return now
+    const found = await waitForEvent(name, ofId(id), Date.now() + LIVENESS_MS, {
+      since,
+      pollMs: 100,
+      ...(o.signal === undefined ? {} : { signal: o.signal }),
+    })
+    if (found === null) continue
+    since = found.cursor
+    lines.push(found.entry)
+  }
+}
+
+export async function opEventsCmd(args: Args, io: Io = stdio): Promise<number> {
+  const name = instanceName(args)
+  const id = args.flags.get("op") ?? ""
+  const stop = new AbortController()
+  const leave = (): void => {
+    stop.abort()
+  }
+  for (const sig of INTERRUPTS) process.on(sig, leave)
+  let r: RecordedOp
+  try {
+    r = await recordedOp(name, id, {
+      follow: args.flags.has("follow"),
+      signal: stop.signal,
+    })
+  } finally {
+    for (const sig of INTERRUPTS) process.off(sig, leave)
+  }
+  if (args.flags.has("json")) {
+    io.out(
+      `${JSON.stringify({
+        id: r.id,
+        operation: r.operation,
+        ended: r.ended,
+        ok: r.ok,
+        exitCode: r.exitCode,
+        error: r.error,
+        output: [r.out.trim(), r.err.trim()].filter((t) => t !== "").join("\n"),
+      })}\n`,
+    )
+    return 0
+  }
+  io.out(r.out)
+  io.err(r.err)
+  if (!r.ended) {
+    io.err(
+      `::error::the record of "${name}" has no end for op ${id}${r.operation === null ? ", nor any line of it" : ""}\n`,
+    )
+    return 1
+  }
+  if (r.exitCode !== null) return r.exitCode
+  io.err(`error: ${r.error ?? "it failed"}\n`)
   return 1
 }

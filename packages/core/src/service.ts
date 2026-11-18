@@ -356,6 +356,7 @@ export async function runService(
     finish = r
   })
   let goneMs = 0
+  let qemuGoneMs = 0
   let settling = false
   let settleAt = 0
   const settleEveryMs = o.settle?.everyMs ?? 30_000
@@ -448,7 +449,8 @@ export async function runService(
     void syncNotices()
     rotate()
     settle()
-    if (livePidIn(p.pid) === null) queue.endQueued()
+    qemuGoneMs = livePidIn(p.pid) === null ? qemuGoneMs + checkMs : 0
+    if (qemuGoneMs >= exitAfterMs) queue.endQueued()
     if (
       livePidIn(p.pid) !== null ||
       !queue.idle() ||

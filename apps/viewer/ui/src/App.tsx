@@ -86,6 +86,7 @@ import {
   isFrozen,
   isLivePhase,
   parseShare,
+  RESTORED_BUSY,
   shownTitle,
   startSteps,
   terminalBlocked,
@@ -756,8 +757,12 @@ export function App(): JSX.Element {
             <div className="notices">
               {w.failure !== null && (
                 <Callout
-                  tone="error"
-                  title={t(`error.${w.failure.verb}`)}
+                  tone={w.failure.code === RESTORED_BUSY ? "notice" : "error"}
+                  title={
+                    w.failure.code === RESTORED_BUSY
+                      ? t("notice.restoredBusy")
+                      : t(`error.${w.failure.verb}`)
+                  }
                   action={
                     <Button
                       size="sm"

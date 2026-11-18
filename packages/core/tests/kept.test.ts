@@ -45,6 +45,7 @@ import {
   keeperSocket,
   keeperStanding,
   keeperUse,
+  keptEnv,
   killKept,
   launchedRuntime,
   setLaunchd,
@@ -582,6 +583,22 @@ describe("launching QEMU without the keeper", () => {
     expect(warnings.join("\n")).toContain(
       "winvm's keeper did not start (launchctl bootstrap user/501 keeper.plist: 5: EIO); starting QEMU without it, so it is not protected if the Mac shuts down",
     )
+  })
+
+  it("refuses, rather than spawn QEMU outside the keeper, when the launch runs inside the keeper's own service", async () => {
+    bootstrapFails = true
+    writeFileSync(
+      pathsFor(NAME).service,
+      JSON.stringify({
+        pid: process.pid,
+        cli: "",
+        version: "0",
+        startedAt: "",
+      }),
+    )
+    spyOn(console, "warn").mockImplementation(() => undefined)
+    await expect(leasedLaunch()).rejects.toThrow("EIO")
+    expect(detached).toEqual([])
   })
 
   it("spawns QEMU detached when no keeper is installed", async () => {
@@ -1244,6 +1261,31 @@ describe("a keeper from phase 3, which speaks protocol 2", () => {
     }
   }, 15_000)
 
+  it("is never asked to exit by its own service, which refuses the launch instead", async () => {
+    const p = pathsFor(NAME)
+    const asked: Record<string, unknown>[] = []
+    const server = await oldKeeper(p, null, (request) => {
+      asked.push(request)
+      return { ok: true }
+    })
+    writeFileSync(
+      p.service,
+      JSON.stringify({
+        pid: process.pid,
+        cli: "",
+        version: "0",
+        startedAt: "",
+      }),
+    )
+    try {
+      await expect(leasedLaunch()).rejects.toThrow("older than this winvm")
+      expect(asked.filter((r) => r.op === "exit-when-idle")).toEqual([])
+      expect(detached).toEqual([])
+    } finally {
+      server.close()
+    }
+  }, 15_000)
+
   it("lets winvm kill end the QEMU that a start refused on, though qemu.pid no longer names it", async () => {
     const p = pathsFor(NAME)
     const pid = await held()
@@ -1273,4 +1315,24 @@ describe("a keeper from phase 3, which speaks protocol 2", () => {
       await releasePidfiles()
     }
   }, 15_000)
+})
+
+describe("the environment the keeper hands its children", () => {
+  it("keeps the XDG folders, so a service launching QEMU finds the same runtime, keeper copies and settings as its CLI", () => {
+    const env = keptEnv({
+      HOME: "/Users/someone",
+      XDG_DATA_HOME: "/elsewhere/data",
+      XDG_CONFIG_HOME: "/elsewhere/config",
+      XDG_CACHE_HOME: "/elsewhere/cache",
+      XDG_STATE_HOME: "/elsewhere/state",
+      SECRET_TOKEN: "x",
+    })
+    expect(env).toMatchObject({
+      XDG_DATA_HOME: "/elsewhere/data",
+      XDG_CONFIG_HOME: "/elsewhere/config",
+      XDG_CACHE_HOME: "/elsewhere/cache",
+      XDG_STATE_HOME: "/elsewhere/state",
+    })
+    expect(env.SECRET_TOKEN).toBeUndefined()
+  })
 })

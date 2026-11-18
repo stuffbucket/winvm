@@ -38,13 +38,14 @@ import {
 } from "../src/display"
 import { appendEntry, readSince, START } from "../src/eventlog"
 import * as finder from "../src/finder"
-import { resetToGolden } from "../src/golden"
+import { golden, resetToGolden } from "../src/golden"
 import * as host from "../src/host"
 import { hostEndFacts, hostEndSeams } from "../src/hostend"
 import { hostPoweredOff } from "../src/hostoff"
 import * as kept from "../src/kept"
 import * as media from "../src/media"
 import * as monitor from "../src/monitor"
+import { type OpScope, runInOp } from "../src/opcontext"
 import { withOperation } from "../src/operation"
 import {
   basePath,
@@ -1634,6 +1635,17 @@ describe("a recall that completed but whose guest did not answer in time", () =>
     ).rejects.toThrow("did not answer")
     expect(readSave("source", "stow")).toBeNull()
   })
+
+  it("has golden reset exit like load, saying Windows was restored and is still busy", async () => {
+    fixture(VIRTIO_GPU, true, "golden", "golden")
+    const warned = spyOn(console, "warn").mockImplementation(() => undefined)
+    expect(await golden(parseArgs(["reset", "golden", "-i", "source"]))).toBe(
+      saves.RESTORED_UNANSWERED,
+    )
+    const said = warned.mock.calls.map((c) => String(c[0])).join("\n")
+    expect(said).toContain("still busy")
+    expect(said).toContain("restored")
+  })
 })
 
 describe("a load that never completes", () => {
@@ -1653,5 +1665,81 @@ describe("a load that never completes", () => {
     expect(commands.filter((c) => c === "quit")).toHaveLength(2)
     expect(runningPid).toBeNull()
     expect(readSave("source", "stow")).not.toBeNull()
+  })
+
+  it("leaves a QEMU whose state it could not read, and marks the stow so start does not recall it", async () => {
+    fixture(VIRTIO_GPU, true, "stow", "stow")
+    const said = spyOn(console, "error").mockImplementation(() => undefined)
+    const real = Date.now.bind(Date)
+    let skew = 0
+    spyOn(Date, "now").mockImplementation(() => real() + skew)
+    spyOn(qmp, "status").mockImplementation(() => {
+      if (launches().length === 0) return Promise.resolve("running")
+      skew = 31 * 60_000
+      return Promise.reject(new Error("the monitor did not answer"))
+    })
+    expect(
+      await savecmds.recallStow("source", parseArgs(["-i", "source"])),
+    ).toBe(1)
+    expect(commands.filter((c) => c === "quit")).toHaveLength(1)
+    expect(runningPid).toBe(FAKE_PID)
+    expect(readSave("source", "stow")?.unfinished).toBe(true)
+    expect(said.mock.calls.map((c) => String(c[0])).join("\n")).toContain(
+      "did not say",
+    )
+  })
+
+  it("marks the stow so start does not recall it when the half-loaded QEMU cannot be quit", async () => {
+    fixture(VIRTIO_GPU, true, "stow", "stow")
+    spyOn(console, "error").mockImplementation(() => undefined)
+    const real = Date.now.bind(Date)
+    let skew = 0
+    spyOn(Date, "now").mockImplementation(() => {
+      if (launches().length > 0) skew += 10 * 60_000
+      return real() + skew
+    })
+    spyOn(qmp, "status").mockResolvedValue("inmigrate")
+    spyOn(qemu, "killQemu").mockResolvedValue(false)
+    spyOn(qmp, "execute").mockImplementation((_socket, cmd) => {
+      commands.push(cmd)
+      if (cmd === "quit" && launches().length === 0) runningPid = null
+      return Promise.resolve({})
+    })
+    expect(
+      await savecmds.recallStow("source", parseArgs(["-i", "source"])),
+    ).toBe(1)
+    expect(runningPid).toBe(FAKE_PID)
+    expect(readSave("source", "stow")?.unfinished).toBe(true)
+  })
+})
+
+describe("a load whose op is ended by kill while QEMU quits", () => {
+  it("leaves the disk as it was instead of replacing it with the lease gone", async () => {
+    fixture(VIRTIO_GPU, true, "named", "manual")
+    const killer = new AbortController()
+    const scope: OpScope = {
+      id: "op-load",
+      operation: "load",
+      signal: killer.signal,
+      cancelled: new AbortController().signal,
+      write: () => undefined,
+      remount: () => undefined,
+      irreversibleAt: null,
+      calls: 0,
+    }
+    spyOn(qmp, "execute").mockImplementation((_socket, cmd) => {
+      commands.push(cmd)
+      if (cmd === "quit") {
+        runningPid = null
+        killer.abort("killed")
+      }
+      return Promise.resolve({})
+    })
+    await expect(
+      runInOp(scope, () => loadSave("source", "named")),
+    ).rejects.toThrow()
+    expect(readFileSync(pathsFor("source").overlay, "utf8")).toBe("live disk")
+    expect(readFileSync(pathsFor("source").vars, "utf8")).toBe("live vars")
+    expect(launches()).toHaveLength(0)
   })
 })

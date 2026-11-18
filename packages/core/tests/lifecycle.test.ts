@@ -1404,6 +1404,31 @@ describe("the CLI", () => {
     })
   }, 60_000)
 
+  it("start of a running instance hands a stale service over before it sends the start", async () => {
+    await control?.stop(true)
+    control = null
+    rmSync(p.control, { force: true })
+    const old = Bun.spawn([process.execPath, cli, "serve", "-i", "t"], {
+      env: env({ WINVM_BUILD_ID: OLD, WINVM_CLI: cli }),
+      stdout: "ignore",
+      stderr: "ignore",
+    })
+    try {
+      const end = Date.now() + 15_000
+      while (readService(p)?.build !== OLD) {
+        if (Date.now() > end) throw new Error("the old service never claimed")
+        await Bun.sleep(50)
+      }
+      winvm(["start", "-i", "t", "--no-watch"])
+      expect(readService(p)?.build).toBe("sha256:cli-test")
+      expect(live(old.pid)).toBe(false)
+      expect(live(qemu.pid)).toBe(true)
+    } finally {
+      old.kill("SIGKILL")
+      await old.exited
+    }
+  }, 60_000)
+
   it("does not reconcile with WINVM_NO_RECONCILE=1", async () => {
     const old = await staleFromSameCli()
     expect(reconcile({ WINVM_NO_RECONCILE: "1" }).status).toBe(0)
@@ -1504,5 +1529,28 @@ describe("what the CLI says after a repair", () => {
     expect(
       reconcileNote("t", { ...changed, deferred: "stowing" }, p),
     ).toBeNull()
+  })
+})
+
+describe("a service asked to ensure itself, as an op it runs does", () => {
+  it("answers with its own record and starts no other service", async () => {
+    const own: ServiceInfo = {
+      pid: process.pid,
+      cli: "",
+      version: "0",
+      startedAt: "2026-11-17T00:00:00.000Z",
+      build: CURRENT,
+    }
+    writeFileSync(p.service, JSON.stringify(own))
+    let started = 0
+    const info = await ensureService("t", p, {
+      start: () => {
+        started += 1
+      },
+      timeoutMs: 200,
+    })
+    expect(started).toBe(0)
+    expect(info.pid).toBe(process.pid)
+    expect(existsSync(p.service)).toBe(true)
   })
 })

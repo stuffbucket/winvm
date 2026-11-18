@@ -79,10 +79,15 @@ A stow is used up the moment QEMU has loaded it and Windows runs again, so
 `winvm start` never recalls the same stow twice, even when Windows was
 stowed in the middle of restarting or installing updates and is slow to
 answer afterwards. If Windows' guest agent does not answer within 5 minutes
-of a recall (or of `winvm load`), winvm says Windows is still busy but was
-restored, starts the watcher, and exits 6; set the clock and mount the
-drives later with `winvm clock` and `winvm files mount`. A load that QEMU
-never finishes is quit, and the stow is kept.
+of a recall (or of `winvm load`, `winvm rewind` or `winvm golden reset`),
+winvm says Windows is still busy but was restored, starts the watcher, and
+exits 6; set the clock and mount the drives later with `winvm clock` and
+`winvm files mount`. The app shows that as a notice, not a failure.
+`winvm share install` says it could not check the shared folder and also
+exits 6, and `winvm run` runs no job and exits 6. A load that QEMU never
+finishes is quit, and the stow is kept. If QEMU cannot be quit, or does not
+say what state it is in, it is left as it is and the stow is marked so that
+`winvm start` does not recall it; `winvm load` still can.
 
 At logout, the keeper only does this if launchd stops it. If launchd leaves
 your background session running, so does Windows, without a window, and you
@@ -105,7 +110,9 @@ The keeper isn't a login item and doesn't outlive a restart. The app carries
 it; a CLI-only install gets it from `winvm setup` once a release pins one.
 `WINVM_KEEPER=<path>` uses another build, for development.
 `WINVM_KEEPER=off` turns the keeper off: QEMU then starts detached, as it did
-before, and so does every VM when no keeper is installed. `winvm status` has a
+before, and so does every VM when no keeper is installed. A command whose
+`WINVM_KEEPER` differs from the one winvm's service runs with is run by the
+CLI itself, so the setting takes effect for that command. `winvm status` has a
 `keeper` row:
 
 - `protected`: QEMU runs under the keeper.
@@ -169,10 +176,13 @@ the status every few seconds.
 
 ## Operations the service runs
 
-`pause`, `resume`, `wake`, `sleep`, `lock`, `reboot` and `kill` run inside the
-control service. The CLI, and the app, which runs the CLI, sends the command to
-the service, prints what the service records for it, and exits with its exit
-code. What they print and their exit codes are as before.
+`start`, `stop`, `stow`, `save`, `load`, `rewind`, `golden reset`, `pause`,
+`resume`, `wake`, `sleep`, `lock`, `reboot` and `kill` run inside the control
+service. The CLI, and the app, which runs the CLI, sends the command to the
+service, prints what the service records for it, and exits with its exit code.
+What they print and their exit codes (3, 4, 5 and 6 included) are as before.
+A `start` of a machine that is not running usually finds no service, and the
+CLI starts it itself, as before.
 
 - **Ctrl-C only lets go.** Ctrl-C, or the app quitting, stops the CLI from
   following, not the command. The command finishes in the service and its end
@@ -188,15 +198,28 @@ code. What they print and their exit codes are as before.
   ends as killed and sends nothing more to QEMU or Windows. Once the kill is
   recorded, the service stops.
 - **`winvm cancel -i NAME`** ends the command the service runs, or, with
-  `--id ID`, a given one. It ends a command still waiting for its turn, and a
-  `reboot` that has not yet asked Windows to restart. Any other command, and a
-  reboot after its request, is refused with the reason. A CLI interrupted
-  while its command still waited prints the `--id` to use.
+  `--id ID`, a given one. It ends a command still waiting for its turn, and
+  these before their point of no return:
+  - `stop`, before it presses the power button: everything it took down is
+    put back, as when Ctrl-C stopped it before;
+  - `stow` and `save`, before the migration completes: QEMU is asked to
+    cancel the migration, and Windows runs on;
+  - `start`, `load`, `rewind` and `golden reset`, before they quit or launch
+    QEMU or replace its disk;
+  - `reboot`, before it asks Windows to restart.
+
+  Any other command, and these after that point, is refused with the reason.
+  A CLI interrupted while its command still waited prints the `--id` to use.
+- **When the Mac shuts down**, a `stow`, a `save` and a `stop` that has
+  pressed the power button are left to finish (a `save` is cancelled if it
+  would run past the keeper's limit); every other command ends at its next
+  step, and winvm stows Windows.
 - **`reboot` counts the restart by Windows' new boot and a logon**, as
   before, then looks for QEMU's report that Windows reset; when the record
   has none, it says so with a `warning` line. It stops at once if QEMU exits.
-- **The guest's Finder drives come back through the CLI.** `resume`, `wake`
-  and `reboot` leave mounting the drives again to the CLI that follows them,
+- **The guest's Finder drives come back through the CLI.** `start`, `load`,
+  `rewind`, `resume`, `wake` and `reboot`, and a `stop` or `stow` that put
+  things back, leave mounting the drives again to the CLI that follows them,
   which mounts them in your own session while it holds the instance, and not
   while the Mac is shutting down or the guest is paused. A CLI that let go
   leaves them down, and `winvm status` names them and the
@@ -212,7 +235,10 @@ The requests, on `control.sock`:
 
 - `POST /ops` with `{"protocol": 1, "op": "pause", "args": [], "wait": false}`
   answers `202` with `{id, cursor, pid, queued}`, or `409` with `{busy}` naming
-  the lease holder. A protocol or command the service doesn't have gets `400`
+  the lease holder. An optional `id` (8 to 64 letters, digits and dashes) is
+  used as the op's id, so a client can follow it in the record by a name it
+  chose. The service refuses an id an op it has taken still uses; keeping ids
+  unique over time is the client's job (the app uses fresh UUIDs). A protocol or command the service doesn't have gets `400`
   or `501`, with the protocol it speaks, so the caller can run the command
   itself.
 - `POST /ops/cancel` with `{"protocol": 1}` and an optional `id` answers `200`
@@ -222,6 +248,16 @@ The requests, on `control.sock`:
 Between a command's `begin` and `end` lines in `events.jsonl`, each piece it
 prints is a line `{"kind": "op", "phase": "output", "id", "operation",
 "stream": "out" | "err", "text"}`. Older readers skip these lines.
+
+A command can be given its op's id with `--op-id ID` (8 to 64 letters, digits
+and dashes). `winvm status --json` names the id of the command in progress,
+and `winvm events -i NAME --op ID` prints what that command printed and exits
+with its exit code; `--follow` waits while it runs, and `--json` prints how it
+ended as one object. The app names every command it runs this way, and its
+close reads how each one ended from the record: its own stow or stop, and any
+command it waited for, whoever ran it. While its own stow or stop runs, the
+app notes it in its data folder, so if the app is quit before it ends, the
+next app follows it to its end and says if it did not finish.
 
 ## Keeping them current
 

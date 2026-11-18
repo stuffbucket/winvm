@@ -6,6 +6,8 @@ import {
   describe,
   expect,
   it,
+  mock,
+  spyOn,
 } from "bun:test"
 import { spawnSync } from "node:child_process"
 import {
@@ -25,12 +27,17 @@ import {
 import { tmpdir } from "node:os"
 import { resolve } from "node:path"
 
+import * as agent from "../src/agent"
 import { parseArgs } from "../src/args"
+import * as commands from "../src/commands"
 import { RAMFB, VIRTIO_GPU, writeDisplay } from "../src/display"
 import { touchPaths } from "../src/guestagent"
 import { LEGACY } from "../src/hardware"
 import { type InstanceMeta, type Paths, pathsFor } from "../src/paths"
+import * as qemu from "../src/qemu"
 import { qemuArgs } from "../src/qemu"
+import * as qga from "../src/qga"
+import * as saves from "../src/saves"
 import {
   hardwareArgs,
   hardwareBeforeDevices,
@@ -38,7 +45,13 @@ import {
 } from "../src/saves"
 import { noticeTarget } from "../src/service"
 import * as share from "../src/share"
-import { parseGuestProbe, setArgs, shareStatus } from "../src/sharecmds"
+import {
+  parseGuestProbe,
+  setArgs,
+  shareCmd,
+  shareStatus,
+} from "../src/sharecmds"
+import * as sharemedia from "../src/sharemedia"
 import { parseDirectory, readIsoFiles } from "../src/sharemedia"
 import { ChangeNotices } from "../src/sharewatch"
 
@@ -734,3 +747,41 @@ describe.skipIf(process.platform !== "darwin")(
     })
   },
 )
+
+describe("share install when Windows comes back restored but silent", () => {
+  it("says the setup could not be checked and exits with the restore's code, instead of reporting success", async () => {
+    const p = instance("restored-share", VIRTIO_GPU)
+    writeFileSync(p.meta, JSON.stringify(META))
+    const putFiles: string[] = []
+    const client = {
+      putFile: (from: string) => {
+        putFiles.push(from)
+        return Promise.resolve()
+      },
+      exec: () => Promise.resolve({ code: 0, stdout: "", stderr: "" }),
+      pwsh: () => Promise.resolve({ output: "True|OK|False" }),
+    }
+    spyOn(sharemedia, "ensureShareMedia").mockResolvedValue(home)
+    spyOn(qemu, "isRunning").mockReturnValue(false)
+    spyOn(qemu, "launch").mockResolvedValue(undefined)
+    spyOn(qga, "untilReady").mockResolvedValue("ready")
+    spyOn(agent, "ensure").mockResolvedValue(client as never)
+    const connected = spyOn(agent, "connect").mockResolvedValue(null)
+    spyOn(commands, "start").mockResolvedValue(saves.RESTORED_UNANSWERED)
+    const said: string[] = []
+    spyOn(console, "error").mockImplementation((...a: unknown[]) => {
+      said.push(a.map(String).join(" "))
+    })
+    spyOn(console, "log").mockImplementation(() => undefined)
+    try {
+      const code = await shareCmd(
+        parseArgs(["install", "-i", "restored-share", "--start", "--json"]),
+      )
+      expect(code).toBe(saves.RESTORED_UNANSWERED)
+      expect(connected).not.toHaveBeenCalled()
+      expect(said.join("\n")).toContain("guest agent has not answered")
+    } finally {
+      mock.restore()
+    }
+  })
+})

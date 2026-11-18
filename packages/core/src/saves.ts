@@ -39,6 +39,13 @@ import { qmpCommand } from "./monitor"
 import type { Note } from "./notes"
 import { copyNote, readNote, removeNote, removeNotes } from "./notes"
 import {
+  checkCancelled,
+  checkOp,
+  currentOp,
+  OpCancelled,
+  pointOfNoReturn,
+} from "./opcontext"
+import {
   clearSavingRunning,
   markSavingRunning,
   withOperation,
@@ -415,6 +422,9 @@ export function sameQemu(saved: string, installed: string): boolean {
 export const STOW_REFUSED = 4
 export const STOW_UNDECIDED = 5
 export const RESTORED_UNANSWERED = 6
+
+export const windowsRuns = (code: number): boolean =>
+  code === 0 || code === RESTORED_UNANSWERED
 
 export function retireLoaded(
   instance: string,
@@ -973,7 +983,13 @@ async function waitMigration(
   timeoutMs: number,
 ): Promise<Record<string, unknown>> {
   const deadline = Date.now() + timeoutMs
+  const op = currentOp()
+  let cancelling = false
   while (Date.now() < deadline) {
+    if (op?.cancelled.aborted === true && !cancelling) {
+      cancelling = true
+      await qmp.execute(p.qmp, "migrate_cancel")
+    }
     const r = (await qmp.execute(p.qmp, "query-migrate")) as Record<
       string,
       unknown
@@ -981,6 +997,7 @@ async function waitMigration(
     const s = r.status
     if (s === "completed") return r
     if (s === "failed" || s === "cancelled") {
+      if (cancelling && op !== null) throw new OpCancelled(op)
       const detail = r["error-desc"]
       throw new Error(
         `migration ${s}: ${typeof detail === "string" ? detail : "no detail"}`,
@@ -1068,6 +1085,32 @@ function markUnfinished(
       `and once it is gone, \`winvm start -i ${instance} --boot\` discards the ${name} if Windows went on after it`
     )
   }
+}
+
+function heldBack(instance: string, name: string, m: Manifest): string {
+  const stows = [
+    ...new Set([
+      ...(m.kind === "stow" ? [name] : []),
+      ...(hasSave(instance, STOW) ? [STOW] : []),
+    ]),
+  ]
+  const marked = stows.filter((stow) => {
+    const found = readSave(instance, stow)
+    if (found === null) return false
+    try {
+      rewriteManifest(saveDir(instance, stow), {
+        ...found,
+        unfinished: true,
+        note: `a ${stow} whose recall did not finish, so the QEMU loading it may have gone on from it`,
+      })
+      return true
+    } catch {
+      return false
+    }
+  })
+  return marked.length === 0
+    ? ""
+    : `; ${marked.map((s) => `"${s}"`).join(" and ")} ${marked.length === 1 ? "is" : "are"} marked so that start does not recall it — \`winvm load -i ${instance} ${marked[0] ?? STOW}\` brings it back, and \`winvm kill -i ${instance}\` ends that QEMU`
 }
 
 function setAside(instance: string, name: string, m: Manifest): string {
@@ -1195,14 +1238,17 @@ async function createSaveHeld(
   let ppm: string | null = null
   if (wasRunning) markSavingRunning(instance)
   try {
+    checkCancelled()
     if (wasRunning) await qmp.execute(p.qmp, "stop")
     ppm = await captureScreen(p.qmp, tmp)
     await qmp.execute(p.qmp, "migrate-set-capabilities", {
       capabilities: plan.capabilities,
     })
     await qmp.execute(p.qmp, "migrate-set-parameters", plan.parameters)
+    checkCancelled()
     await qmp.execute(p.qmp, "migrate", { uri: plan.uri })
     migrated = await waitMigration(p, 30 * 60_000)
+    pointOfNoReturn()
     cloneFile(p.overlay, resolve(tmp, FILES.overlay))
     cloneFile(p.vars, resolve(tmp, FILES.vars))
   } catch (error) {
@@ -1413,7 +1459,9 @@ async function loadSaveHeld(instance: string, name: string): Promise<Manifest> {
   }
 
   const p = pathsFor(instance)
+  pointOfNoReturn()
   await quitQemu(p)
+  checkOp()
   for (const [src, dst] of [
     [resolve(dir, FILES.overlay), p.overlay],
     [resolve(dir, FILES.vars), p.vars],
@@ -1459,7 +1507,20 @@ async function loadSaveHeld(instance: string, name: string): Promise<Manifest> {
       break
     }
     if (Date.now() > deadline) {
-      await quitQemu(p).catch(() => undefined)
+      if (s === "unknown")
+        throw new Error(
+          `loading save "${name}" did not finish in time and QEMU did not say what state it is in, so it was left as it is` +
+            heldBack(instance, name, m),
+        )
+      try {
+        await quitQemu(p)
+      } catch (error) {
+        throw new Error(
+          `loading save "${name}" did not finish in time (state: ${s}), and its QEMU could not be quit: ${errText(error)}` +
+            heldBack(instance, name, m),
+          { cause: error },
+        )
+      }
       throw new Error(
         `loading save "${name}" did not finish in time (state: ${s}), so its QEMU was quit`,
       )

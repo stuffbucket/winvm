@@ -37,6 +37,7 @@ const scopeFor = (signal: AbortSignal): OpScope => ({
   signal,
   write: () => undefined,
   remount: () => undefined,
+  cancelled: new AbortController().signal,
   irreversibleAt: null,
   calls: 0,
 })

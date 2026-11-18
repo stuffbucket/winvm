@@ -117,8 +117,11 @@ const RECONCILING_VERBS: ReadonlySet<string> = new Set([
 export function shouldReconcileVerb(
   verb: string,
   env: NodeJS.ProcessEnv = process.env,
+  name: string | null = null,
 ): boolean {
-  return env[NO_RECONCILE] !== "1" && RECONCILING_VERBS.has(verb)
+  if (env[NO_RECONCILE] === "1") return false
+  if (RECONCILING_VERBS.has(verb)) return true
+  return verb === "start" && name !== null && qemuPid(pathsFor(name)) !== null
 }
 
 export function reconcileNote(

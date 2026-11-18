@@ -238,10 +238,14 @@ export function printChecks(checks: readonly Check[]): number {
   return checks.filter((c) => !c.ok).length
 }
 
-export function requireHost(): void {
+export function hostMissing(): boolean {
   const missing = hostChecks().filter((c) => !c.ok)
-  if (missing.length === 0) return
+  if (missing.length === 0) return false
   console.error("::error::missing prerequisites — run `winvm doctor`")
   for (const c of missing) console.error(`  ${c.label} -> ${c.hint}`)
-  process.exit(1)
+  return true
+}
+
+export function requireHost(): void {
+  if (hostMissing()) process.exit(1)
 }

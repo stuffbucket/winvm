@@ -513,7 +513,11 @@ describe("closing the window", () => {
       buttonNamed(host, copy("close.stow")).click()
     })
     await flush()
-    expect(app.log).toContain("close_run stow -i demo")
+    expect(
+      app.log.some((l) =>
+        /^close_run stow -i demo --op-id [0-9a-f-]{36}$/.test(l),
+      ),
+    ).toBe(true)
     expect(app.log).not.toContain("winvm stow -i demo")
     expect(dialog(host)).toBeNull()
     const overlays = host.querySelectorAll(".display__operation")

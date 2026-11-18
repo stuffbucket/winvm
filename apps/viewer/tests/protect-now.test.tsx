@@ -75,6 +75,7 @@ interface World {
   state: string
   verbs: string[][]
   stow: Answer
+  start: Answer
 }
 
 const newWorld = (protection: string | null): World => ({
@@ -84,6 +85,7 @@ const newWorld = (protection: string | null): World => ({
   state: "running",
   verbs: [],
   stow: { code: 0, stdout: "", stderr: "" },
+  start: { code: 0, stdout: "", stderr: "" },
 })
 
 const statusOf = (w: World): Record<string, unknown> => ({
@@ -146,7 +148,7 @@ function fakeApp(world: World): void {
       }
       world.state = "running"
       world.protection = "kept"
-      return Promise.resolve({ code: 0, stdout: "", stderr: "" })
+      return Promise.resolve(world.start)
     }
     return Promise.resolve({ code: 1, stdout: "", stderr: "" })
   }
@@ -240,6 +242,23 @@ describe("Protect now", () => {
     await openDetails(host)
     await press(protectButton(host))
     expect(world.verbs.map((v) => v[0])).toEqual(["stow"])
+  })
+
+  it("shows a restored guest whose agent was still silent as a notice, not a failure", async () => {
+    const world = newWorld("adopted")
+    world.start = {
+      code: 6,
+      stdout: "",
+      stderr:
+        'warning: Windows is still busy; it was restored ("demo" recalled from "stow" and runs)\n',
+    }
+    const host = await mount(world)
+    await openDetails(host)
+    await press(protectButton(host))
+    expect(world.verbs.map((v) => v[0])).toEqual(["stow", "start"])
+    expect(host.querySelector('[role="alert"]')).toBeNull()
+    expect(host.textContent).toContain("Windows is still busy")
+    expect(host.textContent).not.toContain("Windows didn't start")
   })
 
   it("is not offered for a protected VM, or one with no keeper to protect it", async () => {
