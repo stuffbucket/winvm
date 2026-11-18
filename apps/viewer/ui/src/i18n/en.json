@@ -365,6 +365,7 @@
   "close.failed": "WinVM stayed open",
   "close.statusFailed": "WinVM couldn't read which Windows machines are running, so it stayed open. Try closing it again.",
   "close.actionFailed": "WinVM couldn't finish with {title}, so it stayed open.",
+  "close.cutShort": "WinVM closed while winvm {operation} on {title} ran, and it ended without finishing.",
   "close.externalFailed": "winvm {operation} on {title}, run elsewhere, ended without finishing, so WinVM stayed open. What it said is where it was run.",
   "close.sessionTitle": "macOS is waiting for WinVM to close",
   "close.sessionEnd": "macOS logs out, restarts or shuts down once WinVM has closed, and stops waiting in {seconds, plural, one {# second} other {# seconds}}.",

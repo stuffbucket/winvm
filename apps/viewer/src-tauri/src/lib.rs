@@ -774,6 +774,14 @@ pub fn run() {
             if let Some(main) = app.get_webview_window("main") {
                 liveresize::watch(&main);
             }
+            match app.path().app_data_dir() {
+                Ok(dir) => app
+                    .state::<close::CloseCoordinator>()
+                    .open_journal(dir.join(close::JOURNAL)),
+                Err(e) => close::note(&format!(
+                    "winvm: no folder for the close's notes, so a close cut short is not reported later: {e}"
+                )),
+            }
             events::start(app.handle());
             if !cfg!(debug_assertions) {
                 check_for_update(app.handle().clone(), false);
@@ -805,6 +813,8 @@ pub fn run() {
             close::close_at,
             close::close_resolved,
             close::close_run,
+            close::close_wait,
+            close::close_forget,
             close::close_cancel,
             close::close_complete,
             events::events_state
