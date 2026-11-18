@@ -130,6 +130,7 @@ beforeEach(() => {
   const code = resolve(state, "code.fd")
   writeFileSync(code, "firmware")
   spyOn(host, "requireHost").mockImplementation(() => undefined)
+  spyOn(host, "hostMissing").mockReturnValue(false)
   spyOn(host, "requireFirmware").mockReturnValue({ code, vars: code })
   spyOn(host, "tpmTisHasPpi").mockReturnValue(true)
   spyOn(vnc, "ensureFreeDisplay").mockImplementation((_name, _p, m) =>

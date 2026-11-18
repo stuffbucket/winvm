@@ -392,14 +392,18 @@ describe("the long verbs, as the CLI prints and exits with them", () => {
     })
   }, 30_000)
 
-  it("start of a running instance says so and mounts the guest's drives again", async () => {
-    rememberDrives()
-    expect(await winvm("start", "-i", "t", "--no-watch")).toEqual({
-      code: 0,
-      stdout: 'instance "t" already running\n',
-      stderr: NOT_REMOUNTED,
-    })
-  }, 30_000)
+  it.skipIf(process.platform !== "darwin")(
+    "start of a running instance says so and mounts the guest's drives again",
+    async () => {
+      rememberDrives()
+      expect(await winvm("start", "-i", "t", "--no-watch")).toEqual({
+        code: 0,
+        stdout: 'instance "t" already running\n',
+        stderr: NOT_REMOUNTED,
+      })
+    },
+    30_000,
+  )
 
   it("a long verb meets another command holding the instance with the usual busy words", async () => {
     writeFileSync(
@@ -458,17 +462,21 @@ describe("the long verbs, run by winvm's service", () => {
     expect(ranBy("save")).toBe(service?.pid)
   }, 30_000)
 
-  it("start of a running instance runs in the service, and the CLI mounts the drives", async () => {
-    rememberDrives()
-    expect((await winvm("start", "-i", "t", "--no-watch")).code).toBe(0)
-    expect(ranBy("start")).toBe(service?.pid)
-    expect(
-      readSince("t", START).entries.some(
-        (e) =>
-          e.kind === "op" && e.phase === "output" && e.text.includes("445"),
-      ),
-    ).toBe(false)
-  }, 30_000)
+  it.skipIf(process.platform !== "darwin")(
+    "start of a running instance runs in the service, and the CLI mounts the drives",
+    async () => {
+      rememberDrives()
+      expect((await winvm("start", "-i", "t", "--no-watch")).code).toBe(0)
+      expect(ranBy("start")).toBe(service?.pid)
+      expect(
+        readSince("t", START).entries.some(
+          (e) =>
+            e.kind === "op" && e.phase === "output" && e.text.includes("445"),
+        ),
+      ).toBe(false)
+    },
+    30_000,
+  )
 
   it("load, rewind and golden reset run in the service", async () => {
     expect((await winvm("load", "-i", "t", "nope")).code).toBe(1)
