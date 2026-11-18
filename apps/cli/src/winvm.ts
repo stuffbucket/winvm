@@ -15,12 +15,14 @@ import {
 import * as machineinfo from "@winvm/core/machineinfo"
 import * as mcpcmds from "@winvm/core/mcpcmds"
 import * as ocr from "@winvm/core/ocr"
+import * as opclient from "@winvm/core/opclient"
 import {
   automaticFrom,
   InstanceBusy,
   operationFor,
   withOperation,
 } from "@winvm/core/operation"
+import { isServiceOp } from "@winvm/core/ops"
 import {
   bunVersionWarning,
   pinnedBunVersion,
@@ -49,12 +51,16 @@ const [, , sub, ...rawArgs] = process.argv
 const args = parseArgs(rawArgs)
 
 const operation = operationFor(sub, args)
+const serviceOp = isServiceOp(sub) ? sub : null
 const leased = async (run: () => number | Promise<number>): Promise<number> => {
   if (operation === null) return await run()
   try {
     return await withOperation(instanceName(args), operation, run, {
       interruptible: true,
       automatic: automaticFrom(args),
+      ...(serviceOp !== null && args.flags.has("wait")
+        ? { queue: true, waitMs: Number.POSITIVE_INFINITY }
+        : {}),
     })
   } catch (error) {
     if (!(error instanceof InstanceBusy)) throw error
@@ -62,6 +68,10 @@ const leased = async (run: () => number | Promise<number>): Promise<number> => {
     return 1
   }
 }
+const viaService = async (here: () => Promise<number>): Promise<number> =>
+  serviceOp === null
+    ? await here()
+    : await opclient.runOp({ op: serviceOp, args, argv: rawArgs }, here)
 const NO_SWEEP = [
   "help",
   "--help",
@@ -75,6 +85,7 @@ const NO_SWEEP = [
   "events",
   "status",
   "reconcile",
+  "cancel",
 ]
 const LOOK_ONLY = [
   "info",
@@ -149,10 +160,13 @@ switch (sub ?? "") {
     exitCode = await leased(() => commands.stop(args))
     break
   case "reboot":
-    exitCode = await leased(() => commands.reboot(args))
+    exitCode = await viaService(() => leased(() => commands.reboot(args)))
     break
   case "kill":
-    exitCode = await leased(() => commands.kill(args))
+    exitCode = await viaService(() => leased(() => commands.kill(args)))
+    break
+  case "cancel":
+    exitCode = await opclient.cancelCmd(args)
     break
   case "reset":
     exitCode = await leased(() => commands.reset(args))
@@ -227,17 +241,17 @@ switch (sub ?? "") {
     exitCode = savecmds.list(args)
     break
   case "pause":
-    exitCode = await leased(() => savecmds.pause(args))
+    exitCode = await viaService(() => leased(() => savecmds.pause(args)))
     break
   case "resume":
   case "wake":
-    exitCode = await leased(() => savecmds.resume(args))
+    exitCode = await viaService(() => leased(() => savecmds.resume(args)))
     break
   case "sleep":
-    exitCode = await leased(() => savecmds.sleep(args))
+    exitCode = await viaService(() => leased(() => savecmds.sleep(args)))
     break
   case "lock":
-    exitCode = await leased(() => savecmds.lock(args))
+    exitCode = await viaService(() => leased(() => savecmds.lock(args)))
     break
   case "settings":
     exitCode = settings.settingsCmd(args)

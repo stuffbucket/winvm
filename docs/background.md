@@ -75,6 +75,15 @@ shields it. While a winvm command or the watcher holds the instance (its
 `lease.json`), the keeper never presses the power button; it waits, and quits
 QEMU at 50 seconds if it must.
 
+A stow is used up the moment QEMU has loaded it and Windows runs again, so
+`winvm start` never recalls the same stow twice, even when Windows was
+stowed in the middle of restarting or installing updates and is slow to
+answer afterwards. If Windows' guest agent does not answer within 5 minutes
+of a recall (or of `winvm load`), winvm says Windows is still busy but was
+restored, starts the watcher, and exits 6; set the clock and mount the
+drives later with `winvm clock` and `winvm files mount`. A load that QEMU
+never finishes is quit, and the stow is kept.
+
 At logout, the keeper only does this if launchd stops it. If launchd leaves
 your background session running, so does Windows, without a window, and you
 find it still running when you log back in.
@@ -157,6 +166,62 @@ went) or `end`. Every line carries a `cursor`; pass it back with `--since` to
 carry on from that line without losing one. The app follows the records this
 way, with one long-lived `winvm events --follow --json`, instead of asking for
 the status every few seconds.
+
+## Operations the service runs
+
+`pause`, `resume`, `wake`, `sleep`, `lock`, `reboot` and `kill` run inside the
+control service. The CLI, and the app, which runs the CLI, sends the command to
+the service, prints what the service records for it, and exits with its exit
+code. What they print and their exit codes are as before.
+
+- **Ctrl-C only lets go.** Ctrl-C, or the app quitting, stops the CLI from
+  following, not the command. The command finishes in the service and its end
+  is recorded. The CLI says
+  ``pause continues in winvm's service; follow it with `winvm events -i NAME --follow` ``
+  and exits 130.
+- **One at a time.** While the service runs a command it holds the instance's
+  lease (`lease.json`), so a second command, from this winvm or an older one,
+  is refused as busy. With `--wait` it queues instead, and says what it waits
+  for. As before, a command always waits for work winvm started by itself,
+  such as an idle autosave.
+- **`kill` never waits.** It runs beside the command in progress, which then
+  ends as killed and sends nothing more to QEMU or Windows. Once the kill is
+  recorded, the service stops.
+- **`winvm cancel -i NAME`** ends the command the service runs, or, with
+  `--id ID`, a given one. It ends a command still waiting for its turn, and a
+  `reboot` that has not yet asked Windows to restart. Any other command, and a
+  reboot after its request, is refused with the reason. A CLI interrupted
+  while its command still waited prints the `--id` to use.
+- **`reboot` counts the restart by Windows' new boot and a logon**, as
+  before, then looks for QEMU's report that Windows reset; when the record
+  has none, it says so with a `warning` line. It stops at once if QEMU exits.
+- **The guest's Finder drives come back through the CLI.** `resume`, `wake`
+  and `reboot` leave mounting the drives again to the CLI that follows them,
+  which mounts them in your own session while it holds the instance, and not
+  while the Mac is shutting down or the guest is paused. A CLI that let go
+  leaves them down, and `winvm status` names them and the
+  `winvm files mount -i NAME` that brings them back.
+- **When the service can't take it.** When no service answers (QEMU is not
+  running, or the service is restarting), or the service comes from an older
+  winvm that runs no commands, the CLI runs the command itself, as before. If
+  the service took the command but gave no answer within 5 seconds, the CLI
+  says so and does not run it again, because it may already be running. The
+  exception is `kill`, which then kills QEMU itself.
+
+The requests, on `control.sock`:
+
+- `POST /ops` with `{"protocol": 1, "op": "pause", "args": [], "wait": false}`
+  answers `202` with `{id, cursor, pid, queued}`, or `409` with `{busy}` naming
+  the lease holder. A protocol or command the service doesn't have gets `400`
+  or `501`, with the protocol it speaks, so the caller can run the command
+  itself.
+- `POST /ops/cancel` with `{"protocol": 1}` and an optional `id` answers `200`
+  with `{cancelled}`, `409` with `{refused}` and the reason, or `404` when
+  nothing runs.
+
+Between a command's `begin` and `end` lines in `events.jsonl`, each piece it
+prints is a line `{"kind": "op", "phase": "output", "id", "operation",
+"stream": "out" | "err", "text"}`. Older readers skip these lines.
 
 ## Keeping them current
 

@@ -62,7 +62,7 @@ function positionOf(v: unknown): Position | null {
   return { ino, generation, offset }
 }
 
-function cursorOf(v: unknown): Cursor | null {
+export function cursorOf(v: unknown): Cursor | null {
   const here = positionOf(v)
   if (here === null || !isObject(v)) return null
   if (v.archive === null) return { ...here, archive: null }
@@ -109,6 +109,12 @@ function describe(e: Entry): string {
     case "op":
       if (e.phase === "begin")
         return `${e.operation} began (pid ${String(e.pid)})`
+      if (e.phase === "remount")
+        return `${e.operation} left the guest's drives for its caller to mount again`
+      if (e.phase === "output")
+        return `${e.operation} ${e.stream === "err" ? "stderr" : "stdout"}: ${e.text.trimEnd()}`
+      if (e.queued === true)
+        return `${e.operation} did not run: ${e.error ?? "it never began"}`
       return `${e.operation} ${e.ok ? "succeeded" : "failed"}${e.error === undefined ? "" : `: ${e.error}`}`
     case "service":
     case "warning":

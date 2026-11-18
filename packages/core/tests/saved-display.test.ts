@@ -38,6 +38,7 @@ import {
 } from "../src/display"
 import { appendEntry, readSince, START } from "../src/eventlog"
 import * as finder from "../src/finder"
+import { resetToGolden } from "../src/golden"
 import * as host from "../src/host"
 import { hostEndFacts, hostEndSeams } from "../src/hostend"
 import { hostPoweredOff } from "../src/hostoff"
@@ -1306,7 +1307,7 @@ describe("a stow whose QEMU will not quit", () => {
     }
   })
 
-  it("removes only the folder it loaded when that folder's manifest still calls it the stow", async () => {
+  it("consumes the folder it loaded, and discards the real stow it supersedes, when that folder's manifest still calls it the stow", async () => {
     fixture(VIRTIO_GPU, true, "stow", "stow")
     renameSync(saveDir("source", "stow"), saveDir("source", "stow-unfinished"))
     fixture(VIRTIO_GPU, true, "stow", "stow")
@@ -1319,7 +1320,18 @@ describe("a stow whose QEMU will not quit", () => {
       await savecmds.load(parseArgs(["-i", "source", "stow-unfinished"])),
     ).toBe(0)
     expect(existsSync(saveDir("source", "stow-unfinished"))).toBe(false)
-    expect(readSave("source", "stow")).not.toBeNull()
+    expect(readSave("source", "stow")).toBeNull()
+  })
+
+  it("consumes the stow itself when the stow is what it loaded", async () => {
+    fixture(VIRTIO_GPU, true, "stow", "stow")
+    spyOn(qga, "waitResponsive").mockResolvedValue(true)
+    spyOn(clock, "syncGuestClock").mockResolvedValue({
+      beforeOffsetMs: 0,
+      afterOffsetMs: 0,
+    })
+    expect(await savecmds.load(parseArgs(["-i", "source", "stow"]))).toBe(0)
+    expect(readSave("source", "stow")).toBeNull()
   })
 
   it("is kept as it is when it can be neither moved nor marked", async () => {
@@ -1475,10 +1487,24 @@ describe("a stow whose QEMU did not say which version it runs", () => {
 })
 
 describe("a winvm stow that fails while QEMU still runs Windows", () => {
+  let afterwards: () => Promise<unknown> = async () =>
+    await Promise.resolve({ status: "running" })
+  let asked: number[] = []
   beforeEach(() => {
+    afterwards = async () => await Promise.resolve({ status: "running" })
+    asked = []
     spyOn(console, "error").mockImplementation(() => undefined)
     spyOn(saves, "captureScreen").mockRejectedValue(
       new Error("screendump failed"),
+    )
+    spyOn(monitor, "qmpCommand").mockImplementation(
+      async (_socket, cmd, _args, timeoutMs) => {
+        if (cmd === "query-version")
+          return await Promise.resolve({ qemu: reported, package: "" })
+        if (cmd !== "query-status") throw new Error(`unexpected ${cmd}`)
+        asked.push(timeoutMs ?? 3000)
+        return await afterwards()
+      },
     )
   })
 
@@ -1491,6 +1517,24 @@ describe("a winvm stow that fails while QEMU still runs Windows", () => {
     expect(runningPid).toBe(FAKE_PID)
     expect(commands).toContain("cont")
     expect(restarted).toHaveBeenCalledTimes(1)
+  })
+
+  it("starts no watcher when QEMU's monitor won't say what the guest is doing, and asks it only briefly", async () => {
+    afterwards = async () =>
+      await Promise.reject(new Error("QMP did not answer within 2000 ms"))
+    spyOn(qmp, "status").mockImplementation(() =>
+      commands.includes("cont")
+        ? Promise.reject(new Error("qmp.sock went away"))
+        : Promise.resolve("running"),
+    )
+    spyOn(watcher, "stopWatcher").mockResolvedValue(true)
+    const restarted = spyOn(watcher, "startWatcherFor").mockImplementation(
+      () => undefined,
+    )
+    expect(await savecmds.stow(parseArgs(["-i", "source", "--force"]))).toBe(1)
+    expect(restarted).not.toHaveBeenCalled()
+    expect(asked.length).toBeGreaterThan(0)
+    expect(Math.max(...asked)).toBeLessThanOrEqual(2000)
   })
 
   it("stops and restarts the watcher even when it inherited WINVM_AUTOMATIC", async () => {
@@ -1529,11 +1573,85 @@ describe("a winvm stow that fails while QEMU still runs Windows", () => {
     spyOn(qmp, "status").mockImplementation(() =>
       Promise.resolve(commands.includes("migrate") ? "postmigrate" : "running"),
     )
+    afterwards = async () =>
+      await Promise.resolve({
+        status: commands.includes("migrate") ? "postmigrate" : "running",
+      })
     spyOn(watcher, "stopWatcher").mockResolvedValue(true)
     const restarted = spyOn(watcher, "startWatcherFor").mockImplementation(
       () => undefined,
     )
     expect(await savecmds.stow(parseArgs(["-i", "source", "--force"]))).toBe(1)
     expect(restarted).not.toHaveBeenCalled()
+  })
+})
+
+describe("a recall that completed but whose guest did not answer in time", () => {
+  beforeEach(() => {
+    spyOn(console, "error").mockImplementation(() => undefined)
+    spyOn(console, "warn").mockImplementation(() => undefined)
+    spyOn(qga, "waitResponsive").mockResolvedValue(false)
+  })
+
+  it("retires the stow, says Windows was restored and is still busy, and exits with its own code", async () => {
+    fixture(VIRTIO_GPU, true, "stow", "stow")
+    const warned = spyOn(console, "warn").mockImplementation(() => undefined)
+    expect(
+      await savecmds.recallStow("source", parseArgs(["-i", "source"])),
+    ).toBe(saves.RESTORED_UNANSWERED)
+    expect(readSave("source", "stow")).toBeNull()
+    const said = warned.mock.calls.map((c) => String(c[0])).join("\n")
+    expect(said).toContain("still busy")
+    expect(said).toContain("restored")
+  })
+
+  it("is not recalled again by the next start after a stop", async () => {
+    fixture(VIRTIO_GPU, true, "stow", "stow")
+    await savecmds.recallStow("source", parseArgs(["-i", "source"]))
+    expect(launches()).toHaveLength(1)
+    runningPid = null
+    expect(
+      await savecmds.recallStow("source", parseArgs(["-i", "source"])),
+    ).toBeNull()
+    expect(launches()).toHaveLength(1)
+  })
+
+  it("retires the stow a named load supersedes, though the guest did not answer", async () => {
+    fixture(VIRTIO_GPU, true, "stow", "stow")
+    fixture(VIRTIO_GPU, true, "named", "manual")
+    expect(await savecmds.load(parseArgs(["-i", "source", "named"]))).toBe(
+      saves.RESTORED_UNANSWERED,
+    )
+    expect(readSave("source", "stow")).toBeNull()
+    expect(readSave("source", "named")).not.toBeNull()
+  })
+
+  it("retires the stow a golden reset supersedes, though the guest did not answer", async () => {
+    fixture(VIRTIO_GPU, true, "stow", "stow")
+    fixture(VIRTIO_GPU, true, "golden", "golden")
+    await expect(
+      resetToGolden("source", "golden", { timeoutMs: 10 }),
+    ).rejects.toThrow("did not answer")
+    expect(readSave("source", "stow")).toBeNull()
+  })
+})
+
+describe("a load that never completes", () => {
+  it("quits QEMU rather than leave it half-loaded, and keeps the stow", async () => {
+    fixture(VIRTIO_GPU, true, "stow", "stow")
+    spyOn(console, "error").mockImplementation(() => undefined)
+    const real = Date.now.bind(Date)
+    let skew = 0
+    spyOn(Date, "now").mockImplementation(() => real() + skew)
+    spyOn(qmp, "status").mockImplementation(() => {
+      if (launches().length > 0) skew = 31 * 60_000
+      return Promise.resolve(launches().length > 0 ? "inmigrate" : "running")
+    })
+    expect(
+      await savecmds.recallStow("source", parseArgs(["-i", "source"])),
+    ).toBe(1)
+    expect(commands.filter((c) => c === "quit")).toHaveLength(2)
+    expect(runningPid).toBeNull()
+    expect(readSave("source", "stow")).not.toBeNull()
   })
 })

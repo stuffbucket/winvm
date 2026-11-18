@@ -8,6 +8,7 @@ import type { Args } from "./args"
 import { instanceName } from "./args"
 import { refuseFrozen } from "./frozen"
 import { netfsMount } from "./netfs"
+import { currentOp } from "./opcontext"
 import { cliArgv, pathsFor, readMeta } from "./paths"
 import * as qemu from "./qemu"
 import { spawnText } from "./shell"
@@ -422,6 +423,11 @@ export async function afterUp(
 ): Promise<void> {
   const s = readSmb(pathsFor(instance))
   if (s === null || s.mounted.length === 0 || !sys.running(instance)) return
+  const op = currentOp()
+  if (op !== null) {
+    op.remount()
+    return
+  }
   try {
     await mountShares(instance, s.mounted, { waitMs: 30_000, sys })
   } catch (error) {
@@ -519,6 +525,16 @@ export function status(instance: string, sys: Sys = realSys): FilesStatus {
       }
     }),
   }
+}
+
+export function drivesOwed(
+  instance: string,
+  sys: Sys = realSys,
+): readonly ShareKey[] {
+  const st = status(instance, sys)
+  return st.running
+    ? st.shares.filter((s) => s.remembered && !s.mounted).map((s) => s.key)
+    : []
 }
 
 const USAGE =

@@ -63,6 +63,7 @@ import {
   resolveWindowsIso,
 } from "./media"
 import * as monitor from "./monitor"
+import { currentOp, pointOfNoReturn } from "./opcontext"
 import {
   INTERRUPTED,
   InstanceBusy,
@@ -654,7 +655,8 @@ export async function start(args: Args): Promise<number> {
   const p = pathsFor(name)
   if (qemu.isRunning(p)) return await startRunning(name, args)
   const recalled = await savecmds.recallStow(name, args)
-  if (recalled === 0) watcher.startWatcherFor(name, args)
+  if (recalled === 0 || recalled === saves.RESTORED_UNANSWERED)
+    watcher.startWatcherFor(name, args)
   if (recalled !== null) return recalled
   const isNew = readMeta(name) === null
   if (isNew && !isValidInstanceName(name)) {
@@ -773,7 +775,7 @@ export async function rewind(args: Args): Promise<number> {
   const rewatch = watcher.rewatchAfterRestore(name, args)
   finder.beforeDown(name)
   const viaSave = await savecmds.rewindViaSave(name, args.positional[0])
-  if (viaSave === 0) {
+  if (viaSave === 0 || viaSave === saves.RESTORED_UNANSWERED) {
     watcher.touchActivity(name)
     rewatch()
   }
@@ -1229,6 +1231,41 @@ async function stopRun(
   return 0
 }
 
+const guestReset = (e: Entry): boolean =>
+  qmpEvent("RESET")(e) && e.data?.guest === true
+
+const QEMU_GONE_POLL_MS = 500
+const RESET_GRACE_MS = 5000
+
+async function confirmReset(
+  name: string,
+  since: Cursor,
+  deadline: number,
+  signal: AbortSignal,
+): Promise<void> {
+  const by = Math.min(deadline, Date.now() + RESET_GRACE_MS)
+  const found = await waitForEvent(name, guestReset, by, {
+    since,
+    signal,
+  }).catch(() => null)
+  if (found !== null || signal.aborted) return
+  appendEntry(name, {
+    kind: "warning",
+    what: "reboot without RESET",
+    reason:
+      "Windows came back with a new boot time, and the record has no RESET from QEMU for it",
+  })
+}
+
+async function recordedSoFar(name: string, p: Paths): Promise<Cursor | null> {
+  try {
+    await monitor.qmpCommand(p.qmp, "query-status", undefined, 5000)
+  } catch {
+    return null
+  }
+  return endCursor(name)
+}
+
 export async function reboot(args: Args): Promise<number> {
   const name = instanceName(args)
   const p = pathsFor(name)
@@ -1253,24 +1290,56 @@ export async function reboot(args: Args): Promise<number> {
     )
     return 1
   }
+  const since = await recordedSoFar(name, p)
+  if (since === null) {
+    console.error(
+      `::error::QEMU's monitor did not answer, so a restart could not be confirmed; nothing was asked of Windows`,
+    )
+    return 1
+  }
   const t0 = Date.now()
   const deadline = t0 + s * 1000
+  const gone = qemu.watchExit(p, QEMU_GONE_POLL_MS)
+  const op = currentOp()
+  const signal =
+    op === null ? gone.signal : AbortSignal.any([gone.signal, op.signal])
+  pointOfNoReturn()
   finder.beforeDown(name)
-  const outcome = await watcher.whileActive(
-    name,
-    (async (): Promise<qga.Readiness | { readonly refused: string }> => {
-      try {
-        await qga.reboot(p.qga)
-      } catch (error) {
-        return { refused: errorText(error) }
-      }
-      process.stdout.write("rebooting")
-      return await qga.untilNewBoot(p.qga, before, deadline - Date.now(), {
-        noLogonMs: NO_LOGON_MS,
-        log: (line) => process.stdout.write(`\n${line}\n`),
-      })
-    })(),
-  )
+  let outcome: qga.Readiness | { readonly refused: string }
+  try {
+    outcome = await watcher.whileActive(
+      name,
+      (async (): Promise<qga.Readiness | { readonly refused: string }> => {
+        try {
+          await qga.reboot(p.qga)
+        } catch (error) {
+          return { refused: errorText(error) }
+        }
+        process.stdout.write("rebooting")
+        const back = await qga.untilNewBoot(
+          p.qga,
+          before,
+          deadline - Date.now(),
+          {
+            noLogonMs: NO_LOGON_MS,
+            log: (line) => process.stdout.write(`\n${line}\n`),
+            signal,
+          },
+        )
+        if (back === "ready") await confirmReset(name, since, deadline, signal)
+        return back
+      })(),
+    )
+  } finally {
+    gone.stop()
+  }
+  if (gone.signal.aborted) {
+    process.stdout.write("\n")
+    console.error(
+      `::error::QEMU exited while Windows restarted, so "${name}" is no longer running — \`winvm start -i ${name}\``,
+    )
+    return 1
+  }
   if (typeof outcome === "object") {
     console.error(
       `::error::the guest did not take the restart: ${outcome.refused}`,
@@ -1317,12 +1386,19 @@ async function untilUnlocked(
   return true
 }
 
-export async function kill(args: Args): Promise<number> {
+export interface KillOptions {
+  readonly inService?: boolean
+}
+
+export async function kill(args: Args, o: KillOptions = {}): Promise<number> {
   const name = instanceName(args)
   const p = pathsFor(name)
+  const endService = (): void => {
+    if (o.inService !== true) stopService(p)
+  }
   const pid = qemu.pidOf(p)
   const holder = leaseHolder(name)
-  if (pid === null && holder !== null) {
+  if (pid === null && holder !== null && holder.operation !== "kill") {
     console.error(
       `::error::"${name}" has no QEMU running, and its ${holder.operation} (pid ${String(holder.pid)}) is still in progress; nothing was killed`,
     )
@@ -1333,7 +1409,7 @@ export async function kill(args: Args): Promise<number> {
     const strays = qemu.qemuPids(p)
     for (const stray of strays) signalProcess(stray, "SIGKILL")
     qemu.stopSidecars(p)
-    stopService(p)
+    endService()
     finder.cleanStale(name)
     console.log(
       strays.length > 0
@@ -1371,7 +1447,7 @@ export async function kill(args: Args): Promise<number> {
   }
   rmSync(p.pid, { force: true })
   qemu.stopSidecars(p)
-  stopService(p)
+  endService()
   void watcher.stopWatcher(name)
   console.log(`killed instance "${name}"`)
   return 0
@@ -1664,6 +1740,11 @@ export const USAGE =
   "  pause | resume [-i name]      freeze / unfreeze the guest (resume fixes its clock)\n" +
   "  sleep | wake [-i name]        lock Windows, then freeze it as asleep / resume it\n" +
   "  lock    [-i name]             Windows back to its lock screen (sign in again with Enter)\n" +
+  "  reboot  [-i name] [--timeout S]  restart Windows and wait until someone is logged on again\n" +
+  "                                pause, resume, sleep, wake, lock, reboot and kill run in winvm's\n" +
+  "                                service: Ctrl-C leaves them running there; --wait queues one\n" +
+  "                                behind another operation instead of refusing it as busy\n" +
+  "  cancel  [-i name] [--id ID]   end the operation winvm's service runs, before its point of no return\n" +
   "  stow    [-i name]             save and shut QEMU down; the next start recalls it\n" +
   "  clock   [-i name] [--check]   guest-vs-host clock offset, and fix it\n" +
   "  status  [-i name] [--json]    what it's doing; with no -i and several instances, a table.\n" +

@@ -32,6 +32,7 @@ export type StreamSignal =
 function changes(entry: z.infer<typeof Entry>): boolean {
   switch (entry.kind) {
     case "op":
+      return entry.phase !== "output"
     case "sync":
     case "disconnected":
       return true

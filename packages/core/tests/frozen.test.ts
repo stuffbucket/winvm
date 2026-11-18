@@ -1820,6 +1820,25 @@ describe("status when the host powered Windows off", () => {
     expect(note).toContain("the previous stow, if any, is kept")
   })
 
+  it("still calls a stow cut off when the stow had printed something before the Mac ended it", async () => {
+    keptStart()
+    served()
+    op("begin", "stow", true, "host-stow")
+    appendEntry(HOST, {
+      kind: "op",
+      phase: "output",
+      id: "host-stow",
+      operation: "stow",
+      stream: "out",
+      text: "checking the guest has finished starting… ",
+    })
+    const s = await gather(HOST, false)
+    expect(s.hostPoweredOff).toMatchObject({
+      cause: "host-cut-off",
+      detail: "a stow was being written",
+    })
+  })
+
   it("says the stow was cut off when QEMU quit for it but the save never finished", async () => {
     keptStart()
     served()
