@@ -192,8 +192,15 @@ code. What they print and their exit codes are as before.
   `reboot` that has not yet asked Windows to restart. Any other command, and a
   reboot after its request, is refused with the reason. A CLI interrupted
   while its command still waited prints the `--id` to use.
-- **`reboot` counts the restart once QEMU reports that Windows reset**, then
-  waits for someone to log on, as before.
+- **`reboot` counts the restart by Windows' new boot and a logon**, as
+  before, then looks for QEMU's report that Windows reset; when the record
+  has none, it says so with a `warning` line. It stops at once if QEMU exits.
+- **The guest's Finder drives come back through the CLI.** `resume`, `wake`
+  and `reboot` leave mounting the drives again to the CLI that follows them,
+  which mounts them in your own session while it holds the instance, and not
+  while the Mac is shutting down or the guest is paused. A CLI that let go
+  leaves them down, and `winvm status` names them and the
+  `winvm files mount -i NAME` that brings them back.
 - **When the service can't take it.** When no service answers (QEMU is not
   running, or the service is restarting), or the service comes from an older
   winvm that runs no commands, the CLI runs the command itself, as before. If
