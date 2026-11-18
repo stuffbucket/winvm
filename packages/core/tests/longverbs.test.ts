@@ -552,6 +552,21 @@ describe("the long verbs, run by winvm's service", () => {
   }, 30_000)
 })
 
+describe("a command whose own WINVM_KEEPER differs from the service's", () => {
+  it("runs in the CLI, so a per-command WINVM_KEEPER takes effect", async () => {
+    const proc = Bun.spawn([process.execPath, CLI, "pause", "-i", "t"], {
+      env: { ...env(), WINVM_KEEPER: resolve(home, "another-keeper") },
+      stdout: "pipe",
+      stderr: "pipe",
+    })
+    expect(await proc.exited).toBe(0)
+    const b = begins("pause").at(-1)
+    expect(b?.kind === "op" && b.phase === "begin" ? b.pid : null).toBe(
+      proc.pid,
+    )
+  }, 30_000)
+})
+
 describe("the long verbs, with a service from before they moved", () => {
   let control: ReturnType<typeof Bun.serve> | null = null
 

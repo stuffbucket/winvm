@@ -90,6 +90,7 @@ const isObject = (v: unknown): v is Json =>
 export function readOpRequest(
   body: unknown,
   handlers: OpHandlers,
+  env: Readonly<Record<string, string | undefined>> = process.env,
 ): OpRequest | Reply {
   if (!isObject(body)) return reply(400, { error: "the body is not an op" })
   if (body.protocol !== OPS_PROTOCOL)
@@ -105,6 +106,11 @@ export function readOpRequest(
   const args = body.args
   if (!Array.isArray(args) || !args.every((a) => typeof a === "string"))
     return reply(400, { error: "args must be a list of words" })
+  const keeper = env.WINVM_KEEPER ?? null
+  if (body.keeper !== undefined && body.keeper !== keeper)
+    return reply(400, {
+      error: `this service runs with WINVM_KEEPER=${keeper ?? "(unset)"}, and the command asks for ${typeof body.keeper === "string" ? body.keeper : "(unset)"}`,
+    })
   if (body.id !== undefined && !isOpId(body.id))
     return reply(400, {
       error: "id must be 8 to 64 letters, digits and dashes",

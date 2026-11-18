@@ -305,6 +305,7 @@ export async function runOp(
       op: call.op,
       args: [...call.argv],
       wait: call.args.flags.has("wait"),
+      keeper: process.env.WINVM_KEEPER ?? null,
       ...(call.id === undefined ? {} : { id: call.id }),
     })
     if (interrupted.signal.aborted && sent.kind === "accepted") {

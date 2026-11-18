@@ -110,7 +110,9 @@ The keeper isn't a login item and doesn't outlive a restart. The app carries
 it; a CLI-only install gets it from `winvm setup` once a release pins one.
 `WINVM_KEEPER=<path>` uses another build, for development.
 `WINVM_KEEPER=off` turns the keeper off: QEMU then starts detached, as it did
-before, and so does every VM when no keeper is installed. `winvm status` has a
+before, and so does every VM when no keeper is installed. A command whose
+`WINVM_KEEPER` differs from the one winvm's service runs with is run by the
+CLI itself, so the setting takes effect for that command. `winvm status` has a
 `keeper` row:
 
 - `protected`: QEMU runs under the keeper.
