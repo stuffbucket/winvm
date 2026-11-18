@@ -541,6 +541,26 @@ describe("cancel", () => {
 })
 
 describe("stopping the service", () => {
+  it("ends the ops still waiting for the lease at once, saying why", async () => {
+    const outside = gate()
+    const other = withOperation("t", "stop", async () => {
+      await outside.opened
+    })
+    await Bun.sleep(20)
+    const queued = await submit("pause", { wait: true })
+    const t0 = Date.now()
+    await svc?.stop()
+    svc = null
+    expect(Date.now() - t0).toBeLessThan(2000)
+    expect(endOf(queued.body.id)).toMatchObject({
+      queued: true,
+      exitCode: 1,
+      error: "winvm's service stopped",
+    })
+    outside.open()
+    await other
+  })
+
   it("waits for the op in flight to end and be recorded", async () => {
     const a = await submit("resume")
     await until(() => running === 1)

@@ -335,6 +335,7 @@ export class OpQueue {
             }),
             automatic: automaticFrom(args),
             queue: req.wait,
+            ...(req.wait ? { waitMs: Number.POSITIVE_INFINITY } : {}),
             signal: controller.signal,
             onWait: (holder) => {
               accept(holder)

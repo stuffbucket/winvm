@@ -58,7 +58,9 @@ const leased = async (run: () => number | Promise<number>): Promise<number> => {
     return await withOperation(instanceName(args), operation, run, {
       interruptible: true,
       automatic: automaticFrom(args),
-      queue: serviceOp !== null && args.flags.has("wait"),
+      ...(serviceOp !== null && args.flags.has("wait")
+        ? { queue: true, waitMs: Number.POSITIVE_INFINITY }
+        : {}),
     })
   } catch (error) {
     if (!(error instanceof InstanceBusy)) throw error

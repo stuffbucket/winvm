@@ -6,7 +6,7 @@ import { cursorOf } from "./follow"
 import { INTERRUPTED, InstanceBusy, type LeaseHolder } from "./operation"
 import { OPS_PROTOCOL, type ServiceOp } from "./ops"
 import { pathsFor } from "./paths"
-import { isAlive } from "./proc"
+import { isSameProcess } from "./proc"
 
 type Json = Record<string, unknown>
 
@@ -17,6 +17,7 @@ export interface Accepted {
   readonly id: string
   readonly cursor: Cursor
   readonly servicePid: number
+  readonly serviceStart: string | null
   readonly queued: boolean
 }
 
@@ -53,6 +54,7 @@ function holderOf(v: unknown): LeaseHolder | null {
 
 function acceptedOf(v: Json): Accepted | null {
   const cursor = cursorOf(v.cursor)
+  const pidStart = typeof v.pidStart === "string" ? v.pidStart : null
   if (
     typeof v.id !== "string" ||
     typeof v.pid !== "number" ||
@@ -65,6 +67,7 @@ function acceptedOf(v: Json): Accepted | null {
     id: v.id,
     cursor,
     servicePid: v.pid,
+    serviceStart: pidStart,
     queued: holderOf(v.queued) !== null,
   }
 }
@@ -76,13 +79,12 @@ async function post(
   name: string,
   path: string,
   body: Json,
-  signal: AbortSignal,
 ): Promise<{ readonly status: number; readonly body: Json | null }> {
   const res = await fetch(`http://localhost${path}`, {
     unix: pathsFor(name).control,
     method: "POST",
     body: JSON.stringify({ protocol: OPS_PROTOCOL, ...body }),
-    signal: AbortSignal.any([signal, AbortSignal.timeout(SEND_TIMEOUT_MS)]),
+    signal: AbortSignal.timeout(SEND_TIMEOUT_MS),
   })
   const parsed: unknown = await res.json().catch(() => null)
   return {
@@ -91,14 +93,10 @@ async function post(
   }
 }
 
-async function send(
-  name: string,
-  body: Json,
-  signal: AbortSignal,
-): Promise<Sent> {
+async function send(name: string, body: Json): Promise<Sent> {
   let r: Awaited<ReturnType<typeof post>>
   try {
-    r = await post(name, "/ops", body, signal)
+    r = await post(name, "/ops", body)
   } catch (error) {
     const code = (error as { code?: unknown }).code
     if (typeof code === "string" && NOT_RECEIVED.has(code))
@@ -157,7 +155,7 @@ export async function followOp(
       return 1
     }
     if (found === null) {
-      gone = !isAlive(a.servicePid)
+      gone = !isSameProcess(a.servicePid, a.serviceStart)
       continue
     }
     since = found.cursor
@@ -227,16 +225,20 @@ export async function runOp(
   }
   let accepted: Accepted | null = null
   try {
-    const sent = await send(
-      name,
-      {
-        op: call.op,
-        args: [...call.argv],
-        wait: call.args.flags.has("wait"),
-      },
-      interrupted.signal,
-    )
-    if (interrupted.signal.aborted) {
+    const sent = await send(name, {
+      op: call.op,
+      args: [...call.argv],
+      wait: call.args.flags.has("wait"),
+    })
+    if (interrupted.signal.aborted && sent.kind === "accepted") {
+      detached(call.op, name, sent, io)
+      return INTERRUPTED
+    }
+    if (interrupted.signal.aborted && sent.kind === "unavailable") {
+      io.err(`${call.op} was not run\n`)
+      return INTERRUPTED
+    }
+    if (interrupted.signal.aborted && sent.kind === "unanswered") {
       io.err(
         `${call.op} may have reached winvm's service; \`winvm events -i ${name}\` shows whether it began\n`,
       )
@@ -267,17 +269,21 @@ export async function runOp(
     }
   } catch (error) {
     if (!interrupted.signal.aborted || accepted === null) throw error
-    io.err(
-      `${call.op} continues in winvm's service; follow it with \`winvm events -i ${name} --follow\`\n`,
-    )
-    if (accepted.queued)
-      io.err(
-        `  while it still waits for "${name}", \`winvm cancel -i ${name} --id ${accepted.id}\` takes it off the queue\n`,
-      )
+    detached(call.op, name, accepted, io)
     return INTERRUPTED
   } finally {
     leave()
   }
+}
+
+function detached(operation: string, name: string, a: Accepted, io: Io): void {
+  io.err(
+    `${operation} continues in winvm's service; follow it with \`winvm events -i ${name} --follow\`\n`,
+  )
+  if (a.queued)
+    io.err(
+      `  while it still waits for "${name}", \`winvm cancel -i ${name} --id ${a.id}\` takes it off the queue\n`,
+    )
 }
 
 export async function cancelCmd(args: Args, io: Io = stdio): Promise<number> {
@@ -285,12 +291,7 @@ export async function cancelCmd(args: Args, io: Io = stdio): Promise<number> {
   const id = args.flags.get("id")
   let r: Awaited<ReturnType<typeof post>>
   try {
-    r = await post(
-      name,
-      "/ops/cancel",
-      id === undefined ? {} : { id },
-      new AbortController().signal,
-    )
+    r = await post(name, "/ops/cancel", id === undefined ? {} : { id })
   } catch {
     io.err(
       `::error::winvm's service for "${name}" is not running, so nothing was cancelled\n`,

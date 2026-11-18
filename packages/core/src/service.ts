@@ -25,6 +25,7 @@ import {
 } from "./ops"
 import { SERVICE_HANDLERS } from "./opverbs"
 import { PACKAGE_DIR, type Paths, pathsFor } from "./paths"
+import { ownStart } from "./proc"
 import * as qga from "./qga"
 import { claim, keptWithin, livePidIn, recordedPid } from "./servicectl"
 import * as share from "./share"
@@ -256,6 +257,7 @@ export async function runService(
         id: s.id,
         cursor: s.cursor,
         pid: process.pid,
+        pidStart: ownStart(),
         queued: s.queued,
       }),
     )

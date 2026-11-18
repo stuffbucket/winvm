@@ -681,6 +681,44 @@ describe("the short verbs, with a service that runs no ops", () => {
     expect(guest.status).toBe("running")
   }, 30_000)
 
+  const accepted = (o: { readonly pidStart?: string } = {}): Response =>
+    Response.json(
+      {
+        protocol: 1,
+        id: "op-1",
+        cursor: { ino: 0, generation: null, offset: 0, archive: null },
+        pid: process.pid,
+        queued: null,
+        ...o,
+      },
+      { status: 202 },
+    )
+
+  it("detach with the op's id when interrupted while the service is answering", async () => {
+    await replace(async () => {
+      await Bun.sleep(1000)
+      return accepted()
+    })
+    const r = launch("pause", "-i", "t")
+    await Bun.sleep(400)
+    r.proc.kill("SIGINT")
+    expect(await r.done).toEqual({
+      code: 130,
+      stdout: "",
+      stderr:
+        "pause continues in winvm's service; follow it with `winvm events -i t --follow`\n",
+    })
+  }, 30_000)
+
+  it("take a service whose pid now names another process as gone", async () => {
+    await replace(() => accepted({ pidStart: "Thu Jan  1 00:00:00 1970" }))
+    const r = await winvm("pause", "-i", "t")
+    expect(r.code).toBe(1)
+    expect(r.stderr).toContain(
+      `winvm's service for "t" ended before pause finished`,
+    )
+  }, 30_000)
+
   it("kill from the CLI itself when the service takes the kill but never answers", async () => {
     await replace(async () => {
       await new Promise(() => undefined)
