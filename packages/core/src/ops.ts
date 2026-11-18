@@ -210,12 +210,23 @@ export class OpQueue {
     const id = randomUUID()
     const cursor = endCursor(this.name)
     const controller = new AbortController()
+    let owesRemount = false
     const scope: OpScope = {
       id,
       operation: req.op,
       signal: controller.signal,
       write: (stream, text) => {
         this.output(id, req.op, stream, text)
+      },
+      remount: () => {
+        if (owesRemount) return
+        owesRemount = true
+        this.hooks.record({
+          kind: "op",
+          phase: "remount",
+          id,
+          operation: req.op,
+        })
       },
       irreversibleAt: null,
     }
@@ -258,6 +269,11 @@ export class OpQueue {
           },
           {
             id,
+            outcome: (code: number) => ({
+              ok: code === 0,
+              exitCode: code,
+              ...(owesRemount ? { remount: true as const } : {}),
+            }),
             automatic: automaticFrom(args),
             queue: req.wait,
             signal: controller.signal,

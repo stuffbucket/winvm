@@ -7,6 +7,7 @@ export interface OpScope {
   readonly operation: string
   readonly signal: AbortSignal
   readonly write: (stream: OutputStream, text: string) => void
+  readonly remount: () => void
   irreversibleAt: string | null
 }
 

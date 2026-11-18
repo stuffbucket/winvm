@@ -1,6 +1,7 @@
 import type { Args } from "./args"
 import { instanceName } from "./args"
 import { type Cursor, type Entry, type OpEntry, waitForEvent } from "./eventlog"
+import * as finder from "./finder"
 import { cursorOf } from "./follow"
 import { INTERRUPTED, InstanceBusy, type LeaseHolder } from "./operation"
 import { OPS_PROTOCOL, type ServiceOp } from "./ops"
@@ -116,6 +117,7 @@ async function send(
 export interface Io {
   readonly out: (text: string) => void
   readonly err: (text: string) => void
+  readonly remount: (name: string) => Promise<void>
 }
 
 const ofOp =
@@ -132,6 +134,12 @@ export async function followOp(
 ): Promise<number> {
   let since = a.cursor
   let gone = false
+  let remounted = false
+  const remount = async (): Promise<void> => {
+    if (remounted) return
+    remounted = true
+    await io.remount(name)
+  }
   for (;;) {
     const found = await waitForEvent(
       name,
@@ -155,6 +163,11 @@ export async function followOp(
       ;(e.stream === "out" ? io.out : io.err)(e.text)
       continue
     }
+    if (e.phase === "remount") {
+      await remount()
+      continue
+    }
+    if (e.phase === "end" && e.remount === true) await remount()
     return ended(operation, e, io)
   }
 }
@@ -184,6 +197,9 @@ const stdio: Io = {
   },
   err: (text) => {
     process.stderr.write(text)
+  },
+  remount: async (name) => {
+    await finder.afterUp(name)
   },
 }
 

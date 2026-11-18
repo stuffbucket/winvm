@@ -67,6 +67,7 @@ export interface OpOutcome {
   readonly error?: string
   readonly abandoned?: true
   readonly irreversibleAt?: string
+  readonly remount?: true
 }
 
 export interface OpEndFields extends OpIdentity, OpOutcome {
@@ -84,6 +85,13 @@ export interface OpOutputFields {
   readonly text: string
 }
 
+export interface OpRemountFields {
+  readonly kind: "op"
+  readonly phase: "remount"
+  readonly id: string
+  readonly operation: string
+}
+
 export interface NoteFields {
   readonly kind: "service" | "warning" | "keeper"
   readonly what: string
@@ -97,6 +105,7 @@ export type EntryFields =
   | OpBeginFields
   | OpEndFields
   | OpOutputFields
+  | OpRemountFields
   | NoteFields
 
 export type QmpEntry = QmpFields & Stamp
@@ -301,8 +310,16 @@ function opOutput(stamp: Stamp, r: Json): Entry | null {
   }
 }
 
+function opRemount(stamp: Stamp, r: Json): Entry | null {
+  const id = str(r.id)
+  const operation = str(r.operation)
+  if (id === null || operation === null) return null
+  return { ...stamp, kind: "op", phase: "remount", id, operation }
+}
+
 function opEntry(stamp: Stamp, r: Json): Entry | null {
   if (r.phase === "output") return opOutput(stamp, r)
+  if (r.phase === "remount") return opRemount(stamp, r)
   const id = str(r.id)
   const operation = str(r.operation)
   const startedAt = str(r.startedAt)
@@ -341,6 +358,7 @@ function opEntry(stamp: Stamp, r: Json): Entry | null {
     ...(error === null ? {} : { error }),
     ...(r.abandoned === true ? { abandoned: true as const } : {}),
     ...(irreversibleAt === null ? {} : { irreversibleAt }),
+    ...(r.remount === true ? { remount: true as const } : {}),
   }
 }
 

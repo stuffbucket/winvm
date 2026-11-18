@@ -10,6 +10,7 @@ import {
   runningDisplay,
 } from "./display"
 import { readSince, START } from "./eventlog"
+import { drivesOwed } from "./finder"
 import { frozenFrom, markedAsleep } from "./frozen"
 import { type HostPoweredOff, hostPoweredOff, isDecision } from "./hostoff"
 import {
@@ -45,6 +46,7 @@ import { currentQemuCompat } from "./runtime"
 import * as saves from "./saves"
 import { readService } from "./servicectl"
 import { spawnText } from "./shell"
+import { SHARE_KEYS, SHARES, type ShareKey } from "./smbstate"
 import * as timemachine from "./timemachine"
 import { vncPort, websocketPort } from "./vnc"
 
@@ -166,6 +168,16 @@ export function unfinishedStop(name: string): StopUnfinished | null {
   }
   const killed = abandonedStop(name)
   return killed !== null && killed.at > lastClear ? killed : found
+}
+
+function owedNote(name: string, owed: readonly ShareKey[]): string {
+  const one = owed.length === 1
+  const names = owed.map((k) => SHARES[k].share).join(" and ")
+  const which = owed.length === SHARE_KEYS.length ? "" : ` ${owed.join(" ")}`
+  return (
+    `the guest's drive${one ? "" : "s"} ${names} ${one ? "was" : "were"} mounted before and ${one ? "is" : "are"} not now; ` +
+    `\`winvm files mount -i ${name}${which}\` mounts ${one ? "it" : "them"} again`
+  )
 }
 
 const secondsIn = (ms: number | null): string =>
@@ -599,6 +611,8 @@ export async function gather(
         "the watcher and the guest's Finder drives are down until " +
         `\`winvm start -i ${name}\` brings them back — \`winvm kill -i ${name}\` if Windows is stuck`,
     )
+  const owed = state === "running" && operation === null ? drivesOwed(name) : []
+  if (owed.length > 0) notes.push(owedNote(name, owed))
   const poweredOff = running ? null : hostPoweredOff(name)
   if (poweredOff !== null) notes.push(hostPowerNote(name, poweredOff))
   const standing =

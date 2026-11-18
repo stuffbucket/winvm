@@ -774,7 +774,7 @@ describe("the event record of operations", () => {
     await wedged
     expect(
       ops().map((e) =>
-        e.kind === "op" && e.phase !== "output"
+        e.kind === "op" && (e.phase === "begin" || e.phase === "end")
           ? `${e.phase}:${e.operation}:${String(e.leased)}`
           : "",
       ),

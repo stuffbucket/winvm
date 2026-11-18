@@ -14,6 +14,7 @@ import { QmpChannel } from "../src/broker"
 import { type Entry, readSince, START } from "../src/eventlog"
 import { PACKAGE_DIR, type Paths, pathsFor } from "../src/paths"
 import { stopService } from "../src/servicectl"
+import { newPassword, SMB_USER, writeSmb } from "../src/smbstate"
 import { FakeAgent } from "./fakes/agent"
 import { FakeGuest } from "./fakes/guest"
 import {
@@ -45,6 +46,7 @@ const env = (): Record<string, string> => {
     WINVM_BUILD_ID: "sha256:short-verbs",
     WINVM_NO_RECONCILE: "1",
     WINVM_KEEPER: "off",
+    WINVM_MOUNTS: resolve(home, "mounts"),
   }
 }
 
@@ -104,6 +106,18 @@ async function startService(): Promise<void> {
     if (Date.now() > end) throw new Error("the service never answered")
     await Bun.sleep(50)
   }
+}
+
+const NOT_REMOUNTED =
+  "warning: the guest's drives were not mounted again (could not forward a host port to the guest's port 445: Could not set up host forwarding rule) — `winvm files mount -i t`\n"
+
+function rememberDrives(): void {
+  writeSmb(p, {
+    user: SMB_USER,
+    password: newPassword(),
+    hostPort: 41_234,
+    mounted: ["home", "c"],
+  })
 }
 
 const clock = (text: string): string =>
@@ -194,6 +208,26 @@ describe("the short verbs, as the CLI prints and exits with them", () => {
       stderr: "",
     })
     expect(existsSync(resolve(p.dir, "asleep.json"))).toBe(false)
+  }, 30_000)
+
+  it("resume tries to mount the guest's drives again, and says why it could not", async () => {
+    rememberDrives()
+    guest.status = "paused"
+    const r = await winvm("resume", "-i", "t")
+    expect({ ...r, stdout: clock(r.stdout) }).toEqual({
+      code: 0,
+      stdout: '  clock: guest was ±T from the host, now ±T\nresumed "t"\n',
+      stderr: NOT_REMOUNTED,
+    })
+  }, 30_000)
+
+  it("reboot tries to mount the guest's drives again, and says why it could not", async () => {
+    rememberDrives()
+    expect(await winvm("reboot", "-i", "t")).toEqual({
+      code: 0,
+      stdout: 'rebooting\ninstance "t" rebooted in 0 s\n',
+      stderr: NOT_REMOUNTED,
+    })
   }, 30_000)
 
   it("sleep refuses a guest that is already paused", async () => {
@@ -323,6 +357,38 @@ describe("the short verbs, run by winvm's service", () => {
         text: 'paused "t" — `winvm resume -i t` to continue\n',
       }) as Entry,
     ])
+  }, 30_000)
+
+  for (const verb of ["resume", "reboot"])
+    it(`${verb} leaves the guest's drives to the CLI that follows it, and never mounts them in the service`, async () => {
+      rememberDrives()
+      if (verb === "resume") guest.status = "paused"
+      const r = await winvm(verb, "-i", "t")
+      expect(r.code).toBe(0)
+      expect(r.stderr).toBe(NOT_REMOUNTED)
+      const own = ops().filter((e) => e.kind === "op" && e.operation === verb)
+      expect(
+        own.filter(
+          (e) =>
+            e.kind === "op" &&
+            e.phase === "output" &&
+            e.text.includes("mounted again"),
+        ),
+      ).toEqual([])
+      expect(own.map((e) => (e.kind === "op" ? e.phase : ""))).toContain(
+        "remount",
+      )
+      expect(endOf(verb)).toMatchObject({ remount: true })
+    }, 30_000)
+
+  it("status names the command that mounts the drives again when no one did", async () => {
+    rememberDrives()
+    const r = await winvm("status", "-i", "t", "--json")
+    expect(r.code).toBe(0)
+    const notes = (JSON.parse(r.stdout) as { notes: string[] }).notes
+    expect(notes).toContain(
+      "the guest's drives Home and C were mounted before and are not now; `winvm files mount -i t` mounts them again",
+    )
   }, 30_000)
 
   it("leave the op running when the CLI is interrupted, and say how to follow it", async () => {

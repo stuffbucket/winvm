@@ -45,6 +45,16 @@ export class FakeGuest {
         }
       case "query-chardev":
         return { return: [{ label: "qga0", "frontend-open": true }] }
+      case "human-monitor-command": {
+        const line = String(
+          (cmd.arguments as Json | undefined)?.["command-line"],
+        )
+        return {
+          return: line.startsWith("hostfwd_add")
+            ? "Could not set up host forwarding rule"
+            : "",
+        }
+      }
       case "stop":
         this.status = "paused"
         this.qmp.emit({
