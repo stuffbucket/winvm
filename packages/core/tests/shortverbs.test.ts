@@ -648,16 +648,40 @@ describe("reboot", () => {
     expect(order()).toEqual(["RESET", "end reboot"])
   }, 30_000)
 
+  const warnings = (): readonly string[] =>
+    readSince("t", START).entries.flatMap((e) =>
+      e.kind === "warning" ? [e.what] : [],
+    )
+
+  it("counts a restart the record never saw as a restart, and says so in the record", async () => {
+    guest.resets = false
+    expect(await winvm("reboot", "-i", "t", "--timeout", "4")).toEqual({
+      code: 0,
+      stdout: 'rebooting\ninstance "t" rebooted in 4 s\n',
+      stderr: "",
+    })
+    expect(warnings()).toEqual(["reboot without RESET"])
+  }, 30_000)
+
   it("never takes a reset recorded before it asked Windows to restart for this one", async () => {
     guest.resets = false
     guest.staleResetOnStatus = true
-    expect(await winvm("reboot", "-i", "t", "--timeout", "2")).toEqual({
+    expect((await winvm("reboot", "-i", "t", "--timeout", "2")).code).toBe(0)
+    expect(warnings()).toEqual(["reboot without RESET"])
+  }, 30_000)
+
+  it("stops waiting, and says so, when QEMU exits while Windows restarts", async () => {
+    guest.bootDelayMs = 60_000
+    const r = launch("reboot", "-i", "t", "--timeout", "30")
+    await until(() => r.stdout().includes("rebooting"))
+    const t0 = Date.now()
+    await releasePidfiles()
+    expect(await r.done).toEqual({
       code: 1,
       stdout: "rebooting\n",
       stderr:
-        "::error::the guest was not back within 2 s. Look at it with `winvm open -i t` or " +
-        `${p.serial}\n`,
+        '::error::QEMU exited while Windows restarted, so "t" is no longer running — `winvm start -i t`\n',
     })
-    expect(order()).toEqual(["RESET", "end reboot"])
-  }, 30_000)
+    expect(Date.now() - t0).toBeLessThan(5000)
+  }, 40_000)
 })

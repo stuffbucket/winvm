@@ -1233,6 +1233,29 @@ async function stopRun(
 const guestReset = (e: Entry): boolean =>
   qmpEvent("RESET")(e) && e.data?.guest === true
 
+const QEMU_GONE_POLL_MS = 500
+const RESET_GRACE_MS = 5000
+
+async function confirmReset(
+  name: string,
+  since: Cursor,
+  deadline: number,
+  signal: AbortSignal,
+): Promise<void> {
+  const by = Math.min(deadline, Date.now() + RESET_GRACE_MS)
+  const found = await waitForEvent(name, guestReset, by, {
+    since,
+    signal,
+  }).catch(() => null)
+  if (found !== null || signal.aborted) return
+  appendEntry(name, {
+    kind: "warning",
+    what: "reboot without RESET",
+    reason:
+      "Windows came back with a new boot time, and the record has no RESET from QEMU for it",
+  })
+}
+
 async function recordedSoFar(name: string, p: Paths): Promise<Cursor | null> {
   try {
     await monitor.qmpCommand(p.qmp, "query-status", undefined, 5000)
@@ -1275,31 +1298,50 @@ export async function reboot(args: Args): Promise<number> {
   }
   const t0 = Date.now()
   const deadline = t0 + s * 1000
+  const gone = new AbortController()
   const op = currentOp()
-  const stopWith = op === null ? {} : { signal: op.signal }
+  const signal =
+    op === null ? gone.signal : AbortSignal.any([gone.signal, op.signal])
   pointOfNoReturn()
   finder.beforeDown(name)
-  const outcome = await watcher.whileActive(
-    name,
-    (async (): Promise<qga.Readiness | { readonly refused: string }> => {
-      try {
-        await qga.reboot(p.qga)
-      } catch (error) {
-        return { refused: errorText(error) }
-      }
-      process.stdout.write("rebooting")
-      const reset = await waitForEvent(name, guestReset, deadline, {
-        since,
-        ...stopWith,
-      })
-      if (reset === null) return "timeout"
-      return await qga.untilNewBoot(p.qga, before, deadline - Date.now(), {
-        noLogonMs: NO_LOGON_MS,
-        log: (line) => process.stdout.write(`\n${line}\n`),
-        ...stopWith,
-      })
-    })(),
-  )
+  const watch = setInterval(() => {
+    if (qemu.pidOf(p) === null) gone.abort("qemu-gone")
+  }, QEMU_GONE_POLL_MS)
+  let outcome: qga.Readiness | { readonly refused: string }
+  try {
+    outcome = await watcher.whileActive(
+      name,
+      (async (): Promise<qga.Readiness | { readonly refused: string }> => {
+        try {
+          await qga.reboot(p.qga)
+        } catch (error) {
+          return { refused: errorText(error) }
+        }
+        process.stdout.write("rebooting")
+        const back = await qga.untilNewBoot(
+          p.qga,
+          before,
+          deadline - Date.now(),
+          {
+            noLogonMs: NO_LOGON_MS,
+            log: (line) => process.stdout.write(`\n${line}\n`),
+            signal,
+          },
+        )
+        if (back === "ready") await confirmReset(name, since, deadline, signal)
+        return back
+      })(),
+    )
+  } finally {
+    clearInterval(watch)
+  }
+  if (gone.signal.aborted) {
+    process.stdout.write("\n")
+    console.error(
+      `::error::QEMU exited while Windows restarted, so "${name}" is no longer running — \`winvm start -i ${name}\``,
+    )
+    return 1
+  }
   if (typeof outcome === "object") {
     console.error(
       `::error::the guest did not take the restart: ${outcome.refused}`,
