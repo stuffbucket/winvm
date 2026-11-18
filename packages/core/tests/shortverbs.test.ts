@@ -95,6 +95,14 @@ const answers = async (): Promise<boolean> => {
   }
 }
 
+async function stopTheService(): Promise<void> {
+  stopService(p)
+  service?.kill("SIGKILL")
+  await service?.exited
+  service = null
+  rmSync(p.control, { force: true })
+}
+
 async function startService(): Promise<void> {
   service = Bun.spawn([process.execPath, CLI, "serve", "-i", "t"], {
     env: env(),
@@ -282,23 +290,34 @@ describe("the short verbs, as the CLI prints and exits with them", () => {
     ).toBe("stopped")
   }, 30_000)
 
-  for (const verb of ["pause", "resume", "wake", "sleep", "lock", "reboot"])
-    it(`${verb} of a stopped instance says it is not running`, async () => {
-      await releasePidfiles()
-      const r = await winvm(verb, "-i", "t")
-      expect(r.code).toBe(1)
-      expect(r.stdout).toBe("")
-      expect(r.stderr).toStartWith('::error::instance "t" is not running')
-    }, 30_000)
-
-  it("kill of a stopped instance says it is not running", async () => {
+  const stoppedWith = async (
+    verb: string,
+    service: "up" | "gone",
+  ): Promise<{ readonly r: Ran; readonly pid: number | undefined }> => {
     await releasePidfiles()
-    expect(await winvm("kill", "-i", "t")).toEqual({
-      code: 0,
-      stdout: 'instance "t" is not running\n',
-      stderr: "",
-    })
-  }, 30_000)
+    if (service === "gone") await stopTheService()
+    const run = launch(verb, "-i", "t")
+    return { r: await run.done, pid: run.proc.pid }
+  }
+
+  for (const service of ["up", "gone"] as const) {
+    for (const verb of ["pause", "resume", "wake", "sleep", "lock", "reboot"])
+      it(`${verb} of a stopped instance says it is not running, with the service ${service}`, async () => {
+        const { r } = await stoppedWith(verb, service)
+        expect(r.code).toBe(1)
+        expect(r.stdout).toBe("")
+        expect(r.stderr).toStartWith('::error::instance "t" is not running')
+      }, 30_000)
+
+    it(`kill of a stopped instance says it is not running, with the service ${service}`, async () => {
+      const { r } = await stoppedWith("kill", service)
+      expect(r).toEqual({
+        code: 0,
+        stdout: 'instance "t" is not running\n',
+        stderr: "",
+      })
+    }, 30_000)
+  }
 
   it("a verb another command holds the instance for is refused as busy", async () => {
     writeFileSync(
@@ -342,6 +361,48 @@ const until = async (ok: () => boolean, ms = 15_000): Promise<void> => {
 }
 
 describe("the short verbs, run by winvm's service", () => {
+  const begun = (operation: string): Entry | undefined =>
+    ops().find(
+      (e) =>
+        e.kind === "op" && e.phase === "begin" && e.operation === operation,
+    )
+
+  for (const [verb, paused] of [
+    ["pause", false],
+    ["resume", true],
+    ["wake", true],
+    ["sleep", true],
+    ["lock", true],
+    ["reboot", false],
+    ["kill", false],
+  ] as const)
+    it(`${verb} runs in the service`, async () => {
+      if (paused) guest.status = "paused"
+      const servicePid = service?.pid
+      await winvm(verb, "-i", "t")
+      expect(begun(verb)).toMatchObject({ pid: servicePid })
+    }, 30_000)
+
+  for (const verb of [
+    "pause",
+    "resume",
+    "wake",
+    "sleep",
+    "lock",
+    "reboot",
+    "kill",
+  ])
+    it(`${verb} runs in the CLI itself when no service answers`, async () => {
+      const { pid } = await (async () => {
+        await releasePidfiles()
+        await stopTheService()
+        const run = launch(verb, "-i", "t")
+        await run.done
+        return { pid: run.proc.pid }
+      })()
+      expect(begun(verb)).toMatchObject({ pid })
+    }, 30_000)
+
   it("run in the service, which records what they printed under the op's id", async () => {
     expect((await winvm("pause", "-i", "t")).code).toBe(0)
     const begin = ops().find((e) => e.kind === "op" && e.phase === "begin")
