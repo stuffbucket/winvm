@@ -1,8 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test"
 import {
+  chmodSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readFileSync,
   rmSync,
   utimesSync,
   writeFileSync,
@@ -11,7 +13,7 @@ import { tmpdir } from "node:os"
 import { resolve } from "node:path"
 
 import { QgaChannel, QmpChannel } from "../src/broker"
-import { RAMFB } from "../src/display"
+import { RAMFB, writeDisplay } from "../src/display"
 import { type Entry, readSince, START } from "../src/eventlog"
 import {
   basePath,
@@ -21,6 +23,7 @@ import {
   readMeta,
 } from "../src/paths"
 import { qemuArgs } from "../src/qemu"
+import { currentCompat, FILES, type Manifest, saveDir } from "../src/saves"
 import { stopService } from "../src/servicectl"
 import { newPassword, SMB_USER, writeSmb } from "../src/smbstate"
 import { FakeAgent } from "./fakes/agent"
@@ -65,6 +68,7 @@ const env = (): Record<string, string> => {
     WINVM_MOUNTS: resolve(home, "mounts"),
     WINVM_RUNTIME: runtime(),
     WINVM_QEMU_DATA: resolve(home, "firmware"),
+    WINVM_FAKE_QEMU_LOG: resolve(home, "fake-qemu.log"),
   }
 }
 
@@ -126,6 +130,12 @@ async function startService(): Promise<void> {
   }
 }
 
+async function qemuExits(): Promise<void> {
+  await qemuGoes()
+  await fakeQmp.close().catch(() => undefined)
+  await fakeAgent.close().catch(() => undefined)
+}
+
 async function qemuGoes(): Promise<void> {
   await releasePidfiles()
 }
@@ -185,7 +195,7 @@ function monitor(): void {
           return: { status: "completed", ram: { transferred: 4096 } },
         }
       case "quit":
-        setTimeout(() => void qemuGoes(), 20)
+        setTimeout(() => void qemuExits(), 20)
         return { return: {} }
       case "system_powerdown":
         fakeQmp.emit({
@@ -199,7 +209,7 @@ function monitor(): void {
               data: { guest: true, reason: "guest-shutdown" },
               timestamp: { seconds: 6, microseconds: 0 },
             })
-            setTimeout(() => void qemuGoes(), 50)
+            setTimeout(() => void qemuExits(), 50)
           }, 50)
         return { return: {} }
       default:
@@ -691,4 +701,117 @@ describe("an op a client names, and reads back from the record", () => {
     expect(r.code).toBe(0)
     expect(JSON.parse(r.stdout)).toMatchObject({ id: ID, ended: false })
   }, 30_000)
+})
+
+describe("the long verbs that launch QEMU, run by winvm's service with the keeper off", () => {
+  const FAKE_QEMU = resolve(import.meta.dir, "fakes", "qemu.ts")
+
+  const fakeRuntime = (): void => {
+    const bin = resolve(runtime(), "bin")
+    const script = (name: string, body: string): void => {
+      writeFileSync(resolve(bin, name), `#!/bin/sh\n${body}\n`)
+      chmodSync(resolve(bin, name), 0o755)
+    }
+    script(
+      "swtpm",
+      `while [ $# -gt 0 ]; do case "$1" in --ctrl) s="\${2#*path=}"; s="\${s%%,*}"; shift;; esac; shift; done; : > "$s"\nwhile :; do sleep 1; done`,
+    )
+    script(
+      "qemu-system-aarch64",
+      `exec "${process.execPath}" "${FAKE_QEMU}" "$0" "$@"`,
+    )
+    const old = new Date(Date.now() - 3_600_000)
+    utimesSync(resolve(bin, "qemu-system-aarch64"), old, old)
+  }
+
+  const publish = (name: string, kind: Manifest["kind"]): void => {
+    const meta = readMeta("t")
+    if (meta === null) throw new Error("no meta")
+    const compat = currentCompat("t", meta, RAMFB)
+    const m: Manifest = {
+      name,
+      instance: "t",
+      kind,
+      createdAt: "2026-11-02T00:00:00Z",
+      bytes: 42,
+      image: IMAGE,
+      compat: compat.hash,
+      compatParts: compat.parts,
+      format: "raw",
+      ramFile: FILES.ramRaw,
+      display: RAMFB,
+    }
+    const dir = saveDir("t", name)
+    mkdirSync(dir, { recursive: true })
+    writeFileSync(resolve(dir, FILES.manifest), JSON.stringify(m))
+    writeFileSync(resolve(dir, FILES.ramRaw), "saved RAM")
+    writeFileSync(resolve(dir, FILES.overlay), `${name} disk`)
+    writeFileSync(resolve(dir, FILES.vars), `${name} vars`)
+  }
+
+  afterEach(() => {
+    Bun.spawnSync(["pkill", "-KILL", "-f", home])
+  })
+
+  it.skipIf(process.platform !== "darwin")(
+    "load, rewind and golden reset launch a new QEMU and end well, and a start in the service's linger boots one",
+    async () => {
+      writeDisplay(p, RAMFB)
+      fakeRuntime()
+      publish("named", "manual")
+      publish("golden", "golden")
+      const run = async (...argv: string[]): Promise<Ran> => {
+        const proc = Bun.spawn([process.execPath, CLI, ...argv], {
+          env: env(),
+          stdout: "pipe",
+          stderr: "pipe",
+        })
+        const [stdout, stderr, code] = await Promise.all([
+          new Response(proc.stdout).text(),
+          new Response(proc.stderr).text(),
+          proc.exited,
+        ])
+        return { code, stdout, stderr }
+      }
+      const loaded = await run("load", "-i", "t", "named")
+      expect(loaded.code).toBe(0)
+      expect(loaded.stdout).toContain('loaded "t" from "named"')
+      expect(ranByCli("load")).toBe(service?.pid)
+      expect(readFileSync(p.overlay, "utf8")).toBe("named disk")
+
+      const rewound = await run("rewind", "-i", "t", "named")
+      expect(rewound.code).toBe(0)
+      expect(rewound.stdout).toContain('rewound "t" from "named"')
+      expect(ranByCli("rewind")).toBe(service?.pid)
+
+      const reset = await run("golden", "reset", "-i", "t")
+      expect(reset.code).toBe(0)
+      expect(reset.stdout).toContain('reset "t" to "golden"')
+      expect(ranByCli("golden-reset")).toBe(service?.pid)
+
+      expect((await run("stop", "-i", "t")).code).toBe(0)
+      const started = await run("start", "-i", "t", "--no-watch")
+      expect(started.code).toBe(0)
+      expect(started.stdout).toContain('instance "t" up')
+      expect(ranByCli("start")).toBe(service?.pid)
+
+      const lines = readFileSync(resolve(home, "fake-qemu.log"), "utf8")
+        .trim()
+        .split("\n")
+      expect(lines.filter((l) => l.startsWith("start "))).toHaveLength(4)
+      expect(lines.filter((l) => l.startsWith("lock-failed"))).toEqual([])
+      let alive = 0
+      for (const l of lines) {
+        alive += l.startsWith("start ") ? 1 : l.startsWith("exit ") ? -1 : 0
+        expect(alive).toBeLessThanOrEqual(1)
+      }
+      for (const e of ["load", "rewind", "golden-reset", "start"]) {
+        const end = readSince("t", START).entries.findLast(
+          (x) => x.kind === "op" && x.phase === "end" && x.operation === e,
+        )
+        expect(end).toMatchObject({ ok: true, exitCode: 0 })
+      }
+    },
+    90_000,
+  )
 })

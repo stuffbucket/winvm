@@ -17,10 +17,7 @@ const say = (line: string): void => {
 }
 
 const pidfile = after("-pidfile")
-if (pidfile === undefined) {
-  console.log("  ppi=<bool>")
-  process.exit(0)
-}
+if (pidfile === undefined) process.exit(0)
 
 const fcntl = bindFcntl()
 if (fcntl === null) throw new Error(`no fcntl on ${process.platform}`)
