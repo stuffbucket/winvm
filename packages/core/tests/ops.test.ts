@@ -10,10 +10,11 @@ import { tmpdir } from "node:os"
 import { resolve } from "node:path"
 
 import type { Args } from "../src/args"
+import { parseArgs } from "../src/args"
 import { type Entry, readSince, START } from "../src/eventlog"
 import { type HostEndOutcome, runHostEnd } from "../src/hostend"
-import { remountHeld } from "../src/opclient"
-import { pointOfNoReturn } from "../src/opcontext"
+import { remountHeld, runOp } from "../src/opclient"
+import { currentOp, pointOfNoReturn } from "../src/opcontext"
 import { InstanceBusy, leaseHolder, withOperation } from "../src/operation"
 import { OPS_PROTOCOL, type OpHandlers } from "../src/ops"
 import { SERVICE_HANDLERS } from "../src/opverbs"
@@ -631,6 +632,88 @@ describe("a client's remount", () => {
     const m = mounts()
     await remountHeld("t", m.mount)
     expect(m.count).toBe(0)
+  })
+
+  it("stops waiting for the instance at once when the client is interrupted, and mounts nothing", async () => {
+    const outside = gate()
+    const other = withOperation("t", "resume", async () => {
+      await outside.opened
+    })
+    await Bun.sleep(20)
+    const m = mounts()
+    const interrupted = new AbortController()
+    const t0 = Date.now()
+    const done = remountHeld("t", m.mount, interrupted.signal)
+    setTimeout(() => {
+      interrupted.abort("SIGINT")
+    }, 100)
+    await expect(done).rejects.toThrow()
+    expect(Date.now() - t0).toBeLessThan(1000)
+    expect(m.count).toBe(0)
+    outside.open()
+    await other
+  })
+
+  it("stops waiting for a slow mount at once when the client is interrupted", async () => {
+    const interrupted = new AbortController()
+    const t0 = Date.now()
+    const done = remountHeld(
+      "t",
+      async () => {
+        await Bun.sleep(5000)
+      },
+      interrupted.signal,
+    )
+    setTimeout(() => {
+      interrupted.abort("SIGINT")
+    }, 100)
+    await expect(done).rejects.toThrow()
+    expect(Date.now() - t0).toBeLessThan(1000)
+    expect(leaseHolder("t")).toBeNull()
+  })
+
+  it("lets a client interrupted during its remount detach at once, saying so", async () => {
+    await svc?.stop()
+    svc = await runService("t", {
+      exitAfterMs: 60_000,
+      checkMs: 50,
+      handlers: {
+        resume: {
+          cancel: "never",
+          run: async () => {
+            currentOp()?.remount()
+            return await Promise.resolve(0)
+          },
+        },
+      },
+    })
+    const said: string[] = []
+    let remounting = false
+    const io = {
+      out: (text: string): void => {
+        said.push(text)
+      },
+      err: (text: string): void => {
+        said.push(text)
+      },
+      remount: async (_name: string, signal?: AbortSignal): Promise<void> => {
+        remounting = true
+        await new Promise<void>((_resolve, reject) => {
+          signal?.addEventListener("abort", () => {
+            reject(new Error("interrupted"))
+          })
+        })
+      },
+    }
+    const ran = runOp(
+      { op: "resume", args: parseArgs(["-i", "t"]), argv: ["-i", "t"] },
+      () => Promise.resolve(99),
+      io,
+    )
+    await until(() => remounting)
+    process.emit("SIGINT")
+    expect(await ran).toBe(130)
+    expect(said.join("")).toContain("resume continues in winvm's service")
   })
 })
 

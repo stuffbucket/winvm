@@ -124,7 +124,7 @@ async function send(name: string, body: Json): Promise<Sent> {
 export interface Io {
   readonly out: (text: string) => void
   readonly err: (text: string) => void
-  readonly remount: (name: string) => Promise<void>
+  readonly remount: (name: string, signal: AbortSignal) => Promise<void>
 }
 
 const ofOp =
@@ -145,7 +145,7 @@ export async function followOp(
   const remount = async (): Promise<void> => {
     if (remounted) return
     remounted = true
-    await io.remount(name)
+    await io.remount(name, signal)
   }
   for (;;) {
     const found = await waitForEvent(
@@ -213,8 +213,8 @@ const stdio: Io = {
   err: (text) => {
     process.stderr.write(text)
   },
-  remount: async (name) => {
-    await remountHeld(name)
+  remount: async (name, signal) => {
+    await remountHeld(name, finder.afterUp, signal)
   },
 }
 
@@ -233,9 +233,22 @@ async function hostEnding(name: string): Promise<boolean> {
   }
 }
 
+function abandoned(signal: AbortSignal): Promise<never> {
+  return new Promise((_resolve, reject) => {
+    const stop = (): void => {
+      reject(
+        new Error(`the remount was interrupted by ${String(signal.reason)}`),
+      )
+    }
+    if (signal.aborted) stop()
+    else signal.addEventListener("abort", stop, { once: true })
+  })
+}
+
 export async function remountHeld(
   name: string,
   mount: (name: string) => Promise<void> = finder.afterUp,
+  signal: AbortSignal = new AbortController().signal,
 ): Promise<void> {
   try {
     await withOperation(
@@ -244,13 +257,15 @@ export async function remountHeld(
       async () => {
         if (await hostEnding(name)) return
         if ((await frozenState(pathsFor(name))) !== null) return
-        await mount(name)
+        signal.throwIfAborted()
+        await Promise.race([mount(name), abandoned(signal)])
       },
       {
         automatic: true,
         queue: true,
         waitMs: REMOUNT_WAIT_MS,
         onWait: () => undefined,
+        signal,
       },
     )
   } catch (error) {
