@@ -147,6 +147,7 @@ function fakeBridge() {
     waitFailures: 0,
     wait: null as Deferred<Snapshot> | null,
     records: new Map<string, Recorded>(),
+    refuseFollow: false,
     start: "ok" as "ok" | "out-of-order",
     config: { code: 0, stdout: "", stderr: "" },
     fire(name = "viewer-close-requested", payload: unknown = null): void {
@@ -166,6 +167,22 @@ function fakeBridge() {
     if (cmd === "winvm") {
       const args = a?.args ?? []
       log.push(`winvm ${args.join(" ")}`)
+      if (
+        args[0] === "events" &&
+        bridge.refuseFollow &&
+        args.includes("--follow")
+      )
+        return rejectLikeTauri({
+          kind: "launch",
+          operation: "events",
+          message:
+            "`winvm events --follow` never ends, so the app runs it once, as its event stream, not as a command",
+          stdout: "",
+          stderr: "",
+          code: null,
+          signal: null,
+          timeoutMs: null,
+        })
       if (args[0] === "events") {
         const id = args[args.indexOf("--op") + 1] ?? ""
         const r = bridge.records.get(id)
@@ -1948,6 +1965,47 @@ describe("useCloseFlow after the app was quit during a close", () => {
       "winvm events -i b --op orphan-op-1 --json --follow",
     )
     expect(bridge.log).toContain("close_forget orphan-op-1")
+  })
+
+  it("keeps the note and says it could not read the outcome when the app refuses or fails the follow", async () => {
+    const bridge = fakeBridge()
+    bridge.refuseFollow = true
+    bridge.snapshot = snapshotOf({
+      orphan: { machine: "b", verb: "stow", op: "orphan-op-3" },
+    })
+    await mount(
+      fakeWinvm(
+        [
+          { name: "a", state: "running" },
+          { name: "b", state: "running" },
+        ],
+        "a",
+      ),
+    )
+    const failed = current().state
+    expect(failed.kind).toBe("failed")
+    if (failed.kind !== "failed") return
+    expect(failed.machine?.name).toBe("b")
+    expect(failed.message).toContain("orphan-op-3")
+    expect(failed.message).toContain(
+      copy("close.orphanUnreadable", {
+        operation: "stow",
+        title: "b",
+        machine: "b",
+        op: "orphan-op-3",
+      }),
+    )
+    expect(bridge.log.filter((l) => l.startsWith("close_forget"))).toEqual([])
+  })
+
+  it("lets a note go silently when the record never heard of its op", async () => {
+    const bridge = fakeBridge()
+    bridge.snapshot = snapshotOf({
+      orphan: { machine: "a", verb: "stow", op: "orphan-op-4" },
+    })
+    await mount(fakeWinvm([{ name: "a", state: "running" }], "a"))
+    expect(current().state.kind).toBe("idle")
+    expect(bridge.log).toContain("close_forget orphan-op-4")
   })
 
   it("says nothing of a stow that finished, and lets it go", async () => {

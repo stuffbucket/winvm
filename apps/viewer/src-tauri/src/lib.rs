@@ -73,10 +73,32 @@ fn permitted(args: &[String]) -> Result<(), String> {
             ))
         }
     }
-    if events::follows(args) {
+    if events::follows(args) && !follows_one_op(args) {
         return Err("`winvm events --follow` never ends, so the app runs it once, as its event stream, not as a command".into());
     }
     Ok(())
+}
+
+fn is_instance_name(name: &str) -> bool {
+    let mut chars = name.chars();
+    (1..=64).contains(&name.len())
+        && chars.next().is_some_and(|c| c.is_ascii_alphanumeric())
+        && chars.all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_'))
+}
+
+fn follows_one_op(args: &[String]) -> bool {
+    match args {
+        [events, i, name, op_flag, id, json, follow] => {
+            events == "events"
+                && i == "-i"
+                && is_instance_name(name)
+                && op_flag == "--op"
+                && close::is_op_id(id)
+                && json == "--json"
+                && follow == "--follow"
+        }
+        _ => false,
+    }
 }
 
 #[cfg(test)]
@@ -127,6 +149,63 @@ mod command_allowlist_tests {
         );
         assert!(permitted(&args(&["serve", "-i", "demo"])).is_err());
         assert!(permitted(&[]).is_err());
+    }
+
+    const OP: &str = "0b9c2f1e-7d3a-4e5b-9c8d-112233445566";
+
+    #[test]
+    fn follows_one_op_of_one_machine_to_its_end_and_nothing_wider() {
+        let args = |a: &[&str]| a.iter().map(ToString::to_string).collect::<Vec<_>>();
+        let follow_op = args(&["events", "-i", "demo", "--op", OP, "--json", "--follow"]);
+        assert!(permitted(&follow_op).is_ok());
+        assert_eq!(sidecar::timeout_for(&follow_op), None);
+        assert!(permitted(&args(&["events", "-i", "demo", "--op", OP, "--json"])).is_ok());
+        for refused in [
+            &["events", "--json", "--follow"][..],
+            &["events", "-i", "demo", "--json", "--follow"],
+            &[
+                "events", "-i", "demo", "--op", "short", "--json", "--follow",
+            ],
+            &[
+                "events",
+                "-i",
+                "demo",
+                "--op",
+                "has space in it",
+                "--json",
+                "--follow",
+            ],
+            &["events", "-i", "../etc", "--op", OP, "--json", "--follow"],
+            &["events", "-i", "", "--op", OP, "--json", "--follow"],
+            &["events", "-i", "demo", "--op", OP, "--follow"],
+            &[
+                "events",
+                "-i",
+                "demo",
+                "--op",
+                OP,
+                "--json",
+                "--follow",
+                "--since=start",
+            ],
+            &["events", "--op", OP, "-i", "demo", "--json", "--follow"],
+        ] {
+            assert!(permitted(&args(refused)).is_err(), "{refused:?}");
+        }
+    }
+
+    #[test]
+    fn runs_every_verb_the_app_names_with_an_op_id() {
+        let args = |a: &[&str]| a.iter().map(ToString::to_string).collect::<Vec<_>>();
+        for verb in [
+            "start", "stop", "reboot", "pause", "resume", "sleep", "wake", "lock", "kill", "save",
+            "load", "stow",
+        ] {
+            assert!(
+                permitted(&args(&[verb, "-i", "demo", "--op-id", OP])).is_ok(),
+                "{verb}"
+            );
+        }
     }
 }
 

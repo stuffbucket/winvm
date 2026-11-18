@@ -18,6 +18,7 @@ import {
   onViewerCloseSession,
   opRecord,
   outputText,
+  readOp,
   winvm,
 } from "../../backend"
 import { t } from "../../i18n"
@@ -467,25 +468,35 @@ export function useCloseFlow(w: Winvm): CloseFlow {
       if (op === undefined || op === null) return
       const unmounted = (): boolean => gone
       const elsewhere = (): boolean => gone || active.current
-      const recorded = await opRecord(orphan.machine, op, true)
+      const reading = await readOp(orphan.machine, op, true)
       if (unmounted()) return
-      if (recorded !== null && opFailed(recorded) && !elsewhere()) {
+      const recorded = reading.kind === "read" ? reading.record : null
+      const unheard =
+        recorded !== null && !recorded.ended && recorded.operation === null
+      const unfinished =
+        recorded !== null && !unheard && (!recorded.ended || opFailed(recorded))
+      if (reading.kind === "unreadable" || unfinished) {
         const s = await wRef.current.refreshOne(orphan.machine)
         if (unmounted()) return
-        if (wRef.current.name !== orphan.machine && !elsewhere())
+        const title = s === null ? orphan.machine : shownTitle(s.name, s.title)
+        if (elsewhere()) return
+        if (wRef.current.name !== orphan.machine)
           wRef.current.select(orphan.machine)
-        if (!elsewhere())
-          show({
-            kind: "failed",
-            machine: s,
-            message:
-              recorded.output ||
-              t("close.cutShort", {
-                operation: orphan.verb,
-                title:
-                  s === null ? orphan.machine : shownTitle(s.name, s.title),
-              }),
-          })
+        show({
+          kind: "failed",
+          machine: s,
+          message:
+            reading.kind === "unreadable"
+              ? `${t("close.orphanUnreadable", {
+                  operation: orphan.verb,
+                  title,
+                  machine: orphan.machine,
+                  op,
+                })}\n${reading.why}`
+              : (recorded?.output ?? "") ||
+                t("close.cutShort", { operation: orphan.verb, title }),
+        })
+        if (reading.kind === "unreadable") return
       }
       await closeForget(op).catch(() => undefined)
     }

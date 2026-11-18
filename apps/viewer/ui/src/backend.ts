@@ -209,11 +209,15 @@ export const winvm = (...args: string[]): Promise<Output> =>
 
 export const newOpId = (): string => crypto.randomUUID()
 
-export async function opRecord(
+export type OpReading =
+  | { readonly kind: "read"; readonly record: OpRecord }
+  | { readonly kind: "unreadable"; readonly why: string }
+
+export async function readOp(
   name: string,
   id: string,
   follow: boolean,
-): Promise<OpRecord | null> {
+): Promise<OpReading> {
   try {
     const out = await winvm(
       "events",
@@ -224,10 +228,25 @@ export async function opRecord(
       "--json",
       ...(follow ? ["--follow"] : []),
     )
-    return out.code === 0 ? parseOpRecord(out.stdout) : null
-  } catch {
-    return null
+    const record = out.code === 0 ? parseOpRecord(out.stdout) : null
+    return record === null
+      ? {
+          kind: "unreadable",
+          why: outputText(out) || `winvm events exited ${String(out.code)}`,
+        }
+      : { kind: "read", record }
+  } catch (e) {
+    return { kind: "unreadable", why: errorMessage(e) }
   }
+}
+
+export async function opRecord(
+  name: string,
+  id: string,
+  follow: boolean,
+): Promise<OpRecord | null> {
+  const r = await readOp(name, id, follow)
+  return r.kind === "read" ? r.record : null
 }
 
 export const installCli = (): Promise<string> =>
