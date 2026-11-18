@@ -822,17 +822,13 @@ pub async fn close_wait(
 }
 
 #[tauri::command]
-#[expect(
-    clippy::needless_pass_by_value,
-    reason = "tauri injects these extractors by value; a command cannot take a reference to them"
-)]
-pub fn close_forget(
+pub async fn close_forget(
     window: tauri::WebviewWindow,
-    close: tauri::State<CloseCoordinator>,
+    app: tauri::AppHandle,
     op: String,
 ) -> Result<(), String> {
     caller_may_answer(window.label())?;
-    close.forget_orphan(&op);
+    app.state::<CloseCoordinator>().forget_orphan(&op);
     Ok(())
 }
 
