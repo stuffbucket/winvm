@@ -41,6 +41,7 @@ const CLI = resolve(
 const IMAGE = "win11-arm64"
 const SCRATCH = "winvm-watching-"
 const QUICK = { tickMs: 200 }
+const ON_MAC = process.platform === "darwin"
 
 let home = ""
 let saved: Record<string, string | undefined> = {}
@@ -381,7 +382,7 @@ afterEach(async () => {
     rmSync(home, { recursive: true, force: true })
 })
 
-describe("what the watcher does for the user", () => {
+describe.skipIf(!ON_MAC)("what the watcher does for the user", () => {
   it("autosaves a guest left idle, once, as winvm's own save, and says so in status", async () => {
     await winvm(
       "config",
@@ -726,95 +727,108 @@ describe("what the watcher does for the user", () => {
 
 describe("the watcher's work, as winvm's service runs it", () => {
   const servicePid = (): number => service?.pid ?? -1
-  it("autosaves and stows as ops of the service itself, marked as winvm's own", async () => {
-    await winvm(
-      "config",
-      "-i",
-      "t",
-      "autosave.idleMinutes=0.01",
-      "stow.idleMinutes=0.04",
-    )
-    await watching()
-    await until("the stow", () => automaticOps("stow", "end").length === 1)
-    expect(automaticOps("save", "begin")[0]).toMatchObject({
-      pid: servicePid(),
-      leased: true,
-    })
-    expect(automaticOps("stow", "begin")[0]).toMatchObject({
-      pid: servicePid(),
-      leased: true,
-    })
-    expect((await watcher())?.pid).toBe(servicePid())
-  }, 45_000)
+  it.skipIf(!ON_MAC)(
+    "autosaves and stows as ops of the service itself, marked as winvm's own",
+    async () => {
+      await winvm(
+        "config",
+        "-i",
+        "t",
+        "autosave.idleMinutes=0.01",
+        "stow.idleMinutes=0.04",
+      )
+      await watching()
+      await until("the stow", () => automaticOps("stow", "end").length === 1)
+      expect(automaticOps("save", "begin")[0]).toMatchObject({
+        pid: servicePid(),
+        leased: true,
+      })
+      expect(automaticOps("stow", "begin")[0]).toMatchObject({
+        pid: servicePid(),
+        leased: true,
+      })
+      expect((await watcher())?.pid).toBe(servicePid())
+    },
+    45_000,
+  )
 
-  it("never autosaves while a person's command runs in the service, and does once it is done", async () => {
-    await winvm(
-      "config",
-      "-i",
-      "t",
-      "autosave.idleMinutes=0.01",
-      "stow.enabled=false",
-    )
-    guest.bootDelayMs = 3000
-    await watching()
-    expect((await winvm("reboot", "-i", "t")).code).toBe(0)
-    await until("an autosave", () => automaticOps("save", "end").length === 1)
-    const reboot = records().filter(
-      (e) => e.kind === "op" && e.operation === "reboot",
-    )
-    const began = reboot.find((e) => e.kind === "op" && e.phase === "begin")
-    const ended = reboot.find((e) => e.kind === "op" && e.phase === "end")
-    if (began === undefined || ended === undefined) throw new Error("no reboot")
-    expect(began).toMatchObject({ pid: servicePid() })
-    expect(automaticOps("save", "begin").filter((e) => e.t < ended.t)).toEqual(
-      [],
-    )
-    expect(readFileSync(resolve(p.dir, "watch.log"), "utf8")).toContain(
-      "is busy: reboot",
-    )
-  }, 45_000)
+  it.skipIf(!ON_MAC)(
+    "never autosaves while a person's command runs in the service, and does once it is done",
+    async () => {
+      await winvm(
+        "config",
+        "-i",
+        "t",
+        "autosave.idleMinutes=0.01",
+        "stow.enabled=false",
+      )
+      guest.bootDelayMs = 3000
+      await watching()
+      expect((await winvm("reboot", "-i", "t")).code).toBe(0)
+      await until("an autosave", () => automaticOps("save", "end").length === 1)
+      const reboot = records().filter(
+        (e) => e.kind === "op" && e.operation === "reboot",
+      )
+      const began = reboot.find((e) => e.kind === "op" && e.phase === "begin")
+      const ended = reboot.find((e) => e.kind === "op" && e.phase === "end")
+      if (began === undefined || ended === undefined)
+        throw new Error("no reboot")
+      expect(began).toMatchObject({ pid: servicePid() })
+      expect(
+        automaticOps("save", "begin").filter((e) => e.t < ended.t),
+      ).toEqual([])
+      expect(readFileSync(resolve(p.dir, "watch.log"), "utf8")).toContain(
+        "is busy: reboot",
+      )
+    },
+    45_000,
+  )
 
-  it("at host end, cancels its own autosave under way, then stows Windows", async () => {
-    await winvm(
-      "config",
-      "-i",
-      "t",
-      "autosave.idleMinutes=0.01",
-      "stow.enabled=false",
-    )
-    slowMigrations = ["until-cancel"]
-    await watching()
-    await until("the autosave's migration", () =>
-      fakeQmp.commands.includes("migrate"),
-    )
-    const r = await fetch("http://localhost/host-ending", {
-      unix: p.control,
-      method: "POST",
-      body: JSON.stringify({ deadlineMs: Date.now() + 40_000 }),
-    })
-    expect(r.status).toBe(202)
-    await until(
-      "the host end to finish",
-      () =>
-        records().some(
-          (e) =>
-            e.kind === "service" &&
-            e.what === "host-end" &&
-            e.step === "stowed",
-        ),
-      30_000,
-    )
-    const steps = records().filter(
-      (e) => e.kind === "service" && e.what === "host-end",
-    )
-    expect(steps[0]).toMatchObject({ step: "plan", end: "stow" })
-    expect(fakeQmp.commands).toContain("migrate_cancel")
-    expect(automaticOps("save", "end")[0]).toMatchObject({ ok: false })
-    expect(automaticOps("save", "begin")).toHaveLength(1)
-    expect(automaticOps("stow", "end")[0]).toMatchObject({ ok: true })
-    expect(savesOf("stow")).toEqual(["stow"])
-    expect(savesOf("auto")).toEqual([])
-  }, 45_000)
+  it.skipIf(!ON_MAC)(
+    "at host end, cancels its own autosave under way, then stows Windows",
+    async () => {
+      await winvm(
+        "config",
+        "-i",
+        "t",
+        "autosave.idleMinutes=0.01",
+        "stow.enabled=false",
+      )
+      slowMigrations = ["until-cancel"]
+      await watching()
+      await until("the autosave's migration", () =>
+        fakeQmp.commands.includes("migrate"),
+      )
+      const r = await fetch("http://localhost/host-ending", {
+        unix: p.control,
+        method: "POST",
+        body: JSON.stringify({ deadlineMs: Date.now() + 40_000 }),
+      })
+      expect(r.status).toBe(202)
+      await until(
+        "the host end to finish",
+        () =>
+          records().some(
+            (e) =>
+              e.kind === "service" &&
+              e.what === "host-end" &&
+              e.step === "stowed",
+          ),
+        30_000,
+      )
+      const steps = records().filter(
+        (e) => e.kind === "service" && e.what === "host-end",
+      )
+      expect(steps[0]).toMatchObject({ step: "plan", end: "stow" })
+      expect(fakeQmp.commands).toContain("migrate_cancel")
+      expect(automaticOps("save", "end")[0]).toMatchObject({ ok: false })
+      expect(automaticOps("save", "begin")).toHaveLength(1)
+      expect(automaticOps("stow", "end")[0]).toMatchObject({ ok: true })
+      expect(savesOf("stow")).toEqual(["stow"])
+      expect(savesOf("auto")).toEqual([])
+    },
+    45_000,
+  )
 
   it("turns the watcher on for winvm watch, and says --interval is gone", async () => {
     await winvm(
