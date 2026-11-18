@@ -3,7 +3,13 @@ import { instanceName } from "./args"
 import { type Cursor, type Entry, type OpEntry, waitForEvent } from "./eventlog"
 import * as finder from "./finder"
 import { cursorOf } from "./follow"
-import { INTERRUPTED, InstanceBusy, type LeaseHolder } from "./operation"
+import { frozenState } from "./frozen"
+import {
+  INTERRUPTED,
+  InstanceBusy,
+  type LeaseHolder,
+  withOperation,
+} from "./operation"
 import { OPS_PROTOCOL, type ServiceOp } from "./ops"
 import { pathsFor } from "./paths"
 import { isSameProcess } from "./proc"
@@ -168,7 +174,13 @@ export async function followOp(
       await remount()
       continue
     }
-    if (e.phase === "end" && e.remount === true) await remount()
+    if (
+      e.phase === "end" &&
+      e.remount === true &&
+      e.error !== "host-end" &&
+      e.error !== "killed"
+    )
+      await remount()
     return ended(operation, e, io)
   }
 }
@@ -202,8 +214,48 @@ const stdio: Io = {
     process.stderr.write(text)
   },
   remount: async (name) => {
-    await finder.afterUp(name)
+    await remountHeld(name)
   },
+}
+
+const REMOUNT_WAIT_MS = 10_000
+
+async function hostEnding(name: string): Promise<boolean> {
+  try {
+    const res = await fetch("http://localhost/status", {
+      unix: pathsFor(name).control,
+      signal: AbortSignal.timeout(2000),
+    })
+    const body: unknown = await res.json()
+    return isObject(body) && body.hostEnding === true
+  } catch {
+    return false
+  }
+}
+
+export async function remountHeld(
+  name: string,
+  mount: (name: string) => Promise<void> = finder.afterUp,
+): Promise<void> {
+  try {
+    await withOperation(
+      name,
+      "remount",
+      async () => {
+        if (await hostEnding(name)) return
+        if ((await frozenState(pathsFor(name))) !== null) return
+        await mount(name)
+      },
+      {
+        automatic: true,
+        queue: true,
+        waitMs: REMOUNT_WAIT_MS,
+        onWait: () => undefined,
+      },
+    )
+  } catch (error) {
+    if (!(error instanceof InstanceBusy)) throw error
+  }
 }
 
 export async function runOp(

@@ -12,6 +12,7 @@ import { resolve } from "node:path"
 import type { Args } from "../src/args"
 import { type Entry, readSince, START } from "../src/eventlog"
 import { type HostEndOutcome, runHostEnd } from "../src/hostend"
+import { remountHeld } from "../src/opclient"
 import { pointOfNoReturn } from "../src/opcontext"
 import { InstanceBusy, leaseHolder, withOperation } from "../src/operation"
 import { OPS_PROTOCOL, type OpHandlers } from "../src/ops"
@@ -561,6 +562,59 @@ describe("an op waiting for the lease when QEMU goes", () => {
   })
 })
 
+describe("a client's remount", () => {
+  const mounts = (): { count: number; mount: () => Promise<void> } => {
+    const m = {
+      count: 0,
+      mount: async (): Promise<void> => {
+        m.count += 1
+        await Promise.resolve()
+      },
+    }
+    return m
+  }
+
+  it("waits for the op that holds the instance, then mounts under the lease", async () => {
+    const outside = gate()
+    let holding = true
+    const other = withOperation("t", "resume", async () => {
+      await outside.opened
+      holding = false
+    })
+    await Bun.sleep(20)
+    let leasedWhileMounting: unknown = null
+    const m = mounts()
+    const done = remountHeld("t", async () => {
+      leasedWhileMounting = leaseHolder("t")
+      await m.mount()
+    })
+    await Bun.sleep(100)
+    expect(m.count).toBe(0)
+    outside.open()
+    await done
+    await other
+    expect(holding).toBe(false)
+    expect(m.count).toBe(1)
+    expect(leasedWhileMounting).toBeNull()
+    expect(
+      readSince("t", START).entries.some(
+        (e) =>
+          e.kind === "op" && e.phase === "begin" && e.operation === "remount",
+      ),
+    ).toBe(true)
+  })
+
+  it("mounts nothing on a guest that was paused meanwhile", async () => {
+    fake.handler = (cmd) =>
+      cmd.execute === "query-status"
+        ? { return: { status: "paused", running: false } }
+        : { return: {} }
+    const m = mounts()
+    await remountHeld("t", m.mount)
+    expect(m.count).toBe(0)
+  })
+})
+
 describe("stopping the service", () => {
   it("ends the ops still waiting for the lease at once, saying why", async () => {
     const outside = gate()
@@ -856,6 +910,33 @@ describe("host end", () => {
     await outcome
     await stopping
     svc = null
+  }, 20_000)
+
+  it("leaves the drives down rather than remount them for a client once it has begun", async () => {
+    release = async () => {
+      await Bun.sleep(1500)
+    }
+    const autosave = gate()
+    const saving = withOperation(
+      "t",
+      "save",
+      async () => {
+        await autosave.opened
+      },
+      { automatic: true },
+    )
+    await Bun.sleep(20)
+    expect(await ending()).toBe(202)
+    autosave.open()
+    await saving
+    let mounted = 0
+    await remountHeld("t", async () => {
+      mounted += 1
+      await Promise.resolve()
+    })
+    expect(mounted).toBe(0)
+    await until(() => outcome !== null, 10_000)
+    await outcome
   }, 20_000)
 
   it("takes no new op once it has begun, and says why", async () => {

@@ -315,6 +315,7 @@ export async function runService(
         state,
         qemuPid: livePidIn(p.pid),
         connected: qmpChannel.connected,
+        hostEnding: hostEnding !== null,
       })
     }
     return new Response("not found", { status: 404 })

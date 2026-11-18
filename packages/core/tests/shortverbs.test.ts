@@ -464,6 +464,26 @@ describe("the short verbs, run by winvm's service", () => {
       expect(endOf(verb)).toMatchObject({ remount: true })
     }, 30_000)
 
+  it("remounts under the instance's lease once the op has let go of it, so the app reads status again after", async () => {
+    rememberDrives()
+    guest.status = "paused"
+    const r = launch("resume", "-i", "t")
+    expect((await r.done).code).toBe(0)
+    const lines = ops().flatMap((e) =>
+      e.kind === "op" && (e.phase === "begin" || e.phase === "end")
+        ? [
+            `${e.phase} ${e.operation} ${e.pid === r.proc.pid ? "cli" : "service"}`,
+          ]
+        : [],
+    )
+    expect(lines).toEqual([
+      "begin resume service",
+      "end resume service",
+      "begin remount cli",
+      "end remount cli",
+    ])
+  }, 30_000)
+
   it("status names the command that mounts the drives again when no one did", async () => {
     rememberDrives()
     const r = await winvm("status", "-i", "t", "--json")
