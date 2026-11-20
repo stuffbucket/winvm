@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react"
 
+import { prefersReducedMotion } from "./interaction"
+
 export interface Camera {
   readonly x: number
   readonly y: number
@@ -183,10 +185,14 @@ export function rectsIntersect(a: Rect, b: Rect): boolean {
   )
 }
 
+const easeInCubic = (t: number): number => t * t * t
+
 export function easeInOutCubic(t: number): number {
   const c = Math.min(1, Math.max(0, t))
-  return c < 0.5 ? 4 * c * c * c : 1 - (-2 * c + 2) ** 3 / 2
+  return c < 1 / 2 ? easeInCubic(2 * c) / 2 : 1 - easeInCubic(2 - 2 * c) / 2
 }
+
+const MIN_LOG_ZOOM_CHANGE = 0.05
 
 export function interpolateCamera(
   from: Camera,
@@ -203,7 +209,8 @@ export function interpolateCamera(
   const c1 = centreOf(to, viewport)
   const w0 = 1 / from.zoom
   const w1 = 1 / to.zoom
-  const s = Math.abs(z1 - z0) < 0.05 ? t : (1 / zoom - w0) / (w1 - w0)
+  const s =
+    Math.abs(z1 - z0) < MIN_LOG_ZOOM_CHANGE ? t : (1 / zoom - w0) / (w1 - w0)
   return centreOn(
     { x: c0.x + (c1.x - c0.x) * s, y: c0.y + (c1.y - c0.y) * s },
     zoom,
@@ -211,12 +218,18 @@ export function interpolateCamera(
   )
 }
 
+const FLIGHT_BASE_MS = 420
+const FLIGHT_MAX_MS = 900
+const FLIGHT_MS_PER_ZOOM_STEP = 160
+const FLIGHT_MS_PER_SCREEN = 220
+const FLIGHT_MAX_SCREENS = 1.5
+
 export function flightDuration(
   from: Camera,
   to: Camera,
   viewport: Size,
-  base = 420,
-  max = 900,
+  base = FLIGHT_BASE_MS,
+  max = FLIGHT_MAX_MS,
 ): number {
   const zoomChange = Math.abs(Math.log(to.zoom / from.zoom))
   const c0 = centreOf(from, viewport)
@@ -227,7 +240,12 @@ export function flightDuration(
       (c1.y - c0.y) * Math.min(from.zoom, to.zoom),
     ) / Math.max(1, Math.hypot(viewport.width, viewport.height))
   return Math.round(
-    Math.min(max, base + 160 * zoomChange + 220 * Math.min(1.5, screens)),
+    Math.min(
+      max,
+      base +
+        FLIGHT_MS_PER_ZOOM_STEP * zoomChange +
+        FLIGHT_MS_PER_SCREEN * Math.min(FLIGHT_MAX_SCREENS, screens),
+    ),
   )
 }
 
@@ -269,10 +287,6 @@ export interface CanvasCamera {
   fly: (to: Camera, options?: FlyOptions) => Promise<boolean>
   stop(): void
 }
-
-const prefersReducedMotion = (): boolean =>
-  typeof matchMedia === "function" &&
-  matchMedia("(prefers-reduced-motion: reduce)").matches
 
 export function useCanvasCamera(
   initial: Camera,

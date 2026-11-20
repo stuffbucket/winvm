@@ -25,6 +25,8 @@ interface RouterOptions {
 const SUPER = 0xffeb
 const SUPER_RIGHT = 0xffec
 const CONTROL = 0xffe3
+const ALT = 0xffe9
+const DELETE = 0xffff
 
 const stopGuest = (event: RoutedKeyEvent): void => {
   event.stopImmediatePropagation()
@@ -190,9 +192,9 @@ export function sendWindowsKey(send: KeyboardSend): void {
 
 export function sendCtrlAltDelete(send: KeyboardSend): void {
   send(CONTROL, "ControlLeft", true)
-  send(0xffe9, "AltLeft", true)
-  send(0xffff, "Delete", true)
-  send(0xffff, "Delete", false)
-  send(0xffe9, "AltLeft", false)
+  send(ALT, "AltLeft", true)
+  send(DELETE, "Delete", true)
+  send(DELETE, "Delete", false)
+  send(ALT, "AltLeft", false)
   send(CONTROL, "ControlLeft", false)
 }

@@ -1,5 +1,6 @@
 export * from "./camera"
 export * from "./cursors"
+export * from "./interaction"
 export * from "./SpatialCanvas"
 export * from "./SpatialCanvasChrome"
 export * from "./SpatialCanvasSearch"

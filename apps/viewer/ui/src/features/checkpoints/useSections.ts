@@ -1,6 +1,7 @@
 import {
   type Camera,
   editableTarget,
+  POINTER_SLOP,
   type Point,
   type Rect,
   screenToWorld,
@@ -16,6 +17,7 @@ import {
 
 import { t } from "../../i18n"
 import { CAPTION_ROOM } from "./checkpoints"
+import { FAST_STEP } from "./layout/geometry"
 import {
   type Arrangement,
   capture,
@@ -37,8 +39,6 @@ import {
   shiftMembers,
   uniqueName,
 } from "./sections"
-
-const DRAG_FROM = 4
 
 type Gesture =
   | {
@@ -302,7 +302,7 @@ export function useSections(
     const h = host.current
     if (g === null || h === null || g.pointer !== e.pointerId) return false
     if (!g.moved) {
-      if (Math.hypot(e.clientX - g.from.x, e.clientY - g.from.y) < DRAG_FROM)
+      if (Math.hypot(e.clientX - g.from.x, e.clientY - g.from.y) < POINTER_SLOP)
         return true
       g.moved = true
     }
@@ -457,7 +457,7 @@ export function useSections(
       !e.altKey
     ) {
       e.preventDefault()
-      const d = e.shiftKey ? 4 : 1
+      const d = e.shiftKey ? FAST_STEP : 1
       nudge(id, {
         x: e.key === "ArrowLeft" ? -d : e.key === "ArrowRight" ? d : 0,
         y: e.key === "ArrowUp" ? -d : e.key === "ArrowDown" ? d : 0,

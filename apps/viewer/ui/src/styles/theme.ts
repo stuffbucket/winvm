@@ -107,6 +107,61 @@ export const layout = {
   overviewHeight: "52rem",
 } as const
 
+export const px = (value: `${number}px`): number => Number.parseFloat(value)
+
+export const ms = (value: `${number}ms`): number => Number.parseFloat(value)
+
+const PX_PER_REM = 16
+
+export const rem = (value: `${number}rem`): number =>
+  Number.parseFloat(value) * PX_PER_REM
+
+const toPx = (value: number): `${number}px` =>
+  `${String(value)}px` as `${number}px`
+
+const CHECKPOINTS_TIMELINE_TILES = 3
+const CHECKPOINTS_TIMELINE = px(size["2xl"]) * CHECKPOINTS_TIMELINE_TILES
+const CHECKPOINTS_PANEL_MIN_TILES = 6
+
+export const checkpointLayout = {
+  timeline: toPx(CHECKPOINTS_TIMELINE),
+  timelineSpace: toPx(CHECKPOINTS_TIMELINE + px(spacing[3])),
+  panel: toPx(px(layout.panelWidth) + px(spacing[7])),
+  panelMin: toPx(px(size["2xl"]) * CHECKPOINTS_PANEL_MIN_TILES),
+  canvasMin: toPx(px(spacing[8]) * 2),
+} as const
+
+export const motion = {
+  duration: {
+    xs: "120ms",
+    sm: "150ms",
+    md: "160ms",
+    lg: "180ms",
+    xl: "200ms",
+    "2xl": "220ms",
+    "3xl": "400ms",
+    "4xl": "900ms",
+    "5xl": "1400ms",
+  },
+  ease: {
+    emphasized: "cubic-bezier(0.65, 0, 0.35, 1)",
+    enter: "cubic-bezier(0.16, 1, 0.3, 1)",
+    exit: "cubic-bezier(0.5, 0, 0.75, 0)",
+    chase: "cubic-bezier(0.22, 1, 0.36, 1)",
+  },
+} as const
+
+export const z = {
+  raised: "1",
+  selected: "2",
+  float: "3",
+  status: "4",
+  drag: "5",
+  chrome: "10",
+  overlay: "20",
+  menu: "30",
+} as const
+
 export const themes = {
   dark: {
     surfaceBase: "#0a0a0a",

@@ -64,7 +64,21 @@ export interface RoutedPointerEvent {
   stopImmediatePropagation(): void
 }
 
-const BUTTON_BITS = [1, 4, 2, 8, 16] as const
+const BUTTONS_MASK = {
+  primary: 1,
+  secondary: 2,
+  auxiliary: 4,
+  back: 8,
+  forward: 16,
+} as const
+
+const BUTTON_BITS = [
+  BUTTONS_MASK.primary,
+  BUTTONS_MASK.auxiliary,
+  BUTTONS_MASK.secondary,
+  BUTTONS_MASK.back,
+  BUTTONS_MASK.forward,
+] as const
 const buttonBit = (button: number): number => BUTTON_BITS[button] ?? 0
 
 /**

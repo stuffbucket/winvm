@@ -13,6 +13,9 @@ import { titleEdit, titleProblem } from "./machines"
 
 export const TITLE_MARK = "\u0001"
 
+const MIN_FIELD_CH = 4
+const REOPEN_GUARD_MS = 400
+
 function problemText(typed: string): string | null {
   switch (titleProblem(typed)) {
     case "long":
@@ -119,7 +122,7 @@ export function MachineHeading({
             type="text"
             value={draft}
             style={{
-              width: `${String(Math.max(Array.from(draft).length, 4))}ch`,
+              width: `${String(Math.max(Array.from(draft).length, MIN_FIELD_CH))}ch`,
             }}
             aria-label={t("machine.renameField")}
             aria-invalid={message !== null}
@@ -145,7 +148,11 @@ export function MachineHeading({
             title={t("machine.renameTip")}
             aria-describedby={hintId}
             onClick={(e) => {
-              if (e.detail === 0 && Date.now() - endedAt.current < 400) return
+              if (
+                e.detail === 0 &&
+                Date.now() - endedAt.current < REOPEN_GUARD_MS
+              )
+                return
               start()
             }}
             onKeyDown={(e) => {

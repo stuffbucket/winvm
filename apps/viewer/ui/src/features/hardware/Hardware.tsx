@@ -6,7 +6,7 @@ import { formatGB } from "../usage/usage"
 import { formatMemory, fromGB, pendingRestart, toGB } from "./info"
 import type { MachineInfoView } from "./useMachineInfo"
 
-const SETTLE_MS = 500
+const SIZE_COMMIT_DELAY_MS = 500
 
 export function Hardware({
   view,
@@ -48,7 +48,7 @@ export function Hardware({
     timer.current = setTimeout(() => {
       if (size.cpus !== set.cpus || size.memoryMiB !== set.memoryMiB)
         view.setSize(size)
-    }, SETTLE_MS)
+    }, SIZE_COMMIT_DELAY_MS)
   }
 
   return (

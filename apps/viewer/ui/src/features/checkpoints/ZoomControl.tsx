@@ -1,6 +1,7 @@
 import { CanvasGlyph, CanvasIconButton, GLYPHS } from "@winvm/canvas"
 import { type JSX, useCallback, useEffect, useRef, useState } from "react"
 
+import { PERCENT } from "../../constants"
 import { t } from "../../i18n"
 
 const FIT = (
@@ -13,7 +14,8 @@ const FIT = (
 )
 
 export const ZOOM_SHOWN_MS = 1600
-const ZOOM_NEAR = { width: 160, height: 120 } as const
+const ZOOM_NEAR_WIDTH = 160
+const ZOOM_NEAR_HEIGHT = 120
 const NEAR_MARGIN = 40
 
 export interface ZoomControlProps {
@@ -30,11 +32,11 @@ export function pointerNear(
 ): boolean {
   const right = Math.max(
     control.right + NEAR_MARGIN,
-    area.left + ZOOM_NEAR.width,
+    area.left + ZOOM_NEAR_WIDTH,
   )
   const top = Math.min(
     control.top - NEAR_MARGIN,
-    area.bottom - ZOOM_NEAR.height,
+    area.bottom - ZOOM_NEAR_HEIGHT,
   )
   return (
     point.x >= area.left &&
@@ -45,7 +47,7 @@ export function pointerNear(
 }
 
 export function ZoomControl(p: ZoomControlProps): JSX.Element {
-  const percent = Math.round(p.zoom * 100)
+  const percent = Math.round(p.zoom * PERCENT)
   const host = useRef<HTMLDivElement>(null)
 
   const [lingering, setLingering] = useState(false)

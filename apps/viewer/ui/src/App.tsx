@@ -33,6 +33,7 @@ import { Callout } from "./components/Callout"
 import { ConfirmDialog } from "./components/ConfirmDialog"
 import { cx } from "./components/cx"
 import { Popover } from "./components/Popover"
+import { HTTP_ACCEPTED, HTTP_OK } from "./constants"
 import { SharePanel } from "./features/actions/SharePanel"
 import { CheckpointCanvas } from "./features/checkpoints/CheckpointCanvas"
 import { ClosePolicyDialog } from "./features/close/ClosePolicyDialog"
@@ -104,6 +105,10 @@ interface Notice {
   readonly title: string
   readonly detail?: string
 }
+
+const DISPLAY_WAIT_MS = 2000
+const DISPLAY_REQUEST_TIMEOUT_MS = 22_000
+const NOTICE_DISMISS_MS = 8000
 
 const CONFIRM_ACTION: Record<Confirm["kind"], string> = {
   stop: "action.shutDown",
@@ -238,12 +243,12 @@ export function App(): JSX.Element {
           op: "set",
           width: size.width,
           height: size.height,
-          waitMs: 2000,
+          waitMs: DISPLAY_WAIT_MS,
           scale,
         },
-        22_000,
+        DISPLAY_REQUEST_TIMEOUT_MS,
       )
-      if (reply.status !== 200 && reply.status !== 202)
+      if (reply.status !== HTTP_OK && reply.status !== HTTP_ACCEPTED)
         throw new Error(
           `the agent answered ${String(reply.status)}: ${JSON.stringify(reply.body)}`,
         )
@@ -652,7 +657,7 @@ export function App(): JSX.Element {
     if (notice?.tone !== "notice") return
     const timer = setTimeout(() => {
       setNotice(null)
-    }, 8000)
+    }, NOTICE_DISMISS_MS)
     return () => {
       clearTimeout(timer)
     }
