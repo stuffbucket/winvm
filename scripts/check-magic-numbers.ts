@@ -1,20 +1,27 @@
 import { readFileSync, writeFileSync } from "node:fs"
 import { join, resolve } from "node:path"
 
-export interface Counts {
-  ts: number
-  css: { px: number; ms: number; z: number }
+export interface CssInventory {
+  readonly px: Readonly<Record<string, number>>
+  readonly ms: Readonly<Record<string, number>>
+  readonly z: Readonly<Record<string, number>>
+}
+
+export interface Measurements {
+  readonly ts: number
+  readonly css: CssInventory
 }
 
 export interface Comparison {
-  increased: string[]
-  decreased: string[]
+  readonly increased: string[]
+  readonly decreased: string[]
 }
 
 const ROOT = resolve(import.meta.dir, "..")
 const BASELINE = join(import.meta.dir, "magic-numbers-baseline.json")
 const OXLINT_CONFIG = ".oxlintrc.magic.json"
 const TS_ROOTS = ["apps/viewer/ui/src", "packages/canvas/src"]
+const CSS_KINDS = ["px", "ms", "z"] as const
 const CSS_SCRIPT = join(
   ROOT,
   "apps",
@@ -23,20 +30,33 @@ const CSS_SCRIPT = join(
   "check-design-tokens.ts",
 )
 
-function flatten(counts: Counts): Record<string, number> {
-  return {
-    ts: counts.ts,
-    "css.px": counts.css.px,
-    "css.ms": counts.css.ms,
-    "css.z": counts.css.z,
+function flatten(measurements: Measurements): Record<string, number> {
+  const flat: Record<string, number> = { ts: measurements.ts }
+  for (const kind of CSS_KINDS) {
+    for (const [value, count] of Object.entries(measurements.css[kind])) {
+      flat[`css.${kind}.${value}`] = count
+    }
   }
+  return flat
 }
 
-export function compare(current: Counts, baseline: Counts): Comparison {
+export function compare(
+  current: Measurements,
+  baseline: Measurements,
+): Comparison {
   const now = flatten(current)
   const before = flatten(baseline)
   const result: Comparison = { increased: [], decreased: [] }
-  for (const [name, value] of Object.entries(now)) {
+  const names = [
+    "ts",
+    ...new Set(
+      [...Object.keys(now), ...Object.keys(before)]
+        .filter((name) => name !== "ts")
+        .sort(),
+    ),
+  ]
+  for (const name of names) {
+    const value = now[name] ?? 0
     const limit = before[name] ?? 0
     const line = `${name} ${String(value)} (baseline ${String(limit)})`
     if (value > limit) result.increased.push(line)
@@ -58,23 +78,49 @@ export function oxlintCount(json: string): number {
   return parsed.diagnostics.length
 }
 
-export function parseCssCounts(output: string): Counts["css"] {
-  const parsed: unknown = JSON.parse(output.trim().split("\n").at(-1) ?? "")
-  const field = (name: string): number => {
-    const value = (parsed as Record<string, unknown> | null)?.[name]
-    if (typeof value !== "number") throw new Error(`css count ${name} missing`)
-    return value
+function objectEntries(value: unknown, name: string): [string, unknown][] {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw new Error(`${name} is not an object`)
   }
-  return { px: field("px"), ms: field("ms"), z: field("z") }
+  return Object.entries(value)
 }
 
-export function parseBaseline(text: string): Counts {
-  const parsed = JSON.parse(text) as Counts
-  const numbers = [parsed.ts, parsed.css.px, parsed.css.ms, parsed.css.z]
-  if (!numbers.every((n) => Number.isInteger(n) && n >= 0)) {
-    throw new Error("baseline holds a non-integer count")
+function nonnegativeInteger(value: unknown, name: string): number {
+  if (typeof value !== "number" || !Number.isInteger(value) || value < 0) {
+    throw new Error(`${name} holds a non-integer count`)
   }
-  return parsed
+  return value
+}
+
+function parseValues(value: unknown, name: string): Record<string, number> {
+  const values: Record<string, number> = {}
+  for (const [token, count] of objectEntries(value, name)) {
+    values[token] = nonnegativeInteger(count, `${name}.${token}`)
+  }
+  return values
+}
+
+function parseMeasurements(value: unknown): Measurements {
+  const root = Object.fromEntries(objectEntries(value, "measurements"))
+  const css = Object.fromEntries(objectEntries(root.css, "css"))
+  return {
+    ts: nonnegativeInteger(root.ts, "ts"),
+    css: {
+      px: parseValues(css.px, "css.px"),
+      ms: parseValues(css.ms, "css.ms"),
+      z: parseValues(css.z, "css.z"),
+    },
+  }
+}
+
+export function parseCssInventory(output: string): CssInventory {
+  const line = output.trim().split("\n").at(-1) ?? ""
+  const parsed: unknown = JSON.parse(line)
+  return parseMeasurements({ ts: 0, css: parsed }).css
+}
+
+export function parseBaseline(text: string): Measurements {
+  return parseMeasurements(JSON.parse(text))
 }
 
 function run(argv: string[]): string {
@@ -87,7 +133,7 @@ function run(argv: string[]): string {
   return proc.stdout.toString()
 }
 
-function measure(): Counts {
+function measure(): Measurements {
   const ts = oxlintCount(
     run([
       "pnpm",
@@ -100,7 +146,9 @@ function measure(): Counts {
       ...TS_ROOTS,
     ]),
   )
-  const css = parseCssCounts(run(["bun", CSS_SCRIPT, "--count"]))
+  const css = parseCssInventory(
+    run(["bun", CSS_SCRIPT, "--count", "--inventory"]),
+  )
   return { ts, css }
 }
 

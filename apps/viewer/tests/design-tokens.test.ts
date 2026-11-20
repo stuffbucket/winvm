@@ -1,8 +1,14 @@
 import { expect, it } from "bun:test"
 
-import { countMagic, cssFiles, magicHits } from "../scripts/check-design-tokens"
+import {
+  countMagic,
+  cssFiles,
+  inventoryMagic,
+  magicHits,
+} from "../scripts/check-design-tokens"
 
-const count = (css: string) => countMagic(magicHits("a.css", css))
+const hits = (css: string) => magicHits("a.css", css)
+const count = (css: string) => countMagic(hits(css))
 
 it("counts non-zero px, durations and bare z-index values", () => {
   expect(
@@ -20,20 +26,20 @@ it("ignores zero values, tokens and var() z-index", () => {
   ).toEqual({ px: 0, ms: 0, z: 0 })
 })
 
-it("skips media preludes, comments, urls and strings", () => {
+it("counts at-rule preludes while skipping comments, urls and strings", () => {
   expect(
     count(
       '@media (min-width: 600px) { .a { color: red } } .b { /* 5px 20ms */ background: url("x-3px.png"); content: "4px" }',
     ),
-  ).toEqual({ px: 0, ms: 0, z: 0 })
+  ).toEqual({ px: 1, ms: 0, z: 0 })
 })
 
-it("counts declarations inside media and keyframes bodies", () => {
+it("counts declarations inside media, keyframes and nested rules", () => {
   expect(
     count(
-      "@media (min-width: 600px) { .a { width: 10px } } @keyframes k { 50% { transform: translateX(3px) } }",
+      "@media (min-width: 600px) { .a { width: 10px } } @keyframes k { 50% { transform: translateX(3px) } } .panel { padding: 37px; & .child { inset: 2px } margin: 4px }",
     ),
-  ).toEqual({ px: 2, ms: 0, z: 0 })
+  ).toEqual({ px: 6, ms: 0, z: 0 })
 })
 
 it("counts fractional and signed values once each", () => {
@@ -42,12 +48,30 @@ it("counts fractional and signed values once each", () => {
   ).toEqual({ px: 2, ms: 1, z: 0 })
 })
 
+it("treats CSS units and property names case-insensitively", () => {
+  expect(
+    count(".a { width: 37PX; transition-duration: 250MS; Z-INDEX: 99 }"),
+  ).toEqual({ px: 1, ms: 1, z: 1 })
+})
+
 it("reports the line of each hit", () => {
-  const hits = magicHits("a.css", ".a {\n  width: 3px;\n  z-index: 2;\n}\n")
-  expect(hits.map((hit) => [hit.line, hit.kind])).toEqual([
+  const found = hits(".a {\n  width: 3px;\n  z-index: 2;\n}\n")
+  expect(found.map((hit) => [hit.line, hit.kind])).toEqual([
     [2, "px"],
     [3, "z"],
   ])
+})
+
+it("inventories normalized values instead of only aggregate counts", () => {
+  expect(
+    inventoryMagic(
+      hits(".a { width: 24px; margin: -24PX; transition: 150MS; z-index: 3 }"),
+    ),
+  ).toEqual({
+    px: { "24px": 1, "-24px": 1 },
+    ms: { "150ms": 1 },
+    z: { "3": 1 },
+  })
 })
 
 it("globs the viewer and canvas css without the token file", () => {
