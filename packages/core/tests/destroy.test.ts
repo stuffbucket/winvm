@@ -21,7 +21,7 @@ import { parseArgs } from "../src/args"
 import { destroy, prune } from "../src/commands"
 import { readNote, writeNote } from "../src/notes"
 import { instanceDir, pathsFor } from "../src/paths"
-import { listSaves, saveDir, setSaveProtection } from "../src/saves"
+import { listSaves, saveDir, savesDir, setSaveProtection } from "../src/saves"
 
 let state = ""
 let previousHome: string | undefined
@@ -83,7 +83,7 @@ describe("destroy", () => {
     expect(readNote("gone", "baseline")).toBeNull()
     expect(readNote("other", "baseline")?.title).toBe("other's")
     expect(existsSync(instanceDir("gone"))).toBe(false)
-    expect(listSaves("gone")).toEqual([])
+    expect(existsSync(savesDir("gone"))).toBe(false)
     expect(existsSync(saveDir("other", "baseline"))).toBe(true)
     expect(existsSync(instanceDir("other"))).toBe(true)
   })

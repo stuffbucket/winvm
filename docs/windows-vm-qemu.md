@@ -217,7 +217,8 @@ mismatch and names the part that changed.
 lifecycle lease as save, load and rotation, with no guest calls. Reclamation
 excludes protected saves and never counts them against `autosave.keep`.
 Rotation rechecks sampled victims after acquiring the lease, so a save protected
-in the meantime is retained. Deletion requires unprotecting first or the explicit
+in the meantime is retained. `saves rm` takes the lease too. Deletion requires
+unprotecting first or the explicit
 `saves rm --force`; replacement by save or clone always refuses a protected
 target. An unreadable manifest fails closed. Bulk destroy keeps all saves when
 any is protected or unreadable; prune skips such scratch instances. Stow cannot

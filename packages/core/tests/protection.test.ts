@@ -21,6 +21,8 @@ import { resolve } from "node:path"
 import { parseArgs } from "../src/args"
 import { readNote, writeNote } from "../src/notes"
 import { withOperation } from "../src/operation"
+import { OpQueue } from "../src/ops"
+import { STOW_HANDLER } from "../src/opverbs"
 import { pathsFor } from "../src/paths"
 import { savesCmd } from "../src/savecmds"
 import {
@@ -33,7 +35,7 @@ import {
   saveDir,
   setSaveProtection,
 } from "../src/saves"
-import { realActions } from "../src/watch"
+import { serviceActions } from "../src/watch"
 
 const ENV = ["WINVM_HOME", "XDG_DATA_HOME", "XDG_CONFIG_HOME"] as const
 let before: Record<string, string | undefined> = {}
@@ -203,7 +205,7 @@ describe("snapshot protection", () => {
     expect(await cli("rm", "clean", "--force")).toBe(0)
   })
 
-  it("refuses protect/unprotect while another command holds the instance", async () => {
+  it("refuses protect/unprotect and deletion while another command holds the instance", async () => {
     makeInstance()
     make()
     let release: () => void = () => undefined
@@ -215,6 +217,7 @@ describe("snapshot protection", () => {
     await new Promise((r) => setTimeout(r, 20))
     try {
       expect(await cli("protect", "clean")).toBe(1)
+      expect(await cli("rm", "clean", "--force")).toBe(1)
       expect(errors.join("\n")).toContain("busy")
       expect(readSave("dev", "clean")?.protected).toBeUndefined()
     } finally {
@@ -233,7 +236,21 @@ describe("snapshot protection", () => {
     make("victim", { kind: "auto" })
     await setSaveProtection("dev", "locked", true)
     writeFileSync(file("damaged"), "broken")
-    const actions = realActions("dev", pathsFor("dev"), () => undefined)
+    makeInstance()
+    const queue = new OpQueue(
+      "dev",
+      {},
+      {
+        record: () => undefined,
+        nudge: () => undefined,
+        killed: () => undefined,
+      },
+    )
+    const actions = serviceActions("dev", pathsFor("dev"), () => undefined, {
+      perform: async (op, handler, args) =>
+        await queue.perform(op, handler, args),
+      stow: STOW_HANDLER,
+    })
     expect(
       await actions.deleteSaves(["locked", "replaced", "damaged", "victim"]),
     ).toBe(true)

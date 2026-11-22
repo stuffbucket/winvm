@@ -17,7 +17,7 @@ import { lockWindows } from "./lock"
 import { qmpCommand } from "./monitor"
 import * as notes from "./notes"
 import { currentOp, OpCancelled } from "./opcontext"
-import { automaticFrom, INTERRUPTED } from "./operation"
+import { automaticFrom, INTERRUPTED, withOperation } from "./operation"
 import type { InstanceMeta, Paths } from "./paths"
 import { pathsFor, readImageMeta, readMeta } from "./paths"
 import * as qemu from "./qemu"
@@ -235,9 +235,35 @@ export async function load(args: Args): Promise<number> {
 
 export async function savesCmd(args: Args): Promise<number> {
   const sub = args.positional[0]
+  if (sub === "rm") return await removeCmd(args)
   if (sub === "protect" || sub === "unprotect")
     return await protectCmd(args, sub === "protect")
   return list(args)
+}
+
+async function removeCmd(args: Args): Promise<number> {
+  const name = instanceName(args)
+  const target = args.positional[1]
+  if (target === undefined) return fail("usage: winvm saves rm <name>")
+  const err = nameError(target)
+  if (err !== null) return fail(err)
+  if (!existsSync(saves.saveDir(name, target)))
+    return fail(`instance "${name}" has no save "${target}"`)
+  try {
+    return await withOperation(name, "save", () => {
+      let hadNote = false
+      try {
+        hadNote = notes.readNote(name, target) !== null
+      } catch {
+        hadNote = false
+      }
+      saves.removeSave(name, target, { force: args.flags.has("force") })
+      console.log(`deleted save "${target}"${hadNote ? " and its note" : ""}`)
+      return 0
+    })
+  } catch (error) {
+    return fail(msg(error))
+  }
 }
 
 async function protectCmd(args: Args, protect: boolean): Promise<number> {
@@ -260,27 +286,6 @@ async function protectCmd(args: Args, protect: boolean): Promise<number> {
 
 export function list(args: Args): number {
   const name = instanceName(args)
-  if (args.positional[0] === "rm") {
-    const target = args.positional[1]
-    if (target === undefined) return fail("usage: winvm saves rm <name>")
-    const err = nameError(target)
-    if (err !== null) return fail(err)
-    if (!existsSync(saves.saveDir(name, target)))
-      return fail(`instance "${name}" has no save "${target}"`)
-    let hadNote = false
-    try {
-      hadNote = notes.readNote(name, target) !== null
-    } catch {
-      hadNote = false
-    }
-    try {
-      saves.removeSave(name, target, { force: args.flags.has("force") })
-    } catch (error) {
-      return fail(msg(error))
-    }
-    console.log(`deleted save "${target}"${hadNote ? " and its note" : ""}`)
-    return 0
-  }
   if (args.positional[0] === "note") return note(args)
   if (args.positional[0] === "path") return pathOf(name, args)
   const rows = saves.listSaves(name)
