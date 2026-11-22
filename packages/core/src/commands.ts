@@ -42,6 +42,7 @@ import {
   checksReport,
   hostChecks,
   hostMissing,
+  type KeeperNeed,
   PWSH_SHA256,
   PWSH_URL,
   printChecks,
@@ -118,17 +119,20 @@ import * as watcher from "./watch"
 const virtioBootFor = (meta: InstanceMeta): boolean =>
   readImageMeta(meta.image)?.virtioBoot === true
 
-export async function doctor(json = false): Promise<number> {
+export async function doctor(
+  json = false,
+  keeper: KeeperNeed = "required",
+): Promise<number> {
   const legacy = await legacyVms()
   if (json) {
     const report = {
-      ...checksReport(hostChecks(), timemachine.summary()),
+      ...checksReport(hostChecks(keeper), timemachine.summary()),
       legacy,
     }
     console.log(JSON.stringify(report, null, 2))
     return report.ready ? 0 : 1
   }
-  const missing = printChecks(hostChecks())
+  const missing = printChecks(hostChecks(keeper))
   console.log(timemachine.summary())
   if (legacy.length > 0)
     console.log(
@@ -293,11 +297,11 @@ export async function setup(args: Args): Promise<number> {
     }
   }
   console.log("")
-  return await doctor()
+  return await doctor(false, "optional")
 }
 
 export function adopt(args: Args): number {
-  requireHost()
+  requireHost("optional")
   const src = args.positional[0]
   if (src === undefined) {
     console.error("::error::usage: winvm adopt <disk.qcow2> [--image <name>]")
@@ -331,7 +335,7 @@ export function adopt(args: Args): number {
 }
 
 export async function build(args: Args): Promise<number> {
-  requireHost()
+  requireHost("required")
   const image = imageName(args)
   if (!isValidImageName(image)) {
     console.error(
@@ -617,7 +621,7 @@ export const launchInstaller = async (
 const NO_LOGON_MS = 120_000
 
 export function create(args: Args): number {
-  requireHost()
+  requireHost("optional")
   const name = instanceName(args)
   if (!isValidInstanceName(name)) {
     console.error(
@@ -667,7 +671,7 @@ export async function startRunning(
 }
 
 export async function start(args: Args): Promise<number> {
-  if (hostMissing()) return 1
+  if (hostMissing("required")) return 1
   const name = instanceName(args)
   const p = pathsFor(name)
   if (qemu.isRunning(p)) return await startRunning(name, args)

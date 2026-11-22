@@ -699,19 +699,30 @@ describe("parseJobPrint", () => {
 describe("keeperCheck", () => {
   it("names where the keeper comes from, and is a missing prerequisite when none is found", () => {
     expect(
-      keeperCheck({
-        kind: "keeper",
-        keeper: { path: "/a/winvm-keeper", source: "app" },
-      }),
+      keeperCheck(
+        {
+          kind: "keeper",
+          keeper: { path: "/a/winvm-keeper", source: "app" },
+        },
+        "required",
+      ),
     ).toEqual({
       label: "keeper /a/winvm-keeper (app)",
       ok: true,
       hint: "",
     })
-    expect(keeperCheck({ kind: "missing" })).toEqual({
+    expect(keeperCheck({ kind: "missing" }, "required")).toEqual({
       label: "keeper not installed: winvm starts no VM without it",
       ok: false,
       hint: keeperHint(),
+    })
+  })
+
+  it("is no missing prerequisite for a command that starts no VM, and still says how to get one", () => {
+    expect(keeperCheck({ kind: "missing" }, "optional")).toEqual({
+      label: `keeper not installed yet, so no VM starts until one is: ${keeperHint()}`,
+      ok: true,
+      hint: "",
     })
   })
 
@@ -721,7 +732,15 @@ describe("keeperCheck", () => {
     )
     expect(
       keeperHint({ version: "v1", url: "https://example.test/k", sha256: "0" }),
-    ).toContain("`winvm setup` downloads the one this winvm pins")
+    ).toBe(
+      "the winvm app carries one; `winvm setup` downloads the one this winvm pins (v1); WINVM_KEEPER=<path> names a build of native/keeper (`cargo build --manifest-path native/keeper/Cargo.toml`)",
+    )
+  })
+
+  it("names the keeper this winvm pins", () => {
+    expect(keeperHint()).toContain(
+      `\`winvm setup\` downloads the one this winvm pins (${keeperPin()?.version ?? "?"})`,
+    )
   })
 })
 

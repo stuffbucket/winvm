@@ -107,11 +107,13 @@ with QEMU of the same version. Otherwise it refuses, and
 `winvm start -i NAME --boot` discards the stow and starts Windows afresh.
 
 The keeper isn't a login item and doesn't outlive a restart. The app carries
-it; a CLI-only install gets it from `winvm setup` once a release pins one.
+it; a CLI-only install gets it from `winvm setup`, which downloads the keeper
+`packages/core/keeper.json` pins.
 `WINVM_KEEPER=<path>` uses another build, for development. Every VM runs under
 the keeper: when none is found, `winvm start`, and anything else that launches
 QEMU, starts nothing and says how to get one, and `winvm doctor` lists it as a
-missing prerequisite. A command whose
+missing prerequisite. `winvm create`, `winvm adopt` and `winvm setup`, which
+start no VM, only mention it. A command whose
 `WINVM_KEEPER` differs from the one winvm's service runs with is not run; it
 says which keeper each names. `winvm status` has a `keeper` row:
 

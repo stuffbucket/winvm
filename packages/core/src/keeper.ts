@@ -125,7 +125,7 @@ export const keeperHint = (pin: KeeperPin | null = keeperPin()): string =>
     "the winvm app carries one",
     pin === null
       ? "this winvm pins none for `winvm setup` to download yet (packages/core/keeper.json)"
-      : "`winvm setup` downloads the one this winvm pins",
+      : `\`winvm setup\` downloads the one this winvm pins (${pin.version})`,
     "WINVM_KEEPER=<path> names a build of native/keeper (`cargo build --manifest-path native/keeper/Cargo.toml`)",
   ].join("; ")
 

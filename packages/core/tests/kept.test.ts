@@ -31,6 +31,7 @@ import {
   type JobInfo,
   KeeperBusy,
   keeperLabel,
+  keeperPin,
   keeperRequest,
   type Launchd,
 } from "../src/keeper"
@@ -780,7 +781,9 @@ describe("fix round 1", () => {
         "was started without winvm's keeper, and this winvm has no winvm-keeper to protect it with",
       )
       expect(notes).toContain("WINVM_KEEPER=<path>")
-      expect(notes).not.toContain("`winvm setup` downloads")
+      expect(notes).toContain(
+        `\`winvm setup\` downloads the one this winvm pins (${keeperPin()?.version ?? "?"})`,
+      )
     } finally {
       legacy.kill("SIGKILL")
     }
