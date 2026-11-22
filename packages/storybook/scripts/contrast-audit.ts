@@ -1,4 +1,10 @@
-import { matrix, passes, THEME_NAMES } from "../src/contrast"
+import {
+  DECORATIVE,
+  matrix,
+  passes,
+  THEME_NAMES,
+  unclassified,
+} from "../src/contrast"
 
 const RATIO_WIDTH = 5
 const checks = matrix()
@@ -17,4 +23,13 @@ for (const theme of THEME_NAMES) {
 console.log(
   `\ncontrast: ${String(failing.length)} of ${String(checks.length)} pairings below their minimum`,
 )
-if (failing.length > 0) process.exit(1)
+console.log(`contrast: not measured, decorative: ${DECORATIVE.join(", ")}`)
+const missing = unclassified()
+for (const token of missing)
+  console.log(
+    `✗ --${token} is neither measured nor listed as decorative in src/contrast.ts`,
+  )
+console.log(
+  `contrast: ${String(missing.length)} colors neither measured nor decorative`,
+)
+if (failing.length + missing.length > 0) process.exit(1)

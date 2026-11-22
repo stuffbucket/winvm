@@ -3,10 +3,12 @@ import type { JSX } from "react"
 
 import {
   type Check,
+  DECORATIVE,
   matrix,
   passes,
   THEME_NAMES,
   type Theme,
+  unclassified,
   value,
 } from "../contrast"
 
@@ -99,8 +101,17 @@ function ThemePanel({
 export const AllPairings: StoryObj = {
   render: () => {
     const checks = matrix()
+    const missing = unclassified()
     return (
       <div className="sb-contrast">
+        <p className="sb-contrast__note">
+          Not measured, decorative:{" "}
+          {DECORATIVE.map((token) => `--${token}`).join(", ")}.
+          {missing.length > 0 &&
+            ` Neither measured nor decorative (the audit fails): ${missing
+              .map((token) => `--${token}`)
+              .join(", ")}.`}
+        </p>
         {THEME_NAMES.map((theme) => (
           <ThemePanel
             key={theme}

@@ -1,4 +1,9 @@
-import { accent, brand, themes } from "../../../apps/viewer/ui/src/styles/theme"
+import {
+  accent,
+  brand,
+  scrim,
+  themes,
+} from "../../../apps/viewer/ui/src/styles/theme"
 
 export type Theme = keyof typeof themes
 
@@ -50,15 +55,32 @@ function contrast(a: string, b: string): number {
 const kebab = (name: string): string =>
   name.replace(/([a-z0-9])([A-Z])/g, "$1-$2").toLowerCase()
 
+const ACCENT_NAMES: Readonly<Record<string, string>> = {
+  fg: "accent-fg",
+  destructive: "accent-destructive",
+  destructiveFg: "accent-destructive-foreground",
+}
+
+const FIXED: Readonly<Record<string, string>> = {
+  brand: brand.color,
+  ...Object.fromEntries(
+    Object.entries(accent).map(([k, v]) => [
+      ACCENT_NAMES[k] ?? `accent-${kebab(k)}`,
+      v,
+    ]),
+  ),
+}
+
+const SCRIMS = Object.keys(scrim).map((k) =>
+  k === "color" ? "scrim" : `scrim-${kebab(k)}`,
+)
+
 export function value(theme: Theme, token: string): string {
   const all: Record<string, string> = {
     ...Object.fromEntries(
       Object.entries(themes[theme]).map(([k, v]) => [kebab(k), v]),
     ),
-    brand: brand.color,
-    "accent-fg": accent.fg,
-    "accent-destructive": accent.destructive,
-    "accent-destructive-foreground": accent.destructiveFg,
+    ...FIXED,
   }
   const found = all[token]
   if (found === undefined) throw new Error(`unknown token --${token}`)
@@ -119,3 +141,27 @@ export function matrix(): Check[] {
 }
 
 export const passes = (c: Check): boolean => c.ratio >= c.min
+
+export const DECORATIVE: readonly string[] = [
+  "border-subtle",
+  "backdrop-base",
+  "backdrop-glow-accent",
+  "backdrop-glow-brand",
+  ...SCRIMS,
+]
+
+export function unclassified(): string[] {
+  const classified = new Set([
+    ...SURFACES,
+    ...ROLES.map(([token]) => token),
+    ...ON_FILL.map(([fg]) => fg),
+    ...ON_FILL.map(([, bg]) => bg),
+    ...DECORATIVE,
+  ])
+  const colors = new Set([
+    ...THEME_NAMES.flatMap((theme) => Object.keys(themes[theme]).map(kebab)),
+    ...Object.keys(FIXED),
+    ...SCRIMS,
+  ])
+  return [...colors].filter((token) => !classified.has(token))
+}

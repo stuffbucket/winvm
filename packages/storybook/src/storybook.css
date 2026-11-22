@@ -228,3 +228,10 @@ body {
   border: var(--border-width-hairline) solid var(--border-subtle);
   border-radius: var(--radius-card);
 }
+
+.sb-contrast__note {
+  grid-column: 1 / -1;
+  margin: 0;
+  font-size: var(--text-sm);
+  color: var(--text-muted);
+}
