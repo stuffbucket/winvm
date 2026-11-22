@@ -7,7 +7,7 @@ import {
   mock,
   spyOn,
 } from "bun:test"
-import { ChildProcess, type SpawnOptions, spawn } from "node:child_process"
+import { spawn } from "node:child_process"
 import {
   appendFileSync,
   chmodSync,
@@ -19,10 +19,9 @@ import {
   rmSync,
   utimesSync,
   writeFileSync,
-  writeSync,
 } from "node:fs"
 import { tmpdir } from "node:os"
-import { basename, resolve } from "node:path"
+import { resolve } from "node:path"
 
 import { parseArgs } from "../src/args"
 import * as clock from "../src/clock"
@@ -42,6 +41,7 @@ import { golden, resetToGolden } from "../src/golden"
 import * as host from "../src/host"
 import { hostEndFacts, hostEndSeams } from "../src/hostend"
 import { hostPoweredOff } from "../src/hostoff"
+import type { KeeperChild } from "../src/keeper"
 import * as kept from "../src/kept"
 import * as media from "../src/media"
 import * as monitor from "../src/monitor"
@@ -51,6 +51,7 @@ import {
   basePath,
   type InstanceMeta,
   imageMetaPath,
+  type Paths,
   pathsFor,
   readMeta,
 } from "../src/paths"
@@ -109,12 +110,12 @@ let state = ""
 let previous: Record<string, string | undefined> = {}
 let previousProbe: share.Probe
 let previousSettle: qemu.Settle
-let previousSpawner: qemu.Spawner
 let qemuOutput: string | null = null
 let initialRunning: DisplayConfig | null = VIRTIO_GPU
 let initialDevices: share.DeviceSet | undefined
 let spacedHome: string | null = null
 let runningPid: number | null = FAKE_PID
+let keeperChild: number | null = null
 let commands: string[] = []
 let virtiofsd = 0
 let statusCalls = 0
@@ -134,32 +135,56 @@ const launches = (): readonly string[] =>
     : []
 const lastLaunch = (): string => launches().at(-1) ?? ""
 
-function fakeSpawner(
-  command: string,
-  args: readonly string[],
-  options: SpawnOptions,
-): ChildProcess {
-  const child = new ChildProcess()
-  const binary = basename(command)
-  if (binary === "swtpm") {
-    const sock = /path=([^,]+)/.exec(args.join(" "))?.[1]
+function launchSidecar(
+  p: Paths,
+  child: KeeperChild & { readonly name: string },
+): Promise<number> {
+  if (child.name === "swtpm") {
+    const sock = /path=([^,]+)/.exec(child.argv.join(" "))?.[1]
     if (sock === undefined)
-      throw new Error(`swtpm without a socket: ${args.join(" ")}`)
+      throw new Error(`swtpm without a socket: ${child.argv.join(" ")}`)
     writeFileSync(sock, "")
-  } else if (binary === "qemu-system-aarch64") {
-    appendFileSync(qemuLog(), `${args.join(" ")}\n`)
-    runningPid = FAKE_PID
-    const output = qemuOutput
-    if (output !== null) {
-      const fd = Array.isArray(options.stdio) ? options.stdio[1] : undefined
-      if (typeof fd === "number") writeSync(fd, output)
-      setImmediate(() => child.emit("exit", 1, null))
-    }
+  } else if (child.name === "virtiofsd") {
+    virtiofsd += 1
+    writeFileSync(share.virtiofsdSocket(p), "")
   } else {
-    throw new Error(`unexpected spawn: ${command}`)
+    throw new Error(`unexpected sidecar: ${child.name}`)
   }
-  return child
+  return Promise.resolve(FAKE_PID + 1)
 }
+
+function launchChild(
+  _p: Paths,
+  child: KeeperChild & { readonly name: string },
+): Promise<number> {
+  appendFileSync(qemuLog(), `${child.argv.slice(1, -2).join(" ")}\n`)
+  runningPid = FAKE_PID
+  keeperChild = FAKE_PID
+  if (qemuOutput !== null) {
+    writeFileSync(child.log ?? "", qemuOutput)
+    keeperChild = null
+  }
+  return Promise.resolve(FAKE_PID)
+}
+
+const keeperHello = (): kept.KeeperHello => ({
+  pid: FAKE_PID + 2,
+  protocol: 3,
+  version: "fake",
+  child:
+    keeperChild === null
+      ? null
+      : {
+          name: "qemu",
+          pid: keeperChild,
+          adopted: false,
+          legacy: false,
+          runtime: null,
+        },
+  sidecars: [],
+  service: null,
+  hostEnding: false,
+})
 
 function makeInstance(name: string): void {
   const p = pathsFor(name)
@@ -216,7 +241,6 @@ beforeEach(() => {
   process.env.WINVM_RUNTIME = resolve(state, "runtime")
   mkdirSync(resolve(state, "runtime", "bin"), { recursive: true })
   qemuOutput = null
-  previousSpawner = qemu.setSpawner(fakeSpawner)
   previousProbe = share.setProbe(() => ({ ok: true, reason: null }))
   settled = 0
   previousSettle = qemu.setSettle((survived) => {
@@ -237,6 +261,7 @@ beforeEach(() => {
   initialDevices = undefined
   spacedHome = null
   runningPid = FAKE_PID
+  keeperChild = null
   commands = []
   virtiofsd = 0
   statusCalls = 0
@@ -269,9 +294,20 @@ beforeEach(() => {
     Promise.resolve(m),
   )
   spyOn(vnc, "applyPassword").mockResolvedValue(null)
-  spyOn(share, "startVirtiofsd").mockImplementation(() => {
-    virtiofsd += 1
-    return Promise.resolve({ dir: state, readonly: false, folder: null })
+  spyOn(kept, "openKeeper").mockImplementation(
+    async () => await Promise.resolve(keeperHello()),
+  )
+  spyOn(kept, "keeperHello").mockImplementation(
+    async () => await Promise.resolve(keeperHello()),
+  )
+  spyOn(kept, "untilChildGone").mockResolvedValue(null)
+  spyOn(kept, "launchSidecar").mockImplementation(launchSidecar)
+  spyOn(kept, "launchChild").mockImplementation(launchChild)
+  spyOn(kept, "killKept").mockImplementation(async (_p, pid) => {
+    if (keeperChild === null || (pid !== null && pid !== keeperChild))
+      return await Promise.resolve(false)
+    keeperChild = null
+    return await Promise.resolve(true)
   })
   spyOn(qemu, "pidOf").mockImplementation(() => runningPid)
   spyOn(qemu, "isRunning").mockImplementation(() => runningPid !== null)
@@ -343,7 +379,6 @@ afterEach(() => {
   mock.restore()
   share.setProbe(previousProbe)
   qemu.setSettle(previousSettle)
-  qemu.setSpawner(previousSpawner)
   for (const [k, v] of Object.entries(previous)) {
     if (v === undefined) delete process.env[k]
     else process.env[k] = v

@@ -151,14 +151,14 @@ const lease = (pid: number, operation: string, automatic = false): void => {
 
 beforeEach(async () => {
   saved = Object.fromEntries(
-    ["WINVM_HOME", "WINVM_CLI", "WINVM_NO_RECONCILE"].map((k) => [
-      k,
-      process.env[k],
-    ]),
+    ["WINVM_HOME", "WINVM_CLI", "WINVM_NO_RECONCILE", "WINVM_KEEPER"].map(
+      (k) => [k, process.env[k]],
+    ),
   )
   home = mkdtempSync(resolve(tmpdir(), "winvm-lc-"))
   process.env.WINVM_HOME = home
   process.env.WINVM_CLI = CLI
+  process.env.WINVM_KEEPER = ""
   delete process.env.WINVM_NO_RECONCILE
   p = pathsFor("t")
   mkdirSync(p.dir, { recursive: true })

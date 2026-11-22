@@ -9,7 +9,7 @@ import {
   mock,
   spyOn,
 } from "bun:test"
-import { spawnSync } from "node:child_process"
+import { spawn, spawnSync } from "node:child_process"
 import {
   chmodSync,
   closeSync,
@@ -330,6 +330,35 @@ describe("the runtime's support", () => {
   })
 })
 
+async function startDaemon(
+  p: Paths,
+  bin: string,
+  timeoutMs?: number,
+): Promise<share.Served> {
+  share.stopVirtiofsd(p)
+  for (let i = 0; i < 50 && share.virtiofsdPids(p).length > 0; i += 1)
+    await Bun.sleep(20)
+  const daemon = share.prepareVirtiofsd(p, bin)
+  const [program = "", ...args] = daemon.argv
+  const out = openSync(daemon.log, "a")
+  const proc = spawn(program, args, {
+    detached: true,
+    stdio: ["ignore", out, out],
+  })
+  closeSync(out)
+  proc.unref()
+  let exited = false as boolean
+  proc.on("exit", () => {
+    exited = true
+  })
+  return await share.untilServing(
+    p,
+    { served: daemon.served, pid: proc.pid },
+    () => exited,
+    timeoutMs,
+  )
+}
+
 describe("virtiofsd's lifecycle", () => {
   let p: Paths
   let fake = ""
@@ -349,7 +378,7 @@ describe("virtiofsd's lifecycle", () => {
   })
 
   it("starts one, waits for its socket, records what it serves, and finds it by its socket", async () => {
-    const served = await share.startVirtiofsd(p, { bin: fake })
+    const served = await startDaemon(p, fake)
     expect(served.dir).toBe(share.emptyShareDir(p))
     expect(existsSync(share.virtiofsdSocket(p))).toBe(true)
     expect(share.readServing(p)).toEqual({
@@ -363,10 +392,10 @@ describe("virtiofsd's lifecycle", () => {
 
   it("replaces one left from an earlier QEMU, and never another instance's", async () => {
     const other = instance("life-2")
-    await share.startVirtiofsd(other, { bin: fake })
-    await share.startVirtiofsd(p, { bin: fake })
+    await startDaemon(other, fake)
+    await startDaemon(p, fake)
     const first = share.virtiofsdPids(p)
-    await share.startVirtiofsd(p, { bin: fake })
+    await startDaemon(p, fake)
     expect(share.virtiofsdPids(p)).not.toEqual(first)
     expect(share.virtiofsdPids(p).length).toBe(1)
     expect(share.virtiofsdPids(other).length).toBe(1)
@@ -375,7 +404,7 @@ describe("virtiofsd's lifecycle", () => {
   })
 
   it("stops it, with its socket and record", async () => {
-    await share.startVirtiofsd(p, { bin: fake })
+    await startDaemon(p, fake)
     share.stopVirtiofsd(p)
     expect(share.virtiofsdPids(p).length).toBe(0)
     expect(existsSync(share.virtiofsdSocket(p))).toBe(false)
@@ -384,9 +413,7 @@ describe("virtiofsd's lifecycle", () => {
 
   it("says why when the daemon does not start", async () => {
     process.env.FAKE_FAIL = "1"
-    await expect(
-      share.startVirtiofsd(p, { bin: fake, timeoutMs: 3000 }),
-    ).rejects.toThrow(/cannot serve/)
+    await expect(startDaemon(p, fake, 3000)).rejects.toThrow(/cannot serve/)
     await Bun.sleep(200)
     expect(share.readServing(p)).toBeNull()
   })
@@ -395,7 +422,7 @@ describe("virtiofsd's lifecycle", () => {
     const dir = resolve(home, "chosen")
     mkdirSync(dir, { recursive: true })
     share.writeShare(p, { path: dir, letter: "Z", readonly: false })
-    await share.startVirtiofsd(p, { bin: fake })
+    await startDaemon(p, fake)
     const ps = spawnSync(
       "ps",
       ["-o", "command=", "-p", String(share.virtiofsdPids(p)[0])],

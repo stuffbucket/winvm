@@ -45,7 +45,7 @@ const env = (): Record<string, string> => {
     WINVM_CLI: CLI,
     WINVM_BUILD_ID: "sha256:short-verbs",
     WINVM_NO_RECONCILE: "1",
-    WINVM_KEEPER: "off",
+    WINVM_KEEPER: process.env.WINVM_FAKE_KEEPER ?? "",
     WINVM_MOUNTS: resolve(home, "mounts"),
   }
 }

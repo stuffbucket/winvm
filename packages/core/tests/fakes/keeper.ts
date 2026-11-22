@@ -43,6 +43,9 @@ let sidecars: Kept[] = []
 let lastExit: Record<string, unknown> | null = null
 let service: Service | null = null
 let adopted: { readonly name: string; readonly pid: number } | null = null
+let leaving = false
+let idleSince = Date.now()
+const LINGER_MS = 10_000
 
 const held = spec.adopt === undefined ? null : lockState(spec.adopt.pidfile)
 if (spec.adopt !== undefined && typeof held === "object" && held !== null)
@@ -105,6 +108,7 @@ async function answer(
   request: Record<string, unknown>,
 ): Promise<Record<string, unknown>> {
   appendFileSync(journal, `${JSON.stringify(request)}\n`)
+  idleSince = Date.now()
   switch (request.op) {
     case "hello":
       return {
@@ -202,6 +206,7 @@ async function answer(
       return { ok: true, pid: child.proc.pid }
     }
     case "exit-when-idle":
+      leaving = true
       return { ok: true }
     default:
       return { ok: false, error: "unknown op" }
@@ -227,7 +232,7 @@ const server = createServer((connection: Socket) => {
   })
 })
 server.listen(socket)
-process.on("SIGTERM", () => {
+function end(): void {
   clearInterval(watching)
   retire()
   child?.proc.kill("SIGKILL")
@@ -235,4 +240,18 @@ process.on("SIGTERM", () => {
   server.close()
   rmSync(socket, { force: true })
   process.exit(0)
-})
+}
+setInterval(() => {
+  const idle =
+    child === null &&
+    adopted === null &&
+    service === null &&
+    sidecars.length === 0
+  if (!idle) idleSince = Date.now()
+  if (
+    !existsSync(dir) ||
+    (idle && (leaving || Date.now() - idleSince > LINGER_MS))
+  )
+    end()
+}, 200)
+process.on("SIGTERM", end)
