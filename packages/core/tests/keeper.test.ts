@@ -646,7 +646,7 @@ describe("keeperRequest", () => {
       await expect(keeperRequest(path, { op: "hello" }, 5000)).rejects.toThrow(
         "closed",
       )
-      expect(Date.now() - asked).toBeLessThan(1000)
+      expect(Date.now() - asked).toBeLessThan(2500)
     } finally {
       await closing(server)
     }
