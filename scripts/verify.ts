@@ -186,7 +186,7 @@ const STEPS: Step[] = [
     commands: [npmScript("storybook:check")],
     findings: (output) =>
       count(/error TS\d+/g)(output) +
-      sumOf(/^contrast: (\d+) of/gm)(output) +
+      sumOf(/^contrast: (\d+) (?:of|colors)/gm)(output) +
       sumOf(/^[A-Z][A-Za-z ]+ \((\d+)\)$/gm)(output),
   },
   {
