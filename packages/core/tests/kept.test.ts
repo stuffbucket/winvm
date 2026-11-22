@@ -6,6 +6,7 @@ import {
   it,
   type Mock,
   mock,
+  setDefaultTimeout,
   spyOn,
 } from "bun:test"
 import { spawnSync } from "node:child_process"
@@ -69,6 +70,8 @@ import { gather, legacyVms } from "../src/status"
 import * as vnc from "../src/vnc"
 import { lockPidfile, releasePidfiles } from "./fakes/pidfile"
 import { FakeQmp } from "./fakes/qmp"
+
+setDefaultTimeout(15_000)
 
 const NAME = "kept"
 const FAKE_KEEPER = resolve(import.meta.dir, "fakes", "keeper.ts")

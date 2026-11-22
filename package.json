@@ -10,7 +10,7 @@
     "prepare": "sh scripts/install-hooks.sh",
     "typecheck": "turbo run typecheck",
     "test": "turbo run test",
-    "check": "turbo run typecheck test && bun test scripts",
+    "check": "turbo run typecheck test && bun test --parallel scripts",
     "winvm": "bun apps/cli/src/winvm.ts",
     "verify": "bun scripts/verify.ts",
     "verify:fast": "bun scripts/verify.ts --fast",

@@ -90,6 +90,24 @@ const isWin = process.platform === "win32"
 const POWERSHELL =
   "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe"
 
+export async function writeUpload(
+  path: string,
+  body: Request,
+): Promise<number> {
+  ensureDir(dirname(path))
+  const temp = join(
+    dirname(path),
+    `.winvm-${randomBytes(12).toString("hex")}.part`,
+  )
+  try {
+    const bytes = await Bun.write(temp, body as unknown as Response)
+    await rename(temp, path)
+    return bytes
+  } finally {
+    await rm(temp, { force: true })
+  }
+}
+
 function tokenReader(file: string): () => string | null {
   let cached: {
     readonly mtimeMs: number
@@ -382,6 +400,7 @@ export interface DirEntry {
   readonly size: number | null
   readonly modified: number | null
   readonly hidden: boolean
+  readonly link?: true
 }
 
 export interface Place {
@@ -632,6 +651,7 @@ export async function listDir(
       size: e.dir || st === null ? null : Number(st.size),
       modified: st === null ? null : Math.round(Number(st.mtimeMs)),
       hidden: isHidden(e.name),
+      ...(linkDir.has(e.name) ? { link: true as const } : {}),
     }
   })
   const up = dirname(path)
@@ -1982,8 +2002,7 @@ export function startAgent(
               if (path === null || path === "")
                 return fail(400, "path required")
               const t0 = performance.now()
-              ensureDir(dirname(path))
-              const bytes = await Bun.write(path, req as unknown as Response)
+              const bytes = await writeUpload(path, req)
               return json({ bytes, ms: performance.now() - t0 })
             }
             case "GET /file": {

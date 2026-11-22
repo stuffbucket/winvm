@@ -439,6 +439,7 @@ export const Screen = forwardRef<ScreenHandle, ScreenProps>(function Screen(
     })
     return () => {
       closing = true
+      clipboard.stop()
       live.current = null
       clipboardSync.current = null
       outer.removeEventListener("keydown", onKey, true)

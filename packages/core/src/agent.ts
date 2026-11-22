@@ -1,7 +1,8 @@
 import { randomBytes } from "node:crypto"
-import { once } from "node:events"
 import { createWriteStream, readFileSync } from "node:fs"
-import { resolve } from "node:path"
+import { mkdir, rename, rm } from "node:fs/promises"
+import { dirname, join, resolve } from "node:path"
+import { pipeline } from "node:stream/promises"
 
 import type { AgentState } from "./agentfwd"
 import {
@@ -205,20 +206,33 @@ export class AgentClient {
       undefined,
       timeoutMs,
     )
-    const out = createWriteStream(hostPath)
+    const parent = dirname(hostPath)
+    const temp = join(parent, `.winvm-${randomBytes(12).toString("hex")}.part`)
     let n = 0
+    let out: ReturnType<typeof createWriteStream> | undefined
     try {
+      await mkdir(parent, { recursive: true })
+      out = createWriteStream(temp, { flags: "wx" })
       const body: ReadableStream<Uint8Array> =
         r.body ?? new ReadableStream<Uint8Array>()
-      for await (const chunk of body) {
-        n += chunk.length
-        if (!out.write(chunk)) await once(out, "drain")
-      }
+      await pipeline(async function* () {
+        for await (const chunk of body) {
+          n += chunk.length
+          yield chunk
+        }
+      }, out)
+      if (!out.closed)
+        await new Promise<void>((done) => out?.once("close", done))
+      await rename(temp, hostPath)
+      return n
     } finally {
-      out.end()
-      await once(out, "close")
+      if (out !== undefined && !out.closed) {
+        out.destroy()
+        await new Promise<void>((done) => out?.once("close", done))
+      }
+      await r.body?.cancel().catch(() => undefined)
+      await rm(temp, { force: true })
     }
-    return n
   }
 
   async launch(
