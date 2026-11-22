@@ -301,6 +301,31 @@ describe("the long verbs, as the CLI prints and exits with them", () => {
     expect(existsSync(p.pid)).toBe(false)
   }, 30_000)
 
+  it("stop of a running VM with no service and no keeper starts a service of its own and shuts Windows down", async () => {
+    stopService(p)
+    service?.kill("SIGKILL")
+    await service?.exited
+    service = null
+    const proc = Bun.spawn([process.execPath, CLI, "stop", "-i", "t"], {
+      env: { ...env(), WINVM_KEEPER: "" },
+      stdout: "pipe",
+      stderr: "pipe",
+    })
+    const [stdout, stderr, code] = await Promise.all([
+      new Response(proc.stdout).text(),
+      new Response(proc.stderr).text(),
+      proc.exited,
+    ])
+    expect({ code, stdout, stderr }).toEqual({
+      code: 0,
+      stdout: 'instance "t" stopped\n',
+      stderr: "",
+    })
+    expect(fakeQmp.commands).toContain("system_powerdown")
+    expect(existsSync(p.pid)).toBe(false)
+    expect(existsSync(resolve(p.dir, "keeper"))).toBe(false)
+  }, 30_000)
+
   it("stop of a stopped instance says it is not running", async () => {
     await qemuGoes()
     expect(await winvm("stop", "-i", "t")).toEqual({
@@ -651,6 +676,105 @@ describe("a command whose own WINVM_KEEPER differs from the service's", () => {
       `::error::winvm's service for "t" does not run pause (this service runs with WINVM_KEEPER=${process.env.WINVM_FAKE_KEEPER ?? ""}, and the command asks for ${another}), so it was not run`,
     )
     expect(begins("pause")).toEqual([])
+  }, 30_000)
+})
+
+describe("the long verbs, with a service from before they moved", () => {
+  const OLD_SERVICE = resolve(import.meta.dir, "fakes", "oldservice.ts")
+  let old: ReturnType<typeof Bun.spawn> | null = null
+
+  afterEach(async () => {
+    old?.kill("SIGKILL")
+    await old?.exited
+    old = null
+  })
+
+  const olderService = async (status: number): Promise<number> => {
+    stopService(p)
+    service?.kill("SIGKILL")
+    await service?.exited
+    service = null
+    const proc = Bun.spawn(
+      [process.execPath, OLD_SERVICE, "t", String(status)],
+      {
+        env: env(),
+        stdout: "pipe",
+        stderr: "inherit",
+      },
+    )
+    old = proc
+    const reader = (proc.stdout as ReadableStream<Uint8Array>).getReader()
+    await reader.read()
+    reader.releaseLock()
+    return proc.pid
+  }
+
+  for (const [label, status, keeper] of [
+    [
+      "adopt the VM under winvm's keeper",
+      501,
+      process.env.WINVM_FAKE_KEEPER ?? "",
+    ],
+    ["hand an older service of this install over, with no keeper,", 404, ""],
+  ] as const)
+    it(`${label} stop the older service, and run in a current one, with the same output`, async () => {
+      const oldPid = await olderService(status)
+      const proc = Bun.spawn(
+        [process.execPath, CLI, "save", "-i", "t", "x", "--force"],
+        {
+          env: { ...env(), WINVM_KEEPER: keeper },
+          stdout: "pipe",
+          stderr: "pipe",
+        },
+      )
+      const [stdout, stderr, code] = await Promise.all([
+        new Response(proc.stdout).text(),
+        new Response(proc.stderr).text(),
+        proc.exited,
+      ])
+      expect({ code, stdout: timings(stdout), stderr }).toEqual({
+        code: 0,
+        stdout:
+          'saved "x" (manual, zstd) in N: RAM N -> N on disk, N total (disks are clones)\n' +
+          "  clock: guest was N from the host, now N\n",
+        stderr: "",
+      })
+      const ran = ranByCli("save")
+      expect(ran).not.toBe(proc.pid)
+      expect(ran).not.toBe(oldPid)
+      expect(await old?.exited).toBe(0)
+      expect(existsSync(resolve(p.dir, "keeper"))).toBe(keeper !== "")
+    }, 30_000)
+
+  it("stow (Protect now's first step) stops an older winvm's watcher process and stows", async () => {
+    const watcher = Bun.spawn(
+      [
+        process.execPath,
+        resolve(import.meta.dir, "fakes", "holder.ts"),
+        "winvm",
+        "watch",
+        "-i",
+        "t",
+      ],
+      { stdout: "pipe", stderr: "ignore" },
+    )
+    try {
+      const reader = (watcher.stdout as ReadableStream<Uint8Array>).getReader()
+      await reader.read()
+      reader.releaseLock()
+      writeFileSync(resolve(p.dir, "watch.pid"), `${String(watcher.pid)}\n`)
+      await olderService(501)
+      const r = await winvm("stow", "-i", "t")
+      expect(r.code).toBe(0)
+      expect(r.stdout).toContain('stowed "t"')
+      expect(await watcher.exited).not.toBeNull()
+      expect(existsSync(resolve(p.dir, "watch.pid"))).toBe(false)
+      expect(
+        existsSync(resolve(home, "saves", "t", "stow", "manifest.json")),
+      ).toBe(true)
+    } finally {
+      watcher.kill("SIGKILL")
+    }
   }, 30_000)
 })
 
