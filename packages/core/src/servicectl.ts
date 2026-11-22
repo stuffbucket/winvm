@@ -29,6 +29,7 @@ export interface ServiceInfo {
   readonly cli: string
   readonly version: string
   readonly startedAt: string
+  readonly pidStart?: string | null
   readonly build?: string
 }
 
@@ -85,16 +86,18 @@ function pidIn(text: string | null): number | null {
 }
 
 export function wroteRecord(
-  info: Pick<ServiceInfo, "pid" | "startedAt">,
+  info: Pick<ServiceInfo, "pid" | "startedAt" | "pidStart">,
   startOf: (pid: number) => string | null = processStart,
 ): boolean {
-  if (info.pid === process.pid) return false
-  const claimed = Date.parse(info.startedAt)
-  const start = startOf(info.pid)
-  if (start === null || start === UNREADABLE_START || Number.isNaN(claimed))
+  if (!Number.isInteger(info.pid) || info.pid <= 1 || info.pid === process.pid)
     return false
+  const start = startOf(info.pid)
+  if (start === null || start === UNREADABLE_START) return false
+  if (typeof info.pidStart === "string" && info.pidStart !== UNREADABLE_START)
+    return start === info.pidStart
+  const claimed = Date.parse(info.startedAt)
   const started = Date.parse(`${start} UTC`)
-  return !Number.isNaN(started) && started <= claimed
+  return !Number.isNaN(claimed) && !Number.isNaN(started) && started <= claimed
 }
 
 function parseRecord(text: string | null): ServiceInfo | null {

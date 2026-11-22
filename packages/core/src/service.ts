@@ -132,6 +132,7 @@ export async function runService(
     cli: process.env.WINVM_CLI ?? "",
     version: coreVersion(),
     startedAt: new Date().toISOString(),
+    pidStart: ownStart(),
     build: buildIdentity(),
   })
   const exitAfterMs = o.exitAfterMs ?? 10_000

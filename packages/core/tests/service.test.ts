@@ -467,6 +467,22 @@ describe("one service per instance", () => {
     expect(recorded()?.pid).toBe(process.pid)
   })
 
+  it("takes over a record that names pid 1, which is never a service", async () => {
+    writeFileSync(
+      p.service,
+      JSON.stringify({
+        pid: 1,
+        cli: "",
+        version: "",
+        startedAt: "2000-01-01T00:00:00.000Z",
+      }),
+    )
+    expect(readService(p)).toBeNull()
+    svc = await runService("t", { exitAfterMs: 5000, checkMs: 50 })
+    expect(recorded()?.pid).toBe(process.pid)
+    expect(recorded()?.pidStart).toBe(processStart(process.pid))
+  })
+
   it("stops when its record names another service, and leaves that service's sockets", async () => {
     svc = await runService("t", { exitAfterMs: 5000, checkMs: 50 })
     const newer = new QmpChannel({
@@ -598,6 +614,27 @@ describe("which process wrote a service record", () => {
     expect(at("2026-11-21T10:00:01.000Z", null)).toBe(false)
     expect(at("2026-11-21T10:00:01.000Z", UNREADABLE_START)).toBe(false)
     expect(at("")).toBe(false)
+  })
+
+  it("is the one whose start the record names exactly, when it names one", () => {
+    const exact = (pidStart: string, start: string | null): boolean =>
+      wroteRecord(
+        { pid: 424_242, startedAt: "2026-11-21T10:00:05.000Z", pidStart },
+        () => start,
+      )
+    expect(exact(START, START)).toBe(true)
+    expect(exact(START, "Sat Nov 21 10:00:01 2026")).toBe(false)
+    expect(exact(START, "Sat Nov 21 09:59:59 2026")).toBe(false)
+  })
+
+  it("is never pid 1 or below, whatever the record says", () => {
+    for (const pid of [1, 0, -1])
+      expect(
+        wroteRecord(
+          { pid, startedAt: "2099-01-01T00:00:00Z", pidStart: null },
+          () => START,
+        ),
+      ).toBe(false)
   })
 
   it("is never this very process", () => {
