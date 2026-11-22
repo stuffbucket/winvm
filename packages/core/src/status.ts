@@ -42,7 +42,7 @@ import {
 import { parseEtime } from "./proc"
 import * as qemu from "./qemu"
 import { type Management, managementOf } from "./reconcile"
-import { currentQemuCompat } from "./runtime"
+import { currentQemuCompat, findRuntime } from "./runtime"
 import * as saves from "./saves"
 import { readService } from "./servicectl"
 import { spawnText } from "./shell"
@@ -678,10 +678,11 @@ async function withRuntime(
   k: KeeperStanding | null,
 ): Promise<KeeperStanding | null> {
   if (k === null || pid === null || !WATCHED.has(k.protection)) return k
+  if (findRuntime() === null) return k
+  const installed = currentQemuCompat()
   const by = await saves
     .producedBy(p, pid, runningCommand(pid))
     .catch(() => saves.UNKNOWN_RUNTIME)
-  const installed = currentQemuCompat()
   return {
     ...k,
     recallable: saves.recallable(by, installed),
