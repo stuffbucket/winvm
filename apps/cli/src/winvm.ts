@@ -94,44 +94,9 @@ const viaService = async (
       running: (name) => qemuRunning(pathsFor(name)),
     },
   )
-const NO_SWEEP = [
-  "help",
-  "--help",
-  "ls",
-  "list",
-  "doctor",
-  "version",
-  "--version",
-  "timemachine",
-  "tm",
-  "watch",
-  "serve",
-  "events",
-  "status",
-  "reconcile",
-  "cancel",
-]
-const LOOK_ONLY = [
-  "info",
-  "saves",
-  "snapshots",
-  "config",
-  "screenshot",
-  "mcp",
-  "cua-serve",
-]
-if (
-  sub !== undefined &&
-  !NO_SWEEP.includes(sub) &&
-  !(sub === "files" && args.positional[0]?.startsWith("_") === true)
-) {
-  if (
-    LOOK_ONLY.includes(sub) ||
-    (sub === "files" && args.positional[0] === "status")
-  )
-    finder.cleanStaleLater(instanceName(args))
-  else finder.cleanStale(instanceName(args))
-}
+const sweep = finder.sweepFor(sub, args.positional[0])
+if (sweep === "later") finder.cleanStaleLater(instanceName(args))
+else if (sweep === "now") finder.cleanStale(instanceName(args))
 
 if (
   sub !== undefined &&

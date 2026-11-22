@@ -463,6 +463,51 @@ export async function afterUp(
   await mountAgain(instance, mounted, sys)
 }
 
+const NO_SWEEP = [
+  "help",
+  "--help",
+  "ls",
+  "list",
+  "doctor",
+  "version",
+  "--version",
+  "timemachine",
+  "tm",
+  "watch",
+  "serve",
+  "events",
+  "status",
+  "reconcile",
+  "cancel",
+]
+
+const LOOK_ONLY = [
+  "info",
+  "saves",
+  "snapshots",
+  "config",
+  "screenshot",
+  "mcp",
+  "cua-serve",
+]
+
+export type Sweep = "none" | "later" | "now"
+
+export function sweepFor(
+  sub: string | undefined,
+  action: string | undefined,
+): Sweep {
+  if (
+    sub === undefined ||
+    NO_SWEEP.includes(sub) ||
+    (sub === "files" && action?.startsWith("_") === true)
+  )
+    return "none"
+  return LOOK_ONLY.includes(sub) || (sub === "files" && action === "status")
+    ? "later"
+    : "now"
+}
+
 export function cleanStale(
   instance: string,
   sys: Sys = realSys,
