@@ -12,6 +12,7 @@ import { runningCommand } from "./display"
 import { appendEntry } from "./eventlog"
 import * as finder from "./finder"
 import * as frozen from "./frozen"
+import { keeperMissing } from "./kept"
 import { lockWindows } from "./lock"
 import { qmpCommand } from "./monitor"
 import * as notes from "./notes"
@@ -211,6 +212,8 @@ async function doLoad(
 
 export async function load(args: Args): Promise<number> {
   const name = instanceName(args)
+  const noKeeper = keeperMissing(`"${name}" was not loaded`)
+  if (noKeeper !== null) return fail(noKeeper.message)
   let saveName = args.positional[0]
   if (saveName === undefined) {
     const newest = saves
@@ -468,6 +471,17 @@ function refuse(
 
 export async function stow(args: Args): Promise<number> {
   const name = instanceName(args)
+  const noKeeper = keeperMissing(`"${name}" was not stowed`)
+  if (noKeeper !== null) {
+    appendEntry(name, {
+      kind: "warning",
+      what: "stow refused",
+      reason: "no keeper",
+      automatic: automaticFrom(args),
+    })
+    fail(noKeeper.message)
+    return saves.STOW_REFUSED
+  }
   const refusal = await stowRefusal(name)
   if (refusal !== null) return refuse(name, refusal, automaticFrom(args))
   return await stowHeld(name, args)

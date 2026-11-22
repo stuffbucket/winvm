@@ -2,6 +2,7 @@ import type { Args } from "./args"
 import { imageName, instanceName } from "./args"
 import { alignGuestTimeZone, formatOffset, syncGuestClock } from "./clock"
 import { ensureInstance } from "./instance"
+import { keeperMissing } from "./kept"
 import { withOperation } from "./operation"
 import type { Paths } from "./paths"
 import { pathsFor, readImageMeta, readMeta } from "./paths"
@@ -286,6 +287,8 @@ export async function resetToGolden(
   name: string = saves.GOLDEN,
   o: { readonly timeoutMs?: number } = {},
 ): Promise<ResetResult> {
+  const noKeeper = keeperMissing(`"${instance}" was not reset to "${name}"`)
+  if (noKeeper !== null) throw noKeeper
   const started = Date.now()
   const manifest = await saves.loadSave(instance, name)
   saves.retireLoaded(instance, name, manifest)

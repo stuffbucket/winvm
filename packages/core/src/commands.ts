@@ -53,7 +53,7 @@ import {
 import * as input from "./input"
 import { ensureInstance, makeVars, resetInstance, sealBase } from "./instance"
 import { ensureKeeper } from "./keeper"
-import { killKept, retireKeeper } from "./kept"
+import { keeperMissing, killKept, retireKeeper } from "./kept"
 import { ensureCurrent, ManagementError } from "./lifecycle"
 import * as machineinfo from "./machineinfo"
 import {
@@ -791,6 +791,11 @@ export async function rewind(args: Args): Promise<number> {
   const meta = readMeta(name)
   if (meta === null) {
     console.error(`::error::no such instance "${name}"`)
+    return 1
+  }
+  const noKeeper = keeperMissing(`"${name}" was not rewound`)
+  if (noKeeper !== null) {
+    console.error(`::error::${noKeeper.message}`)
     return 1
   }
   const rewatch = watcher.rewatchAfterRestore(name, args)

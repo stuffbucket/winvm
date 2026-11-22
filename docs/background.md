@@ -111,8 +111,10 @@ it; a CLI-only install gets it from `winvm setup`, which downloads the keeper
 `packages/core/keeper.json` pins.
 `WINVM_KEEPER=<path>` uses another build, for development. Every VM runs under
 the keeper: when none is found, `winvm start`, and anything else that launches
-QEMU, starts nothing and says how to get one, and `winvm doctor` lists it as a
-missing prerequisite. `winvm create`, `winvm adopt` and `winvm setup`, which
+QEMU, starts nothing and says how to get one; `load`, `rewind`,
+`golden reset` and `stow` refuse before they touch Windows, since none of them
+could bring it back (a stow refused this way exits 4, as any refused stow
+does); and `winvm doctor` lists it as a missing prerequisite. `winvm create`, `winvm adopt` and `winvm setup`, which
 start no VM, only mention it. A command whose
 `WINVM_KEEPER` differs from the one winvm's service runs with is not run; it
 says which keeper each names. `winvm status` has a `keeper` row:

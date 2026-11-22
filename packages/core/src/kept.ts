@@ -45,6 +45,9 @@ export class KeeperMissing extends Error {
   }
 }
 
+export const keeperMissing = (what: string): KeeperMissing | null =>
+  keeperUse().kind === "missing" ? new KeeperMissing(what) : null
+
 export function callerUmask(): number {
   const mask = process.umask(0o077)
   process.umask(mask)

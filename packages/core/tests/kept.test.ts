@@ -26,6 +26,8 @@ import { dirname, resolve } from "node:path"
 import { parseArgs } from "../src/args"
 import * as commands from "../src/commands"
 import { readSince, START } from "../src/eventlog"
+import * as finder from "../src/finder"
+import { resetToGolden } from "../src/golden"
 import * as host from "../src/host"
 import {
   type JobInfo,
@@ -59,6 +61,7 @@ import * as qemu from "../src/qemu"
 import * as qmp from "../src/qmp"
 import { reconcileNote } from "../src/reconcile"
 import { currentQemuCompat } from "../src/runtime"
+import * as savecmds from "../src/savecmds"
 import * as saves from "../src/saves"
 import * as servicectl from "../src/servicectl"
 import * as share from "../src/share"
@@ -594,6 +597,110 @@ describe("a launch with no keeper", () => {
     await expect(leasedLaunch()).rejects.toThrow(
       `EIO. Windows is stopped; \`winvm start -i ${NAME}\` starts it again once the keeper answers`,
     )
+  })
+})
+
+describe("a command that ends QEMU to launch it again, with no keeper", () => {
+  const live = async (): Promise<number> => {
+    const p = pathsFor(NAME)
+    writeFileSync(p.overlay, "live disk")
+    return (
+      await lockPidfile(
+        p.pid,
+        resolve(state, "runtime", "bin", "qemu-system-aarch64"),
+        "-pidfile",
+        p.pid,
+      )
+    ).pid
+  }
+  const errors = (): string[] => {
+    const said: string[] = []
+    spyOn(console, "error").mockImplementation((...a: unknown[]) => {
+      said.push(a.map(String).join(" "))
+    })
+    return said
+  }
+  const untouched = (pid: number): void => {
+    expect(alive(pid)).toBe(true)
+    expect(qemu.pidOf(pathsFor(NAME))).toBe(pid)
+    expect(readFileSync(pathsFor(NAME).overlay, "utf8")).toBe("live disk")
+  }
+
+  beforeEach(() => {
+    delete process.env.WINVM_KEEPER
+  })
+
+  it("load leaves Windows running and its disk as it was", async () => {
+    const pid = await live()
+    const said = errors()
+    try {
+      expect(await savecmds.load(parseArgs(["-i", NAME, "named"]))).toBe(1)
+      untouched(pid)
+      expect(said.join("\n")).toContain(
+        `::error::no winvm-keeper was found, so "${NAME}" was not loaded; winvm runs every VM under it: the winvm app carries one`,
+      )
+    } finally {
+      await releasePidfiles()
+    }
+  })
+
+  it("rewind leaves Windows running and its disk as it was", async () => {
+    const pid = await live()
+    const down = spyOn(finder, "beforeDown")
+    const said = errors()
+    try {
+      expect(await commands.rewind(parseArgs(["-i", NAME, "named"]))).toBe(1)
+      untouched(pid)
+      expect(down).not.toHaveBeenCalled()
+      expect(said.join("\n")).toContain(`so "${NAME}" was not rewound`)
+    } finally {
+      await releasePidfiles()
+    }
+  })
+
+  it("golden reset leaves Windows running and its disk as it was", async () => {
+    const pid = await live()
+    const loading = spyOn(saves, "loadSave")
+    try {
+      await expect(resetToGolden(NAME)).rejects.toThrow(
+        `so "${NAME}" was not reset to "golden"`,
+      )
+      untouched(pid)
+      expect(loading).not.toHaveBeenCalled()
+    } finally {
+      await releasePidfiles()
+    }
+  })
+
+  it("stow is refused as a stow, writes nothing, and leaves Windows running", async () => {
+    const pid = await live()
+    const said = errors()
+    try {
+      expect(await savecmds.stow(parseArgs(["-i", NAME, "--force"]))).toBe(
+        saves.STOW_REFUSED,
+      )
+      untouched(pid)
+      expect(saves.hasSave(NAME, saves.STOW)).toBe(false)
+      expect(said.join("\n")).toContain(`so "${NAME}" was not stowed`)
+      expect(
+        readSince(NAME, START).entries.filter(
+          (e) => e.kind === "warning" && e.what === "stow refused",
+        ),
+      ).toMatchObject([{ reason: "no keeper" }])
+    } finally {
+      await releasePidfiles()
+    }
+  })
+
+  it("start of a stopped instance with a stow starts nothing and keeps the stow", async () => {
+    const stow = saves.saveDir(NAME, saves.STOW)
+    mkdirSync(stow, { recursive: true })
+    writeFileSync(resolve(stow, "manifest.json"), "{}")
+    errors()
+    expect(await commands.start(parseArgs(["-i", NAME]))).toBe(1)
+    expect(existsSync(resolve(stow, "manifest.json"))).toBe(true)
+    expect(launchdCalls).toEqual([])
+    expect(qemu.isRunning(pathsFor(NAME))).toBe(false)
   })
 })
 
