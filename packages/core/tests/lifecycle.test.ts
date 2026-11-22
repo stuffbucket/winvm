@@ -96,7 +96,7 @@ const recordService = (
     pid,
     cli,
     version: "0",
-    startedAt: "",
+    startedAt: new Date().toISOString(),
     ...(build === undefined ? {} : { build }),
   }
   writeFileSync(p.service, JSON.stringify(info))
@@ -573,7 +573,7 @@ describe("the CLI", () => {
       pid: h.pid,
       cli,
       version: "0",
-      startedAt: "",
+      startedAt: new Date().toISOString(),
       build: OLD,
     }
     writeFileSync(p.service, JSON.stringify(info))

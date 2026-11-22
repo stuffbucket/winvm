@@ -54,29 +54,6 @@ export function instanceName(args: Args): string {
   return args.flags.get("instance") ?? process.env.WINVM_INSTANCE ?? "default"
 }
 
-export function commandInstance(afterVerb: string): string | null {
-  const words = afterVerb.trim().split(/\s+/)
-  for (let i = 0; i < words.length; i += 1) {
-    const w = words[i] ?? ""
-    if (w === "-i" || w === "--instance") return words[i + 1] ?? null
-    if (w.startsWith("--instance=")) return w.slice("--instance=".length)
-  }
-  return null
-}
-
-export function winvmCommandAfter(
-  command: string,
-  verb: string,
-): string | null {
-  const target =
-    "[A-Za-z0-9_]+-[A-Za-z0-9_]+-[A-Za-z0-9_.]+(?:-[A-Za-z0-9_.]+)?"
-  const escapedVerb = verb.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
-  const match = new RegExp(
-    `(?:^|[\\s/])winvm(?:\\.ts|-${target})?\\s+${escapedVerb}(\\s.*)?$`,
-  ).exec(command.trim())
-  return match === null ? null : (match[1] ?? "")
-}
-
 export function imageName(args: Args): string {
   return args.flags.get("image") ?? process.env.WINVM_IMAGE ?? "win11-arm64"
 }

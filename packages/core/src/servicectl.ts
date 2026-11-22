@@ -10,21 +10,19 @@ import {
   statSync,
   writeFileSync,
 } from "node:fs"
-import { basename, resolve } from "node:path"
+import { resolve } from "node:path"
 
-import { commandInstance, winvmCommandAfter } from "./args"
 import { buildIdentity } from "./identity"
 import { KEEPER_PROTOCOL, keeperRequest } from "./keeper"
 import {
   callerUmask,
   type KeeperHello,
-  keeperDir,
   keeperHello,
   keeperSocket,
   keptEnv,
 } from "./kept"
 import { cliArgv, managedEnv, type Paths } from "./paths"
-import { spawnText } from "./shell"
+import { isAlive, processStart, UNREADABLE_START } from "./proc"
 
 export interface ServiceInfo {
   readonly pid: number
@@ -86,24 +84,34 @@ function pidIn(text: string | null): number | null {
   }
 }
 
-function isServiceFor(pid: number, name: string): boolean {
-  if (pid === process.pid) return false
-  const r = spawnText("ps", ["-o", "command=", "-p", String(pid)])
-  const after = winvmCommandAfter(r.stdout, "serve")
-  return after !== null && commandInstance(after) === name
+export function wroteRecord(
+  info: Pick<ServiceInfo, "pid" | "startedAt">,
+  startOf: (pid: number) => string | null = processStart,
+): boolean {
+  if (info.pid === process.pid) return false
+  const claimed = Date.parse(info.startedAt)
+  const start = startOf(info.pid)
+  if (start === null || start === UNREADABLE_START || Number.isNaN(claimed))
+    return false
+  const started = Date.parse(`${start} UTC`)
+  return !Number.isNaN(started) && started <= claimed
 }
 
-export function readService(p: Paths): ServiceInfo | null {
+function parseRecord(text: string | null): ServiceInfo | null {
+  if (text === null) return null
   try {
-    const s = JSON.parse(readFileSync(p.service, "utf8")) as ServiceInfo
-    return typeof s.pid === "number" &&
-      alive(s.pid) &&
-      isServiceFor(s.pid, basename(p.dir))
-      ? s
+    const s = JSON.parse(text) as Partial<ServiceInfo>
+    return typeof s.pid === "number" && typeof s.startedAt === "string"
+      ? (s as ServiceInfo)
       : null
   } catch {
     return null
   }
+}
+
+export function readService(p: Paths): ServiceInfo | null {
+  const s = parseRecord(readRecord(p))
+  return s !== null && wroteRecord(s) ? s : null
 }
 
 export function dropServiceRecord(p: Paths, judged: string): boolean {
@@ -193,11 +201,10 @@ export interface StopServiceSeams {
   readonly now?: () => number
   readonly sleep?: (ms: number) => void
   readonly running?: (pid: number) => boolean
-  readonly isService?: (pid: number) => boolean
+  readonly isService?: (info: ServiceInfo) => boolean
 }
 
 export function stopService(p: Paths, seams: StopServiceSeams = {}): void {
-  const name = basename(p.dir)
   const kill =
     seams.kill ??
     ((pid: number, signal: NodeJS.Signals): void =>
@@ -208,51 +215,25 @@ export function stopService(p: Paths, seams: StopServiceSeams = {}): void {
     ((ms: number): void => {
       Bun.sleepSync(ms)
     })
-  const running =
-    seams.running ?? ((pid: number): boolean => alive(pid) && !exited(pid))
+  const running = seams.running ?? isAlive
   const isService =
-    seams.isService ??
-    ((pid: number): boolean => alive(pid) && isServiceFor(pid, name))
+    seams.isService ?? ((info: ServiceInfo) => wroteRecord(info))
   const seen = readRecord(p)
-  const pid = pidIn(seen)
-  if (seen === null || pid === null || !isService(pid)) return
+  const info = parseRecord(seen)
+  if (seen === null || info === null || !isService(info)) return
   try {
-    kill(pid, keptBy(p, pid) ? "SIGUSR2" : "SIGTERM")
+    kill(info.pid, "SIGUSR2")
   } catch {
     return
   }
   const deadline = now() + 5000
-  while (running(pid) && now() < deadline) sleep(50)
-  if (running(pid) && isService(pid)) {
+  while (running(info.pid) && now() < deadline) sleep(50)
+  if (running(info.pid) && isService(info)) {
     try {
-      kill(pid, "SIGKILL")
+      kill(info.pid, "SIGKILL")
     } catch {}
   }
   dropServiceRecord(p, seen)
-}
-
-function keptBy(p: Paths, pid: number): boolean {
-  const keeper = Number.parseInt(
-    readOr(resolve(keeperDir(p), "keeper.pid")),
-    10,
-  )
-  if (!Number.isInteger(keeper) || keeper <= 1) return false
-  const parent = spawnText("ps", ["-o", "ppid=", "-p", String(pid)])
-  return Number.parseInt(parent.stdout.trim(), 10) === keeper
-}
-
-function readOr(file: string): string {
-  try {
-    return readFileSync(file, "utf8")
-  } catch {
-    return ""
-  }
-}
-
-function exited(pid: number): boolean {
-  const r = spawnText("ps", ["-o", "stat=", "-p", String(pid)])
-  const stat = r.stdout.trim()
-  return stat === "" || stat.startsWith("Z")
 }
 
 export interface EnsureServiceOptions {

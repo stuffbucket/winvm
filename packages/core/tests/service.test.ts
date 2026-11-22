@@ -26,7 +26,7 @@ import {
 import { buildIdentity } from "../src/identity"
 import * as monitor from "../src/monitor"
 import { PACKAGE_DIR, type Paths, pathsFor } from "../src/paths"
-import { processStart } from "../src/proc"
+import { processStart, UNREADABLE_START } from "../src/proc"
 import { qemuArgs } from "../src/qemu"
 import * as qga from "../src/qga"
 import * as qmp from "../src/qmp"
@@ -39,6 +39,7 @@ import {
   type ServiceInfo,
   serviceFreshness,
   stopService,
+  wroteRecord,
 } from "../src/servicectl"
 import {
   type Actions,
@@ -494,20 +495,54 @@ describe("one service per instance", () => {
     svc = null
   })
 
-  it("does not take a live process that is not this instance's service for one", () => {
+  it("does not take a process that started after the record was written for its service, as a reused pid would", () => {
     const other = Bun.spawn(["sleep", "30"])
     writeFileSync(
       p.service,
-      JSON.stringify({ pid: other.pid, cli: "", version: "", startedAt: "" }),
+      JSON.stringify({
+        pid: other.pid,
+        cli: "",
+        version: "",
+        startedAt: new Date(Date.now() - 3_600_000).toISOString(),
+      }),
     )
-    expect(readService(p)).toBeNull()
-    other.kill()
+    try {
+      expect(readService(p)).toBeNull()
+      const kills: string[] = []
+      stopService(p, { kill: (_pid, sig) => void kills.push(sig) })
+      expect(kills).toEqual([])
+    } finally {
+      other.kill()
+    }
+  })
+
+  it("takes the process that wrote the record for its service", () => {
+    const h = Bun.spawn(["sleep", "30"])
+    writeFileSync(
+      p.service,
+      JSON.stringify({
+        pid: h.pid,
+        cli: "",
+        version: "",
+        startedAt: new Date(Date.now() + 1000).toISOString(),
+      }),
+    )
+    try {
+      expect(readService(p)?.pid).toBe(h.pid)
+    } finally {
+      h.kill()
+    }
   })
 
   it("never takes this very process for a service, so a stale record naming it cannot make it signal itself", () => {
     writeFileSync(
       p.service,
-      JSON.stringify({ pid: process.pid, cli: "", version: "", startedAt: "" }),
+      JSON.stringify({
+        pid: process.pid,
+        cli: "",
+        version: "",
+        startedAt: new Date().toISOString(),
+      }),
     )
     expect(readService(p)).toBeNull()
     let t = 0
@@ -543,110 +578,33 @@ describe("one service per instance", () => {
     expect(dropServiceRecord(p, rejected)).toBe(true)
     expect(existsSync(p.service)).toBe(false)
   })
-
-  for (const [label, argv] of [
-    [
-      "an instance whose name starts with this one's",
-      ["winvm", "serve", "-i", "tt"],
-    ],
-    [
-      "another instance named with --instance=",
-      ["winvm", "serve", "--instance=other"],
-    ],
-  ] as const) {
-    it(`never takes the service of ${label} for this one's, nor signals it`, () => {
-      const h = Bun.spawn(
-        [
-          process.execPath,
-          resolve(import.meta.dir, "fakes", "holder.ts"),
-          ...argv,
-        ],
-        { stdout: "ignore", stderr: "ignore" },
-      )
-      try {
-        writeFileSync(
-          p.service,
-          JSON.stringify({ pid: h.pid, cli: "", version: "", startedAt: "" }),
-        )
-        expect(readService(p)).toBeNull()
-        const kills: string[] = []
-        stopService(p, { kill: (_pid, sig) => void kills.push(sig) })
-        expect(kills).toEqual([])
-      } finally {
-        h.kill()
-      }
-    })
-  }
 })
 
-describe("which process is the default instance's service", () => {
-  const holder = resolve(import.meta.dir, "fakes", "holder.ts")
-  const d = (): Paths => {
-    const dp = pathsFor("default")
-    mkdirSync(dp.dir, { recursive: true })
-    return dp
-  }
+describe("which process wrote a service record", () => {
+  const START = "Sat Nov 21 10:00:00 2026"
+  const at = (startedAt: string, start: string | null = START): boolean =>
+    wroteRecord({ pid: 424_242, startedAt }, () => start)
 
-  for (const argv of [
-    ["ollama", "serve"],
-    ["hugo", "serve"],
-    ["node", "server.js", "serve"],
-    ["winvm", "serve"],
-    ["evilwinvm", "serve", "-i", "default"],
-    ["ollama", "serve", "-i", "default"],
-  ]) {
-    it(`is never \`${argv.join(" ")}\``, () => {
-      const dp = d()
-      const h = Bun.spawn([process.execPath, holder, ...argv], {
-        stdout: "ignore",
-        stderr: "ignore",
-      })
-      try {
-        writeFileSync(
-          dp.service,
-          JSON.stringify({ pid: h.pid, cli: "", version: "", startedAt: "" }),
-        )
-        expect(readService(dp)).toBeNull()
-        const kills: string[] = []
-        stopService(dp, { kill: (_pid, sig) => void kills.push(sig) })
-        expect(kills).toEqual([])
-      } finally {
-        h.kill()
-      }
-    })
-  }
+  it("is the one that started no later than the record says the service did", () => {
+    expect(at("2026-11-21T10:00:00.500Z")).toBe(true)
+    expect(at("2026-11-21T10:00:07.000Z")).toBe(true)
+  })
 
-  for (const argv of [
-    ["/repo/apps/cli/src/winvm.ts", "serve", "-i", "default"],
-    [
-      "/Applications/winvm.app/Contents/MacOS/winvm",
-      "serve",
-      "--instance=default",
-    ],
-    [
-      "/Applications/winvm.app/Contents/MacOS/winvm-aarch64-apple-darwin",
-      "serve",
-      "-i",
-      "default",
-    ],
-  ]) {
-    it(`is \`${argv.join(" ")}\``, () => {
-      const dp = d()
-      const h = Bun.spawn([process.execPath, holder, ...argv], {
-        stdout: "ignore",
-        stderr: "ignore",
-      })
-      try {
-        writeFileSync(
-          dp.service,
-          JSON.stringify({ pid: h.pid, cli: "", version: "", startedAt: "" }),
-        )
-        expect(readService(dp)?.pid).toBe(h.pid)
-      } finally {
-        h.kill()
-      }
-    })
-  }
+  it("is not one that started after it, as a process given a reused pid did", () => {
+    expect(at("2026-11-21T09:59:59.900Z")).toBe(false)
+  })
+
+  it("is none when the process is gone, its start can't be read, or the record has no time", () => {
+    expect(at("2026-11-21T10:00:01.000Z", null)).toBe(false)
+    expect(at("2026-11-21T10:00:01.000Z", UNREADABLE_START)).toBe(false)
+    expect(at("")).toBe(false)
+  })
+
+  it("is never this very process", () => {
+    expect(
+      wroteRecord({ pid: process.pid, startedAt: "2099-01-01T00:00:00Z" }),
+    ).toBe(false)
+  })
 })
 
 describe("waiting for an entry while the service runs", () => {
@@ -827,7 +785,7 @@ describe("service generations", () => {
       pid,
       cli,
       version: "0",
-      startedAt: "",
+      startedAt: new Date().toISOString(),
       ...(build === undefined ? {} : { build }),
     }
     writeFileSync(p.service, JSON.stringify(info))
@@ -923,10 +881,19 @@ describe("service generations", () => {
     ).rejects.toThrow("did not start")
   })
 
-  it("never signals a pid that is not this instance's service, and drops the record", async () => {
+  it("never signals a process that started after its record was written, and drops the record", async () => {
     const stranger = Bun.spawn(["sleep", "20"])
     spawned.push(stranger)
-    record(stranger.pid, "sha256:old")
+    writeFileSync(
+      p.service,
+      JSON.stringify({
+        pid: stranger.pid,
+        cli: CLI,
+        version: "0",
+        startedAt: new Date(Date.now() - 3_600_000).toISOString(),
+        build: "sha256:old",
+      }),
+    )
     let started = 0
     await expect(
       ensureService("t", p, {
@@ -989,16 +956,16 @@ describe("stopping a service", () => {
     return { kills, elapsed: t }
   }
 
-  it("kills a service that is still running 5 s after SIGTERM", () => {
+  it("kills a service that is still running 5 s after SIGUSR2", () => {
     const r = run({ isService: () => true })
-    expect(r.kills).toEqual(["SIGTERM", "SIGKILL"])
+    expect(r.kills).toEqual(["SIGUSR2", "SIGKILL"])
     expect(r.elapsed).toBeGreaterThanOrEqual(5000)
     expect(existsSync(p.service)).toBe(false)
   })
 
   it("re-checks the pid is still this instance's service just before SIGKILL", () => {
     const r = run({ isService: (t) => t < 5000 })
-    expect(r.kills).toEqual(["SIGTERM"])
+    expect(r.kills).toEqual(["SIGUSR2"])
   })
 
   it("signals nothing when the record names a process that is not its service", () => {
