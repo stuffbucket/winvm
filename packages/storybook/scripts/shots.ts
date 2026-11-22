@@ -6,7 +6,7 @@ import { extname, join, relative, resolve } from "node:path"
 
 import { type Browser, type Page, webkit } from "playwright"
 
-import { entriesOf, prepareOut, refusal, resolveOut } from "./out-dir"
+import { entriesOf, prepareOut, realOut, refusal, resolveOut } from "./out-dir"
 
 interface Entry {
   readonly id: string
@@ -59,11 +59,16 @@ in light and dark with Playwright's WebKit, into <dir>/light and <dir>/dark,
 with an index.html and index.md beside them.
 
   --out <dir>     where to write (default packages/storybook/shots). A
-                  relative path is taken from where you ran the command. The
-                  directory must be new, empty, or one an earlier run wrote;
-                  only light/, dark/ and index.* in it are replaced.
+                  relative path resolves from the repository root under
+                  bun run, pnpm run and mise run storybook:shots, and from
+                  the current directory when this script is run directly.
+                  Symlinks are resolved first. The directory must be new,
+                  empty, or one an earlier run wrote; only light/, dark/
+                  and index.* in it are replaced.
   --match <glob>  only stories whose id matches, e.g. 'windows-main--*'.
-                  Earlier screenshots of other stories are kept and indexed.
+                  Earlier screenshots of other stories are kept and
+                  indexed; a light/ or dark/ that is a symlink rather than
+                  a directory is replaced, as a full run does.
   --help          show this text`
 
 function parseArgs(argv: readonly string[]): {
@@ -98,12 +103,17 @@ function fail(message: string): never {
 const ARGS = parseArgs(process.argv.slice(2))
 const BASE =
   process.env.STORYBOOK_SHOTS_CWD ?? process.env.INIT_CWD ?? process.cwd()
-const OUT =
-  ARGS.out === undefined ? join(PKG, "shots") : resolveOut(ARGS.out, BASE)
+const OUT = realOut(
+  ARGS.out === undefined ? join(PKG, "shots") : resolveOut(ARGS.out, BASE),
+)
 const MATCH = ARGS.match
 const REFUSED = refusal(
   OUT,
-  { home: homedir(), repo: resolve(PKG, "../.."), storybook: PKG },
+  {
+    home: realOut(homedir()),
+    repo: realOut(resolve(PKG, "../..")),
+    storybook: realOut(PKG),
+  },
   entriesOf(OUT),
 )
 if (REFUSED !== null) fail(`refusing to write into ${OUT}: ${REFUSED}`)

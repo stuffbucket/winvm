@@ -1,11 +1,21 @@
 import {
   existsSync,
+  lstatSync,
   readdirSync,
+  realpathSync,
   rmSync,
   statSync,
   writeFileSync,
 } from "node:fs"
-import { isAbsolute, join, parse, relative, resolve } from "node:path"
+import {
+  basename,
+  dirname,
+  isAbsolute,
+  join,
+  parse,
+  relative,
+  resolve,
+} from "node:path"
 
 export const OWN = ["light", "dark", "index.html", "index.md"] as const
 export const MARKER = ".storybook-shots"
@@ -18,6 +28,12 @@ export interface Guarded {
 
 export function resolveOut(arg: string, base: string): string {
   return isAbsolute(arg) ? resolve(arg) : resolve(base, arg)
+}
+
+export function realOut(path: string): string {
+  if (existsSync(path)) return realpathSync(path)
+  const parent = dirname(path)
+  return parent === path ? path : join(realOut(parent), basename(path))
 }
 
 const covers = (dir: string, path: string): boolean => {
@@ -53,10 +69,20 @@ export function entriesOf(out: string): string[] | null {
   return readdirSync(out)
 }
 
+const isRealDirectory = (path: string): boolean => {
+  try {
+    return lstatSync(path).isDirectory()
+  } catch {
+    return false
+  }
+}
+
 export function prepareOut(out: string, everything: boolean): void {
-  for (const entry of OWN)
-    if (everything || entry.startsWith("index."))
-      rmSync(join(out, entry), { recursive: true, force: true })
+  for (const entry of [...OWN, MARKER]) {
+    const path = join(out, entry)
+    const keep = !everything && !entry.includes(".") && isRealDirectory(path)
+    if (!keep) rmSync(path, { recursive: true, force: true })
+  }
   writeFileSync(
     join(out, MARKER),
     "written by packages/storybook/scripts/shots.ts\n",

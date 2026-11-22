@@ -1,15 +1,24 @@
 import { afterAll, describe, expect, it } from "bun:test"
 import {
   existsSync,
+  lstatSync,
   mkdirSync,
   mkdtempSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 
-import { entriesOf, MARKER, prepareOut, refusal, resolveOut } from "./out-dir"
+import {
+  entriesOf,
+  MARKER,
+  prepareOut,
+  realOut,
+  refusal,
+  resolveOut,
+} from "./out-dir"
 
 const guarded = {
   home: "/Users/you",
@@ -100,5 +109,44 @@ describe("prepareOut", () => {
     prepareOut(out, false)
     expect(existsSync(join(out, "light", "a.png"))).toBe(true)
     expect(existsSync(join(out, "index.md"))).toBe(false)
+  })
+
+  it("replaces a symlinked light/ or dark/ in a partial run, never writing through it", () => {
+    const target = join(scratch, "elsewhere")
+    mkdirSync(target, { recursive: true })
+    writeFileSync(join(target, "precious"), "")
+    const linked = join(scratch, "linked")
+    mkdirSync(linked, { recursive: true })
+    symlinkSync(target, join(linked, "light"))
+    symlinkSync(join(target, "precious"), join(linked, MARKER))
+    prepareOut(linked, false)
+    expect(existsSync(join(linked, "light"))).toBe(false)
+    expect(lstatSync(join(linked, MARKER)).isSymbolicLink()).toBe(false)
+    expect(existsSync(join(target, "precious"))).toBe(true)
+  })
+})
+
+describe("realOut", () => {
+  it("resolves a symlinked out directory, or its nearest existing parent", () => {
+    const real = join(scratch, "real")
+    mkdirSync(real, { recursive: true })
+    const link = join(scratch, "link")
+    symlinkSync(real, link)
+    expect(realOut(link)).toBe(realOut(real))
+    expect(realOut(join(link, "new", "deeper"))).toBe(
+      join(realOut(real), "new", "deeper"),
+    )
+  })
+
+  it("lets the guard see a symlink to a guarded directory", () => {
+    const link = join(scratch, "to-home")
+    symlinkSync(scratch, link)
+    expect(
+      refusal(
+        realOut(link),
+        { home: realOut(scratch), repo: "/nowhere/a", storybook: "/nowhere/b" },
+        null,
+      ),
+    ).toContain("home")
   })
 })
