@@ -99,9 +99,13 @@ const ROLES: readonly (readonly [string, "text" | "non-text", string])[] = [
   ["status-success", "text", "success text"],
   ["status-warning", "text", "warning text"],
   ["status-info", "text", "info figures"],
-  ["accent", "non-text", "switch on, checkbox fill, focus ring, busy bar"],
-  ["brand", "non-text", "brand mark, requirement icon"],
-  ["border-strong", "non-text", "input and checkbox borders"],
+  [
+    "accent",
+    "non-text",
+    "checkbox fill, focus ring, busy bar, resource meters",
+  ],
+  ["brand", "non-text", "overview backdrop sun"],
+  ["border-strong", "non-text", "input and secondary button borders"],
   ["status-error", "non-text", "error stripes and icons"],
   ["status-warning", "non-text", "warning icons"],
 ]
