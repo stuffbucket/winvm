@@ -12,7 +12,8 @@ import {
 } from "node:fs"
 import { tmpdir } from "node:os"
 import { resolve } from "node:path"
-import { readSince, START } from "../src/eventlog"
+import { appendEntry, readSince, START } from "../src/eventlog"
+import { hostPoweredOff } from "../src/hostoff"
 import {
   ensureCurrent,
   ManagementError,
@@ -754,7 +755,7 @@ describe("bringing a service up for a command", () => {
     rmSync(p.control, { force: true })
   })
 
-  it("starts the keeper and a service under it for a stopped instance, holding it under the command's own name", async () => {
+  it("starts the keeper and a service under it for a stopped instance, holding it as a reconcile, not as the command", async () => {
     await releasePidfiles()
     await serviceUp("t", "stop", false)
     expect(await answers(p)).toBe(true)
@@ -769,7 +770,18 @@ describe("bringing a service up for a command", () => {
       "begin",
       "end",
     ])
-    expect(held[0]).toMatchObject({ operation: "stop", automatic: false })
+    expect(held[0]).toMatchObject({
+      operation: "reconcile",
+      automatic: false,
+    })
+  }, 30_000)
+
+  it("leaves status's account of how Windows went down as it was, for a start that then fails", async () => {
+    await releasePidfiles()
+    appendEntry("t", { kind: "disconnected", reason: "qemu-closed" })
+    expect(hostPoweredOff("t")?.cause).toBe("qemu-gone")
+    await serviceUp("t", "start", false)
+    expect(hostPoweredOff("t")?.cause).toBe("qemu-gone")
   }, 30_000)
 
   for (const op of ["start", "load"] as const)
@@ -778,6 +790,11 @@ describe("bringing a service up for a command", () => {
       await serviceUp("brandnew", op, false)
       expect(await answers(q)).toBe(true)
       expect(existsSync(q.meta)).toBe(false)
+      expect(
+        readSince("brandnew", START).entries.find(
+          (e) => e.kind === "op" && e.phase === "begin",
+        ),
+      ).toMatchObject({ operation: op, pid: process.pid })
     }, 30_000)
 
   it("says how to get a keeper, and starts nothing, when none is found", async () => {

@@ -11,6 +11,7 @@ import {
 } from "./kept"
 import {
   InstanceBusy,
+  leaseable,
   leaseHolder,
   type VmOperation,
   withOperation,
@@ -195,7 +196,7 @@ export async function serviceUp(
     throw new KeeperMissing(`winvm's service for "${name}" was not started`)
   await withOperation(
     name,
-    op,
+    leaseable(name, "reconcile") ? "reconcile" : op,
     async () => {
       await openKeeper(name, p, use.keeper)
       await ensureService(name, p)
