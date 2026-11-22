@@ -144,7 +144,7 @@ if (
 let exitCode: number
 switch (sub ?? "") {
   case "doctor":
-    exitCode = commands.doctor(args.flags.has("json"))
+    exitCode = await commands.doctor(args.flags.has("json"))
     break
   case "timemachine":
   case "tm":

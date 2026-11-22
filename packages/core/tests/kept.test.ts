@@ -61,7 +61,7 @@ import { currentQemuCompat } from "../src/runtime"
 import * as saves from "../src/saves"
 import * as servicectl from "../src/servicectl"
 import * as share from "../src/share"
-import { gather } from "../src/status"
+import { gather, legacyVms } from "../src/status"
 import * as vnc from "../src/vnc"
 import { lockPidfile, releasePidfiles } from "./fakes/pidfile"
 import { FakeQmp } from "./fakes/qmp"
@@ -1029,6 +1029,67 @@ describe("adopting a VM an older winvm started", () => {
     } finally {
       await releasePidfiles()
     }
+  })
+
+  it("is listed by doctor while it runs, before and after it is adopted, with how to protect it", async () => {
+    const p = pathsFor(NAME)
+    await reporting({ major: 11, minor: 1, micro: 2 })
+    await startLegacy()
+    const said: string[] = []
+    spyOn(console, "log").mockImplementation((...a: unknown[]) => {
+      said.push(a.map(String).join(" "))
+    })
+    try {
+      expect(await legacyVms()).toEqual([
+        {
+          name: NAME,
+          protection: "legacy",
+          note: `Windows on "${NAME}" was started without winvm's keeper, so it is not protected if the Mac shuts down; it is from its next start — \`winvm stow -i ${NAME} && winvm start -i ${NAME}\` does that now`,
+        },
+      ])
+      await commands.doctor()
+      expect(said.join("\n")).toContain(
+        `still running from an older winvm, so not shielded if the Mac shuts down:\n  ${NAME}: Windows on "${NAME}" was started without winvm's keeper`,
+      )
+      expect(await adoptLegacy(NAME, p)).toBe("adopted")
+      const [adopted] = await legacyVms()
+      expect(adopted?.protection).toBe("adopted")
+      expect(adopted?.note).toContain(
+        `Protect now in the viewer, or \`winvm stow -i ${NAME} && winvm start -i ${NAME}\`, restarts it under the keeper`,
+      )
+      said.length = 0
+      await commands.doctor(true)
+      expect(
+        (JSON.parse(said.join("\n")) as { legacy: unknown }).legacy,
+      ).toEqual([
+        { name: NAME, protection: "adopted", note: adopted?.note ?? "" },
+      ])
+    } finally {
+      await releasePidfiles()
+    }
+    expect(await legacyVms()).toEqual([])
+  })
+
+  it("is listed by doctor with how to get a keeper when this winvm has none", async () => {
+    await reporting({ major: 11, minor: 1, micro: 2 })
+    await startLegacy()
+    delete process.env.WINVM_KEEPER
+    try {
+      const [vm] = await legacyVms()
+      expect(vm?.protection).toBe("missing")
+      expect(vm?.note).toContain(
+        "was started without winvm's keeper, and this winvm has no winvm-keeper to protect it with",
+      )
+      expect(vm?.note).toContain("WINVM_KEEPER=<path>")
+    } finally {
+      await releasePidfiles()
+    }
+  })
+
+  it("leaves a VM out of doctor's list once it runs under the keeper", async () => {
+    await leasedLaunch()
+    await until("the pidfile", () => qemu.isRunning(pathsFor(NAME)))
+    expect(await legacyVms()).toEqual([])
   })
 
   it("offers no stow for an adopted VM whose QEMU the installed runtime could not recall, only a shutdown and a start", async () => {

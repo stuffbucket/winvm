@@ -111,20 +111,29 @@ import * as share from "./share"
 import { ensureShareMedia } from "./sharemedia"
 import { download, du, run, sha256Of } from "./shell"
 import * as snapshot from "./snapshot"
+import { legacyVms } from "./status"
 import * as timemachine from "./timemachine"
 import * as watcher from "./watch"
 
 const virtioBootFor = (meta: InstanceMeta): boolean =>
   readImageMeta(meta.image)?.virtioBoot === true
 
-export function doctor(json = false): number {
+export async function doctor(json = false): Promise<number> {
+  const legacy = await legacyVms()
   if (json) {
-    const report = checksReport(hostChecks(), timemachine.summary())
+    const report = {
+      ...checksReport(hostChecks(), timemachine.summary()),
+      legacy,
+    }
     console.log(JSON.stringify(report, null, 2))
     return report.ready ? 0 : 1
   }
   const missing = printChecks(hostChecks())
   console.log(timemachine.summary())
+  if (legacy.length > 0)
+    console.log(
+      `\nstill running from an older winvm, so not shielded if the Mac shuts down:\n${legacy.map((v) => `  ${v.name}: ${v.note}`).join("\n")}`,
+    )
   console.log(
     missing === 0
       ? `\nhost is ready · state: ${home()}`
@@ -259,7 +268,7 @@ export function prune(args: Args): number {
   return 0
 }
 
-export function setup(args: Args): number {
+export async function setup(args: Args): Promise<number> {
   try {
     const rt = ensureRuntime()
     console.log(`runtime ${rt.manifest?.version ?? "?"} in ${rt.dir}`)
@@ -284,7 +293,7 @@ export function setup(args: Args): number {
     }
   }
   console.log("")
-  return doctor()
+  return await doctor()
 }
 
 export function adopt(args: Args): number {
@@ -1744,7 +1753,8 @@ export function configCmd(args: Args): number {
 export const USAGE =
   "winvm <command>\n\n" +
   "  setup                         install missing host prerequisites, fetch pinned media\n" +
-  "  doctor  [--json]              check host prerequisites (the HOST, before anything runs)\n" +
+  "  doctor  [--json]              check host prerequisites (the HOST, before anything runs),\n" +
+  "                                and list VMs an older winvm started that run unshielded\n" +
   "  diagnose [-i name]            explain a guest that misbehaved, from its files\n" +
   "  build --iso <win11.iso>       build a base image (once, ~20 min)\n" +
   "        [--payload <dir>] [--bun <version>] [--image <name>]\n" +

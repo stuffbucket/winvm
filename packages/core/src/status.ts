@@ -721,6 +721,39 @@ function keeperNote(
   }
 }
 
+export interface LegacyVm {
+  readonly name: string
+  readonly protection: Protection
+  readonly note: string
+}
+
+const UNSHIELDED: ReadonlySet<Protection> = new Set([
+  "adopted",
+  "legacy",
+  "missing",
+])
+
+export async function legacyVms(
+  names: readonly string[] = listInstances(),
+): Promise<readonly LegacyVm[]> {
+  const found: LegacyVm[] = []
+  for (const name of [...names].sort()) {
+    const p = pathsFor(name)
+    const pid = qemu.pidOf(p)
+    if (pid === null) continue
+    const standing = await withRuntime(
+      p,
+      pid,
+      keeperStanding(pid, await keeperHello(p), keeperUse().kind),
+    )
+    if (standing === null || !UNSHIELDED.has(standing.protection)) continue
+    const note = keeperNote(name, pid, standing)
+    if (note !== null)
+      found.push({ name, protection: standing.protection, note })
+  }
+  return found
+}
+
 const KEEPER_WORDS: Readonly<Record<Protection, string>> = {
   kept: "protected",
   adopted: "watched, not shielded: started by an older winvm",

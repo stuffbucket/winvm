@@ -134,7 +134,13 @@ says which keeper each names. `winvm status` has a `keeper` row:
 - `confused`: the keeper and `qemu.pid` name different processes; `winvm kill`
   clears it.
 
-`winvm doctor` says which keeper it would use.
+`winvm doctor` says which keeper it would use, and lists every VM still
+running from an older winvm (`watched, not shielded`, `not protected`), each
+with the note `winvm status` gives for it: Protect now in the app, or
+`winvm stow -i NAME && winvm start -i NAME`, puts it under the keeper, and
+when the stow could not be brought back, `winvm stop` then `winvm start`
+does. `winvm doctor --json` lists them as `legacy`, each with its `name`,
+`protection` and `note`.
 
 ## The control service
 
