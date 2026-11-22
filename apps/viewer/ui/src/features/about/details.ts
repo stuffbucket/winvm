@@ -16,7 +16,7 @@ export const isDevelopment = (version: string): boolean =>
 
 export interface AboutDetails {
   readonly runtime: string | null
-  readonly cli: string | null
+  readonly cli: { readonly path: string | null } | null
   readonly machines: string | null
   readonly build: string | null
 }

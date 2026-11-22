@@ -34,23 +34,30 @@ function useAboutDetails(): AboutDetails {
     const merge = (part: Partial<AboutDetails>): void => {
       if (!gone) setDetails((d) => ({ ...d, ...part }))
     }
-    winvm("version", "--json")
-      .then((out) => {
-        merge(versionDetails(out))
-      })
-      .catch(() => undefined)
-    winvm("ls", "--json")
-      .then((out) => {
-        merge({ machines: machineCount(out) })
-      })
-      .catch(() => undefined)
-    installedCli()
-      .then((path) => {
-        merge({ cli: path ?? t("about.cli.none") })
-      })
-      .catch(() => undefined)
+    const read = (): void => {
+      winvm("version", "--json")
+        .then((out) => {
+          merge(versionDetails(out))
+        })
+        .catch(() => undefined)
+      winvm("ls", "--json")
+        .then((out) => {
+          merge({ machines: machineCount(out) })
+        })
+        .catch(() => undefined)
+      installedCli()
+        .then((path) => {
+          merge({ cli: { path } })
+        })
+        .catch(() => {
+          merge({ cli: null })
+        })
+    }
+    read()
+    window.addEventListener("focus", read)
     return () => {
       gone = true
+      window.removeEventListener("focus", read)
     }
   }, [])
   return details
@@ -86,7 +93,7 @@ function Detail({
   return (
     <div className="about__detail">
       <dt>{label}</dt>
-      <dd className={mono ? "about__mono" : undefined}>
+      <dd className={mono && value !== null ? "about__mono" : undefined}>
         {value ?? t("about.unknown")}
       </dd>
     </div>
@@ -100,9 +107,14 @@ export function About({ version }: { readonly version: string }): JSX.Element {
     const onKey = (e: KeyboardEvent): void => {
       if (e.key === "Escape") closeWindow()
     }
+    const quiet = (e: globalThis.MouseEvent): void => {
+      e.preventDefault()
+    }
     document.addEventListener("keydown", onKey)
+    window.addEventListener("contextmenu", quiet)
     return () => {
       document.removeEventListener("keydown", onKey)
+      window.removeEventListener("contextmenu", quiet)
     }
   }, [])
   return (
@@ -136,7 +148,15 @@ export function About({ version }: { readonly version: string }): JSX.Element {
         </div>
         <dl className="about__details">
           <Detail label={t("about.runtime")} value={details.runtime} />
-          <Detail label={t("about.cli")} value={details.cli} mono />
+          <Detail
+            label={t("about.cli")}
+            value={
+              details.cli === null
+                ? null
+                : (details.cli.path ?? t("about.cli.none"))
+            }
+            mono={details.cli !== null && details.cli.path !== null}
+          />
           <Detail label={t("about.machines")} value={details.machines} />
           <Detail label={t("about.build")} value={details.build} mono />
         </dl>

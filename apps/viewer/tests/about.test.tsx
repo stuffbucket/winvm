@@ -1,5 +1,7 @@
 import { afterAll, afterEach, describe, expect, it } from "bun:test"
-import { readFileSync } from "node:fs"
+import { spawnSync } from "node:child_process"
+import { mkdtempSync, readFileSync, rmSync } from "node:fs"
+import { tmpdir } from "node:os"
 import { resolve } from "node:path"
 import { GlobalRegistrator } from "@happy-dom/global-registrator"
 
@@ -9,8 +11,14 @@ Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true })
 const { act } = await import("react")
 const { createRoot } = await import("react-dom/client")
 const { About } = await import("../ui/src/features/about/About")
-const { CONTRIBUTORS, isDevelopment, SOURCE, WEBSITE, shortBuild } =
-  await import("../ui/src/features/about/details")
+const {
+  CONTRIBUTORS,
+  isDevelopment,
+  SOURCE,
+  WEBSITE,
+  shortBuild,
+  versionDetails,
+} = await import("../ui/src/features/about/details")
 
 type Root = ReturnType<typeof createRoot>
 let root: Root | null = null
@@ -178,10 +186,69 @@ describe("the About window", () => {
     ])
   })
 
-  it("shows a dash when the command line tool can't be looked for", async () => {
-    fakeTauri({ ...everything, installedCli: () => new Error("no HOME") })
+  it("shows a dash when the app has no home folder to look for the command line tool in", async () => {
+    fakeTauri({
+      ...everything,
+      installedCli: () =>
+        new Error("no home folder: environment variable not found"),
+    })
     const host = await mount("0.1.4")
     expect(rows(host)[1]).toEqual(["Command line tool", "—"])
+  })
+
+  it("sets only paths and builds in the monospace face, not words or dashes", async () => {
+    const mono = (host: HTMLElement): (string | null)[] =>
+      [...host.querySelectorAll(".about__detail dd")].map((dd) =>
+        dd.classList.contains("about__mono") ? dd.textContent : null,
+      )
+    fakeTauri(everything)
+    expect(mono(await mount("0.1.4"))).toEqual([
+      null,
+      "~/.local/bin/winvm",
+      null,
+      "ab12ab12ab12",
+    ])
+    act(() => root?.unmount())
+    fakeTauri({ installedCli: () => null })
+    expect(mono(await mount("0.1.4"))).toEqual([null, null, null, null])
+  })
+
+  it("reads its details again when it comes forward, so an install or a new machine shows", async () => {
+    let installed: string | null = null
+    let machines = 1
+    fakeTauri({
+      winvm: (args) =>
+        args[0] === "version"
+          ? everything.winvm(args)
+          : ok({ images: [], instances: Array.from({ length: machines }) }),
+      installedCli: () => installed,
+    })
+    const host = await mount("0.1.4")
+    expect(rows(host)[1]).toEqual(["Command line tool", "Not installed"])
+    expect(rows(host)[2]).toEqual(["Windows machines", "1"])
+    installed = "~/.local/bin/winvm"
+    machines = 3
+    act(() => {
+      window.dispatchEvent(new Event("focus"))
+    })
+    await settle()
+    expect(rows(host)[1]).toEqual(["Command line tool", "~/.local/bin/winvm"])
+    expect(rows(host)[2]).toEqual(["Windows machines", "3"])
+  })
+
+  it("keeps the web view's own menu away, so a link can't be opened in the window", async () => {
+    fakeTauri(everything)
+    const host = await mount("0.1.4")
+    const link = host.querySelector("a")
+    if (link === null) throw new Error("no link")
+    const menu = new MouseEvent("contextmenu", {
+      bubbles: true,
+      cancelable: true,
+    })
+    act(() => {
+      link.dispatchEvent(menu)
+    })
+    expect(menu.defaultPrevented).toBe(true)
   })
 
   it("opens its links through the app, not in the window", async () => {
@@ -250,6 +317,32 @@ describe("the About window's links", () => {
 
   it("shortens a build to its first twelve hex digits", () => {
     expect(shortBuild(BUILD)).toBe("ab12ab12ab12")
+  })
+})
+
+describe("winvm version --json", () => {
+  it("is what the About window reads its runtime and build from", () => {
+    const home = mkdtempSync(resolve(tmpdir(), "winvm-about-"))
+    try {
+      const r = spawnSync(
+        process.execPath,
+        [
+          resolve(import.meta.dir, "..", "..", "cli", "src", "winvm.ts"),
+          "version",
+          "--json",
+        ],
+        { encoding: "utf8", env: { ...process.env, WINVM_HOME: home } },
+      )
+      const read = versionDetails({
+        code: r.status ?? 1,
+        stdout: r.stdout,
+        stderr: r.stderr,
+      })
+      expect(read.runtime).toMatch(/^\d+\.\d+\.\d+-\d+$/)
+      expect(read.build).toMatch(/^[0-9a-f]{12}$/)
+    } finally {
+      rmSync(home, { recursive: true, force: true })
+    }
   })
 })
 

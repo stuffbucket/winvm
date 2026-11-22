@@ -420,7 +420,9 @@ Left, winvm's icon (`app-icon.svg`); right, in order:
     from `winvm version --json`.
 - **Contributors**: stuffbucket.
 
-The window shows at once; the rows fill in as they are read. Links open in the
-browser through `open_link`, which opens only the About window's own links.
+The window shows at once; the rows fill in as they are read, and are read
+again each time the window comes forward. Links open in the browser through
+`open_link`, which opens only the About window's own links; the window itself
+never leaves the app's own pages, and the web view's context menu is off.
 `bun scripts/build-ui.ts`, then `PLAYWRIGHT_DIR=… node scripts/render-about.mjs`
 renders it, light and dark.

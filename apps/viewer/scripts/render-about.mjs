@@ -1,7 +1,7 @@
 import { createReadStream, existsSync, mkdirSync } from "node:fs"
 import { createServer } from "node:http"
 import { createRequire } from "node:module"
-import { extname, join, resolve } from "node:path"
+import { extname, join, resolve, sep } from "node:path"
 
 const VIEWER = resolve(import.meta.dirname, "..")
 const DIST = resolve(VIEWER, "dist")
@@ -32,7 +32,7 @@ const TYPES = {
 const server = createServer((req, res) => {
   const url = decodeURIComponent(new URL(req.url ?? "/", "http://x").pathname)
   const path = join(DIST, url)
-  if (!path.startsWith(DIST) || !existsSync(path)) {
+  if (!path.startsWith(`${DIST}${sep}`) || !existsSync(path)) {
     res.writeHead(404).end()
     return
   }
