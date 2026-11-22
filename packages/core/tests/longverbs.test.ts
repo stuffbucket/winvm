@@ -310,6 +310,32 @@ describe("the long verbs, as the CLI prints and exits with them", () => {
     })
   }, 30_000)
 
+  it("start of a stopped instance starts nothing when no keeper is found, and says how to get one", async () => {
+    await qemuGoes()
+    stopService(p)
+    service?.kill("SIGKILL")
+    await service?.exited
+    service = null
+    const proc = Bun.spawn([process.execPath, CLI, "start", "-i", "t"], {
+      env: { ...env(), WINVM_KEEPER: "" },
+      stdout: "pipe",
+      stderr: "pipe",
+    })
+    const [stdout, stderr, code] = await Promise.all([
+      new Response(proc.stdout).text(),
+      new Response(proc.stderr).text(),
+      proc.exited,
+    ])
+    expect({ code, stdout }).toEqual({ code: 1, stdout: "" })
+    expect(stderr).toStartWith(
+      `::error::start was not run: no winvm-keeper was found, so winvm's service for "t" was not started; winvm runs every VM under it: the winvm app carries one;`,
+    )
+    expect(stderr).toContain("WINVM_KEEPER=<path>")
+    expect(existsSync(resolve(p.dir, "keeper"))).toBe(false)
+    expect(existsSync(p.control)).toBe(false)
+    expect(begins("start")).toEqual([])
+  }, 30_000)
+
   it("stow saves the guest, quits QEMU and says start recalls it", async () => {
     const r = await winvm("stow", "-i", "t")
     expect({ ...r, stdout: timings(r.stdout) }).toEqual({
