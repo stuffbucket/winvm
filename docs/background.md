@@ -197,9 +197,9 @@ When no service answers and the machine is not running, a command that needs
 a running guest (`stop`, `pause`, `save` and the like) is answered by the CLI
 itself, as before: it says the machine is not running, with the same exit
 code, and starts nothing. `start`, `load`, `rewind` and `golden reset` first
-start a service under the instance's keeper, holding the instance under the
-command's own name, so `start` and `load` can still create an instance, then
-send it the command. A service that is just stopping is waited for, and a new
+start a service under the instance's keeper, holding the instance meanwhile
+(recorded as a `reconcile`, or under the command's own name when `start` or
+`load` creates the instance), then send it the command. A service that is just stopping is waited for, and a new
 one started.
 
 - **Ctrl-C only lets go.** Ctrl-C, or the app quitting, stops the CLI from
@@ -248,8 +248,9 @@ one started.
   and handing an older service of this install over, and sends the command
   again; with `--wait` it waits for the instance meanwhile. If it still can't
   be sent, the CLI says why and runs nothing, except for `stop` and `stow`,
-  which it then runs itself under the instance's lease, so a running machine
-  can always be shut down or saved. If the service took the command but gave
+  which it then runs itself under the instance's lease. Those still need a
+  service for their own record; when none can run at all, `winvm kill`
+  ends the machine. If the service took the command but gave
   no answer within 5 seconds, the CLI says so and does not run it again,
   because it may already be running. `kill` kills QEMU itself whenever no
   service takes it.
