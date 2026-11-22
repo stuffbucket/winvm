@@ -12,11 +12,13 @@ import {
   hardwareArgs,
   migrationPlan,
   parseManifest,
+  RESTORED_UNANSWERED,
   ramFileFor,
   ramFormatOf,
   savesReport,
   shQuote,
   thumbSize,
+  windowsRuns,
 } from "../src/saves"
 
 describe("save names", () => {
@@ -623,5 +625,13 @@ describe("savesReport", () => {
     )
     expect(old?.compatible).toBe(false)
     expect(old).not.toHaveProperty("incompatible")
+  })
+})
+
+describe("what a start, load or rewind exit code says about Windows", () => {
+  it("counts a guest restored but not yet answering as running, and nothing else that failed", () => {
+    expect(windowsRuns(0)).toBe(true)
+    expect(windowsRuns(RESTORED_UNANSWERED)).toBe(true)
+    for (const code of [1, 3, 4, 5, 130]) expect(windowsRuns(code)).toBe(false)
   })
 })

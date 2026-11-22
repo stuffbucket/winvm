@@ -93,6 +93,7 @@ import {
   isFrozen,
   isLivePhase,
   parseShare,
+  RESTORED_BUSY,
   shownTitle,
   startSteps,
   terminalBlocked,
@@ -182,6 +183,10 @@ export function App(): JSX.Element {
   const frozen = isFrozen(phase)
   const held = phase === "paused" || phase === "asleep" ? phase : null
   const operating = w.operation !== null
+  const protect = async (): Promise<void> => {
+    const stowed = await w.act("stow")
+    if (stowed?.code === 0) await w.act("start")
+  }
   const input = inputRule(inputPhase(phase, w.agentSeen), operating)
   const [released, setReleased] = useState<string | null>(null)
   useEffect(() => {
@@ -863,8 +868,12 @@ export function App(): JSX.Element {
             <div className="notices">
               {w.failure !== null && (
                 <Callout
-                  tone="error"
-                  title={t(`error.${w.failure.verb}`)}
+                  tone={w.failure.code === RESTORED_BUSY ? "notice" : "error"}
+                  title={
+                    w.failure.code === RESTORED_BUSY
+                      ? t("notice.restoredBusy")
+                      : t(`error.${w.failure.verb}`)
+                  }
                   action={
                     <Button
                       size="sm"
@@ -1076,6 +1085,10 @@ export function App(): JSX.Element {
             usageContext={usageContext}
             held={held}
             canForceStop={live && !operating}
+            protecting={operating || w.busy !== null}
+            onProtect={() => {
+              void protect()
+            }}
             sharedFolder={sharedFolder}
             machineInfo={machineInfo}
             guestReady={guestReady}

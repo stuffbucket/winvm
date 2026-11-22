@@ -1,14 +1,5 @@
+import { afterAll, beforeAll, describe, expect, it } from "bun:test"
 import {
-  afterAll,
-  afterEach,
-  beforeAll,
-  beforeEach,
-  describe,
-  expect,
-  it,
-} from "bun:test"
-import {
-  existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -28,21 +19,27 @@ import {
   readOverrides,
   writeAssignments,
 } from "../src/config"
-import { buildIdentity } from "../src/identity"
+import { readSince, START } from "../src/eventlog"
 import type { Decision, Sample, Settings, Timing } from "../src/idle"
-import { autosaveName, IdleMachine, savesToRotate } from "../src/idle"
-import { instanceDir, PACKAGE_DIR, pathsFor } from "../src/paths"
+import {
+  autosaveName,
+  DEFAULT_TIMING,
+  IdleMachine,
+  savesToRotate,
+  timingFrom,
+} from "../src/idle"
+import { instanceDir } from "../src/paths"
+import { STOW_REFUSED, STOW_UNDECIDED } from "../src/saves"
 import {
   caffeinateArgs,
   ensureWatcher,
+  idleSettings,
+  idleState,
   KeepAwake,
+  noteStowRefused,
   parseCpuTime,
-  readWatchState,
-  stopWatcher,
+  stowOutcome,
   watchAfterRestore,
-  watcherFreshness,
-  watcherRecord,
-  watchPathsFor,
 } from "../src/watch"
 
 const MIN = 60_000
@@ -357,6 +354,34 @@ describe("idle state machine", () => {
   })
 })
 
+describe("the watcher's timing, as tests set it through the environment", () => {
+  it("takes the positive numbers it knows and nothing else", () => {
+    expect(timingFrom(undefined)).toEqual({})
+    expect(timingFrom("")).toEqual({})
+    expect(timingFrom("not json")).toEqual({})
+    expect(timingFrom("[200]")).toEqual({})
+    expect(
+      timingFrom(
+        JSON.stringify({
+          tickMs: 200,
+          wakeGapMs: 1500,
+          driftCheckMs: 0,
+          settleMs: -1,
+          cpuWindowMs: "60",
+          other: 5,
+        }),
+      ),
+    ).toEqual({ tickMs: 200, wakeGapMs: 1500 })
+    expect(Object.keys(DEFAULT_TIMING).toSorted()).toEqual([
+      "cpuWindowMs",
+      "driftCheckMs",
+      "settleMs",
+      "tickMs",
+      "wakeGapMs",
+    ])
+  })
+})
+
 describe("autosave rotation", () => {
   const at = (min: number): string =>
     new Date(Date.UTC(2026, 9, 21, 12, min)).toISOString()
@@ -607,7 +632,7 @@ describe("watcher after a load or rewind", () => {
   })
   it("never starts one with watch.enabled=false", () => {
     writeAssignments("off", [parseAssignment("watch.enabled=false")])
-    expect(ensureWatcher("off")).toBeNull()
+    expect(ensureWatcher("off")).toBe(false)
   })
 })
 
@@ -681,308 +706,65 @@ describe("power.keepAwake", () => {
   })
 })
 
-describe("watcher generations", () => {
-  const CURRENT = "sha256:current"
-  let home = ""
-  let savedHome: string | undefined
-  const spawned: ReturnType<typeof Bun.spawn>[] = []
-
-  beforeEach(() => {
-    savedHome = process.env.WINVM_HOME
-    home = mkdtempSync(resolve(tmpdir(), "winvm-watchgen-"))
-    process.env.WINVM_HOME = home
-    mkdirSync(instanceDir("w"), { recursive: true })
-  })
-  afterEach(() => {
-    for (const s of spawned.splice(0)) s.kill()
-    if (savedHome === undefined) delete process.env.WINVM_HOME
-    else process.env.WINVM_HOME = savedHome
-    rmSync(home, { recursive: true, force: true })
+describe("an idle stow that winvm refuses", () => {
+  it("is told apart from a failed stow by winvm stow's exit code", () => {
+    expect(stowOutcome(0)).toBe("stowed")
+    expect(stowOutcome(STOW_REFUSED)).toBe("refused")
+    expect(stowOutcome(STOW_UNDECIDED)).toBe("failed")
+    expect(stowOutcome(1)).toBe("failed")
   })
 
-  const fakeWatcher = (): ReturnType<typeof Bun.spawn> => {
-    const holder = resolve(import.meta.dir, "fakes", "holder.ts")
-    const h = Bun.spawn(
-      [process.execPath, holder, "winvm", "watch", "-i", "w"],
-      { stdout: "ignore", stderr: "ignore" },
-    )
-    spawned.push(h)
-    return h
-  }
-  const alive = (pid: number): boolean => {
-    try {
-      process.kill(pid, 0)
-      return true
-    } catch {
-      return false
-    }
-  }
-  const lock = (pid: number): void => {
-    writeFileSync(watchPathsFor("w").pid, `${String(pid)}\n`)
-  }
-  const state = (o: Record<string, unknown>): void => {
-    writeFileSync(watchPathsFor("w").state, JSON.stringify(o))
-  }
-
-  it("classifies a record by its build: current, stale, or legacy when it has none", () => {
-    expect(watcherFreshness({ pid: 1, build: CURRENT }, CURRENT)).toBe(
-      "current",
-    )
-    expect(watcherFreshness({ pid: 1, build: "sha256:old" }, CURRENT)).toBe(
-      "stale",
-    )
-    expect(watcherFreshness({ pid: 1 }, CURRENT)).toBe("legacy")
-    expect(watcherFreshness({ pid: 1, build: buildIdentity() })).toBe("current")
-  })
-
-  it("reads the pid and build of a live watcher", () => {
-    const h = fakeWatcher()
-    lock(h.pid)
-    state({ pid: h.pid, build: CURRENT, state: "watching" })
-    expect(watcherRecord("w")).toEqual({ pid: h.pid, build: CURRENT })
-  })
-
-  it("has no record without a live watcher, and drops the pidfile of a reused pid without signalling it", () => {
-    expect(watcherRecord("w")).toBeNull()
-    const stranger = Bun.spawn(["sleep", "20"])
-    spawned.push(stranger)
-    lock(stranger.pid)
-    state({ pid: stranger.pid, build: CURRENT })
-    expect(watcherRecord("w")).toBeNull()
-    expect(existsSync(watchPathsFor("w").pid)).toBe(false)
-    expect(alive(stranger.pid)).toBe(true)
-  })
-
-  it("does not trust a watch.json written by a different pid than watch.pid's", () => {
-    const h = fakeWatcher()
-    lock(h.pid)
-    state({ pid: h.pid + 1, build: CURRENT })
-    const rec = watcherRecord("w")
-    expect(rec).toEqual({ pid: h.pid })
-    expect(watcherFreshness(rec ?? { pid: 0 }, CURRENT)).toBe("legacy")
-  })
-
-  it("treats a live watcher whose watch.json has no build as legacy", () => {
-    const h = fakeWatcher()
-    lock(h.pid)
-    state({ pid: h.pid, state: "watching" })
-    const rec = watcherRecord("w")
-    expect(rec).toEqual({ pid: h.pid })
-    expect(watcherFreshness(rec ?? { pid: 0 }, CURRENT)).toBe("legacy")
-  })
-
-  it("keeps a running watcher rather than starting a second, whatever its generation", () => {
-    const h = fakeWatcher()
-    lock(h.pid)
-    state({ pid: h.pid, build: "sha256:old" })
-    expect(ensureWatcher("w")).toBe(h.pid)
-  })
-
-  const seams = (o: { readonly dies: "never" | "on-term" }) => {
-    const calls: { sig: string; at: number }[] = []
-    let t = 1_000
-    let gone = false
-    return {
-      calls,
-      elapsed: (): number => t - 1_000,
-      seams: {
-        kill: (_pid: number, sig: NodeJS.Signals): void => {
-          calls.push({ sig, at: t })
-          if (sig === "SIGKILL" || o.dies === "on-term") gone = true
-        },
-        now: (): number => t,
-        sleep: (ms: number): Promise<void> => {
-          t += ms
-          return Promise.resolve()
-        },
-        isWatcher: (): boolean => !gone,
-      },
-    }
-  }
-
-  it("gives a watcher that is only watching 10 seconds to finish, then kills it", async () => {
-    lock(424_242)
-    state({ pid: 424_242, build: CURRENT, state: "watching" })
-    const s = seams({ dies: "never" })
-    expect(await stopWatcher("w", s.seams)).toBe(true)
-    expect(s.calls.map((c) => c.sig)).toEqual(["SIGTERM", "SIGKILL"])
-    expect(s.elapsed()).toBeGreaterThanOrEqual(10_000)
-    expect(s.elapsed()).toBeLessThan(11_000)
-    expect(existsSync(watchPathsFor("w").pid)).toBe(false)
-  })
-
-  for (const st of ["autosaving", "stowing"] as const) {
-    it(`gives a watcher that is ${st} 10 minutes to finish`, async () => {
-      lock(424_242)
-      state({ pid: 424_242, build: CURRENT, state: st })
-      const s = seams({ dies: "never" })
-      expect(await stopWatcher("w", s.seams)).toBe(true)
-      expect(s.calls.map((c) => c.sig)).toEqual(["SIGTERM", "SIGKILL"])
-      expect(s.elapsed()).toBeGreaterThanOrEqual(600_000)
-      expect(s.elapsed()).toBeLessThan(601_000)
-    })
-  }
-
-  it("does not kill a watcher that exits after SIGTERM", async () => {
-    lock(424_242)
-    state({ pid: 424_242, state: "autosaving" })
-    const s = seams({ dies: "on-term" })
-    expect(await stopWatcher("w", s.seams)).toBe(true)
-    expect(s.calls.map((c) => c.sig)).toEqual(["SIGTERM"])
-  })
-
-  it("believes watch.json's autosaving only when it names the watcher being stopped", async () => {
-    lock(424_242)
-    state({ pid: 424_243, build: CURRENT, state: "autosaving" })
-    const s = seams({ dies: "never" })
-    expect(await stopWatcher("w", s.seams)).toBe(true)
-    expect(s.elapsed()).toBeGreaterThanOrEqual(10_000)
-    expect(s.elapsed()).toBeLessThan(11_000)
-  })
-
-  it("re-checks the pid is still a watcher's just before SIGKILL", async () => {
-    lock(424_242)
-    state({ pid: 424_242, build: CURRENT, state: "watching" })
-    let t = 1_000
-    const kills: string[] = []
-    const result = await stopWatcher("w", {
-      kill: (_pid, sig) => void kills.push(sig),
-      now: () => t,
-      sleep: (ms) => {
-        t += ms
-        return Promise.resolve()
-      },
-      isWatcher: () => t < 11_000,
-    })
-    expect(result).toBe(true)
-    expect(kills).toEqual(["SIGTERM"])
-  })
-
-  it("signals nobody when watch.pid names a process that is not a watcher", async () => {
-    const stranger = Bun.spawn(["sleep", "20"])
-    spawned.push(stranger)
-    lock(stranger.pid)
-    const kills: string[] = []
+  it("turns idle stows off for the rest of this QEMU, leaving autosave alone", () => {
     expect(
-      await stopWatcher("w", { kill: (_p, sig) => void kills.push(sig) }),
+      idleSettings(SETTINGS, { ephemeral: false, stowRefused: true }),
+    ).toEqual({
+      ...SETTINGS,
+      stow: { ...SETTINGS.stow, enabled: false },
+    })
+    expect(
+      idleSettings(SETTINGS, { ephemeral: false, stowRefused: false }),
+    ).toEqual(SETTINGS)
+    expect(
+      idleSettings(SETTINGS, { ephemeral: true, stowRefused: false }).autosave
+        .enabled,
     ).toBe(false)
-    expect(kills).toEqual([])
-    expect(alive(stranger.pid)).toBe(true)
   })
 
-  for (const [label, argv] of [
-    ["another instance's watcher", ["winvm", "watch", "-i", "other"]],
-    [
-      "the watcher of an instance whose name starts with this one's",
-      ["winvm", "watch", "-i", "wx"],
-    ],
-    [
-      "a watcher named with --instance=",
-      ["winvm", "watch", "--instance=other"],
-    ],
-    [
-      "a `watch --stop` for this instance",
-      ["winvm", "watch", "-i", "w", "--stop"],
-    ],
-    [
-      "an unrelated executable whose name ends in winvm",
-      ["evilwinvm", "watch", "-i", "w"],
-    ],
-  ] as const) {
-    it(`never takes ${label} for this instance's watcher, before SIGTERM or SIGKILL`, async () => {
-      const holder = resolve(import.meta.dir, "fakes", "holder.ts")
-      const h = Bun.spawn([process.execPath, holder, ...argv], {
-        stdout: "ignore",
-        stderr: "ignore",
-      })
-      spawned.push(h)
-      lock(h.pid)
-      state({ pid: h.pid, build: CURRENT, state: "watching" })
-      const kills: string[] = []
-      let t = 0
-      const stopped = await stopWatcher("w", {
-        kill: (_p, sig) => void kills.push(sig),
-        now: () => t,
-        sleep: (ms) => {
-          t += ms
-          return Promise.resolve()
-        },
-      })
-      expect(kills).toEqual([])
-      expect(stopped).toBe(false)
-      expect(watcherRecord("w")).toBeNull()
-      expect(alive(h.pid)).toBe(true)
-    })
-  }
-
-  it("still recognises this instance's own watcher, however it was named", () => {
-    const holder = resolve(import.meta.dir, "fakes", "holder.ts")
-    for (const argv of [
-      ["winvm", "watch", "-i", "w"],
-      ["winvm.ts", "watch", "--instance", "w"],
-      ["winvm", "watch", "--instance=w"],
-      ["winvm-aarch64-apple-darwin", "watch", "-i", "w"],
-    ]) {
-      const h = Bun.spawn([process.execPath, holder, ...argv], {
-        stdout: "ignore",
-        stderr: "ignore",
-      })
-      spawned.push(h)
-      lock(h.pid)
-      expect(watcherRecord("w")?.pid).toBe(h.pid)
-    }
-  })
-
-  it("publishes its build as soon as it holds the lock, and in every later state", async () => {
-    const cli = resolve(
-      PACKAGE_DIR,
-      "..",
-      "..",
-      "apps",
-      "cli",
-      "src",
-      "winvm.ts",
+  it("is published as idle stow off, with why, while it holds", () => {
+    const cfg = { ...DEFAULTS, "stow.enabled": true }
+    const latched = idleState(
+      cfg,
+      { ephemeral: false, stowRefused: true },
+      { stow: "2026-11-17T08:00:00Z" },
     )
-    const p = pathsFor("w")
-    writeFileSync(p.meta, JSON.stringify({ image: "x", vnc: 9, created: "" }))
-    writeFileSync(p.pid, `${String(process.pid)}\n`)
-    const env: Record<string, string | undefined> = {
-      ...process.env,
-      WINVM_HOME: home,
+    expect(latched.stow.enabled).toBe(false)
+    expect(latched.stow.off).toContain("refused")
+    expect(latched.stow.off).toContain("until QEMU restarts")
+    expect(latched.stow.lastAt).toBe("2026-11-17T08:00:00Z")
+    expect(latched.autosave.enabled).toBe(cfg["autosave.enabled"])
+    const free = idleState(cfg, { ephemeral: false, stowRefused: false }, {})
+    expect(free.stow.enabled).toBe(true)
+    expect(free.stow.off).toBeUndefined()
+    expect(
+      idleState(
+        { ...cfg, "stow.enabled": false },
+        { ephemeral: false, stowRefused: true },
+        {},
+      ).stow.off,
+    ).toBeUndefined()
+  })
+
+  it("is logged once, however often it comes back, and leaves the record to winvm stow", () => {
+    rmSync(instanceDir("refused"), { recursive: true, force: true })
+    mkdirSync(instanceDir("refused"), { recursive: true })
+    const logged: string[] = []
+    const log = (line: string): void => {
+      logged.push(line)
     }
-    delete env.WINVM_BUILD_ID
-    const child = Bun.spawn([process.execPath, cli, "watch", "-i", "w"], {
-      env,
-      stdout: "pipe",
-      stderr: "ignore",
-    })
-    spawned.push(child)
-    let output = ""
-    const decoder = new TextDecoder()
-    void (async () => {
-      for await (const chunk of child.stdout) output += decoder.decode(chunk)
-    })()
-    try {
-      while (readWatchState("w")?.build === undefined)
-        await new Promise((r) => setTimeout(r, 5))
-      expect(readWatchState("w")).toMatchObject({
-        pid: child.pid,
-        build: buildIdentity(),
-      })
-      expect(watcherRecord("w")).toEqual({
-        pid: child.pid,
-        build: buildIdentity(),
-        cli,
-      })
-      while (!output.includes("watching qemu pid"))
-        await new Promise((r) => setTimeout(r, 5))
-      child.kill("SIGTERM")
-      await child.exited
-      expect(
-        JSON.parse(readFileSync(watchPathsFor("w").state, "utf8")),
-      ).toMatchObject({ state: "stopped", build: buildIdentity() })
-    } finally {
-      child.kill("SIGKILL")
-    }
-  }, 30_000)
+    expect(noteStowRefused(false, log)).toBe(true)
+    expect(noteStowRefused(true, log)).toBe(true)
+    expect(readSince("refused", START).entries).toEqual([])
+    expect(logged).toHaveLength(1)
+    expect(logged[0]).toContain("idle stows are off")
+  })
 })

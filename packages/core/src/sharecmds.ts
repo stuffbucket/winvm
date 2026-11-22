@@ -327,14 +327,25 @@ async function install(
   } finally {
     if (qemu.isRunning(p)) {
       if ((await quietly(asJson, async () => await commands.stop(cli()))) !== 0)
-        commands.kill(cli())
+        await commands.kill(cli())
     }
     writeDisplay(p, display)
   }
   if (wasRunning || args.flags.has("start")) {
     log("starting Windows again")
-    if ((await quietly(asJson, async () => await commands.start(cli()))) !== 0)
+    const started = await quietly(
+      asJson,
+      async () => await commands.start(cli()),
+    )
+    if (!saves.windowsRuns(started))
       return fail(`"${name}" did not start again`)
+    if (started === saves.RESTORED_UNANSWERED) {
+      console.error(
+        `::warning::the shared folder is set up in "${name}", but its guest agent has not answered since Windows came back, so winvm could not check it — \`winvm share${flag}\` shows it once Windows answers`,
+      )
+      printStatus(name, await gather(name, p), asJson)
+      return started
+    }
     await agent.connect(name, { timeoutMs: 60_000 })
   }
   printStatus(name, await gather(name, p), asJson)

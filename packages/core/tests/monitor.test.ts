@@ -4,6 +4,8 @@ import { tmpdir } from "node:os"
 import { resolve } from "node:path"
 
 import { QmpError, QmpNotDelivered, qmpCommand } from "../src/monitor"
+import { type OpScope, runInOp } from "../src/opcontext"
+import * as qmp from "../src/qmp"
 import { FakeQmp } from "./fakes/qmp"
 
 let dir: string
@@ -22,6 +24,7 @@ afterAll(async () => {
 
 afterEach(() => {
   fake.greets = true
+  fake.negotiateDelayMs = 0
   fake.handler = () => ({ return: {} })
   fake.commands.length = 0
 })
@@ -77,4 +80,43 @@ describe("qmpCommand tells a request QEMU never acted on from one it may have", 
     expect(e).toBeInstanceOf(QmpError)
     expect(e).not.toBeInstanceOf(QmpNotDelivered)
   })
+})
+
+describe("an op that ends while its QMP client negotiates", () => {
+  const scopeFor = (signal: AbortSignal): OpScope => ({
+    id: "op-1",
+    operation: "resume",
+    signal,
+    write: () => undefined,
+    remount: () => undefined,
+    cancelled: new AbortController().signal,
+    irreversibleAt: null,
+    calls: 0,
+  })
+
+  const slowGreeting = (): void => {
+    fake.negotiateDelayMs = 200
+  }
+
+  for (const [label, send] of [
+    [
+      "qmpCommand",
+      async (): Promise<unknown> => await qmpCommand(fake.path, "cont"),
+    ],
+    [
+      "qmp.execute",
+      async (): Promise<unknown> => await qmp.execute(fake.path, "cont"),
+    ],
+  ] as const)
+    it(`never writes the command (${label})`, async () => {
+      slowGreeting()
+      const ac = new AbortController()
+      const asked = runInOp(scopeFor(ac.signal), send)
+      setTimeout(() => {
+        ac.abort("host-end")
+      }, 50)
+      await expect(asked).rejects.toThrow("the Mac is shutting down")
+      await Bun.sleep(300)
+      expect(fake.commands).not.toContain("cont")
+    })
 })

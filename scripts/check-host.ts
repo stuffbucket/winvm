@@ -11,7 +11,7 @@ if ((process.env.WINVM_RUNTIME ?? "") === "") {
     )
   }
 }
-const missing = printChecks(hostChecks())
+const missing = printChecks(hostChecks("required"))
 console.log(
   missing === 0
     ? "host is ready for winvm"

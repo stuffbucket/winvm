@@ -78,6 +78,21 @@ export function runtimeCache(
   )
 }
 
+export function runtimeManifestAt(
+  dir: string,
+): { readonly manifest: RuntimeManifest; readonly mtimeMs: number } | null {
+  const manifest = readManifest(dir)
+  if (manifest === null) return null
+  try {
+    return {
+      manifest,
+      mtimeMs: statSync(resolve(dir, "manifest.json")).mtimeMs,
+    }
+  } catch {
+    return null
+  }
+}
+
 function readManifest(dir: string): RuntimeManifest | null {
   try {
     return JSON.parse(

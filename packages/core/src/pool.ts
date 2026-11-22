@@ -228,7 +228,7 @@ async function hardStop(instance: string): Promise<void> {
   const pid = qemu.pidOf(p)
   if (pid !== null && qemu.isInstanceQemu(pid, p)) {
     try {
-      process.kill(pid, "SIGKILL")
+      await qemu.killQemu(p, pid)
     } catch {}
     for (let i = 0; i < 100 && qemu.pidOf(p) !== null; i += 1) await sleep(100)
   }

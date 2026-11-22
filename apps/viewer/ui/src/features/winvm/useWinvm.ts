@@ -4,6 +4,7 @@ import {
   errorMessage,
   eventStreamUp,
   installCli,
+  newOpId,
   type Output,
   onWinvmEvent,
   outputText,
@@ -25,6 +26,7 @@ import {
   parseConnection,
   parseStatus,
   phase,
+  RESTORED_BUSY,
   titleAssignment,
 } from "../../model"
 import { type AgentSeen, agentSeen, UNSEEN } from "./agentSeen"
@@ -48,10 +50,7 @@ export interface Ran {
   readonly verb: Verb | "open" | "put"
   readonly code: number
   readonly output: string
-}
-
-interface RanOn extends Ran {
-  readonly seq: number
+  readonly id?: string | null
 }
 
 type Runner = (...args: string[]) => Promise<Output>
@@ -59,6 +58,7 @@ type Runner = (...args: string[]) => Promise<Output>
 export interface ActiveOperation {
   readonly operation: VmOperation
   readonly source: "local" | "external"
+  readonly id?: string | null
 }
 
 export interface Winvm {
@@ -87,7 +87,7 @@ export interface Winvm {
     arg?: string,
     through?: Runner,
   ) => Promise<Ran | null>
-  lastOn(name: string): RanOn | null
+  lastOn(name: string): Ran | null
   openScreenSharing(): Promise<void>
   installCommand: () => Promise<void>
   dismissFailure: () => void
@@ -102,6 +102,7 @@ export interface Winvm {
 interface Local {
   readonly target: string | null
   readonly verb: Verb
+  readonly id: string | null
 }
 
 const errorText = (e: unknown): string => errorMessage(e)
@@ -164,8 +165,7 @@ export function useWinvm(): Winvm {
   const waiters = useRef(new Map<string, Set<(s: Status | null) => void>>())
   const repairs = useRef(new Map<string, Repair>())
   const guard = useRef(new StatusGuard())
-  const outcomes = useRef(new Map<string, RanOn>())
-  const ranCount = useRef(0)
+  const outcomes = useRef(new Map<string, Ran>())
   const tick = useRef(0)
   const looped = useRef<string | null>(null)
   const nameRef = useRef<string | null>(null)
@@ -345,6 +345,17 @@ export function useWinvm(): Winvm {
     const r = refresher.current
     r.start()
     let gone = false
+    const remounting = new Set<string>()
+    const remount = (instance: string): void => {
+      if (remounting.has(instance)) return
+      remounting.add(instance)
+      winvm("files", "remount", "-i", instance)
+        .catch(() => undefined)
+        .finally(() => {
+          remounting.delete(instance)
+          if (!gone) r.changed(instance, 0)
+        })
+    }
     const resync = (): void => {
       loadNames().catch(() => undefined)
       const shown = nameRef.current
@@ -359,7 +370,8 @@ export function useWinvm(): Winvm {
         return
       }
       setStreaming(true)
-      if (signal.kind === "changed")
+      if (signal.kind === "remount") remount(signal.instance)
+      if (signal.kind === "changed" || signal.kind === "remount")
         r.changed(signal.instance, EVENT_REFRESH_DELAY_MS)
       else resync()
     })
@@ -404,14 +416,24 @@ export function useWinvm(): Winvm {
 
   const current = status !== null && status.name === name ? status : null
   const p = shownPhase(held, current, phase)
-  const busy =
-    locals.find((l) => l.target === null || l.target === name)?.verb ?? null
+  const mine = locals.find((l) => l.target === null || l.target === name)
+  const busy = mine?.verb ?? null
   const operation: ActiveOperation | null =
     busy !== null
-      ? { operation: operationFor(busy), source: "local" }
+      ? {
+          operation: operationFor(busy),
+          source: "local",
+          ...(mine?.id == null ? {} : { id: mine.id }),
+        }
       : current?.operation == null
         ? null
-        : { operation: current.operation.operation, source: "external" }
+        : {
+            operation: current.operation.operation,
+            source: "external",
+            ...(current.operation.id === undefined
+              ? {}
+              : { id: current.operation.id }),
+          }
   const every = streaming
     ? SAFETY_MS
     : operation !== null || p === "starting"
@@ -508,11 +530,11 @@ export function useWinvm(): Winvm {
     ): Promise<Ran> => {
       const target = verb === "setup" ? null : machine
       const owner = target ?? nameRef.current
-      const local: Local = { target, verb }
+      const id = target === null ? null : newOpId()
+      const local: Local = { target, verb, id }
       const record = (ran: Ran): void => {
         if (owner === null) return
-        ranCount.current += 1
-        outcomes.current.set(owner, { ...ran, seq: ranCount.current })
+        outcomes.current.set(owner, ran)
       }
       setLocals((was) => [...was, local])
       setFailure(null)
@@ -525,18 +547,32 @@ export function useWinvm(): Winvm {
             : []),
         ]
         const out =
-          target === null
+          target === null || id === null
             ? await winvm("setup")
-            : await through(verb, "-i", target, ...extra)
-        const ran: Ran = { verb, code: out.code, output: outputText(out) }
+            : await through(verb, "-i", target, ...extra, "--op-id", id)
+        const ran: Ran = {
+          verb,
+          code: out.code,
+          output: outputText(out),
+          ...(id === null ? {} : { id }),
+        }
         result = ran
         record(ran)
         setLast(ran)
         if (out.code !== 0) setFailure(ran)
         if (target === null || target === nameRef.current)
-          guard.current.settle(out.code === 0 ? phaseAfter(verb) : null)
+          guard.current.settle(
+            out.code === 0 || out.code === RESTORED_BUSY
+              ? phaseAfter(verb)
+              : null,
+          )
       } catch (e) {
-        const ran: Ran = { verb, code: -1, output: errorText(e) }
+        const ran: Ran = {
+          verb,
+          code: -1,
+          output: errorText(e),
+          ...(id === null ? {} : { id }),
+        }
         result = ran
         record(ran)
         setLast(ran)
@@ -566,7 +602,7 @@ export function useWinvm(): Winvm {
   )
 
   const lastOn = useCallback(
-    (target: string): RanOn | null => outcomes.current.get(target) ?? null,
+    (target: string): Ran | null => outcomes.current.get(target) ?? null,
     [],
   )
 

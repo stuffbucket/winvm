@@ -126,6 +126,11 @@ export function SharedFolder({
         )
       )}
 
+      {view.notice !== null && (
+        <p className="action__hint" role="status">
+          {view.notice}
+        </p>
+      )}
       {view.error !== null && <p className="action__error">{view.error}</p>}
 
       <ConfirmDialog

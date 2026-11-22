@@ -28,6 +28,8 @@ pub struct CommandSpec {
     pub log: Option<PathBuf>,
     #[serde(default = "shielded")]
     pub shield: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub umask: Option<u32>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -42,6 +44,42 @@ pub struct ChildSpec {
     #[serde(default = "shielded")]
     pub shield: bool,
     pub pidfile: Option<PathBuf>,
+    pub qmp: Option<PathBuf>,
+    pub umask: Option<u32>,
+    pub runtime: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ServiceSpec {
+    pub argv: Vec<String>,
+    #[serde(default)]
+    pub env: BTreeMap<String, String>,
+    pub log: Option<PathBuf>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub umask: Option<u32>,
+    pub build: String,
+    pub control: PathBuf,
+}
+
+impl ServiceSpec {
+    pub fn command(&self) -> CommandSpec {
+        CommandSpec {
+            argv: self.argv.clone(),
+            env: self.env.clone(),
+            log: self.log.clone(),
+            shield: false,
+            umask: self.umask,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct AdoptSpec {
+    pub name: String,
+    pub pidfile: PathBuf,
+    pub qmp: Option<PathBuf>,
 }
 
 impl ChildSpec {
@@ -51,6 +89,7 @@ impl ChildSpec {
             env: self.env.clone(),
             log: self.log.clone(),
             shield: self.shield,
+            umask: self.umask,
         }
     }
 }
@@ -64,6 +103,7 @@ pub struct Spec {
     pub linger_ms: Option<u64>,
     pub child: Option<ChildSpec>,
     pub stop: Option<CommandSpec>,
+    pub adopt: Option<AdoptSpec>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -73,6 +113,12 @@ pub struct Kept {
     pub pid: i32,
     pub start_us: u64,
     pub pidfile: Option<PathBuf>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub qmp: Option<PathBuf>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub runtime: Option<String>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub legacy: bool,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
@@ -89,6 +135,12 @@ pub struct State {
     #[serde(default)]
     pub stop: Option<CommandSpec>,
     pub child: Option<Kept>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub sidecars: Vec<Kept>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub service: Option<Kept>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub service_spec: Option<ServiceSpec>,
 }
 
 pub fn read_spec(dir: &Path) -> Result<Spec, String> {
@@ -174,6 +226,26 @@ mod tests {
                 pid: 42,
                 start_us: 7,
                 pidfile: Some(PathBuf::from("/x/qemu.pid")),
+                qmp: Some(PathBuf::from("/x/keeper/qmp.sock")),
+                runtime: Some("11.1.2+patches:abc".to_owned()),
+                legacy: false,
+            }),
+            sidecars: vec![Kept {
+                name: "swtpm".to_owned(),
+                pid: 43,
+                start_us: 8,
+                pidfile: None,
+                qmp: None,
+                runtime: None,
+                legacy: true,
+            }],
+            service_spec: Some(ServiceSpec {
+                argv: vec!["/bin/winvm".to_owned(), "serve".to_owned()],
+                env: BTreeMap::new(),
+                log: None,
+                umask: Some(0o022),
+                build: "b1".to_owned(),
+                control: PathBuf::from("/x/control.sock"),
             }),
             ..State::default()
         };

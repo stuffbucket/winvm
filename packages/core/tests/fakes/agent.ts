@@ -10,6 +10,7 @@ export class FakeAgent {
   handler: Handler = () => ({ return: {} })
   readonly files = new Map<string, Buffer>()
   readCeiling = 1_900_000
+  syncDelayMs = 0
   readonly reads: number[] = []
   private readonly handles = new Map<number, { data: Buffer; pos: number }>()
   private nextHandle = 1000
@@ -108,12 +109,15 @@ export class FakeAgent {
         buf = buf.subarray(nl + 1)
         if (req.execute === "guest-sync-delimited") {
           const id = (req.arguments as { id: number }).id
-          send(
-            Buffer.concat([
-              Buffer.from([0xff]),
-              Buffer.from(`${JSON.stringify({ return: id })}\n`),
-            ]),
-          )
+          const synced = Buffer.concat([
+            Buffer.from([0xff]),
+            Buffer.from(`${JSON.stringify({ return: id })}\n`),
+          ])
+          if (this.syncDelayMs === 0) send(synced)
+          else
+            setTimeout(() => {
+              send(synced)
+            }, this.syncDelayMs)
           continue
         }
         const fileReply = this.file(req)

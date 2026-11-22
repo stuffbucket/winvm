@@ -44,13 +44,21 @@ export const installArgs = (instance: string): string[] => [
   "--json",
 ]
 
-export function cliError(out: Output): string {
-  const marked = `${out.stderr}\n${out.stdout}`
+const marked = (out: Output, mark: string): readonly string[] =>
+  `${out.stderr}\n${out.stdout}`
     .split("\n")
-    .map((l) => /^\s*::error::\s*(.*)$/.exec(l)?.[1]?.trim())
-    .filter((l): l is string => l !== undefined && l !== "")
-  return marked.length > 0 ? marked.join("\n") : outputText(out)
+    .map((l) => l.trim())
+    .filter((l) => l.startsWith(mark))
+    .map((l) => l.slice(mark.length).trim())
+    .filter((l) => l !== "")
+
+export function cliError(out: Output): string {
+  const errors = marked(out, "::error::")
+  return errors.length > 0 ? errors.join("\n") : outputText(out)
 }
+
+export const cliWarning = (out: Output): string =>
+  marked(out, "::warning::").join("\n")
 
 export function homePath(path: string, home: string | null): string {
   if (home === null || home === "" || home === "/") return path

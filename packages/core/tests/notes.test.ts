@@ -28,7 +28,7 @@ import {
   removeNotes,
   writeNote,
 } from "../src/notes"
-import { list, note } from "../src/savecmds"
+import { list, note, savesCmd } from "../src/savecmds"
 import { removeAllSaves, removeSave, saveDir } from "../src/saves"
 
 const VARS = ["WINVM_HOME", "XDG_DATA_HOME", "XDG_CONFIG_HOME"] as const
@@ -310,12 +310,12 @@ describe("winvm saves note", () => {
     expect(run("-i", "dev", "../escape", "--title", "x")).toBe(1)
   })
 
-  it("`saves rm` says the note went too", () => {
+  it("`saves rm` says the note went too", async () => {
     makeSave("dev", "a")
     makeSave("dev", "b")
     writeNote("dev", "a", { title: "T" })
-    expect(list(parseArgs(["rm", "-i", "dev", "a"]))).toBe(0)
-    expect(list(parseArgs(["rm", "-i", "dev", "b"]))).toBe(0)
+    expect(await savesCmd(parseArgs(["rm", "-i", "dev", "a"]))).toBe(0)
+    expect(await savesCmd(parseArgs(["rm", "-i", "dev", "b"]))).toBe(0)
     expect(out).toEqual(['deleted save "a" and its note', 'deleted save "b"'])
     expect(readNote("dev", "a")).toBeNull()
   })

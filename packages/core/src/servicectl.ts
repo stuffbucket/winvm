@@ -10,18 +10,26 @@ import {
   statSync,
   writeFileSync,
 } from "node:fs"
-import { basename, resolve } from "node:path"
+import { resolve } from "node:path"
 
-import { commandInstance, winvmCommandAfter } from "./args"
 import { buildIdentity } from "./identity"
+import { KEEPER_PROTOCOL, keeperRequest } from "./keeper"
+import {
+  callerUmask,
+  type KeeperHello,
+  keeperHello,
+  keeperSocket,
+  keptEnv,
+} from "./kept"
 import { cliArgv, managedEnv, type Paths } from "./paths"
-import { spawnText } from "./shell"
+import { isAlive, processStart, UNREADABLE_START } from "./proc"
 
 export interface ServiceInfo {
   readonly pid: number
   readonly cli: string
   readonly version: string
   readonly startedAt: string
+  readonly pidStart?: string | null
   readonly build?: string
 }
 
@@ -77,24 +85,36 @@ function pidIn(text: string | null): number | null {
   }
 }
 
-function isServiceFor(pid: number, name: string): boolean {
-  if (pid === process.pid) return false
-  const r = spawnText("ps", ["-o", "command=", "-p", String(pid)])
-  const after = winvmCommandAfter(r.stdout, "serve")
-  return after !== null && commandInstance(after) === name
+export function wroteRecord(
+  info: Pick<ServiceInfo, "pid" | "startedAt" | "pidStart">,
+  startOf: (pid: number) => string | null = processStart,
+): boolean {
+  if (!Number.isInteger(info.pid) || info.pid <= 1 || info.pid === process.pid)
+    return false
+  const start = startOf(info.pid)
+  if (start === null || start === UNREADABLE_START) return false
+  if (typeof info.pidStart === "string" && info.pidStart !== UNREADABLE_START)
+    return start === info.pidStart
+  const claimed = Date.parse(info.startedAt)
+  const started = Date.parse(`${start} UTC`)
+  return !Number.isNaN(claimed) && !Number.isNaN(started) && started <= claimed
 }
 
-export function readService(p: Paths): ServiceInfo | null {
+function parseRecord(text: string | null): ServiceInfo | null {
+  if (text === null) return null
   try {
-    const s = JSON.parse(readFileSync(p.service, "utf8")) as ServiceInfo
-    return typeof s.pid === "number" &&
-      alive(s.pid) &&
-      isServiceFor(s.pid, basename(p.dir))
-      ? s
+    const s = JSON.parse(text) as Partial<ServiceInfo>
+    return typeof s.pid === "number" && typeof s.startedAt === "string"
+      ? (s as ServiceInfo)
       : null
   } catch {
     return null
   }
+}
+
+export function readService(p: Paths): ServiceInfo | null {
+  const s = parseRecord(readRecord(p))
+  return s !== null && wroteRecord(s) ? s : null
 }
 
 export function dropServiceRecord(p: Paths, judged: string): boolean {
@@ -184,11 +204,10 @@ export interface StopServiceSeams {
   readonly now?: () => number
   readonly sleep?: (ms: number) => void
   readonly running?: (pid: number) => boolean
-  readonly isService?: (pid: number) => boolean
+  readonly isService?: (info: ServiceInfo) => boolean
 }
 
 export function stopService(p: Paths, seams: StopServiceSeams = {}): void {
-  const name = basename(p.dir)
   const kill =
     seams.kill ??
     ((pid: number, signal: NodeJS.Signals): void =>
@@ -199,33 +218,25 @@ export function stopService(p: Paths, seams: StopServiceSeams = {}): void {
     ((ms: number): void => {
       Bun.sleepSync(ms)
     })
-  const running =
-    seams.running ?? ((pid: number): boolean => alive(pid) && !exited(pid))
+  const running = seams.running ?? isAlive
   const isService =
-    seams.isService ??
-    ((pid: number): boolean => alive(pid) && isServiceFor(pid, name))
+    seams.isService ?? ((info: ServiceInfo) => wroteRecord(info))
   const seen = readRecord(p)
-  const pid = pidIn(seen)
-  if (seen === null || pid === null || !isService(pid)) return
+  const info = parseRecord(seen)
+  if (seen === null || info === null || !isService(info)) return
   try {
-    kill(pid, "SIGTERM")
+    kill(info.pid, "SIGUSR2")
   } catch {
     return
   }
   const deadline = now() + 5000
-  while (running(pid) && now() < deadline) sleep(50)
-  if (running(pid) && isService(pid)) {
+  while (running(info.pid) && now() < deadline) sleep(50)
+  if (running(info.pid) && isService(info)) {
     try {
-      kill(pid, "SIGKILL")
+      kill(info.pid, "SIGKILL")
     } catch {}
   }
   dropServiceRecord(p, seen)
-}
-
-function exited(pid: number): boolean {
-  const r = spawnText("ps", ["-o", "stat=", "-p", String(pid)])
-  const stat = r.stdout.trim()
-  return stat === "" || stat.startsWith("Z")
 }
 
 export interface EnsureServiceOptions {
@@ -234,12 +245,98 @@ export interface EnsureServiceOptions {
   readonly current?: string
 }
 
+async function untilAnswering(
+  name: string,
+  p: Paths,
+  current: string,
+  timeoutMs: number,
+): Promise<ServiceInfo> {
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() < deadline) {
+    const info = readService(p)
+    if (
+      info !== null &&
+      serviceFreshness(info, current) === "current" &&
+      (await answers(p.control))
+    )
+      return info
+    await new Promise((r) => setTimeout(r, 50))
+  }
+  throw new Error(
+    `the control service for "${name}" did not start; see ${resolve(p.dir, "service.log")}`,
+  )
+}
+
+async function keptService(
+  name: string,
+  p: Paths,
+  hello: KeeperHello,
+  current: string,
+  timeoutMs: number,
+): Promise<ServiceInfo> {
+  const running = readService(p)
+  const kept = hello.service
+  const ours = running !== null && kept?.pid === running.pid
+  const orphaned = kept?.adopted ?? false
+  if (ours && !orphaned && serviceFreshness(running, current) === "current") {
+    keepService(p)
+    return running
+  }
+  if (ours && orphaned)
+    await keeperRequest(keeperSocket(p), { op: "service-stop" })
+  if (running !== null && !ours) stopService(p)
+  else if (running === null && hello.service === null) {
+    const seen = readRecord(p)
+    if (seen !== null) dropServiceRecord(p, seen)
+  }
+  keepService(p)
+  const answer = await keeperRequest(keeperSocket(p), {
+    op: "service",
+    service: {
+      argv: [process.execPath, ...cliArgv("serve", "-i", name)],
+      env: keptEnv(managedEnv()),
+      log: resolve(p.dir, "service.log"),
+      umask: callerUmask(),
+      build: current,
+      control: p.control,
+    },
+  })
+  if (answer.ok !== true)
+    throw new Error(
+      `winvm's keeper did not start the control service for "${name}": ${typeof answer.error === "string" ? answer.error : "no reason given"}`,
+    )
+  return await untilAnswering(name, p, current, timeoutMs)
+}
+
+function ownService(p: Paths): ServiceInfo | null {
+  const seen = readRecord(p)
+  if (seen === null || pidIn(seen) !== process.pid) return null
+  try {
+    return JSON.parse(seen) as ServiceInfo
+  } catch {
+    return null
+  }
+}
+
 export async function ensureService(
   name: string,
   p: Paths,
   o: EnsureServiceOptions = {},
 ): Promise<ServiceInfo> {
+  const own = ownService(p)
+  if (own !== null) return own
   const current = o.current ?? buildIdentity()
+  const hello = await keeperHello(p)
+  if (hello?.hostEnding === true)
+    throw new Error(
+      `winvm's keeper for "${name}" is ending its session (the Mac is shutting down or you logged out), so its control service is left as it is`,
+    )
+  if (
+    o.start === undefined &&
+    hello !== null &&
+    hello.protocol >= KEEPER_PROTOCOL
+  )
+    return await keptService(name, p, hello, current, o.timeoutMs ?? 10_000)
   const seen = readRecord(p)
   const running = readService(p)
   if (running !== null && serviceFreshness(running, current) === "current") {
@@ -262,18 +359,5 @@ export async function ensureService(
       child.unref()
     })
   start()
-  const deadline = Date.now() + (o.timeoutMs ?? 10_000)
-  while (Date.now() < deadline) {
-    const info = readService(p)
-    if (
-      info !== null &&
-      serviceFreshness(info, current) === "current" &&
-      (await answers(p.control))
-    )
-      return info
-    await new Promise((r) => setTimeout(r, 50))
-  }
-  throw new Error(
-    `the control service for "${name}" did not start; see ${resolve(p.dir, "service.log")}`,
-  )
+  return await untilAnswering(name, p, current, o.timeoutMs ?? 10_000)
 }

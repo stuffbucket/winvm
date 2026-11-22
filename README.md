@@ -81,8 +81,8 @@ you set it.
 - [Getting files in and out](docs/files.md)
 - [CI jobs](docs/jobs.md): `winvm run` and `winvm test`, and
   [running them in parallel](docs/pool.md)
-- [Background processes](docs/background.md): the control service and the
-  idle watcher
+- [Background processes](docs/background.md): the keeper, and the control
+  service and the idle watcher it runs
 - [Using Windows from Claude Code and Claude Desktop](docs/cua.md#claude-code-and-claude-desktop):
   `winvm mcp install claude-code` (or the app's "Use with Claude" button)
 - [The in-guest agent](docs/agent.md), [driving app UI](docs/gui.md),

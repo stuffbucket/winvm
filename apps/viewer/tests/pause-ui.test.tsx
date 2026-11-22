@@ -846,7 +846,7 @@ describe("operations in the window", () => {
     })
     await flush()
     expect(w().busy).toBe("stow")
-    expect(w().operation).toEqual({ operation: "stow", source: "local" })
+    expect(w().operation).toMatchObject({ operation: "stow", source: "local" })
 
     tauri
       .reads()
@@ -854,7 +854,7 @@ describe("operations in the window", () => {
       .at(-1)
       ?.resolve(status("running", "ok", "stop"))
     await flush()
-    expect(w().operation).toEqual({ operation: "stow", source: "local" })
+    expect(w().operation).toMatchObject({ operation: "stow", source: "local" })
 
     tauri.verb("stow").resolve({ code: 0, stdout: "", stderr: "" })
     await flush()
@@ -879,7 +879,12 @@ describe("operations in the window", () => {
       ran = runOn("other", "pause")
     })
     await flush()
-    expect(tauri.verb("pause").args).toEqual(["pause", "-i", "other"])
+    expect(tauri.verb("pause").args.slice(0, 3)).toEqual([
+      "pause",
+      "-i",
+      "other",
+    ])
+    expect(tauri.verb("pause").args[3]).toBe("--op-id")
     expect(w().busy).toBeNull()
     expect(w().operation).toBeNull()
 
@@ -888,7 +893,7 @@ describe("operations in the window", () => {
     })
     await flush()
     expect(w().busy).toBe("pause")
-    expect(w().operation).toEqual({ operation: "pause", source: "local" })
+    expect(w().operation).toMatchObject({ operation: "pause", source: "local" })
     act(() => {
       w().select("demo")
     })
@@ -924,7 +929,8 @@ describe("operations in the window", () => {
       void w().act("stop")
     })
     await flush()
-    expect(tauri.verb("stop").args).toEqual(["stop", "-i", "demo"])
+    expect(tauri.verb("stop").args.slice(0, 3)).toEqual(["stop", "-i", "demo"])
+    expect(tauri.verb("stop").args[3]).toBe("--op-id")
   })
 
   it("runs setup against the host however it is asked, and makes every machine wait for it", async () => {

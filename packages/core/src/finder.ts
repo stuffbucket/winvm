@@ -8,6 +8,7 @@ import type { Args } from "./args"
 import { instanceName } from "./args"
 import { refuseFrozen } from "./frozen"
 import { netfsMount } from "./netfs"
+import { currentOp } from "./opcontext"
 import { cliArgv, pathsFor, readMeta } from "./paths"
 import * as qemu from "./qemu"
 import { spawnText } from "./shell"
@@ -329,19 +330,137 @@ export function beforeDown(instance: string, sys: Sys = realSys): void {
   }
 }
 
-export async function afterUp(
+export interface QuickUnmount {
+  mountTable(): {
+    readonly done: Promise<readonly MountEntry[]>
+    kill(): void
+  }
+  unmount(dir: string): {
+    readonly done: Promise<unknown>
+    kill(): void
+  }
+}
+
+export const quickUnmount: QuickUnmount = {
+  mountTable: () => {
+    const proc = Bun.spawn(["/sbin/mount"], {
+      stdout: "pipe",
+      stderr: "ignore",
+    })
+    return {
+      done: new Response(proc.stdout).text().then(parseMountTable),
+      kill: () => {
+        proc.kill("SIGKILL")
+      },
+    }
+  },
+  unmount: (dir) => {
+    const proc = Bun.spawn(["/sbin/umount", "-f", dir], {
+      stdout: "ignore",
+      stderr: "ignore",
+    })
+    return {
+      done: proc.exited,
+      kill: () => {
+        proc.kill("SIGKILL")
+      },
+    }
+  },
+}
+
+export async function unmountWithin(
   instance: string,
-  sys: Sys = realSys,
-): Promise<void> {
+  budgetMs: number,
+  sys: QuickUnmount = quickUnmount,
+): Promise<{ readonly unmounted: number; readonly left: number }> {
   const s = readSmb(pathsFor(instance))
-  if (s === null || s.mounted.length === 0 || !sys.running(instance)) return
+  if (s === null || s.hostPort === null) return { unmounted: 0, left: 0 }
+  const port = s.hostPort
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const late = new Promise<"late">((done) => {
+    timer = setTimeout(() => {
+      done("late")
+    }, budgetMs)
+  })
   try {
-    await mountShares(instance, s.mounted, { waitMs: 30_000, sys })
+    const listing = sys.mountTable()
+    const table = await Promise.race([
+      listing.done.catch(() => [] as readonly MountEntry[]),
+      late,
+    ])
+    if (table === "late") {
+      listing.kill()
+      return { unmounted: 0, left: SHARE_KEYS.length }
+    }
+    const ours = SHARE_KEYS.map((key) => ({
+      dir: mountDir(instance, key),
+      port,
+      share: SHARES[key].share,
+    })).filter((want) => findOurMount(table, want) !== null)
+    const runs = ours.map((want) => {
+      const run = sys.unmount(want.dir)
+      let finished = false
+      void run.done.then(() => {
+        finished = true
+      })
+      return { run, finished: (): boolean => finished }
+    })
+    await Promise.race([
+      Promise.all(runs.map(async (r) => await r.run.done)),
+      late,
+    ])
+    const left = runs.filter((r) => !r.finished())
+    for (const r of left) r.run.kill()
+    return { unmounted: runs.length - left.length, left: left.length }
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
+export type Remounted = "mounted" | "nothing pending" | "failed"
+
+const pendingMounts = (instance: string, sys: Sys): readonly ShareKey[] => {
+  const s = readSmb(pathsFor(instance))
+  return s === null || !sys.running(instance) ? [] : s.mounted
+}
+
+async function mountAgain(
+  instance: string,
+  mounted: readonly ShareKey[],
+  sys: Sys,
+): Promise<boolean> {
+  try {
+    await mountShares(instance, mounted, { waitMs: 30_000, sys })
+    return true
   } catch (error) {
     console.warn(
       `warning: the guest's drives were not mounted again (${errMsg(error)}) — \`winvm files mount -i ${instance}\``,
     )
+    return false
   }
+}
+
+export async function remountPending(
+  instance: string,
+  sys: Sys = realSys,
+): Promise<Remounted> {
+  const mounted = pendingMounts(instance, sys)
+  if (mounted.length === 0) return "nothing pending"
+  return (await mountAgain(instance, mounted, sys)) ? "mounted" : "failed"
+}
+
+export async function afterUp(
+  instance: string,
+  sys: Sys = realSys,
+): Promise<void> {
+  const mounted = pendingMounts(instance, sys)
+  if (mounted.length === 0) return
+  const op = currentOp()
+  if (op !== null) {
+    op.remount()
+    return
+  }
+  await mountAgain(instance, mounted, sys)
 }
 
 export function cleanStale(
@@ -434,10 +553,21 @@ export function status(instance: string, sys: Sys = realSys): FilesStatus {
   }
 }
 
+export function drivesOwed(
+  instance: string,
+  sys: Sys = realSys,
+): readonly ShareKey[] {
+  const st = status(instance, sys)
+  return st.running
+    ? st.shares.filter((s) => s.remembered && !s.mounted).map((s) => s.key)
+    : []
+}
+
 const USAGE =
   "usage: winvm files open    [-i name] [c|home] [--path GUEST_PATH]   mount if needed, then show it in Finder\n" +
   "       winvm files mount   [-i name] [c|home]    both when neither is named\n" +
   "       winvm files unmount [-i name] [c|home]\n" +
+  "       winvm files remount [-i name]    mount again what a command took down; exits 1 if it mounted nothing that was waiting\n" +
   "       winvm files status  [-i name] [--json]"
 
 function keysOf(

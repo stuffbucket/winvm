@@ -1,5 +1,6 @@
 use crate::sidecar::{self, Output, SidecarFailure};
 use serde::{Deserialize, Serialize};
+use std::path::PathBuf;
 use std::sync::{Condvar, Mutex, MutexGuard, PoisonError};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tauri::{Emitter, Manager};
@@ -53,16 +54,18 @@ pub enum Finish {
     Reply,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Command {
     pub machine: String,
     pub verb: String,
+    pub op: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct Outcome {
     pub machine: String,
     pub verb: String,
+    pub op: Option<String>,
     pub code: i32,
     pub output: String,
 }
@@ -80,6 +83,7 @@ impl Outcome {
         Outcome {
             machine: command.machine,
             verb: command.verb,
+            op: command.op,
             code,
             output,
         }
@@ -109,6 +113,7 @@ pub struct Snapshot {
     pub last: Option<Outcome>,
     pub resolved: Vec<String>,
     pub session: Option<Session>,
+    pub orphans: Vec<Command>,
 }
 
 #[derive(Default)]
@@ -117,6 +122,9 @@ struct Inner {
     owed: Option<u64>,
     sessions: u64,
     deadline: u64,
+    journal: Option<PathBuf>,
+    orphans: Vec<Command>,
+    written: Vec<String>,
 }
 
 impl Inner {
@@ -151,6 +159,36 @@ impl Inner {
         match self.now.state {
             CloseState::Running => Ok(()),
             other => Err(out_of_order(what, other)),
+        }
+    }
+
+    fn journal(&mut self, command: &Command) {
+        let (Some(path), Some(op)) = (&self.journal, &command.op) else {
+            return;
+        };
+        let mut notes = journaled(path);
+        notes.push(command.clone());
+        match rewrite(path, &notes) {
+            Ok(()) => self.written.push(op.clone()),
+            Err(e) => note(&format!(
+                "winvm: couldn't note the close's winvm {} on {} for a later window: {e}",
+                command.verb, command.machine
+            )),
+        }
+    }
+
+    fn unjournal(&mut self) {
+        let written = std::mem::take(&mut self.written);
+        if let Some(path) = &self.journal {
+            let notes = journaled(path);
+            let kept: Vec<Command> = notes
+                .iter()
+                .filter(|c| !c.op.as_ref().is_some_and(|op| written.contains(op)))
+                .cloned()
+                .collect();
+            if kept.len() != notes.len() {
+                let _ = rewrite(path, &kept);
+            }
         }
     }
 
@@ -213,7 +251,50 @@ impl CloseCoordinator {
     }
 
     pub fn snapshot(&self) -> Snapshot {
-        self.lock().now.clone()
+        let inner = self.lock();
+        Snapshot {
+            orphans: inner.orphans.clone(),
+            ..inner.now.clone()
+        }
+    }
+
+    pub fn open_journal(&self, path: PathBuf) {
+        self.change(|i| {
+            i.orphans = journaled(&path);
+            i.journal = Some(path);
+        });
+    }
+
+    pub fn forget_orphan(&self, op: &str) {
+        self.change(|i| {
+            let before = i.orphans.len();
+            i.orphans.retain(|o| o.op.as_deref() != Some(op));
+            if i.orphans.len() == before {
+                return;
+            }
+            if let Some(path) = &i.journal {
+                let notes = journaled(path);
+                let kept: Vec<Command> = notes
+                    .iter()
+                    .filter(|c| c.op.as_deref() != Some(op))
+                    .cloned()
+                    .collect();
+                if kept.len() != notes.len() {
+                    let _ = rewrite(path, &kept);
+                }
+            }
+        });
+    }
+
+    pub fn wait_for_command(&self) -> Snapshot {
+        let inner = self
+            .changed
+            .wait_while(self.lock(), |i| i.now.command.is_some())
+            .unwrap_or_else(PoisonError::into_inner);
+        Snapshot {
+            orphans: inner.orphans.clone(),
+            ..inner.now.clone()
+        }
     }
 
     pub fn request(&self) -> Request {
@@ -238,6 +319,7 @@ impl CloseCoordinator {
         self.change(|i| match i.now.state {
             CloseState::Requested | CloseState::Running => {
                 i.not_running_a_command("cancel")?;
+                i.unjournal();
                 i.now = Snapshot::default();
                 Ok(i.owed.take().map(|_| false))
             }
@@ -249,6 +331,7 @@ impl CloseCoordinator {
         self.change(|i| {
             i.running("complete")?;
             i.not_running_a_command("complete")?;
+            i.unjournal();
             i.now.state = CloseState::Authorized;
             i.now.session = None;
             Ok(if i.owed.take().is_some() {
@@ -276,6 +359,9 @@ impl CloseCoordinator {
             if i.now.machine.as_deref() == Some(machine) {
                 i.now.machine = None;
             }
+            if i.now.last.as_ref().is_some_and(|l| l.machine == machine) {
+                i.unjournal();
+            }
             Ok(())
         })
     }
@@ -287,6 +373,7 @@ impl CloseCoordinator {
             i.not_running_a_command("command")?;
             i.now.machine = Some(command.machine.clone());
             i.now.command = Some(command.clone());
+            i.journal(&command);
             Ok(command)
         })
     }
@@ -389,6 +476,7 @@ impl Drop for CommandRun<'_> {
             self.close.end(Outcome {
                 machine: command.machine,
                 verb: command.verb,
+                op: command.op,
                 code: -1,
                 output,
             });
@@ -400,19 +488,67 @@ fn out_of_order(what: &str, state: CloseState) -> String {
     format!("close {what} arrived while the close was {state:?}")
 }
 
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum Journaled {
+    Many(Vec<Command>),
+    One(Command),
+}
+
+fn journaled(path: &std::path::Path) -> Vec<Command> {
+    let Ok(text) = std::fs::read_to_string(path) else {
+        return Vec::new();
+    };
+    let notes = match serde_json::from_str::<Journaled>(&text) {
+        Ok(Journaled::Many(notes)) => notes,
+        Ok(Journaled::One(note)) => vec![note],
+        Err(_) => Vec::new(),
+    };
+    notes
+        .into_iter()
+        .filter(|c| c.op.as_deref().is_some_and(is_op_id))
+        .collect()
+}
+
+fn rewrite(path: &std::path::Path, notes: &[Command]) -> std::io::Result<()> {
+    if notes.is_empty() {
+        return match std::fs::remove_file(path) {
+            Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(e),
+            _ => Ok(()),
+        };
+    }
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir)?;
+    }
+    let text = serde_json::to_string(notes).map_err(std::io::Error::other)?;
+    std::fs::write(path, text)
+}
+
+pub fn is_op_id(id: &str) -> bool {
+    let mut chars = id.chars();
+    (8..=64).contains(&id.len())
+        && chars.next().is_some_and(|c| c.is_ascii_alphanumeric())
+        && chars.all(|c| c.is_ascii_alphanumeric() || c == '-')
+}
+
 fn close_command(args: &[String]) -> Result<Command, String> {
-    match args {
-        [verb, flag, machine]
-            if (verb == "stow" || verb == "stop") && flag == "-i" && !machine.is_empty() =>
-        {
-            Ok(Command {
-                machine: machine.clone(),
-                verb: verb.clone(),
-            })
+    let (verb, flag, machine, op) = match args {
+        [verb, flag, machine] => (verb, flag, machine, None),
+        [verb, flag, machine, op_flag, id] if op_flag == "--op-id" && is_op_id(id) => {
+            (verb, flag, machine, Some(id.clone()))
         }
-        _ => Err(format!(
+        _ => (&String::new(), &String::new(), &String::new(), None),
+    };
+    if (verb == "stow" || verb == "stop") && flag == "-i" && !machine.is_empty() {
+        Ok(Command {
+            machine: machine.clone(),
+            verb: verb.clone(),
+            op,
+        })
+    } else {
+        Err(format!(
             "the close only runs winvm stow or stop on one machine, not {args:?}"
-        )),
+        ))
     }
 }
 
@@ -449,6 +585,7 @@ pub fn needs_resolving(status: &str) -> bool {
 }
 
 pub const MAIN: &str = "main";
+pub const JOURNAL: &str = "close-op.json";
 pub const REQUESTED_EVENT: &str = "viewer-close-requested";
 pub const SESSION_EVENT: &str = "viewer-close-session";
 pub const QUIT_ID: &str = "quit";
@@ -674,6 +811,28 @@ pub fn close_resolved(
 }
 
 #[tauri::command]
+pub async fn close_wait(
+    window: tauri::WebviewWindow,
+    app: tauri::AppHandle,
+) -> Result<Snapshot, String> {
+    caller_may_answer(window.label())?;
+    tauri::async_runtime::spawn_blocking(move || app.state::<CloseCoordinator>().wait_for_command())
+        .await
+        .map_err(|e| format!("couldn't wait for the close's command: {e}"))
+}
+
+#[tauri::command]
+pub async fn close_forget(
+    window: tauri::WebviewWindow,
+    app: tauri::AppHandle,
+    op: String,
+) -> Result<(), String> {
+    caller_may_answer(window.label())?;
+    app.state::<CloseCoordinator>().forget_orphan(&op);
+    Ok(())
+}
+
+#[tauri::command]
 pub async fn close_run(
     window: tauri::WebviewWindow,
     app: tauri::AppHandle,
@@ -840,6 +999,7 @@ mod tests {
         Outcome {
             machine: machine.into(),
             verb: verb.into(),
+            op: None,
             code,
             output: String::new(),
         }
@@ -1081,7 +1241,8 @@ mod tests {
             close.begin(&args(&["stow", "-i", "a"])),
             Ok(Command {
                 machine: "a".into(),
-                verb: "stow".into()
+                verb: "stow".into(),
+                op: None,
             })
         );
         let during = close.snapshot();
@@ -1090,7 +1251,8 @@ mod tests {
             during.command,
             Some(Command {
                 machine: "a".into(),
-                verb: "stow".into()
+                verb: "stow".into(),
+                op: None,
             })
         );
         assert!(
@@ -1136,6 +1298,7 @@ mod tests {
             Some(Outcome {
                 machine: "a".into(),
                 verb: "stop".into(),
+                op: None,
                 code: 0,
                 output: "stopped".into(),
             })
@@ -1180,6 +1343,168 @@ mod tests {
         assert_eq!(close.snapshot().command, None);
     }
 
+    const OP: &str = "0b9c2f1e-7d3a-4e5b-9c8d-112233445566";
+
+    fn journal_path(name: &str) -> std::path::PathBuf {
+        std::env::temp_dir().join(format!(
+            "winvm-close-{name}-{}-{}",
+            std::process::id(),
+            epoch_ms(SystemTime::now())
+        ))
+    }
+
+    #[test]
+    fn a_close_command_carries_the_op_id_it_was_given_and_only_a_well_formed_one() {
+        let close = running();
+        let command = close
+            .begin(&args(&["stow", "-i", "a", "--op-id", OP]))
+            .unwrap();
+        assert_eq!(command.op.as_deref(), Some(OP));
+        close.end(outcome("a", "stow", 0));
+        for bad in [
+            &["stow", "-i", "a", "--op-id", "short"][..],
+            &["stow", "-i", "a", "--op-id", "has space in it"],
+            &["stow", "-i", "a", "--id", OP],
+            &["stow", "-i", "a", "--op-id"],
+        ] {
+            assert!(close.begin(&args(bad)).is_err(), "{bad:?}");
+        }
+    }
+
+    #[test]
+    fn a_close_command_cut_short_with_the_app_is_found_by_the_next_app() {
+        let path = journal_path("orphan");
+        let close = running();
+        close.open_journal(path.clone());
+        close
+            .begin(&args(&["stow", "-i", "a", "--op-id", OP]))
+            .unwrap();
+        drop(close);
+        let next = CloseCoordinator::default();
+        next.open_journal(path.clone());
+        let orphan = next.snapshot().orphans.first().cloned().unwrap();
+        assert_eq!(
+            (
+                orphan.machine.as_str(),
+                orphan.verb.as_str(),
+                orphan.op.as_deref()
+            ),
+            ("a", "stow", Some(OP))
+        );
+        next.forget_orphan("someone-else-01");
+        assert_eq!(next.snapshot().orphans.len(), 1);
+        next.forget_orphan(OP);
+        assert_eq!(next.snapshot().orphans, vec![]);
+        assert!(!path.exists());
+    }
+
+    #[test]
+    fn a_second_close_cut_short_keeps_the_first_for_the_next_app_too() {
+        const SECOND: &str = "1c2d3e4f-0000-4000-8000-aabbccddeeff";
+        let path = journal_path("two");
+        let first = running();
+        first.open_journal(path.clone());
+        first
+            .begin(&args(&["stow", "-i", "a", "--op-id", OP]))
+            .unwrap();
+        drop(first);
+        let second = running();
+        second.open_journal(path.clone());
+        second
+            .begin(&args(&["stow", "-i", "b", "--op-id", SECOND]))
+            .unwrap();
+        drop(second);
+        let third = CloseCoordinator::default();
+        third.open_journal(path.clone());
+        let ops: Vec<String> = third
+            .snapshot()
+            .orphans
+            .iter()
+            .filter_map(|o| o.op.clone())
+            .collect();
+        assert_eq!(ops, vec![OP.to_owned(), SECOND.to_owned()]);
+        third.forget_orphan(OP);
+        third.forget_orphan(SECOND);
+        assert!(!path.exists());
+    }
+
+    #[test]
+    fn a_close_that_settles_its_command_keeps_an_earlier_close_cut_short() {
+        let path = journal_path("keeps");
+        let first = running();
+        first.open_journal(path.clone());
+        first
+            .begin(&args(&["stow", "-i", "a", "--op-id", OP]))
+            .unwrap();
+        drop(first);
+        let next = running();
+        next.open_journal(path.clone());
+        next.begin(&args(&[
+            "stop",
+            "-i",
+            "b",
+            "--op-id",
+            "2d3e4f50-0000-4000-8000-aabbccddeeff",
+        ]))
+        .unwrap();
+        next.end(outcome("b", "stop", 0));
+        next.resolved("b").unwrap();
+        let after = CloseCoordinator::default();
+        after.open_journal(path.clone());
+        assert_eq!(
+            after
+                .snapshot()
+                .orphans
+                .iter()
+                .filter_map(|o| o.op.as_deref())
+                .collect::<Vec<_>>(),
+            vec![OP]
+        );
+        after.forget_orphan(OP);
+    }
+
+    #[test]
+    fn a_close_that_settles_its_command_leaves_nothing_for_the_next_app() {
+        for settle in ["resolved", "cancel", "complete"] {
+            let path = journal_path(settle);
+            let close = running();
+            close.open_journal(path.clone());
+            close
+                .begin(&args(&["stop", "-i", "a", "--op-id", OP]))
+                .unwrap();
+            assert!(path.exists(), "{settle}");
+            close.end(outcome("a", "stop", 0));
+            match settle {
+                "resolved" => close.resolved("a").unwrap(),
+                "cancel" => {
+                    close.cancel().unwrap();
+                }
+                _ => {
+                    close.complete().unwrap();
+                }
+            }
+            assert!(!path.exists(), "{settle}");
+        }
+    }
+
+    #[test]
+    fn a_reloaded_window_waits_for_the_close_command_without_polling() {
+        let close = std::sync::Arc::new(running());
+        close
+            .begin(&args(&["stow", "-i", "a", "--op-id", OP]))
+            .unwrap();
+        let waiting = std::sync::Arc::clone(&close);
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let _ = tx.send(waiting.wait_for_command());
+        });
+        assert!(rx.recv_timeout(Duration::from_millis(100)).is_err());
+        close.end(outcome("a", "stow", 4));
+        let after = rx.recv_timeout(Duration::from_secs(5)).unwrap();
+        assert_eq!(after.command, None);
+        assert_eq!(after.last.map(|l| l.code), Some(4));
+    }
+
     #[test]
     fn a_reloaded_window_reads_where_the_running_close_got_to() {
         let close = running();
@@ -1197,10 +1522,11 @@ mod tests {
             serde_json::json!({
                 "state": "running",
                 "machine": "b",
-                "command": { "machine": "b", "verb": "stow" },
+                "command": { "machine": "b", "verb": "stow", "op": null },
                 "last": null,
                 "resolved": ["a"],
                 "session": null,
+                "orphans": [],
             })
         );
     }

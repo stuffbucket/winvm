@@ -8,15 +8,22 @@ import {
   measureOffset,
   syncGuestClock,
 } from "./clock"
+import { runningCommand } from "./display"
+import { appendEntry } from "./eventlog"
 import * as finder from "./finder"
 import * as frozen from "./frozen"
+import { keeperMissing } from "./kept"
 import { lockWindows } from "./lock"
+import { qmpCommand } from "./monitor"
 import * as notes from "./notes"
+import { currentOp, OpCancelled } from "./opcontext"
+import { automaticFrom, INTERRUPTED, withOperation } from "./operation"
 import type { InstanceMeta, Paths } from "./paths"
 import { pathsFor, readImageMeta, readMeta } from "./paths"
 import * as qemu from "./qemu"
 import * as qga from "./qga"
 import * as qmp from "./qmp"
+import { currentQemuCompat } from "./runtime"
 import { nameError } from "./savename"
 import * as saves from "./saves"
 import * as snapshot from "./snapshot"
@@ -31,12 +38,37 @@ const secs = (ms: number): string => `${(ms / 1000).toFixed(1)} s`
 
 const RESPONSIVE_MS = 300_000
 
-async function settle(p: Paths, label: string): Promise<boolean> {
-  if (!(await qga.waitResponsive(p.qga, RESPONSIVE_MS))) {
+const cancelled = (error: OpCancelled): number => {
+  fail(error.message)
+  return INTERRUPTED
+}
+
+type Settled = "answered" | "silent" | "gone"
+
+async function settle(
+  p: Paths,
+  label: string,
+  silent: (p: Paths, label: string) => void = refuseSilent,
+): Promise<Settled> {
+  const exit = qemu.watchExit(p)
+  const op = currentOp()
+  const signal =
+    op === null ? exit.signal : AbortSignal.any([exit.signal, op.signal])
+  let answered: boolean
+  try {
+    answered = await qga.waitResponsive(p.qga, RESPONSIVE_MS, { signal })
+  } finally {
+    exit.stop()
+  }
+  if (exit.signal.aborted) {
     console.error(
-      `::error::guest did not answer after ${label} — see ${p.serial}`,
+      `::error::QEMU exited before the guest answered after ${label} — see ${p.qemuLog}`,
     )
-    return false
+    return "gone"
+  }
+  if (!answered) {
+    silent(p, label)
+    return "silent"
   }
   try {
     const c = await syncGuestClock(p)
@@ -48,7 +80,13 @@ async function settle(p: Paths, label: string): Promise<boolean> {
       `warning: could not set the guest clock (${msg(error)}) — try \`winvm clock\``,
     )
   }
-  return true
+  return "answered"
+}
+
+function refuseSilent(p: Paths, label: string): void {
+  console.error(
+    `::error::guest did not answer after ${label} — see ${p.serial}`,
+  )
 }
 
 function requireSaveable(
@@ -75,8 +113,14 @@ async function doSave(
   const state = await qmp.status(p.qmp)
   if (o.checkReady && state === "running") {
     process.stdout.write("checking the guest has finished starting… ")
-    const ready = await qga.waitReady(p.qga, RESPONSIVE_MS)
+    const op = currentOp()
+    const ready = await qga.waitReady(
+      p.qga,
+      RESPONSIVE_MS,
+      op === null ? {} : { signal: op.cancelled },
+    )
     process.stdout.write("\n")
+    if (op?.cancelled.aborted === true) return cancelled(new OpCancelled(op))
     if (!ready)
       return fail(
         `guest "${name}" is not ready — saving one that is still booting wedges it (--force to override)`,
@@ -86,7 +130,9 @@ async function doSave(
   try {
     r = await saves.createSave(name, o)
   } catch (error) {
-    return fail(msg(error))
+    if (error instanceof OpCancelled) return cancelled(error)
+    fail(msg(error))
+    return error instanceof saves.StowNotRecallable ? error.exitCode : 1
   }
   const m = r.manifest
   console.log(
@@ -146,12 +192,16 @@ async function doLoad(
     return fail(msg(error))
   }
   const restoredMs = Date.now() - started
-  if (!(await settle(p, verb))) return 1
-  if (m.kind === "stow") saves.removeSave(name, m.name)
-  else if (saves.hasSave(name, saves.STOW)) {
-    saves.removeSave(name, saves.STOW)
-    console.log(`  (discarded the stow save; "${m.name}" supersedes it)`)
-  }
+  if (saves.retireLoaded(name, saveName, m))
+    console.log(`  (discarded the stow save; "${saveName}" supersedes it)`)
+  const answered = await settle(p, verb, (_p, label) => {
+    console.warn(
+      `warning: Windows is still busy; it was restored ("${name}" ${label} from "${saveName}" and runs), but its guest agent did not answer within ${String(RESPONSIVE_MS / 1000)} s, ` +
+        `so its clock was not set and its drives were not mounted — \`winvm clock -i ${name}\` and \`winvm files mount -i ${name}\` once it answers (see ${p.serial})`,
+    )
+  })
+  if (answered === "silent") return saves.RESTORED_UNANSWERED
+  if (answered === "gone") return 1
   console.log(
     `${verb} "${name}" from "${m.name}" (${m.kind}, taken ${new Date(m.createdAt).toLocaleString()}) ` +
       `in ${secs(Date.now() - started)} — ${wasRunning ? "was running" : "was stopped"}; state restored in ${secs(restoredMs)}`,
@@ -162,6 +212,8 @@ async function doLoad(
 
 export async function load(args: Args): Promise<number> {
   const name = instanceName(args)
+  const noKeeper = keeperMissing(`"${name}" was not loaded`)
+  if (noKeeper !== null) return fail(noKeeper.message)
   let saveName = args.positional[0]
   if (saveName === undefined) {
     const newest = saves
@@ -174,7 +226,7 @@ export async function load(args: Args): Promise<number> {
   watcher.touchActivity(name)
   const rewatch = watcher.rewatchAfterRestore(name, args)
   const code = await doLoad(name, saveName, "loaded")
-  if (code === 0) {
+  if (saves.windowsRuns(code)) {
     watcher.touchActivity(name)
     rewatch()
   }
@@ -183,9 +235,35 @@ export async function load(args: Args): Promise<number> {
 
 export async function savesCmd(args: Args): Promise<number> {
   const sub = args.positional[0]
+  if (sub === "rm") return await removeCmd(args)
   if (sub === "protect" || sub === "unprotect")
     return await protectCmd(args, sub === "protect")
   return list(args)
+}
+
+async function removeCmd(args: Args): Promise<number> {
+  const name = instanceName(args)
+  const target = args.positional[1]
+  if (target === undefined) return fail("usage: winvm saves rm <name>")
+  const err = nameError(target)
+  if (err !== null) return fail(err)
+  if (!existsSync(saves.saveDir(name, target)))
+    return fail(`instance "${name}" has no save "${target}"`)
+  try {
+    return await withOperation(name, "save", () => {
+      let hadNote = false
+      try {
+        hadNote = notes.readNote(name, target) !== null
+      } catch {
+        hadNote = false
+      }
+      saves.removeSave(name, target, { force: args.flags.has("force") })
+      console.log(`deleted save "${target}"${hadNote ? " and its note" : ""}`)
+      return 0
+    })
+  } catch (error) {
+    return fail(msg(error))
+  }
 }
 
 async function protectCmd(args: Args, protect: boolean): Promise<number> {
@@ -208,27 +286,6 @@ async function protectCmd(args: Args, protect: boolean): Promise<number> {
 
 export function list(args: Args): number {
   const name = instanceName(args)
-  if (args.positional[0] === "rm") {
-    const target = args.positional[1]
-    if (target === undefined) return fail("usage: winvm saves rm <name>")
-    const err = nameError(target)
-    if (err !== null) return fail(err)
-    if (!existsSync(saves.saveDir(name, target)))
-      return fail(`instance "${name}" has no save "${target}"`)
-    let hadNote = false
-    try {
-      hadNote = notes.readNote(name, target) !== null
-    } catch {
-      hadNote = false
-    }
-    try {
-      saves.removeSave(name, target, { force: args.flags.has("force") })
-    } catch (error) {
-      return fail(msg(error))
-    }
-    console.log(`deleted save "${target}"${hadNote ? " and its note" : ""}`)
-    return 0
-  }
   if (args.positional[0] === "note") return note(args)
   if (args.positional[0] === "path") return pathOf(name, args)
   const rows = saves.listSaves(name)
@@ -373,7 +430,10 @@ export async function resume(args: Args): Promise<number> {
   if (state !== "running") await qmp.execute(p.qmp, "cont")
   else console.log(`"${name}" was not ${was}`)
   frozen.clearAsleep(p)
-  if (!(await settle(p, was === "asleep" ? "waking" : "resuming"))) return 1
+  if (
+    (await settle(p, was === "asleep" ? "waking" : "resuming")) !== "answered"
+  )
+    return 1
   if (state !== "running")
     console.log(
       was === "asleep"
@@ -427,19 +487,77 @@ export async function sleep(args: Args): Promise<number> {
   return 0
 }
 
+async function stowRefusal(
+  name: string,
+): Promise<saves.StowNotRecallable | null> {
+  const pid = qemu.pidOf(pathsFor(name))
+  if (pid === null) return null
+  return (await saves.stowRuntime(name, pid, runningCommand(pid))).refusal
+}
+
+async function runsGuest(p: Paths): Promise<boolean> {
+  if (!qemu.isRunning(p)) return false
+  const r = (await qmpCommand(p.qmp, "query-status", undefined, 2000).catch(
+    () => null,
+  )) as { status?: unknown } | null
+  return typeof r?.status === "string" && r.status !== "postmigrate"
+}
+
+function refuse(
+  name: string,
+  refusal: saves.StowNotRecallable,
+  automatic: boolean,
+): number {
+  appendEntry(name, {
+    kind: "warning",
+    what: "stow refused",
+    reason: refusal.reason,
+    automatic,
+    ...(refusal.undecided ? { undecided: true } : {}),
+  })
+  fail(refusal.message)
+  return refusal.exitCode
+}
+
 export async function stow(args: Args): Promise<number> {
   const name = instanceName(args)
-  await watcher.stopWatcher(name)
+  const refusal = await stowRefusal(name)
+  if (refusal !== null) return refuse(name, refusal, automaticFrom(args))
+  const noKeeper = qemu.isRunning(pathsFor(name))
+    ? keeperMissing(`"${name}" was not stowed`)
+    : null
+  if (noKeeper !== null) {
+    appendEntry(name, {
+      kind: "warning",
+      what: "stow refused",
+      reason: "no keeper",
+      automatic: automaticFrom(args),
+    })
+    fail(noKeeper.message)
+    return saves.STOW_REFUSED
+  }
+  return await stowHeld(name, args)
+}
+
+async function stowHeld(name: string, args: Args): Promise<number> {
+  const stopped = automaticFrom(args) ? false : await watcher.stopWatcher(name)
   finder.beforeDown(name)
   const started = Date.now()
-  const code = await doSave(name, {
-    name: saves.STOW,
-    kind: "stow",
-    quitAfter: true,
-    checkReady: !args.flags.has("force"),
-  })
+  let code: number
+  try {
+    code = await doSave(name, {
+      name: saves.STOW,
+      kind: "stow",
+      quitAfter: true,
+      checkReady: !args.flags.has("force"),
+    })
+  } catch (error) {
+    code = fail(msg(error))
+  }
   if (code !== 0) {
     await finder.afterUp(name)
+    if (stopped && (await runsGuest(pathsFor(name))))
+      watcher.startWatcherFor(name, args)
     return code
   }
   console.log(
@@ -498,9 +616,30 @@ export async function recallStow(
     console.log("discarded the stow save (--boot)")
     return null
   }
+  if (saves.readSave(name, saves.STOW)?.unfinished === true) {
+    console.error(
+      `::error::the stow of "${name}" was written by a QEMU that did not quit afterwards, so Windows may have gone on past it, and it was not recalled. ` +
+        `\`winvm load -i ${name} ${saves.STOW}\` brings it back anyway; \`winvm start -i ${name} --boot\` discards it and starts Windows afresh from its disk`,
+    )
+    return 1
+  }
   const meta = readMeta(name)
   if (meta !== null) {
     const m = saves.readSave(name, saves.STOW)
+    const by = m?.compatParts?.qemu
+    const installed = currentQemuCompat()
+    if (
+      by !== undefined &&
+      saves.isUnknownRuntime(by) &&
+      !saves.recallable(by, installed)
+    ) {
+      console.error(
+        `::error::the stow of "${name}" was written by ${by === saves.UNKNOWN_RUNTIME ? "a QEMU" : `QEMU ${saves.versionOfRuntime(by)}`} from a winvm runtime this winvm can't identify, ` +
+          `and this winvm runs QEMU ${saves.versionOfRuntime(installed)}; recalling it could fail or give Windows different hardware, so it was not recalled. ` +
+          `\`winvm start -i ${name} --boot\` discards the stow and starts Windows afresh from its disk`,
+      )
+      return 1
+    }
     if (m !== null && m.compat !== saves.compatFor(name, meta, m).hash) {
       const devices = saves.takenBeforeDevices(
         m,
@@ -515,7 +654,12 @@ export async function recallStow(
       return null
     }
   }
-  return await doLoad(name, saves.STOW, "recalled")
+  const code = await doLoad(name, saves.STOW, "recalled")
+  if (code !== 0 && saves.hasSave(name, saves.STOW))
+    console.error(
+      `  the stow is kept; \`winvm start -i ${name} --boot\` discards it and starts Windows afresh from its disk`,
+    )
+  return code
 }
 
 export const markPristine = saves.markPristine

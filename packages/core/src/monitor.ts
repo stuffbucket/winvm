@@ -1,5 +1,7 @@
 import { connect } from "node:net"
 
+import { checkOp, fenced } from "./opcontext"
+
 export class QmpError extends Error {}
 
 export class QmpNotDelivered extends QmpError {}
@@ -13,6 +15,14 @@ export async function withQmp<T>(
   sockPath: string,
   fn: (send: QmpSend) => Promise<T>,
   timeoutMs = 3000,
+): Promise<T> {
+  return await fenced(async () => await qmpSession(sockPath, fn, timeoutMs))
+}
+
+async function qmpSession<T>(
+  sockPath: string,
+  fn: (send: QmpSend) => Promise<T>,
+  timeoutMs: number,
 ): Promise<T> {
   const sock = connect(sockPath)
   let buf = ""
@@ -61,6 +71,7 @@ export async function withQmp<T>(
 
   const raw = async (o: object, label: string): Promise<unknown> => {
     if (deadErr !== null) throw deadErr
+    checkOp()
     let timer: ReturnType<typeof setTimeout> | undefined
     const reply = new Promise<Record<string, unknown>>((res) =>
       waiting.push(res),

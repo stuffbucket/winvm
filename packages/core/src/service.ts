@@ -11,30 +11,83 @@ import {
   rotateEvents,
   syncFields,
 } from "./eventlog"
+import { hostEnd } from "./hostend"
 import { buildIdentity } from "./identity"
-import { type ReconcileOptions, settleWatcherDebt } from "./lifecycle"
 import { leaseHolder } from "./operation"
+import {
+  captureOutput,
+  OPS_PROTOCOL,
+  type OpHandlers,
+  OpQueue,
+  type Reply,
+  readOpRequest,
+  reply,
+} from "./ops"
+import { SERVICE_HANDLERS, STOW_HANDLER } from "./opverbs"
 import { PACKAGE_DIR, type Paths, pathsFor } from "./paths"
+import { ownStart } from "./proc"
 import * as qga from "./qga"
 import { claim, keptWithin, livePidIn, recordedPid } from "./servicectl"
 import * as share from "./share"
 import { ChangeNotices } from "./sharewatch"
+import {
+  ensureWatcher,
+  stopWatcher,
+  type WatchOptions,
+  watchDuties,
+} from "./watch"
 
 export interface ServiceOptions {
   readonly exitAfterMs?: number
   readonly heartbeatMs?: number
   readonly checkMs?: number
   readonly eventsMaxBytes?: number
-  readonly settle?: {
-    readonly everyMs?: number
-    readonly options?: ReconcileOptions
-  }
+  readonly hostEnd?: (name: string, deadlineMs: number) => Promise<unknown>
+  readonly handlers?: OpHandlers
+  readonly watch?: WatchOptions
 }
 
 export interface ServiceHandle {
   readonly done: Promise<void>
   subscribers(): number
   stop(): Promise<void>
+}
+
+export const KEEPER_PID_ENV = "WINVM_KEEPER_PID"
+
+const SHUTDOWN_SIGNALS = ["SIGINT", "SIGTERM", "SIGHUP"] as const
+
+export interface SignalSeams {
+  readonly keeperPid?: string | undefined
+  readonly parent?: () => number
+  readonly on?: (signal: NodeJS.Signals, handler: () => void) => void
+}
+
+export function serviceSignals(
+  name: string,
+  stop: () => void,
+  o: SignalSeams = {},
+): void {
+  const keeperPid = "keeperPid" in o ? o.keeperPid : process.env[KEEPER_PID_ENV]
+  const parent = o.parent ?? ((): number => process.ppid)
+  const on =
+    o.on ??
+    ((signal: NodeJS.Signals, handler: () => void): void => {
+      process.on(signal, handler)
+    })
+  const kept = (): boolean =>
+    keeperPid !== undefined &&
+    keeperPid !== "" &&
+    String(parent()) === keeperPid
+  for (const signal of SHUTDOWN_SIGNALS)
+    on(signal, () => {
+      if (!kept()) {
+        stop()
+        return
+      }
+      appendEntry(name, { kind: "service", what: "signal ignored", signal })
+    })
+  on("SIGUSR2", stop)
 }
 
 const coreVersion = (): string =>
@@ -79,6 +132,7 @@ export async function runService(
     cli: process.env.WINVM_CLI ?? "",
     version: coreVersion(),
     startedAt: new Date().toISOString(),
+    pidStart: ownStart(),
     build: buildIdentity(),
   })
   const exitAfterMs = o.exitAfterMs ?? 10_000
@@ -106,6 +160,27 @@ export async function runService(
   const rotate = (): void => {
     rotateEvents(name, eventsMaxBytes, () => leaseHolder(name) === null)
   }
+  const nudge = (): void => {
+    for (const c of subs) send(c, ": op\n\n")
+  }
+  captureOutput()
+  const queue = new OpQueue(name, o.handlers ?? SERVICE_HANDLERS, {
+    record,
+    nudge,
+    killed: () => {
+      void stop()
+    },
+  })
+
+  const duties = watchDuties(
+    name,
+    {
+      perform: async (op, handler, args) =>
+        await queue.perform(op, handler, args),
+      stow: STOW_HANDLER,
+    },
+    o.watch,
+  )
 
   const qmpChannel = new QmpChannel({
     listen: p.qmp,
@@ -141,8 +216,112 @@ export async function runService(
     upstream: p.qgaQemu,
     portOpen: askPortOpen,
   })
-  const handle = (req: Request): Response => {
+  let hostEnding: Promise<unknown> | null = null
+  let stopping = false
+  const beginHostEnd = async (req: Request): Promise<Response> => {
+    let body: unknown = null
+    try {
+      body = await req.json()
+    } catch {}
+    const deadlineMs =
+      typeof body === "object" && body !== null
+        ? (body as { deadlineMs?: unknown }).deadlineMs
+        : undefined
+    if (typeof deadlineMs !== "number")
+      return new Response("deadlineMs is required", { status: 400 })
+    if (hostEnding !== null)
+      return new Response("already ending", { status: 409 })
+    const endHost = o.hostEnd ?? hostEnd
+    void duties.halt("the Mac is shutting down")
+    hostEnding = (async (): Promise<unknown> => {
+      await queue.close("host-end")
+      return await endHost(name, deadlineMs)
+    })().catch((error: unknown) => {
+      record({
+        kind: "warning",
+        what: "host-end",
+        error: error instanceof Error ? error.message : String(error),
+      })
+    })
+    return new Response(null, { status: 202 })
+  }
+  const stoppingReply = reply(503, {
+    error: "the service is stopping",
+    stopping: true,
+  })
+  const answer = (r: Reply): Response =>
+    Response.json(r.body, { status: r.status })
+  const submitOp = async (req: Request): Promise<Response> => {
+    if (hostEnding !== null)
+      return answer(
+        reply(503, { error: "the Mac is shutting down", hostEnding: true }),
+      )
+    if (stopping) return answer(stoppingReply)
+    const parsed = readOpRequest(
+      await req.json().catch(() => null),
+      o.handlers ?? SERVICE_HANDLERS,
+    )
+    if ("status" in parsed) return answer(parsed)
+    const s = await queue.submit(parsed)
+    if (s.kind === "busy") return answer(reply(409, { busy: s.holder }))
+    if (s.kind === "failed") return answer(reply(503, { error: s.error }))
+    if (s.kind === "closed")
+      return answer(
+        reply(
+          503,
+          s.reason === "host-end"
+            ? { error: "the Mac is shutting down", hostEnding: true }
+            : stoppingReply.body,
+        ),
+      )
+    return answer(
+      reply(202, {
+        id: s.id,
+        cursor: s.cursor,
+        pid: process.pid,
+        pidStart: ownStart(),
+        queued: s.queued,
+      }),
+    )
+  }
+  const cancelOp = async (req: Request): Promise<Response> => {
+    const body: unknown = await req.json().catch(() => null)
+    const id =
+      typeof body === "object" &&
+      body !== null &&
+      typeof (body as { id?: unknown }).id === "string"
+        ? (body as { id: string }).id
+        : null
+    const c = queue.cancel(id)
+    if (c.kind === "none") return answer(reply(404, { none: true }))
+    if (c.kind === "unknown") return answer(reply(404, { unknown: c.id }))
+    const { kind, ...what } = c
+    return answer(reply(kind === "cancelled" ? 200 : 409, { [kind]: what }))
+  }
+  const watchRequest = async (req: Request): Promise<Response> => {
+    const body: unknown = await req.json().catch(() => null)
+    const on =
+      typeof body === "object" && body !== null
+        ? (body as { protocol?: unknown; on?: unknown })
+        : null
+    if (on?.protocol !== OPS_PROTOCOL || typeof on.on !== "boolean")
+      return answer(reply(400, { error: "the body is not a watch request" }))
+    if (!on.on) return answer(reply(200, { stopped: await stopWatcher(name) }))
+    if (hostEnding !== null || stopping) return answer(stoppingReply)
+    return answer(
+      reply(200, { watching: ensureWatcher(name), pid: process.pid }),
+    )
+  }
+  const handle = async (req: Request): Promise<Response> => {
     const url = new URL(req.url)
+    if (url.pathname === "/watch" && req.method === "POST")
+      return await watchRequest(req)
+    if (url.pathname === "/host-ending" && req.method === "POST")
+      return await beginHostEnd(req)
+    if (url.pathname === "/ops" && req.method === "POST")
+      return await submitOp(req)
+    if (url.pathname === "/ops/cancel" && req.method === "POST")
+      return await cancelOp(req)
     if (url.pathname === "/events") {
       let controller: ReadableStreamDefaultController<Uint8Array> | undefined
       const stream = new ReadableStream<Uint8Array>({
@@ -170,6 +349,7 @@ export async function runService(
         state,
         qemuPid: livePidIn(p.pid),
         connected: qmpChannel.connected,
+        hostEnding: hostEnding !== null,
       })
     }
     return new Response("not found", { status: 404 })
@@ -209,32 +389,8 @@ export async function runService(
   const done = new Promise<void>((r) => {
     finish = r
   })
-  let stopping = false
   let goneMs = 0
-  let settling = false
-  let settleAt = 0
-  const settleEveryMs = o.settle?.everyMs ?? 30_000
-  const settle = (): void => {
-    if (settling || stopping || Date.now() < settleAt) return
-    settling = true
-    settleWatcherDebt(name, p, o.settle?.options)
-      .then(
-        (r) => {
-          if (r !== null) settleAt = Date.now() + settleEveryMs
-        },
-        (error: unknown) => {
-          settleAt = Date.now() + settleEveryMs
-          record({
-            kind: "warning",
-            what: "watcher owed",
-            error: error instanceof Error ? error.message : String(error),
-          })
-        },
-      )
-      .finally(() => {
-        settling = false
-      })
-  }
+  let qemuGoneMs = 0
 
   let notices: { readonly key: string; readonly n: ChangeNotices } | null = null
   let syncing = false
@@ -302,9 +458,12 @@ export async function runService(
     }
     void syncNotices()
     rotate()
-    settle()
+    duties.check()
+    qemuGoneMs = livePidIn(p.pid) === null ? qemuGoneMs + checkMs : 0
+    if (qemuGoneMs >= exitAfterMs) queue.endQueued()
     if (
       livePidIn(p.pid) !== null ||
+      !queue.idle() ||
       leaseHolder(name) !== null ||
       keptWithin(p, exitAfterMs)
     ) {
@@ -321,6 +480,9 @@ export async function runService(
       return
     }
     stopping = true
+    if (hostEnding !== null) await hostEnding
+    await duties.halt("winvm's service stopped")
+    await queue.close("stopping")
     clearInterval(check)
     clearInterval(heartbeat)
     for (const c of subs) {

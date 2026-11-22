@@ -24,7 +24,11 @@ import { type Entry, readSince, START } from "../src/eventlog"
 import type { LeaseOperation, VmOperation } from "../src/operation"
 import {
   abandonedStop,
+  automaticFrom,
   clearSavingRunning,
+  type HeldLease,
+  heldLease,
+  holdsLease,
   InstanceBusy,
   irreversible,
   leaseHolder,
@@ -33,6 +37,7 @@ import {
   readOperation,
   STOP_UNFINISHED,
   savingRunning,
+  waitNote,
   withOperation,
 } from "../src/operation"
 import { pathsFor } from "../src/paths"
@@ -118,6 +123,41 @@ const gate = (): {
 
 const quietly = { onWait: (): void => undefined }
 
+describe("the held lease", () => {
+  it("exists only inside the operation that holds the instance", async () => {
+    expect(heldLease(NAME)).toBeNull()
+    const issued: HeldLease[] = []
+    const heldInside: boolean[] = []
+    await withOperation(NAME, "start", () => {
+      const lease = heldLease(NAME)
+      if (lease !== null) issued.push(lease)
+      heldInside.push(lease !== null && holdsLease(lease))
+      expect(heldLease("another")).toBeNull()
+    })
+    expect(issued).toHaveLength(1)
+    expect(heldInside).toEqual([true])
+    expect(issued.map(holdsLease)).toEqual([false])
+  })
+
+  it("cannot be forged, even with the id of the lease on disk", async () => {
+    await withOperation(NAME, "start", () => {
+      const real = heldLease(NAME)
+      expect(real).not.toBeNull()
+      const forged: HeldLease = { instance: NAME, id: real?.id ?? "" }
+      expect(holdsLease(forged)).toBe(false)
+    })
+  })
+
+  it("stops counting once another process takes the instance over", async () => {
+    await withOperation(NAME, "start", () => {
+      const lease = heldLease(NAME)
+      expect(lease === null ? false : holdsLease(lease)).toBe(true)
+      writeFileSync(leaseFile(), JSON.stringify({ ...onDisk(), id: "other" }))
+      expect(lease === null ? true : holdsLease(lease)).toBe(false)
+    })
+  })
+})
+
 describe("operationFor", () => {
   it("maps the per-instance machine-impacting invocations, golden by its nested action", () => {
     const a = (...argv: string[]): Args => parseArgs(argv)
@@ -202,6 +242,7 @@ describe("the lease record", () => {
       operation: "start",
       pid: process.pid,
       startedAt: during.record?.startedAt as string,
+      id: expect.any(String) as string,
     })
     expect(onDisk()).toBeNull()
 
@@ -220,6 +261,7 @@ describe("the lease record", () => {
       operation: "save",
       pid: h.pid,
       startedAt: "2026-01-01T00:00:00.000Z",
+      id: `id-${String(h.pid)}`,
     })
 
     put(h.pid, { pidStart: "Thu Jan  1 00:00:00 1970" })
@@ -278,6 +320,7 @@ describe("the lease record", () => {
     expect(readOperation(NAME)).toEqual({
       operation: "save",
       pid: child.pid,
+      id: expect.any(String) as string,
       startedAt: expect.any(String) as string,
     })
     await expect(withOperation(NAME, "stop", () => "ran")).rejects.toThrow(
@@ -525,17 +568,86 @@ describe("waiting", () => {
     await auto
   })
 
-  it("marks every lease taken by a command winvm ran on its own", async () => {
+  it("marks the lease of a stow that says --automatic, as winvm's own idle stows do", async () => {
+    const argv = parseArgs(["-i", NAME, "--automatic"])
+    expect(automaticFrom(argv)).toBe(true)
+    expect(automaticFrom(parseArgs(["-i", NAME]))).toBe(false)
+    expect(
+      await withOperation(NAME, "stow", () => onDisk()?.automatic, {
+        automatic: automaticFrom(argv),
+      }),
+    ).toBe(true)
+  })
+
+  it("marks no lease automatic for a WINVM_AUTOMATIC it merely inherited", async () => {
     const before = process.env.WINVM_AUTOMATIC
     process.env.WINVM_AUTOMATIC = "1"
     try {
       expect(await withOperation(NAME, "stow", () => onDisk()?.automatic)).toBe(
-        true,
+        false,
       )
     } finally {
       if (before === undefined) delete process.env.WINVM_AUTOMATIC
       else process.env.WINVM_AUTOMATIC = before
     }
+  })
+
+  it("queues behind a person's command too when asked to, saying whose it is", async () => {
+    const g = gate()
+    const held = withOperation(NAME, "reboot", async () => {
+      await g.opened
+    })
+    await Bun.sleep(20)
+    const said: string[] = []
+    const queued = withOperation(NAME, "pause", () => onDisk()?.operation, {
+      queue: true,
+      pollMs: 10,
+      onWait: (h) => said.push(waitNote(NAME, h)),
+    })
+    await Bun.sleep(60)
+    g.open()
+    await held
+    expect(await queued).toBe("pause")
+    expect(said).toEqual([
+      `instance "${NAME}": waiting for the reboot (pid ${String(process.pid)}) to finish`,
+    ])
+  })
+
+  it("stops waiting when its signal aborts, and never takes the lease", async () => {
+    const g = gate()
+    const held = withOperation(NAME, "reboot", async () => {
+      await g.opened
+    })
+    await Bun.sleep(20)
+    const ac = new AbortController()
+    let ran = false
+    const queued = withOperation(
+      NAME,
+      "pause",
+      () => {
+        ran = true
+      },
+      { queue: true, pollMs: 10, signal: ac.signal, ...quietly },
+    )
+    await Bun.sleep(40)
+    ac.abort("cancelled")
+    await expect(queued).rejects.toBe("cancelled")
+    g.open()
+    await held
+    expect(ran).toBe(false)
+  })
+
+  it("takes the lease under the id it is given, and records the op under it", async () => {
+    expect(
+      await withOperation(NAME, "pause", () => onDisk()?.id, {
+        id: "given-id",
+      }),
+    ).toBe("given-id")
+    expect(
+      readSince(NAME, START)
+        .entries.filter((e) => e.kind === "op")
+        .map((e) => e.id),
+    ).toEqual(["given-id", "given-id"])
   })
 })
 
@@ -591,7 +703,8 @@ describe("the event record of operations", () => {
       id: begin?.kind === "op" ? begin.id : "",
       operation: "stop",
       pid: process.pid,
-      startedAt: begin?.kind === "op" ? begin.startedAt : "",
+      startedAt:
+        begin?.kind === "op" && begin.phase === "begin" ? begin.startedAt : "",
       endedAt: expect.any(String) as string,
       automatic: false,
       leased: true,
@@ -663,7 +776,9 @@ describe("the event record of operations", () => {
     await wedged
     expect(
       ops().map((e) =>
-        e.kind === "op" ? `${e.phase}:${e.operation}:${String(e.leased)}` : "",
+        e.kind === "op" && (e.phase === "begin" || e.phase === "end")
+          ? `${e.phase}:${e.operation}:${String(e.leased)}`
+          : "",
       ),
     ).toEqual([
       "begin:stop:true",

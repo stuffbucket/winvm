@@ -7,25 +7,29 @@ import * as finder from "@winvm/core/finder"
 import * as follow from "@winvm/core/follow"
 import * as goldens from "@winvm/core/golden"
 import {
+  ensureCurrent,
   ManagementError,
-  reconcileManagement,
-  reconcileNote,
-  shouldReconcileVerb,
+  serviceUp,
 } from "@winvm/core/lifecycle"
 import * as machineinfo from "@winvm/core/machineinfo"
 import * as machinenote from "@winvm/core/machinenote"
 import * as mcpcmds from "@winvm/core/mcpcmds"
 import * as ocr from "@winvm/core/ocr"
+import * as opclient from "@winvm/core/opclient"
 import {
+  automaticFrom,
   InstanceBusy,
   operationFor,
   withOperation,
 } from "@winvm/core/operation"
+import { isOpId, isServiceOp, type ServiceOp } from "@winvm/core/ops"
 import {
   bunVersionWarning,
+  pathsFor,
   pinnedBunVersion,
   recordCliEntry,
 } from "@winvm/core/paths"
+import { isRunning as qemuRunning } from "@winvm/core/qemu"
 import * as reconcile from "@winvm/core/reconcile"
 import * as runcmds from "@winvm/core/runcmds"
 import * as savecmds from "@winvm/core/savecmds"
@@ -49,11 +53,24 @@ const [, , sub, ...rawArgs] = process.argv
 const args = parseArgs(rawArgs)
 
 const operation = operationFor(sub, args)
+const serviceOp = isServiceOp(operation) ? operation : null
+const opId = args.flags.get("op-id")
+if (opId !== undefined && !isOpId(opId)) {
+  console.error(
+    "::error::--op-id wants 8 to 64 letters, digits and dashes, starting with a letter or digit",
+  )
+  process.exit(1)
+}
 const leased = async (run: () => number | Promise<number>): Promise<number> => {
   if (operation === null) return await run()
   try {
     return await withOperation(instanceName(args), operation, run, {
       interruptible: true,
+      automatic: automaticFrom(args),
+      ...(opId === undefined ? {} : { id: opId }),
+      ...(serviceOp !== null && args.flags.has("wait")
+        ? { queue: true, waitMs: Number.POSITIVE_INFINITY }
+        : {}),
     })
   } catch (error) {
     if (!(error instanceof InstanceBusy)) throw error
@@ -61,6 +78,23 @@ const leased = async (run: () => number | Promise<number>): Promise<number> => {
     return 1
   }
 }
+const viaService = async (
+  op: ServiceOp,
+  here: () => number | Promise<number>,
+): Promise<number> =>
+  await opclient.runOp(
+    {
+      op,
+      args,
+      argv: rawArgs,
+      ...(opId === undefined ? {} : { id: opId }),
+    },
+    {
+      up: serviceUp,
+      here: async () => await leased(here),
+      running: (name) => qemuRunning(pathsFor(name)),
+    },
+  )
 const NO_SWEEP = [
   "help",
   "--help",
@@ -74,6 +108,7 @@ const NO_SWEEP = [
   "events",
   "status",
   "reconcile",
+  "cancel",
 ]
 const LOOK_ONLY = [
   "info",
@@ -99,17 +134,12 @@ if (
 
 if (
   sub !== undefined &&
-  shouldReconcileVerb(sub) &&
+  reconcile.shouldReconcileVerb(sub, process.env, instanceName(args)) &&
   !(sub === "files" && args.positional[0]?.startsWith("_") === true)
 ) {
   const name = instanceName(args)
   try {
-    const note = reconcileNote(
-      name,
-      await reconcileManagement(name, undefined, {
-        waitForBusyWatcher: false,
-      }),
-    )
+    const note = reconcile.reconcileNote(name, await ensureCurrent(name))
     if (note !== null) console.error(note)
   } catch (error) {
     if (!(error instanceof ManagementError)) throw error
@@ -121,7 +151,7 @@ if (
 let exitCode: number
 switch (sub ?? "") {
   case "doctor":
-    exitCode = commands.doctor(args.flags.has("json"))
+    exitCode = await commands.doctor(args.flags.has("json"))
     break
   case "timemachine":
   case "tm":
@@ -142,16 +172,19 @@ switch (sub ?? "") {
     exitCode = await commands.build(args)
     break
   case "start":
-    exitCode = await leased(() => commands.start(args))
+    exitCode = await viaService("start", () => commands.start(args))
     break
   case "stop":
-    exitCode = await leased(() => commands.stop(args))
+    exitCode = await viaService("stop", () => commands.stop(args))
     break
   case "reboot":
-    exitCode = await leased(() => commands.reboot(args))
+    exitCode = await viaService("reboot", () => commands.reboot(args))
     break
   case "kill":
-    exitCode = await leased(() => commands.kill(args))
+    exitCode = await viaService("kill", () => commands.kill(args))
+    break
+  case "cancel":
+    exitCode = await opclient.cancelCmd(args)
     break
   case "reset":
     exitCode = await leased(() => commands.reset(args))
@@ -187,7 +220,10 @@ switch (sub ?? "") {
     exitCode = await agentcmds.rm(args)
     break
   case "files":
-    exitCode = await finder.filesCmd(args)
+    exitCode =
+      args.positional[0] === "remount"
+        ? await opclient.remountCmd(args)
+        : await finder.filesCmd(args)
     break
   case "launch":
     exitCode = await agentcmds.launch(args)
@@ -205,38 +241,43 @@ switch (sub ?? "") {
     exitCode = await leased(() => commands.snap(args))
     break
   case "rewind":
-    exitCode = await leased(() => commands.rewind(args))
+    exitCode = await viaService("rewind", () => commands.rewind(args))
     break
   case "snapshots":
     exitCode = await commands.snapshots(args)
     break
   case "save":
-    exitCode = await leased(() => savecmds.save(args))
+    exitCode = await viaService("save", () => savecmds.save(args))
     break
   case "load":
-    exitCode = await leased(() => savecmds.load(args))
+    exitCode = await viaService("load", () => savecmds.load(args))
     break
   case "share":
     exitCode = await leased(() => sharecmds.shareCmd(args))
     break
   case "golden":
-    exitCode = await leased(() => goldens.golden(args))
+    exitCode =
+      serviceOp === null
+        ? await leased(() => goldens.golden(args))
+        : await viaService(serviceOp, () => goldens.golden(args))
     break
   case "saves":
     exitCode = await savecmds.savesCmd(args)
     break
   case "pause":
-    exitCode = await leased(() => savecmds.pause(args))
+    exitCode = await viaService("pause", () => savecmds.pause(args))
     break
   case "resume":
   case "wake":
-    exitCode = await leased(() => savecmds.resume(args))
+    exitCode = await viaService(sub === "wake" ? "wake" : "resume", () =>
+      savecmds.resume(args),
+    )
     break
   case "sleep":
-    exitCode = await leased(() => savecmds.sleep(args))
+    exitCode = await viaService("sleep", () => savecmds.sleep(args))
     break
   case "lock":
-    exitCode = await leased(() => savecmds.lock(args))
+    exitCode = await viaService("lock", () => savecmds.lock(args))
     break
   case "settings":
     exitCode = settings.settingsCmd(args)
@@ -245,7 +286,7 @@ switch (sub ?? "") {
     exitCode = machinenote.noteCmd(args)
     break
   case "stow":
-    exitCode = await leased(() => savecmds.stow(args))
+    exitCode = await viaService("stow", () => savecmds.stow(args))
     break
   case "clock":
     exitCode = await savecmds.clock(args)
@@ -254,9 +295,9 @@ switch (sub ?? "") {
     exitCode = await commands.watchCmd(args)
     break
   case "serve": {
-    const handle = await service.runService(instanceName(args))
-    for (const sig of ["SIGINT", "SIGTERM", "SIGHUP"] as const)
-      process.on(sig, () => void handle.stop())
+    const name = instanceName(args)
+    const handle = await service.runService(name)
+    service.serviceSignals(name, () => void handle.stop())
     await handle.done
     exitCode = 0
     break
@@ -265,7 +306,9 @@ switch (sub ?? "") {
     exitCode = await reconcile.reconcileCmd(args)
     break
   case "events":
-    exitCode = await follow.eventsCmd(args)
+    exitCode = args.flags.has("op")
+      ? await opclient.opEventsCmd(args)
+      : await follow.eventsCmd(args)
     break
   case "run":
     exitCode = await runcmds.run(args)

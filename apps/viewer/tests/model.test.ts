@@ -18,6 +18,7 @@ import {
   parseShare,
   parseStatus,
   phase,
+  protectable,
   shownTitle,
   startSteps,
   terminalBlocked,
@@ -532,5 +533,26 @@ describe("an instance's operation and close policy", () => {
   it("sets the policy with winvm config", () => {
     expect(closePolicyAssignment("stow")).toBe("viewer.closePolicy=stow")
     expect(closePolicyAssignment("ask")).toBe("viewer.closePolicy=ask")
+  })
+})
+
+describe("protectable", () => {
+  const keeper = (k: Record<string, unknown>) =>
+    one({ keeper: { version: "0.1.0", pid: 77, ...k } })
+
+  it("is a running VM an older winvm started, whose stow this winvm can recall", () => {
+    expect(
+      protectable(keeper({ protection: "adopted", recallable: true })),
+    ).toBe(true)
+    expect(protectable(keeper({ protection: "legacy" }))).toBe(true)
+  })
+
+  it("is never a VM whose stow this winvm could not recall", () => {
+    expect(
+      protectable(keeper({ protection: "adopted", recallable: false })),
+    ).toBe(false)
+    expect(
+      protectable(keeper({ protection: "legacy", recallable: false })),
+    ).toBe(false)
   })
 })

@@ -1,4 +1,4 @@
-import { spawn, spawnSync } from "node:child_process"
+import { spawnSync } from "node:child_process"
 import {
   closeSync,
   existsSync,
@@ -14,6 +14,7 @@ import { resolve } from "node:path"
 
 import type { DisplayConfig } from "./display"
 import type { Paths } from "./paths"
+import { signalProcess } from "./proc"
 import { findRuntime, type Runtime } from "./runtime"
 import { spawnText } from "./shell"
 
@@ -285,7 +286,7 @@ export function virtiofsdPids(p: Paths): readonly number[] {
 export function stopVirtiofsd(p: Paths): void {
   for (const pid of virtiofsdPids(p)) {
     try {
-      process.kill(pid, "SIGKILL")
+      signalProcess(pid, "SIGKILL")
     } catch {}
   }
   rmSync(virtiofsdSocket(p), { force: true })
@@ -293,21 +294,15 @@ export function stopVirtiofsd(p: Paths): void {
   rmSync(virtiofsdState(p), { force: true })
 }
 
-export interface StartOptions {
-  readonly bin?: string
-  readonly timeoutMs?: number
+export interface DaemonLaunch {
+  readonly argv: readonly string[]
+  readonly log: string
+  readonly served: Served
 }
 
-export async function startVirtiofsd(
-  p: Paths,
-  o: StartOptions = {},
-): Promise<Served> {
-  stopVirtiofsd(p)
-  for (let i = 0; i < 50 && virtiofsdPids(p).length > 0; i += 1)
-    await new Promise((r) => setTimeout(r, 20))
+export function prepareVirtiofsd(p: Paths, bin?: string): DaemonLaunch {
   const served = servedFor(p)
   mkdirSync(emptyShareDir(p), { recursive: true })
-  const bin = o.bin ?? resolve(findRuntime()?.dir ?? "", "bin", "virtiofsd")
   const log = openSync(virtiofsdLog(p), "a")
   writeFileSync(
     log,
@@ -318,26 +313,33 @@ export async function startVirtiofsd(
       log,
       `the shared folder ${served.missing} is missing; serving an empty folder\n`,
     )
-  const proc = spawn(bin, [...daemonArgs(p, served)], {
-    detached: true,
-    stdio: ["ignore", log, log],
-  })
   closeSync(log)
-  proc.unref()
-  let exited = false as boolean
-  proc.on("exit", () => {
-    exited = true
-  })
-  const deadline = Date.now() + (o.timeoutMs ?? 10_000)
+  return {
+    argv: [
+      bin ?? resolve(findRuntime()?.dir ?? "", "bin", "virtiofsd"),
+      ...daemonArgs(p, served),
+    ],
+    log: virtiofsdLog(p),
+    served,
+  }
+}
+
+export async function untilServing(
+  p: Paths,
+  launched: { readonly served: Served; readonly pid: number | undefined },
+  exited: () => boolean | Promise<boolean>,
+  timeoutMs = 10_000,
+): Promise<Served> {
+  const deadline = Date.now() + timeoutMs
   while (Date.now() < deadline) {
     if (existsSync(virtiofsdSocket(p))) {
       writeFileSync(
         virtiofsdState(p),
-        `${JSON.stringify({ ...served, pid: proc.pid }, null, 2)}\n`,
+        `${JSON.stringify({ ...launched.served, pid: launched.pid }, null, 2)}\n`,
       )
-      return served
+      return launched.served
     }
-    if (exited) break
+    if (await exited()) break
     await new Promise((r) => setTimeout(r, 20))
   }
   stopVirtiofsd(p)
