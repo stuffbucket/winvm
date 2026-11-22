@@ -2,8 +2,13 @@ import { existsSync } from "node:fs"
 import { resolve } from "node:path"
 
 import { buildIdentity } from "./identity"
-import { KeeperMissing, keeperHello, keeperUse, openKeeper } from "./kept"
-import { adoptLegacy } from "./legacy"
+import {
+  KeeperMissing,
+  type KeeperUse,
+  keeperHello,
+  keeperUse,
+  openKeeper,
+} from "./kept"
 import { InstanceBusy, leaseHolder, withOperation } from "./operation"
 import { cliEntry, type Paths, pathsFor } from "./paths"
 import { pidOf as qemuPid } from "./qemu"
@@ -60,6 +65,46 @@ export const needsRepair = (
   p: Paths = pathsFor(name),
   current: string = buildIdentity(),
 ): boolean => qemuPid(p) !== null && serviceDue(p, current, null)
+
+export type Adoption = "adopted" | "kept" | "none" | "busy"
+
+async function adoptHeld(
+  name: string,
+  p: Paths,
+  use: Extract<KeeperUse, { readonly kind: "keeper" }>,
+  pid: number,
+): Promise<Adoption> {
+  if (qemuPid(p) !== pid || (await keeperHello(p)) !== null) return "none"
+  const hello = await openKeeper(name, p, use.keeper, {
+    adopt: { name: "qemu", pidfile: p.pid, qmp: p.qmp },
+  })
+  if (hello.child?.pid !== pid) return "none"
+  await ensureService(name, p)
+  return "adopted"
+}
+
+export async function adoptLegacy(
+  name: string,
+  p: Paths = pathsFor(name),
+  use: KeeperUse = keeperUse(),
+): Promise<Adoption> {
+  if (use.kind !== "keeper") return "none"
+  const pid = qemuPid(p)
+  if (pid === null) return "none"
+  const hello = await keeperHello(p)
+  if (hello !== null) return hello.child?.pid === pid ? "kept" : "none"
+  try {
+    return await withOperation(
+      name,
+      "reconcile",
+      async () => await adoptHeld(name, p, use, pid),
+      { automatic: true, waitMs: 0 },
+    )
+  } catch (error) {
+    if (error instanceof InstanceBusy) return "busy"
+    throw error
+  }
+}
 
 async function adopted(name: string, p: Paths): Promise<boolean> {
   try {

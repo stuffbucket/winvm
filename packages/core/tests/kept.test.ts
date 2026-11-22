@@ -50,8 +50,7 @@ import {
   launchedRuntime,
   setLaunchd,
 } from "../src/kept"
-import { adoptLegacy } from "../src/legacy"
-import { ensureCurrent } from "../src/lifecycle"
+import { adoptLegacy, ensureCurrent } from "../src/lifecycle"
 import { InstanceBusy, LeaseNotHeld, withOperation } from "../src/operation"
 import { type InstanceMeta, pathsFor } from "../src/paths"
 import * as proc from "../src/proc"
@@ -1091,7 +1090,7 @@ describe("adopting a VM an older winvm started", () => {
             [
               process.execPath,
               "-e",
-              `const { adoptLegacy } = await import(${JSON.stringify(resolve(import.meta.dir, "..", "src", "legacy.ts"))}); console.log(await adoptLegacy(${JSON.stringify(NAME)}))`,
+              `const { adoptLegacy } = await import(${JSON.stringify(resolve(import.meta.dir, "..", "src", "lifecycle.ts"))}); console.log(await adoptLegacy(${JSON.stringify(NAME)}))`,
             ],
             { stdout: "pipe", stderr: "inherit", env: process.env },
           )

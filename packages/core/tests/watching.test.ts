@@ -365,18 +365,6 @@ const watcherRow = (text: string): string =>
 
 const offsetMs = (): number => Math.abs(guest.offsetMs)
 
-function legacyWatcherPid(): number | null {
-  try {
-    const pid = Number.parseInt(
-      readFileSync(resolve(p.dir, "watch.pid"), "utf8"),
-      10,
-    )
-    return Number.isInteger(pid) && pid > 1 ? pid : null
-  } catch {
-    return null
-  }
-}
-
 beforeEach(async () => {
   saved = Object.fromEntries(
     Object.keys(process.env)
@@ -419,13 +407,6 @@ beforeEach(async () => {
 })
 
 afterEach(async () => {
-  const left = legacyWatcherPid()
-  if (left !== null) {
-    try {
-      process.kill(left, "SIGCONT")
-      process.kill(left, "SIGKILL")
-    } catch {}
-  }
   if (service !== null) {
     try {
       process.kill(service.pid, "SIGCONT")

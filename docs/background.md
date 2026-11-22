@@ -281,11 +281,9 @@ instance), and after one that failed it waits 1, 2, 4 minutes and so on, up to
 
 A repair hands the service over under the instance's lease, so it is put off
 while any command, or an autosave, holds the instance, and never interrupts
-one. The new service carries on the watcher's work: if a watcher process an
-older winvm started is still running, the service asks it to stop, waits for
-an autosave or stow it has under way to finish, and only then watches the
-guest itself. The record says so with `{"kind": "service", "what": "watcher
-taken over"}`.
+one. A watcher process an older winvm started is left alone: it keeps the
+guest it watches until that QEMU stops, and the service watches from the next
+`winvm start`.
 
 `winvm status` also no longer looks at the folder the Windows ISO links to
 when it reports Time Machine: if that is on another disk, macOS would ask for
@@ -322,8 +320,7 @@ Turning the watcher off waits for it, as stopping the watcher process did:
 `winvm watch --stop`, `winvm run` and `winvm test` ask the service, which
 starts no more autosaves or stows, lets one under way finish, and only then
 answers. After an idle stow, QEMU has stopped by then, so `winvm run` recalls
-the stow. With no service running, only a watcher an older winvm started can
-be watching; it is stopped as before, waiting for its autosave or stow.
+the stow.
 
 A stow takes the guest's Finder drives down first. If an idle stow then fails,
 nobody's command is there to mount them again, so the record says a remount

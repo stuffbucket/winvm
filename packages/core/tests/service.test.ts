@@ -1026,8 +1026,6 @@ describe("QEMU's command line", () => {
 })
 
 describe("the watcher's duties in the service", () => {
-  const HOLDER = resolve(import.meta.dir, "fakes", "holder.ts")
-  const held: ReturnType<typeof Bun.spawn>[] = []
   const saved: { readonly name: string; readonly at: number }[] = []
   let gateSave: Promise<void> = Promise.resolve()
 
@@ -1054,10 +1052,6 @@ describe("the watcher's duties in the service", () => {
     ])
   })
 
-  afterEach(() => {
-    for (const h of held.splice(0)) h.kill("SIGKILL")
-  })
-
   const markedQemu = (): unknown => {
     try {
       return (
@@ -1081,150 +1075,21 @@ describe("the watcher's duties in the service", () => {
     expect(existsSync(watchPathsFor("t").state)).toBe(false)
   })
 
-  it("takes over from an older winvm's watcher only once that one has let its autosave finish", async () => {
-    const signals = resolve(home, "legacy-signals")
-    const legacy = Bun.spawn(
-      [
-        process.execPath,
-        HOLDER,
-        "winvm",
-        "watch",
-        "-i",
-        "t",
-        "--linger",
-        "800",
-        "--then-rm",
-        p.lease,
-        "--log-signals",
-        signals,
-      ],
-      { stdout: "pipe", stderr: "ignore" },
-    )
-    held.push(legacy)
-    const reader = (legacy.stdout as ReadableStream<Uint8Array>).getReader()
-    await reader.read()
-    reader.releaseLock()
-    writeFileSync(resolve(p.dir, "watch.pid"), `${String(legacy.pid)}\n`)
-    writeFileSync(
-      watchPathsFor("t").state,
-      JSON.stringify({ pid: legacy.pid, state: "autosaving" }),
-    )
-    writeFileSync(
-      p.lease,
-      JSON.stringify({
-        operation: "save",
-        id: "legacy-autosave",
-        pid: legacy.pid,
-        pidStart: null,
-        startedAt: new Date().toISOString(),
-        instance: "t",
-        automatic: true,
-      }),
-    )
-    svc = await runService("t", {
-      exitAfterMs: 5000,
-      checkMs: 50,
-      watch: watchedQuickly,
-    })
-    await legacy.exited
-    const gone = Date.now()
-    expect(readFileSync(signals, "utf8")).toBe("SIGTERM\n")
-    expect(existsSync(p.lease)).toBe(false)
-    await until(() => saved.length === 1, 8000)
-    expect(saved[0]?.at ?? 0).toBeGreaterThanOrEqual(gone)
-    expect(markedQemu()).toBe(qemuPid)
-    expect(
-      entries().find(
-        (e) => e.kind === "service" && e.what === "watcher taken over",
-      ),
-    ).toMatchObject({ pid: legacy.pid })
-    expect(readWatchState("t")).toMatchObject({ pid: process.pid })
-  }, 20_000)
-
-  it("does not turn the watcher back on after an older one it drained, if it was turned off meanwhile", async () => {
-    const legacy = Bun.spawn(
-      [
-        process.execPath,
-        HOLDER,
-        "winvm",
-        "watch",
-        "-i",
-        "t",
-        "--linger",
-        "800",
-      ],
-      { stdout: "pipe", stderr: "ignore" },
-    )
-    held.push(legacy)
-    const reader = (legacy.stdout as ReadableStream<Uint8Array>).getReader()
-    await reader.read()
-    reader.releaseLock()
-    writeFileSync(resolve(p.dir, "watch.pid"), `${String(legacy.pid)}\n`)
-    writeFileSync(
-      watchPathsFor("t").state,
-      JSON.stringify({ pid: legacy.pid, state: "autosaving" }),
-    )
-    svc = await runService("t", {
-      exitAfterMs: 5000,
-      checkMs: 50,
-      watch: watchedQuickly,
-    })
-    await sleep(200)
-    expect(await stopWatcher("t")).toBe(true)
-    await legacy.exited
-    await sleep(500)
-    expect(markedQemu()).toBeNull()
-    expect(saved).toEqual([])
-    expect(
-      entries().some(
-        (e) => e.kind === "service" && e.what === "watcher taken over",
-      ),
-    ).toBe(false)
-  }, 20_000)
-
-  it("keeps running when it cannot write its mark, and still forgets an owed watcher", async () => {
+  it("keeps running, and says so, when the watcher's mark cannot be written", async () => {
     mkdirSync(watchPathsFor("t").on)
-    const owed = resolve(p.dir, "watch.owed")
-    writeFileSync(owed, JSON.stringify({ qemu: qemuPid }))
     svc = await runService("t", {
       exitAfterMs: 5000,
       checkMs: 50,
       watch: watchedQuickly,
     })
-    await until(() => !existsSync(owed))
+    expect(ensureWatcher("t")).toBe(false)
     await sleep(300)
     expect(await serviceState()).toBe("running")
+    expect(saved).toEqual([])
     expect(readFileSync(watchPathsFor("t").log, "utf8")).toContain(
       "could not turn the watcher on",
     )
   }, 20_000)
-
-  it("takes over a watcher an older winvm's repair owed to this QEMU", async () => {
-    const owed = resolve(p.dir, "watch.owed")
-    writeFileSync(owed, JSON.stringify({ qemu: qemuPid }))
-    svc = await runService("t", {
-      exitAfterMs: 5000,
-      checkMs: 50,
-      watch: watchedQuickly,
-    })
-    await until(() => saved.length === 1, 8000)
-    expect(existsSync(owed)).toBe(false)
-    expect(markedQemu()).toBe(qemuPid)
-  }, 20_000)
-
-  it("forgets a watcher owed to a QEMU that has gone, and watches nothing", async () => {
-    const owed = resolve(p.dir, "watch.owed")
-    writeFileSync(owed, JSON.stringify({ qemu: qemuPid + 1 }))
-    svc = await runService("t", {
-      exitAfterMs: 5000,
-      checkMs: 50,
-      watch: watchedQuickly,
-    })
-    await until(() => !existsSync(owed))
-    await sleep(500)
-    expect(saved).toEqual([])
-    expect(markedQemu()).toBeNull()
-  })
 
   it("follows a QEMU that a load replaced under the lease, and moves its mark to it", async () => {
     writeAssignments("t", [parseAssignment("autosave.enabled=false")])
