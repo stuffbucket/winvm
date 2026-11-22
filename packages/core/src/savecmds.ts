@@ -471,7 +471,11 @@ function refuse(
 
 export async function stow(args: Args): Promise<number> {
   const name = instanceName(args)
-  const noKeeper = keeperMissing(`"${name}" was not stowed`)
+  const refusal = await stowRefusal(name)
+  if (refusal !== null) return refuse(name, refusal, automaticFrom(args))
+  const noKeeper = qemu.isRunning(pathsFor(name))
+    ? keeperMissing(`"${name}" was not stowed`)
+    : null
   if (noKeeper !== null) {
     appendEntry(name, {
       kind: "warning",
@@ -482,8 +486,6 @@ export async function stow(args: Args): Promise<number> {
     fail(noKeeper.message)
     return saves.STOW_REFUSED
   }
-  const refusal = await stowRefusal(name)
-  if (refusal !== null) return refuse(name, refusal, automaticFrom(args))
   return await stowHeld(name, args)
 }
 
