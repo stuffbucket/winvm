@@ -149,8 +149,10 @@ async function guestFolder(
   try {
     await c.mkdir(path)
   } catch (error) {
-    if (!(error instanceof agent.AgentError) || error.code !== "notfound")
-      return await exists(error)
+    if (!(error instanceof agent.AgentError) || error.code !== "notfound") {
+      await exists(error)
+      return
+    }
     const parent = win32.dirname(path)
     if (parent === path) throw error
     await guestFolder(c, parent, depth + 1)
@@ -158,7 +160,12 @@ async function guestFolder(
   }
 }
 
-const WINDOWS_BAD_NAME = /[<>:"/\\|?*\x00-\x1f]|[ .]$/
+const WINDOWS_BAD_NAME = /[<>:"/\\|?*]|[ .]$/
+function hasControlCharacter(name: string): boolean {
+  for (let i = 0; i < name.length; i++)
+    if (name.charCodeAt(i) < 0x20) return true
+  return false
+}
 const WINDOWS_DEVICE_NAME =
   /^(con|prn|aux|nul|com[1-9¹²³]|lpt[1-9¹²³])(?:\.|$)/i
 
@@ -185,7 +192,10 @@ export async function putTree(
     if (st.isDirectory()) {
       const children = readdirSync(src)
       const badName = children.find(
-        (n) => WINDOWS_BAD_NAME.test(n) || WINDOWS_DEVICE_NAME.test(n),
+        (n) =>
+          WINDOWS_BAD_NAME.test(n) ||
+          WINDOWS_DEVICE_NAME.test(n) ||
+          hasControlCharacter(n),
       )
       if (badName !== undefined)
         throw new Error(`not a name Windows takes: ${join(src, badName)}`)
@@ -262,7 +272,7 @@ export async function folderOf(
 
 const FOLDER_LIMIT = 100_000
 
-const UNSAFE_LISTED_NAME = /[/\\\x00]/
+const UNSAFE_LISTED_NAME = /[/\\]/
 
 export async function getTree(
   c: Pick<agent.AgentClient, "list" | "getFile">,
@@ -295,7 +305,8 @@ export async function getTree(
         e.name === "" ||
         e.name === "." ||
         e.name === ".." ||
-        UNSAFE_LISTED_NAME.test(e.name)
+        UNSAFE_LISTED_NAME.test(e.name) ||
+        e.name.includes("\0")
       )
         throw new Error(`unsafe file name in guest listing: ${e.name}`)
       if (e.link === true)

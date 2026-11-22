@@ -37,6 +37,8 @@ import {
   CPU_WINDOW_MS,
   CpuMeter,
   cpuTimes,
+  type DirEntry,
+  type DirListing,
   DisplayHost,
   isWithin,
   launcherArgv,
@@ -48,8 +50,6 @@ import {
   recycleScript,
   startAgent,
   writeUpload,
-  type DirEntry,
-  type DirListing,
 } from "../src/guestagent"
 import type { Paths } from "../src/paths"
 
@@ -323,22 +323,22 @@ function treeWriter() {
   return {
     folders,
     puts,
-    async mkdir(path: string) {
+    mkdir(path: string) {
       if (folders.has(path))
-        throw new AgentError("already exists", 409, "exists")
+        return Promise.reject(new AgentError("already exists", 409, "exists"))
       if (!folders.has(win32.dirname(path)))
-        throw new AgentError("missing parent", 404, "notfound")
+        return Promise.reject(new AgentError("missing parent", 404, "notfound"))
       folders.add(path)
-      return { path }
+      return Promise.resolve({ path })
     },
-    async list(path = "") {
+    list(path: string) {
       if (!folders.has(path))
-        throw new AgentError("not a folder", 400, "notdir")
-      return treeListing(path)
+        return Promise.reject(new AgentError("not a folder", 400, "notdir"))
+      return Promise.resolve(treeListing(path))
     },
-    async putFile(src: string, dest: string) {
+    putFile(src: string, dest: string) {
       puts.push(dest)
-      return { bytes: statSync(src).size, ms: 0 }
+      return Promise.resolve({ bytes: statSync(src).size, ms: 0 })
     },
   }
 }
@@ -391,10 +391,10 @@ describe("recursive file copies", () => {
     const root = resolve(dir, "download-tree")
     const got = await getTree(
       {
-        list: async (path = "") => treeListing(path),
-        getFile: async (_from, to) => {
+        list: (path) => Promise.resolve(treeListing(path ?? "")),
+        getFile: (_from, to) => {
           writeFileSync(to, "x")
-          return 1
+          return Promise.resolve(1)
         },
       },
       treeListing("C:\\copy", [
@@ -410,10 +410,8 @@ describe("recursive file copies", () => {
 
   it("rejects traversal names, links, and truncated listings before downloading", async () => {
     const c = {
-      list: async (path = "") => treeListing(path),
-      getFile: async () => {
-        throw new Error("must not download")
-      },
+      list: (path: string) => Promise.resolve(treeListing(path)),
+      getFile: () => Promise.reject(new Error("must not download")),
     }
     for (const name of ["..", "../outside", "nested\\outside"]) {
       await expect(
@@ -449,7 +447,10 @@ describe("recursive file copies", () => {
     symlinkSync(outside, target)
     await expect(
       getTree(
-        { list: async () => treeListing("C:\\copy"), getFile: async () => 0 },
+        {
+          list: () => Promise.resolve(treeListing("C:\\copy")),
+          getFile: () => Promise.resolve(0),
+        },
         treeListing("C:\\copy"),
         target,
       ),
@@ -461,11 +462,11 @@ describe("recursive file copies", () => {
     let asks = 0
     const loop = treeListing("C:\\copy", [treeEntry("loop", true)])
     const c = {
-      list: async () => {
+      list: () => {
         asks++
-        return loop
+        return Promise.resolve(loop)
       },
-      getFile: async () => 0,
+      getFile: () => Promise.resolve(0),
     }
     await expect(
       getTree(c, loop, resolve(dir, "bounded-tree")),
