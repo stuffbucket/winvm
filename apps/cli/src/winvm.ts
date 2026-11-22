@@ -100,6 +100,8 @@ const NO_SWEEP = [
   "ls",
   "list",
   "doctor",
+  "version",
+  "--version",
   "timemachine",
   "tm",
   "watch",
@@ -151,6 +153,10 @@ let exitCode: number
 switch (sub ?? "") {
   case "doctor":
     exitCode = await commands.doctor(args.flags.has("json"))
+    break
+  case "version":
+  case "--version":
+    exitCode = commands.version(args.flags.has("json"))
     break
   case "timemachine":
   case "tm":
