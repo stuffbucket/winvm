@@ -17,6 +17,8 @@ export class FakeQmp {
       return { return: { status: "running", running: true } }
     if (cmd.execute === "query-chardev")
       return { return: [{ label: "qga0", "frontend-open": true }] }
+    if (cmd.execute === "query-vnc")
+      return { return: { enabled: true, clients: [] } }
     return { return: {} }
   }
   greets = true
