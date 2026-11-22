@@ -1,7 +1,9 @@
 import { StrictMode } from "react"
 import { createRoot } from "react-dom/client"
 
+import { showWindow } from "./backend"
 import { ErrorBoundary } from "./components/ErrorBoundary"
+import { SHOW_WINDOW_DELAY_MS } from "./constants"
 import { About } from "./features/about/About"
 import { t } from "./i18n"
 import { osKind } from "./platform"
@@ -19,3 +21,4 @@ createRoot(root).render(
     </ErrorBoundary>
   </StrictMode>,
 )
+setTimeout(showWindow, SHOW_WINDOW_DELAY_MS)

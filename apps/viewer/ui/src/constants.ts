@@ -1,0 +1,1 @@
+export const SHOW_WINDOW_DELAY_MS = 1000
