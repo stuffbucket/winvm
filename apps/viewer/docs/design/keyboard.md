@@ -15,6 +15,18 @@ Focus loss or a hidden page releases capture and all held guest keys. If a
 Windows key is held, Ctrl is pressed and released before Windows is released;
 Windows therefore never interprets cleanup as a lone Windows-key press.
 
+**Only while Windows takes input.** Capture, the Windows key and Ctrl-Alt-Delete
+act only while Windows runs with no verb under way (`features/screen/input.ts`;
+the table is in [`windows.md`](windows.md)). When it stops (Pause, Sleep, a
+save, a restart), the Mac gets everything back: held keys and buttons are
+released on the guest first, capture is released, the toolbar says quietly
+"Keyboard released: Windows is paused" (a note, not a state), no key is swallowed
+and the Mac's cursor shows over the frame. When Windows runs again, capture is
+**not** resumed: it was released, so the person asks for it again (the toolbar
+button or Control-Option). A capture the person had chosen isn't a standing
+preference, and a pause is a good moment to have the Mac's shortcuts back.
+Focus loss still releases as before.
+
 This follows UTM's useful division between host and captured routing, while
 using one fixed capture chord and one fixed uncaptured Windows modifier rather
 than exposing a matrix of modifier swaps.
@@ -38,6 +50,31 @@ lose to the OS outside capture.
 > roadmap; no app code binds it. *Reserved* = explicitly not bound; do
 > not bind to anything else. Confirm against the codebase before adding
 > new listeners — see [`failure-modes.md`](failure-modes.md).
+
+**Text fields** keep their own keys. The suspended screen's note is a plain text
+area: it takes typing, Tab, Enter and the arrows as a text area does, never calls
+`preventDefault` or `stopPropagation` on them, and only Esc is its own (save and
+leave the field). The menu accelerators (⌘⇧T and the rest) are native and still
+work while it has focus.
+
+## Checkpoints canvas
+
+In the Checkpoints view (a window listener on the view while it is open; none
+of these is sent to Windows). A name field and the search field keep their own
+keys, so none of this acts while one has focus.
+
+| Key | Action | Notes |
+|---|---|---|
+| `S` | Section tool on or off | Tooltip "Section (S)"; the button is `aria-pressed`. Drawing a section turns it off. Not with ⌘, ⌃ or ⌥ held. |
+| `Esc` | Let go, one thing at a time | A carried card put back, Quick Look, a section being drawn, moved or resized, the Section tool, a section's selection, the New Checkpoint form, the search, a selected checkpoint, and last, leave the view. |
+| `Return`, `F2` | Rename the focused section | The name becomes a field, selected; Return keeps it, Esc puts it back. |
+| `←` `→` `↑` `↓` | Move the focused section one grid cell | `⇧` for four. Stops a cell short of another section, Now or the timeline. Without a focused section, the arrows pan. |
+| `Delete`, `Backspace` | Remove the selected or focused section | Only the section: its checkpoints stay where they are. No confirmation. `⌘⌫` still deletes the selected checkpoint (after a confirmation). |
+| `⌥` `←` `→` `↑` `↓` | Move the selected checkpoint | `⇧` for more (16 units, 64 with `⇧`). It lands in the section its centre is in, or loose. |
+| `Tab` | Next control | Sections are groups ("Section: Name, 3 checkpoints") in reading order, before the cards. |
+
+Sections announce what was done (created, renamed, moved, resized, removed) in
+a quiet `role="status"` line.
 
 ## Implementation
 

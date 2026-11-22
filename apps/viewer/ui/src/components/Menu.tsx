@@ -44,13 +44,18 @@ export function MenuRoot({
 
 export function MenuGroup({
   label,
+  name,
   children,
 }: {
   readonly label?: ReactNode
+  readonly name?: string
   readonly children: ReactNode
 }): JSX.Element {
   return (
-    <BaseMenu.Group className="menu__group">
+    <BaseMenu.Group
+      className="menu__group"
+      aria-label={label === undefined ? name : undefined}
+    >
       {label !== undefined && (
         <BaseMenu.GroupLabel className="menu__heading">
           {label}

@@ -326,6 +326,7 @@ function fakeWinvm(machines: Machine[], selected: string | null) {
         phases: {},
         status: current === undefined ? null : parsed(current),
         phase: null,
+        agentSeen: { pid: null, up: false },
         statusError: null,
         checks: null,
         checksError: null,

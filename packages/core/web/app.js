@@ -54,6 +54,7 @@ function connectScreen(vnc) {
     wsProtocols: ["binary"],
   })
   conn.scaleViewport = true
+  conn.qualityLevel = 9
   conn.background = "#000"
   conn.addEventListener("connect", () => {
     screenMessage("")

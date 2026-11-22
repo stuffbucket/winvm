@@ -51,11 +51,14 @@ import {
   TOOLS_URL,
 } from "./host"
 import * as input from "./input"
+import { formatInput, judgeInput, probeInput } from "./inputcheck"
 import { ensureInstance, makeVars, resetInstance, sealBase } from "./instance"
 import { ensureKeeper } from "./keeper"
 import { keeperMissing, killKept, retireKeeper } from "./kept"
+import { lagCommand } from "./lag"
 import { ensureCurrent, ManagementError } from "./lifecycle"
 import * as machineinfo from "./machineinfo"
+import { forgetMachineNote } from "./machinenote"
 import {
   buildSeed,
   checkIsoIsArm64,
@@ -257,6 +260,7 @@ export function prune(args: Args): number {
     stopService(p)
     retireKeeper(name, p)
     rmSync(p.dir, { recursive: true, force: true })
+    forgetMachineNote(name)
     console.log(`  removed scratch instance "${name}" (${size})`)
     freedAnything = true
   }
@@ -1558,6 +1562,7 @@ export function destroy(args: Args): number {
   finder.cleanStale(name)
   const size = du(instanceDir(name))
   rmSync(instanceDir(name), { recursive: true, force: true })
+  forgetMachineNote(name)
   console.log(`destroyed instance "${name}" (${size}; image untouched)`)
   if (!hadSaves) return 0
   if (keepSaves) {
@@ -1670,8 +1675,27 @@ export async function smoke(args: Args): Promise<number> {
   return 0
 }
 
-export function diagnoseCmd(args: Args): number {
+export async function diagnoseCmd(args: Args): Promise<number> {
   const name = instanceName(args)
+  if (args.flags.has("lag")) {
+    const n = Number(args.flags.get("seconds") ?? 60)
+    if (!(n >= 3 && n <= 3600)) {
+      console.error("::error::--seconds is a number from 3 to 3600")
+      return 1
+    }
+    return await lagCommand(
+      name,
+      pathsFor(name),
+      Math.round(n),
+      args.flags.has("json"),
+      args.flags.has("sample"),
+    )
+  }
+  if (args.flags.has("input")) {
+    const findings = judgeInput(await probeInput(pathsFor(name)))
+    console.log(formatInput(name, findings))
+    return findings.some((f) => f.level === "problem") ? 1 : 0
+  }
   for (const dir of finder.cleanStale(name))
     console.log(
       `unmounted ${dir}, left behind by a guest that is no longer running`,
@@ -1787,6 +1811,10 @@ export const USAGE =
   "  doctor  [--json]              check host prerequisites (the HOST, before anything runs),\n" +
   "                                and list VMs an older winvm started that run unshielded\n" +
   "  diagnose [-i name]            explain a guest that misbehaved, from its files\n" +
+  "           [--input]            a running guest's mouse/keyboard path, live and read-only\n" +
+  "           [--lag [--seconds N] [--sample]]  time the monitor, the agent and QEMU once a\n" +
+  "                                second (default 60 s): which layer stops answering in a\n" +
+  "                                stall; --sample also profiles QEMU's threads during one\n" +
   "  build --iso <win11.iso>       build a base image (once, ~20 min)\n" +
   "        [--payload <dir>] [--bun <version>] [--image <name>]\n" +
   "  adopt <disk.qcow2>            adopt an installed disk as a base image\n" +
@@ -1823,6 +1851,7 @@ export const USAGE =
   "  load    [-i name] [name] [--no-watch]  load a save, running or stopped (default: the newest)\n" +
   "                                into a stopped instance it starts the watcher, like start\n" +
   "  saves   [-i name] [rm <name> [--force]] [--json]  list saves (kind, format, protection, size, compatible), or delete one\n" +
+  "  saves path [-i name] <save> [--json]  the save's folder, as an absolute path\n" +
   "  saves protect|unprotect [-i name] <save> [--json]  prevent reclamation/replacement; protected deletion needs rm --force\n" +
   "  saves note [-i name] <save> [--title T] [--text TEXT|-] [--tags a,b,c] [--clear] [--json]\n" +
   "                                show a save's note, or set it (--text - reads stdin;\n" +
@@ -1888,6 +1917,7 @@ export const USAGE =
   "          [--stop | --status]   turn it off until the next start / print its state\n" +
   "  config  [-i name] [key=value ...]  autosave/stow/watch settings and the app's title; bare prints them\n" +
   "          [-i name] cpus=N memory=8G  processors and memory, from the next time Windows starts\n" +
+  "  note    [-i name] [--text TEXT|-] [--clear] [--json]  what you have jotted about a machine; bare prints it\n" +
   "  settings [key=value ...] [--json]  your own settings, for every instance (viewer.pauseOverlay);\n" +
   "                                in $XDG_CONFIG_HOME/winvm/settings.json (default ~/.config/winvm)\n" +
   "          [--section NAME [--set JSON]]   one part the app keeps there (checkpoints), as JSON\n" +

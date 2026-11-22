@@ -12,6 +12,7 @@ winvm load before-install        # running or stopped
 winvm save --fast clean          # larger, but faster to load
 winvm saves                      # name, kind, format, created, size, compatible
 winvm saves rm before-install    # deletes its note too; refuses a protected save
+winvm saves path before-install  # the save's folder (--json: {"path": …}); the app's Show in Finder
 winvm saves protect before-install   # keep it out of automatic reclamation
 winvm saves unprotect before-install # allow retention/deletion again
 winvm saves note before-install --title "Clean install" --tags win11,clean
@@ -69,6 +70,24 @@ winvm clock                      # the guest's clock offset, and fix it
   QEMU checks stay strict for every save.
 - **Clock.** Loading, resuming or recalling a stow sets the guest's clock to
   the host's.
+- **Loading replaces this machine.** `load` never makes a new machine. It
+  quits the instance's QEMU if one is running (running or paused: what it was
+  doing is thrown away, with no copy made), puts the save's disk and firmware
+  back, and starts QEMU again from the save's memory. Windows ends up running
+  at that moment, even if it was paused. A stopped machine is simply started
+  from the save. Nothing keeps the present first: do that with `save`. (The
+  app's Restore confirmation offers "Save Current First", which takes a
+  checkpoint of the running machine and then loads.) Loading also discards a
+  waiting `stow`, since the next `start` would otherwise replace what you loaded.
+- **Size.** `saves` shows `bytes`: the memory file plus the disk copy's
+  allocated blocks plus the firmware variables. That is what the save takes on
+  your Mac's disk, but the disk copies are APFS clones that share blocks with
+  the machine and with other saves, so it overstates what deleting one frees. It
+  is an upper bound. The screenshots aren't counted.
+- **How many machines.** There is no limit in winvm. Each instance is its own
+  QEMU with its own memory (4 GiB to half the Mac's RAM, 8 GiB by default for a
+  new one) and processors, and its own VNC display (`:1` to `:99`, so at most 99
+  instances). In practice the Mac's memory is the limit.
 - **Paused stays paused.** Only `resume` (or `wake`) starts a paused or asleep
   guest again. Nothing else calls into it meanwhile: `status` reports it at once
   without asking its agent, the agent verbs refuse it (`agent connect` exits 3),
@@ -170,6 +189,23 @@ A note still belongs to its save:
 - Saving again under the same name drops the old note, because it described the
   old moment.
 - A save copied to another instance (a test pool) brings its note with it.
+
+A machine has a note of its own, for whatever you want to remember about that
+Windows install. The app shows it on a suspended machine's screen and saves it
+as you type:
+
+```sh
+winvm note -i dev                       # show it
+winvm note -i dev --text="Office is not installed yet"
+echo "Licence key is in the drawer" | winvm note -i dev --text -
+winvm note -i dev --clear               # delete it
+winvm note -i dev --json                # {"text", "updatedAt"}, or null
+```
+
+It lives at `~/.local/share/winvm/machine-notes/<instance>.json` (or under
+`$XDG_DATA_HOME/winvm/`), not with the notes on saves, and goes with the machine:
+`destroy` deletes it, with or without `--keep-saves`. It holds at most 20,000
+characters.
 
 `saves --json` reports, for each save, `format`, `protected` (a boolean;
 older manifests without it are unprotected), `screenshot` and `thumbnail`

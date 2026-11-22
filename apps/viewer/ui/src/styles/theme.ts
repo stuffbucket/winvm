@@ -102,6 +102,9 @@ export const focusRing = {
 export const layout = {
   contentMax: "640px",
   panelWidth: "320px",
+  lightsClearance: "96px",
+  overviewMeasure: "48rem",
+  overviewHeight: "52rem",
 } as const
 
 export const themes = {

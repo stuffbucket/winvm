@@ -7,6 +7,8 @@ import {
 } from "@winvm/displayfit"
 import * as KeyboardUtil from "@winvm/novnc/core/input/util.js"
 import RFB from "@winvm/novnc/core/rfb.js"
+import { clientToElement } from "@winvm/novnc/core/util/element.js"
+import { releaseCapture } from "@winvm/novnc/core/util/events.js"
 import {
   forwardRef,
   type JSX,
@@ -21,10 +23,12 @@ import {
 import { copyText, onLiveResize, readText, trace } from "../../backend"
 import { cx } from "../../components/cx"
 import { Icon } from "../../components/Icon"
+import { pixelRatio, watchPixelRatio } from "../../dpr"
 import { t } from "../../i18n"
 import type { Connection } from "../../model"
 import { ClipboardSync } from "./clipboard"
 import { HeldSizes, keyVerdict } from "./held"
+import { GuestPointerRouter, releaseNoVncPointer } from "./input"
 import {
   GuestKeyboardRouter,
   sendCtrlAltDelete,
@@ -39,8 +43,8 @@ interface ScreenProps {
   onKeyboardCaptured: (captured: boolean) => void
   readonly resizable: boolean
   readonly onGuestSize?: (size: Size, scale: number) => Promise<void>
+  readonly forwardInput: boolean
   readonly frozen?: boolean
-  readonly inputBlocked?: boolean
   readonly ready?: boolean
   readonly asleep?: boolean
   readonly waking?: boolean
@@ -60,17 +64,17 @@ const FRAME_WAIT_MS = 150
 const CLIPBOARD_CAPS_MS = 2000
 const CLIPBOARD_TEXT = 1
 
-const dpr = (): number => window.devicePixelRatio || 1
+const dpr = pixelRatio
 
 export const Screen = forwardRef<ScreenHandle, ScreenProps>(function Screen(
   {
     connection,
     keyboardCaptured,
     onKeyboardCaptured,
+    forwardInput,
     resizable,
     onGuestSize,
     frozen = false,
-    inputBlocked = false,
     ready = true,
     asleep = false,
     waking = false,
@@ -84,6 +88,7 @@ export const Screen = forwardRef<ScreenHandle, ScreenProps>(function Screen(
   const still = useRef<HTMLCanvasElement | null>(null)
   const rfb = useRef<RFB | null>(null)
   const keyboard = useRef<GuestKeyboardRouter | null>(null)
+  const pointerInput = useRef<GuestPointerRouter | null>(null)
   const [view, setView] = useState<View>("connecting")
   const [attempt, setAttempt] = useState(0)
   const [fb, setFb] = useState<Size | null>(null)
@@ -116,9 +121,9 @@ export const Screen = forwardRef<ScreenHandle, ScreenProps>(function Screen(
       askAgainRef.current()
     },
   })
-  const keys = useRef({ frozen, blocked: inputBlocked, asleep, waking, onWake })
+  const keys = useRef({ frozen, asleep, waking, onWake, forward: forwardInput })
+  keys.current.forward = forwardInput
   keys.current.frozen = frozen
-  keys.current.blocked = inputBlocked
   keys.current.asleep = asleep
   keys.current.waking = waking
   keys.current.onWake = onWake
@@ -126,20 +131,21 @@ export const Screen = forwardRef<ScreenHandle, ScreenProps>(function Screen(
   captured.current = keyboardCaptured
   const captureChanged = useRef(onKeyboardCaptured)
   captureChanged.current = onKeyboardCaptured
+  const clipboardSync = useRef<ClipboardSync | null>(null)
 
   useImperativeHandle(
     ref,
     () => ({
       sendWindowsKey: () => {
         const conn = rfb.current
-        if (conn !== null)
+        if (conn !== null && keys.current.forward)
           sendWindowsKey((keysym, code, down) => {
             conn.sendKey(keysym, code, down)
           })
       },
       sendCtrlAltDelete: () => {
         const conn = rfb.current
-        if (conn !== null)
+        if (conn !== null && keys.current.forward)
           sendCtrlAltDelete((keysym, code, down) => {
             conn.sendKey(keysym, code, down)
           })
@@ -163,6 +169,37 @@ export const Screen = forwardRef<ScreenHandle, ScreenProps>(function Screen(
     let retry: ReturnType<typeof setTimeout> | undefined
     let stopWake: (() => void) | null = null
     setView("connecting")
+    const pointer = new GuestPointerRouter((point) => {
+      if (conn === null) return
+      const canvas = el.querySelector("canvas")
+      const pos =
+        point !== null && canvas !== null
+          ? clientToElement(point.x, point.y, canvas)
+          : { x: 0, y: 0 }
+      releaseNoVncPointer(conn, pos, releaseCapture)
+    })
+    pointer.setEnabled(keys.current.forward)
+    pointer.setFocused(document.hasFocus())
+    const onPointer = (event: MouseEvent): void => {
+      pointer.setEnabled(keys.current.forward && el.closest("[inert]") === null)
+      pointer.handle(event)
+    }
+    const onScreenBlur = (event: FocusEvent): void => {
+      if (
+        !(event.relatedTarget instanceof Node) ||
+        !el.contains(event.relatedTarget)
+      )
+        pointer.releaseAll()
+    }
+    const pointerEvents = [
+      "mousedown",
+      "mouseup",
+      "mousemove",
+      "wheel",
+    ] as const
+    for (const name of pointerEvents) el.addEventListener(name, onPointer, true)
+    el.addEventListener("focusout", onScreenBlur)
+    pointerInput.current = pointer
     const router = new GuestKeyboardRouter({
       send: (keysym, code, down) => conn?.sendKey(keysym, code, down),
       translate: (event) => {
@@ -178,16 +215,21 @@ export const Screen = forwardRef<ScreenHandle, ScreenProps>(function Screen(
       },
     })
     router.setCaptured(captured.current)
+    router.setEnabled(keys.current.forward)
     const onKeyDown = (event: KeyboardEvent): void => {
       router.keyDown(event)
     }
     const onKeyUp = (event: KeyboardEvent): void => {
       router.keyUp(event)
     }
-    const onBlur = (): void => {
+    const onBlur = (event: FocusEvent): void => {
+      if (event.target === window) pointer.setFocused(false)
       router.lostFocus()
     }
     const onVisibility = (): void => {
+      pointer.setFocused(
+        document.visibilityState !== "hidden" && document.hasFocus(),
+      )
       if (document.visibilityState === "hidden") router.lostFocus()
     }
     el.addEventListener("keydown", onKeyDown, true)
@@ -204,8 +246,9 @@ export const Screen = forwardRef<ScreenHandle, ScreenProps>(function Screen(
     conn.background = "transparent"
     conn.scaleViewport = true
     conn.resizeSession = false
-    conn.focusOnClick = true
-    conn.viewOnly = keys.current.frozen || keys.current.blocked
+    conn.qualityLevel = 9
+    conn.focusOnClick = keys.current.forward || keys.current.asleep
+    conn.viewOnly = !keys.current.forward
 
     const measure = (): Size => {
       const r = outer.getBoundingClientRect()
@@ -318,21 +361,13 @@ export const Screen = forwardRef<ScreenHandle, ScreenProps>(function Screen(
     }
     const observer = new ResizeObserver(onArea)
     observer.observe(outer)
-    const unlisten = onLiveResize((live) =>
-      live ? resize?.liveStart() : resize?.liveEnd(),
-    )
+    const unlisten = onLiveResize((live) => {
+      pointer.setResizing(live)
+      if (live) resize?.liveStart()
+      else resize?.liveEnd()
+    })
 
-    let media: MediaQueryList | null = null
-    const onRatio = (): void => {
-      watchRatio()
-      onArea()
-    }
-    const watchRatio = (): void => {
-      media?.removeEventListener("change", onRatio)
-      media = window.matchMedia(`(resolution: ${String(dpr())}dppx)`)
-      media.addEventListener("change", onRatio)
-    }
-    watchRatio()
+    const stopRatio = watchPixelRatio(onArea)
 
     const clipboard = new ClipboardSync({
       readMac: readText,
@@ -341,7 +376,9 @@ export const Screen = forwardRef<ScreenHandle, ScreenProps>(function Screen(
         conn.clipboardPasteFrom(text)
       },
       focused: () => document.hasFocus(),
+      canSend: () => keys.current.forward,
     })
+    clipboardSync.current = clipboard
     let clipboardReady = false
     let clipboardWait: ReturnType<typeof setTimeout> | undefined
     conn.addEventListener("clipboard", (e) => {
@@ -350,6 +387,7 @@ export const Screen = forwardRef<ScreenHandle, ScreenProps>(function Screen(
       if (typeof text === "string") clipboard.fromGuest(text)
     })
     const onFocus = (): void => {
+      pointer.setFocused(document.visibilityState !== "hidden")
       if (clipboardReady && connected && !closing) void clipboard.fromMac()
     }
     window.addEventListener("focus", onFocus)
@@ -389,6 +427,7 @@ export const Screen = forwardRef<ScreenHandle, ScreenProps>(function Screen(
       setView("refused")
     })
     conn.addEventListener("disconnect", () => {
+      pointer.releaseAll()
       connected = false
       stopWake?.()
       stopWake = null
@@ -402,6 +441,7 @@ export const Screen = forwardRef<ScreenHandle, ScreenProps>(function Screen(
       closing = true
       clipboard.stop()
       live.current = null
+      clipboardSync.current = null
       outer.removeEventListener("keydown", onKey, true)
       stopWake?.()
       resize?.cancel()
@@ -411,14 +451,19 @@ export const Screen = forwardRef<ScreenHandle, ScreenProps>(function Screen(
       window.removeEventListener("focus", onFocus)
       observer.disconnect()
       unlisten()
-      media?.removeEventListener("change", onRatio)
+      stopRatio()
       if (retry !== undefined) clearTimeout(retry)
       el.removeEventListener("keydown", onKeyDown, true)
       el.removeEventListener("keyup", onKeyUp, true)
       window.removeEventListener("blur", onBlur, true)
       document.removeEventListener("visibilitychange", onVisibility)
       router.lostFocus()
+      pointer.releaseAll()
+      for (const name of pointerEvents)
+        el.removeEventListener(name, onPointer, true)
+      el.removeEventListener("focusout", onScreenBlur)
       conn.disconnect()
+      pointerInput.current = null
       keyboard.current = null
       rfb.current = null
       setHeld(false)
@@ -427,9 +472,14 @@ export const Screen = forwardRef<ScreenHandle, ScreenProps>(function Screen(
   }, [session, resizable])
 
   useEffect(() => {
+    keyboard.current?.setEnabled(forwardInput)
+    pointerInput.current?.setEnabled(forwardInput)
     const conn = rfb.current
-    if (conn !== null) conn.viewOnly = frozen || inputBlocked
-  }, [frozen, inputBlocked])
+    if (conn === null) return
+    conn.viewOnly = !forwardInput
+    conn.focusOnClick = forwardInput || asleep
+    if (forwardInput) void clipboardSync.current?.fromMac()
+  }, [forwardInput, asleep])
   useEffect(() => {
     const kept = heldSizes.current?.setFrozen(frozen || !ready) ?? null
     if (kept !== null) askAgainRef.current()
@@ -460,8 +510,20 @@ export const Screen = forwardRef<ScreenHandle, ScreenProps>(function Screen(
   }, [exactSize])
 
   const message = view === "connected" ? null : t(`screen.${view}`)
+  const inert = !forwardInput || view !== "connected"
   return (
-    <div ref={area} className="screen">
+    <div
+      ref={area}
+      className={cx("screen", inert && "screen--inert")}
+      tabIndex={asleep ? -1 : undefined}
+      onPointerDown={
+        asleep
+          ? (e) => {
+              e.currentTarget.focus({ preventScroll: true })
+            }
+          : undefined
+      }
+    >
       <div
         ref={target}
         className={

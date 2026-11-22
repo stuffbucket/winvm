@@ -641,7 +641,7 @@ export class Computer {
         const { qcodes, unknown } = parseKeys(str(params, "text"))
         if (unknown !== null) throw new ActionError(`unknown key "${unknown}"`)
         const seconds = num(params, "duration", 0, 300)
-        await withQmp(
+        await input.withInput(
           this.p.qmp,
           async (q) => {
             for (const k of qcodes) await input.send(q, [input.keyEv(k, true)])
@@ -774,7 +774,7 @@ export class Computer {
     mods: readonly string[],
   ): Promise<void> {
     await this.display()
-    await withQmp(
+    await input.withInput(
       this.p.qmp,
       async (q) => {
         if (at !== null) {
@@ -800,7 +800,7 @@ export class Computer {
     mods: readonly string[],
   ): Promise<void> {
     await this.display()
-    await withQmp(
+    await input.withInput(
       this.p.qmp,
       async (q) => {
         await this.moveWith(q, from)
@@ -835,7 +835,7 @@ export class Computer {
     const wheel = dir === "up" || dir === "left" ? "wheel-up" : "wheel-down"
     const all =
       horizontal && !mods.includes("shift") ? [...mods, "shift"] : mods
-    await withQmp(
+    await input.withInput(
       this.p.qmp,
       async (q) => {
         if (at !== null) {

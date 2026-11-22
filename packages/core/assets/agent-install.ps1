@@ -11,13 +11,41 @@ New-Item -ItemType Directory -Force -Path $Dest | Out-Null
 $bun = Join-Path $Dest "bun.exe"
 $ris = Join-Path $Dest "runinsession.exe"
 
+$agentTs = Join-Path $Dest "guestagent.ts"
 $helpers = @("winvm-ui.exe", "conpty.exe", "winvm-display.exe") | ForEach-Object { Join-Path $Dest $_ }
-$running = @(Get-Process bun, winvm-ui, conpty, winvm-display -ErrorAction SilentlyContinue | Where-Object { $_.Path -eq $bun -or $helpers -contains $_.Path })
-if ($running.Count -gt 0) {
-    $running | Stop-Process -Force
-    $running | Wait-Process -Timeout 10 -ErrorAction SilentlyContinue
-    Write-Output "stopped agent pid $($running.Id -join ',')"
+
+function Test-AgentCommandLine([string]$CommandLine, [string]$Script) {
+    return ($CommandLine -ne "") -and ($CommandLine.IndexOf($Script, [StringComparison]::OrdinalIgnoreCase) -ge 0)
 }
+function Test-SupervisorCommandLine([string]$CommandLine, [string]$Script) {
+    return (Test-AgentCommandLine $CommandLine $Script) -and ($CommandLine -match '(^|\s)--supervise(\s|$)')
+}
+
+function Get-AgentProcs {
+    @(Get-CimInstance Win32_Process -Filter "Name='bun.exe'" -ErrorAction SilentlyContinue |
+        Where-Object { $_.ExecutablePath -eq $bun -or (Test-AgentCommandLine ([string]$_.CommandLine) $agentTs) })
+}
+function Stop-Pids($ids) {
+    $ids = @($ids | Where-Object { $_ })
+    if ($ids.Count -eq 0) { return }
+    $ids | ForEach-Object { Stop-Process -Id $_ -Force -ErrorAction SilentlyContinue }
+    Wait-Process -Id $ids -Timeout 10 -ErrorAction SilentlyContinue
+}
+function Stop-Agent {
+    $stopped = @()
+    for ($pass = 0; $pass -lt 5; $pass++) {
+        $sup = @(Get-AgentProcs | Where-Object { Test-SupervisorCommandLine ([string]$_.CommandLine) $agentTs })
+        Stop-Pids ($sup | ForEach-Object { $_.ProcessId })
+        $stopped += @($sup | ForEach-Object { $_.ProcessId })
+        $rest = @(Get-AgentProcs | ForEach-Object { $_.ProcessId })
+        $other = @(Get-Process winvm-ui, conpty, winvm-display -ErrorAction SilentlyContinue | Where-Object { $helpers -contains $_.Path } | ForEach-Object { $_.Id })
+        Stop-Pids ($rest + $other)
+        $stopped += $rest + $other
+        if ($sup.Count -eq 0 -and $rest.Count -eq 0 -and $other.Count -eq 0) { break }
+    }
+    if ($stopped.Count -gt 0) { Write-Output "stopped agent pid $((@($stopped) | Sort-Object -Unique) -join ',')" }
+}
+Stop-Agent
 $held = Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue
 if ($held) { Write-Output "WARNING: port $Port is still held (a process an old agent started inherited it); end that process or restart the guest" }
 
@@ -126,6 +154,7 @@ if (-not $NoStart) {
     if (-not $desk) {
         Write-Output "no one is logged on; the agent starts at the next logon"
     } elseif (Test-Path $ris) {
+        Stop-Agent
         & $ris --hidden @argv
         Write-Output "started in session $($desk.SessionId)"
     } else {

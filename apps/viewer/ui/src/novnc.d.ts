@@ -11,6 +11,7 @@ declare module "@winvm/novnc/core/rfb.js" {
     scaleViewport: boolean
     clipViewport: boolean
     resizeSession: boolean
+    qualityLevel: number
     background: string
     focusOnClick: boolean
     viewOnly: boolean
@@ -33,6 +34,9 @@ declare module "@winvm/novnc/core/rfb.js" {
     readonly _keyboard: {
       _allKeysUp(): void
     }
+    readonly _mouseButtonMask: number
+    _mouseMoveTimer: ReturnType<typeof setTimeout> | null
+    _handleMouseButton(x: number, y: number, buttons: number): void
     static readonly messages: {
       setDesktopSize(
         sock: unknown,
@@ -43,6 +47,18 @@ declare module "@winvm/novnc/core/rfb.js" {
       ): void
     }
   }
+}
+
+declare module "@winvm/novnc/core/util/element.js" {
+  export function clientToElement(
+    x: number,
+    y: number,
+    element: HTMLElement,
+  ): { x: number; y: number }
+}
+
+declare module "@winvm/novnc/core/util/events.js" {
+  export function releaseCapture(): void
 }
 
 declare module "@winvm/novnc/core/input/util.js" {

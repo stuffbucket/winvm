@@ -287,6 +287,7 @@ async function protectCmd(args: Args, protect: boolean): Promise<number> {
 export function list(args: Args): number {
   const name = instanceName(args)
   if (args.positional[0] === "note") return note(args)
+  if (args.positional[0] === "path") return pathOf(name, args)
   const rows = saves.listSaves(name)
   const report = saves.savesReport(
     rows,
@@ -326,6 +327,19 @@ export function list(args: Args): number {
     )
   }
   console.log(`\n  ${saves.savesDir(name)}`)
+  return 0
+}
+
+function pathOf(name: string, args: Args): number {
+  const target = args.positional[1]
+  if (target === undefined)
+    return fail("usage: winvm saves path [-i name] <save> [--json]")
+  const bad = nameError(target)
+  if (bad !== null) return fail(bad)
+  if (!saves.hasSave(name, target))
+    return fail(`instance "${name}" has no save "${target}"`)
+  const dir = saves.saveDir(name, target)
+  console.log(args.flags.has("json") ? JSON.stringify({ path: dir }) : dir)
   return 0
 }
 

@@ -3,7 +3,7 @@ export interface Sample {
   readonly cpu: number | null
   readonly activityAtMs: number | null
   readonly vncClients: number | null
-  readonly frozen?: boolean
+  readonly frozen?: boolean | null
 }
 
 export interface Settings {
@@ -145,6 +145,24 @@ export class IdleMachine {
       return decisions
     }
 
+    if (s.frozen === null || s.vncClients === null) {
+      if (
+        (s.activityAtMs !== null && s.activityAtMs > this.idleSinceMs) ||
+        (s.vncClients !== null && s.vncClients > 0)
+      ) {
+        this.autosaveArmed = true
+      }
+      this.restartIdle(s.wallMs)
+      this.lastDriftCheckMs = s.wallMs
+      this.lastVerdict = {
+        quiet: false,
+        cpuAvg: null,
+        reasons: ["monitor unavailable"],
+        woke,
+      }
+      return decisions
+    }
+
     if (s.cpu !== null && s.wallMs >= this.ignoreCpuUntilMs) {
       this.cpuWindow.push({ at: s.wallMs, cpu: s.cpu })
     }
@@ -168,7 +186,7 @@ export class IdleMachine {
       this.active(Math.min(s.activityAtMs, s.wallMs))
     }
 
-    if (s.vncClients !== null && s.vncClients > 0) {
+    if (s.vncClients > 0) {
       quiet = false
       reasons.push(`vnc x${String(s.vncClients)}`)
       this.active(s.wallMs)

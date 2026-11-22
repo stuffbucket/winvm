@@ -3,6 +3,7 @@ export interface ClipboardPorts {
   writeMac(text: string): Promise<void>
   toGuest(text: string): void
   focused(): boolean
+  canSend?(): boolean
 }
 
 export class ClipboardSync {
@@ -72,7 +73,12 @@ export class ClipboardSync {
   }
 
   fromMac(): Promise<void> {
-    if (this.stopped || !this.ports.focused()) return Promise.resolve()
+    if (
+      this.stopped ||
+      !this.ports.focused() ||
+      this.ports.canSend?.() === false
+    )
+      return Promise.resolve()
     if (this.writing !== null) return this.writing.then(() => this.fromMac())
     if (this.reading !== null) {
       this.again = true
@@ -102,7 +108,8 @@ export class ClipboardSync {
       text === "" ||
       text === this.shared ||
       before !== this.generation ||
-      !this.ports.focused()
+      !this.ports.focused() ||
+      this.ports.canSend?.() === false
     )
       return
     try {

@@ -32,7 +32,7 @@ export const connection = (
 })
 
 export function vncArg(display: number): string {
-  return `127.0.0.1:${String(display)},websocket=127.0.0.1:${String(websocketPort(display))},password=on,lossy=on`
+  return `127.0.0.1:${String(display)},websocket=127.0.0.1:${String(websocketPort(display))},password=on,lossy=off`
 }
 
 export async function displayFree(display: number): Promise<boolean> {

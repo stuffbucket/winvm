@@ -28,6 +28,7 @@ import {
   RESTORED_BUSY,
   titleAssignment,
 } from "../../model"
+import { type AgentSeen, agentSeen, UNSEEN } from "./agentSeen"
 import { Refresher } from "./refresher"
 import {
   operationFor,
@@ -39,6 +40,10 @@ import {
 import { signalOf } from "./stream"
 
 export type { Verb } from "./statusGuard"
+
+export interface RunOptions {
+  readonly format?: "zstd" | "mapped"
+}
 
 export interface Ran {
   readonly verb: Verb | "open" | "put"
@@ -62,6 +67,7 @@ export interface Winvm {
   readonly phases: Readonly<Record<string, Phase>>
   readonly status: Status | null
   readonly phase: Phase | null
+  readonly agentSeen: AgentSeen
   readonly statusError: string | null
   readonly checks: Checks | null
   readonly checksError: string | null
@@ -73,7 +79,7 @@ export interface Winvm {
   readonly cliPath: string | null
   readonly streaming: boolean
   select: (name: string) => void
-  act: (verb: Verb, arg?: string) => Promise<Ran | null>
+  act: (verb: Verb, arg?: string, options?: RunOptions) => Promise<Ran | null>
   runOn: (
     name: string,
     verb: Verb,
@@ -142,6 +148,7 @@ export function useWinvm(): Winvm {
   const [last, setLast] = useState<Ran | null>(null)
   const [cliPath, setCliPath] = useState<string | null>(null)
   const [polls, setPolls] = useState(0)
+  const [seen, setSeen] = useState<AgentSeen>(UNSEEN)
   const [held, setHeld] = useState<Phase | null>(null)
   const [streaming, setStreaming] = useState(false)
   const streamingRef = useRef(false)
@@ -247,6 +254,7 @@ export function useWinvm(): Winvm {
         setHeld(null)
         setStatusError(null)
         setStatus(got)
+        setSeen((was) => agentSeen(was, got))
       }
       setTitles((was) =>
         was[got.name] === got.title ? was : { ...was, [got.name]: got.title },
@@ -304,6 +312,7 @@ export function useWinvm(): Winvm {
         setHeld(null)
         setStatusError(null)
         setStatus(selected)
+        setSeen((was) => agentSeen(was, selected))
       }
       return list
     } catch {
@@ -515,6 +524,7 @@ export function useWinvm(): Winvm {
       verb: Verb,
       arg?: string,
       through: Runner = winvm,
+      options?: RunOptions,
     ): Promise<Ran> => {
       const target = verb === "setup" ? null : machine
       const owner = target ?? nameRef.current
@@ -528,7 +538,12 @@ export function useWinvm(): Winvm {
       setFailure(null)
       let result: Ran
       try {
-        const extra = arg === undefined || arg === "" ? [] : [arg]
+        const extra = [
+          ...(arg === undefined || arg === "" ? [] : [arg]),
+          ...(verb === "save" && options?.format !== undefined
+            ? ["--format", options.format]
+            : []),
+        ]
         const out =
           target === null || id === null
             ? await winvm("setup")
@@ -590,10 +605,16 @@ export function useWinvm(): Winvm {
   )
 
   const act = useCallback(
-    async (verb: Verb, arg?: string): Promise<Ran | null> => {
+    async (
+      verb: Verb,
+      arg?: string,
+      options?: RunOptions,
+    ): Promise<Ran | null> => {
       const target = nameRef.current
       if (verb === "setup") return execute(null, verb, arg)
-      return target === null ? null : execute(target, verb, arg)
+      return target === null
+        ? null
+        : execute(target, verb, arg, undefined, options)
     },
     [execute],
   )
@@ -617,6 +638,7 @@ export function useWinvm(): Winvm {
     guard.current.settle(null)
     setHeld(null)
     setStatus(null)
+    setSeen(UNSEEN)
     setConnection(null)
     setName(next)
   }, [])
@@ -675,6 +697,7 @@ export function useWinvm(): Winvm {
     streaming,
     status: current,
     phase: p,
+    agentSeen: seen,
     statusError,
     checks,
     checksError,

@@ -2,20 +2,33 @@ import type { Point, Rect } from "@winvm/canvas"
 
 import type { SaveEntry } from "../../model"
 
-export type Checkpoint = SaveEntry
+export type Checkpoint = SaveEntry & {
+  readonly protected?: boolean | undefined
+}
 
-const CARD_WIDTH = 320
-const CARD_FRAME = 200
-const CARD_CAPTION = 92
-const NOW_WIDTH = 560
-const NOW_CAPTION = 64
-const COLUMN_GAP = 36
-const LINE_GAP = 36
-export const DAY_GAP = 112
-const NOW_GAP = 150
+export type CheckpointFormat = "zstd" | "mapped"
+
+export const formatLabelKey = (format: string | undefined): string =>
+  format === "zstd" || format === "mapped" || format === "raw"
+    ? `checkpoints.format.${format}`
+    : "checkpoints.format.unknown"
+
+export const canProtect = (c: Pick<Checkpoint, "kind" | "name">): boolean =>
+  c.kind !== "stow" && c.name !== "stow"
+
+const CARD_WIDTH = 240
+const CARD_FRAME = 150
+const NOW_WIDTH = 440
+const COLUMN_GAP = 32
+const LINE_GAP = 128
+export const DAY_GAP = 176
+const NOW_GAP = 144
+export const CAPTION_ROOM = 120
 export const DEPTH_STEP = 0.93
 export const DEPTH_MIN = 0.62
 const COLUMNS = 6
+
+export const LABEL_LIFT = 14
 
 export interface CardBox extends Rect {
   readonly name: string
@@ -83,7 +96,7 @@ export function layoutTimeline(
     x: -NOW_WIDTH / 2,
     y: 0,
     width: NOW_WIDTH,
-    height: nowFrame + NOW_CAPTION,
+    height: nowFrame,
     frame: nowFrame,
   }
 
@@ -95,7 +108,7 @@ export function layoutTimeline(
     const list = groups.get(key) ?? []
     const scale = depthScale(back)
     const w = CARD_WIDTH * scale
-    const h = (CARD_FRAME + CARD_CAPTION) * scale
+    const h = CARD_FRAME * scale
     const cols = Math.min(columns, list.length)
     const lines = Math.ceil(list.length / columns)
     const width = cols * w + (cols - 1) * COLUMN_GAP * scale
@@ -130,7 +143,7 @@ export function layoutTimeline(
       width,
       height,
       scale,
-      label: { x: left, y: top - 14 * scale },
+      label: { x: left, y: top - LABEL_LIFT * scale },
       names: list.map((c) => c.name),
     })
     bottom = top - DAY_GAP * scale
@@ -146,7 +159,7 @@ export function layoutTimeline(
   const x0 = Math.min(...all.map((r) => r.x))
   const y0 = Math.min(...all.map((r) => r.y))
   const x1 = Math.max(...all.map((r) => r.x + r.width))
-  const y1 = Math.max(...all.map((r) => r.y + r.height))
+  const y1 = Math.max(...all.map((r) => r.y + r.height)) + CAPTION_ROOM
   return {
     now,
     days,
@@ -154,6 +167,75 @@ export function layoutTimeline(
     order,
     bounds: { x: x0, y: y0, width: x1 - x0, height: y1 - y0 },
   }
+}
+
+export type Moves = Readonly<
+  Record<string, { readonly x: number; readonly y: number }>
+>
+
+export function placeCards(
+  layout: TimelineLayout,
+  moves: Moves,
+): TimelineLayout {
+  const cards = new Map(layout.cards)
+  const moved: Rect[] = []
+  for (const [name, by] of Object.entries(moves)) {
+    const box = cards.get(name)
+    if (box === undefined || (by.x === 0 && by.y === 0)) continue
+    const placed = { ...box, x: box.x + by.x, y: box.y + by.y }
+    cards.set(name, placed)
+    moved.push({ ...placed, height: placed.height + CAPTION_ROOM })
+  }
+  if (moved.length === 0) return layout
+  return { ...layout, cards, bounds: union([layout.bounds, ...moved]) }
+}
+
+export function dayGroup(
+  day: Pick<
+    DayBlock,
+    "names" | "scale" | "label" | "x" | "y" | "width" | "height"
+  >,
+  cards: ReadonlyMap<string, Rect>,
+): { readonly rect: Rect; readonly label: Point } {
+  const boxes = day.names.flatMap((n) => {
+    const b = cards.get(n)
+    return b === undefined ? [] : [b]
+  })
+  if (boxes.length === 0)
+    return {
+      rect: { x: day.x, y: day.y, width: day.width, height: day.height },
+      label: day.label,
+    }
+  const link = LINE_GAP * day.scale + 0.5
+  const gap = (
+    a: Rect,
+    b: Rect,
+  ): { readonly x: number; readonly y: number } => ({
+    x: Math.max(0, a.x - (b.x + b.width), b.x - (a.x + a.width)),
+    y: Math.max(0, a.y - (b.y + b.height), b.y - (a.y + a.height)),
+  })
+  const cluster = boxes.map((_, i) => i)
+  const find = (i: number): number => {
+    let r = i
+    while (cluster[r] !== r) r = cluster[r] ?? r
+    return r
+  }
+  boxes.forEach((a, i) => {
+    boxes.slice(0, i).forEach((b, j) => {
+      const g = gap(a, b)
+      if (g.x <= link && g.y <= link)
+        cluster[Math.max(find(i), find(j))] = Math.min(find(i), find(j))
+    })
+  })
+  const sizes = new Map<number, number>()
+  boxes.forEach((_, i) => {
+    sizes.set(find(i), (sizes.get(find(i)) ?? 0) + 1)
+  })
+  let best = find(0)
+  for (const [root, n] of sizes) if (n > (sizes.get(best) ?? 0)) best = root
+  const mine = boxes.filter((_, i) => find(i) === best)
+  const rect = union(mine)
+  return { rect, label: { x: rect.x, y: rect.y - LABEL_LIFT * day.scale } }
 }
 
 export const withLabel = (
@@ -321,6 +403,27 @@ export const hasNotes = (c: Pick<Checkpoint, "notes" | "note">): boolean =>
     (c.notes.text.trim() !== "" || c.notes.tags.length > 0)) ||
   (c.note !== undefined && c.note !== "")
 
+const NOTE_MARK = /^(?:#{1,6}\s+|[-*+]\s+|>\s+)/
+const NOTE_EMPHASIS = /\*\*|__|`/g
+
+export function noteOf(
+  c: Pick<Checkpoint, "notes" | "note">,
+): { readonly line: string; readonly full: string } | null {
+  if (!hasNotes(c)) return null
+  const text = c.notes?.text.trim() ?? ""
+  const tags = c.notes?.tags.join(", ") ?? ""
+  const body = text !== "" ? text : (c.note ?? "").trim()
+  const first = body
+    .split("\n")
+    .map((l) =>
+      l.trim().replace(NOTE_MARK, "").replace(NOTE_EMPHASIS, "").trim(),
+    )
+    .find((l) => l !== "")
+  const line = first ?? tags
+  if (line === "") return null
+  return { line, full: [body, tags].filter((x) => x !== "").join("\n") }
+}
+
 const SAVE_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]*$/
 
 export const validSaveName = (name: string): boolean =>
@@ -349,7 +452,10 @@ export function saveNameFor(
   }
 }
 
-export function deleteBlocked(c: Pick<Checkpoint, "kind">): string | null {
+export function deleteBlocked(
+  c: Pick<Checkpoint, "kind" | "protected">,
+): string | null {
+  if (c.protected === true) return "checkpoints.keep.protected"
   if (c.kind === "golden") return "checkpoints.keep.golden"
   if (c.kind === "baseline") return "checkpoints.keep.baseline"
   return null

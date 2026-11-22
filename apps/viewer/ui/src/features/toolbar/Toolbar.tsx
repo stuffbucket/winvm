@@ -6,6 +6,7 @@ import {
   MachinePicker,
   type MachinePickerProps,
 } from "../machines/MachinePicker"
+import type { InputRule } from "../screen/input"
 
 export type PanelId = "files" | "share"
 
@@ -25,7 +26,8 @@ interface ToolbarProps {
   readonly open: PanelId | null
   readonly detailsOpen: boolean
   readonly keyboardCaptured: boolean
-  readonly inputBlocked: boolean
+  readonly input: InputRule
+  readonly keyboardReleased: string | null
   onStart: () => void
   onShutDown: () => void
   onRestart: () => void
@@ -50,6 +52,7 @@ interface ToolButtonProps {
   readonly enabled: boolean
   readonly pressed?: boolean | undefined
   readonly expanded?: boolean
+  readonly title?: string | undefined
   onClick: (button: HTMLElement) => void
 }
 
@@ -59,6 +62,7 @@ function ToolButton({
   enabled,
   pressed,
   expanded,
+  title,
   onClick,
 }: ToolButtonProps): JSX.Element {
   return (
@@ -66,7 +70,7 @@ function ToolButton({
       type="button"
       className="btn btn--ghost btn--icon"
       aria-label={label}
-      title={label}
+      title={title ?? label}
       aria-pressed={pressed}
       aria-expanded={expanded}
       disabled={!enabled}
@@ -327,12 +331,23 @@ export function Toolbar(p: ToolbarProps): JSX.Element {
         <ToolButton
           icon="keyboard"
           label={t(p.keyboardCaptured ? "input.release" : "input.capture")}
-          enabled={c.screen && !isFrozen(p.phase) && !p.inputBlocked}
+          enabled={c.screen && p.input.capture === "allowed"}
+          title={p.input.why !== null && c.screen ? t(p.input.why) : undefined}
           pressed={p.keyboardCaptured}
           onClick={p.onKeyboardCapture}
         />
-        {p.keyboardCaptured && (
+        {p.keyboardCaptured ? (
           <span className="toolbar__capture-status">{t("input.captured")}</span>
+        ) : (
+          p.keyboardReleased !== null && (
+            <span
+              className="toolbar__capture-status toolbar__capture-status--released"
+              role="status"
+              title={t(p.keyboardReleased)}
+            >
+              {t(p.keyboardReleased)}
+            </span>
+          )
         )}
         <ToolButton
           icon="fit"

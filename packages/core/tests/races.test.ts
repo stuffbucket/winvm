@@ -25,6 +25,7 @@ import * as commands from "../src/commands"
 import * as display from "../src/display"
 import { VIRTIO_GPU } from "../src/display"
 import * as host from "../src/host"
+import * as inputcheck from "../src/inputcheck"
 import * as kept from "../src/kept"
 import { withOperation } from "../src/operation"
 import { OpQueue } from "../src/ops"
@@ -318,6 +319,7 @@ describe("the watcher's work, in winvm's service", () => {
     spyOn(qemu, "isRunning").mockImplementation(() => true)
     spyOn(qmp, "status").mockResolvedValue("running")
     spyOn(qga, "waitReady").mockResolvedValue(true)
+    spyOn(inputcheck, "hostIdleSeconds").mockReturnValue(null)
     spyOn(qmp, "execute").mockImplementation((_socket, cmd) => {
       sent.push(cmd)
       return Promise.resolve({})
