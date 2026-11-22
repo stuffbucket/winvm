@@ -102,7 +102,6 @@ const Status = z.object({
       protection: z.string(),
       version: z.string().nullable(),
       pid: z.number().nullable(),
-      fallback: z.string().nullable().optional(),
       recallable: z.boolean().optional(),
       runningQemu: z.string().optional(),
       installedQemu: z.string().optional(),

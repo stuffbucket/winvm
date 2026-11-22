@@ -27,6 +27,7 @@ import {
   type JobInfo,
   KEEPER_PREFIX,
   KeeperBusy,
+  keeperHint,
   keeperJob,
   keeperLabel,
   keeperPin,
@@ -696,7 +697,7 @@ describe("parseJobPrint", () => {
 })
 
 describe("keeperCheck", () => {
-  it("names where the keeper comes from, and is never a missing prerequisite", () => {
+  it("names where the keeper comes from, and is a missing prerequisite when none is found", () => {
     expect(
       keeperCheck({
         kind: "keeper",
@@ -708,16 +709,19 @@ describe("keeperCheck", () => {
       hint: "",
     })
     expect(keeperCheck({ kind: "missing" })).toEqual({
-      label:
-        "keeper not installed: VMs start without it, unprotected if the Mac shuts down",
-      ok: true,
-      hint: "",
+      label: "keeper not installed: winvm starts no VM without it",
+      ok: false,
+      hint: keeperHint(),
     })
-    expect(keeperCheck({ kind: "off" })).toMatchObject({
-      label:
-        "keeper off (WINVM_KEEPER=off): VMs start without it, unprotected if the Mac shuts down",
-      ok: true,
-    })
+  })
+
+  it("says how to get a keeper, naming the download only when one is pinned", () => {
+    expect(keeperHint(null)).toBe(
+      "the winvm app carries one; this winvm pins none for `winvm setup` to download yet (packages/core/keeper.json); WINVM_KEEPER=<path> names a build of native/keeper (`cargo build --manifest-path native/keeper/Cargo.toml`)",
+    )
+    expect(
+      keeperHint({ version: "v1", url: "https://example.test/k", sha256: "0" }),
+    ).toContain("`winvm setup` downloads the one this winvm pins")
   })
 })
 

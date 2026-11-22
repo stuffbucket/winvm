@@ -70,7 +70,6 @@ interface Answer {
 
 interface World {
   protection: string | null
-  fallback: string | null
   recallable: boolean
   state: string
   verbs: string[][]
@@ -80,7 +79,6 @@ interface World {
 
 const newWorld = (protection: string | null): World => ({
   protection,
-  fallback: null,
   recallable: true,
   state: "running",
   verbs: [],
@@ -111,7 +109,6 @@ const statusOf = (w: World): Record<string, unknown> => ({
           protection: w.protection,
           version: "0.1.0",
           pid: 77,
-          fallback: w.fallback,
           recallable: w.recallable,
           runningQemu: w.recallable ? "11.1.2" : "10.0.0",
           installedQemu: "11.1.2",
@@ -210,17 +207,6 @@ describe("Protect now", () => {
     }
   })
 
-  it("says why the VM is unprotected when the keeper could not start, without blaming an older winvm", async () => {
-    const world = newWorld("legacy")
-    world.fallback = "launchctl bootstrap: 5: EIO"
-    const host = await mount(world)
-    await openDetails(host)
-    expect(protectButton(host)).not.toBeNull()
-    expect(host.textContent).toContain("could not start")
-    expect(host.textContent).toContain("launchctl bootstrap: 5: EIO")
-    expect(host.textContent).not.toContain("older winvm")
-  })
-
   it("offers no stow when this winvm could not recall it, and says to shut Windows down and start it", async () => {
     for (const protection of ["legacy", "adopted"]) {
       const world = newWorld(protection)
@@ -262,7 +248,7 @@ describe("Protect now", () => {
   })
 
   it("is not offered for a protected VM, or one with no keeper to protect it", async () => {
-    for (const protection of ["kept", "off", "missing", null]) {
+    for (const protection of ["kept", "missing", null]) {
       const world = newWorld(protection)
       const host = await mount(world)
       await openDetails(host)

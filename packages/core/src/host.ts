@@ -8,6 +8,7 @@ import {
 import { resolve } from "node:path"
 import { gunzipSync } from "node:zlib"
 
+import { keeperHint } from "./keeper"
 import { type KeeperUse, keeperUse } from "./kept"
 import { home, PACKAGE_DIR } from "./paths"
 import { findRuntime, type Runtime, runtimeBin, verifyRuntime } from "./runtime"
@@ -165,29 +166,18 @@ export function runtimeCheck(
   }
 }
 
-const UNPROTECTED = "VMs start without it, unprotected if the Mac shuts down"
-
 export function keeperCheck(use: KeeperUse): Check {
-  switch (use.kind) {
-    case "keeper":
-      return {
+  return use.kind === "keeper"
+    ? {
         label: `keeper ${use.keeper.path} (${use.keeper.source})`,
         ok: true,
         hint: "",
       }
-    case "off":
-      return {
-        label: `keeper off (WINVM_KEEPER=off): ${UNPROTECTED}`,
-        ok: true,
-        hint: "",
+    : {
+        label: "keeper not installed: winvm starts no VM without it",
+        ok: false,
+        hint: keeperHint(),
       }
-    case "missing":
-      return {
-        label: `keeper not installed: ${UNPROTECTED}`,
-        ok: true,
-        hint: "",
-      }
-  }
 }
 
 export function macosCheck(productVersion: string, arch: string): Check {

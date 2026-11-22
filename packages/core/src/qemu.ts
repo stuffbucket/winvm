@@ -1,9 +1,4 @@
-import {
-  type ChildProcess,
-  type SpawnOptions,
-  spawn,
-  spawnSync,
-} from "node:child_process"
+import { spawnSync } from "node:child_process"
 import {
   closeSync,
   existsSync,
@@ -16,14 +11,12 @@ import {
 import { restoreForward } from "./agentfwd"
 import type { DisplayConfig } from "./display"
 import { displayArgs, RAMFB, readDisplay, runningCommand } from "./display"
-import { appendEntry } from "./eventlog"
 import type { Hardware } from "./hardware"
 import { readHardware } from "./hardware"
 import { requireFirmware, tpmTisHasPpi } from "./host"
-import { type FoundKeeper, KeeperBusy, type KeeperChild } from "./keeper"
+import type { FoundKeeper, KeeperChild } from "./keeper"
 import * as kept from "./kept"
 import { pointOfNoReturn } from "./opcontext"
-import { LeaseNotHeld } from "./operation"
 import type { InstanceMeta, Paths } from "./paths"
 import { media } from "./paths"
 import { lockState } from "./pidlock"
@@ -165,20 +158,6 @@ export function qemuArgs(
   return a
 }
 
-export type Spawner = (
-  command: string,
-  args: readonly string[],
-  options: SpawnOptions,
-) => ChildProcess
-
-let spawner: Spawner = spawn
-
-export function setSpawner(next: Spawner = spawn): Spawner {
-  const previous = spawner
-  spawner = next
-  return previous
-}
-
 function swtpmPids(p: Paths): readonly number[] {
   const dir = p.tpmDir.replace(/[.*+?^$()|[\]{}\\]/g, "\\$&")
   const r = spawnSync(
@@ -223,18 +202,6 @@ async function untilFile(path: string, timeoutMs: number): Promise<boolean> {
     await new Promise((r) => setTimeout(r, 20))
   }
   return false
-}
-
-async function startSwtpm(p: Paths): Promise<void> {
-  stopSwtpm(p)
-  for (let i = 0; i < 50 && swtpmPids(p).length > 0; i += 1)
-    await new Promise((r) => setTimeout(r, 20))
-  const proc = spawner(runtimeBin("swtpm"), [...swtpmArgs(p)], {
-    detached: true,
-    stdio: "ignore",
-  })
-  proc.unref()
-  if (!(await untilFile(p.tpmSock, 10_000))) throw swtpmMissing(p)
 }
 
 const swtpmMissing = (p: Paths): Error =>
@@ -292,75 +259,20 @@ export async function launch(
     throw new Error(
       `QEMU (pid ${String(running)}) still runs for "${name}", so nothing was started; \`winvm kill -i ${name}\` ends it`,
     )
-  pointOfNoReturn()
   const use = kept.keeperUse()
-  if (use.kind === "keeper") {
-    const failed = await kept.openKeeper(name, p, use.keeper).then(
-      () => null,
-      (error: unknown) =>
-        error instanceof Error ? error : new Error(String(error)),
+  if (use.kind === "missing") throw new kept.KeeperMissing(name)
+  pointOfNoReturn()
+  try {
+    await kept.openKeeper(name, p, use.keeper)
+  } catch (error) {
+    if (!kept.servingHere(p)) throw error
+    const failed = error instanceof Error ? error : new Error(String(error))
+    throw new Error(
+      `${failed.message.replace(/\.$/, "")}. Windows is stopped; \`winvm start -i ${name}\` starts it again once the keeper answers`,
+      { cause: failed },
     )
-    if (failed === null) {
-      await launchKept(name, p, meta, o, use.keeper)
-      return
-    }
-    if (kept.servingHere(p))
-      throw new Error(
-        `${failed.message.replace(/\.$/, "")}. Windows is stopped; \`winvm start -i ${name}\` starts it again once the keeper answers, ` +
-          `or \`WINVM_KEEPER=off winvm start -i ${name}\` starts it without the keeper`,
-        { cause: failed },
-      )
-    if (failed instanceof LeaseNotHeld || failed instanceof KeeperBusy)
-      throw failed
-    console.warn(
-      `warning: winvm's keeper did not start (${failed.message}); starting QEMU without it, so it is not protected if the Mac shuts down`,
-    )
-    appendEntry(name, {
-      kind: "warning",
-      what: kept.UNAVAILABLE,
-      error: failed.message,
-    })
   }
-  await startSwtpm(p)
-  const { display, devices } = launchDevices(p, o)
-  if (devices !== "none") {
-    try {
-      await share.startVirtiofsd(p)
-    } catch (error) {
-      stopSidecars(p)
-      throw error
-    }
-  }
-  if (existsSync(p.serial)) renameSync(p.serial, p.serialPrev)
-  rmSync(p.qemuLog, { force: true })
-  if (o.incoming !== undefined) rmSync(p.qmpQemu, { force: true })
-  await ensureService(name, p)
-  const m = await ensureFreeDisplay(name, p, meta)
-
-  const log = openSync(p.qemuLog, "w")
-  const proc = spawner(
-    runtimeBin("qemu-system-aarch64"),
-    [...qemuArgs(name, p, m, { ...o, display, shareDevices: devices })],
-    {
-      detached: true,
-      stdio: ["ignore", log, log],
-    },
-  )
-  closeSync(log)
-  proc.unref()
-
-  const exited = new Promise<"exited">((res) =>
-    proc.on("exit", () => {
-      res("exited")
-    }),
-  )
-  if ((await settled(p, o, exited)) === "alive") {
-    await afterLaunch(p)
-    return
-  }
-
-  stopSidecars(p)
-  throw exitedImmediately(p)
+  await launchKept(name, p, meta, o, use.keeper)
 }
 
 const REAPED_MS = 5000

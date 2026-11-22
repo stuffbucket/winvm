@@ -717,7 +717,7 @@ describe("an op a client names, and reads back from the record", () => {
   }, 30_000)
 })
 
-describe("the long verbs that launch QEMU, run by winvm's service with the keeper off", () => {
+describe("the long verbs that launch QEMU, run by winvm's service through the keeper", () => {
   const FAKE_QEMU = resolve(import.meta.dir, "fakes", "qemu.ts")
 
   const fakeRuntime = (): void => {

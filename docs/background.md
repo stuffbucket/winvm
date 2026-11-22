@@ -108,9 +108,10 @@ with QEMU of the same version. Otherwise it refuses, and
 
 The keeper isn't a login item and doesn't outlive a restart. The app carries
 it; a CLI-only install gets it from `winvm setup` once a release pins one.
-`WINVM_KEEPER=<path>` uses another build, for development.
-`WINVM_KEEPER=off` turns the keeper off: QEMU then starts detached, as it did
-before, and so does every VM when no keeper is installed. A command whose
+`WINVM_KEEPER=<path>` uses another build, for development. Every VM runs under
+the keeper: when none is found, `winvm start`, and anything else that launches
+QEMU, starts nothing and says how to get one, and `winvm doctor` lists it as a
+missing prerequisite. A command whose
 `WINVM_KEEPER` differs from the one winvm's service runs with is run by the
 CLI itself, so the setting takes effect for that command. `winvm status` has a
 `keeper` row:
@@ -128,7 +129,9 @@ CLI itself, so the setting takes effect for that command. `winvm status` has a
 - `not protected: started without winvm's keeper`: QEMU was started detached
   and no keeper watches it yet. It keeps working, and `winvm stop`, `kill`
   and `status` treat it as before.
-- `not protected: WINVM_KEEPER=off`, or `no winvm-keeper installed`.
+- `not protected: no winvm-keeper installed`: QEMU was started without the
+  keeper, and this winvm has no keeper to take it over; the note says how to
+  get one.
 - `confused`: the keeper and `qemu.pid` name different processes; `winvm kill`
   clears it.
 

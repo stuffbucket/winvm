@@ -36,8 +36,8 @@ import {
 } from "../src/keeper"
 import {
   callerUmask,
-  KEEPER_OFF,
   type KeeperHello,
+  KeeperMissing,
   keeperDir,
   keeperHello,
   keeperMonitor,
@@ -79,7 +79,6 @@ let state = ""
 let previousEnv: Record<string, string | undefined> = {}
 let previousLaunchd: () => Launchd
 let previousSettle: qemu.Settle
-let previousSpawner: qemu.Spawner
 let previousProbe: share.Probe
 let ensuring: Mock<typeof servicectl.ensureService>
 const keepers: ReturnType<typeof Bun.spawn>[] = []
@@ -87,7 +86,6 @@ let launchdCalls: string[] = []
 let bootstrapFails = false
 let silentlyRunning = false
 let listingFails = false
-let detached: string[] = []
 
 const sleep = async (ms: number): Promise<void> => {
   await new Promise((r) => setTimeout(r, ms))
@@ -227,12 +225,7 @@ beforeEach(() => {
       clearTimeout(t)
     }
   })
-  previousSpawner = qemu.setSpawner((command) => {
-    detached.push(command)
-    throw new Error(`detached spawn of ${command}`)
-  })
   launchdCalls = []
-  detached = []
   bootstrapFails = false
   silentlyRunning = false
   listingFails = false
@@ -242,7 +235,6 @@ afterEach(async () => {
   mock.restore()
   setLaunchd(previousLaunchd)
   qemu.setSettle(previousSettle)
-  qemu.setSpawner(previousSpawner)
   share.setProbe(previousProbe)
   const ending = keepers.splice(0)
   for (const k of ending) k.kill("SIGTERM")
@@ -255,14 +247,15 @@ afterEach(async () => {
 })
 
 describe("choosing how QEMU is launched", () => {
-  it("uses the keeper that is found, and none when WINVM_KEEPER=off or none is found", () => {
+  it("uses the keeper that is found, and says none is when none is found", () => {
     const found = { path: "/k", source: "override" as const }
     expect(keeperUse({}, () => found)).toEqual({
       kind: "keeper",
       keeper: found,
     })
-    expect(keeperUse({ WINVM_KEEPER: KEEPER_OFF }, () => found)).toEqual({
-      kind: "off",
+    expect(keeperUse({ WINVM_KEEPER: "off" }, () => found)).toEqual({
+      kind: "keeper",
+      keeper: found,
     })
     expect(keeperUse({}, () => null)).toEqual({ kind: "missing" })
   })
@@ -300,7 +293,6 @@ describe("launching QEMU through the keeper", () => {
     await leasedLaunch()
     const p = pathsFor(NAME)
     expect(launchdCalls).toContain("bootstrap")
-    expect(detached).toEqual([])
     expect(ops()).toEqual(["launch-sidecar", "launch"])
     const [tpm, main] = requests().filter((r) => r.op !== "hello")
     const tpmChild = tpm?.child as Record<string, unknown>
@@ -354,7 +346,6 @@ describe("launching QEMU through the keeper", () => {
       qemu.launch(NAME, pathsFor(NAME), meta, launchOptions),
     ).rejects.toThrow(LeaseNotHeld)
     expect(launchdCalls).toEqual([])
-    expect(detached).toEqual([])
     expect(existsSync(keeperDir(pathsFor(NAME)))).toBe(false)
   })
 
@@ -508,10 +499,9 @@ describe("whether the keeper protects a VM", () => {
     })
   })
 
-  it("is legacy, off or missing for a QEMU no keeper runs", () => {
+  it("is legacy or missing for a QEMU no keeper runs", () => {
     expect(keeperStanding(10, null, "keeper")?.protection).toBe("legacy")
     expect(keeperStanding(10, hello(null), "keeper")?.protection).toBe("legacy")
-    expect(keeperStanding(10, null, "off")?.protection).toBe("off")
     expect(keeperStanding(10, null, "missing")?.protection).toBe("missing")
   })
 
@@ -528,7 +518,7 @@ describe("whether the keeper protects a VM", () => {
 
   it("says nothing for a stopped VM with no kept QEMU", () => {
     expect(keeperStanding(null, hello(null), "keeper")).toBeNull()
-    expect(keeperStanding(null, null, "off")).toBeNull()
+    expect(keeperStanding(null, null, "missing")).toBeNull()
   })
 
   it("is reported by status for a kept VM, and a note says how to protect a legacy one", async () => {
@@ -564,29 +554,33 @@ describe("whether the keeper protects a VM", () => {
   })
 })
 
-describe("launching QEMU without the keeper", () => {
-  it("spawns QEMU detached when WINVM_KEEPER=off, and starts no keeper", async () => {
-    process.env.WINVM_KEEPER = KEEPER_OFF
-    await expect(leasedLaunch()).rejects.toThrow("detached spawn of")
-    expect(detached.some((c) => c.endsWith("/bin/swtpm"))).toBe(true)
+describe("a launch with no keeper", () => {
+  it("starts nothing, and says how to get a keeper, when none is found", async () => {
+    delete process.env.WINVM_KEEPER
+    const error = await leasedLaunch().then(
+      () => null,
+      (e: unknown) => e,
+    )
+    expect(error).toBeInstanceOf(KeeperMissing)
+    expect(String(error)).toContain(
+      `no winvm-keeper was found, so nothing was started on "${NAME}"`,
+    )
+    expect(String(error)).toContain("the winvm app carries one")
+    expect(String(error)).toContain("WINVM_KEEPER=<path>")
     expect(launchdCalls).toEqual([])
     expect(existsSync(keeperDir(pathsFor(NAME)))).toBe(false)
+    expect(existsSync(pathsFor(NAME).tpmSock)).toBe(false)
   })
 
-  it("spawns QEMU detached, with a warning, when the keeper cannot be started", async () => {
+  it("starts nothing when the keeper cannot be started", async () => {
     bootstrapFails = true
-    const warnings: string[] = []
-    spyOn(console, "warn").mockImplementation((...a: unknown[]) => {
-      warnings.push(a.map(String).join(" "))
-    })
-    await expect(leasedLaunch()).rejects.toThrow("detached spawn of")
+    await expect(leasedLaunch()).rejects.toThrow("EIO")
     expect(launchdCalls.at(-1)).toBe("bootstrap")
-    expect(warnings.join("\n")).toContain(
-      "winvm's keeper did not start (launchctl bootstrap user/501 keeper.plist: 5: EIO); starting QEMU without it, so it is not protected if the Mac shuts down",
-    )
+    expect(existsSync(pathsFor(NAME).tpmSock)).toBe(false)
+    expect(qemu.isRunning(pathsFor(NAME))).toBe(false)
   })
 
-  it("refuses, rather than spawn QEMU outside the keeper, when the launch runs inside the keeper's own service", async () => {
+  it("refuses, saying Windows is stopped, when the launch runs inside the keeper's own service", async () => {
     bootstrapFails = true
     writeFileSync(
       pathsFor(NAME).service,
@@ -597,15 +591,9 @@ describe("launching QEMU without the keeper", () => {
         startedAt: "",
       }),
     )
-    spyOn(console, "warn").mockImplementation(() => undefined)
-    await expect(leasedLaunch()).rejects.toThrow("EIO")
-    expect(detached).toEqual([])
-  })
-
-  it("spawns QEMU detached when no keeper is installed", async () => {
-    delete process.env.WINVM_KEEPER
-    await expect(leasedLaunch()).rejects.toThrow("detached spawn of")
-    expect(launchdCalls).toEqual([])
+    await expect(leasedLaunch()).rejects.toThrow(
+      `EIO. Windows is stopped; \`winvm start -i ${NAME}\` starts it again once the keeper answers`,
+    )
   })
 })
 
@@ -637,7 +625,6 @@ describe("fix round 1", () => {
   it("refuses, rather than falling back, while the keeper is running but silent", async () => {
     silentlyRunning = true
     await expect(leasedLaunch()).rejects.toThrow(KeeperBusy)
-    expect(detached).toEqual([])
     expect(launchdCalls).toEqual([])
   }, 15_000)
 
@@ -777,33 +764,6 @@ describe("fix round 1", () => {
     }
   })
 
-  it("names keeper.log, not a restart, when the VM runs unprotected because the keeper could not start", async () => {
-    bootstrapFails = true
-    spyOn(console, "warn").mockImplementation(() => undefined)
-    await withOperation(NAME, "start", async () => {
-      await qemu.launch(NAME, pathsFor(NAME), meta, launchOptions)
-    }).catch(() => undefined)
-    const legacy = Bun.spawn(
-      [
-        resolve(state, "runtime", "bin", "qemu-system-aarch64"),
-        "-pidfile",
-        pathsFor(NAME).pid,
-      ],
-      { stdout: "ignore", stderr: "ignore" },
-    )
-    try {
-      await until("the pidfile", () => qemu.isRunning(pathsFor(NAME)))
-      const s = await gather(NAME, false)
-      expect(s.keeper?.fallback).toContain("EIO")
-      const notes = s.notes.join("\n")
-      expect(notes).toContain("could not start")
-      expect(notes).toContain(resolve(keeperDir(pathsFor(NAME)), "keeper.log"))
-      expect(notes).not.toContain("winvm stow")
-    } finally {
-      legacy.kill("SIGKILL")
-    }
-  })
-
   it("says what is true when no keeper is installed", async () => {
     delete process.env.WINVM_KEEPER
     const legacy = Bun.spawn(
@@ -817,8 +777,11 @@ describe("fix round 1", () => {
     try {
       await until("the pidfile", () => qemu.isRunning(pathsFor(NAME)))
       const notes = (await gather(NAME, false)).notes.join("\n")
-      expect(notes).toContain("not protected if the Mac shuts down")
-      expect(notes).not.toContain("winvm setup")
+      expect(notes).toContain(
+        "was started without winvm's keeper, and this winvm has no winvm-keeper to protect it with",
+      )
+      expect(notes).toContain("WINVM_KEEPER=<path>")
+      expect(notes).not.toContain("`winvm setup` downloads")
     } finally {
       legacy.kill("SIGKILL")
     }
@@ -1121,7 +1084,6 @@ describe("adopting a VM an older winvm started", () => {
     expect(await adoptLegacy(NAME, p)).toBe("none")
     await startLegacy()
     try {
-      expect(await adoptLegacy(NAME, p, { kind: "off" })).toBe("none")
       expect(await adoptLegacy(NAME, p, { kind: "missing" })).toBe("none")
       expect(
         await withOperation(NAME, "save", async () => {
@@ -1255,7 +1217,6 @@ describe("a keeper from phase 3, which speaks protocol 2", () => {
     try {
       await leasedLaunch()
       expect(asked).toEqual([{ op: "exit-when-idle", protocol: 2 }])
-      expect(detached).toEqual([])
       expect(ops()).toEqual(["launch-sidecar", "launch"])
     } finally {
       server.close()
@@ -1281,7 +1242,6 @@ describe("a keeper from phase 3, which speaks protocol 2", () => {
     try {
       await expect(leasedLaunch()).rejects.toThrow("older than this winvm")
       expect(asked.filter((r) => r.op === "exit-when-idle")).toEqual([])
-      expect(detached).toEqual([])
     } finally {
       server.close()
     }
@@ -1301,9 +1261,8 @@ describe("a keeper from phase 3, which speaks protocol 2", () => {
     )
     try {
       await expect(leasedLaunch()).rejects.toThrow(
-        `Windows is stopped; \`winvm start -i ${NAME}\` starts it again once the keeper answers, or \`WINVM_KEEPER=off winvm start -i ${NAME}\` starts it without the keeper`,
+        `Windows is stopped; \`winvm start -i ${NAME}\` starts it again once the keeper answers`,
       )
-      expect(detached).toEqual([])
     } finally {
       server.close()
     }
@@ -1332,7 +1291,6 @@ describe("a keeper from phase 3, which speaks protocol 2", () => {
         `QEMU (pid ${String(pid)}) still runs for "${NAME}"`,
       )
       expect(launchdCalls).toEqual([])
-      expect(detached).toEqual([])
       expect(alive(pid)).toBe(true)
     } finally {
       await releasePidfiles()

@@ -140,9 +140,6 @@ beforeEach(() => {
     Promise.resolve(m),
   )
   spyOn(vnc, "applyPassword").mockResolvedValue(null)
-  spyOn(share, "startVirtiofsd").mockImplementation(() =>
-    Promise.resolve({ dir: state, readonly: false, folder: null }),
-  )
   spyOn(console, "log").mockImplementation(() => undefined)
   spyOn(console, "error").mockImplementation(() => undefined)
   spyOn(console, "warn").mockImplementation(() => undefined)
