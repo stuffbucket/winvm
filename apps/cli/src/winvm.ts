@@ -261,7 +261,7 @@ switch (sub ?? "") {
         : await viaService(serviceOp, () => goldens.golden(args))
     break
   case "saves":
-    exitCode = savecmds.list(args)
+    exitCode = await savecmds.savesCmd(args)
     break
   case "pause":
     exitCode = await viaService("pause", () => savecmds.pause(args))

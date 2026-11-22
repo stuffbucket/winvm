@@ -102,6 +102,9 @@ describe("manifest", () => {
     expect(() =>
       parseManifest(JSON.stringify({ ...good, format: "lz4" })),
     ).toThrow(/format/)
+    expect(() =>
+      parseManifest(JSON.stringify({ ...good, protected: "true" })),
+    ).toThrow(/protected/)
   })
   it("rejects a malformed display profile rather than launching different hardware", () => {
     for (const display of [
@@ -399,6 +402,7 @@ describe("savesReport", () => {
   }
   const plain = {
     format: "zstd" as const,
+    protected: false,
     screenshot: null,
     thumbnail: null,
     title: null,
@@ -453,6 +457,18 @@ describe("savesReport", () => {
       compatible: null,
       note: "clean install",
       ...plain,
+    })
+  })
+
+  it("reports explicit protection without changing the saved format or compatibility", () => {
+    const [entry] = savesReport(
+      [{ name: m.name, manifest: { ...m, protected: true, format: "mapped" } }],
+      { compat: { hash: "abc", parts } },
+    )
+    expect(entry).toMatchObject({
+      protected: true,
+      format: "mapped",
+      compatible: true,
     })
   })
 

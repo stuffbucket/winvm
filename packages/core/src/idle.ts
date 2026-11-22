@@ -223,6 +223,7 @@ export interface SaveInfo {
   readonly name: string
   readonly kind: string
   readonly createdAt: string
+  readonly protected?: boolean
 }
 
 export function savesToRotate(
@@ -230,7 +231,7 @@ export function savesToRotate(
   keep: number,
 ): readonly string[] {
   const autos = saves
-    .filter((s) => s.kind === "auto")
+    .filter((s) => s.kind === "auto" && s.protected !== true)
     .toSorted(
       (a, b) =>
         Date.parse(b.createdAt) - Date.parse(a.createdAt) ||

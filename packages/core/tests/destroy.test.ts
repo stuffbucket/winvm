@@ -18,10 +18,10 @@ import { tmpdir } from "node:os"
 import { resolve } from "node:path"
 
 import { parseArgs } from "../src/args"
-import { destroy } from "../src/commands"
+import { destroy, prune } from "../src/commands"
 import { readNote, writeNote } from "../src/notes"
 import { instanceDir, pathsFor } from "../src/paths"
-import { saveDir, savesDir } from "../src/saves"
+import { listSaves, saveDir, savesDir, setSaveProtection } from "../src/saves"
 
 let state = ""
 let previousHome: string | undefined
@@ -39,7 +39,18 @@ function makeInstance(name: string, saveNames: readonly string[]): void {
   )
   for (const s of saveNames) {
     mkdirSync(saveDir(name, s), { recursive: true })
-    writeFileSync(resolve(saveDir(name, s), "manifest.json"), "{}")
+    writeFileSync(
+      resolve(saveDir(name, s), "manifest.json"),
+      JSON.stringify({
+        name: s,
+        instance: name,
+        kind: s === "stow" ? "stow" : "baseline",
+        createdAt: new Date().toISOString(),
+        bytes: 4096,
+        compat: "abc",
+        image: "win11-arm64",
+      }),
+    )
     writeFileSync(resolve(saveDir(name, s), "vmstate.zst"), "x".repeat(4096))
   }
 }
@@ -84,6 +95,38 @@ describe("destroy", () => {
     expect(existsSync(instanceDir("kept"))).toBe(false)
     expect(existsSync(saveDir("kept", "baseline"))).toBe(true)
     expect(readNote("kept", "baseline")?.title).toBe("first boot")
+  })
+
+  it("keeps protected checkpoints and all notes even without --keep-saves", async () => {
+    makeInstance("protected", ["baseline", "stow"])
+    await setSaveProtection("protected", "baseline", true)
+    writeNote("protected", "baseline", { title: "Do not reclaim" })
+    expect(destroy(parseArgs(["-i", "protected"]))).toBe(0)
+    expect(existsSync(instanceDir("protected"))).toBe(false)
+    expect(listSaves("protected")).toHaveLength(2)
+    expect(readNote("protected", "baseline")?.title).toBe("Do not reclaim")
+  })
+
+  it("keeps unreadable checkpoints rather than guessing their protection state", () => {
+    makeInstance("damaged", ["baseline"])
+    writeFileSync(
+      resolve(saveDir("damaged", "baseline"), "manifest.json"),
+      "broken",
+    )
+    expect(destroy(parseArgs(["-i", "damaged"]))).toBe(0)
+    expect(existsSync(saveDir("damaged", "baseline"))).toBe(true)
+  })
+
+  it("prune leaves scratch instances with protected saves alone", async () => {
+    makeInstance("build-kept", ["baseline"])
+    makeInstance("build-old", ["baseline"])
+    await setSaveProtection("build-kept", "baseline", true)
+    writeNote("build-kept", "baseline", { title: "Important" })
+    expect(prune(parseArgs([]))).toBe(0)
+    expect(existsSync(instanceDir("build-kept"))).toBe(true)
+    expect(readNote("build-kept", "baseline")?.title).toBe("Important")
+    expect(existsSync(instanceDir("build-old"))).toBe(false)
+    expect(listSaves("build-old")).toEqual([])
   })
 
   it("is fine with an instance that never had saves", () => {

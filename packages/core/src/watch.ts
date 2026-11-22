@@ -449,7 +449,11 @@ export function serviceActions(
         {
           cancel: "never",
           run: async () => {
-            for (const n of names) saves.removeSave(instance, n)
+            for (const n of names) {
+              const m = saves.readSave(instance, n)
+              if (m?.kind === "auto" && m.protected !== true)
+                saves.removeSave(instance, n)
+            }
             return await Promise.resolve(0)
           },
         },
@@ -512,6 +516,7 @@ function currentSaves(instance: string): readonly SaveInfo[] {
             name: l.name,
             kind: l.manifest.kind,
             createdAt: l.manifest.createdAt,
+            protected: l.manifest.protected === true,
           },
         ],
   )

@@ -11,7 +11,9 @@ winvm save before-install        # the name defaults to a timestamp
 winvm load before-install        # running or stopped
 winvm save --fast clean          # larger, but faster to load
 winvm saves                      # name, kind, format, created, size, compatible
-winvm saves rm before-install    # deletes its note too
+winvm saves rm before-install    # deletes its note too; refuses a protected save
+winvm saves protect before-install   # keep it out of automatic reclamation
+winvm saves unprotect before-install # allow retention/deletion again
 winvm saves note before-install --title "Clean install" --tags win11,clean
 winvm pause / resume             # freeze the guest / carry on
 winvm sleep / wake               # lock Windows and freeze it / carry on at the lock screen
@@ -26,10 +28,18 @@ winvm clock                      # the guest's clock offset, and fix it
 - **Where.** `~/.local/state/winvm/saves/<instance>/<name>/`. The disk copies
   are APFS clones, so they take little space until the instance changes the
   blocks they share. `destroy` removes an instance's saves, unless you pass
-  `--keep-saves`. `load` can recreate a destroyed instance from a kept save.
+  `--keep-saves` or any save is protected (or has an unreadable manifest); in
+  those cases it keeps all of them and says so. `load` can recreate a destroyed
+  instance from a kept save. `prune` skips scratch instances with protected or
+  unreadable saves entirely.
 - **Formats.** The default is compressed with zstd. `--fast` uses QEMU's
   mapped-ram format: larger, but much faster to load. Use it
-  for a save you load over and over. `load` reads either.
+  for a save you load over and over. `load` reads either, and still reads legacy
+  raw streams. The app's New Checkpoint form offers **Compress memory (zstd)**,
+  on by default; turning it off uses the existing mapped-ram format, not a new
+  compression format. Properties shows how an existing checkpoint's memory is
+  stored. This does not convert an existing checkpoint: mapped-ram files cannot
+  simply be compressed and relabelled as zstd migration streams.
 - **Compatibility.** A save loads only into the same virtual hardware, image,
   firmware and QEMU version. `saves` shows which ones still load, and `load`
   says what changed when it refuses.
@@ -73,6 +83,47 @@ winvm clock                      # the guest's clock offset, and fix it
 
 `snapshot` and `rewind <tag>` also work. They keep their state inside the
 instance's disk file instead.
+
+## Automatic saves and protection
+
+Automatic saves are taken once per idle stretch, after the machine has been
+quiet for the configured time, not periodically during a live session. A
+connected viewer, recent guest commands, or sustained CPU activity restarts
+that idle timer. Paused and asleep machines are left alone.
+
+The existing per-machine settings control whether autosave is enabled, how
+long it waits, and how many unprotected automatic saves it keeps:
+
+```sh
+winvm config -i dev-x autosave.enabled=true autosave.idleMinutes=10 autosave.keep=5
+winvm config -i dev-x autosave.enabled=false
+```
+
+Protect a checkpoint in its properties panel to retain that exact moment.
+Protected automatic saves are **additional to** the retention count: keeping
+five means five unprotected autosaves plus every protected one. Rotation never
+removes manual, baseline, golden or stow saves. Unprotecting an automatic save
+makes it eligible for the next rotation; it does not delete it immediately.
+
+```sh
+winvm saves -i dev-x protect before-install
+winvm saves -i dev-x unprotect before-install
+winvm saves -i dev-x rm before-install --force # explicitly delete even when protected
+```
+
+Without `--force`, deletion refuses protected saves and keeps their notes.
+The app requires unprotecting before its ordinary Delete confirmation. Saving
+or cloning over a protected name also refuses; `save --force` only skips the
+readiness check, never bypasses protection. Rename the new checkpoint or
+unprotect the old one first. Protection does not prevent loading a checkpoint,
+change its compatibility, or call into Windows: it works with the machine
+stopped or running. A damaged manifest is not assumed unprotected; explicit
+`saves rm --force` can remove a damaged save.
+
+The `stow` save is a one-shot suspended session, consumed on recall and discarded
+when superseded. It cannot be protected. Take a separately named checkpoint
+before suspending if that moment should be retained. This keeps the existing
+start/load/reset behaviour unchanged.
 
 ## Screenshots and notes
 
@@ -120,7 +171,8 @@ A note still belongs to its save:
   old moment.
 - A save copied to another instance (a test pool) brings its note with it.
 
-`saves --json` reports, for each save, `format`, `screenshot` and `thumbnail`
+`saves --json` reports, for each save, `format`, `protected` (a boolean;
+older manifests without it are unprotected), `screenshot` and `thumbnail`
 (absolute paths, or `null`), `screenSize`, `title` and `notes` (the whole note,
 or `null`). For a save that won't load, `incompatible` lists what changed:
 `base`, `hardware`, `display` (only the display device differs: a save without
