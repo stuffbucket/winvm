@@ -500,6 +500,10 @@ fn reveal(path: &str) -> Result<(), String> {
     Ok(())
 }
 
+fn cli_link(home: &Path) -> std::path::PathBuf {
+    home.join(".local").join("bin").join("winvm")
+}
+
 #[tauri::command]
 fn install_cli() -> Result<String, String> {
     let exe = std::env::current_exe().map_err(|e| e.to_string())?;
@@ -508,7 +512,7 @@ fn install_cli() -> Result<String, String> {
         .ok_or("the app has no Contents/MacOS directory")?
         .join("winvm");
     let home = std::env::var("HOME").map_err(|e| e.to_string())?;
-    let link = about::cli_link(Path::new(&home));
+    let link = cli_link(Path::new(&home));
     if let Some(bin) = link.parent() {
         std::fs::create_dir_all(bin).map_err(|e| e.to_string())?;
     }

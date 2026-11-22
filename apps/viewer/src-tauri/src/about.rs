@@ -1,5 +1,5 @@
-use std::path::{Path, PathBuf};
-use tauri::{Manager, WebviewUrl, WebviewWindowBuilder};
+use std::path::Path;
+use tauri::{Manager, Url, WebviewUrl, WebviewWindowBuilder};
 
 const MENU_ID: &str = "about";
 const LABEL: &str = "about";
@@ -61,7 +61,8 @@ pub fn show(app: &tauri::AppHandle) {
         .minimizable(false)
         .maximizable(false)
         .visible(false)
-        .center();
+        .center()
+        .on_navigation(is_app_page);
     #[cfg(target_os = "macos")]
     {
         builder = builder
@@ -99,28 +100,36 @@ fn hide_window_buttons(window: &tauri::WebviewWindow) {
 #[cfg(not(target_os = "macos"))]
 fn hide_window_buttons(_window: &tauri::WebviewWindow) {}
 
+fn is_app_page(url: &Url) -> bool {
+    url.scheme() == "tauri" && url.host_str() == Some("localhost")
+}
+
 fn opens(url: &str) -> bool {
     LINKS.contains(&url)
 }
 
 #[tauri::command]
-pub fn open_link(url: &str) -> Result<(), String> {
-    if !opens(url) {
+pub async fn open_link(url: String) -> Result<(), String> {
+    if !opens(&url) {
         return Err(format!("not a link this app opens: {url}"));
     }
-    std::process::Command::new("/usr/bin/open")
-        .arg(url)
-        .status()
-        .map_err(|e| e.to_string())?;
-    Ok(())
-}
-
-pub fn cli_link(home: &Path) -> PathBuf {
-    home.join(".local").join("bin").join("winvm")
+    let status = tauri::async_runtime::spawn_blocking(move || {
+        std::process::Command::new("/usr/bin/open")
+            .arg(&url)
+            .status()
+    })
+    .await
+    .map_err(|e| e.to_string())?
+    .map_err(|e| e.to_string())?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(format!("open couldn't open the link ({status})"))
+    }
 }
 
 fn installed_in(home: &Path) -> Option<String> {
-    let link = cli_link(home);
+    let link = crate::cli_link(home);
     if !link.is_file() {
         return None;
     }
@@ -128,13 +137,35 @@ fn installed_in(home: &Path) -> Option<String> {
 }
 
 #[tauri::command]
-pub fn installed_cli() -> Option<String> {
-    installed_in(Path::new(&std::env::var("HOME").ok()?))
+pub fn installed_cli() -> Result<Option<String>, String> {
+    let home = std::env::var("HOME").map_err(|e| format!("no home folder: {e}"))?;
+    Ok(installed_in(Path::new(&home)))
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{installed_in, opens, LINKS};
+    use super::{installed_in, is_app_page, opens, LINKS};
+    use tauri::Url;
+
+    #[test]
+    fn stays_on_the_apps_own_pages() {
+        for url in [
+            "tauri://localhost/about.html?version=0.1.4",
+            "tauri://localhost/about.html",
+        ] {
+            assert!(is_app_page(&Url::parse(url).expect(url)), "{url}");
+        }
+        for url in [
+            "https://github.com/stuffbucket/winvm",
+            "https://stuffbucket.github.io/winvm/",
+            "http://localhost/about.html",
+            "tauri://elsewhere/about.html",
+            "file:///etc/passwd",
+            "about:blank",
+        ] {
+            assert!(!is_app_page(&Url::parse(url).expect(url)), "{url}");
+        }
+    }
 
     #[test]
     fn opens_only_the_about_windows_own_links() {

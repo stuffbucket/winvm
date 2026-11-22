@@ -1,12 +1,12 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "about",
-  "description": "The About window may run winvm's own commands (to read its version and machines), show itself once drawn, move itself by its surface and close itself.",
+  "description": "The About window may show itself once drawn, move itself by its surface (a double-click there asks to zoom, which a window that can't be resized ignores) and close itself. Nothing else: its reads and links are the app's own commands.",
   "windows": ["about"],
   "permissions": [
-    "core:default",
     "core:window:allow-show",
     "core:window:allow-close",
-    "core:window:allow-start-dragging"
+    "core:window:allow-start-dragging",
+    "core:window:allow-internal-toggle-maximize"
   ]
 }
