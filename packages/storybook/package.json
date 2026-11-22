@@ -10,6 +10,7 @@
     "contrast": "bun scripts/contrast-audit.ts",
     "prepare-ui": "bun scripts/prepare-ui.ts",
     "shots": "bun scripts/shots.ts",
+    "test": "bun test --parallel",
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {

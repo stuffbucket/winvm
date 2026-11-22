@@ -1,15 +1,12 @@
-import {
-  createReadStream,
-  existsSync,
-  mkdirSync,
-  rmSync,
-  writeFileSync,
-} from "node:fs"
+import { createReadStream, existsSync, mkdirSync, writeFileSync } from "node:fs"
 import { createServer } from "node:http"
 import type { AddressInfo } from "node:net"
+import { homedir } from "node:os"
 import { extname, join, relative, resolve } from "node:path"
 
 import { type Browser, type Page, webkit } from "playwright"
+
+import { entriesOf, prepareOut, refusal, resolveOut } from "./out-dir"
 
 interface Entry {
   readonly id: string
@@ -55,13 +52,61 @@ const TYPES: Readonly<Record<string, string>> = {
   ".jpg": "image/jpeg",
 }
 
-function option(name: string): string | undefined {
-  const at = process.argv.indexOf(name)
-  return at === -1 ? undefined : process.argv[at + 1]
+const USAGE = `usage: bun scripts/shots.ts [--out <dir>] [--match <glob>]
+
+Screenshots every story of the static Storybook (run storybook:build first)
+in light and dark with Playwright's WebKit, into <dir>/light and <dir>/dark,
+with an index.html and index.md beside them.
+
+  --out <dir>     where to write (default packages/storybook/shots). A
+                  relative path is taken from where you ran the command. The
+                  directory must be new, empty, or one an earlier run wrote;
+                  only light/, dark/ and index.* in it are replaced.
+  --match <glob>  only stories whose id matches, e.g. 'windows-main--*'.
+                  Earlier screenshots of other stories are kept and indexed.
+  --help          show this text`
+
+function parseArgs(argv: readonly string[]): {
+  out: string | undefined
+  match: string | undefined
+} {
+  const queue = [...argv]
+  let out: string | undefined
+  let match: string | undefined
+  const value = (flag: string): string => {
+    const next = queue.shift()
+    if (next === undefined || next.startsWith("--"))
+      fail(`${flag} needs a value`)
+    return next
+  }
+  for (let arg = queue.shift(); arg !== undefined; arg = queue.shift()) {
+    if (arg === "--help" || arg === "-h") {
+      console.log(USAGE)
+      process.exit(0)
+    } else if (arg === "--out") out = value(arg)
+    else if (arg === "--match") match = value(arg)
+    else fail(`unknown argument ${arg}`)
+  }
+  return { out, match }
 }
 
-const OUT = resolve(option("--out") ?? join(PKG, "shots"))
-const MATCH = option("--match")
+function fail(message: string): never {
+  console.error(`shots: ${message}\n\n${USAGE}`)
+  process.exit(2)
+}
+
+const ARGS = parseArgs(process.argv.slice(2))
+const BASE =
+  process.env.STORYBOOK_SHOTS_CWD ?? process.env.INIT_CWD ?? process.cwd()
+const OUT =
+  ARGS.out === undefined ? join(PKG, "shots") : resolveOut(ARGS.out, BASE)
+const MATCH = ARGS.match
+const REFUSED = refusal(
+  OUT,
+  { home: homedir(), repo: resolve(PKG, "../.."), storybook: PKG },
+  entriesOf(OUT),
+)
+if (REFUSED !== null) fail(`refusing to write into ${OUT}: ${REFUSED}`)
 
 function installProbe(): void {
   const probe: Probe = { finished: false, status: null, errors: [] }
@@ -359,8 +404,8 @@ const stories = Object.values(entries).filter(
     e.type === "story" &&
     (MATCH === undefined || new Bun.Glob(MATCH).match(e.id)),
 )
-rmSync(OUT, { recursive: true, force: true })
 mkdirSync(OUT, { recursive: true })
+prepareOut(OUT, MATCH === undefined)
 
 const server = await serve()
 const browser = await webkit.launch()
@@ -384,7 +429,23 @@ try {
   await browser.close()
   server.close()
 }
-index(shots, stories)
+const earlier = (entry: Entry, theme: Theme): Shot[] => {
+  const file = join(OUT, theme, `${entry.id}.png`)
+  return shots.some((s) => s.entry.id === entry.id && s.theme === theme) ||
+    !existsSync(file)
+    ? []
+    : [{ entry, theme, file, error: null }]
+}
+const listed = Object.values(entries).filter(
+  (e) =>
+    stories.includes(e) ||
+    (e.type === "story" &&
+      THEMES.some((theme) => earlier(e, theme).length > 0)),
+)
+index(
+  [...shots, ...listed.flatMap((e) => THEMES.flatMap((t) => earlier(e, t)))],
+  listed,
+)
 const failed = shots.filter((s) => s.error !== null).length
 console.log(
   `shots: ${String(shots.length - failed)} of ${String(shots.length)} written to ${OUT}`,
