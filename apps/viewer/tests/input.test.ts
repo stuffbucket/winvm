@@ -109,6 +109,7 @@ function setup() {
       sent.push(`${down ? "down" : "up"}:${code}:${keysym.toString(16)}`),
     translate: (e) =>
       e.code === "KeyR" ? { keysym: 0x72, code: "KeyR" } : null,
+    fromCode: (code) => (code === "Tab" ? { keysym: 0xff09, code } : null),
     releaseNoVnc: () => {
       noVncReleases += 1
     },
@@ -133,6 +134,15 @@ describe("a keyboard router turned off (the guest takes no input)", () => {
     expect(router.isCaptured()).toBe(false)
     expect(captures).toEqual([false])
     expect(noVncReleases()).toBeGreaterThan(0)
+  })
+
+  it("releases a system shortcut the tap was holding", () => {
+    const { router, sent } = setup()
+    router.setCaptured(true)
+    router.systemKey("Tab", true)
+    router.setEnabled(false)
+    router.systemKey("Tab", false)
+    expect(sent).toEqual(["down:Tab:ff09", "up:Tab:ff09"])
   })
 
   it("touches no key: nothing is sent, stopped or prevented, whatever the modifiers", () => {

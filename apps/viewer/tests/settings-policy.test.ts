@@ -76,6 +76,7 @@ const base = {
   forwardInput: true,
   resizable: true,
   modal: false,
+  systemKeys: "allowed" as const,
 }
 describe("native toolbar parity", () => {
   test("power and input commands follow phase and guest readiness", () => {
@@ -125,5 +126,16 @@ describe("native toolbar parity", () => {
     ])
       expect(busy[id]).toBe(false)
     expect(nativeMenuState({ ...base, phase: null })["vm-start"]).toBe(false)
+  })
+  test("offers the Accessibility explanation only while permission is missing", () => {
+    expect(nativeMenuState(base)["allow-system-keys"]).toBe(false)
+    expect(
+      nativeMenuState({ ...base, systemKeys: null })["allow-system-keys"],
+    ).toBe(false)
+    const missing = { ...base, systemKeys: "needsPermission" as const }
+    expect(nativeMenuState(missing)["allow-system-keys"]).toBe(true)
+    expect(
+      nativeMenuState({ ...missing, modal: true })["allow-system-keys"],
+    ).toBe(false)
   })
 })

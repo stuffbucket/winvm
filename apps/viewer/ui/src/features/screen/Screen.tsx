@@ -20,7 +20,15 @@ import {
   useState,
 } from "react"
 
-import { copyText, onLiveResize, readText, trace } from "../../backend"
+import {
+  copyText,
+  onLiveResize,
+  onSystemKey,
+  readText,
+  type SystemKeys,
+  setSystemKeys,
+  trace,
+} from "../../backend"
 import { cx } from "../../components/cx"
 import { Icon } from "../../components/Icon"
 import { pixelRatio, watchPixelRatio } from "../../dpr"
@@ -35,12 +43,14 @@ import {
   sendWindowsKey,
 } from "./keyboard"
 import { LiveResize, type ResizePhase } from "./resize"
+import { describeCode, nextSeq, SystemKeyGate } from "./systemKeys"
 import { keepRefreshing, type WakeSock } from "./wake"
 
 interface ScreenProps {
   readonly connection: Connection
   readonly keyboardCaptured: boolean
   onKeyboardCaptured: (captured: boolean) => void
+  onSystemKeys?: (status: SystemKeys) => void
   readonly resizable: boolean
   readonly onGuestSize?: (size: Size, scale: number) => Promise<void>
   readonly forwardInput: boolean
@@ -74,6 +84,7 @@ export const Screen = forwardRef<ScreenHandle, ScreenProps>(function Screen(
     connection,
     keyboardCaptured,
     onKeyboardCaptured,
+    onSystemKeys,
     forwardInput,
     resizable,
     onGuestSize,
@@ -134,6 +145,9 @@ export const Screen = forwardRef<ScreenHandle, ScreenProps>(function Screen(
   captured.current = keyboardCaptured
   const captureChanged = useRef(onKeyboardCaptured)
   captureChanged.current = onKeyboardCaptured
+  const systemKeysChanged = useRef(onSystemKeys)
+  systemKeysChanged.current = onSystemKeys
+  const systemKeys = useRef<SystemKeyGate | null>(null)
   const clipboardSync = useRef<ClipboardSync | null>(null)
 
   useImperativeHandle(
@@ -157,10 +171,64 @@ export const Screen = forwardRef<ScreenHandle, ScreenProps>(function Screen(
     [],
   )
 
-  useEffect(
-    () => keyboard.current?.setCaptured(keyboardCaptured),
-    [keyboardCaptured],
-  )
+  useEffect(() => {
+    if (keyboardCaptured) rfb.current?.focus({ preventScroll: true })
+    keyboard.current?.setCaptured(keyboardCaptured)
+    systemKeys.current?.setCaptured(keyboardCaptured)
+  }, [keyboardCaptured])
+  useEffect(() => {
+    keyboard.current?.setCaptured(captured.current)
+  })
+
+  useEffect(() => {
+    const el = target.current
+    if (el === null) return
+    const gate = new SystemKeyGate((armed) => {
+      setSystemKeys(armed, nextSeq())
+        .then((status) => {
+          systemKeysChanged.current?.(status)
+        })
+        .catch((error: unknown) => {
+          console.warn("changing system-shortcut capture failed", error)
+        })
+    })
+    const inside = (node: EventTarget | null): boolean =>
+      node instanceof Node && el.contains(node)
+    const settle = (): void => {
+      gate.setFocused(
+        document.visibilityState !== "hidden" &&
+          document.hasFocus() &&
+          inside(document.activeElement),
+      )
+    }
+    const onFocusOut = (event: FocusEvent): void => {
+      gate.setFocused(document.hasFocus() && inside(event.relatedTarget))
+    }
+    const onWindowBlur = (): void => {
+      gate.setFocused(false)
+    }
+    gate.setCaptured(captured.current)
+    settle()
+    el.addEventListener("focusin", settle)
+    el.addEventListener("focusout", onFocusOut)
+    window.addEventListener("focus", settle)
+    window.addEventListener("blur", onWindowBlur)
+    document.addEventListener("visibilitychange", settle)
+    const unlisten = onSystemKey((key) => {
+      keyboard.current?.systemKey(key.code, key.down)
+    })
+    systemKeys.current = gate
+    return () => {
+      systemKeys.current = null
+      unlisten()
+      el.removeEventListener("focusin", settle)
+      el.removeEventListener("focusout", onFocusOut)
+      window.removeEventListener("focus", settle)
+      window.removeEventListener("blur", onWindowBlur)
+      document.removeEventListener("visibilitychange", settle)
+      gate.setCaptured(false)
+    }
+  }, [])
 
   useEffect(() => {
     const el = target.current
@@ -211,6 +279,19 @@ export const Screen = forwardRef<ScreenHandle, ScreenProps>(function Screen(
         return keysym === null
           ? null
           : { keysym, code: KeyboardUtil.getKeycode(keyboardEvent) }
+      },
+      fromCode: (code) => {
+        const { key, numpad } = describeCode(code)
+        const keysym = KeyboardUtil.getKeysym(
+          new KeyboardEvent("keydown", {
+            code,
+            key,
+            location: numpad
+              ? KeyboardEvent.DOM_KEY_LOCATION_NUMPAD
+              : KeyboardEvent.DOM_KEY_LOCATION_STANDARD,
+          }),
+        )
+        return { keysym: keysym ?? 0, code }
       },
       releaseNoVnc: () => conn?._keyboard._allKeysUp(),
       onCaptured: (next) => {

@@ -1,4 +1,5 @@
 import type { JSX } from "react"
+import type { SystemKeys } from "../../backend"
 import { Icon, type IconName } from "../../components/Icon"
 import { t } from "../../i18n"
 import { type Controls, isFrozen, isLivePhase, type Phase } from "../../model"
@@ -28,6 +29,7 @@ interface ToolbarProps {
   readonly keyboardCaptured: boolean
   readonly input: InputRule
   readonly keyboardReleased: string | null
+  readonly systemKeys: SystemKeys | null
   onStart: () => void
   onShutDown: () => void
   onRestart: () => void
@@ -227,6 +229,11 @@ function CheckpointsButton({
   )
 }
 
+export const capturedLabel = (systemKeys: SystemKeys | null): string =>
+  systemKeys === "needsPermission" || systemKeys === "unavailable"
+    ? "input.capturedPartial"
+    : "input.captured"
+
 export function Toolbar(p: ToolbarProps): JSX.Element {
   const c = p.controls
   const live = isLivePhase(p.phase)
@@ -337,7 +344,12 @@ export function Toolbar(p: ToolbarProps): JSX.Element {
           onClick={p.onKeyboardCapture}
         />
         {p.keyboardCaptured ? (
-          <span className="toolbar__capture-status">{t("input.captured")}</span>
+          <span
+            className="toolbar__capture-status"
+            title={t(capturedLabel(p.systemKeys))}
+          >
+            {t(capturedLabel(p.systemKeys))}
+          </span>
         ) : (
           p.keyboardReleased !== null && (
             <span

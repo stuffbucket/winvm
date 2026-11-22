@@ -16,6 +16,7 @@ declare module "@winvm/novnc/core/rfb.js" {
     focusOnClick: boolean
     viewOnly: boolean
     disconnect(): void
+    focus(options?: FocusOptions): void
     sendKey(keysym: number, code: string, down?: boolean): void
     sendCredentials(credentials: { readonly password: string }): void
     clipboardPasteFrom(text: string): void

@@ -482,8 +482,29 @@ export const closeCancel = (): Promise<void> =>
 export const closeComplete = (): Promise<void> =>
   tauri().core.invoke<void>("close_complete")
 
-export const setSystemKeyboardCapture = (captured: boolean): Promise<void> =>
-  tauri().core.invoke<void>("set_system_keyboard_capture", { captured })
+export type SystemKeys = "allowed" | "needsPermission" | "unavailable"
+
+export interface SystemKey {
+  readonly code: string
+  readonly down: boolean
+}
+
+export const setSystemKeys = (
+  armed: boolean,
+  seq: number,
+): Promise<SystemKeys> =>
+  tauri().core.invoke<SystemKeys>("system_keys", { armed, seq })
+
+export const systemKeysStatus = (): Promise<SystemKeys> =>
+  tauri().core.invoke<SystemKeys>("system_keys_status")
+
+export const openAccessibilitySettings = (): Promise<void> =>
+  tauri().core.invoke<void>("open_accessibility_settings")
+
+export const onSystemKey = (cb: (key: SystemKey) => void): Unlisten =>
+  listen("system-key", (key) => {
+    cb(key as SystemKey)
+  })
 
 export const onLiveResize = (cb: (live: boolean) => void): Unlisten =>
   listen("live-resize", (live) => {

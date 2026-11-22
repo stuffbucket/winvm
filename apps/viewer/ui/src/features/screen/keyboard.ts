@@ -18,6 +18,7 @@ export interface RoutedKeyEvent {
 interface RouterOptions {
   readonly send: KeyboardSend
   readonly translate: (event: RoutedKeyEvent) => GuestKey | null
+  readonly fromCode: (code: string) => GuestKey | null
   readonly releaseNoVnc: () => void
   readonly onCaptured: (captured: boolean) => void
 }
@@ -48,6 +49,7 @@ export class GuestKeyboardRouter {
   private rightCommand = false
   private rightWindowsDown = false
   private readonly capturedWindows = new Map<string, GuestKey>()
+  private readonly systemHeld = new Map<string, GuestKey>()
   private readonly options: RouterOptions
 
   constructor(options: RouterOptions) {
@@ -161,7 +163,21 @@ export class GuestKeyboardRouter {
     if (event.metaKey) stopGuest(event)
   }
 
+  systemKey(code: string, down: boolean): void {
+    if (!this.enabled || !this.captured) return
+    const key = down
+      ? this.options.fromCode(code)
+      : (this.systemHeld.get(code) ?? null)
+    if (key === null) return
+    if (down) this.systemHeld.set(code, key)
+    else this.systemHeld.delete(code)
+    this.options.send(key.keysym, key.code, down)
+  }
+
   releaseAll(): void {
+    for (const key of this.systemHeld.values())
+      this.options.send(key.keysym, key.code, false)
+    this.systemHeld.clear()
     if (this.capturedWindows.size > 0 || this.rightWindowsDown) {
       this.options.send(CONTROL, "ControlLeft", true)
       this.options.send(CONTROL, "ControlLeft", false)

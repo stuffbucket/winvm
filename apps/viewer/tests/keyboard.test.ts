@@ -47,6 +47,12 @@ function setup() {
     send: (keysym, code, down) => sent.push(label(keysym, code, down)),
     translate: (e) =>
       e.code === "KeyR" ? { keysym: 0x72, code: "KeyR" } : null,
+    fromCode: (code) =>
+      code === "Tab"
+        ? { keysym: 0xff09, code }
+        : code === "Space"
+          ? { keysym: 0x20, code }
+          : null,
     releaseNoVnc: () => {
       noVncReleases += 1
     },
@@ -148,6 +154,59 @@ describe("guest keyboard routing", () => {
       "up:ControlLeft:ffe3",
       "up:MetaLeft:ffeb",
     ])
+  })
+
+  it("sends a system shortcut the tap took to Windows while captured", () => {
+    const { router, sent } = setup()
+    router.setCaptured(true)
+    router.keyDown(event("MetaLeft", { meta: true }))
+    router.systemKey("Tab", true)
+    router.systemKey("Tab", true)
+    router.systemKey("Tab", false)
+    router.keyUp(event("MetaLeft"))
+    expect(sent).toEqual([
+      "down:MetaLeft:ffeb",
+      "down:Tab:ff09",
+      "down:Tab:ff09",
+      "up:Tab:ff09",
+      "up:MetaLeft:ffeb",
+    ])
+  })
+
+  it("drops a tapped key when not captured, disabled or unknown", () => {
+    const { router, sent } = setup()
+    router.systemKey("Tab", true)
+    router.setCaptured(true)
+    router.systemKey("KeyQ", true)
+    router.systemKey("Space", false)
+    router.setEnabled(false)
+    router.systemKey("Tab", true)
+    expect(sent).toEqual([])
+  })
+
+  it("releases tapped keys before the Windows key when focus disappears", () => {
+    const { router, sent } = setup()
+    router.setCaptured(true)
+    router.keyDown(event("MetaLeft", { meta: true }))
+    router.systemKey("Space", true)
+    router.lostFocus()
+    router.systemKey("Space", false)
+    expect(sent).toEqual([
+      "down:MetaLeft:ffeb",
+      "down:Space:20",
+      "up:Space:20",
+      "down:ControlLeft:ffe3",
+      "up:ControlLeft:ffe3",
+      "up:MetaLeft:ffeb",
+    ])
+  })
+
+  it("releases tapped keys when capture is turned off", () => {
+    const { router, sent } = setup()
+    router.setCaptured(true)
+    router.systemKey("Tab", true)
+    router.setCaptured(false)
+    expect(sent).toEqual(["down:Tab:ff09", "up:Tab:ff09"])
   })
 
   it("sends special keys only through explicit actions", () => {
