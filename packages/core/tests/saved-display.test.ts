@@ -1470,15 +1470,16 @@ describe("a stow the installed runtime could not recall", () => {
     expect(down).not.toHaveBeenCalled()
   })
 
-  it("is recorded as a refusal and not as a stow, so a later unexplained end of QEMU is still told", async () => {
+  it("is recorded as a refusal, so a later unexplained end of QEMU is still told", async () => {
     spyOn(console, "error").mockImplementation(() => undefined)
-    const leased = async (run: () => Promise<number>): Promise<number> =>
-      await withOperation("source", "stow", run)
     expect(
-      await savecmds.stow(parseArgs(["-i", "source", "--force"]), leased),
+      await withOperation(
+        "source",
+        "stow",
+        async () => await savecmds.stow(parseArgs(["-i", "source", "--force"])),
+      ),
     ).toBe(STOW_REFUSED)
     const entries = readSince("source", START).entries
-    expect(entries.filter((e) => e.kind === "op")).toEqual([])
     expect(
       entries.filter((e) => e.kind === "warning" && e.what === "stow refused"),
     ).toHaveLength(1)

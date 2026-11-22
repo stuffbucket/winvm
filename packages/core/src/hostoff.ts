@@ -191,6 +191,7 @@ export function hostPoweredOff(name: string): HostPoweredOff | null {
   let sawShutdown = false
   let intended = false
   let keptQemu = false
+  let beforeStow = null as boolean | null
   let hostEnd = null as HostEnd | null
   const close = (): void => {
     const end = hostEnd
@@ -210,6 +211,7 @@ export function hostPoweredOff(name: string): HostPoweredOff | null {
         else if (e.phase === "end")
           hostEnd.fallback ??= `the stow failed: ${e.error ?? `exit ${String(e.exitCode ?? "?")}`}`
       }
+      if (e.phase === "begin" && e.operation === "stow") beforeStow = intended
       if (e.phase === "begin" && ENDS_QEMU.has(e.operation)) intended = true
       else if (e.phase === "end" && e.ok) {
         if (BRINGS_BACK.has(e.operation)) found = null
@@ -257,6 +259,8 @@ export function hostPoweredOff(name: string): HostPoweredOff | null {
                 : "unclean"
         }
       }
+    } else if (e.kind === "warning" && e.what === "stow refused") {
+      intended = beforeStow ?? intended
     } else if (e.kind === "qmp" && e.event === "SHUTDOWN") {
       if (hostEnd !== null && hostEnd.shutdown === null)
         hostEnd.shutdown =
