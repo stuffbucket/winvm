@@ -310,6 +310,39 @@ describe("the long verbs, as the CLI prints and exits with them", () => {
     })
   }, 30_000)
 
+  for (const [verb, expected] of [
+    ["stop", { code: 0, stdout: 'instance "t" is not running\n', stderr: "" }],
+    [
+      "stow",
+      {
+        code: 1,
+        stdout: "",
+        stderr:
+          '::error::instance "t" is not running — a save captures a live guest\n',
+      },
+    ],
+  ] as const)
+    it(`${verb} of a stopped instance with no service and no keeper says it is not running, as before, and starts nothing`, async () => {
+      await qemuGoes()
+      stopService(p)
+      service?.kill("SIGKILL")
+      await service?.exited
+      service = null
+      const proc = Bun.spawn([process.execPath, CLI, verb, "-i", "t"], {
+        env: { ...env(), WINVM_KEEPER: "" },
+        stdout: "pipe",
+        stderr: "pipe",
+      })
+      const [stdout, stderr, code] = await Promise.all([
+        new Response(proc.stdout).text(),
+        new Response(proc.stderr).text(),
+        proc.exited,
+      ])
+      expect({ code, stdout, stderr }).toEqual(expected)
+      expect(existsSync(resolve(p.dir, "keeper"))).toBe(false)
+      expect(existsSync(p.control)).toBe(false)
+    }, 30_000)
+
   it("start of a stopped instance starts nothing when no keeper is found, and says how to get one", async () => {
     await qemuGoes()
     stopService(p)
@@ -716,6 +749,7 @@ describe("the long verbs that launch QEMU, run by winvm's service through the ke
       "qemu-system-aarch64",
       `exec "${process.execPath}" "${FAKE_QEMU}" "$0" "$@"`,
     )
+    script("qemu-img", 'for last; do :; done\n: > "$last"')
     const old = new Date(Date.now() - 3_600_000)
     utimesSync(resolve(bin, "qemu-system-aarch64"), old, old)
   }
@@ -749,6 +783,73 @@ describe("the long verbs that launch QEMU, run by winvm's service through the ke
     const pattern = scratchPattern(home, SCRATCH)
     if (pattern !== null) Bun.spawnSync(["pkill", "-KILL", "-f", pattern])
   })
+
+  const cli = async (...argv: string[]): Promise<Ran & { pid: number }> => {
+    const proc = Bun.spawn([process.execPath, CLI, ...argv], {
+      env: env(),
+      stdout: "pipe",
+      stderr: "pipe",
+    })
+    const [stdout, stderr, code] = await Promise.all([
+      new Response(proc.stdout).text(),
+      new Response(proc.stderr).text(),
+      proc.exited,
+    ])
+    return { code, stdout, stderr, pid: proc.pid }
+  }
+
+  const begunFor = (instance: string, operation: string): Entry | undefined =>
+    readSince(instance, START).entries.findLast(
+      (e) =>
+        e.kind === "op" && e.phase === "begin" && e.operation === operation,
+    )
+
+  for (const instance of ["fresh", "default"])
+    it.skipIf(process.platform !== "darwin")(
+      `start of "${instance}", which does not exist yet, creates it and boots it in winvm's service`,
+      async () => {
+        fakeRuntime()
+        const argv =
+          instance === "default"
+            ? ["start", "--no-watch"]
+            : ["start", "-i", instance, "--no-watch"]
+        const started = await cli(...argv)
+        expect(started.stderr).not.toContain("::error::")
+        expect(started.code).toBe(0)
+        expect(started.stdout).toContain(`instance "${instance}" up`)
+        expect(readMeta(instance)).not.toBeNull()
+        const b = begunFor(instance, "start")
+        expect(b?.kind === "op" && b.phase === "begin" ? b.pid : null).not.toBe(
+          started.pid,
+        )
+        expect((await cli("kill", "-i", instance)).code).toBe(0)
+      },
+      60_000,
+    )
+
+  it.skipIf(process.platform !== "darwin")(
+    "load of a save whose instance was destroyed with its saves kept creates the instance again and boots the save",
+    async () => {
+      writeDisplay(p, RAMFB)
+      fakeRuntime()
+      publish("named", "manual")
+      await qemuGoes()
+      stopService(p)
+      service?.kill("SIGKILL")
+      await service?.exited
+      service = null
+      expect((await cli("destroy", "-i", "t", "--keep-saves")).code).toBe(0)
+      expect(readMeta("t")).toBeNull()
+      const loaded = await cli("load", "-i", "t", "named")
+      expect(loaded.stderr).not.toContain("::error::")
+      expect(loaded.code).toBe(0)
+      expect(loaded.stdout).toContain('loaded "t" from "named"')
+      expect(readMeta("t")).not.toBeNull()
+      expect(ranByCli("load")).not.toBe(loaded.pid)
+      expect((await cli("kill", "-i", "t")).code).toBe(0)
+    },
+    60_000,
+  )
 
   it.skipIf(process.platform !== "darwin")(
     "load, rewind and golden reset launch a new QEMU and end well, and a start in the service's linger boots one",

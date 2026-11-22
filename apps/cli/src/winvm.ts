@@ -24,9 +24,11 @@ import {
 import { isOpId, isServiceOp, type ServiceOp } from "@winvm/core/ops"
 import {
   bunVersionWarning,
+  pathsFor,
   pinnedBunVersion,
   recordCliEntry,
 } from "@winvm/core/paths"
+import { isRunning as qemuRunning } from "@winvm/core/qemu"
 import * as reconcile from "@winvm/core/reconcile"
 import * as runcmds from "@winvm/core/runcmds"
 import * as savecmds from "@winvm/core/savecmds"
@@ -65,6 +67,9 @@ const leased = async (run: () => number | Promise<number>): Promise<number> => {
       interruptible: true,
       automatic: automaticFrom(args),
       ...(opId === undefined ? {} : { id: opId }),
+      ...(serviceOp !== null && args.flags.has("wait")
+        ? { queue: true, waitMs: Number.POSITIVE_INFINITY }
+        : {}),
     })
   } catch (error) {
     if (!(error instanceof InstanceBusy)) throw error
@@ -74,7 +79,7 @@ const leased = async (run: () => number | Promise<number>): Promise<number> => {
 }
 const viaService = async (
   op: ServiceOp,
-  withoutService?: () => Promise<number>,
+  here: () => number | Promise<number>,
 ): Promise<number> =>
   await opclient.runOp(
     {
@@ -85,7 +90,8 @@ const viaService = async (
     },
     {
       up: serviceUp,
-      ...(withoutService === undefined ? {} : { withoutService }),
+      here: async () => await leased(here),
+      running: (name) => qemuRunning(pathsFor(name)),
     },
   )
 const NO_SWEEP = [
@@ -165,16 +171,16 @@ switch (sub ?? "") {
     exitCode = await commands.build(args)
     break
   case "start":
-    exitCode = await viaService("start")
+    exitCode = await viaService("start", () => commands.start(args))
     break
   case "stop":
-    exitCode = await viaService("stop")
+    exitCode = await viaService("stop", () => commands.stop(args))
     break
   case "reboot":
-    exitCode = await viaService("reboot")
+    exitCode = await viaService("reboot", () => commands.reboot(args))
     break
   case "kill":
-    exitCode = await viaService("kill", () => leased(() => commands.kill(args)))
+    exitCode = await viaService("kill", () => commands.kill(args))
     break
   case "cancel":
     exitCode = await opclient.cancelCmd(args)
@@ -234,16 +240,16 @@ switch (sub ?? "") {
     exitCode = await leased(() => commands.snap(args))
     break
   case "rewind":
-    exitCode = await viaService("rewind")
+    exitCode = await viaService("rewind", () => commands.rewind(args))
     break
   case "snapshots":
     exitCode = await commands.snapshots(args)
     break
   case "save":
-    exitCode = await viaService("save")
+    exitCode = await viaService("save", () => savecmds.save(args))
     break
   case "load":
-    exitCode = await viaService("load")
+    exitCode = await viaService("load", () => savecmds.load(args))
     break
   case "share":
     exitCode = await leased(() => sharecmds.shareCmd(args))
@@ -252,29 +258,31 @@ switch (sub ?? "") {
     exitCode =
       serviceOp === null
         ? await leased(() => goldens.golden(args))
-        : await viaService(serviceOp)
+        : await viaService(serviceOp, () => goldens.golden(args))
     break
   case "saves":
     exitCode = savecmds.list(args)
     break
   case "pause":
-    exitCode = await viaService("pause")
+    exitCode = await viaService("pause", () => savecmds.pause(args))
     break
   case "resume":
   case "wake":
-    exitCode = await viaService(sub === "wake" ? "wake" : "resume")
+    exitCode = await viaService(sub === "wake" ? "wake" : "resume", () =>
+      savecmds.resume(args),
+    )
     break
   case "sleep":
-    exitCode = await viaService("sleep")
+    exitCode = await viaService("sleep", () => savecmds.sleep(args))
     break
   case "lock":
-    exitCode = await viaService("lock")
+    exitCode = await viaService("lock", () => savecmds.lock(args))
     break
   case "settings":
     exitCode = settings.settingsCmd(args)
     break
   case "stow":
-    exitCode = await viaService("stow")
+    exitCode = await viaService("stow", () => savecmds.stow(args))
     break
   case "clock":
     exitCode = await savecmds.clock(args)

@@ -245,6 +245,10 @@ export async function runService(
     })
     return new Response(null, { status: 202 })
   }
+  const stoppingReply = reply(503, {
+    error: "the service is stopping",
+    stopping: true,
+  })
   const answer = (r: Reply): Response =>
     Response.json(r.body, { status: r.status })
   const submitOp = async (req: Request): Promise<Response> => {
@@ -252,8 +256,7 @@ export async function runService(
       return answer(
         reply(503, { error: "the Mac is shutting down", hostEnding: true }),
       )
-    if (stopping)
-      return answer(reply(503, { error: "the service is stopping" }))
+    if (stopping) return answer(stoppingReply)
     const parsed = readOpRequest(
       await req.json().catch(() => null),
       o.handlers ?? SERVICE_HANDLERS,
@@ -268,7 +271,7 @@ export async function runService(
           503,
           s.reason === "host-end"
             ? { error: "the Mac is shutting down", hostEnding: true }
-            : { error: "the service is stopping" },
+            : stoppingReply.body,
         ),
       )
     return answer(
@@ -304,8 +307,7 @@ export async function runService(
     if (on?.protocol !== OPS_PROTOCOL || typeof on.on !== "boolean")
       return answer(reply(400, { error: "the body is not a watch request" }))
     if (!on.on) return answer(reply(200, { stopped: await stopWatcher(name) }))
-    if (hostEnding !== null || stopping)
-      return answer(reply(503, { error: "the service is stopping" }))
+    if (hostEnding !== null || stopping) return answer(stoppingReply)
     return answer(
       reply(200, { watching: ensureWatcher(name), pid: process.pid }),
     )

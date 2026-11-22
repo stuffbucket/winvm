@@ -189,9 +189,14 @@ the status every few seconds.
 service. The CLI, and the app, which runs the CLI, sends the command to the
 service, prints what the service records for it, and exits with its exit code.
 What they print and their exit codes (3, 4, 5 and 6 included) are as before.
-When no service runs, as for a machine that is not running, the CLI first
-starts one under the instance's keeper, holding the instance while it does,
-then sends it the command. The CLI never runs these commands itself.
+When no service answers and the machine is not running, a command that needs
+a running guest (`stop`, `pause`, `save` and the like) is answered by the CLI
+itself, as before: it says the machine is not running, with the same exit
+code, and starts nothing. `start`, `load`, `rewind` and `golden reset` first
+start a service under the instance's keeper, holding the instance under the
+command's own name, so `start` and `load` can still create an instance, then
+send it the command. A service that is just stopping is waited for, and a new
+one started.
 
 - **Ctrl-C only lets go.** Ctrl-C, or the app quitting, stops the CLI from
   following, not the command. The command finishes in the service and its end
@@ -233,14 +238,17 @@ then sends it the command. The CLI never runs these commands itself.
   while the Mac is shutting down or the guest is paused. A CLI that let go
   leaves them down, and `winvm status` names them and the
   `winvm files mount -i NAME` that brings them back.
-- **When the service can't take it.** When no service answers, or the
-  service comes from an older winvm that runs no commands, the CLI starts a
-  current service, handing an older one of this install over, and sends the
-  command again. If it still can't be sent, or no keeper is found to start a
-  service under, the CLI says why and runs nothing. If the service took the
-  command but gave no answer within 5 seconds, the CLI says so and does not
-  run it again, because it may already be running. The exception is `kill`,
-  which kills QEMU itself whenever no service takes it.
+- **When the service can't take it.** When no service answers for a running
+  machine, or the service comes from an older winvm that runs no commands,
+  the CLI starts a current service, adopting a machine an older winvm started
+  and handing an older service of this install over, and sends the command
+  again; with `--wait` it waits for the instance meanwhile. If it still can't
+  be sent, the CLI says why and runs nothing, except for `stop` and `stow`,
+  which it then runs itself under the instance's lease, so a running machine
+  can always be shut down or saved. If the service took the command but gave
+  no answer within 5 seconds, the CLI says so and does not run it again,
+  because it may already be running. `kill` kills QEMU itself whenever no
+  service takes it.
 
 The requests, on `control.sock`:
 

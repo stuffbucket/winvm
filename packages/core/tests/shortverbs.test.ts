@@ -414,21 +414,27 @@ describe("the short verbs, run by winvm's service", () => {
   }
 
   for (const verb of ["pause", "resume", "wake", "sleep", "lock", "reboot"])
-    it(`${verb} starts winvm's service when none answers, and runs in it`, async () => {
+    it(`${verb} of a stopped instance with no service is answered by the CLI, which brings no service up`, async () => {
       const cli = await withNoService(verb)
-      const b = begun(verb)
-      expect(b?.kind === "op" && b.phase === "begin" ? b.pid : cli).not.toBe(
-        cli,
-      )
-      expect(
-        ops().find(
-          (e) =>
-            e.kind === "op" &&
-            e.phase === "begin" &&
-            e.operation === "reconcile",
-        ),
-      ).toMatchObject({ pid: cli })
+      expect(begun(verb)).toMatchObject({ pid: cli })
+      expect(existsSync(resolve(p.dir, "keeper"))).toBe(false)
+      expect(existsSync(p.control)).toBe(false)
     }, 30_000)
+
+  it("pause of a running guest with no service brings one up under winvm's keeper and runs in it", async () => {
+    await stopTheService()
+    const run = launch("pause", "-i", "t")
+    expect(await run.done).toEqual({
+      code: 0,
+      stdout: 'paused "t" — `winvm resume -i t` to continue\n',
+      stderr: "",
+    })
+    const b = begun("pause")
+    expect(b?.kind === "op" && b.phase === "begin" ? b.pid : null).not.toBe(
+      run.proc.pid,
+    )
+    expect(guest.status).toBe("paused")
+  }, 30_000)
 
   it("kill runs in the CLI itself when no service answers", async () => {
     const cli = await withNoService("kill")

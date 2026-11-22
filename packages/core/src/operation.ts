@@ -113,7 +113,7 @@ const isPlainName = (name: string): boolean =>
   !name.includes("/") &&
   !name.includes("\0")
 
-function leaseable(name: string, operation: LeaseOperation): boolean {
+export function leaseable(name: string, operation: LeaseOperation): boolean {
   if (!isPlainName(name)) return false
   return (
     existsSync(pathsFor(name).meta) ||
