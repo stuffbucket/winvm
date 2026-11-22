@@ -284,6 +284,10 @@ function atSafePoint(scope: OpScope, then: () => void): void {
   look()
 }
 
+const answered = async (): Promise<void> => {
+  await new Promise((r) => setImmediate(r))
+}
+
 export interface QueueHooks {
   readonly record: (fields: EntryFields) => void
   readonly nudge: () => void
@@ -439,6 +443,7 @@ export class OpQueue {
             running.held = true
             accept(null)
             this.hooks.nudge()
+            await answered()
             const code = await this.raced(scope, handler.run(args))
             ended = { kind: "done", id, code }
             if (req.op === "kill" && code === 0) {
