@@ -444,7 +444,12 @@ export class OpQueue {
             accept(null)
             this.hooks.nudge()
             await answered()
-            const code = await this.raced(scope, handler.run(args))
+            const code = await this.raced(
+              scope,
+              scope.signal.aborted
+                ? Promise.reject(new OpEnded(scope))
+                : handler.run(args),
+            )
             ended = { kind: "done", id, code }
             if (req.op === "kill" && code === 0) {
               killedQemu = true

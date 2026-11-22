@@ -17,7 +17,12 @@ import { type Entry, readSince, START } from "../src/eventlog"
 import { type HostEndOutcome, runHostEnd } from "../src/hostend"
 import { type OpRoute, remountCmd, remountHeld, runOp } from "../src/opclient"
 import { currentOp, OpCancelled, pointOfNoReturn } from "../src/opcontext"
-import { InstanceBusy, leaseHolder, withOperation } from "../src/operation"
+import {
+  INTERRUPTED,
+  InstanceBusy,
+  leaseHolder,
+  withOperation,
+} from "../src/operation"
 import {
   OPS_PROTOCOL,
   type OpHandlers,
@@ -447,6 +452,54 @@ describe("kill", () => {
     })
     expect(await ended(first.body.id)).toMatchObject({ error: "killed" })
     expect(running).toBe(1)
+  })
+})
+
+describe("an op ended in the moment after it was accepted", () => {
+  const queue = (ran: { n: number }): OpQueue =>
+    new OpQueue(
+      "t",
+      {
+        reboot: {
+          cancel: "before-request",
+          run: async () => {
+            ran.n += 1
+            return await Promise.resolve(0)
+          },
+        },
+      },
+      {
+        record: () => undefined,
+        nudge: () => undefined,
+        killed: () => undefined,
+      },
+    )
+
+  beforeEach(async () => {
+    await svc?.stop()
+    svc = null
+  })
+
+  it("never runs when it was cancelled before its first step", async () => {
+    const ran = { n: 0 }
+    const q = queue(ran)
+    const s = await q.submit({ op: "reboot", args: [], wait: false })
+    if (s.kind !== "accepted") throw new Error(s.kind)
+    expect(q.cancel(s.id)).toMatchObject({ kind: "cancelled" })
+    expect(await s.ended).toEqual({ kind: "done", id: s.id, code: INTERRUPTED })
+    expect(ran.n).toBe(0)
+    expect(leaseHolder("t")).toBeNull()
+  })
+
+  it("never runs when the Mac began shutting down before its first step", async () => {
+    const ran = { n: 0 }
+    const q = queue(ran)
+    const s = await q.submit({ op: "reboot", args: [], wait: false })
+    if (s.kind !== "accepted") throw new Error(s.kind)
+    await q.close("host-end")
+    expect(await s.ended).toMatchObject({ kind: "failed", error: "host-end" })
+    expect(ran.n).toBe(0)
+    expect(leaseHolder("t")).toBeNull()
   })
 })
 
