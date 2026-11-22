@@ -80,7 +80,7 @@ describe("status host probes", () => {
     mkdirSync(bin)
     writeFileSync(
       resolve(bin, "ps"),
-      `#!/bin/sh\nprintf '%s\\n' "$*" >> '${calls}'\nprintf '%s\\n' '  2-01:02:03 /a path/qemu-system-aarch64 -name winvm-test -smp cpus=6 -m size=8G'\n`,
+      `#!/bin/sh\nprintf '%s\\n' "$*" >> '${calls}'\ncase "$*" in *etime=*) printf '  2-01:02:03 ' ;; esac\nprintf '%s\\n' '/a path/qemu-system-aarch64 -name winvm-test -pidfile ${p.pid} -smp cpus=6 -m size=8G'\n`,
       { mode: 0o755 },
     )
     const oldPath = process.env.PATH
@@ -95,9 +95,12 @@ describe("status host probes", () => {
         memoryMiB: 8192,
         uptimeSeconds: 176523,
       })
-      expect(readFileSync(calls, "utf8").trim().split("\n")).toEqual([
-        `-ww -o etime=,command= -p ${String(process.pid)}`,
-      ])
+      expect(
+        readFileSync(calls, "utf8")
+          .trim()
+          .split("\n")
+          .filter((call) => call.includes("etime")),
+      ).toEqual([`-ww -o etime=,command= -p ${String(process.pid)}`])
     } finally {
       if (oldPath === undefined) delete process.env.PATH
       else process.env.PATH = oldPath
