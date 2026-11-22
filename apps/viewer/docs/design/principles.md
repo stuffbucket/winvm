@@ -3,7 +3,7 @@
 These bind all other design guidance. When in conflict with anything
 else in `docs/design/` or any agent's intuition, **these win**.
 
-## The four principles
+## The five principles
 
 1. **Speak to the person, not the file.** UI labels describe what the
    control does in human terms, not the underlying config field.
@@ -18,7 +18,14 @@ else in `docs/design/` or any agent's intuition, **these win**.
    both themes (see [`color.md`](color.md)). Any future user-color
    feature must honor the user's choice, compute and surface contrast
    for text and controls, and warn (not block) below AA.
-4. **Reduced motion is a contract, not a hint.** When
+4. **One accent per window.** Each window uses a single accent color,
+   winvm's teal `--accent`, and reserves it for the window's primary
+   action and keyboard focus, plus the states that grow out of them: the
+   highlighted menu item, a checked box, progress and the resource
+   meters. Nothing decorative and no text is drawn in it (teal text is
+   `--link`); a second accent, or the accent spent on ornament, makes the
+   primary action stop standing out.
+5. **Reduced motion is a contract, not a hint.** When
    `prefers-reduced-motion: reduce` is set, animation drops to
    opacity crossfades or instant transitions. Hover scales,
    slide-ins, spring physics — all off. The setting is honored

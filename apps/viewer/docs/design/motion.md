@@ -62,7 +62,7 @@ When `prefers-reduced-motion: reduce` is set:
 - Spring physics → off.
 - The setting is honored **literally**, not "with reduced intensity."
 
-See [`principles.md`](principles.md) → Principle 4.
+See [`principles.md`](principles.md) → Principle 5.
 
 ## Implementation pattern
 
