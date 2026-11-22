@@ -2,19 +2,31 @@ import { describe, expect, test } from "bun:test"
 import { existsSync, readFileSync } from "node:fs"
 import { dirname, resolve } from "node:path"
 
+interface Task {
+  run: string | string[]
+  alias?: string
+  env?: Record<string, string>
+}
+
 const ROOT = resolve(import.meta.dir, "..")
 const read = (path: string): string => readFileSync(resolve(ROOT, path), "utf8")
 const config = Bun.TOML.parse(read("mise.toml")) as {
-  tasks: Record<string, { run: string | string[]; alias?: string }>
+  tasks: Record<string, Task>
 }
 const instructions = read("AGENTS.md")
 const skills = ["winvm-mise", "winvm-release"] as const
 
+function task(name: string): Task {
+  const found = config.tasks[name]
+  if (found === undefined) throw new Error(`mise.toml has no task ${name}`)
+  return found
+}
+
 function localLinks(file: string): string[] {
   return [...read(file).matchAll(/\]\(([^)]+)\)/g)]
-    .map((match) => match[1]!)
+    .flatMap((match) => (match[1] === undefined ? [] : [match[1]]))
     .filter((link) => !/^[a-z]+:|^#/.test(link))
-    .map((link) => resolve(ROOT, dirname(file), link.split("#")[0]!))
+    .map((link) => resolve(ROOT, dirname(file), link.replace(/#.*$/, "")))
 }
 
 describe("development command contract", () => {
@@ -25,27 +37,30 @@ describe("development command contract", () => {
   })
 
   test("quality tasks delegate to existing package scripts", () => {
-    expect(config.tasks["check"]!.run).toBe("pnpm run check")
-    expect(config.tasks["test"]!.run).toBe("pnpm run test")
-    expect(config.tasks["typecheck"]!.run).toBe("pnpm run typecheck")
-    expect(config.tasks["check:force"]!.run).toEqual([
-      "pnpm exec turbo run typecheck test --force",
-      "bun test scripts",
-    ])
+    expect(task("check").run).toBe("pnpm run check")
+    expect(task("verify").run).toBe("pnpm run verify")
+    expect(task("test").run).toBe("pnpm run test")
+    expect(task("typecheck").run).toBe("pnpm run typecheck")
+    expect(task("check:force").run).toBe("pnpm run check")
+    expect(task("check:force").env).toEqual({ TURBO_FORCE: "true" })
   })
 
   test("native build uses viewer tool scope without a release version or launch", () => {
-    expect(config.tasks["build"]!.run).toBe("mise -C apps/viewer exec -- pnpm run app")
-    expect(config.tasks["build"]!.alias).toBe("app:build")
-    expect(config.tasks["dev"]!.run).toContain('open -n "$app"')
-    expect(config.tasks["dev"]!.run).toContain('if [ ! -d "$app" ]')
-    expect(config.tasks["dev"]!.run).not.toContain("/Applications/")
+    expect(task("build").run).toBe("mise -C apps/viewer exec -- pnpm run app")
+    expect(task("build").alias).toBe("app:build")
+    expect(task("dev").run).toContain('open -n "$app"')
+    expect(task("dev").run).toContain('if [ ! -d "$app" ]')
+    expect(task("dev").run).not.toContain("/Applications/")
   })
 
   test("UI watch is distinct from launching and token generation is explicit", () => {
-    expect(config.tasks["ui:build"]!.run).toBe("pnpm --filter @winvm/viewer run build:ui")
-    expect(config.tasks["ui:watch"]!.run).toBe("pnpm --filter @winvm/viewer run dev:ui")
-    expect(config.tasks["tokens:generate"]!.run).toBe("pnpm --filter @winvm/viewer run tokens")
+    expect(task("ui:build").run).toBe(
+      "pnpm --filter @winvm/viewer run build:ui",
+    )
+    expect(task("ui:watch").run).toBe("pnpm --filter @winvm/viewer run dev:ui")
+    expect(task("tokens:generate").run).toBe(
+      "pnpm --filter @winvm/viewer run tokens",
+    )
   })
 })
 
@@ -69,7 +84,9 @@ describe("mise skill discovery", () => {
     expect(content).toContain("### Build")
     expect(content).toContain("### Test / check")
     for (const name of ["winvm-run", "winvm-build", "winvm-check"]) {
-      expect(existsSync(resolve(ROOT, `.claude/skills/${name}/SKILL.md`))).toBe(false)
+      expect(existsSync(resolve(ROOT, `.claude/skills/${name}/SKILL.md`))).toBe(
+        false,
+      )
       expect(instructions).not.toContain(name)
       expect(read("README.md")).not.toContain(name)
       expect(read("docs/development.md")).not.toContain(name)
@@ -80,7 +97,9 @@ describe("mise skill discovery", () => {
     const files = [
       "AGENTS.md",
       "docs/development.md",
-      ...skills.filter((name) => name !== "winvm-release").map((name) => `.claude/skills/${name}/SKILL.md`),
+      ...skills
+        .filter((name) => name !== "winvm-release")
+        .map((name) => `.claude/skills/${name}/SKILL.md`),
     ]
     for (const file of files) {
       for (const link of localLinks(file)) expect(existsSync(link)).toBe(true)

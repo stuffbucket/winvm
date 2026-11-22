@@ -17,10 +17,10 @@ Run these from the repository root. No shell activation is required; mise suppli
 | `mise run dev` | Launch the **existing local native app**. Does not build, refresh embedded UI, or install it. Run `build` first when current source must be included. |
 | `mise run build` | Build and stage the complete local native `.app`. Replaces the previous local bundle; does not launch, install, or publish. |
 | `mise run test` | Run workspace tests; no Windows VM required. |
-| `mise run check` | Run the existing CI quality gate: workspace typechecks/tests and root script tests. No automatic fixes, real-VM tests, or release operations. |
+| `mise run check` | Run workspace typechecks/tests and root script tests. No automatic fixes, real-VM tests, or release operations. The full gate is `verify`. |
 | `mise run doctor` | Run the source CLI's read-only host diagnostic. Mise may first install missing tools. |
 
-Specialized tasks: `typecheck`, `check:force`, `ui:build`, `ui:watch`, and `tokens:generate`. `ui:watch` only rebuilds files; it is deliberately not named `dev`. `tokens:generate` writes generated CSS and is not part of check-only operation.
+Specialized tasks: `verify`, `typecheck`, `check:force`, `ui:build`, `ui:watch`, and `tokens:generate`. `ui:watch` only rebuilds files; it is deliberately not named `dev`. `tokens:generate` writes generated CSS and is not part of check-only operation.
 
 The existing `pnpm run build` delegates to workspace `build` scripts through Turbo. It is **not** the native app-packaging command. The repo-root `mise run build` intentionally selects the complete native viewer recipe.
 
@@ -66,11 +66,13 @@ Guest prerequisites are separate. `winvm setup` downloads the runtime, guest too
 
 Run the public CLI, not a core module directly. `WINVM_CLI` is set by the CLI; do not set it to bypass the entrypoint. `winvm help` lists commands. A wrong Bun version produces a pin warning.
 
-## Quality gates (no Windows or Rust compilation)
+## Quality gates (no Windows)
+
+`mise run verify` runs `scripts/verify.ts`, the gate the pre-push hook runs: lint, comments, encoding, shell and workflow checks, typechecks, dependency rules, Rust format, deny, clippy and tests, and the workspace and root script tests. A passing run stamps the tree so the push skips it. The commands below are its narrower parts and need no Rust compilation.
 
 ```sh
 mise run check
-mise run check:force                         # bypass Turbo cache, still test root scripts
+mise run check:force                         # check without Turbo's cache
 mise run test
 mise run typecheck
 mise exec -- pnpm --filter @winvm/viewer run test
@@ -206,5 +208,5 @@ Configuration overrides live in shared settings. CPU/RAM changes apply on the ne
 - Save refuses after runtime/firmware/hardware changes: respect compatibility checks; do not bypass hashes.
 - Render says `PLAYWRIGHT_DIR` or `dist/index.html` is missing: use the UI/Playwright recipe, not a real VM.
 - `sign_nested` mismatch: inspect `winvm-release` and the signing policy; do not weaken the check.
-- A focused check passes but full CI fails: run the actual full gate and report both; use `check:force` to remove Turbo cache uncertainty.
+- A focused check passes but full CI fails: run the full gate (`mise run verify`) and report both; use `check:force` to remove Turbo cache uncertainty.
 - Conventional Commit subjects are checked by `scripts/check-commit-msg.ts`; valid types include build, chore, ci, docs, feat, fix, perf, refactor, revert, style, and test. Do not commit unless asked.

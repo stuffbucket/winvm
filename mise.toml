@@ -52,8 +52,12 @@ description = "Run workspace tests without a Windows VM"
 run = "pnpm run test"
 
 [tasks.check]
-description = "Run CI typechecks and tests; no automatic source fixes"
+description = "Run workspace typechecks and tests and the root script tests; no automatic source fixes"
 run = "pnpm run check"
+
+[tasks.verify]
+description = "Run the full local gate the pre-push hook runs; no automatic source fixes"
+run = "pnpm run verify"
 
 [tasks.doctor]
 description = "Diagnose host prerequisites using this checkout's source CLI"
@@ -64,8 +68,9 @@ description = "Typecheck workspaces and validate viewer design tokens"
 run = "pnpm run typecheck"
 
 [tasks."check:force"]
-description = "Run the full quality gate without Turbo cache, including root script tests"
-run = ["pnpm exec turbo run typecheck test --force", "bun test scripts"]
+description = "Run check without Turbo's cache"
+env = { TURBO_FORCE = "true" }
+run = "pnpm run check"
 
 [tasks."ui:build"]
 description = "Bundle only the viewer UI; does not update an existing native app"
