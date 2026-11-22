@@ -6,8 +6,10 @@ interface State {
   readonly error: Error | null
 }
 
-/** If the window's UI throws, say so and show what threw, instead of a blank window. */
-export class ErrorBoundary extends Component<{ readonly title: string; readonly children: ReactNode }, State> {
+export class ErrorBoundary extends Component<
+  { readonly title: string; readonly children: ReactNode },
+  State
+> {
   override state: State = { error: null }
 
   static getDerivedStateFromError(error: Error): State {

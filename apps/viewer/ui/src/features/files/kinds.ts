@@ -1,11 +1,3 @@
-/**
- * What kind of thing a guest file is, from its extension: the glyph the list
- * draws for it and the words the Kind column uses. The glyphs are Octicons and
- * Seti-UI icons (both MIT) from Symbols Nerd Font Mono, vendored as a subset
- * holding exactly the code points below (styles/fonts/, THIRD-PARTY-LICENSE.md).
- * A new glyph here means a new subset.
- */
-
 export type Kind =
   | "folder"
   | "text"
@@ -30,37 +22,34 @@ export type Kind =
   | "database"
   | "other"
 
-/** Each kind's glyph: nf-oct-* and nf-seti-* code points in the vendored subset. */
-export const GLYPH: Record<Kind, string> = {
-  folder: "\u{F4D3}", // nf-oct-file_directory_fill
-  text: "\u{E64E}", // nf-seti-text
-  log: "\u{F4ED}", // nf-oct-log
-  image: "\u{F4E5}", // nf-oct-image
-  archive: "\u{F410}", // nf-oct-file_zip
-  audio: "\u{E638}", // nf-seti-audio
-  video: "\u{E69F}", // nf-seti-video
-  code: "\u{F40D}", // nf-oct-file_code
-  script: "\u{E691}", // nf-seti-shell
-  app: "\u{F471}", // nf-oct-file_binary
-  installer: "\u{F487}", // nf-oct-package
-  library: "\u{E690}", // nf-seti-settings
-  config: "\u{E615}", // nf-seti-config
-  font: "\u{E659}", // nf-seti-font
-  pdf: "\u{E67D}", // nf-seti-pdf
-  word: "\u{E6A5}", // nf-seti-word
-  sheet: "\u{E6A6}", // nf-seti-xls
-  slides: "\u{F4A5}", // nf-oct-file
-  shortcut: "\u{F481}", // nf-oct-file_symlink_file
-  disk: "\u{F472}", // nf-oct-database
-  database: "\u{E64D}", // nf-seti-db
-  other: "\u{F4A5}", // nf-oct-file
+const GLYPH: Record<Kind, string> = {
+  folder: "\u{F4D3}",
+  text: "\u{E64E}",
+  log: "\u{F4ED}",
+  image: "\u{F4E5}",
+  archive: "\u{F410}",
+  audio: "\u{E638}",
+  video: "\u{E69F}",
+  code: "\u{F40D}",
+  script: "\u{E691}",
+  app: "\u{F471}",
+  installer: "\u{F487}",
+  library: "\u{E690}",
+  config: "\u{E615}",
+  font: "\u{E659}",
+  pdf: "\u{E67D}",
+  word: "\u{E6A5}",
+  sheet: "\u{E6A6}",
+  slides: "\u{F4A5}",
+  shortcut: "\u{F481}",
+  disk: "\u{F472}",
+  database: "\u{E64D}",
+  other: "\u{F4A5}",
 }
 
-/** PowerShell's own mark, for its scripts. */
-const POWERSHELL = "\u{E683}" // nf-seti-powershell
+const POWERSHELL = "\u{E683}"
 
-/** The sort indicator beside the sorted column's heading. */
-export const CHEVRON = { up: "\u{F47B}", down: "\u{F47C}" } as const // nf-oct-chevron_up, nf-oct-chevron_down
+export const CHEVRON = { up: "\u{F47B}", down: "\u{F47C}" } as const
 
 const BY_EXT: Readonly<Record<string, Kind>> = Object.fromEntries(
   (
@@ -71,7 +60,10 @@ const BY_EXT: Readonly<Record<string, Kind>> = Object.fromEntries(
       ["archive", "zip 7z rar tar gz tgz bz2 xz zst cab"],
       ["audio", "mp3 wav flac m4a aac ogg wma"],
       ["video", "mp4 mov mkv avi wmv webm m4v"],
-      ["code", "js mjs cjs ts tsx jsx py rs c h cpp hpp cs go java json xml yaml yml toml html htm css"],
+      [
+        "code",
+        "js mjs cjs ts tsx jsx py rs c h cpp hpp cs go java json xml yaml yml toml html htm css",
+      ],
       ["script", "ps1 psm1 psd1 bat cmd sh vbs reg ahk"],
       ["app", "exe com scr"],
       ["installer", "msi msix msixbundle appx appxbundle"],
@@ -89,10 +81,11 @@ const BY_EXT: Readonly<Record<string, Kind>> = Object.fromEntries(
   ).flatMap(([kind, exts]) => exts.split(" ").map((e) => [e, kind] as const)),
 )
 
-/** A name's extension, lower case and without the dot; "" for none (a leading dot alone is not one). */
-export function extension(name: string): string {
+function extension(name: string): string {
   const dot = name.lastIndexOf(".")
-  return dot > 0 && dot < name.length - 1 ? name.slice(dot + 1).toLowerCase() : ""
+  return dot > 0 && dot < name.length - 1
+    ? name.slice(dot + 1).toLowerCase()
+    : ""
 }
 
 export function kindOf(name: string, dir: boolean): Kind {
@@ -100,19 +93,21 @@ export function kindOf(name: string, dir: boolean): Kind {
   return BY_EXT[extension(name)] ?? "other"
 }
 
-/** The glyph a row draws: its kind's, or PowerShell's own for a PowerShell script. */
 export function glyphOf(name: string, dir: boolean): string {
   if (!dir && /^ps[dm]?1$/.test(extension(name))) return POWERSHELL
   return GLYPH[kindOf(name, dir)]
 }
 
-/**
- * The Kind column's words for an entry, through the catalog: `files.kind.<kind>`
- * with the extension in capitals as `{ext}` ("PNG image", "LOG file").
- */
-export function kindLabel(name: string, dir: boolean, label: (key: string, values?: Record<string, string>) => string): string {
+export function kindLabel(
+  name: string,
+  dir: boolean,
+  label: (key: string, values?: Record<string, string>) => string,
+): string {
   const kind = kindOf(name, dir)
   const ext = extension(name).toUpperCase()
-  if (kind === "other") return ext === "" ? label("files.kind.plain") : label("files.kind.other", { ext })
+  if (kind === "other")
+    return ext === ""
+      ? label("files.kind.plain")
+      : label("files.kind.other", { ext })
   return label(`files.kind.${kind}`, { ext })
 }

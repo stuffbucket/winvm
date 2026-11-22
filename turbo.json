@@ -1,7 +1,13 @@
 {
   "$schema": "https://turbo.build/schema.json",
   "ui": "stream",
-  "globalDependencies": [".npmrc", "mise.toml", "mise.lock", ".bun-version", "pnpm-workspace.yaml"],
+  "globalDependencies": [
+    ".npmrc",
+    "mise.toml",
+    "mise.lock",
+    ".bun-version",
+    "pnpm-workspace.yaml"
+  ],
   "tasks": {
     "build": {
       "dependsOn": ["^build"],

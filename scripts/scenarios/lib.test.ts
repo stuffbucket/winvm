@@ -1,11 +1,22 @@
 import { describe, expect, it } from "bun:test"
 
-import { type Sample, heldThroughout, path, rfbKeycode } from "./lib"
+import { heldThroughout, path, rfbKeycode, type Sample } from "./lib"
 
-const s = (at: number, state: string | null, vmStatus: string | null = state): Sample => ({ at, state, vmStatus })
+const s = (
+  at: number,
+  state: string | null,
+  vmStatus: string | null = state,
+): Sample => ({ at, state, vmStatus })
 
 describe("assertions held over time", () => {
-  const samples = [s(0, "running"), s(10, "paused"), s(20, "paused"), s(30, "paused", "postmigrate"), s(40, "running"), s(50, "running")]
+  const samples = [
+    s(0, "running"),
+    s(10, "paused"),
+    s(20, "paused"),
+    s(30, "paused", "postmigrate"),
+    s(40, "running"),
+    s(50, "running"),
+  ]
 
   it("holds when every read in the window shows the state", () => {
     expect(heldThroughout(samples, 10, 30, ["paused"]).ok).toBe(true)
@@ -19,21 +30,41 @@ describe("assertions held over time", () => {
   })
 
   it("checks QEMU's run state too when asked", () => {
-    expect(heldThroughout(samples, 10, 30, ["paused"], { vm: ["paused"] }).ok).toBe(false)
-    expect(heldThroughout(samples, 10, 30, ["paused"], { vm: ["paused", "postmigrate"] }).ok).toBe(true)
+    expect(
+      heldThroughout(samples, 10, 30, ["paused"], { vm: ["paused"] }).ok,
+    ).toBe(false)
+    expect(
+      heldThroughout(samples, 10, 30, ["paused"], {
+        vm: ["paused", "postmigrate"],
+      }).ok,
+    ).toBe(true)
   })
 
   it("needs enough reads to mean anything; a stopped machine's reads (no run state) count", () => {
-    expect(heldThroughout(samples, 10, 30, ["paused"], { minSamples: 4 }).ok).toBe(false)
-    expect(heldThroughout([s(0, "stopped", null), s(5, "stopped", null)], 0, 10, ["stopped"], { minSamples: 2 }).ok).toBe(true)
+    expect(
+      heldThroughout(samples, 10, 30, ["paused"], { minSamples: 4 }).ok,
+    ).toBe(false)
+    expect(
+      heldThroughout(
+        [s(0, "stopped", null), s(5, "stopped", null)],
+        0,
+        10,
+        ["stopped"],
+        { minSamples: 2 },
+      ).ok,
+    ).toBe(true)
   })
 
   it("an error read is never the state held", () => {
-    expect(heldThroughout([s(0, null, "paused")], 0, 10, ["paused"]).ok).toBe(false)
+    expect(heldThroughout([s(0, null, "paused")], 0, 10, ["paused"]).ok).toBe(
+      false,
+    )
   })
 
   it("summarises the states gone through", () => {
-    expect(path(samples, 0, 50)).toBe("running > paused > paused(postmigrate) > running")
+    expect(path(samples, 0, 50)).toBe(
+      "running > paused > paused(postmigrate) > running",
+    )
     expect(path([s(0, null, null)], 0, 1)).toBe("error")
   })
 })
