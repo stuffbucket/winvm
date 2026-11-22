@@ -112,9 +112,8 @@ it; a CLI-only install gets it from `winvm setup` once a release pins one.
 the keeper: when none is found, `winvm start`, and anything else that launches
 QEMU, starts nothing and says how to get one, and `winvm doctor` lists it as a
 missing prerequisite. A command whose
-`WINVM_KEEPER` differs from the one winvm's service runs with is run by the
-CLI itself, so the setting takes effect for that command. `winvm status` has a
-`keeper` row:
+`WINVM_KEEPER` differs from the one winvm's service runs with is not run; it
+says which keeper each names. `winvm status` has a `keeper` row:
 
 - `protected`: QEMU runs under the keeper.
 - `watched, not shielded: started by an older winvm`: QEMU was started
@@ -184,8 +183,9 @@ the status every few seconds.
 service. The CLI, and the app, which runs the CLI, sends the command to the
 service, prints what the service records for it, and exits with its exit code.
 What they print and their exit codes (3, 4, 5 and 6 included) are as before.
-A `start` of a machine that is not running usually finds no service, and the
-CLI starts it itself, as before.
+When no service runs, as for a machine that is not running, the CLI first
+starts one under the instance's keeper, holding the instance while it does,
+then sends it the command. The CLI never runs these commands itself.
 
 - **Ctrl-C only lets go.** Ctrl-C, or the app quitting, stops the CLI from
   following, not the command. The command finishes in the service and its end
@@ -227,12 +227,14 @@ CLI starts it itself, as before.
   while the Mac is shutting down or the guest is paused. A CLI that let go
   leaves them down, and `winvm status` names them and the
   `winvm files mount -i NAME` that brings them back.
-- **When the service can't take it.** When no service answers (QEMU is not
-  running, or the service is restarting), or the service comes from an older
-  winvm that runs no commands, the CLI runs the command itself, as before. If
-  the service took the command but gave no answer within 5 seconds, the CLI
-  says so and does not run it again, because it may already be running. The
-  exception is `kill`, which then kills QEMU itself.
+- **When the service can't take it.** When no service answers, or the
+  service comes from an older winvm that runs no commands, the CLI starts a
+  current service, handing an older one of this install over, and sends the
+  command again. If it still can't be sent, or no keeper is found to start a
+  service under, the CLI says why and runs nothing. If the service took the
+  command but gave no answer within 5 seconds, the CLI says so and does not
+  run it again, because it may already be running. The exception is `kill`,
+  which kills QEMU itself whenever no service takes it.
 
 The requests, on `control.sock`:
 
@@ -242,8 +244,7 @@ The requests, on `control.sock`:
   used as the op's id, so a client can follow it in the record by a name it
   chose. The service refuses an id an op it has taken still uses; keeping ids
   unique over time is the client's job (the app uses fresh UUIDs). A protocol or command the service doesn't have gets `400`
-  or `501`, with the protocol it speaks, so the caller can run the command
-  itself.
+  or `501`, with the protocol it speaks and the reason.
 - `POST /ops/cancel` with `{"protocol": 1}` and an optional `id` answers `200`
   with `{cancelled}`, `409` with `{refused}` and the reason, or `404` when
   nothing runs.

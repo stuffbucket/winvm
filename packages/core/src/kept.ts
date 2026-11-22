@@ -37,9 +37,9 @@ export function keeperUse(
 }
 
 export class KeeperMissing extends Error {
-  constructor(name: string) {
+  constructor(what: string) {
     super(
-      `no winvm-keeper was found, so nothing was started on "${name}"; winvm runs every VM under it: ${keeperHint()}`,
+      `no winvm-keeper was found, so ${what}; winvm runs every VM under it: ${keeperHint()}`,
     )
     this.name = "KeeperMissing"
   }

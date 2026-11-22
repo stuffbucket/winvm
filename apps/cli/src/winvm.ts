@@ -6,7 +6,11 @@ import * as cuacmds from "@winvm/core/cuacmds"
 import * as finder from "@winvm/core/finder"
 import * as follow from "@winvm/core/follow"
 import * as goldens from "@winvm/core/golden"
-import { ensureCurrent, ManagementError } from "@winvm/core/lifecycle"
+import {
+  ensureCurrent,
+  ManagementError,
+  serviceUp,
+} from "@winvm/core/lifecycle"
 import * as machineinfo from "@winvm/core/machineinfo"
 import * as mcpcmds from "@winvm/core/mcpcmds"
 import * as ocr from "@winvm/core/ocr"
@@ -17,7 +21,7 @@ import {
   operationFor,
   withOperation,
 } from "@winvm/core/operation"
-import { isOpId, isServiceOp } from "@winvm/core/ops"
+import { isOpId, isServiceOp, type ServiceOp } from "@winvm/core/ops"
 import {
   bunVersionWarning,
   pinnedBunVersion,
@@ -61,9 +65,6 @@ const leased = async (run: () => number | Promise<number>): Promise<number> => {
       interruptible: true,
       automatic: automaticFrom(args),
       ...(opId === undefined ? {} : { id: opId }),
-      ...(serviceOp !== null && args.flags.has("wait")
-        ? { queue: true, waitMs: Number.POSITIVE_INFINITY }
-        : {}),
     })
   } catch (error) {
     if (!(error instanceof InstanceBusy)) throw error
@@ -71,18 +72,22 @@ const leased = async (run: () => number | Promise<number>): Promise<number> => {
     return 1
   }
 }
-const viaService = async (here: () => Promise<number>): Promise<number> =>
-  serviceOp === null
-    ? await here()
-    : await opclient.runOp(
-        {
-          op: serviceOp,
-          args,
-          argv: rawArgs,
-          ...(opId === undefined ? {} : { id: opId }),
-        },
-        here,
-      )
+const viaService = async (
+  op: ServiceOp,
+  withoutService?: () => Promise<number>,
+): Promise<number> =>
+  await opclient.runOp(
+    {
+      op,
+      args,
+      argv: rawArgs,
+      ...(opId === undefined ? {} : { id: opId }),
+    },
+    {
+      up: serviceUp,
+      ...(withoutService === undefined ? {} : { withoutService }),
+    },
+  )
 const NO_SWEEP = [
   "help",
   "--help",
@@ -160,16 +165,16 @@ switch (sub ?? "") {
     exitCode = await commands.build(args)
     break
   case "start":
-    exitCode = await viaService(() => leased(() => commands.start(args)))
+    exitCode = await viaService("start")
     break
   case "stop":
-    exitCode = await viaService(() => leased(() => commands.stop(args)))
+    exitCode = await viaService("stop")
     break
   case "reboot":
-    exitCode = await viaService(() => leased(() => commands.reboot(args)))
+    exitCode = await viaService("reboot")
     break
   case "kill":
-    exitCode = await viaService(() => leased(() => commands.kill(args)))
+    exitCode = await viaService("kill", () => leased(() => commands.kill(args)))
     break
   case "cancel":
     exitCode = await opclient.cancelCmd(args)
@@ -229,44 +234,47 @@ switch (sub ?? "") {
     exitCode = await leased(() => commands.snap(args))
     break
   case "rewind":
-    exitCode = await viaService(() => leased(() => commands.rewind(args)))
+    exitCode = await viaService("rewind")
     break
   case "snapshots":
     exitCode = await commands.snapshots(args)
     break
   case "save":
-    exitCode = await viaService(() => leased(() => savecmds.save(args)))
+    exitCode = await viaService("save")
     break
   case "load":
-    exitCode = await viaService(() => leased(() => savecmds.load(args)))
+    exitCode = await viaService("load")
     break
   case "share":
     exitCode = await leased(() => sharecmds.shareCmd(args))
     break
   case "golden":
-    exitCode = await viaService(() => leased(() => goldens.golden(args)))
+    exitCode =
+      serviceOp === null
+        ? await leased(() => goldens.golden(args))
+        : await viaService(serviceOp)
     break
   case "saves":
     exitCode = savecmds.list(args)
     break
   case "pause":
-    exitCode = await viaService(() => leased(() => savecmds.pause(args)))
+    exitCode = await viaService("pause")
     break
   case "resume":
   case "wake":
-    exitCode = await viaService(() => leased(() => savecmds.resume(args)))
+    exitCode = await viaService(sub === "wake" ? "wake" : "resume")
     break
   case "sleep":
-    exitCode = await viaService(() => leased(() => savecmds.sleep(args)))
+    exitCode = await viaService("sleep")
     break
   case "lock":
-    exitCode = await viaService(() => leased(() => savecmds.lock(args)))
+    exitCode = await viaService("lock")
     break
   case "settings":
     exitCode = settings.settingsCmd(args)
     break
   case "stow":
-    exitCode = await viaService(() => savecmds.stow(args, leased))
+    exitCode = await viaService("stow")
     break
   case "clock":
     exitCode = await savecmds.clock(args)

@@ -12,7 +12,6 @@ import {
 import { tmpdir } from "node:os"
 import { resolve } from "node:path"
 
-import { QgaChannel, QmpChannel } from "../src/broker"
 import { RAMFB, writeDisplay } from "../src/display"
 import { type Entry, readSince, START } from "../src/eventlog"
 import {
@@ -577,65 +576,22 @@ describe("the long verbs, run by winvm's service", () => {
 })
 
 describe("a command whose own WINVM_KEEPER differs from the service's", () => {
-  it("runs in the CLI, so a per-command WINVM_KEEPER takes effect", async () => {
+  it("is not run, and says which keeper each names", async () => {
+    const another = resolve(home, "another-keeper")
     const proc = Bun.spawn([process.execPath, CLI, "pause", "-i", "t"], {
-      env: { ...env(), WINVM_KEEPER: resolve(home, "another-keeper") },
+      env: { ...env(), WINVM_KEEPER: another },
       stdout: "pipe",
       stderr: "pipe",
     })
-    expect(await proc.exited).toBe(0)
-    const b = begins("pause").at(-1)
-    expect(b?.kind === "op" && b.phase === "begin" ? b.pid : null).toBe(
-      proc.pid,
+    const [stderr, code] = await Promise.all([
+      new Response(proc.stderr).text(),
+      proc.exited,
+    ])
+    expect(code).toBe(1)
+    expect(stderr).toContain(
+      `::error::winvm's service for "t" does not run pause (this service runs with WINVM_KEEPER=${process.env.WINVM_FAKE_KEEPER ?? ""}, and the command asks for ${another}), so it was not run`,
     )
-  }, 30_000)
-})
-
-describe("the long verbs, with a service from before they moved", () => {
-  let control: ReturnType<typeof Bun.serve> | null = null
-
-  afterEach(async () => {
-    await control?.stop(true)
-    control = null
-  })
-
-  it("run in the CLI itself when the service does not run them, with the same output", async () => {
-    stopService(p)
-    service?.kill("SIGKILL")
-    await service?.exited
-    service = null
-    rmSync(p.control, { force: true })
-    const broker = new QmpChannel({ listen: p.qmp, upstream: p.qmpQemu })
-    await broker.start()
-    const agentBroker = new QgaChannel({
-      listen: p.qga,
-      upstream: p.qgaQemu,
-      portOpen: () => Promise.resolve(true),
-    })
-    await agentBroker.start()
-    control = Bun.serve({
-      unix: p.control,
-      fetch: () =>
-        Response.json(
-          { protocol: 1, error: "this service does not run save" },
-          { status: 501 },
-        ),
-    })
-    try {
-      const r = launch("save", "-i", "t", "x", "--force")
-      const done = await r.done
-      expect({ ...done, stdout: timings(done.stdout) }).toEqual({
-        code: 0,
-        stdout:
-          'saved "x" (manual, zstd) in N: RAM N -> N on disk, N total (disks are clones)\n' +
-          "  clock: guest was N from the host, now N\n",
-        stderr: "",
-      })
-      expect(ranByCli("save")).toBe(r.proc.pid)
-    } finally {
-      await broker.stop()
-      await agentBroker.stop()
-    }
+    expect(begins("pause")).toEqual([])
   }, 30_000)
 })
 

@@ -450,10 +450,6 @@ async function runsGuest(p: Paths): Promise<boolean> {
   return typeof r?.status === "string" && r.status !== "postmigrate"
 }
 
-type Leased = (run: () => Promise<number>) => Promise<number>
-
-const unleased: Leased = async (run) => await run()
-
 function refuse(
   name: string,
   refusal: saves.StowNotRecallable,
@@ -470,14 +466,11 @@ function refuse(
   return refusal.exitCode
 }
 
-export async function stow(
-  args: Args,
-  leased: Leased = unleased,
-): Promise<number> {
+export async function stow(args: Args): Promise<number> {
   const name = instanceName(args)
   const refusal = await stowRefusal(name)
   if (refusal !== null) return refuse(name, refusal, automaticFrom(args))
-  return await leased(async () => await stowHeld(name, args))
+  return await stowHeld(name, args)
 }
 
 async function stowHeld(name: string, args: Args): Promise<number> {

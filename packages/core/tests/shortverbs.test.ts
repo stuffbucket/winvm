@@ -405,25 +405,35 @@ describe("the short verbs, run by winvm's service", () => {
       expect(begun(verb)).toMatchObject({ pid: servicePid })
     }, 30_000)
 
-  for (const verb of [
-    "pause",
-    "resume",
-    "wake",
-    "sleep",
-    "lock",
-    "reboot",
-    "kill",
-  ])
-    it(`${verb} runs in the CLI itself when no service answers`, async () => {
-      const { pid } = await (async () => {
-        await releasePidfiles()
-        await stopTheService()
-        const run = launch(verb, "-i", "t")
-        await run.done
-        return { pid: run.proc.pid }
-      })()
-      expect(begun(verb)).toMatchObject({ pid })
+  const withNoService = async (verb: string): Promise<number | undefined> => {
+    await releasePidfiles()
+    await stopTheService()
+    const run = launch(verb, "-i", "t")
+    await run.done
+    return run.proc.pid
+  }
+
+  for (const verb of ["pause", "resume", "wake", "sleep", "lock", "reboot"])
+    it(`${verb} starts winvm's service when none answers, and runs in it`, async () => {
+      const cli = await withNoService(verb)
+      const b = begun(verb)
+      expect(b?.kind === "op" && b.phase === "begin" ? b.pid : cli).not.toBe(
+        cli,
+      )
+      expect(
+        ops().find(
+          (e) =>
+            e.kind === "op" &&
+            e.phase === "begin" &&
+            e.operation === "reconcile",
+        ),
+      ).toMatchObject({ pid: cli })
     }, 30_000)
+
+  it("kill runs in the CLI itself when no service answers", async () => {
+    const cli = await withNoService("kill")
+    expect(begun("kill")).toMatchObject({ pid: cli })
+  }, 30_000)
 
   it("run in the service, which records what they printed under the op's id", async () => {
     expect((await winvm("pause", "-i", "t")).code).toBe(0)
@@ -659,20 +669,6 @@ describe("the short verbs, with a service that runs no ops", () => {
     await broker?.stop()
     broker = null
   })
-
-  it("run in the CLI itself when the service is older and has no ops, with the same output", async () => {
-    await replace(() => new Response("not found", { status: 404 }))
-    const r = launch("pause", "-i", "t")
-    expect(await r.done).toEqual({
-      code: 0,
-      stdout: 'paused "t" — `winvm resume -i t` to continue\n',
-      stderr: "",
-    })
-    expect(
-      ops().find((e) => e.kind === "op" && e.phase === "begin"),
-    ).toMatchObject({ operation: "pause", pid: r.proc.pid })
-    expect(guest.status).toBe("paused")
-  }, 30_000)
 
   it("say so, and change nothing, when the service takes the op but never answers", async () => {
     await replace(async () => {

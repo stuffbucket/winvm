@@ -750,13 +750,161 @@ describe("a client's remount", () => {
     }
     const ran = runOp(
       { op: "resume", args: parseArgs(["-i", "t"]), argv: ["-i", "t"] },
-      () => Promise.resolve(99),
+      { up: () => Promise.resolve() },
       io,
     )
     await until(() => remounting)
     process.emit("SIGINT")
     expect(await ran).toBe(130)
     expect(said.join("")).toContain("resume continues in winvm's service")
+  })
+})
+
+describe("a command when no service takes its op", () => {
+  const call = (op: "pause" | "kill") => ({
+    op,
+    args: parseArgs(["-i", "t"]),
+    argv: ["-i", "t"],
+  })
+  const heard = (): { said: string[]; io: Parameters<typeof runOp>[2] } => {
+    const said: string[] = []
+    return {
+      said,
+      io: {
+        out: (text) => {
+          said.push(text)
+        },
+        err: (text) => {
+          said.push(text)
+        },
+        remount: () => Promise.resolve(),
+      },
+    }
+  }
+
+  it("brings a service up and runs the op in it when none answers", async () => {
+    await svc?.stop()
+    svc = null
+    const asked: string[] = []
+    const { said, io } = heard()
+    const code = await runOp(
+      call("pause"),
+      {
+        up: async (name, wait) => {
+          asked.push(`${name} ${String(wait)}`)
+          svc = await runService("t", {
+            exitAfterMs: 60_000,
+            checkMs: 50,
+            handlers: {
+              pause: {
+                cancel: "never",
+                run: async () => {
+                  console.log("paused in the service")
+                  return await Promise.resolve(0)
+                },
+              },
+            },
+          })
+        },
+      },
+      io,
+    )
+    expect(code).toBe(0)
+    expect(asked).toEqual(["t false"])
+    expect(said).toEqual(["paused in the service\n"])
+  })
+
+  it("runs nothing, and says why, when the service still does not run the op", async () => {
+    await svc?.stop()
+    svc = null
+    const stub = Bun.serve({
+      unix: p.control,
+      fetch: () =>
+        Response.json(
+          { protocol: OPS_PROTOCOL, error: "this service does not run pause" },
+          { status: 501 },
+        ),
+    })
+    try {
+      let ups = 0
+      const { said, io } = heard()
+      const code = await runOp(
+        call("pause"),
+        {
+          up: async () => {
+            ups += 1
+            await Promise.resolve()
+          },
+        },
+        io,
+      )
+      expect(code).toBe(1)
+      expect(ups).toBe(1)
+      expect(said).toEqual([
+        '::error::winvm\'s service for "t" does not run pause (this service does not run pause), so it was not run\n',
+      ])
+    } finally {
+      await stub.stop(true)
+    }
+  })
+
+  it("says why a service could not be brought up, and that the op was not run", async () => {
+    await svc?.stop()
+    svc = null
+    const { said, io } = heard()
+    const code = await runOp(
+      call("pause"),
+      {
+        up: () =>
+          Promise.reject(new Error("no winvm-keeper was found, so nothing")),
+      },
+      io,
+    )
+    expect(code).toBe(1)
+    expect(said).toEqual([
+      "::error::pause was not run: no winvm-keeper was found, so nothing\n",
+    ])
+  })
+
+  it("says the instance is busy when another command holds it while the service is brought up", async () => {
+    await svc?.stop()
+    svc = null
+    const holder = {
+      operation: "snapshot",
+      pid: process.pid,
+      startedAt: "2026-11-21T10:00:00.000Z",
+      automatic: false,
+    }
+    const { said, io } = heard()
+    const code = await runOp(
+      call("pause"),
+      { up: () => Promise.reject(new InstanceBusy("t", holder)) },
+      io,
+    )
+    expect(code).toBe(1)
+    expect(said).toEqual([
+      `::error::${new InstanceBusy("t", holder).message}\n`,
+    ])
+  })
+
+  it("kills without a service, and brings none up", async () => {
+    await svc?.stop()
+    svc = null
+    let ups = 0
+    const { io } = heard()
+    const code = await runOp(
+      call("kill"),
+      {
+        up: async () => {
+          ups += 1
+          await Promise.resolve()
+        },
+        withoutService: () => Promise.resolve(0),
+      },
+      io,
+    )
+    expect(code).toBe(0)
+    expect(ups).toBe(0)
   })
 })
 

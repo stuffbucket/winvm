@@ -260,7 +260,8 @@ export async function launch(
       `QEMU (pid ${String(running)}) still runs for "${name}", so nothing was started; \`winvm kill -i ${name}\` ends it`,
     )
   const use = kept.keeperUse()
-  if (use.kind === "missing") throw new kept.KeeperMissing(name)
+  if (use.kind === "missing")
+    throw new kept.KeeperMissing(`nothing was started on "${name}"`)
   pointOfNoReturn()
   try {
     await kept.openKeeper(name, p, use.keeper)

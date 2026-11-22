@@ -2,9 +2,9 @@ import { existsSync } from "node:fs"
 import { resolve } from "node:path"
 
 import { buildIdentity } from "./identity"
-import { keeperHello } from "./kept"
+import { KeeperMissing, keeperHello, keeperUse, openKeeper } from "./kept"
 import { adoptLegacy } from "./legacy"
-import { InstanceBusy, withOperation } from "./operation"
+import { InstanceBusy, leaseHolder, withOperation } from "./operation"
 import { cliEntry, type Paths, pathsFor } from "./paths"
 import { pidOf as qemuPid } from "./qemu"
 import { ensureService, readService } from "./servicectl"
@@ -113,4 +113,29 @@ export async function ensureCurrent(
       { cause: error },
     )
   }
+}
+
+export async function serviceUp(
+  name: string,
+  wait: boolean,
+  p: Paths = pathsFor(name),
+): Promise<void> {
+  if (qemuPid(p) !== null) {
+    const r = await ensureCurrent(name, p)
+    const holder = r.deferred === "busy" ? leaseHolder(name) : null
+    if (holder !== null) throw new InstanceBusy(name, holder)
+    return
+  }
+  const use = keeperUse()
+  if (use.kind === "missing")
+    throw new KeeperMissing(`winvm's service for "${name}" was not started`)
+  await withOperation(
+    name,
+    "reconcile",
+    async () => {
+      await openKeeper(name, p, use.keeper)
+      await ensureService(name, p)
+    },
+    wait ? { queue: true, waitMs: Number.POSITIVE_INFINITY } : {},
+  )
 }
