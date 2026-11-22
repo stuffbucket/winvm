@@ -13,7 +13,8 @@
     "test": "bun test --parallel"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "0.134.0"
+    "@anthropic-ai/sdk": "0.134.0",
+    "@winvm/displayfit": "workspace:*"
   },
   "devDependencies": {
     "@types/bun": "1.4.0",

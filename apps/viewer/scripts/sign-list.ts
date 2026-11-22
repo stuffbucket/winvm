@@ -1,7 +1,22 @@
-import { closeSync, openSync, readFileSync, readSync, readdirSync, statSync, writeFileSync } from "node:fs"
+import {
+  closeSync,
+  openSync,
+  readdirSync,
+  readFileSync,
+  readSync,
+  statSync,
+  writeFileSync,
+} from "node:fs"
 import { relative, resolve } from "node:path"
 
-const CONFIG = resolve(import.meta.dir, "..", "..", "..", ".macos-builder", "config")
+const CONFIG = resolve(
+  import.meta.dir,
+  "..",
+  "..",
+  "..",
+  ".macos-builder",
+  "config",
+)
 const MAIN = "Contents/MacOS/winvm-viewer"
 const PROFILES: Readonly<Record<string, string>> = {
   "Contents/MacOS/winvm": "bun-runtime",
@@ -40,26 +55,37 @@ export function signList(app: string): string {
 }
 
 const LINE = /^sign_nested[ \t]*=[ \t]*(.*)$/m
-const current = (): string => LINE.exec(readFileSync(CONFIG, "utf8"))?.[1]?.trim() ?? ""
+const current = (): string =>
+  LINE.exec(readFileSync(CONFIG, "utf8"))?.[1]?.trim() ?? ""
 
 const [mode, app] = process.argv.slice(2)
 if ((mode !== "--check" && mode !== "--write") || app === undefined) {
-  console.error("usage: bun apps/viewer/scripts/sign-list.ts --check|--write <winvm.app>")
+  console.error(
+    "usage: bun apps/viewer/scripts/sign-list.ts --check|--write <winvm.app>",
+  )
   process.exit(2)
 }
 const want = signList(resolve(app))
 if (mode === "--write") {
   const config = readFileSync(CONFIG, "utf8")
   if (!LINE.test(config)) {
-    console.error("::error::.macos-builder/config has no sign_nested line to write")
+    console.error(
+      "::error::.macos-builder/config has no sign_nested line to write",
+    )
     process.exit(1)
   }
   writeFileSync(CONFIG, config.replace(LINE, `sign_nested = ${want}`))
-  console.log(`${String(want.split(",").length)} nested binaries written to .macos-builder/config`)
+  console.log(
+    `${String(want.split(",").length)} nested binaries written to .macos-builder/config`,
+  )
 } else if (current() !== want) {
-  console.error("::error::.macos-builder/config sign_nested does not match the app's Mach-O files.")
+  console.error(
+    "::error::.macos-builder/config sign_nested does not match the app's Mach-O files.",
+  )
   console.error("Run: bun apps/viewer/scripts/sign-list.ts --write <winvm.app>")
   process.exit(1)
 } else {
-  console.log(`sign_nested matches the app (${String(want.split(",").length)} nested binaries)`)
+  console.log(
+    `sign_nested matches the app (${String(want.split(",").length)} nested binaries)`,
+  )
 }

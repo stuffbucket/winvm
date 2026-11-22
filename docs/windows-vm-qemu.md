@@ -270,11 +270,12 @@ latency on a loaded host dominates.
 
 ## The idle watcher
 
-`start` launches `winvm watch` detached, one per instance. It holds `watch.pid`,
-created with O_EXCL. A pidfile whose process is gone, or is no longer a watcher,
-is treated as stale and replaced. The watcher samples every 15 s. The decisions
-are in `idle.ts`, which is pure and unit-tested; `watch.ts` does the I/O. Its
-rules, and why:
+The watcher runs inside the instance's control service, which already lives as
+long as QEMU does. `start` turns it on for the QEMU it started by writing
+`watching.json`, which names that QEMU; `winvm watch --stop`, `stop`, `stow` and
+the rest turn it off by removing it. The service samples every 15 s while the
+file names the running QEMU. The decisions are in `idle.ts`, which is pure and
+unit-tested; `watch.ts` does the I/O. Its rules, and why:
 
 - **CPU is read from the host**, as QEMU's process CPU time (`ps -o time=`)
   over wall time, divided by the `-smp` count. QMP's `query-cpus-fast` reports
@@ -311,18 +312,21 @@ rules, and why:
   autosaves nor stows it, and the time does not count as idle. The idle clock
   starts again on resume, so a guest paused for hours is not stowed the moment
   it runs again.
-- **Autosave is an in-process `saves.createSave`** (kind `auto`) under
-  `saves.withLock`, followed by a clock sync, because the guest was stopped
-  while it was saved. If another save or load holds the lock, the round is
-  skipped. Rotation deletes only kind `auto`, oldest first, down to
-  `autosave.keep`.
-- **Stow runs `winvm stow`** as a child process. `stow` and `stop` end the
-  watcher first, except when the watcher is the caller.
-- **A `load` replaces QEMU.** The watcher follows the new process and restarts
-  its idle clock instead of exiting. It exits only once QEMU is gone and no save
-  or load holds the instance. `load` and `rewind` count as activity. A save does
-  not, or every autosave would trigger the next.
-- **`start` launches the watcher after the first-boot baseline save**, so that
+- **Autosave is an op the service runs itself**: `saves.createSave` (kind
+  `auto`) in the service's op queue, under the instance's lifecycle lease
+  (`operation.ts`, `lease.json`), marked as winvm's own work, followed by a
+  clock sync, because the guest was stopped while it was saved. If any other
+  command holds the lease, the round is skipped, so it never acts on the guest
+  beside a person's command. Rotation is an op of its own and deletes only kind
+  `auto`, oldest first, down to `autosave.keep`.
+- **Stow is the same `stow` op a person's `winvm stow` runs**, marked as
+  winvm's own work. `stow` and `stop` turn the watcher off first, except for the
+  watcher's own stow.
+- **A `load` replaces QEMU.** The watcher follows the new process, moves
+  `watching.json` to it and restarts its idle clock instead of stopping. It
+  stops only once QEMU is gone and no command holds the instance's lease. `load` and `rewind` count as activity. A
+  save does not, or every autosave would trigger the next.
+- **`start` turns the watcher on after the first-boot baseline save**, so that
   save is not counted as use. An `--ephemeral` guest cannot be saved, so its
   watcher only keeps the clock.
 

@@ -1,9 +1,3 @@
-/**
- * A stand-in for conpty.exe (assets/conpty.cs) on the host: the same arguments
- * and the same frames, with no pseudo-console. It echoes keystrokes, reports a
- * resize in its output, and on a typed line `exit N` exits with N; `fail` sends
- * an error instead. It ends when its connection does, as the real one does.
- */
 import { FrameReader, termFrame } from "../../src/guestagent"
 
 const args = process.argv.slice(2)
@@ -24,7 +18,14 @@ const sock = await Bun.connect({
       for (const f of frames.push(chunk)) {
         if (f.type === "r") {
           const v = new DataView(f.payload.buffer, f.payload.byteOffset)
-          s.write(termFrame("o", enc.encode(`resized ${String(v.getUint16(0, true))}x${String(v.getUint16(2, true))}\r\n`)))
+          s.write(
+            termFrame(
+              "o",
+              enc.encode(
+                `resized ${String(v.getUint16(0, true))}x${String(v.getUint16(2, true))}\r\n`,
+              ),
+            ),
+          )
           continue
         }
         const text = new TextDecoder().decode(f.payload)
@@ -53,4 +54,11 @@ const sock = await Bun.connect({
   },
 })
 sock.write(termFrame("H", enc.encode(opt("key") ?? "")))
-sock.write(termFrame("o", enc.encode(`ready ${shell.join(" ")} ${opt("cols") ?? "?"}x${opt("rows") ?? "?"} cwd=${opt("cwd") ?? "-"} pid=${String(process.pid)}\r\n`)))
+sock.write(
+  termFrame(
+    "o",
+    enc.encode(
+      `ready ${shell.join(" ")} ${opt("cols") ?? "?"}x${opt("rows") ?? "?"} cwd=${opt("cwd") ?? "-"} pid=${String(process.pid)}\r\n`,
+    ),
+  ),
+)

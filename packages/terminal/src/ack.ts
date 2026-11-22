@@ -1,79 +1,87 @@
 export interface TerminalAckScheduler {
-  schedule(callback: () => void): void;
+  schedule(callback: () => void): void
 }
 
-/** Coalesces completed terminal writes into cumulative acknowledgements. */
 export class TerminalAcknowledgements {
-  private sequence = 0;
-  private acknowledgedSequence = 0;
-  private scheduled = false;
-  private disposed = false;
+  private sequence = 0
+  private acknowledgedSequence = 0
+  private scheduled = false
+  private disposed = false
+  private readonly acknowledge: (sequence: number) => void
+  private readonly scheduler: TerminalAckScheduler
 
   constructor(
-    private readonly acknowledge: (sequence: number) => void,
-    private readonly scheduler: TerminalAckScheduler,
-  ) {}
+    acknowledge: (sequence: number) => void,
+    scheduler: TerminalAckScheduler,
+  ) {
+    this.acknowledge = acknowledge
+    this.scheduler = scheduler
+  }
 
   consume(sequence: number): void {
-    if (this.disposed || sequence <= this.acknowledgedSequence) return;
-    this.sequence = Math.max(sequence, this.sequence);
-    if (this.scheduled) return;
-    this.scheduled = true;
+    if (this.disposed || sequence <= this.acknowledgedSequence) return
+    this.sequence = Math.max(sequence, this.sequence)
+    if (this.scheduled) return
+    this.scheduled = true
     this.scheduler.schedule(() => {
-      this.scheduled = false;
-      if (this.disposed) return;
-      const sequence = this.sequence;
-      this.sequence = 0;
-      this.acknowledgedSequence = sequence;
-      this.acknowledge(sequence);
-    });
+      this.scheduled = false
+      if (this.disposed) return
+      const sequence = this.sequence
+      this.sequence = 0
+      this.acknowledgedSequence = sequence
+      this.acknowledge(sequence)
+    })
   }
 
   dispose(): void {
-    this.disposed = true;
+    this.disposed = true
   }
 }
 
-/** Coalesces emulator resizes to the latest dimensions once per frame. */
 export class TerminalResizes {
-  private pending: { cols: number; rows: number } | undefined;
-  private scheduled = false;
-  private disposed = false;
+  private pending: { cols: number; rows: number } | undefined
+  private scheduled = false
+  private disposed = false
+  private readonly resize: (cols: number, rows: number) => void
+  private readonly scheduler: TerminalAckScheduler
 
   constructor(
-    private readonly resize: (cols: number, rows: number) => void,
-    private readonly scheduler: TerminalAckScheduler,
-  ) {}
+    resize: (cols: number, rows: number) => void,
+    scheduler: TerminalAckScheduler,
+  ) {
+    this.resize = resize
+    this.scheduler = scheduler
+  }
 
   update(cols: number, rows: number): void {
-    if (this.disposed) return;
-    this.pending = { cols, rows };
-    if (this.scheduled) return;
-    this.scheduled = true;
+    if (this.disposed) return
+    this.pending = { cols, rows }
+    if (this.scheduled) return
+    this.scheduled = true
     this.scheduler.schedule(() => {
-      this.scheduled = false;
-      if (this.disposed) return;
-      const { cols, rows } = this.pending!;
-      this.pending = undefined;
-      this.resize(cols, rows);
-    });
+      this.scheduled = false
+      const next = this.pending
+      if (this.disposed || next === undefined) return
+      this.pending = undefined
+      this.resize(next.cols, next.rows)
+    })
   }
 
   dispose(): void {
-    this.disposed = true;
-    this.pending = undefined;
+    this.disposed = true
+    this.pending = undefined
   }
 }
 
-/** Use browser frames when available, with a Node-safe microtask fallback. */
 class AnimationFrameScheduler implements TerminalAckScheduler {
   schedule(callback: () => void): void {
-    if (typeof requestAnimationFrame === 'function') {
-      requestAnimationFrame(callback);
+    if (typeof requestAnimationFrame === "function") {
+      requestAnimationFrame(callback)
     } else {
-      queueMicrotask(callback);
+      queueMicrotask(callback)
     }
   }
 }
 
-export const animationFrameScheduler: TerminalAckScheduler = new AnimationFrameScheduler();
+export const animationFrameScheduler: TerminalAckScheduler =
+  new AnimationFrameScheduler()

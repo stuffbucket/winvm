@@ -1,0 +1,18 @@
+{
+  "name": "@winvm/displayfit",
+  "version": "0.1.0",
+  "private": true,
+  "description": "The guest display's size limits and the fit between the viewer's canvas and the guest's screen, shared by the CLI and the viewer",
+  "license": "MIT",
+  "type": "module",
+  "exports": {
+    ".": "./src/displayfit.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "devDependencies": {
+    "@types/bun": "1.4.0",
+    "typescript": "6.0.3"
+  }
+}

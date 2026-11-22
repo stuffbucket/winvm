@@ -1,23 +1,39 @@
-/**
- * The guest's drives in Finder (finder.ts, smbstate.ts): smb.json, the mount
- * table and the "is it really our mount" check, and the lifecycle hooks —
- * against a fake Mac (Sys) and a state directory laid out by hand. No VM, no
- * mounts, nothing run.
- */
 import { afterEach, beforeEach, describe, expect, it, spyOn } from "bun:test"
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs"
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs"
 import { tmpdir } from "node:os"
 import { resolve } from "node:path"
 
 import { AgentClient, AgentError } from "../src/agent"
 import { forwardedPorts, hostfwdRule } from "../src/agentfwd"
 import type { Sys } from "../src/finder"
-import { EAUTH, afterUp, beforeDown, cleanStale, mountShares, staleMounts, status, unmountShare, unmountShares } from "../src/finder"
-import { SMB_SHARES, smbSetupError, smbSetupScript, startAgent } from "../src/guestagent"
+import {
+  afterUp,
+  beforeDown,
+  cleanStale,
+  EAUTH,
+  mountShares,
+  staleMounts,
+  status,
+  unmountShare,
+  unmountShares,
+} from "../src/finder"
+import {
+  SMB_SHARES,
+  smbSetupError,
+  smbSetupScript,
+  startAgent,
+} from "../src/guestagent"
 import { pathsFor } from "../src/paths"
 import type { MountEntry, SmbState } from "../src/smbstate"
 import {
-  SHARES,
   ensureSmb,
   findOurMount,
   isOurMount,
@@ -26,6 +42,7 @@ import {
   parseMountTable,
   parseSmb,
   readSmb,
+  SHARES,
   shareFor,
   smbPath,
   withMounted,
@@ -34,18 +51,24 @@ import {
 
 let state: string
 let mounts: string
-const saved = { home: process.env["WINVM_HOME"], mounts: process.env["WINVM_MOUNTS"] }
+const saved = {
+  home: process.env.WINVM_HOME,
+  mounts: process.env.WINVM_MOUNTS,
+}
 
 beforeEach(() => {
   state = mkdtempSync(resolve(tmpdir(), "winvm-finder-"))
   mounts = resolve(state, "mnt")
-  process.env["WINVM_HOME"] = state
-  process.env["WINVM_MOUNTS"] = mounts
+  process.env.WINVM_HOME = state
+  process.env.WINVM_MOUNTS = mounts
   mkdirSync(pathsFor("vm").dir, { recursive: true })
 })
 afterEach(() => {
   rmSync(state, { recursive: true, force: true })
-  for (const [k, v] of [["WINVM_HOME", saved.home], ["WINVM_MOUNTS", saved.mounts]] as const) {
+  for (const [k, v] of [
+    ["WINVM_HOME", saved.home],
+    ["WINVM_MOUNTS", saved.mounts],
+  ] as const) {
     if (v === undefined) delete process.env[k]
     else process.env[k] = v
   }
@@ -88,13 +111,32 @@ describe("smb.json", () => {
 
   it("rejects what is not a usable state, and keeps only known shares", () => {
     expect(parseSmb("not json")).toBeNull()
-    expect(parseSmb(JSON.stringify({ user: "u", password: "short" }))).toBeNull()
-    const s = parseSmb(JSON.stringify({ user: "u", password: "x".repeat(24), hostPort: 99999, mounted: ["c", "d", "home", "c", 3] }))
-    expect(s).toEqual({ user: "u", password: "x".repeat(24), hostPort: null, mounted: ["c", "home"] })
+    expect(
+      parseSmb(JSON.stringify({ user: "u", password: "short" })),
+    ).toBeNull()
+    const s = parseSmb(
+      JSON.stringify({
+        user: "u",
+        password: "x".repeat(24),
+        hostPort: 99999,
+        mounted: ["c", "d", "home", "c", 3],
+      }),
+    )
+    expect(s).toEqual({
+      user: "u",
+      password: "x".repeat(24),
+      hostPort: null,
+      mounted: ["c", "home"],
+    })
   })
 
   it("remembers and forgets mounted shares", () => {
-    const s: SmbState = { user: "u", password: "x".repeat(24), hostPort: PORT, mounted: [] }
+    const s: SmbState = {
+      user: "u",
+      password: "x".repeat(24),
+      hostPort: PORT,
+      mounted: [],
+    }
     const on = withMounted(withMounted(s, "home", true), "home", true)
     expect(on.mounted).toEqual(["home"])
     expect(withMounted(on, "home", false).mounted).toEqual([])
@@ -107,37 +149,71 @@ describe("the mount table", () => {
   it("parses mount's output, paths with spaces included", () => {
     const t = parseMountTable(TABLE)
     expect(t).toHaveLength(6)
-    expect(t[2]).toEqual({ source: "/dev/disk3s5", dir: "/System/Volumes/Data", type: "apfs" })
-    expect(t[4]).toEqual({ source: "//winvm-share@127.0.0.1:61308/C", dir: "/Users/me/winvm/vm/C", type: "smbfs" })
+    expect(t[2]).toEqual({
+      source: "/dev/disk3s5",
+      dir: "/System/Volumes/Data",
+      type: "apfs",
+    })
+    expect(t[4]).toEqual({
+      source: "//winvm-share@127.0.0.1:61308/C",
+      dir: "/Users/me/winvm/vm/C",
+      type: "smbfs",
+    })
     expect(t[5]?.dir).toBe("/Users/me/My Stuff/winvm/vm/Home")
   })
 
   it("knows our mount: smbfs, exactly that folder, 127.0.0.1 on our port, that share", () => {
     const t = parseMountTable(TABLE)
     const want = { dir: "/Users/me/winvm/vm/C", port: PORT, share: "C" }
-    expect(findOurMount(t, want)?.source).toBe("//winvm-share@127.0.0.1:61308/C")
+    expect(findOurMount(t, want)?.source).toBe(
+      "//winvm-share@127.0.0.1:61308/C",
+    )
     expect(findOurMount(t, { ...want, share: "c" })).not.toBeNull()
     expect(findOurMount(t, { ...want, port: PORT + 1 })).toBeNull()
     expect(findOurMount(t, { ...want, share: "Home" })).toBeNull()
-    const e: MountEntry = { source: "//winvm-share@10.0.0.9:61308/C", dir: want.dir, type: "smbfs" }
+    const e: MountEntry = {
+      source: "//winvm-share@10.0.0.9:61308/C",
+      dir: want.dir,
+      type: "smbfs",
+    }
     expect(isOurMount(e, want)).toBe(false)
-    expect(isOurMount({ ...e, source: "//winvm-share@127.0.0.1:61308/C", type: "nfs" }, want)).toBe(false)
+    expect(
+      isOurMount(
+        { ...e, source: "//winvm-share@127.0.0.1:61308/C", type: "nfs" },
+        want,
+      ),
+    ).toBe(false)
   })
 
   it("refuses a folder that is not a mount point, even inside one", () => {
     const t = parseMountTable(TABLE)
-    // Inside the Data volume, and inside our own mount: neither is a mount point itself.
-    expect(findOurMount(t, { dir: "/Users/me/winvm/vm", port: PORT, share: "C" })).toBeNull()
-    expect(findOurMount(t, { dir: "/Users/me/winvm/vm/C/Windows", port: PORT, share: "C" })).toBeNull()
-    expect(findOurMount(t, { dir: "/System/Volumes/Data", port: PORT, share: "C" })).toBeNull()
+    expect(
+      findOurMount(t, { dir: "/Users/me/winvm/vm", port: PORT, share: "C" }),
+    ).toBeNull()
+    expect(
+      findOurMount(t, {
+        dir: "/Users/me/winvm/vm/C/Windows",
+        port: PORT,
+        share: "C",
+      }),
+    ).toBeNull()
+    expect(
+      findOurMount(t, { dir: "/System/Volumes/Data", port: PORT, share: "C" }),
+    ).toBeNull()
   })
 })
 
 describe("guest paths to shares", () => {
   it("maps the profile to Home and the rest of C:\\ to C", () => {
-    expect(shareFor("C:\\Users\\Administrator\\Desktop\\a b")).toEqual({ key: "home", rel: ["Desktop", "a b"] })
+    expect(shareFor("C:\\Users\\Administrator\\Desktop\\a b")).toEqual({
+      key: "home",
+      rel: ["Desktop", "a b"],
+    })
     expect(shareFor("c:/users/administrator")).toEqual({ key: "home", rel: [] })
-    expect(shareFor("C:\\Users\\Public")).toEqual({ key: "c", rel: ["Users", "Public"] })
+    expect(shareFor("C:\\Users\\Public")).toEqual({
+      key: "c",
+      rel: ["Users", "Public"],
+    })
     expect(shareFor("C:\\")).toEqual({ key: "c", rel: [] })
     expect(shareFor("D:\\x")).toBeNull()
     expect(shareFor("C:\\Windows\\..\\Users")).toBeNull()
@@ -147,9 +223,18 @@ describe("guest paths to shares", () => {
 
 describe("the guest's setup", () => {
   it("holds the body to plain characters", () => {
-    expect(smbSetupError({ user: "winvm-share", password: "x".repeat(19) })).not.toBeNull()
-    expect(smbSetupError({ user: "winvm-share", password: `${"x".repeat(24)}'; rm` })).not.toBeNull()
-    expect(smbSetupError({ user: "a b", password: "x".repeat(24) })).not.toBeNull()
+    expect(
+      smbSetupError({ user: "winvm-share", password: "x".repeat(19) }),
+    ).not.toBeNull()
+    expect(
+      smbSetupError({
+        user: "winvm-share",
+        password: `${"x".repeat(24)}'; rm`,
+      }),
+    ).not.toBeNull()
+    expect(
+      smbSetupError({ user: "a b", password: "x".repeat(24) }),
+    ).not.toBeNull()
     expect(smbSetupError({ password: "x".repeat(24) })).not.toBeNull()
   })
 
@@ -157,30 +242,53 @@ describe("the guest's setup", () => {
     const pw = newPassword()
     const s = smbSetupScript({ user: "winvm-share", password: pw })
     expect(s.split(pw)).toHaveLength(2)
-    for (const right of ["SeDenyInteractiveLogonRight", "SeDenyRemoteInteractiveLogonRight", "SeDenyBatchLogonRight", "SeDenyServiceLogonRight"]) {
+    for (const right of [
+      "SeDenyInteractiveLogonRight",
+      "SeDenyRemoteInteractiveLogonRight",
+      "SeDenyBatchLogonRight",
+      "SeDenyServiceLogonRight",
+    ]) {
       expect(s).toContain(right)
     }
     expect(s).not.toContain("SeDenyNetworkLogonRight")
-    expect(s.indexOf("New-LocalUser")).toBeLessThan(s.indexOf("secedit /configure"))
+    expect(s.indexOf("New-LocalUser")).toBeLessThan(
+      s.indexOf("secedit /configure"),
+    )
     expect(s).toContain("New-LocalUser -Name $user -Password $secret -Disabled")
-    expect(s.indexOf("secedit /configure")).toBeLessThan(s.indexOf("Enable-LocalUser"))
+    expect(s.indexOf("secedit /configure")).toBeLessThan(
+      s.indexOf("Enable-LocalUser"),
+    )
     expect(s).toContain("SpecialAccounts\\UserList")
     expect(s).toContain("-RemoteAddress 10.0.2.2")
     expect(s).toContain("-CachingMode None")
-    expect(s).toContain(`'Home' = '${SMB_SHARES["Home"] ?? ""}'`)
+    expect(s).toContain(`'Home' = '${SMB_SHARES.Home ?? ""}'`)
     expect(s).not.toMatch(/EncryptData|RequireSecuritySignature/)
   })
   it("is a route that takes the password in the body, checks it, and runs only in Windows", async () => {
     const tokenFile = resolve(state, "token")
     writeFileSync(tokenFile, "tok\n")
-    const server = startAgent({ port: 0, hostname: "127.0.0.1", tokenFile, allowFrom: ["127.0.0.1", "::1"] })
+    const server = startAgent({
+      port: 0,
+      hostname: "127.0.0.1",
+      tokenFile,
+      allowFrom: ["127.0.0.1", "::1"],
+    })
     try {
-      const c = new AgentClient(`http://127.0.0.1:${String(server.port)}`, "tok")
-      const bad = await c.smbSetup({ user: "winvm-share", password: "short" }).catch((e: unknown) => e)
+      const c = new AgentClient(
+        `http://127.0.0.1:${String(server.port)}`,
+        "tok",
+      )
+      const bad = await c
+        .smbSetup({ user: "winvm-share", password: "short" })
+        .catch((e: unknown) => e)
       expect(bad).toBeInstanceOf(AgentError)
       expect((bad as AgentError).status).toBe(400)
-      const elsewhere = await c.smbSetup({ user: "winvm-share", password: newPassword() }).catch((e: unknown) => e)
-      expect((elsewhere as AgentError).status).toBe(process.platform === "win32" ? 200 : 501)
+      const elsewhere = await c
+        .smbSetup({ user: "winvm-share", password: newPassword() })
+        .catch((e: unknown) => e)
+      expect((elsewhere as AgentError).status).toBe(
+        process.platform === "win32" ? 200 : 501,
+      )
     } finally {
       server.stop()
     }
@@ -200,14 +308,11 @@ describe("the forward to 445", () => {
   })
 })
 
-// --- the fake Mac --------------------------------------------------------------
-
 interface Fake extends Sys {
   table: MountEntry[]
   ran: string[]
   mounts: string[]
   setups: number
-  /** What the next mounts answer, in turn; then 0. */
   answers: number[]
   isRunning: boolean
   umountWorks: boolean
@@ -226,7 +331,8 @@ function fakeSys(): Fake {
     run: (cmd, args) => {
       f.ran.push([cmd, ...args].join(" "))
       const dir = args.at(-1)
-      if (cmd.endsWith("diskutil") || f.umountWorks) f.table = f.table.filter((e) => e.dir !== dir)
+      if (cmd.endsWith("diskutil") || f.umountWorks)
+        f.table = f.table.filter((e) => e.dir !== dir)
       return { code: 0, out: "" }
     },
     mount: async (req) => {
@@ -234,7 +340,11 @@ function fakeSys(): Fake {
       const code = f.answers.shift() ?? 0
       if (code === 0) {
         const m = /^smb:\/\/127\.0\.0\.1:(\d+)\/(\w+)$/.exec(req.url)
-        f.table.push({ source: `//${req.user}@127.0.0.1:${m?.[1] ?? ""}/${m?.[2] ?? ""}`, dir: req.dir, type: "smbfs" })
+        f.table.push({
+          source: `//${req.user}@127.0.0.1:${m?.[1] ?? ""}/${m?.[2] ?? ""}`,
+          dir: req.dir,
+          type: "smbfs",
+        })
       }
       return await Promise.resolve(code)
     },
@@ -244,43 +354,69 @@ function fakeSys(): Fake {
     },
     forward: async () => await Promise.resolve(PORT),
     running: () => f.isRunning,
-    sleep: async () => await Promise.resolve(),
+    sleep: async () => {
+      await Promise.resolve()
+    },
     log: () => undefined,
   }
   return f
 }
 
 const mountedAt = (f: Fake, key: "c" | "home"): boolean =>
-  findOurMount(f.table, { dir: mountDir("vm", key), port: PORT, share: SHARES[key].share }) !== null
+  findOurMount(f.table, {
+    dir: mountDir("vm", key),
+    port: PORT,
+    share: SHARES[key].share,
+  }) !== null
 
 describe("unmounting", () => {
   it("does nothing at all to a folder that is not our mount point", () => {
     const f = fakeSys()
-    // The Data volume is in the table; the folder is merely inside it.
-    expect(unmountShare({ dir: mountDir("vm", "c"), port: PORT, share: "C" }, f)).toBe("not-mounted")
-    expect(unmountShare({ dir: "/System/Volumes/Data", port: PORT, share: "C" }, f)).toBe("not-mounted")
+    expect(
+      unmountShare({ dir: mountDir("vm", "c"), port: PORT, share: "C" }, f),
+    ).toBe("not-mounted")
+    expect(
+      unmountShare({ dir: "/System/Volumes/Data", port: PORT, share: "C" }, f),
+    ).toBe("not-mounted")
     expect(f.ran).toEqual([])
   })
 
   it("leaves another server's share on our folder alone", () => {
     const f = fakeSys()
-    f.table.push({ source: "//someone@127.0.0.1:445/C", dir: mountDir("vm", "c"), type: "smbfs" })
-    expect(unmountShare({ dir: mountDir("vm", "c"), port: PORT, share: "C" }, f)).toBe("not-mounted")
+    f.table.push({
+      source: "//someone@127.0.0.1:445/C",
+      dir: mountDir("vm", "c"),
+      type: "smbfs",
+    })
+    expect(
+      unmountShare({ dir: mountDir("vm", "c"), port: PORT, share: "C" }, f),
+    ).toBe("not-mounted")
     expect(f.ran).toEqual([])
   })
 
   it("umounts, and forces only a mount point that is still ours", () => {
     const f = fakeSys()
     const dir = mountDir("vm", "c")
-    f.table.push({ source: `//winvm-share@127.0.0.1:${String(PORT)}/C`, dir, type: "smbfs" })
+    f.table.push({
+      source: `//winvm-share@127.0.0.1:${String(PORT)}/C`,
+      dir,
+      type: "smbfs",
+    })
     expect(unmountShare({ dir, port: PORT, share: "C" }, f)).toBe("unmounted")
     expect(f.ran).toEqual([`/sbin/umount ${dir}`])
 
     const g = fakeSys()
     g.umountWorks = false
-    g.table.push({ source: `//winvm-share@127.0.0.1:${String(PORT)}/C`, dir, type: "smbfs" })
+    g.table.push({
+      source: `//winvm-share@127.0.0.1:${String(PORT)}/C`,
+      dir,
+      type: "smbfs",
+    })
     expect(unmountShare({ dir, port: PORT, share: "C" }, g)).toBe("unmounted")
-    expect(g.ran).toEqual([`/sbin/umount ${dir}`, `/usr/sbin/diskutil unmount force ${dir}`])
+    expect(g.ran).toEqual([
+      `/sbin/umount ${dir}`,
+      `/usr/sbin/diskutil unmount force ${dir}`,
+    ])
   })
 })
 
@@ -290,18 +426,25 @@ describe("mounting", () => {
     const dirs = await mountShares("vm", ["home", "c"], { sys: f })
     expect(dirs).toEqual([mountDir("vm", "home"), mountDir("vm", "c")])
     expect(f.setups).toBe(1)
-    expect(f.mounts).toEqual([`smb://127.0.0.1:${String(PORT)}/Home`, `smb://127.0.0.1:${String(PORT)}/C`])
+    expect(f.mounts).toEqual([
+      `smb://127.0.0.1:${String(PORT)}/Home`,
+      `smb://127.0.0.1:${String(PORT)}/C`,
+    ])
     expect(readSmb(pathsFor("vm"))?.mounted).toEqual(["home", "c"])
     expect(readSmb(pathsFor("vm"))?.hostPort).toBe(PORT)
     expect(existsSync(mountDir("vm", "c"))).toBe(true)
-    // Again: already mounted, nothing to do.
     await mountShares("vm", ["c"], { sys: f })
     expect(f.mounts).toHaveLength(2)
   })
 
   it("runs the setup again when the guest refuses the password", async () => {
     const f = fakeSys()
-    writeSmb(pathsFor("vm"), { user: "winvm-share", password: newPassword(), hostPort: PORT, mounted: [] })
+    writeSmb(pathsFor("vm"), {
+      user: "winvm-share",
+      password: newPassword(),
+      hostPort: PORT,
+      mounted: [],
+    })
     f.answers = [EAUTH]
     await mountShares("vm", ["c"], { sys: f })
     expect(f.setups).toBe(1)
@@ -311,7 +454,12 @@ describe("mounting", () => {
 
   it("waits for a file server that is still starting, then gives up and says so", async () => {
     const f = fakeSys()
-    writeSmb(pathsFor("vm"), { user: "winvm-share", password: newPassword(), hostPort: PORT, mounted: [] })
+    writeSmb(pathsFor("vm"), {
+      user: "winvm-share",
+      password: newPassword(),
+      hostPort: PORT,
+      mounted: [],
+    })
     f.answers = [61, 61, 61]
     await mountShares("vm", ["c"], { sys: f, waitMs: 60_000 })
     expect(f.setups).toBe(0)
@@ -319,21 +467,36 @@ describe("mounting", () => {
 
     const g = fakeSys()
     g.isRunning = false
-    await expect(mountShares("vm", ["c"], { sys: g })).rejects.toThrow(/not running/)
+    await expect(mountShares("vm", ["c"], { sys: g })).rejects.toThrow(
+      /not running/,
+    )
   })
 
   it("refuses to mount over something else mounted there", async () => {
     const f = fakeSys()
-    f.table.push({ source: "//other@10.0.0.2/share", dir: mountDir("vm", "c"), type: "smbfs" })
-    await expect(mountShares("vm", ["c"], { sys: f })).rejects.toThrow(/already has/)
+    f.table.push({
+      source: "//other@10.0.0.2/share",
+      dir: mountDir("vm", "c"),
+      type: "smbfs",
+    })
+    await expect(mountShares("vm", ["c"], { sys: f })).rejects.toThrow(
+      /already has/,
+    )
     expect(f.mounts).toEqual([])
   })
 
   it("fails with what the guest said, after one setup", async () => {
     const f = fakeSys()
-    writeSmb(pathsFor("vm"), { user: "winvm-share", password: newPassword(), hostPort: PORT, mounted: [] })
+    writeSmb(pathsFor("vm"), {
+      user: "winvm-share",
+      password: newPassword(),
+      hostPort: PORT,
+      mounted: [],
+    })
     f.answers = [EAUTH, EAUTH]
-    await expect(mountShares("vm", ["home"], { sys: f })).rejects.toThrow(/refused the sign-in/)
+    await expect(mountShares("vm", ["home"], { sys: f })).rejects.toThrow(
+      /refused the sign-in/,
+    )
     expect(f.setups).toBe(1)
   })
 })
@@ -352,9 +515,11 @@ describe("the lifecycle hooks", () => {
     const f = await twoMounted()
     beforeDown("vm", f)
     expect(mountedAt(f, "home") || mountedAt(f, "c")).toBe(false)
-    expect(f.ran).toEqual([`/sbin/umount ${mountDir("vm", "home")}`, `/sbin/umount ${mountDir("vm", "c")}`])
+    expect(f.ran).toEqual([
+      `/sbin/umount ${mountDir("vm", "home")}`,
+      `/sbin/umount ${mountDir("vm", "c")}`,
+    ])
     expect(readSmb(pathsFor("vm"))?.mounted).toEqual(["home", "c"])
-    // The empty mount folders go.
     expect(existsSync(mountDir("vm", "c"))).toBe(false)
   })
 
@@ -401,10 +566,16 @@ describe("the lifecycle hooks", () => {
     expect(cleanStale("vm", f)).toEqual([])
     expect(f.ran).toEqual([])
     f.isRunning = false
-    expect(staleMounts("vm", f)).toEqual([mountDir("vm", "home"), mountDir("vm", "c")])
+    expect(staleMounts("vm", f)).toEqual([
+      mountDir("vm", "home"),
+      mountDir("vm", "c"),
+    ])
     const said = spyOn(console, "error").mockImplementation(() => undefined)
     try {
-      expect(cleanStale("vm", f)).toEqual([mountDir("vm", "home"), mountDir("vm", "c")])
+      expect(cleanStale("vm", f)).toEqual([
+        mountDir("vm", "home"),
+        mountDir("vm", "c"),
+      ])
     } finally {
       said.mockRestore()
     }
@@ -433,7 +604,9 @@ describe("the lifecycle hooks", () => {
       ["home", true, true],
       ["c", false, false],
     ])
-    expect(JSON.stringify(st)).not.toContain(readSmb(pathsFor("vm"))?.password ?? "?")
+    expect(JSON.stringify(st)).not.toContain(
+      readSmb(pathsFor("vm"))?.password ?? "?",
+    )
     expect(readFileSync(smbPath(pathsFor("vm")), "utf8")).toContain('"mounted"')
   })
 

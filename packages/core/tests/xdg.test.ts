@@ -13,7 +13,10 @@ describe("XDG base directories", () => {
 
   it("falls back to the defaults under HOME when unset, empty or relative", () => {
     for (const v of [undefined, "", "relative/dir", "./x"]) {
-      const env = { HOME: "/h", ...(v === undefined ? {} : { XDG_CONFIG_HOME: v, XDG_DATA_HOME: v }) }
+      const env = {
+        HOME: "/h",
+        ...(v === undefined ? {} : { XDG_CONFIG_HOME: v, XDG_DATA_HOME: v }),
+      }
       expect(configDir(env)).toBe("/h/.config/winvm")
       expect(dataDir(env)).toBe("/h/.local/share/winvm")
     }

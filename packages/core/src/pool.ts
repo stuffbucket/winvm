@@ -1,125 +1,98 @@
-/**
- * `winvm test <dir> --pool N [--pool-prefix ci]`: the same jobs as `winvm
- * test`, spread over N instances (ci-1 … ci-N) that run them side by side.
- *
- * SCHEDULING. One worker per instance pulls the next job off a shared queue,
- * resets its instance to the job's golden, runs it, and pulls again. A reset
- * (~1.2 s, mapped-ram) only blocks its own instance; the others keep running
- * jobs, so after the first round almost no wall-clock time goes to resetting.
- * The summary measures exactly that — "exposed reset", time when an instance
- * was resetting and none was running a job (report.ts, PoolStats).
- *
- * The queue is longest job first, by each job's time in the previous pool run
- * ($WINVM_HOME/runs/job-times.json; unknown jobs first): started last, the
- * one long job would be the whole tail of the run. Results are reported in
- * file order regardless.
- *
- * GOLDENS. The golden is created once, on the first member (runner.ts,
- * ensureGolden: boot, agent, settle, mapped-ram save — minutes), and the others
- * get an APFS-clone copy of it (saves.cloneSave): no boot, no settling, no
- * disk. A save holds no per-instance identity a load depends on — QEMU's
- * paths, sockets and VNC port are excluded from its compatibility hash, the
- * agent's port forward is added at runtime — except the agent's token, which
- * lives in the guest and so is copied across into each member's agent.json
- * (with that member's own host port). A member whose virtual hardware differs
- * (cloneSave refuses) gets its own golden made independently, in parallel.
- * A clone records where it came from, so a rebuilt first golden is re-cloned.
- *
- * FAILURE ISOLATION. Each job runs under a watchdog (its timeout + 5 min).
- * A job that outlives it — wedged guest, hung monitor — is recorded as an
- * error, cancelled (runner.ts stops between steps), and its instance's QEMU is
- * killed; the next reset starts a fresh one from the golden. A reset that fails
- * is retried once after killing QEMU; if it fails again the instance is retired
- * and its job goes back on the queue for another member. Other instances never
- * notice.
- *
- * RESOURCES. Every instance is the image's fixed 4 vCPUs / 4 GiB (part of a
- * save's compatibility hash, so not tunable per pool); a pool that would
- * oversubscribe the host's cores or half its memory is warned about.
- */
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs"
 import { availableParallelism, totalmem } from "node:os"
 import { dirname, resolve } from "node:path"
 
 import { ensureState, readState, writeState } from "./agentfwd"
 import type { Args } from "./args"
+import { parseDuration } from "./golden"
 import { NEW_DEFAULT } from "./hardware"
 import type { Job } from "./job"
+import { withOperation } from "./operation"
 import { home, pathsFor, readMeta } from "./paths"
-import { parseDuration } from "./golden"
 import * as qemu from "./qemu"
 import type { JobResult } from "./report"
-import { DEFAULT_GOLDEN, ensureGolden, instanceProblem, resolveHostFiles, runJob } from "./runner"
+import {
+  DEFAULT_GOLDEN,
+  ensureGolden,
+  instanceProblem,
+  resolveHostFiles,
+  runJob,
+} from "./runner"
 import * as saves from "./saves"
 import * as watcher from "./watch"
 
-const errMsg = (e: unknown): string => (e instanceof Error ? e.message : String(e))
-const sleep = async (ms: number): Promise<void> => await new Promise((r) => setTimeout(r, ms))
+const errMsg = (e: unknown): string =>
+  e instanceof Error ? e.message : String(e)
+const sleep = async (ms: number): Promise<void> => {
+  await new Promise((r) => setTimeout(r, ms))
+}
 
-/** Per instance, as a new machine is made (hardware.ts NEW_DEFAULT). */
 export const VCPUS = NEW_DEFAULT.cpus
 export const MEMORY_BYTES = NEW_DEFAULT.memoryMiB * 1024 ** 2
-/** A job gets this long past its own timeout before the watchdog gives up on it. WINVM_POOL_GRACE overrides. */
 export const WATCHDOG_GRACE_MS = 5 * 60_000
 const watchdogGraceMs = (): number => {
-  const v = process.env["WINVM_POOL_GRACE"]
+  const v = process.env.WINVM_POOL_GRACE
   return v === undefined || v === "" ? WATCHDOG_GRACE_MS : parseDuration(v)
 }
 
-// ---------------------------------------------------------------------------
-// Pure logic (unit-tested)
+export const poolMembers = (prefix: string, n: number): string[] =>
+  Array.from({ length: n }, (_, i) => `${prefix}-${String(i + 1)}`)
 
-export const poolMembers = (prefix: string, n: number): string[] => Array.from({ length: n }, (_, i) => `${prefix}-${String(i + 1)}`)
-
-/** Why a pool size is unusable, or null. */
 export function poolSizeError(raw: string): string | null {
-  if (!/^\d+$/.test(raw)) return `--pool takes a number of instances, got "${raw}"`
+  if (!/^\d+$/.test(raw))
+    return `--pool takes a number of instances, got "${raw}"`
   const n = Number(raw)
   if (n < 1 || n > 16) return `--pool must be 1-16, got ${String(n)}`
   return null
 }
 
-/** What a pool of `n` would oversubscribe on a host with `cpus` cores and `memBytes` of RAM. */
-export function resourceWarnings(n: number, cpus: number, memBytes: number): string[] {
+export function resourceWarnings(
+  n: number,
+  cpus: number,
+  memBytes: number,
+): string[] {
   const out: string[] = []
-  if (n * VCPUS > cpus) out.push(`${String(n)} instances x ${String(VCPUS)} vCPUs is more than the host's ${String(cpus)} cores; jobs will contend`)
+  if (n * VCPUS > cpus)
+    out.push(
+      `${String(n)} instances x ${String(VCPUS)} vCPUs is more than the host's ${String(cpus)} cores; jobs will contend`,
+    )
   if (n * MEMORY_BYTES > memBytes / 2) {
-    out.push(`${String(n)} instances x ${saves.formatBytes(MEMORY_BYTES)} is more than half the host's ${saves.formatBytes(memBytes)} of memory`)
+    out.push(
+      `${String(n)} instances x ${saves.formatBytes(MEMORY_BYTES)} is more than half the host's ${saves.formatBytes(memBytes)} of memory`,
+    )
   }
   return out
 }
 
-/** A result whose reset failed: the instance, not the job, is what is broken. */
-export const isResetFailure = (r: JobResult): boolean => r.status === "error" && (r.error ?? "").startsWith("reset to ")
+export const isResetFailure = (r: JobResult): boolean =>
+  r.status === "error" && (r.error ?? "").startsWith("reset to ")
 
-/**
- * Indexes of `keys` in the order to queue them: longest last-known time first,
- * jobs never timed before all of those (they might be the long ones), ties in
- * file order.
- */
-export function longestFirst(keys: readonly string[], lastMs: Readonly<Record<string, number>>): number[] {
-  const t = (i: number): number => lastMs[keys[i] ?? ""] ?? Number.POSITIVE_INFINITY
-  return keys.map((_, i) => i).sort((a, b) => (t(a) === t(b) ? a - b : t(b) - t(a)))
+export function longestFirst(
+  keys: readonly string[],
+  lastMs: Readonly<Record<string, number>>,
+): number[] {
+  const t = (i: number): number =>
+    lastMs[keys[i] ?? ""] ?? Number.POSITIVE_INFINITY
+  return keys
+    .map((_, i) => i)
+    .sort((a, b) => (t(a) === t(b) ? a - b : t(b) - t(a)))
 }
 
 export interface ScheduleDeps<J> {
-  /** Run one job on one instance (reset included). Never throws. */
   readonly run: (job: J, instance: string) => Promise<JobResult>
-  /** Bring a misbehaving instance back to "can be reset": kill its QEMU. */
   readonly recover: (instance: string) => Promise<void>
   readonly log: (instance: string, line: string) => void
-  /** Stands in for a job no instance was left to run. */
   readonly abandoned: (job: J, why: string) => JobResult
 }
 
-/**
- * Run `jobs` over `instances`, a worker per instance pulling from one queue.
- * Results come back in job order. See the top of this file for the failure
- * rules; pure apart from what `deps` does, so it is tested with fakes.
- */
-export async function schedule<J>(jobs: readonly J[], instances: readonly string[], deps: ScheduleDeps<J>): Promise<JobResult[]> {
+export async function schedule<J>(
+  jobs: readonly J[],
+  instances: readonly string[],
+  deps: ScheduleDeps<J>,
+): Promise<JobResult[]> {
   const results: (JobResult | undefined)[] = jobs.map(() => undefined)
-  const queue: { readonly index: number; readonly requeued: boolean }[] = jobs.map((_, index) => ({ index, requeued: false }))
+  const queue: { readonly index: number; readonly requeued: boolean }[] =
+    jobs.map((_, index) => ({ index, requeued: false }))
   const alive = new Set(instances)
 
   const worker = async (instance: string): Promise<void> => {
@@ -127,14 +100,20 @@ export async function schedule<J>(jobs: readonly J[], instances: readonly string
       const job = jobs[item.index] as J
       let r = await deps.run(job, instance)
       if (isResetFailure(r)) {
-        deps.log(instance, `reset failed (${r.error ?? ""}); restarting the instance and trying again`)
+        deps.log(
+          instance,
+          `reset failed (${r.error ?? ""}); restarting the instance and trying again`,
+        )
         await deps.recover(instance)
         r = await deps.run(job, instance)
       }
       if (isResetFailure(r)) {
         alive.delete(instance)
         if (!item.requeued && alive.size > 0) {
-          deps.log(instance, `still cannot reset: retiring this instance; job #${String(item.index + 1)} goes back on the queue`)
+          deps.log(
+            instance,
+            `still cannot reset: retiring this instance; job #${String(item.index + 1)} goes back on the queue`,
+          )
           queue.push({ index: item.index, requeued: true })
         } else {
           deps.log(instance, "still cannot reset: retiring this instance")
@@ -146,21 +125,23 @@ export async function schedule<J>(jobs: readonly J[], instances: readonly string
     }
   }
 
-  // A job requeued after the other workers had already found the queue empty
-  // needs another round.
-  while (queue.length > 0 && alive.size > 0) await Promise.all([...alive].map(worker))
-  return results.map((r, i) => r ?? deps.abandoned(jobs[i] as J, "no instance in the pool could be reset"))
+  while (queue.length > 0 && alive.size > 0)
+    await Promise.all([...alive].map(worker))
+  return results.map(
+    (r, i) =>
+      r ??
+      deps.abandoned(jobs[i] as J, "no instance in the pool could be reset"),
+  )
 }
-
-// ---------------------------------------------------------------------------
-// Job times, for the queue order
 
 const timesPath = (): string => resolve(home(), "runs", "job-times.json")
 
 function readTimes(): Record<string, number> {
   try {
     const o = JSON.parse(readFileSync(timesPath(), "utf8")) as unknown
-    return typeof o === "object" && o !== null ? (o as Record<string, number>) : {}
+    return typeof o === "object" && o !== null
+      ? (o as Record<string, number>)
+      : {}
   } catch {
     return {}
   }
@@ -168,38 +149,42 @@ function readTimes(): Record<string, number> {
 
 function writeTimes(results: readonly JobResult[]): void {
   const t = readTimes()
-  for (const r of results) if (r.file !== "" && r.status !== "error") t[r.file] = r.totalMs
+  for (const r of results)
+    if (r.file !== "" && r.status !== "error") t[r.file] = r.totalMs
   try {
     mkdirSync(dirname(timesPath()), { recursive: true })
     writeFileSync(timesPath(), `${JSON.stringify(t, null, 2)}\n`)
-  } catch {
-    // Only an ordering hint.
-  }
+  } catch {}
 }
 
-// ---------------------------------------------------------------------------
-// Goldens for every member
-
-/** Give `to` a golden `name` cloned from `from`'s, unless it already has a current one. */
-async function cloneGolden(from: string, to: string, name: string, log: (s: string) => void): Promise<boolean> {
+async function cloneGolden(
+  from: string,
+  to: string,
+  name: string,
+  log: (s: string) => void,
+): Promise<boolean> {
   const src = saves.readSave(from, name)
   if (src === null) throw new Error(`"${from}" has no golden "${name}"`)
   const have = saves.readSave(to, name)
   if (have !== null) {
     const c = have.clonedFrom
-    // Current clone, or a golden made on the member itself: keep it.
-    if (c === undefined || (c.instance === from && c.createdAt === src.createdAt)) return true
+    if (
+      c === undefined ||
+      (c.instance === from && c.createdAt === src.createdAt)
+    )
+      return true
   }
   try {
     await saves.cloneSave(from, to, name)
   } catch (error) {
     if (error instanceof saves.IncompatibleSave) {
-      log(`cannot clone "${from}"'s golden to "${to}" (${error.message}); creating one there`)
+      log(
+        `cannot clone "${from}"'s golden to "${to}" (${error.message}); creating one there`,
+      )
       return false
     }
     throw error
   }
-  // The guest in the clone answers to `from`'s token; the host port stays `to`'s own.
   const token = readState(pathsFor(from))?.token
   if (token !== undefined) {
     const own = ensureState(pathsFor(to))
@@ -220,33 +205,44 @@ async function ensurePoolGoldens(
   for (const g of goldens) {
     await ensureGolden(first, g, log, image)
     const independent: string[] = []
-    for (const m of rest) if (!(await cloneGolden(first, m, g, log))) independent.push(m)
-    await Promise.all(independent.map(async (m) => await ensureGolden(m, g, (s) => log(`[${m}] ${s}`), image)))
+    for (const m of rest)
+      if (!(await cloneGolden(first, m, g, log))) independent.push(m)
+    await Promise.all(
+      independent.map(
+        async (m) =>
+          await ensureGolden(
+            m,
+            g,
+            (s) => {
+              log(`[${m}] ${s}`)
+            },
+            image,
+          ),
+      ),
+    )
   }
 }
 
-// ---------------------------------------------------------------------------
-// Running
-
-/** Kill an instance's QEMU outright; the next reset launches a fresh one. */
 async function hardStop(instance: string): Promise<void> {
   const p = pathsFor(instance)
   const pid = qemu.pidOf(p)
-  if (pid !== null) {
+  if (pid !== null && qemu.isInstanceQemu(pid, p)) {
     try {
-      process.kill(pid, "SIGKILL")
-    } catch {
-      // Gone already.
-    }
+      await qemu.killQemu(p, pid)
+    } catch {}
     for (let i = 0; i < 100 && qemu.pidOf(p) !== null; i += 1) await sleep(100)
   }
   qemu.stopSidecars(p)
-  // A reset the watchdog abandoned may still hold the save lock; give it a
-  // moment to fail and let go now that its QEMU is gone.
   await sleep(2000)
 }
 
-function stub(job: Job, instance: string, status: JobResult["status"], error: string, startedAt: number): JobResult {
+function stub(
+  job: Job,
+  instance: string,
+  status: JobResult["status"],
+  error: string,
+  startedAt: number,
+): JobResult {
   return {
     name: job.name,
     file: job.file,
@@ -281,34 +277,52 @@ export interface PoolRun {
   readonly instances: readonly string[]
 }
 
-/** Lines from concurrent jobs, each tagged with its instance. */
 const tagged =
   (instance: string) =>
   (line: string): void => {
-    for (const l of line.split("\n")) console.log(l === "" ? "" : `[${instance}] ${l}`)
+    for (const l of line.split("\n"))
+      console.log(l === "" ? "" : `[${instance}] ${l}`)
   }
 
-export async function runPool(jobs: readonly Job[], o: PoolOptions): Promise<PoolRun> {
+export async function runPool(
+  jobs: readonly Job[],
+  o: PoolOptions,
+): Promise<PoolRun> {
   const t0 = Date.now()
   const members = poolMembers(o.prefix, o.size)
   for (const m of members) {
     const problem = instanceProblem(m)
     if (problem !== null) throw new Error(problem)
   }
-  if (jobs.some((j) => !j.reset)) throw new Error("--pool runs every job from a golden; a job with `reset: false` depends on the one before it")
-  for (const w of resourceWarnings(o.size, availableParallelism(), totalmem())) console.log(`warning: ${w}`)
-  const stamp = new Date().toISOString().replace(/[:]/g, "").replace(/\..*$/, "")
-  const artifactsDir = resolve(o.artifactsDir ?? resolve(home(), "runs", `${o.prefix}-pool`, stamp))
-  console.log(`winvm test: ${String(jobs.length)} job(s) over ${String(o.size)} instance(s) (${members.join(", ")}); artifacts in ${artifactsDir}`)
-  for (const m of members) if (await watcher.stopWatcher(m)) console.log(`  stopped the idle watcher of "${m}"`)
+  if (jobs.some((j) => !j.reset))
+    throw new Error(
+      "--pool runs every job from a golden; a job with `reset: false` depends on the one before it",
+    )
+  for (const w of resourceWarnings(o.size, availableParallelism(), totalmem()))
+    console.log(`warning: ${w}`)
+  const stamp = new Date()
+    .toISOString()
+    .replace(/[:]/g, "")
+    .replace(/\..*$/, "")
+  const artifactsDir = resolve(
+    o.artifactsDir ?? resolve(home(), "runs", `${o.prefix}-pool`, stamp),
+  )
+  console.log(
+    `winvm test: ${String(jobs.length)} job(s) over ${String(o.size)} instance(s) (${members.join(", ")}); artifacts in ${artifactsDir}`,
+  )
+  for (const m of members)
+    if (await watcher.stopWatcher(m))
+      console.log(`  stopped the idle watcher of "${m}"`)
 
-  // Fetch every job's files once, up front: two jobs downloading the same
-  // release into the same cache directory at once would race.
   for (const job of jobs) for (const f of job.files) await resolveHostFiles(f)
 
   const image = o.image ?? readMeta(members[0] ?? "")?.image ?? null
-  const goldens = [...new Set(jobs.map((j) => o.golden ?? j.golden ?? DEFAULT_GOLDEN))]
-  await ensurePoolGoldens(members, goldens, image, (s) => console.log(s))
+  const goldens = [
+    ...new Set(jobs.map((j) => o.golden ?? j.golden ?? DEFAULT_GOLDEN)),
+  ]
+  await ensurePoolGoldens(members, goldens, image, (s) => {
+    console.log(s)
+  })
   const setupMs = Date.now() - t0
 
   const run = async (job: Job, instance: string): Promise<JobResult> => {
@@ -318,7 +332,9 @@ export async function runPool(jobs: readonly Job[], o: PoolOptions): Promise<Poo
     const watchdogMs = job.timeoutMs + watchdogGraceMs()
     let timer: ReturnType<typeof setTimeout> | undefined
     const wedged = new Promise<"wedged">((res) => {
-      timer = setTimeout(() => res("wedged"), watchdogMs)
+      timer = setTimeout(() => {
+        res("wedged")
+      }, watchdogMs)
     })
     const ran = runJob(job, {
       instance,
@@ -328,7 +344,9 @@ export async function runPool(jobs: readonly Job[], o: PoolOptions): Promise<Poo
         if (!cancelled) log(l)
       },
       cancelled: () => cancelled,
-    }).catch((error: unknown) => stub(job, instance, "error", `runner failed: ${errMsg(error)}`, started))
+    }).catch((error: unknown) =>
+      stub(job, instance, "error", `runner failed: ${errMsg(error)}`, started),
+    )
     const r = await Promise.race([ran, wedged])
     clearTimeout(timer)
     if (r !== "wedged") {
@@ -336,9 +354,17 @@ export async function runPool(jobs: readonly Job[], o: PoolOptions): Promise<Poo
       return r
     }
     cancelled = true
-    log(`  watchdog: no result ${String(Math.round(watchdogMs / 1000))} s in; killing the instance (the next job resets it)`)
+    log(
+      `  watchdog: no result ${String(Math.round(watchdogMs / 1000))} s in; killing the instance (the next job resets it)`,
+    )
     await hardStop(instance)
-    return stub(job, instance, "error", `wedged: no result after ${String(Math.round(watchdogMs / 1000))} s; instance restarted`, started)
+    return stub(
+      job,
+      instance,
+      "error",
+      `wedged: no result after ${String(Math.round(watchdogMs / 1000))} s; instance restarted`,
+      started,
+    )
   }
 
   const order = longestFirst(
@@ -351,7 +377,9 @@ export async function runPool(jobs: readonly Job[], o: PoolOptions): Promise<Poo
     {
       run,
       recover: hardStop,
-      log: (i, l) => tagged(i)(l),
+      log: (i, l) => {
+        tagged(i)(l)
+      },
       abandoned: (job, why) => stub(job, "", "error", why, Date.now()),
     },
   )
@@ -364,13 +392,22 @@ export async function runPool(jobs: readonly Job[], o: PoolOptions): Promise<Poo
   if (o.keep) {
     console.log(`\n--keep: instances left running in their last job's state`)
   } else {
-    await Promise.all(members.map(async (m) => await saves.quitQemu(pathsFor(m)).catch(() => undefined)))
+    await Promise.all(
+      members.map(async (m) => {
+        await withOperation(m, "stop", async () => {
+          await saves.quitQemu(pathsFor(m))
+        }).catch((error: unknown) => {
+          console.warn(`warning: left "${m}" running: ${errMsg(error)}`)
+        })
+      }),
+    )
   }
   return { results, setupMs, instances: members }
 }
 
-/** The pool flags, or null when `--pool` is absent. */
-export function poolOptions(args: Args): PoolOptions | { readonly error: string } | null {
+export function poolOptions(
+  args: Args,
+): PoolOptions | { readonly error: string } | null {
   const raw = args.flags.get("pool")
   if (raw === undefined) return null
   const err = poolSizeError(raw)
@@ -379,7 +416,7 @@ export function poolOptions(args: Args): PoolOptions | { readonly error: string 
     size: Number(raw),
     prefix: args.flags.get("pool-prefix") ?? "ci",
     golden: args.flags.get("golden") ?? null,
-    image: args.flags.get("image") ?? process.env["WINVM_IMAGE"] ?? null,
+    image: args.flags.get("image") ?? process.env.WINVM_IMAGE ?? null,
     artifactsDir: args.flags.get("artifacts") ?? null,
     keep: args.flags.has("keep"),
   }

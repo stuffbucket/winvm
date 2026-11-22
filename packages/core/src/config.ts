@@ -1,40 +1,26 @@
-/**
- * Per-instance settings: what the watcher does when the guest goes idle, and
- * the title the Mac app shows for the instance.
- *
- * Stored as OVERRIDES ONLY in `instances/<name>/config.json`, so a default that
- * changes in a later version reaches every instance that never chose otherwise.
- * `effectiveConfig` merges them over the defaults; `winvm config` prints that.
- *
- * Read by the watcher on every tick, so `winvm config ... key=value` takes
- * effect on a running watcher without restarting it.
- */
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs"
 import { resolve } from "node:path"
 
 import { instanceDir } from "./paths"
 
+export const CLOSE_POLICIES = ["ask", "leave", "stow", "shutdown"] as const
+
+export type ClosePolicy = (typeof CLOSE_POLICIES)[number]
+
+export const HOST_END_ACTIONS = ["stow", "shutdown"] as const
+
+export type HostEndAction = (typeof HOST_END_ACTIONS)[number]
+
 export interface InstanceConfig {
   readonly "autosave.enabled": boolean
   readonly "autosave.idleMinutes": number
   readonly "autosave.keep": number
+  readonly "hostEnd.action": HostEndAction
   readonly "stow.enabled": boolean
   readonly "stow.idleMinutes": number
+  readonly "viewer.closePolicy": ClosePolicy
   readonly "watch.enabled": boolean
-  /**
-   * The guest counts as busy above this share of its vCPU capacity (QEMU's
-   * process CPU time / wall time / vCPUs), averaged over the last minute.
-   *
-   * MEASURED on this guest (Windows 11 25H2 ARM64, 4 vCPUs, M-series host under
-   * heavy load), 15 s samples: an idle desktop is 0.2-1%, with background
-   * bursts (Defender, indexing) of 3-17% for a single sample; the worst
-   * 1-minute average seen idle was ~5.5%. One busy thread (`cmd /c for /L`
-   * loop via `winvm exec`) is 25%; four are 97-101%. 10% sits clear of both:
-   * a burst does not restart the idle clock, a single busy thread for half a
-   * minute does.
-   */
   readonly "watch.idleCpuPercent": number
-  /** What the Mac app calls this instance (its window, Terminal and Files); "" is the instance's name. */
   readonly title: string
 }
 
@@ -44,34 +30,39 @@ export const DEFAULTS: InstanceConfig = {
   "autosave.enabled": true,
   "autosave.idleMinutes": 10,
   "autosave.keep": 3,
+  "hostEnd.action": "stow",
   "stow.enabled": true,
   "stow.idleMinutes": 60,
+  "viewer.closePolicy": "ask",
   "watch.enabled": true,
   "watch.idleCpuPercent": 10,
   title: "",
 }
 
-/** The longest title, in characters. */
 export const TITLE_MAX = 80
 
-/**
- * A title as stored: trimmed, at most TITLE_MAX characters, and no control
- * characters (it is shown on one line, in a window title and a menu). Throws
- * with a message fit for the user.
- */
 export function checkTitle(raw: string): string {
   const title = raw.trim()
-  if ([...title].length > TITLE_MAX) throw new Error(`title is at most ${String(TITLE_MAX)} characters`)
-  // eslint-disable-next-line no-control-regex
-  if (/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/.test(title)) throw new Error("title is one line of text, without control characters")
+  if (Array.from(title).length > TITLE_MAX)
+    throw new Error(`title is at most ${String(TITLE_MAX)} characters`)
+  if (/[\p{Cc}\u2028\u2029]/u.test(title))
+    throw new Error("title is one line of text, without control characters")
   return title
 }
 
 type Value = InstanceConfig[ConfigKey]
 
+const isClosePolicy = (v: string): v is ClosePolicy =>
+  (CLOSE_POLICIES as readonly string[]).includes(v)
+
+const isHostEndAction = (v: string): v is HostEndAction =>
+  (HOST_END_ACTIONS as readonly string[]).includes(v)
+
 const valid = (k: ConfigKey, v: unknown): v is Value => {
   if (typeof v !== typeof DEFAULTS[k]) return false
   if (typeof v !== "string") return true
+  if (k === "viewer.closePolicy") return isClosePolicy(v)
+  if (k === "hostEnd.action") return isHostEndAction(v)
   try {
     return checkTitle(v) === v
   } catch {
@@ -81,11 +72,11 @@ const valid = (k: ConfigKey, v: unknown): v is Value => {
 
 export const CONFIG_KEYS = Object.keys(DEFAULTS) as readonly ConfigKey[]
 
-export const configPath = (name: string): string => resolve(instanceDir(name), "config.json")
+export const configPath = (name: string): string =>
+  resolve(instanceDir(name), "config.json")
 
 const isKey = (k: string): k is ConfigKey => Object.hasOwn(DEFAULTS, k)
 
-/** The overrides an instance has set, ignoring anything unknown or mistyped. */
 export function readOverrides(name: string): Partial<InstanceConfig> {
   let raw: unknown
   try {
@@ -105,18 +96,27 @@ export function effectiveConfig(name: string): InstanceConfig {
   return { ...DEFAULTS, ...readOverrides(name) }
 }
 
-/**
- * Parse one `key=value`. Throws with a message fit for the user, because the
- * alternative — storing a string where a number belongs — surfaces much later
- * as a watcher that silently never saves.
- */
 export function parseAssignment(assignment: string): [ConfigKey, Value] {
   const eq = assignment.indexOf("=")
   if (eq < 1) throw new Error(`expected key=value, got "${assignment}"`)
   const key = assignment.slice(0, eq).trim()
   const value = assignment.slice(eq + 1).trim()
-  if (!isKey(key)) throw new Error(`unknown setting "${key}" — one of: ${CONFIG_KEYS.join(", ")}`)
-  // An empty title clears it, back to the instance's name.
+  if (!isKey(key))
+    throw new Error(
+      `unknown setting "${key}" — one of: ${CONFIG_KEYS.join(", ")}`,
+    )
+  if (key === "viewer.closePolicy") {
+    if (isClosePolicy(value)) return [key, value]
+    throw new Error(
+      `${key} is one of: ${CLOSE_POLICIES.join(", ")}, got "${value}"`,
+    )
+  }
+  if (key === "hostEnd.action") {
+    if (isHostEndAction(value)) return [key, value]
+    throw new Error(
+      `${key} is one of: ${HOST_END_ACTIONS.join(", ")}, got "${value}"`,
+    )
+  }
   if (typeof DEFAULTS[key] === "string") return [key, checkTitle(value)]
   if (typeof DEFAULTS[key] === "boolean") {
     if (/^(true|on|yes|1)$/i.test(value)) return [key, true]
@@ -124,13 +124,17 @@ export function parseAssignment(assignment: string): [ConfigKey, Value] {
     throw new Error(`${key} is true or false, got "${value}"`)
   }
   const n = Number(value)
-  if (value === "" || !Number.isFinite(n) || n <= 0) throw new Error(`${key} is a positive number, got "${value}"`)
-  if (key === "autosave.keep" && !Number.isInteger(n)) throw new Error(`${key} is a whole number, got "${value}"`)
+  if (value === "" || !Number.isFinite(n) || n <= 0)
+    throw new Error(`${key} is a positive number, got "${value}"`)
+  if (key === "autosave.keep" && !Number.isInteger(n))
+    throw new Error(`${key} is a whole number, got "${value}"`)
   return [key, n]
 }
 
-/** Apply assignments and write the file atomically. Setting a key to its default removes the override. */
-export function writeAssignments(name: string, assignments: readonly (readonly [ConfigKey, Value])[]): void {
+export function writeAssignments(
+  name: string,
+  assignments: readonly (readonly [ConfigKey, Value])[],
+): void {
   const next: Partial<Record<ConfigKey, Value>> = { ...readOverrides(name) }
   for (const [k, v] of assignments) {
     if (DEFAULTS[k] === v) delete next[k]

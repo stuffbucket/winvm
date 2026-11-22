@@ -1,3 +1,4 @@
 [test]
 # `bun test` runs only this package's own tests (tests/**).
 root = "."
+preload = ["./tests/preload.ts"]
