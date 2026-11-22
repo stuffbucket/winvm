@@ -19,6 +19,33 @@ function exists(pid: number): boolean {
   }
 }
 
+export function signalProcess(
+  pid: number,
+  signal: NodeJS.Signals | 0,
+): boolean {
+  if (!Number.isInteger(pid) || pid <= 1) return false
+  process.kill(pid, signal)
+  return true
+}
+
+export function parseEtime(s: string): number | null {
+  const m = /^\s*(?:(\d+)-)?(?:(\d+):)?(\d+):(\d+)\s*$/.exec(s)
+  if (m === null) return null
+  const [, d, h, mm, ss] = m
+  return (
+    Number(d ?? 0) * 86400 +
+    Number(h ?? 0) * 3600 +
+    Number(mm) * 60 +
+    Number(ss)
+  )
+}
+
+export function processAgeMs(pid: number): number | null {
+  if (!exists(pid)) return null
+  const seconds = parseEtime(ps(["etime"], pid))
+  return seconds === null ? null : seconds * 1000
+}
+
 export const UNREADABLE_START = ""
 
 export function processStart(pid: number): string | null {

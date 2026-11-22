@@ -26,7 +26,10 @@ import * as display from "../src/display"
 import { VIRTIO_GPU } from "../src/display"
 import * as host from "../src/host"
 import * as inputcheck from "../src/inputcheck"
+import * as kept from "../src/kept"
 import { withOperation } from "../src/operation"
+import { OpQueue } from "../src/ops"
+import { STOW_HANDLER } from "../src/opverbs"
 import {
   basePath,
   type InstanceMeta,
@@ -40,10 +43,10 @@ import * as savecmds from "../src/savecmds"
 import * as servicectl from "../src/servicectl"
 import * as share from "../src/share"
 import * as vnc from "../src/vnc"
-import { realActions } from "../src/watch"
+import { serviceActions } from "../src/watch"
+import { lockPidfile, releasePidfiles } from "./fakes/pidfile"
 
 const NAME = "race"
-const HOLDER = resolve(import.meta.dir, "fakes", "holder.ts")
 const meta: InstanceMeta = {
   image: "win11-arm64",
   vnc: 9,
@@ -86,18 +89,6 @@ const lines = (file: string): string[] =>
     : []
 const swtpmLog = (): string => resolve(state, "swtpm.log")
 const qemuLog = (): string => resolve(state, "qemu.log")
-
-async function hold(...argv: string[]): Promise<ReturnType<typeof Bun.spawn>> {
-  const h = Bun.spawn([process.execPath, HOLDER, ...argv], {
-    stdout: "pipe",
-    stderr: "ignore",
-  })
-  spawned.push(h)
-  const reader = (h.stdout as ReadableStream<Uint8Array>).getReader()
-  await reader.read()
-  reader.releaseLock()
-  return h
-}
 
 const outcome = async (p: Promise<unknown>): Promise<string> =>
   await p.then(
@@ -143,25 +134,24 @@ beforeEach(() => {
   const code = resolve(state, "code.fd")
   writeFileSync(code, "firmware")
   spyOn(host, "requireHost").mockImplementation(() => undefined)
+  spyOn(host, "hostMissing").mockReturnValue(false)
   spyOn(host, "requireFirmware").mockReturnValue({ code, vars: code })
   spyOn(host, "tpmTisHasPpi").mockReturnValue(true)
   spyOn(vnc, "ensureFreeDisplay").mockImplementation((_name, _p, m) =>
     Promise.resolve(m),
   )
   spyOn(vnc, "applyPassword").mockResolvedValue(null)
-  spyOn(share, "startVirtiofsd").mockImplementation(() =>
-    Promise.resolve({ dir: state, readonly: false, folder: null }),
-  )
   spyOn(console, "log").mockImplementation(() => undefined)
   spyOn(console, "error").mockImplementation(() => undefined)
   spyOn(console, "warn").mockImplementation(() => undefined)
   spyOn(process.stdout, "write").mockImplementation(() => true)
 })
 
-afterEach(() => {
+afterEach(async () => {
   mock.restore()
   qemu.stopSwtpm(pathsFor(NAME))
   for (const h of spawned.splice(0)) h.kill("SIGKILL")
+  await releasePidfiles()
   share.setProbe(previousProbe)
   for (const [k, v] of Object.entries(previous)) {
     if (v === undefined) delete process.env[k]
@@ -181,13 +171,15 @@ describe("two cold starts at once", () => {
       release = r
     })
     let calls = 0
-    spyOn(servicectl, "ensureService").mockImplementation(async () => {
+    spyOn(servicectl, "ensureService").mockResolvedValue({} as never)
+    const launchChild = kept.launchChild
+    spyOn(kept, "launchChild").mockImplementation(async (p, child) => {
       calls += 1
       if (calls === 1) {
         inLaunch()
         await released
       }
-      return {} as never
+      return await launchChild(p, child)
     })
     spyOn(qga, "untilReady").mockResolvedValue("timeout")
     const args = parseArgs(["-i", NAME])
@@ -267,8 +259,8 @@ describe("stop during a manual save", () => {
         await sleep(1)
       },
       stopWatcher: () => Promise.resolve(false),
-      watcherPid: () => null,
-      ensureWatcher: () => null,
+      watching: () => false,
+      ensureWatcher: () => false,
       beforeDown: () => undefined,
       afterUp: () => Promise.resolve(undefined),
       stopSidecars: () => undefined,
@@ -320,7 +312,7 @@ describe("stop during a manual save", () => {
   }, 20_000)
 })
 
-describe("the watcher's work", () => {
+describe("the watcher's work, in winvm's service", () => {
   it("skips an autosave while a person's command holds the instance, without touching QEMU", async () => {
     const sent: string[] = []
     spyOn(qemu, "pidOf").mockImplementation(() => 1_234_567)
@@ -333,7 +325,20 @@ describe("the watcher's work", () => {
       return Promise.resolve({})
     })
     const log: string[] = []
-    const actions = realActions(NAME, pathsFor(NAME), (l) => log.push(l))
+    const queue = new OpQueue(
+      NAME,
+      {},
+      {
+        record: () => undefined,
+        nudge: () => undefined,
+        killed: () => undefined,
+      },
+    )
+    const actions = serviceActions(NAME, pathsFor(NAME), (l) => log.push(l), {
+      perform: async (op, handler, args) =>
+        await queue.perform(op, handler, args),
+      stow: STOW_HANDLER,
+    })
     let release: () => void = () => undefined
     const reboot = withOperation(NAME, "reboot", async () => {
       await new Promise<void>((r) => {
@@ -376,7 +381,7 @@ describe("the watcher's work", () => {
           pidOf: () => 1_234_567,
           frozenState: () => Promise.resolve(null),
           stopWatcher: () => Promise.resolve(false),
-          watcherPid: () => null,
+          watching: () => false,
           beforeDown: () => undefined,
           stopSidecars: () => undefined,
           ensureService: () => Promise.resolve(),
@@ -413,9 +418,8 @@ describe("the watcher's work", () => {
 describe("kill", () => {
   it("never SIGKILLs a process that is not this instance's QEMU", async () => {
     const p = pathsFor(NAME)
-    const stranger = await hold("unrelated-process")
-    writeFileSync(p.pid, `${String(stranger.pid)}\n`)
-    const code = commands.kill(parseArgs(["-i", NAME]))
+    const stranger = (await lockPidfile(p.pid, "unrelated-process")).proc
+    const code = await commands.kill(parseArgs(["-i", NAME]))
     await sleep(100)
     expect(alive(stranger.pid)).toBe(true)
     expect(code).toBe(1)
@@ -424,15 +428,17 @@ describe("kill", () => {
 
   it("does not take another instance's QEMU for this one's", async () => {
     const p = pathsFor(NAME)
-    const other = await hold(
-      "qemu-system-aarch64",
-      "-name",
-      "winvm-other",
-      "-pidfile",
-      pathsFor("other").pid,
-    )
-    writeFileSync(p.pid, `${String(other.pid)}\n`)
-    expect(commands.kill(parseArgs(["-i", NAME]))).toBe(1)
+    const other = (
+      await lockPidfile(
+        p.pid,
+        "qemu-system-aarch64",
+        "-name",
+        "winvm-other",
+        "-pidfile",
+        pathsFor("other").pid,
+      )
+    ).proc
+    expect(await commands.kill(parseArgs(["-i", NAME]))).toBe(1)
     await sleep(100)
     expect(alive(other.pid)).toBe(true)
   })
@@ -479,20 +485,22 @@ describe("kill", () => {
 
   it("refuses without blaming the pid file when it cannot read the process's command line", async () => {
     const p = pathsFor(NAME)
-    const own = await hold(
-      "qemu-system-aarch64",
-      "-name",
-      `winvm-${NAME}`,
-      "-pidfile",
-      p.pid,
-    )
-    writeFileSync(p.pid, `${String(own.pid)}\n`)
+    const own = (
+      await lockPidfile(
+        p.pid,
+        "qemu-system-aarch64",
+        "-name",
+        `winvm-${NAME}`,
+        "-pidfile",
+        p.pid,
+      )
+    ).proc
     spyOn(display, "runningCommand").mockReturnValue(null)
     const errors: string[] = []
     spyOn(console, "error").mockImplementation((...a: unknown[]) => {
       errors.push(a.map(String).join(" "))
     })
-    expect(commands.kill(parseArgs(["-i", NAME]))).toBe(1)
+    expect(await commands.kill(parseArgs(["-i", NAME]))).toBe(1)
     expect(alive(own.pid)).toBe(true)
     expect(errors.join("\n")).toContain("could not read")
     expect(errors.join("\n")).not.toContain("remove that file")
@@ -500,19 +508,16 @@ describe("kill", () => {
 
   it("kills this instance's QEMU without waiting on a lease another command holds", async () => {
     const p = pathsFor(NAME)
-    script("qemu-system-aarch64", "while :; do sleep 0.2; done")
-    const own = Bun.spawn(
-      [
-        resolve(state, "runtime", "bin", "qemu-system-aarch64"),
+    const own = (
+      await lockPidfile(
+        p.pid,
+        "qemu-system-aarch64",
         "-name",
         `winvm-${NAME}`,
         "-pidfile",
         p.pid,
-      ],
-      { stdout: "ignore", stderr: "ignore" },
-    )
-    spawned.push(own)
-    writeFileSync(p.pid, `${String(own.pid)}\n`)
+      )
+    ).proc
     spyOn(servicectl, "stopService").mockImplementation(() => undefined)
     let release: () => void = () => undefined
     const wedged = withOperation(NAME, "stop", async () => {

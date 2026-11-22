@@ -41,6 +41,8 @@ import * as frozen from "./frozen"
 import {
   checksReport,
   hostChecks,
+  hostMissing,
+  type KeeperNeed,
   PWSH_SHA256,
   PWSH_URL,
   printChecks,
@@ -52,8 +54,9 @@ import * as input from "./input"
 import { formatInput, judgeInput, probeInput } from "./inputcheck"
 import { ensureInstance, makeVars, resetInstance, sealBase } from "./instance"
 import { ensureKeeper } from "./keeper"
+import { keeperMissing, killKept, retireKeeper } from "./kept"
 import { lagCommand } from "./lag"
-import { ManagementError, reconcileManagement } from "./lifecycle"
+import { ensureCurrent, ManagementError } from "./lifecycle"
 import * as machineinfo from "./machineinfo"
 import { forgetMachineNote } from "./machinenote"
 import {
@@ -66,12 +69,22 @@ import {
 } from "./media"
 import * as monitor from "./monitor"
 import {
+  CANCEL_REASON,
+  currentOp,
+  OpCancelled,
+  OpEnded,
+  pointOfNoReturn,
+} from "./opcontext"
+import {
   INTERRUPTED,
+  InstanceBusy,
+  type Interrupts,
   interruptedAfterRequest,
   irreversible,
   leaseHolder,
   STOP_UNFINISHED,
   takeInterrupts,
+  withOperation,
 } from "./operation"
 import type { InstanceMeta, Paths } from "./paths"
 import {
@@ -90,6 +103,7 @@ import {
   readImageMeta,
   readMeta,
 } from "./paths"
+import { signalProcess } from "./proc"
 import * as qemu from "./qemu"
 import * as qga from "./qga"
 import * as qmp from "./qmp"
@@ -101,20 +115,32 @@ import * as share from "./share"
 import { ensureShareMedia } from "./sharemedia"
 import { download, du, run, sha256Of } from "./shell"
 import * as snapshot from "./snapshot"
+import { legacyVms } from "./status"
 import * as timemachine from "./timemachine"
 import * as watcher from "./watch"
 
 const virtioBootFor = (meta: InstanceMeta): boolean =>
   readImageMeta(meta.image)?.virtioBoot === true
 
-export function doctor(json = false): number {
+export async function doctor(
+  json = false,
+  keeper: KeeperNeed = "required",
+): Promise<number> {
+  const legacy = await legacyVms()
   if (json) {
-    const report = checksReport(hostChecks(), timemachine.summary())
+    const report = {
+      ...checksReport(hostChecks(keeper), timemachine.summary()),
+      legacy,
+    }
     console.log(JSON.stringify(report, null, 2))
     return report.ready ? 0 : 1
   }
-  const missing = printChecks(hostChecks())
+  const missing = printChecks(hostChecks(keeper))
   console.log(timemachine.summary())
+  if (legacy.length > 0)
+    console.log(
+      `\nstill running from an older winvm, so not shielded if the Mac shuts down:\n${legacy.map((v) => `  ${v.name}: ${v.note}`).join("\n")}`,
+    )
   console.log(
     missing === 0
       ? `\nhost is ready · state: ${home()}`
@@ -232,6 +258,7 @@ export function prune(args: Args): number {
     }
     qemu.stopSidecars(p)
     stopService(p)
+    retireKeeper(name, p)
     rmSync(p.dir, { recursive: true, force: true })
     forgetMachineNote(name)
     console.log(`  removed scratch instance "${name}" (${size})`)
@@ -256,7 +283,7 @@ export function prune(args: Args): number {
   return 0
 }
 
-export function setup(args: Args): number {
+export async function setup(args: Args): Promise<number> {
   try {
     const rt = ensureRuntime()
     console.log(`runtime ${rt.manifest?.version ?? "?"} in ${rt.dir}`)
@@ -281,11 +308,11 @@ export function setup(args: Args): number {
     }
   }
   console.log("")
-  return doctor()
+  return await doctor(false, "optional")
 }
 
 export function adopt(args: Args): number {
-  requireHost()
+  requireHost("optional")
   const src = args.positional[0]
   if (src === undefined) {
     console.error("::error::usage: winvm adopt <disk.qcow2> [--image <name>]")
@@ -319,7 +346,7 @@ export function adopt(args: Args): number {
 }
 
 export async function build(args: Args): Promise<number> {
-  requireHost()
+  requireHost("required")
   const image = imageName(args)
   if (!isValidImageName(image)) {
     console.error(
@@ -384,8 +411,7 @@ export async function build(args: Args): Promise<number> {
   }
   buildSeed(args.flags.get("payload"), args.flags.get("bun"), shareMedia)
 
-  stopService(p)
-  rmSync(p.dir, { recursive: true, force: true })
+  clearScratch(scratch, p)
   mkdirSync(p.tpmDir, { recursive: true })
   run(runtimeBin("qemu-img"), ["create", "-f", "qcow2", p.overlay, "64G"])
   run(runtimeBin("qemu-img"), ["create", "-f", "qcow2", p.prime, "64M"])
@@ -400,7 +426,7 @@ export async function build(args: Args): Promise<number> {
 
   const reap = (): void => {
     const pid = qemu.pidOf(p)
-    if (pid !== null) process.kill(pid, "SIGKILL")
+    if (pid !== null) signalProcess(pid, "SIGKILL")
     qemu.stopSidecars(p)
   }
   for (const sig of ["SIGINT", "SIGTERM"] as const) {
@@ -417,11 +443,7 @@ export async function build(args: Args): Promise<number> {
     `installing Windows (unattended, ~20 min) · watch: winvm open -i ${scratch}`,
   )
   try {
-    await qemu.launch(scratch, p, meta, {
-      installMedia: true,
-      ephemeral: false,
-      virtioBoot: false,
-    })
+    await launchInstaller(scratch, p, meta)
   } catch (error) {
     qemu.stopSidecars(p)
     console.error(
@@ -567,6 +589,7 @@ export async function build(args: Args): Promise<number> {
       )
       qemu.stopSidecars(p)
       stopService(p)
+      retireKeeper(scratch, p)
       rmSync(p.dir, { recursive: true, force: true })
       console.log(
         `base image ready: ${basePath(image)} (${du(basePath(image))})`,
@@ -584,10 +607,32 @@ export async function build(args: Args): Promise<number> {
   return guestFailed("the guest did not shut down after provisioning")
 }
 
+export function clearScratch(scratch: string, p: Paths): void {
+  const holder = leaseHolder(scratch)
+  if (holder !== null) throw new InstanceBusy(scratch, holder)
+  stopService(p)
+  retireKeeper(scratch, p)
+  rmSync(p.dir, { recursive: true, force: true })
+}
+
+export const launchInstaller = async (
+  scratch: string,
+  p: Paths,
+  meta: InstanceMeta,
+): Promise<void> => {
+  await withOperation(scratch, "build", async () => {
+    await qemu.launch(scratch, p, meta, {
+      installMedia: true,
+      ephemeral: false,
+      virtioBoot: false,
+    })
+  })
+}
+
 const NO_LOGON_MS = 120_000
 
 export function create(args: Args): number {
-  requireHost()
+  requireHost("optional")
   const name = instanceName(args)
   if (!isValidInstanceName(name)) {
     console.error(
@@ -619,7 +664,7 @@ export async function startRunning(
   seams: RunningStartSeams = {},
 ): Promise<number> {
   const p = pathsFor(name)
-  const reconcile = seams.reconcile ?? reconcileManagement
+  const reconcile = seams.reconcile ?? ensureCurrent
   const startWatcher = seams.startWatcher ?? watcher.startWatcherFor
   const frozenState = seams.frozenState ?? ((q: Paths) => frozen.frozenState(q))
   const afterUp = seams.afterUp ?? ((n: string) => finder.afterUp(n))
@@ -637,12 +682,13 @@ export async function startRunning(
 }
 
 export async function start(args: Args): Promise<number> {
-  requireHost()
+  if (hostMissing("required")) return 1
   const name = instanceName(args)
   const p = pathsFor(name)
   if (qemu.isRunning(p)) return await startRunning(name, args)
   const recalled = await savecmds.recallStow(name, args)
-  if (recalled === 0) watcher.startWatcherFor(name, args)
+  if (recalled !== null && saves.windowsRuns(recalled))
+    watcher.startWatcherFor(name, args)
   if (recalled !== null) return recalled
   const isNew = readMeta(name) === null
   if (isNew && !isValidInstanceName(name)) {
@@ -758,10 +804,15 @@ export async function rewind(args: Args): Promise<number> {
     console.error(`::error::no such instance "${name}"`)
     return 1
   }
+  const noKeeper = keeperMissing(`"${name}" was not rewound`)
+  if (noKeeper !== null) {
+    console.error(`::error::${noKeeper.message}`)
+    return 1
+  }
   const rewatch = watcher.rewatchAfterRestore(name, args)
   finder.beforeDown(name)
   const viaSave = await savecmds.rewindViaSave(name, args.positional[0])
-  if (viaSave === 0) {
+  if (viaSave !== null && saves.windowsRuns(viaSave)) {
     watcher.touchActivity(name)
     rewatch()
   }
@@ -791,6 +842,7 @@ export async function rewind(args: Args): Promise<number> {
     }
   } else {
     try {
+      pointOfNoReturn()
       await snapshot.load(p, tag)
     } catch (error) {
       console.error(
@@ -864,9 +916,9 @@ export interface StopCommandSeams {
     o?: qga.WaitOptions,
   ) => Promise<boolean>
   readonly shutdown?: (sockPath: string) => Promise<void>
-  readonly watcherPid?: (name: string) => number | null
+  readonly watching?: (name: string) => boolean
   readonly stopWatcher?: (name: string) => Promise<boolean>
-  readonly ensureWatcher?: (name: string) => number | null
+  readonly ensureWatcher?: (name: string) => boolean
   readonly beforeDown?: (name: string) => void
   readonly afterUp?: (name: string) => Promise<void>
   readonly stopSidecars?: (p: Paths) => void
@@ -959,9 +1011,14 @@ export async function stopWith(
   seams: StopCommandSeams = {},
 ): Promise<number> {
   const name = instanceName(args)
-  const interrupts = (seams.interrupts ?? ((n) => takeInterrupts(n, "stop")))(
-    name,
-  )
+  const op = currentOp()
+  const interrupts = (
+    seams.interrupts ??
+    ((n: string): Interrupts =>
+      op === null
+        ? takeInterrupts(n, "stop")
+        : { signal: op.cancelled, release: () => undefined })
+  )(name)
   const settle = { disarm: (): void => undefined }
   try {
     return await stopRun(args, seams, interrupts.signal, settle)
@@ -1023,7 +1080,7 @@ async function stopRun(
       waitForEvent(n, matches, Date.now() + (until - now()), { since }))
   const afterUp = seams.afterUp ?? ((n: string) => finder.afterUp(n))
   const ensureWatcher = seams.ensureWatcher ?? watcher.ensureWatcher
-  const watcherPid = seams.watcherPid ?? ((n: string) => watcher.watcherPid(n))
+  const watching = seams.watching ?? watcher.watching
   const name = instanceName(args)
   const p = pathsFor(name)
   if (!isRunning(p)) {
@@ -1032,7 +1089,7 @@ async function stopRun(
   }
   const pid = pidOf(p)
   const original = await frozenState(p)
-  const hadWatcher = watcherPid(name) !== null
+  const hadWatcher = watching(name)
   let resumed = false
   const attempt = async (what: string, f: () => unknown): Promise<void> => {
     try {
@@ -1041,7 +1098,10 @@ async function stopRun(
       console.warn(`warning: could not ${what}: ${errorText(error)}`)
     }
   }
+  const op = currentOp()
+  const ended = (): boolean => op?.signal.aborted === true
   const rollback = async (): Promise<void> => {
+    if (ended()) return
     if (original === null || resumed)
       await attempt("remount the guest's drives", () => afterUp(name))
     if (original !== null && pid !== null && pidOf(p) === pid) {
@@ -1054,6 +1114,7 @@ async function stopRun(
 
   const interruptedBy = (): string => String(interrupted.reason)
   const checkpoint = (): void => {
+    if (op !== null && ended()) throw new OpEnded(op)
     if (interrupted.aborted) throw new StopInterrupted(interruptedBy())
   }
 
@@ -1074,6 +1135,12 @@ async function stopRun(
       resumed = true
       frozen.clearAsleep(p)
       checkpoint()
+    }
+    try {
+      pointOfNoReturn()
+    } catch (error) {
+      if (error instanceof OpCancelled) throw new StopInterrupted(CANCEL_REASON)
+      throw error
     }
     try {
       await powerdown(p)
@@ -1217,6 +1284,41 @@ async function stopRun(
   return 0
 }
 
+const guestReset = (e: Entry): boolean =>
+  qmpEvent("RESET")(e) && e.data?.guest === true
+
+const QEMU_GONE_POLL_MS = 500
+const RESET_GRACE_MS = 5000
+
+async function confirmReset(
+  name: string,
+  since: Cursor,
+  deadline: number,
+  signal: AbortSignal,
+): Promise<void> {
+  const by = Math.min(deadline, Date.now() + RESET_GRACE_MS)
+  const found = await waitForEvent(name, guestReset, by, {
+    since,
+    signal,
+  }).catch(() => null)
+  if (found !== null || signal.aborted) return
+  appendEntry(name, {
+    kind: "warning",
+    what: "reboot without RESET",
+    reason:
+      "Windows came back with a new boot time, and the record has no RESET from QEMU for it",
+  })
+}
+
+async function recordedSoFar(name: string, p: Paths): Promise<Cursor | null> {
+  try {
+    await monitor.qmpCommand(p.qmp, "query-status", undefined, 5000)
+  } catch {
+    return null
+  }
+  return endCursor(name)
+}
+
 export async function reboot(args: Args): Promise<number> {
   const name = instanceName(args)
   const p = pathsFor(name)
@@ -1241,24 +1343,56 @@ export async function reboot(args: Args): Promise<number> {
     )
     return 1
   }
+  const since = await recordedSoFar(name, p)
+  if (since === null) {
+    console.error(
+      `::error::QEMU's monitor did not answer, so a restart could not be confirmed; nothing was asked of Windows`,
+    )
+    return 1
+  }
   const t0 = Date.now()
   const deadline = t0 + s * 1000
+  const gone = qemu.watchExit(p, QEMU_GONE_POLL_MS)
+  const op = currentOp()
+  const signal =
+    op === null ? gone.signal : AbortSignal.any([gone.signal, op.signal])
+  pointOfNoReturn()
   finder.beforeDown(name)
-  const outcome = await watcher.whileActive(
-    name,
-    (async (): Promise<qga.Readiness | { readonly refused: string }> => {
-      try {
-        await qga.reboot(p.qga)
-      } catch (error) {
-        return { refused: errorText(error) }
-      }
-      process.stdout.write("rebooting")
-      return await qga.untilNewBoot(p.qga, before, deadline - Date.now(), {
-        noLogonMs: NO_LOGON_MS,
-        log: (line) => process.stdout.write(`\n${line}\n`),
-      })
-    })(),
-  )
+  let outcome: qga.Readiness | { readonly refused: string }
+  try {
+    outcome = await watcher.whileActive(
+      name,
+      (async (): Promise<qga.Readiness | { readonly refused: string }> => {
+        try {
+          await qga.reboot(p.qga)
+        } catch (error) {
+          return { refused: errorText(error) }
+        }
+        process.stdout.write("rebooting")
+        const back = await qga.untilNewBoot(
+          p.qga,
+          before,
+          deadline - Date.now(),
+          {
+            noLogonMs: NO_LOGON_MS,
+            log: (line) => process.stdout.write(`\n${line}\n`),
+            signal,
+          },
+        )
+        if (back === "ready") await confirmReset(name, since, deadline, signal)
+        return back
+      })(),
+    )
+  } finally {
+    gone.stop()
+  }
+  if (gone.signal.aborted) {
+    process.stdout.write("\n")
+    console.error(
+      `::error::QEMU exited while Windows restarted, so "${name}" is no longer running — \`winvm start -i ${name}\``,
+    )
+    return 1
+  }
   if (typeof outcome === "object") {
     console.error(
       `::error::the guest did not take the restart: ${outcome.refused}`,
@@ -1290,22 +1424,53 @@ export async function reboot(args: Args): Promise<number> {
   return 0
 }
 
-export function kill(args: Args): number {
+const KILL_WAIT_MS = 5000
+
+async function untilUnlocked(
+  p: Paths,
+  pid: number,
+  ms: number,
+): Promise<boolean> {
+  const deadline = Date.now() + ms
+  while (qemu.pidOf(p) === pid) {
+    if (Date.now() > deadline) return false
+    await new Promise((r) => setTimeout(r, 50))
+  }
+  return true
+}
+
+export interface KillOptions {
+  readonly inService?: boolean
+}
+
+export async function kill(args: Args, o: KillOptions = {}): Promise<number> {
   const name = instanceName(args)
   const p = pathsFor(name)
+  const endService = (): void => {
+    if (o.inService !== true) stopService(p)
+  }
   const pid = qemu.pidOf(p)
   const holder = leaseHolder(name)
-  if (pid === null && holder !== null) {
+  if (pid === null && holder !== null && holder.operation !== "kill") {
     console.error(
       `::error::"${name}" has no QEMU running, and its ${holder.operation} (pid ${String(holder.pid)}) is still in progress; nothing was killed`,
     )
     return 1
   }
   if (pid === null) {
+    const kept = await killKept(p, null)
+    const strays = qemu.qemuPids(p)
+    for (const stray of strays) signalProcess(stray, "SIGKILL")
     qemu.stopSidecars(p)
-    stopService(p)
+    endService()
     finder.cleanStale(name)
-    console.log(`instance "${name}" is not running`)
+    console.log(
+      strays.length > 0
+        ? `killed QEMU (pid ${strays.join(", ")}) of "${name}", which no longer held qemu.pid`
+        : kept
+          ? `killed the QEMU winvm's keeper ran for "${name}", which qemu.pid did not name`
+          : `instance "${name}" is not running`,
+    )
     return 0
   }
   if (runningCommand(pid) === null) {
@@ -1322,10 +1487,20 @@ export function kill(args: Args): number {
     return 1
   }
   finder.beforeDown(name)
-  process.kill(pid, "SIGKILL")
+  if (!(await killKept(p, pid))) {
+    if (qemu.pidOf(p) === pid) signalProcess(pid, "SIGKILL")
+    await killKept(p, null)
+  }
+  if (!(await untilUnlocked(p, pid, KILL_WAIT_MS))) {
+    console.error(
+      `::error::QEMU (pid ${String(pid)}) still holds its pidfile lock after winvm's kill, so "${name}" is still running; ` +
+        `nothing else was stopped and ${p.pid} is kept. Try again, or end pid ${String(pid)} in Activity Monitor (Force Quit)`,
+    )
+    return 1
+  }
   rmSync(p.pid, { force: true })
   qemu.stopSidecars(p)
-  stopService(p)
+  endService()
   void watcher.stopWatcher(name)
   console.log(`killed instance "${name}"`)
   return 0
@@ -1383,6 +1558,7 @@ export function destroy(args: Args): number {
   }
   stopService(p)
   qemu.stopSidecars(p)
+  retireKeeper(name, p)
   finder.cleanStale(name)
   const size = du(instanceDir(name))
   rmSync(instanceDir(name), { recursive: true, force: true })
@@ -1532,7 +1708,15 @@ export async function diagnoseCmd(args: Args): Promise<number> {
 export async function watchCmd(args: Args): Promise<number> {
   const name = instanceName(args)
   if (args.flags.has("stop")) {
-    const stopped = await watcher.stopWatcher(name)
+    let stopped: boolean
+    try {
+      stopped = await watcher.stopWatcher(name)
+    } catch (error) {
+      console.error(
+        `::error::${error instanceof Error ? error.message : String(error)}`,
+      )
+      return 1
+    }
     console.log(
       stopped
         ? `stopped the watcher for "${name}"`
@@ -1541,28 +1725,45 @@ export async function watchCmd(args: Args): Promise<number> {
     return 0
   }
   if (args.flags.has("status")) {
-    const pid = watcher.watcherPid(name)
     const st = watcher.readWatchState(name)
     if (st === null) console.log(`instance "${name}" has never been watched`)
     else
       console.log(
         JSON.stringify(
-          pid === null ? { ...st, state: "stopped" } : st,
+          watcher.watchingNow(name, st) ? st : { ...st, state: "stopped" },
           null,
           2,
         ),
       )
     return 0
   }
-  const interval = args.flags.get("interval")
-  const tickMs = interval === undefined ? undefined : Number(interval) * 1000
-  if (tickMs !== undefined && !(tickMs >= 1000)) {
-    console.error("::error::--interval is a number of seconds, at least 1")
+  if (args.flags.has("interval")) {
+    console.error(
+      "::error::--interval is gone: winvm's service watches the guest, every 15 s",
+    )
     return 1
   }
-  return await watcher.watch(name, {
-    ...(tickMs === undefined ? {} : { timing: { tickMs } }),
-  })
+  if (readMeta(name) === null) {
+    console.error(`::error::no such instance "${name}"`)
+    return 1
+  }
+  if (!qemu.isRunning(pathsFor(name))) {
+    console.error(
+      `::error::instance "${name}" is not running — nothing to watch`,
+    )
+    return 1
+  }
+  if (!effectiveConfig(name)["watch.enabled"]) {
+    console.error(
+      `::error::watching is off for "${name}" — \`winvm config -i ${name} watch.enabled=true\``,
+    )
+    return 1
+  }
+  if (await watcher.watchViaService(name)) return 0
+  console.error(
+    `::error::no current winvm service runs for "${name}", so nothing would watch it — \`winvm reconcile -i ${name}\` starts one, then \`winvm watch -i ${name}\` turns the watcher on`,
+  )
+  return 1
 }
 
 export function configCmd(args: Args): number {
@@ -1607,7 +1808,8 @@ export function configCmd(args: Args): number {
 export const USAGE =
   "winvm <command>\n\n" +
   "  setup                         install missing host prerequisites, fetch pinned media\n" +
-  "  doctor  [--json]              check host prerequisites (the HOST, before anything runs)\n" +
+  "  doctor  [--json]              check host prerequisites (the HOST, before anything runs),\n" +
+  "                                and list VMs an older winvm started that run unshielded\n" +
   "  diagnose [-i name]            explain a guest that misbehaved, from its files\n" +
   "           [--input]            a running guest's mouse/keyboard path, live and read-only\n" +
   "           [--lag [--seconds N] [--sample]]  time the monitor, the agent and QEMU once a\n" +
@@ -1658,14 +1860,21 @@ export const USAGE =
   "  pause | resume [-i name]      freeze / unfreeze the guest (resume fixes its clock)\n" +
   "  sleep | wake [-i name]        lock Windows, then freeze it as asleep / resume it\n" +
   "  lock    [-i name]             Windows back to its lock screen (sign in again with Enter)\n" +
+  "  reboot  [-i name] [--timeout S]  restart Windows and wait until someone is logged on again\n" +
+  "                                pause, resume, sleep, wake, lock, reboot and kill run in winvm's\n" +
+  "                                service: Ctrl-C leaves them running there; --wait queues one\n" +
+  "                                behind another operation instead of refusing it as busy\n" +
+  "  cancel  [-i name] [--id ID]   end the operation winvm's service runs, before its point of no return\n" +
   "  stow    [-i name]             save and shut QEMU down; the next start recalls it\n" +
   "  clock   [-i name] [--check]   guest-vs-host clock offset, and fix it\n" +
   "  status  [-i name] [--json]    what it's doing; with no -i and several instances, a table.\n" +
   "                                Only reads: it never stops, starts or replaces anything\n" +
-  "  reconcile [-i name]           bring the control service and watcher up to this build, restart\n" +
-  "                                missing ones and unmount drives a gone guest left; no -i: all\n" +
+  "  reconcile [-i name]           bring the control service up to this build, restart a missing\n" +
+  "                                one and unmount drives a gone guest left; no -i: all\n" +
   "  events  [-i name] [--json]    the instances' event records (QEMU events, operations);\n" +
   "          [--follow] [--since c]  keep following / resume after a line's cursor (or `start`)\n" +
+  "          --op ID [--follow]    one operation: what it printed, then its exit code; --follow\n" +
+  "                                waits while it runs (an op is named with --op-id ID)\n" +
   "  info    [-i name] [--json]    processors, memory and disk (running, and set for the next start),\n" +
   "                                and the network: addresses and the ports forwarded into Windows\n" +
   "  open    [-i name] [--web]     show the screen in Screen Sharing, or (--web) the browser;\n" +
@@ -1704,8 +1913,8 @@ export const USAGE =
   "  prune [--media]               drop leftover build scratch instances, and cached media\n" +
   "  stop | kill [-i name]\n" +
   "  destroy [-i name] [--keep-saves]  remove the instance and its saves\n" +
-  "  watch   [-i name]             run the idle watcher in the foreground (start runs it in the background)\n" +
-  "          [--stop | --status]   end it / print its state\n" +
+  "  watch   [-i name]             turn the idle watcher on, in winvm's service (start does too)\n" +
+  "          [--stop | --status]   turn it off until the next start / print its state\n" +
   "  config  [-i name] [key=value ...]  autosave/stow/watch settings and the app's title; bare prints them\n" +
   "          [-i name] cpus=N memory=8G  processors and memory, from the next time Windows starts\n" +
   "  note    [-i name] [--text TEXT|-] [--clear] [--json]  what you have jotted about a machine; bare prints it\n" +

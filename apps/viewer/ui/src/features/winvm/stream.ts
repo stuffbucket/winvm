@@ -15,6 +15,8 @@ const Entry = z.object({
   kind: z.string(),
   event: z.string().optional(),
   phase: z.string().optional(),
+  automatic: z.boolean().optional(),
+  remount: z.boolean().optional(),
 })
 
 const Line = z.object({
@@ -27,11 +29,19 @@ export type StreamSignal =
   | { readonly kind: "connected" }
   | { readonly kind: "instances" }
   | { readonly kind: "changed"; readonly instance: string }
+  | { readonly kind: "remount"; readonly instance: string }
   | { readonly kind: "down" }
+
+const leavesRemount = (entry: z.infer<typeof Entry>): boolean =>
+  entry.kind === "op" &&
+  entry.phase === "end" &&
+  entry.automatic === true &&
+  entry.remount === true
 
 function changes(entry: z.infer<typeof Entry>): boolean {
   switch (entry.kind) {
     case "op":
+      return entry.phase !== "output"
     case "sync":
     case "disconnected":
       return true
@@ -56,9 +66,9 @@ export function signalOf(raw: unknown): StreamSignal | null {
     case "gap":
       return instance === undefined ? null : { kind: "changed", instance }
     case "entry":
-      return instance !== undefined && entry !== undefined && changes(entry)
-        ? { kind: "changed", instance }
-        : null
+      if (instance === undefined || entry === undefined) return null
+      if (leavesRemount(entry)) return { kind: "remount", instance }
+      return changes(entry) ? { kind: "changed", instance } : null
     default:
       return null
   }

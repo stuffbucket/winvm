@@ -1,5 +1,5 @@
 {
-  "version": null,
-  "url": null,
-  "sha256": null
+  "version": "v0.1.4",
+  "url": "https://github.com/stuffbucket/winvm/releases/download/v0.1.4/winvm-keeper-v0.1.4-darwin-arm64",
+  "sha256": "7c39e7a5b5485002be253d3e8fd968b2d2034d2417c777b5ae969a3d3ec35baa"
 }

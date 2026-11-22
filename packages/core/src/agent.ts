@@ -28,6 +28,7 @@ import type {
 } from "./guestagent"
 import { AGENT_VERSION, GUEST_PORT, WINDOWS_DIR } from "./guestagent"
 import { bunZip } from "./media"
+import { fenced } from "./opcontext"
 import { PACKAGE_DIR, pathsFor } from "./paths"
 import * as qemu from "./qemu"
 import * as qga from "./qga"
@@ -88,6 +89,17 @@ export class AgentClient {
     path: string,
     body?: RequestInit["body"],
     timeoutMs = 30_000,
+  ): Promise<Response> {
+    return await fenced(
+      async () => await this.fetchAgent(method, path, body, timeoutMs),
+    )
+  }
+
+  private async fetchAgent(
+    method: string,
+    path: string,
+    body: RequestInit["body"] | undefined,
+    timeoutMs: number,
   ): Promise<Response> {
     const r = await fetch(`${this.base}${path}`, {
       method,

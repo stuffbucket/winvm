@@ -19,7 +19,14 @@ pub fn lock_holder(path: &Path) -> Option<i32> {
     let mut lock = whole_file_write_lock();
     // SAFETY: the descriptor is open for the duration of the call and F_GETLK writes into a valid flock.
     let got = unsafe { libc::fcntl(file.as_raw_fd(), libc::F_GETLK, &raw mut lock) };
-    (got == 0 && lock.l_type != libc::F_UNLCK).then_some(lock.l_pid)
+    if got != 0 {
+        return None;
+    }
+    holder_of(&lock)
+}
+
+fn holder_of(lock: &libc::flock) -> Option<i32> {
+    (lock.l_type != libc::F_UNLCK && lock.l_pid > 0).then_some(lock.l_pid)
 }
 
 pub fn hold(path: &Path) -> io::Result<Option<File>> {
@@ -76,7 +83,51 @@ pub fn boot_session() -> Option<String> {
     (!uuid.is_empty()).then(|| uuid.to_owned())
 }
 
+const MONTHS: [&str; 12] = [
+    "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+];
+
+fn days_from_civil(year: i64, month: i64, day: i64) -> i64 {
+    let y = if month <= 2 { year - 1 } else { year };
+    let era = y.div_euclid(400);
+    let yoe = y.rem_euclid(400);
+    let mp = (month + 9) % 12;
+    let doy = (153 * mp + 2) / 5 + day - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    era * 146_097 + doe - 719_468
+}
+
+pub fn lstart_epoch(text: &str) -> Option<i64> {
+    let fields: Vec<&str> = text.split_whitespace().collect();
+    let [_, month, day, time, year] = fields.as_slice() else {
+        return None;
+    };
+    let month = i64::try_from(MONTHS.iter().position(|m| m == month)?).ok()? + 1;
+    let day: i64 = day.parse().ok()?;
+    let year: i64 = year.parse().ok()?;
+    let clock: Vec<i64> = time
+        .split(':')
+        .map(str::parse)
+        .collect::<Result<_, _>>()
+        .ok()?;
+    let [h, m, sec] = clock.as_slice() else {
+        return None;
+    };
+    Some(days_from_civil(year, month, day) * 86_400 + h * 3600 + m * 60 + sec)
+}
+
+pub fn started_as(pid: i32, lstart: &str) -> bool {
+    let (Some(said), Some(us)) = (lstart_epoch(lstart), start_time_us(pid)) else {
+        return false;
+    };
+    let actual = i64::try_from(us / 1_000_000).unwrap_or(i64::MAX);
+    (actual - said).abs() <= 1
+}
+
 pub fn identify(kept: &Kept) -> Option<&'static str> {
+    if kept.pid <= 1 {
+        return None;
+    }
     if let Some(pidfile) = &kept.pidfile {
         if let Some(holder) = lock_holder(pidfile) {
             return (holder == kept.pid).then_some("pidfile");
@@ -113,12 +164,59 @@ mod tests {
     }
 
     #[test]
+    fn a_lock_held_by_no_single_process_names_no_holder() {
+        let mut lock = whole_file_write_lock();
+        for pid in [-1, 0] {
+            lock.l_pid = pid;
+            assert_eq!(holder_of(&lock), None, "l_pid {pid}");
+        }
+        lock.l_pid = 4242;
+        assert_eq!(holder_of(&lock), Some(4242));
+        lock.l_type = libc::F_UNLCK;
+        assert_eq!(holder_of(&lock), None);
+    }
+
+    #[test]
+    fn a_state_naming_pid_one_or_less_is_never_identified() {
+        for pid in [1, 0, -1] {
+            let kept = Kept {
+                name: "x".to_owned(),
+                pid,
+                start_us: start_time_us(pid).unwrap_or(1),
+                pidfile: None,
+                qmp: None,
+                runtime: None,
+                legacy: false,
+            };
+            assert_eq!(identify(&kept), None, "{pid}");
+        }
+    }
+
+    #[test]
+    fn a_ps_start_time_reads_as_seconds_since_the_epoch() {
+        assert_eq!(lstart_epoch("Thu Jan  1 00:00:00 1970"), Some(0));
+        assert_eq!(
+            lstart_epoch("Tue Nov 17 19:35:19 2026"),
+            Some(1_794_944_119)
+        );
+        assert_eq!(
+            lstart_epoch("Sun Feb 29 12:00:00 2032"),
+            Some(1_961_668_800)
+        );
+        assert_eq!(lstart_epoch("not a time"), None);
+        assert_eq!(lstart_epoch(""), None);
+    }
+
+    #[test]
     fn a_process_that_is_gone_is_not_identified() {
         let kept = Kept {
             name: "x".to_owned(),
             pid: i32::MAX,
             start_us: 1,
             pidfile: None,
+            qmp: None,
+            runtime: None,
+            legacy: false,
         };
         assert_eq!(identify(&kept), None);
     }

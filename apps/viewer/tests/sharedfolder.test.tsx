@@ -55,6 +55,7 @@ function view(over: Partial<View> = {}): View & { calls: string[] } {
   return {
     status: status(),
     error: null,
+    notice: null,
     working: null,
     home: "/Users/me",
     choose: () => calls.push("choose"),
@@ -325,6 +326,22 @@ describe("the Shared folder section", () => {
     expect(button("Stop sharing").disabled).toBe(true)
   })
 
+  it("shows a notice from the setup as a notice, not an error", () => {
+    const host = render(
+      <SharedFolder
+        view={view({
+          status: status({ folder: "/x" }),
+          notice: "the shared folder is set up, but Windows has not answered",
+        })}
+        guestReady={true}
+      />,
+    )
+    expect(host.querySelector(".action__error")).toBeNull()
+    expect(host.querySelector('[role="status"]')?.textContent).toBe(
+      "the shared folder is set up, but Windows has not answered",
+    )
+  })
+
   it("never says instance", () => {
     const states: Status[] = [
       status(),
@@ -375,6 +392,48 @@ describe("useSharedFolder", () => {
       for (let i = 0; i < 10; i++) await Promise.resolve()
     })
   }
+
+  it("takes a setup that brought Windows back still busy as done, with its warning as a notice", async () => {
+    const warning =
+      'the shared folder is set up in "a", but its guest agent has not answered since Windows came back, so winvm could not check it — `winvm share -i a` shows it once Windows answers'
+    const installed = status({
+      folder: "/x",
+      guest: { installed: true, mounted: false },
+    })
+    const invoke = (cmd: string, a?: { args?: string[] }): Promise<unknown> => {
+      const args = a?.args ?? []
+      if (cmd !== "winvm") return Promise.resolve(null)
+      if (args[3] === "install")
+        return Promise.resolve({
+          code: 6,
+          stdout: JSON.stringify(installed),
+          stderr: `::warning::${warning}\n`,
+        })
+      return Promise.resolve({
+        code: 0,
+        stdout: JSON.stringify(status()),
+        stderr: "",
+      })
+    }
+    Object.assign(window, { __TAURI__: { core: { invoke } } })
+    const slot: { current: View | null } = { current: null }
+    render(
+      <FolderProbe
+        instance="a"
+        phase="running"
+        guestReady={true}
+        active={true}
+        slot={slot}
+      />,
+    )
+    await settle()
+    act(() => {
+      slot.current?.install()
+    })
+    await settle()
+    expect(slot.current?.error).toBeNull()
+    expect(slot.current?.notice).toBe(warning)
+  })
 
   it("reads while shown, again whenever the phase or Windows' readiness changes, not while the setup runs, and drops one machine's status for the next", async () => {
     const asked: string[] = []

@@ -2,7 +2,6 @@ import { afterAll, beforeAll, describe, expect, it } from "bun:test"
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { resolve } from "node:path"
-
 import {
   ABS_MAX,
   charToStroke,
@@ -12,6 +11,7 @@ import {
   scaleAxis,
   textToStrokes,
 } from "../src/input"
+import { parseEtime } from "../src/proc"
 import type { InstanceStatus } from "../src/status"
 import {
   deriveState,
@@ -24,10 +24,10 @@ import {
   formatTable,
   formatWatcher,
   osLabel,
-  parseEtime,
   parseHardware,
   parseWatch,
   readSaves,
+  watcherNote,
 } from "../src/status"
 import {
   generatePassword,
@@ -137,6 +137,37 @@ describe("status formatting", () => {
     ).toBeNull()
   })
 
+  it("says when idle stow is off because winvm refused one, in the watcher row and in a note", () => {
+    const off =
+      "winvm refused a stow, because this winvm could not recall a stow of the QEMU that runs Windows; idle stows are off until QEMU restarts"
+    const raw = {
+      pid: 1,
+      state: "watching",
+      idleSeconds: 0,
+      autosave: { enabled: true, idleMinutes: 15, keep: 3 },
+      stow: { enabled: false, idleMinutes: 60, off },
+    }
+    const w = parseWatch(raw, () => true)
+    expect(w?.stow?.off).toBe(off)
+    expect(formatWatcher(w, NOW)).toContain("stow off until QEMU restarts")
+    expect(watcherNote("ui", w)).toContain(off)
+    expect(
+      watcherNote(
+        "ui",
+        parseWatch(raw, () => false),
+      ),
+    ).toBeNull()
+    expect(
+      watcherNote(
+        "ui",
+        parseWatch(
+          { ...raw, stow: { enabled: true, idleMinutes: 60 } },
+          () => true,
+        ),
+      ),
+    ).toBeNull()
+  })
+
   const sample: InstanceStatus = {
     name: "ui",
     title: null,
@@ -183,8 +214,33 @@ describe("status formatting", () => {
     operation: null,
     stopUnfinished: null,
     hostPoweredOff: null,
+    keeper: null,
     notes: [],
   }
+
+  it("shows whether winvm's keeper protects the running VM", () => {
+    expect(
+      formatStatus(
+        {
+          ...sample,
+          keeper: { protection: "kept", version: "0.1.0", pid: 88 },
+        },
+        "",
+        NOW,
+      ),
+    ).toMatch(/^ *keeper {8}protected by winvm-keeper 0\.1\.0 \(pid 88\)$/m)
+    expect(
+      formatStatus(
+        {
+          ...sample,
+          keeper: { protection: "legacy", version: null, pid: null },
+        },
+        "",
+        NOW,
+      ),
+    ).toMatch(/^ *keeper {8}not protected: started without winvm's keeper$/m)
+    expect(formatStatus(sample, "", NOW)).not.toContain("keeper")
+  })
 
   it("shows the instance's control service", () => {
     expect(formatStatus(sample, "", NOW)).toMatch(/^ *service {7}pid 77$/m)

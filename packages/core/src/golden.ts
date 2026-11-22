@@ -2,6 +2,7 @@ import type { Args } from "./args"
 import { imageName, instanceName } from "./args"
 import { alignGuestTimeZone, formatOffset, syncGuestClock } from "./clock"
 import { ensureInstance } from "./instance"
+import { keeperMissing } from "./kept"
 import { withOperation } from "./operation"
 import type { Paths } from "./paths"
 import { pathsFor, readImageMeta, readMeta } from "./paths"
@@ -189,7 +190,7 @@ async function createGoldenHeld(
   if (o.from !== undefined) {
     const from = o.from
     log(`loading "${from}"`)
-    await saves.loadSave(instance, from)
+    saves.retireLoaded(instance, from, await saves.loadSave(instance, from))
     if (!(await qga.waitResponsive(p.qga, 300_000)))
       throw new Error(`guest did not answer after loading "${from}"`)
   } else if (qemu.isRunning(p)) {
@@ -269,25 +270,36 @@ export interface ResetResult {
   readonly manifest: saves.Manifest
 }
 
+export class RestoredUnanswered extends Error {
+  readonly warning: string
+
+  constructor(instance: string, name: string, waitMs: number, serial: string) {
+    super(`guest did not answer after loading "${name}" — see ${serial}`)
+    this.name = "RestoredUnanswered"
+    this.warning =
+      `warning: Windows is still busy; it was restored ("${instance}" reset to "${name}" and runs), but its guest agent did not answer within ${String(Math.round(waitMs / 1000))} s, ` +
+      `so its clock was not set — \`winvm clock -i ${instance}\` once it answers (see ${serial})`
+  }
+}
+
 export async function resetToGolden(
   instance: string,
   name: string = saves.GOLDEN,
   o: { readonly timeoutMs?: number } = {},
 ): Promise<ResetResult> {
+  const noKeeper = keeperMissing(`"${instance}" was not reset to "${name}"`)
+  if (noKeeper !== null) throw noKeeper
   const started = Date.now()
   const manifest = await saves.loadSave(instance, name)
+  saves.retireLoaded(instance, name, manifest)
   const restoredMs = Date.now() - started
   const p = pathsFor(instance)
-  if (!(await qga.waitResponsive(p.qga, o.timeoutMs ?? 120_000))) {
-    throw new Error(
-      `guest did not answer after loading "${name}" — see ${p.serial}`,
-    )
-  }
+  const waitMs = o.timeoutMs ?? 120_000
+  if (!(await qga.waitResponsive(p.qga, waitMs)))
+    throw new RestoredUnanswered(instance, name, waitMs, p.serial)
   const responsiveAt = Date.now()
   const c = await syncGuestClock(p)
   const done = Date.now()
-  if (saves.hasSave(instance, saves.STOW))
-    saves.removeSave(instance, saves.STOW)
   return {
     ms: done - started,
     restoredMs,
@@ -346,6 +358,10 @@ export async function golden(args: Args): Promise<number> {
       return 0
     }
   } catch (error) {
+    if (error instanceof RestoredUnanswered) {
+      console.warn(error.warning)
+      return saves.RESTORED_UNANSWERED
+    }
     return fail(errMsg(error))
   }
   return fail(

@@ -1,6 +1,8 @@
 import { readFileSync, rmSync } from "node:fs"
 import { connect } from "node:net"
 
+import { checkOp, fenced } from "./opcontext"
+
 export async function hmp(
   sockPath: string,
   command: string,
@@ -51,16 +53,16 @@ export async function status(sockPath: string): Promise<string> {
   return r?.status ?? "unknown"
 }
 
-async function withSocket<T>(
-  sockPath: string,
-  fn: (
-    send: (o: object) => Promise<void>,
-    request: (
-      o: object,
-      timeoutMs?: number,
-    ) => Promise<Record<string, unknown>>,
-  ) => Promise<T>,
-): Promise<T> {
+type SocketUse<T> = (
+  send: (o: object) => Promise<void>,
+  request: (o: object, timeoutMs?: number) => Promise<Record<string, unknown>>,
+) => Promise<T>
+
+async function withSocket<T>(sockPath: string, fn: SocketUse<T>): Promise<T> {
+  return await fenced(async () => await onSocket(sockPath, fn))
+}
+
+async function onSocket<T>(sockPath: string, fn: SocketUse<T>): Promise<T> {
   const deadline = Date.now() + 30_000
   let sock: ReturnType<typeof connect> | null = null
   for (;;) {
@@ -105,6 +107,7 @@ async function withSocket<T>(
     o: object,
     timeoutMs = 20_000,
   ): Promise<Record<string, unknown>> => {
+    checkOp()
     let timer: ReturnType<typeof setTimeout> | undefined
     const reply = new Promise<Record<string, unknown>>((res) =>
       waiting.push(res),
@@ -120,6 +123,7 @@ async function withSocket<T>(
     return out
   }
   const send = async (o: object): Promise<void> => {
+    checkOp()
     sock.write(`${JSON.stringify(o)}\n`)
     await new Promise((r) => setTimeout(r, 30))
   }

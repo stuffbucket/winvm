@@ -1,5 +1,6 @@
 import { connect } from "node:net"
 
+import { checkOp, fenced } from "./opcontext"
 import { monitorBeside } from "./paths"
 import * as qmp from "./qmp"
 
@@ -32,6 +33,14 @@ export async function call(
   sockPath: string,
   payload: Record<string, unknown>,
   timeoutMs = 20_000,
+): Promise<Record<string, unknown>> {
+  return await fenced(async () => await callAgent(sockPath, payload, timeoutMs))
+}
+
+async function callAgent(
+  sockPath: string,
+  payload: Record<string, unknown>,
+  timeoutMs: number,
 ): Promise<Record<string, unknown>> {
   const id = Math.floor(Math.random() * 2 ** 31)
   return await new Promise((res, rej) => {
@@ -87,6 +96,14 @@ export async function call(
         inSyncReply = false
         if (syncReplyId(line) === id) {
           synced = true
+          try {
+            checkOp()
+          } catch (error) {
+            settle(() => {
+              rej(error instanceof Error ? error : new Error(String(error)))
+            })
+            return
+          }
           sock.write(`${JSON.stringify(payload)}\n`)
         }
       }
@@ -188,7 +205,11 @@ export interface ReadyOptions {
   readonly repairAudit?: (sockPath: string) => Promise<boolean>
   readonly pollMs?: number
   readonly repairAfterMs?: number
+  readonly signal?: AbortSignal
 }
+
+const signalOf = (o: ReadyOptions): WaitOptions =>
+  o.signal === undefined ? {} : { signal: o.signal }
 
 export const REPAIR_AFTER_MS = 45_000
 
@@ -201,7 +222,11 @@ export async function untilReady(
   o: ReadyOptions = {},
 ): Promise<Readiness> {
   const deadline = Date.now() + timeoutMs
-  if (!(await (o.waitFor ?? waitFor)(sockPath, timeoutMs))) return "timeout"
+  const answered =
+    o.waitFor === undefined
+      ? await waitFor(sockPath, timeoutMs, signalOf(o))
+      : await o.waitFor(sockPath, timeoutMs)
+  if (!answered) return "timeout"
   const user = o.loggedOnUser ?? loggedOnUser
   const repair = o.repairAudit ?? repairAudit
   const repairAfter = o.repairAfterMs ?? REPAIR_AFTER_MS
@@ -209,7 +234,7 @@ export async function untilReady(
   let checked = false
   let repairs = 0
   let slowNoted = false
-  while (Date.now() < deadline) {
+  while (Date.now() < deadline && o.signal?.aborted !== true) {
     const probe = Math.max(
       1,
       Math.min(o.probeMs ?? PROBE_MS, deadline - Date.now()),
@@ -329,11 +354,12 @@ const POWERSHELL =
 export async function waitResponsive(
   sockPath: string,
   timeoutMs: number,
+  o: WaitOptions = {},
 ): Promise<boolean> {
   const deadline = Date.now() + timeoutMs
-  if (!(await waitFor(sockPath, timeoutMs))) return false
+  if (!(await waitFor(sockPath, timeoutMs, o))) return false
   const nonce = `winvm-${String(Date.now())}-${String(Math.random()).slice(2, 8)}`
-  while (Date.now() < deadline) {
+  while (Date.now() < deadline && o.signal?.aborted !== true) {
     try {
       const r = await exec(sockPath, "C:\\Windows\\System32\\cmd.exe", [
         "/c",
@@ -465,7 +491,7 @@ export async function untilNewBoot(
   const deadline = Date.now() + timeoutMs
   const ready = o.untilReady ?? untilReady
   const boot = o.bootTime ?? bootTime
-  while (Date.now() < deadline) {
+  while (Date.now() < deadline && o.signal?.aborted !== true) {
     const r = await ready(sockPath, deadline - Date.now(), o)
     if (r !== "ready") return r
     const now = await boot(sockPath)

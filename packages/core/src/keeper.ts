@@ -10,12 +10,16 @@ import {
   readFileSync,
   renameSync,
   rmSync,
+  statSync,
+  utimesSync,
   writeFileSync,
 } from "node:fs"
 import { connect } from "node:net"
 import { basename, dirname, resolve } from "node:path"
 
 import pinned from "../keeper.json"
+import { type HeldLease, holdsLease, LeaseNotHeld } from "./operation"
+import { home, pathsFor } from "./paths"
 import { download } from "./shell"
 import { dataDir } from "./xdg"
 
@@ -37,7 +41,9 @@ export interface FoundKeeper {
 export const KEEPER_BINARY = "winvm-keeper"
 export const KEEPER_PREFIX = "co.stuffbucket.winvm.keeper."
 export const KEEPER_EXIT_TIMEOUT = 60
-export const KEEPER_PROTOCOL = 1
+export const KEEPER_PROTOCOL = 3
+export const KEEPER_DIR = "keeper"
+const FRESH_MS = 60_000
 const APP_BUNDLE_ID = "co.stuffbucket.winvm"
 const HASH_DIR = /^[0-9a-f]{12}$/
 
@@ -114,6 +120,15 @@ export function ensureKeeper(
   return { path, source: "cache" }
 }
 
+export const keeperHint = (pin: KeeperPin | null = keeperPin()): string =>
+  [
+    "the winvm app carries one",
+    pin === null
+      ? "this winvm pins none for `winvm setup` to download yet (packages/core/keeper.json)"
+      : `\`winvm setup\` downloads the one this winvm pins (${pin.version})`,
+    "WINVM_KEEPER=<path> names a build of native/keeper (`cargo build --manifest-path native/keeper/Cargo.toml`)",
+  ].join("; ")
+
 function sha256File(path: string): string {
   return createHash("sha256").update(readFileSync(path)).digest("hex")
 }
@@ -121,7 +136,11 @@ function sha256File(path: string): string {
 export function installKeeper(binary: string, root: string): string {
   const dir = resolve(root, sha256File(binary).slice(0, 12))
   const dest = resolve(dir, KEEPER_BINARY)
-  if (isFile(dest)) return dest
+  if (isFile(dest)) {
+    const now = new Date()
+    utimesSync(dir, now, now)
+    return dest
+  }
   mkdirSync(dir, { recursive: true })
   const scratch = resolve(dir, `.${KEEPER_BINARY}.${String(process.pid)}`)
   copyFileSync(binary, scratch, constants.COPYFILE_FICLONE)
@@ -161,9 +180,11 @@ export function collectKeepers(o: {
   }
   if (!existsSync(o.root)) return []
   const removed: string[] = []
+  const fresh = Date.now() - FRESH_MS
   for (const name of readdirSync(o.root)) {
     const dir = resolve(o.root, name)
     if (!HASH_DIR.test(name) || keep.has(dir)) continue
+    if (statSync(dir).mtimeMs > fresh) continue
     rmSync(dir, { recursive: true, force: true })
     removed.push(dir)
   }
@@ -275,19 +296,37 @@ export interface KeeperCommand {
   readonly env?: Readonly<Record<string, string>>
   readonly log?: string
   readonly shield?: boolean
+  readonly umask?: number
 }
 
 export interface KeeperChild extends KeeperCommand {
   readonly name?: string
   readonly pidfile?: string
+  readonly qmp?: string
+  readonly runtime?: string
+}
+
+export interface KeeperAdopt {
+  readonly name: string
+  readonly pidfile: string
+  readonly qmp?: string
+}
+
+export interface KeeperService {
+  readonly argv: readonly string[]
+  readonly env?: Readonly<Record<string, string>>
+  readonly log?: string
+  readonly umask?: number
+  readonly build: string
+  readonly control: string
 }
 
 export interface KeeperSpec {
-  readonly instance?: string
   readonly record?: string
   readonly lingerMs?: number
   readonly child?: KeeperChild
   readonly stop?: KeeperCommand
+  readonly adopt?: KeeperAdopt
 }
 
 export type StartedKeeper =
@@ -295,6 +334,14 @@ export type StartedKeeper =
   | { readonly state: "running"; readonly hello: Record<string, unknown> }
 
 export class KeeperBusy extends Error {}
+
+export class KeeperOfAnother extends LeaseNotHeld {
+  constructor(job: KeeperJob, instance: string) {
+    super(instance, `starting ${job.Label}`)
+    this.message = `${job.Label} in ${job.WorkingDirectory} is not the keeper of "${instance}", whose lease this command holds`
+    this.name = "KeeperOfAnother"
+  }
+}
 
 function writePrivate(path: string, text: string): void {
   writeFileSync(path, text, { mode: 0o600 })
@@ -304,12 +351,21 @@ function writePrivate(path: string, text: string): void {
 export async function startKeeper(o: {
   readonly launchd: Launchd
   readonly job: KeeperJob
+  readonly lease: HeldLease
   readonly spec?: KeeperSpec
 }): Promise<StartedKeeper> {
+  if (!holdsLease(o.lease))
+    throw new LeaseNotHeld(o.lease.instance, `starting ${o.job.Label}`)
+  if (
+    o.job.Label !== keeperLabel(home(), o.lease.instance) ||
+    o.job.WorkingDirectory !==
+      resolve(pathsFor(o.lease.instance).dir, KEEPER_DIR)
+  )
+    throw new KeeperOfAnother(o.job, o.lease.instance)
   const dir = o.job.WorkingDirectory
   const hello = await keeperRequest(
     resolve(dir, "keeper.sock"),
-    { op: "hello" },
+    { op: "hello", launching: true },
     1000,
   ).catch(() => null)
   if (hello !== null && hello.hostEnding === true)
@@ -323,11 +379,10 @@ export async function startKeeper(o: {
     )
   mkdirSync(dir, { recursive: true, mode: 0o700 })
   chmodSync(dir, 0o700)
-  if (o.spec !== undefined)
-    writePrivate(
-      resolve(dir, "spec.json"),
-      `${JSON.stringify({ ...o.spec, session: randomUUID() })}\n`,
-    )
+  writePrivate(
+    resolve(dir, "spec.json"),
+    `${JSON.stringify({ ...o.spec, instance: o.lease.instance, session: randomUUID() })}\n`,
+  )
   const plist = resolve(dir, "keeper.plist")
   writePrivate(plist, plistXml(o.job))
   o.launchd.bootout(o.job.Label)
@@ -393,6 +448,16 @@ export function launchctl(uid: number = process.getuid?.() ?? 0): Launchd {
   }
 }
 
+const OP_PROTOCOL: Readonly<Record<string, number>> = {
+  launch: 2,
+  "launch-sidecar": 2,
+  kill: 2,
+  "exit-when-idle": 2,
+}
+
+export const protocolFor = (op: unknown): number =>
+  (typeof op === "string" ? OP_PROTOCOL[op] : undefined) ?? KEEPER_PROTOCOL
+
 export function keeperRequest(
   socket: string,
   message: Readonly<Record<string, unknown>>,
@@ -408,7 +473,7 @@ export function keeperRequest(
     stream.setEncoding("utf8")
     stream.on("connect", () =>
       stream.write(
-        `${JSON.stringify({ ...message, protocol: KEEPER_PROTOCOL })}\n`,
+        `${JSON.stringify({ ...message, protocol: protocolFor(message.op) })}\n`,
       ),
     )
     stream.on("close", () => {

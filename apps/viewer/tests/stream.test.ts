@@ -42,6 +42,33 @@ describe("what a line of the event stream means for the view", () => {
     })
   })
 
+  it("asks for the drives to be mounted again when winvm's own op ends leaving that to a client", () => {
+    expect(
+      signalOf(
+        entry({
+          kind: "op",
+          phase: "end",
+          operation: "stow",
+          automatic: true,
+          ok: false,
+          remount: true,
+        }),
+      ),
+    ).toEqual({ kind: "remount", instance: "demo" })
+    expect(
+      signalOf(
+        entry({
+          kind: "op",
+          phase: "end",
+          operation: "stow",
+          automatic: false,
+          ok: false,
+          remount: true,
+        }),
+      ),
+    ).toEqual({ kind: "changed", instance: "demo" })
+  })
+
   it("ignores what does not change the view, and anything it cannot read", () => {
     for (const e of [
       { kind: "qmp", event: "RTC_CHANGE", data: { offset: 1 } },
@@ -49,6 +76,14 @@ describe("what a line of the event stream means for the view", () => {
       { kind: "qmp", event: "MIGRATION", data: { status: "active" } },
       { kind: "service", what: "started" },
       { kind: "warning", what: "share notices" },
+      {
+        kind: "op",
+        phase: "output",
+        id: "op-1",
+        operation: "reboot",
+        stream: "out",
+        text: "rebooting",
+      },
     ])
       expect(signalOf(entry(e))).toBeNull()
     for (const junk of [

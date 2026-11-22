@@ -2,12 +2,13 @@
 # usage: scripts/accept-keeper.sh install | report [RUN] | cleanup
 #
 # Measures what a real Mac restart and a real logout do to a keeper job, with
-# a dummy child and no VM. install starts the test job
+# dummies and no VM. install starts the test job
 # co.stuffbucket.winvm.test.accept-keeper in your Background launchd domain:
-# the keeper from this checkout keeps a shell loop that writes the time every
-# second, and on SIGTERM runs a stop action that writes the time every second
-# until the keeper's deadline (50 s) or until something kills it. report prints
-# what happened; cleanup removes the job, its processes and every file.
+# the keeper from this checkout keeps a shielded shell loop that writes the
+# time every second, and a dummy control service (unshielded, ignoring SIGTERM
+# as winvm's does) that writes the time too. On SIGTERM the keeper hands the
+# host end to that service, which "stows" for 4 s and then ends the loop.
+# report prints what happened; cleanup removes the job, its processes and files.
 #
 # Once, from the repository: mise trust native/keeper/mise.toml, then
 # pnpm install --frozen-lockfile (install builds the keeper with that Rust
@@ -41,7 +42,7 @@ answers() {
 ours() {
   local escaped
   escaped=$(printf '%s' "$base" | sed 's/[][\\.*^$()+?{}|]/\\&/g')
-  printf '%s' "$escaped/(bin/winvm-keeper run --dir |run-[0-9-]+/(child|stop)\\.beat)"
+  printf '%s' "$escaped/(bin/winvm-keeper run --dir |run-[0-9-]+/(child|service)\\.beat)"
 }
 when() { date -r "$1" '+%Y-%m-%d %H:%M:%S'; }
 
@@ -71,10 +72,6 @@ install() {
     "name": "dummy",
     "argv": ["/bin/sh", "-c", "while :; do date +%s >> \"\$0\"; sleep 1; done", "$run/child.beat"],
     "log": "$run/child.log"
-  },
-  "stop": {
-    "argv": ["/bin/sh", "-c", "echo \"start \$(date +%s) deadline-ms \$WINVM_KEEPER_DEADLINE_MS\" >> \"\$0\"; i=0; while [ \$i -lt 120 ]; do date +%s >> \"\$0\"; sleep 1; i=\$((i+1)); done", "$run/stop.beat"],
-    "log": "$run/stop.log"
   }
 }
 EOF
@@ -82,7 +79,8 @@ EOF
     --dir "$run/keeper" --exit-timeout 60 >"$run/keeper/keeper.plist"
   launchctl bootstrap "user/$(id -u)" "$run/keeper/keeper.plist"
   for _ in $(seq 1 50); do
-    if "$base/bin/winvm-keeper" ctl --dir "$run/keeper" '{"op":"hello"}' 2>/dev/null; then
+    if "$base/bin/winvm-keeper" ctl --dir "$run/keeper" '{"op":"hello"}' >/dev/null 2>&1; then
+      service "$run"
       echo "installed $label ($run)"
       return 0
     fi
@@ -90,6 +88,14 @@ EOF
   done
   echo "the keeper did not answer; see $run/keeper/keeper.log" >&2
   exit 1
+}
+
+service() {
+  local run=$1 bun
+  bun=$(bun -e 'console.log(process.execPath)')
+  "$base/bin/winvm-keeper" ctl --dir "$run/keeper" "$(printf '{"op":"service","service":{"argv":["%s","%s","%s","%s","%s"],"log":"%s","build":"accept","control":"%s"}}' \
+    "$bun" "$here/accept-service.ts" "$run/service.beat" "$run/control.sock" "$run/keeper/keeper.sock" \
+    "$run/service.log" "$run/control.sock")"
 }
 
 beats() {
@@ -133,9 +139,11 @@ report() {
   grep '"kind":"keeper"' "$run/events.jsonl" 2>/dev/null || echo "  empty"
   echo "--- child heartbeat"
   beats "$run/child.beat"
-  echo "--- stop action"
-  grep '^start' "$run/stop.beat" 2>/dev/null | sed 's/^/  /' || true
-  beats "$run/stop.beat"
+  echo "--- control service"
+  if [ -s "$run/service.beat" ]; then
+    grep -E '^(start|signal|host-ending|stowed|stopped|kill)' "$run/service.beat" | sed 's/^/  /' || true
+  fi
+  beats "$run/service.beat"
   echo "--- keeper.log (last 15 lines)"
   tail -n 15 "$run/keeper/keeper.log" 2>/dev/null || echo "  empty"
 }
@@ -169,7 +177,7 @@ install) install ;;
 report) report "${2:-}" ;;
 cleanup) cleanup ;;
 *)
-  sed -n '2,23p' "$0" | sed 's/^# \{0,1\}//'
+  sed -n '2,24p' "$0" | sed 's/^# \{0,1\}//'
   exit 2
   ;;
 esac

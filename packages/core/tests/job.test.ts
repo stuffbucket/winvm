@@ -1,8 +1,19 @@
-import { describe, expect, it } from "bun:test"
+import { describe, expect, it, mock, spyOn } from "bun:test"
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs"
+import { tmpdir } from "node:os"
+import { resolve } from "node:path"
+
+import { parseArgs } from "../src/args"
+import * as commands from "../src/commands"
 
 import { JobError, parseDuration, parseJob, stepScript } from "../src/job"
+import * as qemu from "../src/qemu"
 import type { RunSummary } from "../src/report"
 import { formatSummary, toJunit, totals } from "../src/report"
+import { run } from "../src/runcmds"
+import * as runner from "../src/runner"
+import * as saves from "../src/saves"
+import * as watcher from "../src/watch"
 
 const minimal = "steps:\n  - run: echo hi\n"
 
@@ -230,5 +241,36 @@ describe("report", () => {
       jobs: [{ ...job, steps: [{ ...step, stdout: `${all}\u{1f600}` }] }],
     })
     expect(x).toContain(`<system-out>${kept}\u{1f600}</system-out>`)
+  })
+})
+
+describe("winvm run on a guest restored but still silent", () => {
+  it("runs no job and says why, with the restore's own exit code", async () => {
+    const saved = process.env.WINVM_HOME
+    const dir = mkdtempSync(resolve(tmpdir(), "winvm-run-"))
+    process.env.WINVM_HOME = dir
+    const file = resolve(dir, "job.yml")
+    writeFileSync(file, "reset: false\nsteps:\n  - run: echo hi\n")
+    spyOn(qemu, "isRunning").mockReturnValue(false)
+    spyOn(watcher, "stopWatcher").mockResolvedValue(false)
+    spyOn(commands, "start").mockResolvedValue(saves.RESTORED_UNANSWERED)
+    const jobs = spyOn(runner, "runJob")
+    const said: string[] = []
+    spyOn(console, "error").mockImplementation((...a: unknown[]) => {
+      said.push(a.map(String).join(" "))
+    })
+    spyOn(console, "log").mockImplementation(() => undefined)
+    try {
+      const code = await run(parseArgs([file, "-i", "ci"]))
+      expect(jobs.mock.calls.length).toBe(0)
+      expect(code).toBe(saves.RESTORED_UNANSWERED)
+      expect(jobs.mock.calls.length).toBe(0)
+      expect(said.join("\n")).toContain("guest agent did not answer")
+    } finally {
+      mock.restore()
+      if (saved === undefined) delete process.env.WINVM_HOME
+      else process.env.WINVM_HOME = saved
+      rmSync(dir, { recursive: true, force: true })
+    }
   })
 })

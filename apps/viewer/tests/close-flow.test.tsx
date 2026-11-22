@@ -29,6 +29,7 @@ interface Machine {
   readonly closePolicy?: "ask" | "leave" | "stow" | "shutdown"
   readonly title?: string | null
   readonly operation?: import("../ui/src/model").VmOperation | null
+  readonly opId?: string
 }
 
 const statusOf = (m: Machine) => ({
@@ -42,6 +43,7 @@ const statusOf = (m: Machine) => ({
           operation: m.operation,
           pid: 777,
           startedAt: "2026-11-12T10:00:00.000Z",
+          ...(m.opId === undefined ? {} : { id: m.opId }),
         },
   state: m.state,
   vmStatus: null,
@@ -60,6 +62,7 @@ const statusOf = (m: Machine) => ({
       ? { agent: m.agent ?? "ok", agentVersion: "9", os: "Windows 11" }
       : null,
   saves: { count: 0, bytes: 0 },
+  keeper: null,
   notes: [],
 })
 
@@ -100,13 +103,27 @@ function deferred<T>(): Deferred<T> {
   return { promise, resolve, reject }
 }
 
+interface Command {
+  machine: string
+  verb: string
+  op?: string | null
+}
+
 interface Snapshot {
   state: "idle" | "requested" | "running" | "authorized"
   machine: string | null
-  command: { machine: string; verb: string } | null
-  last: { machine: string; verb: string; code: number; output: string } | null
+  command: Command | null
+  last: (Command & { code: number; output: string }) | null
   resolved: string[]
   session: { kind: "waiting"; deadline: number } | { kind: "missed" } | null
+  orphans?: Command[]
+}
+
+interface Recorded {
+  ended: boolean
+  ok: boolean | null
+  exitCode: number | null
+  output: string
 }
 
 const snapshotOf = (change: Partial<Snapshot>): Snapshot => ({
@@ -127,6 +144,11 @@ function fakeBridge() {
     pending: false as boolean | Deferred<boolean>,
     snapshot: null as Snapshot | null,
     stateFailures: 0,
+    waitFailures: 0,
+    wait: null as Deferred<Snapshot> | null,
+    records: new Map<string, Recorded>(),
+    unreadable: new Set<string>(),
+    refuseFollow: false,
     start: "ok" as "ok" | "out-of-order",
     config: { code: 0, stdout: "", stderr: "" },
     fire(name = "viewer-close-requested", payload: unknown = null): void {
@@ -146,7 +168,57 @@ function fakeBridge() {
     if (cmd === "winvm") {
       const args = a?.args ?? []
       log.push(`winvm ${args.join(" ")}`)
+      if (
+        args[0] === "events" &&
+        bridge.refuseFollow &&
+        args.includes("--follow")
+      )
+        return rejectLikeTauri({
+          kind: "launch",
+          operation: "events",
+          message:
+            "`winvm events --follow` never ends, so the app runs it once, as its event stream, not as a command",
+          stdout: "",
+          stderr: "",
+          code: null,
+          signal: null,
+          timeoutMs: null,
+        })
+      if (args[0] === "events") {
+        const id = args[args.indexOf("--op") + 1] ?? ""
+        if (bridge.unreadable.has(id))
+          return Promise.resolve({
+            code: 1,
+            stdout: "",
+            stderr: "::error::events.jsonl could not be read",
+          })
+        const r = bridge.records.get(id)
+        return Promise.resolve({
+          code: 0,
+          stdout: JSON.stringify({
+            id,
+            operation: null,
+            error: null,
+            ...(r ?? { ended: false, ok: null, exitCode: null, output: "" }),
+          }),
+          stderr: "",
+        })
+      }
       return Promise.resolve(bridge.config)
+    }
+    if (cmd === "close_wait") {
+      log.push(cmd)
+      if (bridge.waitFailures > 0) {
+        bridge.waitFailures -= 1
+        return rejectLikeTauri("the window is reloading")
+      }
+      return bridge.wait === null
+        ? Promise.resolve(bridge.snapshot)
+        : bridge.wait.promise
+    }
+    if (cmd === "close_forget") {
+      log.push(`close_forget ${String((a as { op?: string } | undefined)?.op)}`)
+      return Promise.resolve(null)
     }
     log.push(a?.machine === undefined ? cmd : `${cmd} ${a.machine}`)
     if (cmd === "close_state") {
@@ -235,13 +307,13 @@ function fakeWinvm(machines: Machine[], selected: string | null) {
     },
     ranLocal(name: string, verb: Verb, code: number, output = ""): void {
       seq += 1
-      outcomes.set(name, { verb, code, output, seq })
+      outcomes.set(name, { verb, code, output, id: `local-op-${String(seq)}` })
     },
     finishLocal(name: string, code: number, output = ""): void {
       const verb = world.busy
       if (verb === null) throw new Error("no command of this window is running")
       seq += 1
-      outcomes.set(name, { verb, code, output, seq })
+      outcomes.set(name, { verb, code, output, id: `local-op-${String(seq)}` })
       world.busy = null
       world.rerender()
     },
@@ -322,7 +394,7 @@ function fakeWinvm(machines: Machine[], selected: string | null) {
     },
   }
   const settled = new Set<(typeof runs)[number]>()
-  const outcomes = new Map<string, Ran & { readonly seq: number }>()
+  const outcomes = new Map<string, Ran>()
   let seq = 0
   return world
 }
@@ -833,6 +905,35 @@ describe("useCloseFlow", () => {
     expect(bridge.count("close_cancel")).toBe(2)
   })
 
+  it("stays open with winvm's words when a remembered stow is refused because no recall could take it, and runs nothing else", async () => {
+    const bridge = fakeBridge()
+    const world = fakeWinvm(
+      [
+        { name: "a", state: "running", closePolicy: "stow" },
+        { name: "b", state: "running", closePolicy: "shutdown" },
+      ],
+      "a",
+    )
+    await mount(world)
+    act(() => {
+      bridge.fire()
+    })
+    await flush()
+    expect(world.runs.map((r) => `${r.name} ${r.verb}`)).toEqual(["a stow"])
+    const refusal =
+      'Windows on "a" runs QEMU 11.0.0, and this winvm runs QEMU 11.1.2, so a stow of it could not be brought back; nothing was saved and Windows keeps running. Shut it down (`winvm stop -i a`) and start it again (`winvm start -i a`) to move it to this winvm\'s QEMU'
+    world.settle(4, refusal)
+    await flush()
+    const failed = current().state
+    expect(failed.kind).toBe("failed")
+    if (failed.kind !== "failed") return
+    expect(failed.machine?.name).toBe("a")
+    expect(failed.message).toBe(refusal)
+    expect(bridge.count("close_cancel")).toBe(1)
+    expect(bridge.count("close_complete")).toBe(0)
+    expect(world.runs).toHaveLength(1)
+  })
+
   it("fails the same way when the machine it is about to resolve can't be read", async () => {
     const bridge = fakeBridge()
     const world = fakeWinvm(
@@ -1217,8 +1318,14 @@ describe("useCloseFlow", () => {
     expect(world.log.filter((l) => l.endsWith(" b"))).toEqual([])
   })
 
-  it("calls the close off when another process's command it waited for ends without doing what it does", async () => {
+  it("calls the close off when the record says another process's command it waited for failed", async () => {
     const bridge = fakeBridge()
+    bridge.records.set("ext-stow-1", {
+      ended: true,
+      ok: false,
+      exitCode: 1,
+      output: "",
+    })
     const world = fakeWinvm(
       [
         {
@@ -1226,6 +1333,7 @@ describe("useCloseFlow", () => {
           state: "running",
           closePolicy: "stow",
           operation: "stow",
+          opId: "ext-stow-1",
           title: "Work PC",
         },
         { name: "b", state: "running", closePolicy: "leave" },
@@ -1254,6 +1362,12 @@ describe("useCloseFlow", () => {
     act(() => root?.unmount())
 
     const again = fakeBridge()
+    again.records.set("ext-resume-1", {
+      ended: true,
+      ok: false,
+      exitCode: 1,
+      output: "::error::guest did not answer after resuming",
+    })
     const held = fakeWinvm(
       [
         {
@@ -1261,6 +1375,7 @@ describe("useCloseFlow", () => {
           state: "paused",
           closePolicy: "leave",
           operation: "resume",
+          opId: "ext-resume-1",
         },
       ],
       "c",
@@ -1275,13 +1390,13 @@ describe("useCloseFlow", () => {
     await tick(1500)
     const stillHeld = current().state
     expect(stillHeld.kind === "failed" ? stillHeld.message : null).toBe(
-      copy("close.externalFailed", { operation: "resume", title: "c" }),
+      "::error::guest did not answer after resuming",
     )
     expect(again.count("close_cancel")).toBe(1)
     expect(again.count("close_complete")).toBe(0)
   })
 
-  it("asks, instead of applying a remembered choice, after another process's command whose outcome its state can't show", async () => {
+  it("asks, instead of applying a remembered choice, after another process's command whose end the record does not hold", async () => {
     const bridge = fakeBridge()
     const world = fakeWinvm(
       [
@@ -1314,6 +1429,12 @@ describe("useCloseFlow", () => {
     act(() => root?.unmount())
 
     const again = fakeBridge()
+    again.records.set("ext-pause-1", {
+      ended: true,
+      ok: true,
+      exitCode: 0,
+      output: "",
+    })
     const paused = fakeWinvm(
       [
         {
@@ -1321,6 +1442,7 @@ describe("useCloseFlow", () => {
           state: "running",
           closePolicy: "leave",
           operation: "pause",
+          opId: "ext-pause-1",
         },
       ],
       "b",
@@ -1333,6 +1455,72 @@ describe("useCloseFlow", () => {
     paused.set("b", { operation: null, state: "paused" })
     await tick(1500)
     expect(again.count("close_complete")).toBe(1)
+  })
+
+  it("calls the close off when the record says another process's command failed though the machine looks as it would after it", async () => {
+    const bridge = fakeBridge()
+    bridge.records.set("ext-start-1", {
+      ended: true,
+      ok: false,
+      exitCode: 1,
+      output: "::error::guest never became ready",
+    })
+    const world = fakeWinvm(
+      [
+        {
+          name: "a",
+          state: "running",
+          closePolicy: "leave",
+          operation: "start",
+          opId: "ext-start-1",
+        },
+      ],
+      "a",
+    )
+    await mount(world)
+    act(() => {
+      bridge.fire()
+    })
+    await flush()
+    world.set("a", { operation: null })
+    await tick(1500)
+    const failed = current().state
+    expect(failed.kind === "failed" ? failed.message : null).toBe(
+      "::error::guest never became ready",
+    )
+    expect(bridge.log).toContain("winvm events -i a --op ext-start-1 --json")
+    expect(bridge.count("close_complete")).toBe(0)
+  })
+
+  it("goes on after another process's start that restored Windows, which is still busy", async () => {
+    const bridge = fakeBridge()
+    bridge.records.set("ext-start-2", {
+      ended: true,
+      ok: false,
+      exitCode: 6,
+      output: "warning: Windows is still busy; it was restored",
+    })
+    const world = fakeWinvm(
+      [
+        {
+          name: "a",
+          state: "running",
+          closePolicy: "leave",
+          operation: "start",
+          opId: "ext-start-2",
+        },
+      ],
+      "a",
+    )
+    await mount(world)
+    act(() => {
+      bridge.fire()
+    })
+    await flush()
+    world.set("a", { operation: null })
+    await tick(1500)
+    expect(bridge.count("close_complete")).toBe(1)
+    expect(bridge.count("close_cancel")).toBe(0)
   })
 
   it("calls the close off when this window's command on a machine not yet reached fails while another is asked about", async () => {
@@ -1570,6 +1758,8 @@ describe("useCloseFlow after the window reloads", () => {
       command: { machine: "b", verb: "stow" },
       resolved: ["a"],
     })
+    const wait = deferred<Snapshot>()
+    bridge.wait = wait
     const world = fakeWinvm(
       [
         { name: "a", state: "running" },
@@ -1592,14 +1782,18 @@ describe("useCloseFlow after the window reloads", () => {
     expect(world.runs).toHaveLength(0)
     expect(bridge.count("close_complete")).toBe(0)
     expect(bridge.count("close_cancel")).toBe(0)
+    expect(bridge.count("close_wait")).toBe(1)
+    expect(bridge.count("close_state")).toBe(1)
 
     world.set("b", { state: "stowed", operation: null })
-    bridge.snapshot = snapshotOf({
-      state: "running",
-      last: { machine: "b", verb: "stow", code: 0, output: "" },
-      resolved: ["a"],
-    })
-    await tick(1500)
+    wait.resolve(
+      snapshotOf({
+        state: "running",
+        last: { machine: "b", verb: "stow", code: 0, output: "" },
+        resolved: ["a"],
+      }),
+    )
+    await flush()
     const next = current().state
     expect(next.kind === "asking" ? next.machine.name : null).toBe("c")
     expect(world.runs).toHaveLength(0)
@@ -1619,19 +1813,23 @@ describe("useCloseFlow after the window reloads", () => {
       command: { machine: "a", verb: "stow" },
     })
     const world = fakeWinvm([{ name: "a", state: "running" }], "a")
+    bridge.waitFailures = 2
+    const wait = deferred<Snapshot>()
     await mount(world)
     expect(current().state.kind).toBe("acting")
-    bridge.stateFailures = 2
+    bridge.wait = wait
     await tick(1500)
     await tick(1500)
     expect(current().state.kind).toBe("acting")
     expect(bridge.count("close_cancel")).toBe(0)
     world.set("a", { state: "stowed" })
-    bridge.snapshot = snapshotOf({
-      state: "running",
-      last: { machine: "a", verb: "stow", code: 0, output: "" },
-    })
-    await tick(1500)
+    wait.resolve(
+      snapshotOf({
+        state: "running",
+        last: { machine: "a", verb: "stow", code: 0, output: "" },
+      }),
+    )
+    await flush()
     expect(bridge.count("close_complete")).toBe(1)
     expect(bridge.count("close_cancel")).toBe(0)
   })
@@ -1665,6 +1863,39 @@ describe("useCloseFlow after the window reloads", () => {
     expect(bridge.count("close_cancel")).toBe(1)
     expect(bridge.count("close_complete")).toBe(0)
     expect(world.runs).toHaveLength(0)
+  })
+
+  it("takes how the old page's stow ended from the record by its op id, not from a command cut off with the page", async () => {
+    const bridge = fakeBridge()
+    bridge.records.set("close-op-1", {
+      ended: true,
+      ok: true,
+      exitCode: 0,
+      output: 'stowed "b"',
+    })
+    bridge.snapshot = snapshotOf({
+      state: "running",
+      machine: "b",
+      last: {
+        machine: "b",
+        verb: "stow",
+        op: "close-op-1",
+        code: -1,
+        output: "winvm stow on b stopped without saying how it ended",
+      },
+    })
+    const world = fakeWinvm(
+      [
+        { name: "a", state: "running" },
+        { name: "b", state: "stowed" },
+      ],
+      "a",
+    )
+    await mount(world)
+    const next = current().state
+    expect(next.kind === "asking" ? next.machine.name : null).toBe("a")
+    expect(bridge.count("close_cancel")).toBe(0)
+    expect(bridge.log).toContain("winvm events -i b --op close-op-1 --json")
   })
 
   it("starts again at the machine the close had reached when nothing was running", async () => {
@@ -1710,6 +1941,218 @@ describe("useCloseFlow after the window reloads", () => {
     await flush()
     expect(bridge.count("close_start")).toBe(1)
     expect(current().state.kind).toBe("asking")
+  })
+})
+
+describe("useCloseFlow after the app was quit during a close", () => {
+  it("follows the close's last stow by its op id and says it did not finish, then lets it go", async () => {
+    const bridge = fakeBridge()
+    bridge.records.set("orphan-op-1", {
+      ended: true,
+      ok: false,
+      exitCode: 1,
+      output: "::error::the disk is full",
+    })
+    bridge.snapshot = snapshotOf({
+      orphans: [{ machine: "b", verb: "stow", op: "orphan-op-1" }],
+    })
+    const world = fakeWinvm(
+      [
+        { name: "a", state: "running" },
+        { name: "b", state: "running" },
+      ],
+      "a",
+    )
+    await mount(world)
+    const failed = current().state
+    expect(failed.kind === "failed" ? failed.message : null).toBe(
+      "::error::the disk is full",
+    )
+    expect(world.name).toBe("b")
+    expect(bridge.log).toContain(
+      "winvm events -i b --op orphan-op-1 --json --follow",
+    )
+    expect(bridge.log).toContain("close_forget orphan-op-1")
+  })
+
+  it("keeps the note and says it could not read the outcome when the app refuses or fails the follow", async () => {
+    const bridge = fakeBridge()
+    bridge.refuseFollow = true
+    bridge.snapshot = snapshotOf({
+      orphans: [{ machine: "b", verb: "stow", op: "orphan-op-3" }],
+    })
+    await mount(
+      fakeWinvm(
+        [
+          { name: "a", state: "running" },
+          { name: "b", state: "running" },
+        ],
+        "a",
+      ),
+    )
+    const failed = current().state
+    expect(failed.kind).toBe("failed")
+    if (failed.kind !== "failed") return
+    expect(failed.machine?.name).toBe("b")
+    expect(failed.message).toContain("orphan-op-3")
+    expect(failed.message).toContain(
+      copy("close.orphanUnreadable", {
+        operation: "stow",
+        title: "b",
+        machine: "b",
+        op: "orphan-op-3",
+      }),
+    )
+    expect(bridge.log.filter((l) => l.startsWith("close_forget"))).toEqual([])
+  })
+
+  it("follows every close cut short, one after the other, and stops at the first it must show", async () => {
+    const bridge = fakeBridge()
+    bridge.records.set("orphan-op-5", {
+      ended: true,
+      ok: true,
+      exitCode: 0,
+      output: "",
+    })
+    bridge.records.set("orphan-op-6", {
+      ended: true,
+      ok: false,
+      exitCode: 4,
+      output: "::error::the stow was refused",
+    })
+    bridge.snapshot = snapshotOf({
+      orphans: [
+        { machine: "a", verb: "stow", op: "orphan-op-5" },
+        { machine: "b", verb: "stow", op: "orphan-op-6" },
+        { machine: "a", verb: "stop", op: "orphan-op-7" },
+      ],
+    })
+    await mount(
+      fakeWinvm(
+        [
+          { name: "a", state: "stowed" },
+          { name: "b", state: "running" },
+        ],
+        "a",
+      ),
+    )
+    const failed = current().state
+    expect(failed.kind === "failed" ? failed.message : null).toBe(
+      "::error::the stow was refused",
+    )
+    expect(bridge.log.filter((l) => l.startsWith("close_forget"))).toEqual([
+      "close_forget orphan-op-5",
+      "close_forget orphan-op-6",
+    ])
+  })
+
+  it("goes past a note it cannot read to the next, shows that one, and keeps the unreadable note", async () => {
+    const bridge = fakeBridge()
+    bridge.unreadable.add("orphan-op-8")
+    bridge.records.set("orphan-op-9", {
+      ended: true,
+      ok: false,
+      exitCode: 1,
+      output: "::error::the disk is full",
+    })
+    bridge.snapshot = snapshotOf({
+      orphans: [
+        { machine: "a", verb: "stow", op: "orphan-op-8" },
+        { machine: "b", verb: "stow", op: "orphan-op-9" },
+      ],
+    })
+    await mount(
+      fakeWinvm(
+        [
+          { name: "a", state: "running" },
+          { name: "b", state: "running" },
+        ],
+        "a",
+      ),
+    )
+    const failed = current().state
+    expect(failed.kind === "failed" ? failed.message : null).toBe(
+      "::error::the disk is full",
+    )
+    expect(bridge.log.filter((l) => l.startsWith("close_forget"))).toEqual([
+      "close_forget orphan-op-9",
+    ])
+  })
+
+  it("shows a note it cannot read once the others are settled, and forgets it when the person dismisses it", async () => {
+    const bridge = fakeBridge()
+    bridge.unreadable.add("orphan-op-10")
+    bridge.records.set("orphan-op-11", {
+      ended: true,
+      ok: true,
+      exitCode: 0,
+      output: "",
+    })
+    bridge.snapshot = snapshotOf({
+      orphans: [
+        { machine: "b", verb: "stow", op: "orphan-op-10" },
+        { machine: "a", verb: "stow", op: "orphan-op-11" },
+      ],
+    })
+    await mount(
+      fakeWinvm(
+        [
+          { name: "a", state: "stowed" },
+          { name: "b", state: "running" },
+        ],
+        "a",
+      ),
+    )
+    const failed = current().state
+    expect(failed.kind).toBe("failed")
+    if (failed.kind !== "failed") return
+    expect(failed.machine?.name).toBe("b")
+    expect(failed.message).toContain(
+      copy("close.orphanUnreadable", {
+        operation: "stow",
+        title: "b",
+        machine: "b",
+        op: "orphan-op-10",
+      }),
+    )
+    expect(bridge.log.filter((l) => l.startsWith("close_forget"))).toEqual([
+      "close_forget orphan-op-11",
+    ])
+    act(() => {
+      current().cancel()
+    })
+    await flush()
+    expect(current().state.kind).toBe("idle")
+    expect(bridge.log.filter((l) => l.startsWith("close_forget"))).toEqual([
+      "close_forget orphan-op-11",
+      "close_forget orphan-op-10",
+    ])
+  })
+
+  it("lets a note go silently when the record never heard of its op", async () => {
+    const bridge = fakeBridge()
+    bridge.snapshot = snapshotOf({
+      orphans: [{ machine: "a", verb: "stow", op: "orphan-op-4" }],
+    })
+    await mount(fakeWinvm([{ name: "a", state: "running" }], "a"))
+    expect(current().state.kind).toBe("idle")
+    expect(bridge.log).toContain("close_forget orphan-op-4")
+  })
+
+  it("says nothing of a stow that finished, and lets it go", async () => {
+    const bridge = fakeBridge()
+    bridge.records.set("orphan-op-2", {
+      ended: true,
+      ok: true,
+      exitCode: 0,
+      output: "",
+    })
+    bridge.snapshot = snapshotOf({
+      orphans: [{ machine: "a", verb: "stow", op: "orphan-op-2" }],
+    })
+    await mount(fakeWinvm([{ name: "a", state: "stowed" }], "a"))
+    expect(current().state.kind).toBe("idle")
+    expect(bridge.log).toContain("close_forget orphan-op-2")
   })
 })
 
@@ -1836,8 +2279,10 @@ describe("useWinvm's lastOn", () => {
           stderr: "",
         })
       }
+      const named = args.indexOf("--op-id")
+      const asked = named < 0 ? args : args.slice(0, named)
       return Promise.resolve(
-        answers[args.join(" ")] ?? { code: 1, stdout: "", stderr: "" },
+        answers[asked.join(" ")] ?? { code: 1, stdout: "", stderr: "" },
       )
     }
     Object.assign(window, { __TAURI__: { core: { invoke } } })
@@ -1870,7 +2315,8 @@ describe("useWinvm's lastOn", () => {
     })
     const a = first.lastOn("a")
     expect(a?.code).toBe(0)
-    expect((a?.seq ?? 0) > (b?.seq ?? 0)).toBe(true)
+    expect(typeof a?.id).toBe("string")
+    expect(a?.id).not.toBe(b?.id)
     expect(first.lastOn("b")?.code).toBe(1)
 
     await act(async () => {
@@ -1914,7 +2360,9 @@ describe("useWinvm's lastOn", () => {
         return Promise.resolve({ code: 3, stdout: "", stderr: "no room" })
       })
     })
-    expect(through).toEqual([["stow", "-i", "a"]])
+    expect(through).toEqual([
+      ["stow", "-i", "a", "--op-id", w.lastOn("a")?.id ?? "?"],
+    ])
     expect(asked.filter((l) => l.startsWith("winvm stow"))).toEqual([])
     expect(w.lastOn("a")?.code).toBe(3)
     expect(w.lastOn("a")?.output).toBe("no room")

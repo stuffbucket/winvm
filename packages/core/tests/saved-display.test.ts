@@ -7,19 +7,21 @@ import {
   mock,
   spyOn,
 } from "bun:test"
-import { ChildProcess, type SpawnOptions, spawn } from "node:child_process"
+import { spawn } from "node:child_process"
 import {
   appendFileSync,
+  chmodSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  renameSync,
   rmSync,
+  utimesSync,
   writeFileSync,
-  writeSync,
 } from "node:fs"
 import { tmpdir } from "node:os"
-import { basename, resolve } from "node:path"
+import { resolve } from "node:path"
 
 import { parseArgs } from "../src/args"
 import * as clock from "../src/clock"
@@ -33,21 +35,36 @@ import {
   VIRTIO_GPU,
   writeDisplay,
 } from "../src/display"
+import { appendEntry, readSince, START } from "../src/eventlog"
+import * as finder from "../src/finder"
+import { golden, resetToGolden } from "../src/golden"
 import * as host from "../src/host"
+import { hostEndFacts, hostEndSeams } from "../src/hostend"
+import { hostPoweredOff } from "../src/hostoff"
+import type { KeeperChild } from "../src/keeper"
+import * as kept from "../src/kept"
 import * as media from "../src/media"
+import * as monitor from "../src/monitor"
+import { type OpScope, runInOp } from "../src/opcontext"
+import { withOperation } from "../src/operation"
 import {
   basePath,
   type InstanceMeta,
   imageMetaPath,
+  type Paths,
   pathsFor,
   readMeta,
 } from "../src/paths"
+import * as proc from "../src/proc"
 import * as qemu from "../src/qemu"
 import * as qga from "../src/qga"
 import * as qmp from "../src/qmp"
+import { currentQemuCompat } from "../src/runtime"
 import * as savecmds from "../src/savecmds"
+import * as saves from "../src/saves"
 import {
   cloneSave,
+  compatFor,
   compatHash,
   createSave,
   currentCompat,
@@ -57,6 +74,9 @@ import {
   type Manifest,
   markPristine,
   readSave,
+  recallable,
+  STOW_REFUSED,
+  StowNotRecallable,
   saveDir,
   savesDir,
 } from "../src/saves"
@@ -64,8 +84,16 @@ import * as screen from "../src/screen"
 import * as servicectl from "../src/servicectl"
 import * as share from "../src/share"
 import * as shell from "../src/shell"
+import {
+  type MountEntry,
+  mountDir,
+  SHARE_KEYS,
+  SHARES,
+  writeSmb,
+} from "../src/smbstate"
 import { gather } from "../src/status"
 import * as vnc from "../src/vnc"
+import * as watcher from "../src/watch"
 
 const SIZED: DisplayConfig = {
   device: "virtio-gpu",
@@ -82,17 +110,20 @@ let state = ""
 let previous: Record<string, string | undefined> = {}
 let previousProbe: share.Probe
 let previousSettle: qemu.Settle
-let previousSpawner: qemu.Spawner
 let qemuOutput: string | null = null
 let initialRunning: DisplayConfig | null = VIRTIO_GPU
 let initialDevices: share.DeviceSet | undefined
 let spacedHome: string | null = null
 let runningPid: number | null = FAKE_PID
+let keeperChild: number | null = null
 let commands: string[] = []
 let virtiofsd = 0
 let statusCalls = 0
 let answered = 0
 let settled = 0
+let quitSawStow: boolean | null = null
+let reported = { major: 11, minor: 1, micro: 2 }
+let program = "qemu-system-aarch64"
 const realRunningCommand = display.runningCommand
 
 const qemuLog = (): string => resolve(state, "qemu.log")
@@ -104,31 +135,56 @@ const launches = (): readonly string[] =>
     : []
 const lastLaunch = (): string => launches().at(-1) ?? ""
 
-function fakeSpawner(
-  command: string,
-  args: readonly string[],
-  options: SpawnOptions,
-): ChildProcess {
-  const child = new ChildProcess()
-  const binary = basename(command)
-  if (binary === "swtpm") {
-    const sock = /path=([^,]+)/.exec(args.join(" "))?.[1]
+function launchSidecar(
+  p: Paths,
+  child: KeeperChild & { readonly name: string },
+): Promise<number> {
+  if (child.name === "swtpm") {
+    const sock = /path=([^,]+)/.exec(child.argv.join(" "))?.[1]
     if (sock === undefined)
-      throw new Error(`swtpm without a socket: ${args.join(" ")}`)
+      throw new Error(`swtpm without a socket: ${child.argv.join(" ")}`)
     writeFileSync(sock, "")
-  } else if (binary === "qemu-system-aarch64") {
-    appendFileSync(qemuLog(), `${args.join(" ")}\n`)
-    const output = qemuOutput
-    if (output !== null) {
-      const fd = Array.isArray(options.stdio) ? options.stdio[1] : undefined
-      if (typeof fd === "number") writeSync(fd, output)
-      setImmediate(() => child.emit("exit", 1, null))
-    }
+  } else if (child.name === "virtiofsd") {
+    virtiofsd += 1
+    writeFileSync(share.virtiofsdSocket(p), "")
   } else {
-    throw new Error(`unexpected spawn: ${command}`)
+    throw new Error(`unexpected sidecar: ${child.name}`)
   }
-  return child
+  return Promise.resolve(FAKE_PID + 1)
 }
+
+function launchChild(
+  _p: Paths,
+  child: KeeperChild & { readonly name: string },
+): Promise<number> {
+  appendFileSync(qemuLog(), `${child.argv.slice(1, -2).join(" ")}\n`)
+  runningPid = FAKE_PID
+  keeperChild = FAKE_PID
+  if (qemuOutput !== null) {
+    writeFileSync(child.log ?? "", qemuOutput)
+    keeperChild = null
+  }
+  return Promise.resolve(FAKE_PID)
+}
+
+const keeperHello = (): kept.KeeperHello => ({
+  pid: FAKE_PID + 2,
+  protocol: 3,
+  version: "fake",
+  child:
+    keeperChild === null
+      ? null
+      : {
+          name: "qemu",
+          pid: keeperChild,
+          adopted: false,
+          legacy: false,
+          runtime: null,
+        },
+  sidecars: [],
+  service: null,
+  hostEnding: false,
+})
 
 function makeInstance(name: string): void {
   const p = pathsFor(name)
@@ -185,7 +241,6 @@ beforeEach(() => {
   process.env.WINVM_RUNTIME = resolve(state, "runtime")
   mkdirSync(resolve(state, "runtime", "bin"), { recursive: true })
   qemuOutput = null
-  previousSpawner = qemu.setSpawner(fakeSpawner)
   previousProbe = share.setProbe(() => ({ ok: true, reason: null }))
   settled = 0
   previousSettle = qemu.setSettle((survived) => {
@@ -206,10 +261,14 @@ beforeEach(() => {
   initialDevices = undefined
   spacedHome = null
   runningPid = FAKE_PID
+  keeperChild = null
   commands = []
   virtiofsd = 0
   statusCalls = 0
   answered = 0
+  quitSawStow = null
+  reported = { major: 11, minor: 1, micro: 2 }
+  program = "qemu-system-aarch64"
 
   mkdirSync(resolve(state, "images", meta.image), { recursive: true })
   writeFileSync(basePath(meta.image), "immutable base")
@@ -235,9 +294,20 @@ beforeEach(() => {
     Promise.resolve(m),
   )
   spyOn(vnc, "applyPassword").mockResolvedValue(null)
-  spyOn(share, "startVirtiofsd").mockImplementation(() => {
-    virtiofsd += 1
-    return Promise.resolve({ dir: state, readonly: false, folder: null })
+  spyOn(kept, "openKeeper").mockImplementation(
+    async () => await Promise.resolve(keeperHello()),
+  )
+  spyOn(kept, "keeperHello").mockImplementation(
+    async () => await Promise.resolve(keeperHello()),
+  )
+  spyOn(kept, "untilChildGone").mockResolvedValue(null)
+  spyOn(kept, "launchSidecar").mockImplementation(launchSidecar)
+  spyOn(kept, "launchChild").mockImplementation(launchChild)
+  spyOn(kept, "killKept").mockImplementation(async (_p, pid) => {
+    if (keeperChild === null || (pid !== null && pid !== keeperChild))
+      return await Promise.resolve(false)
+    keeperChild = null
+    return await Promise.resolve(true)
   })
   spyOn(qemu, "pidOf").mockImplementation(() => runningPid)
   spyOn(qemu, "isRunning").mockImplementation(() => runningPid !== null)
@@ -247,7 +317,12 @@ beforeEach(() => {
   })
   spyOn(qmp, "execute").mockImplementation(async (_socket, cmd, args) => {
     commands.push(cmd)
-    if (cmd === "quit") runningPid = null
+    if (cmd === "quit") {
+      quitSawStow = existsSync(
+        resolve(saveDir("source", "stow"), FILES.manifest),
+      )
+      runningPid = null
+    }
     if (cmd === "query-status") {
       answered += 1
       for (let i = 0; i < 300 && launches().length < answered; i += 1)
@@ -285,10 +360,18 @@ beforeEach(() => {
         ? options
         : { ...options, shareDevices: initialDevices },
     )
-    const command = ["qemu-system-aarch64", ...args].join(" ")
+    const command = [program, ...args].join(" ")
     return spacedHome === null ? command : command.replaceAll(state, spacedHome)
   })
   spyOn(console, "log").mockImplementation(() => undefined)
+  spyOn(kept, "launchedRuntime").mockImplementation(
+    async () => await Promise.resolve(currentQemuCompat()),
+  )
+  spyOn(monitor, "qmpCommand").mockImplementation(async (_socket, cmd) =>
+    cmd === "query-version"
+      ? await Promise.resolve({ qemu: reported, package: "" })
+      : await Promise.reject(new Error(`unexpected ${cmd}`)),
+  )
   makeInstance("source")
 })
 
@@ -296,7 +379,6 @@ afterEach(() => {
   mock.restore()
   share.setProbe(previousProbe)
   qemu.setSettle(previousSettle)
-  qemu.setSpawner(previousSpawner)
   for (const [k, v] of Object.entries(previous)) {
     if (v === undefined) delete process.env[k]
     else process.env[k] = v
@@ -322,6 +404,27 @@ describe("capturing the running display", () => {
     )
     expect(readSave("source", "now")?.display).toEqual(VIRTIO_GPU)
     expect(readDisplay(pathsFor("source"))).toEqual(RAMFB)
+  })
+
+  it("stamps a save with the runtime its QEMU was launched from, not the one installed since", async () => {
+    initialRunning = VIRTIO_GPU
+    const launched = spyOn(kept, "launchedRuntime").mockResolvedValue(
+      "10.0.0+patches:old",
+    )
+    const result = await createSave("source", {
+      name: "launched",
+      kind: "manual",
+      format: "raw",
+    })
+    expect(launched).toHaveBeenCalledWith(pathsFor("source"), FAKE_PID)
+    expect(result.manifest.compatParts?.qemu).toBe("10.0.0+patches:old")
+    expect(result.manifest.compat).toBe(
+      currentCompat("source", meta, VIRTIO_GPU, undefined, "10.0.0+patches:old")
+        .hash,
+    )
+    expect(result.manifest.compat).not.toBe(
+      currentCompat("source", meta, VIRTIO_GPU).hash,
+    )
   })
 
   it("records an earlier winvm's sized virtio-gpu exactly", async () => {
@@ -681,6 +784,7 @@ describe("launch resolves the display once", () => {
     spyOn(display, "readDisplay").mockImplementation(
       () => reads.shift() ?? RAMFB,
     )
+    runningPid = null
     await qemu.launch("source", p, meta, {
       installMedia: false,
       ephemeral: false,
@@ -695,6 +799,7 @@ describe("launch resolves the display once", () => {
   it("keeps a build on ramfb with the filesystem device, and an explicit share set as given", async () => {
     const p = pathsFor("source")
     writeDisplay(p, VIRTIO_GPU)
+    runningPid = null
     await qemu.launch("source", p, meta, {
       installMedia: true,
       ephemeral: false,
@@ -704,6 +809,7 @@ describe("launch resolves the display once", () => {
     expect(lastLaunch()).toContain("-device ramfb")
     expect(lastLaunch()).toContain("vhost-user-fs-pci")
     expect(lastLaunch()).not.toContain("qemu-vdagent")
+    runningPid = null
     await qemu.launch("source", p, meta, {
       installMedia: false,
       ephemeral: false,
@@ -722,6 +828,7 @@ describe("launch outcome", () => {
   it("reports a qemu that exits at once, with its output, under the real settle window", async () => {
     qemu.setSettle()
     qemuOutput = "boom\n"
+    runningPid = null
     await expect(
       qemu.launch("source", pathsFor("source"), meta, {
         installMedia: false,
@@ -870,5 +977,819 @@ describe("status", () => {
       child.kill()
       await exited
     }
+  })
+})
+
+describe("the host-end stow", () => {
+  const hanging = (): {
+    readonly sys: finder.QuickUnmount
+    readonly killed: () => number
+  } => {
+    let killed = 0
+    return {
+      sys: {
+        mountTable: () => ({
+          done: Promise.resolve(
+            SHARE_KEYS.map((key) => ({
+              source: `//winvm-share@127.0.0.1:4455/${SHARES[key].share}`,
+              dir: mountDir("source", key),
+              type: "smbfs",
+            })),
+          ),
+          kill: () => undefined,
+        }),
+        unmount: (dir) => {
+          commands.push(`unmount ${dir}`)
+          return {
+            done: new Promise<unknown>(() => undefined),
+            kill: () => {
+              killed += 1
+            },
+          }
+        },
+      },
+      killed: () => killed,
+    }
+  }
+
+  it("unmounts the guest's drives before pausing it, within its budget even when an unmount hangs, and writes the stow before quitting", async () => {
+    writeSmb(pathsFor("source"), {
+      user: "winvm-share",
+      password: "Wv1-aaaaaaaaaaaaaaaaaaaaaaaa",
+      hostPort: 4455,
+      mounted: ["home", "c"],
+    })
+    const u = hanging()
+    let ticks = 0
+    const timer = setInterval(() => {
+      ticks += 1
+    }, 20)
+    const started = Date.now()
+    try {
+      await hostEndSeams("source", { unmount: u.sys, unmountMs: 300 }).stow()
+    } finally {
+      clearInterval(timer)
+    }
+    expect(u.killed()).toBe(2)
+    expect(commands.indexOf(`unmount ${mountDir("source", "home")}`)).toBe(0)
+    expect(commands.indexOf("stop")).toBeGreaterThan(1)
+    expect(Date.now() - started).toBeLessThan(3000)
+    expect(ticks).toBeGreaterThan(5)
+    expect(quitSawStow).toBe(true)
+    expect(readSave("source", "stow")?.kind).toBe("stow")
+  })
+
+  it("kills the mount listing too when it outlasts the budget", async () => {
+    writeSmb(pathsFor("source"), {
+      user: "winvm-share",
+      password: "Wv1-aaaaaaaaaaaaaaaaaaaaaaaa",
+      hostPort: 4455,
+      mounted: ["home"],
+    })
+    let killed = 0
+    const started = Date.now()
+    const r = await finder.unmountWithin("source", 200, {
+      mountTable: () => ({
+        done: new Promise<readonly MountEntry[]>(() => undefined),
+        kill: () => {
+          killed += 1
+        },
+      }),
+      unmount: () => ({ done: Promise.resolve(0), kill: () => undefined }),
+    })
+    expect(Date.now() - started).toBeLessThan(2000)
+    expect(killed).toBe(1)
+    expect(r).toEqual({ unmounted: 0, left: 2 })
+  })
+
+  it("reads the running QEMU's facts: -snapshot, install media and the free space", async () => {
+    spyOn(display, "runningCommand").mockReturnValue(
+      "qemu-system-aarch64 -snapshot -drive if=none,media=cdrom,id=cd0",
+    )
+    const f = await hostEndFacts("source")
+    expect(f.ephemeral).toBe(true)
+    expect(f.installMedia).toBe(true)
+    expect(f.unsaveable).toBeNull()
+    expect(f.freeBytes).toBeGreaterThan(0)
+    expect(f.action).toBe("stow")
+  })
+})
+
+describe("partial saves left behind", () => {
+  it("are cleared at the next save when their writer has gone, never while it runs", async () => {
+    mkdirSync(savesDir("source"), { recursive: true })
+    const dead = resolve(savesDir("source"), ".stow.partial-99999999")
+    mkdirSync(dead)
+    const writer = Bun.spawn(["sleep", "30"])
+    const live = resolve(
+      savesDir("source"),
+      `.stow.partial-${String(writer.pid)}`,
+    )
+    mkdirSync(live)
+    try {
+      await createSave("source", {
+        name: "later",
+        kind: "manual",
+        format: "raw",
+      })
+      expect(existsSync(dead)).toBe(false)
+      expect(existsSync(live)).toBe(true)
+    } finally {
+      writer.kill("SIGKILL")
+      await writer.exited
+    }
+  })
+})
+
+describe("the runtime a stow is labelled with", () => {
+  const installed = (): void => {
+    const manifest = resolve(state, "runtime", "manifest.json")
+    writeFileSync(
+      manifest,
+      JSON.stringify({
+        name: "winvm-runtime",
+        version: "11.1.2-2",
+        qemu: "11.1.2",
+        qemuPatches: "p2",
+        components: {},
+        macho: [],
+        files: {},
+      }),
+    )
+    const old = new Date(Date.now() - 86_400_000)
+    utimesSync(manifest, old, old)
+  }
+  beforeEach(() => {
+    spyOn(kept, "launchedRuntime").mockResolvedValue(null)
+  })
+  const stow = async (): Promise<Manifest> =>
+    (
+      await createSave("source", {
+        name: "stow",
+        kind: "stow",
+        format: "raw",
+        quitAfter: true,
+      })
+    ).manifest
+
+  it("is the version QEMU itself reports, runtime-unknown, for an adopted QEMU that is not the installed runtime's; no stow is written, and an older build's stow is refused naming --boot", async () => {
+    installed()
+    program = resolve(state, "runtime", "bin", "qemu-system-aarch64")
+    reported = { major: 10, minor: 0, micro: 0 }
+    await expect(stow()).rejects.toBeInstanceOf(StowNotRecallable)
+    const named = await createSave("source", {
+      name: "older",
+      kind: "manual",
+      format: "raw",
+    })
+    expect(named.manifest.compatParts?.qemu).toBe("10.0.0+patches:unknown")
+    renameSync(saveDir("source", "older"), saveDir("source", "stow"))
+    const manifest = resolve(saveDir("source", "stow"), FILES.manifest)
+    writeFileSync(
+      manifest,
+      JSON.stringify({ ...named.manifest, name: "stow", kind: "stow" }),
+    )
+    const errors = spyOn(console, "error").mockImplementation(() => undefined)
+    expect(
+      await savecmds.recallStow("source", parseArgs(["-i", "source"])),
+    ).toBe(1)
+    const said = errors.mock.calls.map((c) => String(c[0])).join("\n")
+    expect(said).toContain("10.0.0")
+    expect(said).toContain("--boot")
+    expect(readSave("source", "stow")).not.toBeNull()
+  })
+
+  it("is the installed runtime when QEMU reports its version and the runtime predates the process", async () => {
+    installed()
+    program = resolve(state, "runtime", "bin", "qemu-system-aarch64")
+    spyOn(proc, "processAgeMs").mockReturnValue(3_600_000)
+    expect((await stow()).compatParts?.qemu).toBe("11.1.2+patches:p2")
+  })
+
+  it("is runtime-unknown when the process can't be dated, and a QEMU of the same version may still recall it", async () => {
+    installed()
+    program = resolve(state, "runtime", "bin", "qemu-system-aarch64")
+    const m = await stow()
+    expect(m.compatParts?.qemu).toBe("11.1.2+patches:unknown")
+    const saved = readSave("source", "stow")
+    if (saved === null) throw new Error("no stow")
+    expect(compatFor("source", meta, saved).hash).toBe(saved.compat)
+    const log = spyOn(console, "log")
+    expect(savecmds.list(parseArgs(["-i", "source", "--json"]))).toBe(0)
+    const rows = JSON.parse(String(log.mock.calls.at(-1)?.[0])) as {
+      name: string
+      compatible: boolean | null
+    }[]
+    expect(rows.find((r) => r.name === "stow")?.compatible).toBe(true)
+  })
+
+  it("is the override runtime when QEMU runs from its directory, which has no manifest, and the binary predates the process", async () => {
+    const binary = resolve(state, "runtime", "bin", "qemu-system-aarch64")
+    writeFileSync(binary, "")
+    const old = new Date(Date.now() - 86_400_000)
+    utimesSync(binary, old, old)
+    program = binary
+    spyOn(proc, "processAgeMs").mockReturnValue(3_600_000)
+    const m = await stow()
+    expect(m.compatParts?.qemu).toBe(currentQemuCompat())
+    expect(recallable(m.compatParts?.qemu ?? "")).toBe(true)
+  })
+
+  it("makes the host end shut a kept VM down when the keeper launched it on another runtime than the installed one", async () => {
+    installed()
+    spyOn(kept, "launchedRuntime").mockResolvedValue("11.0.0+patches:p1")
+    const f = await hostEndFacts("source")
+    expect(f.unsaveable).toContain("QEMU 11.0.0")
+    expect(f.unsaveable).toContain("11.1.2")
+  })
+
+  it("decides recallability with the one predicate start uses", () => {
+    expect(recallable("11.1.2+patches:p2", "11.1.2+patches:p2")).toBe(true)
+    expect(recallable("11.1.2+patches:unknown", "11.1.2+patches:p2")).toBe(true)
+    expect(recallable("11.0.0+patches:p1", "11.1.2+patches:p2")).toBe(false)
+    expect(recallable("10.0.0+patches:unknown", "11.1.2+patches:p2")).toBe(
+      false,
+    )
+    expect(recallable("unknown", "11.1.2+patches:p2")).toBe(false)
+  })
+
+  it("makes the host end shut an adopted QEMU of another version down rather than stow what no recall could take", async () => {
+    installed()
+    program = resolve(state, "runtime", "bin", "qemu-system-aarch64")
+    reported = { major: 10, minor: 0, micro: 0 }
+    const f = await hostEndFacts("source")
+    expect(f.unsaveable).toContain("QEMU 10.0.0")
+  })
+})
+
+describe("a recall that fails", () => {
+  it("names --boot as the way out, so start is never stuck on the stow", async () => {
+    await createSave("source", {
+      name: "stow",
+      kind: "stow",
+      format: "raw",
+      quitAfter: true,
+    })
+    spyOn(saves, "loadSave").mockRejectedValue(
+      new Error('QEMU exited while loading save "stow"'),
+    )
+    const errors = spyOn(console, "error").mockImplementation(() => undefined)
+    expect(
+      await savecmds.recallStow("source", parseArgs(["-i", "source"])),
+    ).toBe(1)
+    const said = errors.mock.calls.map((c) => String(c[0])).join("\n")
+    expect(said).toContain("QEMU exited while loading")
+    expect(said).toContain("winvm start -i source --boot")
+    expect(readSave("source", "stow")).not.toBeNull()
+  })
+})
+
+describe("a stow whose QEMU will not quit", () => {
+  it("is moved aside, so a later start never recalls it over newer disk writes", async () => {
+    spyOn(saves, "quitQemu").mockRejectedValue(
+      new Error("QEMU (pid 1234567) did not quit and could not be killed"),
+    )
+    await expect(
+      createSave("source", {
+        name: "stow",
+        kind: "stow",
+        format: "raw",
+        quitAfter: true,
+      }),
+    ).rejects.toThrow("stow-unfinished")
+    expect(readSave("source", "stow")).toBeNull()
+    const aside = readSave("source", "stow-unfinished")
+    expect(aside?.name).toBe("stow-unfinished")
+    expect(aside?.kind).toBe("manual")
+    expect(aside?.note).toContain("did not quit")
+  })
+
+  const stuck = (before: () => void = () => undefined): Promise<string> => {
+    spyOn(saves, "quitQemu").mockImplementation(() => {
+      before()
+      return Promise.reject(
+        new Error("QEMU (pid 1234567) did not quit and could not be killed"),
+      )
+    })
+    return createSave("source", {
+      name: "stow",
+      kind: "stow",
+      format: "raw",
+      quitAfter: true,
+    }).then(
+      () => "",
+      (e: unknown) => (e as Error).message,
+    )
+  }
+
+  it("keeps an earlier unfinished stow it can't remove, and sets this one aside under a free name", async () => {
+    const blocked = saveDir("source", "stow-unfinished")
+    mkdirSync(blocked, { recursive: true })
+    writeFileSync(resolve(blocked, "pinned"), "x")
+    chmodSync(blocked, 0o500)
+    try {
+      const text = await stuck()
+      expect(text).toContain("did not quit")
+      expect(text).toContain('"stow-unfinished-2"')
+      expect(readSave("source", "stow")).toBeNull()
+      expect(readSave("source", "stow-unfinished-2")?.kind).toBe("manual")
+      expect(existsSync(resolve(blocked, "pinned"))).toBe(true)
+    } finally {
+      chmodSync(blocked, 0o700)
+    }
+  })
+
+  it("is kept where it is, marked so that start does not recall it, when it can't be moved, and an explicit load still can", async () => {
+    const dir = savesDir("source")
+    try {
+      const text = await stuck(() => {
+        chmodSync(dir, 0o500)
+      })
+      expect(text).toContain("did not quit")
+      expect(text).toContain("could not be moved aside")
+      expect(text).toContain("winvm load -i source stow")
+      chmodSync(dir, 0o700)
+      const marked = readSave("source", "stow")
+      expect(marked?.unfinished).toBe(true)
+      expect(marked?.kind).toBe("stow")
+      const errors = spyOn(console, "error").mockImplementation(() => undefined)
+      expect(
+        await savecmds.recallStow("source", parseArgs(["-i", "source"])),
+      ).toBe(1)
+      const said = errors.mock.calls.map((c) => String(c[0])).join("\n")
+      expect(said).toContain("winvm load -i source stow")
+      expect(said).toContain("--boot")
+      expect(commands).not.toContain("migrate-incoming")
+      expect(readSave("source", "stow")).not.toBeNull()
+    } finally {
+      chmodSync(dir, 0o700)
+    }
+  })
+
+  it("is still set aside, never deleted, when its manifest can't be rewritten there", async () => {
+    const stow = saveDir("source", "stow")
+    const aside = saveDir("source", "stow-unfinished")
+    try {
+      const text = await stuck(() => {
+        chmodSync(stow, 0o500)
+      })
+      expect(text).toContain('"stow-unfinished"')
+      expect(text).toContain("still calls it the stow")
+      expect(existsSync(stow)).toBe(false)
+      expect(readSave("source", "stow-unfinished")?.kind).toBe("stow")
+    } finally {
+      if (existsSync(aside)) chmodSync(aside, 0o700)
+      if (existsSync(stow)) chmodSync(stow, 0o700)
+    }
+  })
+
+  it("consumes the folder it loaded, and discards the real stow it supersedes, when that folder's manifest still calls it the stow", async () => {
+    fixture(VIRTIO_GPU, true, "stow", "stow")
+    renameSync(saveDir("source", "stow"), saveDir("source", "stow-unfinished"))
+    fixture(VIRTIO_GPU, true, "stow", "stow")
+    spyOn(qga, "waitResponsive").mockResolvedValue(true)
+    spyOn(clock, "syncGuestClock").mockResolvedValue({
+      beforeOffsetMs: 0,
+      afterOffsetMs: 0,
+    })
+    expect(
+      await savecmds.load(parseArgs(["-i", "source", "stow-unfinished"])),
+    ).toBe(0)
+    expect(existsSync(saveDir("source", "stow-unfinished"))).toBe(false)
+    expect(readSave("source", "stow")).toBeNull()
+  })
+
+  it("consumes the stow itself when the stow is what it loaded", async () => {
+    fixture(VIRTIO_GPU, true, "stow", "stow")
+    spyOn(qga, "waitResponsive").mockResolvedValue(true)
+    spyOn(clock, "syncGuestClock").mockResolvedValue({
+      beforeOffsetMs: 0,
+      afterOffsetMs: 0,
+    })
+    expect(await savecmds.load(parseArgs(["-i", "source", "stow"]))).toBe(0)
+    expect(readSave("source", "stow")).toBeNull()
+  })
+
+  it("is kept as it is when it can be neither moved nor marked", async () => {
+    const dir = savesDir("source")
+    const stow = saveDir("source", "stow")
+    try {
+      const text = await stuck(() => {
+        chmodSync(stow, 0o500)
+        chmodSync(dir, 0o500)
+      })
+      expect(text).toContain("could not be moved aside")
+      expect(text).toContain("--boot")
+      chmodSync(dir, 0o700)
+      chmodSync(stow, 0o700)
+      expect(readSave("source", "stow")?.kind).toBe("stow")
+    } finally {
+      chmodSync(dir, 0o700)
+      chmodSync(stow, 0o700)
+    }
+  })
+})
+
+describe("a stow the installed runtime could not recall", () => {
+  const installedR11 = (): void => {
+    const manifest = resolve(state, "runtime", "manifest.json")
+    writeFileSync(
+      manifest,
+      JSON.stringify({
+        name: "winvm-runtime",
+        version: "11.1.2-2",
+        qemu: "11.1.2",
+        qemuPatches: "p2",
+        components: {},
+        macho: [],
+        files: {},
+      }),
+    )
+  }
+  beforeEach(() => {
+    installedR11()
+    spyOn(kept, "launchedRuntime").mockResolvedValue("11.0.0+patches:p1")
+  })
+
+  it("is refused by createSave before the guest is paused, and nothing is written", async () => {
+    let refusal: unknown = null
+    await createSave("source", {
+      name: "stow",
+      kind: "stow",
+      format: "raw",
+      quitAfter: true,
+    }).catch((e: unknown) => {
+      refusal = e
+    })
+    expect(refusal).toBeInstanceOf(StowNotRecallable)
+    const text = (refusal as Error).message
+    expect(text).toContain("QEMU 11.0.0")
+    expect(text).toContain("QEMU 11.1.2")
+    expect(text).toContain("winvm stop -i source")
+    expect(commands).not.toContain("stop")
+    expect(commands).not.toContain("quit")
+    expect(readSave("source", "stow")).toBeNull()
+    expect(runningPid).toBe(FAKE_PID)
+  })
+
+  it("still lets a named save be written under its true label, and a load of it says why it can't", async () => {
+    const r = await createSave("source", {
+      name: "kept-r10",
+      kind: "manual",
+      format: "raw",
+    })
+    expect(r.manifest.compatParts?.qemu).toBe("11.0.0+patches:p1")
+    await expect(loadSave("source", "kept-r10")).rejects.toThrow(
+      "QEMU changed (11.0.0+patches:p1 -> 11.1.2+patches:p2)",
+    )
+  })
+
+  it("makes winvm stow exit with its own code and the restart guidance, leaving Windows running", async () => {
+    const errors = spyOn(console, "error").mockImplementation(() => undefined)
+    expect(await savecmds.stow(parseArgs(["-i", "source", "--force"]))).toBe(
+      STOW_REFUSED,
+    )
+    const said = errors.mock.calls.map((c) => String(c[0])).join("\n")
+    expect(said).toContain("winvm stop -i source")
+    expect(commands).not.toContain("stop")
+    expect(runningPid).toBe(FAKE_PID)
+  })
+
+  it("is decided before winvm stow stops the watcher or takes the Finder drives down, so both stay up", async () => {
+    spyOn(console, "error").mockImplementation(() => undefined)
+    const stopped = spyOn(watcher, "stopWatcher").mockResolvedValue(true)
+    const restarted = spyOn(watcher, "startWatcherFor").mockImplementation(
+      () => undefined,
+    )
+    const down = spyOn(finder, "beforeDown").mockImplementation(() => undefined)
+    expect(await savecmds.stow(parseArgs(["-i", "source", "--force"]))).toBe(
+      STOW_REFUSED,
+    )
+    expect(stopped).not.toHaveBeenCalled()
+    expect(restarted).not.toHaveBeenCalled()
+    expect(down).not.toHaveBeenCalled()
+  })
+
+  it("is recorded as a refusal, so a later unexplained end of QEMU is still told", async () => {
+    spyOn(console, "error").mockImplementation(() => undefined)
+    expect(
+      await withOperation(
+        "source",
+        "stow",
+        async () => await savecmds.stow(parseArgs(["-i", "source", "--force"])),
+      ),
+    ).toBe(STOW_REFUSED)
+    const entries = readSince("source", START).entries
+    expect(
+      entries.filter((e) => e.kind === "warning" && e.what === "stow refused"),
+    ).toHaveLength(1)
+    appendEntry("source", { kind: "disconnected", reason: "qemu-closed" })
+    expect(hostPoweredOff("source")?.cause).toBe("qemu-gone")
+  })
+})
+
+describe("a stow whose QEMU did not say which version it runs", () => {
+  beforeEach(() => {
+    spyOn(kept, "launchedRuntime").mockResolvedValue(null)
+    spyOn(monitor, "qmpCommand").mockRejectedValue(
+      new Error("QMP did not answer within 2000 ms"),
+    )
+  })
+
+  it("is refused this time, as undecided rather than unrecallable", async () => {
+    let refusal: unknown = null
+    await createSave("source", {
+      name: "stow",
+      kind: "stow",
+      format: "raw",
+      quitAfter: true,
+    }).catch((e: unknown) => {
+      refusal = e
+    })
+    expect(refusal).toBeInstanceOf(StowNotRecallable)
+    expect((refusal as StowNotRecallable).undecided).toBe(true)
+    expect((refusal as Error).message).toContain("did not say")
+    expect(commands).not.toContain("stop")
+    expect(readSave("source", "stow")).toBeNull()
+  })
+
+  it("makes winvm stow exit with a code of its own, which the watcher takes as a stow to try again", async () => {
+    spyOn(console, "error").mockImplementation(() => undefined)
+    const code = await savecmds.stow(parseArgs(["-i", "source", "--force"]))
+    expect(code).toBe(saves.STOW_UNDECIDED)
+    expect(code).not.toBe(STOW_REFUSED)
+    expect(watcher.stowOutcome(code)).toBe("failed")
+    expect(runningPid).toBe(FAKE_PID)
+  })
+})
+
+describe("a winvm stow that fails while QEMU still runs Windows", () => {
+  let afterwards: () => Promise<unknown> = async () =>
+    await Promise.resolve({ status: "running" })
+  let asked: number[] = []
+  beforeEach(() => {
+    afterwards = async () => await Promise.resolve({ status: "running" })
+    asked = []
+    spyOn(console, "error").mockImplementation(() => undefined)
+    spyOn(saves, "captureScreen").mockRejectedValue(
+      new Error("screendump failed"),
+    )
+    spyOn(monitor, "qmpCommand").mockImplementation(
+      async (_socket, cmd, _args, timeoutMs) => {
+        if (cmd === "query-version")
+          return await Promise.resolve({ qemu: reported, package: "" })
+        if (cmd !== "query-status") throw new Error(`unexpected ${cmd}`)
+        asked.push(timeoutMs ?? 3000)
+        return await afterwards()
+      },
+    )
+  })
+
+  it("starts the watcher it stopped again", async () => {
+    spyOn(watcher, "stopWatcher").mockResolvedValue(true)
+    const restarted = spyOn(watcher, "startWatcherFor").mockImplementation(
+      () => undefined,
+    )
+    expect(await savecmds.stow(parseArgs(["-i", "source", "--force"]))).toBe(1)
+    expect(runningPid).toBe(FAKE_PID)
+    expect(commands).toContain("cont")
+    expect(restarted).toHaveBeenCalledTimes(1)
+  })
+
+  it("starts no watcher when QEMU's monitor won't say what the guest is doing, and asks it only briefly", async () => {
+    afterwards = async () =>
+      await Promise.reject(new Error("QMP did not answer within 2000 ms"))
+    spyOn(qmp, "status").mockImplementation(() =>
+      commands.includes("cont")
+        ? Promise.reject(new Error("qmp.sock went away"))
+        : Promise.resolve("running"),
+    )
+    spyOn(watcher, "stopWatcher").mockResolvedValue(true)
+    const restarted = spyOn(watcher, "startWatcherFor").mockImplementation(
+      () => undefined,
+    )
+    expect(await savecmds.stow(parseArgs(["-i", "source", "--force"]))).toBe(1)
+    expect(restarted).not.toHaveBeenCalled()
+    expect(asked.length).toBeGreaterThan(0)
+    expect(Math.max(...asked)).toBeLessThanOrEqual(2000)
+  })
+
+  it("stops and restarts the watcher even when it inherited WINVM_AUTOMATIC", async () => {
+    const before = process.env.WINVM_AUTOMATIC
+    process.env.WINVM_AUTOMATIC = "1"
+    try {
+      const stopped = spyOn(watcher, "stopWatcher").mockResolvedValue(true)
+      const restarted = spyOn(watcher, "startWatcherFor").mockImplementation(
+        () => undefined,
+      )
+      expect(await savecmds.stow(parseArgs(["-i", "source", "--force"]))).toBe(
+        1,
+      )
+      expect(stopped).toHaveBeenCalledTimes(1)
+      expect(restarted).toHaveBeenCalledTimes(1)
+    } finally {
+      if (before === undefined) delete process.env.WINVM_AUTOMATIC
+      else process.env.WINVM_AUTOMATIC = before
+    }
+  })
+
+  it("starts no watcher it did not stop", async () => {
+    spyOn(watcher, "stopWatcher").mockResolvedValue(false)
+    const restarted = spyOn(watcher, "startWatcherFor").mockImplementation(
+      () => undefined,
+    )
+    expect(await savecmds.stow(parseArgs(["-i", "source", "--force"]))).toBe(1)
+    expect(restarted).not.toHaveBeenCalled()
+  })
+
+  it("never stops the watcher whose own idle stow it is, though the service runs it", async () => {
+    const stopped = spyOn(watcher, "stopWatcher").mockResolvedValue(true)
+    const restarted = spyOn(watcher, "startWatcherFor").mockImplementation(
+      () => undefined,
+    )
+    expect(
+      await savecmds.stow(
+        parseArgs(["-i", "source", "--force", "--automatic"]),
+      ),
+    ).toBe(1)
+    expect(stopped).not.toHaveBeenCalled()
+    expect(restarted).not.toHaveBeenCalled()
+  })
+
+  it("starts no watcher beside a QEMU that kept the guest stopped after writing the stow", async () => {
+    spyOn(saves, "captureScreen").mockResolvedValue(null)
+    spyOn(saves, "quitQemu").mockRejectedValue(
+      new Error("QEMU (pid 1234567) did not quit and could not be killed"),
+    )
+    spyOn(qmp, "status").mockImplementation(() =>
+      Promise.resolve(commands.includes("migrate") ? "postmigrate" : "running"),
+    )
+    afterwards = async () =>
+      await Promise.resolve({
+        status: commands.includes("migrate") ? "postmigrate" : "running",
+      })
+    spyOn(watcher, "stopWatcher").mockResolvedValue(true)
+    const restarted = spyOn(watcher, "startWatcherFor").mockImplementation(
+      () => undefined,
+    )
+    expect(await savecmds.stow(parseArgs(["-i", "source", "--force"]))).toBe(1)
+    expect(restarted).not.toHaveBeenCalled()
+  })
+})
+
+describe("a recall that completed but whose guest did not answer in time", () => {
+  beforeEach(() => {
+    spyOn(console, "error").mockImplementation(() => undefined)
+    spyOn(console, "warn").mockImplementation(() => undefined)
+    spyOn(qga, "waitResponsive").mockResolvedValue(false)
+  })
+
+  it("retires the stow, says Windows was restored and is still busy, and exits with its own code", async () => {
+    fixture(VIRTIO_GPU, true, "stow", "stow")
+    const warned = spyOn(console, "warn").mockImplementation(() => undefined)
+    expect(
+      await savecmds.recallStow("source", parseArgs(["-i", "source"])),
+    ).toBe(saves.RESTORED_UNANSWERED)
+    expect(readSave("source", "stow")).toBeNull()
+    const said = warned.mock.calls.map((c) => String(c[0])).join("\n")
+    expect(said).toContain("still busy")
+    expect(said).toContain("restored")
+  })
+
+  it("is not recalled again by the next start after a stop", async () => {
+    fixture(VIRTIO_GPU, true, "stow", "stow")
+    await savecmds.recallStow("source", parseArgs(["-i", "source"]))
+    expect(launches()).toHaveLength(1)
+    runningPid = null
+    expect(
+      await savecmds.recallStow("source", parseArgs(["-i", "source"])),
+    ).toBeNull()
+    expect(launches()).toHaveLength(1)
+  })
+
+  it("retires the stow a named load supersedes, though the guest did not answer", async () => {
+    fixture(VIRTIO_GPU, true, "stow", "stow")
+    fixture(VIRTIO_GPU, true, "named", "manual")
+    expect(await savecmds.load(parseArgs(["-i", "source", "named"]))).toBe(
+      saves.RESTORED_UNANSWERED,
+    )
+    expect(readSave("source", "stow")).toBeNull()
+    expect(readSave("source", "named")).not.toBeNull()
+  })
+
+  it("retires the stow a golden reset supersedes, though the guest did not answer", async () => {
+    fixture(VIRTIO_GPU, true, "stow", "stow")
+    fixture(VIRTIO_GPU, true, "golden", "golden")
+    await expect(
+      resetToGolden("source", "golden", { timeoutMs: 10 }),
+    ).rejects.toThrow("did not answer")
+    expect(readSave("source", "stow")).toBeNull()
+  })
+
+  it("has golden reset exit like load, saying Windows was restored and is still busy", async () => {
+    fixture(VIRTIO_GPU, true, "golden", "golden")
+    const warned = spyOn(console, "warn").mockImplementation(() => undefined)
+    expect(await golden(parseArgs(["reset", "golden", "-i", "source"]))).toBe(
+      saves.RESTORED_UNANSWERED,
+    )
+    const said = warned.mock.calls.map((c) => String(c[0])).join("\n")
+    expect(said).toContain("still busy")
+    expect(said).toContain("restored")
+  })
+})
+
+describe("a load that never completes", () => {
+  it("quits QEMU rather than leave it half-loaded, and keeps the stow", async () => {
+    fixture(VIRTIO_GPU, true, "stow", "stow")
+    spyOn(console, "error").mockImplementation(() => undefined)
+    const real = Date.now.bind(Date)
+    let skew = 0
+    spyOn(Date, "now").mockImplementation(() => real() + skew)
+    spyOn(qmp, "status").mockImplementation(() => {
+      if (launches().length > 0) skew = 31 * 60_000
+      return Promise.resolve(launches().length > 0 ? "inmigrate" : "running")
+    })
+    expect(
+      await savecmds.recallStow("source", parseArgs(["-i", "source"])),
+    ).toBe(1)
+    expect(commands.filter((c) => c === "quit")).toHaveLength(2)
+    expect(runningPid).toBeNull()
+    expect(readSave("source", "stow")).not.toBeNull()
+  })
+
+  it("leaves a QEMU whose state it could not read, and marks the stow so start does not recall it", async () => {
+    fixture(VIRTIO_GPU, true, "stow", "stow")
+    const said = spyOn(console, "error").mockImplementation(() => undefined)
+    const real = Date.now.bind(Date)
+    let skew = 0
+    spyOn(Date, "now").mockImplementation(() => real() + skew)
+    spyOn(qmp, "status").mockImplementation(() => {
+      if (launches().length === 0) return Promise.resolve("running")
+      skew = 31 * 60_000
+      return Promise.reject(new Error("the monitor did not answer"))
+    })
+    expect(
+      await savecmds.recallStow("source", parseArgs(["-i", "source"])),
+    ).toBe(1)
+    expect(commands.filter((c) => c === "quit")).toHaveLength(1)
+    expect(runningPid).toBe(FAKE_PID)
+    expect(readSave("source", "stow")?.unfinished).toBe(true)
+    expect(said.mock.calls.map((c) => String(c[0])).join("\n")).toContain(
+      "did not say",
+    )
+  })
+
+  it("marks the stow so start does not recall it when the half-loaded QEMU cannot be quit", async () => {
+    fixture(VIRTIO_GPU, true, "stow", "stow")
+    spyOn(console, "error").mockImplementation(() => undefined)
+    const real = Date.now.bind(Date)
+    let skew = 0
+    spyOn(Date, "now").mockImplementation(() => {
+      if (launches().length > 0) skew += 10 * 60_000
+      return real() + skew
+    })
+    spyOn(qmp, "status").mockResolvedValue("inmigrate")
+    spyOn(qemu, "killQemu").mockResolvedValue(false)
+    spyOn(qmp, "execute").mockImplementation((_socket, cmd) => {
+      commands.push(cmd)
+      if (cmd === "quit" && launches().length === 0) runningPid = null
+      return Promise.resolve({})
+    })
+    expect(
+      await savecmds.recallStow("source", parseArgs(["-i", "source"])),
+    ).toBe(1)
+    expect(runningPid).toBe(FAKE_PID)
+    expect(readSave("source", "stow")?.unfinished).toBe(true)
+  })
+})
+
+describe("a load whose op is ended by kill while QEMU quits", () => {
+  it("leaves the disk as it was instead of replacing it with the lease gone", async () => {
+    fixture(VIRTIO_GPU, true, "named", "manual")
+    const killer = new AbortController()
+    const scope: OpScope = {
+      id: "op-load",
+      operation: "load",
+      signal: killer.signal,
+      cancelled: new AbortController().signal,
+      write: () => undefined,
+      remount: () => undefined,
+      irreversibleAt: null,
+      calls: 0,
+    }
+    spyOn(qmp, "execute").mockImplementation((_socket, cmd) => {
+      commands.push(cmd)
+      if (cmd === "quit") {
+        runningPid = null
+        killer.abort("killed")
+      }
+      return Promise.resolve({})
+    })
+    await expect(
+      runInOp(scope, () => loadSave("source", "named")),
+    ).rejects.toThrow()
+    expect(readFileSync(pathsFor("source").overlay, "utf8")).toBe("live disk")
+    expect(readFileSync(pathsFor("source").vars, "utf8")).toBe("live vars")
+    expect(launches()).toHaveLength(0)
   })
 })

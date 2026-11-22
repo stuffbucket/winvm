@@ -268,6 +268,43 @@ describe("reading the event record", () => {
     expect(all().map((e) => e.kind)).toEqual(["service"])
   })
 
+  it("reads what an op printed, by its id and stream, and skips output that lacks either", () => {
+    const said = {
+      kind: "op",
+      phase: "output",
+      id: "op-1",
+      operation: "pause",
+      stream: "out",
+      text: 'paused "t"\n',
+    } as const
+    appendEntry(NAME, said)
+    appendEntry(NAME, { ...said, stream: "err", text: "warning: x\n" })
+    writeFileSync(
+      p.events,
+      [
+        legacyLine({ kind: "op", phase: "output", id: "op-1", text: "x" }),
+        legacyLine({
+          kind: "op",
+          phase: "output",
+          operation: "pause",
+          stream: "out",
+          text: "x",
+        }),
+      ].join(""),
+      { flag: "a" },
+    )
+    expect(all()).toEqual([
+      { t: expect.any(String) as string, instance: NAME, ...said },
+      {
+        t: expect.any(String) as string,
+        instance: NAME,
+        ...said,
+        stream: "err",
+        text: "warning: x\n",
+      },
+    ])
+  })
+
   it("starts a cursor taken now after everything already recorded", () => {
     appendEntry(NAME, note("before"))
     const cursor = endCursor(NAME)

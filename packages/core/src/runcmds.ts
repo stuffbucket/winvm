@@ -106,8 +106,12 @@ async function runAll(files: readonly string[], args: Args): Promise<number> {
   console.log(
     `winvm run: ${String(jobs.length)} job(s) on instance "${instance}"; artifacts in ${artifactsDir}`,
   )
-  if (await watcher.stopWatcher(instance))
-    console.log(`  stopped the idle watcher of "${instance}"`)
+  try {
+    if (await watcher.stopWatcher(instance))
+      console.log(`  stopped the idle watcher of "${instance}"`)
+  } catch (error) {
+    return fail(errMsg(error))
+  }
 
   const boot = async (name: string): Promise<number> =>
     await withOperation(
@@ -136,13 +140,17 @@ async function runAll(files: readonly string[], args: Args): Promise<number> {
   } catch (error) {
     return fail(errMsg(error))
   }
-  if (
-    !qemu.isRunning(pathsFor(instance)) &&
-    jobs.some((j) => !j.reset) &&
-    (await boot(instance)) !== 0
-  ) {
-    return fail(`could not start instance "${instance}"`)
+  const booted =
+    !qemu.isRunning(pathsFor(instance)) && jobs.some((j) => !j.reset)
+      ? await boot(instance)
+      : 0
+  if (booted === saves.RESTORED_UNANSWERED) {
+    console.error(
+      `::error::instance "${instance}" was restored, but its guest agent did not answer, so no job was run — \`winvm run\` again once \`winvm exec -i ${instance} cmd /c ver\` answers`,
+    )
+    return booted
   }
+  if (booted !== 0) return fail(`could not start instance "${instance}"`)
   const setupMs = Date.now() - wall0
 
   const results: JobResult[] = []
