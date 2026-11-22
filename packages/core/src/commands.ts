@@ -42,6 +42,7 @@ import {
   checksReport,
   hostChecks,
   hostMissing,
+  type KeeperNeed,
   PWSH_SHA256,
   PWSH_URL,
   printChecks,
@@ -52,7 +53,7 @@ import {
 import * as input from "./input"
 import { ensureInstance, makeVars, resetInstance, sealBase } from "./instance"
 import { ensureKeeper } from "./keeper"
-import { killKept, retireKeeper } from "./kept"
+import { keeperMissing, killKept, retireKeeper } from "./kept"
 import { ensureCurrent, ManagementError } from "./lifecycle"
 import * as machineinfo from "./machineinfo"
 import {
@@ -111,20 +112,32 @@ import * as share from "./share"
 import { ensureShareMedia } from "./sharemedia"
 import { download, du, run, sha256Of } from "./shell"
 import * as snapshot from "./snapshot"
+import { legacyVms } from "./status"
 import * as timemachine from "./timemachine"
 import * as watcher from "./watch"
 
 const virtioBootFor = (meta: InstanceMeta): boolean =>
   readImageMeta(meta.image)?.virtioBoot === true
 
-export function doctor(json = false): number {
+export async function doctor(
+  json = false,
+  keeper: KeeperNeed = "required",
+): Promise<number> {
+  const legacy = await legacyVms()
   if (json) {
-    const report = checksReport(hostChecks(), timemachine.summary())
+    const report = {
+      ...checksReport(hostChecks(keeper), timemachine.summary()),
+      legacy,
+    }
     console.log(JSON.stringify(report, null, 2))
     return report.ready ? 0 : 1
   }
-  const missing = printChecks(hostChecks())
+  const missing = printChecks(hostChecks(keeper))
   console.log(timemachine.summary())
+  if (legacy.length > 0)
+    console.log(
+      `\nstill running from an older winvm, so not shielded if the Mac shuts down:\n${legacy.map((v) => `  ${v.name}: ${v.note}`).join("\n")}`,
+    )
   console.log(
     missing === 0
       ? `\nhost is ready · state: ${home()}`
@@ -259,7 +272,7 @@ export function prune(args: Args): number {
   return 0
 }
 
-export function setup(args: Args): number {
+export async function setup(args: Args): Promise<number> {
   try {
     const rt = ensureRuntime()
     console.log(`runtime ${rt.manifest?.version ?? "?"} in ${rt.dir}`)
@@ -284,11 +297,11 @@ export function setup(args: Args): number {
     }
   }
   console.log("")
-  return doctor()
+  return await doctor(false, "optional")
 }
 
 export function adopt(args: Args): number {
-  requireHost()
+  requireHost("optional")
   const src = args.positional[0]
   if (src === undefined) {
     console.error("::error::usage: winvm adopt <disk.qcow2> [--image <name>]")
@@ -322,7 +335,7 @@ export function adopt(args: Args): number {
 }
 
 export async function build(args: Args): Promise<number> {
-  requireHost()
+  requireHost("required")
   const image = imageName(args)
   if (!isValidImageName(image)) {
     console.error(
@@ -608,7 +621,7 @@ export const launchInstaller = async (
 const NO_LOGON_MS = 120_000
 
 export function create(args: Args): number {
-  requireHost()
+  requireHost("optional")
   const name = instanceName(args)
   if (!isValidInstanceName(name)) {
     console.error(
@@ -658,7 +671,7 @@ export async function startRunning(
 }
 
 export async function start(args: Args): Promise<number> {
-  if (hostMissing()) return 1
+  if (hostMissing("required")) return 1
   const name = instanceName(args)
   const p = pathsFor(name)
   if (qemu.isRunning(p)) return await startRunning(name, args)
@@ -778,6 +791,11 @@ export async function rewind(args: Args): Promise<number> {
   const meta = readMeta(name)
   if (meta === null) {
     console.error(`::error::no such instance "${name}"`)
+    return 1
+  }
+  const noKeeper = keeperMissing(`"${name}" was not rewound`)
+  if (noKeeper !== null) {
+    console.error(`::error::${noKeeper.message}`)
     return 1
   }
   const rewatch = watcher.rewatchAfterRestore(name, args)
@@ -1744,7 +1762,8 @@ export function configCmd(args: Args): number {
 export const USAGE =
   "winvm <command>\n\n" +
   "  setup                         install missing host prerequisites, fetch pinned media\n" +
-  "  doctor  [--json]              check host prerequisites (the HOST, before anything runs)\n" +
+  "  doctor  [--json]              check host prerequisites (the HOST, before anything runs),\n" +
+  "                                and list VMs an older winvm started that run unshielded\n" +
   "  diagnose [-i name]            explain a guest that misbehaved, from its files\n" +
   "  build --iso <win11.iso>       build a base image (once, ~20 min)\n" +
   "        [--payload <dir>] [--bun <version>] [--image <name>]\n" +

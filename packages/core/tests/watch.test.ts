@@ -1,14 +1,5 @@
+import { afterAll, beforeAll, describe, expect, it } from "bun:test"
 import {
-  afterAll,
-  afterEach,
-  beforeAll,
-  beforeEach,
-  describe,
-  expect,
-  it,
-} from "bun:test"
-import {
-  existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -37,7 +28,6 @@ import {
   savesToRotate,
   timingFrom,
 } from "../src/idle"
-import { legacyWatcherPid, stopLegacyWatcher } from "../src/legacy"
 import { instanceDir } from "../src/paths"
 import { STOW_REFUSED, STOW_UNDECIDED } from "../src/saves"
 import {
@@ -48,7 +38,6 @@ import {
   parseCpuTime,
   stowOutcome,
   watchAfterRestore,
-  watchPathsFor,
 } from "../src/watch"
 
 const MIN = 60_000
@@ -565,232 +554,6 @@ describe("watcher after a load or rewind", () => {
   it("never starts one with watch.enabled=false", () => {
     writeAssignments("off", [parseAssignment("watch.enabled=false")])
     expect(ensureWatcher("off")).toBe(false)
-  })
-})
-
-describe("a watcher an older winvm started", () => {
-  let home = ""
-  let savedHome: string | undefined
-  const spawned: ReturnType<typeof Bun.spawn>[] = []
-
-  beforeEach(() => {
-    savedHome = process.env.WINVM_HOME
-    home = mkdtempSync(resolve(tmpdir(), "winvm-watchgen-"))
-    process.env.WINVM_HOME = home
-    mkdirSync(instanceDir("w"), { recursive: true })
-  })
-  afterEach(() => {
-    for (const s of spawned.splice(0)) s.kill()
-    if (savedHome === undefined) delete process.env.WINVM_HOME
-    else process.env.WINVM_HOME = savedHome
-    rmSync(home, { recursive: true, force: true })
-  })
-
-  const fakeWatcher = (): ReturnType<typeof Bun.spawn> => {
-    const holder = resolve(import.meta.dir, "fakes", "holder.ts")
-    const h = Bun.spawn(
-      [process.execPath, holder, "winvm", "watch", "-i", "w"],
-      { stdout: "ignore", stderr: "ignore" },
-    )
-    spawned.push(h)
-    return h
-  }
-  const alive = (pid: number): boolean => {
-    try {
-      process.kill(pid, 0)
-      return true
-    } catch {
-      return false
-    }
-  }
-  const pidFile = (): string => resolve(instanceDir("w"), "watch.pid")
-  const lock = (pid: number): void => {
-    writeFileSync(pidFile(), `${String(pid)}\n`)
-  }
-  const state = (o: Record<string, unknown>): void => {
-    writeFileSync(watchPathsFor("w").state, JSON.stringify(o))
-  }
-
-  it("is found by watch.pid while it runs, and a reused pid's file is dropped without signalling it", () => {
-    const h = fakeWatcher()
-    lock(h.pid)
-    expect(legacyWatcherPid("w")).toBe(h.pid)
-    const stranger = Bun.spawn(["sleep", "20"])
-    spawned.push(stranger)
-    lock(stranger.pid)
-    expect(legacyWatcherPid("w")).toBeNull()
-    expect(existsSync(pidFile())).toBe(false)
-    expect(alive(stranger.pid)).toBe(true)
-  })
-
-  it("is never taken to be pid 0 or 1, whatever watch.pid says", async () => {
-    for (const pid of [0, 1, -1]) {
-      lock(pid)
-      const kills: number[] = []
-      expect(legacyWatcherPid("w", () => true)).toBeNull()
-      expect(
-        await stopLegacyWatcher("w", {
-          kill: (p) => void kills.push(p),
-          isWatcher: () => true,
-        }),
-      ).toBe(false)
-      expect(kills).toEqual([])
-    }
-  })
-
-  const seams = (o: { readonly dies: "never" | "on-term" }) => {
-    const calls: { sig: string; at: number }[] = []
-    let t = 1_000
-    let gone = false
-    return {
-      calls,
-      elapsed: (): number => t - 1_000,
-      seams: {
-        kill: (_pid: number, sig: NodeJS.Signals): void => {
-          calls.push({ sig, at: t })
-          if (sig === "SIGKILL" || o.dies === "on-term") gone = true
-        },
-        now: (): number => t,
-        sleep: (ms: number): Promise<void> => {
-          t += ms
-          return Promise.resolve()
-        },
-        isWatcher: (): boolean => !gone,
-      },
-    }
-  }
-
-  it("is given 10 seconds to finish when it is only watching, then killed", async () => {
-    lock(424_242)
-    state({ pid: 424_242, state: "watching" })
-    const s = seams({ dies: "never" })
-    expect(await stopLegacyWatcher("w", s.seams)).toBe(true)
-    expect(s.calls.map((c) => c.sig)).toEqual(["SIGTERM", "SIGKILL"])
-    expect(s.elapsed()).toBeGreaterThanOrEqual(10_000)
-    expect(s.elapsed()).toBeLessThan(11_000)
-    expect(existsSync(pidFile())).toBe(false)
-  })
-
-  for (const st of ["autosaving", "stowing"] as const) {
-    it(`is given 10 minutes to finish when it is ${st}`, async () => {
-      lock(424_242)
-      state({ pid: 424_242, state: st })
-      const s = seams({ dies: "never" })
-      expect(await stopLegacyWatcher("w", s.seams)).toBe(true)
-      expect(s.calls.map((c) => c.sig)).toEqual(["SIGTERM", "SIGKILL"])
-      expect(s.elapsed()).toBeGreaterThanOrEqual(600_000)
-      expect(s.elapsed()).toBeLessThan(601_000)
-    })
-  }
-
-  it("is not killed when it exits after SIGTERM", async () => {
-    lock(424_242)
-    state({ pid: 424_242, state: "autosaving" })
-    const s = seams({ dies: "on-term" })
-    expect(await stopLegacyWatcher("w", s.seams)).toBe(true)
-    expect(s.calls.map((c) => c.sig)).toEqual(["SIGTERM"])
-  })
-
-  it("is believed to be autosaving only when watch.json names it", async () => {
-    lock(424_242)
-    state({ pid: 424_243, state: "autosaving" })
-    const s = seams({ dies: "never" })
-    expect(await stopLegacyWatcher("w", s.seams)).toBe(true)
-    expect(s.elapsed()).toBeGreaterThanOrEqual(10_000)
-    expect(s.elapsed()).toBeLessThan(11_000)
-  })
-
-  it("is checked again just before SIGKILL", async () => {
-    lock(424_242)
-    state({ pid: 424_242, state: "watching" })
-    let t = 1_000
-    const kills: string[] = []
-    const result = await stopLegacyWatcher("w", {
-      kill: (_pid, sig) => void kills.push(sig),
-      now: () => t,
-      sleep: (ms) => {
-        t += ms
-        return Promise.resolve()
-      },
-      isWatcher: () => t < 11_000,
-    })
-    expect(result).toBe(true)
-    expect(kills).toEqual(["SIGTERM"])
-  })
-
-  it("is not what watch.pid names when that is some other process, which nobody signals", async () => {
-    const stranger = Bun.spawn(["sleep", "20"])
-    spawned.push(stranger)
-    lock(stranger.pid)
-    const kills: string[] = []
-    expect(
-      await stopLegacyWatcher("w", { kill: (_p, sig) => void kills.push(sig) }),
-    ).toBe(false)
-    expect(kills).toEqual([])
-    expect(alive(stranger.pid)).toBe(true)
-  })
-
-  for (const [label, argv] of [
-    ["another instance's watcher", ["winvm", "watch", "-i", "other"]],
-    [
-      "the watcher of an instance whose name starts with this one's",
-      ["winvm", "watch", "-i", "wx"],
-    ],
-    [
-      "a watcher named with --instance=",
-      ["winvm", "watch", "--instance=other"],
-    ],
-    [
-      "a `watch --stop` for this instance",
-      ["winvm", "watch", "-i", "w", "--stop"],
-    ],
-    [
-      "an unrelated executable whose name ends in winvm",
-      ["evilwinvm", "watch", "-i", "w"],
-    ],
-  ] as const) {
-    it(`is never ${label}, before SIGTERM or SIGKILL`, async () => {
-      const holder = resolve(import.meta.dir, "fakes", "holder.ts")
-      const h = Bun.spawn([process.execPath, holder, ...argv], {
-        stdout: "ignore",
-        stderr: "ignore",
-      })
-      spawned.push(h)
-      lock(h.pid)
-      state({ pid: h.pid, state: "watching" })
-      const kills: string[] = []
-      let t = 0
-      const stopped = await stopLegacyWatcher("w", {
-        kill: (_p, sig) => void kills.push(sig),
-        now: () => t,
-        sleep: (ms) => {
-          t += ms
-          return Promise.resolve()
-        },
-      })
-      expect(kills).toEqual([])
-      expect(stopped).toBe(false)
-      expect(legacyWatcherPid("w")).toBeNull()
-      expect(alive(h.pid)).toBe(true)
-    })
-  }
-
-  it("is recognised however it was named", () => {
-    const holder = resolve(import.meta.dir, "fakes", "holder.ts")
-    for (const argv of [
-      ["winvm", "watch", "-i", "w"],
-      ["winvm.ts", "watch", "--instance", "w"],
-      ["winvm", "watch", "--instance=w"],
-      ["winvm-aarch64-apple-darwin", "watch", "-i", "w"],
-    ]) {
-      const h = Bun.spawn([process.execPath, holder, ...argv], {
-        stdout: "ignore",
-        stderr: "ignore",
-      })
-      spawned.push(h)
-      lock(h.pid)
-      expect(legacyWatcherPid("w")).toBe(h.pid)
-    }
   })
 })
 

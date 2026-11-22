@@ -50,6 +50,12 @@ const keeper =
   )
 const root = mkdtempSync("/tmp/wkl-")
 const savedHome = process.env.WINVM_HOME
+const savedPath = process.env.PATH
+if (enabled)
+  process.env.PATH = (savedPath ?? "")
+    .split(":")
+    .filter((d) => d !== dirname(process.env.WINVM_FAKE_KEEPER ?? ""))
+    .join(":")
 process.env.WINVM_HOME = resolve(root, "home")
 
 const VM = "kept-launchd"
@@ -95,6 +101,7 @@ afterAll(async () => {
   }
   if (savedHome === undefined) delete process.env.WINVM_HOME
   else process.env.WINVM_HOME = savedHome
+  process.env.PATH = savedPath
   rmSync(root, { recursive: true, force: true })
 })
 

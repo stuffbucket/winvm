@@ -12,13 +12,16 @@ import {
 } from "node:fs"
 import { tmpdir } from "node:os"
 import { resolve } from "node:path"
-import { readSince, START } from "../src/eventlog"
+import { appendEntry, readSince, START } from "../src/eventlog"
+import { hostPoweredOff } from "../src/hostoff"
 import {
   ensureCurrent,
   ManagementError,
   needsRepair,
   type ReconcileOptions,
+  serviceUp,
 } from "../src/lifecycle"
+import { InstanceBusy } from "../src/operation"
 import { PACKAGE_DIR, type Paths, pathsFor } from "../src/paths"
 import { processStart } from "../src/proc"
 import { reconcileNote, shouldReconcileVerb } from "../src/reconcile"
@@ -97,7 +100,7 @@ const recordService = (
     pid,
     cli,
     version: "0",
-    startedAt: "",
+    startedAt: new Date().toISOString(),
     ...(build === undefined ? {} : { build }),
   }
   writeFileSync(p.service, JSON.stringify(info))
@@ -151,14 +154,14 @@ const lease = (pid: number, operation: string, automatic = false): void => {
 
 beforeEach(async () => {
   saved = Object.fromEntries(
-    ["WINVM_HOME", "WINVM_CLI", "WINVM_NO_RECONCILE"].map((k) => [
-      k,
-      process.env[k],
-    ]),
+    ["WINVM_HOME", "WINVM_CLI", "WINVM_NO_RECONCILE", "WINVM_KEEPER"].map(
+      (k) => [k, process.env[k]],
+    ),
   )
   home = mkdtempSync(resolve(tmpdir(), "winvm-lc-"))
   process.env.WINVM_HOME = home
   process.env.WINVM_CLI = CLI
+  process.env.WINVM_KEEPER = ""
   delete process.env.WINVM_NO_RECONCILE
   p = pathsFor("t")
   mkdirSync(p.dir, { recursive: true })
@@ -574,7 +577,7 @@ describe("the CLI", () => {
       pid: h.pid,
       cli,
       version: "0",
-      startedAt: "",
+      startedAt: new Date().toISOString(),
       build: OLD,
     }
     writeFileSync(p.service, JSON.stringify(info))
@@ -724,6 +727,115 @@ describe("the CLI", () => {
     ).toMatchObject([{ pid: w.pid }])
     expect(live(qemu.pid)).toBe(true)
   }, 60_000)
+})
+
+describe("bringing a service up for a command", () => {
+  const realCli = resolve(
+    PACKAGE_DIR,
+    "..",
+    "..",
+    "apps",
+    "cli",
+    "src",
+    "winvm.ts",
+  )
+  const answers = async (q: Paths): Promise<boolean> => {
+    try {
+      return (await fetch("http://localhost/status", { unix: q.control })).ok
+    } catch {
+      return false
+    }
+  }
+
+  beforeEach(async () => {
+    process.env.WINVM_CLI = realCli
+    process.env.WINVM_KEEPER = process.env.WINVM_FAKE_KEEPER ?? ""
+    await control?.stop(true)
+    control = null
+    rmSync(p.control, { force: true })
+  })
+
+  it("starts the keeper and a service under it for a stopped instance, holding it as a reconcile, not as the command", async () => {
+    await releasePidfiles()
+    await serviceUp("t", "stop", false)
+    expect(await answers(p)).toBe(true)
+    expect(existsSync(resolve(p.dir, "keeper", "keeper.sock"))).toBe(true)
+    const held = readSince("t", START).entries.filter(
+      (e) =>
+        e.kind === "op" &&
+        (e.phase === "begin" || e.phase === "end") &&
+        e.pid === process.pid,
+    )
+    expect(held.map((e) => (e.kind === "op" ? e.phase : ""))).toEqual([
+      "begin",
+      "end",
+    ])
+    expect(held[0]).toMatchObject({
+      operation: "reconcile",
+      automatic: false,
+    })
+  }, 30_000)
+
+  it("leaves status's account of how Windows went down as it was, for a start that then fails", async () => {
+    await releasePidfiles()
+    appendEntry("t", { kind: "disconnected", reason: "qemu-closed" })
+    expect(hostPoweredOff("t")?.cause).toBe("qemu-gone")
+    await serviceUp("t", "start", false)
+    expect(hostPoweredOff("t")?.cause).toBe("qemu-gone")
+  }, 30_000)
+
+  for (const op of ["start", "load"] as const)
+    it(`starts a service for an instance a ${op} creates, which has no meta.json yet`, async () => {
+      const q = pathsFor("brandnew")
+      await serviceUp("brandnew", op, false)
+      expect(await answers(q)).toBe(true)
+      expect(existsSync(q.meta)).toBe(false)
+      expect(
+        readSince("brandnew", START).entries.find(
+          (e) => e.kind === "op" && e.phase === "begin",
+        ),
+      ).toMatchObject({ operation: op, pid: process.pid })
+    }, 30_000)
+
+  it("says how to get a keeper, and starts nothing, when none is found", async () => {
+    await releasePidfiles()
+    process.env.WINVM_KEEPER = ""
+    await expect(serviceUp("t", "start", false)).rejects.toThrow(
+      `no winvm-keeper was found, so winvm's service for "t" was not started`,
+    )
+    expect(existsSync(resolve(p.dir, "keeper"))).toBe(false)
+  })
+
+  it("is refused as busy while a person's command holds the instance, and waits for it with --wait", async () => {
+    await releasePidfiles()
+    lease(process.pid, "snapshot")
+    await expect(serviceUp("t", "start", false)).rejects.toBeInstanceOf(
+      InstanceBusy,
+    )
+    const t0 = Date.now()
+    setTimeout(() => {
+      rmSync(p.lease, { force: true })
+    }, 500)
+    await serviceUp("t", "start", true)
+    expect(Date.now() - t0).toBeGreaterThanOrEqual(450)
+    expect(await answers(p)).toBe(true)
+  }, 30_000)
+
+  it("hands a running VM's stale service over, waiting with --wait for the command that holds it", async () => {
+    process.env.WINVM_KEEPER = ""
+    const old = await service(OLD, realCli)
+    lease(process.pid, "snapshot")
+    await expect(serviceUp("t", "save", false)).rejects.toBeInstanceOf(
+      InstanceBusy,
+    )
+    expect(live(old.pid)).toBe(true)
+    setTimeout(() => {
+      rmSync(p.lease, { force: true })
+    }, 500)
+    await serviceUp("t", "save", true)
+    expect(live(old.pid)).toBe(false)
+    expect(live(qemu.pid)).toBe(true)
+  }, 30_000)
 })
 
 describe("what the CLI says after a repair", () => {

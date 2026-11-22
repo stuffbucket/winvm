@@ -28,12 +28,7 @@ import {
   WATCH_TIMING_ENV,
 } from "./idle"
 import { servingHere } from "./kept"
-import {
-  forgiveLegacyWatcher,
-  legacyWatcherOwed,
-  legacyWatcherPid,
-  stopLegacyWatcher,
-} from "./legacy"
+import { olderWatcher, stopOlderWatcher } from "./olderwatcher"
 import { askService } from "./opclient"
 import { InstanceBusy, leaseHolder } from "./operation"
 import type { OpHandler, Performed, ServiceOp } from "./ops"
@@ -159,11 +154,11 @@ function unmark(name: string): boolean {
 }
 
 export const watching = (name: string): boolean =>
-  markedFor(name, qemu.pidOf(pathsFor(name))) || legacyWatcherPid(name) !== null
+  markedFor(name, qemu.pidOf(pathsFor(name))) || olderWatcher(name) !== null
 
 export function watchingNow(name: string, st: WatchState): boolean {
   if (st.state === "stopped" || st.pid <= 1) return false
-  if (legacyWatcherPid(name) === st.pid) return true
+  if (olderWatcher(name)?.pid === st.pid) return true
   const p = pathsFor(name)
   return readService(p)?.pid === st.pid && markedFor(name, qemu.pidOf(p))
 }
@@ -196,8 +191,8 @@ async function stopHere(name: string): Promise<boolean> {
   const run = runs.get(name)
   run?.halt("stopped")
   await run?.ended
-  const legacy = await stopLegacyWatcher(name)
-  return on || legacy
+  const older = await stopOlderWatcher(name)
+  return on || older
 }
 
 const QUIESCE_MS = 11 * 60_000
@@ -867,17 +862,17 @@ export function watchDuties(
   let draining = false
   let current: Run | null = null
 
-  const takeOver = async (legacy: number): Promise<void> => {
+  const takeOver = async (older: number): Promise<void> => {
     const offs = turnedOff.get(name) ?? 0
-    if (!(await stopLegacyWatcher(name)) || halted) return
+    if (!(await stopOlderWatcher(name)) || halted) return
     if ((turnedOff.get(name) ?? 0) !== offs || !ensureWatcher(name)) return
     log(
-      `an older winvm's watcher (pid ${String(legacy)}) has stopped; winvm's service watches "${name}" from now on`,
+      `an older winvm's watcher (pid ${String(older)}) has stopped; winvm's service watches "${name}" from now on`,
     )
     appendEntry(name, {
       kind: "service",
       what: "watcher taken over",
-      pid: legacy,
+      pid: older,
     })
   }
 
@@ -910,10 +905,10 @@ export function watchDuties(
   return {
     check: () => {
       if (halted) return
-      const legacy = draining ? null : legacyWatcherPid(name)
-      if (legacy !== null) {
+      const older = draining ? null : olderWatcher(name)
+      if (older !== null) {
         draining = true
-        void takeOver(legacy)
+        void takeOver(older.pid)
           .catch((error: unknown) => {
             log(
               `could not take over from an older winvm's watcher: ${errText(error)}`,
@@ -930,11 +925,6 @@ export function watchDuties(
       if (draining) return
       const pid = qemu.pidOf(p)
       if (pid === null) return
-      const owed = legacyWatcherOwed(p)
-      if (owed !== null) {
-        if (owed === pid) ensureWatcher(name)
-        forgiveLegacyWatcher(p)
-      }
       if (markedFor(name, pid) && effectiveConfig(name)["watch.enabled"])
         begin(pid)
     },

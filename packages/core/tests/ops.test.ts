@@ -14,10 +14,20 @@ import type { Args } from "../src/args"
 import { parseArgs } from "../src/args"
 import { type Entry, readSince, START } from "../src/eventlog"
 import { type HostEndOutcome, runHostEnd } from "../src/hostend"
-import { remountCmd, remountHeld, runOp } from "../src/opclient"
+import { type OpRoute, remountCmd, remountHeld, runOp } from "../src/opclient"
 import { currentOp, OpCancelled, pointOfNoReturn } from "../src/opcontext"
-import { InstanceBusy, leaseHolder, withOperation } from "../src/operation"
-import { OPS_PROTOCOL, type OpHandlers, OpQueue } from "../src/ops"
+import {
+  INTERRUPTED,
+  InstanceBusy,
+  leaseHolder,
+  withOperation,
+} from "../src/operation"
+import {
+  OPS_PROTOCOL,
+  type OpHandlers,
+  OpQueue,
+  type ServiceOp,
+} from "../src/ops"
 import { SERVICE_HANDLERS } from "../src/opverbs"
 import { type Paths, pathsFor } from "../src/paths"
 import * as qmp from "../src/qmp"
@@ -444,6 +454,54 @@ describe("kill", () => {
   })
 })
 
+describe("an op ended in the moment after it was accepted", () => {
+  const queue = (ran: { n: number }): OpQueue =>
+    new OpQueue(
+      "t",
+      {
+        reboot: {
+          cancel: "before-request",
+          run: async () => {
+            ran.n += 1
+            return await Promise.resolve(0)
+          },
+        },
+      },
+      {
+        record: () => undefined,
+        nudge: () => undefined,
+        killed: () => undefined,
+      },
+    )
+
+  beforeEach(async () => {
+    await svc?.stop()
+    svc = null
+  })
+
+  it("never runs when it was cancelled before its first step", async () => {
+    const ran = { n: 0 }
+    const q = queue(ran)
+    const s = await q.submit({ op: "reboot", args: [], wait: false })
+    if (s.kind !== "accepted") throw new Error(s.kind)
+    expect(q.cancel(s.id)).toMatchObject({ kind: "cancelled" })
+    expect(await s.ended).toEqual({ kind: "done", id: s.id, code: INTERRUPTED })
+    expect(ran.n).toBe(0)
+    expect(leaseHolder("t")).toBeNull()
+  })
+
+  it("never runs when the Mac began shutting down before its first step", async () => {
+    const ran = { n: 0 }
+    const q = queue(ran)
+    const s = await q.submit({ op: "reboot", args: [], wait: false })
+    if (s.kind !== "accepted") throw new Error(s.kind)
+    await q.close("host-end")
+    expect(await s.ended).toMatchObject({ kind: "failed", error: "host-end" })
+    expect(ran.n).toBe(0)
+    expect(leaseHolder("t")).toBeNull()
+  })
+})
+
 describe("cancel", () => {
   const cancel = async (id?: unknown): Promise<Answer> =>
     await post("/ops/cancel", {
@@ -750,13 +808,304 @@ describe("a client's remount", () => {
     }
     const ran = runOp(
       { op: "resume", args: parseArgs(["-i", "t"]), argv: ["-i", "t"] },
-      () => Promise.resolve(99),
+      {
+        up: () => Promise.resolve(),
+        here: () => Promise.resolve(99),
+        running: () => true,
+      },
       io,
     )
     await until(() => remounting)
     process.emit("SIGINT")
     expect(await ran).toBe(130)
     expect(said.join("")).toContain("resume continues in winvm's service")
+  })
+})
+
+describe("a command when no service takes its op", () => {
+  const call = (op: ServiceOp, ...flags: readonly string[]) => ({
+    op,
+    args: parseArgs(["-i", "t", ...flags]),
+    argv: ["-i", "t", ...flags],
+  })
+  const heard = (): { said: string[]; io: Parameters<typeof runOp>[2] } => {
+    const said: string[] = []
+    return {
+      said,
+      io: {
+        out: (text) => {
+          said.push(text)
+        },
+        err: (text) => {
+          said.push(text)
+        },
+        remount: () => Promise.resolve(),
+      },
+    }
+  }
+  const route = (o: Partial<OpRoute> = {}) => {
+    const seen = { ups: [] as string[], here: 0 }
+    const r: OpRoute = {
+      up: async (name, op, wait) => {
+        seen.ups.push(`${name} ${op} ${String(wait)}`)
+        await (o.up?.(name, op, wait) ?? Promise.resolve())
+      },
+      here: async () => {
+        seen.here += 1
+        return await (o.here?.() ?? Promise.resolve(42))
+      },
+      running: o.running ?? (() => true),
+    }
+    return { seen, r }
+  }
+  const declining = (body: Record<string, unknown>, status: number) =>
+    Bun.serve({
+      unix: p.control,
+      fetch: () =>
+        Response.json({ protocol: OPS_PROTOCOL, ...body }, { status }),
+    })
+
+  beforeEach(async () => {
+    await svc?.stop()
+    svc = null
+  })
+
+  it("brings a service up and runs the op in it when none answers, passing --wait on", async () => {
+    const { seen, r } = route({
+      up: async () => {
+        svc = await runService("t", {
+          exitAfterMs: 60_000,
+          checkMs: 50,
+          handlers: {
+            pause: {
+              cancel: "never",
+              run: async () => {
+                console.log("paused in the service")
+                return await Promise.resolve(0)
+              },
+            },
+          },
+        })
+      },
+    })
+    const { said, io } = heard()
+    expect(await runOp(call("pause", "--wait"), r, io)).toBe(0)
+    expect(seen).toEqual({ ups: ["t pause true"], here: 0 })
+    expect(said).toEqual(["paused in the service\n"])
+  })
+
+  it("answers a verb that needs a running guest itself, bringing nothing up, when the guest is not running", async () => {
+    const { seen, r } = route({ running: () => false })
+    expect(await runOp(call("pause"), r, heard().io)).toBe(42)
+    expect(seen).toEqual({ ups: [], here: 1 })
+  })
+
+  it("answers a launch on an instance it may not create itself, bringing nothing up", async () => {
+    const { seen, r } = route({ running: () => false })
+    const ghost = {
+      op: "rewind" as const,
+      args: parseArgs(["-i", "ghost"]),
+      argv: ["-i", "ghost"],
+    }
+    expect(await runOp(ghost, r, heard().io)).toBe(42)
+    expect(seen).toEqual({ ups: [], here: 1 })
+  })
+
+  it("brings a service up for a launch of an instance that does not exist yet but may be created", async () => {
+    const { seen, r } = route({ running: () => false })
+    const fresh = {
+      op: "start" as const,
+      args: parseArgs(["-i", "fresh"]),
+      argv: ["-i", "fresh"],
+    }
+    expect(await runOp(fresh, r, heard().io)).toBe(1)
+    expect(seen).toEqual({ ups: ["fresh start false"], here: 0 })
+  })
+
+  it("runs nothing, and says why, when the service still does not run the op", async () => {
+    const stub = declining({ error: "this service does not run pause" }, 501)
+    try {
+      const { seen, r } = route()
+      const { said, io } = heard()
+      expect(await runOp(call("pause"), r, io)).toBe(1)
+      expect(seen).toEqual({ ups: ["t pause false"], here: 0 })
+      expect(said).toEqual([
+        '::error::winvm\'s service for "t" does not run pause (this service does not run pause), so it was not run\n',
+      ])
+    } finally {
+      await stub.stop(true)
+    }
+  })
+
+  for (const op of ["stop", "stow"] as const)
+    it(`runs ${op} itself as a last resort when the service still does not run it`, async () => {
+      const stub = declining({ error: `this service does not run ${op}` }, 501)
+      try {
+        const { seen, r } = route()
+        expect(await runOp(call(op), r, heard().io)).toBe(42)
+        expect(seen).toEqual({ ups: [`t ${op} false`], here: 1 })
+      } finally {
+        await stub.stop(true)
+      }
+    })
+
+  it("runs stop itself when no service could be brought up for a running guest", async () => {
+    const { seen, r } = route({
+      up: () => Promise.reject(new Error("the service did not start")),
+    })
+    expect(await runOp(call("stop"), r, heard().io)).toBe(42)
+    expect(seen.here).toBe(1)
+  })
+
+  it("says why a service could not be brought up, and that the op was not run", async () => {
+    const { r } = route({
+      up: () =>
+        Promise.reject(new Error("no winvm-keeper was found, so nothing")),
+    })
+    const { said, io } = heard()
+    expect(await runOp(call("pause"), r, io)).toBe(1)
+    expect(said).toEqual([
+      "::error::pause was not run: no winvm-keeper was found, so nothing\n",
+    ])
+  })
+
+  it("says the instance is busy when another command holds it while the service is brought up", async () => {
+    const holder = {
+      operation: "snapshot",
+      pid: process.pid,
+      startedAt: "2026-11-21T10:00:00.000Z",
+      automatic: false,
+    }
+    const { r } = route({
+      up: () => Promise.reject(new InstanceBusy("t", holder)),
+    })
+    const { said, io } = heard()
+    expect(await runOp(call("stop"), r, io)).toBe(1)
+    expect(said).toEqual([
+      `::error::${new InstanceBusy("t", holder).message}\n`,
+    ])
+  })
+
+  const stoppingService = (): {
+    readonly proc: ReturnType<typeof Bun.spawn>
+    readonly stub: ReturnType<typeof Bun.serve>
+  } => {
+    const proc = Bun.spawn(["sleep", "30"])
+    writeFileSync(
+      p.service,
+      JSON.stringify({
+        pid: proc.pid,
+        cli: "",
+        version: "",
+        startedAt: new Date().toISOString(),
+      }),
+    )
+    return {
+      proc,
+      stub: declining(
+        { error: "the service is stopping", stopping: true },
+        503,
+      ),
+    }
+  }
+  const upAfter = (stub: ReturnType<typeof Bun.serve>) =>
+    route({
+      up: async () => {
+        await stub.stop(true)
+        rmSync(p.control, { force: true })
+        rmSync(p.service, { force: true })
+        svc = await runService("t", {
+          exitAfterMs: 60_000,
+          checkMs: 50,
+          handlers: {
+            pause: { cancel: "never", run: () => Promise.resolve(0) },
+          },
+        })
+      },
+    })
+
+  it("waits for a service that is stopping until its process has gone, though its socket stays, then brings a new one up", async () => {
+    const { proc, stub } = stoppingService()
+    const gone = setTimeout(() => {
+      proc.kill("SIGKILL")
+    }, 500)
+    try {
+      const t0 = Date.now()
+      const { seen, r } = upAfter(stub)
+      expect(await runOp(call("pause"), r, heard().io)).toBe(0)
+      expect(Date.now() - t0).toBeGreaterThanOrEqual(450)
+      expect(Date.now() - t0).toBeLessThan(5000)
+      expect(seen.ups).toEqual(["t pause false"])
+    } finally {
+      clearTimeout(gone)
+      proc.kill("SIGKILL")
+      await stub.stop(true)
+    }
+  })
+
+  it("stops waiting for a stopping service once another service has taken the instance", async () => {
+    const { proc, stub } = stoppingService()
+    const taken = setTimeout(() => {
+      writeFileSync(
+        p.service,
+        JSON.stringify({
+          pid: process.pid,
+          cli: "",
+          version: "",
+          startedAt: new Date().toISOString(),
+        }),
+      )
+    }, 500)
+    try {
+      const t0 = Date.now()
+      const { r } = upAfter(stub)
+      expect(await runOp(call("pause"), r, heard().io)).toBe(0)
+      expect(Date.now() - t0).toBeLessThan(5000)
+    } finally {
+      clearTimeout(taken)
+      proc.kill("SIGKILL")
+      await stub.stop(true)
+    }
+  })
+
+  it("lets go at once when interrupted while it waits for a stopping service, and runs nothing", async () => {
+    const { proc, stub } = stoppingService()
+    const interrupt = setTimeout(() => {
+      process.emit("SIGINT")
+    }, 300)
+    try {
+      const t0 = Date.now()
+      const { seen, r } = upAfter(stub)
+      const { said, io } = heard()
+      expect(await runOp(call("pause"), r, io)).toBe(INTERRUPTED)
+      expect(Date.now() - t0).toBeLessThan(2000)
+      expect(seen).toEqual({ ups: [], here: 0 })
+      expect(said).toEqual(["pause was not run\n"])
+    } finally {
+      clearTimeout(interrupt)
+      proc.kill("SIGKILL")
+      await stub.stop(true)
+    }
+  })
+
+  it("kills at once, without waiting for a service that is stopping", async () => {
+    const { proc, stub } = stoppingService()
+    try {
+      const t0 = Date.now()
+      const { seen, r } = route()
+      expect(await runOp(call("kill"), r, heard().io)).toBe(42)
+      expect(Date.now() - t0).toBeLessThan(1000)
+      expect(seen).toEqual({ ups: [], here: 1 })
+    } finally {
+      proc.kill("SIGKILL")
+      await stub.stop(true)
+    }
+  })
+
+  it("kills without a service, and brings none up", async () => {
+    const { seen, r } = route()
+    expect(await runOp(call("kill"), r, heard().io)).toBe(42)
+    expect(seen).toEqual({ ups: [], here: 1 })
   })
 })
 

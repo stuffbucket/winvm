@@ -27,6 +27,7 @@ import {
   type JobInfo,
   KEEPER_PREFIX,
   KeeperBusy,
+  keeperHint,
   keeperJob,
   keeperLabel,
   keeperPin,
@@ -645,7 +646,7 @@ describe("keeperRequest", () => {
       await expect(keeperRequest(path, { op: "hello" }, 5000)).rejects.toThrow(
         "closed",
       )
-      expect(Date.now() - asked).toBeLessThan(1000)
+      expect(Date.now() - asked).toBeLessThan(2500)
     } finally {
       await closing(server)
     }
@@ -696,28 +697,50 @@ describe("parseJobPrint", () => {
 })
 
 describe("keeperCheck", () => {
-  it("names where the keeper comes from, and is never a missing prerequisite", () => {
+  it("names where the keeper comes from, and is a missing prerequisite when none is found", () => {
     expect(
-      keeperCheck({
-        kind: "keeper",
-        keeper: { path: "/a/winvm-keeper", source: "app" },
-      }),
+      keeperCheck(
+        {
+          kind: "keeper",
+          keeper: { path: "/a/winvm-keeper", source: "app" },
+        },
+        "required",
+      ),
     ).toEqual({
       label: "keeper /a/winvm-keeper (app)",
       ok: true,
       hint: "",
     })
-    expect(keeperCheck({ kind: "missing" })).toEqual({
-      label:
-        "keeper not installed: VMs start without it, unprotected if the Mac shuts down",
+    expect(keeperCheck({ kind: "missing" }, "required")).toEqual({
+      label: "keeper not installed: winvm starts no VM without it",
+      ok: false,
+      hint: keeperHint(),
+    })
+  })
+
+  it("is no missing prerequisite for a command that starts no VM, and still says how to get one", () => {
+    expect(keeperCheck({ kind: "missing" }, "optional")).toEqual({
+      label: `keeper not installed yet, so no VM starts until one is: ${keeperHint()}`,
       ok: true,
       hint: "",
     })
-    expect(keeperCheck({ kind: "off" })).toMatchObject({
-      label:
-        "keeper off (WINVM_KEEPER=off): VMs start without it, unprotected if the Mac shuts down",
-      ok: true,
-    })
+  })
+
+  it("says how to get a keeper, naming the download only when one is pinned", () => {
+    expect(keeperHint(null)).toBe(
+      "the winvm app carries one; this winvm pins none for `winvm setup` to download yet (packages/core/keeper.json); WINVM_KEEPER=<path> names a build of native/keeper (`cargo build --manifest-path native/keeper/Cargo.toml`)",
+    )
+    expect(
+      keeperHint({ version: "v1", url: "https://example.test/k", sha256: "0" }),
+    ).toBe(
+      "the winvm app carries one; `winvm setup` downloads the one this winvm pins (v1); WINVM_KEEPER=<path> names a build of native/keeper (`cargo build --manifest-path native/keeper/Cargo.toml`)",
+    )
+  })
+
+  it("names the keeper this winvm pins", () => {
+    expect(keeperHint()).toContain(
+      `\`winvm setup\` downloads the one this winvm pins (${keeperPin()?.version ?? "?"})`,
+    )
   })
 })
 

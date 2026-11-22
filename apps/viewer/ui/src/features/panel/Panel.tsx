@@ -139,13 +139,7 @@ export function Panel(p: PanelProps): JSX.Element {
         )}
         {protectable(p.status) && (
           <>
-            <p className="panel__note">
-              {typeof p.status?.keeper?.fallback === "string"
-                ? t("panel.protectBodyFallback", {
-                    error: p.status.keeper.fallback,
-                  })
-                : t("panel.protectBody")}
-            </p>
+            <p className="panel__note">{t("panel.protectBody")}</p>
             <div className="actions">
               <Button size="sm" disabled={p.protecting} onClick={p.onProtect}>
                 {t("action.protectNow")}

@@ -72,7 +72,7 @@ const env = (timing: object = QUICK): Record<string, string> => {
     WINVM_CLI: CLI,
     WINVM_BUILD_ID: "sha256:watching",
     WINVM_NO_RECONCILE: "1",
-    WINVM_KEEPER: "off",
+    WINVM_KEEPER: process.env.WINVM_FAKE_KEEPER ?? "",
     WINVM_MOUNTS: resolve(home, "mounts"),
     WINVM_RUNTIME: runtime(),
     WINVM_QEMU_DATA: resolve(home, "firmware"),
@@ -365,18 +365,6 @@ const watcherRow = (text: string): string =>
 
 const offsetMs = (): number => Math.abs(guest.offsetMs)
 
-function legacyWatcherPid(): number | null {
-  try {
-    const pid = Number.parseInt(
-      readFileSync(resolve(p.dir, "watch.pid"), "utf8"),
-      10,
-    )
-    return Number.isInteger(pid) && pid > 1 ? pid : null
-  } catch {
-    return null
-  }
-}
-
 beforeEach(async () => {
   saved = Object.fromEntries(
     Object.keys(process.env)
@@ -419,13 +407,6 @@ beforeEach(async () => {
 })
 
 afterEach(async () => {
-  const left = legacyWatcherPid()
-  if (left !== null) {
-    try {
-      process.kill(left, "SIGCONT")
-      process.kill(left, "SIGKILL")
-    } catch {}
-  }
   if (service !== null) {
     try {
       process.kill(service.pid, "SIGCONT")

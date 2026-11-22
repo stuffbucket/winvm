@@ -8,6 +8,7 @@ import {
 import { resolve } from "node:path"
 import { gunzipSync } from "node:zlib"
 
+import { keeperHint } from "./keeper"
 import { type KeeperUse, keeperUse } from "./kept"
 import { home, PACKAGE_DIR } from "./paths"
 import { findRuntime, type Runtime, runtimeBin, verifyRuntime } from "./runtime"
@@ -165,29 +166,26 @@ export function runtimeCheck(
   }
 }
 
-const UNPROTECTED = "VMs start without it, unprotected if the Mac shuts down"
+export type KeeperNeed = "required" | "optional"
 
-export function keeperCheck(use: KeeperUse): Check {
-  switch (use.kind) {
-    case "keeper":
-      return {
-        label: `keeper ${use.keeper.path} (${use.keeper.source})`,
+export function keeperCheck(use: KeeperUse, need: KeeperNeed): Check {
+  if (use.kind === "keeper")
+    return {
+      label: `keeper ${use.keeper.path} (${use.keeper.source})`,
+      ok: true,
+      hint: "",
+    }
+  return need === "required"
+    ? {
+        label: "keeper not installed: winvm starts no VM without it",
+        ok: false,
+        hint: keeperHint(),
+      }
+    : {
+        label: `keeper not installed yet, so no VM starts until one is: ${keeperHint()}`,
         ok: true,
         hint: "",
       }
-    case "off":
-      return {
-        label: `keeper off (WINVM_KEEPER=off): ${UNPROTECTED}`,
-        ok: true,
-        hint: "",
-      }
-    case "missing":
-      return {
-        label: `keeper not installed: ${UNPROTECTED}`,
-        ok: true,
-        hint: "",
-      }
-  }
 }
 
 export function macosCheck(productVersion: string, arch: string): Check {
@@ -200,12 +198,12 @@ export function macosCheck(productVersion: string, arch: string): Check {
     : { label, ok: false, hint: "winvm needs macOS 15 or later" }
 }
 
-export function hostChecks(): readonly Check[] {
+export function hostChecks(keeper: KeeperNeed): readonly Check[] {
   const rt = findRuntime()
   return [
     macosCheck(capture("sw_vers", ["-productVersion"]), process.arch),
     runtimeCheck(rt, rt === null ? [] : verifyRuntime(rt)),
-    keeperCheck(keeperUse()),
+    keeperCheck(keeperUse(), keeper),
     {
       label: `UEFI firmware${firmwareCode() === null ? "" : ` (${String(firmwareCode())})`}`,
       ok: firmwareCode() !== null && firmwareVars() !== null,
@@ -238,14 +236,14 @@ export function printChecks(checks: readonly Check[]): number {
   return checks.filter((c) => !c.ok).length
 }
 
-export function hostMissing(): boolean {
-  const missing = hostChecks().filter((c) => !c.ok)
+export function hostMissing(keeper: KeeperNeed): boolean {
+  const missing = hostChecks(keeper).filter((c) => !c.ok)
   if (missing.length === 0) return false
   console.error("::error::missing prerequisites — run `winvm doctor`")
   for (const c of missing) console.error(`  ${c.label} -> ${c.hint}`)
   return true
 }
 
-export function requireHost(): void {
-  if (hostMissing()) process.exit(1)
+export function requireHost(keeper: KeeperNeed): void {
+  if (hostMissing(keeper)) process.exit(1)
 }

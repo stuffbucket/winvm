@@ -120,6 +120,15 @@ export function ensureKeeper(
   return { path, source: "cache" }
 }
 
+export const keeperHint = (pin: KeeperPin | null = keeperPin()): string =>
+  [
+    "the winvm app carries one",
+    pin === null
+      ? "this winvm pins none for `winvm setup` to download yet (packages/core/keeper.json)"
+      : `\`winvm setup\` downloads the one this winvm pins (${pin.version})`,
+    "WINVM_KEEPER=<path> names a build of native/keeper (`cargo build --manifest-path native/keeper/Cargo.toml`)",
+  ].join("; ")
+
 function sha256File(path: string): string {
   return createHash("sha256").update(readFileSync(path)).digest("hex")
 }

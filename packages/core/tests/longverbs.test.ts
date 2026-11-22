@@ -12,7 +12,6 @@ import {
 import { tmpdir } from "node:os"
 import { resolve } from "node:path"
 
-import { QgaChannel, QmpChannel } from "../src/broker"
 import { RAMFB, writeDisplay } from "../src/display"
 import { type Entry, readSince, START } from "../src/eventlog"
 import {
@@ -66,7 +65,7 @@ const env = (): Record<string, string> => {
     WINVM_CLI: CLI,
     WINVM_BUILD_ID: "sha256:long-verbs",
     WINVM_NO_RECONCILE: "1",
-    WINVM_KEEPER: "off",
+    WINVM_KEEPER: process.env.WINVM_FAKE_KEEPER ?? "",
     WINVM_MOUNTS: resolve(home, "mounts"),
     WINVM_RUNTIME: runtime(),
     WINVM_QEMU_DATA: resolve(home, "firmware"),
@@ -302,6 +301,31 @@ describe("the long verbs, as the CLI prints and exits with them", () => {
     expect(existsSync(p.pid)).toBe(false)
   }, 30_000)
 
+  it("stop of a running VM with no service and no keeper starts a service of its own and shuts Windows down", async () => {
+    stopService(p)
+    service?.kill("SIGKILL")
+    await service?.exited
+    service = null
+    const proc = Bun.spawn([process.execPath, CLI, "stop", "-i", "t"], {
+      env: { ...env(), WINVM_KEEPER: "" },
+      stdout: "pipe",
+      stderr: "pipe",
+    })
+    const [stdout, stderr, code] = await Promise.all([
+      new Response(proc.stdout).text(),
+      new Response(proc.stderr).text(),
+      proc.exited,
+    ])
+    expect({ code, stdout, stderr }).toEqual({
+      code: 0,
+      stdout: 'instance "t" stopped\n',
+      stderr: "",
+    })
+    expect(fakeQmp.commands).toContain("system_powerdown")
+    expect(existsSync(p.pid)).toBe(false)
+    expect(existsSync(resolve(p.dir, "keeper"))).toBe(false)
+  }, 30_000)
+
   it("stop of a stopped instance says it is not running", async () => {
     await qemuGoes()
     expect(await winvm("stop", "-i", "t")).toEqual({
@@ -309,6 +333,65 @@ describe("the long verbs, as the CLI prints and exits with them", () => {
       stdout: 'instance "t" is not running\n',
       stderr: "",
     })
+  }, 30_000)
+
+  for (const [verb, expected] of [
+    ["stop", { code: 0, stdout: 'instance "t" is not running\n', stderr: "" }],
+    [
+      "stow",
+      {
+        code: 1,
+        stdout: "",
+        stderr:
+          '::error::instance "t" is not running — a save captures a live guest\n',
+      },
+    ],
+  ] as const)
+    it(`${verb} of a stopped instance with no service and no keeper says it is not running, as before, and starts nothing`, async () => {
+      await qemuGoes()
+      stopService(p)
+      service?.kill("SIGKILL")
+      await service?.exited
+      service = null
+      const proc = Bun.spawn([process.execPath, CLI, verb, "-i", "t"], {
+        env: { ...env(), WINVM_KEEPER: "" },
+        stdout: "pipe",
+        stderr: "pipe",
+      })
+      const [stdout, stderr, code] = await Promise.all([
+        new Response(proc.stdout).text(),
+        new Response(proc.stderr).text(),
+        proc.exited,
+      ])
+      expect({ code, stdout, stderr }).toEqual(expected)
+      expect(existsSync(resolve(p.dir, "keeper"))).toBe(false)
+      expect(existsSync(p.control)).toBe(false)
+    }, 30_000)
+
+  it("start of a stopped instance starts nothing when no keeper is found, and says how to get one", async () => {
+    await qemuGoes()
+    stopService(p)
+    service?.kill("SIGKILL")
+    await service?.exited
+    service = null
+    const proc = Bun.spawn([process.execPath, CLI, "start", "-i", "t"], {
+      env: { ...env(), WINVM_KEEPER: "" },
+      stdout: "pipe",
+      stderr: "pipe",
+    })
+    const [stdout, stderr, code] = await Promise.all([
+      new Response(proc.stdout).text(),
+      new Response(proc.stderr).text(),
+      proc.exited,
+    ])
+    expect({ code, stdout }).toEqual({ code: 1, stdout: "" })
+    expect(stderr).toStartWith(
+      `::error::start was not run: no winvm-keeper was found, so winvm's service for "t" was not started; winvm runs every VM under it: the winvm app carries one;`,
+    )
+    expect(stderr).toContain("WINVM_KEEPER=<path>")
+    expect(existsSync(resolve(p.dir, "keeper"))).toBe(false)
+    expect(existsSync(p.control)).toBe(false)
+    expect(begins("start")).toEqual([])
   }, 30_000)
 
   it("stow saves the guest, quits QEMU and says start recalls it", async () => {
@@ -577,64 +660,120 @@ describe("the long verbs, run by winvm's service", () => {
 })
 
 describe("a command whose own WINVM_KEEPER differs from the service's", () => {
-  it("runs in the CLI, so a per-command WINVM_KEEPER takes effect", async () => {
+  it("is not run, and says which keeper each names", async () => {
+    const another = resolve(home, "another-keeper")
     const proc = Bun.spawn([process.execPath, CLI, "pause", "-i", "t"], {
-      env: { ...env(), WINVM_KEEPER: resolve(home, "another-keeper") },
+      env: { ...env(), WINVM_KEEPER: another },
       stdout: "pipe",
       stderr: "pipe",
     })
-    expect(await proc.exited).toBe(0)
-    const b = begins("pause").at(-1)
-    expect(b?.kind === "op" && b.phase === "begin" ? b.pid : null).toBe(
-      proc.pid,
+    const [stderr, code] = await Promise.all([
+      new Response(proc.stderr).text(),
+      proc.exited,
+    ])
+    expect(code).toBe(1)
+    expect(stderr).toContain(
+      `::error::winvm's service for "t" does not run pause (this service runs with WINVM_KEEPER=${process.env.WINVM_FAKE_KEEPER ?? ""}, and the command asks for ${another}), so it was not run`,
     )
+    expect(begins("pause")).toEqual([])
   }, 30_000)
 })
 
 describe("the long verbs, with a service from before they moved", () => {
-  let control: ReturnType<typeof Bun.serve> | null = null
+  const OLD_SERVICE = resolve(import.meta.dir, "fakes", "oldservice.ts")
+  let old: ReturnType<typeof Bun.spawn> | null = null
 
   afterEach(async () => {
-    await control?.stop(true)
-    control = null
+    old?.kill("SIGKILL")
+    await old?.exited
+    old = null
   })
 
-  it("run in the CLI itself when the service does not run them, with the same output", async () => {
+  const olderService = async (status: number): Promise<number> => {
     stopService(p)
     service?.kill("SIGKILL")
     await service?.exited
     service = null
-    rmSync(p.control, { force: true })
-    const broker = new QmpChannel({ listen: p.qmp, upstream: p.qmpQemu })
-    await broker.start()
-    const agentBroker = new QgaChannel({
-      listen: p.qga,
-      upstream: p.qgaQemu,
-      portOpen: () => Promise.resolve(true),
-    })
-    await agentBroker.start()
-    control = Bun.serve({
-      unix: p.control,
-      fetch: () =>
-        Response.json(
-          { protocol: 1, error: "this service does not run save" },
-          { status: 501 },
-        ),
-    })
-    try {
-      const r = launch("save", "-i", "t", "x", "--force")
-      const done = await r.done
-      expect({ ...done, stdout: timings(done.stdout) }).toEqual({
+    const proc = Bun.spawn(
+      [process.execPath, OLD_SERVICE, "t", String(status)],
+      {
+        env: env(),
+        stdout: "pipe",
+        stderr: "inherit",
+      },
+    )
+    old = proc
+    const reader = (proc.stdout as ReadableStream<Uint8Array>).getReader()
+    await reader.read()
+    reader.releaseLock()
+    return proc.pid
+  }
+
+  for (const [label, status, keeper] of [
+    [
+      "adopt the VM under winvm's keeper",
+      501,
+      process.env.WINVM_FAKE_KEEPER ?? "",
+    ],
+    ["hand an older service of this install over, with no keeper,", 404, ""],
+  ] as const)
+    it(`${label} stop the older service, and run in a current one, with the same output`, async () => {
+      const oldPid = await olderService(status)
+      const proc = Bun.spawn(
+        [process.execPath, CLI, "save", "-i", "t", "x", "--force"],
+        {
+          env: { ...env(), WINVM_KEEPER: keeper },
+          stdout: "pipe",
+          stderr: "pipe",
+        },
+      )
+      const [stdout, stderr, code] = await Promise.all([
+        new Response(proc.stdout).text(),
+        new Response(proc.stderr).text(),
+        proc.exited,
+      ])
+      expect({ code, stdout: timings(stdout), stderr }).toEqual({
         code: 0,
         stdout:
           'saved "x" (manual, zstd) in N: RAM N -> N on disk, N total (disks are clones)\n' +
           "  clock: guest was N from the host, now N\n",
         stderr: "",
       })
-      expect(ranByCli("save")).toBe(r.proc.pid)
+      const ran = ranByCli("save")
+      expect(ran).not.toBe(proc.pid)
+      expect(ran).not.toBe(oldPid)
+      expect(await old?.exited).toBe(0)
+      expect(existsSync(resolve(p.dir, "keeper"))).toBe(keeper !== "")
+    }, 30_000)
+
+  it("stow (Protect now's first step) stops an older winvm's watcher process and stows", async () => {
+    const watcher = Bun.spawn(
+      [
+        process.execPath,
+        resolve(import.meta.dir, "fakes", "holder.ts"),
+        "winvm",
+        "watch",
+        "-i",
+        "t",
+      ],
+      { stdout: "pipe", stderr: "ignore" },
+    )
+    try {
+      const reader = (watcher.stdout as ReadableStream<Uint8Array>).getReader()
+      await reader.read()
+      reader.releaseLock()
+      writeFileSync(resolve(p.dir, "watch.pid"), `${String(watcher.pid)}\n`)
+      await olderService(501)
+      const r = await winvm("stow", "-i", "t")
+      expect(r.code).toBe(0)
+      expect(r.stdout).toContain('stowed "t"')
+      expect(await watcher.exited).not.toBeNull()
+      expect(existsSync(resolve(p.dir, "watch.pid"))).toBe(false)
+      expect(
+        existsSync(resolve(home, "saves", "t", "stow", "manifest.json")),
+      ).toBe(true)
     } finally {
-      await broker.stop()
-      await agentBroker.stop()
+      watcher.kill("SIGKILL")
     }
   }, 30_000)
 })
@@ -717,7 +856,7 @@ describe("an op a client names, and reads back from the record", () => {
   }, 30_000)
 })
 
-describe("the long verbs that launch QEMU, run by winvm's service with the keeper off", () => {
+describe("the long verbs that launch QEMU, run by winvm's service through the keeper", () => {
   const FAKE_QEMU = resolve(import.meta.dir, "fakes", "qemu.ts")
 
   const fakeRuntime = (): void => {
@@ -734,6 +873,7 @@ describe("the long verbs that launch QEMU, run by winvm's service with the keepe
       "qemu-system-aarch64",
       `exec "${process.execPath}" "${FAKE_QEMU}" "$0" "$@"`,
     )
+    script("qemu-img", 'for last; do :; done\n: > "$last"')
     const old = new Date(Date.now() - 3_600_000)
     utimesSync(resolve(bin, "qemu-system-aarch64"), old, old)
   }
@@ -767,6 +907,73 @@ describe("the long verbs that launch QEMU, run by winvm's service with the keepe
     const pattern = scratchPattern(home, SCRATCH)
     if (pattern !== null) Bun.spawnSync(["pkill", "-KILL", "-f", pattern])
   })
+
+  const cli = async (...argv: string[]): Promise<Ran & { pid: number }> => {
+    const proc = Bun.spawn([process.execPath, CLI, ...argv], {
+      env: env(),
+      stdout: "pipe",
+      stderr: "pipe",
+    })
+    const [stdout, stderr, code] = await Promise.all([
+      new Response(proc.stdout).text(),
+      new Response(proc.stderr).text(),
+      proc.exited,
+    ])
+    return { code, stdout, stderr, pid: proc.pid }
+  }
+
+  const begunFor = (instance: string, operation: string): Entry | undefined =>
+    readSince(instance, START).entries.findLast(
+      (e) =>
+        e.kind === "op" && e.phase === "begin" && e.operation === operation,
+    )
+
+  for (const instance of ["fresh", "default"])
+    it.skipIf(process.platform !== "darwin")(
+      `start of "${instance}", which does not exist yet, creates it and boots it in winvm's service`,
+      async () => {
+        fakeRuntime()
+        const argv =
+          instance === "default"
+            ? ["start", "--no-watch"]
+            : ["start", "-i", instance, "--no-watch"]
+        const started = await cli(...argv)
+        expect(started.stderr).not.toContain("::error::")
+        expect(started.code).toBe(0)
+        expect(started.stdout).toContain(`instance "${instance}" up`)
+        expect(readMeta(instance)).not.toBeNull()
+        const b = begunFor(instance, "start")
+        expect(b?.kind === "op" && b.phase === "begin" ? b.pid : null).not.toBe(
+          started.pid,
+        )
+        expect((await cli("kill", "-i", instance)).code).toBe(0)
+      },
+      60_000,
+    )
+
+  it.skipIf(process.platform !== "darwin")(
+    "load of a save whose instance was destroyed with its saves kept creates the instance again and boots the save",
+    async () => {
+      writeDisplay(p, RAMFB)
+      fakeRuntime()
+      publish("named", "manual")
+      await qemuGoes()
+      stopService(p)
+      service?.kill("SIGKILL")
+      await service?.exited
+      service = null
+      expect((await cli("destroy", "-i", "t", "--keep-saves")).code).toBe(0)
+      expect(readMeta("t")).toBeNull()
+      const loaded = await cli("load", "-i", "t", "named")
+      expect(loaded.stderr).not.toContain("::error::")
+      expect(loaded.code).toBe(0)
+      expect(loaded.stdout).toContain('loaded "t" from "named"')
+      expect(readMeta("t")).not.toBeNull()
+      expect(ranByCli("load")).not.toBe(loaded.pid)
+      expect((await cli("kill", "-i", "t")).code).toBe(0)
+    },
+    60_000,
+  )
 
   it.skipIf(process.platform !== "darwin")(
     "load, rewind and golden reset launch a new QEMU and end well, and a start in the service's linger boots one",

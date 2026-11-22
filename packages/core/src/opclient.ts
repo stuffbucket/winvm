@@ -1,3 +1,6 @@
+import { existsSync } from "node:fs"
+import { resolve } from "node:path"
+
 import type { Args } from "./args"
 import { instanceName } from "./args"
 import {
@@ -15,12 +18,19 @@ import {
   INTERRUPTED,
   InstanceBusy,
   type LeaseHolder,
+  leaseable,
   readOperation,
   withOperation,
 } from "./operation"
-import { OPS_PROTOCOL, type ServiceOp } from "./ops"
+import {
+  LAUNCHING,
+  OPS_PROTOCOL,
+  RUN_HERE_WITHOUT_SERVICE,
+  type ServiceOp,
+} from "./ops"
 import { pathsFor } from "./paths"
-import { isSameProcess } from "./proc"
+import { isAlive, isSameProcess } from "./proc"
+import { recordedPid } from "./servicectl"
 
 type Json = Record<string, unknown>
 
@@ -39,6 +49,8 @@ type Sent =
   | ({ readonly kind: "accepted" } & Accepted)
   | { readonly kind: "busy"; readonly holder: LeaseHolder }
   | { readonly kind: "unavailable" }
+  | { readonly kind: "declined"; readonly why: string }
+  | { readonly kind: "stopping" }
   | { readonly kind: "refused"; readonly why: string }
   | { readonly kind: "unanswered"; readonly why: string }
 
@@ -144,7 +156,15 @@ async function send(name: string, body: Json): Promise<Sent> {
     return { kind: "refused", why: "the Mac is shutting down" }
   const holder = r.status === 409 ? holderOf(r.body?.busy) : null
   if (holder !== null) return { kind: "busy", holder }
-  if ([400, 404, 501, 503].includes(r.status)) return { kind: "unavailable" }
+  if (r.status === 503 && r.body?.stopping === true) return { kind: "stopping" }
+  if ([400, 404, 501, 503].includes(r.status))
+    return {
+      kind: "declined",
+      why:
+        typeof r.body?.error === "string"
+          ? r.body.error
+          : `HTTP ${String(r.status)}`,
+    }
   return { kind: "unanswered", why: `HTTP ${String(r.status)}` }
 }
 
@@ -378,9 +398,41 @@ export async function remountCmd(
   }
 }
 
+export interface OpRoute {
+  readonly up: (name: string, op: ServiceOp, wait: boolean) => Promise<void>
+  readonly here: () => Promise<number>
+  readonly running: (name: string) => boolean
+}
+
+const SETTLE_MS = 15_000
+
+async function untilStopped(name: string, signal: AbortSignal): Promise<void> {
+  const p = pathsFor(name)
+  const stopping = recordedPid(p)
+  const deadline = Date.now() + SETTLE_MS
+  while (
+    !signal.aborted &&
+    Date.now() < deadline &&
+    existsSync(p.control) &&
+    stopping !== null &&
+    recordedPid(p) === stopping &&
+    isAlive(stopping)
+  )
+    await new Promise((r) => setTimeout(r, 100))
+}
+
+const notTaken = (s: Sent): boolean =>
+  s.kind === "unavailable" || s.kind === "declined" || s.kind === "stopping"
+
+function answeredHere(call: OpCall, name: string, route: OpRoute): boolean {
+  if (call.op === "kill") return true
+  if (!LAUNCHING.has(call.op)) return !route.running(name)
+  return !leaseable(name, call.op)
+}
+
 export async function runOp(
   call: OpCall,
-  here: () => Promise<number>,
+  route: OpRoute,
   io: Io = stdio,
 ): Promise<number> {
   const name = instanceName(call.args)
@@ -395,20 +447,48 @@ export async function runOp(
   const leave = (): void => {
     for (const [signal, handler] of handlers) process.off(signal, handler)
   }
+  const here = async (): Promise<number> => {
+    leave()
+    return await route.here()
+  }
+  const lastResort = RUN_HERE_WITHOUT_SERVICE.has(call.op)
+  const wait = call.args.flags.has("wait")
+  const body = {
+    op: call.op,
+    args: [...call.argv],
+    wait,
+    keeper: process.env.WINVM_KEEPER ?? null,
+    ...(call.id === undefined ? {} : { id: call.id }),
+  }
+  const stopped = (): boolean => interrupted.signal.aborted
   let accepted: Accepted | null = null
   try {
-    const sent = await send(name, {
-      op: call.op,
-      args: [...call.argv],
-      wait: call.args.flags.has("wait"),
-      keeper: process.env.WINVM_KEEPER ?? null,
-      ...(call.id === undefined ? {} : { id: call.id }),
-    })
+    let sent = await send(name, body)
+    if (sent.kind === "stopping" && call.op !== "kill" && !stopped())
+      await untilStopped(name, interrupted.signal)
+    if (notTaken(sent) && !stopped()) {
+      if (answeredHere(call, name, route)) return await here()
+      const failed = await route.up(name, call.op, wait).then(
+        () => null,
+        (error: unknown) => error,
+      )
+      if (failed instanceof InstanceBusy) {
+        io.err(`::error::${failed.message}\n`)
+        return 1
+      }
+      if (failed !== null && lastResort) return await here()
+      if (failed !== null) {
+        io.err(`::error::${call.op} was not run: ${why(failed)}\n`)
+        return 1
+      }
+      if (!stopped()) sent = await send(name, body)
+      if (notTaken(sent) && lastResort && !stopped()) return await here()
+    }
     if (interrupted.signal.aborted && sent.kind === "accepted") {
       detached(call.op, name, sent, io)
       return INTERRUPTED
     }
-    if (interrupted.signal.aborted && sent.kind === "unavailable") {
+    if (interrupted.signal.aborted && notTaken(sent)) {
       io.err(`${call.op} was not run\n`)
       return INTERRUPTED
     }
@@ -420,8 +500,16 @@ export async function runOp(
     }
     switch (sent.kind) {
       case "unavailable":
-        leave()
-        return await here()
+      case "stopping":
+        io.err(
+          `::error::winvm's service for "${name}" did not answer once started, so ${call.op} was not run; see ${resolve(pathsFor(name).dir, "service.log")}\n`,
+        )
+        return 1
+      case "declined":
+        io.err(
+          `::error::winvm's service for "${name}" does not run ${call.op} (${sent.why}), so it was not run\n`,
+        )
+        return 1
       case "busy":
         io.err(`::error::${new InstanceBusy(name, sent.holder).message}\n`)
         return 1
@@ -429,10 +517,7 @@ export async function runOp(
         io.err(`::error::${sent.why}, so ${call.op} was not run\n`)
         return 1
       case "unanswered":
-        if (call.op === "kill") {
-          leave()
-          return await here()
-        }
+        if (call.op === "kill") return await here()
         io.err(
           `::error::winvm's service for "${name}" did not answer (${sent.why}), so ${call.op} may or may not have begun; \`winvm events -i ${name}\` shows whether it did\n`,
         )

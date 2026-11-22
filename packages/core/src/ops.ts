@@ -23,11 +23,11 @@ import {
   INTERRUPTED,
   InstanceBusy,
   type LeaseHolder,
+  leaseable,
   type VmOperation,
   waitNote,
   withOperation,
 } from "./operation"
-import { readMeta } from "./paths"
 
 export const OPS_PROTOCOL = 1
 
@@ -49,6 +49,19 @@ export const SERVICE_OPS = [
 ] as const satisfies readonly VmOperation[]
 
 export type ServiceOp = (typeof SERVICE_OPS)[number]
+
+export const LAUNCHING: ReadonlySet<ServiceOp> = new Set([
+  "start",
+  "load",
+  "rewind",
+  "golden-reset",
+])
+
+export const RUN_HERE_WITHOUT_SERVICE: ReadonlySet<ServiceOp> = new Set([
+  "stop",
+  "stow",
+  "kill",
+])
 
 export const isServiceOp = (v: unknown): v is ServiceOp =>
   typeof v === "string" && (SERVICE_OPS as readonly string[]).includes(v)
@@ -271,6 +284,10 @@ function atSafePoint(scope: OpScope, then: () => void): void {
   look()
 }
 
+const answered = async (): Promise<void> => {
+  await new Promise((r) => setImmediate(r))
+}
+
 export interface QueueHooks {
   readonly record: (fields: EntryFields) => void
   readonly nudge: () => void
@@ -343,7 +360,7 @@ export class OpQueue {
     handler: OpHandler,
   ): Promise<Submitted> {
     if (this.closed !== null) return { kind: "closed", reason: this.closed }
-    if (readMeta(this.name) === null)
+    if (!leaseable(this.name, req.op))
       return {
         kind: "failed",
         error: `instance "${this.name}" has no meta.json, so an op on it could not be recorded`,
@@ -426,7 +443,13 @@ export class OpQueue {
             running.held = true
             accept(null)
             this.hooks.nudge()
-            const code = await this.raced(scope, handler.run(args))
+            await answered()
+            const code = await this.raced(
+              scope,
+              scope.signal.aborted
+                ? Promise.reject(new OpEnded(scope))
+                : handler.run(args),
+            )
             ended = { kind: "done", id, code }
             if (req.op === "kill" && code === 0) {
               killedQemu = true

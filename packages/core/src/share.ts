@@ -1,4 +1,4 @@
-import { spawn, spawnSync } from "node:child_process"
+import { spawnSync } from "node:child_process"
 import {
   closeSync,
   existsSync,
@@ -294,11 +294,6 @@ export function stopVirtiofsd(p: Paths): void {
   rmSync(virtiofsdState(p), { force: true })
 }
 
-export interface StartOptions {
-  readonly bin?: string
-  readonly timeoutMs?: number
-}
-
 export interface DaemonLaunch {
   readonly argv: readonly string[]
   readonly log: string
@@ -358,33 +353,5 @@ export async function untilServing(
   } catch {}
   throw new Error(
     `virtiofsd did not start (the shared folder's daemon)${tail === "" ? "" : `:\n  ${tail}`}`,
-  )
-}
-
-export async function startVirtiofsd(
-  p: Paths,
-  o: StartOptions = {},
-): Promise<Served> {
-  stopVirtiofsd(p)
-  for (let i = 0; i < 50 && virtiofsdPids(p).length > 0; i += 1)
-    await new Promise((r) => setTimeout(r, 20))
-  const daemon = prepareVirtiofsd(p, o.bin)
-  const log = openSync(daemon.log, "a")
-  const [bin = "", ...args] = daemon.argv
-  const proc = spawn(bin, args, {
-    detached: true,
-    stdio: ["ignore", log, log],
-  })
-  closeSync(log)
-  proc.unref()
-  let exited = false as boolean
-  proc.on("exit", () => {
-    exited = true
-  })
-  return await untilServing(
-    p,
-    { served: daemon.served, pid: proc.pid },
-    () => exited,
-    o.timeoutMs,
   )
 }

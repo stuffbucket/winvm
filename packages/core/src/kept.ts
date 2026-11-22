@@ -1,6 +1,5 @@
 import { existsSync, readFileSync } from "node:fs"
 import { resolve } from "node:path"
-import { readSince, START } from "./eventlog"
 import {
   collectKeepers,
   type FoundKeeper,
@@ -11,6 +10,7 @@ import {
   KeeperBusy,
   type KeeperChild,
   type KeeperSpec,
+  keeperHint,
   keeperJob,
   keeperLabel,
   keeperRequest,
@@ -24,21 +24,29 @@ import { home, type Paths } from "./paths"
 
 type Env = Readonly<Record<string, string | undefined>>
 
-export const KEEPER_OFF = "off"
-
 export type KeeperUse =
   | { readonly kind: "keeper"; readonly keeper: FoundKeeper }
-  | { readonly kind: "off" }
   | { readonly kind: "missing" }
 
 export function keeperUse(
   env: Env = process.env,
   find: (o: { readonly env: Env }) => FoundKeeper | null = findKeeper,
 ): KeeperUse {
-  if (env.WINVM_KEEPER === KEEPER_OFF) return { kind: "off" }
   const keeper = find({ env })
   return keeper === null ? { kind: "missing" } : { kind: "keeper", keeper }
 }
+
+export class KeeperMissing extends Error {
+  constructor(what: string) {
+    super(
+      `no winvm-keeper was found, so ${what}; winvm runs every VM under it: ${keeperHint()}`,
+    )
+    this.name = "KeeperMissing"
+  }
+}
+
+export const keeperMissing = (what: string): KeeperMissing | null =>
+  keeperUse().kind === "missing" ? new KeeperMissing(what) : null
 
 export function callerUmask(): number {
   const mask = process.umask(0o077)
@@ -335,42 +343,17 @@ export async function killKept(p: Paths, pid: number | null): Promise<boolean> {
   return answer?.ok === true
 }
 
-export const UNAVAILABLE = "keeper-unavailable"
-
-export function keeperFallback(
-  name: string,
-): { readonly at: string; readonly error: string } | null {
-  let found = null as { readonly at: string; readonly error: string } | null
-  for (const e of readSince(name, START).entries) {
-    if (e.kind === "warning" && e.what === UNAVAILABLE)
-      found = {
-        at: e.t,
-        error: typeof e.error === "string" ? e.error : "no reason given",
-      }
-    else if (e.kind === "keeper" && e.what === "launched" && e.child === "qemu")
-      found = null
-  }
-  return found
-}
-
 export function retireKeeper(name: string, p: Paths): void {
   if (!existsSync(keeperPlist(p))) return
   launchdOf().bootout(keeperLabel(home(), name))
 }
 
-export type Protection =
-  | "kept"
-  | "adopted"
-  | "legacy"
-  | "broken"
-  | "off"
-  | "missing"
+export type Protection = "kept" | "adopted" | "legacy" | "broken" | "missing"
 
 export interface KeeperStanding {
   readonly protection: Protection
   readonly version: string | null
   readonly pid: number | null
-  readonly fallback?: string
   readonly recallable?: boolean
   readonly runningQemu?: string
   readonly installedQemu?: string

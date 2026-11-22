@@ -107,13 +107,17 @@ with QEMU of the same version. Otherwise it refuses, and
 `winvm start -i NAME --boot` discards the stow and starts Windows afresh.
 
 The keeper isn't a login item and doesn't outlive a restart. The app carries
-it; a CLI-only install gets it from `winvm setup` once a release pins one.
-`WINVM_KEEPER=<path>` uses another build, for development.
-`WINVM_KEEPER=off` turns the keeper off: QEMU then starts detached, as it did
-before, and so does every VM when no keeper is installed. A command whose
-`WINVM_KEEPER` differs from the one winvm's service runs with is run by the
-CLI itself, so the setting takes effect for that command. `winvm status` has a
-`keeper` row:
+it; a CLI-only install gets it from `winvm setup`, which downloads the keeper
+`packages/core/keeper.json` pins.
+`WINVM_KEEPER=<path>` uses another build, for development. Every VM runs under
+the keeper: when none is found, `winvm start`, and anything else that launches
+QEMU, starts nothing and says how to get one; `load`, `rewind`,
+`golden reset` and `stow` refuse before they touch Windows, since none of them
+could bring it back (a stow refused this way exits 4, as any refused stow
+does); and `winvm doctor` lists it as a missing prerequisite. `winvm create`, `winvm adopt` and `winvm setup`, which
+start no VM, only mention it. A command whose
+`WINVM_KEEPER` differs from the one winvm's service runs with is not run; it
+says which keeper each names. `winvm status` has a `keeper` row:
 
 - `protected`: QEMU runs under the keeper.
 - `watched, not shielded: started by an older winvm`: QEMU was started
@@ -128,11 +132,19 @@ CLI itself, so the setting takes effect for that command. `winvm status` has a
 - `not protected: started without winvm's keeper`: QEMU was started detached
   and no keeper watches it yet. It keeps working, and `winvm stop`, `kill`
   and `status` treat it as before.
-- `not protected: WINVM_KEEPER=off`, or `no winvm-keeper installed`.
+- `not protected: no winvm-keeper installed`: QEMU was started without the
+  keeper, and this winvm has no keeper to take it over; the note says how to
+  get one.
 - `confused`: the keeper and `qemu.pid` name different processes; `winvm kill`
   clears it.
 
-`winvm doctor` says which keeper it would use.
+`winvm doctor` says which keeper it would use, and lists every VM still
+running from an older winvm (`watched, not shielded`, `not protected`), each
+with the note `winvm status` gives for it: Protect now in the app, or
+`winvm stow -i NAME && winvm start -i NAME`, puts it under the keeper, and
+when the stow could not be brought back, `winvm stop` then `winvm start`
+does. `winvm doctor --json` lists them as `legacy`, each with its `name`,
+`protection` and `note`.
 
 ## The control service
 
@@ -181,8 +193,14 @@ the status every few seconds.
 service. The CLI, and the app, which runs the CLI, sends the command to the
 service, prints what the service records for it, and exits with its exit code.
 What they print and their exit codes (3, 4, 5 and 6 included) are as before.
-A `start` of a machine that is not running usually finds no service, and the
-CLI starts it itself, as before.
+When no service answers and the machine is not running, a command that needs
+a running guest (`stop`, `pause`, `save` and the like) is answered by the CLI
+itself, as before: it says the machine is not running, with the same exit
+code, and starts nothing. `start`, `load`, `rewind` and `golden reset` first
+start a service under the instance's keeper, holding the instance meanwhile
+(recorded as a `reconcile`, or under the command's own name when `start` or
+`load` creates the instance), then send it the command. A service that is just stopping is waited for, and a new
+one started.
 
 - **Ctrl-C only lets go.** Ctrl-C, or the app quitting, stops the CLI from
   following, not the command. The command finishes in the service and its end
@@ -224,12 +242,18 @@ CLI starts it itself, as before.
   while the Mac is shutting down or the guest is paused. A CLI that let go
   leaves them down, and `winvm status` names them and the
   `winvm files mount -i NAME` that brings them back.
-- **When the service can't take it.** When no service answers (QEMU is not
-  running, or the service is restarting), or the service comes from an older
-  winvm that runs no commands, the CLI runs the command itself, as before. If
-  the service took the command but gave no answer within 5 seconds, the CLI
-  says so and does not run it again, because it may already be running. The
-  exception is `kill`, which then kills QEMU itself.
+- **When the service can't take it.** When no service answers for a running
+  machine, or the service comes from an older winvm that runs no commands,
+  the CLI starts a current service, adopting a machine an older winvm started
+  and handing an older service of this install over, and sends the command
+  again; with `--wait` it waits for the instance meanwhile. If it still can't
+  be sent, the CLI says why and runs nothing, except for `stop` and `stow`,
+  which it then runs itself under the instance's lease. Those still need a
+  service for their own record; when none can run at all, `winvm kill`
+  ends the machine. If the service took the command but gave
+  no answer within 5 seconds, the CLI says so and does not run it again,
+  because it may already be running. `kill` kills QEMU itself whenever no
+  service takes it.
 
 The requests, on `control.sock`:
 
@@ -239,8 +263,7 @@ The requests, on `control.sock`:
   used as the op's id, so a client can follow it in the record by a name it
   chose. The service refuses an id an op it has taken still uses; keeping ids
   unique over time is the client's job (the app uses fresh UUIDs). A protocol or command the service doesn't have gets `400`
-  or `501`, with the protocol it speaks, so the caller can run the command
-  itself.
+  or `501`, with the protocol it speaks and the reason.
 - `POST /ops/cancel` with `{"protocol": 1}` and an optional `id` answers `200`
   with `{cancelled}`, `409` with `{refused}` and the reason, or `404` when
   nothing runs.
@@ -278,10 +301,13 @@ instance), and after one that failed it waits 1, 2, 4 minutes and so on, up to
 A repair hands the service over under the instance's lease, so it is put off
 while any command, or an autosave, holds the instance, and never interrupts
 one. The new service carries on the watcher's work: if a watcher process an
-older winvm started is still running, the service asks it to stop, waits for
-an autosave or stow it has under way to finish, and only then watches the
-guest itself. The record says so with `{"kind": "service", "what": "watcher
-taken over"}`.
+older winvm started (v0.1.4 and before) is still running, the service asks it
+to stop, waits for an autosave or stow it has under way to finish, and only
+then watches the guest itself. The record says so with `{"kind": "service",
+"what": "watcher taken over"}`. That process is known by `watch.pid`, by a
+start no later than `watch.pid` was written, and by its command line
+(`winvm watch` for this instance), so a pid reused by another process is
+never signalled.
 
 `winvm status` also no longer looks at the folder the Windows ISO links to
 when it reports Time Machine: if that is on another disk, macOS would ask for
@@ -318,8 +344,8 @@ Turning the watcher off waits for it, as stopping the watcher process did:
 `winvm watch --stop`, `winvm run` and `winvm test` ask the service, which
 starts no more autosaves or stows, lets one under way finish, and only then
 answers. After an idle stow, QEMU has stopped by then, so `winvm run` recalls
-the stow. With no service running, only a watcher an older winvm started can
-be watching; it is stopped as before, waiting for its autosave or stow.
+the stow. A watcher process an older winvm started is stopped too, waiting for
+its autosave or stow.
 
 A stow takes the guest's Finder drives down first. If an idle stow then fails,
 nobody's command is there to mount them again, so the record says a remount

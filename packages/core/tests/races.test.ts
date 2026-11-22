@@ -25,6 +25,7 @@ import * as commands from "../src/commands"
 import * as display from "../src/display"
 import { VIRTIO_GPU } from "../src/display"
 import * as host from "../src/host"
+import * as kept from "../src/kept"
 import { withOperation } from "../src/operation"
 import { OpQueue } from "../src/ops"
 import { STOW_HANDLER } from "../src/opverbs"
@@ -139,9 +140,6 @@ beforeEach(() => {
     Promise.resolve(m),
   )
   spyOn(vnc, "applyPassword").mockResolvedValue(null)
-  spyOn(share, "startVirtiofsd").mockImplementation(() =>
-    Promise.resolve({ dir: state, readonly: false, folder: null }),
-  )
   spyOn(console, "log").mockImplementation(() => undefined)
   spyOn(console, "error").mockImplementation(() => undefined)
   spyOn(console, "warn").mockImplementation(() => undefined)
@@ -172,13 +170,15 @@ describe("two cold starts at once", () => {
       release = r
     })
     let calls = 0
-    spyOn(servicectl, "ensureService").mockImplementation(async () => {
+    spyOn(servicectl, "ensureService").mockResolvedValue({} as never)
+    const launchChild = kept.launchChild
+    spyOn(kept, "launchChild").mockImplementation(async (p, child) => {
       calls += 1
       if (calls === 1) {
         inLaunch()
         await released
       }
-      return {} as never
+      return await launchChild(p, child)
     })
     spyOn(qga, "untilReady").mockResolvedValue("timeout")
     const args = parseArgs(["-i", NAME])

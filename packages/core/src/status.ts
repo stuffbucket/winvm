@@ -13,10 +13,9 @@ import { readSince, START } from "./eventlog"
 import { drivesOwed } from "./finder"
 import { frozenFrom, markedAsleep } from "./frozen"
 import { type HostPoweredOff, hostPoweredOff, isDecision } from "./hostoff"
+import { keeperHint } from "./keeper"
 import {
   type KeeperStanding,
-  keeperDir,
-  keeperFallback,
   keeperHello,
   keeperStanding,
   keeperUse,
@@ -42,7 +41,7 @@ import {
 import { parseEtime } from "./proc"
 import * as qemu from "./qemu"
 import { type Management, managementOf } from "./reconcile"
-import { currentQemuCompat } from "./runtime"
+import { currentQemuCompat, findRuntime } from "./runtime"
 import * as saves from "./saves"
 import { readService } from "./servicectl"
 import { spawnText } from "./shell"
@@ -620,15 +619,7 @@ export async function gather(
     pid === null && operation !== null
       ? null
       : keeperStanding(pid, await keeperHello(p), keeperUse().kind)
-  const fellBack =
-    standing?.protection === "legacy" ? keeperFallback(name) : null
-  const keeper = await withRuntime(
-    p,
-    pid,
-    standing === null || fellBack === null
-      ? standing
-      : { ...standing, fallback: fellBack.error },
-  )
+  const keeper = await withRuntime(p, pid, standing)
   const unprotected = keeper === null ? null : keeperNote(name, pid, keeper)
   if (unprotected !== null) notes.push(unprotected)
   const watcher = readWatch(name)
@@ -678,10 +669,11 @@ async function withRuntime(
   k: KeeperStanding | null,
 ): Promise<KeeperStanding | null> {
   if (k === null || pid === null || !WATCHED.has(k.protection)) return k
+  if (findRuntime() === null) return k
+  const installed = currentQemuCompat()
   const by = await saves
     .producedBy(p, pid, runningCommand(pid))
     .catch(() => saves.UNKNOWN_RUNTIME)
-  const installed = currentQemuCompat()
   return {
     ...k,
     recallable: saves.recallable(by, installed),
@@ -705,12 +697,6 @@ function keeperNote(
   k: KeeperStanding,
 ): string | null {
   const flag = name === "default" ? "" : ` -i ${name}`
-  const fellBack = k.protection === "legacy" ? keeperFallback(name) : null
-  if (fellBack !== null)
-    return (
-      `winvm's keeper could not start when Windows on "${name}" was started (${fellBack.error}), ` +
-      `so it is not protected if the Mac shuts down; see ${resolve(keeperDir(pathsFor(name)), "keeper.log")}`
-    )
   if (k.recallable === false) return olderQemuNote(name, k)
   switch (k.protection) {
     case "kept":
@@ -726,10 +712,8 @@ function keeperNote(
         `Windows on "${name}" was started without winvm's keeper, so it is not protected if the Mac shuts down; ` +
         `it is from its next start — \`winvm stow${flag} && winvm start${flag}\` does that now`
       )
-    case "off":
-      return `WINVM_KEEPER=off: Windows on "${name}" runs without winvm's keeper, so it is not protected if the Mac shuts down`
     case "missing":
-      return `this winvm has no winvm-keeper (the Mac app carries one, and \`WINVM_KEEPER=<path>\` names a build), so Windows on "${name}" is not protected if the Mac shuts down`
+      return `Windows on "${name}" was started without winvm's keeper, and this winvm has no winvm-keeper to protect it with: ${keeperHint()}`
     case "broken":
       return pid === null
         ? `winvm's keeper (pid ${String(k.pid)}) still runs a QEMU that qemu.pid does not name — \`winvm kill${flag}\` ends it`
@@ -737,12 +721,44 @@ function keeperNote(
   }
 }
 
+export interface LegacyVm {
+  readonly name: string
+  readonly protection: Protection
+  readonly note: string
+}
+
+const UNSHIELDED: ReadonlySet<Protection> = new Set([
+  "adopted",
+  "legacy",
+  "missing",
+])
+
+export async function legacyVms(
+  names: readonly string[] = listInstances(),
+): Promise<readonly LegacyVm[]> {
+  const found: LegacyVm[] = []
+  for (const name of [...names].sort()) {
+    const p = pathsFor(name)
+    const pid = qemu.pidOf(p)
+    if (pid === null) continue
+    const standing = await withRuntime(
+      p,
+      pid,
+      keeperStanding(pid, await keeperHello(p), keeperUse().kind),
+    )
+    if (standing === null || !UNSHIELDED.has(standing.protection)) continue
+    const note = keeperNote(name, pid, standing)
+    if (note !== null)
+      found.push({ name, protection: standing.protection, note })
+  }
+  return found
+}
+
 const KEEPER_WORDS: Readonly<Record<Protection, string>> = {
   kept: "protected",
   adopted: "watched, not shielded: started by an older winvm",
   legacy: "not protected: started without winvm's keeper",
   broken: "confused: the keeper and qemu.pid disagree",
-  off: "not protected: WINVM_KEEPER=off",
   missing: "not protected: no winvm-keeper installed",
 }
 

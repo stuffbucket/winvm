@@ -12,6 +12,7 @@ import { runningCommand } from "./display"
 import { appendEntry } from "./eventlog"
 import * as finder from "./finder"
 import * as frozen from "./frozen"
+import { keeperMissing } from "./kept"
 import { lockWindows } from "./lock"
 import { qmpCommand } from "./monitor"
 import * as notes from "./notes"
@@ -211,6 +212,8 @@ async function doLoad(
 
 export async function load(args: Args): Promise<number> {
   const name = instanceName(args)
+  const noKeeper = keeperMissing(`"${name}" was not loaded`)
+  if (noKeeper !== null) return fail(noKeeper.message)
   let saveName = args.positional[0]
   if (saveName === undefined) {
     const newest = saves
@@ -450,10 +453,6 @@ async function runsGuest(p: Paths): Promise<boolean> {
   return typeof r?.status === "string" && r.status !== "postmigrate"
 }
 
-type Leased = (run: () => Promise<number>) => Promise<number>
-
-const unleased: Leased = async (run) => await run()
-
 function refuse(
   name: string,
   refusal: saves.StowNotRecallable,
@@ -470,14 +469,24 @@ function refuse(
   return refusal.exitCode
 }
 
-export async function stow(
-  args: Args,
-  leased: Leased = unleased,
-): Promise<number> {
+export async function stow(args: Args): Promise<number> {
   const name = instanceName(args)
   const refusal = await stowRefusal(name)
   if (refusal !== null) return refuse(name, refusal, automaticFrom(args))
-  return await leased(async () => await stowHeld(name, args))
+  const noKeeper = qemu.isRunning(pathsFor(name))
+    ? keeperMissing(`"${name}" was not stowed`)
+    : null
+  if (noKeeper !== null) {
+    appendEntry(name, {
+      kind: "warning",
+      what: "stow refused",
+      reason: "no keeper",
+      automatic: automaticFrom(args),
+    })
+    fail(noKeeper.message)
+    return saves.STOW_REFUSED
+  }
+  return await stowHeld(name, args)
 }
 
 async function stowHeld(name: string, args: Args): Promise<number> {
