@@ -22,8 +22,8 @@ import {
 
 import {
   copyText,
+  listenSystemKeys,
   onLiveResize,
-  onSystemKey,
   readText,
   type SystemKeys,
   setSystemKeys,
@@ -183,6 +183,11 @@ export const Screen = forwardRef<ScreenHandle, ScreenProps>(function Screen(
   useEffect(() => {
     const el = target.current
     if (el === null) return
+    listenSystemKeys((key) => {
+      keyboard.current?.systemKey(key.code, key.down, key.modifiers)
+    }).catch((error: unknown) => {
+      console.warn("listening for system shortcuts failed", error)
+    })
     const gate = new SystemKeyGate((armed) => {
       setSystemKeys(armed, nextSeq())
         .then((status) => {
@@ -214,13 +219,9 @@ export const Screen = forwardRef<ScreenHandle, ScreenProps>(function Screen(
     window.addEventListener("focus", settle)
     window.addEventListener("blur", onWindowBlur)
     document.addEventListener("visibilitychange", settle)
-    const unlisten = onSystemKey((key) => {
-      keyboard.current?.systemKey(key.code, key.down)
-    })
     systemKeys.current = gate
     return () => {
       systemKeys.current = null
-      unlisten()
       el.removeEventListener("focusin", settle)
       el.removeEventListener("focusout", onFocusOut)
       window.removeEventListener("focus", settle)

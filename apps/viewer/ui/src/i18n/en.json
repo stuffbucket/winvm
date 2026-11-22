@@ -334,7 +334,7 @@
   "power.tip": "{action} (Option-click for more)",
   "menu.pauseOverlay": "Show Pause Overlay",
   "systemKeys.title": "Send Mac system shortcuts to Windows?",
-  "systemKeys.why": "While the keyboard is captured, winvm can send ⌘Tab, ⌘Space, Mission Control, Control-arrow and screenshot keys to Windows instead of macOS. To do that it needs Accessibility permission, which it uses only while the keyboard is captured and the Windows screen is in front.",
+  "systemKeys.why": "While the keyboard is captured, winvm can send ⌘Tab, ⌘Space, Mission Control, Control-arrow and screenshot keys to Windows instead of macOS. To do that it needs Accessibility permission, which it uses only for keys typed into winvm's Windows screen while the keyboard is captured.",
   "systemKeys.without": "Without it, capture still sends every other key to Windows and macOS keeps its system shortcuts. After you turn on winvm in Privacy & Security → Accessibility, capture the keyboard again.",
   "systemKeys.open": "Open System Settings",
   "systemKeys.captureAnyway": "Capture Without Them",

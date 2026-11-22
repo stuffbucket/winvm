@@ -14,6 +14,9 @@ const { OperationOverlay } = await import(
   "../ui/src/features/operation/OperationOverlay"
 )
 const { VM_OPERATIONS } = await import("../ui/src/model")
+const { SYSTEM_KEYS_RENEW_MS } = await import(
+  "../ui/src/features/screen/systemKeys"
+)
 
 type Root = ReturnType<typeof createRoot>
 let root: Root | null = null
@@ -163,10 +166,12 @@ const statusOf = (w: World): Record<string, unknown> => ({
 
 function fakeApp(world: World): {
   capture: boolean[]
+  renewals: () => number
   settingsOpened: () => number
   pending: { args: readonly string[]; finish(): void }[]
 } {
   const capture: boolean[] = []
+  let renewals = 0
   let opened = 0
   const pending: { args: readonly string[]; finish(): void }[] = []
   const ok = (
@@ -181,7 +186,9 @@ function fakeApp(world: World): {
     a?: { args?: string[]; armed?: boolean },
   ): Promise<unknown> => {
     if (cmd === "system_keys") {
-      capture.push(a?.armed === true)
+      const armed = a?.armed === true
+      if (armed) renewals += 1
+      if (armed !== (capture.at(-1) ?? false)) capture.push(armed)
       return Promise.resolve(world.systemKeys ?? "allowed")
     }
     if (cmd === "system_keys_status")
@@ -216,7 +223,12 @@ function fakeApp(world: World): {
     return Promise.resolve({ code: 1, stdout: "", stderr: "" })
   }
   Object.assign(window, { __TAURI__: { core: { invoke } } })
-  return { capture, settingsOpened: () => opened, pending }
+  return {
+    capture,
+    renewals: () => renewals,
+    settingsOpened: () => opened,
+    pending,
+  }
 }
 
 const display = (host: HTMLElement): HTMLElement => {
@@ -379,6 +391,14 @@ describe("Mac system shortcuts while the keyboard is captured", () => {
     expect(host.querySelector(".toolbar__capture-status")?.textContent).toBe(
       "Keyboard captured — ⌃⌥ to release",
     )
+    const armed = app.renewals()
+    await tick(SYSTEM_KEYS_RENEW_MS * 2)
+    expect(app.renewals()).toBe(armed + 2)
+    release(host)
+    await flush()
+    await tick(SYSTEM_KEYS_RENEW_MS * 2)
+    expect(app.renewals()).toBe(armed + 2)
+    expect(app.capture).toEqual([true, false])
   })
 
   it("explains the permission first and can capture without it", async () => {

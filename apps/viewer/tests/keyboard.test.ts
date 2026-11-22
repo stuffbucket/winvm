@@ -209,6 +209,100 @@ describe("guest keyboard routing", () => {
     expect(sent).toEqual(["down:Tab:ff09", "up:Tab:ff09"])
   })
 
+  it("presses Windows first when the tapped Tab overtakes Command", () => {
+    const { router, sent } = setup()
+    router.setCaptured(true)
+    router.systemKey("Tab", true, ["command"])
+    const command = event("MetaLeft", { meta: true })
+    router.keyDown(command)
+    router.systemKey("Tab", false, ["command"])
+    router.keyUp(event("MetaLeft"))
+    expect(sent).toEqual([
+      "down:MetaLeft:ffeb",
+      "down:Tab:ff09",
+      "up:Tab:ff09",
+      "up:MetaLeft:ffeb",
+    ])
+    expect(command.stopped).toBe(true)
+  })
+
+  it("does not press a modifier Windows already has from the webview", () => {
+    const { router, sent } = setup()
+    router.setCaptured(true)
+    router.keyDown(event("MetaLeft", { meta: true }))
+    router.keyDown(event("ShiftLeft", { meta: true }))
+    router.systemKey("Tab", true, ["command", "shift"])
+    router.systemKey("Tab", false, ["command", "shift"])
+    expect(sent).toEqual(["down:MetaLeft:ffeb", "down:Tab:ff09", "up:Tab:ff09"])
+  })
+
+  it("lends Control and Option for a tapped key and returns them when the Mac lets go", () => {
+    const { router, sent } = setup()
+    router.setCaptured(true)
+    router.systemKey("Space", true, ["control", "option"])
+    const control = event("ControlLeft", { ctrl: true })
+    router.keyDown(control)
+    router.systemKey("Space", false, ["control", "option"])
+    router.keyUp(event("ControlLeft"))
+    router.keyUp(event("AltLeft"))
+    expect(sent).toEqual([
+      "down:ControlLeft:ffe3",
+      "down:AltLeft:ffe9",
+      "down:Space:20",
+      "up:Space:20",
+      "up:ControlLeft:ffe3",
+      "up:AltLeft:ffe9",
+    ])
+    expect(control.prevented).toBe(true)
+  })
+
+  it("returns a lent modifier once a tapped key arrives without it", () => {
+    const { router, sent } = setup()
+    router.setCaptured(true)
+    router.systemKey("Tab", true, ["command"])
+    router.systemKey("Tab", false, [])
+    expect(sent).toEqual([
+      "down:MetaLeft:ffeb",
+      "down:Tab:ff09",
+      "up:Tab:ff09",
+      "up:MetaLeft:ffeb",
+    ])
+  })
+
+  it("returns a lent Windows key behind a Ctrl tap when focus disappears", () => {
+    const { router, sent } = setup()
+    router.setCaptured(true)
+    router.systemKey("Tab", true, ["command", "shift"])
+    router.lostFocus()
+    expect(sent).toEqual([
+      "down:ShiftLeft:ffe1",
+      "down:MetaLeft:ffeb",
+      "down:Tab:ff09",
+      "up:Tab:ff09",
+      "up:ShiftLeft:ffe1",
+      "down:ControlLeft:ffe3",
+      "up:ControlLeft:ffe3",
+      "up:MetaLeft:ffeb",
+    ])
+  })
+
+  it("returns a lent Windows key when the other Command key is the one let go", () => {
+    const { router, sent } = setup()
+    router.setCaptured(true)
+    router.systemKey("Tab", true, ["command"])
+    router.keyDown(event("MetaRight", { meta: true }))
+    router.systemKey("Tab", false, ["command"])
+    router.keyUp(event("MetaRight"))
+    expect(sent).toEqual([
+      "down:MetaLeft:ffeb",
+      "down:Tab:ff09",
+      "down:MetaRight:ffec",
+      "up:Tab:ff09",
+      "up:MetaLeft:ffeb",
+      "up:MetaRight:ffec",
+    ])
+  })
+
   it("sends special keys only through explicit actions", () => {
     const sent: string[] = []
     const send = (keysym: number, code: string, down: boolean): void => {

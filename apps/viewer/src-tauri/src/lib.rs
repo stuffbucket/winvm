@@ -18,6 +18,7 @@ use std::sync::Mutex;
 use tauri::menu::{
     Menu, MenuItem, PredefinedMenuItem, Submenu, HELP_SUBMENU_ID, WINDOW_SUBMENU_ID,
 };
+use tauri::webview::PageLoadEvent;
 use tauri::{Emitter, Manager, RunEvent, WebviewUrl, WebviewWindowBuilder, WindowEvent};
 use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
 use tauri_plugin_shell::process::CommandChild;
@@ -997,8 +998,14 @@ pub fn run() {
         .manage(CheckpointPresentation::default())
         .manage(agent::Agents::default())
         .manage(events::AppStream::default())
+        .manage(keytap::KeyTap::default())
         .menu(menu)
         .on_window_event(on_window_event)
+        .on_page_load(|webview, payload| {
+            if webview.label() == keytap::WINDOW && payload.event() == PageLoadEvent::Started {
+                webview.state::<keytap::KeyTap>().restart();
+            }
+        })
         .on_menu_event(|app, event| handle_menu(app, &event))
         .setup(|app| {
             let handle = app.handle().clone();
@@ -1009,7 +1016,7 @@ pub fn run() {
             if let Some(main) = app.get_webview_window("main") {
                 liveresize::watch(&main);
             }
-            app.manage(keytap::KeyTap::new(app.handle()));
+            keytap::watch(app.handle());
             match app.path().app_data_dir() {
                 Ok(dir) => app
                     .state::<close::CloseCoordinator>()
@@ -1045,6 +1052,7 @@ pub fn run() {
             dragout::files_drag_out,
             trace,
             keytap::system_keys,
+            keytap::system_keys_channel,
             keytap::system_keys_status,
             keytap::open_accessibility_settings,
             close::close_state,

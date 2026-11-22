@@ -1,18 +1,35 @@
+export const SYSTEM_KEYS_RENEW_MS = 250
+
 let issued = 0
 
-export function nextSeq(now: number = Date.now()): number {
-  issued = Math.max(now, issued + 1)
+export function nextSeq(): number {
+  issued += 1
   return issued
+}
+
+export interface Repeater {
+  repeat(fn: () => void, ms: number): unknown
+  stop(handle: unknown): void
+}
+
+const intervals: Repeater = {
+  repeat: (fn, ms) => setInterval(fn, ms),
+  stop: (handle) => {
+    clearInterval(handle as ReturnType<typeof setInterval>)
+  },
 }
 
 export class SystemKeyGate {
   private captured = false
   private focused = false
-  private armed = false
+  private renewal: unknown = null
   private readonly arm: (armed: boolean) => void
+  private readonly repeater: Repeater
 
-  constructor(arm: (armed: boolean) => void) {
+  constructor(arm: (armed: boolean) => void, repeater: Repeater = intervals) {
     this.arm = arm
+    this.repeater = repeater
+    this.arm(false)
   }
 
   setCaptured(captured: boolean): void {
@@ -27,9 +44,17 @@ export class SystemKeyGate {
 
   private update(): void {
     const armed = this.captured && this.focused
-    if (armed === this.armed) return
-    this.armed = armed
-    this.arm(armed)
+    if (armed === (this.renewal !== null)) return
+    if (armed) {
+      this.arm(true)
+      this.renewal = this.repeater.repeat(() => {
+        this.arm(true)
+      }, SYSTEM_KEYS_RENEW_MS)
+    } else {
+      this.repeater.stop(this.renewal)
+      this.renewal = null
+      this.arm(false)
+    }
   }
 }
 
