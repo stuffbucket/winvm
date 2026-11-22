@@ -12,13 +12,16 @@ export class ClipboardSync {
   private reading: Promise<void> | null = null
   private again = false
   private started = false
+  private stopped = false
+  private writing: Promise<void> | null = null
+  private pendingGuest: string | null = null
 
   constructor(ports: ClipboardPorts) {
     this.ports = ports
   }
 
   async start(): Promise<void> {
-    if (this.started) return
+    if (this.started || this.stopped) return
     try {
       await this.fromMac()
     } finally {
@@ -26,17 +29,51 @@ export class ClipboardSync {
     }
   }
 
-  fromGuest(text: string): void {
-    if (!this.started || !this.ports.focused() || text === this.shared) return
-    this.shared = text
+  stop(): void {
+    this.stopped = true
     this.generation++
-    this.ports.writeMac(text).catch((error: unknown) => {
-      console.warn("putting Windows' clipboard on the Mac failed", error)
+    this.again = false
+    this.pendingGuest = null
+  }
+
+  fromGuest(text: string): void {
+    if (
+      this.stopped ||
+      !this.started ||
+      !this.ports.focused() ||
+      (text === this.shared && this.writing === null)
+    )
+      return
+    this.generation++
+    this.pendingGuest = text
+    this.flushGuest()
+  }
+
+  private flushGuest(): void {
+    this.writing ??= this.writeGuest().finally(() => {
+      this.writing = null
+      if (this.pendingGuest !== null) this.flushGuest()
     })
   }
 
+  private async writeGuest(): Promise<void> {
+    while (this.pendingGuest !== null) {
+      const text = this.pendingGuest
+      this.pendingGuest = null
+      if (this.stopped || !this.ports.focused()) return
+      try {
+        await this.ports.writeMac(text)
+        this.shared = text
+      } catch (error) {
+        this.shared = null
+        console.warn("putting Windows' clipboard on the Mac failed", error)
+      }
+    }
+  }
+
   fromMac(): Promise<void> {
-    if (!this.ports.focused()) return Promise.resolve()
+    if (this.stopped || !this.ports.focused()) return Promise.resolve()
+    if (this.writing !== null) return this.writing.then(() => this.fromMac())
     if (this.reading !== null) {
       this.again = true
       return this.reading
@@ -61,13 +98,18 @@ export class ClipboardSync {
       return
     }
     if (
+      this.stopped ||
       text === "" ||
       text === this.shared ||
       before !== this.generation ||
       !this.ports.focused()
     )
       return
-    this.shared = text
-    this.ports.toGuest(text)
+    try {
+      this.ports.toGuest(text)
+      this.shared = text
+    } catch (error) {
+      console.warn("putting the Mac's clipboard in Windows failed", error)
+    }
   }
 }

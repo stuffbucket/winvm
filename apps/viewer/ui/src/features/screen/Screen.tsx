@@ -400,6 +400,7 @@ export const Screen = forwardRef<ScreenHandle, ScreenProps>(function Screen(
     })
     return () => {
       closing = true
+      clipboard.stop()
       live.current = null
       outer.removeEventListener("keydown", onKey, true)
       stopWake?.()

@@ -34,7 +34,7 @@ export interface ExtrasLike {
 
 export type AgentLike = Pick<
   agent.AgentClient,
-  "exec" | "list" | "putFile" | "getFile" | "pwsh"
+  "exec" | "list" | "mkdir" | "putFile" | "getFile" | "pwsh"
 >
 
 export interface Guest {
