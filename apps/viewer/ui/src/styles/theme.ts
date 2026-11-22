@@ -102,6 +102,7 @@ export const focusRing = {
 export const layout = {
   contentMax: "640px",
   panelWidth: "320px",
+  aboutMark: "184px",
 } as const
 
 export const themes = {

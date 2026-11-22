@@ -6,6 +6,7 @@ const FILES = [
   "ui/src/styles/terminal.css",
   "ui/src/styles/files.css",
   "ui/src/styles/checkpoints.css",
+  "ui/src/styles/about.css",
   "../../packages/canvas/src/canvas.css",
 ]
 const ROOT = resolve(import.meta.dir, "..")

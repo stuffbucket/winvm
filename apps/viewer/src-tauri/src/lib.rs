@@ -1,3 +1,4 @@
+mod about;
 mod agent;
 mod checkpoints;
 mod close;
@@ -61,6 +62,7 @@ const VERBS: &[&str] = &[
     "share",
     "events",
     "reconcile",
+    "version",
 ];
 
 fn permitted(args: &[String]) -> Result<(), String> {
@@ -506,9 +508,10 @@ fn install_cli() -> Result<String, String> {
         .ok_or("the app has no Contents/MacOS directory")?
         .join("winvm");
     let home = std::env::var("HOME").map_err(|e| e.to_string())?;
-    let bin = Path::new(&home).join(".local").join("bin");
-    std::fs::create_dir_all(&bin).map_err(|e| e.to_string())?;
-    let link = bin.join("winvm");
+    let link = about::cli_link(Path::new(&home));
+    if let Some(bin) = link.parent() {
+        std::fs::create_dir_all(bin).map_err(|e| e.to_string())?;
+    }
     match std::fs::symlink_metadata(&link) {
         Ok(m) if m.file_type().is_symlink() => {
             std::fs::remove_file(&link).map_err(|e| e.to_string())?;
@@ -702,6 +705,7 @@ fn menu(app: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
     let input_index = menu.items()?.len().saturating_sub(2);
     menu.insert(&input, input_index)?;
     if let Some(app_menu) = menu.items()?.first().and_then(|i| i.as_submenu().cloned()) {
+        about::replace_menu_item(app, &app_menu)?;
         let items = app_menu.items()?;
         let predefined_quit = items.last().filter(|i| {
             i.as_predefined_menuitem()
@@ -826,6 +830,8 @@ fn handle_menu(app: &tauri::AppHandle, event: &tauri::menu::MenuEvent) {
         let _ = app.emit_to("main", "menu", "checkpoints");
     } else if id == "check-updates" {
         check_for_update(app.clone(), true);
+    } else if about::is_menu(id) {
+        about::show(app);
     }
 }
 
@@ -884,6 +890,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             winvm,
             install_cli,
+            about::installed_cli,
+            about::open_link,
             share_start,
             share_stop,
             downloads_dir,

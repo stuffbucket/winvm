@@ -562,5 +562,18 @@
   "checkpoints.goBack.confirm": "Go Back",
   "checkpoints.delete.title": "Delete “{name}”?",
   "checkpoints.delete.body": "Its picture and notes go with it. This can't be undone.",
-  "checkpoints.delete.confirm": "Delete"
+  "checkpoints.delete.confirm": "Delete",
+  "about.name": "winvm",
+  "about.version": "Version {version}",
+  "about.development": "Development build",
+  "about.close": "Close",
+  "about.website": "Website",
+  "about.source": "GitHub",
+  "about.runtime": "Windows runtime",
+  "about.cli": "Command line tool",
+  "about.cli.none": "Not installed",
+  "about.machines": "Windows machines",
+  "about.build": "Build",
+  "about.unknown": "—",
+  "about.contributors": "Contributors"
 }

@@ -13,6 +13,7 @@ declares no windows) — change them there and update this table.
 | Window     | Default  | Min     | Max  | Resizable | Notes |
 |------------|----------|---------|------|-----------|-------|
 | Splash     | 440×240  | —       | —    | no        | Frameless, transparent, centered; shown while the proxy starts, then dismissed |
+| About      | 680×360  | —       | —    | no        | Overlay title bar with its window buttons hidden, centered; the app mark, version, links, details and contributors (see [`windows.md`](windows.md)) |
 | Main (Unified Settings + Dashboard) | 960×720  | 640×480 | work area (`prevent_overflow`) | yes | Single top bar (`.topbar`) with consolidated Settings tabs + right-side Dashboard/Settings mode icon button |
 
 The unified window is single-instance: opening Settings or Dashboard re-shows

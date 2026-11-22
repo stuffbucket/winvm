@@ -170,7 +170,9 @@ pub fn operation_of(args: &[String]) -> String {
 
 pub fn timeout_for(args: &[String]) -> Option<Duration> {
     match args.first().map_or("", String::as_str) {
-        "status" | "info" | "doctor" | "ls" | "settings" | "config" | "help" => Some(READ_TIMEOUT),
+        "status" | "info" | "doctor" | "ls" | "settings" | "config" | "help" | "version" => {
+            Some(READ_TIMEOUT)
+        }
         "saves" if !matches!(subcommand(args), Some("rm" | "note")) => Some(READ_TIMEOUT),
         "terminal" | "open" => Some(CONNECT_TIMEOUT),
         "events" if !crate::events::follows(args) => Some(READ_TIMEOUT),

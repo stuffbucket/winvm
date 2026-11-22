@@ -252,6 +252,12 @@ export async function opRecord(
 export const installCli = (): Promise<string> =>
   tauri().core.invoke<string>("install_cli")
 
+export const installedCli = (): Promise<string | null> =>
+  tauri().core.invoke<string | null>("installed_cli")
+
+export const openLink = (url: string): Promise<void> =>
+  tauri().core.invoke<void>("open_link", { url })
+
 export const downloadsDir = (): Promise<string> =>
   tauri().core.invoke<string>("downloads_dir")
 

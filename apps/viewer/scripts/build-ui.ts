@@ -15,6 +15,7 @@ async function build(): Promise<void> {
       resolve(UI, "index.html"),
       resolve(UI, "terminal.html"),
       resolve(UI, "files.html"),
+      resolve(UI, "about.html"),
     ],
     outdir: DIST,
     minify: true,
