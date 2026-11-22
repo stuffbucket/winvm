@@ -44,29 +44,49 @@ winvm types them in Windows. winvm uses no private macOS API for this.
   thread with its own run loop. The HID tap is the earliest point a process can
   tap and comes before WindowServer's symbolic hotkeys and the Dock; QEMU's
   Cocoa display grabs the keyboard the same way.
-- **What it takes.** A key-down is taken when ⌘, ⌃, ⌥ or fn is held, or when it
-  is an F-key or an Apple function-row key (Mission Control, Launchpad,
-  Spotlight, Dictation, Do Not Disturb). Its key-up and auto-repeats are taken
-  whether or not the modifier is still held; a key-up whose key-down went to
-  the Mac is left alone. Plain typing and the modifier keys themselves
+- **What it takes.** Only key events macOS addresses to winvm
+  (`kCGEventTargetUnixProcessID` is winvm's pid; it is filled in at the HID
+  tap) are considered, so a panel that takes the keyboard without winvm losing
+  key status (Spotlight, Raycast, a menu) gets its keys. A key-down is taken
+  when ⌘, ⌃ or ⌥ is held, when fn is held with a key that does not carry fn
+  itself, or when it is an F-key or an Apple function-row key (Mission Control,
+  Launchpad, Spotlight, Dictation, Do Not Disturb). Arrows, Home, End, Page Up,
+  Page Down and Forward Delete carry the fn flag on their own, so alone or with
+  Shift they stay on the webview path. Its key-up and auto-repeats are taken
+  whether or not the modifier is still held; the repeats and key-up of a key
+  whose key-down went to the Mac are left alone. A key code winvm cannot name
+  is left alone too. Plain typing and the modifier keys themselves
   (flags-changed events) are never taken, so they reach Windows through the
   webview as before and Control-Option still releases capture.
 - **How a taken key reaches Windows.** The callback returns NULL (macOS never
-  sees the key) and only queues the macOS key code's DOM `code` on a channel.
-  A forwarding thread emits it to the main window as `system-key`; the screen's
-  keyboard router (`features/screen/keyboard.ts`) sends it with
-  `rfb.sendKey`, so it reaches QEMU as a scan code, after the modifier the
-  webview already sent. Apple function-row keys have no Windows key and are
-  dropped.
-- **When it is on.** The tap is created on the first capture with permission
-  and enabled only while the keyboard is captured, the Windows screen has
-  focus and the window is focused (`features/screen/systemKeys.ts` asks; Rust
-  checks the window itself). Losing focus, a hidden page, capture release,
-  closing the window and quitting disable it. Each request carries a rising
-  sequence number so a late one cannot re-enable it. If macOS disables the tap
+  sees the key) and only queues the key's DOM `code` and the modifiers held
+  with it on a channel. A forwarding thread sends it over a Tauri IPC channel
+  the main webview registered (`system_keys_channel`), so no other window can
+  receive it. The screen's keyboard router (`features/screen/keyboard.ts`)
+  first presses any of Shift, Control, Alt and Windows the key was typed with
+  that Windows does not already have (the webview may deliver the real
+  modifier later; a later Windows key-down is then not sent twice), sends the
+  key with `rfb.sendKey`, so it reaches QEMU as a scan code, and lets go of
+  those modifiers when the Mac does or when capture ends. Apple function-row
+  keys have no Windows key and are dropped.
+- **When it is on.** The tap is created on the first capture with permission.
+  Arming is a lease: while the keyboard is captured, the Windows screen has
+  focus and the window is focused, the screen (`features/screen/systemKeys.ts`)
+  renews it every 250 ms through a command that runs on the main thread, and
+  Rust re-checks the window each time. The tap thread reads the lease on every
+  event against a monotonic clock; once it is more than 750 ms old the tap
+  passes everything and turns itself off. A stalled main thread, a hung or
+  reloaded page or a crashed web process therefore gives the keyboard back
+  within 750 ms. Losing focus, a hidden page, capture release, closing the
+  window, a page load, quitting, the session resigning (fast user switching)
+  and sleep end it at once; sleep and session switches also release capture.
+  The tap thread checks Accessibility while armed and stops if it is
+  withdrawn. Requests carry a rising number so a late arm cannot re-enable it;
+  a disarm is always honoured. If macOS disables the tap
   (`kCGEventTapDisabledByTimeout`, `kCGEventTapDisabledByUserInput`) it is
-  re-enabled while capture lasts. Keys the tap sent down are released in
-  Windows when capture ends, before a held Windows key, so nothing stays down.
+  re-enabled while the lease lasts. A tap macOS refuses is retried only when
+  capture starts again. Keys the tap sent down are released in Windows when
+  capture ends, before a held Windows key, so nothing stays down.
 - **Permission.** An active tap needs Accessibility (Privacy & Security →
   Accessibility). Without it capture still sends every other key, macOS keeps
   its system shortcuts, and the toolbar says "Keyboard captured, but macOS keeps
@@ -80,14 +100,18 @@ winvm types them in Windows. winvm uses no private macOS API for this.
   (bundle ID and Developer ID team), so a signed update keeps it. An ad-hoc or
   unsigned local build has a requirement tied to that build: macOS shows winvm
   as allowed but refuses the tap, so turn winvm off and on again (or remove and
-  re-add it) after each local build. No entitlement or Info.plist key is
-  involved.
+  re-add it) after each local build. A binary started from a terminal
+  (`tauri dev`) is probably judged as that terminal app, its responsible
+  process. No entitlement or Info.plist key is involved.
 - **What no public API can take.** Nothing reaches a tap while another app has
   Secure Event Input on (a password field, Terminal's Secure Keyboard Entry).
   The power button, Touch ID, the lock screen and media, volume and
   brightness keys (system-defined events, left to the Mac) are out of reach.
   Globe-key actions (emoji picker, dictation, input source) are unverified:
-  set "Press 🌐 key to" to Do Nothing if one still fires.
+  set "Press 🌐 key to" to Do Nothing if one still fires. If macOS leaves the
+  target pid empty (0) for an event, winvm treats it as its own and relies on
+  the lease alone. The ISO keys (0x0A `IntlBackslash`, 0x32 `Backquote`) follow
+  Carbon's names, which may not match what WebKit reports for the same key.
 
 This follows UTM's useful division between host and captured routing, while
 using one fixed capture chord and one fixed uncaptured Windows modifier rather
