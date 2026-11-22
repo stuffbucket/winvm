@@ -1,12 +1,3 @@
-/* =========================================================
-   @winvm/canvas: the infinite canvas's layers and chrome.
-
-   From monimal's packages/maximal-design-system/src/styles/spatial-canvas.css,
-   cut to the parts this package keeps and moved onto winvm's tokens
-   (apps/viewer/ui/src/styles/theme.ts): --surface-*, --text-*, --border-*,
-   --accent, --space-*, --radius-*. The host page defines them.
-   ========================================================= */
-
 .spatial-canvas-surface {
   position: fixed;
   inset: 0;
@@ -27,17 +18,17 @@
   height: 100%;
 }
 
-.spatial-canvas-surface > .spatial-canvas {
-  width: 100%;
-  height: 100%;
-}
-
 .spatial-canvas {
   position: relative;
   overflow: hidden;
   color: var(--text-base-color);
   contain: layout paint style;
   isolation: isolate;
+}
+
+.spatial-canvas-surface > .spatial-canvas {
+  width: 100%;
+  height: 100%;
 }
 
 .spatial-canvas__sr-only {
@@ -48,8 +39,6 @@
   clip-path: inset(50%);
   white-space: nowrap;
 }
-
-/* ---- Viewport, grid and scene ---- */
 
 .spatial-canvas__viewport {
   position: absolute;
@@ -71,7 +60,11 @@
   position: absolute;
   inset: 0;
   color: color-mix(in srgb, var(--text-muted) 38%, transparent);
-  background-image: radial-gradient(circle, currentColor 0.75px, transparent 1.25px);
+  background-image: radial-gradient(
+    circle,
+    currentColor 0.75px,
+    transparent 1.25px
+  );
   background-size: var(--space-4) var(--space-4);
   pointer-events: none;
 }
@@ -122,8 +115,6 @@
   pointer-events: none;
 }
 
-/* ---- Chrome ---- */
-
 .spatial-canvas__topbar {
   position: absolute;
   z-index: 3;
@@ -147,6 +138,8 @@
   display: inline-flex;
   align-items: center;
   gap: var(--space-1);
+  min-inline-size: auto;
+  margin: 0;
   padding: var(--space-1);
   border: var(--border-width-hairline) solid var(--border-subtle);
   border-radius: var(--radius-card);
@@ -227,7 +220,10 @@
   bottom: var(--space-3);
   display: grid;
   grid-template-rows: auto minmax(0, 1fr) auto;
-  width: min(calc(var(--panel-width) + var(--space-7)), calc(100% - var(--space-5)));
+  width: min(
+    calc(var(--panel-width) + var(--space-7)),
+    calc(100% - var(--space-5))
+  );
   overflow: hidden;
   border: var(--border-width-hairline) solid var(--border-subtle);
   border-radius: var(--radius-card);
@@ -244,22 +240,11 @@
   border-bottom: var(--border-width-hairline) solid var(--border-subtle);
 }
 
-.spatial-canvas__side-panel > header > strong {
-  min-width: 0;
-  overflow: hidden;
-  color: var(--text-strong);
-  font-weight: var(--weight-lg);
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
 .spatial-canvas__side-panel-body {
   min-height: 0;
   overflow: auto;
   padding: var(--space-4);
 }
-
-/* ---- Search ---- */
 
 .spatial-canvas__search-results {
   display: grid;
@@ -316,4 +301,13 @@
 .spatial-canvas__search-result small {
   color: var(--text-muted);
   font-size: var(--text-sm);
+}
+
+.spatial-canvas__side-panel > header > strong {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-strong);
+  font-weight: var(--weight-lg);
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }

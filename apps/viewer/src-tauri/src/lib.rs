@@ -1,110 +1,270 @@
 mod agent;
 mod checkpoints;
+mod close;
 mod dragout;
+mod events;
 mod liveresize;
+mod sidecar;
+pub mod terminate;
 mod usage;
 
 use serde::{Deserialize, Serialize};
+use sidecar::{Finished, Output, SidecarFailure};
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
-use tauri::menu::{Menu, MenuItem, PredefinedMenuItem, Submenu, HELP_SUBMENU_ID, WINDOW_SUBMENU_ID};
+use tauri::menu::{
+    Menu, MenuItem, PredefinedMenuItem, Submenu, HELP_SUBMENU_ID, WINDOW_SUBMENU_ID,
+};
 use tauri::{Emitter, Manager, RunEvent, WebviewUrl, WebviewWindowBuilder, WindowEvent};
 use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
-use tauri_plugin_shell::process::{CommandChild, CommandEvent};
-use tauri_plugin_shell::ShellExt;
+use tauri_plugin_shell::process::CommandChild;
 use tauri_plugin_updater::UpdaterExt;
 
-#[derive(Serialize)]
-struct Output {
-    code: i32,
-    stdout: String,
-    stderr: String,
-}
-
 const VERBS: &[&str] = &[
-    "status", "info", "doctor", "start", "stop", "reboot", "pause", "resume", "kill", "open", "setup", "exec", "put", "get",
-    "dir", "mkdir", "mv", "cp", "rm", "save", "load", "saves", "help", "terminal", "config", "display", "create",
-    "destroy", "ls", "mcp", "sleep", "wake", "lock", "settings", "files", "share",
+    "status",
+    "info",
+    "doctor",
+    "start",
+    "stop",
+    "stow",
+    "reboot",
+    "pause",
+    "resume",
+    "kill",
+    "open",
+    "setup",
+    "exec",
+    "put",
+    "get",
+    "dir",
+    "mkdir",
+    "mv",
+    "cp",
+    "rm",
+    "save",
+    "load",
+    "saves",
+    "help",
+    "terminal",
+    "config",
+    "display",
+    "create",
+    "destroy",
+    "ls",
+    "mcp",
+    "sleep",
+    "wake",
+    "lock",
+    "settings",
+    "files",
+    "share",
+    "events",
+    "reconcile",
 ];
 
-#[tauri::command]
-async fn winvm(app: tauri::AppHandle, args: Vec<String>) -> Result<Output, String> {
+fn permitted(args: &[String]) -> Result<(), String> {
     match args.first() {
         Some(verb) if VERBS.contains(&verb.as_str()) => {}
-        _ => return Err(format!("not a winvm command this app runs: {:?}", args.first())),
+        _ => {
+            return Err(format!(
+                "not a winvm command this app runs: {:?}",
+                args.first()
+            ))
+        }
     }
-    let out = app
-        .shell()
-        .sidecar("winvm")
-        .map_err(|e| e.to_string())?
-        .args(args)
-        .output()
-        .await
-        .map_err(|e| e.to_string())?;
-    Ok(Output {
-        code: out.status.code().unwrap_or(-1),
-        stdout: String::from_utf8_lossy(&out.stdout).into_owned(),
-        stderr: String::from_utf8_lossy(&out.stderr).into_owned(),
-    })
+    if events::follows(args) && !follows_one_op(args) {
+        return Err("`winvm events --follow` never ends, so the app runs it once, as its event stream, not as a command".into());
+    }
+    Ok(())
 }
 
-/// The `winvm cua serve` this app started, while the screen is shared with an agent.
+fn is_instance_name(name: &str) -> bool {
+    let mut chars = name.chars();
+    (1..=64).contains(&name.len())
+        && chars.next().is_some_and(|c| c.is_ascii_alphanumeric())
+        && chars.all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_'))
+}
+
+fn follows_one_op(args: &[String]) -> bool {
+    match args {
+        [events, i, name, op_flag, id, json, follow] => {
+            events == "events"
+                && i == "-i"
+                && is_instance_name(name)
+                && op_flag == "--op"
+                && close::is_op_id(id)
+                && json == "--json"
+                && follow == "--follow"
+        }
+        _ => false,
+    }
+}
+
+#[cfg(test)]
+mod command_allowlist_tests {
+    use super::{events, permitted, sidecar, VERBS};
+
+    #[test]
+    fn permits_every_close_policy_command_without_timing_out_vm_mutations() {
+        for verb in ["stow", "stop"] {
+            assert!(
+                VERBS.contains(&verb),
+                "{verb} must be available to the close flow"
+            );
+            assert_eq!(
+                sidecar::timeout_for(&[verb.to_owned()]),
+                None,
+                "{verb} must not be killed mid-mutation"
+            );
+        }
+        assert!(
+            VERBS.contains(&"config"),
+            "remembering a close policy needs config"
+        );
+    }
+
+    #[test]
+    fn runs_the_event_stream_only_as_the_stream_and_reconcile_without_a_deadline() {
+        let args = |a: &[&str]| a.iter().map(ToString::to_string).collect::<Vec<_>>();
+        assert!(permitted(&args(&["events", "--json", "--since=eyJ2IjoxfQ"])).is_ok());
+        assert_eq!(
+            sidecar::timeout_for(&args(&["events", "--json"])),
+            Some(sidecar::READ_TIMEOUT)
+        );
+        let stream = events::stream_args(None);
+        assert!(
+            permitted(&stream).is_err(),
+            "a follow through `winvm` would never return"
+        );
+        assert_eq!(
+            sidecar::timeout_for(&stream),
+            None,
+            "the stream has no deadline"
+        );
+        assert!(permitted(&args(&["reconcile", "-i", "demo"])).is_ok());
+        assert_eq!(
+            sidecar::timeout_for(&args(&["reconcile", "-i", "demo"])),
+            None
+        );
+        assert!(permitted(&args(&["serve", "-i", "demo"])).is_err());
+        assert!(permitted(&[]).is_err());
+    }
+
+    #[test]
+    fn runs_the_remount_the_app_asks_for_after_a_failed_idle_stow_without_a_deadline() {
+        let remount = ["files", "remount", "-i", "demo"]
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>();
+        assert!(permitted(&remount).is_ok());
+        assert_eq!(
+            sidecar::timeout_for(&remount),
+            None,
+            "a remount waits for the instance and for the mount, so it has no deadline"
+        );
+    }
+
+    const OP: &str = "0b9c2f1e-7d3a-4e5b-9c8d-112233445566";
+
+    #[test]
+    fn follows_one_op_of_one_machine_to_its_end_and_nothing_wider() {
+        let args = |a: &[&str]| a.iter().map(ToString::to_string).collect::<Vec<_>>();
+        let follow_op = args(&["events", "-i", "demo", "--op", OP, "--json", "--follow"]);
+        assert!(permitted(&follow_op).is_ok());
+        assert_eq!(sidecar::timeout_for(&follow_op), None);
+        assert!(permitted(&args(&["events", "-i", "demo", "--op", OP, "--json"])).is_ok());
+        for refused in [
+            &["events", "--json", "--follow"][..],
+            &["events", "-i", "demo", "--json", "--follow"],
+            &[
+                "events", "-i", "demo", "--op", "short", "--json", "--follow",
+            ],
+            &[
+                "events",
+                "-i",
+                "demo",
+                "--op",
+                "has space in it",
+                "--json",
+                "--follow",
+            ],
+            &["events", "-i", "../etc", "--op", OP, "--json", "--follow"],
+            &["events", "-i", "", "--op", OP, "--json", "--follow"],
+            &["events", "-i", "demo", "--op", OP, "--follow"],
+            &[
+                "events",
+                "-i",
+                "demo",
+                "--op",
+                OP,
+                "--json",
+                "--follow",
+                "--since=start",
+            ],
+            &["events", "--op", OP, "-i", "demo", "--json", "--follow"],
+        ] {
+            assert!(permitted(&args(refused)).is_err(), "{refused:?}");
+        }
+    }
+
+    #[test]
+    fn runs_every_verb_the_app_names_with_an_op_id() {
+        let args = |a: &[&str]| a.iter().map(ToString::to_string).collect::<Vec<_>>();
+        for verb in [
+            "start", "stop", "reboot", "pause", "resume", "sleep", "wake", "lock", "kill", "save",
+            "load", "stow",
+        ] {
+            assert!(
+                permitted(&args(&[verb, "-i", "demo", "--op-id", OP])).is_ok(),
+                "{verb}"
+            );
+        }
+    }
+}
+
+#[tauri::command]
+async fn winvm(app: tauri::AppHandle, args: Vec<String>) -> Result<Output, Box<SidecarFailure>> {
+    permitted(&args)
+        .map_err(|why| Box::new(SidecarFailure::rejected(&sidecar::operation_of(&args), why)))?;
+    sidecar::run_sidecar(&app, &args, sidecar::timeout_for(&args)).await
+}
+
 #[derive(Default)]
 struct Sharing(Mutex<Option<CommandChild>>);
 
 fn stop_sharing(sharing: &Sharing) {
-    if let Some(child) = sharing.0.lock().map(|mut c| c.take()).unwrap_or(None) {
-        // SIGTERM, so the server removes its cua.json; CommandChild::kill is SIGKILL.
-        let _ = std::process::Command::new("/bin/kill").arg(child.pid().to_string()).status();
+    if let Some(child) = sharing.0.lock().ok().and_then(|mut c| c.take()) {
+        let _ = sidecar::terminate_child(child.pid());
     }
 }
 
-/// Starts `winvm cua serve` and returns what it printed once it is listening (or what it said before exiting).
 #[tauri::command]
-async fn share_start(app: tauri::AppHandle, instance: String) -> Result<Output, String> {
+async fn share_start(
+    app: tauri::AppHandle,
+    instance: String,
+) -> Result<Output, Box<SidecarFailure>> {
     let sharing = app.state::<Sharing>();
     stop_sharing(&sharing);
-    let (mut rx, child) = app
-        .shell()
-        .sidecar("winvm")
-        .map_err(|e| e.to_string())?
-        .args(["cua", "serve", "-i", instance.as_str()])
-        .spawn()
-        .map_err(|e| e.to_string())?;
-    let mut stdout = String::new();
-    let mut stderr = String::new();
-    let mut code = None;
-    while let Some(event) = rx.recv().await {
-        match event {
-            CommandEvent::Stdout(line) => {
-                stdout.push_str(&String::from_utf8_lossy(&line));
-                stdout.push('\n');
-                if stdout.contains("  token ") {
-                    break;
-                }
-            }
-            CommandEvent::Stderr(line) => {
-                stderr.push_str(&String::from_utf8_lossy(&line));
-                stderr.push('\n');
-            }
-            CommandEvent::Terminated(t) => {
-                code = Some(t.code.unwrap_or(-1));
-                break;
-            }
-            _ => {}
-        }
-    }
-    match code {
-        Some(code) => Ok(Output { code, stdout, stderr }),
-        None => {
-            *sharing.0.lock().map_err(|e| e.to_string())? = Some(child);
-            Ok(Output { code: 0, stdout, stderr })
+    let args = ["cua", "serve", "-i", instance.as_str()].map(String::from);
+    let ready = |stdout: &str| stdout.contains("  token ");
+    match sidecar::start_sidecar(&app, &args, sidecar::SHARE_HANDSHAKE_TIMEOUT, &ready).await? {
+        Finished::Exited(out) => Ok(out),
+        Finished::Ready { output, child } => {
+            *sharing
+                .0
+                .lock()
+                .map_err(|e| SidecarFailure::rejected("cua serve", e.to_string()))? = Some(child);
+            Ok(output)
         }
     }
 }
 
 #[tauri::command]
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "tauri injects the AppHandle by value; a command cannot take a reference to it"
+)]
 fn share_stop(app: tauri::AppHandle) {
     stop_sharing(&app.state::<Sharing>());
 }
@@ -112,8 +272,6 @@ fn share_stop(app: tauri::AppHandle) {
 const TERMINAL: &str = "terminal";
 const SHELLS: &[&str] = &["pwsh", "powershell", "cmd"];
 
-/// One tab the Terminal window should open: a shell in an instance, started in `cwd` (home when absent),
-/// with the shells that instance has when the main window already asked, and the instance's title.
 #[derive(Clone, Deserialize, Serialize)]
 struct TerminalRequest {
     instance: String,
@@ -125,24 +283,24 @@ struct TerminalRequest {
     title: Option<String>,
 }
 
-/// Tabs asked for and not yet taken by the Terminal window, which may still be loading.
 #[derive(Default)]
 struct TerminalRequests(Mutex<Vec<TerminalRequest>>);
 
-/// Brings the Terminal window forward, or opens it beside the main window.
 fn show_terminal(app: &tauri::AppHandle) -> Result<(), String> {
     if let Some(window) = app.get_webview_window(TERMINAL) {
         let _ = window.unminimize();
         let _ = window.show();
         let _ = window.set_focus();
-        return app.emit_to(TERMINAL, "terminal-open", ()).map_err(|e| e.to_string());
+        return app
+            .emit_to(TERMINAL, "terminal-open", ())
+            .map_err(|e| e.to_string());
     }
-    let mut builder = WebviewWindowBuilder::new(app, TERMINAL, WebviewUrl::App("terminal.html".into()))
-        .title("Terminal")
-        .inner_size(820.0, 520.0)
-        .min_inner_size(420.0, 240.0)
-        .visible(false);
-    // Tabs in the title bar, beside traffic lights where the main window has them (tauri.conf.json).
+    let mut builder =
+        WebviewWindowBuilder::new(app, TERMINAL, WebviewUrl::App("terminal.html".into()))
+            .title("Terminal")
+            .inner_size(820.0, 520.0)
+            .min_inner_size(420.0, 240.0)
+            .visible(false);
     #[cfg(target_os = "macos")]
     {
         builder = builder
@@ -156,7 +314,6 @@ fn show_terminal(app: &tauri::AppHandle) -> Result<(), String> {
     builder.build().map(|_| ()).map_err(|e| e.to_string())
 }
 
-/// Just right of the main window, when the screen has room for `width` there.
 fn beside_main(app: &tauri::AppHandle, width: f64) -> Option<(f64, f64)> {
     let main = app.get_webview_window("main")?;
     let scale = main.scale_factor().ok()?;
@@ -174,38 +331,65 @@ async fn terminal_open(app: tauri::AppHandle, request: TerminalRequest) -> Resul
     if !SHELLS.contains(&request.shell.as_str()) {
         return Err(format!("not a shell this app opens: {}", request.shell));
     }
-    app.state::<TerminalRequests>().0.lock().map_err(|e| e.to_string())?.push(request);
+    app.state::<TerminalRequests>()
+        .0
+        .lock()
+        .map_err(|e| e.to_string())?
+        .push(request);
     show_terminal(&app)
 }
 
 #[tauri::command]
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "tauri injects the AppHandle by value; a command cannot take a reference to it"
+)]
 fn terminal_take(app: tauri::AppHandle) -> Vec<TerminalRequest> {
-    app.state::<TerminalRequests>().0.lock().map(|mut q| std::mem::take(&mut *q)).unwrap_or_default()
+    app.state::<TerminalRequests>()
+        .0
+        .lock()
+        .map(|mut q| std::mem::take(&mut *q))
+        .unwrap_or_default()
 }
 
-/// The window with keyboard focus, if any of the app's has it.
 fn focused_window(app: &tauri::AppHandle) -> Option<tauri::WebviewWindow> {
-    app.webview_windows().into_values().find(|w| w.is_focused().unwrap_or(false))
+    app.webview_windows()
+        .into_values()
+        .find(|w| w.is_focused().unwrap_or(false))
 }
 
-/// The Files window's label for an instance: one window per instance.
 fn files_label(instance: &str) -> String {
-    let safe: String = instance.chars().map(|c| if c.is_ascii_alphanumeric() || c == '-' || c == '_' { c } else { '_' }).collect();
+    let safe: String = instance
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect();
     format!("files-{safe}")
 }
 
-/// Percent-encodes a query value.
 fn query_value(s: &str) -> String {
     s.bytes()
-        .map(|b| if b.is_ascii_alphanumeric() || b"-_.~".contains(&b) { (b as char).to_string() } else { format!("%{b:02X}") })
+        .map(|b| {
+            if b.is_ascii_alphanumeric() || b"-_.~".contains(&b) {
+                (b as char).to_string()
+            } else {
+                format!("%{b:02X}")
+            }
+        })
         .collect()
 }
 
-/// Opens the instance's Files window, or brings it forward. The overlay title bar puts the traffic
-/// lights over the window's own sidebar, where the main window puts them over its toolbar. `title`
-/// is what the instance is called (its name when absent); the window hears of later changes itself.
 #[tauri::command]
-async fn files_open(app: tauri::AppHandle, instance: String, title: Option<String>) -> Result<(), String> {
+async fn files_open(
+    app: tauri::AppHandle,
+    instance: String,
+    title: Option<String>,
+) -> Result<(), String> {
     if instance.is_empty() || instance.len() > 64 {
         return Err("no instance named".into());
     }
@@ -217,9 +401,13 @@ async fn files_open(app: tauri::AppHandle, instance: String, title: Option<Strin
         return Ok(());
     }
     let shown = title.clone().unwrap_or_else(|| instance.clone());
-    let url = format!("files.html?instance={}&title={}", query_value(&instance), query_value(title.as_deref().unwrap_or("")));
+    let url = format!(
+        "files.html?instance={}&title={}",
+        query_value(&instance),
+        query_value(title.as_deref().unwrap_or(""))
+    );
     let mut builder = WebviewWindowBuilder::new(&app, &label, WebviewUrl::App(url.into()))
-        .title(format!("Files in Windows â {shown}"))
+        .title(format!("Files in Windows — {shown}"))
         .inner_size(920.0, 560.0)
         .min_inner_size(560.0, 340.0)
         .visible(false);
@@ -238,23 +426,24 @@ async fn files_open(app: tauri::AppHandle, instance: String, title: Option<Strin
     builder.build().map(|_| ()).map_err(|e| e.to_string())
 }
 
-/// Puts text on the Mac's clipboard (the webview's own clipboard needs a user gesture a menu item isn't).
-/// pbcopy reads its input in LANG's encoding, and an app started from Finder has none: say UTF-8.
 #[tauri::command]
-fn copy_text(text: String) -> Result<(), String> {
+fn copy_text(text: &str) -> Result<(), String> {
     use std::io::Write;
     let mut child = std::process::Command::new("/usr/bin/pbcopy")
         .env("LANG", "en_US.UTF-8")
         .stdin(std::process::Stdio::piped())
         .spawn()
         .map_err(|e| e.to_string())?;
-    child.stdin.take().ok_or("pbcopy has no stdin")?.write_all(text.as_bytes()).map_err(|e| e.to_string())?;
+    child
+        .stdin
+        .take()
+        .ok_or("pbcopy has no stdin")?
+        .write_all(text.as_bytes())
+        .map_err(|e| e.to_string())?;
     child.wait().map_err(|e| e.to_string())?;
     Ok(())
 }
 
-/// The text on the Mac's clipboard, for Windows' clipboard; empty when it holds none (an image,
-/// files). Off the main thread: the screen asks each time the window comes forward.
 #[tauri::command]
 async fn read_text() -> Result<String, String> {
     tauri::async_runtime::spawn_blocking(|| {
@@ -272,7 +461,6 @@ async fn read_text() -> Result<String, String> {
     .map_err(|e| e.to_string())?
 }
 
-/// The Mac user's home folder, so the UI can show paths under it as `~/…`.
 #[tauri::command]
 fn home_dir() -> Result<String, String> {
     std::env::var("HOME").map_err(|e| e.to_string())
@@ -284,15 +472,14 @@ fn downloads_dir() -> Result<String, String> {
     Ok(Path::new(&home).join("Downloads").display().to_string())
 }
 
-/// `dir/name`, or Finder's "name 2", "name 3"... when that is taken, so a copy never replaces a Mac file.
 #[tauri::command]
-fn unused_path(dir: String, name: String, folder: bool) -> String {
-    let dir = Path::new(&dir);
+fn unused_path(dir: &str, name: &str, folder: bool) -> String {
+    let dir = Path::new(dir);
     let (stem, ext) = match name.rfind('.') {
         Some(i) if i > 0 && !folder => (&name[..i], &name[i..]),
-        _ => (name.as_str(), ""),
+        _ => (name, ""),
     };
-    let mut path = dir.join(&name);
+    let mut path = dir.join(name);
     let mut n = 2;
     while path.symlink_metadata().is_ok() {
         path = dir.join(format!("{stem} {n}{ext}"));
@@ -301,36 +488,46 @@ fn unused_path(dir: String, name: String, folder: bool) -> String {
     path.display().to_string()
 }
 
-/// Shows a file or folder in Finder, selected.
 #[tauri::command]
-fn reveal(path: String) -> Result<(), String> {
-    std::process::Command::new("/usr/bin/open").arg("-R").arg(&path).status().map_err(|e| e.to_string())?;
+fn reveal(path: &str) -> Result<(), String> {
+    std::process::Command::new("/usr/bin/open")
+        .arg("-R")
+        .arg(path)
+        .status()
+        .map_err(|e| e.to_string())?;
     Ok(())
 }
 
 #[tauri::command]
 fn install_cli() -> Result<String, String> {
     let exe = std::env::current_exe().map_err(|e| e.to_string())?;
-    let cli = exe.parent().ok_or("the app has no Contents/MacOS directory")?.join("winvm");
+    let cli = exe
+        .parent()
+        .ok_or("the app has no Contents/MacOS directory")?
+        .join("winvm");
     let home = std::env::var("HOME").map_err(|e| e.to_string())?;
     let bin = Path::new(&home).join(".local").join("bin");
     std::fs::create_dir_all(&bin).map_err(|e| e.to_string())?;
     let link = bin.join("winvm");
     match std::fs::symlink_metadata(&link) {
-        Ok(m) if m.file_type().is_symlink() => std::fs::remove_file(&link).map_err(|e| e.to_string())?,
-        Ok(_) => return Err(format!("{} exists and is not a link, so it was left alone", link.display())),
+        Ok(m) if m.file_type().is_symlink() => {
+            std::fs::remove_file(&link).map_err(|e| e.to_string())?;
+        }
+        Ok(_) => {
+            return Err(format!(
+                "{} exists and is not a link, so it was left alone",
+                link.display()
+            ))
+        }
         Err(_) => {}
     }
     std::os::unix::fs::symlink(&cli, &link).map_err(|e| e.to_string())?;
     Ok(link.display().to_string())
 }
 
-/// Set while an update check or install is running, so a second one waits its turn.
 #[derive(Default)]
 struct Updating(AtomicBool);
 
-/// Checks the release's latest.json for a newer signed winvm and offers to install it.
-/// `asked`: the person chose Check for Updates, so say when there is nothing new or the check failed.
 fn check_for_update(app: tauri::AppHandle, asked: bool) {
     if app.state::<Updating>().0.swap(true, Ordering::SeqCst) {
         return;
@@ -349,11 +546,16 @@ fn check_for_update(app: tauri::AppHandle, asked: bool) {
                     .buttons(MessageDialogButtons::OkCancelCustom("Install and Restart".into(), "Later".into()))
                     .blocking_show();
                 if install {
-                    let done = tauri::async_runtime::block_on(update.download_and_install(|_, _| {}, || {}));
+                    let done = tauri::async_runtime::block_on(
+                        update.download_and_install(|_, _| {}, || {}),
+                    );
                     match done {
                         Ok(()) => {
-                            stop_sharing(&app.state::<Sharing>());
-                            app.restart();
+                            if app.state::<close::CloseCoordinator>().wait_to_restart() {
+                                stop_sharing(&app.state::<Sharing>());
+                                events::stop(&app);
+                                app.restart();
+                            }
                         }
                         Err(e) => {
                             app.dialog()
@@ -367,7 +569,10 @@ fn check_for_update(app: tauri::AppHandle, asked: bool) {
             }
             Ok(None) if asked => {
                 app.dialog()
-                    .message(format!("winvm {} is the latest version.", app.package_info().version))
+                    .message(format!(
+                        "winvm {} is the latest version.",
+                        app.package_info().version
+                    ))
                     .title("No update")
                     .blocking_show();
             }
@@ -384,44 +589,36 @@ fn check_for_update(app: tauri::AppHandle, asked: bool) {
     });
 }
 
-/// The default menu, plus updates and the command line (app menu), terminal tabs and Checkpoints… (File) and the
-/// command reference (Help). File's New Terminal Tab and Close act on the Terminal window's tabs when
-/// it is in front, so Cmd-T and Cmd-W are tab keys there and window keys elsewhere.
-fn menu(app: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
-    let menu = Menu::default(app)?;
-    let new_tab = MenuItem::with_id(app, "new-tab", "New Terminal Tab", true, Some("CmdOrCtrl+T"))?;
-    // The checkpoints view. A menu key works even while Windows' screen has the keyboard.
-    let checkpoints = MenuItem::with_id(app, "checkpoints", "Checkpoints…", true, Some("CmdOrCtrl+Shift+T"))?;
-    let close = MenuItem::with_id(app, "close", "Close", true, Some("CmdOrCtrl+W"))?;
-    let file = menu
-        .items()?
-        .into_iter()
-        .filter_map(|i| i.as_submenu().cloned())
-        .find(|m| m.text().is_ok_and(|t| t == "File"));
-    if let Some(file) = file {
-        for item in file.items()? {
-            file.remove(&item)?;
-        }
-        file.append_items(&[&new_tab, &checkpoints, &PredefinedMenuItem::separator(app)?, &close])?;
-    }
-    // The Window menu's own Close Window (after a separator) would take Cmd-W back from File's Close.
-    // Rename Windowâ¦ names the instance (main window) or the active tab (Terminal).
-    let rename = MenuItem::with_id(app, "rename-window", "Rename Windowâ¦", true, None::<&str>)?;
-    if let Some(window) = menu.get(WINDOW_SUBMENU_ID).and_then(|i| i.as_submenu().cloned()) {
-        if window.items()?.len() == 4 {
-            window.remove_at(3)?;
-            window.remove_at(2)?;
-        }
-        window.append_items(&[&PredefinedMenuItem::separator(app)?, &rename])?;
-    }
-    let updates = MenuItem::with_id(app, "check-updates", "Check for Updatesâ¦", true, None::<&str>)?;
-    let install = MenuItem::with_id(app, "install-cli", "Install Command Line Toolâ¦", true, None::<&str>)?;
-    let reference = MenuItem::with_id(app, "reference", "winvm Command Reference", true, Some("CmdOrCtrl+Shift+/"))?;
-    let capture = MenuItem::with_id(app, "capture-keyboard", "Capture Keyboard", true, None::<&str>)?;
-    let windows_key = MenuItem::with_id(app, "send-windows-key", "Send Windows Key", true, None::<&str>)?;
-    let ctrl_alt_delete = MenuItem::with_id(app, "send-ctrl-alt-delete", "Send Ctrl-Alt-Delete", true, None::<&str>)?;
-    let release = MenuItem::with_id(app, "release-keyboard", "Release Keyboard", true, None::<&str>)?;
-    let input = Submenu::with_items(
+fn input_menu(app: &tauri::AppHandle) -> tauri::Result<Submenu<tauri::Wry>> {
+    let capture = MenuItem::with_id(
+        app,
+        "capture-keyboard",
+        "Capture Keyboard",
+        true,
+        None::<&str>,
+    )?;
+    let windows_key = MenuItem::with_id(
+        app,
+        "send-windows-key",
+        "Send Windows Key",
+        true,
+        None::<&str>,
+    )?;
+    let ctrl_alt_delete = MenuItem::with_id(
+        app,
+        "send-ctrl-alt-delete",
+        "Send Ctrl-Alt-Delete",
+        true,
+        None::<&str>,
+    )?;
+    let release = MenuItem::with_id(
+        app,
+        "release-keyboard",
+        "Release Keyboard",
+        true,
+        None::<&str>,
+    )?;
+    Submenu::with_items(
         app,
         "Input",
         true,
@@ -433,22 +630,108 @@ fn menu(app: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
             &PredefinedMenuItem::separator(app)?,
             &release,
         ],
+    )
+}
+
+fn menu(app: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
+    let menu = Menu::default(app)?;
+    let new_tab = MenuItem::with_id(
+        app,
+        "new-tab",
+        "New Terminal Tab",
+        true,
+        Some("CmdOrCtrl+T"),
     )?;
+    let checkpoints = MenuItem::with_id(
+        app,
+        "checkpoints",
+        "Checkpoints…",
+        true,
+        Some("CmdOrCtrl+Shift+T"),
+    )?;
+    let close = MenuItem::with_id(app, "close", "Close", true, Some("CmdOrCtrl+W"))?;
+    let file = menu
+        .items()?
+        .into_iter()
+        .filter_map(|i| i.as_submenu().cloned())
+        .find(|m| m.text().is_ok_and(|t| t == "File"));
+    if let Some(file) = file {
+        for item in file.items()? {
+            file.remove(&item)?;
+        }
+        file.append_items(&[
+            &new_tab,
+            &checkpoints,
+            &PredefinedMenuItem::separator(app)?,
+            &close,
+        ])?;
+    }
+    let rename = MenuItem::with_id(app, "rename-window", "Rename Window…", true, None::<&str>)?;
+    if let Some(window) = menu
+        .get(WINDOW_SUBMENU_ID)
+        .and_then(|i| i.as_submenu().cloned())
+    {
+        if window.items()?.len() == 4 {
+            window.remove_at(3)?;
+            window.remove_at(2)?;
+        }
+        window.append_items(&[&PredefinedMenuItem::separator(app)?, &rename])?;
+    }
+    let updates = MenuItem::with_id(
+        app,
+        "check-updates",
+        "Check for Updates…",
+        true,
+        None::<&str>,
+    )?;
+    let install = MenuItem::with_id(
+        app,
+        "install-cli",
+        "Install Command Line Tool…",
+        true,
+        None::<&str>,
+    )?;
+    let reference = MenuItem::with_id(
+        app,
+        "reference",
+        "winvm Command Reference",
+        true,
+        Some("CmdOrCtrl+Shift+/"),
+    )?;
+    let input = input_menu(app)?;
     let input_index = menu.items()?.len().saturating_sub(2);
     menu.insert(&input, input_index)?;
     if let Some(app_menu) = menu.items()?.first().and_then(|i| i.as_submenu().cloned()) {
+        let items = app_menu.items()?;
+        let predefined_quit = items.last().filter(|i| {
+            i.as_predefined_menuitem()
+                .is_some_and(|q| q.text().is_ok_and(|t| t.starts_with("Quit")))
+        });
+        if let Some(quit) = predefined_quit {
+            app_menu.remove(quit)?;
+            let name = app.package_info().name.clone();
+            app_menu.append(&MenuItem::with_id(
+                app,
+                close::QUIT_ID,
+                format!("Quit {name}"),
+                true,
+                Some("CmdOrCtrl+Q"),
+            )?)?;
+        }
         app_menu.insert_items(&[&install, &PredefinedMenuItem::separator(app)?], 2)?;
         app_menu.insert(&updates, 1)?;
     }
-    if let Some(help) = menu.get(HELP_SUBMENU_ID).and_then(|i| i.as_submenu().cloned()) {
+    if let Some(help) = menu
+        .get(HELP_SUBMENU_ID)
+        .and_then(|i| i.as_submenu().cloned())
+    {
         help.append(&reference)?;
     }
     Ok(menu)
 }
 
-/// A line on stderr, for the viewer's timings (a resize from release to its first sharp frame).
 #[tauri::command]
-fn trace(line: String) {
+fn trace(line: &str) {
     eprintln!("{line}");
 }
 
@@ -466,8 +749,9 @@ fn system_keyboard_capture(captured: bool) -> Result<(), String> {
             fn CGSMainConnectionID() -> Connection;
             fn CGSSetGlobalHotKeyOperatingMode(connection: Connection, mode: u32) -> i32;
         }
-        // The same CoreGraphics SPI UTM uses: 0 enables host hotkeys, 1 disables them.
-        let result = unsafe { CGSSetGlobalHotKeyOperatingMode(CGSMainConnectionID(), u32::from(captured)) };
+        // SAFETY: both functions take and return plain integers and have no preconditions.
+        let result =
+            unsafe { CGSSetGlobalHotKeyOperatingMode(CGSMainConnectionID(), u32::from(captured)) };
         if result != 0 {
             return Err(format!("CoreGraphics rejected keyboard capture ({result})"));
         }
@@ -475,6 +759,80 @@ fn system_keyboard_capture(captured: bool) -> Result<(), String> {
     Ok(())
 }
 
+fn handle_menu(app: &tauri::AppHandle, event: &tauri::menu::MenuEvent) {
+    let id = event.id().as_ref();
+    if matches!(
+        id,
+        "install-cli"
+            | "reference"
+            | "capture-keyboard"
+            | "release-keyboard"
+            | "send-windows-key"
+            | "send-ctrl-alt-delete"
+    ) {
+        let _ = app.emit("menu", id);
+    } else if close::is_quit(id) {
+        close::request(app);
+    } else if id == "new-tab" || id == "close" {
+        let focused = focused_window(app);
+        match (
+            id,
+            close::route_close(focused.as_ref().map(tauri::WebviewWindow::label), TERMINAL),
+        ) {
+            (_, close::CloseRoute::TerminalTab) => {
+                let _ = app.emit_to(
+                    TERMINAL,
+                    "terminal-menu",
+                    if id == "new-tab" {
+                        "new-tab"
+                    } else {
+                        "close-tab"
+                    },
+                );
+            }
+            ("close", close::CloseRoute::Viewer) => {
+                close::request(app);
+            }
+            ("close", close::CloseRoute::Window) => {
+                if let Some(w) = focused {
+                    let _ = w.close();
+                }
+            }
+            ("new-tab", _) => {
+                let _ = app.emit_to("main", "menu", "new-terminal");
+            }
+            _ => {}
+        }
+    } else if id == "rename-window" {
+        match focused_window(app) {
+            Some(w) if w.label() == TERMINAL => {
+                let _ = app.emit_to(TERMINAL, "terminal-menu", "rename-tab");
+            }
+            _ => {
+                if let Some(main) = app.get_webview_window("main") {
+                    let _ = main.unminimize();
+                    let _ = main.show();
+                    let _ = main.set_focus();
+                }
+                let _ = app.emit_to("main", "menu", "rename-window");
+            }
+        }
+    } else if id == "checkpoints" {
+        if let Some(main) = app.get_webview_window("main") {
+            let _ = main.unminimize();
+            let _ = main.show();
+            let _ = main.set_focus();
+        }
+        let _ = app.emit_to("main", "menu", "checkpoints");
+    } else if id == "check-updates" {
+        check_for_update(app.clone(), true);
+    }
+}
+
+#[expect(
+    clippy::missing_panics_doc,
+    reason = "run is the binary's entry point rather than an API, and its only panic is a startup failure the app cannot continue past"
+)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
@@ -482,71 +840,42 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(Sharing::default())
         .manage(Updating::default())
+        .manage(close::CloseCoordinator::default())
         .manage(TerminalRequests::default())
         .manage(agent::Agents::default())
+        .manage(events::AppStream::default())
         .menu(menu)
         .on_window_event(|window, event| {
-            // Tabs asked for and never taken die with the window, rather than open in the next one.
+            if let WindowEvent::CloseRequested { api, .. } = event {
+                if close::closes_viewer(window.label()) && close::request(window.app_handle()) {
+                    api.prevent_close();
+                }
+            }
             if let (WindowEvent::Destroyed, TERMINAL) = (event, window.label()) {
                 if let Ok(mut queue) = window.state::<TerminalRequests>().0.lock() {
                     queue.clear();
                 }
             }
         })
-        .on_menu_event(|app, event| {
-            let id = event.id().as_ref();
-            if matches!(
-                id,
-                "install-cli"
-                    | "reference"
-                    | "capture-keyboard"
-                    | "release-keyboard"
-                    | "send-windows-key"
-                    | "send-ctrl-alt-delete"
-            ) {
-                let _ = app.emit("menu", id);
-            } else if id == "new-tab" || id == "close" {
-                match focused_window(app) {
-                    Some(w) if w.label() == TERMINAL => {
-                        let _ = app.emit_to(TERMINAL, "terminal-menu", if id == "new-tab" { "new-tab" } else { "close-tab" });
-                    }
-                    Some(w) if id == "close" => {
-                        let _ = w.close();
-                    }
-                    _ if id == "new-tab" => {
-                        let _ = app.emit_to("main", "menu", "new-terminal");
-                    }
-                    _ => {}
-                }
-            } else if id == "rename-window" {
-                match focused_window(app) {
-                    Some(w) if w.label() == TERMINAL => {
-                        let _ = app.emit_to(TERMINAL, "terminal-menu", "rename-tab");
-                    }
-                    _ => {
-                        if let Some(main) = app.get_webview_window("main") {
-                            let _ = main.unminimize();
-                            let _ = main.show();
-                            let _ = main.set_focus();
-                        }
-                        let _ = app.emit_to("main", "menu", "rename-window");
-                    }
-                }
-            } else if id == "checkpoints" {
-                if let Some(main) = app.get_webview_window("main") {
-                    let _ = main.unminimize();
-                    let _ = main.show();
-                    let _ = main.set_focus();
-                }
-                let _ = app.emit_to("main", "menu", "checkpoints");
-            } else if id == "check-updates" {
-                check_for_update(app.clone(), true);
-            }
-        })
+        .on_menu_event(|app, event| handle_menu(app, &event))
         .setup(|app| {
+            let handle = app.handle().clone();
+            terminate::settle_install(
+                terminate::install(move |quit| close::should_terminate(&handle, quit)),
+                terminate::Fatality::of_this_build(),
+            )?;
             if let Some(main) = app.get_webview_window("main") {
                 liveresize::watch(&main);
             }
+            match app.path().app_data_dir() {
+                Ok(dir) => app
+                    .state::<close::CloseCoordinator>()
+                    .open_journal(dir.join(close::JOURNAL)),
+                Err(e) => close::note(&format!(
+                    "winvm: no folder for the close's notes, so a close cut short is not reported later: {e}"
+                )),
+            }
+            events::start(app.handle());
             if !cfg!(debug_assertions) {
                 check_for_update(app.handle().clone(), false);
             }
@@ -571,14 +900,31 @@ pub fn run() {
             home_dir,
             dragout::files_drag_out,
             trace,
-            set_system_keyboard_capture
+            set_system_keyboard_capture,
+            close::close_state,
+            close::close_start,
+            close::close_at,
+            close::close_resolved,
+            close::close_run,
+            close::close_wait,
+            close::close_forget,
+            close::close_cancel,
+            close::close_complete,
+            events::events_state
         ])
         .build(tauri::generate_context!())
         .expect("winvm could not start")
-        .run(|app, event| {
-            if let RunEvent::Exit = event {
+        .run(|app, event| match event {
+            RunEvent::ExitRequested { api, .. } => {
+                if close::request(app) {
+                    api.prevent_exit();
+                }
+            }
+            RunEvent::Exit => {
                 let _ = system_keyboard_capture(false);
                 stop_sharing(&app.state::<Sharing>());
+                events::stop(app);
             }
+            _ => {}
         });
 }

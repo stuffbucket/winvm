@@ -2,9 +2,8 @@ export const fontStacks = {
   display: '"Fraunces", Georgia, "Times New Roman", serif',
   body: '"Commissioner", "Segoe UI", Helvetica, Arial, sans-serif',
   mono: 'ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace',
-  /** File-type glyphs and sort chevrons (a vendored subset of Symbols Nerd Font Mono); never text. */
   symbols: '"Symbols Nerd Font Mono"',
-} as const;
+} as const
 
 export const text = {
   xs: "0.75rem",
@@ -16,7 +15,7 @@ export const text = {
   "2xl": "2rem",
   "3xl": "2.5rem",
   "4xl": "3rem",
-} as const;
+} as const
 
 export const weight = {
   base: "400",
@@ -24,19 +23,19 @@ export const weight = {
   lg: "600",
   xl: "600",
   "2xl": "700",
-} as const;
+} as const
 
 export const leading = {
   base: "1.6",
   lg: "1.4",
   xl: "1.3",
   "2xl": "1.2",
-} as const;
+} as const
 
 export const tracking = {
   xl: "-0.01em",
   "2xl": "-0.015em",
-} as const;
+} as const
 
 export const spacing = {
   1: "4px",
@@ -47,21 +46,21 @@ export const spacing = {
   6: "32px",
   7: "48px",
   8: "64px",
-} as const;
+} as const
 
 export const radii = {
   input: "6px",
   card: "8px",
   chip: "4px",
   pill: "9999px",
-} as const;
+} as const
 
 export const borderWidth = {
   hairline: "1px",
   thin: "1px",
   thick: "2px",
   heavy: "4px",
-} as const;
+} as const
 
 export const size = {
   xs: "12px",
@@ -70,70 +69,41 @@ export const size = {
   lg: "24px",
   xl: "32px",
   "2xl": "40px",
-} as const;
+} as const
 
 export const elevation = {
   card: "0 1px 2px rgb(0 0 0 / 0.06)",
   modal: "0 8px 24px rgb(0 0 0 / 0.18)",
   tooltip: "0 2px 6px rgb(0 0 0 / 0.1)",
-} as const;
+} as const
 
-/** Identity only (brand mark, requirement icon) — never a control, link or text. */
 export const brand = {
   color: "#c8334a",
-} as const;
+} as const
 
-/**
- * Theme-independent interaction colors. The accent fill itself is per theme
- * (`themes.*.accent`); its label stays white in both. `destructive` is the
- * destructive *button fill* only — error text and icons use `statusError`.
- */
 export const accent = {
   fg: "#ffffff",
   destructive: "#b32d3f",
   destructiveFg: "#ffffff",
-} as const;
+} as const
 
-/**
- * Behind a modal dialog, in both themes. `paused` dims the guest's screen while
- * the machine is paused or asleep: a light grey veil, so the picture stays
- * readable (and the glyph over it says why it doesn't move).
- */
 export const scrim = {
   color: "rgb(0 0 0 / 0.5)",
   paused: "rgb(143 143 143 / 0.2)",
-} as const;
+} as const
 
 export const focusRing = {
   width: "2px",
   offset: "2px",
   color: "var(--accent)",
   expr: "var(--focus-ring-width) solid var(--focus-ring-color)",
-} as const;
+} as const
 
 export const layout = {
   contentMax: "640px",
   panelWidth: "320px",
-} as const;
+} as const
 
-/**
- * Theme-dependent colors. Every key must exist in both themes. The
- * generator (apps/viewer/scripts/generate-css-tokens.ts) emits dark as the default,
- * switches to light when the OS appearance is light, and lets a
- * `data-theme="dark" | "light"` attribute on <html> pin either one.
- *
- * Each value is chosen against all three surfaces of its own theme
- * (maximal's packages/storybook contrast audit checked them):
- *   text-*, link*, status-*   ≥ 4.5:1 — usable as text, so also as icons
- *   accent, border-strong     ≥ 3:1   — controls, focus ring, input borders
- *   accent behind white text  ≥ 4.5:1 — primary button labels
- * `link` doubles as the accent family's text color: anything teal that is
- * text (links, "Copied", accent figures) uses `link`, never `accent`.
- * `backdrop*` (winvm) is the ground the display sits on: a base and two soft
- * glows, accent and brand. Never behind text; text sits on a surface over it.
- * `terminalSelection` (winvm) is selected text's ground in the Terminal
- * window; the terminal's own text on it stays ≥ 4.5:1.
- */
 export const themes = {
   dark: {
     surfaceBase: "#0a0a0a",
@@ -177,4 +147,4 @@ export const themes = {
     backdropGlowBrand: "#efd9de",
     terminalSelection: "#c9dfe2",
   },
-} as const satisfies Record<"dark" | "light", Record<string, string>>;
+} as const satisfies Record<"dark" | "light", Record<string, string>>

@@ -1,0 +1,11 @@
+{
+  "name": "@winvm/novnc",
+  "version": "1.7.0",
+  "private": true,
+  "description": "noVNC's client library, vendored unmodified from the v1.7.0 release",
+  "license": "MPL-2.0",
+  "type": "module",
+  "exports": {
+    "./core/*": "./core/*"
+  }
+}

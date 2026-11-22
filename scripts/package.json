@@ -1,0 +1,17 @@
+{
+  "name": "@winvm/scripts",
+  "version": "0.1.0",
+  "private": true,
+  "description": "The repository's own tooling: the verify gate, release helpers, acceptance runs and scenario checks",
+  "license": "MIT",
+  "type": "module",
+  "dependencies": {
+    "@winvm/core": "workspace:*",
+    "@winvm/displayfit": "workspace:*",
+    "@winvm/viewer": "workspace:*",
+    "typescript": "6.0.3"
+  },
+  "devDependencies": {
+    "@types/bun": "1.4.0"
+  }
+}

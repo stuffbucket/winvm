@@ -1,16 +1,40 @@
 import { describe, expect, it } from "bun:test"
 
-import { childPath, clickSelect, crumbs, findByPrefix, formatBytes, freeName, isListing, leafName, parseListing } from "../ui/src/features/files/files"
+import {
+  childPath,
+  clickSelect,
+  crumbs,
+  findByPrefix,
+  formatBytes,
+  freeName,
+  isListing,
+  leafName,
+  parseListing,
+} from "../ui/src/features/files/files"
 
 const listing = {
   path: "C:\\Users\\me\\Desktop",
   parent: "C:\\Users\\me",
   entries: [
-    { name: "Projects", dir: true, size: null, modified: 1_700_000_000_000, hidden: false },
-    { name: "notes.txt", dir: false, size: 12_345, modified: null, hidden: false },
+    {
+      name: "Projects",
+      dir: true,
+      size: null,
+      modified: 1_700_000_000_000,
+      hidden: false,
+    },
+    {
+      name: "notes.txt",
+      dir: false,
+      size: 12_345,
+      modified: null,
+      hidden: false,
+    },
   ],
   total: 2,
-  places: [{ kind: "desktop", name: "Desktop", path: "C:\\Users\\me\\Desktop" }],
+  places: [
+    { kind: "desktop", name: "Desktop", path: "C:\\Users\\me\\Desktop" },
+  ],
 }
 
 describe("winvm dir --json", () => {
@@ -21,12 +45,24 @@ describe("winvm dir --json", () => {
   })
 
   it("reads why a folder didn't open, by the code the agent gave", () => {
-    expect(parseListing(JSON.stringify({ error: "agent GET /fs/list: 403 access denied: C:\\x", code: "denied" }))).toEqual({
+    expect(
+      parseListing(
+        JSON.stringify({
+          error: "agent GET /fs/list: 403 access denied: C:\\x",
+          code: "denied",
+        }),
+      ),
+    ).toEqual({
       code: "denied",
       detail: "agent GET /fs/list: 403 access denied: C:\\x",
     })
-    expect(parseListing(JSON.stringify({ error: "boom", code: null }))).toEqual({ code: "other", detail: "boom" })
-    expect(parseListing("", "::error::no agent")).toEqual({ code: "other", detail: "::error::no agent" })
+    expect(parseListing(JSON.stringify({ error: "boom", code: null }))).toEqual(
+      { code: "other", detail: "boom" },
+    )
+    expect(parseListing("", "::error::no agent")).toEqual({
+      code: "other",
+      detail: "::error::no agent",
+    })
   })
 })
 
@@ -69,12 +105,21 @@ describe("selection", () => {
   it("picks one on a click, toggles with ⌘, takes a range with ⇧", () => {
     const one = clickSelect(new Set(), null, 2, { toggle: false, range: false })
     expect([...one.selected]).toEqual([2])
-    const toggled = clickSelect(one.selected, one.anchor, 4, { toggle: true, range: false })
+    const toggled = clickSelect(one.selected, one.anchor, 4, {
+      toggle: true,
+      range: false,
+    })
     expect([...toggled.selected].sort()).toEqual([2, 4])
-    const range = clickSelect(toggled.selected, 2, 5, { toggle: false, range: true })
+    const range = clickSelect(toggled.selected, 2, 5, {
+      toggle: false,
+      range: true,
+    })
     expect([...range.selected].sort()).toEqual([2, 3, 4, 5])
     expect(range.anchor).toBe(2)
-    const back = clickSelect(range.selected, 2, 0, { toggle: false, range: true })
+    const back = clickSelect(range.selected, 2, 0, {
+      toggle: false,
+      range: true,
+    })
     expect([...back.selected].sort()).toEqual([0, 1, 2])
   })
 

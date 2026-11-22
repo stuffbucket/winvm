@@ -9,7 +9,10 @@
 # build. This waits up to WAIT_SECONDS (default 0) for those files, then:
 #   - replaces winvm.dmg with winvm-<tag>-darwin-arm64.dmg and its .sha256;
 #   - checks the bundle's signature the way the app will, and attaches
-#     latest.json, the manifest the app's updater reads.
+#     latest.json, the manifest the app's updater reads;
+#   - attaches the signed keeper from inside the notarized app as
+#     winvm-keeper-<tag>-darwin-arm64 with its .sha256, the binary
+#     packages/core/keeper.json pins for CLI-only installs.
 #
 # Needs GH_TOKEN with contents: write, GITHUB_REPOSITORY, and bun.
 set -euo pipefail
@@ -19,19 +22,20 @@ repo=${GITHUB_REPOSITORY:?}
 src=winvm.dmg
 dmg="winvm-${tag}-darwin-arm64.dmg"
 bundle="winvm-${tag}-darwin-arm64.app.tar.gz"
+keeper="winvm-keeper-${tag}-darwin-arm64"
 trigger="gh workflow run build.yml --repo stuffbucket/macos-builder --ref main -f repo=${repo} -f ref=${tag}"
 here=$(cd "$(dirname "$0")" && pwd)
 
 assets() {
-  gh release view "$tag" --repo "$repo" --json assets --jq '.assets[].name' 2> /dev/null
+  gh release view "$tag" --repo "$repo" --json assets --jq '.assets[].name' 2>/dev/null
 }
 
 ready() {
   local have
   have=$(assets)
-  { grep -Fxq "$src" <<< "$have" || grep -Fxq "$dmg" <<< "$have"; } &&
-    grep -Fxq "$bundle" <<< "$have" &&
-    grep -Fxq "$bundle.sig" <<< "$have"
+  { grep -Fxq "$src" <<<"$have" || grep -Fxq "$dmg" <<<"$have"; } &&
+    grep -Fxq "$bundle" <<<"$have" &&
+    grep -Fxq "$bundle.sig" <<<"$have"
 }
 
 deadline=$((SECONDS + wait))
@@ -50,10 +54,10 @@ trap 'rm -rf "$tmp"' EXIT
 if ! assets | grep -Fxq "$dmg"; then
   gh release download "$tag" --repo "$repo" --pattern "$src" --dir "$tmp"
   mv "$tmp/$src" "$tmp/$dmg"
-  (cd "$tmp" && shasum -a 256 "$dmg" > "$dmg.sha256")
+  (cd "$tmp" && shasum -a 256 "$dmg" >"$dmg.sha256")
   gh release upload "$tag" --repo "$repo" "$tmp/$dmg" "$tmp/$dmg.sha256" --clobber
-  gh release delete-asset "$tag" "$src" --repo "$repo" --yes 2> /dev/null || true
-  gh release delete-asset "$tag" "$src.sha256" --repo "$repo" --yes 2> /dev/null || true
+  gh release delete-asset "$tag" "$src" --repo "$repo" --yes 2>/dev/null || true
+  gh release delete-asset "$tag" "$src.sha256" --repo "$repo" --yes 2>/dev/null || true
   echo "attached $dmg and $dmg.sha256 to the $tag draft"
 fi
 
@@ -64,3 +68,15 @@ bun "$here/updater-manifest.ts" --tag "$tag" --file "$tmp/$bundle" \
   --out "$tmp/latest.json"
 gh release upload "$tag" --repo "$repo" "$tmp/latest.json" --clobber
 echo "attached latest.json to the $tag draft"
+
+mkdir "$tmp/app"
+tar -xzf "$tmp/$bundle" -C "$tmp/app"
+signed=$(find "$tmp/app" -path '*.app/Contents/MacOS/winvm-keeper' -type f | head -n 1)
+if [ -z "$signed" ]; then
+  echo "::error::${bundle} has no Contents/MacOS/winvm-keeper"
+  exit 1
+fi
+cp "$signed" "$tmp/$keeper"
+(cd "$tmp" && shasum -a 256 "$keeper" >"$keeper.sha256")
+gh release upload "$tag" --repo "$repo" "$tmp/$keeper" "$tmp/$keeper.sha256" --clobber
+echo "attached $keeper and $keeper.sha256 to the $tag draft"

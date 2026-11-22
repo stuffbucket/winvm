@@ -1,32 +1,3 @@
-// winvm-display: the guest's screen size and display scaling, set live from
-// the logged-on session. Compiled at agent install (agent-install.ps1). The
-// agent's POST /display route keeps one `serve` process running and writes it
-// one request per line; run with a request's arguments, it answers that one.
-// One JSON line out per request; exit 0 on success.
-//
-//   winvm-display serve                     requests on stdin, one per line, as below
-//   winvm-display get                       size, scale, effective DPI
-//   winvm-display modes                     the sizes the driver offers now
-//   winvm-display set W H [waitMs] [scale]  wait until the driver offers WxH, set it,
-//                                           then the scale (percent) if it differs
-//   winvm-display scale PCT                 set the scale if it differs
-//
-// WHY WAIT. The host first asks QEMU for the size over VNC (SetDesktopSize);
-// QEMU tells virtio-gpu, and the viogpudo driver adds exactly that size to its
-// mode list (one "custom" slot, replaced by the next request) but does not
-// switch to it. Until the mode is listed, ChangeDisplaySettingsEx refuses it
-// (DISP_CHANGE_BADMODE), so this polls the mode list for up to waitMs.
-//
-// SCALE. DisplayConfigSetDeviceInfo with the undocumented
-// DISPLAYCONFIG_DEVICE_INFO_SET_DPI_SCALE (-4) and GET (-3), the call the
-// Settings app makes: live, no sign-out, stored per monitor in HKCU
-// PerMonitorSettings\<monitor>\DpiValue as steps relative to the recommended
-// scale. Windows clamps it for small sizes (1280x800 allows at most 125%) and
-// restores it when the size grows again.
-//
-// LIMIT. The driver cannot back a framebuffer over 30 MiB; Windows still says
-// yes to such a mode and the screen goes dark ("Display output is not
-// active"). Refused here as well as on the host (displayfit.ts).
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
@@ -81,7 +52,7 @@ public static class WinvmDisplay {
   static string Primary() {
     var dd = new DISPLAY_DEVICE(); dd.cb = Marshal.SizeOf(dd);
     for (int i = 0; EnumDisplayDevices(null, i, ref dd, 0); i++) {
-      if ((dd.StateFlags & 4) != 0) return dd.DeviceName; // DISPLAY_DEVICE_PRIMARY_DEVICE
+      if ((dd.StateFlags & 4) != 0) return dd.DeviceName;
       dd.cb = Marshal.SizeOf(dd);
     }
     throw new Fail("fail", "no primary display");
@@ -112,24 +83,22 @@ public static class WinvmDisplay {
 
   static uint EffectiveDpi() {
     uint x, y;
-    return GetDpiForMonitor(MonitorFromPoint(0, 1 /* MONITOR_DEFAULTTOPRIMARY */), 0 /* MDT_EFFECTIVE_DPI */, out x, out y) == 0 ? x : 0;
+    return GetDpiForMonitor(MonitorFromPoint(0, 1), 0, out x, out y) == 0 ? x : 0;
   }
 
-  // The adapter LUID and source id of the first active path: what the DPI calls address.
   static byte[] Header(int type, int size) {
     uint np, nm;
     if (GetDisplayConfigBufferSizes(QDC_ONLY_ACTIVE_PATHS, out np, out nm) != 0) throw new Fail("fail", "GetDisplayConfigBufferSizes failed");
-    var paths = new byte[np * 72]; var modes = new byte[nm * 64]; // DISPLAYCONFIG_PATH_INFO, _MODE_INFO
+    var paths = new byte[np * 72]; var modes = new byte[nm * 64];
     int r = QueryDisplayConfig(QDC_ONLY_ACTIVE_PATHS, ref np, paths, ref nm, modes, IntPtr.Zero);
     if (r != 0 || np == 0) throw new Fail("fail", "QueryDisplayConfig failed: " + r);
     var b = new byte[size];
     BitConverter.GetBytes(type).CopyTo(b, 0);
     BitConverter.GetBytes(size).CopyTo(b, 4);
-    Array.Copy(paths, 0, b, 8, 12); // sourceInfo.adapterId (8) + sourceInfo.id (4)
+    Array.Copy(paths, 0, b, 8, 12);
     return b;
   }
 
-  // {min, current, max} in steps relative to the recommended scale (which is -min).
   static int[] ScaleSteps() {
     var b = Header(-3, 32);
     int r = DisplayConfigGetDeviceInfo(b);
@@ -142,7 +111,6 @@ public static class WinvmDisplay {
     return Scales[i];
   }
 
-  // Sets the scale if it differs. Returns whether it changed.
   static bool SetScale(int pct) {
     int idx = Array.IndexOf(Scales, pct);
     if (idx < 0) throw new Fail("bad", "not a scale Windows offers: " + pct);
@@ -169,7 +137,6 @@ public static class WinvmDisplay {
 
   static int Int(string[] a, int i, int dflt) { return a.Length > i ? int.Parse(a[i]) : dflt; }
 
-  // One request: its JSON line, and 0 on success.
   static int Run(string[] a, out string json) {
     var j = new StringBuilder("{");
     try {
@@ -229,12 +196,9 @@ public static class WinvmDisplay {
   }
 
   public static int Main(string[] a) {
-    SetProcessDpiAwarenessContext(new IntPtr(-4)); // per-monitor v2, so DPI reads are real
+    SetProcessDpiAwarenessContext(new IntPtr(-4));
     string json;
     if (a.Length > 0 && a[0] == "serve") {
-      // Requests on stdin, one per line in the same words as the arguments;
-      // one JSON line back for each, until stdin closes. Starting .NET costs
-      // ~0.6 s in the guest, which a live resize cannot afford every time.
       for (string line = Console.In.ReadLine(); line != null; line = Console.In.ReadLine()) {
         var words = line.Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
         if (words.Length == 0) continue;

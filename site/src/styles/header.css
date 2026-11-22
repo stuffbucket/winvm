@@ -1,34 +1,20 @@
-/*
- * The header: site title, search, GitHub link, theme select and, below 50rem, the menu button.
- * Loaded through customCss in astro.config.mjs. Colours are Starlight's theme variables, as in tables.css.
- *
- * The header keeps Starlight's height (--sl-nav-height) and gutters (--sl-nav-pad-x), and its grid,
- * so the search box starts where the page's text starts.
- *
- * Every control is the same height, and the ones with an edge use the app's card radius
- * (--radius-card). The search box is a field: a hairline border on the header's own background. The
- * GitHub link, theme select and menu button are buttons: no border, a background only on hover.
- */
 :root {
   --header-control-height: 2.25rem;
   --header-control-radius: var(--radius-card);
   --header-control-hover: var(--sl-color-gray-5);
   --header-icon-size: 1.125rem;
-  /* Starlight sizes the menu button and the header's room for it from this. */
   --sl-menu-button-size: var(--header-control-height);
 }
-:root[data-theme='light'] {
+:root[data-theme="light"] {
   --header-control-hover: var(--sl-color-gray-6);
 }
 
-/* Site title: the page's heading colour, not the link colour. */
 .site-title {
   color: var(--sl-color-white);
   font-size: var(--sl-text-lg);
   font-weight: 600;
 }
 
-/* Search */
 button[data-open-modal] {
   justify-content: center;
   width: var(--header-control-height);
@@ -63,7 +49,6 @@ button[data-open-modal]:hover {
   }
 }
 
-/* The shortcut, ⌘K or Ctrl K, as one quiet key. */
 button[data-open-modal] > kbd {
   align-items: center;
   gap: 0.125rem;
@@ -77,7 +62,6 @@ button[data-open-modal] > kbd {
   line-height: 1;
 }
 
-/* GitHub and theme: one gap, no divider. */
 .header .right-group,
 .header .social-icons {
   gap: 0.25rem;
@@ -102,7 +86,6 @@ button[data-open-modal] > kbd {
   color: var(--sl-color-white);
 }
 
-/* Theme select: the label and a small caret. The label already says which theme, so its icon goes. */
 starlight-theme-select label {
   --sl-caret-size: 1rem;
 }
@@ -124,8 +107,6 @@ starlight-theme-select .caret {
   inset-inline-end: 0.5rem;
 }
 
-/* Menu button (below 50rem): a button like the others, not a filled circle. Its display is left to
-   Starlight's classes, which hide it from 50rem up. */
 .sl-menu-button {
   align-items: center;
   justify-content: center;

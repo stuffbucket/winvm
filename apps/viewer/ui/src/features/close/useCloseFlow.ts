@@ -1,0 +1,601 @@
+import { useCallback, useEffect, useRef, useState } from "react"
+
+import {
+  type CloseCommand,
+  type CloseSession,
+  type CloseSnapshot,
+  closeAt,
+  closeCancel,
+  closeComplete,
+  closeForget,
+  closeResolved,
+  closeRun,
+  closeStart,
+  closeState,
+  closeWait,
+  errorMessage,
+  onViewerCloseRequested,
+  onViewerCloseSession,
+  opRecord,
+  outputText,
+  readOp,
+  winvm,
+} from "../../backend"
+import { t } from "../../i18n"
+import type { Status } from "../../model"
+import {
+  closePolicyAssignment,
+  isLivePhase,
+  opFailed,
+  phase,
+  shownTitle,
+} from "../../model"
+import { operationFor } from "../winvm/statusGuard"
+import type { ActiveOperation, Verb, Winvm } from "../winvm/useWinvm"
+import { orderCloseQueue } from "./closeQueue"
+
+export type CloseFlowState =
+  | { readonly kind: "idle" }
+  | {
+      readonly kind: "waiting"
+      readonly machine: Status
+      readonly operation: ActiveOperation
+      readonly index: number
+      readonly total: number
+    }
+  | {
+      readonly kind: "asking"
+      readonly machine: Status
+      readonly index: number
+      readonly total: number
+      readonly remember: boolean
+    }
+  | {
+      readonly kind: "acting"
+      readonly machine: Status
+      readonly policy: "stow" | "shutdown"
+      readonly index: number
+      readonly total: number
+    }
+  | {
+      readonly kind: "failed"
+      readonly machine: Status | null
+      readonly message: string
+    }
+
+export type CloseChoice = "leave" | "stow" | "shutdown"
+
+export interface CloseFlow {
+  readonly state: CloseFlowState
+  readonly session: CloseSession | null
+  setRemember: (value: boolean) => void
+  choose: (policy: CloseChoice) => void
+  cancel: () => void
+}
+
+const IDLE: CloseFlowState = { kind: "idle" }
+
+const VERB = { stow: "stow", shutdown: "stop" } as const satisfies Record<
+  Exclude<CloseChoice, "leave">,
+  Verb
+>
+
+type Answer = { readonly policy: CloseChoice; readonly remember: boolean }
+
+interface Transaction {
+  cancelled: boolean
+  wake: (() => void) | null
+  before: ReadonlySet<string>
+  readonly resolved: Set<string>
+  first: string | null
+}
+
+const transactionOf = (
+  resolved: readonly string[],
+  first: string | null,
+): Transaction => ({
+  cancelled: false,
+  wake: null,
+  before: new Set(),
+  resolved: new Set(resolved),
+  first,
+})
+
+const policyOf = (verb: string): "stow" | "shutdown" =>
+  verb === "stow" ? "stow" : "shutdown"
+
+const isCancelled = (tx: Transaction): boolean => tx.cancelled
+
+function ranBefore(w: Winvm): ReadonlySet<string> {
+  return new Set(
+    w.names.flatMap((n) => {
+      const id = w.lastOn(n)?.id
+      return id === undefined || id === null ? [] : [id]
+    }),
+  )
+}
+
+type Verdict =
+  | { readonly kind: "ok" }
+  | { readonly kind: "failed"; readonly output: string }
+  | { readonly kind: "unknown" }
+
+async function verdictOf(
+  name: string,
+  id: string | null | undefined,
+  fallback: { readonly code: number; readonly output: string } | null,
+): Promise<Verdict> {
+  const recorded =
+    id === undefined || id === null ? null : await opRecord(name, id, false)
+  if (recorded?.ended === true)
+    return opFailed(recorded)
+      ? { kind: "failed", output: recorded.output || fallback?.output || "" }
+      : { kind: "ok" }
+  if (fallback === null) return { kind: "unknown" }
+  return fallback.code === 0
+    ? { kind: "ok" }
+    : { kind: "failed", output: fallback.output }
+}
+
+const WAIT_MS = 1500
+const STREAM_WAIT_MS = 20_000
+
+async function pause(
+  tx: Transaction,
+  w: Winvm,
+  name: string,
+): Promise<Status | null> {
+  const got = await new Promise<Status | null>((wake) => {
+    if (w.streaming) {
+      tx.wake = () => {
+        wake(null)
+      }
+      void w.nextStatus(name, STREAM_WAIT_MS).then(wake)
+      return
+    }
+    const timer = setTimeout(() => {
+      wake(null)
+    }, WAIT_MS)
+    tx.wake = () => {
+      clearTimeout(timer)
+      wake(null)
+    }
+  })
+  tx.wake = null
+  return got
+}
+
+function busyWith(w: Winvm, s: Status): ActiveOperation | null {
+  if (w.name === s.name && w.busy !== null)
+    return w.operation?.source === "local"
+      ? w.operation
+      : { operation: operationFor(w.busy), source: "local" }
+  return s.operation === null
+    ? null
+    : {
+        operation: s.operation.operation,
+        source: "external",
+        ...(s.operation.id === undefined ? {} : { id: s.operation.id }),
+      }
+}
+
+type Outcome = "resolved" | "skipped" | "stopped"
+
+async function rememberChoice(
+  name: string,
+  choice: CloseChoice,
+): Promise<string | null> {
+  try {
+    const out = await winvm("config", "-i", name, closePolicyAssignment(choice))
+    return out.code === 0
+      ? null
+      : outputText(out) || `winvm config exited ${String(out.code)}`
+  } catch (e) {
+    return errorMessage(e)
+  }
+}
+
+export function useCloseFlow(w: Winvm): CloseFlow {
+  const [state, setState] = useState<CloseFlowState>(IDLE)
+  const [session, setSession] = useState<CloseSession | null>(null)
+  const wRef = useRef(w)
+  wRef.current = w
+  const active = useRef(false)
+  const shown = useRef<CloseFlowState>(IDLE)
+  const dismissForgets = useRef<string | null>(null)
+  const answer = useRef<((a: Answer | null) => void) | null>(null)
+  const transaction = useRef<Transaction | null>(null)
+
+  const show = useCallback((next: CloseFlowState, forget?: string): void => {
+    shown.current = next
+    dismissForgets.current = forget ?? null
+    setState(next)
+  }, [])
+
+  useEffect(() => {
+    let gone = false
+
+    const fail = (
+      tx: Transaction,
+      machine: Status | null,
+      message: string,
+    ): void => {
+      tx.cancelled = true
+      if (transaction.current === tx) transaction.current = null
+      if (machine !== null && wRef.current.name !== machine.name)
+        wRef.current.select(machine.name)
+      show({ kind: "failed", machine, message })
+      setSession(null)
+      active.current = false
+      closeCancel().catch(() => undefined)
+    }
+
+    const resolveOne = async (
+      tx: Transaction,
+      name: string,
+      known: Status | null,
+      index: number,
+      total: number,
+    ): Promise<Outcome> => {
+      if (wRef.current.name !== name) wRef.current.select(name)
+      closeAt(name).catch(() => undefined)
+      let external: ActiveOperation | null = null
+      let s: Status | null
+      let read: Status | null = null
+      for (;;) {
+        s = read ?? (await wRef.current.refreshOne(name))
+        if (isCancelled(tx)) return "stopped"
+        if (s === null) {
+          fail(tx, known, t("close.statusFailed"))
+          return "stopped"
+        }
+        const operation = busyWith(wRef.current, s)
+        if (operation === null) break
+        if (
+          operation.source === "external" &&
+          (external === null || operation.id != null)
+        )
+          external = operation
+        show({ kind: "waiting", machine: s, operation, index, total })
+        read = await pause(tx, wRef.current, name)
+        if (isCancelled(tx)) return "stopped"
+      }
+      const own = wRef.current.lastOn(name)
+      if (own?.id != null && !tx.before.has(own.id)) {
+        const mine = await verdictOf(name, own.id, own)
+        if (isCancelled(tx)) return "stopped"
+        if (mine.kind === "failed") {
+          fail(
+            tx,
+            s,
+            mine.output ||
+              t("close.actionFailed", { title: shownTitle(s.name, s.title) }),
+          )
+          return "stopped"
+        }
+      }
+      const theirs =
+        external === null ? null : await verdictOf(name, external.id, null)
+      if (isCancelled(tx)) return "stopped"
+      if (external !== null && theirs?.kind === "failed") {
+        fail(
+          tx,
+          s,
+          theirs.output ||
+            t("close.externalFailed", {
+              operation: external.operation,
+              title: shownTitle(s.name, s.title),
+            }),
+        )
+        return "stopped"
+      }
+      if (!isLivePhase(phase(s))) return "skipped"
+      let choice: CloseChoice
+      let remember = false
+      const unsure = theirs?.kind === "unknown"
+      if (s.closePolicy === "ask" || unsure) {
+        show({ kind: "asking", machine: s, index, total, remember: false })
+        const chosen = await new Promise<Answer | null>((settle) => {
+          answer.current = settle
+        })
+        answer.current = null
+        if (chosen === null || isCancelled(tx)) return "stopped"
+        choice = chosen.policy
+        remember = chosen.remember
+      } else {
+        choice = s.closePolicy
+      }
+      if (choice !== "leave") {
+        show({ kind: "acting", machine: s, policy: choice, index, total })
+        const ran = await wRef.current.runOn(
+          name,
+          VERB[choice],
+          undefined,
+          closeRun,
+        )
+        if (ran === null || ran.code !== 0) {
+          fail(
+            tx,
+            s,
+            ran?.output ||
+              t("close.actionFailed", { title: shownTitle(s.name, s.title) }),
+          )
+          return "stopped"
+        }
+      }
+      if (remember) {
+        const why = await rememberChoice(name, choice)
+        if (why !== null) {
+          fail(tx, s, why)
+          return "stopped"
+        }
+      }
+      await closeResolved(name).catch(() => undefined)
+      show(IDLE)
+      return "resolved"
+    }
+
+    const run = async (tx: Transaction): Promise<void> => {
+      const resolved = tx.resolved
+      let last: Status | null = wRef.current.status
+      let list = await wRef.current.refreshAll()
+      if (list === null) {
+        fail(tx, last, t("close.statusFailed"))
+        return
+      }
+      let queue = orderCloseQueue(list, tx.first ?? wRef.current.name, resolved)
+      while (queue.length > 0) {
+        for (
+          let next = queue.shift();
+          next !== undefined;
+          next = queue.shift()
+        ) {
+          const outcome = await resolveOne(
+            tx,
+            next,
+            list.find((s) => s.name === next) ?? null,
+            resolved.size + 1,
+            resolved.size + queue.length + 1,
+          )
+          if (outcome === "stopped") return
+          if (outcome === "resolved") resolved.add(next)
+          last = list.find((s) => s.name === next) ?? last
+        }
+        list = await wRef.current.refreshAll()
+        if (list === null) {
+          fail(tx, last, t("close.statusFailed"))
+          return
+        }
+        queue = orderCloseQueue(list, null, resolved)
+      }
+      await closeComplete()
+    }
+
+    const settle = (tx: Transaction, work: Promise<void>): void => {
+      work.catch((e: unknown) => {
+        if (!tx.cancelled) fail(tx, wRef.current.status, errorMessage(e))
+      })
+    }
+
+    const begin = (): void => {
+      if (active.current) return
+      active.current = true
+      const tx = transactionOf([], null)
+      transaction.current = tx
+      closeStart().then(
+        () => {
+          tx.before = ranBefore(wRef.current)
+          settle(tx, run(tx))
+        },
+        () => {
+          active.current = false
+        },
+      )
+    }
+
+    const resume = async (
+      tx: Transaction,
+      from: CloseSnapshot,
+    ): Promise<void> => {
+      let snapshot = from
+      const command = snapshot.command
+      if (command !== null) {
+        if (wRef.current.name !== command.machine)
+          wRef.current.select(command.machine)
+        const w = wRef.current
+        const known = w.status?.name === command.machine ? w.status : null
+        const s =
+          w.streaming && known !== null
+            ? known
+            : await w.refreshOne(command.machine)
+        if (isCancelled(tx)) return
+        if (s !== null)
+          show({
+            kind: "acting",
+            machine: s,
+            policy: policyOf(command.verb),
+            index: tx.resolved.size + 1,
+            total: tx.resolved.size + 1,
+          })
+        for (;;) {
+          const waited = await closeWait().catch(() => null)
+          if (isCancelled(tx)) return
+          if (waited !== null) {
+            snapshot = waited
+            break
+          }
+          await new Promise<void>((wake) => {
+            setTimeout(wake, WAIT_MS)
+          })
+          if (isCancelled(tx)) return
+        }
+      }
+      if (snapshot.state !== "running") {
+        if (transaction.current === tx) transaction.current = null
+        active.current = false
+        show(IDLE)
+        return
+      }
+      const ended = snapshot.last
+      const verdict =
+        ended === null ? null : await verdictOf(ended.machine, ended.op, ended)
+      if (isCancelled(tx)) return
+      if (ended !== null && verdict?.kind === "failed") {
+        const s = await wRef.current.refreshOne(ended.machine)
+        fail(
+          tx,
+          s,
+          verdict.output ||
+            t("close.actionFailed", {
+              title: s === null ? ended.machine : shownTitle(s.name, s.title),
+            }),
+        )
+        return
+      }
+      tx.first = snapshot.machine ?? tx.first
+      await run(tx)
+    }
+
+    const adopt = (snapshot: CloseSnapshot): void => {
+      if (active.current) return
+      active.current = true
+      const tx = transactionOf(snapshot.resolved, snapshot.machine)
+      tx.before = ranBefore(wRef.current)
+      transaction.current = tx
+      settle(tx, resume(tx, snapshot))
+    }
+
+    type Unread = { readonly orphan: CloseCommand; readonly why: string }
+
+    const showOrphan = async (
+      orphan: CloseCommand,
+      message: (title: string) => string,
+      forget?: string,
+    ): Promise<boolean> => {
+      const s = await wRef.current.refreshOne(orphan.machine)
+      if (gone || active.current) return false
+      const title = s === null ? orphan.machine : shownTitle(s.name, s.title)
+      if (wRef.current.name !== orphan.machine)
+        wRef.current.select(orphan.machine)
+      show({ kind: "failed", machine: s, message: message(title) }, forget)
+      return true
+    }
+
+    const reportOrphan = async (
+      orphan: CloseCommand,
+    ): Promise<"settled" | "shown" | Unread> => {
+      const op = orphan.op
+      if (op === undefined || op === null) return "settled"
+      const reading = await readOp(orphan.machine, op, true)
+      if (gone) return "shown"
+      if (reading.kind === "unreadable") return { orphan, why: reading.why }
+      const recorded = reading.record
+      const unheard = !recorded.ended && recorded.operation === null
+      if (unheard || (recorded.ended && !opFailed(recorded))) {
+        await closeForget(op).catch(() => undefined)
+        return "settled"
+      }
+      const shownNow = await showOrphan(
+        orphan,
+        (title) =>
+          recorded.output ||
+          t("close.cutShort", { operation: orphan.verb, title }),
+      )
+      if (shownNow) await closeForget(op).catch(() => undefined)
+      return "shown"
+    }
+
+    const reportOrphans = async (
+      orphans: readonly CloseCommand[],
+    ): Promise<void> => {
+      let unread: Unread | null = null
+      for (const orphan of orphans) {
+        const r = await reportOrphan(orphan)
+        if (r === "shown") return
+        if (r !== "settled") unread ??= r
+      }
+      if (unread === null) return
+      const { orphan, why } = unread
+      const op = orphan.op ?? ""
+      await showOrphan(
+        orphan,
+        (title) =>
+          `${t("close.orphanUnreadable", {
+            operation: orphan.verb,
+            title,
+            machine: orphan.machine,
+            op,
+          })}\n${why}`,
+        op,
+      )
+    }
+
+    const unlistenSession = onViewerCloseSession((next) => {
+      if (!gone) setSession(next)
+    })
+    const unlisten = onViewerCloseRequested(begin, () => {
+      closeState().then(
+        (snapshot) => {
+          if (gone) return
+          if (snapshot.session !== null) setSession(snapshot.session)
+          if (snapshot.state === "requested") begin()
+          else if (snapshot.state === "running") adopt(snapshot)
+          void reportOrphans(snapshot.orphans ?? [])
+        },
+        () => undefined,
+      )
+    })
+    return () => {
+      gone = true
+      unlisten()
+      unlistenSession()
+    }
+  }, [show])
+
+  const choose = useCallback((policy: CloseChoice): void => {
+    const now = shown.current
+    if (now.kind !== "asking") return
+    const settle = answer.current
+    answer.current = null
+    settle?.({ policy, remember: now.remember })
+  }, [])
+
+  const setRemember = useCallback(
+    (value: boolean): void => {
+      const now = shown.current
+      if (now.kind === "asking" && now.remember !== value)
+        show({ ...now, remember: value })
+    },
+    [show],
+  )
+
+  const cancel = useCallback((): void => {
+    const now = shown.current
+    if (now.kind === "failed") {
+      const forget = dismissForgets.current
+      show(IDLE)
+      if (forget !== null) closeForget(forget).catch(() => undefined)
+      return
+    }
+    if (now.kind !== "asking" && now.kind !== "waiting") return
+    const tx = transaction.current
+    if (tx !== null) {
+      tx.cancelled = true
+      tx.wake?.()
+    }
+    transaction.current = null
+    answer.current?.(null)
+    active.current = false
+    show(IDLE)
+    setSession(null)
+    closeCancel().catch(() => undefined)
+  }, [show])
+
+  return {
+    state,
+    session,
+    setRemember,
+    choose,
+    cancel,
+  }
+}

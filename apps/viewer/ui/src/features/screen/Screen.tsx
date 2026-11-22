@@ -1,49 +1,50 @@
-import RFB from "novnc/core/rfb.js"
-import * as KeyboardUtil from "novnc/core/input/util.js"
-import { forwardRef, useEffect, useImperativeHandle, useLayoutEffect, useRef, useState } from "react"
-
-import { type Size, drawSize, guestSizeFor, sameSize, scaleFor } from "@winvm/displayfit"
+import {
+  drawSize,
+  guestSizeFor,
+  type Size,
+  sameSize,
+  scaleFor,
+} from "@winvm/displayfit"
+import * as KeyboardUtil from "@winvm/novnc/core/input/util.js"
+import RFB from "@winvm/novnc/core/rfb.js"
+import {
+  forwardRef,
+  type JSX,
+  useEffect,
+  useImperativeHandle,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react"
 
 import { copyText, onLiveResize, readText, trace } from "../../backend"
-import { Icon } from "../../components/Icon"
 import { cx } from "../../components/cx"
+import { Icon } from "../../components/Icon"
 import { t } from "../../i18n"
 import type { Connection } from "../../model"
 import { ClipboardSync } from "./clipboard"
 import { HeldSizes, keyVerdict } from "./held"
-import { GuestKeyboardRouter, sendCtrlAltDelete, sendWindowsKey } from "./keyboard"
+import {
+  GuestKeyboardRouter,
+  sendCtrlAltDelete,
+  sendWindowsKey,
+} from "./keyboard"
 import { LiveResize, type ResizePhase } from "./resize"
-import { type WakeSock, keepRefreshing } from "./wake"
+import { keepRefreshing, type WakeSock } from "./wake"
 
 interface ScreenProps {
   readonly connection: Connection
   readonly keyboardCaptured: boolean
-  onKeyboardCaptured(captured: boolean): void
-  /**
-   * The guest's screen can follow the view (virtio-gpu). Then the viewer asks
-   * QEMU for the view's size in device pixels and `onGuestSize` has the guest
-   * switch to it (through its agent), and the picture is drawn one guest pixel
-   * per device pixel.
-   */
+  onKeyboardCaptured: (captured: boolean) => void
   readonly resizable: boolean
   readonly onGuestSize?: (size: Size, scale: number) => Promise<void>
-  /**
-   * The machine is held (paused or asleep): the screen takes no input (it would
-   * queue in QEMU and land on resume), and sizes wait until it runs (held.ts).
-   */
   readonly frozen?: boolean
-  /**
-   * Windows can take a size now (the app's guestReady: it runs, its agent
-   * answers, no verb under way). Until then sizes wait, as while frozen, and
-   * the window's size is asked for, both steps, once it can.
-   */
+  readonly inputBlocked?: boolean
   readonly ready?: boolean
-  /** Asleep: the first key pressed in the screen wakes it (`onWake`), and isn't typed. */
   readonly asleep?: boolean
-  /** A wake is under way: keys are dropped until the machine runs. */
   readonly waking?: boolean
-  onWake?(): void
-  /** Dim the held screen and mark it with a glyph (the "Show Pause Overlay" setting). */
+  onWake?: () => void
   readonly overlay?: boolean
 }
 
@@ -54,32 +55,28 @@ export interface ScreenHandle {
 
 type View = "connecting" | "connected" | "lost" | "refused"
 
-/** A new size's first frame is the old picture redrawn; the second is the guest's. Without one, this long. */
 const FRAME_WAIT_MS = 150
 
-/** How long after connecting to wait for the server to say its clipboard takes UTF-8 before pasting anyway (as Latin-1). */
 const CLIPBOARD_CAPS_MS = 2000
-/** noVNC's extended-clipboard text format. */
 const CLIPBOARD_TEXT = 1
 
 const dpr = (): number => window.devicePixelRatio || 1
 
-/**
- * The guest's screen through QEMU's VNC websocket, interactive.
- *
- * WHILE A RESIZABLE GUEST IS RESIZED (resize.ts decides when): the last
- * picture is copied to a canvas laid over the screen and stretched to fill the
- * view, so the window's edge never shows a blank, a corner or a jump. The live
- * screen underneath carries on (sizes the guest passes through, the redraw of a
- * new size), out of sight, and the copy goes once the guest's picture is drawn
- * in full at the size asked for, one guest pixel per device pixel.
- *
- * THE CLIPBOARD (clipboard.ts), text only, while the window is in front: what
- * Windows copies goes on the Mac's clipboard; the Mac's goes to Windows when
- * the window comes forward, and once on connecting.
- */
 export const Screen = forwardRef<ScreenHandle, ScreenProps>(function Screen(
-  { connection, keyboardCaptured, onKeyboardCaptured, resizable, onGuestSize, frozen = false, ready = true, asleep = false, waking = false, onWake, overlay = true },
+  {
+    connection,
+    keyboardCaptured,
+    onKeyboardCaptured,
+    resizable,
+    onGuestSize,
+    frozen = false,
+    inputBlocked = false,
+    ready = true,
+    asleep = false,
+    waking = false,
+    onWake,
+    overlay = true,
+  },
   ref,
 ): JSX.Element {
   const area = useRef<HTMLDivElement | null>(null)
@@ -89,17 +86,19 @@ export const Screen = forwardRef<ScreenHandle, ScreenProps>(function Screen(
   const keyboard = useRef<GuestKeyboardRouter | null>(null)
   const [view, setView] = useState<View>("connecting")
   const [attempt, setAttempt] = useState(0)
-  // The framebuffer drawn, and the view's size in CSS pixels, for the 1:1 box.
   const [fb, setFb] = useState<Size | null>(null)
   const [box, setBox] = useState<Size | null>(null)
   const [ratio, setRatio] = useState(dpr)
   const [phase, setPhase] = useState<ResizePhase>("settled")
   const [held, setHeld] = useState(false)
   const { websocketPort, password } = connection
+  const session = useMemo(
+    () => ({ websocketPort, password, attempt }),
+    [websocketPort, password, attempt],
+  )
   const guestSize = useRef(onGuestSize)
   guestSize.current = onGuestSize
   const live = useRef<LiveResize | null>(null)
-  // Ask again for the size the window wants now, both steps: after a hold, or a size the guest missed.
   const askAgain = (): void => {
     const resize = live.current
     const outer = area.current
@@ -112,9 +111,14 @@ export const Screen = forwardRef<ScreenHandle, ScreenProps>(function Screen(
   const askAgainRef = useRef(askAgain)
   askAgainRef.current = askAgain
   const heldSizes = useRef<HeldSizes | null>(null)
-  heldSizes.current ??= new HeldSizes(frozen || !ready, { onRetry: () => askAgainRef.current() })
-  const keys = useRef({ frozen, asleep, waking, onWake })
+  heldSizes.current ??= new HeldSizes(frozen || !ready, {
+    onRetry: () => {
+      askAgainRef.current()
+    },
+  })
+  const keys = useRef({ frozen, blocked: inputBlocked, asleep, waking, onWake })
   keys.current.frozen = frozen
+  keys.current.blocked = inputBlocked
   keys.current.asleep = asleep
   keys.current.waking = waking
   keys.current.onWake = onWake
@@ -128,17 +132,26 @@ export const Screen = forwardRef<ScreenHandle, ScreenProps>(function Screen(
     () => ({
       sendWindowsKey: () => {
         const conn = rfb.current
-        if (conn !== null) sendWindowsKey((keysym, code, down) => conn.sendKey(keysym, code, down))
+        if (conn !== null)
+          sendWindowsKey((keysym, code, down) => {
+            conn.sendKey(keysym, code, down)
+          })
       },
       sendCtrlAltDelete: () => {
         const conn = rfb.current
-        if (conn !== null) sendCtrlAltDelete((keysym, code, down) => conn.sendKey(keysym, code, down))
+        if (conn !== null)
+          sendCtrlAltDelete((keysym, code, down) => {
+            conn.sendKey(keysym, code, down)
+          })
       },
     }),
     [],
   )
 
-  useEffect(() => keyboard.current?.setCaptured(keyboardCaptured), [keyboardCaptured])
+  useEffect(
+    () => keyboard.current?.setCaptured(keyboardCaptured),
+    [keyboardCaptured],
+  )
 
   useEffect(() => {
     const el = target.current
@@ -155,15 +168,25 @@ export const Screen = forwardRef<ScreenHandle, ScreenProps>(function Screen(
       translate: (event) => {
         const keyboardEvent = event as KeyboardEvent
         const keysym = KeyboardUtil.getKeysym(keyboardEvent)
-        return keysym === null ? null : { keysym, code: KeyboardUtil.getKeycode(keyboardEvent) }
+        return keysym === null
+          ? null
+          : { keysym, code: KeyboardUtil.getKeycode(keyboardEvent) }
       },
       releaseNoVnc: () => conn?._keyboard._allKeysUp(),
-      onCaptured: (next) => captureChanged.current(next),
+      onCaptured: (next) => {
+        captureChanged.current(next)
+      },
     })
     router.setCaptured(captured.current)
-    const onKeyDown = (event: KeyboardEvent): void => router.keyDown(event)
-    const onKeyUp = (event: KeyboardEvent): void => router.keyUp(event)
-    const onBlur = (): void => router.lostFocus()
+    const onKeyDown = (event: KeyboardEvent): void => {
+      router.keyDown(event)
+    }
+    const onKeyUp = (event: KeyboardEvent): void => {
+      router.keyUp(event)
+    }
+    const onBlur = (): void => {
+      router.lostFocus()
+    }
     const onVisibility = (): void => {
       if (document.visibilityState === "hidden") router.lostFocus()
     }
@@ -173,29 +196,27 @@ export const Screen = forwardRef<ScreenHandle, ScreenProps>(function Screen(
     document.addEventListener("visibilitychange", onVisibility)
     keyboard.current = router
 
-    conn = new RFB(el, `ws://127.0.0.1:${String(websocketPort)}`, {
-      credentials: { password: password ?? "" },
+    conn = new RFB(el, `ws://127.0.0.1:${String(session.websocketPort)}`, {
+      credentials: { password: session.password ?? "" },
       wsProtocols: ["binary"],
     })
     rfb.current = conn
     conn.background = "transparent"
     conn.scaleViewport = true
-    // We send SetDesktopSize ourselves: noVNC asks in CSS pixels, and treats
-    // QEMU's immediate "forwarded" reply as done, dropping later sizes.
     conn.resizeSession = false
     conn.focusOnClick = true
-    conn.viewOnly = keys.current.frozen
+    conn.viewOnly = keys.current.frozen || keys.current.blocked
 
     const measure = (): Size => {
       const r = outer.getBoundingClientRect()
       return { width: r.width, height: r.height }
     }
 
-    // The picture as it is, held over the screen while the guest changes size.
     const hold = (): void => {
       const from = el.querySelector("canvas")
       const to = still.current
-      if (from === null || to === null || from.width === 0 || from.height === 0) return
+      if (from === null || to === null || from.width === 0 || from.height === 0)
+        return
       to.width = from.width
       to.height = from.height
       to.getContext("2d")?.drawImage(from, 0, 0)
@@ -207,15 +228,18 @@ export const Screen = forwardRef<ScreenHandle, ScreenProps>(function Screen(
           request: async (size) => {
             if (!connected || closing) return
             const sizes = heldSizes.current
-            // Held, or Windows not ready: kept, and asked for once it can take it.
             if (sizes === null || !sizes.offer(size)) return
-            RFB.messages.setDesktopSize(conn._sock, size.width, size.height, conn._screenID ?? 0, conn._screenFlags ?? 0)
+            RFB.messages.setDesktopSize(
+              conn._sock,
+              size.width,
+              size.height,
+              conn._screenID ?? 0,
+              conn._screenFlags ?? 0,
+            )
             try {
               await guestSize.current?.(size, scaleFor(dpr()))
               sizes.took()
             } catch (error) {
-              // Not taken (its display driver or agent not up yet, a restart begun):
-              // kept, and asked for again, both steps, never dropped.
               console.warn("resizing the guest failed; asking again", error)
               sizes.missed(size)
             }
@@ -225,7 +249,11 @@ export const Screen = forwardRef<ScreenHandle, ScreenProps>(function Screen(
             else {
               setBox(measure())
               setRatio(dpr())
-              if (settled !== null && settled.ms !== null && settled.size !== null) {
+              if (
+                settled !== null &&
+                settled.ms !== null &&
+                settled.size !== null
+              ) {
                 const { width, height } = settled.size
                 const line = `resize: ${String(width)}x${String(height)} drawn 1:1 ${String(Math.round(settled.ms))} ms after the resize ended${settled.timedOut ? " (gave up waiting for the size asked for)" : ""}`
                 console.info(line)
@@ -238,8 +266,6 @@ export const Screen = forwardRef<ScreenHandle, ScreenProps>(function Screen(
       : null
     live.current = resize
 
-    // Asleep: the first key in the screen wakes the machine and goes no further
-    // (capture, so it is caught before noVNC's own handler takes it).
     const onKey = (e: KeyboardEvent): void => {
       const k = keys.current
       const verdict = keyVerdict(k, e)
@@ -250,8 +276,6 @@ export const Screen = forwardRef<ScreenHandle, ScreenProps>(function Screen(
     }
     outer.addEventListener("keydown", onKey, true)
 
-    // Each update ends in a flip. After a new size, the first is the old
-    // picture redrawn at it; the second is the guest's own.
     const display = conn._display
     const flip = display.flip.bind(display)
     let flipped: Size | null = null
@@ -261,7 +285,6 @@ export const Screen = forwardRef<ScreenHandle, ScreenProps>(function Screen(
       clearTimeout(frameWait)
       setFb((cur) => (sameSize(cur, size) ? cur : size))
       if (resize === null) return
-      // Mid-drag, the held picture becomes the newest one the guest has drawn.
       if (resize.resizing) hold()
       resize.drawnAt(size)
     }
@@ -275,7 +298,9 @@ export const Screen = forwardRef<ScreenHandle, ScreenProps>(function Screen(
         flipped = size
         flips = 1
         clearTimeout(frameWait)
-        frameWait = setTimeout(() => drawnAt(size), FRAME_WAIT_MS)
+        frameWait = setTimeout(() => {
+          drawnAt(size)
+        }, FRAME_WAIT_MS)
       } else if (++flips === 2) drawnAt(size)
     }
 
@@ -286,7 +311,6 @@ export const Screen = forwardRef<ScreenHandle, ScreenProps>(function Screen(
         return
       }
       resize.want(guestSizeFor(measure(), dpr()))
-      // Still settled: the guest keeps its size (a change under a device pixel); follow the view.
       if (!resize.resizing) {
         setBox(measure())
         setRatio(dpr())
@@ -294,9 +318,10 @@ export const Screen = forwardRef<ScreenHandle, ScreenProps>(function Screen(
     }
     const observer = new ResizeObserver(onArea)
     observer.observe(outer)
-    const unlisten = onLiveResize((live) => (live ? resize?.liveStart() : resize?.liveEnd()))
+    const unlisten = onLiveResize((live) =>
+      live ? resize?.liveStart() : resize?.liveEnd(),
+    )
 
-    // Moving the window to a display with another pixel ratio.
     let media: MediaQueryList | null = null
     const onRatio = (): void => {
       watchRatio()
@@ -312,25 +337,31 @@ export const Screen = forwardRef<ScreenHandle, ScreenProps>(function Screen(
     const clipboard = new ClipboardSync({
       readMac: readText,
       writeMac: copyText,
-      toGuest: (text) => conn.clipboardPasteFrom(text),
+      toGuest: (text) => {
+        conn.clipboardPasteFrom(text)
+      },
       focused: () => document.hasFocus(),
     })
     let clipboardReady = false
     let clipboardWait: ReturnType<typeof setTimeout> | undefined
     conn.addEventListener("clipboard", (e) => {
-      const text: unknown = (e as CustomEvent<{ text?: unknown } | null>).detail?.text
+      const text: unknown = (e as CustomEvent<{ text?: unknown } | null>).detail
+        ?.text
       if (typeof text === "string") clipboard.fromGuest(text)
     })
     const onFocus = (): void => {
       if (clipboardReady && connected && !closing) void clipboard.fromMac()
     }
     window.addEventListener("focus", onFocus)
-    // The server says what its clipboard takes just after the connection is up;
-    // the first paste waits for that, so it goes as UTF-8.
     const startClipboard = (since: number): void => {
       if (closing || !connected) return
-      if (conn._clipboardServerCapabilitiesFormats?.[CLIPBOARD_TEXT] !== true && performance.now() - since < CLIPBOARD_CAPS_MS) {
-        clipboardWait = setTimeout(() => startClipboard(since), 100)
+      if (
+        conn._clipboardServerCapabilitiesFormats?.[CLIPBOARD_TEXT] !== true &&
+        performance.now() - since < CLIPBOARD_CAPS_MS
+      ) {
+        clipboardWait = setTimeout(() => {
+          startClipboard(since)
+        }, 100)
         return
       }
       clipboardReady = true
@@ -340,29 +371,35 @@ export const Screen = forwardRef<ScreenHandle, ScreenProps>(function Screen(
     conn.addEventListener("connect", () => {
       connected = true
       setView("connected")
-      // Keep QEMU checking for changes every 30 ms, not backing off (wake.ts).
-      stopWake ??= keepRefreshing(conn._sock as WakeSock, () => connected && !closing && document.visibilityState === "visible")
+      stopWake ??= keepRefreshing(
+        conn._sock as WakeSock,
+        () => connected && !closing && document.visibilityState === "visible",
+      )
       startClipboard(performance.now())
-      // A new connection may be a different guest state (a save loaded, a restart): ask again.
       if (resize !== null) {
         resize.reset()
         resize.want(guestSizeFor(measure(), dpr()))
         resize.flush()
       }
     })
-    conn.addEventListener("credentialsrequired", () => conn.sendCredentials({ password: password ?? "" }))
-    conn.addEventListener("securityfailure", () => setView("refused"))
+    conn.addEventListener("credentialsrequired", () => {
+      conn.sendCredentials({ password: session.password ?? "" })
+    })
+    conn.addEventListener("securityfailure", () => {
+      setView("refused")
+    })
     conn.addEventListener("disconnect", () => {
       connected = false
       stopWake?.()
       stopWake = null
       if (closing) return
       setView((v) => (v === "refused" ? v : "lost"))
-      retry = setTimeout(() => setAttempt((a) => a + 1), 2000)
+      retry = setTimeout(() => {
+        setAttempt((a) => a + 1)
+      }, 2000)
     })
     return () => {
       closing = true
-      // A late clipboard read or a queued write must not land after the screen goes.
       clipboard.stop()
       live.current = null
       outer.removeEventListener("keydown", onKey, true)
@@ -387,54 +424,72 @@ export const Screen = forwardRef<ScreenHandle, ScreenProps>(function Screen(
       setHeld(false)
       setPhase("settled")
     }
-  }, [websocketPort, password, attempt, resizable])
+  }, [session, resizable])
 
-  // Held: no input reaches QEMU. Running again: ask for the size the window
-  // wanted meanwhile, if it wanted one.
   useEffect(() => {
     const conn = rfb.current
-    if (conn !== null) conn.viewOnly = frozen
-  }, [frozen])
-  // Held or not ready: sizes wait. Able to take one again: ask for the size the
-  // window wants now, both steps, if one was kept.
+    if (conn !== null) conn.viewOnly = frozen || inputBlocked
+  }, [frozen, inputBlocked])
   useEffect(() => {
     const kept = heldSizes.current?.setFrozen(frozen || !ready) ?? null
     if (kept !== null) askAgainRef.current()
   }, [frozen, ready])
 
-  // One guest pixel per device pixel once the guest is the size this view
-  // wants: the box noVNC scales into is the framebuffer's size in CSS pixels,
-  // so its scale comes out at exactly 1/devicePixelRatio. Past the limits the
-  // box is the view, up to 5K, and noVNC scales the capped guest up to fill it.
-  // Any other size (the guest not there yet, or refusing) is scaled to fit,
-  // never pinned to a corner.
-  const fits = resizable && fb !== null && box !== null && sameSize(fb, guestSizeFor(box, ratio))
+  const fits =
+    resizable &&
+    fb !== null &&
+    box !== null &&
+    sameSize(fb, guestSizeFor(box, ratio))
   const drawn = fits ? drawSize(fb, box, ratio) : null
-  const exact = drawn === null ? undefined : { width: `${String(drawn.width)}px`, height: `${String(drawn.height)}px` }
-  const scaled = drawn !== null && fb !== null && drawn.width > fb.width / ratio + 0.5
+  const exact =
+    drawn === null
+      ? undefined
+      : {
+          width: `${String(drawn.width)}px`,
+          height: `${String(drawn.height)}px`,
+        }
+  const scaled =
+    drawn !== null && fb !== null && drawn.width > fb.width / ratio + 0.5
   const holding = resizable && phase === "resizing" && held
 
-  // noVNC rescales into a new box by itself a frame later; do it before this
-  // paint, so the held picture gives way to one already in place.
+  const exactSize =
+    exact === undefined ? null : `${exact.width} ${exact.height}`
   useLayoutEffect(() => {
     const conn = rfb.current
-    if (conn !== null && exact !== undefined) conn.scaleViewport = true
-  }, [exact?.width, exact?.height])
+    if (conn !== null && exactSize !== null) conn.scaleViewport = true
+  }, [exactSize])
 
   const message = view === "connected" ? null : t(`screen.${view}`)
   return (
     <div ref={area} className="screen">
       <div
         ref={target}
-        className={exact === undefined ? "screen__canvas" : scaled ? "screen__canvas screen__canvas--exact screen__canvas--scaled" : "screen__canvas screen__canvas--exact"}
+        className={
+          exact === undefined
+            ? "screen__canvas"
+            : scaled
+              ? "screen__canvas screen__canvas--exact screen__canvas--scaled"
+              : "screen__canvas screen__canvas--exact"
+        }
         style={exact}
       />
-      <canvas ref={still} className="screen__still" hidden={!holding} aria-hidden="true" />
-      <div className={cx("screen__held", frozen && overlay && "screen__held--on")} aria-hidden="true">
+      {/* biome-ignore lint/a11y/noAriaHiddenOnFocusable: a canvas without tabIndex is not focusable; this one only holds the last frame while the guest resizes */}
+      <canvas
+        ref={still}
+        className="screen__still"
+        hidden={!holding}
+        aria-hidden="true"
+      />
+      <div
+        className={cx("screen__held", frozen && overlay && "screen__held--on")}
+        aria-hidden="true"
+      >
         <div className="screen__held-mark">
           <Icon name={asleep ? "moon" : "pause"} />
         </div>
-        {asleep && <p className="screen__held-hint">{t("screen.asleepHint")}</p>}
+        {asleep && (
+          <p className="screen__held-hint">{t("screen.asleepHint")}</p>
+        )}
       </div>
       {message !== null && (
         <div className="screen__message" role="status">

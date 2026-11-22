@@ -6,12 +6,86 @@ const Guest = z.object({
   os: z.string().nullable(),
 })
 
+export const VM_OPERATIONS = [
+  "start",
+  "stop",
+  "reboot",
+  "kill",
+  "reset",
+  "snapshot",
+  "rewind",
+  "save",
+  "load",
+  "pause",
+  "resume",
+  "sleep",
+  "wake",
+  "lock",
+  "stow",
+  "setup",
+  "golden-create",
+  "golden-reset",
+] as const
+
+const VmOperationSchema = z.enum(VM_OPERATIONS)
+
+export type VmOperation = z.infer<typeof VmOperationSchema>
+
+const OperationInfoSchema = z.object({
+  operation: VmOperationSchema,
+  pid: z.number(),
+  startedAt: z.string(),
+  id: z.string().optional(),
+})
+
+export const RESTORED_BUSY = 6
+
+const OpRecordSchema = z.object({
+  id: z.string(),
+  operation: z.string().nullable(),
+  ended: z.boolean(),
+  ok: z.boolean().nullable(),
+  exitCode: z.number().nullable(),
+  error: z.string().nullable(),
+  output: z.string(),
+})
+
+export type OpRecord = z.infer<typeof OpRecordSchema>
+
+export function parseOpRecord(stdout: string): OpRecord | null {
+  try {
+    const r = OpRecordSchema.safeParse(JSON.parse(stdout))
+    return r.success ? r.data : null
+  } catch {
+    return null
+  }
+}
+
+export const opFailed = (r: OpRecord): boolean =>
+  r.ended && r.ok !== true && r.exitCode !== RESTORED_BUSY
+
+export const CLOSE_POLICIES = ["ask", "leave", "stow", "shutdown"] as const
+
+const ClosePolicySchema = z.enum(CLOSE_POLICIES)
+
+export type ClosePolicy = z.infer<typeof ClosePolicySchema>
+
+export const closePolicyAssignment = (policy: ClosePolicy): string =>
+  `viewer.closePolicy=${policy}`
+
 const Status = z.object({
   name: z.string(),
-  // What the user calls it (`winvm config title=…`); null, or absent from an older winvm: its name.
   title: z.string().nullable().default(null),
-  // "asleep": paused by `winvm sleep` (Windows locked first); a key in the screen wakes it.
-  state: z.enum(["running", "paused", "asleep", "stopped", "stowed", "missing"]),
+  closePolicy: ClosePolicySchema.default("ask"),
+  operation: OperationInfoSchema.nullable().default(null),
+  state: z.enum([
+    "running",
+    "paused",
+    "asleep",
+    "stopped",
+    "stowed",
+    "missing",
+  ]),
   vmStatus: z.string().nullable(),
   image: z.string().nullable(),
   pid: z.number().nullable(),
@@ -22,23 +96,52 @@ const Status = z.object({
   overlayBytes: z.number().nullable(),
   guest: Guest.nullable(),
   saves: z.object({ count: z.number(), bytes: z.number() }),
+  management: z.string().nullable().optional(),
+  keeper: z
+    .object({
+      protection: z.string(),
+      version: z.string().nullable(),
+      pid: z.number().nullable(),
+      recallable: z.boolean().optional(),
+      runningQemu: z.string().optional(),
+      installedQemu: z.string().optional(),
+    })
+    .nullable()
+    .default(null),
   notes: z.array(z.string()),
 })
 
 export type Status = z.infer<typeof Status>
 
-/** The longest title, for an instance or a tab: what `winvm config title=` allows (core's config.ts). */
+const PROTECTABLE: ReadonlySet<string> = new Set(["legacy", "adopted"])
+
+const unprotected = (s: Status | null): boolean =>
+  s !== null &&
+  s.state === "running" &&
+  s.keeper !== null &&
+  PROTECTABLE.has(s.keeper.protection)
+
+export const protectable = (s: Status | null): boolean =>
+  unprotected(s) && s?.keeper?.recallable !== false
+
+export const needsRestart = (s: Status | null): boolean =>
+  unprotected(s) && s?.keeper?.recallable === false
+
 export const TITLE_MAX = 80
 
-/** What the app calls an instance: the title the user gave it, else its name. */
-export const shownTitle = (name: string, title: string | null | undefined): string => title ?? name
+export const shownTitle = (
+  name: string,
+  title: string | null | undefined,
+): string => title ?? name
 
-/** The `winvm config` assignment that sets an instance's title; empty (or only spaces) clears it. */
-export const titleAssignment = (title: string): string => `title=${title.trim()}`
+export const titleAssignment = (title: string): string =>
+  `title=${title.trim()}`
 
 const Checks = z.object({
   ready: z.boolean(),
-  checks: z.array(z.object({ label: z.string(), ok: z.boolean(), hint: z.string() })),
+  checks: z.array(
+    z.object({ label: z.string(), ok: z.boolean(), hint: z.string() }),
+  ),
   timeMachine: z.string(),
 })
 
@@ -61,7 +164,6 @@ function json(stdout: string): unknown {
   }
 }
 
-/** `winvm status --json`: one instance, or `{ instances }` when there are several. */
 export function parseStatus(stdout: string): Status[] | null {
   const raw = json(stdout)
   const list = z.object({ instances: z.array(Status) }).safeParse(raw)
@@ -70,18 +172,26 @@ export function parseStatus(stdout: string): Status[] | null {
   return single.success ? [single.data] : null
 }
 
-export const parseChecks = (stdout: string): Checks | null => Checks.safeParse(json(stdout)).data ?? null
+export const parseChecks = (stdout: string): Checks | null =>
+  Checks.safeParse(json(stdout)).data ?? null
 
-export const parseConnection = (stdout: string): Connection | null => Connection.safeParse(json(stdout)).data ?? null
+export const parseConnection = (stdout: string): Connection | null =>
+  Connection.safeParse(json(stdout)).data ?? null
 
-export type Phase = "starting" | "running" | "paused" | "asleep" | "stopped" | "stowed" | "missing"
+export type Phase =
+  | "starting"
+  | "running"
+  | "paused"
+  | "asleep"
+  | "stopped"
+  | "stowed"
+  | "missing"
 
-/** QEMU's process is up: the machine runs, starts, or is held (paused or asleep). */
 export const isLivePhase = (p: Phase | null | undefined): boolean =>
   p === "running" || p === "starting" || p === "paused" || p === "asleep"
 
-/** Held: the guest's processors are stopped. Nothing may call its agent, resize it or type into it. */
-export const isFrozen = (p: Phase | null | undefined): boolean => p === "paused" || p === "asleep"
+export const isFrozen = (p: Phase | null | undefined): boolean =>
+  p === "paused" || p === "asleep"
 
 export function phase(s: Status): Phase {
   if (s.state === "running" && s.guest?.agent === "silent") return "starting"
@@ -93,14 +203,10 @@ export interface Controls {
   readonly shutDown: boolean
   readonly restart: boolean
   readonly pause: boolean
-  /** Resume a paused machine, or wake one asleep. */
   readonly resume: boolean
-  /** Lock Windows, then hold the machine asleep until a key or Wake. */
   readonly sleep: boolean
-  /** Return Windows to its lock screen. */
   readonly lock: boolean
   readonly screen: boolean
-  /** A shell in Windows needs Windows up and its agent answering. */
   readonly terminal: boolean
 }
 
@@ -112,7 +218,6 @@ export function controls(p: Phase, busy: boolean): Controls {
     restart: !busy && (p === "running" || p === "starting"),
     pause: !busy && (p === "running" || p === "starting"),
     resume: !busy && isFrozen(p),
-    // Both go through Windows' agent, so Windows must be up and answering.
     sleep: !busy && p === "running",
     lock: !busy && p === "running",
     screen: live,
@@ -120,7 +225,6 @@ export function controls(p: Phase, busy: boolean): Controls {
   }
 }
 
-/** Why the terminal can't open, as an i18n key; null when it can. */
 export function terminalBlocked(p: Phase, busy: boolean): string | null {
   if (p === "starting") return "terminal.why.starting"
   if (p === "paused") return "terminal.why.paused"
@@ -132,14 +236,16 @@ export function terminalBlocked(p: Phase, busy: boolean): string | null {
 const GiB = 1024 ** 3
 
 export const formatSize = (bytes: number): string =>
-  bytes < GiB ? `${String(Math.round(bytes / 1024 ** 2))} MiB` : `${(bytes / GiB).toFixed(1)} GiB`
+  bytes < GiB
+    ? `${String(Math.round(bytes / 1024 ** 2))} MiB`
+    : `${(bytes / GiB).toFixed(1)} GiB`
 
-export function formatMemory(mib: number): string {
+function formatMemory(mib: number): string {
   const gib = mib / 1024
   return Number.isInteger(gib) ? `${String(gib)} GiB` : `${String(mib)} MiB`
 }
 
-export function formatDuration(seconds: number): string {
+function formatDuration(seconds: number): string {
   const m = Math.floor(seconds / 60)
   const h = Math.floor(m / 60)
   const d = Math.floor(h / 24)
@@ -154,27 +260,42 @@ export interface Row {
   readonly value: string
 }
 
-/** The details a person reads, as i18n keys and values; anything unknown is left out. */
 export function detailRows(s: Status): Row[] {
   const rows: Row[] = []
   const add = (key: string, value: string | null): void => {
     if (value !== null && value !== "") rows.push({ key, value })
   }
   add("detail.windows", s.guest?.os ?? null)
-  add("detail.uptime", s.uptimeSeconds === null ? null : formatDuration(s.uptimeSeconds))
+  add(
+    "detail.uptime",
+    s.uptimeSeconds === null ? null : formatDuration(s.uptimeSeconds),
+  )
   add(
     "detail.hardware",
-    [s.cpus === null ? null : `${String(s.cpus)} vCPU`, s.memoryMiB === null ? null : formatMemory(s.memoryMiB)]
+    [
+      s.cpus === null ? null : `${String(s.cpus)} vCPU`,
+      s.memoryMiB === null ? null : formatMemory(s.memoryMiB),
+    ]
       .filter((x) => x !== null)
       .join(" · "),
   )
   add("detail.image", s.image)
   if (s.screen !== null) {
     const d = displaySize(s.screen)
-    add("detail.screen", `${String(d.width)} × ${String(d.height)}${d.device === null ? "" : ` (${d.device})`}`)
+    add(
+      "detail.screen",
+      `${String(d.width)} × ${String(d.height)}${d.device === null ? "" : ` (${d.device})`}`,
+    )
   }
-  add("detail.disk", s.overlayBytes === null ? null : formatSize(s.overlayBytes))
-  if (s.saves.count > 0) add("detail.saves", `${String(s.saves.count)} · ${formatSize(s.saves.bytes)}`)
+  add(
+    "detail.disk",
+    s.overlayBytes === null ? null : formatSize(s.overlayBytes),
+  )
+  if (s.saves.count > 0)
+    add(
+      "detail.saves",
+      `${String(s.saves.count)} · ${formatSize(s.saves.bytes)}`,
+    )
   return rows
 }
 
@@ -184,7 +305,6 @@ export interface DisplaySize {
   readonly device: string | null
 }
 
-/** The guest's display from status' description; the firmware framebuffer's 800x600 when unknown. */
 export function displaySize(screen: string | null): DisplaySize {
   const size = /(\d+)x(\d+)/.exec(screen ?? "")
   const device = /^(ramfb|virtio-gpu)\b/.exec(screen ?? "")?.[1] ?? null
@@ -197,24 +317,34 @@ export interface Step {
   readonly state: "done" | "current" | "todo"
 }
 
-/** What starting has done so far: the disk (for a new instance), the machine, then Windows. */
 export function startSteps(created: boolean, s: Status | null): Step[] {
   const exists = s !== null && s.state !== "missing"
-  const machine = s !== null && (s.state === "running" || s.state === "paused" || s.state === "asleep")
+  const machine =
+    s !== null &&
+    (s.state === "running" || s.state === "paused" || s.state === "asleep")
   const windows = machine && s.guest?.agent === "ok"
-  const reached = [...(created ? [{ key: "step.disk", done: exists }] : []), { key: "step.machine", done: machine }, { key: "step.windows", done: windows }]
+  const reached = [
+    ...(created ? [{ key: "step.disk", done: exists }] : []),
+    { key: "step.machine", done: machine },
+    { key: "step.windows", done: windows },
+  ]
   const firstTodo = reached.findIndex((r) => !r.done)
-  return reached.map((r, i) => ({ key: r.key, state: r.done ? "done" : i === firstTodo ? "current" : "todo" }))
+  return reached.map((r, i) => ({
+    key: r.key,
+    state: r.done ? "done" : i === firstTodo ? "current" : "todo",
+  }))
 }
 
-/** What the instance is, labelled: image, memory, processors, changes since the image, saves. */
 export function facts(s: Status): Row[] {
   const out: Row[] = []
   if (s.image !== null) out.push({ key: "fact.image", value: s.image })
-  if (s.memoryMiB !== null) out.push({ key: "fact.memory", value: formatMemory(s.memoryMiB) })
+  if (s.memoryMiB !== null)
+    out.push({ key: "fact.memory", value: formatMemory(s.memoryMiB) })
   if (s.cpus !== null) out.push({ key: "fact.cpus", value: String(s.cpus) })
-  if (s.overlayBytes !== null) out.push({ key: "fact.changes", value: formatSize(s.overlayBytes) })
-  if (s.saves.count > 0) out.push({ key: "fact.saves", value: String(s.saves.count) })
+  if (s.overlayBytes !== null)
+    out.push({ key: "fact.changes", value: formatSize(s.overlayBytes) })
+  if (s.saves.count > 0)
+    out.push({ key: "fact.saves", value: String(s.saves.count) })
   return out
 }
 
@@ -227,37 +357,30 @@ const SaveNotes = z.object({
 
 export type SaveNotes = z.infer<typeof SaveNotes>
 
-// An older winvm gives only name, kind, createdAt, bytes, compatible and note; the rest default.
 const SaveEntry = z.object({
   name: z.string(),
-  // The title in its notes (`winvm saves note --title`); null, or absent from an older winvm: its name.
   title: z.string().nullable().default(null),
   kind: z.string(),
   createdAt: z.string(),
   bytes: z.number(),
   compatible: z.boolean().nullable(),
-  // The manifest's own note (`winvm save --note`), set when it was taken.
   note: z.string().optional(),
   format: z.string().optional(),
-  // Absolute paths of its screenshot and thumbnail (`screen.png`, `thumb.png`); null for saves taken before them.
   screenshot: z.string().nullable().default(null),
   thumbnail: z.string().nullable().default(null),
   screenSize: z.object({ width: z.number(), height: z.number() }).optional(),
   notes: SaveNotes.nullable().default(null),
-  // When it can't load here, which parts differ: "base", "hardware", "display", "firmware", "qemu".
   incompatible: z.array(z.string()).default([]),
 })
 
 export type SaveEntry = z.infer<typeof SaveEntry>
 
-/** `winvm saves --json`. */
-export const parseSaves = (stdout: string): SaveEntry[] | null => z.array(SaveEntry).safeParse(json(stdout)).data ?? null
+export const parseSaves = (stdout: string): SaveEntry[] | null =>
+  z.array(SaveEntry).safeParse(json(stdout)).data ?? null
 
-/** `winvm saves note … --json`: the note as it now stands, or null when it has none. */
 export function parseNote(stdout: string): SaveNotes | null | undefined {
   if (stdout.trim() === "") return undefined
   const raw = json(stdout)
-  // json() reads anything unparseable as null too; only a literal null means "no note".
   if (raw === null && stdout.trim() !== "null") return undefined
   const r = SaveNotes.nullable().safeParse(raw)
   return r.success ? r.data : undefined
@@ -268,7 +391,6 @@ export interface Share {
   readonly token: string
 }
 
-/** The endpoint and bearer token `winvm cua serve` prints when it is ready. */
 export function parseShare(stdout: string): Share | null {
   const url = / on (http:\/\/127\.0\.0\.1:\d+)/.exec(stdout)?.[1]
   const token = /^\s*token (\S+)$/m.exec(stdout)?.[1]
@@ -280,11 +402,8 @@ const ClaudeClientId = z.enum(["claude-code", "claude-desktop"])
 const ClaudeClient = z.object({
   id: ClaudeClientId,
   name: z.string(),
-  /** The client is on this Mac. */
   available: z.boolean(),
-  /** It has this instance's server. */
   added: z.boolean(),
-  /** …and that server runs this winvm. */
   current: z.boolean(),
   config: z.string(),
 })
@@ -300,38 +419,42 @@ const ClaudeStatus = z.object({
 
 export type ClaudeStatus = z.infer<typeof ClaudeStatus>
 
-/** `winvm mcp status -i <name> --json`: which Claude apps have this instance's MCP server. */
-export const parseClaudeStatus = (stdout: string): ClaudeStatus | null => ClaudeStatus.safeParse(json(stdout)).data ?? null
+export const parseClaudeStatus = (stdout: string): ClaudeStatus | null =>
+  ClaudeStatus.safeParse(json(stdout)).data ?? null
 
 const ClaudeChange = z.discriminatedUnion("ok", [
-  z.object({ ok: z.literal(true), client: ClaudeClientId, changed: z.boolean(), restart: z.boolean() }),
+  z.object({
+    ok: z.literal(true),
+    client: ClaudeClientId,
+    changed: z.boolean(),
+    restart: z.boolean(),
+  }),
   z.object({ ok: z.literal(false), error: z.string() }),
 ])
 
 export type ClaudeChange = z.infer<typeof ClaudeChange>
 
-/** `winvm mcp install|uninstall <client> -i <name> --json`. */
-export const parseClaudeChange = (stdout: string): ClaudeChange | null => ClaudeChange.safeParse(json(stdout)).data ?? null
+export const parseClaudeChange = (stdout: string): ClaudeChange | null =>
+  ClaudeChange.safeParse(json(stdout)).data ?? null
 
 const SharedFolderStatus = z.object({
-  /** This machine can share a folder; when not, `reason` says why in plain words. */
   available: z.boolean(),
   reason: z.string().nullable().default(null),
-  /** The Mac folder chosen; null when nothing is shared. */
   folder: z.string().nullable(),
-  /** The Windows drive letter it shows as, without the colon. */
   letter: z.string(),
   readonly: z.boolean(),
   running: z.boolean(),
-  /** What the running Windows shows now; null while it is off. */
   serving: z.string().nullable().default(null),
-  /** A change waits for the next time Windows starts. */
   pending: z.boolean(),
-  /** Windows' side: the driver installed, the drive there; null when unknown (off, or its agent silent). */
-  guest: z.object({ installed: z.boolean().nullable(), mounted: z.boolean().nullable() }).default({ installed: null, mounted: null }),
+  guest: z
+    .object({
+      installed: z.boolean().nullable(),
+      mounted: z.boolean().nullable(),
+    })
+    .default({ installed: null, mounted: null }),
 })
 
 export type SharedFolderStatus = z.infer<typeof SharedFolderStatus>
 
-/** `winvm share -i <name> status|set|clear|install --json`: the shared Mac folder. */
-export const parseSharedFolder = (stdout: string): SharedFolderStatus | null => SharedFolderStatus.safeParse(json(stdout)).data ?? null
+export const parseSharedFolder = (stdout: string): SharedFolderStatus | null =>
+  SharedFolderStatus.safeParse(json(stdout)).data ?? null

@@ -1,31 +1,50 @@
-import { spawn, spawnSync } from "node:child_process"
-import { appendFileSync, chmodSync, closeSync, linkSync, openSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs"
-import { basename, resolve } from "node:path"
+import { chmodSync, readFileSync, rmSync } from "node:fs"
+import { resolve } from "node:path"
 
+import * as agent from "./agent"
 import { QgaChannel, QmpChannel } from "./broker"
-import { PACKAGE_DIR, cliArgv, cliEntry, home, pathsFor, type Paths } from "./paths"
+import {
+  appendEntry,
+  DEFAULT_MAX_BYTES,
+  type EntryFields,
+  qmpFields,
+  rotateEvents,
+  syncFields,
+} from "./eventlog"
+import { hostEnd } from "./hostend"
+import { buildIdentity } from "./identity"
+import { leaseHolder } from "./operation"
+import {
+  captureOutput,
+  OPS_PROTOCOL,
+  type OpHandlers,
+  OpQueue,
+  type Reply,
+  readOpRequest,
+  reply,
+} from "./ops"
+import { SERVICE_HANDLERS, STOW_HANDLER } from "./opverbs"
+import { PACKAGE_DIR, type Paths, pathsFor } from "./paths"
+import { ownStart } from "./proc"
 import * as qga from "./qga"
+import { claim, keptWithin, livePidIn, recordedPid } from "./servicectl"
 import * as share from "./share"
-import type { ChangeNotices } from "./sharewatch"
-
-export interface ServiceInfo {
-  readonly pid: number
-  readonly cli: string
-  readonly version: string
-  readonly startedAt: string
-}
-
-export interface WinvmEvent {
-  readonly t: string
-  readonly instance: string
-  readonly kind: "state" | "warning" | "service"
-  readonly [field: string]: unknown
-}
+import { ChangeNotices } from "./sharewatch"
+import {
+  ensureWatcher,
+  stopWatcher,
+  type WatchOptions,
+  watchDuties,
+} from "./watch"
 
 export interface ServiceOptions {
   readonly exitAfterMs?: number
   readonly heartbeatMs?: number
   readonly checkMs?: number
+  readonly eventsMaxBytes?: number
+  readonly hostEnd?: (name: string, deadlineMs: number) => Promise<unknown>
+  readonly handlers?: OpHandlers
+  readonly watch?: WatchOptions
 }
 
 export interface ServiceHandle {
@@ -34,207 +53,157 @@ export interface ServiceHandle {
   stop(): Promise<void>
 }
 
-const alive = (pid: number): boolean => {
-  try {
-    process.kill(pid, 0)
-    return true
-  } catch {
-    return false
-  }
+export const KEEPER_PID_ENV = "WINVM_KEEPER_PID"
+
+const SHUTDOWN_SIGNALS = ["SIGINT", "SIGTERM", "SIGHUP"] as const
+
+export interface SignalSeams {
+  readonly keeperPid?: string | undefined
+  readonly parent?: () => number
+  readonly on?: (signal: NodeJS.Signals, handler: () => void) => void
 }
 
-function livePidIn(file: string): number | null {
-  try {
-    const pid = Number.parseInt(readFileSync(file, "utf8").trim(), 10)
-    return Number.isFinite(pid) && alive(pid) ? pid : null
-  } catch {
-    return null
-  }
-}
-
-function recordedPid(p: Paths): number | null {
-  try {
-    const pid = (JSON.parse(readFileSync(p.service, "utf8")) as { pid?: unknown }).pid
-    return typeof pid === "number" ? pid : null
-  } catch {
-    return null
-  }
-}
-
-function isServiceFor(pid: number, name: string): boolean {
-  if (pid === process.pid) return true
-  const r = spawnSync("ps", ["-o", "command=", "-p", String(pid)], { encoding: "utf8" })
-  return (r.stdout ?? "").includes(` serve -i ${name}`)
-}
-
-export function readService(p: Paths): ServiceInfo | null {
-  try {
-    const s = JSON.parse(readFileSync(p.service, "utf8")) as ServiceInfo
-    return typeof s.pid === "number" && alive(s.pid) && isServiceFor(s.pid, basename(p.dir)) ? s : null
-  } catch {
-    return null
-  }
-}
-
-const keepPath = (p: Paths): string => resolve(p.dir, "service.keep")
-
-export function keepService(p: Paths): void {
-  writeFileSync(keepPath(p), `${new Date().toISOString()}\n`)
-}
-
-function keptWithin(p: Paths, ms: number): boolean {
-  try {
-    return Date.now() - statSync(keepPath(p)).mtimeMs < ms
-  } catch {
-    return false
-  }
-}
-
-function claim(p: Paths, name: string, info: ServiceInfo): void {
-  const tmp = `${p.service}.${String(process.pid)}.tmp`
-  writeFileSync(tmp, `${JSON.stringify(info, null, 2)}\n`, { mode: 0o600 })
-  chmodSync(tmp, 0o600)
-  try {
-    for (let attempt = 0; attempt < 2; attempt++) {
-      try {
-        linkSync(tmp, p.service)
+export function serviceSignals(
+  name: string,
+  stop: () => void,
+  o: SignalSeams = {},
+): void {
+  const keeperPid = "keeperPid" in o ? o.keeperPid : process.env[KEEPER_PID_ENV]
+  const parent = o.parent ?? ((): number => process.ppid)
+  const on =
+    o.on ??
+    ((signal: NodeJS.Signals, handler: () => void): void => {
+      process.on(signal, handler)
+    })
+  const kept = (): boolean =>
+    keeperPid !== undefined &&
+    keeperPid !== "" &&
+    String(parent()) === keeperPid
+  for (const signal of SHUTDOWN_SIGNALS)
+    on(signal, () => {
+      if (!kept()) {
+        stop()
         return
-      } catch (e) {
-        if ((e as NodeJS.ErrnoException).code !== "EEXIST") throw e
       }
-      const holder = readService(p)
-      if (holder !== null) throw new Error(`another winvm service (pid ${String(holder.pid)}) holds instance "${name}"`)
-      rmSync(p.service, { force: true })
-    }
-    throw new Error(`could not claim instance "${name}": ${p.service} keeps reappearing`)
-  } finally {
-    rmSync(tmp, { force: true })
-  }
-}
-
-async function answers(control: string): Promise<boolean> {
-  try {
-    return (await fetch("http://localhost/status", { unix: control, signal: AbortSignal.timeout(1000) })).ok
-  } catch {
-    return false
-  }
-}
-
-export function stopService(p: Paths): void {
-  const info = readService(p)
-  if (info === null) return
-  try {
-    process.kill(info.pid, "SIGTERM")
-  } catch {
-    return
-  }
-  const running = (): boolean => alive(info.pid) && !exited(info.pid)
-  const deadline = Date.now() + 5000
-  while (running() && Date.now() < deadline) Bun.sleepSync(50)
-  if (running()) process.kill(info.pid, "SIGKILL")
-  rmSync(p.service, { force: true })
-}
-
-function exited(pid: number): boolean {
-  const r = spawnSync("ps", ["-o", "stat=", "-p", String(pid)], { encoding: "utf8" })
-  const stat = (r.stdout ?? "").trim()
-  return stat === "" || stat.startsWith("Z")
-}
-
-export async function ensureService(name: string, p: Paths): Promise<ServiceInfo> {
-  const cli = cliEntry()
-  const running = readService(p)
-  if (running !== null && running.cli === cli) {
-    keepService(p)
-    return running
-  }
-  if (running !== null) stopService(p)
-  keepService(p)
-  const log = openSync(resolve(p.dir, "service.log"), "a")
-  const child = spawn(process.execPath, [...cliArgv("serve", "-i", name)], { detached: true, stdio: ["ignore", log, log] })
-  closeSync(log)
-  child.unref()
-  const deadline = Date.now() + 10_000
-  while (Date.now() < deadline) {
-    const info = readService(p)
-    if (info !== null && info.cli === cli && (await answers(p.control))) return info
-    await new Promise((r) => setTimeout(r, 50))
-  }
-  throw new Error(`the control service for "${name}" did not start; see ${resolve(p.dir, "service.log")}`)
+      appendEntry(name, { kind: "service", what: "signal ignored", signal })
+    })
+  on("SIGUSR2", stop)
 }
 
 const coreVersion = (): string =>
-  (JSON.parse(readFileSync(resolve(PACKAGE_DIR, "package.json"), "utf8")) as { version: string }).version
+  (
+    JSON.parse(readFileSync(resolve(PACKAGE_DIR, "package.json"), "utf8")) as {
+      version: string
+    }
+  ).version
 
-const STATES: Readonly<Record<string, string>> = { STOP: "paused", RESUME: "running", SHUTDOWN: "stopped", RESET: "reset" }
+const RUN_STATE_AFTER: Readonly<Record<string, string>> = {
+  STOP: "paused",
+  RESUME: "running",
+  SHUTDOWN: "shutdown",
+  SUSPEND: "suspended",
+  WAKEUP: "running",
+  GUEST_PANICKED: "guest-panicked",
+}
 
-/**
- * What the shared folder's change notices (sharewatch.ts) should watch now: the
- * folder the running daemon serves, and the drive it is in Windows. null while
- * no QEMU runs, nothing is shared, or the share is read-only (the guest cannot
- * touch anything there).
- */
-export function noticeTarget(p: Paths, qemuRunning: boolean): { readonly root: string; readonly letter: string } | null {
+const UNKNOWN = "unknown"
+
+export function noticeTarget(
+  p: Paths,
+  qemuRunning: boolean,
+): { readonly root: string; readonly letter: string } | null {
   if (!qemuRunning) return null
   const serving = share.readServing(p)
-  if (serving === null || serving.folder === null || serving.readonly) return null
-  return { root: serving.folder, letter: share.readShare(p)?.letter ?? share.DEFAULT_LETTER }
+  if (serving === null || serving.folder === null || serving.readonly)
+    return null
+  return {
+    root: serving.folder,
+    letter: share.readShare(p)?.letter ?? share.DEFAULT_LETTER,
+  }
 }
 
-export function stateEvent(e: Record<string, unknown>): Record<string, unknown> | null {
-  const name = String(e["event"])
-  const data = e["data"] as Record<string, unknown> | undefined
-  const state = STATES[name]
-  if (state !== undefined) return data === undefined ? { state } : { state, data }
-  if (name === "MIGRATION") return { state: "migration", status: (data as { status?: string } | undefined)?.status }
-  return null
-}
-
-export async function runService(name: string, o: ServiceOptions = {}): Promise<ServiceHandle> {
+export async function runService(
+  name: string,
+  o: ServiceOptions = {},
+): Promise<ServiceHandle> {
   const p = pathsFor(name)
   claim(p, name, {
     pid: process.pid,
-    cli: process.env["WINVM_CLI"] ?? "",
+    cli: process.env.WINVM_CLI ?? "",
     version: coreVersion(),
     startedAt: new Date().toISOString(),
+    pidStart: ownStart(),
+    build: buildIdentity(),
   })
   const exitAfterMs = o.exitAfterMs ?? 10_000
   const checkMs = o.checkMs ?? 1000
+  const eventsMaxBytes = o.eventsMaxBytes ?? DEFAULT_MAX_BYTES
   const enc = new TextEncoder()
   const subs = new Set<ReadableStreamDefaultController<Uint8Array>>()
-  let state = "unknown"
+  let state = UNKNOWN
 
-  const send = (c: ReadableStreamDefaultController<Uint8Array>, text: string): void => {
+  const send = (
+    c: ReadableStreamDefaultController<Uint8Array>,
+    text: string,
+  ): void => {
     try {
       c.enqueue(enc.encode(text))
     } catch {
       subs.delete(c)
     }
   }
-  const record = (kind: WinvmEvent["kind"], fields: Record<string, unknown>): void => {
-    const event: WinvmEvent = { t: new Date().toISOString(), instance: name, kind, ...fields }
-    const line = JSON.stringify(event)
-    try {
-      appendFileSync(p.events, `${line}\n`)
-    } catch {
-      return
-    }
+  const record = (fields: EntryFields): void => {
+    const line = appendEntry(name, fields)
+    if (line === null) return
     for (const c of subs) send(c, `data: ${line}\n\n`)
   }
+  const rotate = (): void => {
+    rotateEvents(name, eventsMaxBytes, () => leaseHolder(name) === null)
+  }
+  const nudge = (): void => {
+    for (const c of subs) send(c, ": op\n\n")
+  }
+  captureOutput()
+  const queue = new OpQueue(name, o.handlers ?? SERVICE_HANDLERS, {
+    record,
+    nudge,
+    killed: () => {
+      void stop()
+    },
+  })
+
+  const duties = watchDuties(
+    name,
+    {
+      perform: async (op, handler, args) =>
+        await queue.perform(op, handler, args),
+      stow: STOW_HANDLER,
+    },
+    o.watch,
+  )
 
   const qmpChannel = new QmpChannel({
     listen: p.qmp,
     upstream: p.qmpQemu,
     onEvent: (e) => {
-      const s = stateEvent(e)
-      if (s === null) return
-      state = String(s["state"])
-      record("state", s)
+      const fields = qmpFields(e)
+      state = RUN_STATE_AFTER[fields.event] ?? state
+      record(fields)
+    },
+    onSync: (reply) => {
+      const fields = syncFields(reply)
+      state = fields.status ?? UNKNOWN
+      record(fields)
+    },
+    onLost: (reason) => {
+      state = UNKNOWN
+      record({ kind: "disconnected", reason })
     },
   })
   const askPortOpen = async (): Promise<boolean | null> => {
     try {
-      const r = (await qmpChannel.request("query-chardev", undefined, 2000))["return"] as
+      const r = (await qmpChannel.request("query-chardev", undefined, 2000))
+        .return as
         | { readonly label: string; readonly "frontend-open": boolean }[]
         | undefined
       return r?.find((c) => c.label === qga.CHARDEV)?.["frontend-open"] ?? null
@@ -242,9 +211,117 @@ export async function runService(name: string, o: ServiceOptions = {}): Promise<
       return null
     }
   }
-  const qgaChannel = new QgaChannel({ listen: p.qga, upstream: p.qgaQemu, portOpen: askPortOpen })
-  const handle = (req: Request): Response => {
+  const qgaChannel = new QgaChannel({
+    listen: p.qga,
+    upstream: p.qgaQemu,
+    portOpen: askPortOpen,
+  })
+  let hostEnding: Promise<unknown> | null = null
+  let stopping = false
+  const beginHostEnd = async (req: Request): Promise<Response> => {
+    let body: unknown = null
+    try {
+      body = await req.json()
+    } catch {}
+    const deadlineMs =
+      typeof body === "object" && body !== null
+        ? (body as { deadlineMs?: unknown }).deadlineMs
+        : undefined
+    if (typeof deadlineMs !== "number")
+      return new Response("deadlineMs is required", { status: 400 })
+    if (hostEnding !== null)
+      return new Response("already ending", { status: 409 })
+    const endHost = o.hostEnd ?? hostEnd
+    void duties.halt("the Mac is shutting down")
+    hostEnding = (async (): Promise<unknown> => {
+      await queue.close("host-end")
+      return await endHost(name, deadlineMs)
+    })().catch((error: unknown) => {
+      record({
+        kind: "warning",
+        what: "host-end",
+        error: error instanceof Error ? error.message : String(error),
+      })
+    })
+    return new Response(null, { status: 202 })
+  }
+  const stoppingReply = reply(503, {
+    error: "the service is stopping",
+    stopping: true,
+  })
+  const answer = (r: Reply): Response =>
+    Response.json(r.body, { status: r.status })
+  const submitOp = async (req: Request): Promise<Response> => {
+    if (hostEnding !== null)
+      return answer(
+        reply(503, { error: "the Mac is shutting down", hostEnding: true }),
+      )
+    if (stopping) return answer(stoppingReply)
+    const parsed = readOpRequest(
+      await req.json().catch(() => null),
+      o.handlers ?? SERVICE_HANDLERS,
+    )
+    if ("status" in parsed) return answer(parsed)
+    const s = await queue.submit(parsed)
+    if (s.kind === "busy") return answer(reply(409, { busy: s.holder }))
+    if (s.kind === "failed") return answer(reply(503, { error: s.error }))
+    if (s.kind === "closed")
+      return answer(
+        reply(
+          503,
+          s.reason === "host-end"
+            ? { error: "the Mac is shutting down", hostEnding: true }
+            : stoppingReply.body,
+        ),
+      )
+    return answer(
+      reply(202, {
+        id: s.id,
+        cursor: s.cursor,
+        pid: process.pid,
+        pidStart: ownStart(),
+        queued: s.queued,
+      }),
+    )
+  }
+  const cancelOp = async (req: Request): Promise<Response> => {
+    const body: unknown = await req.json().catch(() => null)
+    const id =
+      typeof body === "object" &&
+      body !== null &&
+      typeof (body as { id?: unknown }).id === "string"
+        ? (body as { id: string }).id
+        : null
+    const c = queue.cancel(id)
+    if (c.kind === "none") return answer(reply(404, { none: true }))
+    if (c.kind === "unknown") return answer(reply(404, { unknown: c.id }))
+    const { kind, ...what } = c
+    return answer(reply(kind === "cancelled" ? 200 : 409, { [kind]: what }))
+  }
+  const watchRequest = async (req: Request): Promise<Response> => {
+    const body: unknown = await req.json().catch(() => null)
+    const on =
+      typeof body === "object" && body !== null
+        ? (body as { protocol?: unknown; on?: unknown })
+        : null
+    if (on?.protocol !== OPS_PROTOCOL || typeof on.on !== "boolean")
+      return answer(reply(400, { error: "the body is not a watch request" }))
+    if (!on.on) return answer(reply(200, { stopped: await stopWatcher(name) }))
+    if (hostEnding !== null || stopping) return answer(stoppingReply)
+    return answer(
+      reply(200, { watching: ensureWatcher(name), pid: process.pid }),
+    )
+  }
+  const handle = async (req: Request): Promise<Response> => {
     const url = new URL(req.url)
+    if (url.pathname === "/watch" && req.method === "POST")
+      return await watchRequest(req)
+    if (url.pathname === "/host-ending" && req.method === "POST")
+      return await beginHostEnd(req)
+    if (url.pathname === "/ops" && req.method === "POST")
+      return await submitOp(req)
+    if (url.pathname === "/ops/cancel" && req.method === "POST")
+      return await cancelOp(req)
     if (url.pathname === "/events") {
       let controller: ReadableStreamDefaultController<Uint8Array> | undefined
       const stream = new ReadableStream<Uint8Array>({
@@ -260,10 +337,20 @@ export async function runService(name: string, o: ServiceOptions = {}): Promise<
       req.signal.addEventListener("abort", () => {
         if (controller !== undefined) subs.delete(controller)
       })
-      return new Response(stream, { headers: { "content-type": "text/event-stream", "cache-control": "no-store" } })
+      return new Response(stream, {
+        headers: {
+          "content-type": "text/event-stream",
+          "cache-control": "no-store",
+        },
+      })
     }
     if (url.pathname === "/status") {
-      return Response.json({ state, qemuPid: livePidIn(p.pid), connected: qmpChannel.connected })
+      return Response.json({
+        state,
+        qemuPid: livePidIn(p.pid),
+        connected: qmpChannel.connected,
+        hostEnding: hostEnding !== null,
+      })
     }
     return new Response("not found", { status: 404 })
   }
@@ -279,7 +366,11 @@ export async function runService(name: string, o: ServiceOptions = {}): Promise<
     await qmpChannel.start()
     await qgaChannel.start()
     rmSync(p.control, { force: true })
-    server = Bun.serve({ unix: p.control, fetch: handle, idleTimeout: 0 } as unknown as Parameters<typeof Bun.serve>[0])
+    server = Bun.serve({
+      unix: p.control,
+      fetch: handle,
+      idleTimeout: 0,
+    } as unknown as Parameters<typeof Bun.serve>[0])
     chmodSync(p.control, 0o600)
   } catch (e) {
     await qmpChannel.stop()
@@ -291,18 +382,16 @@ export async function runService(name: string, o: ServiceOptions = {}): Promise<
     for (const c of subs) send(c, ": heartbeat\n\n")
   }, o.heartbeatMs ?? 15_000)
 
-  record("service", { what: "started" })
+  rotate()
+  record({ kind: "service", what: "started" })
 
   let finish: () => void = () => undefined
   const done = new Promise<void>((r) => {
     finish = r
   })
-  let stopping = false
   let goneMs = 0
-  const lock = resolve(home(), "saves", name, ".lock")
+  let qemuGoneMs = 0
 
-  // The shared folder's change notices, for as long as a guest with one runs.
-  // Imported on first use: they need the agent's client, which needs qemu.ts.
   let notices: { readonly key: string; readonly n: ChangeNotices } | null = null
   let syncing = false
   const syncNotices = async (): Promise<void> => {
@@ -315,7 +404,6 @@ export async function runService(name: string, o: ServiceOptions = {}): Promise<
       if (notices !== null) await notices.n.stop()
       notices = null
       if (want === null) return
-      const [{ ChangeNotices }, agent] = await Promise.all([import("./sharewatch"), import("./agent")])
       let client: Awaited<ReturnType<typeof agent.connect>> = null
       const n = new ChangeNotices({
         root: want.root,
@@ -324,9 +412,20 @@ export async function runService(name: string, o: ServiceOptions = {}): Promise<
           if (client === null) return
           try {
             const r = await client.touch(`${want.letter}:\\`, paths)
-            if (process.env["WINVM_SHARE_DEBUG"]) record("service", { what: "share notices sent", paths, ...r })
+            if (process.env.WINVM_SHARE_DEBUG)
+              record({
+                ...r,
+                kind: "service",
+                what: "share notices sent",
+                paths,
+              })
           } catch (error) {
-            if (process.env["WINVM_SHARE_DEBUG"]) record("warning", { what: "share notices", error: String(error) })
+            if (process.env.WINVM_SHARE_DEBUG)
+              record({
+                kind: "warning",
+                what: "share notices",
+                error: String(error),
+              })
             client = null
             throw error
           }
@@ -334,9 +433,18 @@ export async function runService(name: string, o: ServiceOptions = {}): Promise<
       })
       n.start()
       notices = { key, n }
-      record("service", { what: "share notices", root: want.root, letter: want.letter })
+      record({
+        kind: "service",
+        what: "share notices",
+        root: want.root,
+        letter: want.letter,
+      })
     } catch (error) {
-      record("warning", { what: "share notices", error: error instanceof Error ? error.message : String(error) })
+      record({
+        kind: "warning",
+        what: "share notices",
+        error: error instanceof Error ? error.message : String(error),
+      })
     } finally {
       syncing = false
     }
@@ -349,7 +457,16 @@ export async function runService(name: string, o: ServiceOptions = {}): Promise<
       return
     }
     void syncNotices()
-    if (livePidIn(p.pid) !== null || livePidIn(lock) !== null || keptWithin(p, exitAfterMs)) {
+    rotate()
+    duties.check()
+    qemuGoneMs = livePidIn(p.pid) === null ? qemuGoneMs + checkMs : 0
+    if (qemuGoneMs >= exitAfterMs) queue.endQueued()
+    if (
+      livePidIn(p.pid) !== null ||
+      !queue.idle() ||
+      leaseHolder(name) !== null ||
+      keptWithin(p, exitAfterMs)
+    ) {
       goneMs = 0
       return
     }
@@ -358,16 +475,20 @@ export async function runService(name: string, o: ServiceOptions = {}): Promise<
   }, checkMs)
 
   async function stop(): Promise<void> {
-    if (stopping) return await done
+    if (stopping) {
+      await done
+      return
+    }
     stopping = true
+    if (hostEnding !== null) await hostEnding
+    await duties.halt("winvm's service stopped")
+    await queue.close("stopping")
     clearInterval(check)
     clearInterval(heartbeat)
     for (const c of subs) {
       try {
         c.close()
-      } catch {
-        // already closed
-      }
+      } catch {}
     }
     subs.clear()
     if (notices !== null) await notices.n.stop()
@@ -376,7 +497,7 @@ export async function runService(name: string, o: ServiceOptions = {}): Promise<
     await qmpChannel.stop()
     await qgaChannel.stop()
     release()
-    record("service", { what: "stopped" })
+    record({ kind: "service", what: "stopped" })
     finish()
   }
 

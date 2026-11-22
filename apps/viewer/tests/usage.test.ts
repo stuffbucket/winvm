@@ -1,13 +1,24 @@
 import { describe, expect, it } from "bun:test"
 
-import { formatGB, formatPair, fraction, parseSample, pushHistory, type Sample, usageFrom } from "../ui/src/features/usage/usage"
+import {
+  formatGB,
+  formatPair,
+  fraction,
+  parseSample,
+  pushHistory,
+  type Sample,
+  usageFrom,
+} from "../ui/src/features/usage/usage"
 
 const GB = 1024 ** 3
 
 const sample = (o: Partial<Sample> = {}): Sample => ({
   atMs: 10_000,
   host: { cpuSeconds: 100, rssBytes: 3 * GB },
-  guest: { memory: { total: 4 * GB, available: 1.5 * GB }, disk: { path: "C:\\", total: 63 * GB, free: 51 * GB } },
+  guest: {
+    memory: { total: 4 * GB, available: 1.5 * GB },
+    disk: { path: "C:\\", total: 63 * GB, free: 51 * GB },
+  },
   guestError: null,
   ...o,
 })
@@ -16,50 +27,115 @@ describe("the meters", () => {
   it("read QEMU's CPU time over the time between samples, out of all the machine's processors", () => {
     const a = sample({ atMs: 10_000, host: { cpuSeconds: 100, rssBytes: GB } })
     const b = sample({ atMs: 12_500, host: { cpuSeconds: 105, rssBytes: GB } })
-    // 5 s of CPU in 2.5 s is two processors' worth: half of four.
-    expect(usageFrom(a, b, 4, 4096)).toMatchObject({ cpu: 50, cpuSource: "mac", macCpu: 50 })
+    expect(usageFrom(a, b, 4, 4096)).toMatchObject({
+      cpu: 50,
+      cpuSource: "mac",
+      macCpu: 50,
+    })
     expect(usageFrom(null, b, 4, 4096).cpu).toBeNull()
     expect(usageFrom(a, b, null, 4096).cpu).toBeNull()
   })
 
   it("lead with Windows' own CPU when the agent gives it, QEMU's on the Mac beside it", () => {
-    const guest = { cpu: 0.04, memory: { total: 4 * GB, available: 1.5 * GB }, disk: null }
-    const a = sample({ atMs: 10_000, host: { cpuSeconds: 100, rssBytes: GB }, guest })
-    const b = sample({ atMs: 12_500, host: { cpuSeconds: 105, rssBytes: GB }, guest })
-    expect(usageFrom(a, b, 4, 4096)).toMatchObject({ cpu: 4, cpuSource: "windows", macCpu: 50 })
-    // Before a second ps sample, Windows' figure still shows.
-    expect(usageFrom(null, b, 4, 4096)).toMatchObject({ cpu: 4, cpuSource: "windows", macCpu: null })
-    // The agent's first answer has none yet, and an older agent never does: QEMU's, said so.
-    expect(usageFrom(a, sample({ ...b, guest: { ...guest, cpu: null } }), 4, 4096)).toMatchObject({ cpu: 50, cpuSource: "mac" })
-    expect(parseSample(sample({ guest: { memory: guest.memory, disk: null } }))?.guest?.cpu).toBeUndefined()
+    const guest = {
+      cpu: 0.04,
+      memory: { total: 4 * GB, available: 1.5 * GB },
+      disk: null,
+    }
+    const a = sample({
+      atMs: 10_000,
+      host: { cpuSeconds: 100, rssBytes: GB },
+      guest,
+    })
+    const b = sample({
+      atMs: 12_500,
+      host: { cpuSeconds: 105, rssBytes: GB },
+      guest,
+    })
+    expect(usageFrom(a, b, 4, 4096)).toMatchObject({
+      cpu: 4,
+      cpuSource: "windows",
+      macCpu: 50,
+    })
+    expect(usageFrom(null, b, 4, 4096)).toMatchObject({
+      cpu: 4,
+      cpuSource: "windows",
+      macCpu: null,
+    })
+    expect(
+      usageFrom(a, sample({ ...b, guest: { ...guest, cpu: null } }), 4, 4096),
+    ).toMatchObject({ cpu: 50, cpuSource: "mac" })
+    expect(
+      parseSample(sample({ guest: { memory: guest.memory, disk: null } }))
+        ?.guest?.cpu,
+    ).toBeUndefined()
   })
 
   it("keep CPU between 0 and 100 (QEMU's own threads, a restarted process)", () => {
     const a = sample({ atMs: 0, host: { cpuSeconds: 0, rssBytes: GB } })
-    expect(usageFrom(a, sample({ atMs: 1000, host: { cpuSeconds: 9, rssBytes: GB } }), 4, 4096).cpu).toBe(100)
-    expect(usageFrom(a, sample({ atMs: 1000, host: { cpuSeconds: -5, rssBytes: GB } }), 4, 4096).cpu).toBe(0)
+    expect(
+      usageFrom(
+        a,
+        sample({ atMs: 1000, host: { cpuSeconds: 9, rssBytes: GB } }),
+        4,
+        4096,
+      ).cpu,
+    ).toBe(100)
+    expect(
+      usageFrom(
+        a,
+        sample({ atMs: 1000, host: { cpuSeconds: -5, rssBytes: GB } }),
+        4,
+        4096,
+      ).cpu,
+    ).toBe(0)
   })
 
   it("show Windows' memory in use as total less available, and C: used out of its size", () => {
     const u = usageFrom(null, sample(), 4, 4096)
-    expect(u.memory).toEqual({ used: 2.5 * GB, total: 4 * GB, source: "windows" })
+    expect(u.memory).toEqual({
+      used: 2.5 * GB,
+      total: 4 * GB,
+      source: "windows",
+    })
     expect(u.disk).toEqual({ used: 12 * GB, total: 63 * GB })
   })
 
   it("fall back to what QEMU holds on the Mac, said so, while Windows doesn't answer", () => {
-    const u = usageFrom(null, sample({ guest: null, guestError: "connection refused" }), 4, 4096)
+    const u = usageFrom(
+      null,
+      sample({ guest: null, guestError: "connection refused" }),
+      4,
+      4096,
+    )
     expect(u.memory).toEqual({ used: 3 * GB, total: 4 * GB, source: "mac" })
     expect(u.disk).toBeNull()
   })
 
   it("leave out what can't be told", () => {
-    const u = usageFrom(null, sample({ host: null, guest: { memory: { total: 0, available: 0 }, disk: null } }), 4, null)
-    expect(u).toEqual({ cpu: null, cpuSource: "mac", macCpu: null, memory: null, disk: null })
+    const u = usageFrom(
+      null,
+      sample({
+        host: null,
+        guest: { memory: { total: 0, available: 0 }, disk: null },
+      }),
+      4,
+      null,
+    )
+    expect(u).toEqual({
+      cpu: null,
+      cpuSource: "mac",
+      macCpu: null,
+      memory: null,
+      disk: null,
+    })
   })
 
   it("take the app's samples only in the shape it sends", () => {
     expect(parseSample(sample())).toEqual(sample())
-    expect(parseSample({ atMs: 1, host: null, guest: null, guestError: null })).not.toBeNull()
+    expect(
+      parseSample({ atMs: 1, host: null, guest: null, guestError: null }),
+    ).not.toBeNull()
     expect(parseSample({ atMs: "soon" })).toBeNull()
     expect(parseSample(null)).toBeNull()
   })
