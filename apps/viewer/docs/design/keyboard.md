@@ -37,13 +37,12 @@ lose to the OS outside capture.
 
 | Binding | Action | Scope | Status | Notes |
 |---|---|---|---|---|
-| `Cmd-,` | Open Settings | Tray menu | **shipped** | macOS convention. Opens or focuses Settings. |
-| `Cmd-D` | Open Dashboard | Tray menu | **shipped** | Opens or focuses the Dashboard. |
-| `Cmd-Q` | Quit Maximal | Tray menu | **shipped** | Confirms in a native dialog, then stops the sidecar (SIGTERM, SIGKILL after a grace period). |
-| `Cmd-W` | Close current window | Per window | **planned** | Hides; doesn't quit (same as the window's close button). |
-| `Esc` | Close current window | Per window | **planned** | Same as Cmd-W; natural for modal-feel windows. |
-| `Cmd-R` | Refresh current window | Dashboard, Settings | **planned** | Re-fetches the window's data. |
-| `Cmd-Shift-,` | Reveal config in editor | Settings | **planned** | Power-user escape hatch. |
+| `Cmd-,` | Settings | App menu | **shipped** | macOS convention. Brings the main window forward, releases keyboard capture and opens the Settings dialog. |
+| `Cmd-Q` | Quit winvm | App menu | **shipped** | Asks the main window how to close (`close::request`), as `Cmd-W` on the main window does. |
+| `Cmd-T` | New Terminal Tab | File menu | **shipped** | A new tab while the Terminal window is in front; otherwise a new tab in the Terminal window, opened or brought forward (see [`windows.md`](windows.md) → *The Terminal window*). |
+| `Cmd-Shift-T` | Checkpoints | File menu | **shipped** | Brings the main window forward and opens or leaves the Checkpoints view. |
+| `Cmd-W` | Close | File menu | **shipped** | Closes the Terminal window's tab; on the main window, asks how to close (`close::request`); any other window closes. |
+| `Cmd-Shift-/` | winvm Command Reference | Help menu | **shipped** | Shows the output of `winvm help`. |
 | `Cmd-K` | Command palette | Global | **reserved** | Not bound in v1. The keybind is reserved so users who try it don't accidentally hit a different action. **Don't repurpose.** |
 
 > **Status definitions.** *Shipped* = implemented. *Planned* = on the
@@ -78,16 +77,17 @@ a quiet `role="status"` line.
 
 ## Implementation
 
-- **Tray-menu bindings** (`Cmd-,`, `Cmd-D`, `Cmd-Q`): accelerators on
-  the tray `MenuItem`s in `build_menu` (`shell/src-tauri/src/lib.rs`),
-  written as `CmdOrCtrl+…`. There is no global-shortcut plugin; these
+- **Menu bindings** (`Cmd-,`, `Cmd-Q`, `Cmd-T`, `Cmd-Shift-T`, `Cmd-W`,
+  `Cmd-Shift-/`): accelerators on the native menu's `MenuItem`s in
+  `menu()` (`src-tauri/src/lib.rs`), written as `CmdOrCtrl+…` and
+  handled in `handle_menu`. There is no global-shortcut plugin; these
   aren't system-wide hotkeys.
-- **In-window bindings**: per-window `keydown` listeners in the window's
-  frontend code (`shell/src/` for Settings, `shell/src/dashboard/` for
-  the Dashboard). None of the window-level bindings above exist yet;
-  the only `keydown` / `Escape` handlers today are component-local
-  (dismissing a tooltip or an inline editor, arrow keys in the
-  Dashboard's period selector).
+- **In-window bindings**: `keydown` listeners in the window's frontend
+  code: the Terminal window's tab keys
+  (`features/terminal/TerminalWindow.tsx`), the Checkpoints canvas
+  (`features/checkpoints/CheckpointCanvas.tsx`), the Files window
+  (`features/files/FilesWindow.tsx`). Keys for Windows go through the
+  screen's own listeners (`features/screen/`).
 - **Cross-platform**: listeners check `event.metaKey` (macOS) and
   `event.ctrlKey` (Windows / Linux) so the same bindings work
   everywhere.

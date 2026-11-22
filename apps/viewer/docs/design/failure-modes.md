@@ -19,10 +19,10 @@ regressing across design iterations.
 - **Window has a visible H1 that duplicates the macOS titlebar text.**
   The H1 inside the content area is the *section* name, never the
   *window* name.
-- **More than one Fraunces moment per window** (beyond the brand
-  mark). Two display headings = the window has two competing
+- **More than one Fraunces moment per window.** Two display headings =
+  the window has two competing
   identities; fix the IA, not the type. → [`type.md`](type.md).
-- **Brand crimson on a button, focus ring, link, or active-nav
+- **Brand crimson on a button, focus ring, link, or selected
   affordance.** Brand is identity-only. Interactive surfaces are
   `--accent` (teal). → [`color.md`](color.md).
 - **A fill color used as text.** `--accent` and `--accent-destructive`
@@ -36,35 +36,14 @@ regressing across design iterations.
 
 - **Inline raw `px`, `rem`, or `#hex` in a component file *or in a
   design doc.*** Reference a token. If no suitable token exists, add
-  one to `shell/src/ui/styles/theme.ts` (then `bun run
+  one to `ui/src/styles/theme.ts` (then `mise run
   tokens:generate`) and document it in [`tokens.md`](tokens.md) before
-  using it. The one allowed exception is the drift table below, where
-  the conflict is the point.
+  using it.
 - **Editing a token value in only one place.** Edit
-  `shell/src/ui/styles/theme.ts` and run `bun run tokens:generate`;
-  never hand-edit the generated `tokens.css` or the Dashboard's
-  generated region. See
+  `ui/src/styles/theme.ts` and run `mise run tokens:generate`;
+  never hand-edit the generated `tokens.css`. See
   [`change-checklists.md`](change-checklists.md) → *Changing a token
   value* for the full touchpoint list.
-- **Assuming the Dashboard has every token.** `tokens.css` and the
-  Dashboard's generated region are both written from `theme.ts`, but the
-  generator gives the Dashboard a subset (see the table below). A token
-  missing from it is silently `inherit`-ed or `initial` in that window.
-
-## Known active drift
-
-Both token files are generated from `shell/src/ui/styles/theme.ts`
-(`bun run tokens:generate`), so color values and both themes match. What
-differs is which tokens each window gets:
-
-| Concern | `shell/src/ui/styles/tokens.css` | `shell/ui/dashboard/style.css` |
-|---|---|---|
-| `--accent-destructive` / `-foreground` | present | absent (the generator omits them) |
-| `--font-display` (Fraunces) | present | absent (intentional: no display moment) |
-| Layout constants (`--sidebar-width`, `--content-max`) | present | absent (single-column window) |
-| `--focus-ring-width` / `-offset` / `-color` | present; `--focus-ring` is an outline | absent; `--focus-ring` is a two-ring box-shadow |
-
-Neither window pins `data-theme`; both follow the OS.
 
 ## Accessibility
 
@@ -88,10 +67,7 @@ Neither window pins `data-theme`; both follow the OS.
 
 ## Process
 
-- **Editing `.design-context.md` instead of `docs/design/*.md`.** The
-  front-door file is intentionally slim and is a pointer doc. Long
-  content goes in the topic files.
 - **Adding a new token without a justification.** A token is a
   permanent commitment to a concept. Add the row in [`tokens.md`](tokens.md)
-  *first*, then declare it in `theme.ts` and run `bun run
+  *first*, then declare it in `theme.ts` and run `mise run
   tokens:generate`.

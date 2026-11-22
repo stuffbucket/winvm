@@ -62,7 +62,7 @@ When `prefers-reduced-motion: reduce` is set:
 - Spring physics → off.
 - The setting is honored **literally**, not "with reduced intensity."
 
-See [`principles.md`](principles.md) → Principle 5.
+See [`principles.md`](principles.md) → Principle 4.
 
 ## Implementation pattern
 
@@ -82,7 +82,8 @@ See [`principles.md`](principles.md) → Principle 5.
 }
 ```
 
-Each window's stylesheet has one global `prefers-reduced-motion` block
-like this (`styles.css` → *Motion*; the Dashboard's `style.css`), which
-is preferred over per-component opt-ins (less to forget). Add a
-per-component block only when zeroing the duration isn't enough.
+`styles.css` has one global `prefers-reduced-motion` block like this,
+and the Files and Terminal stylesheets import `styles.css`, so every
+window gets it. That is preferred over per-component opt-ins (less to
+forget). Add a per-component block only when zeroing the duration isn't
+enough.
