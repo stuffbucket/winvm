@@ -1,0 +1,39 @@
+import { Meta } from "@storybook/addon-docs/blocks"
+
+<Meta title="Overview" />
+
+# winvm viewer UI
+
+Every screen and component of the viewer, in every state worth checking before
+a release, with no Windows machine and no Tauri. The **Theme** toolbar sets
+`data-theme` the way the app's CSS reads it: System follows the OS, Dark and
+Light pin one.
+
+## Foundations
+
+- <a href="./?path=/story/foundations-tokens--all-tokens" target="_top">Tokens</a>: every token in `apps/viewer/ui/src/styles/tokens.css`, read live, with its computed value in the current theme.
+- <a href="./?path=/story/foundations-type--ramp" target="_top">Type</a>: families, the type ramp, weights, leading and tracking.
+- <a href="./?path=/story/foundations-spacing--scale" target="_top">Spacing</a>: spacing, sizing and radii.
+- <a href="./?path=/story/foundations-contrast--all-pairings" target="_top">Contrast</a>: every color token in its role on every surface, both themes. The same matrix fails `bun run storybook:check`.
+
+## Components and viewer pieces
+
+React components from `apps/viewer/ui/src` rendered straight from source with
+fixture props: buttons, banners, confirmation dialogs, icons, the close
+dialog, resource meters, the operation overlay, the machine picker and
+heading, and the shared `packages/canvas` pieces.
+
+## Windows
+
+The real built viewer (`apps/viewer/dist`) in an iframe at each window's
+default size, backed by the render fakes in `apps/viewer/tests/render`
+(`fake-tauri.js`, plus `fake-help.js` for Files, Terminal and Use with
+Claude). A story's query picks the fake's state (`state=stowed`,
+`machines=…`, `usage=mac`, `many=400`, …) and its play function opens the
+menu, dialog or card under review.
+
+- <a href="./?path=/story/windows-main--overview-stowed" target="_top">Overview</a>, <a href="./?path=/story/windows-main--screen-paused" target="_top">screen states</a>, <a href="./?path=/story/windows-main--checkpoints" target="_top">checkpoints</a>, <a href="./?path=/story/windows-main--settings-policy" target="_top">settings</a>, <a href="./?path=/story/windows-main--help-restore" target="_top">help</a>
+- <a href="./?path=/story/windows-files-and-terminal--files" target="_top">Files</a> and <a href="./?path=/story/windows-files-and-terminal--terminal-unreachable" target="_top">Terminal</a>
+
+`bun run storybook:shots` takes every story in light and dark with
+Playwright's WebKit and writes an `index.html` to review them side by side.

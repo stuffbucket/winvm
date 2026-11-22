@@ -23,6 +23,7 @@
     "deps": "depcruise --config .dependency-cruiser.cjs apps packages scripts",
     "storybook": "mise -C packages/storybook exec -- pnpm run dev",
     "storybook:build": "mise -C packages/storybook exec -- pnpm run build",
+    "storybook:check": "mise -C packages/storybook exec -- pnpm run typecheck && mise -C packages/storybook exec -- pnpm run contrast && knip --directory packages/storybook",
     "storybook:install": "mise -C packages/storybook exec -- pnpm install --frozen-lockfile"
   },
   "devDependencies": {
