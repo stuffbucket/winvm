@@ -1,140 +1,155 @@
 import type { Meta, StoryObj } from "@storybook/react-vite"
 
-import { Button } from "../../../../apps/viewer/ui/src/components/Button"
-import { Callout } from "../../../../apps/viewer/ui/src/components/Callout"
-import { SessionEndNote } from "../../../../apps/viewer/ui/src/features/close/SessionEndNote"
+import {
+  Notices,
+  type NoticesProps,
+} from "../../../../apps/viewer/ui/src/features/notices/Notices"
 import { t } from "../../../../apps/viewer/ui/src/i18n"
+import { RESTORED_BUSY } from "../../../../apps/viewer/ui/src/model"
 
 const SESSION_MS = 42_000
+const ignore = (): void => undefined
 
-const dismiss = (
-  <Button size="sm" variant="ghost">
-    {t("action.dismiss")}
-  </Button>
-)
+const NONE: NoticesProps = {
+  failure: null,
+  session: null,
+  closeFailed: null,
+  finding: null,
+  notice: null,
+  copyJob: null,
+  copyResult: null,
+  checks: null,
+  operating: false,
+  statusError: null,
+  onDismissFailure: ignore,
+  onDismissCloseFailed: ignore,
+  onDismissNotice: ignore,
+  onDismissCopy: ignore,
+  onReveal: ignore,
+  onSetup: ignore,
+}
 
 const meta = {
   title: "Components/Banners",
-  parameters: { layout: "padded" },
+  component: Notices,
+  args: NONE,
   decorators: [
     (Story) => (
-      <div className="notices sb-pane">
+      <div className="sb-pane">
         <Story />
       </div>
     ),
   ],
-} satisfies Meta
+} satisfies Meta<typeof Notices>
 
 export default meta
 
-type Story = StoryObj
+type Story = StoryObj<typeof meta>
 
 export const OperationFailed: Story = {
-  render: () => (
-    <Callout tone="error" title={t("error.start")} action={dismiss}>
-      <pre className="output">
-        qemu-system-aarch64: -drive file=disk.qcow2: Could not open: Resource
-        busy
-      </pre>
-    </Callout>
-  ),
+  args: {
+    failure: {
+      verb: "start",
+      code: 1,
+      output:
+        "qemu-system-aarch64: -drive file=disk.qcow2: Could not open: Resource busy",
+    },
+  },
 }
 
 export const RestoredBusy: Story = {
-  render: () => (
-    <Callout tone="notice" title={t("notice.restoredBusy")} action={dismiss}>
-      <pre className="output">Windows Update is still installing.</pre>
-    </Callout>
-  ),
+  args: {
+    failure: {
+      verb: "load",
+      code: RESTORED_BUSY,
+      output: "Windows Update is still installing.",
+    },
+  },
 }
 
 export const SessionEnding: Story = {
-  render: () => (
-    <Callout tone="notice" title={t("close.sessionTitle")}>
-      <SessionEndNote
-        session={{ kind: "waiting", deadline: Date.now() + SESSION_MS }}
-      />
-    </Callout>
-  ),
+  args: { session: { kind: "waiting", deadline: Date.now() + SESSION_MS } },
 }
 
 export const SessionMissed: Story = {
-  render: () => (
-    <Callout tone="notice" title={t("close.sessionTitle")}>
-      <SessionEndNote session={{ kind: "missed" }} />
-    </Callout>
-  ),
+  args: { session: { kind: "missed" } },
 }
 
 export const CloseFailed: Story = {
-  render: () => (
-    <Callout tone="error" title={t("close.failed")} action={dismiss}>
-      <pre className="output">winvm stow: the guest agent did not answer</pre>
-    </Callout>
-  ),
+  args: {
+    closeFailed: { message: "winvm stow: the guest agent did not answer" },
+  },
 }
 
 export const FinderOpening: Story = {
-  render: () => (
-    <Callout
-      tone="notice"
-      title={t("files.finder.opening", { place: "Desktop" })}
-    >
-      <p>{t("files.finder.firstTime")}</p>
-    </Callout>
-  ),
+  args: { finding: "Desktop" },
+}
+
+export const Notice: Story = {
+  args: {
+    notice: {
+      tone: "error",
+      title: t("machine.deleteFailed", { title: "Work PC" }),
+      detail: "winvm delete: the machine is running",
+    },
+  },
 }
 
 export const Copying: Story = {
-  render: () => (
-    <Callout tone="notice" title={t("files.copying", { name: "budget.xlsx" })}>
-      <p>{t("files.ofTotal", { done: 2, total: 5 })}</p>
-    </Callout>
-  ),
+  args: { copyJob: { way: "in", done: 1, total: 5, name: "budget.xlsx" } },
+}
+
+export const CopiedIn: Story = {
+  args: {
+    copyResult: {
+      ok: true,
+      title: t("files.copiedIn", { name: "budget.xlsx", folder: "Desktop" }),
+    },
+  },
 }
 
 export const CopyFailed: Story = {
-  render: () => (
-    <Callout tone="error" title={t("error.put")} action={dismiss}>
-      <pre className="output">setup.exe: not enough space on C:</pre>
-    </Callout>
-  ),
+  args: {
+    copyResult: {
+      ok: false,
+      title: t("files.copyFailed"),
+      detail: "setup.exe: not enough space on C:",
+    },
+  },
+}
+
+export const ItemNotCopied: Story = {
+  args: {
+    copyResult: {
+      ok: false,
+      title: t("files.notCopied", { count: 1 }),
+      detail: "install.log: the file is in use",
+    },
+  },
 }
 
 export const HostNotReady: Story = {
-  render: () => (
-    <Callout
-      tone="error"
-      title={t("host.notReady")}
-      action={
-        <Button size="sm" variant="primary">
-          {t("action.setup")}
-        </Button>
-      }
-    >
-      <p>{t("host.runtimeMissing")}</p>
-    </Callout>
-  ),
+  args: {
+    checks: {
+      ready: false,
+      timeMachine: "ok",
+      checks: [{ label: "Runtime", ok: false, hint: "winvm setup" }],
+    },
+  },
 }
 
 export const StatusError: Story = {
-  render: () => (
-    <Callout tone="error" title={t("error.status")}>
-      <pre className="output">winvm status: config.json is not valid JSON</pre>
-    </Callout>
-  ),
+  args: { statusError: "winvm status: config.json is not valid JSON" },
 }
 
 export const Stacked: Story = {
   name: "Several at once",
-  render: () => (
-    <>
-      <Callout tone="error" title={t("error.stop")} action={dismiss}>
-        <pre className="output">the guest did not shut down in 60 s</pre>
-      </Callout>
-      <Callout tone="notice" title={t("close.sessionTitle")}>
-        <SessionEndNote session={{ kind: "missed" }} />
-      </Callout>
-    </>
-  ),
+  args: {
+    failure: {
+      verb: "stop",
+      code: 1,
+      output: "the guest did not shut down in 60 s",
+    },
+    session: { kind: "missed" },
+  },
 }

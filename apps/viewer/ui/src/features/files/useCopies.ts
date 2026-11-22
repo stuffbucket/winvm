@@ -15,14 +15,14 @@ import type { Entry } from "./files"
 import { childPath, freeName, hostName, isListing, leafName } from "./files"
 import { listFolder } from "./ops"
 
-interface CopyJob {
+export interface CopyJob {
   readonly way: "in" | "out"
   readonly done: number
   readonly total: number
   readonly name: string
 }
 
-interface CopyResult {
+export interface CopyResult {
   readonly ok: boolean
   readonly title: string
   readonly detail?: string
