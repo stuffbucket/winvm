@@ -13,7 +13,7 @@ import type { Args } from "./args"
 import { formatOffset, measureOffset, syncGuestClock } from "./clock"
 import type { InstanceConfig } from "./config"
 import { effectiveConfig } from "./config"
-import { readSince, START } from "./eventlog"
+import { appendEntry, readSince, START } from "./eventlog"
 import * as finder from "./finder"
 import { isFrozenRunState } from "./frozen"
 import { buildIdentity } from "./identity"
@@ -28,6 +28,7 @@ import {
   WATCH_TIMING_ENV,
 } from "./idle"
 import { servingHere } from "./kept"
+import { olderWatcher, stopOlderWatcher } from "./olderwatcher"
 import { askService } from "./opclient"
 import { InstanceBusy, leaseHolder } from "./operation"
 import type { OpHandler, Performed, ServiceOp } from "./ops"
@@ -153,10 +154,11 @@ function unmark(name: string): boolean {
 }
 
 export const watching = (name: string): boolean =>
-  markedFor(name, qemu.pidOf(pathsFor(name)))
+  markedFor(name, qemu.pidOf(pathsFor(name))) || olderWatcher(name) !== null
 
 export function watchingNow(name: string, st: WatchState): boolean {
   if (st.state === "stopped" || st.pid <= 1) return false
+  if (olderWatcher(name)?.pid === st.pid) return true
   const p = pathsFor(name)
   return readService(p)?.pid === st.pid && markedFor(name, qemu.pidOf(p))
 }
@@ -181,13 +183,16 @@ interface Run {
 }
 
 const runs = new Map<string, Run>()
+const turnedOff = new Map<string, number>()
 
 async function stopHere(name: string): Promise<boolean> {
+  turnedOff.set(name, (turnedOff.get(name) ?? 0) + 1)
   const on = unmark(name)
   const run = runs.get(name)
   run?.halt("stopped")
   await run?.ended
-  return on
+  const older = await stopOlderWatcher(name)
+  return on || older
 }
 
 const QUIESCE_MS = 11 * 60_000
@@ -854,7 +859,22 @@ export function watchDuties(
     ...o.timing,
   }
   let halted = false
+  let draining = false
   let current: Run | null = null
+
+  const takeOver = async (older: number): Promise<void> => {
+    const offs = turnedOff.get(name) ?? 0
+    if (!(await stopOlderWatcher(name)) || halted) return
+    if ((turnedOff.get(name) ?? 0) !== offs || !ensureWatcher(name)) return
+    log(
+      `an older winvm's watcher (pid ${String(older)}) has stopped; winvm's service watches "${name}" from now on`,
+    )
+    appendEntry(name, {
+      kind: "service",
+      what: "watcher taken over",
+      pid: older,
+    })
+  }
 
   const begin = (pid: number): void => {
     rotateLog(name)
@@ -885,10 +905,24 @@ export function watchDuties(
   return {
     check: () => {
       if (halted) return
+      const older = draining ? null : olderWatcher(name)
+      if (older !== null) {
+        draining = true
+        void takeOver(older.pid)
+          .catch((error: unknown) => {
+            log(
+              `could not take over from an older winvm's watcher: ${errText(error)}`,
+            )
+          })
+          .finally(() => {
+            draining = false
+          })
+      }
       if (current !== null) {
         if (markedQemu(name) === null) current.halt("stopped")
         return
       }
+      if (draining) return
       const pid = qemu.pidOf(p)
       if (pid === null) return
       if (markedFor(name, pid) && effectiveConfig(name)["watch.enabled"])

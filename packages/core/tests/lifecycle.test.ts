@@ -28,6 +28,7 @@ import {
   type ServiceInfo,
   stopService,
 } from "../src/servicectl"
+import { readWatchState, watchPathsFor } from "../src/watch"
 import { FakeAgent } from "./fakes/agent"
 import { lockPidfile, releasePidfiles } from "./fakes/pidfile"
 import { FakeQmp } from "./fakes/qmp"
@@ -682,6 +683,45 @@ describe("the CLI", () => {
     )
     expect(live(old.pid)).toBe(false)
     expect(readService(p)?.build).toBe("sha256:cli-test")
+    expect(live(qemu.pid)).toBe(true)
+  }, 60_000)
+
+  it("hands a stale service over, and the new one stops an older winvm's watcher and takes its duties once it has gone", async () => {
+    const got = resolve(home, "legacy-watcher-signals")
+    const w = await hold(
+      "--log-signals",
+      got,
+      "--linger",
+      "600",
+      "winvm",
+      "watch",
+      "-i",
+      "t",
+    )
+    writeFileSync(resolve(p.dir, "watch.pid"), `${String(w.pid)}\n`)
+    writeFileSync(
+      watchPathsFor("t").state,
+      JSON.stringify({ pid: w.pid, build: OLD, state: "watching" }),
+    )
+    const old = await staleFromSameCli()
+    expect(reconcile().status).toBe(0)
+    const fresh = readService(p)
+    expect(fresh?.build).toBe("sha256:cli-test")
+    expect(live(old.pid)).toBe(false)
+    const end = Date.now() + 20_000
+    while (readWatchState("t")?.pid !== fresh?.pid) {
+      if (Date.now() > end) throw new Error("the service never took over")
+      await sleep(50)
+    }
+    expect(readFileSync(got, "utf8")).toBe("SIGTERM\n")
+    expect(live(w.pid)).toBe(false)
+    expect(existsSync(resolve(p.dir, "watch.pid"))).toBe(false)
+    expect(readWatchState("t")).toMatchObject({ state: "watching" })
+    expect(
+      readSince("t", START).entries.filter(
+        (e) => e.kind === "service" && e.what === "watcher taken over",
+      ),
+    ).toMatchObject([{ pid: w.pid }])
     expect(live(qemu.pid)).toBe(true)
   }, 60_000)
 })
