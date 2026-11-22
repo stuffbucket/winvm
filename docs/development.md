@@ -20,7 +20,7 @@ Run these from the repository root. No shell activation is required; mise suppli
 | `mise run check` | Run workspace typechecks/tests and root script tests. No automatic fixes, real-VM tests, or release operations. The full gate is `verify`. |
 | `mise run doctor` | Run the source CLI's read-only host diagnostic. Mise may first install missing tools. |
 
-Specialized tasks: `verify`, `typecheck`, `check:force`, `ui:build`, `ui:watch`, and `tokens:generate`. `ui:watch` only rebuilds files; it is deliberately not named `dev`. `tokens:generate` writes generated CSS and is not part of check-only operation.
+Specialized tasks: `verify`, `typecheck`, `check:force`, `ui:build`, `ui:watch`, `tokens:generate`, and the Storybook tasks (`storybook:install`, `storybook`, `storybook:check`, `storybook:shots`; see [Storybook](#storybook)). `ui:watch` only rebuilds files; it is deliberately not named `dev`. `tokens:generate` writes generated CSS and is not part of check-only operation.
 
 The existing `pnpm run build` delegates to workspace `build` scripts through Turbo. It is **not** the native app-packaging command. The repo-root `mise run build` intentionally selects the complete native viewer recipe.
 
@@ -28,6 +28,7 @@ The existing `pnpm run build` delegates to workspace `build` scripts through Tur
 
 - Bun's single version pin is `.bun-version` (currently 1.4.3); mise and CI read it.
 - pnpm is pinned by `mise.toml` and `package.json#packageManager` (currently 12.3.4). Install workspace dependencies with pnpm, not `bun install`.
+- Node is scoped to `packages/storybook/mise.toml` (currently 22.23.2), for Storybook only. Like `apps/viewer/mise.toml`, each checkout must `mise trust` it once.
 - Rust is scoped to `apps/viewer/mise.toml` (currently 1.99.0). The native build task uses `mise -C apps/viewer exec` rather than assuming that a changed working directory loads child tool configuration.
 - `mise.lock` locks runtime-tool artifacts. QEMU/swtpm/zstd/virtiofsd come from the separately pinned `packages/core/runtime.json`, not a Homebrew QEMU.
 - Each checkout/worktree needs its own `pnpm install` and build outputs. CI uses `pnpm install --frozen-lockfile`.
@@ -68,7 +69,7 @@ Run the public CLI, not a core module directly. `WINVM_CLI` is set by the CLI; d
 
 ## Quality gates (no Windows)
 
-`mise run verify` runs `scripts/verify.ts`, the gate the pre-push hook runs: lint, comments, encoding, shell and workflow checks, typechecks, dependency rules, Rust format, deny, clippy and tests, and the workspace and root script tests. A passing run stamps the tree so the push skips it. The commands below are its narrower parts and need no Rust compilation.
+`mise run verify` runs `scripts/verify.ts`, the gate the pre-push hook runs: lint, comments, encoding, shell and workflow checks, typechecks, dependency rules, the Storybook check (its frozen install first), Rust format, deny, clippy and tests, and the workspace and root script tests. A passing run stamps the tree so the push skips it. The commands below are its narrower parts and need no Rust compilation.
 
 ```sh
 mise run check
@@ -156,6 +157,21 @@ Scripts serve local `dist`, inject `tests/render/fake-tauri.js`, drive WebKit, a
 | `render-help.mjs [--out <dir>] [--preview <dir>] [--no-build]` | Help pictures and popovers; default output rewrites tracked JPEGs |
 
 For check-only help rendering, supply a separate `--out` directory. For intentional image regeneration, inspect old targets first, regenerate, rebuild the UI, inspect results, and report tracked changes. `--preview` also rebuilds shared `dist`; serialize it with other jobs.
+
+### Storybook
+
+`packages/storybook` catalogs the viewer UI: Foundations (tokens, type, spacing, and the contrast table), components and viewer pieces rendered from `apps/viewer/ui/src` with fixture props, the shared `packages/canvas` pieces, and the built windows (main, Files, Terminal) in an iframe at their default sizes. Window stories run the same `tests/render/fake-tauri.js` and `fake-help.js` as the render scripts; a story's query picks the fake's state and its play function opens the menu, dialog or card under review. The Theme toolbar (System / Dark / Light) sets `data-theme` the way the app's CSS reads it.
+
+It is its own pnpm workspace with its own lockfile, outside the root one, so Storybook's dependencies never enter the root install; its `.pnpmfile.cjs` reuses the root tarball policy.
+
+```sh
+mise run storybook:install                # once per checkout, and after its lockfile changes
+mise run storybook                        # dev server on :6006
+mise run storybook:check                  # story typecheck, token contrast audit, knip; part of verify
+mise run storybook:shots -- --out <dir>   # static build, then every story in light and dark
+```
+
+`storybook:shots` drives Playwright's WebKit from the package's own pinned `playwright` (browsers: `mise -C packages/storybook exec -- pnpm exec playwright install webkit`), writes `<dir>/{light,dark}/<story-id>.png` plus `index.html` and `index.md`, and fails if any story fails to render or play. `storybook` and `storybook:build` rebuild `apps/viewer/dist` before staging it, so serialize them with the render scripts. Story fixtures come from the render fakes through the viewer's own parsers; add a state to the fakes rather than a second fixture set.
 
 ## Authorized real-guest operations
 

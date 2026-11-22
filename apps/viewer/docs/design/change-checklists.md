@@ -64,7 +64,11 @@ generated file or inlined where a token belongs (see
 5. Hover/active transitions: 150ms ease-out. Wrap in the global
    reduced-motion block ([`motion.md`](motion.md)).
 6. Add stories under `packages/storybook/src/` covering each visual
-   state (not just the happy path). Check them in both themes.
+   state (not just the happy path): `components/` or `viewer/` for a
+   component rendered from source with fixture props, `windows/` for a
+   state of the built window driven through the render fakes. Check
+   them in both themes; `bun run storybook:shots` captures every story
+   in light and dark.
 
 ## Adding or modifying a color role
 
@@ -79,7 +83,7 @@ generated file or inlined where a token belongs (see
    text and as a fill should pass as text on its own; don't add a
    separate foreground-pairing token.
 4. Add the tokens to `theme.ts` (both `themes.dark` and
-   `themes.light` if they differ per theme), run `bun run
+   `themes.light` if they differ per theme), run `mise run
    tokens:generate`, then `bun run storybook:check`.
 5. Update [`tokens.md`](tokens.md) and [`color.md`](color.md).
 

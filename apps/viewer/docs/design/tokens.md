@@ -55,9 +55,12 @@ in a doc or commit message, use its name — never inline the value.
 19 color tokens: 4 theme-independent, 15 per theme.
 "Per theme" tokens have a dark and a light value in `theme.ts`; call sites
 use the one name and the theme picks the value — there are no `-light` /
-`-dark` names to choose between. Every value is checked against all three
-surfaces of its theme by `bun scripts/contrast-audit.ts` (in
-`packages/storybook`; Storybook → Foundations → Contrast shows the table).
+`-dark` names to choose between. Every color with a contrast role (text,
+controls, labels on fills, selected terminal text) is checked against all
+three surfaces of its theme by `bun scripts/contrast-audit.ts` (in
+`packages/storybook`, and part of `bun run storybook:check`; Storybook →
+Foundations → Contrast shows the table). `--border-subtle`, the backdrop
+colors and the scrims are decorative and not measured.
 
 | Token | Theme | Purpose | Use for | Do NOT use for |
 |---|---|---|---|---|
