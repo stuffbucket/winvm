@@ -1,5 +1,5 @@
 import type { Meta, StoryObj } from "@storybook/react-vite"
-import type { JSX } from "react"
+import type { CSSProperties, JSX } from "react"
 
 import tokensCss from "../../../../apps/viewer/ui/src/styles/tokens.css?raw"
 
@@ -7,7 +7,7 @@ const NAMES = [
   ...new Set([...tokensCss.matchAll(/(--[a-z0-9-]+)\s*:/g)].map((m) => m[1])),
 ].filter((name): name is string => name !== undefined)
 
-type Kind = "color" | "size" | "radius" | "plain"
+type Kind = "color" | "size" | "radius" | "type" | "plain"
 
 const GROUPS: readonly {
   readonly title: string
@@ -33,6 +33,11 @@ const GROUPS: readonly {
     kind: "color",
     match: (n) => /^--(backdrop|terminal|scrim)/.test(n),
   },
+  {
+    title: "Type",
+    kind: "type",
+    match: (n) => /^--(font|text|weight|leading|tracking)-/.test(n),
+  },
   { title: "Spacing", kind: "size", match: (n) => n.startsWith("--space-") },
   { title: "Sizing", kind: "size", match: (n) => n.startsWith("--size-") },
   { title: "Radii", kind: "radius", match: (n) => n.startsWith("--radius-") },
@@ -53,6 +58,18 @@ const GROUPS: readonly {
   },
 ]
 
+function typeStyle(name: string): CSSProperties {
+  if (name.startsWith("--font-")) return { fontFamily: `var(${name})` }
+  if (name.startsWith("--weight-")) return { fontWeight: `var(${name})` }
+  if (name.startsWith("--text-")) return { fontSize: `var(${name})` }
+  return {}
+}
+
+const groupOf = (name: string): string =>
+  GROUPS.find((group) => group.match(name))?.title ?? OTHER.title
+
+const OTHER = { title: "Other", kind: "plain" as Kind }
+
 function Specimen({
   name,
   kind,
@@ -69,6 +86,7 @@ function Specimen({
     )
   if (kind === "size")
     return <span className="sb-tokens__bar" style={{ width: `var(${name})` }} />
+  if (kind === "type") return <span style={typeStyle(name)}>Aa</span>
   if (kind === "radius")
     return (
       <span
@@ -108,10 +126,10 @@ export default meta
 export const AllTokens: StoryObj = {
   render: () => (
     <div className="sb-tokens">
-      {GROUPS.map((group) => (
+      {[...GROUPS, OTHER].map((group) => (
         <section key={group.title}>
           <h3>{group.title}</h3>
-          {NAMES.filter(group.match).map((name) => (
+          {NAMES.filter((name) => groupOf(name) === group.title).map((name) => (
             <Row key={name} name={name} kind={group.kind} />
           ))}
         </section>

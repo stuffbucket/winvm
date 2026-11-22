@@ -4,11 +4,9 @@ import {
   type IconName,
 } from "../../../../apps/viewer/ui/src/components/Icon"
 import iconSource from "../../../../apps/viewer/ui/src/components/Icon.tsx?raw"
+import { iconNames } from "../icons"
 
-const UNION = /export type IconName =([\s\S]*?)\n\n/.exec(iconSource)?.[1] ?? ""
-const NAMES = [...UNION.matchAll(/"([A-Za-z]+)"/g)]
-  .map((m) => m[1])
-  .filter((name): name is IconName => name !== undefined)
+const NAMES = iconNames(iconSource) as IconName[]
 
 const meta = {
   title: "Components/Icon",
