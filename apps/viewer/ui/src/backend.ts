@@ -1,3 +1,4 @@
+import { MS_PER_SECOND } from "./constants"
 import {
   connectArgs,
   type Endpoint,
@@ -112,7 +113,7 @@ function sidecarCopy(f: SidecarFailure): string {
     case "timeout":
       return t("sidecar.timeout", {
         operation: f.operation,
-        seconds: (f.timeoutMs ?? 0) / 1000,
+        seconds: (f.timeoutMs ?? 0) / MS_PER_SECOND,
       })
     case "exit":
       return failureText(f.stdout, f.stderr) || f.message

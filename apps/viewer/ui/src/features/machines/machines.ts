@@ -2,7 +2,11 @@ import { z } from "zod"
 
 import { isLivePhase, type Phase, TITLE_MAX } from "../../model"
 
-const NAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/
+export const MACHINE_NAME_MAX = 64
+
+const NAME = new RegExp(
+  `^[A-Za-z0-9][A-Za-z0-9._-]{0,${String(MACHINE_NAME_MAX - 1)}}$`,
+)
 
 export type NameProblem = "empty" | "invalid" | "taken"
 

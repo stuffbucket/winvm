@@ -1,5 +1,7 @@
 import { z } from "zod"
 
+import { BYTES_PER_KB, MS_PER_DAY } from "../../constants"
+
 const Entry = z.object({
   name: z.string(),
   dir: z.boolean(),
@@ -140,11 +142,11 @@ export function formatBytes(bytes: number, locale?: string): string {
   ] as const
   let value = bytes
   let i = 0
-  while (value >= 1000 && i < units.length - 1) {
-    value /= 1000
+  while (value >= BYTES_PER_KB && i < units.length - 1) {
+    value /= BYTES_PER_KB
     i += 1
   }
-  const digits = i > 0 && value < 10 ? 1 : 0
+  const digits = i > 0 && value < ONE_DECIMAL_BELOW ? 1 : 0
   return new Intl.NumberFormat(locale, {
     style: "unit",
     unit: units[i],
@@ -161,9 +163,11 @@ export interface FinderDate {
   readonly short: string
 }
 
+const ONE_DECIMAL_BELOW = 10
+
 const dayNumber = (d: Date): number =>
   Math.round(
-    new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime() / 86_400_000,
+    new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime() / MS_PER_DAY,
   )
 
 export function finderDate(

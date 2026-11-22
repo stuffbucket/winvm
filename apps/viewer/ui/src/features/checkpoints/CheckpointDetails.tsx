@@ -1,4 +1,9 @@
-import { CanvasGlyph, CanvasIconButton, GLYPHS } from "@winvm/canvas"
+import {
+  CanvasGlyph,
+  CanvasIconButton,
+  GLYPHS,
+  prefersReducedMotion,
+} from "@winvm/canvas"
 import {
   type JSX,
   type KeyboardEvent,
@@ -15,6 +20,7 @@ import { Button } from "../../components/Button"
 import { Icon } from "../../components/Icon"
 import { t } from "../../i18n"
 import { formatSize, type SaveNotes } from "../../model"
+import { motion, ms } from "../../styles/theme"
 import { titleEdit } from "../machines/machines"
 import { KindChip, Picture, takenAt } from "./CheckpointCard"
 import {
@@ -99,6 +105,7 @@ interface DetailsProps {
 }
 
 const NOTE_DEBOUNCE_MS = 700
+const ENDED_CLICK_GUARD_MS = 400
 
 function InlineTitle({
   shown,
@@ -224,7 +231,11 @@ function InlineTitle({
           title={t("checkpoints.title.tip")}
           aria-describedby={hintId}
           onClick={(e) => {
-            if (e.detail === 0 && Date.now() - endedAt.current < 400) return
+            if (
+              e.detail === 0 &&
+              Date.now() - endedAt.current < ENDED_CLICK_GUARD_MS
+            )
+              return
             start()
           }}
           onKeyDown={(e) => {
@@ -255,12 +266,8 @@ function InlineTitle({
   )
 }
 
-export const PANEL_EXIT_MS = 180
-const panelExitMs = (): number =>
-  typeof matchMedia === "function" &&
-  matchMedia("(prefers-reduced-motion: reduce)").matches
-    ? 0
-    : PANEL_EXIT_MS
+export const PANEL_EXIT_MS = ms(motion.duration.lg)
+const panelExitMs = (): number => (prefersReducedMotion() ? 0 : PANEL_EXIT_MS)
 
 export function CheckpointDetails({
   c,

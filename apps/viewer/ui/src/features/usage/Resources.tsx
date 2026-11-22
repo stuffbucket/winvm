@@ -1,4 +1,5 @@
 import { type JSX, useEffect, useState } from "react"
+import { PERCENT } from "../../constants"
 import { t } from "../../i18n"
 import {
   type Amount,
@@ -64,8 +65,10 @@ function Sparkline({
   )
 }
 
+const HUNDREDTHS = 100
+
 const percent = (v: number): string =>
-  `${String(Math.round(Math.min(1, Math.max(0, v)) * 10000) / 100)}%`
+  `${String(Math.round(Math.min(1, Math.max(0, v)) * (PERCENT * HUNDREDTHS)) / HUNDREDTHS)}%`
 
 function Bar({
   fill,
@@ -140,8 +143,8 @@ function Resource({
         role="meter"
         aria-label={label}
         aria-valuemin={0}
-        aria-valuemax={100}
-        aria-valuenow={Math.round(fill * 100)}
+        aria-valuemax={PERCENT}
+        aria-valuenow={Math.round(fill * PERCENT)}
         aria-valuetext={value}
       >
         {head}
@@ -257,14 +260,14 @@ export function Resources({
               ? formatPercent(u.cpu)
               : t("usage.cpuMacValue", { value: formatPercent(u.cpu) })
           }
-          fill={u.cpu / 100}
+          fill={u.cpu / PERCENT}
           legend={cpuLegend(u)}
         >
           <Sparkline
-            values={usage.cpuHistory.map((v) => v / 100)}
+            values={usage.cpuHistory.map((v) => v / PERCENT)}
             other={
               u.cpuSource === "windows"
-                ? usage.macCpuHistory.map((v) => v / 100)
+                ? usage.macCpuHistory.map((v) => v / PERCENT)
                 : []
             }
           />

@@ -166,6 +166,12 @@ const STEPS: Step[] = [
       ),
   },
   {
+    name: "magic-numbers",
+    group: "fast",
+    commands: [{ argv: ["bun", "scripts/check-magic-numbers.ts"] }],
+    findings: sumOf(/^magic-numbers: (\d+) increased/gm),
+  },
+  {
     name: "typecheck-scripts",
     group: "fast",
     commands: [

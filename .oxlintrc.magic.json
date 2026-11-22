@@ -1,0 +1,54 @@
+{
+  "plugins": ["typescript"],
+  "categories": { "correctness": "off" },
+  "overrides": [
+    {
+      "files": [
+        "apps/viewer/ui/src/**/*.{ts,tsx}",
+        "packages/canvas/src/**/*.{ts,tsx}"
+      ],
+      "rules": {
+        "typescript/no-magic-numbers": [
+          "error",
+          {
+            "ignore": [-1, 0, 1, 2],
+            "ignoreArrayIndexes": true,
+            "ignoreDefaultValues": true,
+            "ignoreClassFieldInitialValues": true,
+            "enforceConst": true,
+            "ignoreEnums": true,
+            "ignoreNumericLiteralTypes": true,
+            "ignoreReadonlyClassProperties": true,
+            "ignoreTypeIndexes": true
+          }
+        ]
+      }
+    },
+    {
+      "files": ["apps/viewer/ui/src/**/*.tsx", "packages/canvas/src/**/*.tsx"],
+      "rules": {
+        "typescript/no-magic-numbers": [
+          "error",
+          {
+            "ignore": [-1, 0, 1, 2],
+            "ignoreArrayIndexes": true,
+            "ignoreDefaultValues": true,
+            "ignoreClassFieldInitialValues": true,
+            "enforceConst": true,
+            "ignoreEnums": true,
+            "ignoreNumericLiteralTypes": true,
+            "ignoreReadonlyClassProperties": true,
+            "ignoreTypeIndexes": true,
+            "detectObjects": true
+          }
+        ]
+      }
+    }
+  ],
+  "ignorePatterns": [
+    "**/novnc/**",
+    "**/node_modules/**",
+    "**/*.d.ts",
+    "**/*.test.{ts,tsx}"
+  ]
+}

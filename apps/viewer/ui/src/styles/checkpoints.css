@@ -1,6 +1,4 @@
 .checkpoints {
-  --checkpoints-timeline: calc(var(--size-2xl) * 3);
-  --checkpoints-ease: cubic-bezier(0.65, 0, 0.35, 1);
   --checkpoints-bar: calc(
     var(--size-xl) +
     var(--space-2) +
@@ -69,11 +67,11 @@
 }
 
 .checkpoints[data-phase="leaving"] .checkpoints__canvas {
-  animation: checkpoint-leave 200ms ease-in both;
+  animation: checkpoint-leave var(--duration-xl) ease-in both;
 }
 
 .checkpoints[data-phase="leaving"] .checkpoints__backdrop {
-  animation: checkpoint-backdrop-leave 200ms ease-in both;
+  animation: checkpoint-backdrop-leave var(--duration-xl) ease-in both;
 }
 
 @keyframes checkpoint-enter {
@@ -125,11 +123,11 @@
 }
 
 .checkpoints[data-phase="entering"][data-ready="true"] .checkpoints__canvas {
-  animation: checkpoint-enter 200ms ease-out both;
+  animation: checkpoint-enter var(--duration-xl) ease-out both;
 }
 
 .checkpoints[data-phase="entering"][data-ready="true"] .checkpoints__backdrop {
-  animation: checkpoint-backdrop-enter 200ms ease-out both;
+  animation: checkpoint-backdrop-enter var(--duration-xl) ease-out both;
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -145,7 +143,7 @@
 
 .checkpoints__drag {
   position: absolute;
-  z-index: 1;
+  z-index: var(--z-raised);
   top: 0;
   right: 0;
   left: 0;
@@ -187,7 +185,7 @@
   position: relative;
   flex: none;
   width: var(--size-xl);
-  transition: width 200ms ease-out;
+  transition: width var(--duration-xl) ease-out;
 }
 
 .checkpoints__search[data-open="true"] {
@@ -195,7 +193,7 @@
 }
 
 .checkpoints .spatial-canvas__controls {
-  transition: transform 200ms ease-out;
+  transition: transform var(--duration-xl) ease-out;
 }
 
 .checkpoints
@@ -217,7 +215,7 @@
   overflow: hidden;
   border-radius: var(--radius-input);
   background: transparent;
-  transition: background-color 160ms ease-out;
+  transition: background-color var(--duration-md) ease-out;
 }
 
 .checkpoints__search[data-open="true"] .checkpoints__search-box {
@@ -248,7 +246,7 @@
   outline: none;
   opacity: 0;
   pointer-events: none;
-  transition: opacity 160ms ease-out;
+  transition: opacity var(--duration-md) ease-out;
 }
 
 .checkpoints__search[data-open="true"] input {
@@ -297,13 +295,13 @@
 
   .checkpoints__search-box {
     position: absolute;
-    z-index: 1;
+    z-index: var(--z-raised);
     top: var(--space-1);
     left: var(--space-1);
     width: var(--size-xl);
     transition:
-      width 200ms ease-out,
-      background-color 160ms ease-out;
+      width var(--duration-xl) ease-out,
+      background-color var(--duration-md) ease-out;
   }
 
   .checkpoints__search[data-open="true"] .checkpoints__search-box {
@@ -313,8 +311,8 @@
 
   .checkpoints__bar-rest {
     transition:
-      opacity 160ms ease-out,
-      visibility 0s linear 200ms;
+      opacity var(--duration-md) ease-out,
+      visibility 0s linear var(--duration-xl);
   }
 
   .checkpoints__search[data-open="true"] ~ .checkpoints__bar-rest {
@@ -325,13 +323,13 @@
 
 .checkpoints__zoom {
   position: absolute;
-  z-index: 3;
+  z-index: var(--z-float);
   bottom: var(--space-4);
   left: var(--space-4);
   box-shadow: var(--elevation-modal);
   opacity: 0;
   pointer-events: none;
-  transition: opacity 200ms ease-out;
+  transition: opacity var(--duration-xl) ease-out;
 }
 
 .checkpoints__zoom[data-shown="true"],
@@ -341,7 +339,7 @@
 }
 
 .checkpoints__zoom[data-shown="false"]:not(:focus-within) {
-  transition-duration: 150ms;
+  transition-duration: var(--duration-sm);
 }
 
 .checkpoints__zoom-figure {
@@ -401,7 +399,7 @@
 
 .checkpoints__status {
   position: absolute;
-  z-index: 4;
+  z-index: var(--z-status);
   bottom: calc(var(--space-4) + var(--checkpoints-bar) + var(--space-3));
   left: 50%;
   display: flex;
@@ -463,9 +461,9 @@
   border-top-left-radius: 0;
   background: color-mix(in srgb, var(--accent) 7%, transparent);
   transition:
-    border-color 150ms ease-out,
-    background-color 150ms ease-out,
-    box-shadow 150ms ease-out;
+    border-color var(--duration-sm) ease-out,
+    background-color var(--duration-sm) ease-out,
+    box-shadow var(--duration-sm) ease-out;
 }
 
 .section[data-selected="true"] .section__body {
@@ -749,12 +747,12 @@
   );
   opacity: 0;
   pointer-events: none;
-  transition: opacity 150ms ease-out;
+  transition: opacity var(--duration-sm) ease-out;
 }
 
 .checkpoints__grid[data-on="true"] {
   opacity: 1;
-  transition-duration: 200ms;
+  transition-duration: var(--duration-xl);
 }
 
 .checkpoint {
@@ -762,7 +760,7 @@
 }
 
 .checkpoint[data-selected="true"] {
-  z-index: 2;
+  z-index: var(--z-selected);
 }
 
 .checkpoint__hit {
@@ -783,10 +781,10 @@
   text-align: left;
   cursor: grab;
   transition:
-    border-color 150ms ease-out,
-    box-shadow 200ms ease-out,
-    opacity 220ms ease-out,
-    transform 220ms ease-out;
+    border-color var(--duration-sm) ease-out,
+    box-shadow var(--duration-xl) ease-out,
+    opacity var(--duration-2xl) ease-out,
+    transform var(--duration-2xl) ease-out;
 }
 
 .checkpoint__hit:hover {
@@ -799,7 +797,7 @@
 }
 
 .checkpoint[data-carried="true"] {
-  z-index: 5;
+  z-index: var(--z-drag);
 }
 
 .checkpoint[data-carried="true"] .checkpoint__hit {
@@ -1144,12 +1142,12 @@
 }
 
 .checkpoint[data-arriving="true"] {
-  z-index: 3;
+  z-index: var(--z-float);
 }
 
 .checkpoint[data-arriving="true"] .checkpoint__hit {
   transform-origin: 0 0;
-  animation: checkpoint-arrive 900ms var(--checkpoints-ease) both;
+  animation: checkpoint-arrive var(--duration-4xl) var(--ease-emphasized) both;
 }
 
 @keyframes checkpoint-arrive {
@@ -1176,7 +1174,7 @@
 
 .timeline {
   position: absolute;
-  z-index: 3;
+  z-index: var(--z-float);
   top: var(--space-5);
   right: var(--space-3);
   bottom: var(--space-3);
@@ -1242,8 +1240,8 @@
   background: var(--text-muted);
   transform: translateY(-50%);
   transition:
-    width 150ms ease-out,
-    background-color 150ms ease-out;
+    width var(--duration-sm) ease-out,
+    background-color var(--duration-sm) ease-out;
 }
 
 .timeline__tick[data-month="true"] {
@@ -1294,7 +1292,7 @@
 }
 
 .timeline__hover {
-  z-index: 1;
+  z-index: var(--z-raised);
   right: calc(var(--size-xl) + var(--space-2));
   padding: var(--space-1) var(--space-2);
   border: var(--border-width-hairline) solid var(--border-subtle);
@@ -1306,7 +1304,6 @@
 }
 
 .checkpoints {
-  --checkpoints-panel: calc(var(--panel-width) + var(--space-7));
   --checkpoints-clear: calc(
     var(--space-4) +
     var(--checkpoints-bar) +
@@ -1329,7 +1326,7 @@
 
 .checkpoints .checkpoint-details {
   position: absolute;
-  z-index: 3;
+  z-index: var(--z-float);
   top: var(--space-7);
   bottom: var(--checkpoints-clear);
   left: 0;
@@ -1338,9 +1335,13 @@
   box-sizing: border-box;
   width: min(
     var(--checkpoints-panel),
-    calc(100% - var(--checkpoints-timeline) - var(--space-8) * 2)
+    calc(
+      100% -
+      var(--checkpoints-timeline-space) -
+      var(--checkpoints-canvas-min)
+    )
   );
-  min-width: calc(var(--size-2xl) * 6);
+  min-width: var(--checkpoints-panel-min);
   overflow: hidden;
   border: var(--border-width-hairline) solid var(--border-subtle);
   border-left: 0;
@@ -1350,8 +1351,8 @@
   opacity: 1;
   transform: none;
   transition:
-    transform 220ms cubic-bezier(0.16, 1, 0.3, 1),
-    opacity 160ms ease-out;
+    transform var(--duration-2xl) var(--ease-enter),
+    opacity var(--duration-md) ease-out;
 }
 
 .checkpoints .checkpoint-details:focus {
@@ -1363,8 +1364,8 @@
   pointer-events: none;
   transform: translateX(-100%);
   transition:
-    transform 180ms cubic-bezier(0.5, 0, 0.75, 0),
-    opacity 160ms ease-in;
+    transform var(--duration-lg) var(--ease-exit),
+    opacity var(--duration-md) ease-in;
 }
 
 .checkpoint-details__scroll {
@@ -1374,7 +1375,7 @@
 
 .checkpoints .checkpoint-details__close {
   position: absolute;
-  z-index: 1;
+  z-index: var(--z-raised);
   top: var(--space-2);
   right: var(--space-2);
   border: var(--border-width-hairline) solid var(--border-subtle);

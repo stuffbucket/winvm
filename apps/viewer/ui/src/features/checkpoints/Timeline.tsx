@@ -7,6 +7,7 @@ import {
   useState,
 } from "react"
 
+import { PERCENT } from "../../constants"
 import { t } from "../../i18n"
 import { type Tick, tickAt } from "./checkpoints"
 
@@ -138,7 +139,7 @@ export function Timeline({
             data-kind={tick.kind}
             data-month={tick.month !== null}
             data-active={tick.key === active}
-            style={{ top: `${String(tick.at * 100)}%` }}
+            style={{ top: `${String(tick.at * PERCENT)}%` }}
             aria-hidden="true"
           >
             {tick.key === active && tick.kind === "day" ? (
@@ -156,7 +157,7 @@ export function Timeline({
         {hover !== null && hover.kind === "day" && (
           <span
             className="timeline__hover"
-            style={{ top: `${String(hover.at * 100)}%` }}
+            style={{ top: `${String(hover.at * PERCENT)}%` }}
             aria-hidden="true"
           >
             {hover.label}

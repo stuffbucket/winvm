@@ -7,6 +7,11 @@ import {
   useState,
 } from "react"
 
+import { px, spacing } from "../styles/theme"
+
+const EDGE = px(spacing[2])
+const ANCHOR_GAP = 6
+
 interface PopoverProps {
   readonly anchor: HTMLElement | null
   readonly label: string
@@ -30,8 +35,8 @@ export function Popover({
       if (anchor === null) return
       const r = anchor.getBoundingClientRect()
       setPlace({
-        top: r.bottom + 6,
-        right: Math.max(8, window.innerWidth - r.right - 8),
+        top: r.bottom + ANCHOR_GAP,
+        right: Math.max(EDGE, window.innerWidth - r.right - EDGE),
       })
     }
     measure()

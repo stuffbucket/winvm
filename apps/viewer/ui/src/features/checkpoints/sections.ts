@@ -4,11 +4,15 @@ import { titleProblem } from "../machines/machines"
 import { CAPTION_ROOM, type Moves } from "./checkpoints"
 
 export const GRID = 24
-export const MIN_W = 5 * GRID
-export const MIN_H = 4 * GRID
+const MIN_W_CELLS = 5
+const MIN_H_CELLS = 4
+export const MIN_W = MIN_W_CELLS * GRID
+export const MIN_H = MIN_H_CELLS * GRID
 export const GAP = 1 * GRID
 export const PAD = GRID / 2
 export const SECTION_NAME_MAX = 80
+const STEP_OUT_TRIES = 8
+const CLEAR_TRIES = 16
 
 export interface Section {
   readonly id: string
@@ -287,7 +291,7 @@ export interface Drawn {
 
 function stepOut(p: Point, keep: readonly Keepout[]): Point | null {
   let at = p
-  for (let i = 0; i < 8; i += 1) {
+  for (let i = 0; i < STEP_OUT_TRIES; i += 1) {
     const e = { l: at.x, t: at.y, r: at.x, b: at.y }
     const k = keep.find((x) => blocked(e, x))
     if (k === undefined) return at
@@ -407,7 +411,7 @@ function overlap(
 
 function clear(s: Section, keep: readonly Keepout[]): Section | null {
   let e = edgesOf(s)
-  for (let i = 0; i < 16; i += 1) {
+  for (let i = 0; i < CLEAR_TRIES; i += 1) {
     const o = overlap(e, keep)
     if (o === null) return { ...s, x: e.l, y: e.t, w: e.r - e.l, h: e.b - e.t }
     const least = Math.min(o.left, o.right, o.up, o.down)
@@ -418,7 +422,7 @@ function clear(s: Section, keep: readonly Keepout[]): Section | null {
     else e = { ...e, t: e.t + by, b: e.b + by }
   }
   e = edgesOf(s)
-  for (let i = 0; i < 16; i += 1) {
+  for (let i = 0; i < CLEAR_TRIES; i += 1) {
     const o = overlap(e, keep)
     if (o === null) return { ...s, x: e.l, y: e.t, w: e.r - e.l, h: e.b - e.t }
     const least = Math.min(o.left, o.right, o.up, o.down)

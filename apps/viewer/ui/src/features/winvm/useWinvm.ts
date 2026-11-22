@@ -10,6 +10,7 @@ import {
   outputText,
   winvm,
 } from "../../backend"
+import { MS_PER_MINUTE } from "../../constants"
 import type {
   Checks,
   ClosePolicy,
@@ -110,9 +111,10 @@ const POLL_MS = 4000
 const FAST_POLL_MS = 1500
 const SAFETY_MS = 60_000
 const NAMES_EVERY = 10
-const SETTLE_MS = 150
+const EVENT_REFRESH_DELAY_MS = 150
 const REPAIR_EVERY_MS = 60_000
-const REPAIR_LONGEST_MS = 30 * 60_000
+const REPAIR_LONGEST_MINUTES = 30
+const REPAIR_LONGEST_MS = REPAIR_LONGEST_MINUTES * MS_PER_MINUTE
 const SCREEN_RETRY_FIRST_MS = 1500
 const SCREEN_RETRY_LONGEST_MS = 15_000
 
@@ -370,7 +372,7 @@ export function useWinvm(): Winvm {
       setStreaming(true)
       if (signal.kind === "remount") remount(signal.instance)
       if (signal.kind === "changed" || signal.kind === "remount")
-        r.changed(signal.instance, SETTLE_MS)
+        r.changed(signal.instance, EVENT_REFRESH_DELAY_MS)
       else resync()
     })
     eventStreamUp().then(
@@ -399,7 +401,7 @@ export function useWinvm(): Winvm {
       }
       if (stopped) return
       if (first === null) {
-        timer = setTimeout(() => void ask(), 4000)
+        timer = setTimeout(() => void ask(), POLL_MS)
         return
       }
       setStatusError(null)

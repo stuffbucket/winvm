@@ -616,7 +616,7 @@ body {
   height: 100%;
   min-width: var(--border-width-heavy);
   background: var(--accent);
-  transition: width 120ms ease-out;
+  transition: width var(--duration-xs) ease-out;
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -629,7 +629,7 @@ body {
   position: fixed;
   top: 0;
   left: 0;
-  z-index: 20;
+  z-index: var(--z-overlay);
   display: flex;
   align-items: center;
   gap: var(--space-2);

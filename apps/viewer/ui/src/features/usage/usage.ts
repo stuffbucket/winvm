@@ -1,5 +1,12 @@
 import { z } from "zod"
 
+import {
+  BYTES_PER_GIB,
+  BYTES_PER_MIB,
+  MS_PER_SECOND,
+  PERCENT,
+} from "../../constants"
+
 const GuestStats = z.object({
   cpu: z.number().nullable().optional(),
   memory: z.object({ total: z.number(), available: z.number() }),
@@ -33,8 +40,6 @@ export interface Usage {
   readonly disk: Amount | null
 }
 
-const MiB = 1024 ** 2
-
 export function usageFrom(
   prev: Sample | null,
   cur: Sample,
@@ -42,7 +47,7 @@ export function usageFrom(
   memoryMiB: number | null,
 ): Usage {
   let macCpu: number | null = null
-  const seconds = prev === null ? 0 : (cur.atMs - prev.atMs) / 1000
+  const seconds = prev === null ? 0 : (cur.atMs - prev.atMs) / MS_PER_SECOND
   if (
     prev !== null &&
     prev.host !== null &&
@@ -52,7 +57,7 @@ export function usageFrom(
     seconds > 0
   ) {
     const busy = (cur.host.cpuSeconds - prev.host.cpuSeconds) / seconds / cpus
-    macCpu = Math.min(100, Math.max(0, busy * 100))
+    macCpu = Math.min(PERCENT, Math.max(0, busy * PERCENT))
   }
   const g = cur.guest
   const windowsCpu = g?.cpu ?? null
@@ -64,7 +69,11 @@ export function usageFrom(
           source: "windows",
         }
       : cur.host !== null && memoryMiB !== null
-        ? { used: cur.host.rssBytes, total: memoryMiB * MiB, source: "mac" }
+        ? {
+            used: cur.host.rssBytes,
+            total: memoryMiB * BYTES_PER_MIB,
+            source: "mac",
+          }
         : null
   const disk =
     g !== null && g.disk !== null && g.disk.total > 0
@@ -72,7 +81,7 @@ export function usageFrom(
       : null
   return windowsCpu !== null
     ? {
-        cpu: Math.min(100, Math.max(0, windowsCpu * 100)),
+        cpu: Math.min(PERCENT, Math.max(0, windowsCpu * PERCENT)),
         cpuSource: "windows",
         macCpu,
         memory,
@@ -90,12 +99,14 @@ export const pushHistory = (
   max = 40,
 ): number[] => (v === null ? [...h] : [...h, v].slice(-max))
 
-const GB = 1024 ** 3
+const ONE_DECIMAL_BELOW = 10
 
 export function formatGB(bytes: number): string {
-  const gb = bytes / GB
+  const gb = bytes / BYTES_PER_GIB
   const n =
-    gb >= 10 ? String(Math.round(gb)) : gb.toFixed(1).replace(/\.0$/, "")
+    gb >= ONE_DECIMAL_BELOW
+      ? String(Math.round(gb))
+      : gb.toFixed(1).replace(/\.0$/, "")
   return `${n} GB`
 }
 

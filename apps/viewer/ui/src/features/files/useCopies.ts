@@ -40,6 +40,8 @@ export interface Copies {
   dismiss: () => void
 }
 
+const RESULT_DISMISS_MS = 10_000
+
 const dirOf = (path: string): string =>
   path.slice(0, Math.max(1, path.lastIndexOf("/")))
 
@@ -293,7 +295,7 @@ export function useCopies(instance: string | null): Copies {
     if (result?.ok !== true) return
     const timer = setTimeout(() => {
       setResult(null)
-    }, 10_000)
+    }, RESULT_DISMISS_MS)
     return () => {
       clearTimeout(timer)
     }

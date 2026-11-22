@@ -194,6 +194,8 @@ export interface ZoomLabels {
   readonly reset: string
 }
 
+const PERCENT = 100
+
 export function SpatialCanvasZoomControls({
   zoom,
   labels,
@@ -218,7 +220,7 @@ export function SpatialCanvasZoomControls({
         title={labels.reset}
         onClick={onReset}
       >
-        {Math.round(zoom * 100)}%
+        {Math.round(zoom * PERCENT)}%
       </button>
       <CanvasIconButton label={labels.zoomIn} onClick={onZoomIn}>
         <CanvasGlyph>{GLYPHS.plus}</CanvasGlyph>

@@ -1,6 +1,8 @@
 import type { Point, Rect } from "@winvm/canvas"
 
+import { MS_PER_DAY } from "../../constants"
 import type { SaveEntry } from "../../model"
+import { px, spacing } from "../../styles/theme"
 
 export type Checkpoint = SaveEntry & {
   readonly protected?: boolean | undefined
@@ -19,7 +21,7 @@ export const canProtect = (c: Pick<Checkpoint, "kind" | "name">): boolean =>
 const CARD_WIDTH = 240
 const CARD_FRAME = 150
 const NOW_WIDTH = 440
-const COLUMN_GAP = 32
+const COLUMN_GAP = px(spacing[6])
 const LINE_GAP = 128
 export const DAY_GAP = 176
 const NOW_GAP = 144
@@ -29,6 +31,13 @@ export const DEPTH_MIN = 0.62
 const COLUMNS = 6
 
 export const LABEL_LIFT = 14
+const LABEL_HEIGHT = 44
+const LINK_SLACK = 0.5
+const DEFAULT_ASPECT = 1.6
+const OPENING_DAYS = 2
+const WEEK_DAYS = 7
+const SAVE_NAME_MAX = 64
+const SAVE_SLUG_MAX = 56
 
 export interface CardBox extends Rect {
   readonly name: string
@@ -90,7 +99,9 @@ export function layoutTimeline(
 
   const nowFrame = Math.round(
     NOW_WIDTH /
-      (Number.isFinite(nowAspect) && nowAspect > 0 ? nowAspect : 16 / 10),
+      (Number.isFinite(nowAspect) && nowAspect > 0
+        ? nowAspect
+        : DEFAULT_ASPECT),
   )
   const now = {
     x: -NOW_WIDTH / 2,
@@ -206,7 +217,7 @@ export function dayGroup(
       rect: { x: day.x, y: day.y, width: day.width, height: day.height },
       label: day.label,
     }
-  const link = LINE_GAP * day.scale + 0.5
+  const link = LINE_GAP * day.scale + LINK_SLACK
   const gap = (
     a: Rect,
     b: Rect,
@@ -242,9 +253,9 @@ export const withLabel = (
   d: Pick<DayBlock, "x" | "y" | "width" | "height" | "scale">,
 ): Rect => ({
   x: d.x,
-  y: d.y - 44 * d.scale,
+  y: d.y - LABEL_HEIGHT * d.scale,
   width: d.width,
-  height: d.height + 44 * d.scale,
+  height: d.height + LABEL_HEIGHT * d.scale,
 })
 
 export const frameOf = (box: Rect & { readonly frame: number }): Rect => ({
@@ -263,7 +274,7 @@ export function union(rects: readonly Rect[]): Rect {
 }
 
 export function openingView(layout: TimelineLayout): Rect {
-  const recent = layout.days.slice(-2)
+  const recent = layout.days.slice(-OPENING_DAYS)
   return union([layout.now, ...recent.map(withLabel)])
 }
 
@@ -284,13 +295,13 @@ export interface TickWords {
 }
 
 const daysBetween = (a: Date, b: Date): number =>
-  Math.round((midnight(b).getTime() - midnight(a).getTime()) / 86_400_000)
+  Math.round((midnight(b).getTime() - midnight(a).getTime()) / MS_PER_DAY)
 
 export function dayLabel(date: Date, now: Date, words: TickWords): string {
   const ago = daysBetween(date, now)
   if (ago === 0) return words.today
   if (ago === 1) return words.yesterday
-  if (ago > 1 && ago < 7)
+  if (ago > 1 && ago < WEEK_DAYS)
     return new Intl.DateTimeFormat(words.locale, { weekday: "long" }).format(
       date,
     )
@@ -427,7 +438,7 @@ export function noteOf(
 const SAVE_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]*$/
 
 export const validSaveName = (name: string): boolean =>
-  name.length > 0 && name.length <= 64 && SAVE_NAME.test(name)
+  name.length > 0 && name.length <= SAVE_NAME_MAX && SAVE_NAME.test(name)
 
 const timestampName = (d: Date): string =>
   `${String(d.getFullYear())}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}_${pad(d.getHours())}-${pad(d.getMinutes())}-${pad(d.getSeconds())}`
@@ -443,7 +454,7 @@ export function saveNameFor(
     .replace(/[^A-Za-z0-9._-]+/g, "-")
     .replace(/^[^A-Za-z0-9]+/, "")
     .replace(/-+$/, "")
-    .slice(0, 56)
+    .slice(0, SAVE_SLUG_MAX)
   const base = slug === "" || slug === "stow" ? timestampName(now) : slug
   if (!taken.has(base)) return base
   for (let n = 2; ; n += 1) {
