@@ -4,6 +4,7 @@ import { outputText, winvm } from "../../backend"
 import { Button } from "../../components/Button"
 import { Icon } from "../../components/Icon"
 import { OneLine } from "../../components/OneLine"
+import { COPIED_FEEDBACK_MS } from "../../constants"
 import { t } from "../../i18n"
 import type { ClaudeClient, ClaudeClientId, Share } from "../../model"
 import { parseClaudeChange, parseClaudeStatus } from "../../model"
@@ -45,7 +46,7 @@ function CopyRow({
         setCopied(true)
         setTimeout(() => {
           setCopied(false)
-        }, 1500)
+        }, COPIED_FEEDBACK_MS)
       })
       .catch(() => undefined)
   }

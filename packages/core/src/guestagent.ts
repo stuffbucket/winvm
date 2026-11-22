@@ -29,7 +29,7 @@ import type {
   WebSocketHandler,
 } from "bun"
 
-export const AGENT_VERSION = 12
+export const AGENT_VERSION = 14
 export const GUEST_PORT = 7801
 export const WINDOWS_DIR = "C:\\ProgramData\\winvm\\agent"
 
@@ -89,6 +89,24 @@ export interface AgentOptions {
 const isWin = process.platform === "win32"
 const POWERSHELL =
   "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe"
+
+export async function writeUpload(
+  path: string,
+  body: Request,
+): Promise<number> {
+  ensureDir(dirname(path))
+  const temp = join(
+    dirname(path),
+    `.winvm-${randomBytes(12).toString("hex")}.part`,
+  )
+  try {
+    const bytes = await Bun.write(temp, body as unknown as Response)
+    await rename(temp, path)
+    return bytes
+  } finally {
+    await rm(temp, { force: true })
+  }
+}
 
 function tokenReader(file: string): () => string | null {
   let cached: {
@@ -382,6 +400,7 @@ export interface DirEntry {
   readonly size: number | null
   readonly modified: number | null
   readonly hidden: boolean
+  readonly link?: true
 }
 
 export interface Place {
@@ -632,6 +651,7 @@ export async function listDir(
       size: e.dir || st === null ? null : Number(st.size),
       modified: st === null ? null : Math.round(Number(st.mtimeMs)),
       hidden: isHidden(e.name),
+      ...(linkDir.has(e.name) ? { link: true as const } : {}),
     }
   })
   const up = dirname(path)
@@ -1982,8 +2002,7 @@ export function startAgent(
               if (path === null || path === "")
                 return fail(400, "path required")
               const t0 = performance.now()
-              ensureDir(dirname(path))
-              const bytes = await Bun.write(path, req as unknown as Response)
+              const bytes = await writeUpload(path, req)
               return json({ bytes, ms: performance.now() - t0 })
             }
             case "GET /file": {
@@ -2237,18 +2256,112 @@ function flag(argv: readonly string[], name: string): string | undefined {
   return i >= 0 ? argv[i + 1] : undefined
 }
 
-async function supervise(argv: readonly string[]): Promise<never> {
-  let backoff = 1000
-  for (;;) {
-    const t0 = Date.now()
-    const p = Bun.spawn([process.execPath, import.meta.path, ...argv], {
-      stdio: ["ignore", "inherit", "inherit"],
+const EXIT_COULD_NOT_START = 2
+const STALE_LIMIT_MS = 10 * 60_000
+const BACKOFF_MAX_MS = 30_000
+
+function appendLog(file: string | undefined, line: string): void {
+  if (file === undefined) return
+  try {
+    appendFileSync(file, `${new Date().toISOString()} ${line}\n`)
+  } catch {}
+}
+
+export async function agentServes(
+  port: number,
+  token: string | null,
+  timeoutMs = 2000,
+): Promise<boolean> {
+  try {
+    const r = await fetch(`http://127.0.0.1:${String(port)}/health`, {
+      headers: token === null ? {} : { authorization: `Bearer ${token}` },
+      signal: AbortSignal.timeout(timeoutMs),
     })
-    const code = await p.exited
-    if (code === 0) process.exit(0)
-    backoff = Date.now() - t0 > 60_000 ? 1000 : Math.min(backoff * 2, 30_000)
-    await Bun.sleep(backoff)
+    const body = (await r.json()) as {
+      readonly ok?: unknown
+      readonly error?: unknown
+      readonly version?: unknown
+    }
+    if (r.status === 200)
+      return body.ok === true && typeof body.version === "number"
+    return (
+      (r.status === 401 && body.error === "unauthorized") ||
+      (r.status === 403 && body.error === "forbidden")
+    )
+  } catch {
+    return false
   }
+}
+
+export interface SuperviseHooks {
+  run(): Promise<number>
+  serves(): Promise<boolean>
+  sleep(ms: number): Promise<void>
+  now(): number
+  log(line: string): void
+}
+
+export async function superviseLoop(
+  h: SuperviseHooks,
+  port: number,
+  o: { readonly staleLimitMs?: number } = {},
+): Promise<number> {
+  const staleLimit = o.staleLimitMs ?? STALE_LIMIT_MS
+  let backoff = 1000
+  let staleSince: number | null = null
+  for (;;) {
+    const t0 = h.now()
+    const code = await h.run()
+    if (code === 0) return 0
+    if (code === EXIT_COULD_NOT_START) {
+      for (let i = 0; i < 3; i++) {
+        if (await h.serves()) {
+          h.log(`another agent already serves port ${String(port)}; exiting`)
+          return 0
+        }
+        if (i < 2) await h.sleep(500)
+      }
+      staleSince ??= t0
+      if (h.now() - staleSince >= staleLimit) {
+        h.log(
+          `port ${String(port)} is held but nothing answers; giving up (reinstall the agent, or end the process holding it)`,
+        )
+        return 1
+      }
+    } else {
+      staleSince = null
+    }
+    backoff =
+      h.now() - t0 > 60_000 ? 1000 : Math.min(backoff * 2, BACKOFF_MAX_MS)
+    await h.sleep(backoff)
+  }
+}
+
+async function supervise(argv: readonly string[]): Promise<never> {
+  const port = Number(flag(argv, "port") ?? GUEST_PORT)
+  const logFile = flag(argv, "log")
+  const readToken = tokenReader(
+    flag(argv, "token-file") ?? `${WINDOWS_DIR}\\token`,
+  )
+  process.exit(
+    await superviseLoop(
+      {
+        run: async () =>
+          await Bun.spawn([process.execPath, import.meta.path, ...argv], {
+            stdio: ["ignore", "inherit", "inherit"],
+          }).exited,
+        serves: async () => await agentServes(port, readToken()),
+        sleep: async (ms) => {
+          await Bun.sleep(ms)
+        },
+        now: () => Date.now(),
+        log: (line) => {
+          appendLog(logFile, line)
+        },
+      },
+      port,
+    ),
+  )
 }
 
 if (import.meta.main) {
@@ -2277,7 +2390,7 @@ if (import.meta.main) {
           logFile,
           `${new Date().toISOString()} could not start: ${String(error)}\n`,
         )
-      process.exit(2)
+      process.exit(EXIT_COULD_NOT_START)
     }
     if (argv.includes("--close-sysprep")) closeSysprep()
   }

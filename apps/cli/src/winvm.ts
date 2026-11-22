@@ -12,6 +12,7 @@ import {
   serviceUp,
 } from "@winvm/core/lifecycle"
 import * as machineinfo from "@winvm/core/machineinfo"
+import * as machinenote from "@winvm/core/machinenote"
 import * as mcpcmds from "@winvm/core/mcpcmds"
 import * as ocr from "@winvm/core/ocr"
 import * as opclient from "@winvm/core/opclient"
@@ -232,7 +233,7 @@ switch (sub ?? "") {
         : await viaService(serviceOp, () => goldens.golden(args))
     break
   case "saves":
-    exitCode = savecmds.list(args)
+    exitCode = await savecmds.savesCmd(args)
     break
   case "pause":
     exitCode = await viaService("pause", () => savecmds.pause(args))
@@ -251,6 +252,9 @@ switch (sub ?? "") {
     break
   case "settings":
     exitCode = settings.settingsCmd(args)
+    break
+  case "note":
+    exitCode = machinenote.noteCmd(args)
     break
   case "stow":
     exitCode = await viaService("stow", () => savecmds.stow(args))
@@ -287,7 +291,7 @@ switch (sub ?? "") {
     exitCode = commands.configCmd(args)
     break
   case "diagnose":
-    exitCode = commands.diagnoseCmd(args)
+    exitCode = await commands.diagnoseCmd(args)
     break
   case "setup":
     exitCode = await leased(() => commands.setup(args))

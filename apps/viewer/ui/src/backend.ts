@@ -1,3 +1,4 @@
+import { MS_PER_SECOND } from "./constants"
 import {
   connectArgs,
   type Endpoint,
@@ -12,6 +13,7 @@ import {
 } from "./features/terminal/shells"
 import { t } from "./i18n"
 import { type OpRecord, parseOpRecord } from "./model"
+import { type OsKind, osKind } from "./platform"
 
 type SidecarFailureKind = "missing" | "launch" | "timeout" | "exit"
 
@@ -111,7 +113,7 @@ function sidecarCopy(f: SidecarFailure): string {
     case "timeout":
       return t("sidecar.timeout", {
         operation: f.operation,
-        seconds: (f.timeoutMs ?? 0) / 1000,
+        seconds: (f.timeoutMs ?? 0) / MS_PER_SECOND,
       })
     case "exit":
       return failureText(f.stdout, f.stderr) || f.message
@@ -258,6 +260,14 @@ export const installedCli = (): Promise<string | null> =>
 export const openLink = (url: string): Promise<void> =>
   tauri().core.invoke<void>("open_link", { url })
 
+export const setMainMenuState = (
+  enabled: Record<string, boolean>,
+): Promise<void> =>
+  tauri().core.invoke<void>("set_main_menu_state", { enabled })
+
+export const setCheckpointPresentation = (enabled: boolean): Promise<void> =>
+  tauri().core.invoke<void>("set_checkpoint_presentation", { enabled })
+
 export const downloadsDir = (): Promise<string> =>
   tauri().core.invoke<string>("downloads_dir")
 
@@ -312,6 +322,22 @@ export const unusedPath = (
 
 export const revealInFinder = (path: string): Promise<void> =>
   tauri().core.invoke<void>("reveal", { path })
+
+const openFolder = (path: string): Promise<void> =>
+  tauri().core.invoke<void>("open_folder", { path })
+
+export async function showCheckpointInFinder(
+  instance: string,
+  name: string,
+): Promise<void> {
+  const out = await winvm("saves", "-i", instance, "path", name, "--json")
+  if (out.code !== 0)
+    throw new Error(
+      outputText(out) || `winvm saves path exited ${String(out.code)}`,
+    )
+  const { path } = JSON.parse(out.stdout) as { path: string }
+  await openFolder(path)
+}
 
 export interface AgentReply {
   readonly status: number
@@ -685,6 +711,15 @@ export const onDragOutEnd = (
     cb(e as { operation: "copy" | "none" })
   })
 
+export function dragPointToCss(
+  p: { readonly x: number; readonly y: number },
+  ratio: number,
+  os: OsKind,
+): { x: number; y: number } {
+  if (os === "macos" || !(ratio > 0)) return { x: p.x, y: p.y }
+  return { x: p.x / ratio, y: p.y / ratio }
+}
+
 export type HostDrag =
   | {
       readonly type: "enter"
@@ -707,7 +742,7 @@ export function onHostDrag(cb: (e: HostDrag) => void): Unlisten {
   ): { x: number; y: number } | null =>
     p === undefined
       ? null
-      : { x: p.x / window.devicePixelRatio, y: p.y / window.devicePixelRatio }
+      : dragPointToCss(p, window.devicePixelRatio, osKind())
   try {
     void tauri()
       .webview.getCurrentWebview()

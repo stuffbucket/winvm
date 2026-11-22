@@ -5,13 +5,14 @@ import type { ClosePolicy } from "./config"
 import { effectiveConfig } from "./config"
 import {
   describeDisplay,
+  displayFromCommandLine,
   readDisplay,
   runningCommand,
-  runningDisplay,
 } from "./display"
 import { readSince, START } from "./eventlog"
 import { drivesOwed } from "./finder"
 import { frozenFrom, markedAsleep } from "./frozen"
+import { readHardware } from "./hardware"
 import { type HostPoweredOff, hostPoweredOff, isDecision } from "./hostoff"
 import { keeperHint } from "./keeper"
 import {
@@ -362,40 +363,35 @@ export function parseHardware(argv: readonly string[]): {
   return { cpus, memoryMiB }
 }
 
-const psField = (pid: number, field: string): string =>
-  spawnText("ps", ["-ww", "-o", `${field}=`, "-p", String(pid)]).stdout.trim()
-
-function hardwareFor(
-  name: string,
+function hostProcess(
   p: Paths,
   pid: number | null,
-): Pick<InstanceStatus, "cpus" | "memoryMiB" | "screen"> {
+): Pick<InstanceStatus, "uptimeSeconds" | "cpus" | "memoryMiB" | "screen"> {
   if (pid !== null) {
-    const cmd = psField(pid, "command")
-    if (cmd !== "") {
-      const live = runningDisplay(pid)
+    const r = spawnText("ps", [
+      "-ww",
+      "-o",
+      "etime=,command=",
+      "-p",
+      String(pid),
+    ])
+    const fields = /^\s*(\S+)\s+(.+?)\s*$/.exec(r.stdout)
+    if (r.status === 0 && fields !== null) {
+      const command = fields[2] ?? ""
+      const live = displayFromCommandLine(command)
       return {
-        ...parseHardware(cmd.split(/\s+/)),
+        uptimeSeconds: parseEtime(fields[1] ?? ""),
+        ...parseHardware(command.split(/\s+/)),
         screen: live === null ? null : describeDisplay(live),
       }
     }
   }
-  const screen = describeDisplay(readDisplay(p))
-  const meta = readMeta(name)
-  if (meta === null) return { cpus: null, memoryMiB: null, screen }
-  try {
-    return {
-      ...parseHardware(
-        qemu.qemuArgs(name, p, meta, {
-          installMedia: false,
-          ephemeral: false,
-          virtioBoot: false,
-        }),
-      ),
-      screen,
-    }
-  } catch {
-    return { cpus: null, memoryMiB: null, screen }
+  const hw = readHardware(p)
+  return {
+    uptimeSeconds: null,
+    cpus: hw.cpus,
+    memoryMiB: hw.memoryMiB,
+    screen: describeDisplay(readDisplay(p)),
   }
 }
 
@@ -641,8 +637,7 @@ export async function gather(
     image: meta.image,
     snapshotsCapable: readImageMeta(meta.image)?.virtioBoot ?? null,
     pid,
-    uptimeSeconds: pid === null ? null : parseEtime(psField(pid, "etime")),
-    ...hardwareFor(name, p, pid),
+    ...hostProcess(p, pid),
     display: meta.vnc,
     vncPort: vncPort(meta.vnc),
     websocketPort: websocketPort(meta.vnc),

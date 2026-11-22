@@ -28,6 +28,14 @@ winvm prune                          # remove leftover build scratch instances
 winvm rmi <image>                    # remove a base image
 ```
 
+## Backend direction
+
+QEMU with Hypervisor.framework (HVF) remains the supported backend and the
+performance target. The Virtualization.framework (VZ) spike is deferred.
+HVF accelerates QEMU's vCPUs; QEMU still supplies the virtual devices and
+`swtpm` supplies TPM 2.0. Performance work should measure this path before
+changing devices: the QEMU command line is part of save compatibility.
+
 ## Dependencies
 
 | | |
@@ -175,7 +183,7 @@ directory under `$WINVM_HOME/saves/<instance>/<name>/`:
 
 | file | what |
 |---|---|
-| `manifest.json` | `{name, instance, kind: manual\|auto\|baseline\|stow\|golden, createdAt, bytes, compat, image, note?}` plus `compatParts`, `ramFile`, `ramBytes`, `saveMs`, `format` |
+| `manifest.json` | `{name, instance, kind: manual\|auto\|baseline\|stow\|golden, createdAt, bytes, compat, image, note?, protected?}` plus `compatParts`, `ramFile`, `ramBytes`, `saveMs`, `format` |
 | `vmstate.zst` | RAM and device state: a QEMU **migration stream**, `zstd -T0 -3` (`vmstate.mapped` or `vmstate.bin` for the other RAM formats in `saves.ts`) |
 | `overlay.qcow2`, `efi-vars.qcow2` | the instance's disk and NVRAM at that moment, as APFS clones (`cp -c`) |
 
@@ -202,6 +210,22 @@ explicitly.
 QEMU arguments with paths, ports, `-snapshot` and `-rtc` removed; the firmware
 code image; and the runtime's QEMU version and patch set. `load` refuses a
 mismatch and names the part that changed.
+
+**Protection.** `protected: true` is additive retention metadata, not part of
+`compat`. Old manifests without it remain unprotected. `saves protect` and
+`unprotect` atomically update only the manifest, under the same per-instance
+lifecycle lease as save, load and rotation, with no guest calls. Reclamation
+excludes protected saves and never counts them against `autosave.keep`.
+Rotation rechecks sampled victims after acquiring the lease, so a save protected
+in the meantime is retained. `saves rm` takes the lease too. Deletion requires
+unprotecting first or the explicit
+`saves rm --force`; replacement by save or clone always refuses a protected
+target. An unreadable manifest fails closed. Bulk destroy keeps all saves when
+any is protected or unreadable; prune skips such scratch instances. Stow cannot
+be protected because its one-shot consumption/supersession is part of start,
+load and reset. The app offers protection in checkpoint properties, and shows
+the existing zstd/mapped/raw memory format. New checkpoints choose zstd or
+mapped-ram at creation; no relabelling or offline conversion is attempted.
 
 **Baseline.** The first `start` of an instance saves `baseline`, but only after
 `qga.waitReady`, never during boot or OOBE, because of the livelock described
@@ -317,14 +341,17 @@ unit-tested; `watch.ts` does the I/O. Its rules, and why:
   (`operation.ts`, `lease.json`), marked as winvm's own work, followed by a
   clock sync, because the guest was stopped while it was saved. If any other
   command holds the lease, the round is skipped, so it never acts on the guest
-  beside a person's command. Rotation is an op of its own and deletes only kind
-  `auto`, oldest first, down to `autosave.keep`.
+  beside a person's command. Rotation is an op of its own and deletes only
+  unprotected kind `auto`, keeping the newest `autosave.keep` unprotected saves
+  plus every protected save. It rechecks each victim under the lease before
+  deletion.
 - **Stow is the same `stow` op a person's `winvm stow` runs**, marked as
   winvm's own work. `stow` and `stop` turn the watcher off first, except for the
   watcher's own stow.
 - **A `load` replaces QEMU.** The watcher follows the new process, moves
   `watching.json` to it and restarts its idle clock instead of stopping. It
-  stops only once QEMU is gone and no command holds the instance's lease. `load` and `rewind` count as activity. A
+  stops only once QEMU is gone and no command holds the instance's lease.
+  `load` and `rewind` count as activity. A
   save does not, or every autosave would trigger the next.
 - **`start` turns the watcher on after the first-boot baseline save**, so that
   save is not counted as use. An `--ephemeral` guest cannot be saved, so its
@@ -733,8 +760,6 @@ UTM's `utmctl` has the same verbs and is *not* used. It drives UTM.app over
 Apple Events, so it needs a logged-in Aqua session and an interactive TCC grant.
 Upstream's own error text says "utmctl does not work from SSH sessions or before
 logging in"; in practice it hangs silently or fails with `OSStatus -1712`.
-Apple's Virtualization.framework cannot run Windows at all, because it has no
-virtual TPM.
 
 `qemu-ga` on Windows ARM64 is the **x64 build, running under emulation**. UTM's
 installer has no ARM64 build of it. It works, but it is not native.

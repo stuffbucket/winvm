@@ -102,6 +102,9 @@ describe("manifest", () => {
     expect(() =>
       parseManifest(JSON.stringify({ ...good, format: "lz4" })),
     ).toThrow(/format/)
+    expect(() =>
+      parseManifest(JSON.stringify({ ...good, protected: "true" })),
+    ).toThrow(/protected/)
   })
   it("rejects a malformed display profile rather than launching different hardware", () => {
     for (const display of [
@@ -259,6 +262,15 @@ describe("compatibility", () => {
     expect(a).not.toContain("-rtc")
     expect(a).toContain("virt,accel=hvf")
   })
+  it("keeps existing saves compatible when VNC switches from JPEG to lossless", () => {
+    const args = argv("a", 1)
+    const vnc = args.indexOf("-vnc") + 1
+    const old = [...args]
+    old[vnc] = "127.0.0.1:1,websocket=127.0.0.1:5701,password=on,lossy=on"
+    const lossless = [...args]
+    lossless[vnc] = "127.0.0.1:1,websocket=127.0.0.1:5701,password=on,lossy=off"
+    expect(hardwareArgs(old)).toEqual(hardwareArgs(lossless))
+  })
   it("notices a hardware change", () => {
     const a = hardwareArgs(argv("a", 1))
     const more = argv("a", 1).map((x) => (x === "4096" ? "8192" : x))
@@ -399,6 +411,7 @@ describe("savesReport", () => {
   }
   const plain = {
     format: "zstd" as const,
+    protected: false,
     screenshot: null,
     thumbnail: null,
     title: null,
@@ -453,6 +466,18 @@ describe("savesReport", () => {
       compatible: null,
       note: "clean install",
       ...plain,
+    })
+  })
+
+  it("reports explicit protection without changing the saved format or compatibility", () => {
+    const [entry] = savesReport(
+      [{ name: m.name, manifest: { ...m, protected: true, format: "mapped" } }],
+      { compat: { hash: "abc", parts } },
+    )
+    expect(entry).toMatchObject({
+      protected: true,
+      format: "mapped",
+      compatible: true,
     })
   })
 

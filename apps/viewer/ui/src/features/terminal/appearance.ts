@@ -6,7 +6,7 @@ import {
 } from "@winvm/terminal"
 import { useEffect, useState } from "react"
 
-import { fontStacks, text, themes } from "../../styles/theme"
+import { fontStacks, rem, text, themes, weight } from "../../styles/theme"
 
 export function terminalTheme(dark: boolean): TerminalTheme {
   const c = dark ? themes.dark : themes.light
@@ -27,13 +27,14 @@ export function terminalTheme(dark: boolean): TerminalTheme {
   }
 }
 
-const PX_PER_REM = 16
-const PT_PER_PX = 72 / 96
+const POINTS_PER_INCH = 72
+const CSS_PX_PER_INCH = 96
+const PT_PER_PX = POINTS_PER_INCH / CSS_PX_PER_INCH
 
 export const terminalTypography: TerminalTypography = {
   fontFamily: fontStacks.mono,
-  fontSize: Number.parseFloat(text.sm) * PX_PER_REM * PT_PER_PX,
-  fontWeight: 400,
+  fontSize: rem(text.sm) * PT_PER_PX,
+  fontWeight: Number(weight.base),
   fontVariations: {},
   cellHeight: 10,
   tracking: 0,

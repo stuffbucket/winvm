@@ -144,6 +144,18 @@
       ]),
     },
     {
+      name: "before-qemu-upgrade",
+      kind: "manual",
+      createdAt: at(1, 12, 5),
+      bytes: 8.7 * GiB,
+      compatible: false,
+      incompatible: ["qemu"],
+      format: "zstd",
+      ...pics("before-qemu-upgrade"),
+      title: "Before the QEMU upgrade",
+      notes: null,
+    },
+    {
       name: "vs-code-setup",
       kind: "manual",
       createdAt: at(0, 9, 12),
@@ -194,23 +206,99 @@
     })
   }
 
+  const query = new URLSearchParams(location.search)
+  const state = query.get("state") ?? "running"
+  if (state === "stowed") {
+    saves.push({
+      name: "stow",
+      kind: "stow",
+      createdAt: at(0, 13, 40),
+      bytes: 9.2 * GiB,
+      compatible: true,
+      format: "zstd",
+      ...pics("stow"),
+      title: null,
+      notes: null,
+      incompatible: [],
+    })
+  }
+  if (query.get("pictures") === "none")
+    saves = saves.map((s) => ({ ...s, screenshot: null, thumbnail: null }))
+  let machineNote = query.get("note")
+
   const status = {
     name: "canvas-test",
     title: "Work PC",
-    state: "running",
-    vmStatus: "running",
+    state,
+    vmStatus: state === "stowed" ? "stopped" : "running",
     image: "win11-arm64",
     pid: 4242,
     uptimeSeconds: 5400,
     cpus: 4,
     memoryMiB: 8192,
     screen: "virtio-gpu 1920x1200",
-    overlayBytes: 9.1 * GiB,
-    guest: { agent: "ok", agentVersion: "1.0", os: "Windows 11" },
+    overlayBytes:
+      query.get("overlay") === "none"
+        ? null
+        : Number(query.get("overlay") ?? "9.1") * GiB,
+    guest: {
+      agent: query.get("agent") ?? "ok",
+      agentVersion: "1.0",
+      os: "Windows 11",
+    },
     saves: { count: saves.length, bytes: 80 * GiB },
     notes: [],
   }
+
+  let reads = 0
+  let macSeconds = 0
+  const usageMode = query.get("usage") ?? "windows"
+  function usage() {
+    reads += 1
+    const t = reads
+    const windowsCpu = Math.min(
+      0.95,
+      Math.max(
+        0,
+        0.12 +
+          0.1 * Math.sin(t / 3) +
+          0.05 * Math.sin(t * 1.7) +
+          (t % 17 === 0 ? 0.3 : 0),
+      ),
+    )
+    const macCpu = Math.min(
+      0.98,
+      windowsCpu * 1.6 + 0.07 + 0.03 * Math.sin(t / 2),
+    )
+    macSeconds += macCpu * 4 * 2.5
+    return {
+      atMs: t * 2500,
+      host: { cpuSeconds: macSeconds, rssBytes: 3 * GiB },
+      guest:
+        usageMode === "mac"
+          ? null
+          : {
+              cpu: windowsCpu,
+              memory: {
+                total: 4 * GiB,
+                available: (1.1 + 0.05 * Math.sin(t / 5)) * GiB,
+              },
+              disk: { path: "C:", total: 63 * GiB, free: 51 * GiB },
+            },
+      guestError: usageMode === "mac" ? "no agent" : null,
+    }
+  }
   const settings = {}
+  const policy = {
+    "autosave.enabled": true,
+    "autosave.idleMinutes": 10,
+    "autosave.keep": 3,
+    "stow.enabled": true,
+    "stow.idleMinutes": 60,
+    "watch.enabled": true,
+    "power.keepAwake": false,
+  }
+  const hardware = { cpus: 4, memoryMiB: 8192 }
   const out = (stdout, code = 0) => ({
     code,
     stdout: typeof stdout === "string" ? stdout : JSON.stringify(stdout),
@@ -224,16 +312,96 @@
 
   async function run(args) {
     const [verb, ...rest] = args
-    if (verb === "status") return out(status)
+    if (verb === "status") {
+      const target = rest[rest.indexOf("-i") + 1]
+      const more = (query.get("machines") ?? "")
+        .split(",")
+        .filter(Boolean)
+        .map((m) => {
+          const [name, st] = m.split(":")
+          return {
+            ...status,
+            name,
+            title: null,
+            state: st,
+            vmStatus:
+              st === "stowed" || st === "stopped" ? "stopped" : "running",
+          }
+        })
+      if (rest.includes("-i"))
+        return out([status, ...more].find((s) => s.name === target) ?? status)
+      return out(more.length === 0 ? status : { instances: [status, ...more] })
+    }
+    if (verb === "info")
+      return out({
+        name: status.name,
+        running: state === "running",
+        hardware: {
+          running: state === "running" ? { cpus: 4, memoryMiB: 8192 } : null,
+          next: hardware,
+          limits: {
+            cpus: { min: 2, max: 12 },
+            memoryMiB: { min: 4096, max: 32768, step: 1024 },
+          },
+          diskBytes: 64 * GiB,
+        },
+        network: {
+          mode: "user",
+          label: "Shared NAT",
+          guest: "10.0.2.15",
+          gateway: "10.0.2.2",
+          dns: "10.0.2.3",
+          windows: null,
+          forwards: [],
+          listeners: [],
+        },
+      })
+    if (verb === "config") {
+      for (const arg of rest) {
+        const [key, value] = arg.split("=")
+        if (Object.hasOwn(policy, key))
+          policy[key] =
+            value === "true" ? true : value === "false" ? false : Number(value)
+        if (key === "cpus") hardware.cpus = Number(value)
+        if (key === "memory") hardware.memoryMiB = Number(value)
+      }
+      window.__policyWrites = [
+        ...(window.__policyWrites ?? []),
+        rest.filter((v) => v.includes("=")),
+      ].filter((v) => v.length > 0)
+      const set = rest.find((a) => a.startsWith("title="))
+      if (query.get("renamefail") === "1")
+        return out("config.json is read-only", 1)
+      if (set !== undefined) {
+        status.title = set.slice("title=".length) || null
+        window.__titleWrites = [...(window.__titleWrites ?? []), set]
+      }
+      return out(rest.includes("--json") ? policy : "")
+    }
     if (verb === "settings" && rest[0] === "--section") {
       const set = rest.find((a) => a.startsWith("--set="))
       if (set !== undefined)
         settings[rest[1]] = JSON.parse(set.slice("--set=".length))
       return out(settings[rest[1]] ?? null)
     }
+    if (verb === "note") {
+      const text = flag(rest, "text")
+      if (text !== undefined) {
+        machineNote = text.trim() === "" ? null : text
+        window.__noteWrites = [...(window.__noteWrites ?? []), text]
+      }
+      return out(
+        machineNote === null
+          ? null
+          : { text: machineNote, updatedAt: new Date().toISOString() },
+      )
+    }
     if (verb === "doctor")
       return out({ ready: true, checks: [], timeMachine: "ok" })
-    if (verb === "open") return out("no screen in the fake", 1)
+    if (verb === "open")
+      return query.get("screen") === "1"
+        ? out({ display: 0, vncPort: 5900, websocketPort: 1, password: "x" })
+        : out("no screen in the fake", 1)
     if (verb === "saves" && rest.includes("note")) {
       const name =
         rest[rest.indexOf("note") + 1] === "-i"
@@ -250,6 +418,12 @@
       s.notes = n
       s.title = n.title
       return out(n)
+    }
+    if (verb === "saves" && rest.includes("path")) {
+      const name = rest[rest.indexOf("path") + 1]
+      return saves.some((x) => x.name === name)
+        ? out({ path: `${home}/${name}` })
+        : out("", 1)
     }
     if (verb === "saves" && rest.includes("rm")) {
       const name = rest[rest.indexOf("rm") + 1]
@@ -376,10 +550,26 @@
       async invoke(cmd, args = {}) {
         if (cmd === "winvm") return await run(args.args)
         if (cmd === "checkpoint_image") return await picture(args.path)
-        if (cmd === "instance_usage")
-          return { cpuSeconds: 1, rssKiB: 1, windows: null }
+        if (cmd === "instance_usage") return usage()
         if (cmd === "agent_fetch") throw new Error("no agent in the fake")
-        if (cmd === "trace") return null
+        if (cmd === "trace" || cmd === "set_system_keyboard_capture")
+          return null
+        if (cmd === "set_main_menu_state") {
+          window.__menuEnabled = args.enabled
+          return null
+        }
+        if (cmd === "set_checkpoint_presentation") {
+          window.__presentation = args.enabled
+          window.__presentationCalls = [
+            ...(window.__presentationCalls ?? []),
+            args.enabled,
+          ]
+          return null
+        }
+        if (cmd === "open_folder") {
+          window.__opened = [...(window.__opened ?? []), args.path]
+          return null
+        }
         throw new Error(`fake tauri: ${cmd}`)
       },
     },
@@ -405,7 +595,9 @@
     },
   }
   window.__fakeMenu = (id) => listeners.get("menu")?.({ payload: id })
+  window.__fakeCount = () => saves.length
 
+  window.__paintDesktop = paintDesktop
   window.__fakeScreen = () => {
     const display = document.querySelector(".display")
     if (display === null) return false

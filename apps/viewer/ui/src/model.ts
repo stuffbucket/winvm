@@ -1,5 +1,14 @@
 import { z } from "zod"
 
+import {
+  BYTES_PER_GIB,
+  BYTES_PER_MIB,
+  HOURS_PER_DAY,
+  MIB_PER_GIB,
+  MINUTES_PER_HOUR,
+  SECONDS_PER_MINUTE,
+} from "./constants"
+
 const Guest = z.object({
   agent: z.enum(["ok", "silent"]),
   agentVersion: z.string().nullable(),
@@ -233,24 +242,22 @@ export function terminalBlocked(p: Phase, busy: boolean): string | null {
   return busy ? "terminal.why.busy" : null
 }
 
-const GiB = 1024 ** 3
-
 export const formatSize = (bytes: number): string =>
-  bytes < GiB
-    ? `${String(Math.round(bytes / 1024 ** 2))} MiB`
-    : `${(bytes / GiB).toFixed(1)} GiB`
+  bytes < BYTES_PER_GIB
+    ? `${String(Math.round(bytes / BYTES_PER_MIB))} MiB`
+    : `${(bytes / BYTES_PER_GIB).toFixed(1)} GiB`
 
 function formatMemory(mib: number): string {
-  const gib = mib / 1024
+  const gib = mib / MIB_PER_GIB
   return Number.isInteger(gib) ? `${String(gib)} GiB` : `${String(mib)} MiB`
 }
 
 function formatDuration(seconds: number): string {
-  const m = Math.floor(seconds / 60)
-  const h = Math.floor(m / 60)
-  const d = Math.floor(h / 24)
-  if (d > 0) return `${String(d)} d ${String(h % 24)} h`
-  if (h > 0) return `${String(h)} h ${String(m % 60)} min`
+  const m = Math.floor(seconds / SECONDS_PER_MINUTE)
+  const h = Math.floor(m / MINUTES_PER_HOUR)
+  const d = Math.floor(h / HOURS_PER_DAY)
+  if (d > 0) return `${String(d)} d ${String(h % HOURS_PER_DAY)} h`
+  if (h > 0) return `${String(h)} h ${String(m % MINUTES_PER_HOUR)} min`
   if (m > 0) return `${String(m)} min`
   return `${String(Math.floor(seconds))} s`
 }
@@ -366,6 +373,7 @@ const SaveEntry = z.object({
   compatible: z.boolean().nullable(),
   note: z.string().optional(),
   format: z.string().optional(),
+  protected: z.boolean().optional(),
   screenshot: z.string().nullable().default(null),
   thumbnail: z.string().nullable().default(null),
   screenSize: z.object({ width: z.number(), height: z.number() }).optional(),

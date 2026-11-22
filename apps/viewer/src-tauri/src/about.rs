@@ -3,8 +3,6 @@ use tauri::{Manager, Url, WebviewUrl, WebviewWindowBuilder};
 
 const MENU_ID: &str = "about";
 const LABEL: &str = "about";
-const WIDTH: f64 = 680.0;
-const HEIGHT: f64 = 360.0;
 
 const LINKS: &[&str] = &[
     "https://stuffbucket.github.io/winvm/",
@@ -56,7 +54,7 @@ pub fn show(app: &tauri::AppHandle) {
     );
     let mut builder = WebviewWindowBuilder::new(app, LABEL, WebviewUrl::App(url.into()))
         .title(format!("About {name}"))
-        .inner_size(WIDTH, HEIGHT)
+        .inner_size(crate::windows::ABOUT.width, crate::windows::ABOUT.height)
         .resizable(false)
         .minimizable(false)
         .maximizable(false)

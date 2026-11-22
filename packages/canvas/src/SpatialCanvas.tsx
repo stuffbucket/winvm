@@ -36,9 +36,15 @@ export function SpatialCanvas({
   )
 }
 
+const GRID_BASE_SPACING = 16
+const GRID_SPACING_SWING = 4
+const GRID_ZOOM_RESPONSE = 0.35
+
 export function gridStyle({ x, y, zoom }: Camera): CSSProperties {
   const spacing =
-    16 + 4 * Math.tanh(Math.log(Math.max(zoom, Number.EPSILON)) * 0.35)
+    GRID_BASE_SPACING +
+    GRID_SPACING_SWING *
+      Math.tanh(Math.log(Math.max(zoom, Number.EPSILON)) * GRID_ZOOM_RESPONSE)
   const offset = (translation: number): number =>
     ((translation % spacing) + spacing) % spacing
   return {

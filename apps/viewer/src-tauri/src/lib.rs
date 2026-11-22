@@ -8,6 +8,7 @@ mod liveresize;
 mod sidecar;
 pub mod terminate;
 mod usage;
+mod windows;
 
 use serde::{Deserialize, Serialize};
 use sidecar::{Finished, Output, SidecarFailure};
@@ -60,6 +61,7 @@ const VERBS: &[&str] = &[
     "settings",
     "files",
     "share",
+    "note",
     "events",
     "reconcile",
     "version",
@@ -300,32 +302,49 @@ fn show_terminal(app: &tauri::AppHandle) -> Result<(), String> {
     let mut builder =
         WebviewWindowBuilder::new(app, TERMINAL, WebviewUrl::App("terminal.html".into()))
             .title("Terminal")
-            .inner_size(820.0, 520.0)
-            .min_inner_size(420.0, 240.0)
+            .inner_size(windows::TERMINAL.width, windows::TERMINAL.height)
+            .min_inner_size(windows::TERMINAL.min_width, windows::TERMINAL.min_height)
             .visible(false);
     #[cfg(target_os = "macos")]
     {
         builder = builder
             .title_bar_style(tauri::TitleBarStyle::Overlay)
             .hidden_title(true)
-            .traffic_light_position(tauri::LogicalPosition::new(18.0, 26.0));
+            .traffic_light_position(tauri::LogicalPosition::new(
+                windows::TRAFFIC_LIGHTS.0,
+                windows::TRAFFIC_LIGHTS.1,
+            ));
     }
-    if let Some((x, y)) = beside_main(app, 820.0) {
+    if let Some((x, y)) = beside_main(app, windows::TERMINAL) {
         builder = builder.position(x, y);
     }
     builder.build().map(|_| ()).map_err(|e| e.to_string())
 }
 
-fn beside_main(app: &tauri::AppHandle, width: f64) -> Option<(f64, f64)> {
+fn beside_main(app: &tauri::AppHandle, spec: windows::Spec) -> Option<(f64, f64)> {
     let main = app.get_webview_window("main")?;
-    let scale = main.scale_factor().ok()?;
+    let monitor = main.current_monitor().ok()??;
+    let scale = monitor.scale_factor();
     let at = main.outer_position().ok()?.to_logical::<f64>(scale);
     let size = main.outer_size().ok()?.to_logical::<f64>(scale);
-    let monitor = main.current_monitor().ok()??;
-    let screen_at = monitor.position().to_logical::<f64>(scale);
-    let screen = monitor.size().to_logical::<f64>(scale);
-    let x = at.x + size.width + 8.0;
-    (x + width <= screen_at.x + screen.width).then_some((x, at.y))
+    let area = monitor.work_area();
+    let screen_at = area.position.to_logical::<f64>(scale);
+    let screen = area.size.to_logical::<f64>(scale);
+    windows::beside(
+        windows::Rect {
+            x: at.x,
+            y: at.y,
+            width: size.width,
+            height: size.height,
+        },
+        windows::Rect {
+            x: screen_at.x,
+            y: screen_at.y,
+            width: screen.width,
+            height: screen.height,
+        },
+        spec,
+    )
 }
 
 #[tauri::command]
@@ -410,17 +429,20 @@ async fn files_open(
     );
     let mut builder = WebviewWindowBuilder::new(&app, &label, WebviewUrl::App(url.into()))
         .title(format!("Files in Windows — {shown}"))
-        .inner_size(920.0, 560.0)
-        .min_inner_size(560.0, 340.0)
+        .inner_size(windows::FILES.width, windows::FILES.height)
+        .min_inner_size(windows::FILES.min_width, windows::FILES.min_height)
         .visible(false);
     #[cfg(target_os = "macos")]
     {
         builder = builder
             .title_bar_style(tauri::TitleBarStyle::Overlay)
             .hidden_title(true)
-            .traffic_light_position(tauri::LogicalPosition::new(18.0, 26.0));
+            .traffic_light_position(tauri::LogicalPosition::new(
+                windows::TRAFFIC_LIGHTS.0,
+                windows::TRAFFIC_LIGHTS.1,
+            ));
     }
-    if let Some((x, y)) = beside_main(&app, 920.0) {
+    if let Some((x, y)) = beside_main(&app, windows::FILES) {
         builder = builder.position(x, y);
     } else {
         builder = builder.center();
@@ -502,6 +524,20 @@ fn reveal(path: &str) -> Result<(), String> {
 
 fn cli_link(home: &Path) -> std::path::PathBuf {
     home.join(".local").join("bin").join("winvm")
+}
+
+#[tauri::command]
+fn open_folder(path: &str) -> Result<(), String> {
+    let dir = Path::new(path);
+    if !dir.is_absolute() || !dir.is_dir() {
+        return Err(format!("not a folder: {path}"));
+    }
+    std::process::Command::new("/usr/bin/open")
+        .arg("--")
+        .arg(dir)
+        .status()
+        .map_err(|e| e.to_string())?;
+    Ok(())
 }
 
 #[tauri::command]
@@ -596,6 +632,93 @@ fn check_for_update(app: tauri::AppHandle, asked: bool) {
     });
 }
 
+const MACHINE_ACTIONS: &[(&str, &str)] = &[
+    ("vm-choose", "Choose Machine…"),
+    ("vm-new", "New Machine…"),
+    ("vm-delete", "Delete Machine…"),
+    ("vm-start", "Start / Recall"),
+    ("vm-stop", "Shut Down…"),
+    ("vm-reboot", "Restart…"),
+    ("vm-pause", "Pause"),
+    ("vm-resume", "Resume / Wake"),
+    ("vm-sleep", "Sleep"),
+    ("vm-lock", "Lock Windows"),
+    ("vm-save", "Take a Checkpoint Now"),
+    ("vm-files", "Files in Windows…"),
+    ("vm-files-menu", "Windows Folders in Finder…"),
+    ("vm-shells", "Terminal Shells and Folders…"),
+    ("vm-share", "Use with Claude…"),
+    ("vm-kill", "Force Stop…"),
+];
+const VIEW_ACTIONS: &[(&str, &str)] = &[
+    ("view-actual-size", "Actual Size / Fit"),
+    ("view-screen-sharing", "Open in Screen Sharing"),
+    ("view-details", "Show / Hide Details"),
+    ("view-pause-overlay", "Show / Hide Pause Overlay"),
+];
+
+#[derive(Default)]
+struct CheckpointPresentation(Mutex<bool>);
+
+#[tauri::command]
+async fn set_checkpoint_presentation(
+    window: tauri::WebviewWindow,
+    state: tauri::State<'_, CheckpointPresentation>,
+    enabled: bool,
+) -> Result<(), String> {
+    if window.label() != "main" {
+        return Err("checkpoint presentation belongs to the main window".into());
+    }
+    let mut entered = state.0.lock().map_err(|e| e.to_string())?;
+    if enabled {
+        if !*entered && !window.is_fullscreen().map_err(|e| e.to_string())? {
+            window
+                .set_simple_fullscreen(true)
+                .map_err(|e| e.to_string())?;
+            *entered = true;
+        }
+    } else if *entered {
+        window
+            .set_simple_fullscreen(false)
+            .map_err(|e| e.to_string())?;
+        *entered = false;
+    }
+    Ok(())
+}
+
+#[tauri::command]
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "tauri injects the AppHandle by value; a command cannot take a reference to it"
+)]
+fn set_main_menu_state(
+    app: tauri::AppHandle,
+    enabled: std::collections::HashMap<String, bool>,
+) -> tauri::Result<()> {
+    if let Some(menu) = app.menu() {
+        for (id, on) in enabled {
+            let known = MACHINE_ACTIONS
+                .iter()
+                .chain(VIEW_ACTIONS)
+                .any(|(key, _)| *key == id)
+                || matches!(
+                    id.as_str(),
+                    "settings"
+                        | "capture-keyboard"
+                        | "release-keyboard"
+                        | "send-windows-key"
+                        | "send-ctrl-alt-delete"
+                );
+            if known {
+                if let Some(item) = menu.get(&id).and_then(|i| i.as_menuitem().cloned()) {
+                    item.set_enabled(on)?;
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
 fn input_menu(app: &tauri::AppHandle) -> tauri::Result<Submenu<tauri::Wry>> {
     let capture = MenuItem::with_id(
         app,
@@ -638,6 +761,20 @@ fn input_menu(app: &tauri::AppHandle) -> tauri::Result<Submenu<tauri::Wry>> {
             &release,
         ],
     )
+}
+
+fn insert_action_menus(app: &tauri::AppHandle, menu: &Menu<tauri::Wry>) -> tauri::Result<()> {
+    for (title, actions) in [("Machine", MACHINE_ACTIONS), ("View", VIEW_ACTIONS)] {
+        let submenu = Submenu::new(app, title, true)?;
+        for (id, label) in actions {
+            if matches!(*id, "vm-start" | "vm-save" | "vm-kill") {
+                submenu.append(&PredefinedMenuItem::separator(app)?)?;
+            }
+            submenu.append(&MenuItem::with_id(app, *id, *label, false, None::<&str>)?)?;
+        }
+        menu.insert(&submenu, menu.items()?.len().saturating_sub(2))?;
+    }
+    Ok(())
 }
 
 fn menu(app: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
@@ -705,6 +842,7 @@ fn menu(app: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
         true,
         Some("CmdOrCtrl+Shift+/"),
     )?;
+    insert_action_menus(app, &menu)?;
     let input = input_menu(app)?;
     let input_index = menu.items()?.len().saturating_sub(2);
     menu.insert(&input, input_index)?;
@@ -726,8 +864,11 @@ fn menu(app: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
                 Some("CmdOrCtrl+Q"),
             )?)?;
         }
-        app_menu.insert_items(&[&install, &PredefinedMenuItem::separator(app)?], 2)?;
+        app_menu.insert(&install, 1)?;
         app_menu.insert(&updates, 1)?;
+        let settings = MenuItem::with_id(app, "settings", "Settings…", true, Some("CmdOrCtrl+,"))?;
+        app_menu.insert(&settings, 4)?;
+        app_menu.insert(&PredefinedMenuItem::separator(app)?, 5)?;
     }
     if let Some(help) = menu
         .get(HELP_SUBMENU_ID)
@@ -825,13 +966,17 @@ fn handle_menu(app: &tauri::AppHandle, event: &tauri::menu::MenuEvent) {
                 let _ = app.emit_to("main", "menu", "rename-window");
             }
         }
-    } else if id == "checkpoints" {
+    } else if id == "checkpoints"
+        || id == "settings"
+        || id.starts_with("vm-")
+        || id.starts_with("view-")
+    {
         if let Some(main) = app.get_webview_window("main") {
             let _ = main.unminimize();
             let _ = main.show();
             let _ = main.set_focus();
         }
-        let _ = app.emit_to("main", "menu", "checkpoints");
+        let _ = app.emit_to("main", "menu", id);
     } else if id == "check-updates" {
         check_for_update(app.clone(), true);
     } else if about::is_menu(id) {
@@ -852,6 +997,7 @@ pub fn run() {
         .manage(Updating::default())
         .manage(close::CloseCoordinator::default())
         .manage(TerminalRequests::default())
+        .manage(CheckpointPresentation::default())
         .manage(agent::Agents::default())
         .manage(events::AppStream::default())
         .menu(menu)
@@ -901,6 +1047,7 @@ pub fn run() {
             downloads_dir,
             unused_path,
             reveal,
+            open_folder,
             terminal_open,
             terminal_take,
             agent::agent_fetch,
@@ -922,6 +1069,8 @@ pub fn run() {
             close::close_forget,
             close::close_cancel,
             close::close_complete,
+            set_main_menu_state,
+            set_checkpoint_presentation,
             events::events_state
         ])
         .build(tauri::generate_context!())

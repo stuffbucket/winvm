@@ -32,6 +32,7 @@ interface Session {
 }
 
 const OPEN = 1
+const NORMAL_CLOSURE = 1000
 
 export function sizedUrl(url: string, cols: number, rows: number): string {
   const u = new URL(url)
@@ -196,7 +197,7 @@ export function createSocketTransport(
       sessions.delete(id)
       const socket = s.socket
       s.socket = null
-      socket?.close(1000)
+      socket?.close(NORMAL_CLOSURE)
       return Promise.resolve()
     },
 

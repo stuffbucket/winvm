@@ -13,6 +13,12 @@ monitor; commands and files go through the [in-guest agent](agent.md).
 
 ## Claude Code and Claude Desktop
 
+**Use local MCP, not the CUA HTTP address.** `winvm mcp` speaks JSON-RPC 2.0
+with newline-delimited UTF-8 messages over stdin/stdout. Claude Desktop
+launches the server as a local subprocess on the Mac; no listening port or
+CUA bearer token is needed. The HTTP endpoint under **Other agents** is a
+different protocol for custom agent code, not an MCP connector URL.
+
 In the app, choose **Use with Claude** in the toolbar and click **Add** next
 to Claude Code or Claude Desktop. From a terminal:
 
@@ -55,6 +61,29 @@ To start the server by hand, for another MCP client:
 ```sh
 winvm mcp -i demo     # MCP over stdio; logs go to stderr
 ```
+
+### Why a Claude Desktop URL connector cannot reach it
+
+Claude Desktop's **remote/custom connectors** connect from Anthropic's cloud,
+not from the Mac, even when the Desktop app is local. `127.0.0.1` in that
+context is not the Mac's loopback interface. winvm's CUA server deliberately
+listens only on the Mac's loopback interface. There is also a protocol
+mismatch: it is HTTP + JSON, not MCP over Streamable HTTP. A tunnel alone
+would not make it an MCP server.
+
+Use the local MCP integration above for a normal Claude Desktop chat. An
+agent running inside a separate VM or container is another network context;
+do not assume its `localhost` reaches the Mac either. Nothing here changes
+the HTTP bind address or exposes control of Windows to the network.
+
+References:
+
+- [Claude: custom connectors using remote MCP](https://support.claude.com/en/articles/11175166-get-started-with-custom-connectors-using-remote-mcp)
+  explains where remote connections originate and distinguishes local MCP.
+- [MCP: connect local servers](https://modelcontextprotocol.io/docs/2026-07-28/develop/connect-local-servers)
+  covers Claude Desktop's local server configuration and restart steps.
+- [MCP transport specification](https://modelcontextprotocol.io/specification/2025-11-25/basic/transports)
+  defines stdio and Streamable HTTP; a REST endpoint is not automatically MCP.
 
 ### The tools
 
@@ -130,11 +159,42 @@ winvm cua serve -i ui [--port N] [--size WxH]    # also: winvm cua-serve
 In the app, **Use with Claude** > **Other agents** starts and stops it and
 shows the address and token.
 
-The server listens on 127.0.0.1 only. It prints a random bearer token, and
-writes the token, URL and process ID to `<instance>/cua.json` (mode 0600).
-The file is removed when the server stops. Every request must send
-`Authorization: Bearer <token>`. Requests run one at a time, in the order
-they arrive.
+This is a custom **HTTP + JSON request/response API**, not MCP, an Anthropic
+Messages API endpoint, a WebSocket, or an SSE stream. It runs on the Mac
+host, not inside Windows. Your agent code owns the model/tool loop and
+forwards computer actions to these routes.
+
+The server listens on `127.0.0.1` only, over plain HTTP, with no bind-address
+option. By default `--port` is `0`, so the OS chooses a free port; the app
+also uses that default. Read the printed address rather than assuming a
+fixed port. `--port 8765` requests a fixed one.
+
+It prints a fresh random bearer token for each server run and writes the
+token, URL and process ID to `<instance>/cua.json` (mode 0600). The file is
+removed when the server stops. Every request must send
+`Authorization: Bearer <token>`; this is not OAuth. Requests run one at a
+time, in the order they arrive.
+
+For example, with an existing, running instance named `dev-cua`:
+
+```sh
+winvm cua serve -i dev-cua --port 8765
+```
+
+In another terminal, set `CUA_TOKEN` to the token the server printed, then:
+
+```sh
+curl --fail-with-body http://127.0.0.1:8765/v1/info \
+  -H "Authorization: Bearer $CUA_TOKEN"
+
+curl --fail-with-body http://127.0.0.1:8765/v1/computer \
+  -H "Authorization: Bearer $CUA_TOKEN" \
+  -H 'Content-Type: application/json' \
+  --data '{"action":"screenshot"}'
+```
+
+The screenshot response contains a base64-encoded PNG in its `content` blocks.
+Do not share the token: it authorizes screen capture and input to Windows.
 
 | route | body | answer |
 |---|---|---|
@@ -143,8 +203,11 @@ they arrive.
 | `GET /v1/extra` | | `{"tools": [...]}`: definitions for the extra tools |
 | `POST /v1/extra` | `{"action": "ui_find" \| "ui_click" \| "ocr_find", ...}` | same as `/v1/computer` |
 
-Put `content` into your `tool_result` unchanged. Invalid input comes back as
-a result with `is_error: true`, not as an HTTP error.
+Put `content` into your `tool_result` unchanged. Action-level errors generally
+come back with HTTP 200 and `is_error: true`; check that field as well as the
+HTTP status. Malformed or non-object JSON returns HTTP 400, missing or invalid
+authorization returns 401, unknown routes return 404, and uncaught execution
+errors return 500.
 
 `/v1/info` returns the tool entry for the computer toolset
 (`computer_toolset_20260801`) as `tool`, and an entry for the earlier

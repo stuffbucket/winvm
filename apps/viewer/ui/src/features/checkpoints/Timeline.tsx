@@ -7,6 +7,7 @@ import {
   useState,
 } from "react"
 
+import { PERCENT } from "../../constants"
 import { t } from "../../i18n"
 import { type Tick, tickAt } from "./checkpoints"
 
@@ -15,6 +16,7 @@ interface TimelineProps {
   readonly active: string
   onPick: (tick: Tick) => void
   onScrub: (tick: Tick) => void
+  onHover?: (tick: Tick | null) => void
   onOlder: () => void
   onNewer: () => void
   readonly canOlder: boolean
@@ -29,6 +31,7 @@ export function Timeline({
   active,
   onPick,
   onScrub,
+  onHover,
   onOlder,
   onNewer,
   canOlder,
@@ -59,6 +62,7 @@ export function Timeline({
   const move = (e: PointerEvent<HTMLDivElement>): void => {
     const tick = at(e.clientY)
     setHover(tick)
+    onHover?.(tick)
     if (!dragging.current || tick === null || tick.key === last.current) return
     last.current = tick.key
     onScrub(tick)
@@ -123,6 +127,7 @@ export function Timeline({
         }}
         onPointerLeave={() => {
           setHover(null)
+          onHover?.(null)
         }}
         onKeyDown={key}
       >
@@ -134,7 +139,7 @@ export function Timeline({
             data-kind={tick.kind}
             data-month={tick.month !== null}
             data-active={tick.key === active}
-            style={{ top: `${String(tick.at * 100)}%` }}
+            style={{ top: `${String(tick.at * PERCENT)}%` }}
             aria-hidden="true"
           >
             {tick.key === active && tick.kind === "day" ? (
@@ -152,7 +157,7 @@ export function Timeline({
         {hover !== null && hover.kind === "day" && (
           <span
             className="timeline__hover"
-            style={{ top: `${String(hover.at * 100)}%` }}
+            style={{ top: `${String(hover.at * PERCENT)}%` }}
             aria-hidden="true"
           >
             {hover.label}

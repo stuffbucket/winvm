@@ -28,7 +28,7 @@ import {
   removeNotes,
   writeNote,
 } from "../src/notes"
-import { list, note } from "../src/savecmds"
+import { list, note, savesCmd } from "../src/savecmds"
 import { removeAllSaves, removeSave, saveDir } from "../src/saves"
 
 const VARS = ["WINVM_HOME", "XDG_DATA_HOME", "XDG_CONFIG_HOME"] as const
@@ -310,14 +310,32 @@ describe("winvm saves note", () => {
     expect(run("-i", "dev", "../escape", "--title", "x")).toBe(1)
   })
 
-  it("`saves rm` says the note went too", () => {
+  it("`saves rm` says the note went too", async () => {
     makeSave("dev", "a")
     makeSave("dev", "b")
     writeNote("dev", "a", { title: "T" })
-    expect(list(parseArgs(["rm", "-i", "dev", "a"]))).toBe(0)
-    expect(list(parseArgs(["rm", "-i", "dev", "b"]))).toBe(0)
+    expect(await savesCmd(parseArgs(["rm", "-i", "dev", "a"]))).toBe(0)
+    expect(await savesCmd(parseArgs(["rm", "-i", "dev", "b"]))).toBe(0)
     expect(out).toEqual(['deleted save "a" and its note', 'deleted save "b"'])
     expect(readNote("dev", "a")).toBeNull()
+  })
+
+  it("`saves path` prints the save's folder, as JSON for the app, and refuses a bad or missing name", () => {
+    makeSave("dev", "clean")
+    expect(list(parseArgs(["path", "-i", "dev", "clean"]))).toBe(0)
+    expect(out).toEqual([saveDir("dev", "clean")])
+    out.length = 0
+    expect(list(parseArgs(["-i", "dev", "path", "clean", "--json"]))).toBe(0)
+    expect(JSON.parse(out.join("\n"))).toEqual({
+      path: saveDir("dev", "clean"),
+    })
+    out.length = 0
+    for (const bad of ["../dev/clean", "a/b", ".hidden", "nope"])
+      expect(list(parseArgs(["path", "-i", "dev", bad]))).toBe(1)
+    expect(list(parseArgs(["path", "-i", "dev"]))).toBe(1)
+    expect(out).toEqual([])
+    expect(errs.some((e) => e.includes("usage: winvm saves path"))).toBe(true)
+    expect(errs.some((e) => e.includes('has no save "nope"'))).toBe(true)
   })
 
   it("`saves --json` carries the note and the screenshot paths", () => {

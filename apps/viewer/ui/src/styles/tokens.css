@@ -57,6 +57,29 @@
   --elevation-modal: 0 8px 24px rgb(0 0 0 / 0.18);
   --elevation-tooltip: 0 2px 6px rgb(0 0 0 / 0.1);
 
+  --duration-xs: 120ms;
+  --duration-sm: 150ms;
+  --duration-md: 160ms;
+  --duration-lg: 180ms;
+  --duration-xl: 200ms;
+  --duration-2xl: 220ms;
+  --duration-3xl: 400ms;
+  --duration-4xl: 900ms;
+  --duration-5xl: 1400ms;
+  --ease-emphasized: cubic-bezier(0.65, 0, 0.35, 1);
+  --ease-enter: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-exit: cubic-bezier(0.5, 0, 0.75, 0);
+  --ease-chase: cubic-bezier(0.22, 1, 0.36, 1);
+
+  --z-raised: 1;
+  --z-selected: 2;
+  --z-float: 3;
+  --z-status: 4;
+  --z-drag: 5;
+  --z-chrome: 10;
+  --z-overlay: 20;
+  --z-menu: 30;
+
   --brand: #c8334a;
   --accent-fg: #ffffff;
   --accent-destructive: #b32d3f;
@@ -71,7 +94,15 @@
 
   --content-max: 640px;
   --panel-width: 320px;
+  --lights-clearance: 96px;
+  --overview-measure: 48rem;
+  --overview-height: 52rem;
   --about-mark: 184px;
+  --checkpoints-timeline: 120px;
+  --checkpoints-timeline-space: 132px;
+  --checkpoints-panel: 368px;
+  --checkpoints-panel-min: 240px;
+  --checkpoints-canvas-min: 128px;
 }
 
 :root {

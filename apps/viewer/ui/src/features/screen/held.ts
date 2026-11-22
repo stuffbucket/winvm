@@ -32,6 +32,8 @@ const realTimers: Timers = {
 }
 
 const MAX_RETRY_MS = 30_000
+const DEFAULT_RETRY_MS = 2000
+const DEFAULT_TRIES = 6
 
 export class HeldSizes {
   private frozen: boolean
@@ -76,9 +78,9 @@ export class HeldSizes {
     this.waiting ??= size
     this.misses++
     this.clearTimer()
-    if (this.frozen || this.misses > (this.o.tries ?? 6)) return
+    if (this.frozen || this.misses > (this.o.tries ?? DEFAULT_TRIES)) return
     const wait = Math.min(
-      (this.o.retryMs ?? 2000) * 2 ** (this.misses - 1),
+      (this.o.retryMs ?? DEFAULT_RETRY_MS) * 2 ** (this.misses - 1),
       MAX_RETRY_MS,
     )
     this.timer = this.timers.set(() => {

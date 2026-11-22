@@ -16,6 +16,10 @@ class FakeRFB extends EventTarget {
   focusOnClick = false
   viewOnly = false
   scaleViewport = false
+  qualityLevel = 6
+  _mouseButtonMask = 0
+  _mouseMoveTimer: ReturnType<typeof setTimeout> | null = null
+  _handleMouseButton(): void {}
   _sock = {}
   _keyboard = { _allKeysUp: (): void => undefined }
   _display = {
@@ -41,6 +45,7 @@ class FakeRFB extends EventTarget {
   clipboardPasteFrom(): void {}
 }
 
+const realRfb = { ...(await import("@winvm/novnc/core/rfb.js")) }
 await mock.module("@winvm/novnc/core/rfb.js", () => ({ default: FakeRFB }))
 
 const { act } = await import("react")
@@ -57,7 +62,10 @@ afterEach(() => {
   FakeRFB.made = []
   jest.useRealTimers()
 })
-afterAll(() => GlobalRegistrator.unregister())
+afterAll(async () => {
+  await mock.module("@winvm/novnc/core/rfb.js", () => realRfb)
+  await GlobalRegistrator.unregister()
+})
 
 interface Shown {
   readonly websocketPort?: number
@@ -78,6 +86,7 @@ const screen = ({
     onKeyboardCaptured={() => undefined}
     resizable={resizable}
     frozen={frozen}
+    forwardInput={!frozen}
   />
 )
 

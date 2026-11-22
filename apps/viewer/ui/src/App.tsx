@@ -19,11 +19,13 @@ import {
   popupActions,
   popupMenu,
   revealInFinder,
+  setMainMenuState,
   setSystemKeyboardCapture,
   setWindowTitle,
   shareStart,
   shareStop,
   showWindow,
+  trace,
   winvm,
 } from "./backend"
 import { Button } from "./components/Button"
@@ -31,6 +33,7 @@ import { Callout } from "./components/Callout"
 import { ConfirmDialog } from "./components/ConfirmDialog"
 import { cx } from "./components/cx"
 import { Popover } from "./components/Popover"
+import { HTTP_ACCEPTED, HTTP_OK } from "./constants"
 import { SharePanel } from "./features/actions/SharePanel"
 import { CheckpointCanvas } from "./features/checkpoints/CheckpointCanvas"
 import { ClosePolicyDialog } from "./features/close/ClosePolicyDialog"
@@ -57,7 +60,9 @@ import { OperationOverlay } from "./features/operation/OperationOverlay"
 import { Overview } from "./features/overview/Overview"
 import { Panel } from "./features/panel/Panel"
 import { ReferenceDialog } from "./features/reference/ReferenceDialog"
+import { inputRule } from "./features/screen/input"
 import { Screen, type ScreenHandle } from "./features/screen/Screen"
+import { SettingsDialog } from "./features/settings/SettingsDialog"
 import {
   DEFAULT_SETTINGS,
   loadSettings,
@@ -72,9 +77,11 @@ import {
   shellCache,
   shellMenu,
 } from "./features/terminal/shells"
+import { nativeMenuState } from "./features/toolbar/nativeMenu"
 import { type PanelId, Toolbar } from "./features/toolbar/Toolbar"
 import type { UsageContext } from "./features/usage/Resources"
 import { useUsage } from "./features/usage/useUsage"
+import { inputPhase } from "./features/winvm/agentSeen"
 import { pauseMenu } from "./features/winvm/pauseMenu"
 import type { Verb } from "./features/winvm/useWinvm"
 import { useWinvm } from "./features/winvm/useWinvm"
@@ -100,6 +107,10 @@ interface Notice {
   readonly detail?: string
 }
 
+const DISPLAY_WAIT_MS = 2000
+const DISPLAY_REQUEST_TIMEOUT_MS = 22_000
+const NOTICE_DISMISS_MS = 8000
+
 const CONFIRM_ACTION: Record<Confirm["kind"], string> = {
   stop: "action.shutDown",
   reboot: "action.restart",
@@ -120,6 +131,7 @@ export function App(): JSX.Element {
   const sessionEnd = closeAsking ? null : close.session
   const [actualSize, setActualSize] = useState(false)
   const [detailsOpen, setDetailsOpen] = useState(false)
+  const [settingsOpen, setSettingsOpen] = useState(false)
   const [confirm, setConfirm] = useState<Confirm | null>(null)
   const [startedFrom, setStartedFrom] = useState<Phase | null>(null)
   const [open, setOpen] = useState<{ id: PanelId; anchor: HTMLElement } | null>(
@@ -138,6 +150,13 @@ export function App(): JSX.Element {
   const [dropping, setDropping] = useState(false)
   const [checkpoints, setCheckpoints] = useState(false)
   const [closeCheckpoints, setCloseCheckpoints] = useState(0)
+  const checkpointOpener = useRef<Element | null>(null)
+  useEffect(() => {
+    if (checkpoints) return
+    const opener = checkpointOpener.current
+    checkpointOpener.current = null
+    if (opener instanceof HTMLElement) opener.focus({ preventScroll: true })
+  }, [checkpoints])
   const [keyboardCaptured, setKeyboardCaptured] = useState(false)
   const [settingClosePolicy, setSettingClosePolicy] = useState(false)
   const [closePolicyError, setClosePolicyError] = useState<{
@@ -168,9 +187,22 @@ export function App(): JSX.Element {
     const stowed = await w.act("stow")
     if (stowed?.code === 0) await w.act("start")
   }
+  const input = inputRule(inputPhase(phase, w.agentSeen), operating)
+  const [released, setReleased] = useState<string | null>(null)
   useEffect(() => {
-    if (frozen || operating) setKeyboardCaptured(false)
-  }, [frozen, operating])
+    if (input.forward) setReleased(null)
+    else if (keyboardCaptured) {
+      setKeyboardCaptured(false)
+      setReleased(input.released)
+    }
+  }, [input.forward, input.released, keyboardCaptured])
+  const inputRef = useRef(input)
+  inputRef.current = input
+  useEffect(() => {
+    trace(
+      `input: ${input.forward ? "to the guest" : `held back (${input.why ?? "?"})`}; phase ${String(phase)}, verb ${String(w.busy)}`,
+    )
+  }, [input.forward, input.why, phase, w.busy])
   const guestReady = phase === "running" && !operating
   const hostReady = w.checks === null || w.checks.ready
   const c = controls(
@@ -184,12 +216,6 @@ export function App(): JSX.Element {
   const missing = w.checks?.checks.filter((x) => !x.ok) ?? []
   const runtimeMissing = missing.some((x) => x.hint === "winvm setup")
   const display = displaySize(w.status?.screen ?? null)
-  const displayRect = useCallback(() => {
-    const r = document.querySelector(".display")?.getBoundingClientRect()
-    return r === undefined
-      ? null
-      : { x: r.left, y: r.top, width: r.width, height: r.height }
-  }, [])
   const liveSource = useCallback(
     () => document.querySelector<HTMLCanvasElement>(".screen__canvas canvas"),
     [],
@@ -222,12 +248,12 @@ export function App(): JSX.Element {
           op: "set",
           width: size.width,
           height: size.height,
-          waitMs: 2000,
+          waitMs: DISPLAY_WAIT_MS,
           scale,
         },
-        22_000,
+        DISPLAY_REQUEST_TIMEOUT_MS,
       )
-      if (reply.status !== 200 && reply.status !== 202)
+      if (reply.status !== HTTP_OK && reply.status !== HTTP_ACCEPTED)
         throw new Error(
           `the agent answered ${String(reply.status)}: ${JSON.stringify(reply.body)}`,
         )
@@ -246,7 +272,12 @@ export function App(): JSX.Element {
     overlayBytes: w.status?.overlayBytes ?? null,
   }
   const sharedFolder = useSharedFolder(w.name, phase, guestReady, detailsOpen)
-  const machineInfo = useMachineInfo(w.name, phase, guestReady, detailsOpen)
+  const machineInfo = useMachineInfo(
+    w.name,
+    phase,
+    guestReady,
+    detailsOpen || settingsOpen,
+  )
 
   const run = (verb: Verb, arg?: string): void => {
     if (verb === "start") setStartedFrom(phase)
@@ -300,15 +331,16 @@ export function App(): JSX.Element {
     () =>
       onFileDrop(
         (paths) => {
+          if (checkpoints) return
           if (guestReady) copyIn(paths, null)
           else if (paths.length > 0)
             setNotice({ tone: "error", title: t("files.notRunning") })
         },
         (over) => {
-          setDropping(over && guestReady)
+          setDropping(over && guestReady && !checkpoints)
         },
       ),
-    [guestReady, copyIn],
+    [guestReady, copyIn, checkpoints],
   )
 
   const titles = w.titles
@@ -485,8 +517,13 @@ export function App(): JSX.Element {
     w.name !== null && phase !== null && phase !== "missing"
   const openCheckpoints = useCallback(() => {
     setOpen(null)
-    if (canCheckpoints) setCheckpoints(true)
-  }, [canCheckpoints])
+    if (canCheckpoints && !checkpoints && !settingsOpen) {
+      checkpointOpener.current = document.activeElement
+      setKeyboardCaptured(false)
+      setDropping(false)
+      setCheckpoints(true)
+    }
+  }, [canCheckpoints, checkpoints, settingsOpen])
   const toggleCheckpoints = useCallback(() => {
     if (checkpoints) setCloseCheckpoints((n) => n + 1)
     else openCheckpoints()
@@ -518,33 +555,102 @@ export function App(): JSX.Element {
     })
   }
 
+  const menuEnabled = nativeMenuState({
+    phase,
+    busy: operating,
+    hostReady,
+    instance: w.name !== null,
+    forwardInput: input.forward,
+    resizable,
+    modal:
+      checkpoints ||
+      settingsOpen ||
+      closeAsking ||
+      confirm !== null ||
+      deleting !== null ||
+      newOpen ||
+      reference !== null,
+  })
+  const menuStateKey = JSON.stringify(menuEnabled)
+  useEffect(() => {
+    setMainMenuState(JSON.parse(menuStateKey) as Record<string, boolean>).catch(
+      (e: unknown) => {
+        console.warn("updating native menu failed", e)
+      },
+    )
+  }, [menuStateKey])
   const install = w.installCommand
+  const menuHandler = useRef<(id: string) => void>(() => undefined)
+  menuHandler.current = (id) => {
+    if (menuEnabled[id] === false) return
+    if (id === "vm-new") openNew()
+    if (id === "vm-choose")
+      document.querySelector<HTMLButtonElement>(".machine-picker")?.click()
+    if (id === "vm-delete" && w.name !== null && title !== null) {
+      setKeepSaves(false)
+      setDeleting({ name: w.name, title, live: machineLive(phase) })
+    }
+    if (id === "vm-start") run("start")
+    if (id === "vm-stop") setConfirm({ kind: "stop" })
+    if (id === "vm-reboot") setConfirm({ kind: "reboot" })
+    if (id === "vm-kill") setConfirm({ kind: "kill" })
+    if (id === "vm-pause") run("pause")
+    if (id === "vm-resume") run(phase === "asleep" ? "wake" : "resume")
+    if (id === "vm-sleep") run("sleep")
+    if (id === "vm-lock") run("lock")
+    if (id === "vm-save") run("save")
+    if (id === "vm-files") filesWindow()
+    if (id === "vm-files-menu") filesMenu()
+    if (id === "vm-shells") terminalMenu()
+    if (id === "vm-share") {
+      const anchor = [
+        ...document.querySelectorAll<HTMLButtonElement>(".toolbar button"),
+      ].find((b) => b.getAttribute("aria-label") === t("action.share"))
+      if (anchor !== undefined) togglePanel("share", anchor)
+    }
+    if (id === "view-actual-size") setActualSize((v) => !v)
+    if (id === "view-screen-sharing") void w.openScreenSharing()
+    if (id === "view-details") setDetailsOpen((v) => !v)
+    if (id === "view-pause-overlay") changePauseOverlay(!pauseOverlay)
+    if (id === "settings") {
+      setKeyboardCaptured(false)
+      setOpen(null)
+      setSettingsOpen(true)
+    }
+    if (id === "new-terminal") terminal(null)
+    if (id === "release-keyboard") setKeyboardCaptured(false)
+    if (
+      id === "capture-keyboard" ||
+      id === "send-windows-key" ||
+      id === "send-ctrl-alt-delete"
+    ) {
+      const rule = inputRef.current
+      if (!showScreen || !rule.forward) {
+        if (rule.why !== null) setNotice({ tone: "notice", title: t(rule.why) })
+      } else if (id === "capture-keyboard") setKeyboardCaptured(true)
+      else if (id === "send-windows-key") screen.current?.sendWindowsKey()
+      else screen.current?.sendCtrlAltDelete()
+    }
+    if (id === "rename-window") setRenaming(true)
+    if (id === "checkpoints") toggleCheckpoints()
+    if (id === "install-cli") void install()
+    if (id === "reference") {
+      setReference({ text: null })
+      winvm("help")
+        .then((out) => {
+          setReference({ text: outputText(out) })
+        })
+        .catch((e: unknown) => {
+          setReference({ text: errorMessage(e) })
+        })
+    }
+  }
   useEffect(
     () =>
       onMenu((id) => {
-        if (id === "new-terminal") terminal(null)
-        if (id === "capture-keyboard" && showScreen && !frozen && !operating)
-          setKeyboardCaptured(true)
-        if (id === "release-keyboard") setKeyboardCaptured(false)
-        if (id === "send-windows-key" && !operating)
-          screen.current?.sendWindowsKey()
-        if (id === "send-ctrl-alt-delete" && !operating)
-          screen.current?.sendCtrlAltDelete()
-        if (id === "rename-window") setRenaming(true)
-        if (id === "checkpoints") toggleCheckpoints()
-        if (id === "install-cli") void install()
-        if (id === "reference") {
-          setReference({ text: null })
-          winvm("help")
-            .then((out) => {
-              setReference({ text: outputText(out) })
-            })
-            .catch((e: unknown) => {
-              setReference({ text: errorMessage(e) })
-            })
-        }
+        menuHandler.current(id)
       }),
-    [install, terminal, toggleCheckpoints, showScreen, frozen, operating],
+    [],
   )
 
   useEffect(() => {
@@ -556,7 +662,7 @@ export function App(): JSX.Element {
     if (notice?.tone !== "notice") return
     const timer = setTimeout(() => {
       setNotice(null)
-    }, 8000)
+    }, NOTICE_DISMISS_MS)
     return () => {
       clearTimeout(timer)
     }
@@ -670,7 +776,11 @@ export function App(): JSX.Element {
   } as CSSProperties
 
   return (
-    <div className="viewer" data-busy={operating}>
+    <div
+      className="viewer"
+      data-busy={operating}
+      {...(checkpoints ? { inert: "" } : {})}
+    >
       <div className="busybar" aria-hidden="true" />
       <Toolbar
         picker={{
@@ -708,7 +818,8 @@ export function App(): JSX.Element {
         open={open?.id ?? null}
         detailsOpen={detailsOpen}
         keyboardCaptured={keyboardCaptured}
-        inputBlocked={operating}
+        input={input}
+        keyboardReleased={released}
         onStart={() => {
           run("start")
         }}
@@ -915,6 +1026,7 @@ export function App(): JSX.Element {
                 "display",
                 actualSize && !resizable && "display--actual",
                 resizable && showScreen && "display--live",
+                !showScreen && "display--fill",
                 showScreen && "display--on",
                 dropping && "display--drop",
               )}
@@ -926,11 +1038,11 @@ export function App(): JSX.Element {
                   connection={w.connection}
                   keyboardCaptured={keyboardCaptured}
                   onKeyboardCaptured={setKeyboardCaptured}
+                  forwardInput={input.forward && !settingsOpen && !checkpoints}
                   resizable={resizable}
                   onGuestSize={resizeGuest}
                   frozen={frozen}
-                  inputBlocked={operating}
-                  ready={guestReady}
+                  ready={guestReady && !checkpoints}
                   asleep={phase === "asleep"}
                   waking={w.busy === "wake"}
                   onWake={wake}
@@ -938,6 +1050,10 @@ export function App(): JSX.Element {
                 />
               ) : (
                 <Overview
+                  instance={w.name}
+                  title={title ?? undefined}
+                  hasTitle={w.name !== null && titles[w.name] != null}
+                  onRename={w.name === null ? undefined : rename}
                   phase={phase}
                   status={w.status}
                   steps={steps}
@@ -1019,6 +1135,19 @@ export function App(): JSX.Element {
           }}
         />
       )}
+      {settingsOpen && (
+        <SettingsDialog
+          key={w.name}
+          instance={w.name}
+          title={title ?? t("app.name")}
+          machineInfo={machineInfo}
+          pauseOverlay={pauseOverlay}
+          onPauseOverlay={changePauseOverlay}
+          onClose={() => {
+            setSettingsOpen(false)
+          }}
+        />
+      )}
 
       {checkpoints && w.name !== null && (
         <CheckpointCanvas
@@ -1027,9 +1156,8 @@ export function App(): JSX.Element {
           phase={phase}
           busy={operating}
           aspect={display.width / display.height}
-          displayRect={displayRect}
           liveSource={liveSource}
-          run={(verb, arg) => w.act(verb, arg)}
+          run={(verb, arg, options) => w.act(verb, arg, options)}
           closeRequest={closeCheckpoints}
           onClosed={() => {
             setCheckpoints(false)

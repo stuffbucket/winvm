@@ -11,7 +11,7 @@ import {
 } from "../../components/Menu"
 import { t } from "../../i18n"
 import { type Phase, shownTitle, TITLE_MAX } from "../../model"
-import { stateKey } from "./machines"
+import { stateKey, stateShape } from "./machines"
 
 export interface MachinePickerProps {
   readonly names: readonly string[]
@@ -27,6 +27,23 @@ export interface MachinePickerProps {
   onDelete: () => void
 }
 
+function State({
+  phase,
+}: {
+  readonly phase: Phase | null | undefined
+}): JSX.Element | undefined {
+  if (phase === null || phase === undefined) return undefined
+  return (
+    <span className="state">
+      <span
+        className={`state__dot state__dot--${stateShape(phase)}`}
+        aria-hidden="true"
+      />
+      {t(stateKey(phase))}
+    </span>
+  )
+}
+
 export function MachinePicker(p: MachinePickerProps): JSX.Element {
   const title = p.name === null ? null : shownTitle(p.name, p.titles[p.name])
   if (p.renaming && title !== null) {
@@ -39,10 +56,6 @@ export function MachinePicker(p: MachinePickerProps): JSX.Element {
         onDone={p.onRenamed}
       />
     )
-  }
-  const state = (n: string): string | null => {
-    const s = n === p.name ? p.phase : p.phases[n]
-    return s === null || s === undefined ? null : t(stateKey(s))
   }
   const trigger = (
     <button
@@ -72,7 +85,8 @@ export function MachinePicker(p: MachinePickerProps): JSX.Element {
               key={n}
               value={n}
               closeOnClick
-              trailing={state(n) ?? undefined}
+              label={shownTitle(n, p.titles[n])}
+              trailing={<State phase={n === p.name ? p.phase : p.phases[n]} />}
             >
               {shownTitle(n, p.titles[n])}
             </MenuRadioItem>
@@ -80,14 +94,29 @@ export function MachinePicker(p: MachinePickerProps): JSX.Element {
         </MenuRadioGroup>
       </MenuGroup>
       <MenuSeparator />
-      <MenuItem onClick={p.onNew}>{t("machine.new")}</MenuItem>
-      {title !== null && (
-        <MenuItem onClick={p.onRename}>{t("machine.rename")}</MenuItem>
-      )}
-      {title !== null && (
-        <MenuItem tone="danger" onClick={p.onDelete}>
-          {t("machine.delete", { title })}
+      <MenuGroup name={t("machine.commands")}>
+        <MenuItem leading={<Icon name="plus" />} onClick={p.onNew}>
+          {t("machine.new")}
         </MenuItem>
+        {title !== null && (
+          <MenuItem leading={<Icon name="pencil" />} onClick={p.onRename}>
+            {t("machine.rename")}
+          </MenuItem>
+        )}
+      </MenuGroup>
+      {title !== null && (
+        <>
+          <MenuSeparator />
+          <MenuGroup name={t("machine.removal")}>
+            <MenuItem
+              tone="danger"
+              leading={<Icon name="trash" />}
+              onClick={p.onDelete}
+            >
+              {t("machine.delete", { title })}
+            </MenuItem>
+          </MenuGroup>
+        </>
       )}
     </MenuRoot>
   )

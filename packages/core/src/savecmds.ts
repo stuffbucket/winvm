@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs"
+import { existsSync, readFileSync } from "node:fs"
 import * as agent from "./agent"
 import type { Args } from "./args"
 import { instanceName } from "./args"
@@ -17,7 +17,7 @@ import { lockWindows } from "./lock"
 import { qmpCommand } from "./monitor"
 import * as notes from "./notes"
 import { currentOp, OpCancelled } from "./opcontext"
-import { automaticFrom, INTERRUPTED } from "./operation"
+import { automaticFrom, INTERRUPTED, withOperation } from "./operation"
 import type { InstanceMeta, Paths } from "./paths"
 import { pathsFor, readImageMeta, readMeta } from "./paths"
 import * as qemu from "./qemu"
@@ -233,24 +233,61 @@ export async function load(args: Args): Promise<number> {
   return code
 }
 
+export async function savesCmd(args: Args): Promise<number> {
+  const sub = args.positional[0]
+  if (sub === "rm") return await removeCmd(args)
+  if (sub === "protect" || sub === "unprotect")
+    return await protectCmd(args, sub === "protect")
+  return list(args)
+}
+
+async function removeCmd(args: Args): Promise<number> {
+  const name = instanceName(args)
+  const target = args.positional[1]
+  if (target === undefined) return fail("usage: winvm saves rm <name>")
+  const err = nameError(target)
+  if (err !== null) return fail(err)
+  if (!existsSync(saves.saveDir(name, target)))
+    return fail(`instance "${name}" has no save "${target}"`)
+  try {
+    return await withOperation(name, "save", () => {
+      let hadNote = false
+      try {
+        hadNote = notes.readNote(name, target) !== null
+      } catch {
+        hadNote = false
+      }
+      saves.removeSave(name, target, { force: args.flags.has("force") })
+      console.log(`deleted save "${target}"${hadNote ? " and its note" : ""}`)
+      return 0
+    })
+  } catch (error) {
+    return fail(msg(error))
+  }
+}
+
+async function protectCmd(args: Args, protect: boolean): Promise<number> {
+  const name = instanceName(args)
+  const target = args.positional[1]
+  if (target === undefined)
+    return fail(
+      `usage: winvm saves ${protect ? "protect" : "unprotect"} <name>`,
+    )
+  try {
+    const m = await saves.setSaveProtection(name, target, protect)
+    if (args.flags.has("json")) console.log(JSON.stringify(m, null, 2))
+    else
+      console.log(`${protect ? "protected" : "unprotected"} save "${target}"`)
+    return 0
+  } catch (error) {
+    return fail(msg(error))
+  }
+}
+
 export function list(args: Args): number {
   const name = instanceName(args)
-  if (args.positional[0] === "rm") {
-    const target = args.positional[1]
-    if (target === undefined) return fail("usage: winvm saves rm <name>")
-    if (!saves.hasSave(name, target))
-      return fail(`instance "${name}" has no save "${target}"`)
-    let hadNote = false
-    try {
-      hadNote = notes.readNote(name, target) !== null
-    } catch {
-      hadNote = false
-    }
-    saves.removeSave(name, target)
-    console.log(`deleted save "${target}"${hadNote ? " and its note" : ""}`)
-    return 0
-  }
   if (args.positional[0] === "note") return note(args)
+  if (args.positional[0] === "path") return pathOf(name, args)
   const rows = saves.listSaves(name)
   const report = saves.savesReport(
     rows,
@@ -265,7 +302,7 @@ export function list(args: Args): number {
     return 0
   }
   console.log(
-    `  ${"NAME".padEnd(22)} ${"KIND".padEnd(9)} ${"FORMAT".padEnd(7)} ${"CREATED".padEnd(19)} ${"SIZE".padStart(8)}  COMPATIBLE`,
+    `  ${"NAME".padEnd(22)} ${"KIND".padEnd(9)} ${"FORMAT".padEnd(7)} ${"PROTECTED".padEnd(9)} ${"CREATED".padEnd(19)} ${"SIZE".padStart(8)}  COMPATIBLE`,
   )
   for (const r of rows) {
     const m = r.manifest
@@ -285,11 +322,24 @@ export function list(args: Args): number {
             ? "no"
             : "no (before the shared folder)"
     console.log(
-      `  ${m.name.padEnd(22)} ${m.kind.padEnd(9)} ${saves.ramFormatOf(m).padEnd(7)} ${created.padEnd(19)} ${saves.formatBytes(m.bytes).padStart(8)}  ${ok}` +
+      `  ${m.name.padEnd(22)} ${m.kind.padEnd(9)} ${saves.ramFormatOf(m).padEnd(7)} ${(m.protected === true ? "yes" : "no").padEnd(9)} ${created.padEnd(19)} ${saves.formatBytes(m.bytes).padStart(8)}  ${ok}` +
         (m.note === undefined ? "" : `  ${m.note}`),
     )
   }
   console.log(`\n  ${saves.savesDir(name)}`)
+  return 0
+}
+
+function pathOf(name: string, args: Args): number {
+  const target = args.positional[1]
+  if (target === undefined)
+    return fail("usage: winvm saves path [-i name] <save> [--json]")
+  const bad = nameError(target)
+  if (bad !== null) return fail(bad)
+  if (!saves.hasSave(name, target))
+    return fail(`instance "${name}" has no save "${target}"`)
+  const dir = saves.saveDir(name, target)
+  console.log(args.flags.has("json") ? JSON.stringify({ path: dir }) : dir)
   return 0
 }
 

@@ -204,6 +204,73 @@ export async function send(
   await q("input-send-event", { events: [...events] })
 }
 
+export class HeldInput {
+  private readonly down = new Map<string, Event>()
+
+  track(events: readonly Event[]): void {
+    for (const ev of events) {
+      if (ev.type !== "key" && ev.type !== "btn") continue
+      const data = ev.data as
+        | { down?: unknown; key?: { data?: unknown }; button?: unknown }
+        | undefined
+      const id =
+        ev.type === "key"
+          ? `key:${String(data?.key?.data)}`
+          : `btn:${String(data?.button)}`
+      if (data?.down === true) this.down.set(id, ev)
+      else this.down.delete(id)
+    }
+  }
+
+  releases(): Event[] {
+    return [...this.down.values()]
+      .reverse()
+      .map((ev) => ({ ...ev, data: { ...(ev.data as object), down: false } }))
+  }
+}
+
+const isPress = (ev: Event): boolean =>
+  (ev.data as { down?: unknown } | undefined)?.down === true
+
+export async function withInput<T>(
+  sockPath: string,
+  fn: (send: QmpSend) => Promise<T>,
+  timeoutMs = 3000,
+): Promise<T> {
+  const held = new HeldInput()
+  try {
+    return await withQmp(
+      sockPath,
+      async (q) =>
+        await fn(async (execute, args) => {
+          const events = args?.events
+          if (execute !== "input-send-event" || !Array.isArray(events))
+            return await q(execute, args)
+          const sent = events as Event[]
+          held.track(sent.filter(isPress))
+          const reply = await q(execute, args)
+          held.track(sent.filter((ev) => !isPress(ev)))
+          return reply
+        }),
+      timeoutMs,
+    )
+  } catch (error) {
+    const letGo = held.releases()
+    if (letGo.length > 0) {
+      try {
+        await withQmp(
+          sockPath,
+          async (q) => {
+            await send(q, letGo)
+          },
+          3000,
+        )
+      } catch {}
+    }
+    throw error
+  }
+}
+
 export async function screenSize(
   q: QmpSend,
 ): Promise<{ width: number; height: number }> {
@@ -241,7 +308,7 @@ export async function typeText(
   p: Paths,
   strokes: readonly Stroke[],
 ): Promise<void> {
-  await withQmp(
+  await withInput(
     p.qmp,
     async (q) => {
       for (const s of strokes) {
@@ -269,7 +336,7 @@ export async function pressCombo(
   p: Paths,
   qcodes: readonly string[],
 ): Promise<void> {
-  await withQmp(
+  await withInput(
     p.qmp,
     async (q) => {
       for (const k of qcodes) {
@@ -295,7 +362,7 @@ export async function pointer(
   button: Button | null,
   clicks = 1,
 ): Promise<{ width: number; height: number }> {
-  return await withQmp(
+  return await withInput(
     p.qmp,
     async (q) => {
       const size = await screenSize(q)
@@ -320,7 +387,7 @@ export async function pointer(
 
 export async function scroll(p: Paths, notches: number): Promise<void> {
   const button = notches > 0 ? "wheel-down" : "wheel-up"
-  await withQmp(
+  await withInput(
     p.qmp,
     async (q) => {
       for (let i = 0; i < Math.abs(notches); i += 1) {

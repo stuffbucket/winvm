@@ -1,7 +1,7 @@
 import { type JSX, useEffect, useRef, useState } from "react"
 
 import { t } from "../../i18n"
-import { nameProblem } from "./machines"
+import { MACHINE_NAME_MAX, nameProblem } from "./machines"
 
 export interface NewMachine {
   readonly name: string
@@ -88,7 +88,7 @@ export function NewMachineDialog(p: NewMachineDialogProps): JSX.Element | null {
               autoFocus
               autoComplete="off"
               spellCheck={false}
-              maxLength={64}
+              maxLength={MACHINE_NAME_MAX}
               placeholder={t("machine.namePlaceholder")}
               aria-invalid={shownProblem !== null}
               aria-describedby="new-machine-hint"

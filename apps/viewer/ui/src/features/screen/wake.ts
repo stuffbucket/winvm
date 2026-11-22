@@ -1,5 +1,7 @@
 export const WAKE_MS = 15
 
+const QEMU_CLIENT_MESSAGE = 255
+
 export interface WakeSock {
   sQpush8(n: number): void
   sQpush16(n: number): void
@@ -8,7 +10,7 @@ export interface WakeSock {
 }
 
 export function sendWake(sock: WakeSock): void {
-  sock.sQpush8(255)
+  sock.sQpush8(QEMU_CLIENT_MESSAGE)
   sock.sQpush8(0)
   sock.sQpush16(0)
   sock.sQpush32(0)

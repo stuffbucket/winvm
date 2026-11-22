@@ -166,6 +166,12 @@ const STEPS: Step[] = [
       ),
   },
   {
+    name: "magic-numbers",
+    group: "fast",
+    commands: [{ argv: ["bun", "scripts/check-magic-numbers.ts"] }],
+    findings: sumOf(/^magic-numbers: (\d+) increased/gm),
+  },
+  {
     name: "typecheck-scripts",
     group: "fast",
     commands: [
@@ -224,7 +230,7 @@ const STEPS: Step[] = [
     lane: "tests",
     commands: [
       { argv: ["pnpm", "exec", "turbo", "run", "test"] },
-      { argv: ["bun", "test", "scripts"] },
+      { argv: ["bun", "test", "--parallel", "scripts"] },
     ],
     findings: sumOf(/^\s*(\d+) fail/gm),
   },

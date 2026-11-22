@@ -25,6 +25,8 @@ interface RouterOptions {
 const SUPER = 0xffeb
 const SUPER_RIGHT = 0xffec
 const CONTROL = 0xffe3
+const ALT = 0xffe9
+const DELETE = 0xffff
 
 const stopGuest = (event: RoutedKeyEvent): void => {
   event.stopImmediatePropagation()
@@ -41,6 +43,7 @@ const isCaptureModifier = (code: string): boolean =>
 
 export class GuestKeyboardRouter {
   private captured = false
+  private enabled = true
   private captureChord = false
   private rightCommand = false
   private rightWindowsDown = false
@@ -52,7 +55,7 @@ export class GuestKeyboardRouter {
   }
 
   setCaptured(captured: boolean): void {
-    if (this.captured === captured) return
+    if (this.captured === captured || (captured && !this.enabled)) return
     this.releaseAll()
     this.captured = captured
   }
@@ -61,7 +64,14 @@ export class GuestKeyboardRouter {
     return this.captured
   }
 
+  setEnabled(enabled: boolean): void {
+    if (this.enabled === enabled) return
+    if (!enabled) this.lostFocus()
+    this.enabled = enabled
+  }
+
   keyDown(event: RoutedKeyEvent): void {
+    if (!this.enabled) return
     if (
       !event.repeat &&
       isCaptureModifier(event.code) &&
@@ -121,6 +131,7 @@ export class GuestKeyboardRouter {
   }
 
   keyUp(event: RoutedKeyEvent): void {
+    if (!this.enabled) return
     if (isCaptureModifier(event.code) && !(event.ctrlKey && event.altKey))
       this.captureChord = false
     if (this.captured) {
@@ -181,9 +192,9 @@ export function sendWindowsKey(send: KeyboardSend): void {
 
 export function sendCtrlAltDelete(send: KeyboardSend): void {
   send(CONTROL, "ControlLeft", true)
-  send(0xffe9, "AltLeft", true)
-  send(0xffff, "Delete", true)
-  send(0xffff, "Delete", false)
-  send(0xffe9, "AltLeft", false)
+  send(ALT, "AltLeft", true)
+  send(DELETE, "Delete", true)
+  send(DELETE, "Delete", false)
+  send(ALT, "AltLeft", false)
   send(CONTROL, "ControlLeft", false)
 }

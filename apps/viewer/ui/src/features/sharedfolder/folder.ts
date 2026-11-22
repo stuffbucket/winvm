@@ -67,10 +67,13 @@ export function homePath(path: string, home: string | null): string {
   return path.startsWith(`${h}/`) ? `~${path.slice(h.length)}` : path
 }
 
+const TAIL_MIN = 8
+const TAIL_MAX = 16
+
 export function tailToKeep(shown: string): number {
   const slash = shown.lastIndexOf("/")
   const last = slash < 0 ? shown.length : shown.length - slash
-  return Math.min(Math.max(last, 8), 16, shown.length)
+  return Math.min(Math.max(last, TAIL_MIN), TAIL_MAX, shown.length)
 }
 
 export const needsSetup = (s: SharedFolderStatus | null): boolean =>

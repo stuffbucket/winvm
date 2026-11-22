@@ -1,6 +1,7 @@
 import { Menu as BaseMenu } from "@base-ui/react/menu"
 import type { ComponentPropsWithRef, JSX, ReactElement, ReactNode } from "react"
 
+import { px, spacing } from "../styles/theme"
 import { cx } from "./cx"
 import { Icon } from "./Icon"
 
@@ -19,7 +20,7 @@ export function MenuRoot({
   children,
   align = "start",
   side = "bottom",
-  sideOffset = 4,
+  sideOffset = px(spacing[1]),
   label,
   ...props
 }: MenuRootProps): JSX.Element {
@@ -44,13 +45,18 @@ export function MenuRoot({
 
 export function MenuGroup({
   label,
+  name,
   children,
 }: {
   readonly label?: ReactNode
+  readonly name?: string
   readonly children: ReactNode
 }): JSX.Element {
   return (
-    <BaseMenu.Group className="menu__group">
+    <BaseMenu.Group
+      className="menu__group"
+      aria-label={label === undefined ? name : undefined}
+    >
       {label !== undefined && (
         <BaseMenu.GroupLabel className="menu__heading">
           {label}

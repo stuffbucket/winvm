@@ -1,6 +1,7 @@
 import { z } from "zod"
 
 import { type AgentReply, agentFetch } from "../../backend"
+import { HTTP_OK, HTTP_REDIRECTION } from "../../constants"
 import type { ListFailure, Listing } from "./files"
 import { parseListing } from "./files"
 
@@ -38,7 +39,7 @@ export function parseReply<T>(
   reply: AgentReply,
   shape: z.ZodType<T>,
 ): OpResult<T> {
-  if (reply.status >= 200 && reply.status < 300) {
+  if (reply.status >= HTTP_OK && reply.status < HTTP_REDIRECTION) {
     const ok = shape.safeParse(reply.body)
     if (ok.success) return { ok: true, value: ok.data }
   }
@@ -70,6 +71,9 @@ export function unreachable(error: unknown): {
     detail,
   }
 }
+
+const TRANSFER_TIMEOUT_MS = 600_000
+const DELETE_TIMEOUT_MS = 630_000
 
 const Path = z.object({ path: z.string() })
 const Deleted = z.object({ deleted: z.number() })
@@ -117,14 +121,14 @@ export const move = async (
   from: string,
   to: string,
 ): Promise<OpResult<{ path: string }>> =>
-  await call(instance, "/fs/rename", { from, to }, Path, 600_000)
+  await call(instance, "/fs/rename", { from, to }, Path, TRANSFER_TIMEOUT_MS)
 
 export const copy = async (
   instance: string,
   from: string,
   to: string,
 ): Promise<OpResult<{ path: string }>> =>
-  await call(instance, "/fs/copy", { from, to }, Path, 600_000)
+  await call(instance, "/fs/copy", { from, to }, Path, TRANSFER_TIMEOUT_MS)
 
 export const remove = async (
   instance: string,
@@ -136,5 +140,5 @@ export const remove = async (
     "/fs/delete",
     { paths, recycle: !permanently },
     Deleted,
-    630_000,
+    DELETE_TIMEOUT_MS,
   )
