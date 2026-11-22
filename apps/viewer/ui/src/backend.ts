@@ -485,12 +485,10 @@ export const closeComplete = (): Promise<void> =>
 
 export type SystemKeys = "allowed" | "needsPermission" | "unavailable"
 
-export type Modifier = "shift" | "control" | "option" | "command"
-
 export interface SystemKey {
   readonly code: string
   readonly down: boolean
-  readonly modifiers: readonly Modifier[]
+  readonly modifiers: readonly string[]
 }
 
 export const setSystemKeys = (

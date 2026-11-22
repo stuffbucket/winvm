@@ -52,7 +52,9 @@ function setup() {
         ? { keysym: 0xff09, code }
         : code === "Space"
           ? { keysym: 0x20, code }
-          : null,
+          : code === "ArrowRight"
+            ? { keysym: 0xff53, code }
+            : null,
     releaseNoVnc: () => {
       noVncReleases += 1
     },
@@ -212,10 +214,10 @@ describe("guest keyboard routing", () => {
   it("presses Windows first when the tapped Tab overtakes Command", () => {
     const { router, sent } = setup()
     router.setCaptured(true)
-    router.systemKey("Tab", true, ["command"])
+    router.systemKey("Tab", true, ["MetaLeft"])
     const command = event("MetaLeft", { meta: true })
     router.keyDown(command)
-    router.systemKey("Tab", false, ["command"])
+    router.systemKey("Tab", false, ["MetaLeft"])
     router.keyUp(event("MetaLeft"))
     expect(sent).toEqual([
       "down:MetaLeft:ffeb",
@@ -231,18 +233,18 @@ describe("guest keyboard routing", () => {
     router.setCaptured(true)
     router.keyDown(event("MetaLeft", { meta: true }))
     router.keyDown(event("ShiftLeft", { meta: true }))
-    router.systemKey("Tab", true, ["command", "shift"])
-    router.systemKey("Tab", false, ["command", "shift"])
+    router.systemKey("Tab", true, ["ShiftLeft", "MetaLeft"])
+    router.systemKey("Tab", false, ["ShiftLeft", "MetaLeft"])
     expect(sent).toEqual(["down:MetaLeft:ffeb", "down:Tab:ff09", "up:Tab:ff09"])
   })
 
   it("lends Control and Option for a tapped key and returns them when the Mac lets go", () => {
     const { router, sent } = setup()
     router.setCaptured(true)
-    router.systemKey("Space", true, ["control", "option"])
+    router.systemKey("Space", true, ["ControlLeft", "AltLeft"])
     const control = event("ControlLeft", { ctrl: true })
     router.keyDown(control)
-    router.systemKey("Space", false, ["control", "option"])
+    router.systemKey("Space", false, ["ControlLeft", "AltLeft"])
     router.keyUp(event("ControlLeft"))
     router.keyUp(event("AltLeft"))
     expect(sent).toEqual([
@@ -259,7 +261,7 @@ describe("guest keyboard routing", () => {
   it("returns a lent modifier once a tapped key arrives without it", () => {
     const { router, sent } = setup()
     router.setCaptured(true)
-    router.systemKey("Tab", true, ["command"])
+    router.systemKey("Tab", true, ["MetaLeft"])
     router.systemKey("Tab", false, [])
     expect(sent).toEqual([
       "down:MetaLeft:ffeb",
@@ -272,7 +274,7 @@ describe("guest keyboard routing", () => {
   it("returns a lent Windows key behind a Ctrl tap when focus disappears", () => {
     const { router, sent } = setup()
     router.setCaptured(true)
-    router.systemKey("Tab", true, ["command", "shift"])
+    router.systemKey("Tab", true, ["ShiftLeft", "MetaLeft"])
     router.lostFocus()
     expect(sent).toEqual([
       "down:ShiftLeft:ffe1",
@@ -286,20 +288,52 @@ describe("guest keyboard routing", () => {
     ])
   })
 
-  it("returns a lent Windows key when the other Command key is the one let go", () => {
+  it("presses the Windows key on the side of the Command key held, for right Command-Tab", () => {
     const { router, sent } = setup()
     router.setCaptured(true)
-    router.systemKey("Tab", true, ["command"])
-    router.keyDown(event("MetaRight", { meta: true }))
-    router.systemKey("Tab", false, ["command"])
+    router.systemKey("Tab", true, ["MetaRight"])
+    const command = event("MetaRight", { meta: true })
+    router.keyDown(command)
+    router.systemKey("Tab", false, ["MetaRight"])
     router.keyUp(event("MetaRight"))
     expect(sent).toEqual([
+      "down:MetaRight:ffec",
+      "down:Tab:ff09",
+      "up:Tab:ff09",
+      "up:MetaRight:ffec",
+    ])
+    expect(command.stopped).toBe(true)
+  })
+
+  it("lends a right Shift as a right Shift and keeps it from noVNC", () => {
+    const { router, sent } = setup()
+    router.setCaptured(true)
+    router.systemKey("Tab", true, ["ShiftRight", "MetaLeft"])
+    const shift = event("ShiftRight")
+    router.keyDown(shift)
+    router.systemKey("Tab", false, ["ShiftRight", "MetaLeft"])
+    router.keyUp(event("ShiftRight"))
+    expect(sent).toEqual([
+      "down:ShiftRight:ffe2",
       "down:MetaLeft:ffeb",
       "down:Tab:ff09",
-      "down:MetaRight:ffec",
       "up:Tab:ff09",
-      "up:MetaLeft:ffeb",
-      "up:MetaRight:ffec",
+      "up:ShiftRight:ffe2",
+    ])
+    expect(shift.prevented).toBe(true)
+  })
+
+  it("lets go of a held key and its lent modifiers when the tap's lease lapses", () => {
+    const { router, sent } = setup()
+    router.setCaptured(true)
+    router.systemKey("ArrowRight", true, ["ControlLeft"])
+    router.systemKey("ArrowRight", false, [])
+    router.keyUp(event("ControlLeft"))
+    expect(sent).toEqual([
+      "down:ControlLeft:ffe3",
+      "down:ArrowRight:ff53",
+      "up:ArrowRight:ff53",
+      "up:ControlLeft:ffe3",
     ])
   })
 

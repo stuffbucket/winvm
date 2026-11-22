@@ -9,7 +9,7 @@ pub const WINDOW: &str = "main";
 pub const LEASE: Duration = Duration::from_millis(750);
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct Mods(u8);
+pub struct Mods(u16);
 
 impl Mods {
     pub const SHIFT: Self = Self(1);
@@ -17,11 +17,43 @@ impl Mods {
     pub const OPTION: Self = Self(1 << 2);
     pub const COMMAND: Self = Self(1 << 3);
     pub const FUNCTION: Self = Self(1 << 4);
-    const NAMED: [(Self, &'static str); 4] = [
-        (Self::SHIFT, "shift"),
-        (Self::CONTROL, "control"),
-        (Self::OPTION, "option"),
-        (Self::COMMAND, "command"),
+    pub const LEFT_SHIFT: Self = Self(1 << 5);
+    pub const RIGHT_SHIFT: Self = Self(1 << 6);
+    pub const LEFT_CONTROL: Self = Self(1 << 7);
+    pub const RIGHT_CONTROL: Self = Self(1 << 8);
+    pub const LEFT_OPTION: Self = Self(1 << 9);
+    pub const RIGHT_OPTION: Self = Self(1 << 10);
+    pub const LEFT_COMMAND: Self = Self(1 << 11);
+    pub const RIGHT_COMMAND: Self = Self(1 << 12);
+    const SIDES: [(Self, Self, &'static str, Self, &'static str); 4] = [
+        (
+            Self::SHIFT,
+            Self::LEFT_SHIFT,
+            "ShiftLeft",
+            Self::RIGHT_SHIFT,
+            "ShiftRight",
+        ),
+        (
+            Self::CONTROL,
+            Self::LEFT_CONTROL,
+            "ControlLeft",
+            Self::RIGHT_CONTROL,
+            "ControlRight",
+        ),
+        (
+            Self::OPTION,
+            Self::LEFT_OPTION,
+            "AltLeft",
+            Self::RIGHT_OPTION,
+            "AltRight",
+        ),
+        (
+            Self::COMMAND,
+            Self::LEFT_COMMAND,
+            "MetaLeft",
+            Self::RIGHT_COMMAND,
+            "MetaRight",
+        ),
     ];
 
     #[must_use]
@@ -32,16 +64,25 @@ impl Mods {
     pub const fn has(self, any: Self) -> bool {
         self.0 & any.0 != 0
     }
+
+    pub fn codes(self) -> impl Iterator<Item = &'static str> {
+        Self::SIDES
+            .into_iter()
+            .filter(move |(held, ..)| self.has(*held))
+            .flat_map(move |(_, left, left_code, right, right_code)| {
+                let right_only = self.has(right) && !self.has(left);
+                [
+                    (!right_only).then_some(left_code),
+                    self.has(right).then_some(right_code),
+                ]
+            })
+            .flatten()
+    }
 }
 
 impl Serialize for Mods {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        serializer.collect_seq(
-            Self::NAMED
-                .iter()
-                .filter(|(mods, _)| self.has(*mods))
-                .map(|(_, name)| name),
-        )
+        serializer.collect_seq(self.codes())
     }
 }
 
@@ -81,10 +122,6 @@ impl Default for Filter {
 
 impl Filter {
     pub fn decide(&mut self, armed: bool, stroke: Stroke, keycode: u16, mods: Mods) -> Verdict {
-        if !armed {
-            self.reset();
-            return Verdict::Pass;
-        }
         let code = dom_code(keycode);
         if code.is_none() && !is_system_key(keycode) {
             return Verdict::Pass;
@@ -92,10 +129,10 @@ impl Filter {
         let Some(held) = self.held.get_mut(usize::from(keycode)) else {
             return Verdict::Pass;
         };
-        let down = match (stroke, *held) {
-            (Stroke::Down | Stroke::Repeat, true) => true,
-            (Stroke::Down, false) if intercepts(keycode, mods) => true,
-            (Stroke::Up, true) => false,
+        let down = match (stroke, *held, armed) {
+            (Stroke::Up, true, _) => false,
+            (Stroke::Down | Stroke::Repeat, true, true) => true,
+            (Stroke::Down, false, true) if intercepts(keycode, mods) => true,
             _ => return Verdict::Pass,
         };
         *held = down;
@@ -106,8 +143,25 @@ impl Filter {
         }))
     }
 
-    pub fn reset(&mut self) {
+    pub fn holds(&self, keycode: u16) -> bool {
+        self.held
+            .get(usize::from(keycode))
+            .is_some_and(|held| *held)
+    }
+
+    pub fn release(&mut self) -> Vec<Forward> {
+        let released = (0..=u16::MAX)
+            .take(KEYCODES)
+            .filter(|&keycode| self.holds(keycode))
+            .filter_map(dom_code)
+            .map(|code| Forward {
+                code,
+                down: false,
+                modifiers: Mods::default(),
+            })
+            .collect();
         self.held = [false; KEYCODES];
+        released
     }
 }
 
@@ -309,11 +363,31 @@ impl Lease {
         nanos(now) < self.until.load(Ordering::SeqCst)
     }
 
+    pub fn retire(&self) -> bool {
+        self.retire_at(self.now())
+    }
+
     fn extend_at(&self, now: Duration, length: Duration) -> bool {
-        let lapsed = !self.live_at(now);
-        self.until
-            .store(nanos(now.saturating_add(length)), Ordering::SeqCst);
-        lapsed
+        let until = nanos(now.saturating_add(length));
+        let mut seen = self.until.load(Ordering::SeqCst);
+        loop {
+            match self
+                .until
+                .compare_exchange(seen, until, Ordering::SeqCst, Ordering::SeqCst)
+            {
+                Ok(_) => return nanos(now) >= seen,
+                Err(actual) => seen = actual,
+            }
+        }
+    }
+
+    fn retire_at(&self, now: Duration) -> bool {
+        let seen = self.until.load(Ordering::SeqCst);
+        nanos(now) >= seen
+            && self
+                .until
+                .compare_exchange(seen, 0, Ordering::SeqCst, Ordering::SeqCst)
+                .is_ok()
     }
 }
 
@@ -511,6 +585,18 @@ mod platform {
     use tauri::{AppHandle, Emitter, Manager};
 
     const SLICE_SECONDS: f64 = 0.1;
+    const LOG_VARIABLE: &str = "WINVM_KEYTAP_LOG";
+
+    pub const UNADDRESSED_IS_OURS: bool = true;
+
+    const NX_DEVICELCTLKEYMASK: u64 = 0x0000_0001;
+    const NX_DEVICELSHIFTKEYMASK: u64 = 0x0000_0002;
+    const NX_DEVICERSHIFTKEYMASK: u64 = 0x0000_0004;
+    const NX_DEVICELCMDKEYMASK: u64 = 0x0000_0008;
+    const NX_DEVICERCMDKEYMASK: u64 = 0x0000_0010;
+    const NX_DEVICELALTKEYMASK: u64 = 0x0000_0020;
+    const NX_DEVICERALTKEYMASK: u64 = 0x0000_0040;
+    const NX_DEVICERCTLKEYMASK: u64 = 0x0000_2000;
     const ACCESSIBILITY_PANE: &str =
         "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility";
 
@@ -552,9 +638,10 @@ mod platform {
             NSWorkspace, NSWorkspaceSessionDidResignActiveNotification,
             NSWorkspaceWillSleepNotification,
         };
-        use objc2_foundation::NSNotification;
+        use objc2_foundation::{NSNotification, NSOperationQueue};
 
         let center = NSWorkspace::sharedWorkspace().notificationCenter();
+        let main = NSOperationQueue::mainQueue();
         // SAFETY: AppKit's notification names are immutable statics.
         let names = unsafe {
             [
@@ -570,9 +657,14 @@ mod platform {
                 }
                 let _ = app.emit_to(WINDOW, "menu", "release-keyboard");
             });
-            // SAFETY: NSWorkspace posts these on the main thread, where the block runs.
+            // SAFETY: the block runs on the main queue and touches only the thread-safe AppHandle.
             let observer = unsafe {
-                center.addObserverForName_object_queue_usingBlock(Some(name), None, None, &block)
+                center.addObserverForName_object_queue_usingBlock(
+                    Some(name),
+                    None,
+                    Some(&main),
+                    &block,
+                )
             };
             std::mem::forget(observer);
         }
@@ -617,18 +709,24 @@ mod platform {
         }
     }
 
+    enum Message {
+        Key(Forward),
+        Target { target: i64, matched: bool },
+    }
+
     struct Context {
         lease: Arc<Lease>,
         filter: RefCell<Filter>,
-        keys: mpsc::Sender<Forward>,
+        keys: mpsc::Sender<Message>,
         port: OnceCell<CFRetained<CFMachPort>>,
         pid: i64,
+        log: bool,
     }
 
     fn start(sink: Sink) -> Option<Tap> {
         let lease = Arc::new(Lease::default());
         let (wake, woken) = mpsc::channel::<()>();
-        let (keys, forwarded) = mpsc::channel::<Forward>();
+        let (keys, forwarded) = mpsc::channel::<Message>();
         let (ready, started) = mpsc::channel::<bool>();
         let shared = Arc::clone(&lease);
         thread::Builder::new()
@@ -641,10 +739,17 @@ mod platform {
         thread::Builder::new()
             .name("winvm-key-forward".into())
             .spawn(move || {
-                for key in forwarded {
-                    if let Ok(sink) = sink.lock() {
-                        if let Some(channel) = sink.as_ref() {
-                            let _ = channel.send(key);
+                for message in forwarded {
+                    match message {
+                        Message::Key(key) => {
+                            if let Ok(sink) = sink.lock() {
+                                if let Some(channel) = sink.as_ref() {
+                                    let _ = channel.send(key);
+                                }
+                            }
+                        }
+                        Message::Target { target, matched } => {
+                            eprintln!("winvm: key tap: target pid {target}, matched {matched}");
                         }
                     }
                 }
@@ -655,7 +760,7 @@ mod platform {
 
     fn run(
         lease: Arc<Lease>,
-        keys: mpsc::Sender<Forward>,
+        keys: mpsc::Sender<Message>,
         woken: &mpsc::Receiver<()>,
         ready: &mpsc::Sender<bool>,
     ) {
@@ -665,6 +770,7 @@ mod platform {
             keys,
             port: OnceCell::new(),
             pid: i64::from(std::process::id()),
+            log: std::env::var_os(LOG_VARIABLE).is_some(),
         }));
         let mask = (1u64 << CGEventType::KeyDown.0) | (1u64 << CGEventType::KeyUp.0);
         // SAFETY: the callback matches CGEventTapCallBack, and info stays valid for as long as the tap exists.
@@ -700,7 +806,7 @@ mod platform {
         let port = context.port.get_or_init(|| port);
         let _ = ready.send(true);
         while woken.recv().is_ok() {
-            while context.lease.live() {
+            while !context.lease.retire() {
                 if !trusted() {
                     context.lease.end();
                     break;
@@ -713,7 +819,9 @@ mod platform {
             }
             CGEvent::tap_enable(port, false);
             if let Ok(mut filter) = context.filter.try_borrow_mut() {
-                filter.reset();
+                for key in filter.release() {
+                    let _ = context.keys.send(Message::Key(key));
+                }
             }
         }
     }
@@ -728,11 +836,26 @@ mod platform {
         ]
         .into_iter()
         .filter(|(flag, _)| flags.contains(*flag))
+        .chain(
+            [
+                (NX_DEVICELSHIFTKEYMASK, Mods::LEFT_SHIFT),
+                (NX_DEVICERSHIFTKEYMASK, Mods::RIGHT_SHIFT),
+                (NX_DEVICELCTLKEYMASK, Mods::LEFT_CONTROL),
+                (NX_DEVICERCTLKEYMASK, Mods::RIGHT_CONTROL),
+                (NX_DEVICELALTKEYMASK, Mods::LEFT_OPTION),
+                (NX_DEVICERALTKEYMASK, Mods::RIGHT_OPTION),
+                (NX_DEVICELCMDKEYMASK, Mods::LEFT_COMMAND),
+                (NX_DEVICERCMDKEYMASK, Mods::RIGHT_COMMAND),
+            ]
+            .into_iter()
+            .filter(|(mask, _)| flags.bits() & mask != 0)
+            .map(|(mask, side)| (CGEventFlags::from_bits_retain(mask), side)),
+        )
         .fold(Mods::default(), |held, (_, more)| held.with(more))
     }
 
-    pub fn ours(target: i64, pid: i64) -> bool {
-        target == 0 || target == pid
+    pub fn ours(target: i64, pid: i64, unaddressed_is_ours: bool) -> bool {
+        target == pid || (target == 0 && unaddressed_is_ours)
     }
 
     unsafe extern "C-unwind" fn callback(
@@ -755,9 +878,6 @@ mod platform {
         // SAFETY: the event stays valid for the duration of the callback.
         let event = unsafe { event.as_ref() };
         let field = |name| CGEvent::integer_value_field(Some(event), name);
-        if !ours(field(CGEventField::EventTargetUnixProcessID), context.pid) {
-            return pass;
-        }
         let stroke = match kind {
             CGEventType::KeyDown if field(CGEventField::KeyboardEventAutorepeat) != 0 => {
                 Stroke::Repeat
@@ -770,11 +890,21 @@ mod platform {
         let Ok(mut filter) = context.filter.try_borrow_mut() else {
             return pass;
         };
+        if !(stroke == Stroke::Up && filter.holds(keycode)) {
+            let target = field(CGEventField::EventTargetUnixProcessID);
+            let matched = ours(target, context.pid, UNADDRESSED_IS_OURS);
+            if context.log && stroke == Stroke::Down {
+                let _ = context.keys.send(Message::Target { target, matched });
+            }
+            if !matched {
+                return pass;
+            }
+        }
         match filter.decide(armed, stroke, keycode, mods(CGEvent::flags(Some(event)))) {
             Verdict::Pass => pass,
             Verdict::Swallow(forward) => {
                 if let Some(key) = forward {
-                    let _ = context.keys.send(key);
+                    let _ = context.keys.send(Message::Key(key));
                 }
                 ptr::null_mut()
             }
@@ -811,9 +941,30 @@ mod platform_tests {
 
     #[test]
     fn takes_only_events_headed_for_this_process() {
-        assert!(ours(42, 42));
-        assert!(ours(0, 42));
-        assert!(!ours(7, 42));
+        for unaddressed in [true, false] {
+            assert!(ours(42, 42, unaddressed));
+            assert!(!ours(7, 42, unaddressed));
+        }
+        assert!(ours(0, 42, true));
+        assert!(!ours(0, 42, false));
+    }
+
+    #[test]
+    fn reads_which_side_each_modifier_is_held_on() {
+        let right_command = CGEventFlags::MaskCommand | CGEventFlags::from_bits_retain(0x10);
+        let held = mods(right_command);
+        assert!(held.has(Mods::RIGHT_COMMAND));
+        assert!(!held.has(Mods::LEFT_COMMAND));
+        assert_eq!(held.codes().collect::<Vec<_>>(), ["MetaRight"]);
+        let both_shifts = CGEventFlags::MaskShift | CGEventFlags::from_bits_retain(0x02 | 0x04);
+        assert_eq!(
+            mods(both_shifts).codes().collect::<Vec<_>>(),
+            ["ShiftLeft", "ShiftRight"]
+        );
+        assert_eq!(
+            mods(CGEventFlags::MaskControl).codes().collect::<Vec<_>>(),
+            ["ControlLeft"]
+        );
     }
 }
 
@@ -963,17 +1114,59 @@ mod tests {
     }
 
     #[test]
-    fn passes_everything_and_forgets_held_keys_once_disarmed() {
+    fn takes_nothing_new_once_disarmed() {
         let mut filter = Filter::default();
-        filter.decide(true, Stroke::Down, TAB, Mods::COMMAND);
         assert_eq!(
             filter.decide(false, Stroke::Down, SPACE, Mods::COMMAND),
             Verdict::Pass
         );
         assert_eq!(
-            filter.decide(false, Stroke::Up, TAB, Mods::COMMAND),
+            filter.decide(false, Stroke::Up, SPACE, Mods::COMMAND),
             Verdict::Pass
         );
+    }
+
+    #[test]
+    fn still_forwards_the_release_of_a_key_it_took_after_the_lease_lapses() {
+        let mut filter = Filter::default();
+        filter.decide(true, Stroke::Down, TAB, Mods::COMMAND);
+        assert!(filter.holds(TAB));
+        assert_eq!(
+            filter.decide(false, Stroke::Repeat, TAB, Mods::COMMAND),
+            Verdict::Pass
+        );
+        assert_eq!(
+            filter.decide(false, Stroke::Up, TAB, NONE),
+            forward("Tab", false, NONE)
+        );
+        assert!(!filter.holds(TAB));
+        assert_eq!(filter.decide(false, Stroke::Up, TAB, NONE), Verdict::Pass);
+    }
+
+    #[test]
+    fn releases_every_key_it_holds_when_disarmed() {
+        let mut filter = Filter::default();
+        filter.decide(true, Stroke::Down, TAB, Mods::COMMAND);
+        filter.decide(true, Stroke::Down, ARROW_UP, Mods::CONTROL);
+        filter.decide(true, Stroke::Down, MISSION_CONTROL, NONE);
+        let mut released = filter.release();
+        released.sort_by_key(|key| key.code);
+        assert_eq!(
+            released,
+            [
+                Forward {
+                    code: "ArrowUp",
+                    down: false,
+                    modifiers: NONE,
+                },
+                Forward {
+                    code: "Tab",
+                    down: false,
+                    modifiers: NONE,
+                },
+            ]
+        );
+        assert_eq!(filter.release(), []);
         assert_eq!(filter.decide(true, Stroke::Up, TAB, NONE), Verdict::Pass);
     }
 
@@ -1024,6 +1217,7 @@ mod tests {
     fn names_the_modifiers_it_forwards_but_not_fn() {
         let held = Mods::SHIFT
             .with(Mods::COMMAND)
+            .with(Mods::RIGHT_COMMAND)
             .with(Mods::FUNCTION)
             .with(Mods::OPTION);
         let json = serde_json::to_value(Forward {
@@ -1037,7 +1231,7 @@ mod tests {
             Some(serde_json::json!({
                 "code": "Tab",
                 "down": true,
-                "modifiers": ["shift", "option", "command"],
+                "modifiers": ["ShiftLeft", "AltLeft", "MetaRight"],
             }))
         );
     }
@@ -1055,6 +1249,20 @@ mod tests {
         assert!(lease.extend_at(LEASE * 3, LEASE));
         lease.end();
         assert!(!lease.live_at(LEASE * 3));
+    }
+
+    #[test]
+    fn the_tap_thread_retires_only_a_lapsed_lease_and_a_renewal_then_wakes_it() {
+        let lease = Lease::default();
+        let at = Duration::from_millis;
+        lease.extend_at(at(0), LEASE);
+        assert!(!lease.retire_at(at(1)));
+        assert!(lease.live_at(at(1)));
+        assert!(lease.retire_at(LEASE));
+        assert!(!lease.live_at(at(0)));
+        assert!(lease.extend_at(LEASE, LEASE));
+        lease.end();
+        assert!(lease.extend_at(LEASE, LEASE));
     }
 
     #[test]

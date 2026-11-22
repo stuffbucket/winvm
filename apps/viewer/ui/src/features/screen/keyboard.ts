@@ -1,5 +1,3 @@
-import type { Modifier } from "../../backend"
-
 export interface GuestKey {
   readonly keysym: number
   readonly code: string
@@ -28,41 +26,25 @@ interface RouterOptions {
 const SUPER = 0xffeb
 const SUPER_RIGHT = 0xffec
 const SHIFT = 0xffe1
+const SHIFT_RIGHT = 0xffe2
 const CONTROL = 0xffe3
+const CONTROL_RIGHT = 0xffe4
 const ALT = 0xffe9
+const ALT_RIGHT = 0xffea
 const DELETE = 0xffff
 
-interface Lendable {
-  readonly name: Modifier
-  readonly codes: readonly string[]
-  readonly key: GuestKey
-}
-
-const LENDABLE: readonly Lendable[] = [
-  {
-    name: "shift",
-    codes: ["ShiftLeft", "ShiftRight"],
-    key: { keysym: SHIFT, code: "ShiftLeft" },
-  },
-  {
-    name: "control",
-    codes: ["ControlLeft", "ControlRight"],
-    key: { keysym: CONTROL, code: "ControlLeft" },
-  },
-  {
-    name: "option",
-    codes: ["AltLeft", "AltRight"],
-    key: { keysym: ALT, code: "AltLeft" },
-  },
-  {
-    name: "command",
-    codes: ["MetaLeft", "MetaRight"],
-    key: { keysym: SUPER, code: "MetaLeft" },
-  },
-]
-
-const lendableOf = (code: string): Lendable | undefined =>
-  LENDABLE.find((m) => m.codes.includes(code))
+const MODIFIERS: ReadonlyMap<string, GuestKey> = new Map(
+  [
+    { keysym: SHIFT, code: "ShiftLeft" },
+    { keysym: SHIFT_RIGHT, code: "ShiftRight" },
+    { keysym: CONTROL, code: "ControlLeft" },
+    { keysym: CONTROL_RIGHT, code: "ControlRight" },
+    { keysym: ALT, code: "AltLeft" },
+    { keysym: ALT_RIGHT, code: "AltRight" },
+    { keysym: SUPER, code: "MetaLeft" },
+    { keysym: SUPER_RIGHT, code: "MetaRight" },
+  ].map((key) => [key.code, key]),
+)
 
 const stopGuest = (event: RoutedKeyEvent): void => {
   event.stopImmediatePropagation()
@@ -86,7 +68,7 @@ export class GuestKeyboardRouter {
   private readonly capturedWindows = new Map<string, GuestKey>()
   private readonly systemHeld = new Map<string, GuestKey>()
   private readonly pressed = new Set<string>()
-  private readonly lent = new Map<Modifier, GuestKey>()
+  private readonly lent = new Map<string, GuestKey>()
   private readonly options: RouterOptions
 
   constructor(options: RouterOptions) {
@@ -130,9 +112,9 @@ export class GuestKeyboardRouter {
     if (this.captured) {
       if (isMeta(event.code)) {
         stopAll(event)
-        const lent = this.lent.get("command")
-        if (lent?.code === event.code) {
-          this.lent.delete("command")
+        const lent = this.lent.get(event.code)
+        if (lent !== undefined) {
+          this.lent.delete(event.code)
           this.capturedWindows.set(event.code, lent)
         } else if (!this.capturedWindows.has(event.code)) {
           const key =
@@ -144,9 +126,8 @@ export class GuestKeyboardRouter {
         }
         return
       }
-      const lendable = lendableOf(event.code)
-      if (lendable === undefined) return
-      if (this.lent.get(lendable.name)?.code === event.code) stopAll(event)
+      if (!MODIFIERS.has(event.code)) return
+      if (this.lent.has(event.code)) stopAll(event)
       else this.pressed.add(event.code)
       return
     }
@@ -183,8 +164,7 @@ export class GuestKeyboardRouter {
     if (isCaptureModifier(event.code) && !(event.ctrlKey && event.altKey))
       this.captureChord = false
     this.pressed.delete(event.code)
-    const lendable = lendableOf(event.code)
-    if (lendable !== undefined) this.giveBack(lendable.name)
+    this.giveBack(event.code)
     if (this.captured) {
       if (isMeta(event.code)) {
         stopAll(event)
@@ -215,38 +195,38 @@ export class GuestKeyboardRouter {
   systemKey(
     code: string,
     down: boolean,
-    modifiers: readonly Modifier[] = [],
+    modifiers: readonly string[] = [],
   ): void {
     if (!this.enabled || !this.captured) return
     const key = down
       ? this.options.fromCode(code)
       : (this.systemHeld.get(code) ?? null)
     if (key === null) return
-    for (const lendable of LENDABLE)
-      if (modifiers.includes(lendable.name)) this.lend(lendable)
+    for (const modifier of modifiers) this.lend(modifier)
     if (down) this.systemHeld.set(code, key)
     else this.systemHeld.delete(code)
     this.options.send(key.keysym, key.code, down)
-    for (const lendable of LENDABLE)
-      if (!modifiers.includes(lendable.name)) this.giveBack(lendable.name)
+    for (const modifier of [...this.lent.keys()])
+      if (!modifiers.includes(modifier)) this.giveBack(modifier)
   }
 
-  private holds(lendable: Lendable): boolean {
-    return lendable.name === "command"
-      ? this.capturedWindows.size > 0
-      : lendable.codes.some((code) => this.pressed.has(code))
+  private lend(code: string): void {
+    const key = MODIFIERS.get(code)
+    if (
+      key === undefined ||
+      this.lent.has(code) ||
+      this.pressed.has(code) ||
+      this.capturedWindows.has(code)
+    )
+      return
+    this.lent.set(code, key)
+    this.options.send(key.keysym, key.code, true)
   }
 
-  private lend(lendable: Lendable): void {
-    if (this.lent.has(lendable.name) || this.holds(lendable)) return
-    this.lent.set(lendable.name, lendable.key)
-    this.options.send(lendable.key.keysym, lendable.key.code, true)
-  }
-
-  private giveBack(name: Modifier): void {
-    const key = this.lent.get(name)
+  private giveBack(code: string): void {
+    const key = this.lent.get(code)
     if (key === undefined) return
-    this.lent.delete(name)
+    this.lent.delete(code)
     this.options.send(key.keysym, key.code, false)
   }
 
@@ -254,16 +234,17 @@ export class GuestKeyboardRouter {
     for (const key of this.systemHeld.values())
       this.options.send(key.keysym, key.code, false)
     this.systemHeld.clear()
-    const lentWindows = this.lent.get("command")
-    this.lent.delete("command")
+    const lentWindows = [...this.lent.values()].filter((key) =>
+      isMeta(key.code),
+    )
     for (const key of this.lent.values())
-      this.options.send(key.keysym, key.code, false)
+      if (!isMeta(key.code)) this.options.send(key.keysym, key.code, false)
     this.lent.clear()
     this.pressed.clear()
     if (
       this.capturedWindows.size > 0 ||
       this.rightWindowsDown ||
-      lentWindows !== undefined
+      lentWindows.length > 0
     ) {
       this.options.send(CONTROL, "ControlLeft", true)
       this.options.send(CONTROL, "ControlLeft", false)
@@ -272,8 +253,8 @@ export class GuestKeyboardRouter {
       this.options.send(key.keysym, key.code, false)
     this.capturedWindows.clear()
     if (this.rightWindowsDown) this.options.send(SUPER, "MetaLeft", false)
-    if (lentWindows !== undefined)
-      this.options.send(lentWindows.keysym, lentWindows.code, false)
+    for (const key of lentWindows)
+      this.options.send(key.keysym, key.code, false)
     this.rightCommand = false
     this.rightWindowsDown = false
     this.options.releaseNoVnc()
