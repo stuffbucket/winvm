@@ -28,7 +28,7 @@ The existing `pnpm run build` delegates to workspace `build` scripts through Tur
 
 - Bun's single version pin is `.bun-version` (currently 1.4.3); mise and CI read it.
 - pnpm is pinned by `mise.toml` and `package.json#packageManager` (currently 12.3.4). Install workspace dependencies with pnpm, not `bun install`.
-- Node is scoped to `packages/storybook/mise.toml` (currently 22.23.2), for Storybook only. Like `apps/viewer/mise.toml`, each checkout must `mise trust` it once.
+- Node is scoped to `packages/storybook/mise.toml` (currently 22.23.2), for Storybook only. It declares only tools, so mise runs it without a `mise trust`.
 - Rust is scoped to `apps/viewer/mise.toml` (currently 1.99.0). The native build task uses `mise -C apps/viewer exec` rather than assuming that a changed working directory loads child tool configuration.
 - `mise.lock` locks runtime-tool artifacts. QEMU/swtpm/zstd/virtiofsd come from the separately pinned `packages/core/runtime.json`, not a Homebrew QEMU.
 - Each checkout/worktree needs its own `pnpm install` and build outputs. CI uses `pnpm install --frozen-lockfile`.
@@ -167,11 +167,11 @@ It is its own pnpm workspace with its own lockfile, outside the root one, so Sto
 ```sh
 mise run storybook:install                # once per checkout, and after its lockfile changes
 mise run storybook                        # dev server on :6006
-mise run storybook:check                  # story typecheck, token contrast audit, knip; part of verify
+mise run storybook:check                  # story typecheck, script tests, token contrast audit, knip; part of verify
 mise run storybook:shots -- --out <dir>   # static build, then every story in light and dark
 ```
 
-`storybook:shots` drives Playwright's WebKit from the package's own pinned `playwright` (browsers: `mise -C packages/storybook exec -- pnpm exec playwright install webkit`), writes `<dir>/{light,dark}/<story-id>.png` plus `index.html` and `index.md`, and fails if any story fails to render or play. `storybook` and `storybook:build` rebuild `apps/viewer/dist` before staging it, so serialize them with the render scripts. Story fixtures come from the render fakes through the viewer's own parsers; add a state to the fakes rather than a second fixture set.
+`storybook:shots` drives Playwright's WebKit from the package's own pinned `playwright` (browsers: `mise -C packages/storybook exec -- pnpm exec playwright install webkit`), writes `<dir>/{light,dark}/<story-id>.png` plus `index.html` and `index.md`, and fails if any story fails to render or play. A relative `--out` is taken from where pnpm or bun was run (the repository root for `mise run` and `bun run`). It only ever replaces its own `light/`, `dark/` and `index.*`, marks the directory it writes, and refuses the home directory, the repository, the Storybook package, any directory containing one of those, and a non-empty directory holding anything it didn't write. `--match '<glob>'` retakes only matching story ids and keeps the rest; `--help` lists the options. `storybook` and `storybook:build` rebuild `apps/viewer/dist` before staging it, so serialize them with the render scripts. Story fixtures come from the render fakes through the viewer's own parsers; add a state to the fakes rather than a second fixture set.
 
 ## Authorized real-guest operations
 
