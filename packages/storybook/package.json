@@ -1,0 +1,47 @@
+{
+  "name": "@winvm/storybook",
+  "version": "0.0.0",
+  "private": true,
+  "license": "MIT",
+  "type": "module",
+  "scripts": {
+    "dev": "bun scripts/prepare-ui.ts && storybook dev --port 6006 --no-open",
+    "build": "bun scripts/prepare-ui.ts && storybook build --output-dir storybook-static --quiet",
+    "contrast": "bun scripts/contrast-audit.ts",
+    "prepare-ui": "bun scripts/prepare-ui.ts",
+    "shots": "bun scripts/shots.ts",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "react": "18.3.1",
+    "react-dom": "18.3.1"
+  },
+  "devDependencies": {
+    "@storybook/addon-a11y": "10.6.3",
+    "@storybook/addon-docs": "10.6.3",
+    "@storybook/react-vite": "10.6.3",
+    "@types/bun": "1.4.0",
+    "@types/react": "18.3.12",
+    "@types/react-dom": "18.3.1",
+    "@vitejs/plugin-react": "5.2.0",
+    "playwright": "1.56.1",
+    "storybook": "10.6.3",
+    "typescript": "6.0.3",
+    "vite": "7.3.7"
+  },
+  "packageManager": "pnpm@12.3.4",
+  "engines": {
+    "node": ">=22"
+  },
+  "pnpmTarballUrlPolicy": {
+    "rules": [
+      {
+        "registry": "https://packagefeedproxy.microsoft.io/npm/",
+        "includeTarballHostSuffixes": [
+          "pkgs.visualstudio.com"
+        ],
+        "action": "omit"
+      }
+    ]
+  }
+}

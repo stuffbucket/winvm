@@ -2,7 +2,11 @@ import { readFileSync } from "node:fs"
 import { resolve } from "node:path"
 
 const ROOT = resolve(import.meta.dir, "..")
-const GLOBS = ["ui/src/**/*.css", "../../packages/canvas/src/**/*.css"]
+const GLOBS = [
+  "ui/src/**/*.css",
+  "../../packages/canvas/src/**/*.css",
+  "../../packages/storybook/src/**/*.css",
+]
 const TOKENS_FILE = "ui/src/styles/tokens.css"
 
 export function cssFiles(): string[] {

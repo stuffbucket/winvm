@@ -20,3 +20,8 @@ apps/viewer/src-tauri/gen/
 
 # The keeper crate's Rust target.
 native/keeper/target/
+
+# Storybook (packages/storybook): the staged viewer UI and the static build.
+packages/storybook/.ui/
+packages/storybook/storybook-static/
+packages/storybook/shots/

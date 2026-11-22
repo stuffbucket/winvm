@@ -4,7 +4,8 @@
   "workspaces": {
     ".": {
       "project": ["*.{mjs,cjs}"],
-      "ignoreDependencies": ["@winvm/cli"]
+      "ignoreDependencies": ["@winvm/cli"],
+      "ignoreBinaries": ["mise"]
     },
     "apps/cli": {
       "project": ["src/**/*.ts"]

@@ -20,7 +20,10 @@
     "encoding": "bun scripts/check-text-encoding.ts",
     "boundaries": "turbo boundaries",
     "knip": "knip",
-    "deps": "depcruise --config .dependency-cruiser.cjs apps packages scripts"
+    "deps": "depcruise --config .dependency-cruiser.cjs apps packages scripts",
+    "storybook": "mise -C packages/storybook exec -- pnpm run dev",
+    "storybook:build": "mise -C packages/storybook exec -- pnpm run build",
+    "storybook:install": "mise -C packages/storybook exec -- pnpm install --frozen-lockfile"
   },
   "devDependencies": {
     "@biomejs/biome": "2.6.6",

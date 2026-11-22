@@ -5,8 +5,11 @@
 # newer commit, run `pnpm install --lockfile-only`, and commit the lockfile.
 pnpmfile: .pnpmfile.cjs
 
+# packages/storybook is a workspace of its own (its pnpm-workspace.yaml and
+# lockfile), so Storybook's dependencies stay out of this install.
 packages:
   - "packages/*"
+  - "!packages/storybook"
   - "apps/*"
   - "scripts"
   - "site"
