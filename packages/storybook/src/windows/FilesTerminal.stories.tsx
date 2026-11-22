@@ -30,10 +30,12 @@ export const FilesMachineOff = scenario("Files, machine shut down", {
 export const TerminalUnreachable = scenario("Terminal, no connection", {
   page: "terminal",
   ready: ".term",
+  shows: ".term__status",
 })
 
 export const TerminalMachineOff = scenario("Terminal, machine shut down", {
   page: "terminal",
   query: { state: "stopped" },
   ready: ".term",
+  shows: ".term__status",
 })

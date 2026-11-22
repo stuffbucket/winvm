@@ -1,6 +1,6 @@
 import type { StoryObj } from "@storybook/react-vite"
 
-import { type App, appIn } from "./frame"
+import { type App, appIn, waitFor } from "./frame"
 import { type Page, WindowFrame } from "./WindowFrame"
 
 export interface Scenario {
@@ -8,6 +8,7 @@ export interface Scenario {
   readonly query?: Readonly<Record<string, string>>
   readonly ready?: string
   readonly steps?: (app: App) => Promise<void>
+  readonly shows?: string
 }
 
 export function scenario(name: string, s: Scenario): StoryObj {
@@ -24,6 +25,7 @@ export function scenario(name: string, s: Scenario): StoryObj {
     play: async ({ canvasElement }) => {
       const app = await appIn(canvasElement, s.ready ?? ".toolbar")
       await s.steps?.(app)
+      if (s.shows !== undefined) await waitFor(app, s.shows)
     },
   }
 }

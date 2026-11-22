@@ -60,30 +60,36 @@ export const OverviewNoPicture = scenario("Overview, no picture", {
 
 export const OverviewOff = scenario("Overview, shut down", {
   query: { state: "stopped" },
+  shows: ".overview:not(.overview--notes) .facts",
 })
 
 export const OverviewMissing = scenario("Overview, not created", {
   query: { state: "missing" },
+  shows: ".overview__note .mono",
 })
 
 export const ScreenRunning = scenario("Screen, running", {
   query: { state: "running", screen: "1" },
   steps: paintedScreen,
+  shows: ".screen__held:not(.screen__held--on)",
 })
 
 export const ScreenStarting = scenario("Screen, starting", {
   query: { state: "running", agent: "silent", screen: "1" },
   steps: paintedScreen,
+  shows: ".toolbar__activity",
 })
 
 export const ScreenPaused = scenario("Screen, paused", {
   query: { state: "paused", screen: "1" },
   steps: paintedScreen,
+  shows: ".screen__held--on",
 })
 
 export const ScreenAsleep = scenario("Screen, asleep", {
   query: { state: "asleep", screen: "1" },
   steps: paintedScreen,
+  shows: ".screen__held--on .screen__held-hint",
 })
 
 export const MachinePicker = scenario("Machine picker", {
@@ -92,6 +98,15 @@ export const MachinePicker = scenario("Machine picker", {
     await clickOn(app, ".machine-picker")
     await waitFor(app, '[role="menu"]')
   },
+  shows: "[role=menu] [role=menuitemradio]",
+})
+
+export const MachineRename = scenario("Machine picker, renaming", {
+  query: { state: "stowed" },
+  steps: async (app) => {
+    await menu(app, "rename-window")
+  },
+  shows: ".toolbar__rename",
 })
 
 export const Details = scenario("Details and resources", {
@@ -107,6 +122,7 @@ export const DetailsMacOnly = scenario("Details, no guest agent", {
     await open("view-details")(app)
     await waitFor(app, ".panel")
   },
+  shows: ".panel .resources",
 })
 
 export const SettingsPolicy = scenario("Settings, policy", {
@@ -121,8 +137,8 @@ export const SettingsHardware = scenario("Settings, hardware", {
     await open("settings")(app)
     await waitFor(app, ".settings-dialog")
     await clickText(app, "Processors, memory and disk")
-    await waitFor(app, ".settings-dialog")
   },
+  shows: ".settings-dialog .number-field",
 })
 
 export const Checkpoints = scenario("Checkpoints", { steps: checkpoints })

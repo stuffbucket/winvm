@@ -1,15 +1,19 @@
 import { type JSX, useEffect, useRef } from "react"
-
+import windowsRs from "../../../../apps/viewer/src-tauri/src/windows.rs?raw"
+import tauriConfig from "../../../../apps/viewer/src-tauri/tauri.conf.json"
 import { applyTheme } from "../theme"
+import { mainSize, type Size, specSize } from "./sizes"
 
 export type Page = "index" | "help" | "files" | "terminal"
 
-const SIZES = {
-  index: { width: 1024, height: 816 },
-  help: { width: 1024, height: 816 },
-  files: { width: 920, height: 560 },
-  terminal: { width: 820, height: 520 },
-} as const satisfies Record<Page, { width: number; height: number }>
+const MAIN = mainSize(tauriConfig)
+
+const SIZES: Record<Page, Size> = {
+  index: MAIN,
+  help: MAIN,
+  files: specSize(windowsRs, "FILES"),
+  terminal: specSize(windowsRs, "TERMINAL"),
+}
 
 export interface WindowFrameProps {
   readonly page: Page
