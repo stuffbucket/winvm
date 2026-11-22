@@ -140,12 +140,12 @@ describe("the clipboard", () => {
   })
 
   it("serializes native writes, coalesces queued copies, and never reads the old Mac value back", async () => {
-    let release!: () => void
+    let release: () => void = () => undefined
     const writes: string[] = []
     const sent: string[] = []
     let mac = ""
     const sync = new ClipboardSync({
-      readMac: async () => mac,
+      readMac: () => Promise.resolve(mac),
       writeMac: async (text) => {
         writes.push(text)
         if (text === "first")
@@ -172,10 +172,12 @@ describe("the clipboard", () => {
     let attempts = 0
     const warning = spyOn(console, "warn").mockImplementation(() => undefined)
     const sync = new ClipboardSync({
-      readMac: async () => "",
-      writeMac: async () => {
+      readMac: () => Promise.resolve(""),
+      writeMac: () => {
         attempts++
-        if (attempts === 1) throw new Error("pasteboard busy")
+        return attempts === 1
+          ? Promise.reject(new Error("pasteboard busy"))
+          : Promise.resolve()
       },
       toGuest: () => undefined,
       focused: () => true,
@@ -196,8 +198,8 @@ describe("the clipboard", () => {
     let attempts = 0
     const warning = spyOn(console, "warn").mockImplementation(() => undefined)
     const sync = new ClipboardSync({
-      readMac: async () => "retry me",
-      writeMac: async () => undefined,
+      readMac: () => Promise.resolve("retry me"),
+      writeMac: () => Promise.resolve(),
       toGuest: () => {
         attempts++
         if (attempts === 1) throw new Error("disconnected")
