@@ -9,6 +9,8 @@
   "draft": false,
   "prerelease": false,
   "packages": {
-    ".": {}
+    ".": {
+      "component": "winvm-workspace"
+    }
   }
 }

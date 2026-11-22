@@ -1,25 +1,3 @@
-// winvm-ui: UI Automation for the in-guest agent. A long-lived process the
-// agent's spawner starts in the logged-on session and talks to over stdio,
-// one JSON object per line each way:
-//
-//   in   {"id": 7, "op": "click", "window": "Maximal", "name": "Settings", "timeoutMs": 5000}
-//   out  {"id": 7, "result": {...}}   or   {"id": 7, "error": "...", "code": "notfound"}
-//
-// Requests run concurrently (a `wait` does not hold up a `find`). It exits
-// when stdin closes, so it never outlives the agent. Compiled in the guest by
-// agent-install.ps1 with Add-Type (C# 5, the in-box .NET Framework compiler):
-// AnyCPU, so it runs as native ARM64 under .NET Framework 4.8.1.
-//
-// A selector picks the scope, then the element:
-//   window   top-level window: Name contains this (case-insensitive), or ClassName equals it
-//   process  top-level windows of processes with this name ("maximal-shell", ".exe" optional)
-//   hwnd     a window handle
-//   name | nameContains | automationId | controlType | className | index
-// No window/process/hwnd: the whole desktop (slower: every window is searched).
-//
-// Ops: ping, windows, tree, find, wait, act (click | rightclick | doubleclick |
-// invoke | toggle | expand | collapse | select | setvalue | focus | type),
-// focus, settle, tray, menu. See docs/gui.md.
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
@@ -37,7 +15,6 @@ class UiError : Exception {
 }
 
 static class WinvmUi {
-  // ui.ts UI_HELPER_VERSION must match: the host reinstalls the agent when it does not.
   const int VERSION = 7;
 
   [DllImport("user32.dll")] static extern bool SetProcessDpiAwarenessContext(IntPtr v);
@@ -58,7 +35,6 @@ static class WinvmUi {
   [DllImport("kernel32.dll")] static extern bool IsWow64Process2(IntPtr p, out ushort pm, out ushort nm);
   [StructLayout(LayoutKind.Sequential)] struct MOUSEINPUT { public int dx, dy; public uint mouseData, dwFlags, time; public IntPtr dwExtraInfo; }
   [StructLayout(LayoutKind.Sequential)] struct KEYBDINPUT { public ushort wVk, wScan; public uint dwFlags, time; public IntPtr dwExtraInfo; }
-  // INPUT is a union; MOUSEINPUT is its largest member (32 bytes on 64-bit, after an 8-byte-aligned type).
   [StructLayout(LayoutKind.Explicit)] struct INPUT { [FieldOffset(0)] public uint type; [FieldOffset(8)] public MOUSEINPUT mi; [FieldOffset(8)] public KEYBDINPUT ki; }
   [DllImport("user32.dll", SetLastError = true)] static extern uint SendInput(uint n, INPUT[] inputs, int size);
 
@@ -69,7 +45,6 @@ static class WinvmUi {
   static string LogFile;
   static readonly object LogLock = new object();
 
-  /** One line per request, start and end, beside the exe: what hung, and for how long. */
   static void Log(string s) {
     if (LogFile == null) return;
     try {
@@ -85,13 +60,11 @@ static class WinvmUi {
   static int lastFlyoutClose = Environment.TickCount - 100000;
 
   static int Main(string[] args) {
-    // Physical pixels everywhere: UIA bounds == SendInput coordinates == the framebuffer.
-    DpiAware = SetProcessDpiAwarenessContext(new IntPtr(-4)); // PER_MONITOR_AWARE_V2
+    DpiAware = SetProcessDpiAwarenessContext(new IntPtr(-4));
     Out = new StreamWriter(Console.OpenStandardOutput(), new UTF8Encoding(false)) { AutoFlush = true, NewLine = "\n" };
     var input = new StreamReader(Console.OpenStandardInput(), new UTF8Encoding(false));
     try { LogFile = Path.Combine(Path.GetDirectoryName(Process.GetCurrentProcess().MainModule.FileName), "winvm-ui.log"); } catch { }
     Log("start pid " + Process.GetCurrentProcess().Id);
-    // Warm UIA up front: the first cross-process call costs ~100 ms or more.
     ThreadPool.QueueUserWorkItem(delegate { try { AutomationElement.RootElement.FindAll(TreeScope.Children, Condition.TrueCondition); } catch { } });
     string line;
     while ((line = input.ReadLine()) != null) {
@@ -100,7 +73,6 @@ static class WinvmUi {
       Interlocked.Increment(ref pending);
       ThreadPool.QueueUserWorkItem(delegate { try { Handle(l); } finally { Interlocked.Decrement(ref pending); } });
     }
-    // stdin closed: finish what was asked (briefly), then go.
     for (int i = 0; i < 100 && Thread.VolatileRead(ref pending) > 0; i++) Thread.Sleep(50);
     return 0;
   }
@@ -115,9 +87,6 @@ static class WinvmUi {
       var req = Json.Deserialize<Dictionary<string, object>>(line);
       req.TryGetValue("id", out id);
       Log("> " + line);
-      // A UIA call into a hung provider can block for minutes: answer anyway
-      // once the request is well past its own deadline, and leave the thread.
-      // (act with settleMs looks for its element twice, and settles in between.)
       int limit = 2 * Int(req, "timeoutMs", 0) + Int(req, "settleTimeoutMs", 5000) + 20000;
       object wid = id;
       watchdog = new Timer(delegate {
@@ -144,9 +113,6 @@ static class WinvmUi {
     Log("< " + Convert.ToString(reply["id"]) + " " + sw.ElapsedMilliseconds + " ms" + (reply.ContainsKey("error") ? " " + reply["code"] + ": " + reply["error"] : ""));
     lock (OutLock) Out.WriteLine(text);
   }
-
-
-  // --- request fields --------------------------------------------------------
 
   static string Str(Dictionary<string, object> b, string k) {
     object v;
@@ -214,8 +180,6 @@ static class WinvmUi {
     throw new UiError("bad", "unknown op \"" + op + "\"");
   }
 
-  // --- elements --------------------------------------------------------------
-
   static readonly AutomationProperty[] Props = {
     AutomationElement.NameProperty, AutomationElement.ControlTypeProperty, AutomationElement.AutomationIdProperty,
     AutomationElement.ClassNameProperty, AutomationElement.BoundingRectangleProperty, AutomationElement.IsEnabledProperty,
@@ -281,7 +245,6 @@ static class WinvmUi {
     return b.ContainsKey("window") || b.ContainsKey("process") || b.ContainsKey("hwnd");
   }
 
-  /** The top-level windows a selector scopes to; empty when it names none (the desktop). Waits up to timeoutMs for one. */
   static List<AutomationElement> Roots(Dictionary<string, object> b, int timeoutMs) {
     if (!HasScope(b)) return new List<AutomationElement>();
     string window = Str(b, "window"), proc = Str(b, "process"), hwnd = Str(b, "hwnd");
@@ -337,7 +300,6 @@ static class WinvmUi {
     return conds.Count == 0 ? Condition.TrueCondition : conds.Count == 1 ? conds[0] : new AndCondition(conds.ToArray());
   }
 
-  /** One pass: every match, in document order, the scope windows themselves included. */
   static List<AutomationElement> Matches(Dictionary<string, object> b, List<AutomationElement> roots) {
     var c = Cond(b);
     string contains = Str(b, "nameContains");
@@ -363,7 +325,6 @@ static class WinvmUi {
         var hits = Matches(b, Roots(b, Math.Max(0, deadline - Environment.TickCount)));
         if (hits.Count > index) return hits[index];
       } catch (ElementNotAvailableException) {
-        // the tree changed under us; look again
       }
       if (Environment.TickCount - deadline >= 0) throw new UiError("notfound", "no element matching " + Json.Serialize(Sel(b)));
       Thread.Sleep(50);
@@ -383,8 +344,6 @@ static class WinvmUi {
     return b.ContainsKey("name") || b.ContainsKey("nameContains") || b.ContainsKey("automationId") || b.ContainsKey("controlType") || b.ContainsKey("className");
   }
 
-  // --- tree ------------------------------------------------------------------
-
   static Dictionary<string, object> Tree(Dictionary<string, object> b) {
     int depth = Int(b, "depth", HasScope(b) || HasElementSel(b) ? 64 : 1);
     int max = Int(b, "max", 5000);
@@ -395,7 +354,6 @@ static class WinvmUi {
     if (HasElementSel(b)) roots = new List<AutomationElement> { Find(b, Int(b, "timeoutMs", 0)) };
     else if (HasScope(b)) roots = Roots(b, Int(b, "timeoutMs", 0));
     else {
-      // The desktop: its windows, each walked to depth - 1.
       var desk = Obj("name", "Desktop", "controlType", "Pane");
       var kids = new List<object>();
       count = 1;
@@ -411,7 +369,6 @@ static class WinvmUi {
     return Obj("count", count, "truncated", truncated, "tree", trees.Count == 1 ? trees[0] : Obj("name", "", "controlType", "List", "children", trees));
   }
 
-  /** One cross-process call caches the whole subtree; then walk it locally. */
   static Dictionary<string, object> WalkFrom(AutomationElement root, int depth, int max, ref int count, ref bool truncated) {
     AutomationElement cached;
     using (Cache(TreeScope.Subtree).Activate()) cached = root.GetUpdatedCache(Cache(TreeScope.Subtree));
@@ -432,8 +389,6 @@ static class WinvmUi {
     return d;
   }
 
-  // --- wait and settle -------------------------------------------------------
-
   static Dictionary<string, object> Wait(Dictionary<string, object> b) {
     int timeout = Int(b, "timeoutMs", 10000);
     var sw = Stopwatch.StartNew();
@@ -446,18 +401,13 @@ static class WinvmUi {
       try {
         present = HasElementSel(b) ? Matches(b, Roots(b, 0)).Count > Int(b, "index", 0) : Roots(b, 0).Count > 0;
       } catch (UiError) { present = false; }
-      catch (ElementNotAvailableException) { present = true; } // going: look again
+      catch (ElementNotAvailableException) { present = true; }
       if (!present) return Obj("gone", true, "waitedMs", sw.ElapsedMilliseconds);
       if (sw.ElapsedMilliseconds >= timeout) throw new UiError("timeout", "still there after " + timeout + " ms: " + Json.Serialize(Sel(b)));
       Thread.Sleep(50);
     }
   }
 
-  /**
-   * Wait until the UI stops changing: the scope's element tree (names, types,
-   * bounds, states) is identical for quietMs. Scope: the selector's windows,
-   * else every top-level window plus the foreground window's whole subtree.
-   */
   static Dictionary<string, object> Settle(Dictionary<string, object> b) {
     int quiet = Int(b, "quietMs", 300), timeout = Int(b, "timeoutMs", 10000), interval = Int(b, "intervalMs", 50);
     var sw = Stopwatch.StartNew();
@@ -493,7 +443,6 @@ static class WinvmUi {
       using (Cache(TreeScope.Subtree).Activate()) c = r.GetUpdatedCache(Cache(TreeScope.Subtree));
       n += SignTree(sb, c, 0);
     }
-    // FNV-1a, 64-bit
     ulong h = 14695981039346656037UL;
     foreach (char ch in sb.ToString()) { h ^= ch; h *= 1099511628211UL; }
     return (long)h;
@@ -518,14 +467,11 @@ static class WinvmUi {
       .Append(Prop(e, ValuePattern.ValueProperty)).Append(Prop(e, TogglePattern.ToggleStateProperty)).Append(';');
   }
 
-  // --- acting ----------------------------------------------------------------
-
   static Dictionary<string, object> Act(Dictionary<string, object> b) {
     string action = Str(b, "action") ?? "click";
     var e = Find(b, Int(b, "timeoutMs", 0));
     int settleMs = Int(b, "settleMs", 0);
     if (settleMs > 0) {
-      // Settle the window the element lives in, then find it again (it may have moved).
       var top = TopWindowOf(e);
       if (top != null) {
         var sb = Obj("hwnd", top.Current.NativeWindowHandle, "quietMs", settleMs, "timeoutMs", Int(b, "settleTimeoutMs", 5000));
@@ -599,13 +545,6 @@ static class WinvmUi {
     return new[] { (int)(r.X + r.Width / 2), (int)(r.Y + r.Height / 2) };
   }
 
-  /**
-   * Where to click `e`, once nothing else is on top of it there. A real click
-   * goes to whatever window is at that point: a toast sliding up over the
-   * tray, a dialog. Hit-test first; while something else is there, park the
-   * pointer away (a toast never times out under the pointer) and wait, up to
-   * waitMs, then say what covers it.
-   */
   static int[] ClearPoint(AutomationElement e, int waitMs) {
     var sw = Stopwatch.StartNew();
     bool parked = false;
@@ -614,8 +553,7 @@ static class WinvmUi {
     if (top != null) { try { want = new IntPtr(top.Current.NativeWindowHandle); } catch (ElementNotAvailableException) { } }
     while (true) {
       int[] p = ClickPoint(e);
-      if (want == IntPtr.Zero) return p; // nothing to compare with
-      // Win32, not UIA: a toast's window is not in the UIA tree at all, yet takes the click.
+      if (want == IntPtr.Zero) return p;
       IntPtr hit = RootAt(p[0], p[1]);
       if (hit == want || hit == IntPtr.Zero) {
         if (parked) Log("hit-test clear after " + sw.ElapsedMilliseconds + " ms");
@@ -625,7 +563,7 @@ static class WinvmUi {
         throw new UiError("covered", "the element is covered at " + p[0] + "," + p[1] + " by " + DescribeHwnd(hit));
       if (!parked) {
         Log("hit-test: covered at " + p[0] + "," + p[1] + " by " + DescribeHwnd(hit) + "; waiting");
-        lock (InputLock) Send(Mouse(0, 32767, 0x0001 | 0x8000 | 0x4000)); // left edge, halfway down
+        lock (InputLock) Send(Mouse(0, 32767, 0x0001 | 0x8000 | 0x4000));
         parked = true;
       }
       Thread.Sleep(100);
@@ -635,7 +573,7 @@ static class WinvmUi {
   static IntPtr RootAt(int x, int y) {
     var pt = new POINT { X = x, Y = y };
     IntPtr h = WindowFromPoint(pt);
-    return h == IntPtr.Zero ? h : GetAncestor(h, 2 /* GA_ROOT */);
+    return h == IntPtr.Zero ? h : GetAncestor(h, 2);
   }
 
   static string DescribeHwnd(IntPtr h) {
@@ -645,15 +583,14 @@ static class WinvmUi {
     return "\"" + title + "\" (" + cls + ", " + ProcessName((int)pid) + ", hwnd " + h.ToInt64() + ")";
   }
 
-  /** Real input: move there, press, release. Absolute coordinates over the virtual desktop. */
   static void Click(int x, int y, string button, int times) {
     uint down = button == "right" ? 0x0008u : button == "middle" ? 0x0020u : 0x0002u;
     uint up = button == "right" ? 0x0010u : button == "middle" ? 0x0040u : 0x0004u;
     int vx = GetSystemMetrics(76), vy = GetSystemMetrics(77), vw = GetSystemMetrics(78), vh = GetSystemMetrics(79);
     int nx = (int)Math.Round((x - vx) * 65535.0 / Math.Max(1, vw - 1)), ny = (int)Math.Round((y - vy) * 65535.0 / Math.Max(1, vh - 1));
     lock (InputLock) {
-      Send(Mouse(nx, ny, 0x0001 | 0x8000 | 0x4000)); // MOVE | ABSOLUTE | VIRTUALDESK
-      Thread.Sleep(40); // a hover first: XAML buttons (the tray) want to see the pointer arrive
+      Send(Mouse(nx, ny, 0x0001 | 0x8000 | 0x4000));
+      Thread.Sleep(40);
       for (int i = 0; i < times; i++) {
         Send(Mouse(nx, ny, down | 0x8000 | 0x4000));
         Thread.Sleep(30);
@@ -675,7 +612,6 @@ static class WinvmUi {
       throw new UiError("fail", "SendInput was blocked (error " + Marshal.GetLastWin32Error() + "): is the desktop locked, or a UAC prompt up?");
   }
 
-  /** KEYEVENTF_UNICODE: any character, whatever the keyboard layout. */
   static void Type(string text) {
     lock (InputLock) {
       foreach (char ch in text) {
@@ -688,13 +624,11 @@ static class WinvmUi {
     }
   }
 
-  /** Bring a top-level window to the foreground despite the foreground lock. */
   static bool Focus(AutomationElement w) {
     var h = new IntPtr(w.Current.NativeWindowHandle);
     if (h == IntPtr.Zero) throw new UiError("bad", "that element is not a window");
-    if (IsIconic(h)) ShowWindow(h, 9); // SW_RESTORE
+    if (IsIconic(h)) ShowWindow(h, 9);
     if (!SetForegroundWindow(h)) {
-      // A process that sent the last input may take the foreground: press and release Alt.
       var a = new INPUT(); var z = new INPUT();
       a.type = z.type = 1; a.ki.wVk = z.ki.wVk = 0x12; z.ki.dwFlags = 0x0002;
       lock (InputLock) Send(a, z);
@@ -704,14 +638,6 @@ static class WinvmUi {
     return GetForegroundWindow() == h;
   }
 
-  // --- the notification area ---------------------------------------------------
-
-  /**
-   * Click a notification-area icon by its tooltip (substring, case-insensitive):
-   * on the taskbar if it is promoted there, else in the overflow flyout, which is
-   * opened through the taskbar's "Show hidden icons" button. Then, with `menu`,
-   * click that item in the context menu the click opened.
-   */
   static Dictionary<string, object> Tray(Dictionary<string, object> b) {
     string tip = Str(b, "name");
     if (string.IsNullOrEmpty(tip)) throw new UiError("bad", "tray needs name: the icon's tooltip, or part of it");
@@ -734,11 +660,10 @@ static class WinvmUi {
             var chevron = Chevron(bar);
             if (chevron == null) throw new UiError("notfound", "no tray icon like \"" + tip + "\" and no \"Show hidden icons\" button");
             int[] at = ClearPoint(chevron, Math.Max(1000, timeout - (int)sw.ElapsedMilliseconds));
-            // The chevron ignores a click that comes right after the flyout closed.
             int since = Environment.TickCount - lastFlyoutClose;
             if (since >= 0 && since < 500) Thread.Sleep(500 - since);
             Click(at[0], at[1], "left", 1);
-            var until = sw.ElapsedMilliseconds + 800; // it opens in 130-260 ms; else click again
+            var until = sw.ElapsedMilliseconds + 800;
             while ((flyout = OverflowWindow()) == null && sw.ElapsedMilliseconds < until) Thread.Sleep(30);
             Log("tray: flyout " + (flyout == null ? "did not open" : "open") + " at " + sw.ElapsedMilliseconds + " ms");
           }
@@ -749,12 +674,9 @@ static class WinvmUi {
           }
         }
         if (icon != null) {
-          // A flyout still closing from a previous call shows the icon, then takes it away: look again.
           try {
             Steady(icon, 1500);
             p = ClickPoint(icon);
-            // Covered: a toast (it goes), or the flyout sank behind a window
-            // that came forward (it stays): close the flyout and open it again.
             p = ClearPoint(icon, overflow ? 800 : Math.Max(1000, timeout - (int)sw.ElapsedMilliseconds));
           } catch (ElementNotAvailableException) { p = null; icon = null; }
           catch (UiError e) {
@@ -777,9 +699,6 @@ static class WinvmUi {
       Log("tray: clicked the icon at " + sw.ElapsedMilliseconds + " ms");
       result = Obj("icon", desc, "overflow", overflow, "at", p, "clickedMs", sw.ElapsedMilliseconds, "attempts", attempt);
       if (item == null) return result;
-      // The menu should be up within a second or two. If not (the click came
-      // while the flyout was still moving, or the app had not attached its
-      // menu yet: right after start), dismiss whatever opened and click again.
       int left = timeout - (int)sw.ElapsedMilliseconds;
       try {
         var m = Menu(b, item, Math.Max(1000, Math.Min(2500, left)), Str(b, "menuAction") ?? "click");
@@ -788,19 +707,15 @@ static class WinvmUi {
       } catch (UiError e) {
         if (e.Code != "notfound" || sw.ElapsedMilliseconds >= timeout) throw;
         Log("tray: no \"" + item + "\" after click " + attempt + "; again");
-        if (TopLevel().Any(w => w.Cached.ClassName == "#32768")) Key(0x1B); // Esc closes a wrong menu
+        if (TopLevel().Any(w => w.Cached.ClassName == "#32768")) Key(0x1B);
       }
     }
-    // The flyout stays open over the desktop after its icon's menu is done
-    // with (and sinks behind whatever window the item opens); close it the
-    // way a person would, with the chevron.
     Log("tray: menu item clicked at " + sw.ElapsedMilliseconds + " ms");
     if (overflow && CloseOverflow(bar)) result["closedOverflow"] = true;
     Log("tray: flyout " + (result.ContainsKey("closedOverflow") ? "closed" : "NOT closed") + " at " + sw.ElapsedMilliseconds + " ms");
     return result;
   }
 
-  /** Close the overflow flyout if it is showing: the chevron toggles it. Best effort; true if it closed. */
   static bool CloseOverflow(AutomationElement bar) {
     try {
       if (OverflowWindow() == null) return true;
@@ -825,8 +740,6 @@ static class WinvmUi {
     lock (InputLock) Send(a, z);
   }
 
-
-  /** On the taskbar only the notification area's buttons count: "Maximal - 1 running window" is a task button. */
   static AutomationElement TrayIcon(AutomationElement scope, string tip, bool taskbar) {
     using (Cache(TreeScope.Element).Activate()) {
       foreach (AutomationElement e in scope.FindAll(TreeScope.Descendants, new PropertyCondition(AutomationElement.ControlTypeProperty, ControlType.Button))) {
@@ -848,18 +761,12 @@ static class WinvmUi {
         var i = e.Cached;
         if (i.Name.IndexOf("hidden icons", StringComparison.OrdinalIgnoreCase) >= 0) return e;
       }
-      // Another display language: the chevron is the tray's only NormalButton.
       foreach (AutomationElement e in bar.FindAll(TreeScope.Descendants, new PropertyCondition(AutomationElement.ClassNameProperty, "SystemTray.NormalButton")))
         return e;
     }
     return null;
   }
 
-  /**
-   * The overflow flyout, if it is really showing. A closed flyout stays in the
-   * UIA tree with its old bounds, not offscreen: it is merely cloaked (DWM), so
-   * ask Win32 and DWM, not UIA.
-   */
   static AutomationElement OverflowWindow() {
     foreach (var w in TopLevel()) {
       var i = w.Cached;
@@ -868,7 +775,7 @@ static class WinvmUi {
         if (r.IsEmpty || r.Width <= 0 || i.IsOffscreen) continue;
         var h = new IntPtr(i.NativeWindowHandle);
         int cloaked = 0;
-        if (h != IntPtr.Zero && (!IsWindowVisible(h) || (DwmGetWindowAttribute(h, 14 /* DWMWA_CLOAKED */, out cloaked, 4) == 0 && cloaked != 0))) continue;
+        if (h != IntPtr.Zero && (!IsWindowVisible(h) || (DwmGetWindowAttribute(h, 14, out cloaked, 4) == 0 && cloaked != 0))) continue;
         return w;
       }
     }
@@ -881,7 +788,6 @@ static class WinvmUi {
     return s.Replace("&", "").Trim().TrimEnd('\u2026', '.').Trim();
   }
 
-  /** Wait (briefly) until an element stops moving: a flyout or menu that is still sliding in. */
   static void Steady(AutomationElement e, int maxMs) {
     var sw = Stopwatch.StartNew();
     System.Windows.Rect last = System.Windows.Rect.Empty;
@@ -895,11 +801,6 @@ static class WinvmUi {
     }
   }
 
-  /**
-   * Click (or invoke) an item of an open context menu: a Win32 popup (#32768)
-   * or any top-level Menu. Matched on its text without accelerators, exact
-   * first, then as a prefix, case-insensitive.
-   */
   static Dictionary<string, object> Menu(Dictionary<string, object> b, string name, int timeoutMs, string action) {
     if (string.IsNullOrEmpty(name)) throw new UiError("bad", "menu needs name: the item's text");
     string want = MenuText(name);

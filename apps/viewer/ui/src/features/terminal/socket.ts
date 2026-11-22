@@ -1,22 +1,8 @@
-/**
- * A TerminalTransport over the guest's terminal WebSocket.
- *
- * `connect` resolves a session's endpoint (the app runs `winvm terminal …
- * --connect --json`); the socket is then opened from the webview as
- * `new WebSocket(url + "&cols=N&rows=M", protocols)`. On it:
- *
- *   binary frames   raw terminal bytes, both ways
- *   text frames     JSON control: we send {"type":"resize","cols","rows"};
- *                   the guest sends {"type":"exit","code"} (then closes) and
- *                   {"type":"error","message"}
- *
- * Output reaches the view as `data` events (decoded as UTF-8, a frame split
- * mid-character is held for the next) and the shell's end as an `exit` event.
- * An error the guest reports is written into the terminal, in red, as well.
- * Everything else that happens to a session, opening, errors, a connection
- * lost without an exit, is reported through `onStatus`.
- */
-import type { TerminalDescriptor, TerminalEvent, TerminalTransport } from "@winvm/terminal"
+import type {
+  TerminalDescriptor,
+  TerminalEvent,
+  TerminalTransport,
+} from "@winvm/terminal"
 
 import type { Endpoint } from "./shells"
 
@@ -26,8 +12,7 @@ export type SessionStatus =
   | { readonly kind: "error"; readonly message: string }
   | { readonly kind: "lost"; readonly message: string | null }
 
-/** The parts of the WebSocket constructor this uses; tests pass their own. */
-export type SocketConstructor = new (url: string, protocols: string[]) => WebSocket
+type SocketConstructor = new (url: string, protocols: string[]) => WebSocket
 
 export interface SocketTransportOptions {
   connect(descriptor: TerminalDescriptor): Promise<Endpoint>
@@ -40,7 +25,6 @@ interface Session {
   readonly decoder: TextDecoder
   socket: WebSocket | null
   size: { cols: number; rows: number } | null
-  /** The size the guest was last told, so a repeat is not sent. */
   sent: { cols: number; rows: number } | null
   lastError: string | null
   exited: boolean
@@ -49,7 +33,6 @@ interface Session {
 
 const OPEN = 1
 
-/** The endpoint with the terminal's first size, which the guest starts the shell at. */
 export function sizedUrl(url: string, cols: number, rows: number): string {
   const u = new URL(url)
   u.searchParams.set("cols", String(cols))
@@ -57,21 +40,31 @@ export function sizedUrl(url: string, cols: number, rows: number): string {
   return u.toString()
 }
 
-type Control = { type: "exit"; code: number } | { type: "error"; message: string }
+type Control =
+  | { type: "exit"; code: number }
+  | { type: "error"; message: string }
 
 function control(text: string): Control | null {
   try {
-    const m = JSON.parse(text) as { type?: unknown; code?: unknown; message?: unknown }
-    if (m.type === "exit" && typeof m.code === "number") return { type: "exit", code: m.code }
-    if (m.type === "error" && typeof m.message === "string") return { type: "error", message: m.message }
-  } catch {
-    // not JSON: ignored, as an unknown control message is
-  }
+    const m = JSON.parse(text) as {
+      type?: unknown
+      code?: unknown
+      message?: unknown
+    }
+    if (m.type === "exit" && typeof m.code === "number")
+      return { type: "exit", code: m.code }
+    if (m.type === "error" && typeof m.message === "string")
+      return { type: "error", message: m.message }
+  } catch {}
   return null
 }
 
-export function createSocketTransport(options: SocketTransportOptions): TerminalTransport {
-  const Socket = options.WebSocket ?? (globalThis.WebSocket as SocketConstructor)
+const hasEnded = (s: Session): boolean => s.ended
+
+export function createSocketTransport(
+  options: SocketTransportOptions,
+): TerminalTransport {
+  const Socket = options.WebSocket ?? globalThis.WebSocket
   const sessions = new Map<string, Session>()
   const encoder = new TextEncoder()
 
@@ -100,8 +93,15 @@ export function createSocketTransport(options: SocketTransportOptions): Terminal
   const sendSize = (s: Session): void => {
     const size = s.size
     if (size === null || s.socket?.readyState !== OPEN) return
-    if (s.sent !== null && s.sent.cols === size.cols && s.sent.rows === size.rows) return
-    s.socket.send(JSON.stringify({ type: "resize", cols: size.cols, rows: size.rows }))
+    if (
+      s.sent !== null &&
+      s.sent.cols === size.cols &&
+      s.sent.rows === size.rows
+    )
+      return
+    s.socket.send(
+      JSON.stringify({ type: "resize", cols: size.cols, rows: size.rows }),
+    )
     s.sent = size
   }
 
@@ -116,9 +116,12 @@ export function createSocketTransport(options: SocketTransportOptions): Terminal
       s.lastError = null
       s.size = { cols, rows }
       const endpoint = await options.connect(descriptor)
-      if (s.ended) return
+      if (hasEnded(s)) return
 
-      const socket = new Socket(sizedUrl(endpoint.url, cols, rows), endpoint.protocols)
+      const socket = new Socket(
+        sizedUrl(endpoint.url, cols, rows),
+        endpoint.protocols,
+      )
       socket.binaryType = "arraybuffer"
       s.socket = socket
       s.sent = { cols, rows }
@@ -141,46 +144,60 @@ export function createSocketTransport(options: SocketTransportOptions): Terminal
               options.onStatus?.(id, { kind: "exit", code: m.code })
             } else if (m?.type === "error") {
               s.lastError = m.message
-              emit(s, { type: "data", data: `\r\n\x1b[31m${m.message}\x1b[0m\r\n` })
+              emit(s, {
+                type: "data",
+                data: `\r\n\x1b[31m${m.message}\x1b[0m\r\n`,
+              })
               options.onStatus?.(id, { kind: "error", message: m.message })
             }
             return
           }
-          const text = s.decoder.decode(new Uint8Array(e.data as ArrayBuffer), { stream: true })
+          const text = s.decoder.decode(new Uint8Array(e.data as ArrayBuffer), {
+            stream: true,
+          })
           if (text !== "") emit(s, { type: "data", data: text })
         }
         socket.onclose = (e: CloseEvent) => {
           const reason = s.lastError ?? (e.reason === "" ? null : e.reason)
-          if (!opened) reject(new Error(reason ?? "the terminal connection closed before it opened"))
+          if (!opened)
+            reject(
+              new Error(
+                reason ?? "the terminal connection closed before it opened",
+              ),
+            )
           if (s.socket !== socket) return
           s.socket = null
           const tail = s.decoder.decode()
           if (tail !== "") emit(s, { type: "data", data: tail })
-          if (opened && !s.exited && !s.ended) options.onStatus?.(id, { kind: "lost", message: reason })
+          if (opened && !s.exited && !s.ended)
+            options.onStatus?.(id, { kind: "lost", message: reason })
         }
       })
     },
 
-    async write(id, data) {
+    write(id, data) {
       const socket = sessions.get(id)?.socket
       if (socket?.readyState === OPEN) socket.send(encoder.encode(data))
+      return Promise.resolve()
     },
 
-    async resize(id, cols, rows) {
+    resize(id, cols, rows) {
       const s = sessions.get(id)
-      if (s === undefined) return
+      if (s === undefined) return Promise.resolve()
       s.size = { cols, rows }
       sendSize(s)
+      return Promise.resolve()
     },
 
-    async terminate(id) {
+    terminate(id) {
       const s = sessions.get(id)
-      if (s === undefined) return
+      if (s === undefined) return Promise.resolve()
       s.ended = true
       sessions.delete(id)
       const socket = s.socket
       s.socket = null
       socket?.close(1000)
+      return Promise.resolve()
     },
 
     subscribe(id, listener) {

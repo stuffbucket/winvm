@@ -1,12 +1,5 @@
-/**
- * Search results within canvas chrome, from monimal's
- * `spatial-canvas-search.tsx`. Changed here: the leading icon and a second
- * line are the caller's (monimal draws a repository folder), and the active
- * result is marked for arrow-key travel.
- */
-import { Children, type ReactNode } from "react"
+import { Children, type JSX, type ReactNode } from "react"
 
-/** A list of matches, or what to say when there are none. */
 export function SpatialCanvasSearchResults({
   children,
   emptyMessage,
@@ -17,13 +10,20 @@ export function SpatialCanvasSearchResults({
   readonly label: string
 }): JSX.Element {
   return (
-    <div className="spatial-canvas__search-results" role="listbox" aria-label={label}>
-      {Children.count(children) > 0 ? children : <span className="spatial-canvas__search-empty">{emptyMessage}</span>}
+    <div
+      className="spatial-canvas__search-results"
+      role="listbox"
+      aria-label={label}
+    >
+      {Children.count(children) > 0 ? (
+        children
+      ) : (
+        <span className="spatial-canvas__search-empty">{emptyMessage}</span>
+      )}
     </div>
   )
 }
 
-/** One match: a title, a line under it, and what happens when it is chosen. */
 export function SpatialCanvasSearchResult({
   id,
   title,
@@ -33,13 +33,13 @@ export function SpatialCanvasSearchResult({
   disabled = false,
   onSelect,
 }: {
-  readonly id?: string
+  readonly id?: string | undefined
   readonly title: string
   readonly description: string
   readonly icon?: ReactNode
   readonly active?: boolean
   readonly disabled?: boolean
-  onSelect(): void
+  onSelect: () => void
 }): JSX.Element {
   return (
     <button

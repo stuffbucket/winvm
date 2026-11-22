@@ -4,15 +4,23 @@ import { createServer, type Server, type Socket } from "node:net"
 type Json = Record<string, unknown>
 export type QmpHandler = (cmd: Json) => Json | null | Promise<Json | null>
 
-export const GREETING = { QMP: { version: { qemu: { major: 11, minor: 0, micro: 3 } }, capabilities: [] } }
+const GREETING = {
+  QMP: {
+    version: { qemu: { major: 11, minor: 0, micro: 3 } },
+    capabilities: [],
+  },
+}
 
 export class FakeQmp {
   handler: QmpHandler = (cmd) => {
-    if (cmd["execute"] === "query-status") return { return: { status: "running", running: true } }
-    if (cmd["execute"] === "query-chardev") return { return: [{ label: "qga0", "frontend-open": true }] }
+    if (cmd.execute === "query-status")
+      return { return: { status: "running", running: true } }
+    if (cmd.execute === "query-chardev")
+      return { return: [{ label: "qga0", "frontend-open": true }] }
     return { return: {} }
   }
   greets = true
+  negotiateDelayMs = 0
   connections = 0
   readonly commands: string[] = []
   private readonly sockets = new Set<Socket>()
@@ -23,7 +31,9 @@ export class FakeQmp {
 
   constructor(path: string) {
     this.path = path
-    this.server = createServer((s) => this.accept(s))
+    this.server = createServer((s) => {
+      this.accept(s)
+    })
   }
 
   async listen(): Promise<void> {
@@ -33,7 +43,11 @@ export class FakeQmp {
 
   async close(): Promise<void> {
     for (const s of this.sockets) s.destroy()
-    await new Promise<void>((r) => this.server.close(() => r()))
+    await new Promise<void>((r) =>
+      this.server.close(() => {
+        r()
+      }),
+    )
     rmSync(this.path, { force: true })
   }
 
@@ -74,21 +88,31 @@ export class FakeQmp {
         buf = buf.slice(nl + 1)
         if (line === "") continue
         const cmd = JSON.parse(line) as Json
-        const name = String(cmd["execute"])
-        const id = cmd["id"]
+        const name = String(cmd.execute)
+        const id = cmd.id
         this.commands.push(name)
         if (name === "qmp_capabilities") {
           negotiated = true
-          s.write(`${JSON.stringify({ return: {}, ...(id === undefined ? {} : { id }) })}\n`)
+          const answer = `${JSON.stringify({ return: {}, ...(id === undefined ? {} : { id }) })}\n`
+          if (this.negotiateDelayMs === 0) s.write(answer)
+          else
+            setTimeout(() => {
+              if (!s.destroyed) s.write(answer)
+            }, this.negotiateDelayMs)
           continue
         }
         if (!negotiated) {
-          s.write(`${JSON.stringify({ error: { class: "CommandNotFound", desc: "Expecting capabilities negotiation" } })}\n`)
+          s.write(
+            `${JSON.stringify({ error: { class: "CommandNotFound", desc: "Expecting capabilities negotiation" } })}\n`,
+          )
           continue
         }
         inOrder = inOrder.then(async () => {
           const reply = await this.handler(cmd)
-          if (reply !== null && !s.destroyed) s.write(`${JSON.stringify(id === undefined ? reply : { ...reply, id })}\n`)
+          if (reply !== null && !s.destroyed)
+            s.write(
+              `${JSON.stringify(id === undefined ? reply : { ...reply, id })}\n`,
+            )
         })
       }
     })

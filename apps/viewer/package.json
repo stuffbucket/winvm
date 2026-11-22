@@ -3,6 +3,12 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
+  "exports": {
+    "./held": "./ui/src/features/screen/held.ts",
+    "./keyboard": "./ui/src/features/screen/keyboard.ts",
+    "./model": "./ui/src/model.ts",
+    "./statusGuard": "./ui/src/features/winvm/statusGuard.ts"
+  },
   "scripts": {
     "tauri": "tauri",
     "app": "bun scripts/build-app.ts",
@@ -18,11 +24,14 @@
     "@types/bun": "1.4.0",
     "@types/react": "18.3.12",
     "@types/react-dom": "18.3.1",
+    "@winvm/core": "workspace:*",
     "typescript": "6.0.3"
   },
   "dependencies": {
     "@base-ui/react": "1.8.0",
     "@winvm/canvas": "workspace:*",
+    "@winvm/displayfit": "workspace:*",
+    "@winvm/novnc": "workspace:*",
     "@winvm/terminal": "workspace:*",
     "intl-messageformat": "11.2.9",
     "react": "18.3.1",

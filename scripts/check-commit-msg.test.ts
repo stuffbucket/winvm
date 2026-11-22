@@ -3,7 +3,9 @@ import { expect, it } from "bun:test"
 import { subjectOf, subjectProblem } from "./check-commit-msg"
 
 it("accepts a Conventional Commit subject", () => {
-  expect(subjectProblem("fix(qemu): pass ppi=off only when supported")).toBeUndefined()
+  expect(
+    subjectProblem("fix(qemu): pass ppi=off only when supported"),
+  ).toBeUndefined()
 })
 
 it("accepts subjects git writes itself", () => {
