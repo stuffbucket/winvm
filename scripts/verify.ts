@@ -230,7 +230,7 @@ const STEPS: Step[] = [
     lane: "tests",
     commands: [
       { argv: ["pnpm", "exec", "turbo", "run", "test"] },
-      { argv: ["bun", "test", "scripts"] },
+      { argv: ["bun", "test", "--parallel", "scripts"] },
     ],
     findings: sumOf(/^\s*(\d+) fail/gm),
   },

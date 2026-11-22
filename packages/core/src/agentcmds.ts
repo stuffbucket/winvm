@@ -1,4 +1,4 @@
-import { mkdirSync, readdirSync, statSync } from "node:fs"
+import { lstatSync, mkdirSync, readdirSync, statSync } from "node:fs"
 import { join, win32 } from "node:path"
 
 import * as agent from "./agent"
@@ -130,19 +130,95 @@ export async function put(args: Args): Promise<number> {
   }
 }
 
+const TREE_DEPTH = 64
+const TREE_ENTRIES = 100_000
+
+type TreeWriter = Pick<agent.AgentClient, "putFile" | "mkdir" | "list">
+
+async function guestFolder(
+  c: TreeWriter,
+  path: string,
+  depth = 0,
+): Promise<void> {
+  if (depth > TREE_DEPTH) throw new Error(`too many parent folders: ${path}`)
+  const exists = async (error: unknown): Promise<void> => {
+    if (!(error instanceof agent.AgentError) || error.code !== "exists")
+      throw error
+    await c.list(path, { limit: 0 })
+  }
+  try {
+    await c.mkdir(path)
+  } catch (error) {
+    if (!(error instanceof agent.AgentError) || error.code !== "notfound") {
+      await exists(error)
+      return
+    }
+    const parent = win32.dirname(path)
+    if (parent === path) throw error
+    await guestFolder(c, parent, depth + 1)
+    await c.mkdir(path).catch(exists)
+  }
+}
+
+const WINDOWS_BAD_NAME = /[<>:"/\\|?*]|[ .]$/
+function hasControlCharacter(name: string): boolean {
+  for (let i = 0; i < name.length; i++)
+    if (name.charCodeAt(i) < 0x20) return true
+  return false
+}
+const WINDOWS_DEVICE_NAME =
+  /^(con|prn|aux|nul|com[1-9¹²³]|lpt[1-9¹²³])(?:\.|$)/i
+
 export async function putTree(
-  c: Pick<agent.AgentClient, "putFile">,
+  c: TreeWriter,
   from: string,
   to: string,
 ): Promise<{ files: number; bytes: number }> {
   let files = 0
   let bytes = 0
-  for (const rel of readdirSync(from, { recursive: true, encoding: "utf8" })) {
-    const src = join(from, rel)
-    if (!statSync(src).isFile()) continue
-    bytes += (await c.putFile(src, win32.join(to, ...rel.split("/")))).bytes
-    files += 1
+  let entries = 0
+  const copy = async (
+    src: string,
+    dest: string,
+    depth: number,
+  ): Promise<void> => {
+    if (depth > TREE_DEPTH)
+      throw new Error(
+        `folder tree is deeper than ${String(TREE_DEPTH)}: ${src}`,
+      )
+    const st = lstatSync(src)
+    if (st.isSymbolicLink())
+      throw new Error(`cannot copy a symbolic link or junction: ${src}`)
+    if (st.isDirectory()) {
+      const children = readdirSync(src)
+      const badName = children.find(
+        (n) =>
+          WINDOWS_BAD_NAME.test(n) ||
+          WINDOWS_DEVICE_NAME.test(n) ||
+          hasControlCharacter(n),
+      )
+      if (badName !== undefined)
+        throw new Error(`not a name Windows takes: ${join(src, badName)}`)
+      entries += children.length
+      if (entries > TREE_ENTRIES)
+        throw new Error(
+          `folder tree holds more than ${String(TREE_ENTRIES)} entries`,
+        )
+      if (
+        new Set(children.map((n) => n.toLowerCase())).size !== children.length
+      )
+        throw new Error(`names differ only by case: ${src}`)
+      await guestFolder(c, dest)
+      for (const name of children)
+        await copy(join(src, name), win32.join(dest, name), depth + 1)
+    } else if (st.isFile()) {
+      bytes += (await c.putFile(src, dest)).bytes
+      files += 1
+    } else {
+      throw new Error(`not a regular file or folder: ${src}`)
+    }
   }
+  await copy(from, to, 0)
   return { files, bytes }
 }
 
@@ -196,31 +272,70 @@ export async function folderOf(
 
 const FOLDER_LIMIT = 100_000
 
+const UNSAFE_LISTED_NAME = /[/\\]/
+
 export async function getTree(
   c: Pick<agent.AgentClient, "list" | "getFile">,
   l: agent.DirListing,
   to: string,
 ): Promise<{ files: number; bytes: number }> {
-  if (l.total > l.entries.length)
-    throw new Error(`${l.path} holds more than ${String(FOLDER_LIMIT)} entries`)
-  mkdirSync(to, { recursive: true })
   let files = 0
   let bytes = 0
-  for (const e of l.entries) {
-    const from = win32.join(l.path, e.name)
-    if (e.dir) {
-      const sub = await getTree(
-        c,
-        await c.list(from, { hidden: true, limit: FOLDER_LIMIT }),
-        join(to, e.name),
+  let entries = 0
+  const copy = async (
+    listing: agent.DirListing,
+    dest: string,
+    depth: number,
+  ): Promise<void> => {
+    if (depth > TREE_DEPTH)
+      throw new Error(
+        `folder tree is deeper than ${String(TREE_DEPTH)}: ${listing.path}`,
       )
-      files += sub.files
-      bytes += sub.bytes
-    } else {
-      bytes += await c.getFile(from, join(to, e.name))
-      files += 1
+    if (listing.total > listing.entries.length)
+      throw new Error(
+        `${listing.path} holds more than ${String(FOLDER_LIMIT)} entries`,
+      )
+    entries += listing.entries.length
+    if (entries > TREE_ENTRIES)
+      throw new Error(
+        `folder tree holds more than ${String(TREE_ENTRIES)} entries`,
+      )
+    for (const e of listing.entries) {
+      if (
+        e.name === "" ||
+        e.name === "." ||
+        e.name === ".." ||
+        UNSAFE_LISTED_NAME.test(e.name) ||
+        e.name.includes("\0")
+      )
+        throw new Error(`unsafe file name in guest listing: ${e.name}`)
+      if (e.link === true)
+        throw new Error(
+          `cannot copy a symbolic link or junction: ${win32.join(listing.path, e.name)}`,
+        )
+    }
+    try {
+      if (lstatSync(dest).isSymbolicLink())
+        throw new Error(`cannot copy into a symbolic link: ${dest}`)
+    } catch (error) {
+      if ((error as { code?: string }).code !== "ENOENT") throw error
+    }
+    mkdirSync(dest, { recursive: true })
+    for (const e of listing.entries) {
+      const from = win32.join(listing.path, e.name)
+      if (e.dir) {
+        await copy(
+          await c.list(from, { hidden: true, limit: FOLDER_LIMIT }),
+          join(dest, e.name),
+          depth + 1,
+        )
+      } else {
+        bytes += await c.getFile(from, join(dest, e.name))
+        files += 1
+      }
     }
   }
+  await copy(l, to, 0)
   return { files, bytes }
 }
 
