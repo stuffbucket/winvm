@@ -52,20 +52,21 @@ winvm types them in Windows. winvm uses no private macOS API for this.
   itself, or when it is an F-key or an Apple function-row key (Mission Control,
   Launchpad, Spotlight, Dictation, Do Not Disturb). Arrows, Home, End, Page Up,
   Page Down and Forward Delete carry the fn flag on their own, so alone or with
-  Shift they stay on the webview path. Its key-up and auto-repeats are taken
-  whether or not the modifier is still held; the repeats and key-up of a key
-  whose key-down went to the Mac are left alone. A key code winvm cannot name
+  Shift they stay on the webview path. Its auto-repeats are taken while the
+  lease lasts, whether or not the modifier is still held, and its key-up is
+  always taken and forwarded, whatever the lease or the target says; the
+  repeats and key-up of a key whose key-down went to the Mac are left alone. A key code winvm cannot name
   is left alone too. Plain typing and the modifier keys themselves
   (flags-changed events) are never taken, so they reach Windows through the
   webview as before and Control-Option still releases capture.
 - **How a taken key reaches Windows.** The callback returns NULL (macOS never
-  sees the key) and only queues the key's DOM `code` and the modifiers held
-  with it on a channel. A forwarding thread sends it over a Tauri IPC channel
+  sees the key) and only queues the key's DOM `code` and the modifier keys
+  held with it (left or right, from the event's device flags) on a channel. A forwarding thread sends it over a Tauri IPC channel
   the main webview registered (`system_keys_channel`), so no other window can
   receive it. The screen's keyboard router (`features/screen/keyboard.ts`)
-  first presses any of Shift, Control, Alt and Windows the key was typed with
-  that Windows does not already have (the webview may deliver the real
-  modifier later; a later Windows key-down is then not sent twice), sends the
+  first presses any of the modifier keys the key was typed with that Windows
+  does not already have, on the same side (the webview may deliver the real
+  modifier later; that key-down is then not sent twice), sends the
   key with `rfb.sendKey`, so it reaches QEMU as a scan code, and lets go of
   those modifiers when the Mac does or when capture ends. Apple function-row
   keys have no Windows key and are dropped.
@@ -85,8 +86,11 @@ winvm types them in Windows. winvm uses no private macOS API for this.
   a disarm is always honoured. If macOS disables the tap
   (`kCGEventTapDisabledByTimeout`, `kCGEventTapDisabledByUserInput`) it is
   re-enabled while the lease lasts. A tap macOS refuses is retried only when
-  capture starts again. Keys the tap sent down are released in Windows when
-  capture ends, before a held Windows key, so nothing stays down.
+  capture starts again. When the lease lapses or the tap is disarmed for any
+  reason, the tap thread forwards a release for every key it still holds,
+  and the router lets go of the modifiers it pressed for them; when capture
+  ends, the router releases its keys before a held Windows key. Nothing the
+  tap pressed stays down in Windows.
 - **Permission.** An active tap needs Accessibility (Privacy & Security →
   Accessibility). Without it capture still sends every other key, macOS keeps
   its system shortcuts, and the toolbar says "Keyboard captured, but macOS keeps
@@ -110,7 +114,10 @@ winvm types them in Windows. winvm uses no private macOS API for this.
   Globe-key actions (emoji picker, dictation, input source) are unverified:
   set "Press 🌐 key to" to Do Nothing if one still fires. If macOS leaves the
   target pid empty (0) for an event, winvm treats it as its own and relies on
-  the lease alone. The ISO keys (0x0A `IntlBackslash`, 0x32 `Backquote`) follow
+  the lease alone; `UNADDRESSED_IS_OURS` in `keytap.rs` is the one switch that
+  makes such events pass instead. Launching with `WINVM_KEYTAP_LOG` set logs,
+  for each key press the tap considers, the target pid and whether it matched
+  winvm (never the key) to standard error. The ISO keys (0x0A `IntlBackslash`, 0x32 `Backquote`) follow
   Carbon's names, which may not match what WebKit reports for the same key.
 
 This follows UTM's useful division between host and captured routing, while
