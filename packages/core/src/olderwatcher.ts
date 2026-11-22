@@ -65,12 +65,14 @@ export function olderWatcher(
     return null
   }
   const start = Number.isInteger(pid) && pid > 1 ? startOf(pid) : null
+  if (start === UNREADABLE_START) return null
+  const command = start === null ? "" : commandOf(pid)
+  if (start !== null && command.trim() === "") return null
   if (
     start !== null &&
-    start !== UNREADABLE_START &&
     pid !== process.pid &&
     wrotePidFile(start, file) &&
-    watchesInstance(commandOf(pid), name)
+    watchesInstance(command, name)
   )
     return { pid, start }
   rmSync(file, { force: true })
@@ -113,7 +115,10 @@ export async function stopOlderWatcher(
   const startOf = seams.startOf ?? processStart
   const w = olderWatcher(name, seams)
   if (w === null || w.pid === process.ppid) return false
-  const same = (): boolean => startOf(w.pid) === w.start
+  const gone = (): boolean => {
+    const start = startOf(w.pid)
+    return start === null || (start !== UNREADABLE_START && start !== w.start)
+  }
   try {
     kill(w.pid, "SIGTERM")
   } catch {
@@ -121,10 +126,10 @@ export async function stopOlderWatcher(
   }
   const deadline = now() + (savingIn(name, w.pid) ? 10 * 60_000 : 10_000)
   while (now() < deadline) {
-    if (!same()) break
+    if (gone()) break
     await wait(200)
   }
-  if (same()) {
+  if (startOf(w.pid) === w.start) {
     try {
       kill(w.pid, "SIGKILL")
     } catch {}

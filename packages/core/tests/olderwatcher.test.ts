@@ -16,6 +16,7 @@ import {
   stopOlderWatcher,
 } from "../src/olderwatcher"
 import { instanceDir } from "../src/paths"
+import { UNREADABLE_START } from "../src/proc"
 import { watchPathsFor } from "../src/watch"
 
 const HOLDER = resolve(import.meta.dir, "fakes", "holder.ts")
@@ -207,6 +208,46 @@ describe("an older winvm's watcher process", () => {
         ?.pid ?? null
     )
   }
+
+  it("is kept in watch.pid, though not signalled, while ps can't read its start or command", async () => {
+    for (const seams of [
+      { startOf: () => UNREADABLE_START, commandOf: () => "winvm watch -i w" },
+      { startOf: () => START, commandOf: () => "" },
+    ] satisfies StopSeams[]) {
+      lock(424_242)
+      const kills: string[] = []
+      expect(olderWatcher("w", seams)).toBeNull()
+      expect(
+        await stopOlderWatcher("w", {
+          ...seams,
+          kill: (_p, sig) => void kills.push(sig),
+        }),
+      ).toBe(false)
+      expect(kills).toEqual([])
+      expect(existsSync(pidFile())).toBe(true)
+    }
+  })
+
+  it("keeps waiting out an autosave while ps can't read its start, and kills it only once it is sure", async () => {
+    lock(424_242)
+    state({ pid: 424_242, state: "autosaving" })
+    let t = 1_000
+    const kills: string[] = []
+    expect(
+      await stopOlderWatcher("w", {
+        kill: (_pid, sig) => void kills.push(sig),
+        now: () => t,
+        sleep: (ms) => {
+          t += ms
+          return Promise.resolve()
+        },
+        startOf: () => (t === 1_000 || t >= 601_000 ? START : UNREADABLE_START),
+        commandOf: () => "winvm watch -i w",
+      }),
+    ).toBe(true)
+    expect(t - 1_000).toBeGreaterThanOrEqual(600_000)
+    expect(kills).toEqual(["SIGTERM", "SIGKILL"])
+  })
 
   for (const [label, command] of [
     ["another instance's watcher", "winvm watch -i other"],
