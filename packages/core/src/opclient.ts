@@ -29,7 +29,8 @@ import {
   type ServiceOp,
 } from "./ops"
 import { pathsFor } from "./paths"
-import { isSameProcess } from "./proc"
+import { isAlive, isSameProcess } from "./proc"
+import { recordedPid } from "./servicectl"
 
 type Json = Record<string, unknown>
 
@@ -405,9 +406,18 @@ export interface OpRoute {
 
 const SETTLE_MS = 15_000
 
-async function untilStopped(name: string): Promise<void> {
+async function untilStopped(name: string, signal: AbortSignal): Promise<void> {
+  const p = pathsFor(name)
+  const stopping = recordedPid(p)
   const deadline = Date.now() + SETTLE_MS
-  while (existsSync(pathsFor(name).control) && Date.now() < deadline)
+  while (
+    !signal.aborted &&
+    Date.now() < deadline &&
+    existsSync(p.control) &&
+    stopping !== null &&
+    recordedPid(p) === stopping &&
+    isAlive(stopping)
+  )
     await new Promise((r) => setTimeout(r, 100))
 }
 
@@ -454,7 +464,8 @@ export async function runOp(
   let accepted: Accepted | null = null
   try {
     let sent = await send(name, body)
-    if (sent.kind === "stopping" && !stopped()) await untilStopped(name)
+    if (sent.kind === "stopping" && call.op !== "kill" && !stopped())
+      await untilStopped(name, interrupted.signal)
     if (notTaken(sent) && !stopped()) {
       if (answeredHere(call, name, route)) return await here()
       const failed = await route.up(name, call.op, wait).then(

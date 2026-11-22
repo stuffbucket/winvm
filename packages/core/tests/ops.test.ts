@@ -1,7 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test"
 import {
   chmodSync,
-  existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -987,34 +986,118 @@ describe("a command when no service takes its op", () => {
     ])
   })
 
-  it("waits for a service that is stopping to go, then brings a new one up", async () => {
-    const stub = declining(
-      { error: "the service is stopping", stopping: true },
-      503,
+  const stoppingService = (): {
+    readonly proc: ReturnType<typeof Bun.spawn>
+    readonly stub: ReturnType<typeof Bun.serve>
+  } => {
+    const proc = Bun.spawn(["sleep", "30"])
+    writeFileSync(
+      p.service,
+      JSON.stringify({
+        pid: proc.pid,
+        cli: "",
+        version: "",
+        startedAt: new Date().toISOString(),
+      }),
     )
+    return {
+      proc,
+      stub: declining(
+        { error: "the service is stopping", stopping: true },
+        503,
+      ),
+    }
+  }
+  const upAfter = (stub: ReturnType<typeof Bun.serve>) =>
+    route({
+      up: async () => {
+        await stub.stop(true)
+        rmSync(p.control, { force: true })
+        rmSync(p.service, { force: true })
+        svc = await runService("t", {
+          exitAfterMs: 60_000,
+          checkMs: 50,
+          handlers: {
+            pause: { cancel: "never", run: () => Promise.resolve(0) },
+          },
+        })
+      },
+    })
+
+  it("waits for a service that is stopping until its process has gone, though its socket stays, then brings a new one up", async () => {
+    const { proc, stub } = stoppingService()
     const gone = setTimeout(() => {
-      void stub.stop(true)
-      rmSync(p.control, { force: true })
+      proc.kill("SIGKILL")
     }, 500)
     try {
       const t0 = Date.now()
-      const { seen, r } = route({
-        up: async () => {
-          expect(existsSync(p.control)).toBe(false)
-          svc = await runService("t", {
-            exitAfterMs: 60_000,
-            checkMs: 50,
-            handlers: {
-              pause: { cancel: "never", run: () => Promise.resolve(0) },
-            },
-          })
-        },
-      })
+      const { seen, r } = upAfter(stub)
       expect(await runOp(call("pause"), r, heard().io)).toBe(0)
       expect(Date.now() - t0).toBeGreaterThanOrEqual(450)
+      expect(Date.now() - t0).toBeLessThan(5000)
       expect(seen.ups).toEqual(["t pause false"])
     } finally {
       clearTimeout(gone)
+      proc.kill("SIGKILL")
+      await stub.stop(true)
+    }
+  })
+
+  it("stops waiting for a stopping service once another service has taken the instance", async () => {
+    const { proc, stub } = stoppingService()
+    const taken = setTimeout(() => {
+      writeFileSync(
+        p.service,
+        JSON.stringify({
+          pid: process.pid,
+          cli: "",
+          version: "",
+          startedAt: new Date().toISOString(),
+        }),
+      )
+    }, 500)
+    try {
+      const t0 = Date.now()
+      const { r } = upAfter(stub)
+      expect(await runOp(call("pause"), r, heard().io)).toBe(0)
+      expect(Date.now() - t0).toBeLessThan(5000)
+    } finally {
+      clearTimeout(taken)
+      proc.kill("SIGKILL")
+      await stub.stop(true)
+    }
+  })
+
+  it("lets go at once when interrupted while it waits for a stopping service, and runs nothing", async () => {
+    const { proc, stub } = stoppingService()
+    const interrupt = setTimeout(() => {
+      process.emit("SIGINT")
+    }, 300)
+    try {
+      const t0 = Date.now()
+      const { seen, r } = upAfter(stub)
+      const { said, io } = heard()
+      expect(await runOp(call("pause"), r, io)).toBe(INTERRUPTED)
+      expect(Date.now() - t0).toBeLessThan(2000)
+      expect(seen).toEqual({ ups: [], here: 0 })
+      expect(said).toEqual(["pause was not run\n"])
+    } finally {
+      clearTimeout(interrupt)
+      proc.kill("SIGKILL")
+      await stub.stop(true)
+    }
+  })
+
+  it("kills at once, without waiting for a service that is stopping", async () => {
+    const { proc, stub } = stoppingService()
+    try {
+      const t0 = Date.now()
+      const { seen, r } = route()
+      expect(await runOp(call("kill"), r, heard().io)).toBe(42)
+      expect(Date.now() - t0).toBeLessThan(1000)
+      expect(seen).toEqual({ ups: [], here: 1 })
+    } finally {
+      proc.kill("SIGKILL")
       await stub.stop(true)
     }
   })
