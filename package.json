@@ -20,7 +20,12 @@
     "encoding": "bun scripts/check-text-encoding.ts",
     "boundaries": "turbo boundaries",
     "knip": "knip",
-    "deps": "depcruise --config .dependency-cruiser.cjs apps packages scripts"
+    "deps": "depcruise --config .dependency-cruiser.cjs apps packages scripts",
+    "storybook": "mise -C packages/storybook exec -- pnpm run dev",
+    "storybook:build": "mise -C packages/storybook exec -- pnpm run build",
+    "storybook:check": "mise -C packages/storybook exec -- pnpm run typecheck && mise -C packages/storybook exec -- pnpm run test && mise -C packages/storybook exec -- pnpm run contrast && knip --directory packages/storybook",
+    "storybook:install": "mise -C packages/storybook exec -- pnpm install --frozen-lockfile",
+    "storybook:shots": "mise -C packages/storybook exec -- pnpm run build && STORYBOOK_SHOTS_CWD=\"${INIT_CWD:-$PWD}\" mise -C packages/storybook exec -- pnpm run shots"
   },
   "devDependencies": {
     "@biomejs/biome": "2.6.6",

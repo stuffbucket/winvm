@@ -85,6 +85,19 @@ function netWarnings(output: string): number {
   )
 }
 
+let storybookFailure: string | undefined | null = null
+
+function ensureStorybook(): string | undefined {
+  if (storybookFailure !== null) return storybookFailure
+  const argv = ["pnpm", "run", "--silent", "storybook:install"]
+  const installed = Bun.spawnSync(argv, { cwd: ROOT, env: ENV })
+  storybookFailure =
+    installed.exitCode === 0
+      ? undefined
+      : `setup failed: ${argv.join(" ")}\n${installed.stderr.toString()}${installed.stdout.toString()}`
+  return storybookFailure
+}
+
 let rustInputsFailure: string | undefined | null = null
 
 function ensureRustInputs(): string | undefined {
@@ -156,6 +169,7 @@ const STEPS: Step[] = [
   {
     name: "types",
     group: "fast",
+    prepare: ensureStorybook,
     commands: [npmScript("lint:types")],
     findings: (output) =>
       [
@@ -164,6 +178,16 @@ const STEPS: Step[] = [
         (total, match) => total + Number(match[1] ?? 0) + Number(match[2] ?? 0),
         0,
       ),
+  },
+  {
+    name: "storybook",
+    group: "fast",
+    prepare: ensureStorybook,
+    commands: [npmScript("storybook:check")],
+    findings: (output) =>
+      count(/error TS\d+/g)(output) +
+      sumOf(/^contrast: (\d+) (?:of|colors)/gm)(output) +
+      sumOf(/^[A-Z][A-Za-z ]+ \((\d+)\)$/gm)(output),
   },
   {
     name: "magic-numbers",

@@ -83,3 +83,19 @@ run = "pnpm --filter @winvm/viewer run dev:ui"
 [tasks."tokens:generate"]
 description = "Regenerate viewer CSS tokens (writes generated source)"
 run = "pnpm --filter @winvm/viewer run tokens"
+
+[tasks."storybook:install"]
+description = "Install Storybook's own dependencies (packages/storybook, separate lockfile)"
+run = "pnpm run storybook:install"
+
+[tasks.storybook]
+description = "Serve Storybook for the viewer UI on port 6006; rebuilds the staged viewer UI first"
+run = "pnpm run storybook"
+
+[tasks."storybook:check"]
+description = "Typecheck stories, run the token contrast audit and knip for packages/storybook"
+run = "pnpm run storybook:check"
+
+[tasks."storybook:shots"]
+description = "Build Storybook and screenshot every story in light and dark (--out <dir>)"
+run = "pnpm run storybook:shots"

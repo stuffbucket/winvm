@@ -2,17 +2,16 @@
 
 ## Brand personality
 
-**Warm + crafted + considered.** The brand mark (a brand-crimson
-rounded square with a wonky Fraunces "m"; the color is the
-`--brand` token) sets the tone: a tool made by a person, not a
+**Warm + crafted + considered.** A tool made by a person, not a
 corporation. Friendly without being playful-cute. Confident without
 being terminal-stark.
 
-- **Voice:** clear, direct, second-person. "Sign in with GitHub" not
-  "Initiate OAuth flow." "We can't reach the proxy" not "ECONNREFUSED."
+- **Voice:** clear, direct, second-person. "Start Windows" not "Boot
+  the instance." "Windows won't let you open that folder" not "Access
+  denied."
 - **Type:** Commissioner (humanist sans) does the body heavy lifting;
-  Fraunces appears in the brand mark and one display heading per
-  window. See [`type.md`](type.md).
+  Fraunces is kept for one display heading per window (today, the
+  overview's title). See [`type.md`](type.md).
 - **Restraint over decoration:** layout, type, and spacing carry the
   feeling. Color is one surface, not the only surface.
 
@@ -51,9 +50,9 @@ actionable entity** visually cohesive — one card represents one
 *thing the user can act on as a unit*.
 
 **Use a card when:**
-- The contents are the state of a single entity (a provider, an API
-  key row, a connected account). The card's borders say "this group
-  of fields belongs together; act on them together."
+- The contents are the state of a single entity (a checkpoint). The
+  card's borders say "this group of fields belongs together; act on
+  them together."
 - The user can perform actions specific to that entity (toggle on/off,
   edit, delete) without affecting neighbors.
 
@@ -78,11 +77,9 @@ chrome. Drop them.
 
 ## Iconography
 
-- **Functional / utility icons:** monochrome, `currentColor`, Lucide's
-  stroke, sized with `--size-sm` / `--size-md` / `--size-lg`.
-  **Lucide** is the icon set: the Dashboard loads the vendored
-  `shell/ui/dashboard/vendor/lucide.min.js`; Settings inlines Lucide
-  SVGs, each marked with a `// lucide: <name>` comment. Don't mix in
-  another library.
-- **Identity / accent:** the brand "m" appears once per window (top
-  of the window, near the heading). Never on every row.
+- **Functional / utility icons:** monochrome, `currentColor`, sized
+  with the `--size-*` tokens. The icon set is the shared `Icon`
+  component (`ui/src/components/Icon.tsx`): inline SVG paths on a
+  24-unit grid, drawn as a 2-unit round stroke and `aria-hidden`. A new
+  glyph is added there, in the same stroke. Don't mix in another
+  library.

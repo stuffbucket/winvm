@@ -57,15 +57,23 @@ module.exports = {
       to: { path: "^scripts/" },
     },
     {
-      name: "viewer-imported-only-by-viewer-and-scripts",
+      name: "viewer-imported-only-by-viewer-scripts-and-storybook",
       severity: "error",
-      from: { pathNot: "^(apps/viewer/|scripts/)" },
+      from: { pathNot: "^(apps/viewer/|packages/storybook/|scripts/)" },
       to: { path: "^apps/viewer/" },
+    },
+    {
+      name: "nothing-imports-storybook",
+      severity: "error",
+      from: { pathNot: "^packages/storybook/" },
+      to: { path: "^packages/storybook/" },
     },
   ],
   options: {
     doNotFollow: { path: "node_modules" },
-    exclude: { path: "(^|/)(novnc|dist|target|\\.turbo)(/|$)" },
+    exclude: {
+      path: "(^|/)(novnc|dist|target|\\.turbo|storybook-static|\\.ui)(/|$)",
+    },
     tsConfig: { fileName: "apps/viewer/tsconfig.json" },
     tsPreCompilationDeps: true,
     combinedDependencies: true,

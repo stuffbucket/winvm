@@ -53,6 +53,16 @@ describe("development command contract", () => {
     expect(task("dev").run).not.toContain("/Applications/")
   })
 
+  test("Storybook tasks delegate to the root scripts", () => {
+    for (const name of [
+      "storybook",
+      "storybook:install",
+      "storybook:check",
+      "storybook:shots",
+    ])
+      expect(task(name).run).toBe(`pnpm run ${name}`)
+  })
+
   test("UI watch is distinct from launching and token generation is explicit", () => {
     expect(task("ui:build").run).toBe(
       "pnpm --filter @winvm/viewer run build:ui",

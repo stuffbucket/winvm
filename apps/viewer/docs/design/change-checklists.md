@@ -7,29 +7,26 @@ generated file or inlined where a token belongs (see
 
 ## Token value hygiene (read first)
 
-- **Values live in `shell/src/ui/styles/theme.ts` only.** Design docs reference
-  tokens by name + purpose, never by value. The only allowed exception
-  is [`failure-modes.md`](failure-modes.md)'s drift audit table.
+- **Values live in `ui/src/styles/theme.ts` only.** Design docs reference
+  tokens by name + purpose, never by value.
 - If a doc shows a value, that's a bug — fix the doc.
 - If you change a value, follow *Changing a token value* below.
 
 ## Changing a token value
 
-1. Edit `shell/src/ui/styles/theme.ts` (the declared ground truth). A
+1. Edit `ui/src/styles/theme.ts` (the declared ground truth). A
    color that differs between light and dark goes in **both**
    `themes.dark` and `themes.light`.
-2. Run `bun run tokens:generate`. It rewrites `shell/src/ui/styles/tokens.css`
-   and the generated region of `shell/ui/dashboard/style.css` (the
-   Dashboard's stylesheet isn't bundled with Settings', so it carries
-   its own generated copy — see [`windows.md`](windows.md)). Never
-   hand-edit either.
+2. Run `mise run tokens:generate`. It rewrites `ui/src/styles/tokens.css`,
+   which every window's stylesheet imports (through `styles.css`). Never
+   hand-edit it; the viewer's `typecheck` fails when it is stale.
 3. Search for any inlined raw value the token was supposed to replace:
-   `grep -rn '<old-value>' shell/src shell/ui shell/splash.html`. The
-   splash window inlines `--brand` by hand (it loads before any
-   stylesheet), so a brand change goes there too.
-4. Manually verify both windows: `bun run app:ui` with the proxy
-   running, then open `http://localhost:4141/ui/settings/` and
-   `/ui/dashboard/`.
+   `grep -rn '<old-value>' apps/viewer/ui/src packages/canvas/src
+   packages/storybook/src`. `scripts/check-design-tokens.ts` (in the
+   viewer's `typecheck`) already fails a raw color in their stylesheets,
+   but not one in a `.ts` or `.tsx` file.
+4. Manually verify every window (main, Files, Terminal) in the app:
+   `mise run build`, then `mise run dev`.
 5. If the change is a color, run `bun run storybook:check` (includes
    the contrast audit across all three surfaces in **both** themes) per
    [`color.md`](color.md). Storybook's Theme toolbar (System / Dark /
@@ -42,10 +39,9 @@ generated file or inlined where a token belongs (see
 2. Add the row to [`tokens.md`](tokens.md) **first**, with `Purpose`,
    `Use for`, `Do NOT use for` filled in. A token without a clear
    role is a future drift source.
-3. Declare it in `shell/src/ui/styles/theme.ts` and run `bun run
-   tokens:generate`. If the Dashboard needs a token the generator
-   doesn't give it (see [`failure-modes.md`](failure-modes.md) →
-   *Known active drift*), extend the Dashboard branch of
+3. Declare it in `ui/src/styles/theme.ts` and run `mise run
+   tokens:generate`. A key in an existing group is written out as it
+   is; a new group also needs a line in `tokensCss()` in
    `scripts/generate-css-tokens.ts`.
 4. Use it. Don't inline the value anywhere else.
 
@@ -64,7 +60,11 @@ generated file or inlined where a token belongs (see
 5. Hover/active transitions: 150ms ease-out. Wrap in the global
    reduced-motion block ([`motion.md`](motion.md)).
 6. Add stories under `packages/storybook/src/` covering each visual
-   state (not just the happy path). Check them in both themes.
+   state (not just the happy path): `components/` or `viewer/` for a
+   component rendered from source with fixture props, `windows/` for a
+   state of the built window driven through the render fakes. Check
+   them in both themes; `bun run storybook:shots` captures every story
+   in light and dark.
 
 ## Adding or modifying a color role
 
@@ -79,7 +79,7 @@ generated file or inlined where a token belongs (see
    text and as a fill should pass as text on its own; don't add a
    separate foreground-pairing token.
 4. Add the tokens to `theme.ts` (both `themes.dark` and
-   `themes.light` if they differ per theme), run `bun run
+   `themes.light` if they differ per theme), run `mise run
    tokens:generate`, then `bun run storybook:check`.
 5. Update [`tokens.md`](tokens.md) and [`color.md`](color.md).
 
@@ -89,10 +89,14 @@ generated file or inlined where a token belongs (see
    already **shipped** (don't duplicate) or **reserved** (don't
    repurpose, especially `Cmd-K`).
 2. Choose scope:
-   - **Tray menu** → an accelerator on the tray `MenuItem` in
-     `build_menu` (`shell/src-tauri/src/lib.rs`).
+   - **Native menu** → an accelerator on the `MenuItem` in `menu()`
+     (`src-tauri/src/lib.rs`), handled in `handle_menu`; whether the
+     main window's items are enabled is
+     `ui/src/features/toolbar/nativeMenu.ts`.
    - **Per-window** → `keydown` listener in the window's frontend
-     code (`shell/src/` or `shell/src/dashboard/`).
+     code (`ui/src/App.tsx` and `ui/src/features/` for the main window,
+     `ui/src/features/files/FilesWindow.tsx`,
+     `ui/src/features/terminal/TerminalWindow.tsx`).
 3. Cross-platform: `event.metaKey || event.ctrlKey`.
 4. Add the tooltip affordance on the corresponding visible control,
    keybind in parens: `Settings (⌘,)`.
@@ -100,19 +104,16 @@ generated file or inlined where a token belongs (see
 
 ## Adding a window
 
-1. Read [`windows.md`](windows.md) → *Where they diverge*.
-2. Add the window builder in `shell/src-tauri/src/lib.rs` and a build
-   step in `scripts/build-ui.ts` so the proxy serves it under `/ui/`.
+1. Read [`windows.md`](windows.md) → *The Files window* and *The
+   Terminal window*.
+2. Add the window builder (`WebviewWindowBuilder`) in
+   `src-tauri/src/lib.rs`, its size and minimum in
+   `src-tauri/src/windows.rs`, and its HTML page to the entrypoints in
+   `scripts/build-ui.ts`.
 3. Add to the window-sizes table in [`layout.md`](layout.md).
-4. Single-instance behavior: re-show + focus the existing window
-   instead of opening another; closing hides it.
-5. Tokens: import the generated `tokens.css`, or give the window its
-   own generated region in `scripts/generate-css-tokens.ts`. Never
+4. Single-instance behavior: if the window is already open, unminimize,
+   show and focus it instead of building another (`show_terminal`,
+   `files_open`; the Files window is one per machine).
+5. Tokens: the page's stylesheet imports `styles.css`, which imports the
+   generated `tokens.css`, as `files.css` and `terminal.css` do. Never
    hand-declare token values.
-
-## Touching `.design-context.md` itself
-
-That file is the slim front-door pointer. **Long content goes in the
-topic files under `docs/design/*.md`.** If you're tempted to add more
-than a paragraph to `.design-context.md`, you probably want to add a
-section to a topic file and add a pointer in the front door instead.

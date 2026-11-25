@@ -1,7 +1,7 @@
 # Layout system
 
 **All token values live in [`ui/src/styles/theme.ts`](../../ui/src/styles/theme.ts)**
-(CSS in `ui/src/styles/tokens.css` is generated from it: `pnpm tokens`). This file
+(CSS in `ui/src/styles/tokens.css` is generated from it: `mise run tokens:generate`). This file
 describes structure, scope, and which token to reach for, never the literal value.
 
 ## Window sizes (Rust shell)
@@ -99,7 +99,7 @@ Use the `--space-*` scale. **No off-scale values.**
 | `--space-3` | Inline gaps; compact card-internal row gap |
 | `--space-4` | Card-internal padding (vertical); card-to-card gap; form-row internal gap |
 | `--space-5` | Section gap inside a window |
-| `--space-6` | Section gap (large); window-edge to content (Settings pane) |
+| `--space-6` | Section gap (large) |
 | `--space-7` | Inter-section gap on large windows |
 | `--space-8` | Reserved for inter-section gaps on the widest windows |
 
@@ -110,7 +110,7 @@ Layering — in both themes, cards step forward of base.
 | Token | Use |
 |---|---|
 | `--surface-base` | Window background (`body`) |
-| `--surface-card` | Cards, sidebar fill |
+| `--surface-card` | Cards |
 | `--surface-control` | Form controls, secondary buttons |
 
 Every text and control color is checked against all three surfaces
@@ -140,7 +140,7 @@ in both themes. See [`color.md`](color.md).
 | z-index | Layer |
 |---|---|
 | 0 | Base / card content |
-| 10 | Fixed window chrome (the Settings busy bar) |
+| 10 | Fixed window chrome (the busy bar) |
 | 20 | Tooltips (above cards) |
 | top layer | Modals — native `<dialog>` (`ConfirmDialog`), above everything without a z-index |
 

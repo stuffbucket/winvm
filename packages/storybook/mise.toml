@@ -1,0 +1,7 @@
+# Storybook runs on Node; only work in this directory installs it. pnpm comes
+# from the root mise.toml. Same Node pin as maximal's packages/storybook.
+[tools]
+node = "22.23.2"
+
+[settings]
+lockfile = true

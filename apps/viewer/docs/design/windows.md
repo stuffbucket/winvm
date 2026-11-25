@@ -1,8 +1,7 @@
 # The winvm window
 
 One window shows one Windows machine (see *Words* below). It follows the
-rest of these rules, which come from maximal v0.4.48's `docs/design/` and
-apply here unchanged except where this page says otherwise.
+rest of these design docs, except where this page says otherwise.
 
 ## Words
 
@@ -618,7 +617,7 @@ view pulls back to Now and today, Now says "Taking a checkpoint…", and the
 new card flies out of Now into its place, screenshot and all.
 
 **The control bar** floats at the bottom of the window, one compact bar
-(Settings' glass is opaque here: cards pass under it): search, New, Newest,
+(the canvas's glass is opaque here: cards pass under it): search, New, Newest,
 Automatic, Reset layout and Done.
 Each is a button with an accessible name and a tooltip, the keys in the
 tooltip. **New** is a plus and a word; its tooltip says why when it can't

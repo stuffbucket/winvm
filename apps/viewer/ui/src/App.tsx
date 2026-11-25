@@ -30,8 +30,6 @@ import {
   trace,
   winvm,
 } from "./backend"
-import { Button } from "./components/Button"
-import { Callout } from "./components/Callout"
 import { ConfirmDialog } from "./components/ConfirmDialog"
 import { cx } from "./components/cx"
 import { Popover } from "./components/Popover"
@@ -39,7 +37,6 @@ import { HTTP_ACCEPTED, HTTP_OK } from "./constants"
 import { SharePanel } from "./features/actions/SharePanel"
 import { CheckpointCanvas } from "./features/checkpoints/CheckpointCanvas"
 import { ClosePolicyDialog } from "./features/close/ClosePolicyDialog"
-import { SessionEndNote } from "./features/close/SessionEndNote"
 import { useCloseFlow } from "./features/close/useCloseFlow"
 import { useCopies } from "./features/files/useCopies"
 import { useMachineInfo } from "./features/hardware/useMachineInfo"
@@ -58,6 +55,7 @@ import {
   type NewMachine,
   NewMachineDialog,
 } from "./features/machines/NewMachineDialog"
+import { type Notice, Notices } from "./features/notices/Notices"
 import { OperationOverlay } from "./features/operation/OperationOverlay"
 import { Overview } from "./features/overview/Overview"
 import { Panel } from "./features/panel/Panel"
@@ -95,19 +93,12 @@ import {
   isFrozen,
   isLivePhase,
   parseShare,
-  RESTORED_BUSY,
   shownTitle,
   startSteps,
   terminalBlocked,
 } from "./model"
 
 type Confirm = { kind: "stop" | "reboot" | "kill" }
-
-interface Notice {
-  readonly tone: "notice" | "error"
-  readonly title: string
-  readonly detail?: string
-}
 
 const DISPLAY_WAIT_MS = 2000
 const DISPLAY_REQUEST_TIMEOUT_MS = 22_000
@@ -239,8 +230,6 @@ export function App(): JSX.Element {
     phase ?? "missing",
     operating || phase === null || !hostReady,
   )
-  const missing = w.checks?.checks.filter((x) => !x.ok) ?? []
-  const runtimeMissing = missing.some((x) => x.hint === "winvm setup")
   const display = displaySize(w.status?.screen ?? null)
   const liveSource = useCallback(
     () => document.querySelector<HTMLCanvasElement>(".screen__canvas canvas"),
@@ -351,7 +340,6 @@ export function App(): JSX.Element {
 
   const copies = useCopies(w.name)
   const copyIn = copies.copyIn
-  const copyNotice = copies.job !== null || copies.result !== null
 
   useEffect(
     () =>
@@ -892,167 +880,30 @@ export function App(): JSX.Element {
 
       <div className="stage">
         <div className="display-area">
-          {(w.failure !== null ||
-            closeFailed !== null ||
-            sessionEnd !== null ||
-            notice !== null ||
-            copyNotice ||
-            (w.checks !== null && !w.checks.ready) ||
-            w.statusError !== null) && (
-            <div className="notices">
-              {w.failure !== null && (
-                <Callout
-                  tone={w.failure.code === RESTORED_BUSY ? "notice" : "error"}
-                  title={
-                    w.failure.code === RESTORED_BUSY
-                      ? t("notice.restoredBusy")
-                      : t(`error.${w.failure.verb}`)
-                  }
-                  action={
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      onClick={w.dismissFailure}
-                    >
-                      {t("action.dismiss")}
-                    </Button>
-                  }
-                >
-                  <pre className="output">{w.failure.output}</pre>
-                </Callout>
-              )}
-              {sessionEnd !== null && (
-                <Callout tone="notice" title={t("close.sessionTitle")}>
-                  <SessionEndNote session={sessionEnd} />
-                </Callout>
-              )}
-              {closeFailed !== null && (
-                <Callout
-                  tone="error"
-                  title={t("close.failed")}
-                  action={
-                    <Button size="sm" variant="ghost" onClick={close.cancel}>
-                      {t("action.dismiss")}
-                    </Button>
-                  }
-                >
-                  {closeFailed.message !== w.failure?.output && (
-                    <pre className="output">{closeFailed.message}</pre>
-                  )}
-                </Callout>
-              )}
-              {finding !== null && (
-                <Callout
-                  tone="notice"
-                  title={t("files.finder.opening", { place: finding })}
-                >
-                  <p>{t("files.finder.firstTime")}</p>
-                </Callout>
-              )}
-              {notice !== null && (
-                <Callout
-                  tone={notice.tone}
-                  title={notice.title}
-                  action={
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      onClick={() => {
-                        setNotice(null)
-                      }}
-                    >
-                      {t("action.dismiss")}
-                    </Button>
-                  }
-                >
-                  {notice.detail !== undefined && (
-                    <pre className="output">{notice.detail}</pre>
-                  )}
-                </Callout>
-              )}
-              {copyNotice && copies.job !== null && (
-                <Callout
-                  tone="notice"
-                  title={t("files.copying", { name: copies.job.name })}
-                >
-                  {copies.job.total > 1 && (
-                    <p>
-                      {t("files.ofTotal", {
-                        done: copies.job.done + 1,
-                        total: copies.job.total,
-                      })}
-                    </p>
-                  )}
-                </Callout>
-              )}
-              {copyNotice && copies.job === null && copies.result !== null && (
-                <Callout
-                  tone={copies.result.ok ? "notice" : "error"}
-                  title={copies.result.title}
-                  action={
-                    copies.result.reveal !== undefined ? (
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        onClick={() =>
-                          void revealInFinder(copies.result?.reveal ?? "")
-                        }
-                      >
-                        {t("files.reveal")}
-                      </Button>
-                    ) : (
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        onClick={copies.dismiss}
-                      >
-                        {t("action.dismiss")}
-                      </Button>
-                    )
-                  }
-                >
-                  {copies.result.detail !== undefined && (
-                    <pre className="output">{copies.result.detail}</pre>
-                  )}
-                </Callout>
-              )}
-              {w.checks !== null && !w.checks.ready && (
-                <Callout
-                  tone="error"
-                  title={t("host.notReady")}
-                  action={
-                    runtimeMissing ? (
-                      <Button
-                        size="sm"
-                        variant="primary"
-                        disabled={operating}
-                        onClick={() => {
-                          run("setup")
-                        }}
-                      >
-                        {t("action.setup")}
-                      </Button>
-                    ) : undefined
-                  }
-                >
-                  {missing.map((x) =>
-                    x.hint === "winvm setup" ? (
-                      <p key={x.label}>{t("host.runtimeMissing")}</p>
-                    ) : (
-                      <p key={x.label}>
-                        {x.label} <span className="mono">{x.hint}</span>
-                      </p>
-                    ),
-                  )}
-                </Callout>
-              )}
-              {w.statusError !== null && (
-                <Callout tone="error" title={t("error.status")}>
-                  <pre className="output">{w.statusError}</pre>
-                </Callout>
-              )}
-            </div>
-          )}
+          <Notices
+            failure={w.failure}
+            session={sessionEnd}
+            closeFailed={closeFailed}
+            finding={finding}
+            notice={notice}
+            copyJob={copies.job}
+            copyResult={copies.result}
+            checks={w.checks}
+            operating={operating}
+            statusError={w.statusError}
+            onDismissFailure={w.dismissFailure}
+            onDismissCloseFailed={close.cancel}
+            onDismissNotice={() => {
+              setNotice(null)
+            }}
+            onDismissCopy={copies.dismiss}
+            onReveal={(path) => {
+              void revealInFinder(path)
+            }}
+            onSetup={() => {
+              run("setup")
+            }}
+          />
 
           <div className="display-fit">
             <div

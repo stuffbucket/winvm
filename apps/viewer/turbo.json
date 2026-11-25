@@ -1,0 +1,20 @@
+{
+  "$schema": "https://turbo.build/schema.json",
+  "extends": ["//"],
+  "tasks": {
+    "typecheck": {
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "$TURBO_ROOT$/packages/canvas/src/**/*.css",
+        "$TURBO_ROOT$/packages/storybook/src/**/*.css"
+      ]
+    },
+    "test": {
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "$TURBO_ROOT$/packages/canvas/src/**/*.css",
+        "$TURBO_ROOT$/packages/storybook/src/**/*.css"
+      ]
+    }
+  }
+}

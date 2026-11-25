@@ -82,6 +82,10 @@ jobs:
       - name: The lockfile records no proxy shard hosts
         run: bun apply-pnpm-tarball-policy.mjs --check
 
+      - name: The Storybook lockfile records no proxy shard hosts
+        working-directory: packages/storybook
+        run: bun ../../apply-pnpm-tarball-policy.mjs --check
+
       - name: Locate pnpm store
         id: pnpm-store
         run: echo "path=$(pnpm store path)" >> "$GITHUB_OUTPUT"
@@ -91,17 +95,10 @@ jobs:
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ steps.pnpm-store.outputs.path }}
-          key: pnpm-v1-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
+          key: pnpm-v1-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml', 'packages/storybook/pnpm-lock.yaml') }}
           restore-keys: pnpm-v1-${{ runner.os }}-
 
       - run: pnpm install --frozen-lockfile
-
-      - name: Save pnpm cache
-        if: github.event_name == 'push' && steps.pnpm-cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: ${{ steps.pnpm-store.outputs.path }}
-          key: ${{ steps.pnpm-cache.outputs.cache-primary-key }}
 
       - uses: jdx/mise-action@6612f0ef07ed2a736cd1e00a94a065522dd41195 # v5.2.5
         with:
@@ -113,15 +110,30 @@ jobs:
           mise trust mise.toml
           mise trust apps/viewer/mise.toml
           mise trust native/keeper/mise.toml
+          mise trust packages/storybook/mise.toml
           mise install
           mise --cd apps/viewer install
           mise --cd native/keeper install
+          mise --cd packages/storybook install
+
+      # Storybook's own workspace, into the same store, before the cache is
+      # saved so its packages are cached too.
+      - name: Install Storybook dependencies
+        run: pnpm run storybook:install
+
+      - name: Save pnpm cache
+        if: github.event_name == 'push' && steps.pnpm-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ steps.pnpm-store.outputs.path }}
+          key: ${{ steps.pnpm-cache.outputs.cache-primary-key }}
 
       # The fast group of scripts/verify.ts: biome, comments, encoding,
-      # shellcheck, shfmt, actionlint, typecheck, types, typecheck-scripts,
-      # boundaries, knip, deps, and cargo fmt, cargo-deny and cargo-machete
-      # for the viewer and the keeper. Clippy and cargo test need the macOS
-      # target (AppKit, kqueue) and stay local.
+      # shellcheck, shfmt, actionlint, typecheck, types, storybook (story
+      # typecheck and tests, contrast audit and knip),
+      # typecheck-scripts, boundaries, knip, deps, and cargo fmt, cargo-deny
+      # and cargo-machete for the viewer and the keeper. Clippy and cargo test
+      # need the macOS target (AppKit, kqueue) and stay local.
       - name: Static gates
         run: pnpm verify --fast
 

@@ -74,9 +74,10 @@ it("inventories normalized values instead of only aggregate counts", () => {
   })
 })
 
-it("globs the viewer and canvas css without the token file", () => {
+it("globs the viewer, canvas and Storybook css without the token file", () => {
   const files = cssFiles()
   expect(files).toContain("ui/src/styles/styles.css")
   expect(files).toContain("../../packages/canvas/src/canvas.css")
+  expect(files).toContain("../../packages/storybook/src/storybook.css")
   expect(files).not.toContain("ui/src/styles/tokens.css")
 })

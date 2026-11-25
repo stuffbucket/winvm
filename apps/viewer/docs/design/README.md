@@ -1,19 +1,13 @@
 # Design rules
 
-These are maximal v0.4.48's design rules (`docs/design/`), copied as they
-are so the winvm window and maximal's windows follow one design language.
-Where they name maximal's Settings window, read the winvm window; where
-they name maximal's files, the winvm equivalents are:
+The viewer's design rules: its main window, the Files window and the
+Terminal window. They began as a copy of maximal's design docs and now
+describe winvm.
 
-| maximal | winvm |
-|---|---|
-| `shell/src/ui/styles/theme.ts` | `apps/viewer/ui/src/styles/theme.ts` |
-| `shell/src/ui/styles/tokens.css` (generated) | `apps/viewer/ui/src/styles/tokens.css`, by `bun scripts/generate-css-tokens.ts` |
-| `shell/src/ui/styles/styles.css` | `apps/viewer/ui/src/styles/styles.css` |
-| `shell/src/ui/components/` | `apps/viewer/ui/src/components/` |
-| `shell/src/i18n/` | `apps/viewer/ui/src/i18n/` |
-| `scripts/check-design-tokens.ts` | `apps/viewer/scripts/check-design-tokens.ts` |
-
-[`windows.md`](windows.md) is winvm's own: it describes the winvm window.
+[`windows.md`](windows.md) describes the windows themselves; the other
+files are the rules they share. Token values live in
+`apps/viewer/ui/src/styles/theme.ts`, and `mise run tokens:generate`
+writes `apps/viewer/ui/src/styles/tokens.css` from it.
 `pnpm typecheck` in `apps/viewer` checks that `tokens.css` matches
-`theme.ts` and that the stylesheet follows the token rules.
+`theme.ts` and that the stylesheets follow the token rules
+(`apps/viewer/scripts/check-design-tokens.ts`).
