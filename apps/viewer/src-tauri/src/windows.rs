@@ -20,6 +20,13 @@ pub const FILES: Spec = Spec {
     min_height: 340.0,
 };
 
+pub const ABOUT: Spec = Spec {
+    width: 680.0,
+    height: 360.0,
+    min_width: 680.0,
+    min_height: 360.0,
+};
+
 pub const TRAFFIC_LIGHTS: (f64, f64) = (18.0, 26.0);
 
 pub const GAP_BESIDE_MAIN: f64 = 8.0;
@@ -149,7 +156,7 @@ mod tests {
 
     #[test]
     fn defaults_are_not_below_minimums() {
-        for spec in [TERMINAL, FILES] {
+        for spec in [TERMINAL, FILES, ABOUT] {
             assert!(
                 spec.width >= spec.min_width && spec.height >= spec.min_height,
                 "{spec:?}"

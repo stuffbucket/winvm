@@ -317,6 +317,10 @@ html[data-os="macos"] .toolbar {
   flex-direction: column;
   flex: 1 1 auto;
   min-width: 0;
+}
+
+.display-area,
+.about {
   background:
     radial-gradient(
       120% 90% at 12% 8%,

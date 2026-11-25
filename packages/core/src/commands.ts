@@ -50,6 +50,7 @@ import {
   TOOLS_SHA256,
   TOOLS_URL,
 } from "./host"
+import { buildIdentity, releaseVersion } from "./identity"
 import * as input from "./input"
 import { formatInput, judgeInput, probeInput } from "./inputcheck"
 import { ensureInstance, makeVars, resetInstance, sealBase } from "./instance"
@@ -107,7 +108,7 @@ import { signalProcess } from "./proc"
 import * as qemu from "./qemu"
 import * as qga from "./qga"
 import * as qmp from "./qmp"
-import { ensureRuntime, findRuntime, runtimeBin } from "./runtime"
+import { ensureRuntime, findRuntime, runtimeBin, runtimePin } from "./runtime"
 import * as savecmds from "./savecmds"
 import * as saves from "./saves"
 import { ensureService, stopService } from "./servicectl"
@@ -147,6 +148,28 @@ export async function doctor(
       : `\n${String(missing)} prerequisite(s) missing`,
   )
   return missing === 0 ? 0 : 1
+}
+
+export interface VersionReport {
+  readonly version: string
+  readonly build: string
+  readonly runtime: string
+}
+
+export const versionReport = (): VersionReport => ({
+  version: releaseVersion(),
+  build: buildIdentity(),
+  runtime: runtimePin().version,
+})
+
+export function version(json = false): number {
+  const r = versionReport()
+  console.log(
+    json
+      ? JSON.stringify(r)
+      : `winvm ${r.version}\nbuild   ${r.build}\nruntime ${r.runtime}`,
+  )
+  return 0
 }
 
 export function lsJson(): {
@@ -1810,6 +1833,7 @@ export const USAGE =
   "  setup                         install missing host prerequisites, fetch pinned media\n" +
   "  doctor  [--json]              check host prerequisites (the HOST, before anything runs),\n" +
   "                                and list VMs an older winvm started that run unshielded\n" +
+  "  version [--json]              this winvm's version, build and pinned Windows runtime\n" +
   "  diagnose [-i name]            explain a guest that misbehaved, from its files\n" +
   "           [--input]            a running guest's mouse/keyboard path, live and read-only\n" +
   "           [--lag [--seconds N] [--sample]]  time the monitor, the agent and QEMU once a\n" +

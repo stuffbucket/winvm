@@ -727,3 +727,37 @@ as SYSTEM, are added there.
   lifted to 4.5:1 against the ground. It follows the OS between light and
   dark.
 - The window has a native title bar, titled after the active tab.
+
+## The About window
+
+winvm → About winvm opens it, or brings it forward. It follows maximal's About
+in shape and content, in winvm's own look: a 680 × 360 window, centred, that
+can't be resized, minimized or zoomed. It is a real window, so macOS draws its
+corners and shadow, with the overlay title bar, the title hidden and the three
+window buttons hidden (`standardWindowButton(_:)`, public AppKit); its own ×
+at the top right, Esc and ⌘W close it, and anywhere but a link or the × drags
+it. The ground is the display area's backdrop, so it follows light and dark.
+
+Left, winvm's icon (`app-icon.svg`); right, in order:
+
+- **winvm** in Fraunces (`--text-3xl`), the window's one display moment.
+- **Version 0.1.4**, or **Development build** for the checked-in `0.0.0`
+  (a release stamps the real version into `tauri.conf.json`).
+- **Website** and **GitHub** links.
+- Four rows, label left and value right, each "—" until it is read and if it
+  can't be:
+  - **Windows runtime**: the pinned runtime (`packages/core/runtime.json`),
+    from `winvm version --json`.
+  - **Command line tool**: where Install Command Line Tool… put it
+    (`~/.local/bin/winvm`), or Not installed.
+  - **Windows machines**: how many `winvm ls --json` lists.
+  - **Build**: the first 12 hex digits of the bundled CLI's build identity,
+    from `winvm version --json`.
+- **Contributors**: stuffbucket.
+
+The window shows at once; the rows fill in as they are read, and are read
+again each time the window comes forward. Links open in the browser through
+`open_link`, which opens only the About window's own links; the window itself
+never leaves the app's own pages, and the web view's context menu is off.
+`bun scripts/build-ui.ts`, then `PLAYWRIGHT_DIR=… node scripts/render-about.mjs`
+renders it, light and dark.

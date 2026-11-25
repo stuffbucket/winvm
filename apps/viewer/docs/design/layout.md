@@ -16,6 +16,7 @@ converted back with the `scale_factor()` of the monitor it belongs to, never a c
 | Main | 1024x816 | 720x480 | `src-tauri/tauri.conf.json` (window properties belong in config) |
 | Terminal | 820x520 | 420x240 | `src-tauri/src/windows.rs` `TERMINAL` |
 | Files (one per machine) | 920x560 | 560x340 | `src-tauri/src/windows.rs` `FILES` |
+| About | 680x360 | fixed | `src-tauri/src/windows.rs` `ABOUT` |
 
 Rules:
 

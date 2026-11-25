@@ -105,6 +105,7 @@ export const layout = {
   lightsClearance: "96px",
   overviewMeasure: "48rem",
   overviewHeight: "52rem",
+  aboutMark: "184px",
 } as const
 
 export const px = (value: `${number}px`): number => Number.parseFloat(value)

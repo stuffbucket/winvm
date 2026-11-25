@@ -11,7 +11,7 @@
     },
     "apps/viewer": {
       "entry": [
-        "ui/src/{main,files,terminal}.tsx",
+        "ui/src/{main,files,terminal,about}.tsx",
         "scripts/*.{ts,mjs}",
         "tests/**/*.test.{ts,tsx}",
         "tests/render/{fake-tauri,fake-help}.js",
