@@ -179,6 +179,12 @@ const built = [
   ...["bodyLive", "bodyStopped"].map((b) => `checkpoints.goBack.${b}`),
   ...["finder", "agent", "other"].map((k) => `network.forward.${k}`),
   ...["vnc", "websocket", "other"].map((k) => `network.listener.${k}`),
+  ...["allowed", "needsPermission", "unavailable"].map(
+    (k) => `systemKeys.status.${k}`,
+  ),
+  "input.captured",
+  "input.capturedPartial",
+  "systemKeys.notNow",
 ]
 
 describe("the en catalog", () => {

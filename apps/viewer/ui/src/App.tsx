@@ -12,6 +12,7 @@ import {
   installedShells,
   onFileDrop,
   onMenu,
+  openAccessibilitySettings,
   openFiles,
   openShareInFinder,
   openTerminal,
@@ -19,12 +20,13 @@ import {
   popupActions,
   popupMenu,
   revealInFinder,
+  type SystemKeys,
   setMainMenuState,
-  setSystemKeyboardCapture,
   setWindowTitle,
   shareStart,
   shareStop,
   showWindow,
+  systemKeysStatus,
   trace,
   winvm,
 } from "./backend"
@@ -158,6 +160,11 @@ export function App(): JSX.Element {
     if (opener instanceof HTMLElement) opener.focus({ preventScroll: true })
   }, [checkpoints])
   const [keyboardCaptured, setKeyboardCaptured] = useState(false)
+  const [systemKeys, noteSystemKeys] = useState<SystemKeys | null>(null)
+  const [askSystemKeys, setAskSystemKeys] = useState<"capture" | "menu" | null>(
+    null,
+  )
+  const systemKeysAsked = useRef(false)
   const [settingClosePolicy, setSettingClosePolicy] = useState(false)
   const [closePolicyError, setClosePolicyError] = useState<{
     name: string
@@ -169,14 +176,33 @@ export function App(): JSX.Element {
     showWindow()
   }, [])
   useEffect(() => {
-    setSystemKeyboardCapture(keyboardCaptured).catch((error: unknown) => {
-      console.warn("changing keyboard capture failed", error)
-      if (keyboardCaptured) setKeyboardCaptured(false)
-    })
-    return () => {
-      if (keyboardCaptured) void setSystemKeyboardCapture(false)
+    const refresh = (): void => {
+      systemKeysStatus()
+        .then(noteSystemKeys)
+        .catch((error: unknown) => {
+          console.warn("reading the system-shortcut permission failed", error)
+        })
     }
-  }, [keyboardCaptured])
+    refresh()
+    window.addEventListener("focus", refresh)
+    return () => {
+      window.removeEventListener("focus", refresh)
+    }
+  }, [])
+  const requestCapture = (): void => {
+    if (systemKeys === "needsPermission" && !systemKeysAsked.current)
+      setAskSystemKeys("capture")
+    else setKeyboardCaptured(true)
+  }
+  const allowSystemKeys = (): void => {
+    openAccessibilitySettings().catch((e: unknown) => {
+      setNotice({
+        tone: "error",
+        title: t("systemKeys.openFailed"),
+        detail: errorMessage(e),
+      })
+    })
+  }
 
   const phase = w.phase
   const live = isLivePhase(phase)
@@ -569,7 +595,9 @@ export function App(): JSX.Element {
       confirm !== null ||
       deleting !== null ||
       newOpen ||
-      reference !== null,
+      reference !== null ||
+      askSystemKeys !== null,
+    systemKeys,
   })
   const menuStateKey = JSON.stringify(menuEnabled)
   useEffect(() => {
@@ -619,6 +647,10 @@ export function App(): JSX.Element {
     }
     if (id === "new-terminal") terminal(null)
     if (id === "release-keyboard") setKeyboardCaptured(false)
+    if (id === "allow-system-keys") {
+      setKeyboardCaptured(false)
+      setAskSystemKeys("menu")
+    }
     if (
       id === "capture-keyboard" ||
       id === "send-windows-key" ||
@@ -627,7 +659,7 @@ export function App(): JSX.Element {
       const rule = inputRef.current
       if (!showScreen || !rule.forward) {
         if (rule.why !== null) setNotice({ tone: "notice", title: t(rule.why) })
-      } else if (id === "capture-keyboard") setKeyboardCaptured(true)
+      } else if (id === "capture-keyboard") requestCapture()
       else if (id === "send-windows-key") screen.current?.sendWindowsKey()
       else screen.current?.sendCtrlAltDelete()
     }
@@ -820,6 +852,7 @@ export function App(): JSX.Element {
         keyboardCaptured={keyboardCaptured}
         input={input}
         keyboardReleased={released}
+        systemKeys={systemKeys}
         onStart={() => {
           run("start")
         }}
@@ -852,7 +885,8 @@ export function App(): JSX.Element {
           setDetailsOpen((o) => !o)
         }}
         onKeyboardCapture={() => {
-          setKeyboardCaptured((captured) => !captured)
+          if (keyboardCaptured) setKeyboardCaptured(false)
+          else requestCapture()
         }}
       />
 
@@ -1037,7 +1071,11 @@ export function App(): JSX.Element {
                   ref={screen}
                   connection={w.connection}
                   keyboardCaptured={keyboardCaptured}
-                  onKeyboardCaptured={setKeyboardCaptured}
+                  onKeyboardCaptured={(next) => {
+                    if (next) requestCapture()
+                    else setKeyboardCaptured(false)
+                  }}
+                  onSystemKeys={noteSystemKeys}
                   forwardInput={input.forward && !settingsOpen && !checkpoints}
                   resizable={resizable}
                   onGuestSize={resizeGuest}
@@ -1143,6 +1181,8 @@ export function App(): JSX.Element {
           machineInfo={machineInfo}
           pauseOverlay={pauseOverlay}
           onPauseOverlay={changePauseOverlay}
+          systemKeys={systemKeys}
+          onAllowSystemKeys={allowSystemKeys}
           onClose={() => {
             setSettingsOpen(false)
           }}
@@ -1164,6 +1204,37 @@ export function App(): JSX.Element {
           }}
         />
       )}
+
+      <ConfirmDialog
+        open={askSystemKeys !== null}
+        title={t("systemKeys.title")}
+        body={
+          <>
+            <p>{t("systemKeys.why")}</p>
+            <p>{t("systemKeys.without")}</p>
+          </>
+        }
+        confirmLabel={t("systemKeys.open")}
+        cancelLabel={t(
+          askSystemKeys === "capture" ? "confirm.cancel" : "systemKeys.notNow",
+        )}
+        {...(askSystemKeys === "capture" && {
+          secondaryLabel: t("systemKeys.captureAnyway"),
+          onSecondary: () => {
+            systemKeysAsked.current = true
+            setAskSystemKeys(null)
+            setKeyboardCaptured(true)
+          },
+        })}
+        onCancel={() => {
+          setAskSystemKeys(null)
+        }}
+        onConfirm={() => {
+          systemKeysAsked.current = true
+          setAskSystemKeys(null)
+          allowSystemKeys()
+        }}
+      />
 
       <ConfirmDialog
         open={confirm !== null}

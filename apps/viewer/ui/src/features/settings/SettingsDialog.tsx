@@ -1,6 +1,6 @@
 import { type JSX, useEffect, useRef, useState } from "react"
 
-import { outputText, winvm } from "../../backend"
+import { outputText, type SystemKeys, winvm } from "../../backend"
 import { t } from "../../i18n"
 import { Hardware } from "../hardware/Hardware"
 import { Network } from "../hardware/Network"
@@ -18,6 +18,8 @@ interface Props {
   readonly machineInfo: MachineInfoView
   readonly pauseOverlay: boolean
   onPauseOverlay(on: boolean): void
+  readonly systemKeys: SystemKeys | null
+  onAllowSystemKeys(): void
   onClose(): void
 }
 
@@ -158,6 +160,24 @@ export function SettingsDialog(p: Props): JSX.Element {
               />
               <span>{t("menu.pauseOverlay")}</span>
             </label>
+            {p.systemKeys !== null && (
+              <div className="settings-dialog__shortcuts">
+                <p className="action__hint" role="status">
+                  {t(`systemKeys.status.${p.systemKeys}`)}
+                </p>
+                {p.systemKeys === "needsPermission" && (
+                  <button
+                    type="button"
+                    className="btn btn--secondary"
+                    onClick={() => {
+                      p.onAllowSystemKeys()
+                    }}
+                  >
+                    {t("systemKeys.open")}
+                  </button>
+                )}
+              </div>
+            )}
           </section>
           {p.instance !== null && (
             <>

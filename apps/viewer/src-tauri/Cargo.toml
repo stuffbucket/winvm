@@ -75,6 +75,22 @@ objc2-app-kit = { version = "=0.3.2", default-features = false, features = [
     "NSWorkspace",
 ] }
 objc2-uniform-type-identifiers = { version = "=0.3.2", default-features = false, features = ["std", "UTType"] }
+# The keyboard event tap (src/keytap.rs); both already build as dependencies of objc2-app-kit.
+objc2-core-foundation = { version = "=0.3.2", default-features = false, features = [
+    "std",
+    "CFBase",
+    "CFDate",
+    "CFDictionary",
+    "CFMachPort",
+    "CFNumber",
+    "CFRunLoop",
+    "CFString",
+] }
+objc2-core-graphics = { version = "=0.3.2", default-features = false, features = [
+    "std",
+    "CGEvent",
+    "CGEventTypes",
+] }
 
 [lints.rust]
 unsafe_op_in_unsafe_fn = "deny"

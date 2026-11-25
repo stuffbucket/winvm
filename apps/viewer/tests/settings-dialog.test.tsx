@@ -33,11 +33,16 @@ afterEach(() => {
 })
 afterAll(() => GlobalRegistrator.unregister())
 
-async function render(reply: {
-  code: number
-  stdout: string
-  stderr: string
-}): Promise<HTMLElement> {
+let allowed = 0
+async function render(
+  reply: {
+    code: number
+    stdout: string
+    stderr: string
+  },
+  systemKeys: "allowed" | "needsPermission" | "unavailable" | null = null,
+): Promise<HTMLElement> {
+  allowed = 0
   Object.assign(window, {
     __TAURI__: { core: { invoke: () => Promise.resolve(reply) } },
   })
@@ -52,6 +57,10 @@ async function render(reply: {
         machineInfo={view}
         pauseOverlay
         onPauseOverlay={() => undefined}
+        systemKeys={systemKeys}
+        onAllowSystemKeys={() => {
+          allowed += 1
+        }}
         onClose={() => undefined}
       />,
     )
@@ -99,4 +108,35 @@ test("turning monitoring off disables its subordinate fields without losing thei
   expect(
     host.querySelector<HTMLButtonElement>('[type="submit"]')?.disabled,
   ).toBe(false)
+})
+
+const ok = { code: 0, stdout: JSON.stringify(policy), stderr: "" }
+
+test("says system shortcuts go to Windows once Accessibility allows it", async () => {
+  const host = await render(ok, "allowed")
+  const status = host.querySelector(".settings-dialog__shortcuts")
+  expect(status?.textContent).toContain("go to Windows")
+  expect(status?.querySelector("button")).toBeNull()
+})
+
+test("offers Accessibility settings while permission is missing", async () => {
+  const host = await render(ok, "needsPermission")
+  const status = host.querySelector(".settings-dialog__shortcuts")
+  expect(status?.textContent).toContain("Accessibility")
+  const open = status?.querySelector("button")
+  expect(open?.textContent).toBe("Open System Settings")
+  act(() => open?.click())
+  expect(allowed).toBe(1)
+})
+
+test("explains a tap macOS refused without offering settings", async () => {
+  const host = await render(ok, "unavailable")
+  const status = host.querySelector(".settings-dialog__shortcuts")
+  expect(status?.textContent).toContain("Quit and reopen")
+  expect(status?.querySelector("button")).toBeNull()
+})
+
+test("shows nothing about shortcuts before the permission is known", async () => {
+  const host = await render(ok)
+  expect(host.querySelector(".settings-dialog__shortcuts")).toBeNull()
 })

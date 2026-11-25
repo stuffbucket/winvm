@@ -18,15 +18,33 @@ export interface RoutedKeyEvent {
 interface RouterOptions {
   readonly send: KeyboardSend
   readonly translate: (event: RoutedKeyEvent) => GuestKey | null
+  readonly fromCode: (code: string) => GuestKey | null
   readonly releaseNoVnc: () => void
   readonly onCaptured: (captured: boolean) => void
 }
 
 const SUPER = 0xffeb
 const SUPER_RIGHT = 0xffec
+const SHIFT = 0xffe1
+const SHIFT_RIGHT = 0xffe2
 const CONTROL = 0xffe3
+const CONTROL_RIGHT = 0xffe4
 const ALT = 0xffe9
+const ALT_RIGHT = 0xffea
 const DELETE = 0xffff
+
+const MODIFIERS: ReadonlyMap<string, GuestKey> = new Map(
+  [
+    { keysym: SHIFT, code: "ShiftLeft" },
+    { keysym: SHIFT_RIGHT, code: "ShiftRight" },
+    { keysym: CONTROL, code: "ControlLeft" },
+    { keysym: CONTROL_RIGHT, code: "ControlRight" },
+    { keysym: ALT, code: "AltLeft" },
+    { keysym: ALT_RIGHT, code: "AltRight" },
+    { keysym: SUPER, code: "MetaLeft" },
+    { keysym: SUPER_RIGHT, code: "MetaRight" },
+  ].map((key) => [key.code, key]),
+)
 
 const stopGuest = (event: RoutedKeyEvent): void => {
   event.stopImmediatePropagation()
@@ -48,6 +66,9 @@ export class GuestKeyboardRouter {
   private rightCommand = false
   private rightWindowsDown = false
   private readonly capturedWindows = new Map<string, GuestKey>()
+  private readonly systemHeld = new Map<string, GuestKey>()
+  private readonly pressed = new Set<string>()
+  private readonly lent = new Map<string, GuestKey>()
   private readonly options: RouterOptions
 
   constructor(options: RouterOptions) {
@@ -91,7 +112,11 @@ export class GuestKeyboardRouter {
     if (this.captured) {
       if (isMeta(event.code)) {
         stopAll(event)
-        if (!this.capturedWindows.has(event.code)) {
+        const lent = this.lent.get(event.code)
+        if (lent !== undefined) {
+          this.lent.delete(event.code)
+          this.capturedWindows.set(event.code, lent)
+        } else if (!this.capturedWindows.has(event.code)) {
           const key =
             event.code === "MetaRight"
               ? { keysym: SUPER_RIGHT, code: "MetaRight" }
@@ -99,7 +124,11 @@ export class GuestKeyboardRouter {
           this.capturedWindows.set(event.code, key)
           this.options.send(key.keysym, key.code, true)
         }
+        return
       }
+      if (!MODIFIERS.has(event.code)) return
+      if (this.lent.has(event.code)) stopAll(event)
+      else this.pressed.add(event.code)
       return
     }
 
@@ -134,6 +163,8 @@ export class GuestKeyboardRouter {
     if (!this.enabled) return
     if (isCaptureModifier(event.code) && !(event.ctrlKey && event.altKey))
       this.captureChord = false
+    this.pressed.delete(event.code)
+    this.giveBack(event.code)
     if (this.captured) {
       if (isMeta(event.code)) {
         stopAll(event)
@@ -161,8 +192,60 @@ export class GuestKeyboardRouter {
     if (event.metaKey) stopGuest(event)
   }
 
+  systemKey(
+    code: string,
+    down: boolean,
+    modifiers: readonly string[] = [],
+  ): void {
+    if (!this.enabled || !this.captured) return
+    const key = down
+      ? this.options.fromCode(code)
+      : (this.systemHeld.get(code) ?? null)
+    if (key === null) return
+    for (const modifier of modifiers) this.lend(modifier)
+    if (down) this.systemHeld.set(code, key)
+    else this.systemHeld.delete(code)
+    this.options.send(key.keysym, key.code, down)
+    for (const modifier of [...this.lent.keys()])
+      if (!modifiers.includes(modifier)) this.giveBack(modifier)
+  }
+
+  private lend(code: string): void {
+    const key = MODIFIERS.get(code)
+    if (
+      key === undefined ||
+      this.lent.has(code) ||
+      this.pressed.has(code) ||
+      this.capturedWindows.has(code)
+    )
+      return
+    this.lent.set(code, key)
+    this.options.send(key.keysym, key.code, true)
+  }
+
+  private giveBack(code: string): void {
+    const key = this.lent.get(code)
+    if (key === undefined) return
+    this.lent.delete(code)
+    this.options.send(key.keysym, key.code, false)
+  }
+
   releaseAll(): void {
-    if (this.capturedWindows.size > 0 || this.rightWindowsDown) {
+    for (const key of this.systemHeld.values())
+      this.options.send(key.keysym, key.code, false)
+    this.systemHeld.clear()
+    const lentWindows = [...this.lent.values()].filter((key) =>
+      isMeta(key.code),
+    )
+    for (const key of this.lent.values())
+      if (!isMeta(key.code)) this.options.send(key.keysym, key.code, false)
+    this.lent.clear()
+    this.pressed.clear()
+    if (
+      this.capturedWindows.size > 0 ||
+      this.rightWindowsDown ||
+      lentWindows.length > 0
+    ) {
       this.options.send(CONTROL, "ControlLeft", true)
       this.options.send(CONTROL, "ControlLeft", false)
     }
@@ -170,6 +253,8 @@ export class GuestKeyboardRouter {
       this.options.send(key.keysym, key.code, false)
     this.capturedWindows.clear()
     if (this.rightWindowsDown) this.options.send(SUPER, "MetaLeft", false)
+    for (const key of lentWindows)
+      this.options.send(key.keysym, key.code, false)
     this.rightCommand = false
     this.rightWindowsDown = false
     this.options.releaseNoVnc()

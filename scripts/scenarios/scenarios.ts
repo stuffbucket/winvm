@@ -1101,6 +1101,7 @@ async function startMenu(ctx: Context): Promise<Scenario> {
           keys.send(keysym, code, down)
         },
         translate: (e) => ({ keysym: KEYSYM[e.code] ?? 0, code: e.code }),
+        fromCode: (code) => ({ keysym: KEYSYM[code] ?? 0, code }),
         releaseNoVnc: () => {
           for (const [code, keysym] of novnc) keys.send(keysym, code, false)
           novnc.clear()

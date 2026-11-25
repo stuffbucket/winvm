@@ -4,6 +4,7 @@ mod checkpoints;
 mod close;
 mod dragout;
 mod events;
+mod keytap;
 mod liveresize;
 mod sidecar;
 pub mod terminate;
@@ -18,6 +19,7 @@ use std::sync::Mutex;
 use tauri::menu::{
     Menu, MenuItem, PredefinedMenuItem, Submenu, HELP_SUBMENU_ID, WINDOW_SUBMENU_ID,
 };
+use tauri::webview::PageLoadEvent;
 use tauri::{Emitter, Manager, RunEvent, WebviewUrl, WebviewWindowBuilder, WindowEvent};
 use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
 use tauri_plugin_shell::process::CommandChild;
@@ -706,6 +708,7 @@ fn set_main_menu_state(
                     "settings"
                         | "capture-keyboard"
                         | "release-keyboard"
+                        | "allow-system-keys"
                         | "send-windows-key"
                         | "send-ctrl-alt-delete"
                 );
@@ -748,6 +751,13 @@ fn input_menu(app: &tauri::AppHandle) -> tauri::Result<Submenu<tauri::Wry>> {
         true,
         None::<&str>,
     )?;
+    let system_keys = MenuItem::with_id(
+        app,
+        "allow-system-keys",
+        "Allow System Shortcuts in Windows…",
+        false,
+        None::<&str>,
+    )?;
     Submenu::with_items(
         app,
         "Input",
@@ -759,6 +769,7 @@ fn input_menu(app: &tauri::AppHandle) -> tauri::Result<Submenu<tauri::Wry>> {
             &ctrl_alt_delete,
             &PredefinedMenuItem::separator(app)?,
             &release,
+            &system_keys,
         ],
     )
 }
@@ -884,30 +895,6 @@ fn trace(line: &str) {
     eprintln!("{line}");
 }
 
-#[tauri::command]
-fn set_system_keyboard_capture(captured: bool) -> Result<(), String> {
-    system_keyboard_capture(captured)
-}
-
-fn system_keyboard_capture(captured: bool) -> Result<(), String> {
-    #[cfg(target_os = "macos")]
-    {
-        type Connection = u32;
-        #[link(name = "CoreGraphics", kind = "framework")]
-        unsafe extern "C" {
-            fn CGSMainConnectionID() -> Connection;
-            fn CGSSetGlobalHotKeyOperatingMode(connection: Connection, mode: u32) -> i32;
-        }
-        // SAFETY: both functions take and return plain integers and have no preconditions.
-        let result =
-            unsafe { CGSSetGlobalHotKeyOperatingMode(CGSMainConnectionID(), u32::from(captured)) };
-        if result != 0 {
-            return Err(format!("CoreGraphics rejected keyboard capture ({result})"));
-        }
-    }
-    Ok(())
-}
-
 fn handle_menu(app: &tauri::AppHandle, event: &tauri::menu::MenuEvent) {
     let id = event.id().as_ref();
     if matches!(
@@ -968,6 +955,7 @@ fn handle_menu(app: &tauri::AppHandle, event: &tauri::menu::MenuEvent) {
         }
     } else if id == "checkpoints"
         || id == "settings"
+        || id == "allow-system-keys"
         || id.starts_with("vm-")
         || id.starts_with("view-")
     {
@@ -981,6 +969,26 @@ fn handle_menu(app: &tauri::AppHandle, event: &tauri::menu::MenuEvent) {
         check_for_update(app.clone(), true);
     } else if about::is_menu(id) {
         about::show(app);
+    }
+}
+
+fn on_window_event(window: &tauri::Window, event: &WindowEvent) {
+    if let WindowEvent::CloseRequested { api, .. } = event {
+        if close::closes_viewer(window.label()) && close::request(window.app_handle()) {
+            api.prevent_close();
+        }
+    }
+    if let (WindowEvent::Focused(false) | WindowEvent::Destroyed, keytap::WINDOW) =
+        (event, window.label())
+    {
+        if let Some(tap) = window.try_state::<keytap::KeyTap>() {
+            tap.release();
+        }
+    }
+    if let (WindowEvent::Destroyed, TERMINAL) = (event, window.label()) {
+        if let Ok(mut queue) = window.state::<TerminalRequests>().0.lock() {
+            queue.clear();
+        }
     }
 }
 
@@ -1000,17 +1008,12 @@ pub fn run() {
         .manage(CheckpointPresentation::default())
         .manage(agent::Agents::default())
         .manage(events::AppStream::default())
+        .manage(keytap::KeyTap::default())
         .menu(menu)
-        .on_window_event(|window, event| {
-            if let WindowEvent::CloseRequested { api, .. } = event {
-                if close::closes_viewer(window.label()) && close::request(window.app_handle()) {
-                    api.prevent_close();
-                }
-            }
-            if let (WindowEvent::Destroyed, TERMINAL) = (event, window.label()) {
-                if let Ok(mut queue) = window.state::<TerminalRequests>().0.lock() {
-                    queue.clear();
-                }
+        .on_window_event(on_window_event)
+        .on_page_load(|webview, payload| {
+            if webview.label() == keytap::WINDOW && payload.event() == PageLoadEvent::Started {
+                webview.state::<keytap::KeyTap>().restart();
             }
         })
         .on_menu_event(|app, event| handle_menu(app, &event))
@@ -1023,6 +1026,7 @@ pub fn run() {
             if let Some(main) = app.get_webview_window("main") {
                 liveresize::watch(&main);
             }
+            keytap::watch(app.handle());
             match app.path().app_data_dir() {
                 Ok(dir) => app
                     .state::<close::CloseCoordinator>()
@@ -1059,7 +1063,10 @@ pub fn run() {
             home_dir,
             dragout::files_drag_out,
             trace,
-            set_system_keyboard_capture,
+            keytap::system_keys,
+            keytap::system_keys_channel,
+            keytap::system_keys_status,
+            keytap::open_accessibility_settings,
             close::close_state,
             close::close_start,
             close::close_at,
@@ -1082,7 +1089,7 @@ pub fn run() {
                 }
             }
             RunEvent::Exit => {
-                let _ = system_keyboard_capture(false);
+                app.state::<keytap::KeyTap>().release();
                 stop_sharing(&app.state::<Sharing>());
                 events::stop(app);
             }

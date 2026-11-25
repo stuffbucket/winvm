@@ -1,3 +1,4 @@
+import type { SystemKeys } from "../../backend"
 import { controls, isLivePhase, type Phase } from "../../model"
 
 export function nativeMenuState(p: {
@@ -8,6 +9,7 @@ export function nativeMenuState(p: {
   forwardInput: boolean
   resizable: boolean
   modal: boolean
+  systemKeys: SystemKeys | null
 }): Record<string, boolean> {
   const c = controls(
     p.phase ?? "missing",
@@ -41,6 +43,7 @@ export function nativeMenuState(p: {
     "view-pause-overlay": available,
     "capture-keyboard": available && c.screen && p.forwardInput,
     "release-keyboard": true,
+    "allow-system-keys": available && p.systemKeys === "needsPermission",
     "send-windows-key": available && c.screen && p.forwardInput,
     "send-ctrl-alt-delete": available && c.screen && p.forwardInput,
   }

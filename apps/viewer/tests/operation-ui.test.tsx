@@ -14,6 +14,9 @@ const { OperationOverlay } = await import(
   "../ui/src/features/operation/OperationOverlay"
 )
 const { VM_OPERATIONS } = await import("../ui/src/model")
+const { SYSTEM_KEYS_RENEW_MS } = await import(
+  "../ui/src/features/screen/systemKeys"
+)
 
 type Root = ReturnType<typeof createRoot>
 let root: Root | null = null
@@ -129,6 +132,7 @@ describe("OperationOverlay", () => {
 interface World {
   state: "running" | "paused" | "asleep" | "stopped"
   operation: string | null
+  systemKeys?: "allowed" | "needsPermission"
 }
 
 const statusOf = (w: World): Record<string, unknown> => ({
@@ -162,9 +166,13 @@ const statusOf = (w: World): Record<string, unknown> => ({
 
 function fakeApp(world: World): {
   capture: boolean[]
+  renewals: () => number
+  settingsOpened: () => number
   pending: { args: readonly string[]; finish(): void }[]
 } {
   const capture: boolean[] = []
+  let renewals = 0
+  let opened = 0
   const pending: { args: readonly string[]; finish(): void }[] = []
   const ok = (
     stdout: unknown,
@@ -175,10 +183,18 @@ function fakeApp(world: World): {
   })
   const invoke = (
     cmd: string,
-    a?: { args?: string[]; captured?: boolean },
+    a?: { args?: string[]; armed?: boolean },
   ): Promise<unknown> => {
-    if (cmd === "set_system_keyboard_capture") {
-      capture.push(a?.captured === true)
+    if (cmd === "system_keys") {
+      const armed = a?.armed === true
+      if (armed) renewals += 1
+      if (armed !== (capture.at(-1) ?? false)) capture.push(armed)
+      return Promise.resolve(world.systemKeys ?? "allowed")
+    }
+    if (cmd === "system_keys_status")
+      return Promise.resolve(world.systemKeys ?? "allowed")
+    if (cmd === "open_accessibility_settings") {
+      opened += 1
       return Promise.resolve(null)
     }
     if (cmd !== "winvm") return Promise.resolve(null)
@@ -207,7 +223,12 @@ function fakeApp(world: World): {
     return Promise.resolve({ code: 1, stdout: "", stderr: "" })
   }
   Object.assign(window, { __TAURI__: { core: { invoke } } })
-  return { capture, pending }
+  return {
+    capture,
+    renewals: () => renewals,
+    settingsOpened: () => opened,
+    pending,
+  }
 }
 
 const display = (host: HTMLElement): HTMLElement => {
@@ -229,6 +250,14 @@ const tick = async (ms: number): Promise<void> => {
     jest.advanceTimersByTime(ms)
   })
   await flush()
+}
+
+const dialogButton = (label: string): HTMLButtonElement => {
+  const el = [
+    ...document.querySelectorAll<HTMLButtonElement>("dialog button"),
+  ].find((b) => b.textContent === label)
+  if (el === undefined) throw new Error(`no ${label} in a dialog`)
+  return el
 }
 
 async function mount(
@@ -272,6 +301,11 @@ describe("the display while an operation runs", () => {
       button(host, "Capture Keyboard (Control-Option)").click()
     })
     await flush()
+    expect(
+      button(host, "Release Keyboard (Control-Option)").getAttribute(
+        "aria-pressed",
+      ),
+    ).toBe("true")
     expect(app.capture.at(-1)).toBe(true)
 
     world.operation = "stow"
@@ -293,7 +327,7 @@ describe("the display while an operation runs", () => {
     ]) {
       expect(button(host, label).disabled).toBe(true)
     }
-    expect(app.capture.at(-1)).toBe(false)
+    expect(app.capture).toEqual([true, false])
 
     world.operation = null
     await tick(1500)
@@ -333,5 +367,105 @@ describe("the display while an operation runs", () => {
     expect(overlay(host)?.textContent).toBe("Resuming Windows")
     expect(display(host).querySelector(".screen__held--on")).not.toBeNull()
     expect(display(host).lastElementChild).toBe(overlay(host))
+  })
+})
+
+describe("Mac system shortcuts while the keyboard is captured", () => {
+  const capture = (host: HTMLElement): void => {
+    act(() => {
+      button(host, "Capture Keyboard (Control-Option)").click()
+    })
+  }
+  const release = (host: HTMLElement): void => {
+    act(() => {
+      button(host, "Release Keyboard (Control-Option)").click()
+    })
+  }
+
+  it("captures straight away once Accessibility allows it", async () => {
+    const { host, app } = await mount({ state: "running", operation: null })
+    capture(host)
+    await flush()
+    expect(document.querySelector("dialog")).toBeNull()
+    expect(app.capture).toEqual([true])
+    expect(host.querySelector(".toolbar__capture-status")?.textContent).toBe(
+      "Keyboard captured — ⌃⌥ to release",
+    )
+    const armed = app.renewals()
+    await tick(SYSTEM_KEYS_RENEW_MS * 2)
+    expect(app.renewals()).toBe(armed + 2)
+    release(host)
+    await flush()
+    await tick(SYSTEM_KEYS_RENEW_MS * 2)
+    expect(app.renewals()).toBe(armed + 2)
+    expect(app.capture).toEqual([true, false])
+  })
+
+  it("explains the permission first and can capture without it", async () => {
+    const { host, app } = await mount({
+      state: "running",
+      operation: null,
+      systemKeys: "needsPermission",
+    })
+    capture(host)
+    await flush()
+    expect(document.querySelector("dialog h2")?.textContent).toBe(
+      "Send Mac system shortcuts to Windows?",
+    )
+    expect(app.capture).toEqual([])
+    act(() => {
+      dialogButton("Capture Without Them").click()
+    })
+    await flush()
+    expect(app.capture).toEqual([true])
+    expect(host.querySelector(".toolbar__capture-status")?.textContent).toBe(
+      "Keyboard captured, but macOS keeps ⌘Tab — ⌃⌥ to release",
+    )
+    release(host)
+    capture(host)
+    await flush()
+    expect(document.querySelector("dialog")).toBeNull()
+    expect(app.capture).toEqual([true, false, true])
+  })
+
+  it("opens Accessibility settings and leaves the keyboard released", async () => {
+    const { host, app } = await mount({
+      state: "running",
+      operation: null,
+      systemKeys: "needsPermission",
+    })
+    capture(host)
+    await flush()
+    act(() => {
+      dialogButton("Open System Settings").click()
+    })
+    await flush()
+    expect(app.settingsOpened()).toBe(1)
+    expect(app.capture).toEqual([])
+    expect(
+      button(host, "Capture Keyboard (Control-Option)").getAttribute(
+        "aria-pressed",
+      ),
+    ).toBe("false")
+  })
+
+  it("asks again after a cancel", async () => {
+    const { host } = await mount({
+      state: "running",
+      operation: null,
+      systemKeys: "needsPermission",
+    })
+    capture(host)
+    await flush()
+    act(() => {
+      dialogButton("Cancel").click()
+    })
+    await flush()
+    expect(document.querySelector("dialog")).toBeNull()
+    capture(host)
+    await flush()
+    expect(document.querySelector("dialog h2")?.textContent).toBe(
+      "Send Mac system shortcuts to Windows?",
+    )
   })
 })

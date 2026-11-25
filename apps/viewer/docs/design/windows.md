@@ -59,8 +59,11 @@ shortcuts, left Command is never sent to Windows, and right Command is the
 deliberate Windows modifier (right Command-R is Windows-R). The Input menu
 also sends a Windows-key press or Ctrl-Alt-Delete directly. Capture Keyboard
 in the toolbar or Input menu, or Control-Option, enters an explicit mode:
-macOS global hotkeys are suspended, every key goes to Windows, the toolbar
-says that capture is on, and Control-Option releases it. Losing focus or
+every key goes to Windows, the toolbar says that capture is on, and
+Control-Option releases it. macOS's system shortcuts (⌘Tab, ⌘Space, Mission
+Control, Control-arrows, screenshots) go to Windows too once winvm has
+Accessibility permission; without it macOS keeps them and the toolbar says so
+(see [System shortcuts](keyboard.md#system-shortcuts)). Losing focus or
 hiding the window always releases capture and every held guest key. A held
 Windows key is neutralized with a Ctrl press/release before it is released,
 so cleanup cannot open Start.

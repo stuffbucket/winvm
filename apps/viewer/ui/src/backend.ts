@@ -175,6 +175,7 @@ interface NativeMenu {
 interface TauriGlobal {
   readonly core: {
     invoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T>
+    readonly Channel?: new (onmessage: (message: never) => void) => object
   }
   readonly window: {
     getCurrentWindow(): {
@@ -488,8 +489,41 @@ export const closeCancel = (): Promise<void> =>
 export const closeComplete = (): Promise<void> =>
   tauri().core.invoke<void>("close_complete")
 
-export const setSystemKeyboardCapture = (captured: boolean): Promise<void> =>
-  tauri().core.invoke<void>("set_system_keyboard_capture", { captured })
+export type SystemKeys = "allowed" | "needsPermission" | "unavailable"
+
+export interface SystemKey {
+  readonly code: string
+  readonly down: boolean
+  readonly modifiers: readonly string[]
+}
+
+export const setSystemKeys = (
+  armed: boolean,
+  seq: number,
+): Promise<SystemKeys> =>
+  new Promise((resolve) => {
+    resolve(tauri().core.invoke<SystemKeys>("system_keys", { armed, seq }))
+  })
+
+export const systemKeysStatus = (): Promise<SystemKeys> =>
+  tauri().core.invoke<SystemKeys>("system_keys_status")
+
+export const openAccessibilitySettings = (): Promise<void> =>
+  tauri().core.invoke<void>("open_accessibility_settings")
+
+export const listenSystemKeys = (
+  onKey: (key: SystemKey) => void,
+): Promise<void> =>
+  new Promise((resolve) => {
+    const core = tauri().core
+    resolve(
+      core.Channel === undefined
+        ? undefined
+        : core.invoke<void>("system_keys_channel", {
+            keys: new core.Channel(onKey),
+          }),
+    )
+  })
 
 export const onLiveResize = (cb: (live: boolean) => void): Unlisten =>
   listen("live-resize", (live) => {
