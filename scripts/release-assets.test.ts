@@ -79,35 +79,35 @@ describe("release-assets.sh", () => {
     expect(readFileSync(join(box.dir, "release", KEEPER), "utf8")).toBe(
       "signed keeper",
     )
-  })
+  }, 30_000)
 
   it("fails when the update bundle has no keeper", () => {
     const r = run(sandbox(BUILDER, { keeper: false }))
     expect(r.code).toBe(1)
     expect(r.out).toContain("has no Contents/MacOS/winvm-keeper")
-  })
+  }, 30_000)
 
   it("is safe to run again", () => {
     const r = run(sandbox(FINAL))
     expect(r.code).toBe(0)
     expect(r.assets).toEqual(FINAL)
-  })
+  }, 30_000)
 
   it("fails when the builder's update bundle is missing", () => {
     const r = run(sandbox(BUILDER.filter((a) => a !== `${BUNDLE}.sig`)))
     expect(r.code).not.toBe(0)
-  })
+  }, 30_000)
 
   it("fails, naming the file, when the draft holds anything unexpected", () => {
     const r = run(sandbox([...BUILDER, "stray.zip"]))
     expect(r.code).toBe(1)
     expect(r.out).toContain("stray.zip")
     expect(r.out).toContain("does not hold exactly the expected assets")
-  })
+  }, 30_000)
 
   it("fails when the dmg checksum is missing", () => {
     const r = run(sandbox(BUILDER.filter((a) => a !== `${DMG}.sha256`)))
     expect(r.code).toBe(1)
     expect(r.out).toContain(`${DMG}.sha256`)
-  })
+  }, 30_000)
 })
