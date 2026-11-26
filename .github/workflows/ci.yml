@@ -100,6 +100,18 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
 
+      # The signed build refuses a release whose sign_nested list does not match
+      # the app's Mach-O files or the builder's policy (v0.1.3), so find out here,
+      # while the pull request is open, and not 25 seconds into the release.
+      # BUILDER_POLICY_TOKEN: a repository secret, read-only (contents) on
+      # stuffbucket/macos-builder, which `gh` reads as GH_TOKEN. Without it the
+      # policy part is skipped with a warning, and pull requests from forks
+      # never have it.
+      - name: Signing preflight
+        env:
+          GH_TOKEN: ${{ secrets.BUILDER_POLICY_TOKEN }}
+        run: bun scripts/preflight-signing.ts
+
       - uses: jdx/mise-action@6612f0ef07ed2a736cd1e00a94a065522dd41195 # v5.2.5
         with:
           version: 2026.9.14
@@ -139,27 +151,3 @@ jobs:
 
       - name: Typecheck and test
         run: pnpm check
-
-  # The signed build refuses a release whose sign_nested list does not match the
-  # app's Mach-O files or the builder's policy (v0.1.3), so find out here, while
-  # the pull request is open, and not 25 seconds into the release.
-  signing:
-    name: signing preflight
-    runs-on: ubuntu-24.04
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-
-      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
-        with:
-          bun-version-file: .bun-version
-
-      # BUILDER_POLICY_TOKEN: a repository secret, read-only (contents) on
-      # stuffbucket/macos-builder. Without it the policy part is skipped with a
-      # warning, and pull requests from forks never have it.
-      - name: sign_nested matches the pinned runtime and the builder's policy
-        env:
-          BUILDER_POLICY_TOKEN: ${{ secrets.BUILDER_POLICY_TOKEN }}
-        run: bun scripts/preflight-signing.ts

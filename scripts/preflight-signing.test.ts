@@ -4,18 +4,22 @@ import { resolve } from "node:path"
 
 import { parseFlat, policyProblems } from "./preflight-signing"
 
-const CONFIG = readFileSync(resolve(import.meta.dir, "..", ".macos-builder", "config"), "utf8")
+const CONFIG = readFileSync(
+  resolve(import.meta.dir, "..", ".macos-builder", "config"),
+  "utf8",
+)
 const nested = parseFlat(CONFIG).sign_nested ?? ""
+const sorted = (entries: string): string => entries.split(",").sort().join(",")
 
-/** The policy the builder would hold for this config. */
 const policy = (over: Record<string, string> = {}): string =>
   Object.entries({
     bundle_id_allowed: "co.stuffbucket.winvm",
     entitlements_allowed: "default,bun-runtime,qemu-hvf",
     artifact_allowed: "dmg,updater",
     volname_allowed: "winvm",
-    app_path_allowed: "apps/viewer/src-tauri/target/release/bundle/macos/winvm.app",
-    sign_nested_allowed: nested,
+    app_path_allowed:
+      "apps/viewer/src-tauri/target/release/bundle/macos/winvm.app",
+    sign_nested_allowed: sorted(nested),
     updater_key_id: "winvm",
     ...over,
   })
@@ -23,17 +27,20 @@ const policy = (over: Record<string, string> = {}): string =>
     .join("\n")
 
 describe("policyProblems", () => {
-  it("accepts the repository's config under a policy that lists exactly its files", () => {
+  it("accepts the repository's config under a policy that lists exactly its files in the builder's order", () => {
     expect(nested.split(",").length).toBeGreaterThan(20)
     expect(policyProblems(CONFIG, policy())).toEqual([])
   })
 
   it("names the Mach-O files the policy lacks (the v0.1.3 refusal)", () => {
-    const old = nested
+    const old = sorted(nested)
       .split(",")
       .filter((e) => !e.includes("virtiofsd") && !e.includes("libjpeg"))
       .join(",")
-    const problems = policyProblems(CONFIG, policy({ sign_nested_allowed: old }))
+    const problems = policyProblems(
+      CONFIG,
+      policy({ sign_nested_allowed: old }),
+    )
     expect(problems).toHaveLength(1)
     expect(problems[0]).toContain("virtiofsd:default")
     expect(problems[0]).toContain("libjpeg.8.dylib:default")
@@ -41,17 +48,47 @@ describe("policyProblems", () => {
   })
 
   it("names entries the policy has and the config dropped", () => {
-    const problems = policyProblems(CONFIG, policy({ sign_nested_allowed: `${nested},Contents/Resources/runtime/bin/gone:default` }))
-    expect(problems[0]).toContain("in the policy only: Contents/Resources/runtime/bin/gone:default")
+    const problems = policyProblems(
+      CONFIG,
+      policy({
+        sign_nested_allowed: sorted(
+          `${nested},Contents/Resources/runtime/bin/gone:default`,
+        ),
+      }),
+    )
+    expect(problems[0]).toContain(
+      "in the policy only: Contents/Resources/runtime/bin/gone:default",
+    )
   })
 
-  it("requires the same order, as the builder compares the strings", () => {
+  it("needs the policy in the builder's sorted form, as it sorts only the config before comparing", () => {
+    const reversed = sorted(nested).split(",").reverse().join(",")
+    const problems = policyProblems(
+      CONFIG,
+      policy({ sign_nested_allowed: reversed }),
+    )
+    expect(problems).toHaveLength(1)
+    expect(problems[0]).toContain("not in the builder's form")
+    expect(problems[0]).toContain(`it must read: ${sorted(nested)}`)
+  })
+
+  it("accepts the config in any order", () => {
     const reversed = nested.split(",").reverse().join(",")
-    expect(policyProblems(CONFIG, policy({ sign_nested_allowed: reversed }))[0]).toContain("different order")
+    expect(
+      policyProblems(`${CONFIG}\nsign_nested = ${reversed}\n`, policy()),
+    ).toEqual([])
   })
 
   it("checks the other fields the builder gates on", () => {
-    const problems = policyProblems(CONFIG, policy({ bundle_id_allowed: "x.y", artifact_allowed: "dmg", entitlements_allowed: "default", volname_allowed: "other" }))
+    const problems = policyProblems(
+      CONFIG,
+      policy({
+        bundle_id_allowed: "x.y",
+        artifact_allowed: "dmg",
+        entitlements_allowed: "default",
+        volname_allowed: "other",
+      }),
+    )
     expect(problems.join("\n")).toContain("bundle_id")
     expect(problems.join("\n")).toContain("artifact 'updater'")
     expect(problems.join("\n")).toContain("entitlements 'bun-runtime'")
@@ -61,6 +98,9 @@ describe("policyProblems", () => {
 
 describe("parseFlat", () => {
   it("ignores comments and blank lines and trims", () => {
-    expect(parseFlat("# c\n\n a = b # tail\nk=v=w\n")).toEqual({ a: "b", k: "v=w" })
+    expect(parseFlat("# c\n\n a = b # tail\nk=v=w\n")).toEqual({
+      a: "b",
+      k: "v=w",
+    })
   })
 })
