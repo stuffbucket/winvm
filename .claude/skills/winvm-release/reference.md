@@ -27,7 +27,7 @@ Companion to [SKILL.md](SKILL.md). Old-pipeline facts checked 2026-11-03 against
 | 22:51-22:55 | Builder rerun green (run 41734374384) | builder run |
 | 23:07 | `finish-release` run 41736597750 green; v0.1.3 published | winvm runs |
 
-New pipeline: `check` (its `Signing preflight` step) fails the pin PR when it can read the policy; otherwise `build` fails ~30 s after the merge with the builder's error in the job summary (`scripts/release-builder.test.ts` replays this log shape); after the policy PR merges, one Re-run failed jobs finishes the release on the same run.
+New pipeline: a maintainer's local `bun scripts/preflight-signing.ts` catches it before the merge (CI checks only the runtime half); otherwise `build` fails ~30 s after the merge with the builder's error in the job summary (`scripts/release-builder.test.ts` replays this log shape); after the policy PR merges, one Re-run failed jobs finishes the release on the same run.
 
 Earlier pattern: v0.1.0 and v0.1.1 shipped only dmg + sha256 + SBOM (pre-updater); v0.1.2 and v0.1.3 shipped 7 assets; from v0.1.4 the keeper and its `.sha256` make 9. Release Please run 40642984921 (first PR attempt) failed at "GitHub Actions is not permitted to create or approve pull requests" (a repo setting, now on).
 

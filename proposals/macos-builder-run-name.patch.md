@@ -29,11 +29,9 @@ stays within the file's own rule that no input is.
 
 ## Not proposed, but worth knowing
 
-- winvm's CI reads `clients/stuffbucket/winvm.policy` (a private file) to check a
-  pull request's `sign_nested` against it before release. That needs a read-only
-  credential, a repository secret `BUILDER_POLICY_TOKEN` in winvm (a fine-grained
-  token with Contents: read on `stuffbucket/macos-builder` only). It needs no
-  change to the builder.
+- `clients/stuffbucket/winvm.policy` is private, so winvm's CI does not check a
+  pull request's `sign_nested` against it; `scripts/preflight-signing.ts` does,
+  run by a maintainer whose `gh` can read this repository.
 - The policy gate sorts `sign_nested` and compares it byte for byte with
   `sign_nested_allowed`, which must therefore be stored sorted: a pin change that adds or removes a Mach-O file needs the policy PR merged
   BEFORE the winvm release PR. `scripts/preflight-signing.ts` reports the
