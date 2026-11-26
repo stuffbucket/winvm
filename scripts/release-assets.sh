@@ -29,26 +29,8 @@ bundle="winvm-${tag}-darwin-arm64.app.tar.gz"
 keeper="winvm-keeper-${tag}-darwin-arm64"
 here=$(cd "$(dirname "$0")" && pwd)
 
-assets() {
-  gh release view "$tag" --repo "$repo" --json assets --jq '.assets[].name'
-}
-
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
-
-# A builder that predates dmg_name uploads winvm.dmg. Rename it (and write its
-# checksum) so the release has the same names either way. [Remove once a release
-# has shipped with dmg_name.]
-# (Variables, not `assets | grep -q`: grep exiting early would fail the pipeline.)
-names=$(assets)
-if grep -Fxq winvm.dmg <<<"$names"; then
-  gh release download "$tag" --repo "$repo" --pattern winvm.dmg --dir "$tmp"
-  mv "$tmp/winvm.dmg" "$tmp/$dmg"
-  (cd "$tmp" && shasum -a 256 "$dmg" >"$dmg.sha256")
-  gh release upload "$tag" --repo "$repo" "$tmp/$dmg" "$tmp/$dmg.sha256" --clobber
-  gh release delete-asset "$tag" winvm.dmg --repo "$repo" --yes
-  if grep -Fxq winvm.dmg.sha256 <<<"$names"; then gh release delete-asset "$tag" winvm.dmg.sha256 --repo "$repo" --yes; fi
-fi
 
 gh release download "$tag" --repo "$repo" --pattern "$bundle" --pattern "$bundle.sig" --dir "$tmp"
 bun "$here/updater-manifest.ts" --tag "$tag" --file "$tmp/$bundle" \
@@ -72,7 +54,7 @@ gh release upload "$tag" --repo "$repo" "$tmp/latest.json" "$tmp/SBOM.cdx.json" 
 
 want=$(printf '%s\n' "$bundle" "$bundle.sha256" "$bundle.sig" "$dmg" "$dmg.sha256" \
   "$keeper" "$keeper.sha256" SBOM.cdx.json latest.json | sort)
-have=$(assets | sort)
+have=$(gh release view "$tag" --repo "$repo" --json assets --jq '.assets[].name' | sort)
 if [ "$want" != "$have" ]; then
   echo "::error::The ${tag} draft does not hold exactly the expected assets. Expected (<) vs found (>):"
   diff <(echo "$want") <(echo "$have") | sed 's/^/::error::/' || true

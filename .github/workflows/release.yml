@@ -55,8 +55,6 @@ jobs:
       pull-requests: write # the release PR and its autorelease labels
     outputs:
       tag: ${{ steps.plan.outputs.tag }}
-      go: ${{ steps.plan.outputs.go }}
-      publish: ${{ steps.plan.outputs.publish }}
       release_pr_before: ${{ steps.release-pr-before.outputs.sha }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -94,13 +92,11 @@ jobs:
           RELEASE_CREATED: ${{ steps.rp.outputs.release_created }}
           RELEASE_TAG: ${{ steps.rp.outputs.tag_name }}
         run: |
-          tag='' go=false publish=false
+          tag=''
 
           if [ -n "$REHEARSE_TAG" ]; then
             [[ "$REHEARSE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+-[0-9A-Za-z.]+$ ]] \
               || { echo "::error::A rehearsal needs a pre-release tag such as v0.0.0-rehearsal.1, not '${REHEARSE_TAG}'."; exit 1; }
-            [ "$GITHUB_REF" = refs/heads/main ] \
-              || { echo "::error::Run a rehearsal from main, the only branch that can use the release environment."; exit 1; }
             state=$(gh release view "$REHEARSE_TAG" --repo "$GITHUB_REPOSITORY" --json isDraft --jq .isDraft 2> /dev/null || echo none)
             case "$state" in
               true) echo "Reusing the draft for ${REHEARSE_TAG}." ;;
@@ -110,13 +106,13 @@ jobs:
                 ;;
               *) echo "::error::${REHEARSE_TAG} is published; a rehearsal never touches a published release."; exit 1 ;;
             esac
-            tag=$REHEARSE_TAG go=true
+            tag=$REHEARSE_TAG
             echo "Rehearsing ${tag}: the run stops before publishing." >> "$GITHUB_STEP_SUMMARY"
           elif [ "$RELEASE_CREATED" = true ]; then
-            tag=$RELEASE_TAG go=true publish=true
+            tag=$RELEASE_TAG
             echo "Releasing ${tag}." >> "$GITHUB_STEP_SUMMARY"
           fi
-          { echo "tag=${tag}"; echo "go=${go}"; echo "publish=${publish}"; } >> "$GITHUB_OUTPUT"
+          echo "tag=${tag}" >> "$GITHUB_OUTPUT"
 
   # The release PR is opened with GITHUB_TOKEN, whose pushes trigger nothing, so
   # run CI for its exact head commit by hand: only when release-please created
@@ -148,7 +144,7 @@ jobs:
 
   check:
     needs: release-please
-    if: needs.release-please.outputs.go == 'true'
+    if: needs.release-please.outputs.tag != ''
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:
@@ -186,7 +182,7 @@ jobs:
 
   build:
     needs: release-please
-    if: needs.release-please.outputs.go == 'true'
+    if: needs.release-please.outputs.tag != ''
     runs-on: ubuntu-latest
     timeout-minutes: 40
     # The release environment holds app-repoman's APP_ID and APP_PRIVATE_KEY, and
@@ -223,7 +219,6 @@ jobs:
 
   publish:
     needs: [release-please, check, build]
-    if: needs.release-please.outputs.go == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -231,7 +226,7 @@ jobs:
     env:
       TAG: ${{ needs.release-please.outputs.tag }}
       GH_TOKEN: ${{ github.token }}
-      PUBLISH: ${{ needs.release-please.outputs.publish }}
+      PUBLISH: ${{ inputs.rehearse_tag == '' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -264,7 +259,7 @@ jobs:
           runtime=$(jq -r .version packages/core/runtime.json)
           notes=$(mktemp)
           gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json body --jq .body > "$notes"
-          if ! grep -q "winvm-runtime" "$notes"; then
+          if ! grep -qF "winvm-runtime/releases/tag/v${runtime})" "$notes"; then
             printf '\nQEMU, swtpm and zstd come from [winvm-runtime %s](https://github.com/stuffbucket/winvm-runtime/releases/tag/v%s), whose release carries their sources.\n' "$runtime" "$runtime" >> "$notes"
             gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --notes-file "$notes"
           fi

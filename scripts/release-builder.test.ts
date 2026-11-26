@@ -1,46 +1,40 @@
 import { afterEach, describe, expect, it } from "bun:test"
-import { chmodSync, copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
-import { tmpdir } from "node:os"
+import { readFileSync, writeFileSync } from "node:fs"
 import { join, resolve } from "node:path"
 
-const FAKE = resolve(import.meta.dir, "testdata", "fake-gh.sh")
+import { ghSandbox, removeGhSandboxes, runBash } from "./testdata/gh-sandbox"
+
 const SCRIPT = resolve(import.meta.dir, "release-builder.sh")
-const dirs: string[] = []
 
-afterEach(() => {
-  for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true })
-})
+afterEach(removeGhSandboxes)
 
-/** A scratch directory with a fake `gh` first on PATH and the given API fixtures. */
-function sandbox(fixtures: Record<string, string>): { dir: string; env: Record<string, string> } {
-  const dir = mkdtempSync(join(tmpdir(), "release-builder-"))
-  dirs.push(dir)
-  mkdirSync(join(dir, "bin"))
-  mkdirSync(join(dir, "api"))
-  copyFileSync(FAKE, join(dir, "bin", "gh"))
-  chmodSync(join(dir, "bin", "gh"), 0o755)
-  for (const [name, body] of Object.entries(fixtures)) writeFileSync(join(dir, name), body)
+function sandbox(fixtures: Record<string, string>): {
+  dir: string
+  env: Record<string, string>
+} {
+  const { dir, env } = ghSandbox("release-builder", ["api"])
+  for (const [name, body] of Object.entries(fixtures))
+    writeFileSync(join(dir, name), body)
   return {
     dir,
     env: {
-      PATH: `${join(dir, "bin")}:${process.env.PATH ?? ""}`,
-      FAKE_GH_DIR: dir,
-      GITHUB_REPOSITORY: "stuffbucket/winvm",
-      GH_TOKEN: "x",
+      ...env,
       POLL_SECONDS: "0",
       GITHUB_STEP_SUMMARY: join(dir, "summary.md"),
     },
   }
 }
 
-function run(env: Record<string, string>) {
-  const p = Bun.spawnSync(["bash", SCRIPT, "v0.1.4"], { env, stdout: "pipe", stderr: "pipe" })
-  return { code: p.exitCode, out: p.stdout.toString() + p.stderr.toString() }
-}
+const run = (env: Record<string, string>) => runBash([SCRIPT, "v0.1.4"], env)
 
 const RUN = "repos_stuffbucket_macos-builder_actions_runs_555"
-const dispatch = JSON.stringify({ workflow_run_id: 555, run_url: "u", html_url: "https://github.com/stuffbucket/macos-builder/actions/runs/555" })
-const state = (status: string, conclusion: string | null) => JSON.stringify({ status, conclusion })
+const dispatch = JSON.stringify({
+  workflow_run_id: 555,
+  run_url: "u",
+  html_url: "https://github.com/stuffbucket/macos-builder/actions/runs/555",
+})
+const state = (status: string, conclusion: string | null) =>
+  JSON.stringify({ status, conclusion })
 
 describe("release-builder.sh", () => {
   it("waits for the run the dispatch named and succeeds when it does", () => {
@@ -72,9 +66,13 @@ describe("release-builder.sh", () => {
     const r = run(env)
     expect(r.code).toBe(1)
     expect(r.out).toContain("ended failure")
-    expect(r.out).toContain("::error::sign_nested 'x' is not permitted by policy for stuffbucket/winvm.")
+    expect(r.out).toContain(
+      "::error::sign_nested 'x' is not permitted by policy for stuffbucket/winvm.",
+    )
     expect(r.out).not.toContain("Enforce per-repo policy")
-    expect(readFileSync(join(dir, "summary.md"), "utf8")).toContain("is not permitted by policy")
+    expect(readFileSync(join(dir, "summary.md"), "utf8")).toContain(
+      "is not permitted by policy",
+    )
     expect(readFileSync(join(dir, "calls.log"), "utf8")).not.toContain("jobs_8")
   })
 
@@ -86,14 +84,21 @@ describe("release-builder.sh", () => {
   })
 
   it("gives up, without cancelling the run, after the timeout", () => {
-    const { env } = sandbox({ "dispatch.json": dispatch, [`api/${RUN}.1.json`]: state("in_progress", null) })
+    const { env } = sandbox({
+      "dispatch.json": dispatch,
+      [`api/${RUN}.1.json`]: state("in_progress", null),
+    })
     const r = run({ ...env, BUILD_TIMEOUT: "0" })
     expect(r.code).toBe(1)
     expect(r.out).toContain("still running")
   })
 
   it("treats a cancelled run as a failure", () => {
-    const { env } = sandbox({ "dispatch.json": dispatch, [`api/${RUN}.1.json`]: state("completed", "cancelled"), [`api/${RUN}_jobs.1.json`]: '{"jobs":[]}' })
+    const { env } = sandbox({
+      "dispatch.json": dispatch,
+      [`api/${RUN}.1.json`]: state("completed", "cancelled"),
+      [`api/${RUN}_jobs.1.json`]: '{"jobs":[]}',
+    })
     const r = run(env)
     expect(r.code).toBe(1)
     expect(r.out).toContain("ended cancelled")

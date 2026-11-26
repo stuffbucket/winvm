@@ -18,60 +18,60 @@
 # `gh run watch` could not use (it reads check-runs).
 #
 # Env: GH_TOKEN (a token that can run workflows and read runs on the builder
-# repository), GITHUB_REPOSITORY. Optional: BUILDER_REPO, BUILDER_WORKFLOW,
-# BUILDER_REF, BUILD_TIMEOUT (seconds, default 1800), POLL_SECONDS (default 10).
+# repository), GITHUB_REPOSITORY. Optional: BUILD_TIMEOUT (seconds, default
+# 1800), POLL_SECONDS (default 10).
 set -euo pipefail
 
 tag=${1:?usage: release-builder.sh TAG}
 repo=${GITHUB_REPOSITORY:?}
-builder=${BUILDER_REPO:-stuffbucket/macos-builder}
-workflow=${BUILDER_WORKFLOW:-build.yml}
-ref=${BUILDER_REF:-main}
+builder=stuffbucket/macos-builder
+workflow=build.yml
+ref=main
 timeout=${BUILD_TIMEOUT:-1800}
 poll=${POLL_SECONDS:-10}
 summary=${GITHUB_STEP_SUMMARY:-/dev/null}
 
 resp=$(gh api --method POST "repos/${builder}/actions/workflows/${workflow}/dispatches" \
   -f "ref=${ref}" -f "inputs[repo]=${repo}" -f "inputs[ref]=${tag}" -F return_run_details=true)
-run_id=$(jq -r '.workflow_run_id // empty' <<< "${resp:-null}" 2> /dev/null || true)
-url=$(jq -r '.html_url // empty' <<< "${resp:-null}" 2> /dev/null || true)
+run_id=$(jq -r '.workflow_run_id // empty' <<<"${resp:-null}" 2>/dev/null || true)
+url=$(jq -r '.html_url // empty' <<<"${resp:-null}" 2>/dev/null || true)
 if [[ ! "$run_id" =~ ^[0-9]+$ ]]; then
   echo "::error::The dispatch of ${builder} ${workflow} for ${tag} returned no run id (response: '${resp}'). Not guessing which run is ours."
   exit 1
 fi
 echo "Signed build of ${tag}: ${url:-https://github.com/${builder}/actions/runs/${run_id}}"
-echo "Signed build of ${tag}: ${url:-run ${run_id}}" >> "$summary"
+echo "Signed build of ${tag}: ${url:-run ${run_id}}" >>"$summary"
 
 # Prints the builder's own error lines for the failed jobs of the run.
 surface_failure() {
   local jobs job_id
-  jobs=$(gh api "repos/${builder}/actions/runs/${run_id}/jobs" --jq '.jobs[] | select(.conclusion != "success" and .conclusion != "skipped") | .id' 2> /dev/null || true)
+  jobs=$(gh api "repos/${builder}/actions/runs/${run_id}/jobs" --jq '.jobs[] | select(.conclusion != "success" and .conclusion != "skipped") | .id' 2>/dev/null || true)
   {
     echo
     echo "### The builder refused or failed the build of ${tag}"
     echo
     echo '```'
-  } >> "$summary"
+  } >>"$summary"
   for job_id in $jobs; do
-    gh api "repos/${builder}/actions/jobs/${job_id}/logs" 2> /dev/null | grep -F '##[error]' | sed 's/^.*##\[error\]//' | head -20 | tee -a "$summary" |
+    gh api "repos/${builder}/actions/jobs/${job_id}/logs" 2>/dev/null | grep -F '##[error]' | sed 's/^.*##\[error\]//' | head -20 | tee -a "$summary" |
       sed 's/^/::error::/' || true
   done
-  echo '```' >> "$summary"
+  echo '```' >>"$summary"
 }
 
 deadline=$((SECONDS + timeout))
 last=
 while :; do
-  if state=$(gh api "repos/${builder}/actions/runs/${run_id}" --jq '"\(.status) \(.conclusion // "none")"' 2> /dev/null); then
+  if state=$(gh api "repos/${builder}/actions/runs/${run_id}" --jq '"\(.status) \(.conclusion // "none")"' 2>/dev/null); then
     [ "$state" = "$last" ] || echo "builder run ${run_id}: ${state}"
     last=$state
     case "$state" in
-      "completed success") exit 0 ;;
-      completed\ *)
-        echo "::error::The signed build of ${tag} ended ${state#completed }: ${url:-${builder} run ${run_id}}"
-        surface_failure
-        exit 1
-        ;;
+    "completed success") exit 0 ;;
+    completed\ *)
+      echo "::error::The signed build of ${tag} ended ${state#completed }: ${url:-${builder} run ${run_id}}"
+      surface_failure
+      exit 1
+      ;;
     esac
   else
     echo "::warning::could not read builder run ${run_id}; retrying"
