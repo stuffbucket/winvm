@@ -14,9 +14,8 @@ by hand.
    - The PR's `check` (including its signing preflight) is green for its head commit
      (the run `release.yml` dispatched for it; see Release PR CI below).
    - If `packages/core/runtime.json` changed since the last release, the
-     builder's policy already matches (Changing the runtime). The signing
-     preflight fails the PR when it can read the policy and it does not; when
-     it warns that it could not, run `bun scripts/preflight-signing.ts` yourself.
+     builder's policy already matches (Changing the runtime). CI cannot read
+     the policy, so run `bun scripts/preflight-signing.ts` yourself.
 2. **Merge the release PR.** The `Release` run starts on the push to main.
 3. **Watch the run** (`gh run list --repo stuffbucket/winvm --workflow release.yml --limit 3`).
    About 6 minutes: `release-please` (seconds), then `check` and `build` in
@@ -133,9 +132,9 @@ records that release's acceptance and the Mac it ran on:
 3. The cage check.
 4. The signing list. `bun scripts/preflight-signing.ts` checks that
    `.macos-builder/config`'s `sign_nested` equals the runtime's Mach-O files
-   and the builder's policy (it reads the policy with your `gh` login, or with
-   `BUILDER_POLICY_TOKEN`). The `Signing preflight` step of CI's `check`
-   runs the same on every PR. If the runtime's files changed, run
+   and the builder's policy (it reads the policy with your `gh` login). The
+   `Signing preflight` step of CI's `check` runs the runtime half on every PR;
+   CI cannot read the private policy. If the runtime's files changed, run
    `bun apps/viewer/scripts/sign-list.ts --write <winvm.app>` and commit the
    result, and get the policy in macos-builder updated FIRST: a build-config
    issue approved by a maintainer, or a reviewed PR editing `sign_nested_allowed`
@@ -226,10 +225,6 @@ app key within reach of every push to main, so it is not done.
   Only reviewed code on main can reach the key, because main requires a PR.
 - Actions can create pull requests (Settings, Actions, General; on as of
   2026-11-03).
-- Optional: the repository secret `BUILDER_POLICY_TOKEN`, a fine-grained token
-  with Contents: read on `stuffbucket/macos-builder` only, lets `signing
-  preflight` check the policy in CI. Without it the check warns and the policy
-  comparison is manual (`bun scripts/preflight-signing.ts`).
 - Optional: the labels `autorelease: pending` and `autorelease: tagged`.
   release-please adds them itself, and creating them first removes any doubt.
 - Recommended: require `check` (which includes the signing preflight) on main in a ruleset.

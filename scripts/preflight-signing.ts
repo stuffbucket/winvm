@@ -115,8 +115,7 @@ function fetchPolicy(): { text: string } | { skipped: string } {
   return gh.exitCode === 0
     ? { text: gh.stdout.toString() }
     : {
-        skipped:
-          "`gh` cannot read stuffbucket/macos-builder (in CI, set the BUILDER_POLICY_TOKEN secret)",
+        skipped: "`gh` cannot read stuffbucket/macos-builder",
       }
 }
 
