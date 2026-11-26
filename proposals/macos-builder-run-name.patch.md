@@ -34,7 +34,7 @@ stays within the file's own rule that no input is.
   credential, a repository secret `BUILDER_POLICY_TOKEN` in winvm (a fine-grained
   token with Contents: read on `stuffbucket/macos-builder` only). It needs no
   change to the builder.
-- The policy gate compares `sign_nested` to `sign_nested_allowed` as exact strings,
-  so a pin change that adds or removes a Mach-O file needs the policy PR merged
+- The policy gate sorts `sign_nested` and compares it byte for byte with
+  `sign_nested_allowed`, which must therefore be stored sorted: a pin change that adds or removes a Mach-O file needs the policy PR merged
   BEFORE the winvm release PR. `scripts/preflight-signing.ts` reports the
   difference as entries added and removed.

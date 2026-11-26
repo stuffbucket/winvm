@@ -11,11 +11,11 @@ by hand.
 1. **Pre-flight** (before merging the release PR)
    - `gh pr list --repo stuffbucket/winvm --label "autorelease: pending"`: one
      open PR `chore(main): release X.Y.Z`. Read its changelog.
-   - The PR's `check` and `signing preflight` are green for its head commit
+   - The PR's `check` (including its signing preflight) is green for its head commit
      (the run `release.yml` dispatched for it; see Release PR CI below).
    - If `packages/core/runtime.json` changed since the last release, the
-     builder's policy already matches (Changing the runtime). `signing
-     preflight` fails the PR when it can read the policy and it does not; when
+     builder's policy already matches (Changing the runtime). The signing
+     preflight fails the PR when it can read the policy and it does not; when
      it warns that it could not, run `bun scripts/preflight-signing.ts` yourself.
 2. **Merge the release PR.** The `Release` run starts on the push to main.
 3. **Watch the run** (`gh run list --repo stuffbucket/winvm --workflow release.yml --limit 3`).
@@ -134,13 +134,15 @@ records that release's acceptance and the Mac it ran on:
 4. The signing list. `bun scripts/preflight-signing.ts` checks that
    `.macos-builder/config`'s `sign_nested` equals the runtime's Mach-O files
    and the builder's policy (it reads the policy with your `gh` login, or with
-   `BUILDER_POLICY_TOKEN`). `signing preflight` in CI runs the same on every
-   PR. If the runtime's files changed, run
+   `BUILDER_POLICY_TOKEN`). The `Signing preflight` step of CI's `check`
+   runs the same on every PR. If the runtime's files changed, run
    `bun apps/viewer/scripts/sign-list.ts --write <winvm.app>` and commit the
    result, and get the policy in macos-builder updated FIRST: a build-config
    issue approved by a maintainer, or a reviewed PR editing `sign_nested_allowed`
-   in `clients/stuffbucket/winvm.policy`. The builder compares the two as exact
-   strings, so order matters. Merge that before the release PR.
+   in `clients/stuffbucket/winvm.policy`. The builder sorts the config's entries
+   and compares them byte for byte with the policy, so the policy must hold
+   them in sorted order; the preflight prints that exact line. Merge that
+   before the release PR.
 
 A new QEMU version or patch set makes existing saves refuse to load, so golden
 and baseline saves need rebuilding.
@@ -230,6 +232,6 @@ app key within reach of every push to main, so it is not done.
   comparison is manual (`bun scripts/preflight-signing.ts`).
 - Optional: the labels `autorelease: pending` and `autorelease: tagged`.
   release-please adds them itself, and creating them first removes any doubt.
-- Recommended: require `check` and `signing preflight` on main in a ruleset.
+- Recommended: require `check` (which includes the signing preflight) on main in a ruleset.
   The current rulesets (Protect main, Require PR) do not require a status
   check.

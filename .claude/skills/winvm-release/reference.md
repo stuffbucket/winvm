@@ -9,8 +9,8 @@ Companion to [SKILL.md](SKILL.md). Old-pipeline facts checked 2026-11-03 against
 | `release-please.yml` on every push to main: hand-written tag step (reads the manifest, pushes an annotated tag), a label step that failed on every release (`autorelease: tagged` did not exist; `gh pr edit` validates labels), `gh workflow run release.yml`, `gh workflow run ci.yml`; release PR via `bunx release-please@17.11.2 release-pr` | One `release.yml`: `googleapis/release-please-action@v5.0.0` (SHA-pinned) creates the tag (`force-tag-creation`) and the draft (`draft: true`) and manages labels itself. Only `ci.yml` is still dispatched, for the release PR. |
 | `release.yml` on a `v*` tag (dispatched): `release` job (check, SBOM, draft via changelogithub), then `macos-dmg` (start builder, poll the release for assets up to 50 min), then `publish` | Same run: `check` and `build` in parallel, then `publish`. `build` waits on the builder run itself (id from the dispatch response), not on assets. |
 | `finish-release.yml` (manual) for a builder run that finished after `macos-dmg` stopped waiting | Deleted. Recovery is Re-run failed jobs on the same run. |
-| `release-assets.sh TAG WAIT`: poll, rename `winvm.dmg`, `latest.json` | `release-assets.sh TAG SBOM`: no polling; `latest.json` + SBOM; asserts the exact 7-asset set. The rename is gone because `.macos-builder/config` sets `dmg_name`. |
-| No check that `sign_nested` matches the runtime or the builder's policy before the tag | `scripts/preflight-signing.ts`, run by `ci.yml` as `signing preflight`. |
+| `release-assets.sh TAG WAIT`: poll, rename `winvm.dmg`, `latest.json` | `release-assets.sh TAG SBOM`: no polling; `latest.json`, SBOM and the signed keeper; asserts the exact 9-asset set. The rename is gone because the config sets `dmg_name`. |
+| No check that `sign_nested` matches the runtime or the builder's policy before the tag | `scripts/preflight-signing.ts`, run by `ci.yml` as the `Signing preflight` step of `check`. |
 | `release` environment admitted only `v*` tags | Must admit `main` (the run starts on a push to main). Setting changed by hand. |
 | Runbook claimed: PR `check` required, assets immutable by setting, `macos-dmg` only prints a command | Rewritten. Facts: rulesets `Protect main` (deletion, non_fast_forward) and `Require PR` (pull_request, 0 approvals) have no `required_status_checks`; `immutable: false` on all releases; `can_approve_pull_request_reviews: true` (Actions may create PRs). |
 
@@ -27,9 +27,9 @@ Companion to [SKILL.md](SKILL.md). Old-pipeline facts checked 2026-11-03 against
 | 22:51-22:55 | Builder rerun green (run 41734374384) | builder run |
 | 23:07 | `finish-release` run 41736597750 green; v0.1.3 published | winvm runs |
 
-New pipeline: `signing preflight` fails the pin PR when it can read the policy; otherwise `build` fails ~30 s after the merge with the builder's error in the job summary (`scripts/release-builder.test.ts` replays this log shape); after the policy PR merges, one Re-run failed jobs finishes the release on the same run.
+New pipeline: `check` (its `Signing preflight` step) fails the pin PR when it can read the policy; otherwise `build` fails ~30 s after the merge with the builder's error in the job summary (`scripts/release-builder.test.ts` replays this log shape); after the policy PR merges, one Re-run failed jobs finishes the release on the same run.
 
-Earlier pattern: v0.1.0 and v0.1.1 shipped only dmg + sha256 + SBOM (pre-updater); from v0.1.2 the 7-asset set applies. Release Please run 40642984921 (first PR attempt) failed at "GitHub Actions is not permitted to create or approve pull requests" (a repo setting, now on).
+Earlier pattern: v0.1.0 and v0.1.1 shipped only dmg + sha256 + SBOM (pre-updater); v0.1.2 and v0.1.3 shipped 7 assets; from v0.1.4 the keeper and its `.sha256` make 9. Release Please run 40642984921 (first PR attempt) failed at "GitHub Actions is not permitted to create or approve pull requests" (a repo setting, now on).
 
 ## Other facts worth knowing
 
@@ -42,4 +42,4 @@ Earlier pattern: v0.1.0 and v0.1.1 shipped only dmg + sha256 + SBOM (pre-updater
 - Pre-release tags (`vX.Y.Z-rc.1`): `publish` uses `--prerelease` (no `--latest`), so `latest.json` is not moved, and the post-publish check reads `latest.json` from the tag's own download URL. `[unverified]` never exercised for a real release; rehearsal tags exercise everything but publish.
 - Policy gate fields (macos-builder build.yml "Enforce per-repo policy"): bundle id (exact), entitlements membership (including each `sign_nested` profile), every artifact in `artifact_allowed`, volname and app_path if pinned, `sign_nested` exact string. Unknown policy keys are rejected. `scripts/preflight-signing.ts` mirrors this.
 - Security: with the key in an environment that admits `main`, any code merged to main can mint an app-repoman token. main requires a PR. The token still only runs workflows on macos-builder.
-- Release PR branch name: `release-please--branches--main` or `...--components--winvm-workspace` (old runs used the latter); `release-pr-ci` takes it from the action's `pr` output instead of assuming.
+- Release PR branch name: `release-please--branches--main` or `...--components--winvm-workspace` (old runs used the latter); `scripts/release-please-ci.ts` names it (`RELEASE_PR_BRANCH`) and reads its head with `git ls-remote`.
