@@ -7,6 +7,7 @@
     "./held": "./ui/src/features/screen/held.ts",
     "./keyboard": "./ui/src/features/screen/keyboard.ts",
     "./model": "./ui/src/model.ts",
+    "./sign-list": "./scripts/sign-list.ts",
     "./statusGuard": "./ui/src/features/winvm/statusGuard.ts"
   },
   "scripts": {

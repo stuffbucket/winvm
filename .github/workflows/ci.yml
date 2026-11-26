@@ -4,8 +4,8 @@ on:
   push:
     branches: [main]
   pull_request:
-  # release-please.yml dispatches this for its release PR, whose GITHUB_TOKEN
-  # pushes trigger nothing, with the exact head SHA the check must cover.
+  # release.yml dispatches this for the release PR, whose GITHUB_TOKEN pushes
+  # trigger nothing, with the exact head SHA the checks must cover.
   workflow_dispatch:
     inputs:
       expected_sha:
@@ -99,6 +99,18 @@ jobs:
           restore-keys: pnpm-v1-${{ runner.os }}-
 
       - run: pnpm install --frozen-lockfile
+
+      # The signed build refuses a release whose sign_nested list does not match
+      # the app's Mach-O files or the builder's policy (v0.1.3), so find out here,
+      # while the pull request is open, and not 25 seconds into the release.
+      # BUILDER_POLICY_TOKEN: a repository secret, read-only (contents) on
+      # stuffbucket/macos-builder, which `gh` reads as GH_TOKEN. Without it the
+      # policy part is skipped with a warning, and pull requests from forks
+      # never have it.
+      - name: Signing preflight
+        env:
+          GH_TOKEN: ${{ secrets.BUILDER_POLICY_TOKEN }}
+        run: bun scripts/preflight-signing.ts
 
       - uses: jdx/mise-action@6612f0ef07ed2a736cd1e00a94a065522dd41195 # v5.2.5
         with:

@@ -1,24 +1,45 @@
 name: Release
 
-# Runs on a vX.Y.Z tag (dispatched by release-please.yml, or by hand with the
-# tag selected). Creates the draft release, starts stuffbucket/macos-builder,
-# which builds, signs, notarizes and attaches the .dmg and the app update, then
-# publishes once. A release is never published without them. Adapted from stuffbucket/maximal's release.yml.
+# One run per release. A push to main keeps the release PR current; merging
+# that PR is the decision to release, and the same run then does everything:
+#
+#   release-please  tags the merge commit and creates the DRAFT release, with the
+#                   changelog as its notes (release-please-config.json)
+#   check           pnpm check and the SBOM, at the tag      } in parallel
+#   build           the signed build on stuffbucket/macos-builder } in parallel
+#   publish         adds latest.json and the SBOM, asserts the exact asset list,
+#                   publishes, and checks the published release
+#
+# Failure is recovered by "Re-run failed jobs" on this run: every step reuses
+# what is already there (the tag, the draft, assets already uploaded). There is
+# no other workflow to run and no hand-made tag. A published release is never
+# touched again.
+#
+# Rehearsal: run this workflow by hand with `rehearse_tag` set to a pre-release
+# tag (see docs/release-runbook.md). It does everything above for that tag
+# except publish, and leaves a draft to delete.
 
 on:
   push:
-    tags: ["v*"]
+    branches: [main]
   workflow_dispatch:
     inputs:
-      tag:
-        description: Tag to release (must already exist, e.g. v0.2.0)
-        required: true
+      rehearse_tag:
+        description: Rehearse the release pipeline on this existing pre-release tag (vX.Y.Z-name.N), leaving an unpublished draft. Empty runs release-please as a push would.
+        required: false
+        type: string
+      force_ci:
+        description: Run CI again for the release PR's current head, even if it has not changed.
+        required: false
+        default: false
+        type: boolean
 
-permissions:
-  contents: write
+# Each job asks for what it needs.
+permissions: {}
 
+# One release run at a time; a running release is never cancelled.
 concurrency:
-  group: release-${{ github.event.inputs.tag || github.ref_name }}
+  group: release
   cancel-in-progress: false
 
 defaults:
@@ -26,22 +47,116 @@ defaults:
     shell: bash -eo pipefail {0}
 
 jobs:
-  release:
+  release-please:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 10
+    permissions:
+      contents: write # the tag, the draft release, the release PR's branch
+      pull-requests: write # the release PR and its autorelease labels
     outputs:
-      is_prerelease: ${{ steps.prerelease.outputs.is_prerelease }}
+      tag: ${{ steps.plan.outputs.tag }}
+      release_pr_before: ${{ steps.release-pr-before.outputs.sha }}
     steps:
-      - name: Validate the ref is a release tag
-        run: |
-          if [[ ! "$GITHUB_REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$ ]]; then
-            echo "::error::Release must run on a vX.Y.Z tag, not '$GITHUB_REF_NAME'."
-            exit 1
-          fi
-
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          persist-credentials: false
+
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version-file: .bun-version
+
+      # Releases and the release PR are only ever maintained from main.
+      - name: Validate release maintenance ref
+        run: bun scripts/release-please-ci.ts validate-trigger
+
+      # The release PR's head before release-please runs, so the release-pr-ci
+      # job can tell whether release-please created or moved it.
+      - name: Capture the current release PR head
+        id: release-pr-before
+        run: bun scripts/release-please-ci.ts capture
+
+      # With GITHUB_TOKEN, no `pull_request` CI runs for the release PR; the
+      # release-pr-ci job below covers that.
+      - id: rp
+        if: ${{ inputs.rehearse_tag == '' }}
+        uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
+        with:
+          token: ${{ github.token }}
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
+
+      - id: plan
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REHEARSE_TAG: ${{ inputs.rehearse_tag }}
+          RELEASE_CREATED: ${{ steps.rp.outputs.release_created }}
+          RELEASE_TAG: ${{ steps.rp.outputs.tag_name }}
+        run: |
+          tag=''
+
+          if [ -n "$REHEARSE_TAG" ]; then
+            [[ "$REHEARSE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+-[0-9A-Za-z.]+$ ]] \
+              || { echo "::error::A rehearsal needs a pre-release tag such as v0.0.0-rehearsal.1, not '${REHEARSE_TAG}'."; exit 1; }
+            state=$(gh release view "$REHEARSE_TAG" --repo "$GITHUB_REPOSITORY" --json isDraft --jq .isDraft 2> /dev/null || echo none)
+            case "$state" in
+              true) echo "Reusing the draft for ${REHEARSE_TAG}." ;;
+              none)
+                gh release create "$REHEARSE_TAG" --repo "$GITHUB_REPOSITORY" --verify-tag --draft --prerelease \
+                  --title "$REHEARSE_TAG" --notes "Release pipeline rehearsal. Delete this draft and its tag."
+                ;;
+              *) echo "::error::${REHEARSE_TAG} is published; a rehearsal never touches a published release."; exit 1 ;;
+            esac
+            tag=$REHEARSE_TAG
+            echo "Rehearsing ${tag}: the run stops before publishing." >> "$GITHUB_STEP_SUMMARY"
+          elif [ "$RELEASE_CREATED" = true ]; then
+            tag=$RELEASE_TAG
+            echo "Releasing ${tag}." >> "$GITHUB_STEP_SUMMARY"
+          fi
+          echo "tag=${tag}" >> "$GITHUB_OUTPUT"
+
+  # The release PR is opened with GITHUB_TOKEN, whose pushes trigger nothing, so
+  # run CI for its exact head commit by hand: only when release-please created
+  # or moved it, or when force_ci asks again. (A GitHub App token would make
+  # `pull_request` CI run normally; see docs/release-runbook.md.)
+  release-pr-ci:
+    needs: release-please
+    if: inputs.rehearse_tag == ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: write
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version-file: .bun-version
+
+      - name: Run CI for a changed release PR head
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BEFORE_SHA: ${{ needs.release-please.outputs.release_pr_before }}
+          FORCE_CI: ${{ inputs.force_ci || false }}
+        run: bun scripts/release-please-ci.ts dispatch --before "$BEFORE_SHA" --force "$FORCE_CI"
+
+  check:
+    needs: release-please
+    if: needs.release-please.outputs.tag != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    env:
+      TAG: ${{ needs.release-please.outputs.tag }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.TAG }}
           fetch-depth: 0
+          persist-credentials: false
 
       - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
         with:
@@ -58,88 +173,34 @@ jobs:
       - name: Generate SBOM and run license scan
         run: bun scripts/sbom.ts --root packages/core --root apps/cli --output SBOM.cdx.json
 
-      - name: Detect pre-release
-        id: prerelease
-        run: |
-          if [[ "$GITHUB_REF_NAME" == *-* ]]; then
-            echo "is_prerelease=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "is_prerelease=false" >> "$GITHUB_OUTPUT"
-          fi
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: sbom
+          path: SBOM.cdx.json
+          retention-days: 1
+          overwrite: true
 
-      # changelogithub computes notes from the previous v* tag. On the first
-      # release there is none and it produces a malformed range, so fall back
-      # to gh's generated notes.
-      - name: Generate the release notes (draft)
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-          GH_TOKEN: ${{ github.token }}
-          IS_PRERELEASE: ${{ steps.prerelease.outputs.is_prerelease }}
-        run: |
-          draft=$(gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --json isDraft --jq .isDraft 2> /dev/null || echo notfound)
-          if [ "$draft" = "true" ]; then
-            echo "Draft release for $GITHUB_REF_NAME already exists; skipping creation (re-run)."
-            exit 0
-          fi
-          prior=$(git tag --list 'v*' --sort=-v:refname | grep -v "^${GITHUB_REF_NAME}$" | head -1 || true)
-          if [ -z "$prior" ]; then
-            flags=(--draft)
-            [ "$IS_PRERELEASE" = "true" ] && flags+=(--prerelease)
-            gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --title "$GITHUB_REF_NAME" --generate-notes "${flags[@]}"
-          elif [ "$IS_PRERELEASE" = "true" ]; then
-            bunx changelogithub@15.0.5 --draft --prerelease
-          else
-            bunx changelogithub@15.0.5 --draft
-          fi
-
-      - name: Link the runtime release in the notes
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          runtime=$(jq -r .version packages/core/runtime.json)
-          notes=$(mktemp)
-          gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --json body --jq .body > "$notes"
-          if ! grep -q "winvm-runtime" "$notes"; then
-            printf '\nQEMU, swtpm and zstd come from [winvm-runtime %s](https://github.com/stuffbucket/winvm-runtime/releases/tag/v%s), whose release carries their sources.\n' "$runtime" "$runtime" >> "$notes"
-            gh release edit "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --notes-file "$notes"
-          fi
-
-      - name: Attach SBOM to release
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: gh release upload "$GITHUB_REF_NAME" SBOM.cdx.json --repo "$GITHUB_REPOSITORY" --clobber
-
-  macos-dmg:
-    needs: release
+  build:
+    needs: release-please
+    if: needs.release-please.outputs.tag != ''
     runs-on: ubuntu-latest
-    timeout-minutes: 60
-    # The release environment, which only v* tags can use, holds app-repoman's
-    # APP_ID and APP_PRIVATE_KEY. They start the signed build on
-    # stuffbucket/macos-builder.
+    timeout-minutes: 40
+    # The release environment holds app-repoman's APP_ID and APP_PRIVATE_KEY, and
+    # admits only main (and v* tags): a branch cannot reach the key.
     environment: release
+    permissions:
+      contents: read
     env:
-      TAG: ${{ github.ref_name }}
+      TAG: ${{ needs.release-please.outputs.tag }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ env.TAG }}
           persist-credentials: false
 
-      - name: Check whether the signed build is already on the draft
-        id: built
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          names=$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name')
-          if grep -Eq '^winvm(-.+-darwin-arm64)?\.dmg$' <<< "$names"; then
-            echo "already=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "already=false" >> "$GITHUB_OUTPUT"
-          fi
-
-      # Good for an hour, and only for starting workflows on macos-builder.
+      # Good for an hour, and only for running workflows on macos-builder.
       - name: Get a token for macos-builder
         id: token
-        if: steps.built.outputs.already == 'false' && vars.APP_ID != ''
         uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349 # v2.2.2
         with:
           app-id: ${{ vars.APP_ID }}
@@ -148,58 +209,90 @@ jobs:
           repositories: macos-builder
           permission-actions: write
 
-      - name: Start the signed build
-        if: steps.built.outputs.already == 'false'
+      # Builds, signs and notarizes on the builder and uploads the dmg and the
+      # app update to this tag's draft. A refusal fails here in seconds, with the
+      # builder's own error; a re-run of this job starts a fresh build.
+      - name: Build, sign and notarize on macos-builder
         env:
-          BUILDER_TOKEN: ${{ steps.token.outputs.token }}
-          REPO: ${{ github.repository }}
-        run: |
-          if [ -n "$BUILDER_TOKEN" ]; then
-            GH_TOKEN="$BUILDER_TOKEN" gh workflow run build.yml --repo stuffbucket/macos-builder --ref main -f repo="$REPO" -f ref="$TAG"
-            echo "Started the signed build for ${TAG} on stuffbucket/macos-builder." >> "$GITHUB_STEP_SUMMARY"
-            exit 0
-          fi
-          cmd="gh workflow run build.yml --repo stuffbucket/macos-builder --ref main -f repo=${REPO} -f ref=${TAG}"
-          echo "::notice::The release environment has no APP_ID. Start the signed build for ${TAG}: ${cmd}"
-          {
-            echo "### Start the signed build"
-            echo
-            echo "The release environment has no app key, so someone with access to stuffbucket/macos-builder runs:"
-            echo
-            echo '```'
-            echo "$cmd"
-            echo '```'
-            echo
-            echo "This job waits about 50 minutes for the DMG and the app update, then the release is published."
-            echo "If it is started later, run the **finish-release** workflow for ${TAG}."
-          } >> "$GITHUB_STEP_SUMMARY"
+          GH_TOKEN: ${{ steps.token.outputs.token }}
+        run: scripts/release-builder.sh "$TAG"
+
+  publish:
+    needs: [release-please, check, build]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    env:
+      TAG: ${{ needs.release-please.outputs.tag }}
+      GH_TOKEN: ${{ github.token }}
+      PUBLISH: ${{ inputs.rehearse_tag == '' }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.TAG }}
+          persist-credentials: false
 
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
           bun-version-file: .bun-version
 
-      - name: Attach the signed .dmg and the app update to the draft
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: scripts/release-assets.sh "$TAG" 3000
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: sbom
 
-  publish:
-    needs: [release, macos-dmg]
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    steps:
-      - name: Publish
-        env:
-          GH_TOKEN: ${{ github.token }}
-          TAG: ${{ github.ref_name }}
+      # A published release is never modified: on a re-run after publishing,
+      # skip straight to the check.
+      - name: Is the release still a draft
+        id: state
         run: |
-          draft=$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json isDraft --jq .isDraft 2> /dev/null || echo true)
-          if [ "$draft" = "false" ]; then
-            echo "$TAG is already published"
-            exit 0
+          draft=$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json isDraft --jq .isDraft)
+          echo "draft=${draft}" >> "$GITHUB_OUTPUT"
+
+      - name: Add latest.json and the SBOM, and assert the asset list
+        if: steps.state.outputs.draft == 'true'
+        run: scripts/release-assets.sh "$TAG" SBOM.cdx.json
+
+      - name: Link the runtime release in the notes
+        if: steps.state.outputs.draft == 'true'
+        run: |
+          runtime=$(jq -r .version packages/core/runtime.json)
+          notes=$(mktemp)
+          gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json body --jq .body > "$notes"
+          if ! grep -qF "winvm-runtime/releases/tag/v${runtime})" "$notes"; then
+            printf '\nQEMU, swtpm and zstd come from [winvm-runtime %s](https://github.com/stuffbucket/winvm-runtime/releases/tag/v%s), whose release carries their sources.\n' "$runtime" "$runtime" >> "$notes"
+            gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --notes-file "$notes"
           fi
-          if [ "${{ needs.release.outputs.is_prerelease }}" = "true" ]; then
+
+      # The last change to the release, and public: a rehearsal stops here.
+      - name: Publish
+        if: steps.state.outputs.draft == 'true' && env.PUBLISH == 'true'
+        run: |
+          if [[ "$TAG" == *-* ]]; then
             gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --draft=false --prerelease
           else
             gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --draft=false --latest
           fi
+
+      - name: Rehearsal done
+        if: env.PUBLISH != 'true'
+        run: |
+          echo "Rehearsal of ${TAG} complete: the draft holds every asset and was not published. Delete it: gh release delete ${TAG} --repo ${GITHUB_REPOSITORY} --cleanup-tag --yes" | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Check the published release
+        if: env.PUBLISH == 'true'
+        run: |
+          view=$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json isDraft,isPrerelease,tagName)
+          [ "$(jq -r .isDraft <<< "$view")" = false ] || { echo "::error::${TAG} is still a draft."; exit 1; }
+          if [ "$(jq -r .isPrerelease <<< "$view")" = true ]; then
+            url="https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}/latest.json"
+          else
+            url="https://github.com/${GITHUB_REPOSITORY}/releases/latest/download/latest.json"
+          fi
+          for attempt in 1 2 3 4 5 6; do
+            served=$(curl -fsSL "$url" | jq -r .version || true)
+            [ "$served" = "${TAG#v}" ] && break
+            [ "$attempt" -lt 6 ] || { echo "::error::${url} serves version '${served}', not ${TAG#v}."; exit 1; }
+            sleep 5
+          done
+          echo "Published ${TAG}: latest.json serves ${served}." | tee -a "$GITHUB_STEP_SUMMARY"
